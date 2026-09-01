@@ -316,6 +316,14 @@ hugr_engine = pecos_rslib.hugr_engine
 
 # Re-export noise model builder classes for direct instantiation
 GeneralNoiseModelBuilder = pecos_rslib.GeneralNoiseModelBuilder
+PauliLeakageDict = pecos_rslib.PauliLeakageDict
+PauliLeakageChannel = pecos_rslib.PauliLeakageChannel
+TwoQubitPauliLeakageChannel = pecos_rslib.TwoQubitPauliLeakageChannel
+P2PauliLeakageStep = pecos_rslib.P2PauliLeakageStep
+TransitionDict = pecos_rslib.TransitionDict
+TransitionChannel = pecos_rslib.TransitionChannel
+TwoQubitTransitionChannel = pecos_rslib.TwoQubitTransitionChannel
+P2TransitionStep = pecos_rslib.P2TransitionStep
 
 
 __all__ = [
@@ -348,7 +356,11 @@ __all__ = [
     "Nanoseconds",
     "NoiseParameters",
     "Numeric",
+    "P2PauliLeakageStep",
+    "P2TransitionStep",
     "Pauli",
+    "PauliLeakageChannel",
+    "PauliLeakageDict",
     "PauliString",
     "PhirJson",
     "PhirJsonEngineBuilder",
@@ -363,6 +375,10 @@ __all__ = [
     "ShotVec",
     "SignedInteger",
     "TimeUnits",
+    "TransitionChannel",
+    "TransitionDict",
+    "TwoQubitPauliLeakageChannel",
+    "TwoQubitTransitionChannel",
     "UnsignedClassicalSemantics",
     "UnsignedInteger",
     "Wasm",

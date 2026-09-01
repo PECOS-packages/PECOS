@@ -474,18 +474,23 @@ class _DetectorErrorModelMixin:
                 are converted together after propagation.
             p2_weights: Optional relative probabilities over two-qubit Pauli
                 error labels. Plain labels such as ``"XX"`` are post-gate
-                Pauli branches; labels prefixed by ``"*"`` such as ``"*XX"``
-                are replacement branches that omit the ideal two-qubit gate
-                before applying the Pauli. Values must sum to 1.0; ``p2``
-                remains the total two-qubit error rate.
-            p2_replacement_approximation: Approximation used for starred
+                Pauli branches; labels such as ``"~XX"`` or
+                ``":replace:XX"`` are replacement branches that omit the ideal
+                two-qubit gate before applying the Pauli. ``"~II"`` (or
+                ``":replace:II"``) omits the gate without applying a Pauli.
+                The two replacement spellings are equivalent and cannot both
+                name the same entry. Values must sum to 1.0; ``p2`` remains the
+                total two-qubit error rate. The former ``"*XX"`` syntax is not
+                accepted because ``"*"`` is reserved for state wildcards in
+                stochastic channels.
+            p2_replacement_approximation: Approximation used for
                 replacement labels. ``"pauli_twirl_omitted_gate"`` convolves
                 with the omitted two-qubit gate's Pauli twirl;
-                ``"branch_impact"`` evaluates starred entries as replacement
+                ``"branch_impact"`` evaluates replacement entries as
                 branch impacts; ``"exact_branch_replay"`` is reserved for a
                 future circuit-aware exact replay provider and currently fails
-                loudly for starred entries; ``"ignore_gate_removal"`` treats starred
-                entries like plain post-gate Pauli entries.
+                loudly for replacement entries; ``"ignore_gate_removal"``
+                treats replacement entries like plain post-gate Pauli entries.
             p_meas: Measurement flip rate.
             p_prep: Preparation (reset) error rate.
             p_idle_linear: Optional total stochastic idle-noise rate linear in
@@ -1475,8 +1480,9 @@ def build_dem_from_guppy(
         p2: Two-qubit gate depolarizing rate. Its 15 categorical branches are
             converted together after propagation.
         p2_weights: Optional relative probabilities over two-qubit Pauli error
-            labels, including starred replacement branches.
-        p2_replacement_approximation: Approximation used for starred
+            labels, including replacement branches written as ``"~XX"`` or
+            ``":replace:XX"``.
+        p2_replacement_approximation: Approximation used for
             replacement labels in ``p2_weights``.
         p_meas: Measurement flip rate.
         p_prep: Preparation (reset) error rate.

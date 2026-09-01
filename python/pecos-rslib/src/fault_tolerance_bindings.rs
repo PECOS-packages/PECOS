@@ -122,7 +122,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyString;
 
 use crate::observable_flips_bindings::{PyObservableFlips, obsmask_to_py, py_to_obsmask};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::str::FromStr;
 
 mod batch_decode;
@@ -191,23 +191,45 @@ fn parse_p2_weights(weights: BTreeMap<String, f64>) -> PyResult<PauliWeights> {
 
     let mut entries = Vec::with_capacity(weights.len());
     let mut replacement_entries = Vec::new();
+    let mut normalized_labels = BTreeSet::new();
     let mut sum = 0.0;
     for (label, weight) in weights {
-        let label = label.trim().to_ascii_uppercase();
-        let (replacement, label) = match label.strip_prefix('*') {
-            Some(stripped) => (true, stripped.to_string()),
-            None => (false, label),
+        let input_label = label.trim().to_ascii_uppercase();
+        let (replacement, label) = if let Some(stripped) = input_label.strip_prefix(":REPLACE:") {
+            (true, stripped.to_string())
+        } else if let Some(stripped) = input_label.strip_prefix('~') {
+            (true, stripped.to_string())
+        } else if let Some(stripped) = input_label.strip_prefix('*') {
+            let replacement = format!("~{stripped}");
+            let msg = format!(
+                "p2_weights replacement label {input_label:?} uses the removed '*' syntax; use {replacement:?} (or \":replace:{stripped}\") instead"
+            );
+            return Err(pyo3::exceptions::PyValueError::new_err(msg));
+        } else {
+            (false, input_label.clone())
         };
+        if !normalized_labels.insert((replacement, label.clone())) {
+            let canonical = if replacement {
+                format!("~{label}")
+            } else {
+                label.clone()
+            };
+            let msg = format!(
+                "p2_weights contains duplicate label {canonical:?} after normalization; use only one spelling for each branch"
+            );
+            return Err(pyo3::exceptions::PyValueError::new_err(msg));
+        }
         let replacement_identity = replacement && label == "II";
         if !replacement_identity && !PAULI_2Q_ORDER.contains(&label.as_str()) {
             let msg = format!(
-                "p2_weights keys must be one of {PAULI_2Q_ORDER:?} or prefixed with '*' for replacement branches, got {label:?}"
+                "p2_weights keys must be one of {PAULI_2Q_ORDER:?}, or use '~' / ':replace:' before a two-qubit Pauli label for a replacement branch; got {input_label:?}"
             );
             return Err(pyo3::exceptions::PyValueError::new_err(msg));
         }
         if !weight.is_finite() || weight < 0.0 {
-            let msg =
-                format!("p2_weights[{label:?}] must be finite and non-negative, got {weight}");
+            let msg = format!(
+                "p2_weights[{input_label:?}] must be finite and non-negative, got {weight}"
+            );
             return Err(pyo3::exceptions::PyValueError::new_err(msg));
         }
         let mut pauli = None;
@@ -235,7 +257,7 @@ fn parse_p2_weights(weights: BTreeMap<String, f64>) -> PyResult<PauliWeights> {
             )
         } else {
             return Err(pyo3::exceptions::PyValueError::new_err(
-                "plain p2_weights cannot contain identity pair 'II'; use '*II' for a replacement branch that only omits the gate",
+                "plain p2_weights cannot contain identity pair 'II'; use '~II' (or ':replace:II') for a replacement branch that only omits the gate",
             ));
         };
         sum += weight;
@@ -250,6 +272,42 @@ fn parse_p2_weights(weights: BTreeMap<String, f64>) -> PyResult<PauliWeights> {
         return Err(pyo3::exceptions::PyValueError::new_err(msg));
     }
     Ok(PauliWeights::with_replacement(entries, replacement_entries))
+}
+
+#[cfg(test)]
+mod p2_weight_parser_tests {
+    use super::*;
+
+    #[test]
+    fn accepts_compact_and_explicit_replacement_labels() {
+        let weights = BTreeMap::from([("~II".to_string(), 0.4), (":replace:XX".to_string(), 0.6)]);
+
+        let parsed = parse_p2_weights(weights).unwrap();
+
+        assert!(parsed.entries().is_empty());
+        assert_eq!(parsed.replacement_entries().len(), 2);
+    }
+
+    #[test]
+    fn rejects_removed_star_replacement_syntax_with_migration_hint() {
+        let error = parse_p2_weights(BTreeMap::from([("*XX".to_string(), 1.0)])).unwrap_err();
+        let message = error.to_string();
+
+        assert!(message.contains("removed '*' syntax"));
+        assert!(message.contains("~XX"));
+        assert!(message.contains(":replace:XX"));
+    }
+
+    #[test]
+    fn rejects_duplicate_replacement_aliases_after_normalization() {
+        let error = parse_p2_weights(BTreeMap::from([
+            ("~XX".to_string(), 0.5),
+            (":replace:XX".to_string(), 0.5),
+        ]))
+        .unwrap_err();
+
+        assert!(error.to_string().contains("duplicate label"));
+    }
 }
 
 fn parse_replacement_approximation(
@@ -2427,7 +2485,7 @@ impl PyDemBuilder {
     /// Attach the original circuit for exact replacement-branch replay.
     ///
     /// This is only needed when using `p2_replacement_approximation="exact_branch_replay"`
-    /// with starred p2 replacement branches. The influence map still determines
+    /// with p2 replacement branches. The influence map still determines
     /// ordinary Pauli propagation; the circuit context lets PECOS replay the
     /// omitted-gate branch and fail loudly if it is not DEM-representable.
     fn with_exact_branch_replay_circuit<'py>(

@@ -22,9 +22,14 @@ type RustStabilizerEngineBuilder = StabilizerEngineBuilder;
 type RustSparseStabEngineBuilder = SparseStabEngineBuilder;
 type RustStateVectorEngineBuilder = StateVectorEngineBuilder;
 
-use pyo3::exceptions::PyRuntimeError;
+use pecos_engines::noise::{
+    P2PauliLeakageStep, P2TransitionStep, PauliLeakageChannel, PauliLeakageDict,
+    QubitTransitionChannel, TransitionDict, TwoQubitPauliLeakageChannel, TwoQubitTransitionChannel,
+};
+use pyo3::exceptions::{PyKeyError, PyRuntimeError, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::PyBool;
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -873,6 +878,482 @@ pub fn biased_depolarizing_noise() -> PyBiasedDepolarizingNoiseModelBuilder {
     PyBiasedDepolarizingNoiseModelBuilder::new()
 }
 
+/// A validated relative distribution of stochastic Pauli-plus-leakage events.
+#[pyclass(name = "PauliLeakageDict", from_py_object)]
+#[derive(Clone)]
+pub struct PyPauliLeakageDict {
+    inner: PauliLeakageDict,
+}
+
+impl PyPauliLeakageDict {
+    fn extract(value: &Bound<'_, PyAny>) -> PyResult<PauliLeakageDict> {
+        if let Ok(events) = value.extract::<PyRef<'_, Self>>() {
+            return Ok(events.inner.clone());
+        }
+        let events = value.extract::<BTreeMap<String, f64>>().map_err(|_| {
+            PyTypeError::new_err("events must be a PauliLeakageDict or dict[str, float]")
+        })?;
+        Ok(PauliLeakageDict::new(&events))
+    }
+}
+
+#[pymethods]
+impl PyPauliLeakageDict {
+    #[new]
+    fn new(events: BTreeMap<String, f64>) -> Self {
+        Self {
+            inner: PauliLeakageDict::new(&events),
+        }
+    }
+
+    #[getter]
+    fn arity(&self) -> usize {
+        self.inner.arity()
+    }
+
+    #[getter]
+    fn events(&self) -> BTreeMap<String, f64> {
+        self.inner.events().clone()
+    }
+
+    fn to_dict(&self) -> BTreeMap<String, f64> {
+        self.inner.events().clone()
+    }
+
+    fn __len__(&self) -> usize {
+        self.inner.events().len()
+    }
+
+    fn __getitem__(&self, event: &str) -> PyResult<f64> {
+        self.inner
+            .events()
+            .get(event)
+            .copied()
+            .ok_or_else(|| PyKeyError::new_err(event.to_string()))
+    }
+
+    fn __contains__(&self, event: &str) -> bool {
+        self.inner.events().contains_key(event)
+    }
+
+    fn get(&self, event: &str) -> Option<f64> {
+        self.inner.events().get(event).copied()
+    }
+
+    fn keys(&self) -> Vec<String> {
+        self.inner.events().keys().cloned().collect()
+    }
+
+    fn items(&self) -> Vec<(String, f64)> {
+        self.inner
+            .events()
+            .iter()
+            .map(|(event, probability)| (event.clone(), *probability))
+            .collect()
+    }
+
+    fn values(&self) -> Vec<f64> {
+        self.inner.events().values().copied().collect()
+    }
+
+    /// Tensor/Kronecker product; equivalent to ``self * other``.
+    fn tensor(&self, other: &Self) -> Self {
+        Self {
+            inner: self.inner.tensor(&other.inner),
+        }
+    }
+
+    fn __mul__(&self, other: &Self) -> Self {
+        self.tensor(other)
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "PauliLeakageDict(arity={}, events={:?})",
+            self.inner.arity(),
+            self.inner.events()
+        )
+    }
+}
+
+/// A stochastic single-qubit Pauli-plus-leakage channel.
+#[pyclass(name = "PauliLeakageChannel", from_py_object)]
+#[derive(Clone)]
+pub struct PyPauliLeakageChannel {
+    inner: PauliLeakageChannel,
+}
+
+#[pymethods]
+impl PyPauliLeakageChannel {
+    #[new]
+    fn new(probability: f64, events: &Bound<'_, PyAny>) -> PyResult<Self> {
+        let events = PyPauliLeakageDict::extract(events)?;
+        Ok(Self {
+            inner: PauliLeakageChannel::from_event_dict(probability, &events),
+        })
+    }
+
+    #[getter]
+    fn probability(&self) -> f64 {
+        self.inner.probability()
+    }
+
+    #[getter]
+    fn events(&self) -> BTreeMap<String, f64> {
+        self.inner.events().clone()
+    }
+
+    #[getter]
+    fn event_dict(&self) -> PyPauliLeakageDict {
+        PyPauliLeakageDict {
+            inner: self.inner.event_dict().clone(),
+        }
+    }
+
+    fn __mul__(&self, other: &Self) -> PyP2PauliLeakageStep {
+        PyP2PauliLeakageStep {
+            inner: P2PauliLeakageStep::tensor_product(self.inner.clone(), other.inner.clone()),
+        }
+    }
+}
+
+/// A stochastic joint two-qubit Pauli-plus-leakage channel.
+#[pyclass(name = "TwoQubitPauliLeakageChannel", from_py_object)]
+#[derive(Clone)]
+pub struct PyTwoQubitPauliLeakageChannel {
+    inner: TwoQubitPauliLeakageChannel,
+}
+
+#[pymethods]
+impl PyTwoQubitPauliLeakageChannel {
+    #[new]
+    fn new(probability: f64, events: &Bound<'_, PyAny>) -> PyResult<Self> {
+        let events = PyPauliLeakageDict::extract(events)?;
+        Ok(Self {
+            inner: TwoQubitPauliLeakageChannel::from_event_dict(probability, &events),
+        })
+    }
+
+    #[getter]
+    fn probability(&self) -> f64 {
+        self.inner.probability()
+    }
+
+    #[getter]
+    fn events(&self) -> BTreeMap<String, f64> {
+        self.inner.events().clone()
+    }
+
+    #[getter]
+    fn event_dict(&self) -> PyPauliLeakageDict {
+        PyPauliLeakageDict {
+            inner: self.inner.event_dict().clone(),
+        }
+    }
+}
+
+/// One independent-leg or joint Pauli-plus-leakage step at a two-qubit hook.
+#[pyclass(name = "P2PauliLeakageStep", from_py_object)]
+#[derive(Clone)]
+pub struct PyP2PauliLeakageStep {
+    inner: P2PauliLeakageStep,
+}
+
+#[pymethods]
+impl PyP2PauliLeakageStep {
+    #[staticmethod]
+    fn independent(first: &PyPauliLeakageChannel, second: &PyPauliLeakageChannel) -> Self {
+        Self {
+            inner: P2PauliLeakageStep::independent(first.inner.clone(), second.inner.clone()),
+        }
+    }
+
+    #[staticmethod]
+    fn tensor_product(first: &PyPauliLeakageChannel, second: &PyPauliLeakageChannel) -> Self {
+        Self {
+            inner: P2PauliLeakageStep::tensor_product(first.inner.clone(), second.inner.clone()),
+        }
+    }
+
+    #[staticmethod]
+    fn same_on_each(channel: &PyPauliLeakageChannel) -> Self {
+        Self {
+            inner: P2PauliLeakageStep::same_on_each(channel.inner.clone()),
+        }
+    }
+
+    #[staticmethod]
+    fn joint(channel: &PyTwoQubitPauliLeakageChannel) -> Self {
+        Self {
+            inner: P2PauliLeakageStep::joint(channel.inner.clone()),
+        }
+    }
+}
+
+/// A validated conditional-transition mapping over strings in ``{"0", "1", "L"}^arity``.
+#[pyclass(name = "TransitionDict", from_py_object)]
+#[derive(Clone)]
+pub struct PyTransitionDict {
+    inner: TransitionDict,
+}
+
+impl PyTransitionDict {
+    fn extract(value: &Bound<'_, PyAny>) -> PyResult<TransitionDict> {
+        if let Ok(transitions) = value.extract::<PyRef<'_, Self>>() {
+            return Ok(transitions.inner.clone());
+        }
+        let transitions = value
+            .extract::<BTreeMap<String, BTreeMap<String, f64>>>()
+            .map_err(|_| {
+                PyTypeError::new_err(
+                    "transitions must be a TransitionDict or dict[str, dict[str, float]]",
+                )
+            })?;
+        Ok(TransitionDict::new(&transitions))
+    }
+}
+
+#[pymethods]
+impl PyTransitionDict {
+    #[new]
+    fn new(transitions: BTreeMap<String, BTreeMap<String, f64>>) -> Self {
+        Self {
+            inner: TransitionDict::new(&transitions),
+        }
+    }
+
+    /// Number of effective qutrits represented by each state label.
+    #[getter]
+    fn arity(&self) -> usize {
+        self.inner.arity()
+    }
+
+    /// Return a plain nested dictionary copy.
+    #[getter]
+    fn transitions(&self) -> BTreeMap<String, BTreeMap<String, f64>> {
+        self.inner.transitions().clone()
+    }
+
+    fn to_dict(&self) -> BTreeMap<String, BTreeMap<String, f64>> {
+        self.inner.transitions().clone()
+    }
+
+    fn __len__(&self) -> usize {
+        self.inner.transitions().len()
+    }
+
+    fn __getitem__(&self, source: &str) -> PyResult<BTreeMap<String, f64>> {
+        self.inner
+            .transitions()
+            .get(source)
+            .cloned()
+            .ok_or_else(|| PyKeyError::new_err(source.to_string()))
+    }
+
+    fn __contains__(&self, source: &str) -> bool {
+        self.inner.transitions().contains_key(source)
+    }
+
+    fn get(&self, source: &str) -> Option<BTreeMap<String, f64>> {
+        self.inner.transitions().get(source).cloned()
+    }
+
+    fn keys(&self) -> Vec<String> {
+        self.inner.transitions().keys().cloned().collect()
+    }
+
+    fn items(&self) -> Vec<(String, BTreeMap<String, f64>)> {
+        self.inner
+            .transitions()
+            .iter()
+            .map(|(source, row)| (source.clone(), row.clone()))
+            .collect()
+    }
+
+    fn values(&self) -> Vec<BTreeMap<String, f64>> {
+        self.inner.transitions().values().cloned().collect()
+    }
+
+    /// Tensor/Kronecker product; equivalent to ``self * other``.
+    fn tensor(&self, other: &Self) -> Self {
+        Self {
+            inner: self.inner.tensor(&other.inner),
+        }
+    }
+
+    /// Sequential composition, applying ``before`` first and ``self`` second.
+    fn compose(&self, before: &Self) -> Self {
+        Self {
+            inner: self.inner.compose(&before.inner),
+        }
+    }
+
+    /// Sequential composition, applying ``self`` first and ``next`` second.
+    fn then(&self, next: &Self) -> Self {
+        Self {
+            inner: self.inner.then(&next.inner),
+        }
+    }
+
+    fn __mul__(&self, other: &Self) -> Self {
+        self.tensor(other)
+    }
+
+    fn __matmul__(&self, before: &Self) -> Self {
+        self.compose(before)
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "TransitionDict(arity={}, transitions={:?})",
+            self.inner.arity(),
+            self.inner.transitions()
+        )
+    }
+}
+
+/// A conditional population-transition channel on ``{"0", "1", "L"}``.
+#[pyclass(name = "TransitionChannel", from_py_object)]
+#[derive(Clone)]
+pub struct PyTransitionChannel {
+    inner: QubitTransitionChannel,
+}
+
+#[pymethods]
+impl PyTransitionChannel {
+    /// Construct ``transitions[source][destination] = P(destination | source)``.
+    #[new]
+    fn new(probability: f64, transitions: &Bound<'_, PyAny>) -> PyResult<Self> {
+        let transitions = PyTransitionDict::extract(transitions)?;
+        Ok(Self {
+            inner: QubitTransitionChannel::from_transition_dict(probability, &transitions),
+        })
+    }
+
+    /// Recover ``L`` to ``0`` with ``p_zero`` and to ``1`` otherwise.
+    #[staticmethod]
+    #[pyo3(signature = (probability, p_zero=0.5))]
+    fn leak_recovery(probability: f64, p_zero: f64) -> Self {
+        Self {
+            inner: QubitTransitionChannel::leak_recovery(probability, p_zero),
+        }
+    }
+
+    #[getter]
+    fn probability(&self) -> f64 {
+        self.inner.probability()
+    }
+
+    #[getter]
+    fn transitions(&self) -> BTreeMap<String, BTreeMap<String, f64>> {
+        self.inner.transitions().clone()
+    }
+
+    #[getter]
+    fn transition_dict(&self) -> PyTransitionDict {
+        PyTransitionDict {
+            inner: self.inner.transition_dict().clone(),
+        }
+    }
+
+    /// Build an independent two-leg step, preserving each channel's outer probability.
+    fn __mul__(&self, other: &Self) -> PyP2TransitionStep {
+        PyP2TransitionStep {
+            inner: P2TransitionStep::tensor_product(self.inner.clone(), other.inner.clone()),
+        }
+    }
+}
+
+/// A joint conditional population-transition channel on two effective qutrits.
+#[pyclass(name = "TwoQubitTransitionChannel", from_py_object)]
+#[derive(Clone)]
+pub struct PyTwoQubitTransitionChannel {
+    inner: TwoQubitTransitionChannel,
+}
+
+#[pymethods]
+impl PyTwoQubitTransitionChannel {
+    /// Construct ``transitions[xy][wz] = P(wz | xy)`` for symbols in ``{"0", "1", "L"}``.
+    #[new]
+    fn new(probability: f64, transitions: &Bound<'_, PyAny>) -> PyResult<Self> {
+        let transitions = PyTransitionDict::extract(transitions)?;
+        Ok(Self {
+            inner: TwoQubitTransitionChannel::from_transition_dict(probability, &transitions),
+        })
+    }
+
+    #[getter]
+    fn probability(&self) -> f64 {
+        self.inner.probability()
+    }
+
+    #[getter]
+    fn transitions(&self) -> BTreeMap<String, BTreeMap<String, f64>> {
+        self.inner.transitions().clone()
+    }
+
+    #[getter]
+    fn transition_dict(&self) -> PyTransitionDict {
+        PyTransitionDict {
+            inner: self.inner.transition_dict().clone(),
+        }
+    }
+}
+
+/// One ordered transition step at a two-qubit gate hook.
+#[pyclass(name = "P2TransitionStep", from_py_object)]
+#[derive(Clone)]
+pub struct PyP2TransitionStep {
+    inner: P2TransitionStep,
+}
+
+#[pymethods]
+impl PyP2TransitionStep {
+    /// Apply potentially different single-qubit channels independently to the two gate legs.
+    #[staticmethod]
+    fn independent(first: &PyTransitionChannel, second: &PyTransitionChannel) -> Self {
+        Self {
+            inner: P2TransitionStep::independent(first.inner.clone(), second.inner.clone()),
+        }
+    }
+
+    /// Alias for ``independent`` emphasizing the product of two one-qubit channels.
+    #[staticmethod]
+    fn tensor_product(first: &PyTransitionChannel, second: &PyTransitionChannel) -> Self {
+        Self {
+            inner: P2TransitionStep::tensor_product(first.inner.clone(), second.inner.clone()),
+        }
+    }
+
+    /// Apply the same single-qubit channel independently to both gate legs.
+    #[staticmethod]
+    fn same_on_each(channel: &PyTransitionChannel) -> Self {
+        Self {
+            inner: P2TransitionStep::same_on_each(channel.inner.clone()),
+        }
+    }
+
+    /// Apply one correlated transition matrix to the joint two-qutrit basis state.
+    #[staticmethod]
+    fn joint(channel: &PyTwoQubitTransitionChannel) -> Self {
+        Self {
+            inner: P2TransitionStep::joint(channel.inner.clone()),
+        }
+    }
+}
+
+fn extract_p2_transition_channel(channel: &Bound<'_, PyAny>) -> PyResult<P2TransitionStep> {
+    if let Ok(channel) = channel.extract::<PyRef<'_, PyTransitionChannel>>() {
+        return Ok(P2TransitionStep::same_on_each(channel.inner.clone()));
+    }
+    if let Ok(channel) = channel.extract::<PyRef<'_, PyTwoQubitTransitionChannel>>() {
+        return Ok(P2TransitionStep::joint(channel.inner.clone()));
+    }
+    Err(PyTypeError::new_err(
+        "channel must be a TransitionChannel or TwoQubitTransitionChannel",
+    ))
+}
+
 /// Python wrapper for `GeneralNoiseModelBuilder`
 #[pyclass(name = "GeneralNoiseModelBuilder", from_py_object)]
 #[derive(Clone)]
@@ -996,6 +1477,126 @@ impl PyGeneralNoiseModelBuilder {
         })
     }
 
+    /// Replace the ordered Pauli-plus-leakage stack before single-qubit gates.
+    fn with_p1_pauli_leakage_channels_before_gate(
+        &self,
+        channels: Vec<PyPauliLeakageChannel>,
+    ) -> PyResult<Self> {
+        let channels = channels
+            .into_iter()
+            .map(|channel| channel.inner)
+            .collect::<Vec<_>>();
+        Ok(Self {
+            inner: self
+                .inner
+                .clone()
+                .with_p1_pauli_leakage_channels_before_gate(&channels),
+        })
+    }
+
+    /// Append one Pauli-plus-leakage channel before single-qubit gates.
+    fn add_p1_pauli_leakage_channel_before_gate(
+        &self,
+        channel: &PyPauliLeakageChannel,
+    ) -> PyResult<Self> {
+        Ok(Self {
+            inner: self
+                .inner
+                .clone()
+                .add_p1_pauli_leakage_channel_before_gate(&channel.inner),
+        })
+    }
+
+    /// Replace the ordered Pauli-plus-leakage stack after single-qubit noise sites.
+    fn with_p1_pauli_leakage_channels_after_gate(
+        &self,
+        channels: Vec<PyPauliLeakageChannel>,
+    ) -> PyResult<Self> {
+        let channels = channels
+            .into_iter()
+            .map(|channel| channel.inner)
+            .collect::<Vec<_>>();
+        Ok(Self {
+            inner: self
+                .inner
+                .clone()
+                .with_p1_pauli_leakage_channels_after_gate(&channels),
+        })
+    }
+
+    /// Append one Pauli-plus-leakage channel after single-qubit noise sites.
+    fn add_p1_pauli_leakage_channel_after_gate(
+        &self,
+        channel: &PyPauliLeakageChannel,
+    ) -> PyResult<Self> {
+        Ok(Self {
+            inner: self
+                .inner
+                .clone()
+                .add_p1_pauli_leakage_channel_after_gate(&channel.inner),
+        })
+    }
+
+    /// Replace the ordered transition-channel stack before each single-qubit gate.
+    fn with_p1_transition_channels_before_gate(
+        &self,
+        channels: Vec<PyTransitionChannel>,
+    ) -> PyResult<Self> {
+        let channels = channels
+            .into_iter()
+            .map(|channel| channel.inner)
+            .collect::<Vec<_>>();
+        Ok(Self {
+            inner: self
+                .inner
+                .clone()
+                .with_p1_transition_channels_before_gate(&channels),
+        })
+    }
+
+    /// Append one transition channel before each single-qubit gate.
+    fn add_p1_transition_channel_before_gate(
+        &self,
+        channel: &PyTransitionChannel,
+    ) -> PyResult<Self> {
+        Ok(Self {
+            inner: self
+                .inner
+                .clone()
+                .add_p1_transition_channel_before_gate(&channel.inner),
+        })
+    }
+
+    /// Replace the ordered transition-channel stack after each single-qubit noise site.
+    fn with_p1_transition_channels_after_gate(
+        &self,
+        channels: Vec<PyTransitionChannel>,
+    ) -> PyResult<Self> {
+        let channels = channels
+            .into_iter()
+            .map(|channel| channel.inner)
+            .collect::<Vec<_>>();
+        Ok(Self {
+            inner: self
+                .inner
+                .clone()
+                .with_p1_transition_channels_after_gate(&channels),
+        })
+    }
+
+    /// Append one transition channel after each single-qubit noise site.
+    fn add_p1_transition_channel_after_gate(
+        &self,
+        channel: &PyTransitionChannel,
+    ) -> PyResult<Self> {
+        Ok(Self {
+            inner: self
+                .inner
+                .clone()
+                .add_p1_transition_channel_after_gate(&channel.inner),
+        })
+    }
+
     /// Set two-qubit Pauli error model
     fn with_p2_pauli_model(
         &self,
@@ -1005,6 +1606,144 @@ impl PyGeneralNoiseModelBuilder {
         let btree_map: BTreeMap<String, f64> = model.into_iter().collect();
         Ok(Self {
             inner: self.inner.clone().with_p2_pauli_model(&btree_map),
+        })
+    }
+
+    /// Replace the ordered Pauli-plus-leakage step stack before two-qubit gates.
+    fn with_p2_pauli_leakage_steps_before_gate(
+        &self,
+        steps: Vec<PyP2PauliLeakageStep>,
+    ) -> PyResult<Self> {
+        let steps = steps.into_iter().map(|step| step.inner).collect::<Vec<_>>();
+        Ok(Self {
+            inner: self
+                .inner
+                .clone()
+                .with_p2_pauli_leakage_steps_before_gate(&steps),
+        })
+    }
+
+    /// Append one Pauli-plus-leakage step before two-qubit gates.
+    fn add_p2_pauli_leakage_step_before_gate(&self, step: &PyP2PauliLeakageStep) -> PyResult<Self> {
+        Ok(Self {
+            inner: self
+                .inner
+                .clone()
+                .add_p2_pauli_leakage_step_before_gate(&step.inner),
+        })
+    }
+
+    /// Append the same independently drawn single-qubit channel before both gate legs.
+    fn add_p2_pauli_leakage_channel_before_gate(
+        &self,
+        channel: &PyPauliLeakageChannel,
+    ) -> PyResult<Self> {
+        Ok(Self {
+            inner: self
+                .inner
+                .clone()
+                .add_p2_pauli_leakage_channel_before_gate(&channel.inner),
+        })
+    }
+
+    /// Replace the ordered Pauli-plus-leakage step stack after two-qubit noise sites.
+    fn with_p2_pauli_leakage_steps_after_gate(
+        &self,
+        steps: Vec<PyP2PauliLeakageStep>,
+    ) -> PyResult<Self> {
+        let steps = steps.into_iter().map(|step| step.inner).collect::<Vec<_>>();
+        Ok(Self {
+            inner: self
+                .inner
+                .clone()
+                .with_p2_pauli_leakage_steps_after_gate(&steps),
+        })
+    }
+
+    /// Append one Pauli-plus-leakage step after two-qubit noise sites.
+    fn add_p2_pauli_leakage_step_after_gate(&self, step: &PyP2PauliLeakageStep) -> PyResult<Self> {
+        Ok(Self {
+            inner: self
+                .inner
+                .clone()
+                .add_p2_pauli_leakage_step_after_gate(&step.inner),
+        })
+    }
+
+    /// Append the same independently drawn single-qubit channel after both gate legs.
+    fn add_p2_pauli_leakage_channel_after_gate(
+        &self,
+        channel: &PyPauliLeakageChannel,
+    ) -> PyResult<Self> {
+        Ok(Self {
+            inner: self
+                .inner
+                .clone()
+                .add_p2_pauli_leakage_channel_after_gate(&channel.inner),
+        })
+    }
+
+    /// Replace the ordered transition-step stack before each two-qubit gate.
+    fn with_p2_transition_steps_before_gate(
+        &self,
+        steps: Vec<PyP2TransitionStep>,
+    ) -> PyResult<Self> {
+        let steps = steps.into_iter().map(|step| step.inner).collect::<Vec<_>>();
+        Ok(Self {
+            inner: self
+                .inner
+                .clone()
+                .with_p2_transition_steps_before_gate(&steps),
+        })
+    }
+
+    /// Append an independent-leg or joint transition step before each two-qubit gate.
+    fn add_p2_transition_step_before_gate(&self, step: &PyP2TransitionStep) -> PyResult<Self> {
+        Ok(Self {
+            inner: self
+                .inner
+                .clone()
+                .add_p2_transition_step_before_gate(&step.inner),
+        })
+    }
+
+    /// Append a single-qubit-per-leg or joint channel before each two-qubit gate.
+    fn add_p2_transition_channel_before_gate(&self, channel: &Bound<'_, PyAny>) -> PyResult<Self> {
+        let step = extract_p2_transition_channel(channel)?;
+        Ok(Self {
+            inner: self.inner.clone().add_p2_transition_step_before_gate(&step),
+        })
+    }
+
+    /// Replace the ordered transition-step stack after each two-qubit noise site.
+    fn with_p2_transition_steps_after_gate(
+        &self,
+        steps: Vec<PyP2TransitionStep>,
+    ) -> PyResult<Self> {
+        let steps = steps.into_iter().map(|step| step.inner).collect::<Vec<_>>();
+        Ok(Self {
+            inner: self
+                .inner
+                .clone()
+                .with_p2_transition_steps_after_gate(&steps),
+        })
+    }
+
+    /// Append an independent-leg or joint transition step after each two-qubit noise site.
+    fn add_p2_transition_step_after_gate(&self, step: &PyP2TransitionStep) -> PyResult<Self> {
+        Ok(Self {
+            inner: self
+                .inner
+                .clone()
+                .add_p2_transition_step_after_gate(&step.inner),
+        })
+    }
+
+    /// Append a single-qubit-per-leg or joint channel after each two-qubit site.
+    fn add_p2_transition_channel_after_gate(&self, channel: &Bound<'_, PyAny>) -> PyResult<Self> {
+        let step = extract_p2_transition_channel(channel)?;
+        Ok(Self {
+            inner: self.inner.clone().add_p2_transition_step_after_gate(&step),
         })
     }
 
@@ -1767,6 +2506,14 @@ pub fn register_engine_builders(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyPhirJson>()?;
 
     // Noise builders
+    m.add_class::<PyPauliLeakageDict>()?;
+    m.add_class::<PyPauliLeakageChannel>()?;
+    m.add_class::<PyTwoQubitPauliLeakageChannel>()?;
+    m.add_class::<PyP2PauliLeakageStep>()?;
+    m.add_class::<PyTransitionDict>()?;
+    m.add_class::<PyTransitionChannel>()?;
+    m.add_class::<PyTwoQubitTransitionChannel>()?;
+    m.add_class::<PyP2TransitionStep>()?;
     m.add_class::<PyGeneralNoiseModelBuilder>()?;
     m.add_class::<PyDepolarizingNoiseModelBuilder>()?;
     m.add_class::<PyBiasedDepolarizingNoiseModelBuilder>()?;

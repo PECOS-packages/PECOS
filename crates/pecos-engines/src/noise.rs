@@ -33,7 +33,11 @@ pub use self::noise_rng::NoiseRng;
 pub use self::pass_through::{PassThroughNoiseModel, PassThroughNoiseModelBuilder};
 pub use self::utils::{NoiseUtils, ProbabilityValidator};
 pub use self::weighted_sampler::{
-    CrosstalkWeightedSampler, SingleQubitWeightedSampler, TwoQubitWeightedSampler, WeightedSampler,
+    CrosstalkWeightedSampler, P2PauliLeakageStep, P2TransitionStep, PauliLeakageChannel,
+    PauliLeakageDict, PauliLeakageWeightedSampler, QubitTransitionChannel, QubitTransitionState,
+    QubitTransitionWeightedSampler, SingleQubitWeightedSampler, TransitionDict,
+    TwoQubitPauliLeakageChannel, TwoQubitPauliLeakageWeightedSampler, TwoQubitTransitionChannel,
+    TwoQubitWeightedSampler, WeightedSampler,
 };
 
 use crate::byte_message::ByteMessage;

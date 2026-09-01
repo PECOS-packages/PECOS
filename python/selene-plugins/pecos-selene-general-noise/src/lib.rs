@@ -453,7 +453,7 @@ impl ErrorModelInterface for GeneralNoiseErrorModel {
                 } => {
                     let qubit = self.qubit(qubit_id)?;
                     self.add_idle_before(qubit, start)?;
-                    self.builder.r1xy(
+                    self.builder.rxy1q(
                         Angle64::from_radians(theta),
                         Angle64::from_radians(phi),
                         &[qubit],
@@ -797,7 +797,7 @@ mod tests {
                 } => {
                     let qubit = usize::try_from(*qubit_id).unwrap();
                     idle_before(qubit);
-                    builder.r1xy(
+                    builder.rxy1q(
                         Angle64::from_radians(*theta),
                         Angle64::from_radians(*phi),
                         &[qubit],
@@ -948,7 +948,7 @@ mod tests {
     fn simulator_bridge_translates_pecos_operations_in_order() {
         let mut builder = ByteMessage::quantum_operations_builder();
         builder.pz(&[0]);
-        builder.r1xy(
+        builder.rxy1q(
             Angle64::from_radians(0.75),
             Angle64::from_radians(-0.25),
             &[0],

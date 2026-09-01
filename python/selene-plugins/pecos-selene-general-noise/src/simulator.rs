@@ -76,7 +76,7 @@ impl SeleneSimulator {
                         theta: angle(0),
                     }));
                 }
-                GateType::R1XY => {
+                GateType::RXY1Q => {
                     operations.extend(qubits.iter().map(|&qubit_id| Operation::RXYGate {
                         qubit_id,
                         theta: angle(0),

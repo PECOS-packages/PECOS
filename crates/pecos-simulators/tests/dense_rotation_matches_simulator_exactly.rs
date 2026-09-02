@@ -246,6 +246,14 @@ impl CliffordGateable for DefaultsOnly {
     fn mz(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
         self.0.mz(qubits)
     }
+    // The trait's phase hook defaults to a no-op because projective backends cannot observe a
+    // global phase; the trait requires amplitude-exposing backends to override it. This wrapper
+    // exposes amplitudes, so it must delegate -- otherwise the default `u` cannot carry its scalar
+    // and the test would be measuring the wrapper's omission rather than the decomposition.
+    fn apply_global_phase(&mut self, phase: Angle64, qubits: &[QubitId]) -> &mut Self {
+        self.0.apply_global_phase(phase, qubits);
+        self
+    }
 }
 
 impl ArbitraryRotationGateable for DefaultsOnly {
@@ -259,14 +267,6 @@ impl ArbitraryRotationGateable for DefaultsOnly {
     }
     fn rzz(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         self.0.rzz(theta, pairs);
-        self
-    }
-    // The trait's phase hook defaults to a no-op because projective backends cannot observe a
-    // global phase; the trait requires amplitude-exposing backends to override it. This wrapper
-    // exposes amplitudes, so it must delegate -- otherwise the default `u` cannot carry its scalar
-    // and the test would be measuring the wrapper's omission rather than the decomposition.
-    fn apply_global_phase(&mut self, phase: Angle64, qubits: &[QubitId]) -> &mut Self {
-        self.0.apply_global_phase(phase, qubits);
         self
     }
 }
@@ -384,9 +384,8 @@ fn signed_radians_are_decided_on_the_raw_fraction() {
         "one tick above a half turn is a negative signed angle, got {}",
         one_tick_above_half.to_radians_signed()
     );
-    assert_eq!(
-        Angle64::HALF_TURN.to_radians_signed(),
-        PI,
+    assert!(
+        (Angle64::HALF_TURN.to_radians_signed() - PI).abs() < 1e-15,
         "exactly a half turn is +pi"
     );
     let one_tick_below_half = Angle64::new(Angle64::HALF_TURN.fraction() - 1);

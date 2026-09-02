@@ -1,5 +1,5 @@
 OPENQASM 2.0;
-include "hqslib1.inc";
+include "qelib1.inc";
 // Run the 6 non-flagged checks (if non-trivial flags)
 // ===================================================
 // // X check 1, Z check 2, Z check 3

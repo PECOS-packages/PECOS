@@ -285,6 +285,7 @@ fn reference_matrix(name: &str, parameters: &[f64]) -> Matrix {
         "cx" | "cnot" | "CNOT" => controlled(&x_matrix()),
         "cy" => controlled(&y_matrix()),
         "cz" | "cphase180" => controlled(&z_matrix()),
+        "ch" => controlled(&h_matrix()),
         "swap" => swap_matrix(),
         "csx" => controlled(&sx_matrix()),
         "crz" => controlled(&rz_matrix(parameters[0])),

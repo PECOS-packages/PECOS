@@ -1,5 +1,5 @@
 OPENQASM 2.0;
-include "hqslib1.inc";
+include "qelib1.inc";
 // Logical SYdg
 ry(-pi/2) q_test[0];
 ry(-pi/2) q_test[1];

@@ -8,6 +8,30 @@ use pecos_qasm::{Operation, QASMParser, qasm_engine};
 use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, StateVecSoA32};
 
 #[test]
+fn uppercase_native_swap_executes() {
+    let qasm = r"
+        OPENQASM 2.0;
+        qreg q[2];
+        creg c[2];
+        X q[0];
+        SWAP q[0], q[1];
+        measure q -> c;
+    ";
+
+    let results = qasm_engine()
+        .program(Qasm::from_string(qasm))
+        .to_sim()
+        .seed(42)
+        .workers(1)
+        .run(4)
+        .unwrap();
+
+    for shot in &results.shots {
+        assert_eq!(shot.data.get("c").unwrap().as_u32(), Some(2));
+    }
+}
+
+#[test]
 fn xy_plane_rotation_spellings_are_identical_native_gates() {
     let programs = [
         r#"
@@ -227,9 +251,9 @@ fn qasm_rzz_pi_over_2_entangles_qubits() {
 }
 
 #[test]
-fn qasm_rx_pi_via_decomposition_acts_as_x() {
-    // In qelib1.inc, rx(theta) decomposes to h; rz(theta); h.
-    // rx(pi) = H*Z*H = X. So |0> -> |1>.
+fn qasm_rx_pi_via_rxy1q_acts_as_x() {
+    // In qelib1.inc, rx(theta) maps to RXY1Q(theta, 0).
+    // RXY1Q(pi, 0) = X up to global phase. So |0> -> |1>.
     let qasm = r#"
         OPENQASM 2.0;
         include "qelib1.inc";

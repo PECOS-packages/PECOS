@@ -1,5 +1,5 @@
 OPENQASM 2.0;
-include "hqslib1.inc";
+include "qelib1.inc";
 h q_test[0];
 h q_test[4];
 h q_test[6];

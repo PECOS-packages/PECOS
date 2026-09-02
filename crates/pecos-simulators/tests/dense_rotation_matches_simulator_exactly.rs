@@ -396,12 +396,18 @@ fn signed_radians_are_decided_on_the_raw_fraction() {
 /// the `Clifford` enum's matrix entrywise. A default written as a Clifford identity is correct
 /// up to a power of `e^{i pi/4}`; on a projective backend that is invisible, on an amplitude
 /// backend that inherits the default it is a real phase on the state.
+/// One row of the Clifford-default sweep: the enum variant and the trait call that should equal it.
+type CliffordCase = (
+    pecos_core::clifford::Clifford,
+    Box<dyn Fn(&mut DefaultsOnly)>,
+);
+
 #[test]
 fn clifford_default_decompositions_match_the_clifford_matrices_exactly() {
     use pecos_core::clifford::Clifford;
     let q = [QubitId(0)];
     let pair = [(QubitId(0), QubitId(1))];
-    let one_qubit: Vec<(Clifford, Box<dyn Fn(&mut DefaultsOnly)>)> = vec![
+    let one_qubit: Vec<CliffordCase> = vec![
         (
             Clifford::I,
             Box::new(move |s| {
@@ -547,7 +553,7 @@ fn clifford_default_decompositions_match_the_clifford_matrices_exactly() {
             }),
         ),
     ];
-    let two_qubit: Vec<(Clifford, Box<dyn Fn(&mut DefaultsOnly)>)> = vec![
+    let two_qubit: Vec<CliffordCase> = vec![
         (
             Clifford::CX,
             Box::new(move |s| {

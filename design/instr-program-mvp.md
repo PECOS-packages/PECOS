@@ -11,8 +11,8 @@ program model against PECOS behavior that exists today.
 
 The MVP constructs one distance-three, Z-basis, CX-syndrome surface-memory
 experiment, resolves statically linked Rust providers, builds a portable
-`ProtocolPhysicalPlan`, lowers it directly in Rust to a normalized
-`TickCircuit`, and builds a native DEM.
+`ProtocolProgram`, and lowers it directly in Rust to a normalized
+`TickCircuit`.
 
 The MVP does **not** generate Guppy. It does not include SZZ, transversal CX,
 PHIR, reusable modules, dynamic control, target mapping, or visualization.
@@ -77,10 +77,13 @@ resolved = program.resolve(
     providers=surface,
     context=SurfaceReferenceContext(),
 )
-protocol = resolved.to_protocol_physical_plan()
+protocol = resolved.to_protocol_program()
 generated = protocol.to_tick_program(SurfaceReferenceSchedule())
-dem = generated.build_dem(REFERENCE_NOISE)
 ```
+
+DEM construction is deliberately outside this authoring/lowering API. A
+separate integration test may pass `generated` and a fixed physical noise model
+to the existing native DEM compiler.
 
 The cursor API advances a Rust-owned current `ValueId`. Rust exposes equivalent
 typed builders. Tooling may use the lower-level graph API, where every call
@@ -105,10 +108,11 @@ The MVP generic Rust crate/module contains only:
 - `UsePolicy`: `SingleUse` or `Reusable`;
 - `InstrImplDescriptor`: serializable instruction-scoped implementation ID,
   version, provider identity, and fingerprint;
-- `InstrImplProvider`: executable support assessment and plan construction;
+- `InstrImplProvider`: executable support assessment and implementation-body
+  construction;
 - `ResolutionContext`: explicit, serializable facts needed by providers; and
 - `ResolvedInstrProgram`: every call selected with its descriptor, selection
-  source, provider fingerprint, and plan.
+  source, provider fingerprint, and implementation body.
 
 There are no reusable modules, regions, loops, space-time quantities, service
 leases, package manager, or dynamic plugins in this subset.
@@ -124,7 +128,7 @@ The following Rust newtypes are distinct:
 | `CodeBlockInstanceId` | one persistent patch instance |
 | `ValueId` | one state version of that patch or a result |
 | `CodeElementId` | stable data site or check from `PatchSpec` |
-| `ProtocolWireId` | physical role local to the selected protocol plan |
+| `ProtocolWireId` | physical role local to the selected protocol program |
 | `SemanticMeasId` | semantic measurement occurrence |
 | `MeasId` | existing identity in the generated `TickCircuit` |
 
@@ -232,9 +236,9 @@ Broader patch parity and other interaction bases are separate projects.
 
 ## Program-level QEC composition owner
 
-Per-call plans do not finalize detectors or observables. The MVP includes a
-small program-level `SurfaceMemoryAnalysis` pass over the resolved calls and
-their semantic measurement events. It owns:
+Per-call implementation bodies do not finalize detectors or observables. The
+MVP includes a small program-level `SurfaceMemoryAnalysis` pass over the
+resolved calls and their semantic measurement events. It owns:
 
 - preparation-boundary detectors;
 - comparisons between consecutive syndrome rounds;
@@ -247,10 +251,10 @@ This pass is intentionally sufficient only for one straight-line, single-patch
 memory experiment. It establishes the ownership seam that later multi-call and
 cross-patch stabilizer-flow analysis will generalize.
 
-## Protocol physical plan
+## Protocol program
 
-Selected call plans and `SurfaceMemoryAnalysis` compose into one Rust
-`ProtocolPhysicalPlan` containing:
+Selected call implementation bodies and `SurfaceMemoryAnalysis` compose into
+one Rust `ProtocolProgram` containing:
 
 - portable preparation, one-/two-qubit, measurement, and tick-barrier intent;
 - an operation dependency DAG and named syndrome rounds;
@@ -261,9 +265,16 @@ Selected call plans and `SurfaceMemoryAnalysis` compose into one Rust
 - detectors and logical observable; and
 - provenance back to calls, block versions, checks, and providers.
 
-The MVP plan does not contain target addresses, routing, calibrated time,
+The MVP program does not contain target addresses, routing, calibrated time,
 adaptive control, resource estimates, service requirements, or execution
 traces.
+
+For this straight-line slice, each Rust provider builds a typed lower-level
+`InstrGraph` fragment containing portable preparation, quantum operation,
+measurement, resource-lifetime, and dependency instructions. The composed
+`ProtocolProgram` is therefore an inspectable graph, not an opaque callback
+that happens to produce a `TickCircuit`. Structured control is deferred, but
+the lower-level graph boundary is the one that will host it later.
 
 ## Reference scheduling and outputs
 
@@ -279,8 +290,11 @@ It returns `GeneratedTickProgram` containing:
 - block/call/check/provider provenance; and
 - reference schedule ID and version.
 
-Native DEM construction consumes this generated program. The fixed MVP noise
-fixture is part of the test data rather than a free variable:
+## Separate DEM integration fixture
+
+The core MVP ends at `GeneratedTickProgram`. A separate downstream integration
+test passes that artifact to `TickDemCompiler` with a fixed physical noise
+fixture:
 
 ```text
 REFERENCE_NOISE_V1
@@ -294,6 +308,12 @@ REFERENCE_NOISE_V1
 If the current native builder uses a richer schema, the fixture explicitly
 sets every additional field to zero. The checked-in canonical fixture records
 that full schema and version.
+
+This test proves that the lowered circuit preserves the measurement, detector,
+and observable information required by PECOS analysis. It does not make DEM
+construction a method of `InstrProgram`, `ProtocolProgram`, or
+`GeneratedTickProgram`. Future DEM consumers may accept higher-level artifacts
+only with an explicit noise-model dialect and control/scheduling semantics.
 
 ## Rust/Python boundary and serialization
 
@@ -338,12 +358,13 @@ The exact wire format is decided in the Stage 0 serialization note.
 2. Land the tiny generic Rust graph, IDs, typed implementation references,
    provider resolution, use checks, and golden serialization fixture.
 3. Land distance-three `PatchSpec` parity from the Python reference fixture.
-4. Port the exact CX memory planning subset into QEC call plans.
+4. Port the exact CX memory planning subset into QEC implementation bodies.
 5. Implement `SurfaceMemoryAnalysis` and its detector/observable ledger.
-6. Build `ProtocolPhysicalPlan` and `SurfaceReferenceSchedule` lowering.
+6. Build `ProtocolProgram` and `SurfaceReferenceSchedule` lowering.
 7. Match the existing ideal TickCircuit, measurement maps, detectors, and
    observable.
-8. Match the native DEM under `REFERENCE_NOISE_V1`.
+8. Add a separate adapter integration test matching the native DEM under
+   `REFERENCE_NOISE_V1`.
 9. Add thin PyO3/Python cursor bindings and executable documentation tests.
 
 Each step is independently reviewable and testable. No step silently includes
@@ -362,14 +383,16 @@ The MVP is complete only when:
   fingerprint, implementation scope, and ambiguity fail with structured errors;
 - prepare/syndrome/measure preserve one `CodeBlockInstanceId` and produce fresh
   `ValueId`s;
-- the protocol plan exposes bounded temporary ancilla lifetimes and no target
+- the protocol program exposes bounded temporary ancilla lifetimes and no target
   resource IDs;
 - the generated TickCircuit matches the reference's ideal operations, qubit
   numbering, round/tick boundaries, and measurement order;
 - `SemanticMeasId -> MeasId -> record` maps round-trip and drive detector and
   observable construction;
 - detector definitions and logical observable match the existing reference;
-- native DEM output matches under the complete `REFERENCE_NOISE_V1` schema;
+- the separate DEM consumer integration matches native DEM output under the
+  complete `REFERENCE_NOISE_V1` schema without adding DEM behavior to the core
+  HDL artifacts;
 - Rust tests do not import Python or Guppy; and
 - Python tests add no shadow graph, resolver, planner, or serializer.
 

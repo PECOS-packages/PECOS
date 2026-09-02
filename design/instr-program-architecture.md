@@ -28,7 +28,7 @@ by SLR and earlier PECOS circuit models, but it is not a transpiler to a
 high-level host language. In particular, **PECOS will not lower
 `InstrProgram` to Guppy**.
 
-The principal lowering paths are:
+The principal lowering and consumption paths are:
 
 ```text
 InstrProgram
@@ -39,8 +39,8 @@ resolved QEC gadgets and program-level QEC analysis
     +--------------------------+
     |                          |
     v                          v
-PHIR                    ProtocolPhysicalPlan
-(inspectable IR)        (portable physical intent)
+PHIR                    ProtocolProgram
+(inspectable IR)        (portable Rust mid-level program)
                                |
                     +----------+----------+
                     |                     |
@@ -51,7 +51,14 @@ PHIR                    ProtocolPhysicalPlan
           normalized TickCircuit   ScheduledPhysicalPlan
                     |                     |
                     v                     v
-             DagCircuit / DEM      trace/import when supported
+               DagCircuit          trace/import when supported
+
+Analysis/compiler consumers may attach at the level whose semantics they
+understand. In particular:
+
+    normalized TickCircuit + physical noise model
+        -> TickDemCompiler
+        -> DEM
 ```
 
 QIR or appropriate MLIR quantum dialects may become additional lower-level
@@ -81,10 +88,12 @@ This revision makes the following decisions explicit:
 6. The raw graph API is a tooling substrate. Human authors use cursors, fluent
    methods, generated builders, Rust macros, or a future textual syntax.
 7. Rust owns the authoritative graph, validation, resolution, QEC analysis,
-   physical planning, serialization, and direct circuit lowering. Python is a
+   protocol expansion, serialization, and direct circuit lowering. Python is a
    thin ergonomic wrapper.
 8. Portable QEC physical intent is separate from target mapping, routing,
    native scheduling, and authoritative device time.
+9. DEM construction is a downstream analysis/compiler concern. It is not an
+   intrinsic method of `InstrProgram`, a gadget, or `ProtocolProgram`.
 
 ## Required retrospective before implementation
 
@@ -125,7 +134,7 @@ The current surface stack already contains important prototypes:
 - `LogicalCircuitBuilder` owns cross-call detector construction, stabilizer
   relabeling, observable propagation, and multi-patch gate boundaries.
 
-The new resolver and `ProtocolPhysicalPlan` should generalize or extract these
+The new resolver and `ProtocolProgram` should generalize or extract these
 working seams rather than introduce parallel implementations. Their limitations
 must also be recorded, including duplicated state, incomplete basis support,
 position-dependent lifecycle behavior, and renderer-specific semantic side
@@ -147,7 +156,7 @@ pecos-instr
     |
 pecos-qec
     code-block state, QEC gadget contracts and providers,
-    composition analysis, ProtocolPhysicalPlan, direct Tick/DEM
+    composition analysis, ProtocolProgram, direct Tick lowering
 
 pecos-phir
     existing general PHIR representation
@@ -175,10 +184,11 @@ namespace before adding new QEC operations or types.
   values.
 - `InstrImplDescriptor` is serializable identity and metadata for one
   implementation.
-- `InstrImplProvider` is executable Rust behavior that assesses and plans calls
-  matching a descriptor.
+- `InstrImplProvider` is executable Rust behavior that assesses calls and
+  constructs implementation bodies matching a descriptor.
 - `ResolvedInstrProgram` records one selected implementation and selection
-  source for every call plus QEC composition-analysis products.
+  source for every call plus implementation bodies and QEC
+  composition-analysis products.
 
 The graph never dispatches on display names or surface-code operation names.
 Dialect implementations interpret their own types and semantics.
@@ -293,8 +303,46 @@ The ideal logical action is the intended decoded behavior under the
 instruction's stated success conditions. It does not claim that noisy physical
 execution or an undecoded syndrome is literally identity.
 
-`QecInstrImpl` is one selectable realization. `QecInstrPlan` binds it to a
-specific call, code-block states, parameters, and resolution context.
+`QecInstrImpl` is one selectable realization. Resolving it binds the
+implementation to a specific call, code-block states, parameters, and context,
+then produces an inspectable implementation body or an explicitly opaque
+external body.
+
+### Implementation bodies as lower-level instruction graphs
+
+An implementation is not normally stored as an already scheduled
+`TickCircuit`. Its inspectable form is a lower-level Rust `InstrGraph` body in a
+protocol/physical dialect. The same generic graph substrate can therefore be
+used at different abstraction levels without teaching it surface-code names:
+
+```text
+logical/QEC InstrGraph
+    QEC block values and gadget calls
+        |
+        | select and expand QecInstrImpl bodies
+        v
+protocol/physical InstrGraph fragments
+    portable operations, resource lifetimes, measurements,
+    dependencies, and structured control
+        |
+        | compose and verify
+        v
+ProtocolProgram
+```
+
+The lower dialect is similar in role to the useful lower and middle circuit
+layers in SLR, but is Rust-owned, typed, serializable, and provenance linked.
+It may contain portable quantum and classical operations, resource
+acquire/release, barriers or dependency edges, semantic measurements, and—once
+the structured-control prerequisite exists—`if` and bounded repetition with
+explicit arguments and yields.
+
+An implementation may be authored directly as this graph, built by Rust code,
+imported from a supported HUGR subset, or retained as an opaque external body.
+Regardless of authoring route, registration supplies the same QEC contract and
+conformance obligations. Rust builder code that immediately emits a flat
+`TickCircuit` is permitted only for a deliberately straight-line leaf adapter;
+it cannot represent the general gadget-body contract.
 
 The model naturally covers:
 
@@ -336,7 +384,8 @@ code-element frame states; matching value types alone is insufficient.
 
 Detectors and logical observables are not generally owned by one call. They can
 span calls, code blocks, rounds, and gate boundaries. `ResolvedInstrProgram`
-therefore runs a program-level QEC composition pass over the selected plans.
+therefore runs a program-level QEC composition pass over the selected
+implementation bodies.
 
 The pass owns:
 
@@ -348,7 +397,7 @@ The pass owns:
 - logical and local-Clifford frame evolution; and
 - required round or epoch alignment.
 
-Per-call plans emit semantic events and transfer relations. They do not finalize
+Per-call bodies emit semantic events and transfer relations. They do not finalize
 detectors or observables in isolation. Existing `LogicalCircuitBuilder`
 behavior remains a test oracle until an algebraic stabilizer-flow implementation
 replaces its hand-written boundary rules.
@@ -372,7 +421,7 @@ typed constraints attached to calls or groups, for example:
 - pinned coordinates or intervals when a user deliberately explores a layout.
 
 These constraints restrict legal schedules; they do not themselves assign
-target resources or authoritative time. The protocol planner diagnoses
+target resources or authoritative time. The protocol scheduler diagnoses
 inconsistent constraints.
 
 ### Branching and repetition
@@ -387,9 +436,15 @@ must distinguish:
 
 Backends lacking adaptive control return a capability error without erasing the
 source semantics. `TickCircuit` currently has no implemented classical-control
-model, so direct Tick lowering supports only straight-line programs,
-compile-time-specialized control, and frame-only rewrites until a separate
-classical-control prerequisite lands.
+model, so it remains a straight-line scheduled projection. A `ProtocolProgram`
+with control can lower to Tick only after compile-time specialization,
+unrolling, or a proved frame-only rewrite. Otherwise it requires PHIR, an
+appropriate quantum MLIR/QIR form, or a control-capable target backend.
+
+A future scheduled control-flow artifact may use regions or basic blocks whose
+straight-line bodies are TickCircuit-like sequences. That is conceptually
+“TickCircuit plus control flow,” but it should be a separate typed IR rather
+than weakening `TickCircuit` semantics.
 
 ### First-order hierarchy
 
@@ -400,7 +455,7 @@ called many times. It cannot capture live host values, accept functions as
 values, mutate hidden global state, or require general lexical scope.
 
 The MVP defers reusable modules. Ordinary program entry graphs and implementation
-plans are sufficient to validate the initial shape.
+bodies are sufficient to validate the initial shape.
 
 ## Ergonomic authoring
 
@@ -435,9 +490,10 @@ values. Examples must not mix those styles ambiguously.
 Rust should offer typed builders and may add macros after the data structure
 stabilizes. A textual HDL is a possible later frontend, not an MVP deliverable.
 
-## Portable physical intent
+## Portable protocol program
 
-Selected QEC plans compose into `ProtocolPhysicalPlan`. It contains:
+Selected lower-level implementation bodies compose into `ProtocolProgram`. It
+is a portable Rust mid-level program containing:
 
 - portable physical operations with named operand roles;
 - an operation dependency DAG;
@@ -452,16 +508,64 @@ Selected QEC plans compose into `ProtocolPhysicalPlan`. It contains:
 It does **not** contain final target resource addresses, target-native routing,
 inserted idles, calibrated duration, or authoritative device time.
 
-A PECOS reference scheduler can refine supported straight-line plans into a
-normalized `TickCircuit`. An external target backend can instead produce a
-`ScheduledPhysicalPlan` with target bindings and legal operation order, plus an
-optional execution trace. It may reject an infeasible plan but cannot change
-its QEC semantics or silently select another implementation.
+A PECOS reference scheduler can refine a supported straight-line
+`ProtocolProgram` into a normalized `TickCircuit`. An external target backend
+can instead produce a `ScheduledPhysicalPlan` with target bindings and legal
+operation order, plus an optional execution trace. A control-capable backend
+may retain structured control. A backend may reject an infeasible program but
+cannot change its QEC semantics or silently select another implementation.
 
 Backend conformance compares the protocol dependency relation, logical action,
 resource lifetimes, frames, measurements, detectors, observables, and
 provenance. Exact tick order is required only when two routes claim the same
 scheduling policy.
+
+## Downstream analyses and DEM construction
+
+Lowering and analysis are separate extension axes. A consumer declares the
+artifact level and dialect it accepts, required capabilities, configuration,
+and output type. It can operate on the authored graph, resolved QEC program,
+PHIR, `ProtocolProgram`, `ScheduledPhysicalPlan`, or a concrete circuit without
+being built into those artifacts.
+
+DEM construction is one such consumer. The existing precise route is shown
+below; `TickDemCompiler` is a provisional interface name rather than a required
+crate or public type name.
+
+```text
+GeneratedTickProgram
+    normalized TickCircuit
+    measurement/detector/observable bindings
+    lowering provenance
+        + physical NoiseModel
+        |
+        v
+TickDemCompiler
+        |
+        v
+DEM + provenance/diagnostics
+```
+
+Conceptually the API is `dem_compiler.compile(&generated, &noise_model)`, not
+`generated.build_dem(...)`. The compiler owns noise insertion/interpretation,
+fault propagation, detector-error construction, and capability diagnostics.
+The generated circuit owns only circuit semantics and the identity maps the
+compiler consumes.
+
+Other DEM compilers may work at a higher HDL level if their noise models are
+defined on that level. For example, a gadget-level stochastic model could
+consume resolved gadget calls, while a protocol-operation noise model could
+consume `ProtocolProgram`. Such a compiler must declare how it treats
+hierarchy, symbolic scheduling, branches, loops, correlations, and target
+timing; it must reject semantics it cannot faithfully model. A single ordinary
+DEM may be insufficient for runtime branching, in which case a consumer may
+produce a conditional/family artifact or report that specialization is
+required.
+
+Detector and observable composition remains QEC program analysis rather than
+DEM construction. The QEC pass defines semantic detector/observable relations;
+lowering binds their measurement identities; a DEM compiler evaluates faults
+against those definitions under a noise model.
 
 ## Measurement identity
 
@@ -497,9 +601,9 @@ crate dependencies and the existing PHIR QEC dialect namespace. Once that
 boundary is proven by a consumer, PHIR becomes the preferred general compiler
 route rather than growing `InstrGraph` into a general IR.
 
-QIR or quantum MLIR dialect exports should consume PHIR or
-`ProtocolPhysicalPlan`, not reimplement QEC planning. Their exact role depends
-on whether they can preserve hierarchy, measurement identity, control, and
+QIR or quantum MLIR dialect exports should consume PHIR or `ProtocolProgram`,
+not reimplement QEC implementation expansion. Their exact role depends on
+whether they can preserve hierarchy, measurement identity, control, and
 scheduling constraints required by a selected backend.
 
 ## Guppy/HUGR import
@@ -569,8 +673,8 @@ MVP bullet. It includes:
 2. CX-based preparation, check scheduling, ancilla assignment, and measurement;
 3. program-level detector/observable composition for the supported memory
    experiment;
-4. `ProtocolPhysicalPlan` construction;
-5. reference Tick/DEM lowering; and
+4. `ProtocolProgram` construction;
+5. reference Tick lowering and a separate Tick-to-DEM integration adapter; and
 6. PyO3 cursors and typed provider handles.
 
 SZZ, multi-patch CX, Clifford deformation, and other protocols follow in
@@ -592,8 +696,8 @@ detectors, observables, and physical operations. It can show:
 - resource lifetimes and alignment constraints; and
 - symbolic versus mapped coordinates and time.
 
-Interactive rendering is deferred until the core plan and factory migration
-work. Bevy remains one possible optional viewer, but dependency-version
+Interactive rendering is deferred until the core protocol program and factory
+migration work. Bevy remains one possible optional viewer, but dependency-version
 alignment elsewhere in PECOS is not itself a justification. The stable product
 boundary is renderer-independent `SpaceTimeView` data.
 
@@ -616,7 +720,9 @@ boundary is renderer-independent `SpaceTimeView` data.
 - Add surface prepare-Z, CX-based syndrome extraction, and measure-Z.
 - Add the minimal block state and program-level stabilizer/detector/observable
   composition required by one memory experiment.
-- Produce `ProtocolPhysicalPlan`, reference TickCircuit, and native DEM.
+- Produce `ProtocolProgram` and a reference TickCircuit.
+- Exercise the existing native DEM builder through a separate consumer adapter,
+  without making DEM construction part of the program/lowering API.
 - Add thin Python cursor bindings only after the Rust path passes.
 
 ### Stage 2: additional checked implementations
@@ -667,11 +773,13 @@ Each phase owns a verifier:
   selection, and acyclic expansion;
 - QEC composition: lifecycle, frames, stabilizer flow, detectors, observables,
   and alignment;
-- protocol plan: resource roles, operation dependencies, cleanup, semantic
-  measurements, and provenance;
-- scheduled plan: target bindings and schedule satisfy the protocol plan;
-- circuit/analysis products: measurement maps, detectors, observables, and
-  declared logical behavior are preserved.
+- protocol program: resource roles, operation dependencies, cleanup, control,
+  semantic measurements, and provenance;
+- scheduled plan: target bindings and schedule satisfy the protocol program;
+- circuit products: measurement maps, detectors, observables, and declared
+  logical behavior are preserved;
+- analysis consumers: accepted input level, noise/configuration semantics,
+  capabilities, provenance, and rejection behavior are explicit.
 
 Normative examples must either execute in repository tests after implementation
 or be explicitly labeled proposed pseudocode. Existing constructors and
@@ -702,3 +810,7 @@ references named by an acceptance criterion must be verified against the code.
 5. Which HUGR subset is safe to import structurally without silent loss?
 6. Which ergonomic Rust form—typed builders, macros, or both—best overlays the
    core data structure?
+7. Should the first control-capable scheduled IR use structured regions whose
+   leaves are TickCircuit-like sequences, or lower directly through PHIR?
+8. Which higher-level noise-model dialects, if any, justify DEM construction
+   before concrete Tick scheduling?

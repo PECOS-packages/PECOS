@@ -1721,12 +1721,6 @@ impl<S: CliffordGateable> CircuitRunner<S> {
                 };
                 sim.try_ryy(*angle, &flat_to_pairs(qubits)).map(|_| ())
             }
-            GateType::CRZ => {
-                let [angle] = angles else {
-                    return Err(arity_error());
-                };
-                sim.try_crz(*angle, &flat_to_pairs(qubits)).map(|_| ())
-            }
             _ => return Ok(CliffordRotationAttempt::NotARotation),
         };
         Ok(match result {
@@ -2477,18 +2471,6 @@ where
                 sim.rzz(*angle, &pairs);
                 true
             }
-            // CRZ decomposition: RZ(theta/2), CX, RZ(-theta/2), CX
-            GateType::CRZ if qubits.len() >= 2 => {
-                let [angle] = angles else { return false };
-                let control = qubits[0];
-                let target = qubits[1];
-                let half_angle = *angle / 2u64;
-                sim.rz(half_angle, &[target]);
-                sim.cx(&[(control, target)]);
-                sim.rz(-half_angle, &[target]);
-                sim.cx(&[(control, target)]);
-                true
-            }
             // CCX (Toffoli) decomposition
             GateType::CCX if qubits.len() >= 3 => {
                 let c1 = qubits[0];
@@ -2684,35 +2666,6 @@ mod tests {
 
         let outcome = outcomes.get(QubitId(0)).unwrap();
         assert!(outcome.outcome, "RX(pi) on |0> should give |1>");
-    }
-
-    #[test]
-    fn test_crz_decomposition() {
-        use pecos_core::Angle64;
-
-        let commands = CommandBuilder::new()
-            .pz(&[0])
-            .pz(&[1])
-            .x(&[0])
-            .h(&[1])
-            .gate(GateCommand::with_angles(
-                GateType::CRZ,
-                smallvec::smallvec![QubitId(0), QubitId(1)],
-                smallvec::smallvec![Angle64::HALF_TURN],
-            ))
-            .h(&[1])
-            .mz(&[1])
-            .build();
-
-        let mut state = StateVec::with_seed(2, 42);
-        let mut runner = CircuitRunner::<StateVec>::rotations().with_seed(42);
-        let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
-
-        let outcome = outcomes.get(QubitId(1)).unwrap();
-        assert!(
-            outcome.outcome,
-            "CRZ(pi) with control=1 should flip target phase"
-        );
     }
 
     #[test]
@@ -3412,7 +3365,6 @@ mod tests {
             GateType::RZZ,
             GateType::RXY1Q,
             GateType::U,
-            GateType::CRZ,
         ] {
             let qubits = if gate_type.is_two_qubit() {
                 smallvec::smallvec![QubitId(0), QubitId(1)]

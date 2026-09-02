@@ -97,7 +97,7 @@ pub mod gates {
     pub const SZZdg: GateId = GateId(65);
 
     // Two-qubit parameterized gates
-    pub const CRZ: GateId = GateId(70);
+    // GateId(70) is retired and must not be reused.
     pub const RXX: GateId = GateId(71);
     pub const RYY: GateId = GateId(72);
     pub const RZZ: GateId = GateId(73);

@@ -26,13 +26,17 @@
 //!
 //! // Build a fast DemSampler from the influence map
 //! let num_locations = influence_map.locations.len();
-//! let sampler = DemSampler::from_influence_map(&influence_map, &vec![0.001; num_locations]);
+//! let sampler = DemSampler::from_influence_map(&influence_map, &vec![0.001; num_locations])
+//!     .expect("influence map is Pauli-propagatable");
 //! let stats = sampler.sample_statistics(100, 42);
 //! ```
 
 use super::propagator::dag::{DagFaultInfluenceMap, DagSpacetimeLocation, DemOutputMetadata};
 use super::propagator::types::{DetectorId, MeasurementId};
-use super::propagator::{DagFaultAnalyzer, DagPropagator, Direction, Pauli, apply_gate};
+use super::propagator::{
+    DagFaultAnalyzer, DagPropagator, Direction, Pauli, apply_gate_unchecked,
+    is_supported_noop_or_metadata_gate, is_supported_prep_gate,
+};
 use super::symbolic_replay::{Dispatch, apply_unitary_clifford};
 use pecos_core::QubitId;
 use pecos_simulators::{PauliProp, SymbolicSparseStab};
@@ -137,6 +141,8 @@ impl std::error::Error for AnnotationIngestError {}
 /// silently wrong detector analyses.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InfluenceBuildError {
+    /// A gate the Pauli propagation primitive cannot faithfully represent.
+    UnsupportedPauliPropagation(super::propagator::UnsupportedGateError),
     /// A gate the symbolic replay cannot represent.
     UnsupportedGate {
         /// The DAG node holding the gate.
@@ -161,6 +167,7 @@ pub enum InfluenceBuildError {
 impl std::fmt::Display for InfluenceBuildError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::UnsupportedPauliPropagation(error) => write!(f, "{error}"),
             Self::UnsupportedGate { node, gate_type } => write!(
                 f,
                 "symbolic replay cannot represent {gate_type:?} at node {node}; lower it to \
@@ -177,6 +184,14 @@ impl std::fmt::Display for InfluenceBuildError {
 
 impl std::error::Error for InfluenceBuildError {}
 
+/// Builds fault influence maps by combining symbolic stabilizer replay with
+/// backward Pauli propagation.
+///
+/// Symbolic replay accepts the rotation gates `RX`, `RY`, `RZ`, `RXX`, `RYY`,
+/// `RZZ`, and `CRZ` only when their sole angle is exactly zero. It rejects
+/// every `RXY1Q`, including `RXY1Q(0, phi)`, even though core Clifford lowering
+/// recognizes that case as the identity. Other Clifford-equivalent rotations
+/// must be lowered to supported named gates before this builder is used.
 pub struct InfluenceBuilder<'a> {
     dag: &'a pecos_quantum::DagCircuit,
     /// Non-detector parity outputs to track for flipping.
@@ -367,6 +382,12 @@ impl<'a> InfluenceBuilder<'a> {
     /// 1. Forward symbolic simulation to get measurement correlations
     /// 2. Detector extraction from deterministic measurements
     /// 3. Backward propagation from detectors and DEM outputs
+    ///
+    /// Symbolic replay accepts `RX`, `RY`, `RZ`, `RXX`, `RYY`, `RZZ`, and
+    /// `CRZ` only with exactly one, exactly-zero angle. It rejects every
+    /// `RXY1Q`, including `RXY1Q(0, phi)`. Other Clifford-equivalent rotations
+    /// must be lowered to supported named gates before calling this method.
+    ///
     /// # Errors
     ///
     /// Returns [`InfluenceBuildError`] when the circuit contains a gate the
@@ -375,6 +396,9 @@ impl<'a> InfluenceBuilder<'a> {
     /// phantom detectors, and a batched node was treated as measuring only its
     /// first qubit.
     pub fn build(&self) -> Result<DagFaultInfluenceMap, InfluenceBuildError> {
+        if let Some(error) = DagFaultAnalyzer::new(self.dag).first_unsupported_gate() {
+            return Err(InfluenceBuildError::UnsupportedPauliPropagation(error));
+        }
         // Step 1: Run forward symbolic simulation
         let measurement_info = self.run_symbolic_simulation()?;
 
@@ -464,9 +488,7 @@ impl<'a> InfluenceBuilder<'a> {
                     }
                     // Resets project onto |0>. Skipping them treated a reused
                     // qubit as still carrying its pre-reset correlations.
-                    pecos_quantum::GateType::PX
-                    | pecos_quantum::GateType::PZ
-                    | pecos_quantum::GateType::QAlloc => {
+                    gate_type if is_supported_prep_gate(gate_type) => {
                         for &q in &qubits {
                             sim.pz(q);
                             if op.gate_type == pecos_quantum::GateType::PX {
@@ -475,12 +497,7 @@ impl<'a> InfluenceBuilder<'a> {
                         }
                     }
                     // No effect on stabilizer correlations.
-                    pecos_quantum::GateType::I
-                    | pecos_quantum::GateType::Idle
-                    | pecos_quantum::GateType::QFree
-                    | pecos_quantum::GateType::MeasCrosstalkGlobalPayload
-                    | pecos_quantum::GateType::MeasCrosstalkLocalPayload
-                    | pecos_quantum::GateType::TrackedPauliMeta => {}
+                    gate_type if is_supported_noop_or_metadata_gate(gate_type) => {}
                     gate_type
                         if matches!(
                             gate_type,
@@ -490,7 +507,6 @@ impl<'a> InfluenceBuilder<'a> {
                                 | pecos_quantum::GateType::RXX
                                 | pecos_quantum::GateType::RYY
                                 | pecos_quantum::GateType::RZZ
-                                | pecos_quantum::GateType::CRZ
                         ) && op.angles.len() == 1
                             && op.angles[0].is_zero() => {}
                     // Anything else would be silently mis-analyzed: an ignored
@@ -688,12 +704,7 @@ impl<'a> InfluenceBuilder<'a> {
                         idle_duration: gate.idle_duration(),
                     });
                 }
-                if matches!(
-                    gate.gate_type,
-                    pecos_quantum::GateType::PX
-                        | pecos_quantum::GateType::PZ
-                        | pecos_quantum::GateType::QAlloc
-                ) {
+                if is_supported_prep_gate(gate.gate_type) {
                     prepared_qubits.extend(qubits.iter().copied());
                 }
             }
@@ -898,12 +909,7 @@ impl<'a> InfluenceBuilder<'a> {
                 // Prep gates (PZ/QAlloc) reset the qubit -- kill the Pauli
                 // and mark the qubit inactive. Faults before the prep
                 // cannot propagate past it.
-                let is_prep = matches!(
-                    gate.gate_type,
-                    pecos_quantum::GateType::PX
-                        | pecos_quantum::GateType::PZ
-                        | pecos_quantum::GateType::QAlloc
-                );
+                let is_prep = is_supported_prep_gate(gate.gate_type);
                 if is_prep {
                     for q in &gate.qubits {
                         let qi = q.index();
@@ -922,7 +928,7 @@ impl<'a> InfluenceBuilder<'a> {
                 }
 
                 // Apply gate backward
-                apply_gate(&mut prop, gate, Direction::Backward);
+                let _outcome = apply_gate_unchecked(&mut prop, gate, Direction::Backward);
 
                 // Record per-qubit influences at before=true location
                 if let Some(qubit_locs) = loc_map.get(&(node, true)) {
@@ -1002,12 +1008,7 @@ impl<'a> InfluenceBuilder<'a> {
                     map.entry((node, before)).or_default().push((qi, loc_idx));
                     loc_idx += 1;
                 }
-                if matches!(
-                    gate.gate_type,
-                    pecos_quantum::GateType::PX
-                        | pecos_quantum::GateType::PZ
-                        | pecos_quantum::GateType::QAlloc
-                ) {
+                if is_supported_prep_gate(gate.gate_type) {
                     prepared_qubits.extend(gate.qubits.iter().copied());
                 }
             }

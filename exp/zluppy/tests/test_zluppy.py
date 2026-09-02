@@ -1,10 +1,18 @@
 """Tests for the Zluppy Python bindings."""
 
 import json
+import math
 
 import pytest
 
 import zluppy
+from pecos.simulators import StateVec
+
+
+def operation_signature(program):
+    """Return the exact ordered SLR operation types and gate kinds."""
+    return [(statement["type"], statement.get("gate")) for statement in program["body"]]
+
 
 # =============================================================================
 # Version Tests
@@ -26,10 +34,11 @@ def test_version():
 
 def test_compile_to_slr_bell_state():
     """Test compiling a Bell state program to SLR-AST dict."""
-    source = """fn main() -> void {
-        var q = qalloc(2);
-        h(q[0]);
-        cx(q[0], q[1]);
+    source = """pub fn main() -> unit {
+        q := qalloc(2);
+        h q[0];
+        cx (q[0], q[1]);
+        return unit;
     }"""
 
     result = zluppy.compile_to_slr(source)
@@ -48,9 +57,10 @@ def test_compile_to_slr_bell_state():
 
 def test_compile_to_slr_rotation_gate():
     """Test compiling a rotation gate program."""
-    source = """fn main() -> void {
-        var q = qalloc(1);
-        rz(q[0], 1.57);
+    source = """pub fn main() -> unit {
+        q := qalloc(1);
+        rz(1.57) q[0];
+        return unit;
     }"""
 
     result = zluppy.compile_to_slr(source)
@@ -63,10 +73,11 @@ def test_compile_to_slr_rotation_gate():
 
 def test_compile_to_slr_child_allocator():
     """Test compiling with child allocator."""
-    source = """fn main() -> void {
-        var base = qalloc(4);
-        var q = base.child(2);
-        h(q[0]);
+    source = """pub fn main() -> unit {
+        mut base := qalloc(4);
+        q := base.child(2);
+        h q[0];
+        return unit;
     }"""
 
     result = zluppy.compile_to_slr(source)
@@ -78,9 +89,11 @@ def test_compile_to_slr_child_allocator():
 
 def test_compile_to_slr_strict_mode():
     """Test compiling with strict mode enabled."""
-    source = """fn main() -> void {
-        var q = qalloc(2);
-        h(q[0]);
+    source = """pub fn main() -> unit {
+        q := qalloc(2);
+        pz q;
+        h q[0];
+        return unit;
     }"""
 
     # Strict mode should still compile valid code
@@ -90,7 +103,7 @@ def test_compile_to_slr_strict_mode():
 
 def test_compile_to_slr_parse_error():
     """Test that parse errors raise ZluppyError."""
-    source = "fn main() -> void { h(q[0] }"  # Missing closing paren
+    source = "pub fn main() -> unit { h q[0 }"  # Missing closing bracket
 
     with pytest.raises(zluppy.ZluppyError) as exc_info:
         zluppy.compile_to_slr(source)
@@ -100,8 +113,9 @@ def test_compile_to_slr_parse_error():
 
 def test_compile_to_slr_semantic_error():
     """Test that semantic errors raise ZluppyError."""
-    source = """fn main() -> void {
-        h(undefined_var[0]);
+    source = """pub fn main() -> unit {
+        h undefined_var[0];
+        return unit;
     }"""
 
     with pytest.raises(zluppy.ZluppyError) as exc_info:
@@ -117,9 +131,10 @@ def test_compile_to_slr_semantic_error():
 
 def test_compile_to_slr_json_pretty():
     """Test compiling to pretty-printed JSON string."""
-    source = """fn main() -> void {
-        var q = qalloc(1);
-        h(q[0]);
+    source = """pub fn main() -> unit {
+        q := qalloc(1);
+        h q[0];
+        return unit;
     }"""
 
     result = zluppy.compile_to_slr_json(source)
@@ -135,9 +150,10 @@ def test_compile_to_slr_json_pretty():
 
 def test_compile_to_slr_json_compact():
     """Test compiling to compact JSON string."""
-    source = """fn main() -> void {
-        var q = qalloc(1);
-        h(q[0]);
+    source = """pub fn main() -> unit {
+        q := qalloc(1);
+        h q[0];
+        return unit;
     }"""
 
     result = zluppy.compile_to_slr_json(source, compact=True)
@@ -153,9 +169,11 @@ def test_compile_to_slr_json_compact():
 
 def test_compile_to_slr_json_strict():
     """Test compiling to JSON with strict mode."""
-    source = """fn main() -> void {
-        var q = qalloc(1);
-        x(q[0]);
+    source = """pub fn main() -> unit {
+        q := qalloc(1);
+        pz q;
+        x q[0];
+        return unit;
     }"""
 
     result = zluppy.compile_to_slr_json(source, strict=True)
@@ -170,10 +188,11 @@ def test_compile_to_slr_json_strict():
 
 def test_check_valid_program():
     """Test checking a valid program."""
-    source = """fn main() -> void {
-        var q = qalloc(2);
-        h(q[0]);
-        cx(q[0], q[1]);
+    source = """pub fn main() -> unit {
+        q := qalloc(2);
+        h q[0];
+        cx (q[0], q[1]);
+        return unit;
     }"""
 
     # Should not raise
@@ -182,9 +201,11 @@ def test_check_valid_program():
 
 def test_check_strict_mode():
     """Test checking in strict mode."""
-    source = """fn main() -> void {
-        var q = qalloc(2);
-        h(q[0]);
+    source = """pub fn main() -> unit {
+        q := qalloc(2);
+        pz q;
+        h q[0];
+        return unit;
     }"""
 
     # Should not raise for valid code
@@ -193,7 +214,7 @@ def test_check_strict_mode():
 
 def test_check_parse_error():
     """Test that check raises on parse error."""
-    source = "fn main( void { }"  # Missing closing paren
+    source = "pub fn main( -> unit { }"  # Missing closing paren
 
     with pytest.raises(zluppy.ZluppyError):
         zluppy.check(source)
@@ -201,8 +222,9 @@ def test_check_parse_error():
 
 def test_check_semantic_error():
     """Test that check raises on semantic error."""
-    source = """fn main() -> void {
+    source = """pub fn main() -> unit {
         UnknownGate(q[0]);
+        return unit;
     }"""
 
     with pytest.raises(zluppy.ZluppyError):
@@ -216,7 +238,7 @@ def test_check_semantic_error():
 
 def test_parse_debug():
     """Test getting debug AST string."""
-    source = "fn main() -> void { var q = qalloc(1); }"
+    source = "pub fn main() -> unit { q := qalloc(1); return unit; }"
 
     result = zluppy.parse_debug(source)
 
@@ -228,7 +250,7 @@ def test_parse_debug():
 def test_parse_debug_error():
     """Test that parse_debug raises on parse error."""
     with pytest.raises(zluppy.ZluppyError):
-        zluppy.parse_debug("fn main( void { }")
+        zluppy.parse_debug("pub fn main( -> unit { }")
 
 
 # =============================================================================
@@ -352,10 +374,11 @@ def test_slr_program_unknown_gate():
 
 def test_roundtrip_compile_and_build():
     """Test that compiled and built programs produce similar structure."""
-    source = """fn main() -> void {
-        var q = qalloc(2);
-        h(q[0]);
-        cx(q[0], q[1]);
+    source = """pub fn main() -> unit {
+        q := qalloc(2);
+        h q[0];
+        cx (q[0], q[1]);
+        return unit;
     }"""
 
     # Compile from source
@@ -460,10 +483,11 @@ def test_lowercase_gate_aliases():
 
 def test_zluppy_engine_source():
     """Test ZluppyEngine with source code."""
-    source = """fn main() -> void {
-        var q = qalloc(2);
-        h(q[0]);
-        cx(q[0], q[1]);
+    source = """pub fn main() -> unit {
+        q := qalloc(2);
+        h q[0];
+        cx (q[0], q[1]);
+        return unit;
     }"""
 
     engine = zluppy.ZluppyEngine().source(source)
@@ -471,15 +495,17 @@ def test_zluppy_engine_source():
 
     assert isinstance(hugr_bytes, bytes)
     assert len(hugr_bytes) > 0
+    assert operation_signature(zluppy.compile_to_slr(source)) == [("GateOp", "H"), ("GateOp", "CX")]
 
 
 def test_zluppy_engine_file(tmp_path):
     """Test ZluppyEngine with file input."""
     # Create a temporary .zlp file
     zlp_file = tmp_path / "test.zlp"
-    zlp_file.write_text("""fn main() -> void {
-        var q = qalloc(1);
-        h(q[0]);
+    zlp_file.write_text("""pub fn main() -> unit {
+        q := qalloc(1);
+        h q[0];
+        return unit;
     }""")
 
     engine = zluppy.ZluppyEngine().file(str(zlp_file))
@@ -487,34 +513,38 @@ def test_zluppy_engine_file(tmp_path):
 
     assert isinstance(hugr_bytes, bytes)
     assert len(hugr_bytes) > 0
+    assert operation_signature(zluppy.compile_file(str(zlp_file))) == [("GateOp", "H")]
 
 
 def test_zluppy_engine_run():
     """Test ZluppyEngine.run() executes through simulator."""
-    source = """fn main() -> void {
-        var q = qalloc(2);
-        h(q[0]);
-        cx(q[0], q[1]);
+    source = """pub fn main() -> unit {
+        q := qalloc(2);
+        h q[0];
+        cx (q[0], q[1]);
+        return unit;
     }"""
 
-    result = zluppy.ZluppyEngine().source(source).run(shots=10)
+    result = zluppy.ZluppyEngine().source(source).run(shots=100)
 
     # Check we got results
     assert result is not None
     result_dict = result.to_dict()
     assert "measurements" in result_dict
-    assert len(result_dict["measurements"]) == 10
+    assert len(result_dict["measurements"]) == 100
 
     # Verify Bell state correlations (q0 == q1 for each shot)
     for shot in result_dict["measurements"]:
         assert shot[0] == shot[1], f"Bell state violation: {shot}"
+    assert {tuple(shot) for shot in result_dict["measurements"]} == {(0, 0), (1, 1)}
 
 
 def test_zluppy_engine_run_single_qubit():
     """Test ZluppyEngine with single qubit circuit."""
-    source = """fn main() -> void {
-        var q = qalloc(1);
-        x(q[0]);
+    source = """pub fn main() -> unit {
+        q := qalloc(1);
+        x q[0];
+        return unit;
     }"""
 
     result = zluppy.ZluppyEngine().source(source).run(shots=5)
@@ -537,7 +567,7 @@ def test_zluppy_engine_no_source_error():
 
 def test_zluppy_engine_parse_error():
     """Test that ZluppyEngine raises on parse error."""
-    source = "fn main() -> void { h(q[0] }"  # Missing closing paren
+    source = "pub fn main() -> unit { h q[0 }"  # Missing closing bracket
 
     with pytest.raises(zluppy.ZluppyError):
         zluppy.ZluppyEngine().source(source)
@@ -545,8 +575,9 @@ def test_zluppy_engine_parse_error():
 
 def test_zluppy_engine_semantic_error():
     """Test that ZluppyEngine raises on semantic error."""
-    source = """fn main() -> void {
-        h(undefined_var[0]);
+    source = """pub fn main() -> unit {
+        h undefined_var[0];
+        return unit;
     }"""
 
     with pytest.raises(zluppy.ZluppyError):
@@ -555,9 +586,11 @@ def test_zluppy_engine_semantic_error():
 
 def test_zluppy_engine_strict_mode():
     """Test ZluppyEngine with strict mode."""
-    source = """fn main() -> void {
-        var q = qalloc(2);
-        h(q[0]);
+    source = """pub fn main() -> unit {
+        q := qalloc(2);
+        pz q;
+        h q[0];
+        return unit;
     }"""
 
     # Strict mode should work for valid code
@@ -565,18 +598,23 @@ def test_zluppy_engine_strict_mode():
     hugr_bytes = engine.to_hugr_bytes()
 
     assert len(hugr_bytes) > 0
+    assert operation_signature(zluppy.compile_to_slr(source, strict=True)) == [
+        ("PrepareOp", None),
+        ("GateOp", "H"),
+    ]
 
 
 def test_zluppy_engine_chaining():
     """Test that ZluppyEngine methods return self for chaining."""
-    source = """fn main() -> void {
-        var q = qalloc(1);
-        h(q[0]);
+    source = """pub fn main() -> unit {
+        q := qalloc(1);
+        x q[0];
+        return unit;
     }"""
 
     # All methods should be chainable
     result = zluppy.ZluppyEngine().source(source).run(shots=1)
-    assert result is not None
+    assert result.to_dict()["measurements"] == [[1]]
 
 
 def test_zluppy_engine_repr():
@@ -584,7 +622,7 @@ def test_zluppy_engine_repr():
     engine = zluppy.ZluppyEngine()
     assert "not compiled" in repr(engine)
 
-    engine.source("fn main() -> void { var q = qalloc(1); }")
+    engine.source("pub fn main() -> unit { q := qalloc(1); return unit; }")
     assert "compiled" in repr(engine)
 
 
@@ -601,128 +639,227 @@ def test_zluppy_engine_file_not_found():
 
 def test_engine_ch_gate():
     """Test CH (controlled Hadamard) gate compiles to HUGR."""
-    source = """fn main() -> void {
-        var q = qalloc(2);
-        ch(q[0], q[1]);
+    source = """pub fn main() -> unit {
+        q := qalloc(2);
+        ch (q[0], q[1]);
+        return unit;
     }"""
 
     engine = zluppy.ZluppyEngine().source(source)
     hugr_bytes = engine.to_hugr_bytes()
     assert len(hugr_bytes) > 0
+    assert operation_signature(zluppy.compile_to_slr(source)) == [("GateOp", "CH")]
 
 
 def test_engine_ising_gates():
     """Test Ising gates (SXX, SYY, SZZ) compile to HUGR."""
-    source = """fn main() -> void {
-        var q = qalloc(2);
-        sxx(q[0], q[1]);
-        syy(q[0], q[1]);
-        szz(q[0], q[1]);
+    source = """pub fn main() -> unit {
+        q := qalloc(2);
+        sxx (q[0], q[1]);
+        syy (q[0], q[1]);
+        szz (q[0], q[1]);
+        return unit;
     }"""
 
     engine = zluppy.ZluppyEngine().source(source)
     hugr_bytes = engine.to_hugr_bytes()
     assert len(hugr_bytes) > 0
+    assert operation_signature(zluppy.compile_to_slr(source)) == [
+        ("GateOp", "SXX"),
+        ("GateOp", "SYY"),
+        ("GateOp", "SZZ"),
+    ]
 
 
 def test_engine_ising_dagger_gates():
     """Test Ising dagger gates compile to HUGR."""
-    source = """fn main() -> void {
-        var q = qalloc(2);
-        sxxdg(q[0], q[1]);
-        syydg(q[0], q[1]);
-        szzdg(q[0], q[1]);
+    source = """pub fn main() -> unit {
+        q := qalloc(2);
+        sxxdg (q[0], q[1]);
+        syydg (q[0], q[1]);
+        szzdg (q[0], q[1]);
+        return unit;
     }"""
 
     engine = zluppy.ZluppyEngine().source(source)
     hugr_bytes = engine.to_hugr_bytes()
     assert len(hugr_bytes) > 0
+    assert operation_signature(zluppy.compile_to_slr(source)) == [
+        ("GateOp", "SXXdg"),
+        ("GateOp", "SYYdg"),
+        ("GateOp", "SZZdg"),
+    ]
 
 
 def test_engine_rzz_gate():
     """Test RZZ (ZZ rotation) gate compiles to HUGR."""
-    source = """fn main() -> void {
-        var q = qalloc(2);
-        rzz(q[0], q[1], 1.57);
+    source = """pub fn main() -> unit {
+        q := qalloc(2);
+        rzz(1.57) (q[0], q[1]);
+        return unit;
     }"""
 
     engine = zluppy.ZluppyEngine().source(source)
     hugr_bytes = engine.to_hugr_bytes()
     assert len(hugr_bytes) > 0
+    assert operation_signature(zluppy.compile_to_slr(source)) == [("GateOp", "RZZ")]
 
 
 def test_engine_f_gates():
     """Test F gates (Clifford face rotation) compile to HUGR."""
-    source = """fn main() -> void {
-        var q = qalloc(1);
-        f(q[0]);
-        fdg(q[0]);
-        f4(q[0]);
-        f4dg(q[0]);
+    source = """pub fn main() -> unit {
+        q := qalloc(1);
+        f q[0];
+        fdg q[0];
+        f4 q[0];
+        f4dg q[0];
+        return unit;
     }"""
 
     engine = zluppy.ZluppyEngine().source(source)
     hugr_bytes = engine.to_hugr_bytes()
     assert len(hugr_bytes) > 0
+    assert operation_signature(zluppy.compile_to_slr(source)) == [
+        ("GateOp", "F"),
+        ("GateOp", "Fdg"),
+        ("GateOp", "F4"),
+        ("GateOp", "F4dg"),
+    ]
 
 
 def test_engine_ccx_gate():
     """Test CCX (Toffoli) gate compiles to HUGR."""
-    source = """fn main() -> void {
-        var q = qalloc(3);
-        ccx(q[0], q[1], q[2]);
+    source = """pub fn main() -> unit {
+        q := qalloc(3);
+        ccx (q[0], q[1], q[2]);
+        return unit;
     }"""
 
     engine = zluppy.ZluppyEngine().source(source)
     hugr_bytes = engine.to_hugr_bytes()
     assert len(hugr_bytes) > 0
+    assert operation_signature(zluppy.compile_to_slr(source)) == [("GateOp", "CCX")]
 
 
 def test_engine_swap_gates():
     """Test SWAP and iSWAP gates compile to HUGR."""
-    source = """fn main() -> void {
-        var q = qalloc(2);
-        swap(q[0], q[1]);
-        iswap(q[0], q[1]);
+    source = """pub fn main() -> unit {
+        q := qalloc(2);
+        swap (q[0], q[1]);
+        iswap (q[0], q[1]);
+        return unit;
     }"""
 
     engine = zluppy.ZluppyEngine().source(source)
     hugr_bytes = engine.to_hugr_bytes()
     assert len(hugr_bytes) > 0
+    assert operation_signature(zluppy.compile_to_slr(source)) == [("GateOp", "SWAP"), ("GateOp", "ISWAP")]
 
 
 def test_compile_all_new_gates():
     """Test compiling a program with all new gates to SLR."""
-    source = """fn main() -> void {
-        var q = qalloc(3);
+    source = """pub fn main() -> unit {
+        q := qalloc(3);
         // F gates
-        f(q[0]);
-        fdg(q[0]);
-        f4(q[0]);
-        f4dg(q[0]);
+        f q[0];
+        fdg q[0];
+        f4 q[0];
+        f4dg q[0];
         // Two-qubit controlled
-        ch(q[0], q[1]);
+        ch (q[0], q[1]);
         // Ising gates
-        sxx(q[0], q[1]);
-        syy(q[0], q[1]);
-        szz(q[0], q[1]);
-        sxxdg(q[0], q[1]);
-        syydg(q[0], q[1]);
-        szzdg(q[0], q[1]);
+        sxx (q[0], q[1]);
+        syy (q[0], q[1]);
+        szz (q[0], q[1]);
+        sxxdg (q[0], q[1]);
+        syydg (q[0], q[1]);
+        szzdg (q[0], q[1]);
         // Swap gates
-        swap(q[0], q[1]);
-        iswap(q[0], q[1]);
+        swap (q[0], q[1]);
+        iswap (q[0], q[1]);
         // Rotation
-        rzz(q[0], q[1], 0.5);
-        crz(q[0], q[1], 0.5);
+        rzz(0.5) (q[0], q[1]);
+        crz(0.5) (q[0], q[1]);
         // Three-qubit
-        ccx(q[0], q[1], q[2]);
+        ccx (q[0], q[1], q[2]);
+        return unit;
     }"""
 
     result = zluppy.compile_to_slr(source)
     assert result["type"] == "Program"
     # Should have 16 operations in body
     assert len(result["body"]) == 16
+
+
+def test_slr_program_accepts_both_crz_spellings():
+    """CRZ remains an accepted SLR boundary spelling in either case."""
+    prog = zluppy.SlrProgram("main")
+    prog.add_allocator("q", 2)
+    prog.add_gate("CRZ", [("q", 0), ("q", 1)], params=[0.5])
+    prog.add_gate("crz", [("q", 0), ("q", 1)], params=[0.25])
+
+    result = json.loads(prog.to_json())
+    assert [op["gate"] for op in result["body"]] == ["CRZ", "CRZ"]
+
+
+def test_zlup_parser_to_phir_crz_preserves_full_matrix():
+    """The zlup CRZ spelling retains its control-relative phase through PHIR."""
+
+    for theta in (-math.pi, math.pi / 3, math.pi, math.tau, 3 * math.pi):
+        columns = []
+        for basis in range(4):
+            prep = []
+            if basis & 1:
+                prep.append("x(q[0]);")
+            if basis & 2:
+                prep.append("x(q[1]);")
+            source_turns = theta / math.tau
+            source_angle = repr(source_turns) if source_turns >= 0 else f"0.0 - {abs(source_turns)!r}"
+            source = f"""
+pub fn main() -> unit {{
+    mut q := qalloc(2);
+    {" ".join(prep)}
+    crz ({source_angle}) (q[1], q[0]);
+    return unit;
+}}
+"""
+            phir = json.loads(zluppy.compile_to_phir_json(source))
+            simulator = StateVec(2)
+            for op in phir["ops"]:
+                name = op.get("qop")
+                if name == "X":
+                    for _, qubit in op["args"]:
+                        simulator.backend.run_1q_gate("X", qubit, None)
+                elif name == "RZ":
+                    angle = op["angles"][0][0]
+                    for _, qubit in op["args"]:
+                        simulator.backend.run_1q_gate("RZ", qubit, {"angle": angle})
+                elif name == "RZZ":
+                    angle = op["angles"][0][0]
+                    for pair in op["args"]:
+                        simulator.backend.run_2q_gate(
+                            "RZZ",
+                            (pair[0][1], pair[1][1]),
+                            {"angle": angle},
+                        )
+            columns.append([complex(value) for value in simulator.backend.vector])
+
+        half = theta / 2
+        reference = [
+            [1, 0, 0, 0],
+            [0, 1, 0, 0],
+            [0, 0, complex(math.cos(half), -math.sin(half)), 0],
+            [0, 0, 0, complex(math.cos(half), math.sin(half))],
+        ]
+        phase = columns[0][0] / reference[0][0]
+        assert abs(abs(phase) - 1) < 1e-12
+        if theta in {-math.pi, math.pi / 3, math.pi}:
+            assert abs(phase - 1) < 1e-12
+        else:
+            assert min(abs(phase - 1), abs(phase + 1)) < 1e-12
+        for column in range(4):
+            for row in range(4):
+                assert abs(columns[column][row] / phase - reference[row][column]) < 1e-12
 
 
 # =============================================================================
@@ -742,7 +879,8 @@ def test_zlup_program_add_allocator():
     prog.add_allocator("q", 2)
 
     source = prog.to_source()
-    assert "var q = qalloc(2);" in source
+    assert "mut q := qalloc(2);" in source
+    assert source.endswith("    return;\n}\n")
 
 
 def test_zlup_program_add_gate():
@@ -753,8 +891,8 @@ def test_zlup_program_add_gate():
     prog.add_gate("cx", [("q", 0), ("q", 1)])
 
     source = prog.to_source()
-    assert "h(q[0]);" in source
-    assert "cx(q[0], q[1]);" in source
+    assert "h q[0];" in source
+    assert "cx (q[0], q[1]);" in source
 
 
 def test_zlup_program_add_rotation_gate():
@@ -764,7 +902,7 @@ def test_zlup_program_add_rotation_gate():
     prog.add_gate("rz", [("q", 0)], params=[1.57])
 
     source = prog.to_source()
-    assert "rz(q[0], 1.57);" in source
+    assert "rz(1.57) q[0];" in source
 
 
 def test_zlup_program_compile_to_slr():
@@ -807,6 +945,7 @@ def test_zlup_program_compile_to_hugr():
 
     assert isinstance(hugr_bytes, bytes)
     assert len(hugr_bytes) > 0
+    assert operation_signature(json.loads(prog.compile_to_slr())) == [("GateOp", "H"), ("GateOp", "CX")]
 
 
 def test_zlup_program_method_chaining():
@@ -816,9 +955,9 @@ def test_zlup_program_method_chaining():
     )
 
     source = prog.to_source()
-    assert "var q = qalloc(2);" in source
-    assert "h(q[0]);" in source
-    assert "cx(q[0], q[1]);" in source
+    assert "mut q := qalloc(2);" in source
+    assert "h q[0];" in source
+    assert "cx (q[0], q[1]);" in source
 
 
 def test_zlup_program_all_single_qubit_gates():
@@ -870,7 +1009,7 @@ def test_zlup_program_prepare():
     prog.add_gate("h", [("q", 0)])
 
     source = prog.to_source()
-    assert "q.prepare_all();" in source
+    assert "pz q;" in source
 
 
 def test_zlup_program_measure():
@@ -913,10 +1052,11 @@ def test_zlup_program_save(tmp_path):
 
     # Verify file contents
     content = path.read_text()
-    assert "fn main() -> void {" in content
-    assert "var q = qalloc(2);" in content
-    assert "h(q[0]);" in content
-    assert "cx(q[0], q[1]);" in content
+    assert "fn main() -> unit {" in content
+    assert "mut q := qalloc(2);" in content
+    assert "h q[0];" in content
+    assert "cx (q[0], q[1]);" in content
+    assert content.endswith("    return;\n}\n")
 
     # Verify the saved file can be compiled
     result = zluppy.compile_file(str(path))
@@ -956,6 +1096,10 @@ def test_zlup_program_compile_via_source_to_hugr():
 
     assert isinstance(hugr_bytes, bytes)
     assert len(hugr_bytes) > 0
+    assert operation_signature(json.loads(prog.compile_via_source_to_slr())) == [
+        ("GateOp", "H"),
+        ("GateOp", "CX"),
+    ]
 
 
 def test_zlup_program_roundtrip_all_gates():

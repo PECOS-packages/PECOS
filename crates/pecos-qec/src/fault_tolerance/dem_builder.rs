@@ -36,7 +36,7 @@
 //!     .with_noise(0.01, 0.01, 0.01, 0.01)
 //!     .with_detectors_json("[]")?
 //!     .with_observables_json("[]")?
-//!     .build();
+//!     .build()?;
 //!
 //! // Output in standard DEM format (non-decomposed).
 //! let _ = dem.to_string();

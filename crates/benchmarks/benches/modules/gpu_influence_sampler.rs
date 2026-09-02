@@ -169,7 +169,8 @@ fn bench_cpu_vs_gpu_surface_codes<M: Measurement>(c: &mut Criterion<M>) {
 
         // CPU benchmark
         let probs = vec![p_error; cpu_map.locations.len()];
-        let cpu_sampler = DemSampler::from_influence_map(&cpu_map, &probs);
+        let cpu_sampler = DemSampler::from_influence_map(&cpu_map, &probs)
+            .expect("benchmark influence map must support Pauli propagation");
 
         group.bench_with_input(BenchmarkId::new("CPU", &label), &(), |b, ()| {
             b.iter(|| black_box(cpu_sampler.sample_statistics(num_shots as usize, seed)));
@@ -210,7 +211,8 @@ fn bench_gpu_sampler_shot_scaling<M: Measurement>(c: &mut Criterion<M>) {
 
         // CPU benchmark
         let probs = vec![p_error; cpu_map.locations.len()];
-        let cpu_sampler = DemSampler::from_influence_map(&cpu_map, &probs);
+        let cpu_sampler = DemSampler::from_influence_map(&cpu_map, &probs)
+            .expect("benchmark influence map must support Pauli propagation");
 
         group.bench_with_input(BenchmarkId::new("CPU", &label), &num_shots, |b, &shots| {
             b.iter(|| black_box(cpu_sampler.sample_statistics(shots as usize, seed)));

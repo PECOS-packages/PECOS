@@ -505,10 +505,19 @@ impl QASMEngine {
     ) -> Result<(), PecosError> {
         for chunk in qubits.chunks(2) {
             if chunk.len() == 2 {
+                if gate_type == GateType::SWAP {
+                    Self::handle_swap(self, chunk, &[])?;
+                    continue;
+                }
                 match gate_type {
                     GateType::CX => self.message_builder.cx(&[(chunk[0], chunk[1])]),
                     GateType::CY => self.message_builder.cy(&[(chunk[0], chunk[1])]),
                     GateType::CZ => self.message_builder.cz(&[(chunk[0], chunk[1])]),
+                    GateType::CH => self.message_builder.ch(&[(chunk[0], chunk[1])]),
+                    GateType::SXX => self.message_builder.sxx(&[(chunk[0], chunk[1])]),
+                    GateType::SXXdg => self.message_builder.sxxdg(&[(chunk[0], chunk[1])]),
+                    GateType::SYY => self.message_builder.syy(&[(chunk[0], chunk[1])]),
+                    GateType::SYYdg => self.message_builder.syydg(&[(chunk[0], chunk[1])]),
                     GateType::SZZ => self.message_builder.szz(&[(chunk[0], chunk[1])]),
                     GateType::SZZdg => self.message_builder.szzdg(&[(chunk[0], chunk[1])]),
                     _ => {
@@ -638,9 +647,11 @@ impl QASMEngine {
             | GateType::SXX
             | GateType::SXXdg
             | GateType::SYY
-            | GateType::SYYdg => self.process_two_qubit_gate(gate.gate_type, &qubits),
+            | GateType::SYYdg
+            | GateType::CH
+            | GateType::SWAP => self.process_two_qubit_gate(gate.gate_type, &qubits),
             // Gates not yet supported in QASM engine
-            GateType::SWAP | GateType::CCX | GateType::CRZ | GateType::CH | GateType::Channel => {
+            GateType::CCX | GateType::PX | GateType::Channel => {
                 Err(PecosError::Processing(format!(
                     "Gate type {:?} is not yet supported in the QASM engine",
                     gate.gate_type
@@ -671,10 +682,6 @@ impl QASMEngine {
             | GateType::MPZ => Err(PecosError::Processing(
                 "measurement gates should be handled by MeasureWithMapping operation".to_string(),
             )),
-            GateType::PX => Err(PecosError::Processing(format!(
-                "Gate type {:?} is not yet supported in the QASM engine",
-                gate.gate_type
-            ))),
         }
     }
 

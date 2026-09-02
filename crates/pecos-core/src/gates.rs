@@ -624,34 +624,6 @@ impl Gate {
         Self::ch_vec(&flat_qubits)
     }
 
-    /// Create CRZ gate from flat qubit list
-    ///
-    /// # Panics
-    ///
-    /// Panics if the number of qubits is not even.
-    #[must_use]
-    pub fn crz_vec(theta: Angle64, qubits: &[impl Into<QubitId> + Copy]) -> Self {
-        assert!(
-            qubits.len().is_multiple_of(2),
-            "CRZ gate requires an even number of qubits"
-        );
-        Self::with_angles(
-            GateType::CRZ,
-            vec![theta],
-            qubits.iter().map(|&q| q.into()).collect::<GateQubits>(),
-        )
-    }
-
-    /// Create CRZ gate on multiple qubit pairs
-    #[must_use]
-    pub fn crz(
-        theta: Angle64,
-        qubit_pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
-    ) -> Self {
-        let flat_qubits = Self::flatten_qubit_pairs(qubit_pairs);
-        Self::crz_vec(theta, &flat_qubits)
-    }
-
     /// Create CCX (Toffoli) gate on qubit triples
     #[must_use]
     pub fn ccx(

@@ -23,6 +23,8 @@ on:
       - 'python/**'
       - 'examples/**'
       - 'crates/**'
+      - 'exp/zlup/**'
+      - 'exp/zluppy/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'pyproject.toml'
@@ -40,6 +42,8 @@ on:
       - 'python/**'
       - 'examples/**'
       - 'crates/**'
+      - 'exp/zlup/**'
+      - 'exp/zluppy/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'pyproject.toml'
@@ -228,7 +232,9 @@ jobs:
 
     - name: Validate Python lockfile (PR fast path)
       if: github.event_name == 'pull_request'
-      run: uv lock --check --project .
+      run: |
+        uv lock --check --project .
+        uv lock --check --project exp/zluppy
 
   python-compat-smoke-build:
     runs-on: ${{ matrix.os }}
@@ -669,6 +675,87 @@ jobs:
 
     - name: Run slow Python tests
       run: just pytest-slow
+
+  zluppy-postmerge:
+    if: (github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name)) || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      PECOS_BUILD_MWPF: "1"
+    steps:
+    - name: Harden the runner (egress audit)
+      uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+      with:
+        egress-policy: audit
+
+    - name: Free Disk Space (Ubuntu)
+      uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
+      with:
+        android: true
+        dotnet: true
+        haskell: true
+        large-packages: false
+        docker-images: true
+        tool-cache: false
+        swap-storage: true
+
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      with:
+        persist-credentials: false
+
+    - name: Set up Python
+      uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+      with:
+        python-version: "3.14"
+
+    - name: Install the latest version of uv
+      uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+      with:
+        version-file: ".github/uv.toml"
+        enable-cache: true
+        save-cache: ${{ github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name) }}
+
+    - name: Set up Rust
+      run: |
+        bash scripts/ci/ensure-rust.sh stable minimal
+        export PATH="$HOME/.cargo/bin:$PATH"
+        rustup show
+
+    - name: Verify cmake is available (MWPF decoder build)
+      run: cmake --version
+
+    - name: Install just
+      uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+
+    - name: Cache Rust
+      uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      with:
+        cache-bin: false
+        prefix-key: v1-rust-no-bin
+        save-if: ${{ github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name) }}
+        workspaces: |
+          python/pecos-rslib
+          python/pecos-rslib-llvm
+
+    - name: Cache LLVM ${{ env.LLVM_VERSION }}
+      id: cache-llvm-zluppy
+      uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+      with:
+        path: ~/.pecos/deps/llvm-21.1
+        key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v3
+
+    - name: Ensure LLVM ${{ env.LLVM_VERSION }}
+      run: just ci-env
+
+    - name: Save LLVM ${{ env.LLVM_VERSION }} cache
+      if: steps.cache-llvm-zluppy.outputs.cache-hit != 'true' && github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name)
+      uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+      with:
+        path: ~/.pecos/deps/llvm-21.1
+        key: ${{ steps.cache-llvm-zluppy.outputs.cache-primary-key }}
+
+    - name: Run zluppy Python tests
+      run: just pytest-zluppy
 
   windows-vanilla-cargo:
     name: Windows vanilla cargo (crates.io consumer contract)

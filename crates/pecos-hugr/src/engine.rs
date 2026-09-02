@@ -1763,6 +1763,13 @@ impl HugrEngine {
     ) -> Result<bool, PecosError> {
         let mut hit_measurement = false;
 
+        if op.is_crz {
+            let angle = self.resolve_rotation_angle(hugr, node, op)?;
+            let gates = pecos_core::controlled_rotations::lower_crz(angle, qubits[0], qubits[1]);
+            self.message_builder.add_gate_commands(&gates);
+            return Ok(false);
+        }
+
         match op.gate_type {
             // Lifecycle operations
             GateType::QAlloc => {
@@ -1854,16 +1861,6 @@ impl HugrEngine {
                     &[target],
                 );
             }
-            GateType::CRZ => {
-                let angle = self.resolve_rotation_angle(hugr, node, op)?;
-                let half_angle = angle / 2.0;
-                self.message_builder
-                    .rz(Angle64::from_radians(half_angle), &[qubits[1].0]);
-                self.message_builder.cx(&[(qubits[0].0, qubits[1].0)]);
-                self.message_builder
-                    .rz(Angle64::from_radians(-half_angle), &[qubits[1].0]);
-                self.message_builder.cx(&[(qubits[0].0, qubits[1].0)]);
-            }
             GateType::CCX => {
                 let c0 = qubits[0].0;
                 let c1 = qubits[1].0;
@@ -1947,8 +1944,8 @@ impl HugrEngine {
         // No silent default: a zero angle would turn the gate into a no-op and
         // corrupt the simulated physics without any visible failure.
         Err(PecosError::Input(format!(
-            "{:?} at {node:?}: rotation angle unavailable (no static extraction, no runtime value); refusing to default to 0",
-            op.gate_type
+            "{} at {node:?}: rotation angle unavailable (no static extraction, no runtime value); refusing to default to 0",
+            op.source_name
         )))
     }
 
@@ -2483,6 +2480,61 @@ mod tests {
         let engine = HugrEngine::default();
         assert!(engine.hugr.is_none());
         assert!(engine.quantum_ops.is_empty());
+    }
+
+    #[test]
+    fn dynamic_crz_missing_angle_error_uses_source_spelling() {
+        use tket::TketOp;
+        use tket::hugr::builder::{DFGBuilder, Dataflow, DataflowHugr};
+        use tket::hugr::types::Signature;
+
+        let mut builder = DFGBuilder::new(Signature::new(
+            vec![tket::extension::rotation::rotation_type()],
+            vec![],
+        ))
+        .expect("create HUGR");
+        let rotation = builder.input_wires().next().expect("rotation input");
+        let control = builder
+            .add_dataflow_op(TketOp::QAlloc, vec![])
+            .expect("allocate control")
+            .outputs()
+            .next()
+            .expect("control output");
+        let target = builder
+            .add_dataflow_op(TketOp::QAlloc, vec![])
+            .expect("allocate target")
+            .outputs()
+            .next()
+            .expect("target output");
+        let mut outputs = builder
+            .add_dataflow_op(TketOp::CRz, vec![control, target, rotation])
+            .expect("add CRz")
+            .outputs();
+        let control = outputs.next().expect("control output");
+        let target = outputs.next().expect("target output");
+        builder
+            .add_dataflow_op(TketOp::QFree, vec![control])
+            .expect("free control");
+        builder
+            .add_dataflow_op(TketOp::QFree, vec![target])
+            .expect("free target");
+        let hugr = builder
+            .finish_hugr_with_outputs(vec![])
+            .expect("finish HUGR");
+        let engine = HugrEngine::from_hugr(hugr);
+        let hugr = engine.hugr.as_ref().expect("engine HUGR");
+        let (&node, op) = engine
+            .quantum_ops
+            .iter()
+            .find(|(_, op)| op.is_crz)
+            .expect("CRz operation");
+
+        let error = engine
+            .resolve_rotation_angle(hugr, node, op)
+            .expect_err("dynamic angle has no runtime input value");
+        let message = error.to_string();
+        assert!(message.contains("CRz at"), "error was: {message}");
+        assert!(!message.contains("RZZ at"), "error was: {message}");
     }
 
     /// Build the RNG chain from tket-qsystem's own builder test and drive

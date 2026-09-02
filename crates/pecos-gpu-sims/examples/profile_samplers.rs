@@ -80,7 +80,8 @@ fn profile_cpu_sampler(
     num_shots: usize,
 ) -> CpuProfile {
     let probs = vec![p_error; influence_map.locations.len()];
-    let sampler = DemSampler::from_influence_map(influence_map, &probs);
+    let sampler = DemSampler::from_influence_map(influence_map, &probs)
+        .expect("profiling influence map must support Pauli propagation");
 
     let start = Instant::now();
     let _stats = sampler.sample_statistics(num_shots, seed);

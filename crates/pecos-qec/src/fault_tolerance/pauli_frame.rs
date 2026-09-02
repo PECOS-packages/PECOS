@@ -19,7 +19,7 @@
 //! sampled shots.
 
 use super::dem_builder::record_offset_to_absolute_index;
-use super::propagator::{Direction, apply_gate};
+use super::propagator::{Direction, apply_gate, is_supported_prep_gate};
 use pecos_core::gate_type::GateType;
 use pecos_core::{Pauli, PauliString};
 use pecos_quantum::{AnnotationKind, DagCircuit};
@@ -522,12 +522,16 @@ fn propagate_tracked_pauli_forward(
                     );
                 }
             }
-            GateType::PX | GateType::PZ | GateType::QAlloc => {
+            gate_type if is_supported_prep_gate(gate_type) => {
                 for qubit in &gate.qubits {
                     clear_qubit(&mut prop, qubit.index());
                 }
             }
-            _ => apply_gate(&mut prop, gate, Direction::Forward),
+            _ => {
+                // Pauli-frame lookup intentionally preserves its historical
+                // permissive treatment of unsupported gates.
+                let _outcome = apply_gate(&mut prop, gate, Direction::Forward);
+            }
         }
     }
 

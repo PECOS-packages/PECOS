@@ -48,6 +48,9 @@ pub enum HugrError {
     #[error("unknown gate '{name}'")]
     UnknownGate { name: String },
 
+    #[error("HUGR codegen supports only gate calls; call to '{name}' is unsupported")]
+    UnsupportedCall { name: String },
+
     #[error("undefined qubit '{name}'")]
     UndefinedQubit { name: String },
 
@@ -153,8 +156,6 @@ enum GateMapping {
     F4,
     /// F4 dagger
     F4dg,
-    /// Mid-circuit measurement (returns classical bit, keeps qubit)
-    MidMeasure,
 }
 
 /// Maps Zluppy gate names to gate operations.
@@ -167,11 +168,10 @@ enum GateMapping {
 /// - Square root: sx, sxdg, sy, sydg, sz, szdg (sqrt of X, Y, and Z)
 /// - T gates: t, tdg (fourth root of Z)
 /// - F gates: f, fdg, f4, f4dg (Clifford face rotations)
-/// - Rotation: rx, ry, rz (single-qubit), crz, rzz (two-qubit)
+/// - Rotation: rx, ry, rz (single-qubit), rzz (two-qubit)
 /// - Two-qubit: cx, cy, cz, ch, swap, iswap
 /// - Two-qubit Ising: sxx, syy, szz, sxxdg, syydg, szzdg
 /// - Three-qubit: ccx
-/// - Measurement: mz (Z-basis measurement)
 /// - State preparation: pz (prepare +Z eigenstate)
 ///
 /// Composite gates (decomposed):
@@ -239,9 +239,6 @@ fn gate_name_to_mapping(name: &str) -> Option<GateMapping> {
         "fdg" => Some(GateMapping::Fdg),
         "f4" => Some(GateMapping::F4),
         "f4dg" => Some(GateMapping::F4dg),
-
-        // Mid-circuit measurement in Z basis (keeps qubit alive)
-        "mz" => Some(GateMapping::MidMeasure),
 
         // Prepare +Z eigenstate (reset)
         "pz" => Some(GateMapping::Direct(TketOp::Reset)),
@@ -691,6 +688,8 @@ impl HugrCodegen {
         match stmt {
             Stmt::Binding(binding) => self.collect_binding(binding)?,
             Stmt::Expr(expr_stmt) => self.collect_expr(&expr_stmt.expr)?,
+            Stmt::Gate(gate) => self.collect_gate_op(gate)?,
+            Stmt::Prepare(prepare) => self.collect_prepare_op(prepare)?,
             // Tick blocks - flatten operations (HUGR doesn't have native parallel blocks)
             Stmt::Tick(tick_stmt) => {
                 for inner_stmt in &tick_stmt.body {
@@ -788,7 +787,10 @@ impl HugrCodegen {
 
     fn collect_expr(&mut self, expr: &Expr) -> HugrResult<()> {
         match expr {
-            Expr::Call(call) => self.collect_call(call)?,
+            // HUGR lowering does not yet represent ordinary function calls.
+            // Reject them so user code cannot silently disappear from the circuit.
+            Expr::Call(call) => self.reject_unsupported_call(call)?,
+            Expr::Gate(gate) => self.collect_gate_expr(gate)?,
             Expr::Binary(binary) => {
                 self.collect_expr(&binary.left)?;
                 self.collect_expr(&binary.right)?;
@@ -798,14 +800,100 @@ impl HugrCodegen {
         Ok(())
     }
 
+    fn collect_gate_expr(&mut self, gate: &crate::ast::GateExpr) -> HugrResult<()> {
+        if gate.kind == crate::ast::GateKind::PZ
+            && let Expr::Ident(ident) = &gate.target
+        {
+            let allocator =
+                self.allocators
+                    .get(&ident.name)
+                    .ok_or_else(|| HugrError::AllocatorNotFound {
+                        name: ident.name.clone(),
+                    })?;
+            for index in 0..allocator.capacity {
+                self.operations.push(GateOp::Direct {
+                    op: TketOp::Reset,
+                    qubits: vec![QubitRef::new(&ident.name, index)],
+                    angle: None,
+                });
+            }
+            return Ok(());
+        }
+
+        let targets = match &gate.target {
+            Expr::Tuple(tuple) => tuple.elements.clone(),
+            target => vec![target.clone()],
+        };
+        self.collect_named_gate(gate.kind.keyword(), &gate.params, targets)
+    }
+
+    fn collect_gate_op(&mut self, gate: &crate::ast::GateOp) -> HugrResult<()> {
+        let targets = gate
+            .targets
+            .iter()
+            .cloned()
+            .map(|target| Expr::SlotRef(Box::new(target)))
+            .collect();
+        self.collect_named_gate(gate.kind.keyword(), &gate.params, targets)
+    }
+
+    fn collect_named_gate(
+        &mut self,
+        name: &str,
+        params: &[Expr],
+        targets: Vec<Expr>,
+    ) -> HugrResult<()> {
+        let mut args = params.to_vec();
+        args.extend(targets);
+        self.collect_call(&CallExpr {
+            callee: Expr::Ident(crate::ast::Ident {
+                name: name.to_string(),
+                location: None,
+            }),
+            args,
+            location: None,
+        })
+    }
+
+    fn reject_unsupported_call(&self, call: &CallExpr) -> HugrResult<()> {
+        let name = self.extract_call_name(&call.callee)?;
+        Err(HugrError::UnsupportedCall { name })
+    }
+
+    fn collect_prepare_op(&mut self, prepare: &crate::ast::PrepareOp) -> HugrResult<()> {
+        let allocator = self.allocators.get(&prepare.allocator).ok_or_else(|| {
+            HugrError::AllocatorNotFound {
+                name: prepare.allocator.clone(),
+            }
+        })?;
+        let slots = prepare
+            .slots
+            .clone()
+            .unwrap_or_else(|| (0..allocator.capacity as u32).collect());
+        for index in slots {
+            let index = index as usize;
+            if index >= allocator.capacity {
+                return Err(HugrError::QubitIndexOutOfBounds {
+                    index,
+                    capacity: allocator.capacity,
+                });
+            }
+            self.operations.push(GateOp::Direct {
+                op: TketOp::Reset,
+                qubits: vec![QubitRef::new(&prepare.allocator, index)],
+                angle: None,
+            });
+        }
+        Ok(())
+    }
+
     fn collect_call(&mut self, call: &CallExpr) -> HugrResult<()> {
         // Check if this is a gate call
         let name = self.extract_call_name(&call.callee)?;
 
-        // Skip non-gate calls
+        // Named-gate lowering must resolve through the canonical HUGR mapping.
         let Some(mapping) = gate_name_to_mapping(&name) else {
-            // Could be a method call like child()
-            return Ok(());
+            return Err(HugrError::UnknownGate { name });
         };
 
         match mapping {
@@ -1374,33 +1462,6 @@ impl HugrCodegen {
                     angle: Some(-std::f64::consts::FRAC_PI_4),
                 });
             }
-
-            GateMapping::MidMeasure => {
-                // Typed measurement: mz(type, target) or mz(type, &[targets])
-                // Also supports legacy mz(qubit)
-                if call.args.len() == 2 {
-                    // New typed syntax: mz(type, target)
-                    let target_arg = &call.args[1];
-                    let qubits = self.extract_measurement_targets(target_arg)?;
-                    for qubit in qubits {
-                        let result_var = format!("__measure_{}", self.operations.len());
-                        self.operations
-                            .push(GateOp::MidMeasure { qubit, result_var });
-                    }
-                } else if call.args.len() == 1 {
-                    // Legacy syntax: mz(qubit)
-                    let qubit = self.extract_qubit_ref(&call.args[0])?;
-                    let result_var = format!("__measure_{}", self.operations.len());
-                    self.operations
-                        .push(GateOp::MidMeasure { qubit, result_var });
-                } else {
-                    return Err(HugrError::WrongArgumentCount {
-                        gate: name,
-                        expected: 2,
-                        got: call.args.len(),
-                    });
-                }
-            }
         }
 
         Ok(())
@@ -1459,6 +1520,21 @@ impl HugrCodegen {
     fn extract_qubit_ref(&self, expr: &Expr) -> HugrResult<QubitRef> {
         match expr {
             Expr::Index(index_expr) => self.extract_qubit_from_index(index_expr),
+            Expr::SlotRef(slot_ref) => {
+                let index = self.extract_integer(&slot_ref.index)?;
+                let allocator = self.allocators.get(&slot_ref.allocator).ok_or_else(|| {
+                    HugrError::AllocatorNotFound {
+                        name: slot_ref.allocator.clone(),
+                    }
+                })?;
+                if index >= allocator.capacity {
+                    return Err(HugrError::QubitIndexOutOfBounds {
+                        index,
+                        capacity: allocator.capacity,
+                    });
+                }
+                Ok(QubitRef::new(&slot_ref.allocator, index))
+            }
             _ => Err(HugrError::UnsupportedExpression),
         }
     }
@@ -1499,6 +1575,13 @@ impl HugrCodegen {
         match expr {
             Expr::IntLit(lit) => Ok(lit.value as f64),
             Expr::FloatLit(lit) => Ok(lit.value),
+            Expr::AngleLit(angle) => {
+                let value = self.extract_angle(&angle.value)?;
+                match angle.unit {
+                    crate::ast::AngleUnit::Turns => Ok(value * std::f64::consts::TAU),
+                    crate::ast::AngleUnit::Rad => Ok(value),
+                }
+            }
             // Handle expressions like PI / 4
             Expr::Binary(binary) => {
                 let left = self.extract_angle(&binary.left)?;
@@ -2130,6 +2213,62 @@ mod tests {
         codegen.compile(&program)
     }
 
+    fn collect_operations(source: &str) -> Vec<GateOp> {
+        let program = parse(source).expect("parse failed");
+        let mut codegen = HugrCodegen::new();
+        codegen
+            .collect_program(&program)
+            .expect("collection failed");
+        codegen.operations
+    }
+
+    fn assert_direct_operation(
+        operation: &GateOp,
+        expected_op: TketOp,
+        expected_qubits: &[QubitRef],
+        expected_angle: Option<f64>,
+    ) {
+        let GateOp::Direct { op, qubits, angle } = operation else {
+            panic!("expected direct operation, got {operation:?}");
+        };
+        assert_eq!(*op, expected_op);
+        assert_eq!(qubits, expected_qubits);
+        match (angle, expected_angle) {
+            (Some(actual), Some(expected)) => {
+                assert!((actual - expected).abs() < f64::EPSILON);
+            }
+            (None, None) => {}
+            _ => panic!("expected angle {expected_angle:?}, got {angle:?}"),
+        }
+    }
+
+    fn slot_ref(allocator: &str, index: i128) -> crate::ast::SlotRef {
+        crate::ast::SlotRef {
+            allocator: allocator.to_string(),
+            index: Box::new(Expr::IntLit(crate::ast::IntLit {
+                value: index,
+                suffix: None,
+                location: None,
+            })),
+            location: None,
+        }
+    }
+
+    fn insert_builder_statements(program: &mut Program, statements: Vec<Stmt>) {
+        let main = program
+            .declarations
+            .iter_mut()
+            .find_map(|decl| match decl {
+                TopLevelDecl::Fn(function) if function.name == "main" => Some(function),
+                _ => None,
+            })
+            .expect("main function");
+        let insertion_index = main.body.statements.len() - 1;
+        main.body
+            .statements
+            .splice(insertion_index..insertion_index, statements);
+    }
+
     #[test]
     fn test_empty_program() {
         let hugr = compile_to_hugr("").unwrap();
@@ -2138,14 +2277,36 @@ mod tests {
 
     #[test]
     fn test_single_qubit_gate() {
-        let source = r#"
+        let mut program = parse(
+            r#"
             pub fn main() -> unit {
                 mut q := qalloc(1);
-                h q[0];
+                return unit;
             }
-        "#;
+        "#,
+        )
+        .expect("parse failed");
+        insert_builder_statements(
+            &mut program,
+            vec![Stmt::Gate(crate::ast::GateOp {
+                kind: crate::ast::GateKind::H,
+                targets: vec![slot_ref("q", 0)],
+                params: Vec::new(),
+                attrs: Vec::new(),
+                location: None,
+            })],
+        );
+        let mut codegen = HugrCodegen::new();
+        codegen.collect_program(&program).unwrap();
+        assert_eq!(codegen.operations.len(), 1);
+        assert_direct_operation(
+            &codegen.operations[0],
+            TketOp::H,
+            &[QubitRef::new("q", 0)],
+            None,
+        );
 
-        let hugr = compile_to_hugr(source).unwrap();
+        let hugr = codegen.build_hugr().unwrap();
         // Should have input, h gate, output nodes
         assert!(hugr.num_nodes() >= 3);
     }
@@ -2160,6 +2321,16 @@ mod tests {
             }
         "#;
 
+        let operations = collect_operations(source);
+        assert_eq!(operations.len(), 2);
+        assert_direct_operation(&operations[0], TketOp::H, &[QubitRef::new("q", 0)], None);
+        assert_direct_operation(
+            &operations[1],
+            TketOp::CX,
+            &[QubitRef::new("q", 0), QubitRef::new("q", 1)],
+            None,
+        );
+
         let hugr = compile_to_hugr(source).unwrap();
         // Should have input, h, cx, output nodes
         assert!(hugr.num_nodes() >= 4);
@@ -2170,7 +2341,7 @@ mod tests {
         let source = r#"
             pub fn main() -> unit {
                 mut q := qalloc(1);
-                rz(1.57, q[0]);
+                rz(1.57) q[0];
             }
         "#;
 
@@ -2201,6 +2372,19 @@ mod tests {
                 ccx (q[0], q[1], q[2]);
             }
         "#;
+
+        let operations = collect_operations(source);
+        assert_eq!(operations.len(), 1);
+        assert_direct_operation(
+            &operations[0],
+            TketOp::Toffoli,
+            &[
+                QubitRef::new("q", 0),
+                QubitRef::new("q", 1),
+                QubitRef::new("q", 2),
+            ],
+            None,
+        );
 
         let hugr = compile_to_hugr(source).unwrap();
         assert!(hugr.num_nodes() >= 3);
@@ -2332,16 +2516,24 @@ mod tests {
     }
 
     #[test]
-    fn test_controlled_rotation() {
+    fn test_crz_lowers_to_tket_crz() {
         let source = r#"
             pub fn main() -> unit {
                 mut q := qalloc(2);
-                crz(1.57, q[0], q[1]);
+                crz(1.57) (q[0], q[1]);
             }
         "#;
 
-        let hugr = compile_to_hugr(source).unwrap();
-        assert!(hugr.num_nodes() >= 3);
+        // `crz` is its own GateKind (PR #638); the HUGR backend emits tket's own
+        // CRz spelling rather than a decomposition, since Guppy/tket own that name.
+        let operations = collect_operations(source);
+        assert_eq!(operations.len(), 1);
+        assert_direct_operation(
+            &operations[0],
+            TketOp::CRz,
+            &[QubitRef::new("q", 0), QubitRef::new("q", 1)],
+            Some(1.57),
+        );
     }
 
     #[test]
@@ -2349,10 +2541,20 @@ mod tests {
         let source = r#"
             pub fn main() -> unit {
                 mut q := qalloc(1);
-                x(q[0]);
-                reset(q[0]);
+                x q[0];
+                pz q[0];
             }
         "#;
+
+        let operations = collect_operations(source);
+        assert_eq!(operations.len(), 2);
+        assert_direct_operation(&operations[0], TketOp::X, &[QubitRef::new("q", 0)], None);
+        assert_direct_operation(
+            &operations[1],
+            TketOp::Reset,
+            &[QubitRef::new("q", 0)],
+            None,
+        );
 
         let hugr = compile_to_hugr(source).unwrap();
         assert!(hugr.num_nodes() >= 3);
@@ -2458,13 +2660,317 @@ mod tests {
         let source = r#"
             pub fn main() -> unit {
                 mut q := qalloc(2);
-                rzz(1.57, q[0], q[1]);
+                rzz(0.25 turns) (q[0], q[1]);
             }
         "#;
 
-        // RZZ decomposes to CX Rz CX
+        let operations = collect_operations(source);
+        assert_eq!(operations.len(), 3);
+        assert_direct_operation(
+            &operations[0],
+            TketOp::CX,
+            &[QubitRef::new("q", 0), QubitRef::new("q", 1)],
+            None,
+        );
+        assert_direct_operation(
+            &operations[1],
+            TketOp::Rz,
+            &[QubitRef::new("q", 1)],
+            Some(std::f64::consts::FRAC_PI_2),
+        );
+        assert_direct_operation(
+            &operations[2],
+            TketOp::CX,
+            &[QubitRef::new("q", 0), QubitRef::new("q", 1)],
+            None,
+        );
+
         let hugr = compile_to_hugr(source).unwrap();
         assert!(hugr.num_nodes() >= 4);
+    }
+
+    #[test]
+    fn test_rzz_gate_with_radian_literal() {
+        let operations = collect_operations(
+            r#"
+                pub fn main() -> unit {
+                    mut q := qalloc(2);
+                    rzz(1.25 rad) (q[0], q[1]);
+                }
+            "#,
+        );
+
+        assert_eq!(operations.len(), 3);
+        assert_direct_operation(
+            &operations[0],
+            TketOp::CX,
+            &[QubitRef::new("q", 0), QubitRef::new("q", 1)],
+            None,
+        );
+        assert_direct_operation(
+            &operations[1],
+            TketOp::Rz,
+            &[QubitRef::new("q", 1)],
+            Some(1.25),
+        );
+        assert_direct_operation(
+            &operations[2],
+            TketOp::CX,
+            &[QubitRef::new("q", 0), QubitRef::new("q", 1)],
+            None,
+        );
+    }
+
+    #[test]
+    fn test_prepare_whole_allocator() {
+        let operations = collect_operations(
+            r#"
+                pub fn main() -> unit {
+                    mut q := qalloc(2);
+                    pz q;
+                }
+            "#,
+        );
+
+        assert_eq!(operations.len(), 2);
+        assert_direct_operation(
+            &operations[0],
+            TketOp::Reset,
+            &[QubitRef::new("q", 0)],
+            None,
+        );
+        assert_direct_operation(
+            &operations[1],
+            TketOp::Reset,
+            &[QubitRef::new("q", 1)],
+            None,
+        );
+    }
+
+    #[test]
+    fn test_prepare_explicit_slot() {
+        let operations = collect_operations(
+            r#"
+                pub fn main() -> unit {
+                    mut q := qalloc(2);
+                    pz q[1];
+                }
+            "#,
+        );
+
+        assert_eq!(operations.len(), 1);
+        assert_direct_operation(
+            &operations[0],
+            TketOp::Reset,
+            &[QubitRef::new("q", 1)],
+            None,
+        );
+    }
+
+    #[test]
+    fn test_builder_shaped_gate_and_prepare_statements() {
+        let mut program = parse(
+            r#"
+                pub fn main() -> unit {
+                    mut q := qalloc(2);
+                    return unit;
+                }
+            "#,
+        )
+        .expect("parse failed");
+        insert_builder_statements(
+            &mut program,
+            vec![
+                Stmt::Gate(crate::ast::GateOp {
+                    kind: crate::ast::GateKind::X,
+                    targets: vec![slot_ref("q", 0)],
+                    params: Vec::new(),
+                    attrs: Vec::new(),
+                    location: None,
+                }),
+                Stmt::Prepare(crate::ast::PrepareOp {
+                    allocator: "q".to_string(),
+                    slots: Some(vec![1]),
+                    location: None,
+                }),
+            ],
+        );
+
+        let mut codegen = HugrCodegen::new();
+        codegen
+            .collect_program(&program)
+            .expect("collection failed");
+        assert_eq!(codegen.operations.len(), 2);
+        assert_direct_operation(
+            &codegen.operations[0],
+            TketOp::X,
+            &[QubitRef::new("q", 0)],
+            None,
+        );
+        assert_direct_operation(
+            &codegen.operations[1],
+            TketOp::Reset,
+            &[QubitRef::new("q", 1)],
+            None,
+        );
+    }
+
+    #[test]
+    fn test_builder_shaped_multi_qubit_gate_target_order() {
+        let mut program = parse(
+            r#"
+                pub fn main() -> unit {
+                    mut q := qalloc(3);
+                    return unit;
+                }
+            "#,
+        )
+        .expect("parse failed");
+        insert_builder_statements(
+            &mut program,
+            vec![
+                Stmt::Gate(crate::ast::GateOp {
+                    kind: crate::ast::GateKind::CX,
+                    targets: vec![slot_ref("q", 0), slot_ref("q", 1)],
+                    params: Vec::new(),
+                    attrs: Vec::new(),
+                    location: None,
+                }),
+                Stmt::Gate(crate::ast::GateOp {
+                    kind: crate::ast::GateKind::CCX,
+                    targets: vec![slot_ref("q", 0), slot_ref("q", 1), slot_ref("q", 2)],
+                    params: Vec::new(),
+                    attrs: Vec::new(),
+                    location: None,
+                }),
+            ],
+        );
+
+        let mut codegen = HugrCodegen::new();
+        codegen
+            .collect_program(&program)
+            .expect("collection failed");
+        assert_eq!(codegen.operations.len(), 2);
+        assert_direct_operation(
+            &codegen.operations[0],
+            TketOp::CX,
+            &[QubitRef::new("q", 0), QubitRef::new("q", 1)],
+            None,
+        );
+        assert_direct_operation(
+            &codegen.operations[1],
+            TketOp::Toffoli,
+            &[
+                QubitRef::new("q", 0),
+                QubitRef::new("q", 1),
+                QubitRef::new("q", 2),
+            ],
+            None,
+        );
+    }
+
+    #[test]
+    fn test_builder_prepare_whole_allocator() {
+        let mut program = parse(
+            r#"
+                pub fn main() -> unit {
+                    mut q := qalloc(3);
+                    return unit;
+                }
+            "#,
+        )
+        .expect("parse failed");
+        insert_builder_statements(
+            &mut program,
+            vec![Stmt::Prepare(crate::ast::PrepareOp {
+                allocator: "q".to_string(),
+                slots: None,
+                location: None,
+            })],
+        );
+
+        let mut codegen = HugrCodegen::new();
+        codegen
+            .collect_program(&program)
+            .expect("collection failed");
+        assert_eq!(codegen.operations.len(), 3);
+        for (index, operation) in codegen.operations.iter().enumerate() {
+            assert_direct_operation(operation, TketOp::Reset, &[QubitRef::new("q", index)], None);
+        }
+    }
+
+    #[test]
+    fn test_builder_prepare_rejects_out_of_bounds_slot() {
+        let mut program = parse(
+            r#"
+                pub fn main() -> unit {
+                    mut q := qalloc(2);
+                    return unit;
+                }
+            "#,
+        )
+        .expect("parse failed");
+        insert_builder_statements(
+            &mut program,
+            vec![Stmt::Prepare(crate::ast::PrepareOp {
+                allocator: "q".to_string(),
+                slots: Some(vec![2]),
+                location: None,
+            })],
+        );
+
+        let mut codegen = HugrCodegen::new();
+        assert!(matches!(
+            codegen.collect_program(&program),
+            Err(HugrError::QubitIndexOutOfBounds {
+                index: 2,
+                capacity: 2
+            })
+        ));
+        assert!(codegen.operations.is_empty());
+    }
+
+    #[test]
+    fn test_all_gate_kinds_have_hugr_mappings() {
+        for kind in crate::ast::GateKind::ALL {
+            assert!(
+                gate_name_to_mapping(kind.keyword()).is_some(),
+                "missing HUGR mapping for {}",
+                kind.keyword()
+            );
+        }
+    }
+
+    #[test]
+    fn test_ordinary_function_call_is_an_error() {
+        let program = parse(
+            r#"
+                fn helper() -> unit {
+                    return unit;
+                }
+
+                pub fn main() -> unit {
+                    helper();
+                }
+            "#,
+        )
+        .expect("parse failed");
+        let mut codegen = HugrCodegen::new();
+
+        assert!(matches!(
+            codegen.collect_program(&program),
+            Err(HugrError::UnsupportedCall { name }) if name == "helper"
+        ));
+    }
+
+    #[test]
+    fn test_missing_named_gate_mapping_is_an_error() {
+        let mut codegen = HugrCodegen::new();
+
+        assert!(matches!(
+            codegen.collect_named_gate("unmapped_gate", &[], Vec::new()),
+            Err(HugrError::UnknownGate { name }) if name == "unmapped_gate"
+        ));
     }
 
     #[test]

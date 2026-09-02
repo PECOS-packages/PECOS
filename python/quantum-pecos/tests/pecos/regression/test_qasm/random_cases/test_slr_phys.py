@@ -81,7 +81,7 @@ def test_bell() -> None:
 
     qasm = (
         "OPENQASM 2.0;\n"
-        'include "hqslib1.inc";\n'
+        'include "qelib1.inc";\n'
         "qreg q[2];\n"
         "creg m[2];\n"
         "h q[0];\n"
@@ -150,7 +150,7 @@ def test_if_bell() -> None:
 
     qasm = (
         "OPENQASM 2.0;\n"
-        'include "hqslib1.inc";\n'
+        'include "qelib1.inc";\n'
         "qreg q[2];\n"
         "creg m[2];\n"
         "creg c[4];\n"
@@ -183,7 +183,7 @@ def test_strange_program() -> None:
 
     qasm = (
         "OPENQASM 2.0;\n"
-        'include "hqslib1.inc";\n'
+        'include "qelib1.inc";\n'
         "qreg q[2];\n"
         "creg c[4];\n"
         "creg b[4];\n"

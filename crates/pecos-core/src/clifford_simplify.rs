@@ -654,17 +654,6 @@ mod tests {
     }
 
     #[test]
-    fn crz_not_in_simplify_rotation() {
-        // CRZ cannot be simplified to a single gate (CRZ(pi) != CZ).
-        // It is handled via decomposition in the CliffordRotation trait instead.
-        assert_eq!(try_simplify_rotation(GateType::CRZ, Angle64::ZERO), None);
-        assert_eq!(
-            try_simplify_rotation(GateType::CRZ, Angle64::HALF_TURN),
-            None
-        );
-    }
-
-    #[test]
     fn non_rotation_gate_returns_none() {
         assert_eq!(try_simplify_rotation(GateType::H, Angle64::ZERO), None);
         assert_eq!(

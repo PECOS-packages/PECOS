@@ -76,15 +76,11 @@ fn test_controlled_rotation_gates() {
                 "Expected 6 CX gates from 3 controlled rotations"
             );
 
-            // crz contributes 2 RZ gates, crx uses ry which expands to rx (h-rz-h),
-            // and cry uses ry gates
-            assert!(
-                rz_count > 2,
-                "Expected multiple RZ gates from controlled rotations"
-            );
+            // crz and crx each contribute two RZ gates.
+            assert_eq!(rz_count, 4, "Expected 4 RZ gates from crz and crx");
 
-            // The rx gates expand to h-rz-h patterns
-            assert!(h_count > 0, "Expected H gates from the expansions");
+            // crx conjugates crz by H on the target.
+            assert_eq!(h_count, 2, "Expected 2 H gates from crx");
         }
         Err(e) => {
             panic!("Failed to parse controlled rotation gates: {e}");
@@ -225,8 +221,7 @@ fn test_crx_expansion() {
                 program.operations.len()
             );
 
-            // crx expands to a controlled version of rx
-            // It should include CX gates and rotations
+            // crx is H on the target, crz, then H on the target.
             let cx_count = program
                 .operations
                 .iter()
@@ -243,16 +238,15 @@ fn test_crx_expansion() {
 
             println!("CRX gate sequence: {gate_types:?}");
 
-            // crx uses ry gates which expand to rx (h-rz-h) patterns
             assert!(
                 gate_types
                     .iter()
                     .any(|name| name.to_uppercase() == "H" || name.to_uppercase() == "HADAMARD"),
-                "CRX should contain H gates from RY expansion"
+                "CRX should contain H gates from H-RZ-H conjugation"
             );
             assert!(
                 gate_types.iter().any(|name| name.to_uppercase() == "RZ"),
-                "CRX should contain RZ gates from RY expansion"
+                "CRX should contain RZ gates from crz"
             );
             assert!(
                 gate_types
@@ -286,13 +280,11 @@ fn test_cry_expansion() {
                 program.operations.len()
             );
 
-            // cry uses ry gates which expand to rx (h-rz-h) patterns
-            // Each ry expands to: rx(-pi/2); rz(theta); rx(pi/2)
-            // And each rx expands to: h; rz(angle); h
-            // So we expect more than 4 operations due to expansions
-            assert!(
-                program.operations.len() > 4,
-                "CRY should expand to more than 4 operations due to ry expansion"
+            // cry contains two native RXY1Q rotations and two CX gates.
+            assert_eq!(
+                program.operations.len(),
+                4,
+                "CRY should expand to 4 operations"
             );
 
             // Count gate types
@@ -301,25 +293,18 @@ fn test_cry_expansion() {
                 .iter()
                 .filter(|op| is_gate_with_name(op, "CX"))
                 .count();
-            let h_count = program
+            let rxy_count = program
                 .operations
                 .iter()
-                .filter(|op| is_gate_with_name(op, "H"))
-                .count();
-            let rz_count = program
-                .operations
-                .iter()
-                .filter(|op| is_gate_with_name(op, "RZ"))
+                .filter(|op| is_gate_with_name(op, "RXY1Q"))
                 .count();
 
-            println!("CRY gate counts - CX: {cx_count}, H: {h_count}, RZ: {rz_count}");
+            println!("CRY gate counts - CX: {cx_count}, RXY1Q: {rxy_count}");
 
             // Should have 2 CX gates from the original cry structure
             assert_eq!(cx_count, 2, "CRY should have 2 CX gates");
 
-            // Should have multiple H and RZ gates from ry expansion
-            assert!(h_count > 0, "CRY should have H gates from ry expansion");
-            assert!(rz_count > 0, "CRY should have RZ gates from ry expansion");
+            assert_eq!(rxy_count, 2, "CRY should have 2 RXY1Q gates from ry");
         }
         Err(e) => {
             panic!("Failed to parse cry gate: {e}");

@@ -45,7 +45,7 @@
 //! println!("Total faults: {}", results.len());
 //! ```
 
-use super::propagator::{Direction, apply_gate};
+use super::propagator::{Direction, apply_gate, is_supported_prep_gate};
 use super::{
     FaultCheckConfig, FaultCheckResult, FaultConfiguration, PauliFault, PauliFaultIterator,
     SpacetimeLocation,
@@ -307,13 +307,15 @@ pub(crate) fn apply_gate_flip_ledger(prop: &mut PauliProp, gate: &pecos_core::Ga
         // The shared dispatcher keeps preps transparent and expects walkers
         // to clear at their own call sites; without this arm a stale ledger
         // entry would survive a re-preparation and read as a phantom flip.
-        GateType::PX | GateType::PZ | GateType::QAlloc | GateType::MPZ => {
+        gate_type if is_supported_prep_gate(gate_type) || gate_type == GateType::MPZ => {
             for q in &gate.qubits {
                 prop.clear_qubit(q.index());
             }
         }
         _ => {
-            apply_gate(prop, gate, Direction::Forward);
+            // The propagation checker intentionally retains permissive
+            // handling; DEM construction validates this outcome separately.
+            let _outcome = apply_gate(prop, gate, Direction::Forward);
         }
     }
 }

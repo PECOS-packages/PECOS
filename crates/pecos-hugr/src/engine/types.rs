@@ -168,6 +168,10 @@ pub struct QuantumOp {
     pub node: Node,
     /// The PECOS gate type.
     pub gate_type: GateType,
+    /// The source HUGR operation spelling used for diagnostics.
+    pub source_name: String,
+    /// Whether this carries the external `CRz` spelling for boundary lowering.
+    pub is_crz: bool,
     /// Number of qubit input ports.
     pub num_qubit_inputs: usize,
     /// Number of qubit output ports.

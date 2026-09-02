@@ -95,6 +95,21 @@ PECOS supports two categories of quantum gates:
 | G | Clifford | Two-qubit Clifford |
 | RXX, RYY, RZZ | Non-Clifford | Two-qubit rotations |
 
+`CRX`, `CRY`, `CRZ`, `CPhase`, and `CU1` may be accepted by source-format and
+simulator APIs, but they are boundary spellings rather than stored PECOS gates.
+The HUGR, QIS, PHIR, SLR native-codegen, circuit-builder, and direct-simulator
+ingresses lower them to native Clifford, `RZ`, `RZZ`, and `U` operations.
+Consequently a lowered `CRZ` is one two-qubit `RZZ` noise location followed by
+one single-qubit `RZ` location in consecutive ticks. Gate counts and traces
+describe those executed native operations.
+
+OpenQASM is the exception: lowercase controlled-rotation names are not native
+PECOS gates and expand through `qelib1.inc` macros. The `crz` and `cphase`
+macros, the `cu1` controlled-phase alias, and the `ry`, `crx`, and `cry`
+expansions are asserted against their textbook matrices by the include gate
+conformance tests. SLR QASM output declares `qelib1.inc` for these exact
+boundary expansions.
+
 ### Measurements and Preparations
 
 | Operation | Description |

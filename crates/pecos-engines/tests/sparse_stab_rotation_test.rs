@@ -168,6 +168,59 @@ fn rzz_half_turn_decomposes_to_z_tensor_z() {
 }
 
 #[test]
+fn lowered_crz_pi_runs_through_byte_message_dispatch() {
+    let lowered = pecos_core::controlled_rotations::lower_crz(
+        std::f64::consts::PI,
+        0usize.into(),
+        1usize.into(),
+    );
+
+    // With the control in |1>, the correct lowering applies the full RZ(pi)
+    // to the target. This probe distinguishes the RZZ sign deterministically.
+    let sign_outcomes = run_sparse_stab(2, |builder| {
+        builder.x(&[0]);
+        builder.h(&[1]);
+        builder.add_gate_commands(&lowered);
+        builder.h(&[1]);
+        builder.mz(&[1]);
+    });
+    assert_eq!(sign_outcomes, vec![1]);
+
+    // Applying the pair twice makes a missing or control-side RZ correction
+    // differ deterministically: the target ends in |1> instead of |0>.
+    let target_outcomes = run_sparse_stab(2, |builder| {
+        builder.x(&[0]);
+        builder.h(&[1]);
+        builder.add_gate_commands(&lowered);
+        builder.add_gate_commands(&lowered);
+        builder.h(&[1]);
+        builder.mz(&[1]);
+    });
+    assert_eq!(target_outcomes, vec![0]);
+}
+
+#[test]
+fn lowered_crz_non_clifford_fails_through_byte_message_dispatch() {
+    let lowered = pecos_core::controlled_rotations::lower_crz(
+        std::f64::consts::PI / 3.0,
+        0usize.into(),
+        1usize.into(),
+    );
+    let message = expect_sparse_stab_error(2, |builder| {
+        builder.add_gate_commands(&lowered);
+        builder.mz(&[0, 1]);
+    });
+    assert!(
+        message.contains("RZZ"),
+        "error should name the gate: {message}"
+    );
+    assert!(
+        message.contains("not a Clifford"),
+        "error should explain it is not Clifford: {message}"
+    );
+}
+
+#[test]
 fn rzz_zero_is_identity() {
     let outcomes = run_sparse_stab(2, |b| {
         b.rzz(Angle64::ZERO, &[(0, 1)]);
@@ -429,95 +482,6 @@ fn u_mixed_non_clifford_lambda_fails() {
             &[0],
         );
         b.mz(&[0]);
-    });
-    assert!(msg.contains("not a Clifford"), "error: {msg}");
-}
-
-// --- CRZ tests ---
-
-#[test]
-fn crz_zero_is_identity() {
-    // CRZ(0) = I: no effect
-    let outcomes = run_sparse_stab(2, |b| {
-        let gate = Gate::crz(Angle64::ZERO, &[(0usize, 1usize)]);
-        b.add_gate_command(&gate);
-        b.mz(&[0, 1]);
-    });
-    assert_eq!(outcomes, vec![0, 0]);
-}
-
-#[test]
-fn crz_pi_does_nothing_when_control_is_zero() {
-    // CRZ(theta)|0,psi> = |0,psi> for any theta (controlled gate, control off).
-    // Prepare |0,+>. CRZ(pi)|0,+> = |0,+>. H on target -> |0,0>.
-    let outcomes = run_sparse_stab(2, |b| {
-        b.h(&[1]);
-        let gate = Gate::crz(Angle64::HALF_TURN, &[(0usize, 1usize)]);
-        b.add_gate_command(&gate);
-        b.h(&[1]);
-        b.mz(&[0, 1]);
-    });
-    assert_eq!(outcomes, vec![0, 0]);
-}
-
-#[test]
-fn crz_pi_applies_rz_pi_when_control_is_one() {
-    // CRZ(pi)|1,psi> = |1, RZ(pi)|psi>>. RZ(pi) = -iZ.
-    // |1,0> -> CRZ(pi) -> |1, -i*Z|0>> = |1, -i|0>> = -i|1,0>.
-    // Measurement: q0=1, q1=0 (global phase doesn't matter).
-    let outcomes = run_sparse_stab(2, |b| {
-        b.x(&[0]); // control = |1>
-        let gate = Gate::crz(Angle64::HALF_TURN, &[(0usize, 1usize)]);
-        b.add_gate_command(&gate);
-        b.mz(&[0, 1]);
-    });
-    assert_eq!(outcomes, vec![1, 0]);
-}
-
-#[test]
-fn crz_pi_twice_gives_cz() {
-    // CRZ(pi)^2 applies RZ(pi)^2 = RZ(2pi) = I on target when control=|1>,
-    // but the decomposition runs twice so we get 2 * (SZ, CX, SZdg, CX).
-    // Actually CRZ(pi) applied twice = CRZ(2pi) effect... but via decomposition
-    // each application is independent.
-    //
-    // Easier: CRZ(pi) * CRZ(pi) on |+,1>:
-    // CRZ(pi)|+,1> = (|0,1> + |1,RZ(pi)|1>>)/sqrt(2) = (|0,1> + i|1,1>)/sqrt(2)
-    // CRZ(pi) again: (|0,1> + i*i|1,1>)/sqrt(2) = (|0,1> - |1,1>)/sqrt(2) = |-,1>
-    // H on q0: |1,1>. Measure: q0=1, q1=1.
-    let outcomes = run_sparse_stab(2, |b| {
-        b.x(&[1]);
-        b.h(&[0]);
-        let gate = Gate::crz(Angle64::HALF_TURN, &[(0usize, 1usize)]);
-        b.add_gate_command(&gate);
-        b.add_gate_command(&gate);
-        b.h(&[0]);
-        b.mz(&[0, 1]);
-    });
-    assert_eq!(outcomes, vec![1, 1]);
-}
-
-#[test]
-fn crz_non_clifford_fails_with_useful_message() {
-    let msg = expect_sparse_stab_error(2, |b| {
-        let gate = Gate::crz(Angle64::from_radians(0.5), &[(0usize, 1usize)]);
-        b.add_gate_command(&gate);
-        b.mz(&[0, 1]);
-    });
-    assert!(msg.contains("CRZ"), "error should name the gate: {msg}");
-    assert!(
-        msg.contains("not a Clifford"),
-        "error should explain it's not Clifford: {msg}"
-    );
-}
-
-#[test]
-fn crz_quarter_turn_fails() {
-    // CRZ(pi/2) requires RZ(pi/4), projectively T and NOT Clifford.
-    let msg = expect_sparse_stab_error(2, |b| {
-        let gate = Gate::crz(Angle64::QUARTER_TURN, &[(0usize, 1usize)]);
-        b.add_gate_command(&gate);
-        b.mz(&[0, 1]);
     });
     assert!(msg.contains("not a Clifford"), "error: {msg}");
 }

@@ -106,13 +106,15 @@ pub use dag::{
     DemOutputKind, DemOutputMetadata, FaultCombo, FaultComponent, FaultEffect, FaultLocations,
     GateFaultLocation, InfluencesSoA, InfluencesSoAStats, SoARecorderBuilder,
 };
+pub(crate) use pauli::apply_gate_unchecked;
 pub(crate) use pauli::cross_measurement;
 pub use pauli::{
-    Direction, apply_gate, init_pauli_prop_with_fault, propagate_backward_from_tick,
-    propagate_fault_backward, propagate_observable_backward, propagate_through_circuit,
-    propagate_tick_range,
+    Direction, PauliPropagationOutcome, apply_gate, init_pauli_prop_with_fault,
+    propagate_backward_from_tick, propagate_fault_backward, propagate_observable_backward,
+    propagate_through_circuit, propagate_tick_range,
 };
 pub use tick::TickFaultAnalyzer;
+pub(crate) use tick::first_unsupported_tick_gate;
 pub use types::{
     DemOutputIdx, DetectorId, DetectorIdx, FaultInfluence, FaultInfluenceMap, LocationId,
     MeasurementId, NodeId, Pauli, TrackedPauliId, TrackedPauliIdx,
@@ -124,6 +126,71 @@ use pecos_core::gate_type::GateType;
 use pecos_quantum::{DagCircuit, DagTraversalIndex};
 use pecos_simulators::PauliProp;
 use std::collections::{BTreeSet, BinaryHeap};
+
+/// Whether a gate prepares or allocates a qubit in a known state.
+///
+/// These gates absorb Pauli components at reset boundaries and are therefore
+/// deliberately transparent to the gate-conjugation step itself.
+#[inline]
+#[must_use]
+pub fn is_supported_prep_gate(gate_type: GateType) -> bool {
+    matches!(gate_type, GateType::PX | GateType::PZ | GateType::QAlloc)
+}
+
+/// Whether a gate is a no-op or metadata operation for Pauli propagation.
+#[inline]
+#[must_use]
+pub fn is_supported_noop_or_metadata_gate(gate_type: GateType) -> bool {
+    matches!(
+        gate_type,
+        GateType::QFree
+            | GateType::I
+            | GateType::Idle
+            | GateType::MeasCrosstalkGlobalPayload
+            | GateType::MeasCrosstalkLocalPayload
+            | GateType::TrackedPauliMeta
+    )
+}
+
+/// Circuit position of a gate that cannot be faithfully Pauli-propagated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnsupportedGateLocation {
+    /// Location in a tick circuit.
+    Tick {
+        /// Zero-based tick index.
+        tick: usize,
+        /// Zero-based gate-batch index within the tick.
+        gate_in_tick: usize,
+    },
+    /// Node in a DAG circuit.
+    DagNode {
+        /// DAG node index.
+        node: usize,
+    },
+}
+
+impl std::fmt::Display for UnsupportedGateLocation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Tick { tick, gate_in_tick } => {
+                write!(f, "tick {tick} gate {gate_in_tick}")
+            }
+            Self::DagNode { node } => write!(f, "DAG node {node}"),
+        }
+    }
+}
+
+/// Error identifying a gate whose action Pauli propagation cannot represent.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("unsupported gate {gate_type:?} at {location} on qubits {qubits:?}")]
+pub struct UnsupportedGateError {
+    /// Offending gate type.
+    pub gate_type: GateType,
+    /// Circuit position of the gate.
+    pub location: UnsupportedGateLocation,
+    /// Qubits touched by the gate.
+    pub qubits: Vec<usize>,
+}
 
 // ============================================================================
 // DAG-Based Sparse Propagation Infrastructure
@@ -538,7 +605,7 @@ impl<'a> DagPropagator<'a> {
 
                 if touches_active {
                     // Apply the gate
-                    apply_gate(prop, gate, direction);
+                    let _outcome = apply_gate(prop, gate, direction);
 
                     // Update active qubits
                     for q in &gate.qubits {
@@ -567,7 +634,7 @@ impl<'a> DagPropagator<'a> {
 
         for &node in node_iter {
             if let Some(gate) = self.gate(node) {
-                apply_gate(prop, gate, direction);
+                let _outcome = apply_gate(prop, gate, direction);
             }
         }
     }
@@ -601,10 +668,7 @@ impl<'a> DagPropagator<'a> {
 
                 if touches_active {
                     // Handle prep gates specially - they kill the Pauli
-                    if matches!(
-                        gate.gate_type,
-                        GateType::PX | GateType::PZ | GateType::QAlloc
-                    ) {
+                    if is_supported_prep_gate(gate.gate_type) {
                         for q in &gate.qubits {
                             let idx = q.index();
                             if prop.contains_x(idx) {
@@ -617,7 +681,7 @@ impl<'a> DagPropagator<'a> {
                         }
                     } else {
                         // Apply gate backward
-                        apply_gate(prop, gate, Direction::Backward);
+                        let _outcome = apply_gate(prop, gate, Direction::Backward);
 
                         // Update active qubits
                         for q in &gate.qubits {

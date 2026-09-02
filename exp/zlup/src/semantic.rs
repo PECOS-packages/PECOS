@@ -6033,12 +6033,28 @@ fn float_suffix_to_type(suffix: &str) -> Type {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ast::GateKind;
     use crate::parse;
 
     fn analyze(source: &str) -> SemanticResult<()> {
         let program = parse(source).expect("parse failed");
         let mut analyzer = SemanticAnalyzer::new();
         analyzer.analyze(&program)
+    }
+
+    #[test]
+    fn test_gate_info_covers_every_gate_kind() {
+        for kind in GateKind::ALL {
+            let info = get_gate_info(kind.keyword())
+                .unwrap_or_else(|| panic!("missing semantic gate info for {}", kind.keyword()));
+            assert_eq!(info.arity, kind.arity(), "gate: {}", kind.keyword());
+            assert_eq!(
+                info.parameterized,
+                kind.is_parameterized(),
+                "gate: {}",
+                kind.keyword()
+            );
+        }
     }
 
     #[test]

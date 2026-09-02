@@ -39,6 +39,7 @@ Example::
 
 from __future__ import annotations
 
+from itertools import pairwise
 from typing import TYPE_CHECKING, Protocol
 
 from pecos.graph import DAG
@@ -93,6 +94,8 @@ GATE_OPERATIONS = {
     "Rx",
     "Ry",
     "Rz",
+    "RZZ",
+    "U",
     "U1",
     "U2",
     "U3",
@@ -122,6 +125,23 @@ MEASURE_OPERATIONS = {"Measure", "MeasureFree"}
 
 # All quantum operations
 ALL_QUANTUM_OPERATIONS = GATE_OPERATIONS | ALLOC_OPERATIONS | MEASURE_OPERATIONS
+
+CONTROLLED_ROTATION_LOWERINGS = {
+    "CRx": (("H", None), ("RZZ", -0.5), ("Rz", 0.5), ("H", None)),
+    "CRy": (("SX", None), ("RZZ", -0.5), ("Rz", 0.5), ("SXdg", None)),
+    "CRz": (("RZZ", -0.5), ("Rz", 0.5)),
+    "CU1": (("RZZ", -0.5), ("U", 0.5), ("Rz", 0.5)),
+}
+
+# Input/output qubit ports touched by each native node above. Keeping this
+# alongside the lowering prevents analysis edges on one qubit from being
+# routed through a target- or control-only node on the other qubit.
+CONTROLLED_ROTATION_QUBIT_PORTS = {
+    "CRx": ({1}, {0, 1}, {1}, {1}),
+    "CRy": ({1}, {0, 1}, {1}, {1}),
+    "CRz": ({0, 1}, {1}),
+    "CU1": ({0, 1}, {0}, {1}),
+}
 
 
 def _check_for_unsupported_structures(hugr: Hugr, quantum_op_parents: set[int]) -> None:
@@ -252,7 +272,7 @@ def _extract_quantum_operations(hugr: Hugr) -> list[dict]:
 def _trace_qubit_dependencies(
     operations: list[dict],
     hugr: Hugr,
-) -> list[tuple[int, int]]:
+) -> list[tuple[int, int, int, int]]:
     """Trace qubit data flow to establish dependencies between operations.
 
     This follows the qubit wires through the HUGR to find which operations
@@ -263,7 +283,8 @@ def _trace_qubit_dependencies(
         hugr: The HUGR for looking up intermediate nodes.
 
     Returns:
-        List of (source_op_idx, target_op_idx) dependency edges.
+        List of (source_op_idx, target_op_idx, source_port, target_port)
+        dependency edges.
     """
     # Build lookup from HUGR node index to operation list index
     node_to_op_idx = {op["node_idx"]: i for i, op in enumerate(operations)}
@@ -273,21 +294,22 @@ def _trace_qubit_dependencies(
 
     # For each operation, trace its inputs back to find source operations
     for target_op_idx, op in enumerate(operations):
-        for src_node_idx, src_port, _dest_port in op["incoming"]:
+        for src_node_idx, src_port, dest_port in op["incoming"]:
             # Direct connection to another quantum op?
             if src_node_idx in node_to_op_idx:
                 source_op_idx = node_to_op_idx[src_node_idx]
-                edges.append((source_op_idx, target_op_idx))
+                edges.append((source_op_idx, target_op_idx, src_port, dest_port))
             else:
                 # Need to trace back through intermediate nodes (Call, UnpackTuple, etc.)
-                source_op_idx = _trace_back_to_quantum_op(
+                source = _trace_back_to_quantum_op(
                     src_node_idx,
                     src_port,
                     hugr,
                     node_to_op_idx,
                 )
-                if source_op_idx is not None:
-                    edges.append((source_op_idx, target_op_idx))
+                if source is not None:
+                    source_op_idx, source_port = source
+                    edges.append((source_op_idx, target_op_idx, source_port, dest_port))
 
     return edges
 
@@ -297,7 +319,7 @@ def _trace_back_to_quantum_op(
     port: int,
     hugr: Hugr,
     node_to_op_idx: dict[int, int],
-) -> int | None:
+) -> tuple[int, int] | None:
     """Trace backwards from a node/port to find the source quantum operation.
 
     Args:
@@ -307,7 +329,8 @@ def _trace_back_to_quantum_op(
         node_to_op_idx: Mapping from HUGR node index to operation list index.
 
     Returns:
-        The operation list index of the source quantum op, or None if not found.
+        The operation list index and output port of the source quantum op, or
+        None if not found.
     """
     from hugr import Node
 
@@ -323,7 +346,7 @@ def _trace_back_to_quantum_op(
 
         # Check if this is a quantum operation
         if current_idx in node_to_op_idx:
-            return node_to_op_idx[current_idx]
+            return node_to_op_idx[current_idx], current_port
 
         # Otherwise, trace back through this node's inputs
         try:
@@ -397,11 +420,15 @@ def hugr_to_dag(
     # Trace dependencies
     edges = _trace_qubit_dependencies(operations, hugr)
 
-    # Build the DAG
+    # Build the DAG. Controlled rotations are analysis-boundary spellings: the
+    # multiplier is applied to the source HUGR angle before any consumer stores
+    # it in a modulo-2pi angle type.
     dag = DAG()
+    expanded_nodes: dict[int, list[int]] = {}
+    expanded_node_ports: dict[int, list[set[int] | None]] = {}
 
     # Add nodes with attributes
-    for op in operations:
+    for op_idx, op in enumerate(operations):
         op_name = op["op_name"]
 
         # Determine operation type
@@ -412,19 +439,58 @@ def hugr_to_dag(
         else:
             op_type = "measure"
 
-        node_idx = dag.add_node()
-        # DAG nodes are added sequentially starting from 0
-        attrs = dag.node_attrs(node_idx)
-        attrs["op_name"] = op_name
-        attrs["extension"] = op["extension"]
-        attrs["hugr_node_idx"] = op["node_idx"]
-        attrs["op_type"] = op_type
+        lowering = CONTROLLED_ROTATION_LOWERINGS.get(op_name, ((op_name, None),))
+        qubit_ports = CONTROLLED_ROTATION_QUBIT_PORTS.get(op_name, (None,))
+        expanded_nodes[op_idx] = []
+        expanded_node_ports[op_idx] = []
+        for (lowered_name, angle_multiplier), ports in zip(lowering, qubit_ports, strict=True):
+            node_idx = dag.add_node()
+            expanded_nodes[op_idx].append(node_idx)
+            expanded_node_ports[op_idx].append(ports)
+            attrs = dag.node_attrs(node_idx)
+            attrs["op_name"] = lowered_name
+            attrs["extension"] = op["extension"]
+            attrs["hugr_node_idx"] = op["node_idx"]
+            attrs["op_type"] = op_type
+            if op_name in CONTROLLED_ROTATION_LOWERINGS:
+                attrs["source_op_name"] = op_name
+                if angle_multiplier is not None:
+                    attrs["source_angle_multiplier"] = angle_multiplier
+
+        if op_name in CONTROLLED_ROTATION_QUBIT_PORTS:
+            all_ports = set().union(*qubit_ports)
+            for port in all_ports:
+                nodes_on_port = [
+                    node for node, ports in zip(expanded_nodes[op_idx], qubit_ports, strict=True) if port in ports
+                ]
+                for source, target in pairwise(nodes_on_port):
+                    if dag.find_edge(source, target) is None:
+                        dag.add_edge(source, target)
 
     # Add edges
-    for src_idx, tgt_idx in edges:
-        # Avoid duplicate edges and self-loops
-        if src_idx != tgt_idx and dag.find_edge(src_idx, tgt_idx) is None:
-            dag.add_edge(src_idx, tgt_idx)
+    for src_idx, tgt_idx, src_port, tgt_port in edges:
+        source = next(
+            (
+                node
+                for node, ports in reversed(
+                    list(zip(expanded_nodes[src_idx], expanded_node_ports[src_idx], strict=True)),
+                )
+                if ports is None or src_port in ports
+            ),
+            None,
+        )
+        target = next(
+            (
+                node
+                for node, ports in zip(expanded_nodes[tgt_idx], expanded_node_ports[tgt_idx], strict=True)
+                if ports is None or tgt_port in ports
+            ),
+            None,
+        )
+        if source is None or target is None:
+            continue
+        if source != target and dag.find_edge(source, target) is None:
+            dag.add_edge(source, target)
 
     return dag
 

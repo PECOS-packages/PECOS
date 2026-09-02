@@ -441,6 +441,7 @@ fn test_processor_rzz_gate() {
 fn test_processor_cphase_gate() {
     let mut processor = PhirProcessor::new();
     let mut builder = ByteMessageBuilder::new();
+    let _ = builder.for_quantum_operations();
 
     let cp_instr = instr(
         Operation::Quantum(QuantumOp::CPhase(Angle64::from_radians(
@@ -456,6 +457,14 @@ fn test_processor_cphase_gate() {
             .process_instruction(&cp_instr, &mut builder)
             .unwrap()
     );
+    let ops = builder.build().quantum_ops().unwrap();
+    assert_eq!(ops.len(), 3);
+    assert_eq!(ops[0].gate_type, pecos_core::gate_type::GateType::RZZ);
+    assert_eq!(ops[1].gate_type, pecos_core::gate_type::GateType::U);
+    assert_eq!(ops[2].gate_type, pecos_core::gate_type::GateType::RZ);
+    assert_eq!(ops[0].qubits.as_slice(), [0.into(), 1.into()]);
+    assert_eq!(ops[1].qubits.as_slice(), [0.into()]);
+    assert_eq!(ops[2].qubits.as_slice(), [1.into()]);
 }
 
 #[test]

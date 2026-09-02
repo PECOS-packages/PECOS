@@ -66,7 +66,6 @@ pub enum GateType {
     SYY,
     SYYdg,
     SWAP,
-    CRZ,
     RXX,
     RYY,
     RZZ,
@@ -129,7 +128,6 @@ impl GateType {
             | Self::SYY
             | Self::SYYdg
             | Self::SWAP
-            | Self::CRZ
             | Self::RXX
             | Self::RYY
             | Self::RZZ => 2,
@@ -252,7 +250,7 @@ impl GateCommand {
     /// the gate" semantics, since `G * G_dagger = I`.
     ///
     /// Rotation inverses use the standard conventions
-    /// (`RX/RY/RZ(theta)` and `CRZ/RXX/RYY/RZZ(theta)` -> negate `theta`;
+    /// (`RX/RY/RZ(theta)` and `RXX/RYY/RZZ(theta)` -> negate `theta`;
     /// `RXY1Q(theta, phi)` -> `RXY1Q(-theta, phi)`; `U(theta, phi, lambda)` ->
     /// `U(-theta, -lambda, -phi)`).
     #[must_use]
@@ -296,7 +294,6 @@ impl GateCommand {
             GateType::RX
             | GateType::RY
             | GateType::RZ
-            | GateType::CRZ
             | GateType::RXX
             | GateType::RYY
             | GateType::RZZ => neg_first(self.gate_type),

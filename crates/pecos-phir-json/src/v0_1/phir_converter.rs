@@ -8,7 +8,7 @@ For example, when measurements write to [["m", 0]] and [["m", 1]], this
 generates explicit shift and OR operations to combine the bits.
 */
 
-use pecos_core::errors::PecosError;
+use pecos_core::{Angle64, errors::PecosError};
 use pecos_phir::{
     Module,
     builtin_ops::{BuiltinOp, VarDefineOp},
@@ -409,6 +409,32 @@ impl ImprovedConverter {
             "T" => QuantumOp::T,
             "CX" | "CNOT" => QuantumOp::CX,
             "CZ" => QuantumOp::CZ,
+            "CPhase" => {
+                let angles = obj.get("angles").and_then(Value::as_array).ok_or_else(|| {
+                    PecosError::Input("CPhase requires an angles field".to_string())
+                })?;
+                let values = angles.first().and_then(Value::as_array).ok_or_else(|| {
+                    PecosError::Input("CPhase angles must contain a value list".to_string())
+                })?;
+                let value = values.first().and_then(Value::as_f64).ok_or_else(|| {
+                    PecosError::Input("CPhase requires one numeric angle".to_string())
+                })?;
+                let unit = angles
+                    .get(1)
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| PecosError::Input("CPhase angles require a unit".to_string()))?;
+                let radians = match unit {
+                    "rad" => value,
+                    "pi" => value * std::f64::consts::PI,
+                    "deg" => value.to_radians(),
+                    _ => {
+                        return Err(PecosError::Input(format!(
+                            "Unsupported CPhase angle unit: {unit}"
+                        )));
+                    }
+                };
+                QuantumOp::CPhase(Angle64::from_radians(radians))
+            }
             "Measure" => QuantumOp::Measure,
             _ => {
                 return Err(PecosError::Input(format!(

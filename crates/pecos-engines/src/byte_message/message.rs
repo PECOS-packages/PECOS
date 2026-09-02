@@ -723,7 +723,7 @@ impl ByteMessage {
         let header = *bytemuck::from_bytes::<GateHeader>(&payload[0..size_of::<GateHeader>()]);
         let num_qubits = header.num_qubits as usize;
         let has_params = header.has_params != 0;
-        let gate_type = GateType::from(header.gate_type);
+        let gate_type = GateType::try_from(header.gate_type).map_err(PecosError::Input)?;
         if gate_type == GateType::Channel {
             return Err(PecosError::Input(
                 "Channel gates carry typed payloads and cannot be encoded in ByteMessage gate commands"
@@ -824,6 +824,34 @@ mod tests {
 
         assert!(err.to_string().contains("Gate RZ expected 1 parameters"));
         assert!(err.to_string().contains("received 16 parameter bytes"));
+    }
+
+    #[test]
+    fn quantum_ops_rejects_retired_and_unknown_gate_ids_without_panicking() {
+        for gate_type in [70_u8, 254_u8] {
+            let header = GateHeader {
+                gate_type,
+                num_qubits: 2,
+                has_params: 0,
+                reserved: 0,
+            };
+            let mut payload = Vec::new();
+            payload.extend_from_slice(bytemuck::bytes_of(&header));
+            payload.extend_from_slice(&0_u32.to_le_bytes());
+            payload.extend_from_slice(&1_u32.to_le_bytes());
+            let mut builder = ByteMessageBuilder::new();
+            builder.add_message(MessageType::Gate, &payload, MessageFlags::NONE);
+
+            let error = builder
+                .build()
+                .quantum_ops()
+                .expect_err("unknown gate id must return a structured error");
+            assert!(
+                matches!(error, PecosError::Input(_)),
+                "unexpected error: {error}"
+            );
+            assert!(error.to_string().contains(&gate_type.to_string()));
+        }
     }
 
     #[test]

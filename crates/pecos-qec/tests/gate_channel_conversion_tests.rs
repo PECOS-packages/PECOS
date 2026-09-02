@@ -153,7 +153,8 @@ fn single_qubit_gate_mechanisms_compose_to_the_three_pauli_channel() {
     let influence = synthetic_one_qubit_influence(GateType::H, false, &[0], &[0, 1], &[1]);
     let model = MemBuilder::new(&influence)
         .with_noise_config(NoiseConfig::new(p1, 0.0, 0.0, 0.0))
-        .build();
+        .build()
+        .unwrap();
     let distribution = independent_distribution(&model, 2);
     let target = p1 / 3.0;
 
@@ -193,7 +194,8 @@ fn two_qubit_gate_mechanisms_compose_to_the_fifteen_pauli_channel() {
     let influence = synthetic_two_qubit_influence();
     let model = MemBuilder::new(&influence)
         .with_noise_config(NoiseConfig::new(0.0, p2, 0.0, 0.0))
-        .build();
+        .build()
+        .unwrap();
     let distribution = independent_distribution(&model, 4);
     let target = p2 / 15.0;
 
@@ -270,7 +272,8 @@ fn prep_and_measurement_channels_remain_single_exact_mechanisms() {
         let influence = synthetic_one_qubit_influence(gate_type, before, &[0], &[], &[]);
         let model = MemBuilder::new(&influence)
             .with_noise_config(noise.clone())
-            .build();
+            .build()
+            .unwrap();
         assert_eq!(model.mechanisms.len(), 1);
         assert_eq!(
             model

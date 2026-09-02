@@ -1840,7 +1840,6 @@ fn gate_to_matrix(gate_type: GateType, qubits: &[usize], num_qubits: usize) -> D
         | GateType::RXX
         | GateType::RYY
         | GateType::RZZ
-        | GateType::CRZ
         | GateType::U
         | GateType::RXY1Q
         | GateType::RXXRYYRZZ

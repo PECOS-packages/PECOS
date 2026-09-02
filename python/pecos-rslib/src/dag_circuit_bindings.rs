@@ -101,7 +101,6 @@ fn receives_two_qubit_noise(gate_type: GateType) -> bool {
             | GateType::SYY
             | GateType::SYYdg
             | GateType::SWAP
-            | GateType::CRZ
             | GateType::RXX
             | GateType::RYY
             | GateType::RZZ
@@ -548,14 +547,6 @@ impl PyGateType {
     fn ch() -> Self {
         Self {
             inner: GateType::CH,
-        }
-    }
-
-    #[classattr]
-    #[pyo3(name = "CRZ")]
-    fn crz() -> Self {
-        Self {
-            inner: GateType::CRZ,
         }
     }
 
@@ -2964,7 +2955,6 @@ impl PyTickCircuit {
                     | GateType::SYY
                     | GateType::SYYdg
                     | GateType::SWAP
-                    | GateType::CRZ
                     | GateType::RXX
                     | GateType::RYY
                     | GateType::RZZ
@@ -3594,15 +3584,25 @@ impl PyTickHandle {
         Ok(slf)
     }
 
-    /// Apply a CRZ gate (controlled-RZ).
+    /// Lower a CRZ boundary spelling into native gates in consecutive ticks.
     fn crz(
         slf: Py<Self>,
         py: Python<'_>,
-        theta: AngleParam,
+        theta_radians: f64,
         pairs: Vec<(usize, usize)>,
     ) -> PyResult<Py<Self>> {
-        slf.borrow_mut(py)
-            .add_gate_internal(py, Gate::crz(theta.0, &pairs))?;
+        let tick_idx = slf.borrow(py).tick_idx;
+        let circuit_handle = slf.borrow(py).circuit.clone_ref(py);
+        let last_gate_idx = {
+            let mut circuit = circuit_handle.borrow_mut(py);
+            let mut tick = circuit.inner.tick_at(tick_idx);
+            tick.try_crz(theta_radians, &pairs)
+                .map_err(|err| tick_gate_error_to_pyerr(err, None))?;
+            tick.last_gate_index()
+        };
+        if let Some(last_gate_idx) = last_gate_idx {
+            slf.borrow_mut(py).last_gate_idx = Some(last_gate_idx);
+        }
         Ok(slf)
     }
 

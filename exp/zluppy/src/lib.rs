@@ -7,10 +7,11 @@
 //!
 //! # Compile to SLR-AST (returns dict)
 //! ast = zluppy.compile_to_slr("""
-//!     fn main() -> void {
-//!         var q = qalloc(2);
-//!         H(q[0]);
-//!         CX(q[0], q[1]);
+//!     pub fn main() -> unit {
+//!         q := qalloc(2);
+//!         h q[0];
+//!         cx (q[0], q[1]);
+//!         return;
 //!     }
 //! """)
 //!
@@ -30,7 +31,7 @@ use std::path::Path;
 use pyo3::exceptions::{PyIOError, PyValueError};
 use pyo3::prelude::*;
 
-use ::zlup::codegen::{HugrCodegen, SlrCodegen};
+use ::zlup::codegen::{HugrCodegen, PhirJsonCodegen, SlrCodegen};
 use ::zlup::semantic::SemanticAnalyzer;
 
 // =============================================================================
@@ -154,6 +155,26 @@ fn compile_to_slr_json(source: &str, strict: bool, compact: bool) -> PyResult<St
     } else {
         codegen.to_json(&slr_program).map_err(codegen_error_to_py)
     }
+}
+
+/// Compile Zluppy source to PHIR/JSON.
+#[pyfunction]
+#[pyo3(signature = (source, strict = false))]
+fn compile_to_phir_json(source: &str, strict: bool) -> PyResult<String> {
+    let program = ::zlup::parse(source).map_err(parse_error_to_py)?;
+    let mut analyzer = if strict {
+        SemanticAnalyzer::new()
+    } else {
+        SemanticAnalyzer::new_permissive()
+    };
+    analyzer.analyze(&program).map_err(semantic_error_to_py)?;
+    let mut codegen = PhirJsonCodegen::new();
+    let phir = codegen
+        .compile(&program)
+        .map_err(|error| ZluppyError::new_err(format!("PHIR codegen error: {error}")))?;
+    codegen
+        .to_json(&phir)
+        .map_err(|error| ZluppyError::new_err(format!("PHIR serialization error: {error}")))
 }
 
 /// Check Zluppy source for errors without compiling.
@@ -647,7 +668,7 @@ impl ZlupProgram {
     /// Returns:
     ///     self: For method chaining
     fn add_allocator(&mut self, name: &str, capacity: usize) -> Self {
-        // Build: var {name} = qalloc({capacity});
+        // Build: mut {name} := qalloc({capacity});
         let alloc_call = ::zlup::ast::Expr::Call(Box::new(::zlup::ast::CallExpr {
             callee: ::zlup::ast::Expr::Ident(::zlup::ast::Ident {
                 name: "qalloc".to_string(),
@@ -988,7 +1009,14 @@ impl ZlupProgram {
 impl ZlupProgram {
     /// Build the Zlup AST Program.
     fn build_ast(&self) -> ::zlup::ast::Program {
-        // Create main function with all statements
+        let mut statements = self.statements.clone();
+        statements.push(::zlup::ast::Stmt::Return(::zlup::ast::ReturnStmt {
+            value: Some(::zlup::ast::Expr::Unit(::zlup::ast::UnitLit {
+                location: None,
+            })),
+            location: None,
+        }));
+
         let main_fn = ::zlup::ast::FnDecl {
             name: self.name.clone(),
             params: Vec::new(),
@@ -996,7 +1024,7 @@ impl ZlupProgram {
             body: ::zlup::ast::Block {
                 label: None,
                 attrs: Vec::new(),
-                statements: self.statements.clone(),
+                statements,
                 trailing_expr: None,
                 location: None,
             },
@@ -1027,10 +1055,11 @@ impl ZlupProgram {
 /// Example:
 ///     ```python
 ///     result = zluppy.ZluppyEngine().source('''
-///         fn main() -> void {
-///             var q = qalloc(2);
-///             H(q[0]);
-///             CX(q[0], q[1]);
+///         pub fn main() -> unit {
+///             q := qalloc(2);
+///             h q[0];
+///             cx (q[0], q[1]);
+///             return;
 ///         }
 ///     ''').run(shots=100)
 ///     print(result.to_dict())
@@ -1141,6 +1170,7 @@ fn _zluppy(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Add functions
     m.add_function(wrap_pyfunction!(compile_to_slr, m)?)?;
     m.add_function(wrap_pyfunction!(compile_to_slr_json, m)?)?;
+    m.add_function(wrap_pyfunction!(compile_to_phir_json, m)?)?;
     m.add_function(wrap_pyfunction!(check, m)?)?;
     m.add_function(wrap_pyfunction!(parse_debug, m)?)?;
     m.add_function(wrap_pyfunction!(version, m)?)?;

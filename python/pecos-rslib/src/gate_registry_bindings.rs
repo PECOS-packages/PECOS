@@ -51,7 +51,6 @@ fn parse_gate_type(name: &str) -> PyResult<GateType> {
         "SZZ" => Ok(GateType::SZZ),
         "SZZdg" => Ok(GateType::SZZdg),
         "SWAP" => Ok(GateType::SWAP),
-        "CRZ" => Ok(GateType::CRZ),
         "RXX" => Ok(GateType::RXX),
         "RYY" => Ok(GateType::RYY),
         "RZZ" => Ok(GateType::RZZ),

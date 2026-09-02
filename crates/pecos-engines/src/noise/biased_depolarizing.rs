@@ -197,7 +197,6 @@ impl BiasedDepolarizingNoiseModel {
                 | GateType::SZZ
                 | GateType::SZZdg
                 | GateType::SWAP
-                | GateType::CRZ
                 | GateType::RXX
                 | GateType::RYY
                 | GateType::RZZ

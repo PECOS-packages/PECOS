@@ -100,6 +100,7 @@ fn build_surface_code_dem(distance: usize, rounds: usize) -> DetectorErrorModel 
         .with_observables_json("[]")
         .expect("observables json should parse")
         .build()
+        .expect("surface-code benchmark circuit must support Pauli propagation")
 }
 
 fn bench_dem_build<M: Measurement>(c: &mut Criterion<M>) {

@@ -339,7 +339,6 @@ where
             | GateType::SZZ
             | GateType::SZZdg
             | GateType::SWAP
-            | GateType::CRZ
             | GateType::CH
             | GateType::CCX
             | GateType::Channel

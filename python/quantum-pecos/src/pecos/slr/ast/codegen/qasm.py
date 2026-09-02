@@ -72,7 +72,7 @@ if TYPE_CHECKING:
 
 
 # Mapping from AST GateKind to QASM gate names
-GATE_TO_QASM: dict[GateKind, str] = {
+GATE_TO_QASM: dict[GateKind, str | None] = {
     # Single-qubit Paulis
     GateKind.X: "x",
     GateKind.Y: "y",
@@ -101,12 +101,12 @@ GATE_TO_QASM: dict[GateKind, str] = {
     # Two-qubit entangling gates
     GateKind.SXX: "SXX",
     GateKind.SYY: "SYY",
-    GateKind.SZZ: "ZZ",
+    GateKind.SZZ: "SZZ",
     GateKind.SXXdg: "SXXdg",
     GateKind.SYYdg: "SYYdg",
     GateKind.SZZdg: "SZZdg",
     GateKind.RZZ: "rzz",
-    # Controlled rotation gates
+    # qelib1.inc owns these source-precision controlled-rotation spellings.
     GateKind.CRX: "crx",
     GateKind.CRY: "cry",
     GateKind.CRZ: "crz",
@@ -116,6 +116,7 @@ GATE_TO_QASM: dict[GateKind, str] = {
     GateKind.F4: None,
     GateKind.F4dg: None,
 }
+CONTROLLED_ROTATION_GATES = {GateKind.CRX, GateKind.CRY, GateKind.CRZ}
 
 # Mapping from AST BinaryOp to QASM operators
 BINARY_OP_TO_QASM: dict[BinaryOp, str] = {
@@ -204,10 +205,10 @@ class AstToQasm(BaseVisitor[list[str]]):
 
         Args:
             include_header: Whether to include OPENQASM header.
-            includes: List of include files. Defaults to ["hqslib1.inc"].
+            includes: List of include files. Defaults to ["qelib1.inc"].
         """
         self.include_header = include_header
-        self.includes = includes or ["hqslib1.inc"]
+        self.includes = includes or ["qelib1.inc"]
         self.context = QasmContext()
 
     def generate(self, program: Program) -> list[str]:
@@ -334,18 +335,27 @@ class AstToQasm(BaseVisitor[list[str]]):
             )
             raise NotImplementedError(msg)
 
-        # Typed-angle guard: a user/direct-AST parameterized gate's params
-        # must be typed `Angle` literals (matches Guppy + the typed-AST
-        # contract); reject bare floats so backends do not diverge.
+        # Stored rotations carry typed `Angle` literals. Controlled-rotation
+        # boundary spellings carry unreduced real radians literals.
         if node.gate.is_parameterized:
             from pecos.slr.angle import Angle  # noqa: PLC0415  (avoid import cycle)
 
             for p in node.params:
-                if not (isinstance(p, LiteralExpr) and isinstance(p.value, Angle)):
-                    msg = (
-                        f"QASM codegen: parameterized gate {node.gate.name!r} requires typed `Angle` "
-                        f"params (use `rad(...)` / `turns(...)` in SLR); got {p!r}."
+                if node.gate in CONTROLLED_ROTATION_GATES:
+                    valid = (
+                        isinstance(p, LiteralExpr)
+                        and isinstance(p.value, int | float)
+                        and not isinstance(p.value, bool)
                     )
+                else:
+                    valid = isinstance(p, LiteralExpr) and isinstance(p.value, Angle)
+                if not valid:
+                    expected = (
+                        "an unreduced real radians literal"
+                        if node.gate in CONTROLLED_ROTATION_GATES
+                        else "typed `Angle` params (use `rad(...)` / `turns(...)` in SLR)"
+                    )
+                    msg = f"QASM codegen: parameterized gate {node.gate.name!r} requires {expected}; got {p!r}."
                     raise NotImplementedError(msg)
 
         # Handle special face rotation gates
@@ -378,7 +388,10 @@ class AstToQasm(BaseVisitor[list[str]]):
             return lines
 
         # Standard gates
-        gate_name = GATE_TO_QASM.get(node.gate, node.gate.name.lower())
+        gate_name = GATE_TO_QASM[node.gate]
+        if gate_name is None:
+            msg = f"QASM codegen: gate {node.gate.name!r} has no standard or special lowering."
+            raise NotImplementedError(msg)
 
         # Handle parameterized gates
         if node.params and node.gate.is_parameterized:
@@ -827,7 +840,7 @@ class AstToQasm(BaseVisitor[list[str]]):
         from pecos.slr.angle import Angle  # noqa: PLC0415  (avoid import cycle)
 
         if isinstance(node.value, Angle):
-            # OpenQASM rotations are in radians; signed principal value.
+            # OpenQASM stored rotations are emitted in radians.
             return str(node.value.value.to_radians_signed())
         return str(node.value)
 
@@ -854,7 +867,12 @@ class AstToQasm(BaseVisitor[list[str]]):
         return stmt
 
 
-def ast_to_qasm(program: Program, *, include_header: bool = True) -> str:
+def ast_to_qasm(
+    program: Program,
+    *,
+    include_header: bool = True,
+    includes: list[str] | None = None,
+) -> str:
     """Convert an AST Program to QASM code.
 
     Convenience function for simple code generation.
@@ -862,10 +880,11 @@ def ast_to_qasm(program: Program, *, include_header: bool = True) -> str:
     Args:
         program: The AST Program to convert.
         include_header: Whether to include OPENQASM header.
+        includes: List of include files. Defaults to ["qelib1.inc"].
 
     Returns:
         Generated QASM code as a string.
     """
-    generator = AstToQasm(include_header=include_header)
+    generator = AstToQasm(include_header=include_header, includes=includes)
     lines = generator.generate(program)
     return "\n".join(lines)

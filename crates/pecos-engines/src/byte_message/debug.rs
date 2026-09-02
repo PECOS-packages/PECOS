@@ -164,9 +164,9 @@ pub fn dump_batch_raw(data: &[u8]) -> String {
                             &payload[0..size_of::<GateHeader>()],
                         );
 
-                        let gate_type = match std::panic::catch_unwind(|| {
-                            pecos_core::gate_type::GateType::from(gate_header.gate_type)
-                        }) {
+                        let gate_type = match pecos_core::gate_type::GateType::try_from(
+                            gate_header.gate_type,
+                        ) {
                             Ok(gt) => format!("{gt}"),
                             Err(_) => format!("Unknown({})", gate_header.gate_type),
                         };

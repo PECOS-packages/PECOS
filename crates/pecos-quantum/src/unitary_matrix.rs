@@ -1289,6 +1289,14 @@ fn to_matrix_with_size_impl(op: &UnitaryRep, num_qubits: usize) -> DMatrix<Compl
             u3_to_matrix(*theta, *phi, *lambda, qubits, num_qubits)
         }
 
+        UnitaryRep::Gate(
+            pecos_core::Unitary::Phase {
+                gamma,
+                num_qubits: operand_count,
+            },
+            qubits,
+        ) => phase_to_matrix(*gamma, *operand_count, qubits, num_qubits),
+
         UnitaryRep::Gate(pecos_core::Unitary::RXXRYYRZZ { alpha, beta, gamma }, qubits) => {
             rxxryyrzz_to_matrix(*alpha, *beta, *gamma, qubits, num_qubits)
         }
@@ -1654,6 +1662,34 @@ fn u3_to_matrix(
     let u11 = Complex64::new(cos_t * (p + l).cos(), cos_t * (p + l).sin());
     let gate = DMatrix::from_row_slice(2, 2, &[u00, u01, u10, u11]);
     embed_single_qubit_gate(&gate, qubits[0], num_qubits)
+}
+
+/// Constructs the diagonal matrix that phases exactly the all-ones operand subspace.
+fn phase_to_matrix(
+    gamma: Angle64,
+    operand_count: u8,
+    qubits: &[usize],
+    num_qubits: usize,
+) -> DMatrix<Complex64> {
+    // Arity and distinctness are validated by `UnitaryRep::phase_gate`; only the
+    // descriptor/operand-list agreement is re-checked, since `UnitaryRep::Gate` is public.
+    assert_eq!(
+        qubits.len(),
+        usize::from(operand_count),
+        "Phase descriptor declares {operand_count} operands but its gate has {}",
+        qubits.len()
+    );
+
+    let dim = 1usize << num_qubits;
+    let mut matrix = DMatrix::identity(dim, dim);
+    let (sin_gamma, cos_gamma) = gamma.sin_cos();
+    let phase = Complex64::new(cos_gamma, sin_gamma);
+    for basis in 0..dim {
+        if qubits.iter().all(|&qubit| basis & (1usize << qubit) != 0) {
+            matrix[(basis, basis)] = phase;
+        }
+    }
+    matrix
 }
 
 /// Constructs the matrix for RXXRYYRZZ(alpha, beta, gamma).

@@ -54,18 +54,51 @@ pub fn lower_cry(theta_radians: f64, control: QubitId, target: QubitId) -> [Gate
 ///
 /// The identity is
 /// `CPhase(lambda) = (U(0,0,lambda/2) (x) RZ(lambda/2)) . RZZ(-lambda/2)`.
-/// `U(0,0,lambda/2)` carries the `exp(i lambda/4)` factor. The stored lowering
-/// is exact up to a further global phase of ±1 when a halved angle crosses the
-/// 2π reduction.
+/// `U(0,0,lambda/2)` carries the `exp(i lambda/4)` factor. `CPhase` is
+/// 2π-periodic, so `lambda` is first reduced to its signed representative in
+/// `(-π, π]`; every halved angle then lies in `(-π/2, π/2]`, away from the ±π
+/// pair that a stored [`Angle64`] cannot tell apart, and the lowering is exact
+/// for every input.
 #[must_use]
 pub fn lower_cphase(lambda_radians: f64, control: QubitId, target: QubitId) -> [Gate; 3] {
-    let half_lambda = lambda_radians / 2.0;
+    let half_lambda = Angle64::from_radians(lambda_radians).to_radians_signed() / 2.0;
     let half_angle = Angle64::from_radians(half_lambda);
     [
         Gate::rzz(Angle64::from_radians(-half_lambda), &[(control, target)]),
         Gate::u(Angle64::ZERO, Angle64::ZERO, half_angle, &[control]),
         Gate::rz(half_angle, &[target]),
     ]
+}
+
+/// Lower a phase on zero, one, or two all-one operands to hardware gates.
+///
+/// A zero-operand phase is a scalar, so this returns no gates; the caller must
+/// retain that scalar if global phase is observable in its representation. A
+/// one-operand phase becomes exactly `U(0, 0, gamma)`. A two-operand phase uses
+/// [`lower_cphase`] so its phase-carrying `U` leg is preserved.
+///
+/// # Panics
+///
+/// Panics if more than two operands are supplied or if an operand is repeated.
+#[must_use]
+pub fn lower_phase(gamma_radians: f64, qubits: &[QubitId]) -> Vec<Gate> {
+    match qubits {
+        [] => Vec::new(),
+        &[qubit] => vec![Gate::u(
+            Angle64::ZERO,
+            Angle64::ZERO,
+            Angle64::from_radians(gamma_radians),
+            &[qubit],
+        )],
+        &[control, target] => {
+            assert_ne!(
+                control, target,
+                "Phase requires distinct qubits; duplicated qubit: {control:?}"
+            );
+            lower_cphase(gamma_radians, control, target).to_vec()
+        }
+        _ => panic!("Phase supports at most two qubits, got {}", qubits.len()),
+    }
 }
 
 #[cfg(test)]
@@ -276,5 +309,10 @@ mod tests {
                 lambda,
             );
         }
+    }
+
+    #[test]
+    fn zero_qubit_phase_lowering_emits_no_hardware_gates() {
+        assert!(lower_phase(0.37, &[]).is_empty());
     }
 }

@@ -106,7 +106,7 @@ pub use circuit_diagram::{
 //   use pecos_core::op::*;        // MZ, PZ, Depolarizing, ... -> Op (promoted)
 
 pub mod unitary;
-pub use unitary_rep::{Is, Unitary, UnitaryRep};
+pub use unitary_rep::{ControlError, Is, Unitary, UnitaryRep};
 
 pub use pauli::constructors::{I, X, Xs, Y, Ys, Z, Zs};
 

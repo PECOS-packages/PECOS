@@ -177,6 +177,16 @@ pub enum Unitary {
         phi: Angle64,
         lambda: Angle64,
     },
+    /// Phase on the all-ones subspace of zero, one, or two operands.
+    ///
+    /// The operand count is stored here so a [`UnitaryRep::Gate`] can check that
+    /// its qubit list agrees with the descriptor.
+    Phase {
+        /// The phase angle in `exp(i gamma)`.
+        gamma: Angle64,
+        /// The number of operands, which must be at most two.
+        num_qubits: u8,
+    },
     /// General 2-qubit Pauli rotation: exp(-i/2 * (alpha*XX + beta*YY + gamma*ZZ))
     RXXRYYRZZ {
         alpha: Angle64,
@@ -203,6 +213,7 @@ impl Unitary {
             Self::Rotation { rotation_type, .. } => rotation_type.num_qubits(),
             Self::RXY1Q { .. } | Self::U3 { .. } => 1,
             Self::RXXRYYRZZ { .. } | Self::U2q { .. } => 2,
+            Self::Phase { num_qubits, .. } => usize::from(*num_qubits),
             Self::Named(gate_type) => gate_type.quantum_arity(),
         }
     }
@@ -220,6 +231,16 @@ impl Unitary {
                     && is_multiple_of_quarter_turn(*phi)
                     && is_multiple_of_quarter_turn(*lambda)
             }
+            // Phase(gamma) on one qubit is exp(i gamma / 2) RZ(gamma), so it is Clifford
+            // exactly when RZ(gamma) is; on two qubits only 0 (identity) and pi (CZ) are.
+            Self::Phase { gamma, num_qubits } => match num_qubits {
+                0 => true,
+                1 => {
+                    crate::clifford_simplify::try_simplify_rotation(GateType::RZ, *gamma).is_some()
+                }
+                2 => matches!(*gamma, Angle64::ZERO | Angle64::HALF_TURN),
+                _ => false,
+            },
             Self::RXXRYYRZZ { alpha, beta, gamma } => {
                 is_multiple_of_quarter_turn(*alpha)
                     && is_multiple_of_quarter_turn(*beta)
@@ -249,6 +270,7 @@ impl Unitary {
             Self::U3 { theta, phi, lambda } => {
                 *theta == Angle64::ZERO && (*phi + *lambda) == Angle64::ZERO
             }
+            Self::Phase { gamma, .. } => *gamma == Angle64::ZERO,
             Self::RXXRYYRZZ { alpha, beta, gamma } => {
                 *alpha == Angle64::ZERO && *beta == Angle64::ZERO && *gamma == Angle64::ZERO
             }
@@ -271,20 +293,26 @@ impl Unitary {
     /// Checks if this unitary is a Pauli operation (I, X, Y, or Z).
     #[must_use]
     pub fn is_pauli(&self) -> bool {
-        matches!(
-            self,
-            Self::Named(GateType::I | GateType::X | GateType::Y | GateType::Z)
-        )
+        self.try_to_pauli().is_some()
     }
 
     /// Returns the corresponding `Pauli` if this is a Pauli gate.
     #[must_use]
     pub fn try_to_pauli(&self) -> Option<Pauli> {
         match self {
-            Self::Named(GateType::I) => Some(Pauli::I),
+            // Phase(0) and Phase(pi) on one qubit are exactly I and Z.
+            Self::Named(GateType::I)
+            | Self::Phase {
+                gamma: Angle64::ZERO,
+                num_qubits: 1,
+            } => Some(Pauli::I),
             Self::Named(GateType::X) => Some(Pauli::X),
             Self::Named(GateType::Y) => Some(Pauli::Y),
-            Self::Named(GateType::Z) => Some(Pauli::Z),
+            Self::Named(GateType::Z)
+            | Self::Phase {
+                gamma: Angle64::HALF_TURN,
+                num_qubits: 1,
+            } => Some(Pauli::Z),
             _ => None,
         }
     }
@@ -299,6 +327,17 @@ impl Unitary {
             } => rotation_to_gate_type(*rotation_type, *angle),
             Self::RXY1Q { .. } => Some(GateType::RXY1Q),
             Self::U3 { .. } => Some(GateType::U),
+            // Exact matches only: Phase(pi/2) on one qubit is SZ itself, not SZ up to phase.
+            Self::Phase { gamma, num_qubits } => match (*num_qubits, *gamma) {
+                (1, Angle64::ZERO) => Some(GateType::I),
+                (1, Angle64::QUARTER_TURN) => Some(GateType::SZ),
+                (1, Angle64::HALF_TURN) => Some(GateType::Z),
+                (1, Angle64::THREE_QUARTERS_TURN) => Some(GateType::SZdg),
+                (1, angle) if angle == Angle64::HALF_TURN / 4 => Some(GateType::T),
+                (1, angle) if angle == negate_angle(Angle64::HALF_TURN / 4) => Some(GateType::Tdg),
+                (2, Angle64::HALF_TURN) => Some(GateType::CZ),
+                _ => None,
+            },
             Self::RXXRYYRZZ { .. } => Some(GateType::RXXRYYRZZ),
             Self::U2q { .. } => Some(GateType::U2q),
             Self::Named(gate_type) => Some(*gate_type),
@@ -656,6 +695,51 @@ impl std::fmt::Display for ParseUnitaryRepError {
 
 impl std::error::Error for ParseUnitaryRepError {}
 
+/// Error returned when a unitary representation cannot acquire a structural control.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ControlError {
+    /// The representation is not a [`Unitary::Phase`] gate.
+    NotPhase,
+    /// The proposed control is already one of the phase operands.
+    ControlAlreadyPresent {
+        /// The repeated control qubit.
+        control: usize,
+    },
+    /// Adding a control would exceed the supported two-operand phase gate.
+    TooManyQubits {
+        /// The operand count that the controlled gate would require.
+        num_qubits: usize,
+    },
+    /// A directly constructed phase descriptor disagrees with its operand list.
+    InvalidPhaseArity {
+        /// The operand count stored in [`Unitary::Phase`].
+        declared: u8,
+        /// The number of qubits stored in [`UnitaryRep::Gate`].
+        actual: usize,
+    },
+}
+
+impl std::fmt::Display for ControlError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotPhase => write!(f, "only Phase gates support structural control"),
+            Self::ControlAlreadyPresent { control } => {
+                write!(f, "Phase control qubit {control} is already an operand")
+            }
+            Self::TooManyQubits { num_qubits } => write!(
+                f,
+                "controlled Phase would require {num_qubits} operands; at most two are supported"
+            ),
+            Self::InvalidPhaseArity { declared, actual } => write!(
+                f,
+                "Phase descriptor declares {declared} operands but its gate has {actual}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ControlError {}
+
 /// Parses an angle expression like `pi`, `pi/4`, `2*pi/3`, `-pi/2`.
 ///
 /// Returns the angle as an `Angle64`.
@@ -1010,6 +1094,29 @@ impl UnitaryRep {
         )
     }
 
+    /// Creates a phase gate on the subspace where every operand is `|1>`.
+    ///
+    /// With no operands this represents the scalar `exp(i gamma)`. With one
+    /// operand it is `diag(1, exp(i gamma))`; with two it phases only `|11>`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if more than two operands are supplied or if an operand is repeated.
+    #[must_use]
+    pub fn phase_gate(gamma: Angle64, qubits: impl Into<SmallVec<[usize; 3]>>) -> Self {
+        let qubits = qubits.into();
+        assert!(
+            qubits.len() <= 2,
+            "Phase supports at most two qubits, got {}",
+            qubits.len()
+        );
+        if qubits.len() > 1 {
+            assert_distinct_qubits("Phase", qubits.iter().copied());
+        }
+        let num_qubits = u8::try_from(qubits.len()).expect("Phase arity is at most two");
+        Self::Gate(Unitary::Phase { gamma, num_qubits }, qubits)
+    }
+
     /// Creates a fixed gate expression.
     ///
     /// # Panics
@@ -1030,6 +1137,41 @@ impl UnitaryRep {
             assert_distinct_qubits(&format!("{gate_type:?}"), qubits.iter().copied());
         }
         Self::Gate(Unitary::Named(gate_type), qubits)
+    }
+
+    /// Adds a structural control to a [`Unitary::Phase`] gate.
+    ///
+    /// The control becomes another operand of the same phase rule. Other
+    /// representations are rejected because this method does not infer a
+    /// controlled form for arbitrary unitaries.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ControlError`] if this is not a phase gate, if the control is
+    /// already an operand, if the result would have more than two operands, or
+    /// if a directly constructed phase has inconsistent arity metadata.
+    pub fn control(self, control: usize) -> Result<Self, ControlError> {
+        let Self::Gate(Unitary::Phase { gamma, num_qubits }, mut qubits) = self else {
+            return Err(ControlError::NotPhase);
+        };
+
+        if usize::from(num_qubits) != qubits.len() {
+            return Err(ControlError::InvalidPhaseArity {
+                declared: num_qubits,
+                actual: qubits.len(),
+            });
+        }
+        if qubits.contains(&control) {
+            return Err(ControlError::ControlAlreadyPresent { control });
+        }
+        if qubits.len() >= 2 {
+            return Err(ControlError::TooManyQubits {
+                num_qubits: qubits.len() + 1,
+            });
+        }
+
+        qubits.push(control);
+        Ok(Self::phase_gate(gamma, qubits))
     }
 
     /// Returns the adjoint (Hermitian conjugate) of this expression.
@@ -1071,6 +1213,13 @@ impl UnitaryRep {
                     theta: negate_angle(*theta),
                     phi: negate_angle(*lambda),
                     lambda: negate_angle(*phi),
+                },
+                qubits.clone(),
+            ),
+            Self::Gate(Unitary::Phase { gamma, num_qubits }, qubits) => Self::Gate(
+                Unitary::Phase {
+                    gamma: negate_angle(*gamma),
+                    num_qubits: *num_qubits,
                 },
                 qubits.clone(),
             ),
@@ -1496,6 +1645,16 @@ impl UnitaryRep {
                 Some(ps)
             }
 
+            Self::Gate(Unitary::Phase { gamma, num_qubits }, qubits) => match (num_qubits, gamma) {
+                (0, angle) => {
+                    let phase = angle_to_quarter_phase(angle)?;
+                    Some(PauliString::with_phase_and_paulis(phase, Vec::new()))
+                }
+                (1 | 2, Angle64::ZERO) => Some(PauliString::identity()),
+                (1, Angle64::HALF_TURN) => Some(PauliString::z(qubits[0])),
+                _ => None,
+            },
+
             // RXY1Q, U3, RXXRYYRZZ, and U2q are not Paulis
             Self::Gate(
                 Unitary::RXY1Q { .. }
@@ -1522,7 +1681,15 @@ impl UnitaryRep {
     #[must_use]
     pub fn is_pauli_equivalent(&self) -> bool {
         match self {
-            Self::Pauli(_) => true,
+            // Phase(pi) on one qubit is exactly Z.
+            Self::Pauli(_)
+            | Self::Gate(
+                Unitary::Phase {
+                    gamma: Angle64::HALF_TURN,
+                    num_qubits: 1,
+                },
+                _,
+            ) => true,
             Self::Gate(
                 Unitary::Rotation {
                     rotation_type,
@@ -1588,6 +1755,13 @@ impl UnitaryRep {
                     _ => None,
                 }
             }
+            Self::Gate(
+                Unitary::Phase {
+                    gamma: Angle64::HALF_TURN,
+                    num_qubits: 1,
+                },
+                qubits,
+            ) => Some(Z(qubits[0])),
             _ => None,
         }
     }
@@ -1723,6 +1897,13 @@ impl UnitaryRep {
         match self {
             Self::Pauli(ps) => GlobalPhase::from(ps.phase()),
             Self::Phase { phase, .. } => GlobalPhase::from(*phase),
+            Self::Gate(
+                Unitary::Phase {
+                    gamma,
+                    num_qubits: 0,
+                },
+                _,
+            ) => GlobalPhase::from(*gamma),
             _ => GlobalPhase::one(),
         }
     }
@@ -1811,6 +1992,9 @@ impl UnitaryRep {
             Self::Gate(Unitary::U3 { theta, phi, lambda }, _) => {
                 (*theta == Angle64::ZERO || *theta == Angle64::HALF_TURN)
                     && *phi == negate_angle(*lambda)
+            }
+            Self::Gate(Unitary::Phase { gamma, .. }, _) => {
+                matches!(*gamma, Angle64::ZERO | Angle64::HALF_TURN)
             }
             Self::Gate(Unitary::RXXRYYRZZ { alpha, beta, gamma }, _) => {
                 (*alpha == Angle64::ZERO || *alpha == Angle64::HALF_TURN)
@@ -1990,6 +2174,12 @@ impl UnitaryRep {
                     smallvec::smallvec![*theta, *phi, *lambda],
                     qubit_ids,
                 )]
+            }
+
+            Self::Gate(Unitary::Phase { gamma, .. }, qubits) => {
+                let qubit_ids: crate::GateQubits =
+                    qubits.iter().map(|&q| crate::QubitId(q)).collect();
+                crate::controlled_rotations::lower_phase(gamma.to_radians_signed(), &qubit_ids)
             }
 
             Self::Gate(Unitary::RXXRYYRZZ { alpha, beta, gamma }, qubits) => {
@@ -2225,6 +2415,14 @@ impl UnitaryRep {
                     * UnitaryRep::Gate(ry, SmallVec::from_slice(&[q]))
                     * UnitaryRep::Gate(rz_lambda, SmallVec::from_slice(&[q]));
                 rep.to_clifford_rep(num_qubits)
+            }
+
+            Self::Gate(Unitary::Phase { gamma, .. }, qubits) => {
+                if qubits.is_empty() || *gamma == Angle64::ZERO {
+                    Some(CliffordRep::identity(num_qubits))
+                } else {
+                    gate_type_to_clifford_rep(self.to_named_gate()?, qubits, num_qubits)
+                }
             }
 
             Self::Gate(Unitary::Named(gate_type), qubits) => {
@@ -3661,6 +3859,18 @@ impl UnitaryRep {
             Self::Gate(Unitary::U3 { .. }, qubits) => {
                 diagram.add_gate(qubits[0], "U", CellColor::None, GateFamily::Default);
             }
+            Self::Gate(Unitary::Phase { .. }, qubits) => match qubits.as_slice() {
+                [] => {}
+                [qubit] => {
+                    diagram.add_gate(*qubit, "Phase", CellColor::None, GateFamily::Default);
+                }
+                [first, second] => {
+                    diagram.add_gate(*first, "Phase", CellColor::None, GateFamily::Default);
+                    diagram.add_gate(*second, "Phase", CellColor::None, GateFamily::Default);
+                    diagram.connect_vertical(*first, *second, CellColor::None);
+                }
+                _ => unreachable!("Phase supports at most two operands"),
+            },
             Self::Gate(Unitary::RXXRYYRZZ { .. }, qubits) => {
                 diagram.add_gate(qubits[0], "RXXRYYRZZ", CellColor::None, GateFamily::Default);
                 diagram.add_gate(qubits[1], "RXXRYYRZZ", CellColor::None, GateFamily::Default);
@@ -3730,6 +3940,72 @@ impl UnitaryRep {
 mod tests {
     use super::*;
     use crate::Pauli;
+
+    #[test]
+    fn phase_gate_exact_names_and_pauli_views() {
+        let eighth = Angle64::HALF_TURN / 4;
+        assert_eq!(
+            UnitaryRep::phase_gate(eighth, smallvec::smallvec![0usize]).to_named_gate(),
+            Some(GateType::T)
+        );
+        assert_eq!(
+            UnitaryRep::phase_gate(negate_angle(eighth), smallvec::smallvec![0usize])
+                .to_named_gate(),
+            Some(GateType::Tdg)
+        );
+
+        let z = UnitaryRep::phase_gate(Angle64::HALF_TURN, smallvec::smallvec![2usize]);
+        assert!(z.is_pauli_equivalent());
+        assert_eq!(z.clone().try_to_pauli(), Some(Z(2)));
+        assert_eq!(
+            Unitary::Phase {
+                gamma: Angle64::HALF_TURN,
+                num_qubits: 1,
+            }
+            .try_to_pauli(),
+            Some(Pauli::Z)
+        );
+        assert!(
+            !UnitaryRep::phase_gate(Angle64::HALF_TURN, smallvec::smallvec![0usize, 1])
+                .is_pauli_equivalent()
+        );
+
+        let scalar = UnitaryRep::phase_gate(Angle64::HALF_TURN, smallvec::smallvec![]);
+        assert_eq!(scalar.phase(), crate::GlobalPhase::minus_one());
+        assert_eq!(z.phase(), crate::GlobalPhase::one());
+    }
+
+    #[test]
+    fn phase_control_reports_each_refusal() {
+        let gamma = Angle64::from_radians(0.37);
+
+        assert_eq!(
+            UnitaryRep::phase_gate(gamma, smallvec::smallvec![1usize]).control(1),
+            Err(ControlError::ControlAlreadyPresent { control: 1 })
+        );
+        assert_eq!(
+            UnitaryRep::phase_gate(gamma, smallvec::smallvec![0usize, 1]).control(2),
+            Err(ControlError::TooManyQubits { num_qubits: 3 })
+        );
+        assert_eq!(
+            UnitaryRep::gate(GateType::H, smallvec::smallvec![0usize]).control(1),
+            Err(ControlError::NotPhase)
+        );
+        assert_eq!(
+            UnitaryRep::Gate(
+                Unitary::Phase {
+                    gamma,
+                    num_qubits: 0,
+                },
+                smallvec::smallvec![0usize],
+            )
+            .control(1),
+            Err(ControlError::InvalidPhaseArity {
+                declared: 0,
+                actual: 1,
+            })
+        );
+    }
 
     #[test]
     fn test_single_qubit_gates() {

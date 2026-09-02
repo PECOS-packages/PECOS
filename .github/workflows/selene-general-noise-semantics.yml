@@ -70,9 +70,19 @@ jobs:
             -e python/selene-plugins/pecos-selene-statevec
 
       - name: Run extended semantic matrix
+        # `set -o pipefail` is required: the default shell is `bash -e`, where the
+        # exit status of a pipeline is `tee`'s, so a failing pytest would be reported
+        # as a passing step and this lane could never go red.
+        shell: bash
         run: |
+          set -euo pipefail
+          # The whole suite, not just `-m slow`: --require-full-noise-coverage fails
+          # the session unless every required channel had a PASSING test, and the fast
+          # cases carry evidence for several channels. The package's own addopts filter
+          # is overridden so nothing is silently deselected.
           pytest python/selene-plugins/pecos-selene-general-noise/tests \
-            -m slow -v --tb=short | tee general-noise-semantic-results.txt
+            --override-ini=addopts= --require-full-noise-coverage \
+            -v --tb=short | tee general-noise-semantic-results.txt
 
       - name: Publish channel coverage summary
         if: always()

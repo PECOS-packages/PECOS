@@ -5,36 +5,12 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pytest
+from conftest import REQUIRED_CHANNELS
 
 if TYPE_CHECKING:
     from conftest import ChannelCoverage
 
-pytestmark = pytest.mark.slow
 
-REQUIRED_CHANNELS = frozenset(
-    {
-        "combined-channels",
-        "gate-leakage",
-        "idle-coherent",
-        "idle-linear",
-        "idle-sine-squared",
-        "layered-multiqubit",
-        "measurement-crosstalk",
-        "measurement-crosstalk-multiqubit",
-        "measurement-crosstalk-repeated",
-        "preparation",
-        "preparation-crosstalk",
-        "preparation-leakage",
-        "readout",
-        "single-qubit-emission",
-        "single-qubit-pauli",
-        "single-qubit-seepage",
-        "two-qubit-angle-scaling",
-        "two-qubit-emission",
-        "two-qubit-pauli",
-        "two-qubit-seepage",
-    },
-)
 MINIMUM_SENSITIVE_CASES = 3
 INDEPENDENT_ORACLES = frozenset({"analytic", "basis-state", "qutrit"})
 
@@ -42,7 +18,13 @@ INDEPENDENT_ORACLES = frozenset({"analytic", "basis-state", "qutrit"})
 def test_every_noise_channel_has_redundant_independent_evidence(
     noise_channel_coverage: dict[str, ChannelCoverage],
 ) -> None:
-    """Fail when a channel drops below the original harness's three-case bar."""
+    """Fail when a channel drops below the original harness's three-case bar.
+
+    This reads the pre-deselection collection matrix, so it proves that the evidence
+    is *declared*, not that it ran. It is a documentation-drift guard and is cheap
+    enough for the fast lane. `test_every_required_channel_actually_executed` below
+    is the one that proves the evidence was exercised.
+    """
     missing = REQUIRED_CHANNELS - noise_channel_coverage.keys()
     assert not missing, f"noise channels have no registered semantic evidence: {sorted(missing)}"
 

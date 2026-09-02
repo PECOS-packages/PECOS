@@ -75,10 +75,27 @@ are supplied directly by the test rather than copied from any device layout. A
 second matrix tests global crosstalk after one and five mid-circuit measurements
 on both qubit counts, using three deterministic component-seed pairs per circuit.
 
-`test_coverage_contract.py` makes semantic breadth an executable contract. Each
-current channel must retain at least three sensitive circuits backed by an
-analytic, basis-state, or qutrit oracle. Collection prints a channel-by-channel
-count and oracle summary. Seed repetitions do not inflate those circuit counts.
+Semantic breadth is enforced in two separate places, because "declared" and
+"exercised" are different claims.
+
+`test_coverage_contract.py` is the drift guard. It reads the pre-deselection
+collection matrix, so it proves each channel still *declares* at least three
+sensitive circuits backed by an analytic, basis-state, or qutrit oracle. It runs
+in the fast lane and cannot tell you whether that evidence executed. Collection
+prints a channel-by-channel count and oracle summary. Seed repetitions do not
+inflate those circuit counts.
+
+`--require-full-noise-coverage` is the execution guard. It fails the session
+unless every required channel had a *passing* test in that run, so deselected
+cases cannot satisfy it. It is enforced at session end rather than as a test,
+because pytest runs files in collection order and a test asserting on executed
+coverage would only ever see the files sorted before it. Pass it only to a run
+that selects the whole suite:
+
+```console
+uv run pytest python/selene-plugins/pecos-selene-general-noise/tests \
+  --override-ini=addopts= --require-full-noise-coverage
+```
 
 The generated matrix and additional statistical seed repetitions carry the
 repository's `slow` marker. The default fast lane retains one seed for every
@@ -90,7 +107,8 @@ uv run pytest python/selene-plugins/pecos-selene-general-noise/tests -m slow
 ```
 
 The extended matrix also runs weekly and on demand in
-`.github/workflows/selene-general-noise-semantics.yml`; the workflow publishes
+`.github/workflows/selene-general-noise-semantics.yml`, which runs the whole
+suite with `--require-full-noise-coverage`; the workflow publishes
 the channel summary and complete pytest log as CI artifacts. Pull requests keep
 the deterministic and representative statistical fast lane on all supported
 platforms.

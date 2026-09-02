@@ -4790,11 +4790,15 @@ name = "pecos-selene-general-noise"
 version = "0.2.0-dev.0"
 dependencies = [
  "anyhow",
+ "nalgebra",
+ "num-complex 0.4.6",
  "pecos-core",
  "pecos-engines",
+ "pecos-quantum",
  "selene-core",
  "serde",
  "serde_json",
+ "smallvec",
 ]
 
 [[package]]

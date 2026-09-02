@@ -50,11 +50,20 @@ impl SeleneSimulator {
                     }));
                 }
                 GateType::H => {
-                    operations.extend(qubits.iter().map(|&qubit_id| Operation::RXYGate {
-                        qubit_id,
-                        theta: PI / 2.0,
-                        phi: -PI / 2.0,
-                    }));
+                    // H is not a single RXY: RXY(pi/2, -pi/2) = RY(-pi/2) differs from H by Z,
+                    // not by a phase. RZ(pi) after it gives H = e^{i pi/2} * emitted; that
+                    // residue is pinned, direction stated once, by `residual_phase_per_arm`.
+                    for &qubit_id in &qubits {
+                        operations.push(Operation::RXYGate {
+                            qubit_id,
+                            theta: PI / 2.0,
+                            phi: -PI / 2.0,
+                        });
+                        operations.push(Operation::RZGate {
+                            qubit_id,
+                            theta: PI,
+                        });
+                    }
                 }
                 GateType::RX => {
                     operations.extend(qubits.iter().map(|&qubit_id| Operation::RXYGate {

@@ -1,5 +1,5 @@
 [package]
-name = "pecos-uf-decoder"
+name = "pecos-bp"
 version.workspace = true
 edition.workspace = true
 readme = "README.md"
@@ -9,19 +9,13 @@ repository.workspace = true
 license.workspace = true
 keywords.workspace = true
 categories.workspace = true
-description = "Fast syndrome-graph Union-Find decoder for PECOS"
+description = "Native belief-propagation primitives for PECOS decoders"
 
 [dependencies]
-pecos-bp.workspace = true
 pecos-decoder-core.workspace = true
-pecos-random.workspace = true
-rayon.workspace = true
 
 [lib]
-name = "pecos_uf_decoder"
-
-[dev-dependencies]
-fastrand.workspace = true
+name = "pecos_bp"
 
 [lints]
 workspace = true

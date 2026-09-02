@@ -170,7 +170,11 @@ impl ZOmega {
             left = right;
             right = remainder;
         }
-        (!left.is_zero()).then(|| canonical_associate(&left))
+        if left.is_zero() {
+            None
+        } else {
+            canonical_associate(&left)
+        }
     }
 }
 
@@ -243,7 +247,7 @@ fn floor_ratio(numerator: &BigInt, positive_denominator: &BigInt) -> BigInt {
     quotient
 }
 
-fn canonical_associate(value: &ZOmega) -> ZOmega {
+fn canonical_associate(value: &ZOmega) -> Option<ZOmega> {
     let lambda = ZSqrt2::new(BigInt::one(), BigInt::one());
     let inverse_lambda = ZSqrt2::new(BigInt::from(-1), BigInt::one());
     let lambda_squared = &lambda * &lambda;
@@ -258,16 +262,18 @@ fn canonical_associate(value: &ZOmega) -> ZOmega {
         )
     };
     let mut normalized = value.clone();
-    let mut remaining = value
-        .field_norm()
-        .bits()
-        .saturating_add(8)
-        .saturating_mul(8);
-    loop {
-        assert!(
-            remaining != 0,
-            "Z[omega] associate normalization failed to converge"
-        );
+    // Field norm cannot bound this work: every lambda^k is a unit of field
+    // norm one, while normalizing it takes |k| steps. Coordinate magnitude
+    // does grow exponentially with |k|, so its maximum bit length gives a
+    // linear bound. Exhaustion remains a fallible gcd result, never a panic.
+    let coordinate_bits = value
+        .coordinates
+        .iter()
+        .map(BigInt::bits)
+        .max()
+        .unwrap_or(0);
+    let mut remaining = coordinate_bits.saturating_add(8).saturating_mul(8);
+    while remaining != 0 {
         remaining -= 1;
         let norm = normalized.norm_squared();
         let norm_square = &norm * &norm;
@@ -285,19 +291,19 @@ fn canonical_associate(value: &ZOmega) -> ZOmega {
             normalized = &normalized * &embed(&inverse_lambda);
             continue;
         }
-        break;
-    }
-    let omega = ZOmega::omega();
-    let mut rotation = ZOmega::one();
-    let mut best = normalized.clone();
-    for _ in 1_u8..8 {
-        rotation = &rotation * &omega;
-        let candidate = &normalized * &rotation;
-        if candidate.coordinates < best.coordinates {
-            best = candidate;
+        let omega = ZOmega::omega();
+        let mut rotation = ZOmega::one();
+        let mut best = normalized.clone();
+        for _ in 1_u8..8 {
+            rotation = &rotation * &omega;
+            let candidate = &normalized * &rotation;
+            if candidate.coordinates < best.coordinates {
+                best = candidate;
+            }
         }
+        return Some(best);
     }
-    best
+    None
 }
 
 impl From<BigInt> for ZOmega {
@@ -444,6 +450,20 @@ mod tests {
         )
     }
 
+    fn pow(mut base: ZOmega, mut exponent: u32) -> ZOmega {
+        let mut result = ZOmega::one();
+        while exponent != 0 {
+            if !exponent.is_multiple_of(2) {
+                result = &result * &base;
+            }
+            exponent /= 2;
+            if exponent != 0 {
+                base = &base * &base;
+            }
+        }
+        result
+    }
+
     #[test]
     fn ring_axioms() {
         let mut rng = Lcg::new(0x0a3e_6a12_c900_4147);
@@ -551,5 +571,21 @@ mod tests {
             expected.norm_squared().norm().abs(),
             BigInt::from(41_u8).pow(2)
         );
+    }
+
+    #[test]
+    fn gcd_normalizes_large_and_common_unit_associates() {
+        let lambda = ZOmega::new(BigInt::one(), BigInt::one(), BigInt::zero(), -BigInt::one());
+        let large_unit = pow(lambda, 160);
+        let canonical_unit = ZOmega::one()
+            .gcd(&ZOmega::zero())
+            .expect("unit gcd should converge");
+        assert_eq!(large_unit.gcd(&ZOmega::zero()), Some(canonical_unit));
+
+        let primitive_common = &ZOmega::one() + &ZOmega::i();
+        let unbalanced_common = &large_unit * &primitive_common;
+        let left = &unbalanced_common * &ZOmega::from(2_i64);
+        let right = &unbalanced_common * &ZOmega::from(3_i64);
+        assert_eq!(left.gcd(&right), primitive_common.gcd(&ZOmega::zero()));
     }
 }

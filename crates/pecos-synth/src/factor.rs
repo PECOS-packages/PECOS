@@ -60,6 +60,16 @@ pub(crate) enum FactorError {
     Exhausted,
 }
 
+impl FactorParams {
+    pub(crate) fn validate(&self) -> Result<(), FactorError> {
+        if self.primality_rounds == 0 {
+            Err(FactorError::Exhausted)
+        } else {
+            Ok(())
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 #[repr(u64)]
 enum Purpose {
@@ -126,6 +136,7 @@ pub(crate) fn factor_integer(
     value: &BigUint,
     params: &FactorParams,
 ) -> Result<Vec<PrimeFactor>, FactorError> {
+    params.validate()?;
     if value.is_zero() {
         return Err(FactorError::Exhausted);
     }
@@ -173,31 +184,37 @@ fn factor_residual(
     streams: &mut SeedStreams,
     factors: &mut BTreeMap<BigUint, (u32, PrimeEvidence)>,
 ) -> Result<(), FactorError> {
-    if value.is_one() {
-        return Ok(());
-    }
-    if let Primality::Prime(evidence) = classify_primality(value, params, streams) {
-        let entry = factors.entry(value.clone()).or_insert((0, evidence));
-        entry.0 = entry
-            .0
-            .checked_add(1)
-            .expect("prime exponent exceeded u32::MAX");
-        if evidence == PrimeEvidence::Probable {
-            entry.1 = PrimeEvidence::Probable;
+    let mut worklist = vec![value.clone()];
+    while let Some(current) = worklist.pop() {
+        if current.is_one() {
+            continue;
         }
-        return Ok(());
-    }
+        if let Primality::Prime(evidence) = classify_primality(&current, params, streams) {
+            let entry = factors.entry(current).or_insert((0, evidence));
+            entry.0 = entry
+                .0
+                .checked_add(1)
+                .expect("prime exponent exceeded u32::MAX");
+            if evidence == PrimeEvidence::Probable {
+                entry.1 = PrimeEvidence::Probable;
+            }
+            continue;
+        }
 
-    let divisor = pollard_brent(value, params, streams).ok_or(FactorError::Exhausted)?;
-    let quotient = value / &divisor;
-    // Canonical recursion order makes all stream consumption and output stable.
-    if divisor <= quotient {
-        factor_residual(&divisor, params, streams, factors)?;
-        factor_residual(&quotient, params, streams, factors)
-    } else {
-        factor_residual(&quotient, params, streams, factors)?;
-        factor_residual(&divisor, params, streams, factors)
+        // Each composite node receives the specified fresh rho-restart
+        // budget. Push the larger child first so the LIFO worklist preserves
+        // the previous canonical depth-first processing and seed consumption.
+        let divisor = pollard_brent(&current, params, streams).ok_or(FactorError::Exhausted)?;
+        let quotient = &current / &divisor;
+        let (first, second) = if divisor <= quotient {
+            (divisor, quotient)
+        } else {
+            (quotient, divisor)
+        };
+        worklist.push(second);
+        worklist.push(first);
     }
+    Ok(())
 }
 
 fn classify_primality(
@@ -529,6 +546,31 @@ mod tests {
             factors
                 .iter()
                 .all(|factor| factor.evidence == PrimeEvidence::Proven)
+        );
+    }
+
+    #[test]
+    fn deeply_repeated_residual_prime_uses_heap_worklist() {
+        let prime = BigUint::from(65_537_u32);
+        let input = prime.pow(256);
+        assert_eq!(
+            factor_integer(&input, &params()),
+            Ok(vec![PrimeFactor {
+                prime,
+                exponent: 256,
+                evidence: PrimeEvidence::Proven,
+            }])
+        );
+    }
+
+    #[test]
+    fn zero_primality_rounds_are_rejected_at_the_factor_boundary() {
+        let mut invalid = params();
+        invalid.primality_rounds = 0;
+        let above_u64 = BigUint::from(18_446_744_073_709_552_423_u128);
+        assert_eq!(
+            factor_integer(&above_u64, &invalid),
+            Err(FactorError::Exhausted)
         );
     }
 

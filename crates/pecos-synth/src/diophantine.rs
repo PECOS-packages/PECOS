@@ -14,6 +14,11 @@ use crate::{DOmega, ZOmega, ZSqrt2};
 /// Norm-equation inputs are the real `D[sqrt(2)]` subset of that carrier.
 pub(crate) type DyadicZSqrt2Value = DOmega;
 
+/// Practical ceiling on norm-equation denominator scaling. As with the grid
+/// tolerance cap, accepting arbitrary `u32` exponents would let a compact
+/// input request enormous exact powers before a budgeted operation is reached.
+const MAX_SCALE_EXPONENT: u32 = 4096;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum NormResolution {
     Solved { t: DOmega },
@@ -30,13 +35,19 @@ struct RelativePrimePower {
 }
 
 pub(crate) fn solve_norm_equation(xi: &DyadicZSqrt2Value, params: &FactorParams) -> NormResolution {
+    if params.validate().is_err() {
+        return NormResolution::Exhausted;
+    }
     if xi.is_zero() {
         return verified_resolution(DOmega::zero(), xi);
+    }
+    let scale_exponent = xi.least_denominator_exponent();
+    if scale_exponent > MAX_SCALE_EXPONENT {
+        return NormResolution::Exhausted;
     }
     let Some(scaled) = real_numerator(xi) else {
         return NormResolution::Exhausted;
     };
-    let scale_exponent = xi.least_denominator_exponent();
 
     // Ross & Selinger, arXiv:1403.2975v3, Eq. (9), Definition C.1,
     // Lemma 6.1, and Lemma C.16: a nonzero dagger norm is STRICTLY positive
@@ -95,7 +106,7 @@ pub(crate) fn solve_norm_equation(xi: &DyadicZSqrt2Value, params: &FactorParams)
     // N(delta) = lambda sqrt(2), hence
     // N(delta^-ell s) = lambda^-ell sqrt(2)^-ell N(s). The exact unit still
     // needed after unscaling is therefore lambda^ell scaled/N(s).
-    let lambda_scale = zsqrt_pow(&ZSqrt2::new(BigInt::one(), BigInt::one()), scale_exponent);
+    let lambda_scale = lambda_pow(i64::from(scale_exponent));
     let correction_unit = &lambda_scale * &unit_ratio;
 
     // Ross & Selinger, arXiv:1403.2975v3, Lemma C.2 and the constructive
@@ -109,10 +120,8 @@ pub(crate) fn solve_norm_equation(xi: &DyadicZSqrt2Value, params: &FactorParams)
     let Some(delta_inverse) = delta_inverse() else {
         return NormResolution::Exhausted;
     };
-    let mut solution = DOmega::from(associate_root);
-    for _ in 0..scale_exponent {
-        solution = &solution * &delta_inverse;
-    }
+    let unscaling = domega_pow(&delta_inverse, scale_exponent);
+    let solution = &DOmega::from(associate_root) * &unscaling;
     verified_resolution(solution, xi)
 }
 
@@ -340,14 +349,37 @@ fn zsqrt_pow(value: &ZSqrt2, exponent: u32) -> ZSqrt2 {
 }
 
 fn lambda_pow(exponent: i64) -> ZSqrt2 {
-    let base = if exponent >= 0 {
+    let mut base = if exponent >= 0 {
         ZSqrt2::new(BigInt::one(), BigInt::one())
     } else {
         ZSqrt2::new(BigInt::from(-1), BigInt::one())
     };
     let mut result = ZSqrt2::one();
-    for _ in 0..exponent.unsigned_abs() {
-        result = &result * &base;
+    let mut remaining = exponent.unsigned_abs();
+    while remaining != 0 {
+        if !remaining.is_multiple_of(2) {
+            result = &result * &base;
+        }
+        remaining /= 2;
+        if remaining != 0 {
+            base = &base * &base;
+        }
+    }
+    result
+}
+
+fn domega_pow(value: &DOmega, exponent: u32) -> DOmega {
+    let mut result = DOmega::one();
+    let mut base = value.clone();
+    let mut remaining = exponent;
+    while remaining != 0 {
+        if !remaining.is_multiple_of(2) {
+            result = &result * &base;
+        }
+        remaining /= 2;
+        if remaining != 0 {
+            base = &base * &base;
+        }
     }
     result
 }
@@ -425,6 +457,26 @@ mod tests {
     }
 
     #[test]
+    fn invalid_parameters_and_excessive_scaling_are_exhausted() {
+        let mut invalid = params();
+        invalid.primality_rounds = 0;
+        assert_eq!(
+            solve_norm_equation(&DOmega::zero(), &invalid),
+            NormResolution::Exhausted
+        );
+
+        let excessive = DOmega::new(ZOmega::one(), MAX_SCALE_EXPONENT + 1);
+        assert_eq!(
+            excessive.least_denominator_exponent(),
+            MAX_SCALE_EXPONENT + 1
+        );
+        assert_eq!(
+            solve_norm_equation(&excessive, &params()),
+            NormResolution::Exhausted
+        );
+    }
+
+    #[test]
     fn odd_scaling_counterexample_is_solved_up_to_associates() {
         let xi = dyadic_zsqrt(&ZSqrt2::new(BigInt::from(2_u8), BigInt::one()), 2);
         assert_eq!(xi.least_denominator_exponent(), 1);
@@ -471,6 +523,22 @@ mod tests {
             solve_norm_equation(&xi, &params()),
             NormResolution::Unsolvable
         );
+    }
+
+    #[test]
+    fn single_split_seven_prime_obstructs_only_at_odd_exponent() {
+        let split_prime = ZSqrt2::new(BigInt::from(3_u8), BigInt::one());
+        assert_eq!(split_prime.norm(), BigInt::from(7_u8));
+
+        let odd_power = dyadic_zsqrt(&split_prime, 0);
+        assert_eq!(
+            solve_norm_equation(&odd_power, &params()),
+            NormResolution::Unsolvable
+        );
+
+        let even_power = dyadic_zsqrt(&(&split_prime * &split_prime), 0);
+        let resolution = solve_norm_equation(&even_power, &params());
+        assert_solved_exactly(&even_power, &resolution);
     }
 
     #[test]

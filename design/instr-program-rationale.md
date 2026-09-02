@@ -23,13 +23,18 @@ shared traits are appropriate.
 
 ### Earlier circuit containers
 
-The original `QuantumCircuit` usefully stored instruction symbols separately
-from their later interpretation. The live `LogicalCircuit` also shows a failure
-mode: logical information held in a list parallel to an underlying physical
-circuit can drift from the circuit it describes.
+The pre-`TickCircuit` `QuantumCircuit` usefully stored arbitrary instruction
+symbols, locations, and parameters separately from their later interpretation.
+That open vocabulary is the closer precedent: recording a call did not require
+the instruction to be registered. The live `LogicalCircuit` also shows a
+failure mode: logical information held in a list parallel to an underlying
+physical circuit can drift from the circuit it describes.
 
-`InstrProgram` keeps late binding but requires one authoritative artifact and
-provenance-preserving transforms rather than parallel mutable models.
+`InstrProgram` keeps late binding but adds declared port shapes, a distinct
+linking pass, one authoritative artifact, and provenance-preserving transforms
+rather than parallel mutable models. A fully opaque legacy symbol can be
+imported, but it cannot participate in typed dataflow or lower until a
+compatible declaration is linked.
 
 ### Surface planning and renderer prototypes
 
@@ -47,10 +52,13 @@ It also contains limitations the new model should not preserve: duplicated
 state, incomplete basis support, position-dependent lifecycle behavior, and
 renderer-specific semantic side passes.
 
-SLR provides the main HDL analogy and useful lower/middle circuit experience.
-The new implementation should carry that experience into typed, Rust-owned,
-serializable graphs without depending on SLR or reproducing its original
-transpiler goal.
+SLR provides more than an HDL analogy: it builds complex QEC implementations
+from simpler primitives and composition rules in the same broad language. The
+new implementation keeps that self-hosting idea while making the instruction
+vocabulary open and linkable. Larger graph bodies may depend on instructions
+whose definitions or realizations are supplied later. PECOS should carry this
+experience into Rust-owned, serializable graphs without depending on the SLR
+runtime or reproducing its original transpiler goal.
 
 ## Detailed Rust model
 
@@ -58,19 +66,43 @@ Names in this section are provisional until implementation proves them.
 
 ### Structural artifacts
 
-- `InstrProgram` is a versioned linkage unit with entry graphs, imported
-  descriptors, provider requirements, exports, and serialization metadata.
+- `InstrProgram` is a versioned linkage unit with entry graphs, instruction
+  references and declarations, imported descriptors, provider requirements,
+  exports, and serialization metadata.
 - `InstrGraph` contains typed declarations, calls, values, dependencies, and
   later first-order structured control.
-- `InstrDef` declares named ports, canonical parameters, generic effects, use
-  policy, and a dialect semantic interface.
-- `BoundInstrCall` binds values and parameters to a definition and may constrain
-  the implementation through a typed handle.
+- `InstrDecl` gives a stable link identity and the named ports, canonical
+  parameters, generic effects, and use policy needed to connect a call.
+- `InstrDef` adds the owning dialect's semantic interface to a compatible
+  declaration.
+- `OpenInstrCall` records a declaration reference, values, parameters, and an
+  optional typed implementation constraint before a definition is present.
+- `BoundInstrCall` is the linked, signature-checked form of that call.
+- `LinkedInstrProgram` records the definitions selected by a deterministic
+  linker and proves that every call has a compatible definition.
 - `ResolvedInstrProgram` records selected implementations, selection sources,
   implementation bodies, provider fingerprints, and QEC composition products.
 
-The graph never dispatches on display names or surface-code operations. The
-owning dialect interprets its opaque value payloads and semantic interfaces.
+The graph never dispatches on display names or surface-code operations. A
+qualified symbolic identity is only a linkage key; the owning dialect
+interprets opaque value payloads and semantic interfaces after linking.
+
+The phases are explicit:
+
+```text
+authored (open references allowed)
+    -> link declarations to definitions and check signatures
+linked and typed
+    -> select implementations and recursively expand graph bodies
+resolved
+    -> validate the accepted portable dialect and compose QEC-wide semantics
+ProtocolProgram
+    -> schedule or lower to Tick, PHIR, or another accepted target
+```
+
+Typed builders can combine authoring and declaration lookup for good error
+messages. Serialization and the generic graph must not rely on that convenience
+or require providers to be loaded merely to inspect a program.
 
 ### Why descriptors and providers are separate
 
@@ -82,10 +114,11 @@ has two sides:
 | Descriptor | Stable instruction-scoped identity, semantic/schema versions, provider identity, content fingerprint, configuration schema, requirements, and provenance |
 | Provider | Executable Rust support assessment and implementation-body construction |
 
-Resolution receives providers and context explicitly:
+After linking, resolution receives providers and context explicitly:
 
 ```rust
-let resolved = program.resolve(&providers, &context)?;
+let linked = program.link(&definitions)?;
+let resolved = linked.resolve(&providers, &context)?;
 ```
 
 Loading a serialized program never silently discovers process-global behavior.
@@ -108,7 +141,10 @@ requirements. The MVP needs only supported/unsupported.
 Resolution is deterministic: explicit typed choice, configured choice, sole
 supported candidate, or error. Explicit choices do not fall back. Candidate
 diagnostics sort by stable qualified identity. Composite expansion must be
-acyclic.
+acyclic. A body is an `InstrGraph` with formal input and output ports, not a
+separate callback-only implementation language. Substitution binds those
+formal ports, preserves call and definition provenance, and may leave
+lower-level calls for the next expansion step.
 
 ### Identity and ownership
 
@@ -116,7 +152,7 @@ Persistent semantic identity is different from one dataflow state version:
 
 | Identity | Meaning |
 |---|---|
-| `InstrDefId` / `ImplDefId` | Versioned reusable definitions |
+| `InstrDeclId` / `InstrDefId` / `ImplDefId` | Versioned declarations, semantic definitions, and implementations |
 | `CallId` | One instruction application |
 | `CodeBlockInstanceId` | One persistent logical/code-block instance |
 | `ValueId` | One dataflow state version |
@@ -165,16 +201,24 @@ stabilizer-flow algebra replaces its hand-written boundary rules.
 
 ## Protocol and control boundaries
 
-A selected implementation normally produces a lower-level `InstrGraph` body in
-a portable protocol/physical dialect. Bodies may be authored as data, built by
-Rust, imported from a supported HUGR subset, or represented as explicitly
-opaque externals. Registration always supplies the same QEC contract.
+A selected implementation normally supplies a lower-level `InstrGraph` body in
+the same HDL representation. Bodies may be authored as data, built by Rust,
+imported from a supported HUGR subset, or represented as explicitly opaque
+externals. They may call still lower-level instructions. Registration always
+supplies the same QEC contract, and recursive expansion stops only at
+consumer-supported primitives or externals.
 
-Composed bodies form `ProtocolProgram`, which may contain portable quantum and
-classical operations, resource acquisition and release, dependencies, atomic
-stages, semantic measurements, QEC annotations, and provenance. It does not
-contain final target addresses, target-native routing, inserted idles,
-calibrated durations, or authoritative device time.
+The standard `pecos-core` `GateType` vocabulary should be surfaced through a
+built-in instruction library. This makes existing PECOS gates convenient
+physical leaves without making them special syntax of `InstrGraph` or
+preventing a backend from selecting a different accepted primitive set.
+
+Composed bodies form `ProtocolProgram`, a validated phase of the same graph
+model. It may contain portable quantum and classical operations, resource
+acquisition and release, dependencies, atomic stages, semantic measurements,
+QEC annotations, and provenance. It does not contain final target addresses,
+target-native routing, inserted idles, calibrated durations, or authoritative
+device time.
 
 Dataflow supplies concurrency: calls with no dependency path may overlap.
 Typed before/after, alignment, exclusion, and relative space-time constraints
@@ -311,11 +355,27 @@ planner, or serializer.
 
 ## Space-time and visualization
 
-Resolved gadgets may expose coarse shapes and detailed portable realizations.
-A renderer-independent `SpaceTimeView` can link calls, blocks, code elements,
-protocol resources, measurements, detectors, observables, and operations. It
-may show patch slices, 2+1D occupancy, hierarchy expansion, lifetimes,
-constraints, and symbolic versus mapped coordinates.
+Every instruction instance can be viewed as a cell with typed boundary ports
+and one or more possible space-time realizations. Resource and value wires
+enter and leave through those ports. A parent realization contains the child
+cells from its implementation body. Connections become world-lines,
+world-tubes, or shared boundary faces depending on whether they carry
+classical values, physical qubits, or extended QEC blocks. Local child
+coordinates and explicit placement transforms avoid forcing every reusable
+definition into one global coordinate system.
+
+This is intentionally a realization of a semantic call, not an intrinsic fixed
+shape on `InstrDef`: parameters, implementation selection, scheduling, and
+target mapping may change the volume. The representation should distinguish
+`Unplaced`, `Constrained`, and `Placed` states. Branches may produce a family or
+an envelope of possible volumes; bounded loops may retain a symbolic repeated
+cell; virtual frame updates may occupy zero volume.
+
+A renderer-independent `SpaceTimeView` can link cells, ports, blocks, code
+elements, protocol resources, measurements, detectors, observables, and
+operations. It may show patch slices, 2+1D occupancy, hierarchy expansion,
+lifetimes, constraints, and symbolic versus mapped coordinates. The overview's
+space-time picture illustrates the coarse envelope and one level of expansion.
 
 Interactive rendering is deferred until semantic artifacts stabilize. Bevy is
 one possible optional viewer, not part of the core representation.

@@ -9,8 +9,9 @@ background and later extensions.
 ## 1. Goal and reference
 
 The MVP constructs one distance-three, Z-basis, CX-syndrome surface-memory
-experiment, resolves statically linked Rust implementations, composes a
-portable `ProtocolProgram`, and lowers it to a normalized `TickCircuit`.
+experiment, links its instruction declarations to Rust definitions, resolves
+Rust implementations, composes a portable `ProtocolProgram`, and lowers it to
+a normalized `TickCircuit`.
 
 The existing Python surface stack is the migration oracle:
 
@@ -34,7 +35,7 @@ This proposed Python API must become an executable documentation test. Rust
 must offer equivalent typed builders over the same Rust-owned objects.
 
 ```python
-surface = SurfaceInstrSet.providers()
+surface = SurfaceInstrSet.builtin()
 program = InstrProgram()
 
 data = program.qec_block(
@@ -49,8 +50,9 @@ data.syn_extract(
 result = data.measure(basis=Basis.Z)
 program.export("result", result)
 
-resolved = program.resolve(
-    providers=surface,
+linked = program.link(definitions=surface.definitions)
+resolved = linked.resolve(
+    providers=surface.providers,
     context=SurfaceReferenceContext(),
 )
 protocol = resolved.to_protocol_program()
@@ -73,7 +75,7 @@ handle. Raw strings and a universal implementation enum are not accepted.
 | Three CX-based syndrome rounds | SZZ and other syndrome implementations |
 | Destructive logical-Z measurement | Logical gates, injection, surgery, teleportation, code switching |
 | Straight-line dataflow | Modules, branches, loops, adaptive control |
-| Static Rust providers | Packages and dynamic providers |
+| Static declarations, definitions, and Rust providers | Packages and dynamic providers |
 | Portable protocol graph | Target mapping, routing, calibrated timing, traces |
 | Reference Tick lowering | PHIR, QIR, MLIR, Guppy output/import |
 | Separate native DEM integration test | Higher-level noise dialects and DEM compilers |
@@ -91,12 +93,18 @@ The three QEC instructions have these contracts:
 
 ## 4. Required pipeline
 
-### Author and resolve
+### Author, link, and resolve
 
 The generic Rust substrate contains only a straight-line `InstrProgram` and
-`InstrGraph`, typed definitions and bound calls, opaque registered value types,
-`SingleUse | Reusable` use policy, serializable implementation descriptors,
-executable Rust providers, explicit resolution context, and a resolved program.
+`InstrGraph`, linkable instruction declarations, typed definitions and calls,
+opaque registered value types, `SingleUse | Reusable` use policy, serializable
+implementation descriptors, executable Rust providers, explicit linkage and
+resolution contexts, and linked and resolved program phases.
+
+The MVP's typed surface builder supplies every declaration while authoring, but
+the graph stores declaration references separately from definitions. The
+linker must diagnose a missing definition and a mismatched signature. General
+package discovery and authoring completely opaque legacy calls are deferred.
 
 A serialized descriptor contains stable instruction-scoped identity, versions,
 provider identity, and fingerprint; executable Rust behavior remains in its
@@ -151,9 +159,12 @@ measurement events, detectors, and the logical-Z observable.
 
 ### Compose QEC semantics
 
-Each selected provider builds a typed lower-level `InstrGraph` body containing
+Each selected provider supplies a typed lower-level `InstrGraph` body containing
 portable preparation, quantum operation, measurement, resource-lifetime, and
-dependency instructions. It does not emit an opaque Tick circuit.
+dependency instructions. This is the same graph representation used for the
+outer program, with formal ports substituted at expansion. Its physical leaves
+come from a typed instruction library over the existing PECOS `GateType`
+vocabulary. It does not emit an opaque Tick circuit.
 
 A surface-memory composition pass—type name provisional—runs over the resolved
 calls and their events. It owns preparation-boundary detectors, comparisons
@@ -167,8 +178,9 @@ correct ownership boundary for later logical Cliffords.
 
 ### Build and lower the protocol program
 
-The implementation bodies and QEC composition results form one inspectable
-`ProtocolProgram` containing portable operations, an operation dependency DAG,
+The recursively expanded implementation bodies and QEC composition results
+form one inspectable `ProtocolProgram`, a validated portable-dialect phase of
+the same graph model, containing operations, an operation dependency DAG,
 named syndrome rounds, code elements, temporary protocol resources, ancilla
 lifetimes and cleanup, semantic measurements, detector/observable definitions,
 and provenance to calls, block versions, checks, and providers.
@@ -220,8 +232,9 @@ The wire format is settled before public API stabilization.
 
 1. Record the PECOS retrospective, crate direction, serialization rules,
    measurement mapping, and canonical patch schema.
-2. Implement the generic Rust graph, typed implementation handles, provider
-   resolution, use checks, structured errors, and golden serialization.
+2. Implement the generic Rust graph, declaration linking, typed implementation
+   handles, provider resolution, use checks, structured errors, and golden
+   serialization.
 3. Land distance-3 `PatchSpec` parity from the Python fixture.
 4. Port the exact CX memory implementation bodies and QEC composition pass.
 5. Build `ProtocolProgram` and reference Tick lowering.
@@ -241,9 +254,9 @@ The MVP is complete only when:
 - every normative API example executes in repository tests;
 - patch parity preserves exact data/check identities, supports, ordering,
   coordinates, orientation, and logical supports;
-- invalid ports, parameters, lifecycle, reuse, provider availability,
-  fingerprint, implementation scope, unsupported choices, and ambiguity return
-  structured errors;
+- missing or mismatched definitions and invalid ports, parameters, lifecycle,
+  reuse, provider availability, fingerprint, implementation scope, unsupported
+  choices, and ambiguity return structured errors;
 - prepare, syndrome extraction, and measurement preserve one block identity and
   produce fresh value versions;
 - the protocol program has bounded temporary ancilla lifetimes and no target

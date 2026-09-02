@@ -1,4 +1,4 @@
-# Typed instruction programs for QEC
+# Instruction programs for QEC
 
 Status: proposed design.
 
@@ -15,9 +15,12 @@ result at several levels. An experiment author should not need to start from a
 purpose-built circuit factory, while a QEC implementer should not need to bake
 surface-code names into a generic graph container.
 
-The design is HDL-like: a gadget has a typed interface and may be treated as a
-black box or expanded into a lower-level implementation. It builds on lessons
-from SLR and earlier PECOS circuit models, but it is not a general programming
+The design is HDL-like: an instruction is a cell with an interface and may be
+treated as a black box or expanded into a body made from other instructions.
+Calls can be recorded before their definitions or implementations are present,
+then linked and type-checked later. This combines the open instruction
+vocabulary of earlier PECOS circuit containers with SLR's composition of
+larger QEC gadgets from smaller primitives. It is not a general programming
 language and does not transpile programs to Guppy.
 
 ## A surface-memory example
@@ -26,7 +29,7 @@ The following is proposed Python API. Rust owns the program and exposes an
 equivalent typed builder; Python is a thin ergonomic layer.
 
 ```python
-surface = SurfaceInstrSet.providers()
+surface = SurfaceInstrSet.builtin()
 program = InstrProgram()
 
 data = program.qec_block(
@@ -41,8 +44,9 @@ data.syn_extract(
 result = data.measure(basis=Basis.Z)
 program.export("result", result)
 
-resolved = program.resolve(
-    providers=surface,
+linked = program.link(definitions=surface.definitions)
+resolved = linked.resolve(
+    providers=surface.providers,
     context=SurfaceReferenceContext(),
 )
 protocol = resolved.to_protocol_program()
@@ -71,38 +75,48 @@ enum. If the user does not choose an implementation, resolution may use an
 explicitly configured choice or the only compatible candidate; ambiguity is an
 error.
 
-## The six core concepts
+## The core concepts
 
 | Concept | Meaning |
 |---|---|
-| `InstrProgram` | The authored typed dataflow program. It does not know QEC instruction names. |
-| QEC instruction | A typed gadget contract: inputs, outputs, parameters, lifecycle, and ideal logical effect. |
-| Implementation | One selectable realization of a QEC instruction. |
+| `InstrProgram` | The generic authored dataflow program. It stores instruction references and calls but does not interpret their names. |
+| Instruction declaration | A linkable identity plus its input, output, parameter, and use shape. It is enough to connect a call before its definition is available. |
+| QEC instruction definition | The declaration plus its lifecycle, ideal logical effect, frame transfer, and semantic result contract. |
+| Implementation | One selectable realization whose body is another `InstrGraph`, possibly at a lower dialect level. |
+| Linked program | The program after references have definitions and all call signatures have been checked. |
 | Resolved program | The program after every call has a selected implementation and QEC-wide analysis has run. |
-| `ProtocolProgram` | A portable lower-level Rust program of physical/protocol operations, resources, measurements, dependencies, and later structured control. |
+| `ProtocolProgram` | A validated portable-dialect view of the same graph model, containing physical/protocol operations, resources, measurements, dependencies, and later structured control. |
 | Consumer or backend | A scheduler, compiler, target backend, visualizer, or analysis that accepts a declared program level. |
 
-`InstrProgram` and `ProtocolProgram` use the same general graph idea at
-different dialect levels. The first carries logical/QEC calls; the second
-carries lower-level protocol and physical operations. This is how the design
-keeps the container generic without flattening every gadget immediately.
+`InstrProgram`, implementation bodies, and `ProtocolProgram` use the same graph
+representation at different linkage and dialect phases. The first can carry
+open logical/QEC calls; a selected implementation recursively replaces a call
+with a graph of simpler calls; and `ProtocolProgram` certifies that the
+remaining graph is in the portable protocol/physical dialect. It is a phase
+boundary, not a second incompatible programming model.
 
 ## What happens to the example
 
 ```text
 authored InstrProgram
-    typed QEC calls and patch state versions
+    declared or unresolved calls and patch state versions
         |
-        | resolve implementation choices
+        | link definitions and check call signatures
+        v
+linked InstrProgram
+    typed QEC calls and explicit contracts
+        |
+        | select implementations
         v
 resolved program
     selected gadget bodies, frame transfer,
     semantic measurements, detectors, observables
         |
-        | expand and compose lower-level bodies
+        | recursively expand and compose graph bodies
         v
 ProtocolProgram
-    portable operations, resource lifetimes,
+    same graph model, certified portable dialect,
+    resource lifetimes,
     dependencies, provenance
         |
         +----------------------+----------------------+
@@ -119,7 +133,16 @@ physical DEM path consumes a generated `TickCircuit`, its measurement and
 detector bindings, and a physical noise model. DEM construction is not a method
 of `InstrProgram`, a gadget, or `ProtocolProgram`.
 
-## Instructions and implementations
+## Linking instructions and expanding implementations
+
+Authoring is open-world. A call may refer to an instruction whose definition or
+implementation will be supplied later, as in an HDL module declaration or the
+older PECOS `QuantumCircuit`. The call still carries a declared port and
+parameter shape so values can be connected. Linking binds the stable reference
+to a definition and rejects missing definitions or signature mismatches before
+implementation selection. Typed instruction-set builders provide declarations
+up front and therefore catch most mistakes while authoring; the graph itself
+does not dispatch on display names.
 
 A QEC instruction declares named code-block and classical ports, canonical
 parameters, lifecycle effects, its ideal decoded logical action, logical-frame
@@ -128,15 +151,47 @@ code switching, merge/split, and destructive measurement all fit this model;
 their input and output block types and arities may differ.
 
 An implementation is checked against the complete bound call, including its
-parameters and block types. Resolving an implementation produces an
-inspectable lower-level graph body or an explicitly opaque external body. A
-normal inspectable body is not an already scheduled `TickCircuit`: it uses a
-portable protocol/physical dialect that can represent resource lifetimes,
-dependencies, semantic measurements, and, later, structured control.
+parameters and block types. Its normal body is an ordinary `InstrGraph`, with
+formal ports bound to the call's values. That body may itself call other
+instructions, so the same HDL builds physical primitives into syndrome rounds,
+rounds into QEC gadgets, and gadgets into experiments. Expansion continues
+until every remaining call is accepted as a primitive by the selected consumer
+or is an explicitly supported opaque external. Recursive definition cycles are
+an error unless represented by a future structured repetition construct.
 
-Rust code may build such a body programmatically. A flat Tick-producing adapter
-is acceptable for a deliberately straight-line leaf, but it cannot define the
-general implementation contract.
+The standard PECOS `GateType` operations should be exposed as a built-in typed
+instruction library rather than hard-coded into the generic graph. They supply
+the first physical leaves for portable implementations. A normal inspectable
+body is not an already scheduled `TickCircuit`: it preserves resource
+lifetimes, dependencies, semantic measurements, hierarchy, and, later,
+structured control. A flat Tick-producing adapter is acceptable for a
+deliberately straight-line leaf, but it cannot define the general
+implementation contract.
+
+## Instructions as space-time cells
+
+An instruction call is also a cell instance that can acquire a space-time
+realization. Typed resource and value wires enter through its input ports and
+replacement resources or results leave through its output ports. Its selected
+implementation places child cells inside the volume and connects their ports.
+A port's use policy states whether an input is consumed or reusable; a
+resource-transforming call returns a successor wire version rather than
+mutating the incoming one.
+A code block is an extended spatial cross-section carried through time, while
+physical qubits and classical values appear as finer world-lines when the cell
+is expanded.
+
+![A coarse QEC experiment volume containing preparation, three syndrome-round
+cells, and measurement, with one round expanded into lower-level child
+cells.](instr-program-spacetime.svg)
+
+The semantic instruction does not have one universal fixed box. Parameters,
+implementation choice, scheduling constraints, and target mapping can produce
+different realizations of the same call. A realization therefore progresses
+from unplaced, through constrained, to placed. Parent/child identities and
+local coordinates preserve hierarchy so a tool can show only the envelope or
+peek through to the physical circuit. Frame-only operations may have a
+degenerate or zero-volume realization.
 
 ## Dataflow, concurrency, and control
 
@@ -205,8 +260,14 @@ patterns.
   serialization, and reference lowering; Python remains thin.
 - The graph is first-order dataflow, not a general-purpose language or
   unrestricted control-flow graph.
+- Authoring may precede definition; linking makes every call typed before
+  implementation selection or lowering.
 - Instruction identities are generic; dialects provide names and semantics.
 - Implementation choices are typed and instruction-scoped.
+- Normal implementation bodies use the same `InstrGraph` representation and
+  may recursively call lower-level instructions.
+- Standard PECOS gates form a built-in instruction library, not generic graph
+  syntax.
 - Consumed resource versions cannot be reused, without exposing a general
   linear-type system to authors.
 - Concurrency follows from dataflow; explicit constraints refine scheduling.
@@ -217,10 +278,11 @@ patterns.
 
 ## Deferred or open
 
-The first implementation deliberately defers reusable modules, structured
+The first implementation deliberately defers general user packages, structured
 control, PHIR integration, additional patch geometries and logical gates,
-target mapping, generalized stabilizer-flow algebra, space-time tooling,
-visualization, package management, and dynamic providers.
+target mapping, generalized stabilizer-flow algebra, placed space-time tooling,
+interactive visualization, and dynamic providers. It preserves graph
+hierarchy and cell identity so those tools do not require a later IR rewrite.
 
 Open architectural questions include the exact PHIR QEC dialect, the first
 control-capable scheduled representation, whether any higher-level noise

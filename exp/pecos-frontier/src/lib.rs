@@ -29,6 +29,7 @@ pub use pecos_trellis::{
     deadline_column_order_for_factors,
 };
 use std::cmp::Ordering;
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
 
 /// Parity-port name for [`pecos_trellis::TrellisDecoder`].
@@ -104,6 +105,7 @@ impl FrontierCommittee {
     /// Returns [`DecoderError::InvalidConfiguration`] when the configuration or
     /// DEM is invalid.
     pub fn from_sparse_dem(dem: &SparseDem, config: FrontierConfig) -> Result<Self, DecoderError> {
+        #[cfg(not(target_arch = "wasm32"))]
         let build_started = Instant::now();
         if config.metric_mode == MetricMode::MaxLogInt {
             return Err(DecoderError::InvalidConfiguration(
@@ -147,7 +149,10 @@ impl FrontierCommittee {
             int_metric_scale,
         };
         let backward = FrontierDecoder::from_sparse_dem(dem, backward_config)?;
+        #[cfg(not(target_arch = "wasm32"))]
         let build_seconds = build_started.elapsed().as_secs_f64();
+        #[cfg(target_arch = "wasm32")]
+        let build_seconds = 0.0;
         Ok(Self {
             forward,
             backward,

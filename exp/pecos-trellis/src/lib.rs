@@ -34,7 +34,33 @@ pub use pecos_decoder_core::errors::DecoderError;
 pub use pecos_decoder_core::obs_mask::ObsMask;
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
+
+#[cfg(not(target_arch = "wasm32"))]
+type TimerStart = Instant;
+#[cfg(target_arch = "wasm32")]
+struct TimerStart;
+
+#[cfg(not(target_arch = "wasm32"))]
+fn timer_start() -> TimerStart {
+    Instant::now()
+}
+
+#[cfg(target_arch = "wasm32")]
+fn timer_start() -> TimerStart {
+    TimerStart
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn timer_seconds(start: TimerStart) -> f64 {
+    start.elapsed().as_secs_f64()
+}
+
+#[cfg(target_arch = "wasm32")]
+fn timer_seconds(_: TimerStart) -> f64 {
+    0.0
+}
 
 const WORD_BITS: usize = u64::BITS as usize;
 const BP_MIN_SUM_SCALE: f64 = 0.625;
@@ -486,7 +512,7 @@ impl TrellisDecoder {
     ///
     /// Panics if the internal post-filter BP graph and DP column counts differ.
     pub fn from_sparse_dem(dem: &SparseDem, config: TrellisConfig) -> Result<Self, DecoderError> {
-        let build_started = Instant::now();
+        let build_started = timer_start();
         validate_config(&config, dem.mechanisms.len())?;
 
         let detector_words = words_for(dem.num_detectors);
@@ -653,7 +679,7 @@ impl TrellisDecoder {
         }
 
         debug_assert_model_invariants(&columns, &touched_detectors);
-        let build_seconds = build_started.elapsed().as_secs_f64();
+        let build_seconds = timer_seconds(build_started);
 
         Ok(Self {
             config,
@@ -726,7 +752,7 @@ impl TrellisDecoder {
         }
         validate_config(&config, model.factors().len())?;
 
-        let build_started = Instant::now();
+        let build_started = timer_start();
         let detector_words = words_for(model.num_detectors());
         let logical_words = words_for(model.num_observables());
         let order = config
@@ -821,7 +847,7 @@ impl TrellisDecoder {
             column.suffix_compatibility = suffix_compatibility;
         }
         debug_assert_factor_model_invariants(&columns, &touched_detectors);
-        let build_seconds = build_started.elapsed().as_secs_f64();
+        let build_seconds = timer_seconds(build_started);
 
         Ok(Self {
             config,
@@ -1409,7 +1435,7 @@ impl TrellisDecoder {
             return Ok((None, 0.0));
         };
 
-        let started = Instant::now();
+        let started = timer_start();
         for (detector, residual) in bp_score.residual_syndrome.iter_mut().enumerate() {
             let word_index = detector / WORD_BITS;
             let bit_mask = 1 << (detector % WORD_BITS);
@@ -1446,7 +1472,7 @@ impl TrellisDecoder {
             (self.config.metric_mode == MetricMode::MaxLogInt)
                 .then_some(self.config.int_metric_scale),
         );
-        Ok((Some(tables), started.elapsed().as_secs_f64()))
+        Ok((Some(tables), timer_seconds(started)))
     }
 }
 

@@ -317,6 +317,45 @@ impl FaultContribution {
         }
     }
 
+    /// Creates a contribution with an arbitrary source-frame decomposition.
+    ///
+    /// The complete effect is derived by XOR-ing `components`. Keeping the
+    /// components attached to one contribution preserves their correlated
+    /// source identity for decomposed rendering without changing the raw DEM
+    /// mechanism.
+    #[must_use]
+    pub fn source_decomposed(
+        components: impl IntoIterator<Item = FaultMechanism>,
+        probability: f64,
+    ) -> Self {
+        let source_component_effects: SmallVec<[FaultMechanism; 4]> =
+            components.into_iter().collect();
+        let effect = source_component_effects
+            .iter()
+            .fold(FaultMechanism::new(), |effect, component| {
+                effect.xor(component)
+            });
+        let direct_component_effects = if let [first, second] = source_component_effects.as_slice()
+        {
+            Some((first.clone(), second.clone()))
+        } else {
+            None
+        };
+        Self {
+            effect,
+            probability,
+            source_type: FaultSourceType::Direct,
+            location_indices: SmallVec::new(),
+            paulis: SmallVec::new(),
+            source_gate_types: SmallVec::new(),
+            source_before_flags: SmallVec::new(),
+            direct_source_family: None,
+            direct_component_effects,
+            source_component_effects: Some(source_component_effects),
+            replacement_branch: false,
+        }
+    }
+
     /// Creates a new direct error contribution with source metadata.
     #[must_use]
     fn direct_with_source(
@@ -4865,6 +4904,17 @@ impl DetectorErrorModel {
         self.contributions.len()
     }
 
+    /// Returns source-tracked contributions in insertion order.
+    ///
+    /// This read-only view is the structured handoff for transformations such
+    /// as DEM slicing. Callers should preserve each contribution as one
+    /// independent source rather than aggregating equal effects prematurely.
+    #[inline]
+    #[must_use]
+    pub fn contributions(&self) -> &[FaultContribution] {
+        &self.contributions
+    }
+
     /// Returns every quantified categorical-channel approximation made during build.
     ///
     /// Each record identifies the channel kind, a representative concrete flip
@@ -5516,6 +5566,26 @@ impl DetectorErrorModel {
         }
         self.contributions
             .push(FaultContribution::direct(effect, probability));
+    }
+
+    /// Adds one correlated contribution with arbitrary source-frame components.
+    ///
+    /// The raw mechanism is the XOR of all components. Decomposed renderers may
+    /// retain the component boundaries when they are useful to a graphlike
+    /// consumer.
+    pub fn add_source_decomposed_contribution(
+        &mut self,
+        components: impl IntoIterator<Item = FaultMechanism>,
+        probability: f64,
+    ) {
+        if probability <= 0.0 {
+            return;
+        }
+        let contribution = FaultContribution::source_decomposed(components, probability);
+        if contribution.effect.is_empty() {
+            return;
+        }
+        self.contributions.push(contribution);
     }
 
     /// Adds a direct error contribution with source metadata.

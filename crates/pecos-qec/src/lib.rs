@@ -121,8 +121,8 @@ pub use distance_problem::{
 pub use fault_tolerance::dem_builder::{
     DecomposedFault, DemBoundaryKind, DemBuilder, DemBuilderError, DemDetectorPlacement, DemOutput,
     DemSlice, DemSliceCache, DemSliceContribution, DemSliceDetector, DemSliceInstance,
-    DemSliceStitchError, DemStitchDiagnostics, DemStitcher, DemTemporalHorizon, DemWindowSpec,
-    DetectorDef, DetectorErrorModel, FaultMechanism, IdleNoiseFamily, NoiseConfig,
+    DemSliceModelMap, DemSliceStitchError, DemStitchDiagnostics, DemStitcher, DemTemporalHorizon,
+    DemWindowSpec, DetectorDef, DetectorErrorModel, FaultMechanism, IdleNoiseFamily, NoiseConfig,
     PecosDemMetadataError, RelativeDetectorTarget, SliceFaultMechanism, StitchedDem,
     StitchedDetectorAddress, combine_probabilities,
 };

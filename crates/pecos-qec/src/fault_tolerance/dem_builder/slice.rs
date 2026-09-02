@@ -25,7 +25,7 @@
 //! describe initialization, idle, logical-gate, and terminal templates while sharing the same
 //! boundary and aggregation semantics.
 
-use super::types::{DemOutput, DetectorDef, DetectorErrorModel, FaultMechanism};
+use super::types::{DemOutput, DetectorDef, DetectorErrorModel, FaultContribution, FaultMechanism};
 use smallvec::{Array, SmallVec};
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
@@ -59,6 +59,8 @@ pub struct SliceFaultMechanism {
     pub detectors: SmallVec<[RelativeDetectorTarget; 4]>,
     /// Slice-local standard DEM output (`L<n>`) identities toggled by the mechanism.
     pub dem_outputs: SmallVec<[u32; 2]>,
+    /// Slice-local PECOS tracked-Pauli (`TP<n>`) identities toggled by the mechanism.
+    pub tracked_paulis: SmallVec<[u32; 2]>,
 }
 
 impl SliceFaultMechanism {
@@ -70,16 +72,27 @@ impl SliceFaultMechanism {
         detectors: impl IntoIterator<Item = RelativeDetectorTarget>,
         dem_outputs: impl IntoIterator<Item = u32>,
     ) -> Self {
+        Self::from_unsorted_with_tracked_paulis(detectors, dem_outputs, std::iter::empty())
+    }
+
+    /// Construct a canonical mechanism including PECOS tracked-Pauli targets.
+    #[must_use]
+    pub fn from_unsorted_with_tracked_paulis(
+        detectors: impl IntoIterator<Item = RelativeDetectorTarget>,
+        dem_outputs: impl IntoIterator<Item = u32>,
+        tracked_paulis: impl IntoIterator<Item = u32>,
+    ) -> Self {
         Self {
             detectors: parity_sorted(detectors),
             dem_outputs: parity_sorted(dem_outputs),
+            tracked_paulis: parity_sorted(tracked_paulis),
         }
     }
 
     /// Return the XOR of two local mechanisms.
     #[must_use]
     pub fn xor(&self, other: &Self) -> Self {
-        Self::from_unsorted(
+        Self::from_unsorted_with_tracked_paulis(
             self.detectors
                 .iter()
                 .copied()
@@ -88,13 +101,17 @@ impl SliceFaultMechanism {
                 .iter()
                 .copied()
                 .chain(other.dem_outputs.iter().copied()),
+            self.tracked_paulis
+                .iter()
+                .copied()
+                .chain(other.tracked_paulis.iter().copied()),
         )
     }
 
-    /// Whether this mechanism has no detector or standard DEM-output effect.
+    /// Whether this mechanism has no detector, standard-output, or tracked-Pauli effect.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.detectors.is_empty() && self.dem_outputs.is_empty()
+        self.detectors.is_empty() && self.dem_outputs.is_empty() && self.tracked_paulis.is_empty()
     }
 }
 
@@ -131,6 +148,13 @@ pub enum DemSliceContribution {
         /// Independent occurrence probability.
         probability: f64,
     },
+    /// A contribution with an arbitrary source-frame decomposition.
+    SourceDecomposed {
+        /// Source components whose XOR is the complete effect.
+        components: Vec<SliceFaultMechanism>,
+        /// Independent occurrence probability.
+        probability: f64,
+    },
 }
 
 impl DemSliceContribution {
@@ -157,21 +181,42 @@ impl DemSliceContribution {
         }
     }
 
-    fn probability(&self) -> f64 {
-        match self {
-            Self::Direct { probability, .. } | Self::YDecomposed { probability, .. } => {
-                *probability
-            }
+    /// Create a contribution with an arbitrary source-frame decomposition.
+    #[must_use]
+    pub fn source_decomposed(
+        components: impl IntoIterator<Item = SliceFaultMechanism>,
+        probability: f64,
+    ) -> Self {
+        Self::SourceDecomposed {
+            components: components.into_iter().collect(),
+            probability,
         }
     }
 
-    fn effects(&self) -> SmallVec<[&SliceFaultMechanism; 2]> {
+    fn probability(&self) -> f64 {
+        match self {
+            Self::Direct { probability, .. }
+            | Self::YDecomposed { probability, .. }
+            | Self::SourceDecomposed { probability, .. } => *probability,
+        }
+    }
+
+    fn components(&self) -> SmallVec<[&SliceFaultMechanism; 4]> {
         match self {
             Self::Direct { effect, .. } => smallvec::smallvec![effect],
             Self::YDecomposed {
                 x_effect, z_effect, ..
             } => smallvec::smallvec![x_effect, z_effect],
+            Self::SourceDecomposed { components, .. } => components.iter().collect(),
         }
+    }
+
+    fn combined_effect(&self) -> SliceFaultMechanism {
+        self.components()
+            .into_iter()
+            .fold(SliceFaultMechanism::default(), |effect, component| {
+                effect.xor(component)
+            })
     }
 }
 
@@ -246,6 +291,51 @@ pub struct DemSlice {
     contributions: Vec<DemSliceContribution>,
     horizon: DemTemporalHorizon,
     local_dem_outputs: BTreeSet<u32>,
+    local_tracked_paulis: BTreeSet<u32>,
+}
+
+/// Explicit identity map used when extracting a reusable slice from an existing DEM.
+///
+/// Detector keys are source-model `D<n>` identities and values are slice-local,
+/// relative-round targets. Standard outputs and tracked Paulis are mapped into
+/// their corresponding slice-local identity spaces.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DemSliceModelMap {
+    /// Source detector to relative slice target.
+    pub detectors: BTreeMap<u32, RelativeDetectorTarget>,
+    /// Source `L<n>` output to slice-local `L<n>` identity.
+    pub dem_outputs: BTreeMap<u32, u32>,
+    /// Source `TP<n>` output to slice-local `TP<n>` identity.
+    pub tracked_paulis: BTreeMap<u32, u32>,
+}
+
+impl DemSliceModelMap {
+    /// Create an empty model map.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Add or replace a source detector mapping.
+    #[must_use]
+    pub fn with_detector(mut self, source_detector: u32, target: RelativeDetectorTarget) -> Self {
+        self.detectors.insert(source_detector, target);
+        self
+    }
+
+    /// Add or replace a source standard-output mapping.
+    #[must_use]
+    pub fn with_dem_output(mut self, source_output: u32, local_output: u32) -> Self {
+        self.dem_outputs.insert(source_output, local_output);
+        self
+    }
+
+    /// Add or replace a source tracked-Pauli mapping.
+    #[must_use]
+    pub fn with_tracked_pauli(mut self, source_output: u32, local_output: u32) -> Self {
+        self.tracked_paulis.insert(source_output, local_output);
+        self
+    }
 }
 
 /// Deterministic cache for reusable DEM slices.
@@ -342,6 +432,7 @@ impl DemSlice {
         }
 
         let mut local_dem_outputs = BTreeSet::new();
+        let mut local_tracked_paulis = BTreeSet::new();
         for contribution in &contributions {
             let probability = contribution.probability();
             if !probability.is_finite() || !(0.0..=1.0).contains(&probability) {
@@ -350,7 +441,7 @@ impl DemSlice {
                     probability,
                 });
             }
-            for effect in contribution.effects() {
+            for effect in contribution.components() {
                 for target in &effect.detectors {
                     if !declared.contains(&target.detector) {
                         return Err(DemSliceStitchError::UndeclaredLocalDetector {
@@ -372,6 +463,7 @@ impl DemSlice {
                     }
                 }
                 local_dem_outputs.extend(effect.dem_outputs.iter().copied());
+                local_tracked_paulis.extend(effect.tracked_paulis.iter().copied());
             }
         }
 
@@ -381,7 +473,166 @@ impl DemSlice {
             contributions,
             horizon,
             local_dem_outputs,
+            local_tracked_paulis,
         })
+    }
+
+    /// Extract a reusable relative-address slice from a bounded structured DEM.
+    ///
+    /// This adapter preserves each [`super::types::FaultContribution`] as one
+    /// independent source, including Y-specific and arbitrary source-frame
+    /// decomposition components. Every source detector declaration must have
+    /// an explicit relative mapping; this prevents a halo or boundary detector
+    /// from disappearing silently.
+    ///
+    /// Source detectors mapped to offset zero become emitted local detectors.
+    /// Identities seen only at non-zero offsets become non-emitting temporal
+    /// ports. Spatial coordinates are inherited from the source declarations;
+    /// the source time coordinate is replaced by the instance round.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for incomplete or inconsistent identity maps, source
+    /// components whose XOR does not match their complete effect, or any normal
+    /// slice validation failure.
+    pub fn from_detector_error_model(
+        name: impl Into<String>,
+        model: &DetectorErrorModel,
+        source_map: &DemSliceModelMap,
+        horizon: DemTemporalHorizon,
+    ) -> Result<Self, DemSliceStitchError> {
+        Self::from_detector_error_model_selected(name.into(), model, source_map, horizon, |_| {
+            Ok(true)
+        })
+    }
+
+    /// Extract only contributions owned by a set of influence-map locations.
+    ///
+    /// A source contribution is included when all of its location indices are
+    /// in `owned_locations`, and omitted when none are. Partial ownership is an
+    /// error because splitting one correlated physical source between slices
+    /// would double-count or decorrelate it. Unattributed contributions also
+    /// fail loudly because their ownership cannot be established.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for unattributed or partially owned contributions in
+    /// addition to the errors from [`Self::from_detector_error_model`].
+    pub fn from_detector_error_model_for_locations(
+        name: impl Into<String>,
+        model: &DetectorErrorModel,
+        source_map: &DemSliceModelMap,
+        horizon: DemTemporalHorizon,
+        owned_locations: &BTreeSet<u32>,
+    ) -> Result<Self, DemSliceStitchError> {
+        let name = name.into();
+        Self::from_detector_error_model_selected(
+            name.clone(),
+            model,
+            source_map,
+            horizon,
+            |contribution| {
+                if contribution.location_indices.is_empty() {
+                    return Err(DemSliceStitchError::UnattributedSourceContribution {
+                        slice: name.clone(),
+                    });
+                }
+                let owned = contribution
+                    .location_indices
+                    .iter()
+                    .filter(|location| owned_locations.contains(location))
+                    .count();
+                if owned == 0 {
+                    Ok(false)
+                } else if owned == contribution.location_indices.len() {
+                    Ok(true)
+                } else {
+                    Err(DemSliceStitchError::PartialSourceOwnership {
+                        slice: name.clone(),
+                        location_indices: contribution.location_indices.to_vec(),
+                    })
+                }
+            },
+        )
+    }
+
+    fn from_detector_error_model_selected(
+        name: String,
+        model: &DetectorErrorModel,
+        source_map: &DemSliceModelMap,
+        horizon: DemTemporalHorizon,
+        include: impl Fn(&FaultContribution) -> Result<bool, DemSliceStitchError>,
+    ) -> Result<Self, DemSliceStitchError> {
+        let source_detectors: BTreeMap<_, _> = model
+            .detectors
+            .iter()
+            .map(|detector| (detector.id, detector))
+            .collect();
+
+        for source_detector in source_detectors.keys() {
+            if !source_map.detectors.contains_key(source_detector) {
+                return Err(DemSliceStitchError::MissingSourceDetectorMapping {
+                    slice: name,
+                    source_detector: *source_detector,
+                });
+            }
+        }
+
+        let mut local_detectors: BTreeMap<u32, (bool, Option<[f64; 2]>)> = BTreeMap::new();
+        for (&source_detector, target) in &source_map.detectors {
+            let declaration = source_detectors.get(&source_detector).ok_or_else(|| {
+                DemSliceStitchError::UnknownSourceDetector {
+                    slice: name.clone(),
+                    source_detector,
+                }
+            })?;
+            let coords = declaration.coords.map(|[x, y, _]| [x, y]);
+            let emitted = target.round_offset == 0;
+            match local_detectors.entry(target.detector) {
+                std::collections::btree_map::Entry::Vacant(entry) => {
+                    entry.insert((emitted, coords));
+                }
+                std::collections::btree_map::Entry::Occupied(mut entry) => {
+                    let (already_emitted, existing_coords) = entry.get_mut();
+                    if emitted && *already_emitted {
+                        return Err(DemSliceStitchError::DuplicateEmittedSourceDetector {
+                            slice: name,
+                            local_detector: target.detector,
+                        });
+                    }
+                    if let (Some(existing), Some(incoming)) = (*existing_coords, coords)
+                        && !spatial_coords_equal(existing, incoming)
+                    {
+                        return Err(DemSliceStitchError::ConflictingLocalDetectorCoordinates {
+                            slice: name,
+                            local_detector: target.detector,
+                        });
+                    }
+                    *already_emitted |= emitted;
+                    if existing_coords.is_none() {
+                        *existing_coords = coords;
+                    }
+                }
+            }
+        }
+
+        let detectors = local_detectors
+            .into_iter()
+            .map(|(id, (emitted, coords))| DemSliceDetector {
+                id,
+                coords,
+                emitted,
+            })
+            .collect();
+
+        let mut contributions = Vec::new();
+        for contribution in model.contributions() {
+            if include(contribution)? {
+                contributions.push(map_source_contribution(&name, contribution, source_map)?);
+            }
+        }
+
+        Self::new(name, detectors, contributions, horizon)
     }
 
     /// Human-readable template name, used in diagnostics and cache inspection.
@@ -407,6 +658,115 @@ impl DemSlice {
     pub const fn horizon(&self) -> DemTemporalHorizon {
         self.horizon
     }
+}
+
+fn map_source_contribution(
+    slice: &str,
+    contribution: &FaultContribution,
+    source_map: &DemSliceModelMap,
+) -> Result<DemSliceContribution, DemSliceStitchError> {
+    let complete = map_source_mechanism(slice, &contribution.effect, source_map)?;
+    if let Some((x_effect, z_effect)) = contribution.decomposition_components() {
+        let x_effect = map_source_mechanism(slice, &x_effect, source_map)?;
+        let z_effect = map_source_mechanism(slice, &z_effect, source_map)?;
+        if x_effect.xor(&z_effect) != complete {
+            return Err(DemSliceStitchError::SourceComponentEffectMismatch {
+                slice: slice.to_owned(),
+            });
+        }
+        return Ok(DemSliceContribution::y_decomposed(
+            x_effect,
+            z_effect,
+            contribution.probability,
+        ));
+    }
+
+    let source_components = contribution.source_component_effects().or_else(|| {
+        contribution
+            .direct_component_effects()
+            .map(|(first, second)| smallvec::smallvec![first, second])
+    });
+    if let Some(source_components) = source_components {
+        let components: Vec<_> = source_components
+            .iter()
+            .map(|component| map_source_mechanism(slice, component, source_map))
+            .collect::<Result<_, _>>()?;
+        let combined = components
+            .iter()
+            .fold(SliceFaultMechanism::default(), |effect, component| {
+                effect.xor(component)
+            });
+        if combined != complete {
+            return Err(DemSliceStitchError::SourceComponentEffectMismatch {
+                slice: slice.to_owned(),
+            });
+        }
+        Ok(DemSliceContribution::source_decomposed(
+            components,
+            contribution.probability,
+        ))
+    } else {
+        Ok(DemSliceContribution::direct(
+            complete,
+            contribution.probability,
+        ))
+    }
+}
+
+fn map_source_mechanism(
+    slice: &str,
+    source: &FaultMechanism,
+    source_map: &DemSliceModelMap,
+) -> Result<SliceFaultMechanism, DemSliceStitchError> {
+    let detectors = source
+        .detectors
+        .iter()
+        .map(|detector| {
+            source_map.detectors.get(detector).copied().ok_or_else(|| {
+                DemSliceStitchError::MissingSourceDetectorMapping {
+                    slice: slice.to_owned(),
+                    source_detector: *detector,
+                }
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let dem_outputs = source
+        .dem_outputs
+        .iter()
+        .map(|output| {
+            source_map.dem_outputs.get(output).copied().ok_or_else(|| {
+                DemSliceStitchError::MissingSourceDemOutputMapping {
+                    slice: slice.to_owned(),
+                    source_output: *output,
+                }
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let tracked_paulis = source
+        .tracked_paulis
+        .iter()
+        .map(|output| {
+            source_map
+                .tracked_paulis
+                .get(output)
+                .copied()
+                .ok_or_else(|| DemSliceStitchError::MissingSourceTrackedPauliMapping {
+                    slice: slice.to_owned(),
+                    source_output: *output,
+                })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(SliceFaultMechanism::from_unsorted_with_tracked_paulis(
+        detectors,
+        dem_outputs,
+        tracked_paulis,
+    ))
+}
+
+fn spatial_coords_equal(left: [f64; 2], right: [f64; 2]) -> bool {
+    left.into_iter()
+        .zip(right)
+        .all(|(left, right)| left.partial_cmp(&right) == Some(std::cmp::Ordering::Equal))
 }
 
 /// Placement of one slice-local detector in an algorithm-wide detector stream.
@@ -443,6 +803,7 @@ pub struct DemSliceInstance {
     round: i64,
     detector_map: BTreeMap<u32, DemDetectorPlacement>,
     dem_output_map: BTreeMap<u32, u32>,
+    tracked_pauli_map: BTreeMap<u32, u32>,
 }
 
 impl DemSliceInstance {
@@ -459,11 +820,17 @@ impl DemSliceInstance {
             .iter()
             .map(|&output| (output, output))
             .collect();
+        let tracked_pauli_map = slice
+            .local_tracked_paulis
+            .iter()
+            .map(|&output| (output, output))
+            .collect();
         Self {
             slice,
             round,
             detector_map,
             dem_output_map,
+            tracked_pauli_map,
         }
     }
 
@@ -482,6 +849,13 @@ impl DemSliceInstance {
     #[must_use]
     pub fn with_dem_output(mut self, local_output: u32, global_output: u32) -> Self {
         self.dem_output_map.insert(local_output, global_output);
+        self
+    }
+
+    /// Replace a local PECOS tracked-Pauli mapping.
+    #[must_use]
+    pub fn with_tracked_pauli(mut self, local_output: u32, global_output: u32) -> Self {
+        self.tracked_pauli_map.insert(local_output, global_output);
         self
     }
 
@@ -587,6 +961,7 @@ pub struct StitchedDem {
 pub struct DemStitcher {
     spec: DemWindowSpec,
     observables: Vec<DemOutput>,
+    tracked_paulis: Vec<DemOutput>,
 }
 
 impl DemStitcher {
@@ -596,6 +971,7 @@ impl DemStitcher {
         Self {
             spec,
             observables: Vec::new(),
+            tracked_paulis: Vec::new(),
         }
     }
 
@@ -603,6 +979,13 @@ impl DemStitcher {
     #[must_use]
     pub fn with_observables(mut self, observables: Vec<DemOutput>) -> Self {
         self.observables = observables;
+        self
+    }
+
+    /// Supply algorithm-wide PECOS tracked-Pauli definitions.
+    #[must_use]
+    pub fn with_tracked_paulis(mut self, tracked_paulis: Vec<DemOutput>) -> Self {
+        self.tracked_paulis = tracked_paulis;
         self
     }
 
@@ -670,58 +1053,96 @@ impl DemStitcher {
         for observable in &self.observables {
             model.add_observable(observable.clone());
         }
+        for tracked_pauli in &self.tracked_paulis {
+            model.add_tracked_pauli(tracked_pauli.clone());
+        }
 
         let mut diagnostics = DemStitchDiagnostics::default();
         let mut referenced_outputs = BTreeSet::new();
+        let mut referenced_tracked_paulis = BTreeSet::new();
+        let context = StitchContext {
+            spec: self.spec,
+            commit_end,
+            end_round,
+            address_to_id: &address_to_id,
+        };
         for instance in instances {
             for contribution in &instance.slice.contributions {
                 if !contribution_is_relevant(contribution, instance, self.spec, end_round)? {
                     continue;
                 }
                 let mut projection = Projection::default();
+                let complete = instantiate_effect(
+                    &contribution.combined_effect(),
+                    instance,
+                    &context,
+                    &mut projection,
+                    true,
+                )?;
                 match contribution {
-                    DemSliceContribution::Direct {
-                        effect,
-                        probability,
-                    } => {
-                        let effect = instantiate_effect(
-                            effect,
-                            instance,
-                            self.spec,
-                            commit_end,
-                            end_round,
-                            &address_to_id,
-                            &mut projection,
-                        )?;
-                        referenced_outputs.extend(effect.dem_outputs.iter().copied());
-                        model.add_direct_contribution(effect, *probability);
+                    DemSliceContribution::Direct { probability, .. } => {
+                        referenced_outputs.extend(complete.dem_outputs.iter().copied());
+                        referenced_tracked_paulis.extend(complete.tracked_paulis.iter().copied());
+                        model.add_direct_contribution(complete, *probability);
                     }
                     DemSliceContribution::YDecomposed {
                         x_effect,
                         z_effect,
                         probability,
                     } => {
+                        let mut component_projection = Projection::default();
                         let x_effect = instantiate_effect(
                             x_effect,
                             instance,
-                            self.spec,
-                            commit_end,
-                            end_round,
-                            &address_to_id,
-                            &mut projection,
+                            &context,
+                            &mut component_projection,
+                            false,
                         )?;
                         let z_effect = instantiate_effect(
                             z_effect,
                             instance,
-                            self.spec,
-                            commit_end,
-                            end_round,
-                            &address_to_id,
-                            &mut projection,
+                            &context,
+                            &mut component_projection,
+                            false,
                         )?;
+                        debug_assert_eq!(x_effect.xor(&z_effect), complete);
                         referenced_outputs.extend(x_effect.dem_outputs.iter().copied());
                         referenced_outputs.extend(z_effect.dem_outputs.iter().copied());
+                        referenced_tracked_paulis.extend(x_effect.tracked_paulis.iter().copied());
+                        referenced_tracked_paulis.extend(z_effect.tracked_paulis.iter().copied());
                         model.add_y_decomposed_contribution(&x_effect, &z_effect, *probability);
+                    }
+                    DemSliceContribution::SourceDecomposed {
+                        components,
+                        probability,
+                    } => {
+                        let mut component_projection = Projection::default();
+                        let components: Vec<_> = components
+                            .iter()
+                            .map(|component| {
+                                instantiate_effect(
+                                    component,
+                                    instance,
+                                    &context,
+                                    &mut component_projection,
+                                    false,
+                                )
+                            })
+                            .collect::<Result<_, _>>()?;
+                        debug_assert_eq!(
+                            components
+                                .iter()
+                                .fold(FaultMechanism::new(), |effect, component| {
+                                    effect.xor(component)
+                                }),
+                            complete
+                        );
+                        for component in &components {
+                            referenced_outputs.extend(component.dem_outputs.iter().copied());
+                            referenced_tracked_paulis
+                                .extend(component.tracked_paulis.iter().copied());
+                        }
+                        model.add_source_decomposed_contribution(components, *probability);
                     }
                 }
 
@@ -738,6 +1159,11 @@ impl DemStitcher {
             self.observables.iter().map(|output| output.id).collect();
         for output in referenced_outputs.difference(&declared_outputs) {
             model.add_observable(DemOutput::new(*output));
+        }
+        let declared_tracked_paulis: BTreeSet<u32> =
+            self.tracked_paulis.iter().map(|output| output.id).collect();
+        for output in referenced_tracked_paulis.difference(&declared_tracked_paulis) {
+            model.add_tracked_pauli(DemOutput::new(*output));
         }
 
         Ok(StitchedDem {
@@ -768,15 +1194,13 @@ fn contribution_is_relevant(
         return Ok(true);
     }
 
-    for effect in contribution.effects() {
-        for target in &effect.detectors {
-            let round = instance
-                .round
-                .checked_add(i64::from(target.round_offset))
-                .ok_or(DemSliceStitchError::RoundOverflow)?;
-            if round >= spec.start_round && round < end_round {
-                return Ok(true);
-            }
+    for target in &contribution.combined_effect().detectors {
+        let round = instance
+            .round
+            .checked_add(i64::from(target.round_offset))
+            .ok_or(DemSliceStitchError::RoundOverflow)?;
+        if round >= spec.start_round && round < end_round {
+            return Ok(true);
         }
     }
     Ok(false)
@@ -789,14 +1213,19 @@ struct Projection {
     touches_commit: bool,
 }
 
-fn instantiate_effect(
-    local: &SliceFaultMechanism,
-    instance: &DemSliceInstance,
+struct StitchContext<'a> {
     spec: DemWindowSpec,
     commit_end: i64,
     end_round: i64,
-    address_to_id: &BTreeMap<StitchedDetectorAddress, u32>,
+    address_to_id: &'a BTreeMap<StitchedDetectorAddress, u32>,
+}
+
+fn instantiate_effect(
+    local: &SliceFaultMechanism,
+    instance: &DemSliceInstance,
+    context: &StitchContext<'_>,
     projection: &mut Projection,
+    validate_boundary: bool,
 ) -> Result<FaultMechanism, DemSliceStitchError> {
     let mut detectors = Vec::with_capacity(local.detectors.len());
     for target in &local.detectors {
@@ -810,13 +1239,13 @@ fn instantiate_effect(
             .round
             .checked_add(i64::from(target.round_offset))
             .ok_or(DemSliceStitchError::RoundOverflow)?;
-        if round < spec.start_round {
+        if round < context.spec.start_round {
             projection.past = true;
             continue;
         }
-        if round >= end_round {
+        if round >= context.end_round {
             projection.future = true;
-            if spec.forward_boundary == DemBoundaryKind::Hard {
+            if validate_boundary && context.spec.forward_boundary == DemBoundaryKind::Hard {
                 return Err(DemSliceStitchError::UnresolvedHardForwardPort {
                     slice: instance.slice.name.clone(),
                     source_round: instance.round,
@@ -825,29 +1254,28 @@ fn instantiate_effect(
             }
             continue;
         }
-        if round < commit_end {
+        if round < context.commit_end {
             projection.touches_commit = true;
         }
         let address = StitchedDetectorAddress {
             round,
             stream_id: placement.stream_id,
         };
-        let id =
-            address_to_id
-                .get(&address)
-                .ok_or(DemSliceStitchError::MissingDetectorDeclaration {
-                    slice: instance.slice.name.clone(),
-                    address,
-                })?;
+        let id = context.address_to_id.get(&address).ok_or(
+            DemSliceStitchError::MissingDetectorDeclaration {
+                slice: instance.slice.name.clone(),
+                address,
+            },
+        )?;
         detectors.push(*id);
     }
 
-    if projection.future && projection.touches_commit {
+    if validate_boundary && projection.future && projection.touches_commit {
         return Err(DemSliceStitchError::BufferTooSmall {
             slice: instance.slice.name.clone(),
             source_round: instance.round,
-            commit_end,
-            window_end: end_round,
+            commit_end: context.commit_end,
+            window_end: context.end_round,
         });
     }
 
@@ -862,7 +1290,22 @@ fn instantiate_effect(
         outputs.push(*mapped);
     }
 
-    Ok(FaultMechanism::from_unsorted(detectors, outputs))
+    let mut tracked_paulis = Vec::with_capacity(local.tracked_paulis.len());
+    for output in &local.tracked_paulis {
+        let mapped = instance.tracked_pauli_map.get(output).ok_or_else(|| {
+            DemSliceStitchError::MissingTrackedPauliMapping {
+                slice: instance.slice.name.clone(),
+                output: *output,
+            }
+        })?;
+        tracked_paulis.push(*mapped);
+    }
+
+    Ok(FaultMechanism::from_unsorted_with_tracked_paulis(
+        detectors,
+        outputs,
+        tracked_paulis,
+    ))
 }
 
 /// Error returned while validating or stitching reusable DEM slices.
@@ -872,6 +1315,27 @@ pub enum DemSliceStitchError {
     DuplicateLocalDetector { slice: String, detector: u32 },
     /// A contribution references a detector the slice does not declare.
     UndeclaredLocalDetector { slice: String, detector: u32 },
+    /// A source DEM detector declaration has no relative slice mapping.
+    MissingSourceDetectorMapping { slice: String, source_detector: u32 },
+    /// A source detector mapping names no declaration in the source DEM.
+    UnknownSourceDetector { slice: String, source_detector: u32 },
+    /// Multiple source detectors map to one emitted local detector at offset zero.
+    DuplicateEmittedSourceDetector { slice: String, local_detector: u32 },
+    /// Source declarations mapped to one local detector disagree on spatial coordinates.
+    ConflictingLocalDetectorCoordinates { slice: String, local_detector: u32 },
+    /// A source DEM output has no slice-local mapping.
+    MissingSourceDemOutputMapping { slice: String, source_output: u32 },
+    /// A source tracked Pauli has no slice-local mapping.
+    MissingSourceTrackedPauliMapping { slice: String, source_output: u32 },
+    /// Recorded source components do not XOR to their complete contribution effect.
+    SourceComponentEffectMismatch { slice: String },
+    /// A contribution has no influence-map location indices from which to determine ownership.
+    UnattributedSourceContribution { slice: String },
+    /// Only part of one correlated source was assigned to this slice.
+    PartialSourceOwnership {
+        slice: String,
+        location_indices: Vec<u32>,
+    },
     /// A contribution probability is NaN, infinite, negative, or greater than one.
     InvalidProbability { slice: String, probability: f64 },
     /// A target exceeds the slice's declared temporal reach.
@@ -885,6 +1349,8 @@ pub enum DemSliceStitchError {
     MissingDetectorMapping { slice: String, detector: u32 },
     /// An instance does not map one of its slice's standard DEM outputs.
     MissingDemOutputMapping { slice: String, output: u32 },
+    /// An instance does not map one of its slice's PECOS tracked Paulis.
+    MissingTrackedPauliMapping { slice: String, output: u32 },
     /// Two instances declare different coordinates for the same algorithm-wide detector.
     ConflictingDetectorDeclaration { address: StitchedDetectorAddress },
     /// A contribution targets an in-window detector no instance declared.
@@ -928,6 +1394,63 @@ impl fmt::Display for DemSliceStitchError {
                 f,
                 "DEM slice {slice:?} references undeclared local detector {detector}"
             ),
+            Self::MissingSourceDetectorMapping {
+                slice,
+                source_detector,
+            } => write!(
+                f,
+                "source DEM detector D{source_detector} has no relative mapping for slice {slice:?}"
+            ),
+            Self::UnknownSourceDetector {
+                slice,
+                source_detector,
+            } => write!(
+                f,
+                "slice {slice:?} maps source detector D{source_detector}, but the source DEM does not declare it"
+            ),
+            Self::DuplicateEmittedSourceDetector {
+                slice,
+                local_detector,
+            } => write!(
+                f,
+                "slice {slice:?} maps multiple offset-zero source detectors to emitted local detector {local_detector}"
+            ),
+            Self::ConflictingLocalDetectorCoordinates {
+                slice,
+                local_detector,
+            } => write!(
+                f,
+                "source declarations mapped to slice {slice:?} local detector {local_detector} have conflicting spatial coordinates"
+            ),
+            Self::MissingSourceDemOutputMapping {
+                slice,
+                source_output,
+            } => write!(
+                f,
+                "source DEM output L{source_output} has no local mapping for slice {slice:?}"
+            ),
+            Self::MissingSourceTrackedPauliMapping {
+                slice,
+                source_output,
+            } => write!(
+                f,
+                "source tracked Pauli TP{source_output} has no local mapping for slice {slice:?}"
+            ),
+            Self::SourceComponentEffectMismatch { slice } => write!(
+                f,
+                "source decomposition components do not XOR to their complete effect in slice {slice:?}"
+            ),
+            Self::UnattributedSourceContribution { slice } => write!(
+                f,
+                "source contribution in slice {slice:?} has no influence-map location identity"
+            ),
+            Self::PartialSourceOwnership {
+                slice,
+                location_indices,
+            } => write!(
+                f,
+                "slice {slice:?} owns only part of correlated source locations {location_indices:?}"
+            ),
             Self::InvalidProbability { slice, probability } => write!(
                 f,
                 "DEM slice {slice:?} has invalid probability {probability}; expected a finite value in [0, 1]"
@@ -949,6 +1472,10 @@ impl fmt::Display for DemSliceStitchError {
             Self::MissingDemOutputMapping { slice, output } => write!(
                 f,
                 "DEM slice instance {slice:?} has no mapping for local output L{output}"
+            ),
+            Self::MissingTrackedPauliMapping { slice, output } => write!(
+                f,
+                "DEM slice instance {slice:?} has no mapping for local tracked Pauli TP{output}"
             ),
             Self::ConflictingDetectorDeclaration { address } => write!(
                 f,
@@ -1068,6 +1595,32 @@ mod tests {
             error,
             DemSliceStitchError::UnresolvedHardForwardPort { .. }
         ));
+    }
+
+    #[test]
+    fn hard_boundary_validates_the_combined_source_effect() {
+        let future_component = SliceFaultMechanism::from_unsorted(
+            [RelativeDetectorTarget::new(0, 1)],
+            std::iter::empty(),
+        );
+        let slice = Arc::new(
+            DemSlice::new(
+                "cancelled source components",
+                vec![DemSliceDetector::port(0)],
+                vec![DemSliceContribution::source_decomposed(
+                    [future_component.clone(), future_component],
+                    0.125,
+                )],
+                DemTemporalHorizon::new(0, 1),
+            )
+            .unwrap(),
+        );
+        let stitched = DemStitcher::new(DemWindowSpec::new(0, 1, 0, DemBoundaryKind::Hard))
+            .stitch(&[DemSliceInstance::identity(slice, 0)])
+            .unwrap();
+
+        assert!(stitched.model.contributions().is_empty());
+        assert_eq!(stitched.diagnostics, DemStitchDiagnostics::default());
     }
 
     #[test]
@@ -1250,5 +1803,257 @@ mod tests {
             vec![(0.01, vec![0], vec![])]
         );
         assert_eq!(stitched.diagnostics.projected_past_contributions, 1);
+    }
+
+    #[test]
+    fn structured_dem_adapter_preserves_source_components_and_pecos_outputs() {
+        let mut source = DetectorErrorModel::new();
+        for id in 0..4 {
+            source.add_detector(DetectorDef::new(id).with_coords([f64::from(id), 2.0, 11.0]));
+        }
+        source.add_observable(DemOutput::new(2));
+        source.add_tracked_pauli(DemOutput::new(4));
+        source.add_source_decomposed_contribution(
+            [
+                FaultMechanism::from_unsorted_with_tracked_paulis([0, 1], [2], [4]),
+                FaultMechanism::from_unsorted([1, 2], []),
+                FaultMechanism::from_unsorted([3], []),
+            ],
+            0.125,
+        );
+
+        let source_map = (0..4).fold(
+            DemSliceModelMap::new()
+                .with_dem_output(2, 0)
+                .with_tracked_pauli(4, 1),
+            |source_map, detector| {
+                source_map.with_detector(detector, RelativeDetectorTarget::new(detector, 0))
+            },
+        );
+        let slice = Arc::new(
+            DemSlice::from_detector_error_model(
+                "adapted",
+                &source,
+                &source_map,
+                DemTemporalHorizon::new(0, 0),
+            )
+            .unwrap(),
+        );
+        let instance = DemSliceInstance::identity(slice, 7)
+            .with_dem_output(0, 6)
+            .with_tracked_pauli(1, 8);
+        let stitched = DemStitcher::new(DemWindowSpec::new(7, 1, 0, DemBoundaryKind::Hard))
+            .stitch(&[instance])
+            .unwrap();
+
+        assert_eq!(
+            stitched.model.to_mechanisms().0,
+            vec![(0.125, vec![0, 2, 3], vec![6])]
+        );
+        let contribution = &stitched.model.contributions()[0];
+        assert_eq!(contribution.effect.tracked_paulis.as_slice(), &[8]);
+        let components = contribution.source_component_effects().unwrap();
+        assert_eq!(components.len(), 3);
+        assert_eq!(components[0].detectors.as_slice(), &[0, 1]);
+        assert_eq!(components[0].dem_outputs.as_slice(), &[6]);
+        assert_eq!(components[0].tracked_paulis.as_slice(), &[8]);
+    }
+
+    #[test]
+    fn structured_dem_adapter_infers_forward_port_from_relative_map() {
+        let mut source = DetectorErrorModel::new();
+        source.add_detector(DetectorDef::new(10).with_coords([1.0, 2.0, 0.0]));
+        source.add_detector(DetectorDef::new(11).with_coords([1.0, 2.0, 1.0]));
+        source.add_direct_contribution(FaultMechanism::from_unsorted([10, 11], []), 0.01);
+        let source_map = DemSliceModelMap::new()
+            .with_detector(10, target(0, 0))
+            .with_detector(11, target(0, 1));
+
+        let slice = Arc::new(
+            DemSlice::from_detector_error_model(
+                "bulk from DEM",
+                &source,
+                &source_map,
+                DemTemporalHorizon::new(0, 1),
+            )
+            .unwrap(),
+        );
+        assert_eq!(
+            slice.detectors(),
+            &[DemSliceDetector::new(0).with_coords([1.0, 2.0])]
+        );
+
+        let instances: Vec<_> = (0..3)
+            .map(|round| DemSliceInstance::identity(Arc::clone(&slice), round))
+            .collect();
+        let stitched = DemStitcher::new(DemWindowSpec::new(0, 2, 1, DemBoundaryKind::Soft))
+            .stitch(&instances)
+            .unwrap();
+        assert_eq!(
+            stitched.model.to_mechanisms().0,
+            vec![
+                (0.01, vec![0, 1], vec![]),
+                (0.01, vec![1, 2], vec![]),
+                (0.01, vec![2], vec![]),
+            ]
+        );
+    }
+
+    #[test]
+    fn dem_builder_output_round_trips_through_a_slice_exactly() {
+        use crate::fault_tolerance::dem_builder::{DemBuilder, ParsedDem, compare_dems_exact};
+        use pecos_quantum::{Attribute, TickCircuit};
+
+        let mut circuit = TickCircuit::new();
+        circuit.tick().px(&[0]);
+        let measurement = circuit.tick().mx(&[0]);
+        circuit
+            .detector(&measurement)
+            .expect("the MX reference belongs to the circuit");
+        circuit.set_meta("num_measurements", Attribute::String("1".to_string()));
+        circuit.set_meta(
+            "detectors",
+            Attribute::String(r#"[{"id":0,"coords":[2.0,3.0,0.0],"meas_ids":[0]}]"#.to_string()),
+        );
+        circuit.set_meta("observables", Attribute::String("[]".to_string()));
+
+        let reference = DemBuilder::try_from_tick_circuit(&circuit, 0.01, 0.0, 0.02, 0.03)
+            .expect("the physical template builds");
+        let owned_locations: BTreeSet<_> = reference
+            .contributions()
+            .iter()
+            .flat_map(|contribution| contribution.location_indices.iter().copied())
+            .collect();
+        assert!(!owned_locations.is_empty());
+        let slice = Arc::new(
+            DemSlice::from_detector_error_model_for_locations(
+                "physical MX template",
+                &reference,
+                &DemSliceModelMap::new().with_detector(0, target(0, 0)),
+                DemTemporalHorizon::new(0, 0),
+                &owned_locations,
+            )
+            .expect("the structured DEM adapts to a slice"),
+        );
+        let stitched = DemStitcher::new(DemWindowSpec::new(0, 1, 0, DemBoundaryKind::Hard))
+            .stitch(&[DemSliceInstance::identity(slice, 0)])
+            .expect("the one-round slice stitches");
+
+        let reference: ParsedDem = reference.to_string().parse().unwrap();
+        let stitched: ParsedDem = stitched.model.to_string().parse().unwrap();
+        let equivalence = compare_dems_exact(&reference, &stitched, 1e-12);
+        assert!(equivalence.equivalent, "{:#?}", equivalence.details);
+    }
+
+    #[test]
+    fn owned_physical_round_slices_equal_the_full_repeated_measurement_dem() {
+        use crate::fault_tolerance::dem_builder::{DemBuilder, ParsedDem, compare_dems_exact};
+        use crate::fault_tolerance::propagator::DagFaultAnalyzer;
+        use pecos_quantum::DagCircuit;
+
+        let mut circuit = DagCircuit::new();
+        circuit.pz(&[0]);
+        let mut owned_nodes = Vec::new();
+        for _ in 0..3 {
+            circuit.pz(&[1]);
+            circuit.cx(&[(0, 1)]);
+            owned_nodes.push(circuit.last_added_node().unwrap());
+            circuit.mz(&[1]);
+        }
+        let influence_map = DagFaultAnalyzer::new(&circuit).build_influence_map();
+        let reference = DemBuilder::new(&influence_map)
+            .with_noise(0.0, 0.05, 0.0, 0.0)
+            .with_detectors_json(
+                r#"[
+                    {"id":0,"coords":[2.0,3.0,0.0],"meas_ids":[0]},
+                    {"id":1,"coords":[2.0,3.0,1.0],"meas_ids":[0,1]},
+                    {"id":2,"coords":[2.0,3.0,2.0],"meas_ids":[1,2]}
+                ]"#,
+            )
+            .unwrap()
+            .with_num_measurements(3)
+            .try_build()
+            .expect("the repeated syndrome-measurement circuit builds");
+        let owned_by_round: Vec<BTreeSet<u32>> = owned_nodes
+            .iter()
+            .map(|owned_node| {
+                influence_map
+                    .locations
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, location)| location.node == *owned_node)
+                    .map(|(index, _)| u32::try_from(index).unwrap())
+                    .collect()
+            })
+            .collect();
+        assert!(owned_by_round.iter().all(|locations| !locations.is_empty()));
+
+        let partial_ownership = BTreeSet::from([*reference
+            .contributions()
+            .iter()
+            .find(|contribution| contribution.location_indices.len() > 1)
+            .expect("two-qubit CX sources have multiple location indices")
+            .location_indices
+            .first()
+            .unwrap()]);
+        let all_at_anchor = (0..3_u32).fold(DemSliceModelMap::new(), |source_map, detector| {
+            source_map.with_detector(detector, target(0, i32::try_from(detector).unwrap()))
+        });
+        let error = DemSlice::from_detector_error_model_for_locations(
+            "partially owned CX",
+            &reference,
+            &all_at_anchor,
+            DemTemporalHorizon::new(0, 2),
+            &partial_ownership,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            DemSliceStitchError::PartialSourceOwnership { .. }
+        ));
+
+        let mut slices = Vec::new();
+        for round in 0..3_i32 {
+            let source_map = (0..3_u32).fold(DemSliceModelMap::new(), |source_map, detector| {
+                source_map.with_detector(
+                    detector,
+                    target(0, i32::try_from(detector).unwrap() - round),
+                )
+            });
+            slices.push(Arc::new(
+                DemSlice::from_detector_error_model_for_locations(
+                    format!("measurement round {round}"),
+                    &reference,
+                    &source_map,
+                    DemTemporalHorizon::new(2, 2),
+                    &owned_by_round[usize::try_from(round).unwrap()],
+                )
+                .expect("the owned physical round extracts"),
+            ));
+        }
+        assert!(slices.iter().any(|slice| {
+            slice.contributions().iter().any(|contribution| {
+                contribution.components().iter().any(|component| {
+                    component
+                        .detectors
+                        .iter()
+                        .any(|target| target.round_offset != 0)
+                })
+            })
+        }));
+
+        let instances: Vec<_> = slices
+            .into_iter()
+            .enumerate()
+            .map(|(round, slice)| DemSliceInstance::identity(slice, i64::try_from(round).unwrap()))
+            .collect();
+        let stitched = DemStitcher::new(DemWindowSpec::new(0, 3, 0, DemBoundaryKind::Hard))
+            .stitch(&instances)
+            .expect("the physical slices stitch");
+
+        let reference: ParsedDem = reference.to_string().parse().unwrap();
+        let stitched: ParsedDem = stitched.model.to_string().parse().unwrap();
+        let equivalence = compare_dems_exact(&reference, &stitched, 1e-12);
+        assert!(equivalence.equivalent, "{:#?}", equivalence.details);
     }
 }

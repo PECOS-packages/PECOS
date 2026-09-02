@@ -100,9 +100,9 @@ pub use sampler::{
 };
 pub use slice::{
     DemBoundaryKind, DemDetectorPlacement, DemSlice, DemSliceCache, DemSliceContribution,
-    DemSliceDetector, DemSliceInstance, DemSliceStitchError, DemStitchDiagnostics, DemStitcher,
-    DemTemporalHorizon, DemWindowSpec, RelativeDetectorTarget, SliceFaultMechanism, StitchedDem,
-    StitchedDetectorAddress,
+    DemSliceDetector, DemSliceInstance, DemSliceModelMap, DemSliceStitchError,
+    DemStitchDiagnostics, DemStitcher, DemTemporalHorizon, DemWindowSpec, RelativeDetectorTarget,
+    SliceFaultMechanism, StitchedDem, StitchedDetectorAddress,
 };
 pub use types::{
     ContributionEffectSummary, ContributionRenderRecord, ContributionRenderStrategy,

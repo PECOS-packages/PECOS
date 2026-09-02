@@ -52,6 +52,27 @@ template compiler should include circuit identity, code geometry, detector
 schema, temporal horizon, and noise-support topology in that key. It should not
 include instance-only relabeling state.
 
+## Existing DEM integration
+
+`DemSlice::from_detector_error_model` adapts PECOS's structured
+`DetectorErrorModel` directly. `DemSliceModelMap` explicitly maps every source
+detector declaration to a local detector identity and signed round offset, and
+maps standard `L<n>` and PECOS `TP<n>` outputs into their local identity spaces.
+Missing declarations or output mappings fail instead of being dropped.
+
+The adapter retains contributions individually. Y-specific decomposition and
+arbitrary source-frame component lists are both preserved, including
+multi-component sources used by native two-qubit Clifford and replacement
+branches. Component XOR is checked against the source contribution's complete
+effect.
+
+For a physical template containing halo operations,
+`DemSlice::from_detector_error_model_for_locations` accepts the owned
+`DagFaultInfluenceMap` location IDs. A contribution is included only if all of
+its source locations are owned by the slice and omitted if none are. Partial or
+unattributed ownership fails loudly so one correlated source cannot be split
+or counted twice.
+
 ## Window boundaries
 
 `DemWindowSpec` describes a half-open commit region followed by a half-open
@@ -77,8 +98,8 @@ converted to mechanism columns.
 
 ## Current scope
 
-This layer provides the stable slice, cache, mapping, and stitching API. It does
-not yet decide how a circuit frontend compiles physical operations into slices,
-mutate a decoder's prior vector, schedule logical gates, or support adaptive
-syndrome-extraction templates. The full-circuit DEM builder remains the
-equivalence oracle while those integrations are added.
+This layer provides the stable slice, cache, structured-DEM adapter, ownership,
+mapping, and stitching API. It does not yet choose physical template/halo
+circuits for a frontend, mutate a decoder's prior vector, schedule logical
+gates, or support adaptive syndrome-extraction templates. The full-circuit DEM
+builder remains the equivalence oracle while those integrations are added.

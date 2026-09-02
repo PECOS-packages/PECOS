@@ -301,7 +301,7 @@ struct MeasurementResult {
 struct GeneralNoiseErrorModel {
     model: Box<dyn NoiseModel>,
     builder: ByteMessageBuilder,
-    last_operation_end: Vec<u64>,
+    last_operation_end: Vec<Option<u64>>,
     local_groups: Vec<BTreeSet<usize>>,
 }
 
@@ -317,7 +317,7 @@ impl GeneralNoiseErrorModel {
         Ok(Self {
             model,
             builder: ByteMessage::quantum_operations_builder(),
-            last_operation_end: vec![0; n_qubits],
+            last_operation_end: vec![None; n_qubits],
             local_groups: config
                 .measurement
                 .local_groups
@@ -339,7 +339,14 @@ impl GeneralNoiseErrorModel {
     }
 
     fn add_idle_before(&mut self, qubit: usize, start: u64) -> Result<()> {
-        let previous = self.last_operation_end[qubit];
+        // A qubit's first operation in a shot has no predecessor within that shot, so
+        // there is no gap to model. Selene's runtime clock is monotonic across shots
+        // (`SimpleRuntime::shot_start` is a no-op and its instant only advances), so
+        // treating "no previous operation" as timestamp zero would charge the qubit
+        // for every nanosecond of emulator time that elapsed in earlier shots.
+        let Some(previous) = self.last_operation_end[qubit] else {
+            return Ok(());
+        };
         if start < previous {
             bail!(
                 "operation on qubit {qubit} starts at {start}ns before its previous operation ended at {previous}ns"
@@ -396,7 +403,7 @@ impl ErrorModelInterface for GeneralNoiseErrorModel {
 
     fn shot_start(&mut self, _shot_id: u64, error_seed: u64) -> Result<()> {
         self.model.set_seed(error_seed);
-        self.last_operation_end.fill(0);
+        self.last_operation_end.fill(None);
         self.builder.reset();
         let _ = self.builder.for_quantum_operations();
         Ok(())
@@ -458,13 +465,13 @@ impl ErrorModelInterface for GeneralNoiseErrorModel {
                         Angle64::from_radians(phi),
                         &[qubit],
                     );
-                    self.last_operation_end[qubit] = end;
+                    self.last_operation_end[qubit] = Some(end);
                 }
                 Operation::RZGate { qubit_id, theta } => {
                     let qubit = self.qubit(qubit_id)?;
                     self.add_idle_before(qubit, start)?;
                     self.builder.rz(Angle64::from_radians(theta), &[qubit]);
-                    self.last_operation_end[qubit] = end;
+                    self.last_operation_end[qubit] = Some(end);
                 }
                 Operation::RZZGate {
                     qubit_id_1,
@@ -477,8 +484,8 @@ impl ErrorModelInterface for GeneralNoiseErrorModel {
                     self.add_idle_before(second, start)?;
                     self.builder
                         .rzz(Angle64::from_radians(theta), &[(first, second)]);
-                    self.last_operation_end[first] = end;
-                    self.last_operation_end[second] = end;
+                    self.last_operation_end[first] = Some(end);
+                    self.last_operation_end[second] = Some(end);
                 }
                 Operation::Measure {
                     qubit_id,
@@ -487,7 +494,7 @@ impl ErrorModelInterface for GeneralNoiseErrorModel {
                     let qubit = self.qubit(qubit_id)?;
                     self.add_idle_before(qubit, start)?;
                     self.builder.mz(&[qubit]);
-                    self.last_operation_end[qubit] = end;
+                    self.last_operation_end[qubit] = Some(end);
                     expected.push(MeasurementResult {
                         id: result_id,
                         kind: MeasurementKind::Bool,
@@ -500,7 +507,7 @@ impl ErrorModelInterface for GeneralNoiseErrorModel {
                     let qubit = self.qubit(qubit_id)?;
                     self.add_idle_before(qubit, start)?;
                     self.builder.measure_leakages(&[qubit]);
-                    self.last_operation_end[qubit] = end;
+                    self.last_operation_end[qubit] = Some(end);
                     expected.push(MeasurementResult {
                         id: result_id,
                         kind: MeasurementKind::Leakage,
@@ -510,7 +517,7 @@ impl ErrorModelInterface for GeneralNoiseErrorModel {
                     let qubit = self.qubit(qubit_id)?;
                     self.add_idle_before(qubit, start)?;
                     self.builder.pz(&[qubit]);
-                    self.last_operation_end[qubit] = end;
+                    self.last_operation_end[qubit] = Some(end);
                 }
                 Operation::RPPGate { .. } => {
                     bail!(
@@ -751,7 +758,7 @@ mod tests {
         operations: &[Operation],
         start: u64,
         end: u64,
-        last_operation_end: &mut [u64],
+        last_operation_end: &mut [Option<u64>],
         local_groups: &[BTreeSet<usize>],
     ) -> (ByteMessage, Vec<(u64, bool)>) {
         let mut builder = ByteMessage::quantum_operations_builder();
@@ -781,13 +788,13 @@ mod tests {
         let mut expected = Vec::new();
         for operation in operations {
             let mut idle_before = |qubit: usize| {
-                if start > last_operation_end[qubit] {
-                    let seconds =
-                        std::time::Duration::from_nanos(start - last_operation_end[qubit])
-                            .as_secs_f64();
+                if let Some(previous) = last_operation_end[qubit]
+                    && start > previous
+                {
+                    let seconds = std::time::Duration::from_nanos(start - previous).as_secs_f64();
                     builder.idle(seconds, &[qubit]);
                 }
-                last_operation_end[qubit] = end;
+                last_operation_end[qubit] = Some(end);
             };
             match operation {
                 Operation::RXYGate {
@@ -1140,7 +1147,7 @@ mod tests {
         let mut direct_simulator = ClassicalSimulator::with_qubits(N_QUBITS);
         let mut adapter_simulator = ClassicalSimulator::with_qubits(N_QUBITS);
         let local_groups = [BTreeSet::from([0, 1]), BTreeSet::from([1, 2])];
-        let mut reference_last_end = vec![0; N_QUBITS];
+        let mut reference_last_end: Vec<Option<u64>> = vec![None; N_QUBITS];
         let error_seed = 8_191;
         direct_model.set_seed(error_seed);
         adapter.shot_start(0, error_seed).unwrap();
@@ -1282,6 +1289,116 @@ mod tests {
             assert_eq!(adapter_simulator.received, direct_simulator.received);
             assert_eq!(adapter_simulator.bits, direct_simulator.bits);
         }
+    }
+
+    #[test]
+    fn a_shot_does_not_inherit_the_previous_shots_clock() {
+        // Selene's runtime clock is monotonic across shots: `SimpleRuntime::shot_start`
+        // is a no-op and its instant only ever advances. A qubit's first operation in a
+        // shot therefore has no predecessor within that shot and must not accrue idle
+        // time measured from an earlier shot's timestamps.
+        let config = r#"{"idle":{"linear_rate":1.0,"linear_model":{"X":1.0}}}"#;
+        let batch = || {
+            vec![Operation::RXYGate {
+                qubit_id: 0,
+                theta: PI,
+                phi: 0.0,
+            }]
+        };
+
+        // One operation per qubit per batch, as the runtime schedules them.
+        let mut error_model = build_error_model(config, 1);
+        let span = 1_000_000_000;
+        let run_shot = |model: &mut GeneralNoiseErrorModel, shot: u64, base: u64| {
+            let mut simulator = ClassicalSimulator::with_qubits(1);
+            model.shot_start(shot, 41).unwrap();
+            model
+                .handle_operations(runtime_batch(batch(), base, span), &mut simulator)
+                .unwrap();
+            model
+                .handle_operations(
+                    runtime_batch(
+                        vec![Operation::Measure {
+                            qubit_id: 0,
+                            result_id: 0,
+                        }],
+                        base + span,
+                        span,
+                    ),
+                    &mut simulator,
+                )
+                .unwrap();
+            model.shot_end().unwrap();
+            simulator.received
+        };
+
+        let first = run_shot(&mut error_model, 0, 0);
+        let second = run_shot(&mut error_model, 1, 2 * span);
+
+        assert_eq!(
+            first, second,
+            "the same circuit under the same seed must reach the simulator identically \
+             regardless of how much emulator time preceded the shot"
+        );
+    }
+
+    #[test]
+    fn prepared_qubits_do_not_leak_across_shots() {
+        // `prepared_qubits` is the global measurement-crosstalk victim pool. A qubit
+        // prepared in an earlier shot must not be a victim in a later shot that never
+        // prepared it, or shots stop being independent and any rate averaged over them
+        // depends on shot ordering.
+        //
+        // The oracle is a freshly constructed model with no history running the same
+        // shot: whatever the correct emission is, both must produce it identically.
+        let config = r#"{"measurement":{"global_crosstalk_probability":1.0,"crosstalk_model":{"0->1":1.0,"1->0":1.0}}}"#;
+        let later_shot = || {
+            vec![Operation::Measure {
+                qubit_id: 0,
+                result_id: 0,
+            }]
+        };
+
+        let mut with_history = build_error_model(config, 2);
+        let mut discarded = ClassicalSimulator::with_qubits(2);
+        with_history.shot_start(0, 41).unwrap();
+        with_history
+            .handle_operations(
+                runtime_batch(
+                    vec![
+                        Operation::Reset { qubit_id: 1 },
+                        Operation::Measure {
+                            qubit_id: 0,
+                            result_id: 0,
+                        },
+                    ],
+                    0,
+                    1,
+                ),
+                &mut discarded,
+            )
+            .unwrap();
+        with_history.shot_end().unwrap();
+
+        let mut history_simulator = ClassicalSimulator::with_qubits(2);
+        with_history.shot_start(1, 41).unwrap();
+        with_history
+            .handle_operations(runtime_batch(later_shot(), 1, 1), &mut history_simulator)
+            .unwrap();
+        with_history.shot_end().unwrap();
+
+        let mut fresh = build_error_model(config, 2);
+        let mut fresh_simulator = ClassicalSimulator::with_qubits(2);
+        fresh.shot_start(1, 41).unwrap();
+        fresh
+            .handle_operations(runtime_batch(later_shot(), 1, 1), &mut fresh_simulator)
+            .unwrap();
+        fresh.shot_end().unwrap();
+
+        assert_eq!(
+            history_simulator.received, fresh_simulator.received,
+            "a shot must not depend on qubits prepared in earlier shots"
+        );
     }
 
     #[test]

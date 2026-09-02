@@ -1408,6 +1408,11 @@ impl GeneralNoiseModel {
         self.leaked_qubits.clear();
         // Clear measured qubits
         self.measured_qubits.clear();
+        // Clear prepared qubits. This set is the crosstalk victim pool and is scoped
+        // to one program run; carrying it across resets would let a qubit prepared in
+        // an earlier shot be a crosstalk victim in a later shot that never prepared it,
+        // which makes shots depend on their ordering.
+        self.prepared_qubits.clear();
         // RNG state is intentionally not reset to maintain natural randomness
     }
 

@@ -560,10 +560,23 @@ impl GeneralNoiseModel {
                 );
             }
 
-            // Skip noise application for noiseless gates
+            // Skip noise application for noiseless gates.
             if self.is_noiseless_gate(&gate.gate_type) {
-                // Just add the gate as-is, without any noise
-                // TODO: Still apply leakage rules
+                // Declaring a gate noiseless suppresses its FAULTS, not the physics it
+                // performs. Preparation returns a leaked qubit to the computational
+                // subspace whether or not it is noisy, and consumers lower a
+                // preparation to a real reset on the simulator, so skipping this
+                // bookkeeping would leave the leakage record disagreeing with the
+                // state the simulator actually holds.
+                if matches!(gate.gate_type, GateType::PZ) {
+                    for &qubit in &gate.qubits {
+                        let qubit = usize::from(qubit);
+                        if self.is_leaked(qubit) {
+                            self.mark_as_unleaked(qubit);
+                            trace!("Qubit {qubit} unleaked due to noiseless preparation");
+                        }
+                    }
+                }
                 builder.add_gate_command(&gate);
                 trace!("Skipping noise for noiseless gate: {:?}", gate.gate_type);
                 continue;

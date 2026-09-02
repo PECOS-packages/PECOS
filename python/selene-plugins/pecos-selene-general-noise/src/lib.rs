@@ -1402,6 +1402,235 @@ mod tests {
     }
 
     #[test]
+    fn any_reset_returns_a_leaked_qubit_to_the_computational_subspace() {
+        // Declaring a gate noiseless suppresses its faults, not the physics it
+        // performs. The bridge lowers PZ to a real reset on the simulator, so a
+        // noiseless PZ that failed to clear the model's leakage record would leave
+        // the model and the simulator disagreeing about the qubit's state.
+        // Both reset paths must clear leakage: the ordinary one through the
+        // preparation fault handler, and the one that bypasses faults entirely.
+        for config in [
+            r#"{"single_qubit":{"probability":1.0,"emission_ratio":1.0,"emission_model":{"L":1.0}},"scaling":{"leakage":1.0}}"#,
+            r#"{"single_qubit":{"probability":1.0,"emission_ratio":1.0,"emission_model":{"L":1.0}},"scaling":{"leakage":1.0},"noiseless_gates":["PZ"]}"#,
+        ] {
+            let mut error_model = build_error_model(config, 1);
+            let mut simulator = ClassicalSimulator::with_qubits(1);
+            error_model.shot_start(0, 41).unwrap();
+
+            // A one-qubit gate at full infidelity and full leakage ratio leaks the qubit.
+            error_model
+                .handle_operations(
+                    runtime_batch(
+                        vec![Operation::RXYGate {
+                            qubit_id: 0,
+                            theta: PI,
+                            phi: 0.0,
+                        }],
+                        0,
+                        1,
+                    ),
+                    &mut simulator,
+                )
+                .unwrap();
+            let leaked = error_model
+                .handle_operations(
+                    runtime_batch(
+                        vec![Operation::MeasureLeaked {
+                            qubit_id: 0,
+                            result_id: 0,
+                        }],
+                        1,
+                        1,
+                    ),
+                    &mut simulator,
+                )
+                .unwrap();
+            assert_eq!(
+                leaked.u64_results[0].value, 2,
+                "the gate should have leaked the qubit: {config}"
+            );
+
+            error_model
+                .handle_operations(
+                    runtime_batch(vec![Operation::Reset { qubit_id: 0 }], 2, 1),
+                    &mut simulator,
+                )
+                .unwrap();
+            let after_reset = error_model
+                .handle_operations(
+                    runtime_batch(
+                        vec![Operation::MeasureLeaked {
+                            qubit_id: 0,
+                            result_id: 1,
+                        }],
+                        3,
+                        1,
+                    ),
+                    &mut simulator,
+                )
+                .unwrap();
+            assert_eq!(
+                after_reset.u64_results[0].value, 0,
+                "reset must return the qubit to the computational subspace: {config}"
+            );
+        }
+    }
+
+    // The three tests below assert emissions directly rather than against
+    // `reference_message`. That helper is a transcription of `handle_operations`, so a
+    // mistake made in both is invisible to the differential trace; these behaviours had
+    // no other guard.
+
+    #[test]
+    fn a_sub_second_gap_still_produces_idle() {
+        // A gap shorter than one second must not be truncated away. At 0.5s with a
+        // linear rate of 2.0 the idle probability is exactly 1.0, so the X is
+        // deterministic; truncating the gap to whole seconds would yield 0.0 and emit
+        // nothing.
+        let mut error_model = build_error_model(
+            r#"{"idle":{"linear_rate":2.0,"linear_model":{"X":1.0}}}"#,
+            1,
+        );
+        let mut simulator = ClassicalSimulator::with_qubits(1);
+        error_model.shot_start(0, 41).unwrap();
+        error_model
+            .handle_operations(
+                runtime_batch(vec![Operation::Reset { qubit_id: 0 }], 0, 1),
+                &mut simulator,
+            )
+            .unwrap();
+        let result = error_model
+            .handle_operations(
+                runtime_batch(
+                    vec![Operation::Measure {
+                        qubit_id: 0,
+                        result_id: 0,
+                    }],
+                    500_000_001,
+                    1,
+                ),
+                &mut simulator,
+            )
+            .unwrap();
+        assert!(
+            result.bool_results[0].value,
+            "a 0.5s gap must produce idle noise, not be truncated to zero seconds"
+        );
+    }
+
+    #[test]
+    fn a_measured_qubit_is_not_its_own_crosstalk_victim() {
+        // Local crosstalk targets the rest of a measured qubit's group, never the
+        // measured qubit itself, whose outcome is already governed by readout error.
+        let mut error_model = build_error_model(
+            r#"{"measurement":{"local_crosstalk_probability":1.0,"crosstalk_model":{"0->1":1.0,"1->0":1.0},"local_groups":[[0,1]]}}"#,
+            2,
+        );
+        let mut simulator = ClassicalSimulator::with_qubits(2);
+        error_model.shot_start(0, 41).unwrap();
+        error_model
+            .handle_operations(
+                runtime_batch(
+                    vec![
+                        Operation::Reset { qubit_id: 0 },
+                        Operation::Reset { qubit_id: 1 },
+                    ],
+                    0,
+                    1,
+                ),
+                &mut simulator,
+            )
+            .unwrap();
+        simulator.received.clear();
+        error_model
+            .handle_operations(
+                runtime_batch(
+                    vec![Operation::Measure {
+                        qubit_id: 0,
+                        result_id: 0,
+                    }],
+                    1,
+                    1,
+                ),
+                &mut simulator,
+            )
+            .unwrap();
+
+        let disturbed_qubits = simulator
+            .received
+            .iter()
+            .flatten()
+            .filter_map(|operation| match operation {
+                Operation::RXYGate { qubit_id, .. } | Operation::RZGate { qubit_id, .. } => {
+                    Some(*qubit_id)
+                }
+                _ => None,
+            })
+            .collect::<BTreeSet<_>>();
+        assert!(
+            !disturbed_qubits.contains(&0),
+            "the measured qubit must not be a victim of its own measurement crosstalk: {:?}",
+            simulator.received
+        );
+        assert!(
+            disturbed_qubits.contains(&1),
+            "the rest of the measured qubit's group must be disturbed: {:?}",
+            simulator.received
+        );
+    }
+
+    #[test]
+    fn a_leakage_measurement_also_triggers_crosstalk() {
+        // MeasureLeaked is a measurement: it disturbs its neighbours exactly as an
+        // ordinary measurement does.
+        let mut error_model = build_error_model(
+            r#"{"measurement":{"local_crosstalk_probability":1.0,"crosstalk_model":{"0->1":1.0,"1->0":1.0},"local_groups":[[0,1]]}}"#,
+            2,
+        );
+        let mut simulator = ClassicalSimulator::with_qubits(2);
+        error_model.shot_start(0, 41).unwrap();
+        error_model
+            .handle_operations(
+                runtime_batch(
+                    vec![
+                        Operation::Reset { qubit_id: 0 },
+                        Operation::Reset { qubit_id: 1 },
+                    ],
+                    0,
+                    1,
+                ),
+                &mut simulator,
+            )
+            .unwrap();
+        simulator.received.clear();
+        error_model
+            .handle_operations(
+                runtime_batch(
+                    vec![Operation::MeasureLeaked {
+                        qubit_id: 0,
+                        result_id: 0,
+                    }],
+                    1,
+                    1,
+                ),
+                &mut simulator,
+            )
+            .unwrap();
+
+        let disturbed_one = simulator.received.iter().flatten().any(|operation| {
+            matches!(
+                operation,
+                Operation::RXYGate { qubit_id: 1, .. } | Operation::RZGate { qubit_id: 1, .. }
+            )
+        });
+        assert!(
+            disturbed_one,
+            "a leakage measurement must trigger measurement crosstalk: {:?}",
+            simulator.received
+        );
+    }
+
+    #[test]
     fn adapter_rejects_invalid_runtime_contracts() {
         let config: Config =
             serde_json::from_str(r#"{"measurement":{"local_groups":[[0,2]]}}"#).unwrap();

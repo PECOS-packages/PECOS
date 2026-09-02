@@ -392,3 +392,276 @@ fn signed_radians_are_decided_on_the_raw_fraction() {
     let one_tick_below_half = Angle64::new(Angle64::HALF_TURN.fraction() - 1);
     assert!(one_tick_below_half.to_radians_signed() > 0.0);
 }
+
+/// Every unitary `CliffordGateable` default, run through the defaults-only backend, must equal
+/// the `Clifford` enum's matrix entrywise. A default written as a Clifford identity is correct
+/// up to a power of `e^{i pi/4}`; on a projective backend that is invisible, on an amplitude
+/// backend that inherits the default it is a real phase on the state.
+#[test]
+fn clifford_default_decompositions_match_the_clifford_matrices_exactly() {
+    use pecos_core::clifford::Clifford;
+    let q = [QubitId(0)];
+    let pair = [(QubitId(0), QubitId(1))];
+    let one_qubit: Vec<(Clifford, Box<dyn Fn(&mut DefaultsOnly)>)> = vec![
+        (
+            Clifford::I,
+            Box::new(move |s| {
+                s.identity(&q);
+            }),
+        ),
+        (
+            Clifford::X,
+            Box::new(move |s| {
+                s.x(&q);
+            }),
+        ),
+        (
+            Clifford::Y,
+            Box::new(move |s| {
+                s.y(&q);
+            }),
+        ),
+        (
+            Clifford::Z,
+            Box::new(move |s| {
+                s.z(&q);
+            }),
+        ),
+        (
+            Clifford::H,
+            Box::new(move |s| {
+                s.h(&q);
+            }),
+        ),
+        (
+            Clifford::H2,
+            Box::new(move |s| {
+                s.h2(&q);
+            }),
+        ),
+        (
+            Clifford::H3,
+            Box::new(move |s| {
+                s.h3(&q);
+            }),
+        ),
+        (
+            Clifford::H4,
+            Box::new(move |s| {
+                s.h4(&q);
+            }),
+        ),
+        (
+            Clifford::H5,
+            Box::new(move |s| {
+                s.h5(&q);
+            }),
+        ),
+        (
+            Clifford::H6,
+            Box::new(move |s| {
+                s.h6(&q);
+            }),
+        ),
+        (
+            Clifford::SX,
+            Box::new(move |s| {
+                s.sx(&q);
+            }),
+        ),
+        (
+            Clifford::SXdg,
+            Box::new(move |s| {
+                s.sxdg(&q);
+            }),
+        ),
+        (
+            Clifford::SY,
+            Box::new(move |s| {
+                s.sy(&q);
+            }),
+        ),
+        (
+            Clifford::SYdg,
+            Box::new(move |s| {
+                s.sydg(&q);
+            }),
+        ),
+        (
+            Clifford::SZ,
+            Box::new(move |s| {
+                s.sz(&q);
+            }),
+        ),
+        (
+            Clifford::SZdg,
+            Box::new(move |s| {
+                s.szdg(&q);
+            }),
+        ),
+        (
+            Clifford::F,
+            Box::new(move |s| {
+                s.f(&q);
+            }),
+        ),
+        (
+            Clifford::Fdg,
+            Box::new(move |s| {
+                s.fdg(&q);
+            }),
+        ),
+        (
+            Clifford::F2,
+            Box::new(move |s| {
+                s.f2(&q);
+            }),
+        ),
+        (
+            Clifford::F2dg,
+            Box::new(move |s| {
+                s.f2dg(&q);
+            }),
+        ),
+        (
+            Clifford::F3,
+            Box::new(move |s| {
+                s.f3(&q);
+            }),
+        ),
+        (
+            Clifford::F3dg,
+            Box::new(move |s| {
+                s.f3dg(&q);
+            }),
+        ),
+        (
+            Clifford::F4,
+            Box::new(move |s| {
+                s.f4(&q);
+            }),
+        ),
+        (
+            Clifford::F4dg,
+            Box::new(move |s| {
+                s.f4dg(&q);
+            }),
+        ),
+    ];
+    let two_qubit: Vec<(Clifford, Box<dyn Fn(&mut DefaultsOnly)>)> = vec![
+        (
+            Clifford::CX,
+            Box::new(move |s| {
+                s.cx(&pair);
+            }),
+        ),
+        (
+            Clifford::CY,
+            Box::new(move |s| {
+                s.cy(&pair);
+            }),
+        ),
+        (
+            Clifford::CZ,
+            Box::new(move |s| {
+                s.cz(&pair);
+            }),
+        ),
+        (
+            Clifford::SWAP,
+            Box::new(move |s| {
+                s.swap(&pair);
+            }),
+        ),
+        (
+            Clifford::SXX,
+            Box::new(move |s| {
+                s.sxx(&pair);
+            }),
+        ),
+        (
+            Clifford::SXXdg,
+            Box::new(move |s| {
+                s.sxxdg(&pair);
+            }),
+        ),
+        (
+            Clifford::SYY,
+            Box::new(move |s| {
+                s.syy(&pair);
+            }),
+        ),
+        (
+            Clifford::SYYdg,
+            Box::new(move |s| {
+                s.syydg(&pair);
+            }),
+        ),
+        (
+            Clifford::SZZ,
+            Box::new(move |s| {
+                s.szz(&pair);
+            }),
+        ),
+        (
+            Clifford::SZZdg,
+            Box::new(move |s| {
+                s.szzdg(&pair);
+            }),
+        ),
+        (
+            Clifford::ISWAP,
+            Box::new(move |s| {
+                s.iswap(&pair);
+            }),
+        ),
+        (
+            Clifford::ISWAPdg,
+            Box::new(move |s| {
+                s.iswapdg(&pair);
+            }),
+        ),
+        (
+            Clifford::G,
+            Box::new(move |s| {
+                s.g(&pair);
+            }),
+        ),
+        (
+            Clifford::Gdg,
+            Box::new(move |s| {
+                s.gdg(&pair);
+            }),
+        ),
+    ];
+    let mut projective: Vec<String> = Vec::new();
+    for (num_qubits, cases) in [(1usize, one_qubit), (2usize, two_qubit)] {
+        for (cliff, apply) in cases {
+            let dense = cliff.to_matrix();
+            let dense = dense.inner();
+            let got = defaults_only_unitary(num_qubits, &*apply);
+            let dim = 1usize << num_qubits;
+            let worst = (0..dim)
+                .flat_map(|c| (0..dim).map(move |r| (r, c)))
+                .map(|(r, c)| (dense[(r, c)] - got[c][r]).norm())
+                .fold(0.0, f64::max);
+            if worst > 1e-12 {
+                // Report the phase so the failure names the defect class.
+                let (r, c) = (0..dim)
+                    .flat_map(|c| (0..dim).map(move |r| (r, c)))
+                    .find(|&(r, c)| dense[(r, c)].norm() > 1e-9 && got[c][r].norm() > 1e-9)
+                    .unwrap_or((0, 0));
+                let ratio = got[c][r] / dense[(r, c)];
+                projective.push(format!(
+                    "{cliff:?}: default differs from Clifford::to_matrix by {worst:.3e} (default/dense = {ratio:.4}, arg {:+.3} pi)",
+                    ratio.arg() / PI
+                ));
+            }
+        }
+    }
+    assert!(
+        projective.is_empty(),
+        "these CliffordGateable defaults are only projectively correct on an amplitude backend:\n  {}",
+        projective.join("\n  ")
+    );
+}

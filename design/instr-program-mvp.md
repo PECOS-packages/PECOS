@@ -1,24 +1,18 @@
-# InstrProgram MVP: Rust-first surface-memory vertical slice
+# `InstrProgram` MVP: Rust-first surface memory
 
-Status: proposed normative implementation subset.
+Status: proposed normative first implementation.
 
-Companion architecture: [`instr-program-architecture.md`](instr-program-architecture.md).
+See [`instr-program.md`](instr-program.md) for the design overview and
+[`instr-program-rationale.md`](instr-program-rationale.md) for non-normative
+background and later extensions.
 
-## Purpose
-
-Implement the smallest independently testable version of the instruction
-program model against PECOS behavior that exists today.
+## 1. Goal and reference
 
 The MVP constructs one distance-three, Z-basis, CX-syndrome surface-memory
-experiment, resolves statically linked Rust providers, builds a portable
-`ProtocolProgram`, and lowers it directly in Rust to a normalized
-`TickCircuit`.
+experiment, resolves statically linked Rust implementations, composes a
+portable `ProtocolProgram`, and lowers it to a normalized `TickCircuit`.
 
-The MVP does **not** generate Guppy. It does not include SZZ, transversal CX,
-PHIR, reusable modules, dynamic control, target mapping, or visualization.
-
-The existing Python surface stack is the migration oracle. The exact reference
-fixture is:
+The existing Python surface stack is the migration oracle:
 
 ```python
 patch = SurfacePatch.create(distance=3)
@@ -30,32 +24,14 @@ reference = generate_tick_circuit_from_patch(
 )
 ```
 
-This is current PECOS code, not proposed API. The MVP comparison predicate and
-noise fixture are defined below.
+The core MVP ends at a generated Tick artifact. A separate integration test
+passes that artifact and a fixed physical noise model to the existing native
+DEM builder.
 
-## Prerequisites
+## 2. Proposed authoring API
 
-Implementation starts only after these Stage 0 artifacts are reviewed:
-
-1. A short retrospective covering `pecos.qeccs`, legacy `LogicalCircuit`,
-   `_check_plan`, `SurfaceCircuitStep`/`CircuitRenderer`, and
-   `LogicalCircuitBuilder`.
-2. A dependency decision establishing standalone `pecos-instr` on
-   `pecos-core`, with QEC and PHIR bridges pointing in one direction.
-3. A versioned serialization note defining canonical ordering, deterministic
-   ID allocation, schema versioning, and provider fingerprint matching.
-4. A measurement note defining
-   `SemanticMeasId -> pecos_core::MeasId -> record offset`.
-5. A canonical Rust `PatchSpec` schema and parity fixtures for the subset used
-   by this MVP.
-
-These are design prerequisites, not permission to implement the deferred
-features themselves.
-
-## Proposed authoring API
-
-This example is proposed API and becomes an executable documentation test when
-the MVP lands:
+This proposed Python API must become an executable documentation test. Rust
+must offer equivalent typed builders over the same Rust-owned objects.
 
 ```python
 surface = SurfaceInstrSet.providers()
@@ -81,220 +57,140 @@ protocol = resolved.to_protocol_program()
 generated = protocol.to_tick_program(SurfaceReferenceSchedule())
 ```
 
-DEM construction is deliberately outside this authoring/lowering API. A
-separate integration test may pass `generated` and a fixed physical noise model
-to the existing native DEM compiler.
+The cursor advances its current Rust-owned value after every successful call.
+The lower-level graph API instead returns explicit replacement values. Examples
+must not mix the two styles ambiguously.
 
-The cursor API advances a Rust-owned current `ValueId`. Rust exposes equivalent
-typed builders. Tooling may use the lower-level graph API, where every call
-returns explicit replacement values; normative examples do not mix cursor and
-SSA-rebinding styles.
+`surface.impls.syndrome_cx` is a typed, instruction-scoped implementation
+handle. Raw strings and a universal implementation enum are not accepted.
 
-`surface.impls.syndrome_cx` is a typed `ImplDefRef`, not a string or a universal
-language enum. It is scoped to the `surface.syn_extract` instruction.
+## 3. Scope
 
-## Required generic substrate
-
-The MVP generic Rust crate/module contains only:
-
-- `InstrProgram`: one entry graph, provider/descriptor requirements, exports,
-  and serialization metadata;
-- `InstrGraph`: declarations, straight-line calls, value edges, and exports;
-- `InstrDef`: stable qualified ID, named ports, canonical parameter schema,
-  use policies, and a dialect semantic-interface reference;
-- `BoundInstrCall`: definition reference, named input `ValueId`s, canonical
-  parameters, optional typed `ImplDefRef`, output `ValueId`s, and `CallId`;
-- `ValueType`: registered opaque type ID plus canonical dialect-owned payload;
-- `UsePolicy`: `SingleUse` or `Reusable`;
-- `InstrImplDescriptor`: serializable instruction-scoped implementation ID,
-  version, provider identity, and fingerprint;
-- `InstrImplProvider`: executable support assessment and implementation-body
-  construction;
-- `ResolutionContext`: explicit, serializable facts needed by providers; and
-- `ResolvedInstrProgram`: every call selected with its descriptor, selection
-  source, provider fingerprint, and implementation body.
-
-There are no reusable modules, regions, loops, space-time quantities, service
-leases, package manager, or dynamic plugins in this subset.
-
-## Identity model
-
-The following Rust newtypes are distinct:
-
-| Identity | MVP meaning |
+| Included | Deferred |
 |---|---|
-| `InstrDefId` / `ImplDefId` | reusable versioned descriptors |
-| `CallId` | one call in the program |
-| `CodeBlockInstanceId` | one persistent patch instance |
-| `ValueId` | one state version of that patch or a result |
-| `CodeElementId` | stable data site or check from `PatchSpec` |
-| `ProtocolWireId` | physical role local to the selected protocol program |
-| `SemanticMeasId` | semantic measurement occurrence |
-| `MeasId` | existing identity in the generated `TickCircuit` |
+| One rotated distance-3 patch | Other distances, standard/asymmetric/repetition patches |
+| Prepare logical Z | X/Y preparation |
+| Three CX-based syndrome rounds | SZZ and other syndrome implementations |
+| Destructive logical-Z measurement | Logical gates, injection, surgery, teleportation, code switching |
+| Straight-line dataflow | Modules, branches, loops, adaptive control |
+| Static Rust providers | Packages and dynamic providers |
+| Portable protocol graph | Target mapping, routing, calibrated timing, traces |
+| Reference Tick lowering | PHIR, QIR, MLIR, Guppy output/import |
+| Separate native DEM integration test | Higher-level noise dialects and DEM compilers |
 
-Prepare, syndrome extraction, and measure preserve the same
-`CodeBlockInstanceId` while producing fresh `ValueId`s. Destructive measurement
-ends the active block lifetime. Two same-geometry patches are type-compatible
-but have different block instance IDs.
+Space-time quantities, visualization, and replacing existing factories are also
+deferred.
 
-Generic validation rejects a second use of a consumed `SingleUse` value. QEC
-validation separately checks preparation, active lifetime, measurement, and
-export obligations.
+The three QEC instructions have these contracts:
 
-## Descriptor/provider resolution
-
-Serialized descriptors do not contain Rust trait behavior. Resolution is:
-
-```rust
-let resolved = program.resolve(&providers, &context)?;
-```
-
-The provider receives the entire canonical `BoundInstrCall`, including basis
-and round parameters:
-
-```rust
-fn assess_support(
-    &self,
-    call: &BoundInstrCall,
-    context: &ResolutionContext,
-) -> SupportAssessment;
-```
-
-The MVP assessment is `Supported` or `Unsupported` with a stable reason code
-and human-readable explanation. Deferred feasibility is reserved for the
-architecture but not implemented here.
-
-Resolution order is:
-
-1. explicit typed `ImplDefRef`;
-2. explicitly configured instruction-set choice;
-3. sole supported provider;
-4. otherwise structured unsupported or ambiguity error.
-
-Explicit choices do not fall back. Candidate diagnostics are sorted by stable
-qualified ID. Missing providers, version/fingerprint mismatches, and an
-implementation reference scoped to the wrong instruction are distinct errors.
-
-The resolved selection source is `Explicit`, `Configured`, or `SoleCandidate`.
-
-## Required QEC subset
-
-The QEC layer defines a `SingleUse` `QecBlockType` carrying:
-
-- canonical `PatchSpec` structural identity;
-- lifecycle class: `Declared` or `Active`; and
-- encoded logical interface.
-
-Instance-local `QecBlockState` contains the block instance ID, current value ID,
-lifecycle state, logical Pauli frame, code-element Clifford/check frame, and a
-reference to program-level QEC analysis state. The MVP frames remain identity,
-but their fields and transfer checks prevent later H/S/SZZ support from needing
-a second block-state model.
-
-Required instructions are:
-
-| Instruction | Input | Output | Ideal logical effect |
+| Instruction | Input | Output | Ideal decoded effect |
 |---|---|---|---|
-| `surface.prepare(basis=Z)` | declared patch | active patch | prepare logical zero |
-| `surface.syn_extract(rounds>0)` | active patch | replacement active patch | decoded logical identity under the protocol's success contract |
-| `surface.measure(basis=Z)` | active patch | logical result | destructive logical-Z measurement |
+| Prepare Z | Declared patch | Active patch | Prepare logical zero |
+| Syndrome extraction, three CX rounds | Active patch | Replacement active patch | Logical identity under the protocol's success contract |
+| Measure Z | Active patch | Logical result | Destructive logical-Z measurement |
 
-Required providers are:
+## 4. Required pipeline
 
-- current compatible Z preparation;
-- CX-based syndrome extraction; and
-- current compatible Z measurement.
+### Author and resolve
 
-Preparation and measurement can be sole providers because each provider sees
-the canonical basis parameter. The MVP does not claim support for X/Y basis,
-SZZ, H/S, multi-patch gates, injection, surgery, or code switching.
+The generic Rust substrate contains only a straight-line `InstrProgram` and
+`InstrGraph`, typed definitions and bound calls, opaque registered value types,
+`SingleUse | Reusable` use policy, serializable implementation descriptors,
+executable Rust providers, explicit resolution context, and a resolved program.
 
-## Canonical patch subset and explicit Rust port
+A serialized descriptor contains stable instruction-scoped identity, versions,
+provider identity, and fingerprint; executable Rust behavior remains in its
+provider. A provider assesses the complete bound call, including the basis and
+round parameters, before constructing an implementation body.
 
-The MVP canonical `PatchSpec` supports exactly the reviewed subset needed by
-the reference fixture:
+Resolution order is deterministic:
 
-- rotated distance-three square patch;
-- orientation used by the current reference;
-- stable data and X/Z-check IDs;
-- exact Python check supports, ordering, coordinates, and logical supports; and
-- separation of data geometry from protocol ancillas.
+1. the call's explicit typed implementation;
+2. an explicitly configured instruction-set choice;
+3. the sole supported provider;
+4. otherwise a structured unsupported or ambiguity error.
 
-The parity fixture is serialized from the existing Python `SurfacePatch`, then
-loaded and validated by Rust. Rust must not independently regenerate check
-order and call that parity.
+Explicit choices never fall back. Missing providers, fingerprint/version
+mismatches, wrong-instruction implementation handles, unsupported parameters,
+and ambiguity are distinct diagnostics sorted by stable identity.
+The resolved artifact records whether each choice was explicit, configured, or
+the sole candidate.
 
-The surface-planning work is explicitly part of the MVP:
+### Preserve identities and use rules
 
-1. import/represent the parity fixture;
-2. port CX preparation and measurement planning;
-3. port the CX check plan, touch order, ancilla assignment, and round structure;
-4. emit semantic measurement events and protocol operations; and
-5. compose the reference detectors and logical observable.
+The implementation distinguishes reusable definition identity, call identity,
+persistent code-block identity, dataflow value versions, code elements,
+protocol-local resource roles, semantic measurements, and existing circuit
+measurement identity.
 
-Broader patch parity and other interaction bases are separate projects.
+Preparation, syndrome extraction, and measurement preserve one persistent
+code-block identity while producing fresh value versions. Destructive
+measurement ends the block lifetime. Generic validation rejects a second use
+of a consumed value; QEC validation handles preparation, active lifetime,
+measurement, and export obligations.
 
-## Program-level QEC composition owner
+The measurement mapping is explicit:
 
-Per-call implementation bodies do not finalize detectors or observables. The
-MVP includes a small program-level `SurfaceMemoryAnalysis` pass over the
-resolved calls and their semantic measurement events. It owns:
+```text
+SemanticMeasId -> pecos_core::MeasId -> record ordinal
+```
 
-- preparation-boundary detectors;
-- comparisons between consecutive syndrome rounds;
-- terminal measurement detectors;
-- the logical-Z observable;
-- stabilizer/check epoch consistency; and
-- `SemanticMeasId` allocation and mapping.
+### Match the canonical patch
 
-This pass is intentionally sufficient only for one straight-line, single-patch
-memory experiment. It establishes the ownership seam that later multi-call and
-cross-patch stabilizer-flow analysis will generalize.
+The Rust `PatchSpec` subset must preserve the current Python distance-3 patch's
+data and X/Z-check identities, exact supports and ordering, coordinates,
+logical supports, orientation, and separation of data geometry from protocol
+ancillas.
 
-## Protocol program
+The fixture is serialized from the existing Python `SurfacePatch` and loaded by
+Rust. Rust must not independently regenerate ordering and call that parity.
 
-Selected call implementation bodies and `SurfaceMemoryAnalysis` compose into
-one Rust `ProtocolProgram` containing:
+The surface port includes CX preparation and measurement, the CX check plan and
+touch order, ancilla assignment and lifetime, round structure, semantic
+measurement events, detectors, and the logical-Z observable.
 
-- portable preparation, one-/two-qubit, measurement, and tick-barrier intent;
-- an operation dependency DAG and named syndrome rounds;
-- persistent `CodeElementId`s and temporary `ProtocolWireId`s;
-- ancilla lifetimes and cleanup;
-- instruction and round boundaries;
-- semantic measurements and their eventual `MeasId` bindings;
-- detectors and logical observable; and
-- provenance back to calls, block versions, checks, and providers.
+### Compose QEC semantics
 
-The MVP program does not contain target addresses, routing, calibrated time,
-adaptive control, resource estimates, service requirements, or execution
-traces.
+Each selected provider builds a typed lower-level `InstrGraph` body containing
+portable preparation, quantum operation, measurement, resource-lifetime, and
+dependency instructions. It does not emit an opaque Tick circuit.
 
-For this straight-line slice, each Rust provider builds a typed lower-level
-`InstrGraph` fragment containing portable preparation, quantum operation,
-measurement, resource-lifetime, and dependency instructions. The composed
-`ProtocolProgram` is therefore an inspectable graph, not an opaque callback
-that happens to produce a `TickCircuit`. Structured control is deferred, but
-the lower-level graph boundary is the one that will host it later.
+A surface-memory composition pass—type name provisional—runs over the resolved
+calls and their events. It owns preparation-boundary detectors, comparisons
+between consecutive syndrome rounds, terminal detectors, the logical-Z
+observable, stabilizer/check epoch consistency, and semantic measurement
+allocation.
 
-## Reference scheduling and outputs
+Block state includes logical Pauli and code-element Clifford/check frames. They
+remain identity in this MVP, but their presence and transfer checks reserve the
+correct ownership boundary for later logical Cliffords.
 
-`SurfaceReferenceSchedule` is a versioned deterministic policy reproducing the
-existing CX memory fixture's qubit numbering, check ordering, touch ordering,
-ancilla assignment, round barriers, and measurement order.
+### Build and lower the protocol program
 
-It returns `GeneratedTickProgram` containing:
+The implementation bodies and QEC composition results form one inspectable
+`ProtocolProgram` containing portable operations, an operation dependency DAG,
+named syndrome rounds, code elements, temporary protocol resources, ancilla
+lifetimes and cleanup, semantic measurements, detector/observable definitions,
+and provenance to calls, block versions, checks, and providers.
 
-- normalized `TickCircuit`;
-- `SemanticMeasId -> MeasId -> record ordinal` maps;
-- detectors and logical observable;
-- block/call/check/provider provenance; and
-- reference schedule ID and version.
+It contains no target addresses, routing, calibrated time, adaptive control,
+resource estimates, service requirements, or execution traces.
 
-## Separate DEM integration fixture
+The versioned `SurfaceReferenceSchedule` reproduces the Python oracle's qubit
+numbering, check and touch order, ancilla assignment, tick boundaries, and
+measurement order. It returns a generated Tick artifact containing the
+normalized `TickCircuit`, measurement maps, detectors, logical observable,
+provenance, and schedule identity/version.
 
-The core MVP ends at `GeneratedTickProgram`. A separate downstream integration
-test passes that artifact to `TickDemCompiler` with a fixed physical noise
-fixture:
+### Keep DEM construction separate
+
+The DEM integration test uses a provisional adapter interface, conceptually:
+
+```text
+TickDemCompiler.compile(generated_tick_artifact, REFERENCE_NOISE_V1)
+```
+
+The noise fixture is:
 
 ```text
 REFERENCE_NOISE_V1
@@ -305,97 +201,57 @@ REFERENCE_NOISE_V1
     idle = 0.0
 ```
 
-If the current native builder uses a richer schema, the fixture explicitly
-sets every additional field to zero. The checked-in canonical fixture records
-that full schema and version.
+Every additional field in the current native schema is explicitly zero and the
+fixture records that schema version. This test adds no DEM behavior to
+`InstrProgram`, `ProtocolProgram`, or the generated Tick artifact.
 
-This test proves that the lowered circuit preserves the measurement, detector,
-and observable information required by PECOS analysis. It does not make DEM
-construction a method of `InstrProgram`, `ProtocolProgram`, or
-`GeneratedTickProgram`. Future DEM consumers may accept higher-level artifacts
-only with an explicit noise-model dialect and control/scheduling semantics.
+### Keep Rust authoritative
 
-## Rust/Python boundary and serialization
+Rust owns every authoritative graph, transition, resolver, protocol body, and
+serializer. Python adds no shadow model or callbacks to built-in resolution.
 
-Rust owns every authoritative object and serializer. Python calls the Rust
-builders; therefore “Rust and Python serialize byte-equivalently” is not an
-independent semantic oracle.
+Tests use canonical authored/resolved fixtures, deterministic documented ID
+allocation, ordered or explicitly sorted data, schema and provider fingerprint
+fields, no floating-point values in the authored/resolved MVP schema, Rust
+round trips, and Python binding tests against the same Rust-owned artifacts.
+The wire format is settled before public API stabilization.
 
-Instead, the MVP uses:
+## 5. Implementation slices
 
-- canonical golden fixtures for authored and resolved programs;
-- deterministic IDs from documented traversal/allocation rules;
-- ordered maps or explicitly sorted key/value sequences;
-- no floating-point fields in the authored/resolved MVP schema;
-- schema/version and provider fingerprint fields;
-- Rust round-trip tests; and
-- Python binding tests that prove each ergonomic operation invokes the expected
-  Rust transition and returns the same Rust-owned artifact.
+1. Record the PECOS retrospective, crate direction, serialization rules,
+   measurement mapping, and canonical patch schema.
+2. Implement the generic Rust graph, typed implementation handles, provider
+   resolution, use checks, structured errors, and golden serialization.
+3. Land distance-3 `PatchSpec` parity from the Python fixture.
+4. Port the exact CX memory implementation bodies and QEC composition pass.
+5. Build `ProtocolProgram` and reference Tick lowering.
+6. Match ideal Tick operations, identities, detectors, and observable.
+7. Add the separate native DEM adapter integration test.
+8. Add thin PyO3/Python cursors and executable documentation tests.
 
-The exact wire format is decided in the Stage 0 serialization note.
+Each slice must be independently reviewable and must not silently include the
+rest of the Python surface stack.
 
-## Explicitly deferred
-
-- Guppy generation or direct-versus-Guppy equivalence;
-- Guppy/HUGR import;
-- PHIR, QIR, or MLIR lowering;
-- reusable `InstrModule` definitions or higher-order constructs;
-- `ParallelRegion`, generic scheduling regions, branches, loops, or adaptive
-  control;
-- X/Y memory, SZZ, transversal gates, code-element Clifford evolution beyond
-  identity, injection, teleportation, surgery, and code switching;
-- general detector/observable stabilizer-flow algebra;
-- asymmetric, standard, repetition, or distance-1 patch parity;
-- target mapping, routing, native rebasing, calibrated timing, and traces;
-- `SpaceTimeProgram`, resource quantities, services, visualization, or Bevy;
-- package management and dynamic providers; and
-- replacing or removing existing factories.
-
-## Implementation order
-
-1. Complete the retrospective, crate-boundary, serialization, and measurement
-   identity notes.
-2. Land the tiny generic Rust graph, IDs, typed implementation references,
-   provider resolution, use checks, and golden serialization fixture.
-3. Land distance-three `PatchSpec` parity from the Python reference fixture.
-4. Port the exact CX memory planning subset into QEC implementation bodies.
-5. Implement `SurfaceMemoryAnalysis` and its detector/observable ledger.
-6. Build `ProtocolProgram` and `SurfaceReferenceSchedule` lowering.
-7. Match the existing ideal TickCircuit, measurement maps, detectors, and
-   observable.
-8. Add a separate adapter integration test matching the native DEM under
-   `REFERENCE_NOISE_V1`.
-9. Add thin PyO3/Python cursor bindings and executable documentation tests.
-
-Each step is independently reviewable and testable. No step silently includes
-the rest of the Python surface stack.
-
-## Acceptance criteria
+## 6. Acceptance tests
 
 The MVP is complete only when:
 
-- the proposed program works in Rust and Python through the same Rust-owned
+- the proposed program works from Rust and Python through the same Rust-owned
   artifacts;
-- every normative API example is executed by repository tests;
-- `SurfacePatch.create(distance=3)` parity preserves exact data/check IDs,
-  supports, ordering, coordinates, and logical supports;
+- every normative API example executes in repository tests;
+- patch parity preserves exact data/check identities, supports, ordering,
+  coordinates, orientation, and logical supports;
 - invalid ports, parameters, lifecycle, reuse, provider availability,
-  fingerprint, implementation scope, and ambiguity fail with structured errors;
-- prepare/syndrome/measure preserve one `CodeBlockInstanceId` and produce fresh
-  `ValueId`s;
-- the protocol program exposes bounded temporary ancilla lifetimes and no target
-  resource IDs;
-- the generated TickCircuit matches the reference's ideal operations, qubit
-  numbering, round/tick boundaries, and measurement order;
-- `SemanticMeasId -> MeasId -> record` maps round-trip and drive detector and
-  observable construction;
-- detector definitions and logical observable match the existing reference;
-- the separate DEM consumer integration matches native DEM output under the
-  complete `REFERENCE_NOISE_V1` schema without adding DEM behavior to the core
-  HDL artifacts;
-- Rust tests do not import Python or Guppy; and
-- Python tests add no shadow graph, resolver, planner, or serializer.
-
-After this gate passes, the architecture roadmap determines the next slice.
-The likely next work is X-basis memory and then resolving the existing SZZ
-reference limitations before registering SZZ as a real alternative provider.
+  fingerprint, implementation scope, unsupported choices, and ambiguity return
+  structured errors;
+- prepare, syndrome extraction, and measurement preserve one block identity and
+  produce fresh value versions;
+- the protocol program has bounded temporary ancilla lifetimes and no target
+  resource identities;
+- Tick output matches the oracle's ideal operations, qubit numbering, tick
+  boundaries, measurement order, detectors, and logical observable;
+- semantic measurement, circuit measurement, and record mappings round-trip;
+- the separate DEM consumer matches native output under the complete versioned
+  noise fixture without adding analysis behavior to the HDL artifacts;
+- Rust tests import neither Python nor Guppy; and
+- Python tests contain no shadow graph, resolver, planner, or serializer.

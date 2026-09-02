@@ -72,7 +72,7 @@ if TYPE_CHECKING:
 
 
 # Mapping from AST GateKind to QASM gate names
-GATE_TO_QASM: dict[GateKind, str] = {
+GATE_TO_QASM: dict[GateKind, str | None] = {
     # Single-qubit Paulis
     GateKind.X: "x",
     GateKind.Y: "y",
@@ -101,7 +101,7 @@ GATE_TO_QASM: dict[GateKind, str] = {
     # Two-qubit entangling gates
     GateKind.SXX: "SXX",
     GateKind.SYY: "SYY",
-    GateKind.SZZ: "ZZ",
+    GateKind.SZZ: "SZZ",
     GateKind.SXXdg: "SXXdg",
     GateKind.SYYdg: "SYYdg",
     GateKind.SZZdg: "SZZdg",
@@ -205,10 +205,10 @@ class AstToQasm(BaseVisitor[list[str]]):
 
         Args:
             include_header: Whether to include OPENQASM header.
-            includes: List of include files. Defaults to ["hqslib1.inc"].
+            includes: List of include files. Defaults to ["qelib1.inc"].
         """
         self.include_header = include_header
-        self.includes = includes or ["hqslib1.inc"]
+        self.includes = includes or ["qelib1.inc"]
         self.context = QasmContext()
 
     def generate(self, program: Program) -> list[str]:
@@ -388,7 +388,10 @@ class AstToQasm(BaseVisitor[list[str]]):
             return lines
 
         # Standard gates
-        gate_name = GATE_TO_QASM.get(node.gate, node.gate.name.lower())
+        gate_name = GATE_TO_QASM[node.gate]
+        if gate_name is None:
+            msg = f"QASM codegen: gate {node.gate.name!r} has no standard or special lowering."
+            raise NotImplementedError(msg)
 
         # Handle parameterized gates
         if node.params and node.gate.is_parameterized:
@@ -864,7 +867,12 @@ class AstToQasm(BaseVisitor[list[str]]):
         return stmt
 
 
-def ast_to_qasm(program: Program, *, include_header: bool = True) -> str:
+def ast_to_qasm(
+    program: Program,
+    *,
+    include_header: bool = True,
+    includes: list[str] | None = None,
+) -> str:
     """Convert an AST Program to QASM code.
 
     Convenience function for simple code generation.
@@ -872,10 +880,11 @@ def ast_to_qasm(program: Program, *, include_header: bool = True) -> str:
     Args:
         program: The AST Program to convert.
         include_header: Whether to include OPENQASM header.
+        includes: List of include files. Defaults to ["qelib1.inc"].
 
     Returns:
         Generated QASM code as a string.
     """
-    generator = AstToQasm(include_header=include_header)
+    generator = AstToQasm(include_header=include_header, includes=includes)
     lines = generator.generate(program)
     return "\n".join(lines)

@@ -26,20 +26,11 @@ gate sdg a { SDG a; }
 gate t a { T a; }
 gate tdg a { TDG a; }
 
-// X-axis rotation using decomposition
-// Note: H · RZ(θ) · H = RX(θ)
-gate rx(theta) a {
-  h a;
-  rz(theta) a;
-  h a;
-}
+// RXY1Q(theta, 0) = RX(theta)
+gate rx(theta) a { RXY1Q(theta, 0) a; }
 
-// Y-axis rotation
-gate ry(theta) a {
-  rx(-pi/2) a;
-  rz(theta) a;
-  rx(pi/2) a;
-}
+// RXY1Q(theta, pi/2) = RY(theta)
+gate ry(theta) a { RXY1Q(theta, pi/2) a; }
 
 // sqrt(X) gates (native)
 gate sx a { SX a; }
@@ -49,6 +40,9 @@ gate sxdg a { SXDG a; }
 
 // Controlled-NOT (CNOT) - native
 gate cx c,t { CX c,t; }
+
+// Controlled-Hadamard - native
+gate ch a,b { CH a,b; }
 
 // Controlled-Z
 gate cz a,b {
@@ -65,8 +59,11 @@ gate cy a,b {
 }
 
 // Controlled-SX
+// H · S · H = SX on the target
 gate csx a,b {
-  cx a,b;  // Simplified version
+  h b;
+  cu1(pi/2) a,b;
+  h b;
 }
 
 // SWAP gate
@@ -91,12 +88,11 @@ gate crz(theta) a,b {
 }
 
 // Controlled RX
+// H · RZ(theta) · H = RX(theta) on the target
 gate crx(theta) a,b {
-  ry(pi/2) b;
-  cx a,b;
-  ry(theta) b;
-  cx a,b;
-  ry(-pi/2) b;
+  h b;
+  crz(theta) a,b;
+  h b;
 }
 
 // Controlled RY
@@ -134,9 +130,6 @@ gate ccx a,b,c {
   tdg b;
   cx a,b;
 }
-
-// Note: More complex gates like controlled-H (ch)
-// and other gates would require additional implementations
 
 // --- Utility gates ---
 

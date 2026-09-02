@@ -446,7 +446,7 @@ else
         fi
     done < <(
         rg -l '\bunsafe\b' \
-            crates python go julia exp \
+            crates python julia exp \
             --glob '*.rs' \
             --glob '*.c' \
             --glob '*.cpp' \

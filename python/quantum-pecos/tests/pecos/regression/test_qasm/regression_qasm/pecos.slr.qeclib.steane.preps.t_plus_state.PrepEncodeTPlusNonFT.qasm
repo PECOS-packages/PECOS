@@ -1,5 +1,5 @@
 OPENQASM 2.0;
-include "hqslib1.inc";
+include "qelib1.inc";
 // Initialize logical |T> = T|+>
 // =============================
 reset q_test[6];

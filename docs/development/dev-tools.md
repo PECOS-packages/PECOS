@@ -91,12 +91,12 @@ just build                     # Build all (debug, default)
 just build release             # Build all (release)
 
 # Testing
-just test                      # Run all tests (Rust + Python + Julia + Go)
+just test                      # Run all tests (Rust + Python + Julia)
 just rstest                    # Rust tests only (CUDA-aware, via CLI)
 just pytest                    # Python tests only
 
 # Code quality
-just lint                      # Run all checks (fmt + clippy + pre-commit + Julia/Go)
+just lint                      # Run all checks (fmt + clippy + pre-commit + Julia)
 just lint-fix                  # Auto-fix all fixable issues
 just fmt                       # Check Rust formatting
 just fmt-fix                   # Fix Rust formatting

@@ -157,8 +157,9 @@ Controlled-rotation names such as `CRX`, `CRY`, and `CRZ` are boundary
 spellings, not `GateType` variants. At direct PECOS ingresses their source
 `f64` angle is halved before normalization and lowered into this native
 rotation family. Lowercase OpenQASM names instead expand through `qelib1.inc`;
-the known `ry`, `crx`, and `cry` macro defects are tracked by issue #637, while
-the `crz` and controlled-phase macros are correct.
+the include gate conformance tests assert `ry`, `crx`, `cry`, `crz`, and the
+controlled-phase macros against their textbook matrices. SLR QASM output
+declares that include for these exact boundary expansions.
 In SLR, these boundary spellings take radians as a real number and reject the
 typed `Angle` used by ordinary stored rotations because it is already reduced
 modulo 2pi.

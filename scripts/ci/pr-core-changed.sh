@@ -22,7 +22,7 @@ changed="$(git diff --name-only "$base"...HEAD)"
 
 # Allowlist of paths that PROVABLY cannot affect python-ci-core or
 # `pecos rust test`:
-#   - other-language CI workflows (julia/go/codeql) and issue templates
+#   - other-language CI workflows (julia/codeql) and issue templates
 #   - root-level prose only ([^/]+); root README/CHANGELOG are not pyproject
 #     `readme=` inputs (verified).
 # docs/ is intentionally NOT ignored: docs/assets/** holds test fixtures (e.g.
@@ -30,7 +30,7 @@ changed="$(git diff --name-only "$base"...HEAD)"
 # python/quantum-pecos/tests/docs/, both collected by the non-slow core
 # selection. Nested package READMEs (python/**/README.md) are also build inputs
 # and run. Anything not on the allowlist runs.
-ignore='^(\.github/ISSUE_TEMPLATE/|\.github/workflows/(julia-|go-|codeql)|[^/]+\.(md|rst|txt)$|LICENSE$|CITATION(\.cff)?$)'
+ignore='^(\.github/ISSUE_TEMPLATE/|\.github/workflows/(julia-|codeql)|[^/]+\.(md|rst|txt)$|LICENSE$|CITATION(\.cff)?$)'
 
 if printf '%s\n' "$changed" | grep -qvE "$ignore"; then
   echo "true"

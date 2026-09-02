@@ -104,6 +104,13 @@ commit region from source ownership and detector targets. Omitting
 `buffer_rounds` from `stitched_round_window(...)` applies that safe value;
 supplying an undersized value still fails loudly.
 
+For multiple windows, `DetectorErrorModel.round_schedule(...)` returns a
+reusable `DemSliceRoundSchedule`. Its `stitch(...)` and
+`required_buffer_rounds(...)` methods reuse the already-derived ownership,
+stream layout, relative mappings, and slice contributions instead of compiling
+the schedule again for every window. The one-shot model methods remain
+convenience wrappers over the same provider.
+
 `LogicalCircuitBuilder.build_algorithm_descriptor(...)` uses this path for its
 per-segment models. Segment DEMs may contain look-ahead detectors needed to
 preserve a cross-boundary source, while segment metadata counts only the

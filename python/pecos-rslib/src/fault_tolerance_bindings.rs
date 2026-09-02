@@ -1561,6 +1561,94 @@ pub struct PyDetectorErrorModel {
     inner: RustDetectorErrorModel,
 }
 
+/// A reusable round schedule compiled from one source-tracked DEM and annotated circuit.
+///
+/// Compile this once and call ``stitch`` for each decoding window. The schedule
+/// owns its relative DEM slices, so subsequent window assembly does not repeat
+/// detector-stream discovery or source-ownership partitioning.
+#[pyclass(name = "DemSliceRoundSchedule", module = "pecos_rslib.qec")]
+pub struct PyDemSliceRoundSchedule {
+    inner: RustDemSliceRoundSchedule,
+}
+
+fn parse_dem_boundary_kind(forward_boundary: &str) -> PyResult<RustDemBoundaryKind> {
+    match forward_boundary {
+        "soft" => Ok(RustDemBoundaryKind::Soft),
+        "hard" => Ok(RustDemBoundaryKind::Hard),
+        _ => Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "forward_boundary must be 'soft' or 'hard', got {forward_boundary:?}"
+        ))),
+    }
+}
+
+#[pymethods]
+impl PyDemSliceRoundSchedule {
+    /// Number of scheduled owner rounds.
+    #[getter]
+    fn num_instances(&self) -> usize {
+        self.inner.instances().len()
+    }
+
+    /// Owner rounds in deterministic assembly order.
+    fn rounds(&self) -> Vec<i64> {
+        self.inner
+            .instances()
+            .iter()
+            .map(pecos_qec::DemSliceInstance::round)
+            .collect()
+    }
+
+    /// Return the exact minimum safe look-ahead for a commit region.
+    fn required_buffer_rounds(&self, start_round: i64, commit_rounds: u32) -> PyResult<u32> {
+        self.inner
+            .required_buffer_rounds(start_round, commit_rounds)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
+    }
+
+    /// Assemble one structured commit-plus-buffer window.
+    ///
+    /// ``buffer_rounds=None`` derives the minimum safe look-ahead from this
+    /// schedule. An explicit undersized buffer fails instead of truncating a
+    /// commit-region correlation.
+    #[pyo3(signature = (start_round, commit_rounds, buffer_rounds=None, forward_boundary="soft"))]
+    fn stitch(
+        &self,
+        start_round: i64,
+        commit_rounds: u32,
+        buffer_rounds: Option<u32>,
+        forward_boundary: &str,
+    ) -> PyResult<PyDetectorErrorModel> {
+        let forward_boundary = parse_dem_boundary_kind(forward_boundary)?;
+        let buffer_rounds = match buffer_rounds {
+            Some(buffer_rounds) => buffer_rounds,
+            None => self
+                .inner
+                .required_buffer_rounds(start_round, commit_rounds)
+                .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?,
+        };
+        let stitched = self
+            .inner
+            .stitch(RustDemWindowSpec::new(
+                start_round,
+                commit_rounds,
+                buffer_rounds,
+                forward_boundary,
+            ))
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+        Ok(PyDetectorErrorModel {
+            inner: stitched.model,
+        })
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "DemSliceRoundSchedule(num_instances={}, rounds={:?})",
+            self.inner.instances().len(),
+            self.rounds()
+        )
+    }
+}
+
 fn split_dem_outputs_for_dem(
     dem_outputs: &[u32],
     dem: &RustDetectorErrorModel,
@@ -1938,6 +2026,26 @@ impl PyDetectorErrorModel {
             .collect()
     }
 
+    /// Compile a reusable round schedule from this source-tracked model.
+    ///
+    /// The influence map and DAG circuit must be the same pair used to build
+    /// the model. Every referenced gate must carry an integer
+    /// ``dem_slice_round`` attribute.
+    fn round_schedule(
+        &self,
+        influence_map: &PyDagFaultInfluenceMap,
+        circuit: &PyDagCircuit,
+    ) -> PyResult<PyDemSliceRoundSchedule> {
+        let inner = RustDemSliceRoundSchedule::from_annotated_circuit(
+            "python DEM round",
+            &self.inner,
+            &influence_map.inner,
+            &circuit.inner,
+        )
+        .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+        Ok(PyDemSliceRoundSchedule { inner })
+    }
+
     /// Return the minimum safe look-ahead for an annotated round window.
     ///
     /// Sources owned by the commit region, plus source-halo contributions that
@@ -1953,14 +2061,9 @@ impl PyDetectorErrorModel {
         start_round: i64,
         commit_rounds: u32,
     ) -> PyResult<u32> {
-        let schedule = RustDemSliceRoundSchedule::from_annotated_circuit(
-            "python DEM round",
-            &self.inner,
-            &influence_map.inner,
-            &circuit.inner,
-        )
-        .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+        let schedule = self.round_schedule(influence_map, circuit)?;
         schedule
+            .inner
             .required_buffer_rounds(start_round, commit_rounds)
             .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
     }
@@ -1994,39 +2097,12 @@ impl PyDetectorErrorModel {
         buffer_rounds: Option<u32>,
         forward_boundary: &str,
     ) -> PyResult<Self> {
-        let forward_boundary = match forward_boundary {
-            "soft" => RustDemBoundaryKind::Soft,
-            "hard" => RustDemBoundaryKind::Hard,
-            _ => {
-                return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                    "forward_boundary must be 'soft' or 'hard', got {forward_boundary:?}"
-                )));
-            }
-        };
-        let schedule = RustDemSliceRoundSchedule::from_annotated_circuit(
-            "python DEM round",
-            &self.inner,
-            &influence_map.inner,
-            &circuit.inner,
+        self.round_schedule(influence_map, circuit)?.stitch(
+            start_round,
+            commit_rounds,
+            buffer_rounds,
+            forward_boundary,
         )
-        .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
-        let buffer_rounds = match buffer_rounds {
-            Some(buffer_rounds) => buffer_rounds,
-            None => schedule
-                .required_buffer_rounds(start_round, commit_rounds)
-                .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?,
-        };
-        let stitched = schedule
-            .stitch(RustDemWindowSpec::new(
-                start_round,
-                commit_rounds,
-                buffer_rounds,
-                forward_boundary,
-            ))
-            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
-        Ok(Self {
-            inner: stitched.model,
-        })
     }
 
     /// Compute exact fault distance when every mechanism is graphlike.
@@ -7648,6 +7724,7 @@ pub fn register_qec_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     qec.add_class::<PyFaultDistanceUpperBoundConfig>()?;
     qec.add_class::<PyFaultDistanceUpperBoundResult>()?;
     qec.add_class::<PyDetectorErrorModel>()?;
+    qec.add_class::<PyDemSliceRoundSchedule>()?;
     qec.add_class::<PyDemBuilder>()?;
     qec.add_class::<PySampleBatch>()?;
     qec.add_class::<batch_decode::PyDecodeResult>()?;

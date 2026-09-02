@@ -776,6 +776,7 @@ class LogicalCircuitBuilder:
         seg_dems = []
         segment_detector_counts = []
         detector_rounds = [int(coords[2]) for _, coords in structured_dem.detector_coordinates() if coords is not None]
+        round_schedule = structured_dem.round_schedule(influence_map, dag_circuit)
         explicit_buffer = 0 if buffer is None else buffer
         for segment_index, seg in enumerate(segments):
             start_round = max(0, int(seg["time_start"]) - explicit_buffer)
@@ -786,9 +787,7 @@ class LogicalCircuitBuilder:
             forward_boundary = "hard" if is_last else "soft"
 
             if not is_last and buffer is not None:
-                required = structured_dem.required_buffer_rounds(
-                    influence_map,
-                    dag_circuit,
+                required = round_schedule.required_buffer_rounds(
                     start_round,
                     commit_rounds,
                 )
@@ -799,9 +798,7 @@ class LogicalCircuitBuilder:
                     )
                     raise ValueError(msg)
 
-            segment_dem = structured_dem.stitched_round_window(
-                influence_map,
-                dag_circuit,
+            segment_dem = round_schedule.stitch(
                 start_round=start_round,
                 commit_rounds=commit_rounds,
                 buffer_rounds=forward_buffer,

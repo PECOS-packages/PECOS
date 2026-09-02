@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pecos_rslib import ParityCheckMatrix, PauliString, StabilizerCodeSpec, TickCircuit
+from pecos_rslib import DagCircuit, ParityCheckMatrix, PauliString, StabilizerCodeSpec, TickCircuit
 
 class BivariateBicycleCode:
     """A validated bivariate-bicycle CSS code."""
@@ -103,9 +103,43 @@ class FaultDistanceUpperBoundResult:
     def bound_kind(self) -> str: ...
     def __repr__(self) -> str: ...
 
+class DemSliceRoundSchedule:
+    """Reusable structured-DEM schedule compiled from annotated round metadata."""
+
+    @property
+    def num_instances(self) -> int: ...
+    def rounds(self) -> list[int]: ...
+    def required_buffer_rounds(self, start_round: int, commit_rounds: int) -> int: ...
+    def stitch(
+        self,
+        start_round: int,
+        commit_rounds: int,
+        buffer_rounds: int | None = ...,
+        forward_boundary: str = ...,
+    ) -> DetectorErrorModel: ...
+    def __repr__(self) -> str: ...
+
 class DetectorErrorModel:
     """Rust-backed detector error model."""
 
+    def detector_coordinates(self) -> list[tuple[int, list[float] | None]]: ...
+    def round_schedule(self, influence_map: Any, circuit: DagCircuit) -> DemSliceRoundSchedule: ...
+    def required_buffer_rounds(
+        self,
+        influence_map: Any,
+        circuit: DagCircuit,
+        start_round: int,
+        commit_rounds: int,
+    ) -> int: ...
+    def stitched_round_window(
+        self,
+        influence_map: Any,
+        circuit: DagCircuit,
+        start_round: int,
+        commit_rounds: int,
+        buffer_rounds: int | None = ...,
+        forward_boundary: str = ...,
+    ) -> DetectorErrorModel: ...
     def graphlike_fault_distance(self) -> FaultDistanceResult | None: ...
     def connected_cluster_fault_distance(self, max_weight: int) -> FaultDistanceResult | None: ...
     def per_observable_fault_distances(self, max_weight: int) -> list[FaultDistanceResult | None]: ...

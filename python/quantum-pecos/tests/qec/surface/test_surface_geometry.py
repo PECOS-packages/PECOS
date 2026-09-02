@@ -299,7 +299,7 @@ def test_logical_circuit_marks_dag_gates_with_dem_slice_rounds():
 def test_surface_dem_round_schedule_reconstructs_the_terminal_model():
     """The Python surface path reaches the structured Rust slice frontend."""
     from pecos.qec.surface import LogicalCircuitBuilder
-    from pecos_rslib.qec import DagFaultAnalyzer, DetectorErrorModel
+    from pecos_rslib.qec import DagFaultAnalyzer, DemSliceRoundSchedule, DetectorErrorModel
 
     patch = SurfacePatch.create(distance=3)
     lcb = LogicalCircuitBuilder()
@@ -315,18 +315,26 @@ def test_surface_dem_round_schedule_reconstructs_the_terminal_model():
         p_prep=0.001,
     )
 
+    schedule = reference.round_schedule(influence_map, dag)
+    assert isinstance(schedule, DemSliceRoundSchedule)
+    assert schedule.num_instances == 3
+    assert schedule.rounds() == [0, 1, 2]
+    assert schedule.required_buffer_rounds(0, 2) == 1
+    assert schedule.required_buffer_rounds(0, 3) == 0
     assert reference.required_buffer_rounds(influence_map, dag, 0, 2) == 1
-    assert reference.required_buffer_rounds(influence_map, dag, 0, 3) == 0
     with pytest.raises(ValueError, match="increase the buffer"):
-        reference.stitched_round_window(
-            influence_map,
-            dag,
+        schedule.stitch(
             start_round=0,
             commit_rounds=2,
             buffer_rounds=0,
         )
 
-    stitched = reference.stitched_round_window(
+    stitched = schedule.stitch(
+        start_round=0,
+        commit_rounds=3,
+        forward_boundary="hard",
+    )
+    one_shot = reference.stitched_round_window(
         influence_map,
         dag,
         start_round=0,
@@ -355,6 +363,7 @@ def test_surface_dem_round_schedule_reconstructs_the_terminal_model():
     # Dense local D<n> numbering is intentionally schedule-derived. Compare
     # physical detector coordinates and independent sources across that relabeling.
     assert coordinate_normalized_sources(stitched) == coordinate_normalized_sources(reference)
+    assert coordinate_normalized_sources(stitched) == coordinate_normalized_sources(one_shot)
 
 
 # ============================================================

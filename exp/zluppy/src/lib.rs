@@ -34,6 +34,45 @@ use pyo3::prelude::*;
 use ::zlup::codegen::{HugrCodegen, PhirJsonCodegen, SlrCodegen};
 use ::zlup::semantic::SemanticAnalyzer;
 
+fn explicit_angle_unit(
+    gate: &str,
+    is_parameterized: bool,
+    has_params: bool,
+    unit: Option<&str>,
+) -> PyResult<Option<::zlup::ast::AngleUnit>> {
+    if !is_parameterized {
+        return match unit {
+            Some(unit) => Err(PyValueError::new_err(format!(
+                "non-parameterized gate '{gate}' takes no angle unit, but received '{unit}'"
+            ))),
+            None => Ok(None),
+        };
+    }
+
+    let unit = match unit {
+        Some("turns") => ::zlup::ast::AngleUnit::Turns,
+        Some("rad") => ::zlup::ast::AngleUnit::Rad,
+        Some(unit) => {
+            return Err(PyValueError::new_err(format!(
+                "rotation gate '{gate}' has unrecognized angle unit '{unit}'; accepted units are 'turns' or 'rad'"
+            )));
+        }
+        None => {
+            return Err(PyValueError::new_err(format!(
+                "rotation gate '{gate}' parameter requires an explicit angle unit; accepted units are 'turns' or 'rad'"
+            )));
+        }
+    };
+
+    if !has_params {
+        return Err(PyValueError::new_err(format!(
+            "rotation gate '{gate}' requires an angle parameter with an explicit unit; accepted units are 'turns' or 'rad'"
+        )));
+    }
+
+    Ok(Some(unit))
+}
+
 // =============================================================================
 // Error Types
 // =============================================================================
@@ -452,6 +491,7 @@ fn compile_file_hugr(
 ///     prog.add_allocator("q", 2)
 ///     prog.add_gate("H", [("q", 0)])
 ///     prog.add_gate("CX", [("q", 0), ("q", 1)])
+///     prog.add_gate("RZ", [("q", 0)], params=[0.25], unit="turns")
 ///     json_str = prog.to_json()
 ///     ```
 #[pyclass(skip_from_py_object)]
@@ -487,12 +527,18 @@ impl SlrProgram {
     ///     gate: Gate name (e.g., "H", "CX", "RZ")
     ///     targets: List of (`allocator_name`, index) tuples
     ///     params: Optional list of parameter values (for parameterized gates)
-    #[pyo3(signature = (gate, targets, params = None))]
+    ///     unit: Required for rotation parameters; must be "turns" or "rad"
+    ///
+    /// Raises:
+    ///     `ValueError`: If a rotation parameter lacks a valid unit, or a
+    ///         non-parameterized gate is given a unit
+    #[pyo3(signature = (gate, targets, params = None, unit = None))]
     fn add_gate(
         &mut self,
         gate: &str,
         targets: Vec<(String, usize)>,
         params: Option<Vec<f64>>,
+        unit: Option<&str>,
     ) -> PyResult<()> {
         let gate_name = match gate {
             // Single-qubit Pauli gates
@@ -544,6 +590,10 @@ impl SlrProgram {
             }
         };
 
+        let is_parameterized = matches!(gate_name, "RX" | "RY" | "RZ" | "CRZ" | "RZZ");
+        let has_params = params.as_ref().is_some_and(|values| !values.is_empty());
+        let angle_unit = explicit_angle_unit(gate, is_parameterized, has_params, unit)?;
+
         let slot_refs: Vec<_> = targets
             .into_iter()
             .map(|(alloc, idx)| ::zlup::codegen::slr::SlrSlotRef::new(alloc, idx))
@@ -553,9 +603,11 @@ impl SlrProgram {
             .unwrap_or_default()
             .into_iter()
             .map(|v| {
-                ::zlup::codegen::slr::SlrExpression::Literal(
-                    ::zlup::codegen::slr::SlrLiteralExpr::float(v),
-                )
+                let literal = angle_unit.map_or_else(
+                    || ::zlup::codegen::slr::SlrLiteralExpr::float(v),
+                    |unit| ::zlup::codegen::slr::SlrLiteralExpr::angle(unit.to_turns(v)),
+                );
+                ::zlup::codegen::slr::SlrExpression::Literal(literal)
             })
             .collect();
 
@@ -624,6 +676,7 @@ impl SlrProgram {
 /// prog.add_allocator("q", 2)
 /// prog.add_gate("h", [("q", 0)])
 /// prog.add_gate("cx", [("q", 0), ("q", 1)])
+/// prog.add_gate("rz", [("q", 0)], params=[0.25], unit="turns")
 ///
 /// # Compile to SLR
 /// slr_json = prog.compile_to_slr()
@@ -702,15 +755,21 @@ impl ZlupProgram {
     ///     gate: Gate name (e.g., "h", "cx", "rz")
     ///     targets: List of (`allocator_name`, index) tuples
     ///     params: Optional list of parameter values (for rotation gates)
+    ///     unit: Required for rotation parameters; must be "turns" or "rad"
     ///
     /// Returns:
     ///     self: For method chaining
-    #[pyo3(signature = (gate, targets, params = None))]
+    ///
+    /// Raises:
+    ///     `ValueError`: If a rotation parameter lacks a valid unit, or a
+    ///         non-parameterized gate is given a unit
+    #[pyo3(signature = (gate, targets, params = None, unit = None))]
     fn add_gate(
         &mut self,
         gate: &str,
         targets: Vec<(String, usize)>,
         params: Option<Vec<f64>>,
+        unit: Option<&str>,
     ) -> PyResult<Self> {
         let gate_kind = match gate.to_lowercase().as_str() {
             // Single-qubit Paulis
@@ -753,6 +812,9 @@ impl ZlupProgram {
             _ => return Err(PyValueError::new_err(format!("Unknown gate: {gate}"))),
         };
 
+        let has_params = params.as_ref().is_some_and(|values| !values.is_empty());
+        let angle_unit = explicit_angle_unit(gate, gate_kind.is_parameterized(), has_params, unit)?;
+
         // Build slot references
         let slot_refs: Vec<_> = targets
             .into_iter()
@@ -772,11 +834,19 @@ impl ZlupProgram {
             .unwrap_or_default()
             .into_iter()
             .map(|v| {
-                ::zlup::ast::Expr::FloatLit(::zlup::ast::FloatLit {
+                let value = ::zlup::ast::Expr::FloatLit(::zlup::ast::FloatLit {
                     value: v,
                     suffix: None,
                     location: None,
-                })
+                });
+                match angle_unit {
+                    Some(unit) => ::zlup::ast::Expr::AngleLit(Box::new(::zlup::ast::AngleLit {
+                        value,
+                        unit,
+                        location: None,
+                    })),
+                    None => value,
+                }
             })
             .collect();
 

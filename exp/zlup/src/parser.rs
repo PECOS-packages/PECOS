@@ -2043,7 +2043,7 @@ impl<'a> ParserState<'a> {
                 op: BinaryOp::Or,
                 left,
                 right,
-                location: None,
+                location: Some(loc.clone()),
             }));
         }
 
@@ -2117,7 +2117,7 @@ impl<'a> ParserState<'a> {
                 op: BinaryOp::Orelse,
                 left,
                 right,
-                location: None,
+                location: Some(loc.clone()),
             }));
         }
 
@@ -2143,7 +2143,7 @@ impl<'a> ParserState<'a> {
                 op: BinaryOp::And,
                 left,
                 right,
-                location: None,
+                location: Some(loc.clone()),
             }));
         }
 
@@ -2172,7 +2172,7 @@ impl<'a> ParserState<'a> {
                 op,
                 left,
                 right,
-                location: None,
+                location: Some(loc.clone()),
             }));
         }
 
@@ -2218,7 +2218,7 @@ impl<'a> ParserState<'a> {
                 op,
                 left,
                 right,
-                location: None,
+                location: Some(loc),
             })))
         } else {
             Ok(left)
@@ -2273,7 +2273,7 @@ impl<'a> ParserState<'a> {
                 op,
                 left,
                 right,
-                location: None,
+                location: Some(loc.clone()),
             }));
         }
 
@@ -2305,7 +2305,7 @@ impl<'a> ParserState<'a> {
                 op,
                 left,
                 right,
-                location: None,
+                location: Some(loc.clone()),
             }));
         }
 
@@ -2338,7 +2338,7 @@ impl<'a> ParserState<'a> {
                 op,
                 left,
                 right,
-                location: None,
+                location: Some(loc.clone()),
             }));
         }
 

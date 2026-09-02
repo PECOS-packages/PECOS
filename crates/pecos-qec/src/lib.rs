@@ -122,10 +122,10 @@ pub use fault_tolerance::dem_builder::{
     DEM_SLICE_ROUND_ATTRIBUTE, DecomposedFault, DemBoundaryKind, DemBuilder, DemBuilderError,
     DemDetectorPlacement, DemOutput, DemSlice, DemSliceCache, DemSliceContribution,
     DemSliceDetector, DemSliceInstance, DemSliceModelMap, DemSliceRoundSchedule,
-    DemSliceStitchError, DemStitchDiagnostics, DemStitcher, DemTemporalHorizon, DemWindowSpec,
-    DetectorDef, DetectorErrorModel, FaultMechanism, IdleNoiseFamily, NoiseConfig,
-    PecosDemMetadataError, RelativeDetectorTarget, SliceFaultMechanism, StitchedDem,
-    StitchedDetectorAddress, combine_probabilities,
+    DemSliceStitchError, DemSliceTemplateCompiler, DemStitchDiagnostics, DemStitcher,
+    DemTemporalHorizon, DemWindowSpec, DetectorDef, DetectorErrorModel, FaultMechanism,
+    IdleNoiseFamily, NoiseConfig, PecosDemMetadataError, RelativeDetectorTarget,
+    SliceFaultMechanism, StitchedDem, StitchedDetectorAddress, combine_probabilities,
 };
 pub use fault_tolerance::{
     CircuitDistanceResult, CorrectionResult, DecoderAnalysis, DemOutputKind, DemOutputMetadata,

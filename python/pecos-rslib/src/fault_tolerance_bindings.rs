@@ -56,6 +56,7 @@ use pecos_qec::fault_tolerance::dem_builder::{
     ContributionRenderSummary as RustContributionRenderSummary,
     DemBoundaryKind as RustDemBoundaryKind, DemBuilder as RustDemBuilder,
     DemSampler as RustNewDemSampler, DemSamplerBuilder as RustNewDemSamplerBuilder,
+    DemSlice as RustDemSlice, DemSliceInstance as RustDemSliceInstance,
     DemSliceRoundSchedule as RustDemSliceRoundSchedule, DemWindowSpec as RustDemWindowSpec,
     DetectorErrorModel as RustDetectorErrorModel, DirectSourceFamily as RustDirectSourceFamily,
     EquivalenceResult as RustEquivalenceResult, FaultContribution as RustFaultContribution,
@@ -126,6 +127,7 @@ use pyo3::types::PyString;
 use crate::observable_flips_bindings::{PyObservableFlips, obsmask_to_py, py_to_obsmask};
 use std::collections::BTreeMap;
 use std::str::FromStr;
+use std::sync::Arc;
 
 mod batch_decode;
 mod decoder_comparison;
@@ -1561,6 +1563,45 @@ pub struct PyDetectorErrorModel {
     inner: RustDetectorErrorModel,
 }
 
+/// One reusable, absolute-round-independent DEM slice compiled from a bounded template.
+#[pyclass(name = "DemSliceTemplate", module = "pecos_rslib.qec")]
+pub struct PyDemSliceTemplate {
+    inner: Arc<RustDemSlice>,
+}
+
+#[pymethods]
+impl PyDemSliceTemplate {
+    /// Human-readable template name.
+    #[getter]
+    fn name(&self) -> String {
+        self.inner.name().to_owned()
+    }
+
+    /// Validated ``(past_rounds, future_rounds)`` temporal horizon.
+    #[getter]
+    fn temporal_horizon(&self) -> (u32, u32) {
+        let horizon = self.inner.horizon();
+        (horizon.past_rounds, horizon.future_rounds)
+    }
+
+    /// Number of independent physical-source contributions in the template.
+    #[getter]
+    fn num_contributions(&self) -> usize {
+        self.inner.contributions().len()
+    }
+
+    fn __repr__(&self) -> String {
+        let (past, future) = self.temporal_horizon();
+        format!(
+            "DemSliceTemplate(name={:?}, num_contributions={}, temporal_horizon=({}, {}))",
+            self.inner.name(),
+            self.inner.contributions().len(),
+            past,
+            future
+        )
+    }
+}
+
 /// A reusable round schedule compiled from one source-tracked DEM and annotated circuit.
 ///
 /// Compile this once and call ``stitch`` for each decoding window. The schedule
@@ -1583,6 +1624,29 @@ fn parse_dem_boundary_kind(forward_boundary: &str) -> PyResult<RustDemBoundaryKi
 
 #[pymethods]
 impl PyDemSliceRoundSchedule {
+    /// Assemble a schedule from cached templates at requested absolute rounds.
+    ///
+    /// Identity stream and output mappings are used. ``output_model`` supplies
+    /// only standard-output and tracked-Pauli declarations; its detector and
+    /// contribution contents are ignored.
+    #[staticmethod]
+    fn from_templates(
+        py: Python<'_>,
+        output_model: &PyDetectorErrorModel,
+        templates: Vec<(Py<PyDemSliceTemplate>, i64)>,
+    ) -> Self {
+        let instances = templates
+            .into_iter()
+            .map(|(template, round)| {
+                let template = template.borrow(py);
+                RustDemSliceInstance::identity(Arc::clone(&template.inner), round)
+            })
+            .collect();
+        Self {
+            inner: RustDemSliceRoundSchedule::from_instances(&output_model.inner, instances),
+        }
+    }
+
     /// Number of scheduled owner rounds.
     #[getter]
     fn num_instances(&self) -> usize {
@@ -1596,6 +1660,23 @@ impl PyDemSliceRoundSchedule {
             .iter()
             .map(pecos_qec::DemSliceInstance::round)
             .collect()
+    }
+
+    /// Extract one compiled owner-round slice for caching and later reuse.
+    fn template(&self, owner_round: i64) -> PyResult<PyDemSliceTemplate> {
+        let instance = self
+            .inner
+            .instances()
+            .iter()
+            .find(|instance| instance.round() == owner_round)
+            .ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "DEM round schedule has no template at owner round {owner_round}"
+                ))
+            })?;
+        Ok(PyDemSliceTemplate {
+            inner: Arc::clone(instance.slice()),
+        })
     }
 
     /// Return the exact minimum safe look-ahead for a commit region.
@@ -7724,6 +7805,7 @@ pub fn register_qec_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     qec.add_class::<PyFaultDistanceUpperBoundConfig>()?;
     qec.add_class::<PyFaultDistanceUpperBoundResult>()?;
     qec.add_class::<PyDetectorErrorModel>()?;
+    qec.add_class::<PyDemSliceTemplate>()?;
     qec.add_class::<PyDemSliceRoundSchedule>()?;
     qec.add_class::<PyDemBuilder>()?;
     qec.add_class::<PySampleBatch>()?;

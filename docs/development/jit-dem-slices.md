@@ -73,6 +73,30 @@ its source locations are owned by the slice and omitted if none are. Partial or
 unattributed ownership fails loudly so one correlated source cannot be split
 or counted twice.
 
+## Bounded physical-template compiler
+
+`DemSliceTemplateCompiler` extracts selected owner rounds from a bounded,
+source-tracked physical model. It validates the annotated circuit's source
+ownership and detector-stream layout once, then emits absolute-round-independent
+`DemSlice` values suitable for `DemSliceCache`. The bounded model needs only
+enough neighboring rounds to expose the operation's complete temporal horizon;
+it is not an algorithm-length model.
+
+For a surface-code memory experiment, a three-SEC-round fixture is enough to
+compile four relevant families: initialization, stationary bulk SEC, the SEC
+round immediately before destructive readout, and the terminal measurement.
+The pre-terminal SEC family is intentionally distinct from bulk because its
+faults terminate on data-readout detectors rather than the next full syndrome
+round. Tests instantiate one cached bulk slice at multiple absolute rounds and
+reconstruct a separately compiled five-round physical DEM exactly.
+
+At the Rust layer, callers compose cached `DemSliceInstance` values with
+`DemSliceRoundSchedule::from_instances`. Python exposes the same narrow path as
+opaque `DemSliceTemplate` values returned by `schedule.template(...)` and
+`DemSliceRoundSchedule.from_templates(...)`. The Python constructor currently
+uses identity detector/output mappings, appropriate when reusing one geometry;
+general patch placement and logical relabeling remain in the Rust instance API.
+
 ## Native round schedule
 
 `DemSliceRoundSchedule::from_annotated_circuit` derives the repetitive layout
@@ -92,8 +116,8 @@ locations disagree on the owner round is also rejected.
 The schedule derives relative detector maps, temporal horizons, standard
 output mappings, and tracked-Pauli mappings, then exposes the resulting slice
 instances to `DemStitcher`. This removes the hand-authored ownership and mapping
-tables from the equivalence path; it still uses a full source-tracked DEM as the
-oracle until the operation-template compiler is introduced.
+tables from the equivalence path. Full-circuit source-tracked DEMs remain the
+independent equivalence oracle for bounded template composition.
 
 Python callers can exercise the same structured path through
 `DetectorErrorModel.stitched_round_window(...)`. It accepts the originating
@@ -145,9 +169,11 @@ converted to mechanism columns.
 ## Current scope
 
 This layer provides the stable slice, cache, structured-DEM adapter, automatic
-round layout, ownership, mapping, and stitching API. It does not yet compile
-physical template/halo circuits independently, mutate a decoder's prior
-vector, enable the anti-snake logical-subgraph window decoder, or support
-adaptive syndrome-extraction templates. The full-circuit DEM builder remains
-the equivalence oracle and the source of round-schedule slices until the
-operation-template compiler is introduced.
+round layout, ownership, bounded template extraction, mapping, and stitching
+API. Initialization, stationary bulk SEC, pre-terminal SEC, and terminal
+surface-memory families have exact composition coverage. It does not yet
+provide production cache-key/provider integration for surface builders,
+compile logical-Clifford operation families, mutate a decoder's prior vector,
+enable the anti-snake logical-subgraph window decoder, or support adaptive
+syndrome-extraction templates. Full-circuit DEM construction remains the
+equivalence oracle rather than the intended online algorithm path.

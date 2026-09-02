@@ -882,6 +882,158 @@ impl DemSliceInstance {
     }
 }
 
+/// Offline compiler for one-round slices from a bounded physical template model.
+///
+/// The input model may cover a small initialization, bulk, gate, or terminal
+/// circuit with enough temporal halo to expose every bounded correlation. The
+/// compiler validates source ownership and detector streams once, then extracts
+/// selected owner rounds as reusable, absolute-index-free [`DemSlice`] values.
+/// Those slices can be stored in [`DemSliceCache`] and instantiated without
+/// retaining the template circuit or its absolute round numbers.
+#[derive(Debug)]
+pub struct DemSliceTemplateCompiler<'a> {
+    model: &'a DetectorErrorModel,
+    location_rounds: Vec<i64>,
+    detector_layout: BTreeMap<u32, (u32, i64)>,
+    output_ids: DemSliceModelMap,
+    rounds: Vec<i64>,
+}
+
+impl<'a> DemSliceTemplateCompiler<'a> {
+    /// Prepare a compiler from an annotated bounded physical circuit.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for missing/invalid gate ownership, detector layout,
+    /// or source-location metadata.
+    pub fn from_annotated_circuit(
+        model: &'a DetectorErrorModel,
+        influence_map: &DagFaultInfluenceMap,
+        circuit: &DagCircuit,
+    ) -> Result<Self, DemSliceStitchError> {
+        let location_rounds = annotated_location_rounds(influence_map, circuit)?;
+        Self::from_location_rounds_named("DEM slice template", model, location_rounds)
+    }
+
+    /// Prepare a compiler from one owner round per influence-map location.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for incomplete source ownership or invalid detector
+    /// coordinates.
+    pub fn from_location_rounds(
+        model: &'a DetectorErrorModel,
+        location_rounds: &[i64],
+    ) -> Result<Self, DemSliceStitchError> {
+        Self::from_location_rounds_named("DEM slice template", model, location_rounds.to_vec())
+    }
+
+    fn from_location_rounds_named(
+        validation_name: &str,
+        model: &'a DetectorErrorModel,
+        location_rounds: Vec<i64>,
+    ) -> Result<Self, DemSliceStitchError> {
+        validate_source_location_owners(validation_name, model, &location_rounds)?;
+        let detector_layout = detector_round_layout(model)?;
+        let mut rounds: BTreeSet<_> = location_rounds.iter().copied().collect();
+        rounds.extend(detector_layout.values().map(|&(_, round)| round));
+        Ok(Self {
+            model,
+            location_rounds,
+            detector_layout,
+            output_ids: source_output_ids(model),
+            rounds: rounds.into_iter().collect(),
+        })
+    }
+
+    /// Owner rounds available in this bounded template.
+    #[must_use]
+    pub fn rounds(&self) -> &[i64] {
+        &self.rounds
+    }
+
+    /// Compile one owner round into a reusable relative-address slice.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `owner_round` is absent, a relative address does not
+    /// fit, or the selected physical sources fail normal slice validation.
+    pub fn compile_round(
+        &self,
+        name: impl Into<String>,
+        owner_round: i64,
+    ) -> Result<DemSlice, DemSliceStitchError> {
+        if self.rounds.binary_search(&owner_round).is_err() {
+            return Err(DemSliceStitchError::UnknownTemplateRound { owner_round });
+        }
+        let name = name.into();
+        let owned_locations = self
+            .location_rounds
+            .iter()
+            .enumerate()
+            .filter(|&(_, &round)| round == owner_round)
+            .map(|(location, _)| {
+                u32::try_from(location).map_err(|_| DemSliceStitchError::TooManyFaultLocations)
+            })
+            .collect::<Result<BTreeSet<_>, _>>()?;
+        let source_map =
+            self.detector_layout.iter().try_fold(
+                self.output_ids.clone(),
+                |source_map, (&source_detector, &(stream, detector_round))| {
+                    let offset = detector_round
+                        .checked_sub(owner_round)
+                        .ok_or(DemSliceStitchError::RoundOverflow)?;
+                    let offset = i32::try_from(offset).map_err(|_| {
+                        DemSliceStitchError::RelativeRoundOffsetOverflow {
+                            source_detector,
+                            owner_round,
+                            detector_round,
+                        }
+                    })?;
+                    Ok::<_, DemSliceStitchError>(source_map.with_detector(
+                        source_detector,
+                        RelativeDetectorTarget::new(stream, offset),
+                    ))
+                },
+            )?;
+        let horizon = owned_temporal_horizon(&name, self.model, &source_map, &owned_locations)?;
+        DemSlice::from_detector_error_model_for_locations(
+            name,
+            self.model,
+            &source_map,
+            horizon,
+            &owned_locations,
+        )
+    }
+}
+
+fn annotated_location_rounds(
+    influence_map: &DagFaultInfluenceMap,
+    circuit: &DagCircuit,
+) -> Result<Vec<i64>, DemSliceStitchError> {
+    influence_map
+        .locations
+        .iter()
+        .enumerate()
+        .map(|(location, spacetime)| {
+            let Some(attribute) = circuit.get_gate_attr(spacetime.node, DEM_SLICE_ROUND_ATTRIBUTE)
+            else {
+                return Err(DemSliceStitchError::MissingLocationRoundAttribute {
+                    location,
+                    node: spacetime.node,
+                });
+            };
+            let Attribute::Int(round) = attribute else {
+                return Err(DemSliceStitchError::InvalidLocationRoundAttribute {
+                    location,
+                    node: spacetime.node,
+                });
+            };
+            Ok(*round)
+        })
+        .collect()
+}
+
 /// Round-indexed slice instances derived from PECOS circuit and detector metadata.
 ///
 /// Detector coordinates provide the stable spatial stream and absolute syndrome
@@ -896,6 +1048,24 @@ pub struct DemSliceRoundSchedule {
 }
 
 impl DemSliceRoundSchedule {
+    /// Build a schedule from previously compiled slice instances.
+    ///
+    /// Detector and output mappings on each instance are preserved. Standard
+    /// output declarations are copied from `output_model`; its detector and
+    /// contribution contents are not used.
+    #[must_use]
+    pub fn from_instances(
+        output_model: &DetectorErrorModel,
+        mut instances: Vec<DemSliceInstance>,
+    ) -> Self {
+        instances.sort_by_key(DemSliceInstance::round);
+        Self {
+            instances,
+            observables: output_model.observables.clone(),
+            tracked_paulis: output_model.tracked_paulis.clone(),
+        }
+    }
+
     /// Derive a round schedule from fault-location gate attributes.
     ///
     /// Every node referenced by `influence_map.locations` must carry an integer
@@ -916,23 +1086,7 @@ impl DemSliceRoundSchedule {
         influence_map: &DagFaultInfluenceMap,
         circuit: &DagCircuit,
     ) -> Result<Self, DemSliceStitchError> {
-        let mut location_rounds = Vec::with_capacity(influence_map.locations.len());
-        for (location, spacetime) in influence_map.locations.iter().enumerate() {
-            let Some(attribute) = circuit.get_gate_attr(spacetime.node, DEM_SLICE_ROUND_ATTRIBUTE)
-            else {
-                return Err(DemSliceStitchError::MissingLocationRoundAttribute {
-                    location,
-                    node: spacetime.node,
-                });
-            };
-            let Attribute::Int(round) = attribute else {
-                return Err(DemSliceStitchError::InvalidLocationRoundAttribute {
-                    location,
-                    node: spacetime.node,
-                });
-            };
-            location_rounds.push(*round);
-        }
+        let location_rounds = annotated_location_rounds(influence_map, circuit)?;
         Self::from_location_rounds(name_prefix, model, &location_rounds)
     }
 
@@ -952,53 +1106,20 @@ impl DemSliceRoundSchedule {
         location_rounds: &[i64],
     ) -> Result<Self, DemSliceStitchError> {
         let name_prefix = name_prefix.as_ref();
-        let detector_layout = detector_round_layout(model)?;
-        let mut owned_by_round: BTreeMap<i64, BTreeSet<u32>> = BTreeMap::new();
-        for (location, &round) in location_rounds.iter().enumerate() {
-            let location =
-                u32::try_from(location).map_err(|_| DemSliceStitchError::TooManyFaultLocations)?;
-            owned_by_round.entry(round).or_default().insert(location);
-        }
-        for &(_, round) in detector_layout.values() {
-            owned_by_round.entry(round).or_default();
-        }
-
-        validate_source_location_owners(name_prefix, model, location_rounds)?;
-
-        let output_ids = source_output_ids(model);
-        let mut instances = Vec::with_capacity(owned_by_round.len());
-        for (round, owned_locations) in owned_by_round {
-            let slice_name = format!("{name_prefix}@{round}");
-            let source_map = detector_layout.iter().try_fold(
-                output_ids.clone(),
-                |source_map, (&source_detector, &(stream, detector_round))| {
-                    let offset = detector_round
-                        .checked_sub(round)
-                        .ok_or(DemSliceStitchError::RoundOverflow)?;
-                    let offset = i32::try_from(offset).map_err(|_| {
-                        DemSliceStitchError::RelativeRoundOffsetOverflow {
-                            source_detector,
-                            owner_round: round,
-                            detector_round,
-                        }
-                    })?;
-                    Ok::<_, DemSliceStitchError>(source_map.with_detector(
-                        source_detector,
-                        RelativeDetectorTarget::new(stream, offset),
-                    ))
-                },
-            )?;
-            let horizon =
-                owned_temporal_horizon(&slice_name, model, &source_map, &owned_locations)?;
-            let slice = Arc::new(DemSlice::from_detector_error_model_for_locations(
-                slice_name,
-                model,
-                &source_map,
-                horizon,
-                &owned_locations,
-            )?);
-            instances.push(DemSliceInstance::identity(slice, round));
-        }
+        let compiler = DemSliceTemplateCompiler::from_location_rounds_named(
+            name_prefix,
+            model,
+            location_rounds.to_vec(),
+        )?;
+        let instances = compiler
+            .rounds()
+            .iter()
+            .map(|&round| {
+                let slice =
+                    Arc::new(compiler.compile_round(format!("{name_prefix}@{round}"), round)?);
+                Ok(DemSliceInstance::identity(slice, round))
+            })
+            .collect::<Result<_, DemSliceStitchError>>()?;
 
         Ok(Self {
             instances,
@@ -1773,6 +1894,8 @@ pub enum DemSliceStitchError {
         location: u32,
         num_locations: usize,
     },
+    /// The requested owner round is absent from the bounded physical template.
+    UnknownTemplateRound { owner_round: i64 },
     /// A relative detector round does not fit the slice target representation.
     RelativeRoundOffsetOverflow {
         source_detector: u32,
@@ -1929,6 +2052,10 @@ impl fmt::Display for DemSliceStitchError {
                 f,
                 "source contribution in slice schedule {slice:?} references location {location}, but only {num_locations} location owners were supplied"
             ),
+            Self::UnknownTemplateRound { owner_round } => write!(
+                f,
+                "bounded DEM template has no detector or physical source owned by round {owner_round}"
+            ),
             Self::RelativeRoundOffsetOverflow {
                 source_detector,
                 owner_round,
@@ -2012,6 +2139,67 @@ impl Error for DemSliceStitchError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn repeated_measurement_fixture(
+        rounds: usize,
+    ) -> (DagCircuit, DagFaultInfluenceMap, DetectorErrorModel) {
+        use crate::fault_tolerance::dem_builder::DemBuilder;
+        use crate::fault_tolerance::propagator::DagFaultAnalyzer;
+
+        let mut circuit = DagCircuit::new();
+        circuit.pz(&[0]);
+        let data_prep = circuit.last_added_node().unwrap();
+        circuit.set_gate_attr(data_prep, DEM_SLICE_ROUND_ATTRIBUTE, Attribute::Int(0));
+        for round in 0..rounds {
+            let owner = i64::try_from(round).unwrap();
+            circuit.pz(&[1]);
+            let ancilla_prep = circuit.last_added_node().unwrap();
+            circuit.set_gate_attr(
+                ancilla_prep,
+                DEM_SLICE_ROUND_ATTRIBUTE,
+                Attribute::Int(owner),
+            );
+            circuit.cx(&[(0, 1)]);
+            let interaction = circuit.last_added_node().unwrap();
+            circuit.set_gate_attr(
+                interaction,
+                DEM_SLICE_ROUND_ATTRIBUTE,
+                Attribute::Int(owner),
+            );
+            circuit.mz(&[1]);
+            let measurement = circuit.last_added_node().unwrap();
+            circuit.set_gate_attr(
+                measurement,
+                DEM_SLICE_ROUND_ATTRIBUTE,
+                Attribute::Int(owner),
+            );
+        }
+
+        let influence_map = DagFaultAnalyzer::new(&circuit).build_influence_map();
+        let detector_entries = (0..rounds)
+            .map(|round| {
+                if round == 0 {
+                    r#"{"id":0,"coords":[2.0,3.0,0.0],"meas_ids":[0]}"#.to_string()
+                } else {
+                    format!(
+                        r#"{{"id":{round},"coords":[2.0,3.0,{round}.0],"meas_ids":[{},{}]}}"#,
+                        round - 1,
+                        round
+                    )
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        let detector_json = format!("[{detector_entries}]");
+        let model = DemBuilder::new(&influence_map)
+            .with_noise(0.0, 0.05, 0.0, 0.0)
+            .with_detectors_json(&detector_json)
+            .unwrap()
+            .with_num_measurements(rounds)
+            .try_build()
+            .expect("the repeated syndrome-measurement circuit builds");
+        (circuit, influence_map, model)
+    }
 
     fn target(detector: u32, round_offset: i32) -> RelativeDetectorTarget {
         RelativeDetectorTarget::new(detector, round_offset)
@@ -2497,6 +2685,73 @@ mod tests {
             error,
             DemSliceStitchError::MissingLocationRoundAttribute { .. }
         ));
+    }
+
+    #[test]
+    fn bounded_templates_reconstruct_a_longer_repeated_measurement_dem() {
+        use crate::fault_tolerance::dem_builder::{ParsedDem, compare_dems_exact};
+
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+        enum TemplateKind {
+            Initialization,
+            Bulk,
+            Terminal,
+        }
+
+        // This three-round circuit is the bounded physical-template oracle.
+        // Only its relative slices are retained after compilation.
+        let (template_circuit, template_influence, template_model) =
+            repeated_measurement_fixture(3);
+        let compiler = DemSliceTemplateCompiler::from_annotated_circuit(
+            &template_model,
+            &template_influence,
+            &template_circuit,
+        )
+        .expect("the bounded template metadata is complete");
+        assert_eq!(compiler.rounds(), &[0, 1, 2]);
+
+        let mut cache = DemSliceCache::new();
+        let initialization = cache
+            .get_or_try_insert_with(TemplateKind::Initialization, || {
+                compiler.compile_round("repeated measurement initialization", 0)
+            })
+            .unwrap();
+        let bulk = cache
+            .get_or_try_insert_with(TemplateKind::Bulk, || {
+                compiler.compile_round("repeated measurement bulk", 1)
+            })
+            .unwrap();
+        let terminal = cache
+            .get_or_try_insert_with(TemplateKind::Terminal, || {
+                compiler.compile_round("repeated measurement terminal", 2)
+            })
+            .unwrap();
+        assert_eq!(cache.len(), 3);
+        assert_eq!(bulk.horizon(), DemTemporalHorizon::new(0, 1));
+        assert!(matches!(
+            compiler.compile_round("absent", 3).unwrap_err(),
+            DemSliceStitchError::UnknownTemplateRound { owner_round: 3 }
+        ));
+
+        // Assemble five rounds without deriving slices from the five-round
+        // reference. The same cached bulk Arc backs every interior instance.
+        let instances = vec![
+            DemSliceInstance::identity(initialization, 0),
+            DemSliceInstance::identity(Arc::clone(&bulk), 1),
+            DemSliceInstance::identity(Arc::clone(&bulk), 2),
+            DemSliceInstance::identity(Arc::clone(&bulk), 3),
+            DemSliceInstance::identity(terminal, 4),
+        ];
+        assert!(Arc::ptr_eq(instances[1].slice(), instances[3].slice()));
+        let stitched = DemStitcher::new(DemWindowSpec::new(0, 5, 0, DemBoundaryKind::Hard))
+            .stitch(&instances)
+            .expect("the cached bounded templates stitch");
+
+        let (_, _, reference) = repeated_measurement_fixture(5);
+        let reference: ParsedDem = reference.to_string().parse().unwrap();
+        let stitched: ParsedDem = stitched.model.to_string().parse().unwrap();
+        let equivalence = compare_dems_exact(&reference, &stitched, 1e-12);
+        assert!(equivalence.equivalent, "{:#?}", equivalence.details);
     }
 
     #[test]

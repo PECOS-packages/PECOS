@@ -4310,13 +4310,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pecos-go-ffi"
-version = "0.1.0-dev0"
-dependencies = [
- "pecos",
-]
-
-[[package]]
 name = "pecos-gpu-sims"
 version = "0.2.0-dev.0"
 dependencies = [
@@ -4790,6 +4783,22 @@ dependencies = [
  "pecos-core",
  "pecos-simulators",
  "selene-core",
+]
+
+[[package]]
+name = "pecos-selene-general-noise"
+version = "0.2.0-dev.0"
+dependencies = [
+ "anyhow",
+ "nalgebra",
+ "num-complex 0.4.6",
+ "pecos-core",
+ "pecos-engines",
+ "pecos-quantum",
+ "selene-core",
+ "serde",
+ "serde_json",
+ "smallvec",
 ]
 
 [[package]]

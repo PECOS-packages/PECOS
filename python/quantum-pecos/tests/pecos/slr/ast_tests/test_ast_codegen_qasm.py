@@ -29,7 +29,7 @@ class TestAstToQasmBasic:
         code = ast_to_qasm(ast)
 
         assert "OPENQASM 2.0;" in code
-        assert 'include "hqslib1.inc";' in code
+        assert 'include "qelib1.inc";' in code
 
     def test_no_header(self) -> None:
         """Program without header excludes version and includes."""

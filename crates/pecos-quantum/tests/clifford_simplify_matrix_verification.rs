@@ -163,7 +163,10 @@ fn rzz_zero_equiv_identity() {
 fn rzz_quarter_equiv_szz() {
     let rzz = RZZ(Angle64::QUARTER_TURN, 0, 1);
     let szz = SZZ(0, 1);
-    assert!(unitaries_equiv(&rzz, &szz), "RZZ(pi/2) should equal SZZ");
+    assert!(
+        unitaries_equiv(&rzz, &szz),
+        "RZZ(pi/2) should equal SZZ up to global phase"
+    );
 }
 
 #[test]
@@ -172,7 +175,7 @@ fn rzz_three_quarters_equiv_szzdg() {
     let szzdg = SZZ(0, 1).dg();
     assert!(
         unitaries_equiv(&rzz, &szzdg),
-        "RZZ(3pi/2) should equal SZZdg"
+        "RZZ(3pi/2) should equal SZZdg up to global phase"
     );
 }
 
@@ -182,7 +185,7 @@ fn rzz_neg_quarter_equiv_szzdg() {
     let szzdg = SZZ(0, 1).dg();
     assert!(
         unitaries_equiv(&rzz, &szzdg),
-        "RZZ(-pi/2) should equal SZZdg"
+        "RZZ(-pi/2) should equal SZZdg up to global phase"
     );
 }
 

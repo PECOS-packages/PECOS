@@ -610,6 +610,7 @@ mod tests {
 
     use anyhow::Result;
     use pecos_core::Angle64;
+    use pecos_engines::byte_message::GateType;
     use pecos_engines::prelude::{ByteMessage, EngineStage, NoiseModel};
     use selene_core::error_model::BatchResult;
     use selene_core::error_model::interface::ErrorModelInterface;
@@ -1628,6 +1629,361 @@ mod tests {
             "a leakage measurement must trigger measurement crosstalk: {:?}",
             simulator.received
         );
+    }
+
+    /// Residual global phase of every unitary bridge arm, pinned as a value.
+    ///
+    /// Direction convention, stated here and nowhere else:
+    ///
+    /// ```text
+    ///     U_pecos = e^{i phi} * U_emitted
+    /// ```
+    ///
+    /// `phi` is what this test returns and what the table below pins.
+    ///
+    /// The PECOS side is PECOS's *executable* dense matrix, `UnitaryRep::to_matrix()`,
+    /// never a formula written here -- a hand-written formula is a second
+    /// implementation and can only agree with itself. The Selene side is transcribed
+    /// from Selene's own reference `selene-ext/simulators/quest/python/
+    /// gate_definitions.py` at the pinned revision: `RZ(a) = diag(e^{-ia/2}, e^{ia/2})`,
+    /// `RX(t) = [[cos t/2, -i sin t/2], [-i sin t/2, cos t/2]]`, `RXY(t, p) = RZ(p) RX(t)
+    /// RZ(-p)`, and `RZZ(a) = diag(e^{-ia/2}, e^{ia/2}, e^{ia/2}, e^{-ia/2})`.
+    ///
+    /// Two facts the pinned values record rather than hide:
+    ///
+    /// - PECOS's `rotation_to_matrix` halves the unsigned `[0, 2pi)` representative of an
+    ///   angle, so for any angle in `(pi, 2pi)` -- every negative angle -- its dense matrix
+    ///   is `-1` times the signed textbook `exp(-i theta/2 P)`. `SZZdg` is built as
+    ///   `RZZ(3pi/2)` and so carries `pi` here, as does every negative-angle rotation.
+    ///   This is the 4pi-periodicity problem recorded in the CRZ parameter
+    ///   representation note; the bridge cannot fix it and this test does not pretend it
+    ///   is absent.
+    /// - Selene's Rust `QuEST` simulator at the same revision scales `exp(i a/2)` out of
+    ///   `RZZ`, differing from Selene's own reference definition above. Under that one
+    ///   simulator the two-qubit arms carry an additional `-a/2` that the reference does
+    ///   not. That is Selene-internal, and unobservable on an error-model path where
+    ///   nothing is controlled. This test pins the documented reference.
+    ///
+    /// Beyond the phase, the test asserts `U_pecos == e^{i phi} U_emitted` entrywise, so
+    /// an arm that is wrong by more than a phase (the former `H` arm was wrong by `Z`)
+    /// fails here rather than being reported as a phase. It also asserts every emitted
+    /// operation targets the qubits the PECOS gate named.
+    #[test]
+    fn residual_phase_per_arm() {
+        use nalgebra::DMatrix;
+        use num_complex::Complex64;
+        use pecos_core::UnitaryRep;
+        use pecos_core::unitary_rep::RotationType;
+        use pecos_quantum::ToMatrix;
+        use smallvec::{SmallVec, smallvec};
+
+        fn c(re: f64, im: f64) -> Complex64 {
+            Complex64::new(re, im)
+        }
+        fn selene_rz(a: f64) -> DMatrix<Complex64> {
+            DMatrix::from_row_slice(
+                2,
+                2,
+                &[
+                    c(0.0, -a / 2.0).exp(),
+                    c(0.0, 0.0),
+                    c(0.0, 0.0),
+                    c(0.0, a / 2.0).exp(),
+                ],
+            )
+        }
+        fn selene_rx(t: f64) -> DMatrix<Complex64> {
+            let (s, co) = ((t / 2.0).sin(), (t / 2.0).cos());
+            DMatrix::from_row_slice(2, 2, &[c(co, 0.0), c(0.0, -s), c(0.0, -s), c(co, 0.0)])
+        }
+        fn selene_rxy(t: f64, p: f64) -> DMatrix<Complex64> {
+            selene_rz(p) * selene_rx(t) * selene_rz(-p)
+        }
+        fn selene_rzz(a: f64) -> DMatrix<Complex64> {
+            DMatrix::from_diagonal(&nalgebra::DVector::from_vec(vec![
+                c(0.0, -a / 2.0).exp(),
+                c(0.0, a / 2.0).exp(),
+                c(0.0, a / 2.0).exp(),
+                c(0.0, -a / 2.0).exp(),
+            ]))
+        }
+        /// Emitted operations composed in execution order -- Selene applies a batch
+        /// first to last, so each later operation multiplies on the left. Every
+        /// operation must target one of `targets`.
+        fn emitted_matrix(ops: &[Operation], targets: &[u64]) -> DMatrix<Complex64> {
+            let dim = 1 << targets.len();
+            let mut total = DMatrix::identity(dim, dim);
+            for op in ops {
+                let (step, touched): (DMatrix<Complex64>, Vec<u64>) = match *op {
+                    Operation::RXYGate {
+                        qubit_id,
+                        theta,
+                        phi,
+                    } => (selene_rxy(theta, phi), vec![qubit_id]),
+                    Operation::RZGate { qubit_id, theta } => (selene_rz(theta), vec![qubit_id]),
+                    Operation::RZZGate {
+                        qubit_id_1,
+                        qubit_id_2,
+                        theta,
+                    } => (selene_rzz(theta), vec![qubit_id_1, qubit_id_2]),
+                    ref other => panic!("phase table only covers unitary arms, got {other:?}"),
+                };
+                assert_eq!(
+                    touched, targets,
+                    "emitted {op:?} does not act on the PECOS gate's targets {targets:?}"
+                );
+                assert_eq!(step.nrows(), dim, "arm emitted an op of the wrong width");
+                total = step * total;
+            }
+            total
+        }
+        /// Returns phi with `U_pecos == e^{i phi} U_emitted`, or the entrywise mismatch.
+        fn residual_phase(
+            pecos: &DMatrix<Complex64>,
+            emitted: &DMatrix<Complex64>,
+        ) -> Result<f64, String> {
+            if pecos
+                .iter()
+                .chain(emitted.iter())
+                .any(|z| !z.re.is_finite() || !z.im.is_finite())
+            {
+                return Err("non-finite entry".into());
+            }
+            let (i, j) = (0..pecos.nrows())
+                .flat_map(|i| (0..pecos.ncols()).map(move |j| (i, j)))
+                .find(|&(i, j)| pecos[(i, j)].norm() > 1e-9 && emitted[(i, j)].norm() > 1e-9)
+                .ok_or("no jointly nonzero entry")?;
+            let ratio = pecos[(i, j)] / emitted[(i, j)];
+            if (ratio.norm() - 1.0).abs() > 1e-9 {
+                return Err(format!("ratio is not unit modulus: {ratio}"));
+            }
+            let rebuilt = emitted * ratio;
+            let worst = (pecos - &rebuilt)
+                .iter()
+                .map(|z| z.norm())
+                .fold(0.0, f64::max);
+            if worst > 1e-9 {
+                return Err(format!(
+                    "differs by more than a global phase (max entry error {worst:.3e})"
+                ));
+            }
+            Ok(ratio.arg())
+        }
+
+        /// One row of the pinned table.
+        struct Arm {
+            name: &'static str,
+            build: fn(&mut pecos_engines::prelude::ByteMessageBuilder),
+            pecos: UnitaryRep,
+            /// `phi` in `U_pecos = e^{i phi} U_emitted`.
+            expected: f64,
+        }
+        let q1: SmallVec<[usize; 3]> = smallvec![0];
+        let q2: SmallVec<[usize; 3]> = smallvec![0, 1];
+        let named = |g: GateType, q: &SmallVec<[usize; 3]>| UnitaryRep::gate(g, q.clone());
+        let rot = |r: RotationType, a: f64, q: &SmallVec<[usize; 3]>| {
+            UnitaryRep::rotation(r, Angle64::from_radians(a), q.clone())
+        };
+        let arm = |name, build, pecos, expected| Arm {
+            name,
+            build,
+            pecos,
+            expected,
+        };
+        let cases = vec![
+            // Named single-qubit gates.
+            arm(
+                "X",
+                |b| {
+                    b.x(&[0]);
+                },
+                named(GateType::X, &q1),
+                PI / 2.0,
+            ),
+            arm(
+                "Y",
+                |b| {
+                    b.y(&[0]);
+                },
+                named(GateType::Y, &q1),
+                PI / 2.0,
+            ),
+            arm(
+                "Z",
+                |b| {
+                    b.z(&[0]);
+                },
+                named(GateType::Z, &q1),
+                PI / 2.0,
+            ),
+            arm(
+                "H",
+                |b| {
+                    b.h(&[0]);
+                },
+                named(GateType::H, &q1),
+                PI / 2.0,
+            ),
+            arm(
+                "SZ",
+                |b| {
+                    b.sz(&[0]);
+                },
+                named(GateType::SZ, &q1),
+                PI / 4.0,
+            ),
+            arm(
+                "SZdg",
+                |b| {
+                    b.szdg(&[0]);
+                },
+                named(GateType::SZdg, &q1),
+                -PI / 4.0,
+            ),
+            arm(
+                "T",
+                |b| {
+                    b.t(&[0]);
+                },
+                named(GateType::T, &q1),
+                PI / 8.0,
+            ),
+            arm(
+                "Tdg",
+                |b| {
+                    b.tdg(&[0]);
+                },
+                named(GateType::Tdg, &q1),
+                -PI / 8.0,
+            ),
+            // Parameterised single-qubit rotations, positive and negative angles. The
+            // negative cases carry pi against PECOS's unsigned-halved dense matrix.
+            arm(
+                "RX(+0.37)",
+                |b| {
+                    b.rx(Angle64::from_radians(0.37), &[0]);
+                },
+                rot(RotationType::RX, 0.37, &q1),
+                0.0,
+            ),
+            arm(
+                "RX(-0.37)",
+                |b| {
+                    b.rx(Angle64::from_radians(-0.37), &[0]);
+                },
+                rot(RotationType::RX, -0.37, &q1),
+                PI,
+            ),
+            arm(
+                "RY(+0.37)",
+                |b| {
+                    b.ry(Angle64::from_radians(0.37), &[0]);
+                },
+                rot(RotationType::RY, 0.37, &q1),
+                0.0,
+            ),
+            arm(
+                "RY(-0.37)",
+                |b| {
+                    b.ry(Angle64::from_radians(-0.37), &[0]);
+                },
+                rot(RotationType::RY, -0.37, &q1),
+                PI,
+            ),
+            arm(
+                "RZ(+0.37)",
+                |b| {
+                    b.rz(Angle64::from_radians(0.37), &[0]);
+                },
+                rot(RotationType::RZ, 0.37, &q1),
+                0.0,
+            ),
+            arm(
+                "RZ(-0.37)",
+                |b| {
+                    b.rz(Angle64::from_radians(-0.37), &[0]);
+                },
+                rot(RotationType::RZ, -0.37, &q1),
+                PI,
+            ),
+            arm(
+                "RXY1Q(+0.37, -0.91)",
+                |b| {
+                    b.rxy1q(
+                        Angle64::from_radians(0.37),
+                        Angle64::from_radians(-0.91),
+                        &[0],
+                    );
+                },
+                UnitaryRep::Gate(
+                    pecos_core::Unitary::RXY1Q {
+                        theta: Angle64::from_radians(0.37),
+                        phi: Angle64::from_radians(-0.91),
+                    },
+                    q1.clone(),
+                ),
+                0.0,
+            ),
+            // Two-qubit.
+            arm(
+                "SZZ",
+                |b| {
+                    b.szz(&[(0, 1)]);
+                },
+                named(GateType::SZZ, &q2),
+                0.0,
+            ),
+            arm(
+                "SZZdg",
+                |b| {
+                    b.szzdg(&[(0, 1)]);
+                },
+                named(GateType::SZZdg, &q2),
+                PI,
+            ),
+            arm(
+                "RZZ(+0.37)",
+                |b| {
+                    b.rzz(Angle64::from_radians(0.37), &[(0, 1)]);
+                },
+                rot(RotationType::RZZ, 0.37, &q2),
+                0.0,
+            ),
+            arm(
+                "RZZ(-0.37)",
+                |b| {
+                    b.rzz(Angle64::from_radians(-0.37), &[(0, 1)]);
+                },
+                rot(RotationType::RZZ, -0.37, &q2),
+                PI,
+            ),
+        ];
+
+        for Arm {
+            name,
+            build,
+            pecos,
+            expected,
+        } in cases
+        {
+            let targets: Vec<u64> = pecos.qubits().iter().map(|&q| q as u64).collect();
+            let mut builder = ByteMessage::quantum_operations_builder();
+            build(&mut builder);
+            let message = builder.build();
+            let mut simulator = ClassicalSimulator::with_qubits(targets.len());
+            SeleneSimulator::process(&mut simulator, &message).unwrap();
+            let ops = simulator.received.concat();
+            let emitted = emitted_matrix(&ops, &targets);
+            let source = pecos.to_matrix().inner().clone();
+            let phi = residual_phase(&source, &emitted)
+                .unwrap_or_else(|why| panic!("{name}: {why}; emitted {ops:?}"));
+            let delta = (phi - expected).rem_euclid(2.0 * PI);
+            let delta = delta.min(2.0 * PI - delta);
+            assert!(
+                delta < 1e-9,
+                "{name}: residual phase {phi:.6} rad, expected {expected:.6} rad (U_pecos = e^{{i phi}} U_emitted)"
+            );
+        }
     }
 
     #[test]

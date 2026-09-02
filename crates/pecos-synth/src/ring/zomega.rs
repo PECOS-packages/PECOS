@@ -3,7 +3,7 @@
 use std::ops::{Add, Mul, Neg, Sub};
 
 use num_bigint::BigInt;
-use num_traits::{One, Zero};
+use num_traits::{One, Signed, Zero};
 
 use super::ZSqrt2;
 
@@ -142,6 +142,162 @@ impl ZOmega {
             &scaled * &Self::sqrt2()
         }
     }
+
+    fn field_norm(&self) -> BigInt {
+        let norm = self.norm_squared().norm();
+        debug_assert!(!norm.is_negative());
+        norm
+    }
+
+    /// Euclidean gcd in `Z[omega]`, with a deterministic unit associate.
+    pub(crate) fn gcd(&self, other: &Self) -> Option<Self> {
+        let mut left = self.clone();
+        let mut right = other.clone();
+        let input_bits = left
+            .field_norm()
+            .bits()
+            .saturating_add(right.field_norm().bits())
+            .saturating_add(1);
+        let mut remaining = input_bits.saturating_mul(32).saturating_add(256);
+        while !right.is_zero() {
+            if remaining == 0 {
+                return None;
+            }
+            remaining -= 1;
+            let quotient = nearest_quotient(&left, &right);
+            let remainder = &left - &(&quotient * &right);
+            debug_assert!(remainder.field_norm() < right.field_norm());
+            left = right;
+            right = remainder;
+        }
+        (!left.is_zero()).then(|| canonical_associate(&left))
+    }
+}
+
+fn nearest_quotient(dividend: &ZOmega, divisor: &ZOmega) -> ZOmega {
+    // In Q(omega), y^-1 = y^dagger y^bullet (y^bullet)^dagger / N(y).
+    // Thus all four power-basis coordinates of x/y have one positive integer
+    // denominator. Choosing floor or ceiling independently gives coordinate
+    // errors |e_j| <= 1/2. For e=sum e_j omega^j, write
+    // A=sum e_j^2 and B=e0e1-e0e3+e1e2+e2e3. Then
+    // N(e)=A^2-2B^2 <= A^2 <= 1. Equality can only occur when all four
+    // errors are exact halves; enumerating both choices at every half includes
+    // a sign pattern with B != 0, so the minimum is strictly below one.
+    let bullet = divisor.sqrt2_conjugate();
+    let inverse_numerator = &(&divisor.conjugate() * &bullet) * &bullet.conjugate();
+    let quotient_numerator = dividend * &inverse_numerator;
+    let denominator = divisor.field_norm();
+    debug_assert!(denominator.is_positive());
+
+    let mut floors: [BigInt; 4] = std::array::from_fn(|index| {
+        floor_ratio(&quotient_numerator.coordinates[index], &denominator)
+    });
+    let ceilings: [BigInt; 4] = std::array::from_fn(|index| {
+        let numerator = &quotient_numerator.coordinates[index];
+        let floor = &floors[index];
+        if floor * &denominator == *numerator {
+            floor.clone()
+        } else {
+            floor + 1_u8
+        }
+    });
+    let mut best: Option<(BigInt, [BigInt; 4])> = None;
+    for mask in 0_u8..16 {
+        let coordinates: [BigInt; 4] = std::array::from_fn(|index| {
+            if mask & (1_u8 << u32::try_from(index).expect("coordinate index fits u32")) == 0 {
+                floors[index].clone()
+            } else {
+                ceilings[index].clone()
+            }
+        });
+        let candidate = ZOmega {
+            coordinates: coordinates.clone(),
+        };
+        let remainder = dividend - &(&candidate * divisor);
+        let norm = remainder.field_norm();
+        let replace = best.as_ref().is_none_or(|(best_norm, best_coordinates)| {
+            norm < *best_norm || (norm == *best_norm && coordinates < *best_coordinates)
+        });
+        if replace {
+            best = Some((norm, coordinates));
+        }
+    }
+    let (_, coordinates) = best.expect("finite quotient candidate set is nonempty");
+    debug_assert!({
+        let candidate = ZOmega {
+            coordinates: coordinates.clone(),
+        };
+        (dividend - &(&candidate * divisor)).field_norm() < divisor.field_norm()
+    });
+    floors = coordinates;
+    ZOmega {
+        coordinates: floors,
+    }
+}
+
+fn floor_ratio(numerator: &BigInt, positive_denominator: &BigInt) -> BigInt {
+    let mut quotient = numerator / positive_denominator;
+    if numerator.is_negative() && !(numerator % positive_denominator).is_zero() {
+        quotient -= 1_u8;
+    }
+    quotient
+}
+
+fn canonical_associate(value: &ZOmega) -> ZOmega {
+    let lambda = ZSqrt2::new(BigInt::one(), BigInt::one());
+    let inverse_lambda = ZSqrt2::new(BigInt::from(-1), BigInt::one());
+    let lambda_squared = &lambda * &lambda;
+    let lambda_fourth = &lambda_squared * &lambda_squared;
+    let lambda_eighth = &lambda_fourth * &lambda_fourth;
+    let embed = |scalar: &ZSqrt2| {
+        ZOmega::new(
+            scalar.rational_part().clone(),
+            scalar.sqrt2_part().clone(),
+            BigInt::zero(),
+            -scalar.sqrt2_part(),
+        )
+    };
+    let mut normalized = value.clone();
+    let mut remaining = value
+        .field_norm()
+        .bits()
+        .saturating_add(8)
+        .saturating_mul(8);
+    loop {
+        assert!(
+            remaining != 0,
+            "Z[omega] associate normalization failed to converge"
+        );
+        remaining -= 1;
+        let norm = normalized.norm_squared();
+        let norm_square = &norm * &norm;
+        let bullet = norm.sqrt2_conjugate();
+        let bullet_square = &bullet * &bullet;
+        // A Z[omega] unit is omega^j lambda^k; its relative norm is
+        // lambda^(2k). Consequently the absolute embedding ratio of the
+        // relative norm moves by lambda^4, so its fundamental interval is
+        // [1, lambda^4), whose squared upper boundary is lambda^8.
+        if norm_square < bullet_square {
+            normalized = &normalized * &embed(&lambda);
+            continue;
+        }
+        if norm_square >= &lambda_eighth * &bullet_square {
+            normalized = &normalized * &embed(&inverse_lambda);
+            continue;
+        }
+        break;
+    }
+    let omega = ZOmega::omega();
+    let mut rotation = ZOmega::one();
+    let mut best = normalized.clone();
+    for _ in 1_u8..8 {
+        rotation = &rotation * &omega;
+        let candidate = &normalized * &rotation;
+        if candidate.coordinates < best.coordinates {
+            best = candidate;
+        }
+    }
+    best
 }
 
 impl From<BigInt> for ZOmega {
@@ -263,7 +419,7 @@ impl Neg for &ZOmega {
 #[cfg(test)]
 mod tests {
     use num_bigint::BigInt;
-    use num_traits::{One, Zero};
+    use num_traits::{One, Signed, Zero};
 
     use super::ZOmega;
     use crate::ring::test_support::{Lcg, assert_commutative_ring};
@@ -370,5 +526,30 @@ mod tests {
             assert!(product.is_divisible_by_sqrt2());
             assert_eq!(product.div_sqrt2(), Some(value));
         }
+    }
+
+    #[test]
+    fn euclidean_gcd_has_a_canonical_unit_associate() {
+        let rational_prime = ZOmega::from(41_i64);
+        let root_term = &ZOmega::from(9_i64) + &ZOmega::i();
+        let expected = rational_prime
+            .gcd(&root_term)
+            .expect("cyclotomic gcd should converge");
+        assert_eq!(
+            root_term
+                .gcd(&rational_prime)
+                .expect("swapped gcd should converge"),
+            expected
+        );
+        assert_eq!(
+            (&rational_prime * &ZOmega::omega())
+                .gcd(&root_term)
+                .expect("unit-associated gcd should converge"),
+            expected
+        );
+        assert_eq!(
+            expected.norm_squared().norm().abs(),
+            BigInt::from(41_u8).pow(2)
+        );
     }
 }

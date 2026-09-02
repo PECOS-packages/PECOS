@@ -4885,6 +4885,7 @@ dependencies = [
  "num-bigint",
  "num-traits",
  "pecos-core",
+ "pecos-random",
 ]
 
 [[package]]

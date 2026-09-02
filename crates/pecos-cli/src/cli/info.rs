@@ -143,7 +143,6 @@ fn print_toolchain_status() {
     println!("  Python:   {}", detect_tool("python3", "--version"));
     println!("  uv:       {}", detect_tool("uv", "--version"));
     println!("  Julia:    {}", detect_tool("julia", "--version"));
-    println!("  Go:       {}", detect_tool("go", "version"));
 }
 
 fn detect_tool(cmd: &str, arg: &str) -> String {
@@ -156,7 +155,7 @@ fn detect_tool(cmd: &str, arg: &str) -> String {
                 // Some tools (python) output to stderr
                 String::from_utf8_lossy(&o.stderr).trim().to_string()
             } else {
-                out.strip_prefix("go version ").unwrap_or(out).to_string()
+                out.to_string()
             }
         }
         _ => "not found".to_string(),

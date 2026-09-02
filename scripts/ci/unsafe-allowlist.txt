@@ -20,7 +20,6 @@ exp/pecos-experimental
 # invariant constructor; zlup-ffi is a C-ABI boundary crate (Box::from_raw / slices).
 exp/zlup
 exp/zlup/ffi/zlup-ffi
-go/pecos-go-ffi
 julia/pecos-julia-ffi
 python/pecos-rslib
 python/pecos-rslib-llvm

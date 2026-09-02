@@ -4310,13 +4310,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pecos-go-ffi"
-version = "0.1.0-dev0"
-dependencies = [
- "pecos",
-]
-
-[[package]]
 name = "pecos-gpu-sims"
 version = "0.2.0-dev.0"
 dependencies = [

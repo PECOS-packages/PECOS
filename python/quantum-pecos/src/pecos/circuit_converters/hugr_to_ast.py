@@ -18,10 +18,15 @@ and code generation to other targets.
 
 Supports:
 - Straight-line quantum circuits
-- Conditionals (if/else based on measurement results)
-- Nested conditionals (if/else within if/else branches)
-- While loops with classical conditions
+- One conditional (if/else) whose predicate is the direct read of a measurement
 - Two-qubit gates (CX, CZ, etc.)
+- Parameterized rotations (Rx/Ry/Rz/Rzz) with a constant angle
+
+A branch predicate is read off the HUGR wire that selects the successor block.
+Anything other than a direct measurement read -- a negation, a comparison, a
+purely classical expression, or a loop counter -- is rejected rather than
+lowered to a fabricated condition, so ``while`` loops are not convertible today
+even though the CFG shape itself is recognized.
 
 Will raise UnsupportedHugrStructureError for unsupported CFG patterns.
 
@@ -61,21 +66,21 @@ Examples::
     >>> ast = guppy_to_ast(conditional)
     >>> # AST contains IfStmt node for the conditional
 
-    Loop circuit:
+    Parameterized rotation:
 
+    >>> from guppylang.std.angles import pi
+    >>> from guppylang.std.quantum import rz
+    >>>
     >>> @guppy
-    ... def loop_circuit() -> bool:
+    ... def rotation() -> bool:
     ...     q = qubit()
     ...     h(q)
-    ...     count = 0
-    ...     while count < 3:
-    ...         x(q)
-    ...         count = count + 1
+    ...     rz(q, pi / 4)
     ...     return measure(q).read()
     ...
     >>>
-    >>> ast = guppy_to_ast(loop_circuit)
-    >>> # AST contains WhileStmt node for the loop
+    >>> ast = guppy_to_ast(rotation)
+    >>> # The RZ GateOp carries the angle in its `params`
 """
 
 from __future__ import annotations
@@ -89,6 +94,7 @@ from pecos.slr.ast.nodes import (
     GateKind,
     GateOp,
     IfStmt,
+    LiteralExpr,
     MeasureOp,
     PrepareOp,
     Program,
@@ -103,6 +109,7 @@ if TYPE_CHECKING:
 
     from pecos.slr.ast.nodes import (
         Declaration,
+        Expression,
         Statement,
     )
 
@@ -129,11 +136,13 @@ class UnsupportedHugrStructureError(Exception):
 
     This converter supports:
     - Straight-line quantum circuits
-    - Conditionals (if/else based on measurements)
-    - While loops with classical conditions
+    - One conditional whose predicate directly reads a measurement
 
     Unsupported structures include:
     - Sequential, nested, or loop-contained conditionals
+    - Branch predicates that are not a direct measurement read (negations,
+      comparisons, classical expressions, loop counters)
+    - Rotation gates whose angle is not a constant
     - Complex CFG patterns that cannot be mapped to structured control flow
     - Irreducible control flow graphs
     """
@@ -176,6 +185,14 @@ MEASURE_OPERATIONS = {"Measure", "MeasureFree"}
 GATE_OPERATIONS = set(GATE_KIND_MAP.keys())
 
 _TWO_QUBIT_GATES = {"CX", "CY", "CZ", "CH", "Rzz"}
+
+# Gates that carry a rotation angle alongside their qubit operands.  The angle
+# is a required operand: emitting one of these without it is not the source
+# circuit, so an unresolvable angle is rejected rather than dropped.
+_ROTATION_GATES = {"Rx", "Ry", "Rz", "Rzz"}
+
+# HUGR extension op that reads a measurement's classical outcome.
+_MEASUREMENT_READ_OPS = {("tket.measurement", "Read")}
 
 # All quantum operations we handle
 ALL_QUANTUM_OPERATIONS = GATE_OPERATIONS | ALLOC_OPERATIONS | MEASURE_OPERATIONS
@@ -756,8 +773,8 @@ class HugrToAstConverter:
             # After processing entry block, capture output port -> qubit mappings
             self._capture_block_output_qubits(entry_idx)
 
-            # Get the condition (last measurement result)
-            condition_var = self._get_condition_variable()
+            # Read the branch predicate off the entry block's Output wire.
+            condition_var = self._resolve_branch_condition(entry_idx)
 
             # Map then block's Input node to source qubits
             self._map_block_input_qubits(entry_idx, then_idx)
@@ -958,15 +975,13 @@ class HugrToAstConverter:
                 # Capture outputs for next block
                 self._capture_block_output_qubits(body_block_idx)
 
-            # Create WhileStmt
-            # For quantum loops, the condition is typically based on a measurement result
-            # or a classical counter. Use a placeholder variable for now.
-            condition_var = self._get_condition_variable()
-            # Use measurement variable if available, else generic condition
-            condition = VarExpr(name=condition_var) if condition_var.startswith("m") else VarExpr(name="loop_condition")
+            # Create WhileStmt. The predicate is read off the loop header's
+            # Output wire; a counter comparison is rejected there rather than
+            # replaced by a fabricated measurement variable (issue #493).
+            condition_var = self._resolve_branch_condition(loop.header_block)
 
             while_stmt = WhileStmt(
-                condition=condition,
+                condition=VarExpr(name=condition_var),
                 body=tuple(body_stmts),
             )
             statements.append(while_stmt)
@@ -985,16 +1000,186 @@ class HugrToAstConverter:
 
         return statements
 
-    def _get_condition_variable(self) -> str:
-        """Get the variable name for the last measurement result.
+    def _resolve_branch_condition(self, block_idx: int) -> str:
+        """Resolve a block's branch predicate to the measurement it reads.
+
+        A ``DataflowBlock`` carries its branch selector on input port 0 of the
+        block's ``Output`` node.  The flat lowering can only express a
+        predicate that is the direct read of one measurement, so that is the
+        one shape accepted here.  Negations, comparisons, purely classical
+        expressions and loop counters are rejected: emitting a plausible but
+        fabricated ``m<n>`` for them silently changes the circuit (issue #493).
+
+        Args:
+            block_idx: The block whose outgoing branch is being lowered.
 
         Returns:
-            Variable name like "m0", "m1", etc.
+            The result variable name of the measurement the predicate reads.
+
+        Raises:
+            UnsupportedHugrStructureError: If the predicate is anything other
+                than the direct read of an already-converted measurement.
         """
-        # Use the last assigned measurement result
-        if self.measurement_results:
-            return list(self.measurement_results.values())[-1]
-        return f"m{self.next_result_idx}"
+        from hugr import Node  # noqa: PLC0415
+
+        output_node_idx = self.block_output_nodes.get(block_idx)
+        if output_node_idx is None:
+            msg = f"HUGR block {block_idx} has no Output node, so its branch predicate cannot be read"
+            raise UnsupportedHugrStructureError(msg)
+
+        sources = [
+            out_port
+            for in_port, out_ports in self.hugr.incoming_links(Node(output_node_idx))
+            if in_port.offset == 0
+            for out_port in out_ports
+        ]
+        if len(sources) != 1:
+            msg = (
+                f"HUGR block {block_idx} has {len(sources)} source(s) on its branch "
+                "predicate wire; exactly one is required"
+            )
+            raise UnsupportedHugrStructureError(msg)
+
+        predicate_node = sources[0].node.idx
+        meas_node = self._trace_predicate_measurement(predicate_node)
+        if meas_node is None:
+            msg = (
+                f"HUGR block {block_idx} branches on {self._describe_node(predicate_node)}, "
+                "which is not the direct read of a measurement; negations, comparisons, "
+                "classical expressions and loop counters cannot be represented by this "
+                "converter"
+            )
+            raise UnsupportedHugrStructureError(msg)
+
+        condition_var = self.measurement_results.get(meas_node)
+        if condition_var is None:
+            msg = (
+                f"HUGR block {block_idx} branches on the result of HUGR node {meas_node}, "
+                "which this converter has not emitted as a measurement"
+            )
+            raise UnsupportedHugrStructureError(msg)
+        return condition_var
+
+    def _trace_predicate_measurement(self, node_idx: int) -> int | None:
+        """Return the measurement node a predicate wire reads, or ``None``.
+
+        Only a direct ``tket.measurement.Read`` of a measurement counts.  Any
+        intervening classical operation makes the predicate something other
+        than that measurement's outcome, and is reported by the caller.
+
+        Args:
+            node_idx: The node driving the predicate wire.
+
+        Returns:
+            The node index of the measurement being read, or ``None``.
+        """
+        from hugr import Node  # noqa: PLC0415
+
+        if self._custom_op_id(node_idx) not in _MEASUREMENT_READ_OPS:
+            return None
+
+        for _in_port, out_ports in self.hugr.incoming_links(Node(node_idx)):
+            for out_port in out_ports:
+                if out_port.node.idx in self.measurement_results:
+                    return out_port.node.idx
+        return None
+
+    def _custom_op_id(self, node_idx: int) -> tuple[str, str] | None:
+        """Return ``(extension, op_name)`` for an ExtOp node, else ``None``."""
+        from hugr import Node  # noqa: PLC0415
+
+        op = self.hugr[Node(node_idx)].op
+        if op.__class__.__name__ != "ExtOp":
+            return None
+        try:
+            custom_op = op.to_custom_op()
+        except (AttributeError, ValueError):
+            return None
+        return (custom_op.extension, custom_op.op_name)
+
+    def _describe_node(self, node_idx: int) -> str:
+        """Name a HUGR node for an error message, e.g. ``logic.Not``."""
+        from hugr import Node  # noqa: PLC0415
+
+        custom = self._custom_op_id(node_idx)
+        if custom is not None:
+            return f"HUGR node {node_idx} ({custom[0]}.{custom[1]})"
+        return f"HUGR node {node_idx} ({self.hugr[Node(node_idx)].op.__class__.__name__})"
+
+    def _resolve_rotation_params(self, op: dict) -> tuple[Expression, ...]:
+        """Resolve a rotation gate's angle operands into AST parameters.
+
+        Guppy lowers a rotation angle to a ``ConstRotation`` value in half
+        turns, loaded onto the gate's non-qubit input port.  A rotation whose
+        angle cannot be resolved is rejected rather than emitted without it
+        (issue #493).
+
+        Args:
+            op: The operation info dict.
+
+        Returns:
+            One :class:`LiteralExpr` per angle operand, in port order.
+
+        Raises:
+            UnsupportedHugrStructureError: If an angle operand is not a
+                loaded rotation constant.
+        """
+        from hugr import Node  # noqa: PLC0415
+
+        node_idx = op["node_idx"]
+        angle_sources: list[tuple[int, int]] = []
+        for in_port, out_ports in self.hugr.incoming_links(Node(node_idx)):
+            if in_port.offset < 0 or self._is_qubit_port(in_port):
+                continue
+            if len(out_ports) != 1:
+                msg = (
+                    f"cannot resolve the angle on input port {in_port.offset} of "
+                    f"{self._describe_node(node_idx)}: {len(out_ports)} source(s)"
+                )
+                raise UnsupportedHugrStructureError(msg)
+            angle_sources.append((in_port.offset, out_ports[0].node.idx))
+
+        if not angle_sources:
+            msg = f"rotation {self._describe_node(node_idx)} has no angle operand"
+            raise UnsupportedHugrStructureError(msg)
+
+        angle_sources.sort()
+        return tuple(self._resolve_rotation_constant(source) for _offset, source in angle_sources)
+
+    def _resolve_rotation_constant(self, node_idx: int) -> Expression:
+        """Read a loaded ``ConstRotation`` as a typed AST angle literal."""
+        from hugr import Node  # noqa: PLC0415
+
+        from pecos.slr.angle import turns  # noqa: PLC0415  (avoid import cycle)
+
+        const_idx = node_idx
+        if self.hugr[Node(node_idx)].op.__class__.__name__ == "LoadConst":
+            const_sources = [
+                out_port.node.idx
+                for _in_port, out_ports in self.hugr.incoming_links(Node(node_idx))
+                for out_port in out_ports
+            ]
+            if len(const_sources) != 1:
+                msg = f"cannot resolve the constant behind {self._describe_node(node_idx)}"
+                raise UnsupportedHugrStructureError(msg)
+            const_idx = const_sources[0]
+
+        const_op = self.hugr[Node(const_idx)].op
+        value = getattr(const_op, "val", None)
+        half_turns = getattr(value, "val", None)
+        if (
+            const_op.__class__.__name__ != "Const"
+            or getattr(value, "name", None) != "ConstRotation"
+            or not isinstance(half_turns, dict)
+            or "half_turns" not in half_turns
+        ):
+            msg = (
+                f"rotation angle is not a constant: {self._describe_node(node_idx)} does not load a ConstRotation value"
+            )
+            raise UnsupportedHugrStructureError(msg)
+
+        # ``ConstRotation`` counts half turns; `turns` counts full turns.
+        return LiteralExpr(value=turns(float(half_turns["half_turns"]) / 2.0))
 
     def _capture_block_output_qubits(self, block_idx: int) -> None:
         """Capture which qubits are on which output ports of a block.
@@ -1119,7 +1304,8 @@ class HugrToAstConverter:
                 qubit_indices = self._resolve_qubit_operands(op)
                 self._require_qubit_arity(op, qubit_indices, 2 if op_name in _TWO_QUBIT_GATES else 1)
                 slot_refs = tuple(SlotRef(allocator=self.allocator_name, index=idx) for idx in qubit_indices)
-                statements.append(GateOp(gate=gate_kind, targets=slot_refs))
+                params = self._resolve_rotation_params(op) if op_name in _ROTATION_GATES else ()
+                statements.append(GateOp(gate=gate_kind, targets=slot_refs, params=params))
                 self._bind_operation_output_qubits(op, qubit_indices)
 
             elif op_name in MEASURE_OPERATIONS:

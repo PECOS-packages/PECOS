@@ -99,10 +99,11 @@ pub use sampler::{
     SamplerLabels,
 };
 pub use slice::{
-    DemBoundaryKind, DemDetectorPlacement, DemSlice, DemSliceCache, DemSliceContribution,
-    DemSliceDetector, DemSliceInstance, DemSliceModelMap, DemSliceStitchError,
-    DemStitchDiagnostics, DemStitcher, DemTemporalHorizon, DemWindowSpec, RelativeDetectorTarget,
-    SliceFaultMechanism, StitchedDem, StitchedDetectorAddress,
+    DEM_SLICE_ROUND_ATTRIBUTE, DemBoundaryKind, DemDetectorPlacement, DemSlice, DemSliceCache,
+    DemSliceContribution, DemSliceDetector, DemSliceInstance, DemSliceModelMap,
+    DemSliceRoundSchedule, DemSliceStitchError, DemStitchDiagnostics, DemStitcher,
+    DemTemporalHorizon, DemWindowSpec, RelativeDetectorTarget, SliceFaultMechanism, StitchedDem,
+    StitchedDetectorAddress,
 };
 pub use types::{
     ContributionEffectSummary, ContributionRenderRecord, ContributionRenderStrategy,

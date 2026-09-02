@@ -119,10 +119,11 @@ pub use distance_problem::{
     certified_stabilizer_coset_weight, logical_generator_coset_weights,
 };
 pub use fault_tolerance::dem_builder::{
-    DecomposedFault, DemBoundaryKind, DemBuilder, DemBuilderError, DemDetectorPlacement, DemOutput,
-    DemSlice, DemSliceCache, DemSliceContribution, DemSliceDetector, DemSliceInstance,
-    DemSliceModelMap, DemSliceStitchError, DemStitchDiagnostics, DemStitcher, DemTemporalHorizon,
-    DemWindowSpec, DetectorDef, DetectorErrorModel, FaultMechanism, IdleNoiseFamily, NoiseConfig,
+    DEM_SLICE_ROUND_ATTRIBUTE, DecomposedFault, DemBoundaryKind, DemBuilder, DemBuilderError,
+    DemDetectorPlacement, DemOutput, DemSlice, DemSliceCache, DemSliceContribution,
+    DemSliceDetector, DemSliceInstance, DemSliceModelMap, DemSliceRoundSchedule,
+    DemSliceStitchError, DemStitchDiagnostics, DemStitcher, DemTemporalHorizon, DemWindowSpec,
+    DetectorDef, DetectorErrorModel, FaultMechanism, IdleNoiseFamily, NoiseConfig,
     PecosDemMetadataError, RelativeDetectorTarget, SliceFaultMechanism, StitchedDem,
     StitchedDetectorAddress, combine_probabilities,
 };

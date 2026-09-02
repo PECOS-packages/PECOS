@@ -73,6 +73,33 @@ its source locations are owned by the slice and omitted if none are. Partial or
 unattributed ownership fails loudly so one correlated source cannot be split
 or counted twice.
 
+## Native round schedule
+
+`DemSliceRoundSchedule::from_annotated_circuit` derives the repetitive layout
+from metadata PECOS already carries. Detector coordinates are interpreted as
+`[x, y, round]`: equal spatial pairs form a stable detector stream, while the
+time coordinate supplies the emitted round. Physical DAG gates carry the
+integer `dem_slice_round` attribute, and every `DagFaultInfluenceMap` location
+inherits its owner from its gate node.
+
+The surface `LogicalCircuitBuilder` writes this attribute on every generated
+gate. Initialization is owned by round zero, syndrome-extraction operations by
+their current round, transversal gates by the following round, and terminal
+data measurements by the terminal boundary round. Missing or non-integral
+metadata fails instead of guessing. A multi-location correlated source whose
+locations disagree on the owner round is also rejected.
+
+The schedule derives relative detector maps, temporal horizons, standard
+output mappings, and tracked-Pauli mappings, then exposes the resulting slice
+instances to `DemStitcher`. This removes the hand-authored ownership and mapping
+tables from the equivalence path; it still uses a full source-tracked DEM as the
+oracle until the operation-template compiler is introduced.
+
+Python callers can exercise the same structured path through
+`DetectorErrorModel.stitched_round_window(...)`. It accepts the originating
+influence map and annotated DAG and returns another structured model; rendered
+DEM text appears only at an explicit final serialization boundary.
+
 ## Window boundaries
 
 `DemWindowSpec` describes a half-open commit region followed by a half-open
@@ -98,8 +125,9 @@ converted to mechanism columns.
 
 ## Current scope
 
-This layer provides the stable slice, cache, structured-DEM adapter, ownership,
-mapping, and stitching API. It does not yet choose physical template/halo
-circuits for a frontend, mutate a decoder's prior vector, schedule logical
-gates, or support adaptive syndrome-extraction templates. The full-circuit DEM
-builder remains the equivalence oracle while those integrations are added.
+This layer provides the stable slice, cache, structured-DEM adapter, automatic
+round layout, ownership, mapping, and stitching API. It does not yet compile
+physical template/halo circuits independently, mutate a decoder's prior
+vector, replace the window decoder's text-filtering path, or support adaptive
+syndrome-extraction templates. The full-circuit DEM builder remains the
+equivalence oracle while those integrations are added.

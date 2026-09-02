@@ -37,6 +37,11 @@ if TYPE_CHECKING:
 
 PatchSnapshot = dict[str, tuple[bool, list[str], list[str], list[str], list[str]]]
 
+# Kept in sync with pecos_qec::DEM_SLICE_ROUND_ATTRIBUTE. The TickCircuit ->
+# DagCircuit conversion copies batch metadata to every split DAG gate, letting
+# the structured DEM frontend assign each physical fault location to a round.
+DEM_SLICE_ROUND_ATTRIBUTE = "dem_slice_round"
+
 
 class LogicalGateType(Enum):
     """Types of logical operations in a surface code circuit."""
@@ -943,6 +948,21 @@ class _CircuitGenerator:
         return self._current_tick
 
     def _end_tick(self) -> None:
+        if self._current_tick is not None:
+            round_owner = int(self.round_time)
+            if float(round_owner) != self.round_time:
+                msg = f"DEM slice round owner must be integral, got {self.round_time}"
+                raise ValueError(msg)
+            tick_idx = self._current_tick.index()
+            tick = self.tc.get_tick(tick_idx)
+            if tick is not None:
+                for gate_idx in range(tick.gate_batch_count()):
+                    self.tc.set_gate_meta(
+                        tick_idx,
+                        gate_idx,
+                        DEM_SLICE_ROUND_ATTRIBUTE,
+                        round_owner,
+                    )
         self._current_tick = None
 
     def _emit_qalloc_or_reset(self, qubits: list[int]) -> None:

@@ -43,7 +43,7 @@
 //! ```
 
 use crate::code_matrix_bindings::PyParityCheckMatrix;
-use crate::dag_circuit_bindings::PyTickCircuit;
+use crate::dag_circuit_bindings::{PyDagCircuit, PyTickCircuit};
 use crate::decoder_spec_bindings::PyDecoderSpec;
 use crate::pecos_array::{Array, ArrayData};
 use crate::stabilizer_code_spec_bindings::PyStabilizerCodeSpec;
@@ -53,8 +53,10 @@ use pecos_qec::fault_tolerance::dem_builder::{
     ContributionEffectSummary as RustContributionEffectSummary,
     ContributionRenderRecord as RustContributionRenderRecord,
     ContributionRenderStrategy as RustContributionRenderStrategy,
-    ContributionRenderSummary as RustContributionRenderSummary, DemBuilder as RustDemBuilder,
+    ContributionRenderSummary as RustContributionRenderSummary,
+    DemBoundaryKind as RustDemBoundaryKind, DemBuilder as RustDemBuilder,
     DemSampler as RustNewDemSampler, DemSamplerBuilder as RustNewDemSamplerBuilder,
+    DemSliceRoundSchedule as RustDemSliceRoundSchedule, DemWindowSpec as RustDemWindowSpec,
     DetectorErrorModel as RustDetectorErrorModel, DirectSourceFamily as RustDirectSourceFamily,
     EquivalenceResult as RustEquivalenceResult, FaultContribution as RustFaultContribution,
     FaultSourceType as RustFaultSourceType, IdleNoiseFamily, MeasurementCrosstalkDemMode,
@@ -1925,6 +1927,63 @@ impl PyDetectorErrorModel {
     #[getter]
     fn num_tracked_paulis(&self) -> usize {
         self.inner.num_tracked_paulis()
+    }
+
+    /// Build a structured DEM for one annotated commit-plus-buffer round window.
+    ///
+    /// The influence map and DAG circuit must be the same pair used to build
+    /// this source-tracked model. Every physical gate referenced by the map must
+    /// carry an integer ``dem_slice_round`` attribute. Detector ``[x, y, t]``
+    /// coordinates define stable streams and syndrome rounds.
+    ///
+    /// Args:
+    ///     influence_map: Source influence map for this model.
+    ///     circuit: Annotated physical DAG circuit.
+    ///     start_round: First round included in the window.
+    ///     commit_rounds: Number of rounds whose corrections may be committed.
+    ///     buffer_rounds: Look-ahead rounds after the commit region.
+    ///     forward_boundary: ``"soft"`` for a sliding window or ``"hard"``
+    ///         for a terminal window.
+    ///
+    /// Raises:
+    ///     ValueError: If metadata, ownership, mapping, or boundary validation fails.
+    #[pyo3(signature = (influence_map, circuit, start_round, commit_rounds, buffer_rounds=0, forward_boundary="soft"))]
+    fn stitched_round_window(
+        &self,
+        influence_map: &PyDagFaultInfluenceMap,
+        circuit: &PyDagCircuit,
+        start_round: i64,
+        commit_rounds: u32,
+        buffer_rounds: u32,
+        forward_boundary: &str,
+    ) -> PyResult<Self> {
+        let forward_boundary = match forward_boundary {
+            "soft" => RustDemBoundaryKind::Soft,
+            "hard" => RustDemBoundaryKind::Hard,
+            _ => {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "forward_boundary must be 'soft' or 'hard', got {forward_boundary:?}"
+                )));
+            }
+        };
+        let schedule = RustDemSliceRoundSchedule::from_annotated_circuit(
+            "python DEM round",
+            &self.inner,
+            &influence_map.inner,
+            &circuit.inner,
+        )
+        .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+        let stitched = schedule
+            .stitch(RustDemWindowSpec::new(
+                start_round,
+                commit_rounds,
+                buffer_rounds,
+                forward_boundary,
+            ))
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+        Ok(Self {
+            inner: stitched.model,
+        })
     }
 
     /// Compute exact fault distance when every mechanism is graphlike.

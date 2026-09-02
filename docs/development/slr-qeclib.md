@@ -70,18 +70,21 @@ prog = Main(
 
 # Convert to QASM
 qasm = SlrConverter(prog).qasm()
+assert 'include "qelib1.inc";' in qasm
+assert "measure q[0] -> c[0];\nmeasure q[1] -> c[1];" in qasm
 print(qasm)
 ```
 
 Output:
 ```
 OPENQASM 2.0;
-include "hqslib1.inc";
+include "qelib1.inc";
 qreg q[2];
 creg c[2];
 h q[0];
 cx q[0], q[1];
-measure q -> c;
+measure q[0] -> c[0];
+measure q[1] -> c[1];
 ```
 
 ### Using Blocks

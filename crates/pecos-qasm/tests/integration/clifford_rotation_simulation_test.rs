@@ -88,6 +88,30 @@ fn qasm_zz_alias_and_szz_have_identical_observables() {
 }
 
 #[test]
+fn uppercase_native_swap_executes() {
+    let qasm = r"
+        OPENQASM 2.0;
+        qreg q[2];
+        creg c[2];
+        X q[0];
+        SWAP q[0], q[1];
+        measure q -> c;
+    ";
+
+    let results = qasm_engine()
+        .program(Qasm::from_string(qasm))
+        .to_sim()
+        .seed(42)
+        .workers(1)
+        .run(4)
+        .unwrap();
+
+    for shot in &results.shots {
+        assert_eq!(shot.data.get("c").unwrap().as_u32(), Some(2));
+    }
+}
+
+#[test]
 fn xy_plane_rotation_spellings_are_identical_native_gates() {
     let programs = [
         r#"

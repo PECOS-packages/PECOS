@@ -145,7 +145,9 @@ impl AngleSource {
             Self::Input(idx) => input_angles[idx as usize],
             Self::Fixed(a) => a,
             Self::NegInput(idx) => -input_angles[idx as usize],
-            Self::HalfInput(idx) => input_angles[idx as usize] / 2_u64,
+            Self::HalfInput(idx) => {
+                Angle64::from_radians(input_angles[idx as usize].to_radians_signed() / 2.0)
+            }
         }
     }
 }
@@ -1075,12 +1077,13 @@ mod tests {
 
     #[test]
     fn test_angle_source_half_input() {
-        let input_angles = [Angle64::QUARTER_TURN];
         let src = AngleSource::HalfInput(0);
-        let resolved = src.resolve(&input_angles);
-
-        // Half of quarter turn is eighth turn
-        assert_eq!(resolved, Angle64::QUARTER_TURN / 2_u64);
+        for (input, expected) in [
+            (Angle64::QUARTER_TURN, Angle64::QUARTER_TURN / 2_u64),
+            (-Angle64::QUARTER_TURN, -(Angle64::QUARTER_TURN / 2_u64)),
+        ] {
+            assert_eq!(src.resolve(&[input]), expected);
+        }
     }
 
     #[test]

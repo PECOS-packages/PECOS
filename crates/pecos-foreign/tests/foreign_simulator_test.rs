@@ -164,6 +164,20 @@ fn test_foreign_simulator_derived_gates() {
 }
 
 #[test]
+fn test_phase_corrected_defaults_dispatch_on_foreign_simulator() {
+    // These defaults apply a global-phase residue through the hook. The foreign
+    // protocol cannot observe a scalar, so the hook must be a no-op and the
+    // inherited decompositions must dispatch normally.
+    let mut sim = make_toy_sim(2);
+    sim.y(&[QubitId(0)])
+        .sxx(&[(QubitId(0), QubitId(1))])
+        .h3(&[QubitId(1)]);
+
+    let results = sim.mz(&[QubitId(0), QubitId(1)]);
+    assert_eq!(results.len(), 2);
+}
+
+#[test]
 fn test_foreign_simulator_no_rotations() {
     let sim = make_toy_sim(1);
     assert!(

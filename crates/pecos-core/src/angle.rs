@@ -141,11 +141,21 @@ where
     /// This function will panic if the conversion of `fraction` or `max_value` to `f64` fails.
     pub fn to_radians_signed(&self) -> f64 {
         let r = self.to_radians();
-        if r > std::f64::consts::PI {
+        if self.uses_negative_signed_representative() {
             r - std::f64::consts::TAU
         } else {
             r
         }
+    }
+
+    /// Whether the stored fraction lies strictly above the positive half-turn boundary.
+    fn uses_negative_signed_representative(&self) -> bool {
+        let bit_count = std::mem::size_of::<T>() * 8;
+        let fraction = self
+            .fraction
+            .to_u128()
+            .expect("Failed to convert fraction to u128");
+        fraction > (1_u128 << (bit_count - 1))
     }
 
     /// Converts the angle to turns in `[0, 1)` (the inverse of `from_turns`).
@@ -165,7 +175,11 @@ where
     /// Converts the angle to signed turns in `(-0.5, 0.5]`.
     pub fn to_turns_signed(&self) -> f64 {
         let t = self.to_turns();
-        if t > 0.5 { t - 1.0 } else { t }
+        if self.uses_negative_signed_representative() {
+            t - 1.0
+        } else {
+            t
+        }
     }
 
     /// Converts the angle to half-turns in `[0, 2)` (π radians = 1 half-turn).
@@ -721,6 +735,18 @@ mod tests {
         let h = Angle64::HALF_TURN;
         assert!((h.to_turns() - 0.5).abs() < 1e-12);
         assert!((h.to_half_turns() - 1.0).abs() < 1e-12);
+        assert!(!h.to_turns_signed().is_sign_negative());
+        assert!((h.to_turns_signed() - 0.5).abs() < 1e-12);
+        assert!(!h.to_half_turns_signed().is_sign_negative());
+        assert!((h.to_half_turns_signed() - 1.0).abs() < 1e-12);
+
+        // The sign comes from the stored fraction, even when conversion rounds
+        // the fraction one tick above the boundary to the same f64 as 0.5.
+        let just_above_half = Angle64::new(Angle64::HALF_TURN.fraction() + 1);
+        assert!(just_above_half.to_turns_signed().is_sign_negative());
+        assert!((just_above_half.to_turns_signed() + 0.5).abs() < 1e-12);
+        assert!(just_above_half.to_half_turns_signed().is_sign_negative());
+        assert!((just_above_half.to_half_turns_signed() + 1.0).abs() < 1e-12);
 
         // Three-quarter turn: unsigned 0.75 turns; signed wraps to -0.25 turns
         // (-0.5 half-turns), mirroring to_radians_signed.

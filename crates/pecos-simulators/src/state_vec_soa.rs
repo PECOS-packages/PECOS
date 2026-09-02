@@ -2632,6 +2632,20 @@ impl<R> CliffordGateable for StateVecSoA<R>
 where
     R: Rng,
 {
+    fn apply_global_phase(&mut self, phase: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let unit_phase = Complex64::from_polar(1.0, phase.to_radians_signed());
+        let mut global_phase = Complex64::new(1.0, 0.0);
+        for _ in qubits {
+            global_phase *= unit_phase;
+        }
+        for (real, imag) in self.real.iter_mut().zip(&mut self.imag) {
+            let amplitude = Complex64::new(*real, *imag) * global_phase;
+            *real = amplitude.re;
+            *imag = amplitude.im;
+        }
+        self
+    }
+
     #[inline]
     fn h(&mut self, qubits: &[QubitId]) -> &mut Self {
         if self.fusion_enabled {
@@ -4415,20 +4429,6 @@ where
             for &q in qubits {
                 self.apply_rz_gate(q.index(), theta);
             }
-        }
-        self
-    }
-
-    fn apply_global_phase(&mut self, phase: Angle64, qubits: &[QubitId]) -> &mut Self {
-        let unit_phase = Complex64::from_polar(1.0, phase.to_radians_signed());
-        let mut global_phase = Complex64::new(1.0, 0.0);
-        for _ in qubits {
-            global_phase *= unit_phase;
-        }
-        for (real, imag) in self.real.iter_mut().zip(&mut self.imag) {
-            let amplitude = Complex64::new(*real, *imag) * global_phase;
-            *real = amplitude.re;
-            *imag = amplitude.im;
         }
         self
     }

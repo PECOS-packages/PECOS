@@ -1651,13 +1651,9 @@ mod tests {
     ///
     /// Two facts the pinned values record rather than hide:
     ///
-    /// - PECOS's `rotation_to_matrix` halves the unsigned `[0, 2pi)` representative of an
-    ///   angle, so for any angle in `(pi, 2pi)` -- every negative angle -- its dense matrix
-    ///   is `-1` times the signed textbook `exp(-i theta/2 P)`. `SZZdg` is built as
-    ///   `RZZ(3pi/2)` and so carries `pi` here, as does every negative-angle rotation.
-    ///   This is the 4pi-periodicity problem recorded in the CRZ parameter
-    ///   representation note; the bridge cannot fix it and this test does not pretend it
-    ///   is absent.
+    /// - PECOS's dense matrices and simulators both halve the signed angle representative,
+    ///   so negative-angle rotations and `SZZdg` agree with the signed textbook
+    ///   `exp(-i theta/2 P)` representative used by Selene's reference definitions.
     /// - Selene's Rust `QuEST` simulator at the same revision scales `exp(i a/2)` out of
     ///   `RZZ`, differing from Selene's own reference definition above. Under that one
     ///   simulator the two-qubit arms carry an additional `-a/2` that the reference does
@@ -1856,8 +1852,7 @@ mod tests {
                 named(GateType::Tdg, &q1),
                 -PI / 8.0,
             ),
-            // Parameterised single-qubit rotations, positive and negative angles. The
-            // negative cases carry pi against PECOS's unsigned-halved dense matrix.
+            // Parameterised single-qubit rotations, positive and negative angles.
             arm(
                 "RX(+0.37)",
                 |b| {
@@ -1872,7 +1867,7 @@ mod tests {
                     b.rx(Angle64::from_radians(-0.37), &[0]);
                 },
                 rot(RotationType::RX, -0.37, &q1),
-                PI,
+                0.0,
             ),
             arm(
                 "RY(+0.37)",
@@ -1888,7 +1883,7 @@ mod tests {
                     b.ry(Angle64::from_radians(-0.37), &[0]);
                 },
                 rot(RotationType::RY, -0.37, &q1),
-                PI,
+                0.0,
             ),
             arm(
                 "RZ(+0.37)",
@@ -1904,7 +1899,7 @@ mod tests {
                     b.rz(Angle64::from_radians(-0.37), &[0]);
                 },
                 rot(RotationType::RZ, -0.37, &q1),
-                PI,
+                0.0,
             ),
             arm(
                 "RXY1Q(+0.37, -0.91)",
@@ -1939,7 +1934,7 @@ mod tests {
                     b.szzdg(&[(0, 1)]);
                 },
                 named(GateType::SZZdg, &q2),
-                PI,
+                0.0,
             ),
             arm(
                 "RZZ(+0.37)",
@@ -1955,7 +1950,7 @@ mod tests {
                     b.rzz(Angle64::from_radians(-0.37), &[(0, 1)]);
                 },
                 rot(RotationType::RZZ, -0.37, &q2),
-                PI,
+                0.0,
             ),
         ];
 

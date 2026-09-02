@@ -1139,6 +1139,8 @@ pub trait ToMatrix {
     /// Converts to a dense [`UnitaryMatrix`] representation.
     ///
     /// The matrix size is 2^n where n is determined by the maximum qubit index + 1.
+    /// Rotation-family matrices use the stored angle's signed `(-pi, pi]`
+    /// representative, matching the simulator convention exactly.
     fn to_matrix(&self) -> UnitaryMatrix;
 }
 
@@ -1560,7 +1562,7 @@ fn rotation_to_matrix(
     qubits: &[usize],
     num_qubits: usize,
 ) -> DMatrix<Complex64> {
-    let half = angle / 2u64;
+    let half = angle.to_radians_signed() / 2.0;
     let (sin_half, cos_half) = half.sin_cos();
     let cos_half = Complex64::new(cos_half, 0.0);
     let sin_half = Complex64::new(sin_half, 0.0);
@@ -1604,7 +1606,7 @@ fn rotation_to_matrix(
                 }
                 _ => unreachable!("outer match already filtered for RXX/RYY/RZZ"),
             };
-            let scaled = generator * Complex64::new(0.0, -half.to_radians());
+            let scaled = generator * Complex64::new(0.0, -half);
             pecos_num::matrix_exp(&scaled)
         }
     }
@@ -1617,7 +1619,7 @@ fn rxy1q_to_matrix(
     qubits: &[usize],
     num_qubits: usize,
 ) -> DMatrix<Complex64> {
-    let half_theta = (theta / 2u64).to_radians_signed();
+    let half_theta = theta.to_radians_signed() / 2.0;
     let phi_rad = phi.to_radians_signed();
     let cos_t = half_theta.cos();
     let sin_t = half_theta.sin();
@@ -1641,7 +1643,7 @@ fn u3_to_matrix(
     qubits: &[usize],
     num_qubits: usize,
 ) -> DMatrix<Complex64> {
-    let t = (theta / 2u64).to_radians_signed();
+    let t = theta.to_radians_signed() / 2.0;
     let p = phi.to_radians_signed();
     let l = lambda.to_radians_signed();
     let cos_t = t.cos();

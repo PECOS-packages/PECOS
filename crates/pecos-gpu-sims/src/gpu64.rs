@@ -1253,6 +1253,15 @@ impl QuantumSimulator for GpuStateVec64 {
 
 #[allow(clippy::cast_possible_truncation)]
 impl CliffordGateable for GpuStateVec64 {
+    fn apply_global_phase(&mut self, phase: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let (sin, cos) = phase.to_radians_signed().sin_cos();
+        let matrix = [cos, sin, 0.0, 0.0, 0.0, 0.0, cos, sin];
+        for &q in qubits {
+            self.queue_single_gate(q.index() as u32, matrix);
+        }
+        self
+    }
+
     fn h(&mut self, qubits: &[QubitId]) -> &mut Self {
         let m = Self::matrix_f32_to_f64(gates::H);
         for &q in qubits {
@@ -1631,15 +1640,6 @@ impl ArbitraryRotationGateable for GpuStateVec64 {
         let m = Self::matrix_f32_to_f64(gates::rz(theta.to_radians_signed()));
         for &q in qubits {
             self.queue_single_gate(q.index() as u32, m);
-        }
-        self
-    }
-
-    fn apply_global_phase(&mut self, phase: Angle64, qubits: &[QubitId]) -> &mut Self {
-        let (sin, cos) = phase.to_radians_signed().sin_cos();
-        let matrix = [cos, sin, 0.0, 0.0, 0.0, 0.0, cos, sin];
-        for &q in qubits {
-            self.queue_single_gate(q.index() as u32, matrix);
         }
         self
     }

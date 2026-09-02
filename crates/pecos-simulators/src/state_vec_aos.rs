@@ -508,6 +508,18 @@ impl<R> CliffordGateable for StateVecAoS<R>
 where
     R: Rng + SeedableRng + Debug,
 {
+    fn apply_global_phase(&mut self, phase: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let unit_phase = Complex64::from_polar(1.0, phase.to_radians_signed());
+        let mut global_phase = Complex64::new(1.0, 0.0);
+        for _ in qubits {
+            global_phase *= unit_phase;
+        }
+        for amplitude in &mut self.state {
+            *amplitude *= global_phase;
+        }
+        self
+    }
+
     /// Implementation of Pauli-X gate for state vectors.
     ///
     /// See [`CliffordGateable::x`] for mathematical details and gate properties.
@@ -951,18 +963,6 @@ where
                 Complex64::new(0.0, 0.0),
                 e_neg,
             );
-        }
-        self
-    }
-
-    fn apply_global_phase(&mut self, phase: Angle64, qubits: &[QubitId]) -> &mut Self {
-        let unit_phase = Complex64::from_polar(1.0, phase.to_radians_signed());
-        let mut global_phase = Complex64::new(1.0, 0.0);
-        for _ in qubits {
-            global_phase *= unit_phase;
-        }
-        for amplitude in &mut self.state {
-            *amplitude *= global_phase;
         }
         self
     }

@@ -868,9 +868,7 @@ fn rotation_adjoint_negates_angle_via_matrix() {
     let angle = Angle64::QUARTER_TURN;
     let neg_angle = Angle64::THREE_QUARTERS_TURN;
 
-    // R(-theta) = R(theta)^dagger up to global phase
-    // (THREE_QUARTERS_TURN and -QUARTER_TURN differ by 2pi but the half-angle
-    //  causes an overall -1 factor, so we check equiv_up_to_phase)
+    // R(-theta) = R(theta)^dagger entrywise under the signed representative.
     for (make_rot, name) in [
         (RX as fn(Angle64, usize) -> pecos_core::UnitaryRep, "RX"),
         (RY as fn(Angle64, usize) -> pecos_core::UnitaryRep, "RY"),
@@ -880,10 +878,14 @@ fn rotation_adjoint_negates_angle_via_matrix() {
         let mat_neg = make_rot(neg_angle, 0).to_matrix();
         let mat_adj = mat.adjoint();
 
-        assert!(
-            mat_neg.equiv_up_to_phase(&mat_adj),
-            "{name}(-theta) should equal {name}(theta).adjoint() up to phase"
-        );
+        for row in 0..mat_neg.nrows() {
+            for col in 0..mat_neg.ncols() {
+                assert!(
+                    (mat_neg[(row, col)] - mat_adj[(row, col)]).norm() < 1e-10,
+                    "{name}(-theta) should equal {name}(theta).adjoint() at ({row}, {col})"
+                );
+            }
+        }
     }
 }
 

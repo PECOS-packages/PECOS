@@ -261,6 +261,14 @@ impl ArbitraryRotationGateable for DefaultsOnly {
         self.0.rzz(theta, pairs);
         self
     }
+    // The trait's phase hook defaults to a no-op because projective backends cannot observe a
+    // global phase; the trait requires amplitude-exposing backends to override it. This wrapper
+    // exposes amplitudes, so it must delegate -- otherwise the default `u` cannot carry its scalar
+    // and the test would be measuring the wrapper's omission rather than the decomposition.
+    fn apply_global_phase(&mut self, phase: Angle64, qubits: &[QubitId]) -> &mut Self {
+        self.0.apply_global_phase(phase, qubits);
+        self
+    }
 }
 
 fn defaults_only_unitary(

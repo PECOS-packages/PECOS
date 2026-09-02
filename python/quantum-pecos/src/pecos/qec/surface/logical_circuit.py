@@ -553,28 +553,15 @@ class LogicalCircuitBuilder:
             result.append({"X": x_coords, "Z": z_coords})
         return result
 
-    def build_dem(
+    def _build_structured_dem(
         self,
         *,
         p1: float = 0.001,
         p2: float = 0.001,
         p_meas: float = 0.001,
         p_prep: float = 0.0,
-    ) -> str:
-        """Generate a DEM using the PECOS-native fault analysis pipeline.
-
-        TickCircuit -> DagCircuit -> DagFaultAnalyzer -> DemBuilder.
-        No Stim dependency.
-
-        Args:
-            p1: Single-qubit depolarizing error rate.
-            p2: Two-qubit depolarizing error rate.
-            p_meas: Measurement error rate.
-            p_prep: Preparation error rate.
-
-        Returns:
-            DEM string in Stim-compatible format.
-        """
+    ) -> tuple[object, object, object]:
+        """Build the native DEM together with its source-tracking context."""
         from pecos_rslib.qec import DagFaultAnalyzer, DemBuilder
 
         tc = self.to_tick_circuit()
@@ -600,7 +587,32 @@ class LogicalCircuitBuilder:
         dem_builder = dem_builder.with_num_measurements(num_meas)
         dem_builder = dem_builder.with_measurement_order(meas_order)
 
-        return str(dem_builder.build())
+        return dem_builder.build(), influence_map, dc
+
+    def build_dem(
+        self,
+        *,
+        p1: float = 0.001,
+        p2: float = 0.001,
+        p_meas: float = 0.001,
+        p_prep: float = 0.0,
+    ) -> str:
+        """Generate a DEM using the PECOS-native fault analysis pipeline.
+
+        TickCircuit -> DagCircuit -> DagFaultAnalyzer -> DemBuilder.
+        No Stim dependency.
+
+        Args:
+            p1: Single-qubit depolarizing error rate.
+            p2: Two-qubit depolarizing error rate.
+            p_meas: Measurement error rate.
+            p_prep: Preparation error rate.
+
+        Returns:
+            DEM string in Stim-compatible format.
+        """
+        dem, _, _ = self._build_structured_dem(p1=p1, p2=p2, p_meas=p_meas, p_prep=p_prep)
+        return str(dem)
 
     def build_sampler_and_decoder(
         self,
@@ -617,32 +629,9 @@ class LogicalCircuitBuilder:
             Tuple of (DemSampler, LogicalSubgraphDecoder, dem_str).
             dem_str is also returned for compatibility with existing code.
         """
-        from pecos_rslib.qec import DagFaultAnalyzer, DemBuilder, LogicalSubgraphDecoder
+        from pecos_rslib.qec import LogicalSubgraphDecoder
 
-        tc = self.to_tick_circuit()
-        dc = tc.to_dag_circuit()
-        analyzer = DagFaultAnalyzer(dc)
-        influence_map = analyzer.build_influence_map()
-
-        det_json = tc.get_meta("detectors")
-        obs_json = tc.get_meta("observables")
-        num_meas = int(tc.get_meta("num_measurements"))
-
-        meas_order = []
-        for tick_idx in range(tc.num_ticks()):
-            tick = tc.get_tick(tick_idx)
-            for gate in tick.gate_batches():
-                if gate.gate_type.name == "MZ":
-                    meas_order.extend(int(q) for q in gate.qubits)
-
-        dem_builder = DemBuilder(influence_map)
-        dem_builder = dem_builder.with_noise(p1, p2, p_meas, p_prep)
-        dem_builder = dem_builder.with_detectors_json(det_json)
-        dem_builder = dem_builder.with_observables_json(obs_json)
-        dem_builder = dem_builder.with_num_measurements(num_meas)
-        dem_builder = dem_builder.with_measurement_order(meas_order)
-
-        dem = dem_builder.build()
+        dem, _, _ = self._build_structured_dem(p1=p1, p2=p2, p_meas=p_meas, p_prep=p_prep)
         sampler = dem.to_sampler()
         dem_str = str(dem)
 
@@ -658,33 +647,34 @@ class LogicalCircuitBuilder:
         p2: float = 0.001,
         p_meas: float = 0.001,
         p_prep: float = 0.0,
-        buffer: int = 0,
+        buffer: int | None = None,
     ) -> dict:
         """Extract per-segment DEMs and boundary gates for LogicalAlgorithmDecoder.
 
         Splits the full circuit DEM at gate boundaries. Each memory operation
         becomes a segment; each transversal gate becomes a boundary gate with
-        Pauli frame propagation rules.
+        Pauli frame propagation rules. By default, each non-terminal segment
+        derives the minimum safe look-ahead from the source-tracked model.
+        Passing ``buffer`` requests that exact amount of look-behind and
+        look-ahead; a value below the model's required look-ahead is rejected.
 
         Returns:
             Dict with keys: segments, boundary_gates, num_observables, full_dem.
         """
-        # Build the full DEM
-        full_dem = self.build_dem(p1=p1, p2=p2, p_meas=p_meas, p_prep=p_prep)
-        sc = self.stab_coords()
+        if buffer is not None and buffer < 0:
+            msg = "buffer must be non-negative or None"
+            raise ValueError(msg)
 
-        # Parse detector time coordinates from full DEM
-        det_times = {}
-        for raw_line in full_dem.split("\n"):
-            line = raw_line.strip()
-            if line.startswith("detector("):
-                paren = line.index(")")
-                coords = [float(x) for x in line[len("detector(") : paren].split(",")]
-                tokens = line[paren + 1 :].split()
-                for tok in tokens:
-                    if tok.startswith("D"):
-                        det_id = int(tok[1:])
-                        det_times[det_id] = coords[-1] if coords else 0.0
+        # Keep the structured DEM and the exact source-tracking context used to
+        # build it. Per-segment projection happens in Rust before serialization.
+        structured_dem, influence_map, dag_circuit = self._build_structured_dem(
+            p1=p1,
+            p2=p2,
+            p_meas=p_meas,
+            p_prep=p_prep,
+        )
+        full_dem = str(structured_dem)
+        sc = self.stab_coords()
 
         # Compute segment time boundaries from operations.
         # Each MEMORY op has a number of rounds. Time coordinates are
@@ -693,7 +683,7 @@ class LogicalCircuitBuilder:
         boundary_gates = []
         # Gates accumulate between consecutive MEMORY ops.
         pending_gates = []
-        time_cursor = 0.0
+        time_cursor = 0
         patch_labels = list(self._patches.keys())
         num_patches = len(patch_labels)
 
@@ -701,7 +691,7 @@ class LogicalCircuitBuilder:
         # After transversal H, the X and Z stabilizer types swap.
         x_z_swapped = dict.fromkeys(patch_labels, False)
 
-        for i, op in enumerate(self._operations):
+        for op in self._operations:
             if op.gate_type == LogicalGateType.MEMORY:
                 # If there are pending gates, they form the boundary
                 # between the previous segment and this one.
@@ -716,20 +706,6 @@ class LogicalCircuitBuilder:
                 seg_end = time_cursor + op.rounds
                 time_cursor = seg_end
 
-                # Find detectors in this time range, extended by buffer.
-                # Buffer extends the window into adjacent segments for
-                # cross-boundary error correlation context.
-                buf_start = max(0, seg_start - buffer)
-                buf_end = seg_end + buffer
-
-                is_last = all(
-                    self._operations[j].gate_type != LogicalGateType.MEMORY for j in range(i + 1, len(self._operations))
-                )
-                if is_last:
-                    seg_det_ids = sorted(d for d, t in det_times.items() if t >= buf_start)
-                else:
-                    seg_det_ids = sorted(d for d, t in det_times.items() if buf_start <= t < buf_end)
-
                 # Build per-segment stab_coords respecting X/Z swap state
                 seg_sc = []
                 for label in patch_labels:
@@ -742,8 +718,6 @@ class LogicalCircuitBuilder:
 
                 segments.append(
                     {
-                        "det_ids": seg_det_ids,
-                        "num_detectors": len(seg_det_ids),
                         "time_start": seg_start,
                         "time_end": seg_end,
                         "stab_coords": seg_sc,
@@ -796,50 +770,50 @@ class LogicalCircuitBuilder:
                     },
                 )
 
-        # Build per-segment sub-DEMs by filtering the full DEM.
-        # Each segment gets only the mechanisms involving its detectors.
+        # Assemble each sub-DEM through the native slice schedule. This keeps
+        # independent source contributions, decomposition metadata, logical
+        # outputs, hyperedges, and cross-round correlations intact.
         seg_dems = []
-        for seg in segments:
-            set(seg["det_ids"])
-            # Build local detector index mapping
-            global_to_local = {g: local_id for local_id, g in enumerate(seg["det_ids"])}
+        segment_detector_counts = []
+        detector_rounds = [int(coords[2]) for _, coords in structured_dem.detector_coordinates() if coords is not None]
+        explicit_buffer = 0 if buffer is None else buffer
+        for segment_index, seg in enumerate(segments):
+            start_round = max(0, int(seg["time_start"]) - explicit_buffer)
+            is_last = segment_index == len(segments) - 1
+            commit_end = time_cursor + 1 if is_last else int(seg["time_end"])
+            commit_rounds = commit_end - start_round
+            forward_buffer = 0 if is_last else buffer
+            forward_boundary = "hard" if is_last else "soft"
 
-            lines = []
-            # Add detector coordinate declarations
-            for raw_line in full_dem.split("\n"):
-                line = raw_line.strip()
-                if line.startswith("detector("):
-                    paren = line.index(")")
-                    tokens = line[paren + 1 :].split()
-                    for tok in tokens:
-                        if tok.startswith("D"):
-                            d_id = int(tok[1:])
-                            if d_id in global_to_local:
-                                local = global_to_local[d_id]
-                                coords = line[len("detector(") : paren]
-                                lines.append(f"detector({coords}) D{local}")
+            if not is_last and buffer is not None:
+                required = structured_dem.required_buffer_rounds(
+                    influence_map,
+                    dag_circuit,
+                    start_round,
+                    commit_rounds,
+                )
+                if buffer < required:
+                    msg = (
+                        f"buffer={buffer} is too small for logical segment {segment_index}; "
+                        f"the source-tracked DEM requires at least {required} look-ahead rounds"
+                    )
+                    raise ValueError(msg)
 
-            # Add error mechanisms (remap detector IDs)
-            for raw_line in full_dem.split("\n"):
-                line = raw_line.strip()
-                if not line.startswith("error("):
-                    continue
-                tokens = line.split()
-                prob_tok = tokens[0]
-                new_tokens = [prob_tok]
-                has_local_det = False
-                for tok in tokens[1:]:
-                    if tok.startswith("D"):
-                        d_id = int(tok[1:])
-                        if d_id in global_to_local:
-                            new_tokens.append(f"D{global_to_local[d_id]}")
-                            has_local_det = True
-                    elif tok.startswith("L"):
-                        new_tokens.append(tok)
-                if has_local_det:
-                    lines.append(" ".join(new_tokens))
-
-            seg_dems.append("\n".join(lines))
+            segment_dem = structured_dem.stitched_round_window(
+                influence_map,
+                dag_circuit,
+                start_round=start_round,
+                commit_rounds=commit_rounds,
+                buffer_rounds=forward_buffer,
+                forward_boundary=forward_boundary,
+            )
+            seg_dems.append(str(segment_dem))
+            # Segment metadata partitions the incoming full-circuit syndrome;
+            # it therefore counts only this segment's commit detectors, not the
+            # look-behind/look-ahead detectors duplicated in its local DEM.
+            segment_detector_counts.append(
+                sum(int(seg["time_start"]) <= round_ < commit_end for round_ in detector_rounds),
+            )
 
         # Physical code distance for latency/windowing decisions. With multiple
         # patches use the minimum (the weakest bound governs latency). This is the
@@ -853,7 +827,7 @@ class LogicalCircuitBuilder:
             "segments": [
                 {
                     "dem": seg_dems[i],
-                    "num_detectors": segments[i]["num_detectors"],
+                    "num_detectors": segment_detector_counts[i],
                     "stab_coords": segments[i]["stab_coords"],
                 }
                 for i in range(len(segments))

@@ -57,6 +57,44 @@ def test_unlimited_budget_reports_unlimited():
     assert dec.actual_num_windows == []
 
 
+def test_algorithm_segments_keep_structured_boundary_correlations():
+    """A local segment DEM may overlap the next detector round without moving
+    the streaming boundary or projecting away the cross-round mechanism."""
+    desc = _h_boundary_descriptor()
+    full_detector_count = sum(line.startswith("detector(") for line in desc["full_dem"].splitlines())
+    local_detector_counts = [
+        sum(line.startswith("detector(") for line in segment["dem"].splitlines()) for segment in desc["segments"]
+    ]
+
+    assert sum(segment["num_detectors"] for segment in desc["segments"]) == full_detector_count
+    assert local_detector_counts[0] > desc["segments"][0]["num_detectors"]
+
+    first_dem = desc["segments"][0]["dem"]
+    detector_times = {}
+    for line in first_dem.splitlines():
+        if line.startswith("detector("):
+            coords, detector = line.split(") D")
+            detector_times[int(detector)] = float(coords.rsplit(",", maxsplit=1)[-1])
+    assert any(
+        min(times) < 3 <= max(times)
+        for line in first_dem.splitlines()
+        if line.startswith("error(")
+        and (times := [detector_times[int(token[1:])] for token in line.split()[1:] if token.startswith("D")])
+    )
+
+
+def test_explicit_algorithm_buffer_cannot_truncate_a_boundary_correlation():
+    patch = SurfacePatch.create(3)
+    builder = LogicalCircuitBuilder()
+    builder.add_patch(patch, "A")
+    builder.add_memory("A", 3, "Z")
+    builder.add_transversal_h("A")
+    builder.add_memory("A", 3, "X")
+
+    with pytest.raises(ValueError, match="requires at least 1 look-ahead rounds"):
+        builder.build_algorithm_descriptor(buffer=0)
+
+
 def test_windowed_budget_is_explicit_full_fallback_not_silent():
     """The windowed budget must NOT silently claim bounded latency: it reports a
     full-decode fallback with one window per observable, while still signalling

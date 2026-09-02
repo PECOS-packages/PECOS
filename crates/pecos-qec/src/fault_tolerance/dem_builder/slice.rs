@@ -1013,6 +1013,63 @@ impl DemSliceRoundSchedule {
         &self.instances
     }
 
+    /// Return the minimum look-ahead needed to preserve commit-region correlations.
+    ///
+    /// A contribution is commit-relevant when its owning source round is in the
+    /// commit region or when one of its detector targets reaches the commit
+    /// region from the source halo. The returned buffer includes every later
+    /// detector target of those contributions. Sources owned wholly in the
+    /// buffer do not enlarge it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the commit region is empty or round arithmetic
+    /// overflows.
+    pub fn required_buffer_rounds(
+        &self,
+        start_round: i64,
+        commit_rounds: u32,
+    ) -> Result<u32, DemSliceStitchError> {
+        let spec = DemWindowSpec::new(start_round, commit_rounds, 0, DemBoundaryKind::Soft);
+        let commit_end = spec.commit_end()?;
+        let mut required_end = commit_end;
+
+        for instance in &self.instances {
+            for contribution in &instance.slice.contributions {
+                let target_rounds = contribution
+                    .combined_effect()
+                    .detectors
+                    .iter()
+                    .map(|target| {
+                        instance
+                            .round
+                            .checked_add(i64::from(target.round_offset))
+                            .ok_or(DemSliceStitchError::RoundOverflow)
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let owner_is_committed =
+                    instance.round >= start_round && instance.round < commit_end;
+                let target_touches_commit = target_rounds
+                    .iter()
+                    .any(|&round| round >= start_round && round < commit_end);
+                if !owner_is_committed && !target_touches_commit {
+                    continue;
+                }
+                for round in target_rounds {
+                    if round >= commit_end {
+                        required_end = required_end.max(
+                            round
+                                .checked_add(1)
+                                .ok_or(DemSliceStitchError::RoundOverflow)?,
+                        );
+                    }
+                }
+            }
+        }
+
+        u32::try_from(required_end - commit_end).map_err(|_| DemSliceStitchError::RoundOverflow)
+    }
+
     /// Assemble one commit-plus-buffer window from this schedule.
     ///
     /// # Errors
@@ -2238,6 +2295,45 @@ mod tests {
             vec![(0.01, vec![0], vec![])]
         );
         assert_eq!(stitched.diagnostics.projected_past_contributions, 1);
+    }
+
+    #[test]
+    fn round_schedule_computes_the_exact_commit_buffer() {
+        let owned = Arc::new(
+            DemSlice::new(
+                "owned",
+                vec![DemSliceDetector::new(0)],
+                vec![direct(0.01, [target(0, 0), target(0, 2)])],
+                DemTemporalHorizon::new(0, 2),
+            )
+            .unwrap(),
+        );
+        let halo = Arc::new(
+            DemSlice::new(
+                "halo",
+                vec![DemSliceDetector::port(0)],
+                vec![direct(0.02, [target(0, 1), target(0, 3)])],
+                DemTemporalHorizon::new(0, 3),
+            )
+            .unwrap(),
+        );
+        let schedule = DemSliceRoundSchedule {
+            instances: vec![
+                DemSliceInstance::identity(halo, -1),
+                DemSliceInstance::identity(owned, 0),
+            ],
+            observables: vec![],
+            tracked_paulis: vec![],
+        };
+
+        // Both the round-zero owner and the pre-window source reach round two.
+        assert_eq!(schedule.required_buffer_rounds(0, 1).unwrap(), 2);
+        // Once round two is committed, no forward look-ahead remains.
+        assert_eq!(schedule.required_buffer_rounds(0, 3).unwrap(), 0);
+        assert_eq!(
+            schedule.required_buffer_rounds(0, 0).unwrap_err(),
+            DemSliceStitchError::EmptyCommitRegion
+        );
     }
 
     #[test]

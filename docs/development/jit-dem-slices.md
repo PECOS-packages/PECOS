@@ -99,6 +99,18 @@ Python callers can exercise the same structured path through
 `DetectorErrorModel.stitched_round_window(...)`. It accepts the originating
 influence map and annotated DAG and returns another structured model; rendered
 DEM text appears only at an explicit final serialization boundary.
+`required_buffer_rounds(...)` computes the exact minimum look-ahead for a
+commit region from source ownership and detector targets. Omitting
+`buffer_rounds` from `stitched_round_window(...)` applies that safe value;
+supplying an undersized value still fails loudly.
+
+`LogicalCircuitBuilder.build_algorithm_descriptor(...)` uses this path for its
+per-segment models. Segment DEMs may contain look-ahead detectors needed to
+preserve a cross-boundary source, while segment metadata counts only the
+non-overlapping detector partition consumed by the streaming decoder. An
+omitted `buffer` derives the safe forward overlap. An explicit `buffer` also
+adds that many look-behind rounds and is rejected if it is smaller than the
+derived forward requirement.
 
 ## Window boundaries
 
@@ -128,6 +140,7 @@ converted to mechanism columns.
 This layer provides the stable slice, cache, structured-DEM adapter, automatic
 round layout, ownership, mapping, and stitching API. It does not yet compile
 physical template/halo circuits independently, mutate a decoder's prior
-vector, replace the window decoder's text-filtering path, or support adaptive
-syndrome-extraction templates. The full-circuit DEM builder remains the
-equivalence oracle while those integrations are added.
+vector, enable the anti-snake logical-subgraph window decoder, or support
+adaptive syndrome-extraction templates. The full-circuit DEM builder remains
+the equivalence oracle and the source of round-schedule slices until the
+operation-template compiler is introduced.

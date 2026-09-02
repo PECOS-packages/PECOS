@@ -315,6 +315,17 @@ def test_surface_dem_round_schedule_reconstructs_the_terminal_model():
         p_prep=0.001,
     )
 
+    assert reference.required_buffer_rounds(influence_map, dag, 0, 2) == 1
+    assert reference.required_buffer_rounds(influence_map, dag, 0, 3) == 0
+    with pytest.raises(ValueError, match="increase the buffer"):
+        reference.stitched_round_window(
+            influence_map,
+            dag,
+            start_round=0,
+            commit_rounds=2,
+            buffer_rounds=0,
+        )
+
     stitched = reference.stitched_round_window(
         influence_map,
         dag,

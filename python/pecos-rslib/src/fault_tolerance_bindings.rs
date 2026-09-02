@@ -1929,6 +1929,42 @@ impl PyDetectorErrorModel {
         self.inner.num_tracked_paulis()
     }
 
+    /// Detector identities and their optional ``[x, y, time]`` coordinates.
+    fn detector_coordinates(&self) -> Vec<(u32, Option<[f64; 3]>)> {
+        self.inner
+            .detectors
+            .iter()
+            .map(|detector| (detector.id, detector.coords))
+            .collect()
+    }
+
+    /// Return the minimum safe look-ahead for an annotated round window.
+    ///
+    /// Sources owned by the commit region, plus source-halo contributions that
+    /// reach it, determine the required buffer. The result includes all of
+    /// their later detector targets.
+    ///
+    /// Raises:
+    ///     ValueError: If metadata, ownership, mapping, or round validation fails.
+    fn required_buffer_rounds(
+        &self,
+        influence_map: &PyDagFaultInfluenceMap,
+        circuit: &PyDagCircuit,
+        start_round: i64,
+        commit_rounds: u32,
+    ) -> PyResult<u32> {
+        let schedule = RustDemSliceRoundSchedule::from_annotated_circuit(
+            "python DEM round",
+            &self.inner,
+            &influence_map.inner,
+            &circuit.inner,
+        )
+        .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+        schedule
+            .required_buffer_rounds(start_round, commit_rounds)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
+    }
+
     /// Build a structured DEM for one annotated commit-plus-buffer round window.
     ///
     /// The influence map and DAG circuit must be the same pair used to build
@@ -1941,20 +1977,21 @@ impl PyDetectorErrorModel {
     ///     circuit: Annotated physical DAG circuit.
     ///     start_round: First round included in the window.
     ///     commit_rounds: Number of rounds whose corrections may be committed.
-    ///     buffer_rounds: Look-ahead rounds after the commit region.
+    ///     buffer_rounds: Look-ahead rounds after the commit region. ``None``
+    ///         derives the minimum safe value from source correlations.
     ///     forward_boundary: ``"soft"`` for a sliding window or ``"hard"``
     ///         for a terminal window.
     ///
     /// Raises:
     ///     ValueError: If metadata, ownership, mapping, or boundary validation fails.
-    #[pyo3(signature = (influence_map, circuit, start_round, commit_rounds, buffer_rounds=0, forward_boundary="soft"))]
+    #[pyo3(signature = (influence_map, circuit, start_round, commit_rounds, buffer_rounds=None, forward_boundary="soft"))]
     fn stitched_round_window(
         &self,
         influence_map: &PyDagFaultInfluenceMap,
         circuit: &PyDagCircuit,
         start_round: i64,
         commit_rounds: u32,
-        buffer_rounds: u32,
+        buffer_rounds: Option<u32>,
         forward_boundary: &str,
     ) -> PyResult<Self> {
         let forward_boundary = match forward_boundary {
@@ -1973,6 +2010,12 @@ impl PyDetectorErrorModel {
             &circuit.inner,
         )
         .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+        let buffer_rounds = match buffer_rounds {
+            Some(buffer_rounds) => buffer_rounds,
+            None => schedule
+                .required_buffer_rounds(start_round, commit_rounds)
+                .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?,
+        };
         let stitched = schedule
             .stitch(RustDemWindowSpec::new(
                 start_round,

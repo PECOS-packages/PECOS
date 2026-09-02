@@ -1,5 +1,5 @@
 OPENQASM 2.0;
-include "hqslib1.inc";
+include "qelib1.inc";
 barrier q_test;
 measure q_test[0] -> meas_creg_test[0];
 measure q_test[1] -> meas_creg_test[1];

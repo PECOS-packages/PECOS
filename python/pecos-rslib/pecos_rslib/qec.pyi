@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Sequence
 
 from pecos_rslib import DagCircuit, ParityCheckMatrix, PauliString, StabilizerCodeSpec, TickCircuit
 

@@ -943,7 +943,7 @@ pub trait CliffordGateable: QuantumSimulator {
 
     /// Applies a square root of XX (SXX) operation between qubit pairs.
     ///
-    /// The SXX gate implements evolution under XX coupling for time π/4.
+    /// This is the conventional phase-fixed root `((1+i)I + (1-i)XX)/2`.
     ///
     /// # Arguments
     /// * `pairs` - Pairs of qubit indices: `[(q0, q1), (q2, q3), ...]`
@@ -958,13 +958,12 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Matrix Representation
     /// ```text
-    /// SXX = 1/√2 [[1,  0,  0, -i],
-    ///             [0,  1, -i,  0],
-    ///             [0, -i,  1,  0],
-    ///             [-i, 0,  0,  1]]
+    /// SXX = 1/2 [[1+i,   0,   0, 1-i],
+    ///              [  0, 1+i, 1-i,   0],
+    ///              [  0, 1-i, 1+i,   0],
+    ///              [1-i,   0,   0, 1+i]]
     /// ```
-    /// The default Clifford decomposition contributes `exp(i*pi/4)` per pair;
-    /// [`Self::apply_global_phase`] removes that residue once per pair.
+    /// The default Clifford decomposition evaluates to this phase-fixed matrix exactly.
     /// See the [`CliffordGateable`] trait-level batched-target precondition.
     ///
     /// # Returns
@@ -973,17 +972,12 @@ pub trait CliffordGateable: QuantumSimulator {
     fn sxx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         let q1s: QubitBuf = pairs.iter().map(|&(q1, _)| q1).collect();
         let q2s: QubitBuf = pairs.iter().map(|&(_, q2)| q2).collect();
-        self.sx(&q1s)
-            .sx(&q2s)
-            .sydg(&q1s)
-            .cx(pairs)
-            .sy(&q1s)
-            .apply_global_phase(-(Angle64::QUARTER_TURN / 2u64), &q1s)
+        self.sx(&q1s).sx(&q2s).sydg(&q1s).cx(pairs).sy(&q1s)
     }
 
     /// Applies the adjoint of the square root of XX operation.
     ///
-    /// The SXX† gate implements reverse evolution under XX coupling.
+    /// This is the exact adjoint of the conventional phase-fixed SXX.
     ///
     /// # Arguments
     /// * `pairs` - Pairs of qubit indices: `[(q0, q1), (q2, q3), ...]`
@@ -998,11 +992,13 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Matrix Representation
     /// ```text
-    /// SXX† = 1/√2 [[1,  0,  0,  i],
-    ///              [0,  1,  i,  0],
-    ///              [0,  i,  1,  0],
-    ///              [i,  0,  0,  1]]
+    /// SXX† = 1/2 [[1-i,   0,   0, 1+i],
+    ///               [  0, 1-i, 1+i,   0],
+    ///               [  0, 1+i, 1-i,   0],
+    ///               [1+i,   0,   0, 1-i]]
     /// ```
+    /// Multiplying the phase-fixed `SXX` by `XX` swaps its `I` and `XX`
+    /// coefficients, producing this adjoint exactly.
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
@@ -1010,15 +1006,12 @@ pub trait CliffordGateable: QuantumSimulator {
     fn sxxdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         let q1s: QubitBuf = pairs.iter().map(|&(q1, _)| q1).collect();
         let q2s: QubitBuf = pairs.iter().map(|&(_, q2)| q2).collect();
-        self.x(&q1s)
-            .x(&q2s)
-            .sxx(pairs)
-            .apply_global_phase(Angle64::QUARTER_TURN, &q1s)
+        self.x(&q1s).x(&q2s).sxx(pairs)
     }
 
     /// Applies a square root of YY (SYY) operation between qubit pairs.
     ///
-    /// The SYY gate implements evolution under YY coupling for time π/4.
+    /// This is the conventional phase-fixed root `((1+i)I + (1-i)YY)/2`.
     ///
     /// # Arguments
     /// * `pairs` - Pairs of qubit indices: `[(q0, q1), (q2, q3), ...]`
@@ -1033,10 +1026,10 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Matrix Representation
     /// ```text
-    /// SYY = 1/√2 [[1,  0,   0, -i],
-    ///             [0, -i,   1,  0],
-    ///             [0,  1,  -i,  0],
-    ///             [-i, 0,   0,  1]]
+    /// SYY = 1/2 [[ 1+i,   0,   0, -1+i],
+    ///              [   0, 1+i, 1-i,    0],
+    ///              [   0, 1-i, 1+i,    0],
+    ///              [-1+i,   0,   0,  1+i]]
     /// ```
     /// The default is an exact conjugation of the phase-corrected `SXX`.
     ///
@@ -1051,7 +1044,7 @@ pub trait CliffordGateable: QuantumSimulator {
 
     /// Applies the adjoint of the square root of YY operation.
     ///
-    /// The SYY† gate implements reverse evolution under YY coupling.
+    /// This is the exact adjoint of the conventional phase-fixed SYY.
     ///
     /// # Arguments
     /// * `pairs` - Pairs of qubit indices: `[(q0, q1), (q2, q3), ...]`
@@ -1066,11 +1059,13 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Matrix Representation
     /// ```text
-    /// SYY† = 1/√2 [[1,  0,  0,  i],
-    ///              [0,  i,  1,  0],
-    ///              [0,  1,  i,  0],
-    ///              [i,  0,  0,  1]]
+    /// SYY† = 1/2 [[ 1-i,   0,   0, -1-i],
+    ///               [   0, 1-i, 1+i,    0],
+    ///               [   0, 1+i, 1-i,    0],
+    ///               [-1-i,   0,   0,  1-i]]
     /// ```
+    /// Multiplying the phase-fixed `SYY` by `YY` swaps its `I` and `YY`
+    /// coefficients, producing this adjoint exactly.
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
@@ -1078,15 +1073,12 @@ pub trait CliffordGateable: QuantumSimulator {
     fn syydg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         let q1s: QubitBuf = pairs.iter().map(|&(q1, _)| q1).collect();
         let q2s: QubitBuf = pairs.iter().map(|&(_, q2)| q2).collect();
-        self.y(&q1s)
-            .y(&q2s)
-            .syy(pairs)
-            .apply_global_phase(Angle64::QUARTER_TURN, &q1s)
+        self.y(&q1s).y(&q2s).syy(pairs)
     }
 
     /// Applies a square root of ZZ (SZZ) operation between qubit pairs.
     ///
-    /// The SZZ gate implements evolution under ZZ coupling for time π/4.
+    /// This is the conventional phase-fixed root `((1+i)I + (1-i)ZZ)/2`.
     ///
     /// # Arguments
     /// * `pairs` - Pairs of qubit indices: `[(q0, q1), (q2, q3), ...]`
@@ -1101,10 +1093,10 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Matrix Representation
     /// ```text
-    /// SZZ = e^(-iπ/4) [[1,  0,  0,  0],
-    ///                  [0, -i,  0,  0],
-    ///                  [0,  0, -i,  0],
-    ///                  [0,  0,  0,  1]]
+    /// SZZ = [[1, 0, 0, 0],
+    ///        [0, i, 0, 0],
+    ///        [0, 0, i, 0],
+    ///        [0, 0, 0, 1]]
     /// ```
     /// The default is an exact Hadamard conjugation of the phase-corrected
     /// `SXX`.
@@ -1120,7 +1112,7 @@ pub trait CliffordGateable: QuantumSimulator {
 
     /// Applies the adjoint of the square root of ZZ operation.
     ///
-    /// The SZZ† gate implements reverse evolution under ZZ coupling.
+    /// This is the exact adjoint of the conventional phase-fixed SZZ.
     ///
     /// # Arguments
     /// * `pairs` - Pairs of qubit indices: `[(q0, q1), (q2, q3), ...]`
@@ -1135,11 +1127,13 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Matrix Representation
     /// ```text
-    /// SZZ† = e^(iπ/4) [[1,  0,  0,  0],
-    ///                  [0,  i,  0,  0],
-    ///                  [0,  0,  i,  0],
-    ///                  [0,  0,  0,  1]]
+    /// SZZ† = [[1,  0,  0, 0],
+    ///         [0, -i,  0, 0],
+    ///         [0,  0, -i, 0],
+    ///         [0,  0,  0, 1]]
     /// ```
+    /// Multiplying the phase-fixed `SZZ` by `ZZ` swaps its `I` and `ZZ`
+    /// coefficients, producing this adjoint exactly.
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
@@ -1147,10 +1141,7 @@ pub trait CliffordGateable: QuantumSimulator {
     fn szzdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         let q1s: QubitBuf = pairs.iter().map(|&(q1, _)| q1).collect();
         let q2s: QubitBuf = pairs.iter().map(|&(_, q2)| q2).collect();
-        self.z(&q1s)
-            .z(&q2s)
-            .szz(pairs)
-            .apply_global_phase(Angle64::QUARTER_TURN, &q1s)
+        self.z(&q1s).z(&q2s).szz(pairs)
     }
 
     /// Applies the SWAP operation between qubit pairs.

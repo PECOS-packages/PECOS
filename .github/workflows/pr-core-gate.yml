@@ -12,7 +12,11 @@ name: PR core gate
 #
 # The setup below mirrors the Linux legs of python-test.yml (python-core) and
 # rust-test.yml. Keep their action SHAs, uv/just/LLVM versions, and cache keys
-# in sync when editing either side. The change-detection rule lives in
+# in sync when editing either side. The Rust caches are shared with those two
+# jobs through `shared-key` (they save on dev pushes, this workflow only
+# restores); rust-cache hashes the RUSTFLAGS/CARGO_*/RUST_BACKTRACE values into
+# the key, so the `env:` block here must stay identical to theirs or every
+# restore silently misses. The change-detection rule lives in
 # scripts/ci/pr-core-changed.sh (single source of truth for both jobs).
 
 permissions:
@@ -121,9 +125,9 @@ jobs:
           cache-bin: false
           prefix-key: v1-rust-no-bin
           save-if: ${{ github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name) }}
-          workspaces: |
-            python/pecos-rslib
-            python/pecos-rslib-llvm
+          # Read the cache the post-merge python-core job (python-test.yml)
+          # saves on dev pushes; this workflow never saves one (PR events).
+          shared-key: python-core
 
       - name: Cache LLVM ${{ env.LLVM_VERSION }}
         if: steps.detect.outputs.run == 'true'
@@ -224,9 +228,9 @@ jobs:
           cache-bin: false
           prefix-key: v1-rust-no-bin
           save-if: ${{ github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name) }}
-          workspaces: |
-            python/pecos-rslib
-            python/pecos-rslib-llvm
+          # Read the cache the post-merge rust-test job (rust-test.yml) saves
+          # on dev pushes; this workflow never saves one (PR events).
+          shared-key: rust-test
 
       - name: Cache LLVM ${{ env.LLVM_VERSION }}
         if: steps.detect.outputs.run == 'true'

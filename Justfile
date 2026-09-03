@@ -313,6 +313,37 @@ pytest-ci-core:
     uv run --frozen pytest -n auto python/quantum-pecos/tests -m "not optional_dependency and not slow"
     uv run --frozen pytest -n auto python/pecos-rslib-exp/tests
 
+# One shard of `pytest-ci-core`, for the pr-core-python matrix. The three shards
+# partition the lane by directory: `qec-surface` and `qec-guppy` own the
+# directories named in their commands, and `rest` is everything else, ignoring
+# exactly those directories. Keep the two lists in step so the union stays
+# equal to `pytest-ci-core`. Balance (CPU-seconds, 2026-09-02): qec/surface
+# ~1750, qec-rest + guppy ~1100, rest ~950.
+[group('test')]
+pytest-ci-core-shard shard:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    QP=python/quantum-pecos/tests
+    CORE_MARKERS="not optional_dependency and not slow"
+    case "{{shard}}" in
+      qec-surface)
+        uv run --frozen pytest -n auto "$QP/qec/surface" -m "$CORE_MARKERS"
+        ;;
+      qec-guppy)
+        uv run --frozen pytest -n auto "$QP/qec" --ignore="$QP/qec/surface" "$QP/guppy" -m "$CORE_MARKERS"
+        ;;
+      rest)
+        uv run --frozen pytest -n auto python/pecos-rslib/tests -m "not performance"
+        uv run --frozen --group numpy-compat pytest -n auto python/pecos-rslib/tests -m "numpy and not performance"
+        uv run --frozen pytest -n auto "$QP" --ignore="$QP/qec" --ignore="$QP/guppy" -m "$CORE_MARKERS"
+        uv run --frozen pytest -n auto python/pecos-rslib-exp/tests
+        ;;
+      *)
+        echo "unknown pytest-ci-core shard: {{shard}} (expected qec-surface, qec-guppy, or rest)" >&2
+        exit 1
+        ;;
+    esac
+
 # Run the experimental zluppy package's independent Python test project.
 [group('test')]
 pytest-zluppy:

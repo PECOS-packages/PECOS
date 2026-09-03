@@ -1589,16 +1589,15 @@ impl OperationProcessor {
             }
 
             // Two-qubit gates
-            "SZZ" | "ZZ" => {
-                // Verify we have exactly 2 qubits
-                if qubit_args.len() < 2 {
+            "SXX" | "SXXdg" | "SYY" | "SYYdg" | "SZZ" | "SZZdg" | "ZZ" => {
+                if qubit_args.is_empty() || !qubit_args.len().is_multiple_of(2) {
                     return Err(PecosError::ValidationInvalidGateParameters(format!(
-                        "'{qop}' gate requires exactly two qubits, but found {}",
+                        "'{qop}' gate requires complete qubit pairs, but found {} qubits",
                         qubit_args.len()
                     )));
                 }
-                // Always return the canonical name SZZ
-                Ok(("SZZ".to_string(), qubit_args, vec![]))
+                let canonical = if qop == "ZZ" { "SZZ" } else { qop };
+                Ok((canonical.to_string(), qubit_args, vec![]))
             }
             "CX" | "CNOT" => {
                 // Verify we have exactly 2 qubits
@@ -1632,6 +1631,20 @@ impl OperationProcessor {
         qubit_args: &[usize],
         angle_args: &[f64],
     ) -> Result<(), PecosError> {
+        let pairs = || {
+            if qubit_args.is_empty() || !qubit_args.len().is_multiple_of(2) {
+                return Err(PecosError::ValidationInvalidGateParameters(format!(
+                    "'{gate_type}' gate requires complete qubit pairs, but found {} qubits",
+                    qubit_args.len()
+                )));
+            }
+            Ok(qubit_args
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|pair| (pair[0], pair[1]))
+                .collect::<Vec<_>>())
+        };
         match gate_type {
             "RZ" => {
                 builder.rz(Angle64::from_radians(angle_args[0]), &[qubit_args[0]]);
@@ -1644,19 +1657,35 @@ impl OperationProcessor {
                 );
             }
             "RXXRYYRZZ" => {
+                let pairs = pairs()?;
                 let gate = Gate::rxxryyrzz(
                     Angle64::from_radians(angle_args[0]),
                     Angle64::from_radians(angle_args[1]),
                     Angle64::from_radians(angle_args[2]),
-                    &[(qubit_args[0], qubit_args[1])],
+                    &pairs,
                 );
                 builder.add_gate_command(&gate);
             }
+            "SXX" => {
+                builder.sxx(&pairs()?);
+            }
+            "SXXdg" => {
+                builder.sxxdg(&pairs()?);
+            }
+            "SYY" => {
+                builder.syy(&pairs()?);
+            }
+            "SYYdg" => {
+                builder.syydg(&pairs()?);
+            }
             "SZZ" => {
-                builder.szz(&[(qubit_args[0], qubit_args[1])]);
+                builder.szz(&pairs()?);
+            }
+            "SZZdg" => {
+                builder.szzdg(&pairs()?);
             }
             "CX" => {
-                builder.cx(&[(qubit_args[0], qubit_args[1])]);
+                builder.cx(&pairs()?);
             }
             "H" => {
                 builder.h(&[qubit_args[0]]);
@@ -2032,7 +2061,41 @@ impl OperationProcessor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::v0_1::ast::{ArgItem, Expression};
+    use crate::v0_1::ast::{ArgItem, Expression, QubitArg};
+
+    #[test]
+    fn all_named_two_qubit_roots_parse_and_execute() {
+        let mut processor = OperationProcessor::new();
+        processor.add_quantum_variable("q", 2).unwrap();
+        let args = [QubitArg::MultipleQubits(vec![
+            ("q".to_string(), 0),
+            ("q".to_string(), 1),
+        ])];
+        let mut builder = ByteMessageBuilder::new();
+        let _ = builder.for_quantum_operations();
+
+        for name in ["SXX", "SXXdg", "SYY", "SYYdg", "SZZ", "SZZdg"] {
+            let (gate_type, qubits, angles) = processor
+                .process_quantum_op(name, None, &args)
+                .unwrap_or_else(|error| panic!("{name} did not parse: {error}"));
+            processor
+                .add_quantum_operation_to_builder(&mut builder, &gate_type, &qubits, &angles)
+                .unwrap_or_else(|error| panic!("{name} did not execute: {error}"));
+        }
+
+        let ops = builder.build().quantum_ops().unwrap();
+        assert_eq!(
+            ops.iter().map(|op| op.gate_type).collect::<Vec<_>>(),
+            [
+                pecos_core::gate_type::GateType::SXX,
+                pecos_core::gate_type::GateType::SXXdg,
+                pecos_core::gate_type::GateType::SYY,
+                pecos_core::gate_type::GateType::SYYdg,
+                pecos_core::gate_type::GateType::SZZ,
+                pecos_core::gate_type::GateType::SZZdg,
+            ]
+        );
+    }
 
     // Issue #345 finding 2: an out-of-range measurement return write must fail
     // fast, not log-and-continue (silently dropping the outcome).

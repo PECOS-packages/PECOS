@@ -1649,20 +1649,23 @@ mod tests {
     /// `RX(t) = [[cos t/2, -i sin t/2], [-i sin t/2, cos t/2]]`, `RXY(t, p) = RZ(p) RX(t)
     /// RZ(-p)`, and `RZZ(a) = diag(e^{-ia/2}, e^{ia/2}, e^{ia/2}, e^{-ia/2})`.
     ///
-    /// Two facts the pinned values record rather than hide:
+    /// Three facts the pinned values record rather than hide:
     ///
     /// - PECOS's `rotation_to_matrix` halves the unsigned `[0, 2pi)` representative of an
     ///   angle, so for any angle in `(pi, 2pi)` -- every negative angle -- its dense matrix
-    ///   is `-1` times the signed textbook `exp(-i theta/2 P)`. `SZZdg` is built as
-    ///   `RZZ(3pi/2)` and so carries `pi` here, as does every negative-angle rotation.
-    ///   This is the 4pi-periodicity problem recorded in the CRZ parameter
-    ///   representation note; the bridge cannot fix it and this test does not pretend it
-    ///   is absent.
+    ///   is `-1` times the signed textbook `exp(-i theta/2 P)`. Every negative-angle
+    ///   parameterized rotation therefore carries `pi` here. This is the 4pi-periodicity
+    ///   problem recorded in the CRZ parameter representation note; the bridge cannot fix
+    ///   it and this test does not pretend it is absent.
     /// - Selene's Rust `QuEST` simulator at the same revision scales `exp(i a/2)` out of
     ///   `RZZ`, differing from Selene's own reference definition above. Under that one
     ///   simulator the two-qubit arms carry an additional `-a/2` that the reference does
     ///   not. That is Selene-internal, and unobservable on an error-model path where
     ///   nothing is controlled. This test pins the documented reference.
+    /// - PECOS's named two-qubit Pauli roots are conventional phase-fixed matrices, so
+    ///   `SP^2 = P` exactly, while Selene's reference set provides only the rotation
+    ///   representatives. These arms therefore carry the convention phase. It is
+    ///   unobservable here because nothing on this error-model path is controlled.
     ///
     /// Beyond the phase, the test asserts `U_pecos == e^{i phi} U_emitted` entrywise, so
     /// an arm that is wrong by more than a phase (the former `H` arm was wrong by `Z`)
@@ -1931,7 +1934,7 @@ mod tests {
                     b.szz(&[(0, 1)]);
                 },
                 named(GateType::SZZ, &q2),
-                0.0,
+                PI / 4.0,
             ),
             arm(
                 "SZZdg",
@@ -1939,7 +1942,7 @@ mod tests {
                     b.szzdg(&[(0, 1)]);
                 },
                 named(GateType::SZZdg, &q2),
-                PI,
+                -PI / 4.0,
             ),
             arm(
                 "RZZ(+0.37)",

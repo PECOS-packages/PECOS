@@ -283,6 +283,7 @@ impl DepolarizingFaultCatalog {
                         .unwrap() as u8,
                     outcome_label: outcome.label,
                 });
+                break; // fixes a bug where the loop would continue after finding the correct outcome
             }
         }
 

@@ -453,6 +453,172 @@ fn to_matrix_unitary_rotation_at_various_angles() {
     }
 }
 
+fn assert_phase_exact_matrix(
+    label: &str,
+    actual: &UnitaryMatrix,
+    expected: &nalgebra::DMatrix<Complex64>,
+) {
+    let error = actual
+        .iter()
+        .zip(expected.iter())
+        .map(|(lhs, rhs)| (lhs - rhs).norm())
+        .fold(0.0, f64::max);
+    assert!(
+        error < 1e-12,
+        "{label}: max entrywise error {error:e}; actual={actual:?}; expected={expected:?}"
+    );
+}
+
+#[test]
+fn negative_pauli_rotations_use_the_signed_principal_half_angle() {
+    use pecos_core::unitary_rep::{RX, RY, RZ, RZZ};
+    use std::f64::consts::FRAC_1_SQRT_2;
+
+    let negative_angle = -Angle64::QUARTER_TURN;
+    let aliased_angle = Angle64::THREE_QUARTERS_TURN;
+    assert_eq!(negative_angle, aliased_angle);
+
+    let c = FRAC_1_SQRT_2;
+    let zero = Complex64::new(0.0, 0.0);
+    let real = Complex64::new(c, 0.0);
+    let plus_i = Complex64::new(0.0, c);
+    let exp_plus_i = Complex64::new(c, c);
+    let exp_minus_i = Complex64::new(c, -c);
+
+    let cases = [
+        (
+            "RX(-pi/2)",
+            RX(negative_angle, 0),
+            RX(aliased_angle, 0),
+            nalgebra::DMatrix::from_row_slice(2, 2, &[real, plus_i, plus_i, real]),
+        ),
+        (
+            "RY(-pi/2)",
+            RY(negative_angle, 0),
+            RY(aliased_angle, 0),
+            nalgebra::DMatrix::from_row_slice(2, 2, &[real, real, -real, real]),
+        ),
+        (
+            "RZ(-pi/2)",
+            RZ(negative_angle, 0),
+            RZ(aliased_angle, 0),
+            nalgebra::DMatrix::from_row_slice(2, 2, &[exp_plus_i, zero, zero, exp_minus_i]),
+        ),
+    ];
+
+    for (label, negative, aliased, expected) in cases {
+        let negative = negative.to_matrix();
+        let aliased = aliased.to_matrix();
+        assert_phase_exact_matrix(label, &negative, &expected);
+        assert_phase_exact_matrix(
+            &format!("{label} three-quarter-turn alias"),
+            &aliased,
+            &expected,
+        );
+        assert_phase_exact_matrix(
+            &format!("{label} aliases agree"),
+            &aliased,
+            negative.inner(),
+        );
+    }
+
+    let expected_rzz = nalgebra::DMatrix::from_diagonal(&nalgebra::DVector::from_row_slice(&[
+        exp_plus_i,
+        exp_minus_i,
+        exp_minus_i,
+        exp_plus_i,
+    ]));
+    let negative_rzz = RZZ(negative_angle, 0, 1).to_matrix();
+    let aliased_rzz = RZZ(aliased_angle, 0, 1).to_matrix();
+    assert_phase_exact_matrix("RZZ(-pi/2)", &negative_rzz, &expected_rzz);
+    assert_phase_exact_matrix(
+        "RZZ(-pi/2) three-quarter-turn alias",
+        &aliased_rzz,
+        &expected_rzz,
+    );
+    assert_phase_exact_matrix(
+        "RZZ(-pi/2) aliases agree",
+        &aliased_rzz,
+        negative_rzz.inner(),
+    );
+}
+
+#[test]
+fn other_negative_half_angle_dense_gates_use_the_signed_principal_angle() {
+    use std::f64::consts::FRAC_1_SQRT_2;
+
+    let negative_angle = -Angle64::QUARTER_TURN;
+    let aliased_angle = Angle64::THREE_QUARTERS_TURN;
+    let c = FRAC_1_SQRT_2;
+    let expected_rxy1q = nalgebra::DMatrix::from_row_slice(
+        2,
+        2,
+        &[
+            Complex64::new(c, 0.0),
+            Complex64::new(0.0, c),
+            Complex64::new(0.0, c),
+            Complex64::new(c, 0.0),
+        ],
+    );
+    let expected_u3 = nalgebra::DMatrix::from_row_slice(
+        2,
+        2,
+        &[
+            Complex64::new(c, 0.0),
+            Complex64::new(c, 0.0),
+            Complex64::new(-c, 0.0),
+            Complex64::new(c, 0.0),
+        ],
+    );
+
+    for (label, negative, aliased, expected) in [
+        (
+            "RXY1Q(-pi/2, 0)",
+            Unitary::RXY1Q {
+                theta: negative_angle,
+                phi: Angle64::ZERO,
+            }
+            .on_qubit(0),
+            Unitary::RXY1Q {
+                theta: aliased_angle,
+                phi: Angle64::ZERO,
+            }
+            .on_qubit(0),
+            expected_rxy1q,
+        ),
+        (
+            "U3(-pi/2, 0, 0)",
+            Unitary::U3 {
+                theta: negative_angle,
+                phi: Angle64::ZERO,
+                lambda: Angle64::ZERO,
+            }
+            .on_qubit(0),
+            Unitary::U3 {
+                theta: aliased_angle,
+                phi: Angle64::ZERO,
+                lambda: Angle64::ZERO,
+            }
+            .on_qubit(0),
+            expected_u3,
+        ),
+    ] {
+        let negative = negative.to_matrix();
+        let aliased = aliased.to_matrix();
+        assert_phase_exact_matrix(label, &negative, &expected);
+        assert_phase_exact_matrix(
+            &format!("{label} three-quarter-turn alias"),
+            &aliased,
+            &expected,
+        );
+        assert_phase_exact_matrix(
+            &format!("{label} aliases agree"),
+            &aliased,
+            negative.inner(),
+        );
+    }
+}
+
 #[test]
 fn to_matrix_unitary_named_ccx_is_unitary() {
     use pecos_core::gate_type::GateType;
@@ -868,9 +1034,8 @@ fn rotation_adjoint_negates_angle_via_matrix() {
     let angle = Angle64::QUARTER_TURN;
     let neg_angle = Angle64::THREE_QUARTERS_TURN;
 
-    // R(-theta) = R(theta)^dagger up to global phase
-    // (THREE_QUARTERS_TURN and -QUARTER_TURN differ by 2pi but the half-angle
-    //  causes an overall -1 factor, so we check equiv_up_to_phase)
+    // Angle64's three-quarter turn is the signed principal -pi/2, so the
+    // phase-fixed matrices must be exact adjoints, not merely equivalent up to phase.
     for (make_rot, name) in [
         (RX as fn(Angle64, usize) -> pecos_core::UnitaryRep, "RX"),
         (RY as fn(Angle64, usize) -> pecos_core::UnitaryRep, "RY"),
@@ -880,9 +1045,10 @@ fn rotation_adjoint_negates_angle_via_matrix() {
         let mat_neg = make_rot(neg_angle, 0).to_matrix();
         let mat_adj = mat.adjoint();
 
+        let error = (&mat_neg - &mat_adj).norm();
         assert!(
-            mat_neg.equiv_up_to_phase(&mat_adj),
-            "{name}(-theta) should equal {name}(theta).adjoint() up to phase"
+            error < 1e-12,
+            "{name}(-theta) should exactly equal {name}(theta).adjoint(); error={error:e}"
         );
     }
 }

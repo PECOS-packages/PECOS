@@ -273,7 +273,7 @@ fn ryy_pi_equiv_y_tensor_y() {
 
 /// Build CRZ(angle) as a composition: RZ(angle/2) on target, CX, RZ(-angle/2) on target, CX.
 fn crz_operator(angle: Angle64, control: usize, target: usize) -> UnitaryRep {
-    let half = angle / 2u64;
+    let half = Angle64::from_radians(angle.to_radians_signed() / 2.0);
     // CRZ(theta) = CX * RZ(-theta/2)_target * CX * RZ(theta/2)_target
     // Read right-to-left: first RZ(theta/2), then CX, then RZ(-theta/2), then CX
     RZ(half, target) * CX(control, target) * RZ(-half, target) * CX(control, target)

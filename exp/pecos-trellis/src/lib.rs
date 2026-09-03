@@ -34,30 +34,30 @@ pub use pecos_decoder_core::errors::DecoderError;
 pub use pecos_decoder_core::obs_mask::ObsMask;
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 use std::time::Instant;
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 type TimerStart = Instant;
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
 struct TimerStart;
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 fn timer_start() -> TimerStart {
     Instant::now()
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
 fn timer_start() -> TimerStart {
     TimerStart
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 fn timer_seconds(start: TimerStart) -> f64 {
     start.elapsed().as_secs_f64()
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
 fn timer_seconds(_: TimerStart) -> f64 {
     0.0
 }

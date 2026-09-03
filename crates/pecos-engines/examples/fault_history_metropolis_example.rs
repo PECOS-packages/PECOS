@@ -329,19 +329,18 @@ fn main() -> Result<(), PecosError> {
     // and perform metropolis steps to determine if we should step from `current` to `proposal`.
     let mut current = histories[0].clone();
 
-    for i in 1..1_000_000 {
-        let proposal = fault_catalog.random_flip(&current);
-        let ratio: f64 = fault_catalog.fault_histories_probability_ratio(&proposal, &current);
+    for _i in 1..1_000 {
+        let (proposal, correction) = fault_catalog.random_flip_hastings_correction(&current);
+        let ratio: f64 = correction * fault_catalog.fault_histories_probability_ratio(&proposal, &current);
         let result = stepper.step(current.clone(), proposal.clone(), ratio);
         current = result.state;
-        if result.accepted && false {
+        if result.accepted {
             let probability = fault_catalog.fault_history_probability(&current);
             println!("Proposal ratio: {}", ratio);
+            println!("Hastings correction: {}", correction);
             println!("new state probability: {:e}", probability);
         }
     }
-    let probability = fault_catalog.fault_history_probability(&current);
-    println!("new state probability: {:e}", probability);
 
     Ok(())
 }

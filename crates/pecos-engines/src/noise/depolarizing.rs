@@ -306,6 +306,50 @@ impl DepolarizingFaultCatalog {
         self.random_flip_at_site(flip_site_uid, sampled_fault_history)
     }
 
+    // Takes a fault history and randomly selects a site and flips it to a
+    // different outcome. Returns the new history and the hastings correction
+    // p(s->s')/p(s'->s) used for the metropolis-hastings algorithm.
+    pub fn random_flip_hastings_correction(
+        &mut self,
+        sampled_fault_history: &[DepolarizingSampledFault],
+    ) -> (Vec<DepolarizingSampledFault>,f64) {
+        // Pick a random site
+        let flip_site_uid = self.random_site();
+        let chosen_site = self.sites[flip_site_uid].clone();
+        let outcome_at_site = |history: &[DepolarizingSampledFault]| {
+            history
+                .binary_search_by_key(&flip_site_uid, |fault| fault.site_uid)
+                .map_or("NoFault", |index| history[index].outcome_label)
+        };
+        // Get initial fault information pre-flip
+        let initial_fault = outcome_at_site(sampled_fault_history);
+
+        // Flip the site
+        let new_history = self.random_flip_at_site(flip_site_uid, sampled_fault_history);
+        // Get fault information post-flip
+        let new_fault = outcome_at_site(&new_history);
+
+        // get probability of each fault being sampled from the other.
+        let p_initial = chosen_site.outcome_label_probability(initial_fault).unwrap_or_else(|| {
+                        panic!(
+                            "Outcome label {} not found for fault site {}",
+                            initial_fault, chosen_site.uid
+                        );
+                    });
+        let p_new = chosen_site.outcome_label_probability(new_fault).unwrap_or_else(|| {
+                        panic!(
+                            "Outcome label {} not found for fault site {}",
+                            new_fault, chosen_site.uid
+                        );
+                    });
+
+        // compute hastings correction:
+        // P(proposing:new->init)/P(proposing:init->new)
+        let correction = (p_initial/(1.0-p_new)) / (p_new/(1.0-p_initial));
+
+        return (new_history, correction);
+    }
+
     // Checks that two catalogs are compatible with each other
     fn is_catalog_compatible(&self, other: &DepolarizingFaultCatalog) -> bool {
         // Check that they have the same number of sites

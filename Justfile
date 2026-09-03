@@ -266,7 +266,9 @@ python-ci-build-docs profile="debug": _msvc-bootstrap (validate-profile "python-
     set -euo pipefail
     PROFILE="{{profile}}"
     PECOS_BUILD_MWPF=0 {{pecos}} python build --profile "$PROFILE" --no-cuda
-    uv run --frozen --package pecos-rslib-exp maturin develop --uv --locked --manifest-path python/pecos-rslib-exp/Cargo.toml
+    # --no-sync: a package-scoped `uv run` otherwise syncs pecos-rslib-exp into the
+    # environment first, i.e. builds the release wheel this very command replaces.
+    uv run --frozen --no-sync --package pecos-rslib-exp maturin develop --uv --locked --manifest-path python/pecos-rslib-exp/Cargo.toml
 
 # Build the extra experimental bindings exercised by the fast Python core test lane.
 [group('build')]
@@ -275,7 +277,9 @@ python-ci-build-test profile="debug": _msvc-bootstrap (validate-profile "python-
     set -euo pipefail
     PROFILE="{{profile}}"
     {{pecos}} python build --profile "$PROFILE" --no-cuda
-    uv run --frozen --package pecos-rslib-exp maturin develop --uv --locked --manifest-path python/pecos-rslib-exp/Cargo.toml
+    # --no-sync: a package-scoped `uv run` otherwise syncs pecos-rslib-exp into the
+    # environment first, i.e. builds the release wheel this very command replaces.
+    uv run --frozen --no-sync --package pecos-rslib-exp maturin develop --uv --locked --manifest-path python/pecos-rslib-exp/Cargo.toml
 
 # =============================================================================
 # Testing

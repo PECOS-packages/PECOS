@@ -860,22 +860,33 @@ impl<SV: GpuStateVecBackend> CliffordGateable for GpuDensityMatrix<SV> {
             let qubit = q.index();
             let state = self.state_vector.state_f64();
 
-            // P(qubit = 1) = sum_k rho_{k,k} over k with bit_q(k) = 1.
-            // In the purification convention, rho_{k,k} = sum_i |psi[(k<<n)|i]|^2,
-            // so we sum over every Choi index whose system-row has bit_q set.
+            // In the purification convention, each branch weight is the sum of
+            // |psi[(k<<n)|i]|^2 over physical rows in that branch. Normalize the weights before
+            // applying probability-scale thresholds or sampling because f32 gate arithmetic can
+            // make the total drift slightly from one without changing the represented state.
             let qubit_mask = 1usize << qubit;
-            let prob_one: f64 = state
-                .iter()
-                .enumerate()
-                .filter(|(idx, _)| ((idx >> n) & qubit_mask) != 0)
-                .map(|(_, [re, im])| re * re + im * im)
-                .sum();
+            let (zero_weight, one_weight) = state.iter().enumerate().fold(
+                (0.0, 0.0),
+                |(zero_weight, one_weight), (idx, [re, im])| {
+                    let weight = re * re + im * im;
+                    if ((idx >> n) & qubit_mask) == 0 {
+                        (zero_weight + weight, one_weight)
+                    } else {
+                        (zero_weight, one_weight + weight)
+                    }
+                },
+            );
+            let total_weight = zero_weight + one_weight;
+            let prob_one = one_weight / total_weight;
 
             let is_deterministic = !(1e-10..=1.0 - 1e-10).contains(&prob_one);
+            // Keep RNG advancement transactional with the projected-state write. If the
+            // invariant below fails, a caught panic must not perturb seeded replay.
+            let mut next_rng = self.rng.clone();
             let outcome = if is_deterministic {
                 prob_one > 0.5
             } else {
-                self.rng.random_range(0.0..1.0) < prob_one
+                next_rng.random_range(0.0..1.0) < prob_one
             };
 
             let target_bit = if outcome { qubit_mask } else { 0 };
@@ -893,7 +904,11 @@ impl<SV: GpuStateVecBackend> CliffordGateable for GpuDensityMatrix<SV> {
 
             assert!(
                 norm_sq > 1e-15,
-                "projected outcome has zero weight; sampler and projector disagree"
+                "GPU density-matrix measurement projected to zero norm; sampler and projector \
+                 disagree: qubit={qubit}, outcome={}, projected_weight={norm_sq:.17e}, \
+                 zero_weight={zero_weight:.17e}, one_weight={one_weight:.17e}, \
+                 total_norm={total_weight:.17e}",
+                u8::from(outcome)
             );
             let norm = norm_sq.sqrt();
             for amp in &mut new_state {
@@ -902,6 +917,7 @@ impl<SV: GpuStateVecBackend> CliffordGateable for GpuDensityMatrix<SV> {
             }
 
             self.state_vector.write_state_f64(&new_state);
+            self.rng = next_rng;
 
             results.push(MeasurementResult {
                 outcome,
@@ -1038,11 +1054,169 @@ mod tests {
         fn sync_backend(&mut self) {}
     }
 
+    /// CPU-backed adapter that uses the GPU's f32 Hadamard coefficients. It exercises the real
+    /// generic density-wrapper logic on hosts where a hardware GPU is unavailable while retaining
+    /// the norm drift that exposed the f32 measurement bug.
+    struct RoundedF32StateVec(StateVecSoA);
+
+    impl QuantumSimulator for RoundedF32StateVec {
+        fn reset(&mut self) -> &mut Self {
+            self.0.reset();
+            self
+        }
+
+        fn num_qubits(&self) -> usize {
+            self.0.num_qubits()
+        }
+    }
+
+    impl CliffordGateable for RoundedF32StateVec {
+        fn x(&mut self, qubits: &[QubitId]) -> &mut Self {
+            self.0.x(qubits);
+            self
+        }
+
+        fn sz(&mut self, qubits: &[QubitId]) -> &mut Self {
+            self.0.sz(qubits);
+            self
+        }
+
+        fn h(&mut self, qubits: &[QubitId]) -> &mut Self {
+            let gate = crate::gates::H;
+            for &qubit in qubits {
+                self.0.single_qubit_unitary(
+                    qubit.index(),
+                    Complex64::new(f64::from(gate[0]), f64::from(gate[1])),
+                    Complex64::new(f64::from(gate[2]), f64::from(gate[3])),
+                    Complex64::new(f64::from(gate[4]), f64::from(gate[5])),
+                    Complex64::new(f64::from(gate[6]), f64::from(gate[7])),
+                );
+            }
+            self
+        }
+
+        fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+            self.0.cx(pairs);
+            self
+        }
+
+        fn mz(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
+            self.0.mz(qubits)
+        }
+    }
+
+    impl ArbitraryRotationGateable for RoundedF32StateVec {
+        fn rx(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+            self.0.rx(theta, qubits);
+            self
+        }
+
+        fn rz(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
+            self.0.rz(theta, qubits);
+            self
+        }
+
+        fn rzz(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+            self.0.rzz(theta, pairs);
+            self
+        }
+    }
+
+    impl GpuStateVecBackend for RoundedF32StateVec {
+        fn new_backend(num_qubits: u32) -> Result<Self, GpuError> {
+            let mut state = StateVecSoA::new(
+                usize::try_from(num_qubits).expect("u32 qubit count must fit usize"),
+            );
+            state.set_fusion(false);
+            Ok(Self(state))
+        }
+
+        fn state_f64(&mut self) -> Vec<[f64; 2]> {
+            self.0
+                .state()
+                .into_iter()
+                .map(|amplitude| [amplitude.re, amplitude.im])
+                .collect()
+        }
+
+        fn write_state_f64(&mut self, amplitudes: &[[f64; 2]]) {
+            let amplitudes: Vec<Complex64> = amplitudes
+                .iter()
+                .map(|[re, im]| Complex64::new(*re, *im))
+                .collect();
+            let rng = self.0.rng().clone();
+            self.0 = StateVecSoA::from_state(&amplitudes, rng);
+            self.0.set_fusion(false);
+        }
+
+        fn sync_backend(&mut self) {}
+    }
+
     // Primary tests run on the f32 backend (GpuDensityMatrix32), because the
     // f64 backend has pre-existing shader bugs in RZZ/RXX/RYY we haven't
     // fixed yet. Tolerance ~1e-3 reflects f32 precision for f64 comparisons.
     const TOL: f64 = 1e-3;
     const CONJUGATION_TOLERANCE: f64 = 1e-12;
+    const UPPER_TAIL_SEED: u64 = 6_327_882;
+
+    fn check_rounded_deterministic_measurement<SV: GpuStateVecBackend>() -> Result<(), GpuError> {
+        let q0 = QubitId(0);
+        let mut density = GpuDensityMatrix::<SV>::with_seed(1, UPPER_TAIL_SEED)?;
+        density.x(&[q0]).h(&[q0]).h(&[q0]);
+
+        let state = density.state_vector.state_f64();
+        let (zero_weight, one_weight) = state.iter().enumerate().fold(
+            (0.0, 0.0),
+            |(zero_weight, one_weight), (idx, [re, im])| {
+                let weight = re * re + im * im;
+                if (idx >> 1) & 1 == 0 {
+                    (zero_weight + weight, one_weight)
+                } else {
+                    (zero_weight, one_weight + weight)
+                }
+            },
+        );
+        assert!(
+            (1e-10..=1.0 - 1e-10).contains(&one_weight),
+            "the rounded deterministic branch weight must expose the old absolute-threshold bug: \
+             {one_weight:.17e}"
+        );
+        assert!(zero_weight <= 1e-15);
+
+        let initial_rng = PecosRng::seed_from_u64(UPPER_TAIL_SEED);
+        let mut preview_rng = initial_rng.clone();
+        let upper_tail_draw = preview_rng.random_range(0.0..1.0);
+        assert!(
+            upper_tail_draw > one_weight,
+            "the forced draw {upper_tail_draw:.17e} must exceed the raw one-branch weight \
+             {one_weight:.17e}"
+        );
+        density.set_rng(initial_rng.clone());
+
+        let result = density.mz(&[q0]);
+        assert!(result[0].outcome);
+        assert!(result[0].is_deterministic);
+        assert_eq!(
+            density.rng(),
+            &initial_rng,
+            "deterministic measurement drew RNG"
+        );
+        assert!((density.probability(1) - 1.0).abs() < 1e-12);
+        assert!(density.probability(0) < 1e-15);
+        Ok(())
+    }
+
+    #[test]
+    fn rounded_f32_deterministic_measurement_ignores_upper_tail_draw() {
+        check_rounded_deterministic_measurement::<RoundedF32StateVec>().unwrap();
+    }
+
+    #[test]
+    fn gpu_f32_deterministic_measurement_ignores_upper_tail_draw() {
+        let Ok(()) = check_rounded_deterministic_measurement::<GpuStateVec32>() else {
+            return;
+        };
+    }
 
     fn assert_density_diagonal(rho: &[Vec<Complex64>], expected_diagonal: &[f64], tolerance: f64) {
         assert_eq!(rho.len(), expected_diagonal.len());

@@ -1181,22 +1181,33 @@ where
             let state = self.state_vector.state();
             let qubit_mask = 1 << qubit;
 
-            // P(qubit = 1) is the norm on physical rows whose measured bit is set.
-            let prob_one: f64 = state
-                .iter()
-                .enumerate()
-                .filter(|(idx, _)| ((idx >> n) & qubit_mask) != 0)
-                .map(|(_, amplitude)| amplitude.norm_sqr())
-                .sum();
+            // Normalize the branch weights before applying probability-scale thresholds or
+            // sampling. The purification norm can drift slightly without changing the state.
+            let (zero_weight, one_weight) = state.iter().enumerate().fold(
+                (0.0, 0.0),
+                |(zero_weight, one_weight), (idx, amplitude)| {
+                    let weight = amplitude.norm_sqr();
+                    if ((idx >> n) & qubit_mask) == 0 {
+                        (zero_weight + weight, one_weight)
+                    } else {
+                        (zero_weight, one_weight + weight)
+                    }
+                },
+            );
+            let total_weight = zero_weight + one_weight;
+            let prob_one = one_weight / total_weight;
 
             // Determine if measurement is deterministic
             let is_deterministic = !(1e-10..=1.0 - 1e-10).contains(&prob_one);
 
             // Determine outcome
+            // Keep RNG advancement transactional with the projected-state write. If the
+            // invariant below fails, a caught panic must not perturb seeded replay.
+            let mut next_rng = self.state_vector.rng().clone();
             let outcome = if is_deterministic {
                 prob_one > 0.5
             } else {
-                self.state_vector.rng_mut().random_range(0.0..1.0) < prob_one
+                next_rng.random_range(0.0..1.0) < prob_one
             };
 
             // Apply the measurement projection to the physical/high register. The low index is a
@@ -1218,7 +1229,11 @@ where
 
             assert!(
                 norm_sq > 1e-15,
-                "projected outcome has zero weight; sampler and projector disagree"
+                "density-matrix measurement projected to zero norm; sampler and projector \
+                 disagree: qubit={qubit}, outcome={}, projected_weight={norm_sq:.17e}, \
+                 zero_weight={zero_weight:.17e}, one_weight={one_weight:.17e}, \
+                 total_norm={total_weight:.17e}",
+                u8::from(outcome)
             );
             let norm = norm_sq.sqrt();
             for amplitude in &mut new_state {
@@ -1226,7 +1241,7 @@ where
             }
 
             // Update the state vector
-            let new_sv = StateVec::from_state(&new_state, self.state_vector.rng().clone());
+            let new_sv = StateVec::from_state(&new_state, next_rng);
             *self.state_vector_mut() = new_sv;
 
             results.push(MeasurementResult {

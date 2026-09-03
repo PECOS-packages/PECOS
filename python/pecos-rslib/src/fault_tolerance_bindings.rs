@@ -1631,13 +1631,16 @@ impl PyDemSliceRoundSchedule {
     /// only standard-output and tracked-Pauli declarations; its detector and
     /// contribution contents are ignored. ``coordinate_offset`` translates
     /// every available template-local detector coordinate at instantiation.
+    /// ``detector_coordinate_offsets`` adds a further translation selected by
+    /// local detector-stream ID, allowing independently placed code blocks.
     #[staticmethod]
-    #[pyo3(signature = (output_model, templates, coordinate_offset=None))]
+    #[pyo3(signature = (output_model, templates, coordinate_offset=None, detector_coordinate_offsets=None))]
     fn from_templates(
         py: Python<'_>,
         output_model: &PyDetectorErrorModel,
         templates: Vec<(Py<PyDemSliceTemplate>, i64)>,
         coordinate_offset: Option<(f64, f64)>,
+        detector_coordinate_offsets: Option<BTreeMap<u32, (f64, f64)>>,
     ) -> PyResult<Self> {
         if let Some((x, y)) = coordinate_offset
             && (!x.is_finite() || !y.is_finite())
@@ -1646,16 +1649,44 @@ impl PyDemSliceRoundSchedule {
                 "coordinate_offset values must be finite",
             ));
         }
+        if let Some(offsets) = &detector_coordinate_offsets {
+            for (&detector, &(x, y)) in offsets {
+                if !x.is_finite() || !y.is_finite() {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "detector_coordinate_offsets[{detector}] values must be finite"
+                    )));
+                }
+                let known = templates.iter().any(|(template, _)| {
+                    template
+                        .borrow(py)
+                        .inner
+                        .detectors()
+                        .iter()
+                        .any(|candidate| candidate.id == detector)
+                });
+                if !known {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "detector_coordinate_offsets contains unknown detector stream {detector}"
+                    )));
+                }
+            }
+        }
         let instances = templates
             .into_iter()
             .map(|(template, round)| -> PyResult<_> {
                 let template = template.borrow(py);
                 let mut instance =
                     RustDemSliceInstance::identity(Arc::clone(&template.inner), round);
-                if let Some((offset_x, offset_y)) = coordinate_offset {
+                if coordinate_offset.is_some() || detector_coordinate_offsets.is_some() {
+                    let (global_x, global_y) = coordinate_offset.unwrap_or((0.0, 0.0));
                     for detector in template.inner.detectors() {
                         if let Some([x, y]) = detector.coords {
-                            let translated = [x + offset_x, y + offset_y];
+                            let (local_x, local_y) = detector_coordinate_offsets
+                                .as_ref()
+                                .and_then(|offsets| offsets.get(&detector.id))
+                                .copied()
+                                .unwrap_or((0.0, 0.0));
+                            let translated = [x + global_x + local_x, y + global_y + local_y];
                             if !translated.into_iter().all(f64::is_finite) {
                                 return Err(pyo3::exceptions::PyValueError::new_err(
                                     "translated detector coordinates must be finite",

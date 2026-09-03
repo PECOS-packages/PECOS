@@ -2501,6 +2501,7 @@ class qec:
             output_model: qec.DetectorErrorModel,
             templates: Sequence[tuple[qec.DemSliceTemplate, int]],
             coordinate_offset: tuple[float, float] | None = ...,
+            detector_coordinate_offsets: Mapping[int, tuple[float, float]] | None = ...,
         ) -> qec.DemSliceRoundSchedule: ...
         @property
         def num_instances(self) -> int: ...

@@ -96,15 +96,15 @@ def _cached_surface_memory_dem_templates(
 
 
 @dataclass(frozen=True)
-class _CachedSurfaceHDemTemplates:
-    """Noise-weighted bounded templates for one transversal-H family."""
+class _CachedSurfaceBoundaryDemTemplates:
+    """Noise-weighted templates around one bounded logical-gate boundary."""
 
     output_model: object
     initialization: object
-    pre_h_bulk: object
-    pre_h_boundary: object
-    h_boundary: object
-    post_h_bulk: object
+    pre_gate_bulk: object
+    pre_gate_boundary: object
+    gate_boundary: object
+    post_gate_bulk: object
     pre_terminal: object
     terminal: object
 
@@ -121,7 +121,7 @@ def _cached_surface_h_dem_templates(
     p2: float,
     p_meas: float,
     p_prep: float,
-) -> _CachedSurfaceHDemTemplates:
+) -> _CachedSurfaceBoundaryDemTemplates:
     """Compile a bounded memory-H-memory template on a cache miss."""
     from pecos.qec.surface.patch import PatchOrientation, SurfacePatch
 
@@ -143,16 +143,133 @@ def _cached_surface_h_dem_templates(
         p_prep=p_prep,
     )
     schedule = model.round_schedule(influence_map, dag_circuit)
-    return _CachedSurfaceHDemTemplates(
+    return _CachedSurfaceBoundaryDemTemplates(
         output_model=model,
         initialization=schedule.template(0),
-        pre_h_bulk=schedule.template(1),
-        pre_h_boundary=schedule.template(2),
-        h_boundary=schedule.template(3),
-        post_h_bulk=schedule.template(4),
+        pre_gate_bulk=schedule.template(1),
+        pre_gate_boundary=schedule.template(2),
+        gate_boundary=schedule.template(3),
+        post_gate_bulk=schedule.template(4),
         pre_terminal=schedule.template(5),
         terminal=schedule.template(6),
     )
+
+
+@dataclass(frozen=True)
+class _CachedSurfaceCxDemTemplates:
+    """Bounded transversal-CX templates and their canonical stream layout."""
+
+    templates: _CachedSurfaceBoundaryDemTemplates
+    control_stream_count: int
+    target_stream_count: int
+    target_coordinate_origin: tuple[float, float]
+
+
+@cache
+def _cached_surface_cx_dem_templates(
+    control_dx: int,
+    control_dz: int,
+    control_orientation_name: str,
+    control_rotated: bool,
+    target_dx: int,
+    target_dz: int,
+    target_orientation_name: str,
+    target_rotated: bool,
+    initial_control_basis: str,
+    initial_target_basis: str,
+    final_control_basis: str,
+    final_target_basis: str,
+    p1: float,
+    p2: float,
+    p_meas: float,
+    p_prep: float,
+) -> _CachedSurfaceCxDemTemplates:
+    """Compile a bounded two-patch memory-CX-memory template."""
+    from pecos.qec.surface.patch import PatchOrientation, SurfacePatch
+
+    control = SurfacePatch.create(
+        dx=control_dx,
+        dz=control_dz,
+        orientation=PatchOrientation[control_orientation_name],
+        rotated=control_rotated,
+    )
+    target = SurfacePatch.create(
+        dx=target_dx,
+        dz=target_dz,
+        orientation=PatchOrientation[target_orientation_name],
+        rotated=target_rotated,
+    )
+    target_origin = (float(max(control_dz, target_dz) * 2 + 2), 0.0)
+    builder = LogicalCircuitBuilder()
+    builder.add_patch(control, "control", coord_offset=(0.0, 0.0))
+    builder.add_patch(
+        target,
+        "target",
+        qubit_offset=control.geometry.num_qubits,
+        coord_offset=target_origin,
+    )
+    builder.add_memory(
+        ["control", "target"],
+        rounds=3,
+        basis={"control": initial_control_basis, "target": initial_target_basis},
+    )
+    builder.add_transversal_cx("control", "target")
+    builder.add_memory(
+        ["control", "target"],
+        rounds=3,
+        basis={"control": final_control_basis, "target": final_target_basis},
+    )
+    model, influence_map, dag_circuit = builder._build_structured_dem(  # noqa: SLF001
+        p1=p1,
+        p2=p2,
+        p_meas=p_meas,
+        p_prep=p_prep,
+    )
+    schedule = model.round_schedule(influence_map, dag_circuit)
+    templates = _CachedSurfaceBoundaryDemTemplates(
+        output_model=model,
+        initialization=schedule.template(0),
+        pre_gate_bulk=schedule.template(1),
+        pre_gate_boundary=schedule.template(2),
+        gate_boundary=schedule.template(3),
+        post_gate_bulk=schedule.template(4),
+        pre_terminal=schedule.template(5),
+        terminal=schedule.template(6),
+    )
+    control_stream_count = len(control.geometry.x_stabilizers) + len(control.geometry.z_stabilizers)
+    target_stream_count = len(target.geometry.x_stabilizers) + len(target.geometry.z_stabilizers)
+    return _CachedSurfaceCxDemTemplates(
+        templates=templates,
+        control_stream_count=control_stream_count,
+        target_stream_count=target_stream_count,
+        target_coordinate_origin=target_origin,
+    )
+
+
+def _boundary_template_instances(
+    templates: _CachedSurfaceBoundaryDemTemplates,
+    before_rounds: int,
+    after_rounds: int,
+) -> tuple[list[tuple[object, int]], int]:
+    """Place one cached logical boundary between two memory segments."""
+    boundary_round = before_rounds
+    terminal_round = before_rounds + after_rounds
+    instances = [(templates.initialization, 0)]
+    instances.extend((templates.pre_gate_bulk, round_) for round_ in range(1, boundary_round - 1))
+    instances.extend(
+        [
+            (templates.pre_gate_boundary, boundary_round - 1),
+            (templates.gate_boundary, boundary_round),
+        ],
+    )
+    instances.extend((templates.post_gate_bulk, round_) for round_ in range(boundary_round + 1, terminal_round - 1))
+    instances.extend(
+        [
+            (templates.pre_terminal, terminal_round - 1),
+            (templates.terminal, terminal_round),
+        ],
+    )
+    return instances, terminal_round
 
 
 class LogicalGateType(Enum):
@@ -710,16 +827,23 @@ class LogicalCircuitBuilder:
         p_prep: float,
     ) -> tuple[object, object] | None:
         """Assemble an eligible surface DEM from bounded template caches."""
-        if len(self._patches) != 1:
-            return None
         if len(self._operations) == 3:
-            return self._build_structured_h_dem_from_cached_templates(
-                p1=p1,
-                p2=p2,
-                p_meas=p_meas,
-                p_prep=p_prep,
-            )
-        if len(self._operations) != 1:
+            if len(self._patches) == 1:
+                return self._build_structured_h_dem_from_cached_templates(
+                    p1=p1,
+                    p2=p2,
+                    p_meas=p_meas,
+                    p_prep=p_prep,
+                )
+            if len(self._patches) == 2:
+                return self._build_structured_cx_dem_from_cached_templates(
+                    p1=p1,
+                    p2=p2,
+                    p_meas=p_meas,
+                    p_prep=p_prep,
+                )
+            return None
+        if len(self._patches) != 1 or len(self._operations) != 1:
             return None
 
         operation = self._operations[0]
@@ -761,6 +885,99 @@ class LogicalCircuitBuilder:
         model = schedule.stitch(
             start_round=0,
             commit_rounds=operation.rounds + 1,
+            buffer_rounds=0,
+            forward_boundary="hard",
+        )
+        return model, schedule
+
+    def _build_structured_cx_dem_from_cached_templates(
+        self,
+        *,
+        p1: float,
+        p2: float,
+        p_meas: float,
+        p_prep: float,
+    ) -> tuple[object, object] | None:
+        """Assemble an eligible two-patch memory-CX-memory DEM."""
+        before, gate, after = self._operations
+        if (
+            before.gate_type != LogicalGateType.MEMORY
+            or gate.gate_type != LogicalGateType.TRANSVERSAL_CX
+            or after.gate_type != LogicalGateType.MEMORY
+            or before.rounds < 2
+            or after.rounds < 2
+            or len(before.patches) != 2
+            or len(gate.patches) != 2
+            or len(after.patches) != 2
+        ):
+            return None
+
+        control_label, target_label = gate.patches
+        patch_order = list(self._patches)
+        if before.patches != patch_order or gate.patches != patch_order or after.patches != patch_order:
+            return None
+
+        control_state = self._patches[control_label]
+        target_state = self._patches[target_label]
+        control_geometry = control_state.patch.geometry
+        target_geometry = target_state.patch.geometry
+        if (
+            control_geometry.dx != target_geometry.dx
+            or control_geometry.dz != target_geometry.dz
+            or control_geometry.rotated != target_geometry.rotated
+        ):
+            return None
+        initial_control_basis = before.per_patch_basis.get(control_label, before.basis).upper()
+        initial_target_basis = before.per_patch_basis.get(target_label, before.basis).upper()
+        final_control_basis = after.per_patch_basis.get(control_label, after.basis).upper()
+        final_target_basis = after.per_patch_basis.get(target_label, after.basis).upper()
+        cached = _cached_surface_cx_dem_templates(
+            control_geometry.dx,
+            control_geometry.dz,
+            control_geometry.orientation.name,
+            control_geometry.rotated,
+            target_geometry.dx,
+            target_geometry.dz,
+            target_geometry.orientation.name,
+            target_geometry.rotated,
+            initial_control_basis,
+            initial_target_basis,
+            final_control_basis,
+            final_target_basis,
+            p1,
+            p2,
+            p_meas,
+            p_prep,
+        )
+        templates = cached.templates
+
+        from pecos_rslib.qec import DemSliceRoundSchedule
+
+        instances, terminal_round = _boundary_template_instances(templates, before.rounds, after.rounds)
+
+        control_x, control_y = control_state.coord_offset
+        target_x, target_y = target_state.coord_offset
+        target_origin_x, target_origin_y = cached.target_coordinate_origin
+        detector_coordinate_offsets = {
+            stream: (float(control_x), float(control_y)) for stream in range(cached.control_stream_count)
+        }
+        detector_coordinate_offsets.update(
+            {
+                stream: (float(target_x) - target_origin_x, float(target_y) - target_origin_y)
+                for stream in range(
+                    cached.control_stream_count,
+                    cached.control_stream_count + cached.target_stream_count,
+                )
+            },
+        )
+        schedule = DemSliceRoundSchedule.from_templates(
+            templates.output_model,
+            instances,
+            detector_coordinate_offsets=detector_coordinate_offsets,
+        )
+        model = schedule.stitch(
+            start_round=0,
+            commit_rounds=terminal_round + 1,
             buffer_rounds=0,
             forward_boundary="hard",
         )
@@ -811,23 +1028,7 @@ class LogicalCircuitBuilder:
 
         from pecos_rslib.qec import DemSliceRoundSchedule
 
-        boundary_round = before.rounds
-        terminal_round = before.rounds + after.rounds
-        instances = [(templates.initialization, 0)]
-        instances.extend((templates.pre_h_bulk, round_) for round_ in range(1, boundary_round - 1))
-        instances.extend(
-            [
-                (templates.pre_h_boundary, boundary_round - 1),
-                (templates.h_boundary, boundary_round),
-            ],
-        )
-        instances.extend((templates.post_h_bulk, round_) for round_ in range(boundary_round + 1, terminal_round - 1))
-        instances.extend(
-            [
-                (templates.pre_terminal, terminal_round - 1),
-                (templates.terminal, terminal_round),
-            ],
-        )
+        instances, terminal_round = _boundary_template_instances(templates, before.rounds, after.rounds)
         schedule = DemSliceRoundSchedule.from_templates(
             templates.output_model,
             instances,
@@ -852,9 +1053,9 @@ class LogicalCircuitBuilder:
         """Generate a DEM using the PECOS-native fault analysis pipeline.
 
         TickCircuit -> DagCircuit -> DagFaultAnalyzer -> DemBuilder.
-        No Stim dependency. Eligible single-patch memories and transversal-H
-        algorithms reuse bounded physical-template compiles across requested
-        memory lengths.
+        No Stim dependency. Eligible single-patch memories, transversal-H, and
+        two-patch transversal-CX algorithms reuse bounded physical-template
+        compiles across requested memory lengths.
 
         Args:
             p1: Single-qubit depolarizing error rate.
@@ -929,9 +1130,10 @@ class LogicalCircuitBuilder:
         derives the minimum safe look-ahead from the source-tracked model.
         Passing ``buffer`` requests that exact amount of look-behind and
         look-ahead; a value below the model's required look-ahead is rejected.
-        Eligible single-patch memories and memory-H-memory algorithms are
-        assembled directly from bounded physical-template caches; other
-        circuits retain full-model fallback.
+        Eligible single-patch memories, memory-H-memory algorithms, and
+        two-patch memory-CX-memory algorithms are assembled directly from
+        bounded physical-template caches; other circuits retain full-model
+        fallback.
 
         Returns:
             Dict with keys: segments, boundary_gates, num_observables, full_dem.
@@ -940,10 +1142,11 @@ class LogicalCircuitBuilder:
             msg = "buffer must be non-negative or None"
             raise ValueError(msg)
 
-        # Eligible memory and memory-H-memory algorithms are assembled entirely
-        # from bounded physical-template caches. Other algorithms retain the
-        # full structured path as an equivalence oracle and fallback until their
-        # logical-operation families are available.
+        # Eligible memory, memory-H-memory, and two-patch memory-CX-memory
+        # algorithms are assembled entirely from bounded physical-template
+        # caches. Other algorithms retain the full structured path as an
+        # equivalence oracle and fallback until their logical-operation families
+        # are available.
         cached = self._build_structured_dem_from_cached_templates(
             p1=p1,
             p2=p2,

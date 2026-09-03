@@ -94,8 +94,9 @@ At the Rust layer, callers compose cached `DemSliceInstance` values with
 `DemSliceRoundSchedule::from_instances`. Python exposes the same narrow path as
 opaque `DemSliceTemplate` values returned by `schedule.template(...)` and
 `DemSliceRoundSchedule.from_templates(...)`. The Python constructor currently
-uses identity detector/output mappings plus a checked spatial translation,
-appropriate when reusing one geometry; general stream routing and logical
+uses identity detector/output mappings plus checked global or per-stream
+spatial translations. Per-stream translation lets independently placed code
+blocks reuse one physical template; general stream-identity routing and logical
 relabeling remain in the Rust instance API.
 
 The production `LogicalCircuitBuilder` uses a bounded three-round compile for
@@ -122,6 +123,24 @@ measurement bases but still excludes both requested segment lengths, patch
 label, qubit offset, and spatial placement. Exact tests cover different depths,
 orientations, bases, labels, offsets, and noise keys. Shallow boundary cases,
 multiple H gates, and other Clifford operations retain the full-model fallback.
+
+A third bounded provider covers a transversal CX between two matching patch
+shapes. Its seven families use the same temporal positions as H but contain two
+patches and the correlated boundary sources introduced by the physical CX.
+Canonical stream IDs are partitioned by patch, then independently translated
+to the control and target placements at instantiation. The cache key includes
+both geometries, orientations, four boundary bases, and noise parameters, while
+excluding both memory depths, labels, qubit offsets, and patch coordinates.
+Patches whose shapes differ, reversed/noncanonical operation ordering, or a
+memory side shorter than two rounds retain the full structured fallback.
+
+The current standalone SZ/SZdg emitter is deliberately not cached. Its full DEM
+contains mechanisms whose detector span grows with the entire preceding memory
+segment (observed spans 3, 5, and 9 for corresponding pre-gate depths), violating
+the bounded-correlation requirement for JIT templates. A sound provider requires
+the documented mid-cycle fold-transversal S-SE construction, rather than
+caching the current between-round physical phase layer with a depth-dependent
+key.
 
 Stable detector-stream IDs are seeded from the earliest round with the maximum
 number of declarations. This uses stationary SEC record order instead of a
@@ -205,9 +224,10 @@ round layout, ownership, bounded template extraction, mapping, and stitching
 API. Initialization, stationary bulk SEC, pre-terminal SEC, and terminal
 surface-memory families have exact composition coverage and a production
 single-patch memory provider. A single transversal-H boundary and its adjacent
-memory families also have exact composition coverage and a production provider.
-It does not yet compile the remaining logical-Clifford or multi-patch operation
-families, compose repeated logical gates, mutate a decoder's prior vector,
-enable the anti-snake logical-subgraph window decoder, or support adaptive
-syndrome-extraction templates. Full-circuit DEM construction remains the
-equivalence oracle and the conservative fallback outside supported families.
+memory families also have exact composition coverage and a production provider,
+as does a two-patch transversal CX between matching patch shapes. It does not
+yet implement the bounded mid-cycle SZ/SZdg circuit, general multi-patch or
+lattice-surgery families, repeated logical gates, decoder prior mutation, the
+anti-snake logical-subgraph window decoder, or adaptive syndrome-extraction
+templates. Full-circuit DEM construction remains the equivalence oracle and the
+conservative fallback outside supported families.

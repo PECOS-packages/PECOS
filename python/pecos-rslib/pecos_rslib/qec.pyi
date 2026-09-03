@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 from pecos_rslib import DagCircuit, ParityCheckMatrix, PauliString, StabilizerCodeSpec, TickCircuit
 
@@ -122,6 +122,7 @@ class DemSliceRoundSchedule:
         output_model: DetectorErrorModel,
         templates: Sequence[tuple[DemSliceTemplate, int]],
         coordinate_offset: tuple[float, float] | None = ...,
+        detector_coordinate_offsets: Mapping[int, tuple[float, float]] | None = ...,
     ) -> DemSliceRoundSchedule: ...
     @property
     def num_instances(self) -> int: ...

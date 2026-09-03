@@ -958,12 +958,10 @@ impl<SV: GpuStateVecBackend> ArbitraryRotationGateable for GpuDensityMatrix<SV> 
         self
     }
 
-    // NOTE: we deliberately do NOT override rxx/ryy here. The default trait
-    // impls decompose them into H-RZZ-H and SX-RZZ-SXdg sequences, which route
-    // through our overridden h/sx/rzz (correct sys/env handling per gate).
-    // The raw GpuStateVec RXX/RYY shaders have a pre-existing correctness bug
-    // (only half the basis pairs updated) -- keeping this decomposition until
-    // that's fixed.
+    // NOTE: we deliberately do not override rxx/ryy here. Their default
+    // decompositions route each component through this density simulator's
+    // system/environment-aware h/sx/rzz overrides. Calling the raw state-vector
+    // rotations here would omit the conjugate action on the environment copy.
 
     fn rzz(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         // RZZ(-theta) = (X tensor I) RZZ(theta) (X tensor I). X on just one

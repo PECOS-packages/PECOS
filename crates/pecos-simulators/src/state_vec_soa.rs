@@ -3259,7 +3259,7 @@ where
 
     #[inline]
     fn sxx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
-        const K: f64 = std::f64::consts::FRAC_1_SQRT_2;
+        const HALF: f64 = 0.5;
 
         for &(qa, qb) in pairs {
             let q1 = qa.index();
@@ -3275,12 +3275,11 @@ where
             let mask1 = 1 << q1;
             let mask2 = 1 << q2;
 
-            // SXX = exp(-i * π/4 * X⊗X) = (1/√2)(I - i*X⊗X)
-            // Matrix: (1/√2) * [[1, 0, 0, -i], [0, 1, -i, 0], [0, -i, 1, 0], [-i, 0, 0, 1]]
+            // SXX = ((1+i)I + (1-i)X⊗X) / 2.
 
             if step_lo >= 4 {
                 // SIMD version
-                let k_v = f64x4::splat(K);
+                let half = f64x4::splat(HALF);
                 for i_hi in (0..n).step_by(step_hi * 2) {
                     for i_lo in (i_hi..i_hi + step_hi).step_by(step_lo * 2) {
                         let mut offset = 0;
@@ -3299,21 +3298,22 @@ where
                             let re_11 = f64x4::from(&self.real[idx_11..idx_11 + 4]);
                             let im_11 = f64x4::from(&self.imag[idx_11..idx_11 + 4]);
 
-                            // new_00 = K * (|00⟩ - i*|11⟩)
-                            let new_re_00: [f64; 4] = (k_v * (re_00 + im_11)).into();
-                            let new_im_00: [f64; 4] = (k_v * (im_00 - re_11)).into();
-
-                            // new_01 = K * (|01⟩ - i*|10⟩)
-                            let new_re_01: [f64; 4] = (k_v * (re_01 + im_10)).into();
-                            let new_im_01: [f64; 4] = (k_v * (im_01 - re_10)).into();
-
-                            // new_10 = K * (|10⟩ - i*|01⟩)
-                            let new_re_10: [f64; 4] = (k_v * (re_10 + im_01)).into();
-                            let new_im_10: [f64; 4] = (k_v * (im_10 - re_01)).into();
-
-                            // new_11 = K * (|11⟩ - i*|00⟩)
-                            let new_re_11: [f64; 4] = (k_v * (re_11 + im_00)).into();
-                            let new_im_11: [f64; 4] = (k_v * (im_11 - re_00)).into();
+                            let new_re_00: [f64; 4] =
+                                (half * (re_00 + re_11 - im_00 + im_11)).into();
+                            let new_im_00: [f64; 4] =
+                                (half * (im_00 + im_11 + re_00 - re_11)).into();
+                            let new_re_01: [f64; 4] =
+                                (half * (re_01 + re_10 - im_01 + im_10)).into();
+                            let new_im_01: [f64; 4] =
+                                (half * (im_01 + im_10 + re_01 - re_10)).into();
+                            let new_re_10: [f64; 4] =
+                                (half * (re_10 + re_01 - im_10 + im_01)).into();
+                            let new_im_10: [f64; 4] =
+                                (half * (im_10 + im_01 + re_10 - re_01)).into();
+                            let new_re_11: [f64; 4] =
+                                (half * (re_11 + re_00 - im_11 + im_00)).into();
+                            let new_im_11: [f64; 4] =
+                                (half * (im_11 + im_00 + re_11 - re_00)).into();
 
                             self.real[idx_00..idx_00 + 4].copy_from_slice(&new_re_00);
                             self.imag[idx_00..idx_00 + 4].copy_from_slice(&new_im_00);
@@ -3350,21 +3350,14 @@ where
                             let (re_10, im_10) = (self.real[idx_10], self.imag[idx_10]);
                             let (re_11, im_11) = (self.real[idx_11], self.imag[idx_11]);
 
-                            // new_00 = K * (|00⟩ - i*|11⟩)
-                            self.real[idx_00] = K * (re_00 + im_11);
-                            self.imag[idx_00] = K * (im_00 - re_11);
-
-                            // new_01 = K * (|01⟩ - i*|10⟩)
-                            self.real[idx_01] = K * (re_01 + im_10);
-                            self.imag[idx_01] = K * (im_01 - re_10);
-
-                            // new_10 = K * (|10⟩ - i*|01⟩)
-                            self.real[idx_10] = K * (re_10 + im_01);
-                            self.imag[idx_10] = K * (im_10 - re_01);
-
-                            // new_11 = K * (|11⟩ - i*|00⟩)
-                            self.real[idx_11] = K * (re_11 + im_00);
-                            self.imag[idx_11] = K * (im_11 - re_00);
+                            self.real[idx_00] = HALF * (re_00 + re_11 - im_00 + im_11);
+                            self.imag[idx_00] = HALF * (im_00 + im_11 + re_00 - re_11);
+                            self.real[idx_01] = HALF * (re_01 + re_10 - im_01 + im_10);
+                            self.imag[idx_01] = HALF * (im_01 + im_10 + re_01 - re_10);
+                            self.real[idx_10] = HALF * (re_10 + re_01 - im_10 + im_01);
+                            self.imag[idx_10] = HALF * (im_10 + im_01 + re_10 - re_01);
+                            self.real[idx_11] = HALF * (re_11 + re_00 - im_11 + im_00);
+                            self.imag[idx_11] = HALF * (im_11 + im_00 + re_11 - re_00);
                         }
                     }
                 }
@@ -3375,7 +3368,7 @@ where
 
     #[inline]
     fn sxxdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
-        const K: f64 = std::f64::consts::FRAC_1_SQRT_2;
+        const HALF: f64 = 0.5;
 
         for &(qa, qb) in pairs {
             let q1 = qa.index();
@@ -3391,12 +3384,11 @@ where
             let mask1 = 1 << q1;
             let mask2 = 1 << q2;
 
-            // SXXDG = exp(+i * π/4 * X⊗X) = (1/√2)(I + i*X⊗X)
-            // Matrix: (1/√2) * [[1, 0, 0, i], [0, 1, i, 0], [0, i, 1, 0], [i, 0, 0, 1]]
+            // SXXdg = ((1-i)I + (1+i)X⊗X) / 2.
 
             if step_lo >= 4 {
                 // SIMD version
-                let k_v = f64x4::splat(K);
+                let half = f64x4::splat(HALF);
                 for i_hi in (0..n).step_by(step_hi * 2) {
                     for i_lo in (i_hi..i_hi + step_hi).step_by(step_lo * 2) {
                         let mut offset = 0;
@@ -3415,21 +3407,22 @@ where
                             let re_11 = f64x4::from(&self.real[idx_11..idx_11 + 4]);
                             let im_11 = f64x4::from(&self.imag[idx_11..idx_11 + 4]);
 
-                            // new_00 = K * (|00⟩ + i*|11⟩)
-                            let new_re_00: [f64; 4] = (k_v * (re_00 - im_11)).into();
-                            let new_im_00: [f64; 4] = (k_v * (im_00 + re_11)).into();
-
-                            // new_01 = K * (|01⟩ + i*|10⟩)
-                            let new_re_01: [f64; 4] = (k_v * (re_01 - im_10)).into();
-                            let new_im_01: [f64; 4] = (k_v * (im_01 + re_10)).into();
-
-                            // new_10 = K * (|10⟩ + i*|01⟩)
-                            let new_re_10: [f64; 4] = (k_v * (re_10 - im_01)).into();
-                            let new_im_10: [f64; 4] = (k_v * (im_10 + re_01)).into();
-
-                            // new_11 = K * (|11⟩ + i*|00⟩)
-                            let new_re_11: [f64; 4] = (k_v * (re_11 - im_00)).into();
-                            let new_im_11: [f64; 4] = (k_v * (im_11 + re_00)).into();
+                            let new_re_00: [f64; 4] =
+                                (half * (re_00 + re_11 + im_00 - im_11)).into();
+                            let new_im_00: [f64; 4] =
+                                (half * (im_00 + im_11 - re_00 + re_11)).into();
+                            let new_re_01: [f64; 4] =
+                                (half * (re_01 + re_10 + im_01 - im_10)).into();
+                            let new_im_01: [f64; 4] =
+                                (half * (im_01 + im_10 - re_01 + re_10)).into();
+                            let new_re_10: [f64; 4] =
+                                (half * (re_10 + re_01 + im_10 - im_01)).into();
+                            let new_im_10: [f64; 4] =
+                                (half * (im_10 + im_01 - re_10 + re_01)).into();
+                            let new_re_11: [f64; 4] =
+                                (half * (re_11 + re_00 + im_11 - im_00)).into();
+                            let new_im_11: [f64; 4] =
+                                (half * (im_11 + im_00 - re_11 + re_00)).into();
 
                             self.real[idx_00..idx_00 + 4].copy_from_slice(&new_re_00);
                             self.imag[idx_00..idx_00 + 4].copy_from_slice(&new_im_00);
@@ -3465,21 +3458,14 @@ where
                             let (re_10, im_10) = (self.real[idx_10], self.imag[idx_10]);
                             let (re_11, im_11) = (self.real[idx_11], self.imag[idx_11]);
 
-                            // new_00 = K * (|00⟩ + i*|11⟩)
-                            self.real[idx_00] = K * (re_00 - im_11);
-                            self.imag[idx_00] = K * (im_00 + re_11);
-
-                            // new_01 = K * (|01⟩ + i*|10⟩)
-                            self.real[idx_01] = K * (re_01 - im_10);
-                            self.imag[idx_01] = K * (im_01 + re_10);
-
-                            // new_10 = K * (|10⟩ + i*|01⟩)
-                            self.real[idx_10] = K * (re_10 - im_01);
-                            self.imag[idx_10] = K * (im_10 + re_01);
-
-                            // new_11 = K * (|11⟩ + i*|00⟩)
-                            self.real[idx_11] = K * (re_11 - im_00);
-                            self.imag[idx_11] = K * (im_11 + re_00);
+                            self.real[idx_00] = HALF * (re_00 + re_11 + im_00 - im_11);
+                            self.imag[idx_00] = HALF * (im_00 + im_11 - re_00 + re_11);
+                            self.real[idx_01] = HALF * (re_01 + re_10 + im_01 - im_10);
+                            self.imag[idx_01] = HALF * (im_01 + im_10 - re_01 + re_10);
+                            self.real[idx_10] = HALF * (re_10 + re_01 + im_10 - im_01);
+                            self.imag[idx_10] = HALF * (im_10 + im_01 - re_10 + re_01);
+                            self.real[idx_11] = HALF * (re_11 + re_00 + im_11 - im_00);
+                            self.imag[idx_11] = HALF * (im_11 + im_00 - re_11 + re_00);
                         }
                     }
                 }
@@ -3490,7 +3476,7 @@ where
 
     #[inline]
     fn syy(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
-        const K: f64 = std::f64::consts::FRAC_1_SQRT_2;
+        const HALF: f64 = 0.5;
 
         for &(qa, qb) in pairs {
             let q1 = qa.index();
@@ -3506,13 +3492,11 @@ where
             let mask1 = 1 << q1;
             let mask2 = 1 << q2;
 
-            // SYY = exp(-i * π/4 * Y⊗Y) = (1/√2)(I - i*Y⊗Y)
-            // Y⊗Y swaps |00⟩↔-|11⟩ and |01⟩↔|10⟩
-            // Matrix: (1/√2) * [[1, 0, 0, i], [0, 1, -i, 0], [0, -i, 1, 0], [i, 0, 0, 1]]
+            // SYY = ((1+i)I + (1-i)Y⊗Y) / 2.
 
             if step_lo >= 4 {
                 // SIMD version
-                let k_v = f64x4::splat(K);
+                let half = f64x4::splat(HALF);
                 for i_hi in (0..n).step_by(step_hi * 2) {
                     for i_lo in (i_hi..i_hi + step_hi).step_by(step_lo * 2) {
                         let mut offset = 0;
@@ -3531,21 +3515,22 @@ where
                             let re_11 = f64x4::from(&self.real[idx_11..idx_11 + 4]);
                             let im_11 = f64x4::from(&self.imag[idx_11..idx_11 + 4]);
 
-                            // new_00 = K * (|00⟩ + i*|11⟩)
-                            let new_re_00: [f64; 4] = (k_v * (re_00 - im_11)).into();
-                            let new_im_00: [f64; 4] = (k_v * (im_00 + re_11)).into();
-
-                            // new_01 = K * (|01⟩ - i*|10⟩)
-                            let new_re_01: [f64; 4] = (k_v * (re_01 + im_10)).into();
-                            let new_im_01: [f64; 4] = (k_v * (im_01 - re_10)).into();
-
-                            // new_10 = K * (|10⟩ - i*|01⟩)
-                            let new_re_10: [f64; 4] = (k_v * (re_10 + im_01)).into();
-                            let new_im_10: [f64; 4] = (k_v * (im_10 - re_01)).into();
-
-                            // new_11 = K * (|11⟩ + i*|00⟩)
-                            let new_re_11: [f64; 4] = (k_v * (re_11 - im_00)).into();
-                            let new_im_11: [f64; 4] = (k_v * (im_11 + re_00)).into();
+                            let new_re_00: [f64; 4] =
+                                (half * (re_00 - re_11 - im_00 - im_11)).into();
+                            let new_im_00: [f64; 4] =
+                                (half * (im_00 - im_11 + re_00 + re_11)).into();
+                            let new_re_01: [f64; 4] =
+                                (half * (re_01 + re_10 - im_01 + im_10)).into();
+                            let new_im_01: [f64; 4] =
+                                (half * (im_01 + im_10 + re_01 - re_10)).into();
+                            let new_re_10: [f64; 4] =
+                                (half * (re_10 + re_01 - im_10 + im_01)).into();
+                            let new_im_10: [f64; 4] =
+                                (half * (im_10 + im_01 + re_10 - re_01)).into();
+                            let new_re_11: [f64; 4] =
+                                (half * (re_11 - re_00 - im_11 - im_00)).into();
+                            let new_im_11: [f64; 4] =
+                                (half * (im_11 - im_00 + re_11 + re_00)).into();
 
                             self.real[idx_00..idx_00 + 4].copy_from_slice(&new_re_00);
                             self.imag[idx_00..idx_00 + 4].copy_from_slice(&new_im_00);
@@ -3581,21 +3566,14 @@ where
                             let (re_10, im_10) = (self.real[idx_10], self.imag[idx_10]);
                             let (re_11, im_11) = (self.real[idx_11], self.imag[idx_11]);
 
-                            // new_00 = K * (|00⟩ + i*|11⟩)
-                            self.real[idx_00] = K * (re_00 - im_11);
-                            self.imag[idx_00] = K * (im_00 + re_11);
-
-                            // new_01 = K * (|01⟩ - i*|10⟩)
-                            self.real[idx_01] = K * (re_01 + im_10);
-                            self.imag[idx_01] = K * (im_01 - re_10);
-
-                            // new_10 = K * (|10⟩ - i*|01⟩)
-                            self.real[idx_10] = K * (re_10 + im_01);
-                            self.imag[idx_10] = K * (im_10 - re_01);
-
-                            // new_11 = K * (|11⟩ + i*|00⟩)
-                            self.real[idx_11] = K * (re_11 - im_00);
-                            self.imag[idx_11] = K * (im_11 + re_00);
+                            self.real[idx_00] = HALF * (re_00 - re_11 - im_00 - im_11);
+                            self.imag[idx_00] = HALF * (im_00 - im_11 + re_00 + re_11);
+                            self.real[idx_01] = HALF * (re_01 + re_10 - im_01 + im_10);
+                            self.imag[idx_01] = HALF * (im_01 + im_10 + re_01 - re_10);
+                            self.real[idx_10] = HALF * (re_10 + re_01 - im_10 + im_01);
+                            self.imag[idx_10] = HALF * (im_10 + im_01 + re_10 - re_01);
+                            self.real[idx_11] = HALF * (re_11 - re_00 - im_11 - im_00);
+                            self.imag[idx_11] = HALF * (im_11 - im_00 + re_11 + re_00);
                         }
                     }
                 }
@@ -3606,7 +3584,7 @@ where
 
     #[inline]
     fn syydg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
-        const K: f64 = std::f64::consts::FRAC_1_SQRT_2;
+        const HALF: f64 = 0.5;
 
         for &(qa, qb) in pairs {
             let q1 = qa.index();
@@ -3622,12 +3600,11 @@ where
             let mask1 = 1 << q1;
             let mask2 = 1 << q2;
 
-            // SYYDG = exp(+i * π/4 * Y⊗Y) = (1/√2)(I + i*Y⊗Y)
-            // Matrix: (1/√2) * [[1, 0, 0, -i], [0, 1, i, 0], [0, i, 1, 0], [-i, 0, 0, 1]]
+            // SYYdg = ((1-i)I + (1+i)Y⊗Y) / 2.
 
             if step_lo >= 4 {
                 // SIMD version
-                let k_v = f64x4::splat(K);
+                let half = f64x4::splat(HALF);
                 for i_hi in (0..n).step_by(step_hi * 2) {
                     for i_lo in (i_hi..i_hi + step_hi).step_by(step_lo * 2) {
                         let mut offset = 0;
@@ -3646,21 +3623,22 @@ where
                             let re_11 = f64x4::from(&self.real[idx_11..idx_11 + 4]);
                             let im_11 = f64x4::from(&self.imag[idx_11..idx_11 + 4]);
 
-                            // new_00 = K * (|00⟩ - i*|11⟩)
-                            let new_re_00: [f64; 4] = (k_v * (re_00 + im_11)).into();
-                            let new_im_00: [f64; 4] = (k_v * (im_00 - re_11)).into();
-
-                            // new_01 = K * (|01⟩ + i*|10⟩)
-                            let new_re_01: [f64; 4] = (k_v * (re_01 - im_10)).into();
-                            let new_im_01: [f64; 4] = (k_v * (im_01 + re_10)).into();
-
-                            // new_10 = K * (|10⟩ + i*|01⟩)
-                            let new_re_10: [f64; 4] = (k_v * (re_10 - im_01)).into();
-                            let new_im_10: [f64; 4] = (k_v * (im_10 + re_01)).into();
-
-                            // new_11 = K * (|11⟩ - i*|00⟩)
-                            let new_re_11: [f64; 4] = (k_v * (re_11 + im_00)).into();
-                            let new_im_11: [f64; 4] = (k_v * (im_11 - re_00)).into();
+                            let new_re_00: [f64; 4] =
+                                (half * (re_00 - re_11 + im_00 + im_11)).into();
+                            let new_im_00: [f64; 4] =
+                                (half * (im_00 - im_11 - re_00 - re_11)).into();
+                            let new_re_01: [f64; 4] =
+                                (half * (re_01 + re_10 + im_01 - im_10)).into();
+                            let new_im_01: [f64; 4] =
+                                (half * (im_01 + im_10 - re_01 + re_10)).into();
+                            let new_re_10: [f64; 4] =
+                                (half * (re_10 + re_01 + im_10 - im_01)).into();
+                            let new_im_10: [f64; 4] =
+                                (half * (im_10 + im_01 - re_10 + re_01)).into();
+                            let new_re_11: [f64; 4] =
+                                (half * (re_11 - re_00 + im_11 + im_00)).into();
+                            let new_im_11: [f64; 4] =
+                                (half * (im_11 - im_00 - re_11 - re_00)).into();
 
                             self.real[idx_00..idx_00 + 4].copy_from_slice(&new_re_00);
                             self.imag[idx_00..idx_00 + 4].copy_from_slice(&new_im_00);
@@ -3696,21 +3674,14 @@ where
                             let (re_10, im_10) = (self.real[idx_10], self.imag[idx_10]);
                             let (re_11, im_11) = (self.real[idx_11], self.imag[idx_11]);
 
-                            // new_00 = K * (|00⟩ - i*|11⟩)
-                            self.real[idx_00] = K * (re_00 + im_11);
-                            self.imag[idx_00] = K * (im_00 - re_11);
-
-                            // new_01 = K * (|01⟩ + i*|10⟩)
-                            self.real[idx_01] = K * (re_01 - im_10);
-                            self.imag[idx_01] = K * (im_01 + re_10);
-
-                            // new_10 = K * (|10⟩ + i*|01⟩)
-                            self.real[idx_10] = K * (re_10 - im_01);
-                            self.imag[idx_10] = K * (im_10 + re_01);
-
-                            // new_11 = K * (|11⟩ - i*|00⟩)
-                            self.real[idx_11] = K * (re_11 + im_00);
-                            self.imag[idx_11] = K * (im_11 - re_00);
+                            self.real[idx_00] = HALF * (re_00 - re_11 + im_00 + im_11);
+                            self.imag[idx_00] = HALF * (im_00 - im_11 - re_00 - re_11);
+                            self.real[idx_01] = HALF * (re_01 + re_10 + im_01 - im_10);
+                            self.imag[idx_01] = HALF * (im_01 + im_10 - re_01 + re_10);
+                            self.real[idx_10] = HALF * (re_10 + re_01 + im_10 - im_01);
+                            self.imag[idx_10] = HALF * (im_10 + im_01 - re_10 + re_01);
+                            self.real[idx_11] = HALF * (re_11 - re_00 + im_11 + im_00);
+                            self.imag[idx_11] = HALF * (im_11 - im_00 - re_11 - re_00);
                         }
                     }
                 }
@@ -3721,12 +3692,7 @@ where
 
     #[inline]
     fn szz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
-        // SZZ = exp(-i * π/4 * Z⊗Z)
-        // Z⊗Z is diagonal: diag(1, -1, -1, 1)
-        // SZZ = diag(e^{-iπ/4}, e^{iπ/4}, e^{iπ/4}, e^{-iπ/4})
-        // e^{-iπ/4} = (1-i)/√2: (re,im) -> K*(re+im, -re+im)
-        // e^{iπ/4} = (1+i)/√2: (re,im) -> K*(re-im, re+im)
-        const K: f64 = std::f64::consts::FRAC_1_SQRT_2;
+        // SZZ = diag(1, i, i, 1). Only the odd-parity amplitudes change.
 
         for &(qa, qb) in pairs {
             let q1 = qa.index();
@@ -3739,26 +3705,19 @@ where
             // When both qubits >= 2, consecutive indices share the same phase
             if q_lo >= 2 {
                 let n = self.real.len();
-                let k_v = f64x4::splat(K);
                 let mut i = 0;
                 while i + 4 <= n {
                     let bit1 = (i >> q1) & 1;
                     let bit2 = (i >> q2) & 1;
 
-                    let re = f64x4::from(&self.real[i..i + 4]);
-                    let im = f64x4::from(&self.imag[i..i + 4]);
-
-                    let (new_re, new_im) = if bit1 == bit2 {
-                        // e^{-iπ/4}: (re,im) -> K*(re+im, -re+im)
-                        (k_v * (re + im), k_v * (im - re))
-                    } else {
-                        // e^{iπ/4}: (re,im) -> K*(re-im, re+im)
-                        (k_v * (re - im), k_v * (re + im))
-                    };
-                    let arr_re: [f64; 4] = new_re.into();
-                    let arr_im: [f64; 4] = new_im.into();
-                    self.real[i..i + 4].copy_from_slice(&arr_re);
-                    self.imag[i..i + 4].copy_from_slice(&arr_im);
+                    if bit1 != bit2 {
+                        let re = f64x4::from(&self.real[i..i + 4]);
+                        let im = f64x4::from(&self.imag[i..i + 4]);
+                        let new_re: [f64; 4] = (-im).into();
+                        let new_im: [f64; 4] = re.into();
+                        self.real[i..i + 4].copy_from_slice(&new_re);
+                        self.imag[i..i + 4].copy_from_slice(&new_im);
+                    }
                     i += 4;
                 }
             } else {
@@ -3782,27 +3741,15 @@ where
 
                             let idx_01 = idx_00 | mask2;
                             let idx_10 = idx_00 | mask1;
-                            let idx_11 = idx_00 | mask1 | mask2;
-
-                            // |00⟩ → (1-i)/√2 |00⟩
-                            let (re, im) = (self.real[idx_00], self.imag[idx_00]);
-                            self.real[idx_00] = K * (re + im);
-                            self.imag[idx_00] = K * (-re + im);
-
-                            // |01⟩ → (1+i)/√2 |01⟩
+                            // |01⟩ → i|01⟩
                             let (re, im) = (self.real[idx_01], self.imag[idx_01]);
-                            self.real[idx_01] = K * (re - im);
-                            self.imag[idx_01] = K * (re + im);
+                            self.real[idx_01] = -im;
+                            self.imag[idx_01] = re;
 
-                            // |10⟩ → (1+i)/√2 |10⟩
+                            // |10⟩ → i|10⟩
                             let (re, im) = (self.real[idx_10], self.imag[idx_10]);
-                            self.real[idx_10] = K * (re - im);
-                            self.imag[idx_10] = K * (re + im);
-
-                            // |11⟩ → (1-i)/√2 |11⟩
-                            let (re, im) = (self.real[idx_11], self.imag[idx_11]);
-                            self.real[idx_11] = K * (re + im);
-                            self.imag[idx_11] = K * (-re + im);
+                            self.real[idx_10] = -im;
+                            self.imag[idx_10] = re;
                         }
                     }
                 }
@@ -3813,11 +3760,7 @@ where
 
     #[inline]
     fn szzdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
-        // SZZDG = exp(+i * π/4 * Z⊗Z)
-        // SZZDG = diag(e^{iπ/4}, e^{-iπ/4}, e^{-iπ/4}, e^{iπ/4})
-        // e^{iπ/4} = (1+i)/√2: (re,im) -> K*(re-im, re+im)
-        // e^{-iπ/4} = (1-i)/√2: (re,im) -> K*(re+im, -re+im)
-        const K: f64 = std::f64::consts::FRAC_1_SQRT_2;
+        // SZZdg = diag(1, -i, -i, 1). Only the odd-parity amplitudes change.
 
         for &(qa, qb) in pairs {
             let q1 = qa.index();
@@ -3830,26 +3773,19 @@ where
             // When both qubits >= 2, consecutive indices share the same phase
             if q_lo >= 2 {
                 let n = self.real.len();
-                let k_v = f64x4::splat(K);
                 let mut i = 0;
                 while i + 4 <= n {
                     let bit1 = (i >> q1) & 1;
                     let bit2 = (i >> q2) & 1;
 
-                    let re = f64x4::from(&self.real[i..i + 4]);
-                    let im = f64x4::from(&self.imag[i..i + 4]);
-
-                    let (new_re, new_im) = if bit1 == bit2 {
-                        // e^{iπ/4}: (re,im) -> K*(re-im, re+im)
-                        (k_v * (re - im), k_v * (re + im))
-                    } else {
-                        // e^{-iπ/4}: (re,im) -> K*(re+im, -re+im)
-                        (k_v * (re + im), k_v * (im - re))
-                    };
-                    let arr_re: [f64; 4] = new_re.into();
-                    let arr_im: [f64; 4] = new_im.into();
-                    self.real[i..i + 4].copy_from_slice(&arr_re);
-                    self.imag[i..i + 4].copy_from_slice(&arr_im);
+                    if bit1 != bit2 {
+                        let re = f64x4::from(&self.real[i..i + 4]);
+                        let im = f64x4::from(&self.imag[i..i + 4]);
+                        let new_re: [f64; 4] = im.into();
+                        let new_im: [f64; 4] = (-re).into();
+                        self.real[i..i + 4].copy_from_slice(&new_re);
+                        self.imag[i..i + 4].copy_from_slice(&new_im);
+                    }
                     i += 4;
                 }
             } else {
@@ -3873,27 +3809,15 @@ where
 
                             let idx_01 = idx_00 | mask2;
                             let idx_10 = idx_00 | mask1;
-                            let idx_11 = idx_00 | mask1 | mask2;
-
-                            // |00⟩ → (1+i)/√2 |00⟩
-                            let (re, im) = (self.real[idx_00], self.imag[idx_00]);
-                            self.real[idx_00] = K * (re - im);
-                            self.imag[idx_00] = K * (re + im);
-
-                            // |01⟩ → (1-i)/√2 |01⟩
+                            // |01⟩ → -i|01⟩
                             let (re, im) = (self.real[idx_01], self.imag[idx_01]);
-                            self.real[idx_01] = K * (re + im);
-                            self.imag[idx_01] = K * (-re + im);
+                            self.real[idx_01] = im;
+                            self.imag[idx_01] = -re;
 
-                            // |10⟩ → (1-i)/√2 |10⟩
+                            // |10⟩ → -i|10⟩
                             let (re, im) = (self.real[idx_10], self.imag[idx_10]);
-                            self.real[idx_10] = K * (re + im);
-                            self.imag[idx_10] = K * (-re + im);
-
-                            // |11⟩ → (1+i)/√2 |11⟩
-                            let (re, im) = (self.real[idx_11], self.imag[idx_11]);
-                            self.real[idx_11] = K * (re - im);
-                            self.imag[idx_11] = K * (re + im);
+                            self.real[idx_10] = im;
+                            self.imag[idx_10] = -re;
                         }
                     }
                 }

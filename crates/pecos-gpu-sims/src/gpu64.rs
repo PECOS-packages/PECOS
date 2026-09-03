@@ -1029,6 +1029,40 @@ impl GpuStateVec64 {
         }
     }
 
+    /// Queue a conventional named Pauli root through the corresponding rotation
+    /// pipeline. `matrix[2]` is +1 for the root or -1 for its adjoint and selects
+    /// the exact named-root shader branch.
+    fn queue_named_pauli_root(
+        &mut self,
+        pipeline: GatePipeline,
+        qubit0: u32,
+        qubit1: u32,
+        dagger: bool,
+    ) {
+        self.gate_queue.push(QueuedGate {
+            pipeline,
+            params: GateParams64 {
+                target_qubit: qubit1,
+                control_qubit: qubit0,
+                num_qubits: self.num_qubits,
+                _padding: 0,
+                matrix: [
+                    0.0,
+                    0.0,
+                    if dagger { -1.0 } else { 1.0 },
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                ],
+            },
+        });
+        if self.gate_queue.len() >= MAX_BATCH_SIZE {
+            self.flush_gates();
+        }
+    }
+
     // -- Measurement --
 
     #[allow(clippy::too_many_lines, clippy::cast_possible_truncation)]
@@ -1466,49 +1500,73 @@ impl CliffordGateable for GpuStateVec64 {
     }
 
     fn szz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
-        let theta = std::f64::consts::FRAC_PI_2;
         for &(q0, q1) in pairs {
-            self.queue_rzz(q0.index() as u32, q1.index() as u32, theta);
+            self.queue_named_pauli_root(
+                GatePipeline::Rzz,
+                q0.index() as u32,
+                q1.index() as u32,
+                false,
+            );
         }
         self
     }
 
     fn szzdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
-        let theta = -std::f64::consts::FRAC_PI_2;
         for &(q0, q1) in pairs {
-            self.queue_rzz(q0.index() as u32, q1.index() as u32, theta);
+            self.queue_named_pauli_root(
+                GatePipeline::Rzz,
+                q0.index() as u32,
+                q1.index() as u32,
+                true,
+            );
         }
         self
     }
 
     fn sxx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
-        let theta = std::f64::consts::FRAC_PI_2;
         for &(q0, q1) in pairs {
-            self.queue_rxx(q0.index() as u32, q1.index() as u32, theta);
+            self.queue_named_pauli_root(
+                GatePipeline::Rxx,
+                q0.index() as u32,
+                q1.index() as u32,
+                false,
+            );
         }
         self
     }
 
     fn sxxdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
-        let theta = -std::f64::consts::FRAC_PI_2;
         for &(q0, q1) in pairs {
-            self.queue_rxx(q0.index() as u32, q1.index() as u32, theta);
+            self.queue_named_pauli_root(
+                GatePipeline::Rxx,
+                q0.index() as u32,
+                q1.index() as u32,
+                true,
+            );
         }
         self
     }
 
     fn syy(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
-        let theta = std::f64::consts::FRAC_PI_2;
         for &(q0, q1) in pairs {
-            self.queue_ryy(q0.index() as u32, q1.index() as u32, theta);
+            self.queue_named_pauli_root(
+                GatePipeline::Ryy,
+                q0.index() as u32,
+                q1.index() as u32,
+                false,
+            );
         }
         self
     }
 
     fn syydg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
-        let theta = -std::f64::consts::FRAC_PI_2;
         for &(q0, q1) in pairs {
-            self.queue_ryy(q0.index() as u32, q1.index() as u32, theta);
+            self.queue_named_pauli_root(
+                GatePipeline::Ryy,
+                q0.index() as u32,
+                q1.index() as u32,
+                true,
+            );
         }
         self
     }

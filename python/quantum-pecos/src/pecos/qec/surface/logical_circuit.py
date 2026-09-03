@@ -95,6 +95,66 @@ def _cached_surface_memory_dem_templates(
     )
 
 
+@dataclass(frozen=True)
+class _CachedSurfaceHDemTemplates:
+    """Noise-weighted bounded templates for one transversal-H family."""
+
+    output_model: object
+    initialization: object
+    pre_h_bulk: object
+    pre_h_boundary: object
+    h_boundary: object
+    post_h_bulk: object
+    pre_terminal: object
+    terminal: object
+
+
+@cache
+def _cached_surface_h_dem_templates(
+    dx: int,
+    dz: int,
+    orientation_name: str,
+    rotated: bool,
+    initial_basis: str,
+    final_basis: str,
+    p1: float,
+    p2: float,
+    p_meas: float,
+    p_prep: float,
+) -> _CachedSurfaceHDemTemplates:
+    """Compile a bounded memory-H-memory template on a cache miss."""
+    from pecos.qec.surface.patch import PatchOrientation, SurfacePatch
+
+    patch = SurfacePatch.create(
+        dx=dx,
+        dz=dz,
+        orientation=PatchOrientation[orientation_name],
+        rotated=rotated,
+    )
+    builder = LogicalCircuitBuilder()
+    builder.add_patch(patch, "template", coord_offset=(0.0, 0.0))
+    builder.add_memory("template", rounds=3, basis=initial_basis)
+    builder.add_transversal_h("template")
+    builder.add_memory("template", rounds=3, basis=final_basis)
+    model, influence_map, dag_circuit = builder._build_structured_dem(  # noqa: SLF001
+        p1=p1,
+        p2=p2,
+        p_meas=p_meas,
+        p_prep=p_prep,
+    )
+    schedule = model.round_schedule(influence_map, dag_circuit)
+    return _CachedSurfaceHDemTemplates(
+        output_model=model,
+        initialization=schedule.template(0),
+        pre_h_bulk=schedule.template(1),
+        pre_h_boundary=schedule.template(2),
+        h_boundary=schedule.template(3),
+        post_h_bulk=schedule.template(4),
+        pre_terminal=schedule.template(5),
+        terminal=schedule.template(6),
+    )
+
+
 class LogicalGateType(Enum):
     """Types of logical operations in a surface code circuit."""
 
@@ -649,9 +709,19 @@ class LogicalCircuitBuilder:
         p_meas: float,
         p_prep: float,
     ) -> tuple[object, object] | None:
-        """Assemble an eligible memory DEM from the bounded template cache."""
-        if len(self._patches) != 1 or len(self._operations) != 1:
+        """Assemble an eligible surface DEM from bounded template caches."""
+        if len(self._patches) != 1:
             return None
+        if len(self._operations) == 3:
+            return self._build_structured_h_dem_from_cached_templates(
+                p1=p1,
+                p2=p2,
+                p_meas=p_meas,
+                p_prep=p_prep,
+            )
+        if len(self._operations) != 1:
+            return None
+
         operation = self._operations[0]
         if operation.gate_type != LogicalGateType.MEMORY or len(operation.patches) != 1 or operation.rounds < 2:
             return None
@@ -696,6 +766,81 @@ class LogicalCircuitBuilder:
         )
         return model, schedule
 
+    def _build_structured_h_dem_from_cached_templates(
+        self,
+        *,
+        p1: float,
+        p2: float,
+        p_meas: float,
+        p_prep: float,
+    ) -> tuple[object, object] | None:
+        """Assemble an eligible memory-H-memory DEM from bounded templates."""
+        before, gate, after = self._operations
+        if (
+            before.gate_type != LogicalGateType.MEMORY
+            or gate.gate_type != LogicalGateType.TRANSVERSAL_H
+            or after.gate_type != LogicalGateType.MEMORY
+            or before.rounds < 2
+            or after.rounds < 2
+            or len(before.patches) != 1
+            or len(gate.patches) != 1
+            or len(after.patches) != 1
+            or before.patches[0] != gate.patches[0]
+            or gate.patches[0] != after.patches[0]
+        ):
+            return None
+
+        patch_label = gate.patches[0]
+        patch_state = self._patches[patch_label]
+        geometry = patch_state.patch.geometry
+        initial_basis = before.per_patch_basis.get(patch_label, before.basis).upper()
+        final_basis = after.per_patch_basis.get(patch_label, after.basis).upper()
+        coord_x, coord_y = patch_state.coord_offset
+        templates = _cached_surface_h_dem_templates(
+            geometry.dx,
+            geometry.dz,
+            geometry.orientation.name,
+            geometry.rotated,
+            initial_basis,
+            final_basis,
+            p1,
+            p2,
+            p_meas,
+            p_prep,
+        )
+
+        from pecos_rslib.qec import DemSliceRoundSchedule
+
+        boundary_round = before.rounds
+        terminal_round = before.rounds + after.rounds
+        instances = [(templates.initialization, 0)]
+        instances.extend((templates.pre_h_bulk, round_) for round_ in range(1, boundary_round - 1))
+        instances.extend(
+            [
+                (templates.pre_h_boundary, boundary_round - 1),
+                (templates.h_boundary, boundary_round),
+            ],
+        )
+        instances.extend((templates.post_h_bulk, round_) for round_ in range(boundary_round + 1, terminal_round - 1))
+        instances.extend(
+            [
+                (templates.pre_terminal, terminal_round - 1),
+                (templates.terminal, terminal_round),
+            ],
+        )
+        schedule = DemSliceRoundSchedule.from_templates(
+            templates.output_model,
+            instances,
+            coordinate_offset=(float(coord_x), float(coord_y)),
+        )
+        model = schedule.stitch(
+            start_round=0,
+            commit_rounds=terminal_round + 1,
+            buffer_rounds=0,
+            forward_boundary="hard",
+        )
+        return model, schedule
+
     def build_dem(
         self,
         *,
@@ -707,8 +852,9 @@ class LogicalCircuitBuilder:
         """Generate a DEM using the PECOS-native fault analysis pipeline.
 
         TickCircuit -> DagCircuit -> DagFaultAnalyzer -> DemBuilder.
-        No Stim dependency. Eligible single-patch memories reuse a bounded
-        three-round physical-template compile across requested memory lengths.
+        No Stim dependency. Eligible single-patch memories and transversal-H
+        algorithms reuse bounded physical-template compiles across requested
+        memory lengths.
 
         Args:
             p1: Single-qubit depolarizing error rate.
@@ -783,8 +929,9 @@ class LogicalCircuitBuilder:
         derives the minimum safe look-ahead from the source-tracked model.
         Passing ``buffer`` requests that exact amount of look-behind and
         look-ahead; a value below the model's required look-ahead is rejected.
-        Eligible single-patch memories are assembled directly from the bounded
-        physical-template cache; other circuits retain full-model fallback.
+        Eligible single-patch memories and memory-H-memory algorithms are
+        assembled directly from bounded physical-template caches; other
+        circuits retain full-model fallback.
 
         Returns:
             Dict with keys: segments, boundary_gates, num_observables, full_dem.
@@ -793,10 +940,10 @@ class LogicalCircuitBuilder:
             msg = "buffer must be non-negative or None"
             raise ValueError(msg)
 
-        # A single memory operation with at least two SEC rounds is assembled
-        # entirely from the bounded physical-template cache. Other algorithms
-        # retain the full structured path as an equivalence oracle and fallback
-        # until their logical-operation families are available.
+        # Eligible memory and memory-H-memory algorithms are assembled entirely
+        # from bounded physical-template caches. Other algorithms retain the
+        # full structured path as an equivalence oracle and fallback until their
+        # logical-operation families are available.
         cached = self._build_structured_dem_from_cached_templates(
             p1=p1,
             p2=p2,

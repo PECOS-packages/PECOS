@@ -94,8 +94,9 @@ At the Rust layer, callers compose cached `DemSliceInstance` values with
 `DemSliceRoundSchedule::from_instances`. Python exposes the same narrow path as
 opaque `DemSliceTemplate` values returned by `schedule.template(...)` and
 `DemSliceRoundSchedule.from_templates(...)`. The Python constructor currently
-uses identity detector/output mappings, appropriate when reusing one geometry;
-general patch placement and logical relabeling remain in the Rust instance API.
+uses identity detector/output mappings plus a checked spatial translation,
+appropriate when reusing one geometry; general stream routing and logical
+relabeling remain in the Rust instance API.
 
 The production `LogicalCircuitBuilder` uses a bounded three-round compile for
 eligible single-patch memory operations of two or more rounds. Its cache key
@@ -107,8 +108,20 @@ any supported length or placement reuses the same initialization, stationary
 bulk, pre-terminal, and terminal objects.
 `build_dem`, `build_sampler_and_decoder`, and `build_algorithm_descriptor` all
 share this provider. One-round memories, multiple patches, and circuits with
-logical gates conservatively retain the full structured fallback until their
-bounded families and instance mappings are implemented.
+unsupported logical gates conservatively retain the full structured fallback
+until their bounded families and instance mappings are implemented.
+
+A second bounded provider covers a single transversal H between two memory
+segments of at least two rounds each. A six-round canonical fixture yields
+initialization, ordinary pre-H bulk, the pre-H boundary round, H plus the first
+post-H SEC round, ordinary post-H bulk, pre-terminal, and terminal templates.
+The rounds adjacent to H are distinct physical families: faults immediately
+before the gate can propagate through it, while H itself shares ownership with
+the first post-gate detector round. The cache key adds the initial and final
+measurement bases but still excludes both requested segment lengths, patch
+label, qubit offset, and spatial placement. Exact tests cover different depths,
+orientations, bases, labels, offsets, and noise keys. Shallow boundary cases,
+multiple H gates, and other Clifford operations retain the full-model fallback.
 
 Stable detector-stream IDs are seeded from the earliest round with the maximum
 number of declarations. This uses stationary SEC record order instead of a
@@ -191,9 +204,10 @@ This layer provides the stable slice, cache, structured-DEM adapter, automatic
 round layout, ownership, bounded template extraction, mapping, and stitching
 API. Initialization, stationary bulk SEC, pre-terminal SEC, and terminal
 surface-memory families have exact composition coverage and a production
-single-patch memory provider. It does not yet compile logical-Clifford or
-multi-patch operation families, mutate a decoder's prior vector, enable the
-anti-snake logical-subgraph window decoder, or support adaptive
+single-patch memory provider. A single transversal-H boundary and its adjacent
+memory families also have exact composition coverage and a production provider.
+It does not yet compile the remaining logical-Clifford or multi-patch operation
+families, compose repeated logical gates, mutate a decoder's prior vector,
+enable the anti-snake logical-subgraph window decoder, or support adaptive
 syndrome-extraction templates. Full-circuit DEM construction remains the
-equivalence oracle and the conservative fallback outside the supported memory
-family.
+equivalence oracle and the conservative fallback outside supported families.

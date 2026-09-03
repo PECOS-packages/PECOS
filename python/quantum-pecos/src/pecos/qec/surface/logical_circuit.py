@@ -30,6 +30,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from enum import Enum, auto
+from functools import cache
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -41,6 +42,57 @@ PatchSnapshot = dict[str, tuple[bool, list[str], list[str], list[str], list[str]
 # DagCircuit conversion copies batch metadata to every split DAG gate, letting
 # the structured DEM frontend assign each physical fault location to a round.
 DEM_SLICE_ROUND_ATTRIBUTE = "dem_slice_round"
+
+
+@dataclass(frozen=True)
+class _CachedSurfaceMemoryDemTemplates:
+    """Noise-weighted bounded templates for one physical memory family."""
+
+    output_model: object
+    initialization: object
+    bulk: object
+    pre_terminal: object
+    terminal: object
+
+
+@cache
+def _cached_surface_memory_dem_templates(
+    dx: int,
+    dz: int,
+    orientation_name: str,
+    rotated: bool,
+    basis: str,
+    p1: float,
+    p2: float,
+    p_meas: float,
+    p_prep: float,
+) -> _CachedSurfaceMemoryDemTemplates:
+    """Compile the constant-depth surface-memory template on a cache miss."""
+    from pecos.qec.surface.patch import PatchOrientation, SurfacePatch
+
+    patch = SurfacePatch.create(
+        dx=dx,
+        dz=dz,
+        orientation=PatchOrientation[orientation_name],
+        rotated=rotated,
+    )
+    builder = LogicalCircuitBuilder()
+    builder.add_patch(patch, "template", coord_offset=(0.0, 0.0))
+    builder.add_memory("template", rounds=3, basis=basis)
+    model, influence_map, dag_circuit = builder._build_structured_dem(  # noqa: SLF001
+        p1=p1,
+        p2=p2,
+        p_meas=p_meas,
+        p_prep=p_prep,
+    )
+    schedule = model.round_schedule(influence_map, dag_circuit)
+    return _CachedSurfaceMemoryDemTemplates(
+        output_model=model,
+        initialization=schedule.template(0),
+        bulk=schedule.template(1),
+        pre_terminal=schedule.template(2),
+        terminal=schedule.template(3),
+    )
 
 
 class LogicalGateType(Enum):
@@ -589,6 +641,61 @@ class LogicalCircuitBuilder:
 
         return dem_builder.build(), influence_map, dc
 
+    def _build_structured_dem_from_cached_templates(
+        self,
+        *,
+        p1: float,
+        p2: float,
+        p_meas: float,
+        p_prep: float,
+    ) -> tuple[object, object] | None:
+        """Assemble an eligible memory DEM from the bounded template cache."""
+        if len(self._patches) != 1 or len(self._operations) != 1:
+            return None
+        operation = self._operations[0]
+        if operation.gate_type != LogicalGateType.MEMORY or len(operation.patches) != 1 or operation.rounds < 2:
+            return None
+
+        patch_label = operation.patches[0]
+        patch_state = self._patches[patch_label]
+        geometry = patch_state.patch.geometry
+        basis = operation.per_patch_basis.get(patch_label, operation.basis).upper()
+        coord_x, coord_y = patch_state.coord_offset
+        templates = _cached_surface_memory_dem_templates(
+            geometry.dx,
+            geometry.dz,
+            geometry.orientation.name,
+            geometry.rotated,
+            basis,
+            p1,
+            p2,
+            p_meas,
+            p_prep,
+        )
+
+        from pecos_rslib.qec import DemSliceRoundSchedule
+
+        instances = [(templates.initialization, 0)]
+        instances.extend((templates.bulk, round_) for round_ in range(1, operation.rounds - 1))
+        instances.extend(
+            [
+                (templates.pre_terminal, operation.rounds - 1),
+                (templates.terminal, operation.rounds),
+            ],
+        )
+        schedule = DemSliceRoundSchedule.from_templates(
+            templates.output_model,
+            instances,
+            coordinate_offset=(float(coord_x), float(coord_y)),
+        )
+        model = schedule.stitch(
+            start_round=0,
+            commit_rounds=operation.rounds + 1,
+            buffer_rounds=0,
+            forward_boundary="hard",
+        )
+        return model, schedule
+
     def build_dem(
         self,
         *,
@@ -600,7 +707,8 @@ class LogicalCircuitBuilder:
         """Generate a DEM using the PECOS-native fault analysis pipeline.
 
         TickCircuit -> DagCircuit -> DagFaultAnalyzer -> DemBuilder.
-        No Stim dependency.
+        No Stim dependency. Eligible single-patch memories reuse a bounded
+        three-round physical-template compile across requested memory lengths.
 
         Args:
             p1: Single-qubit depolarizing error rate.
@@ -611,7 +719,16 @@ class LogicalCircuitBuilder:
         Returns:
             DEM string in Stim-compatible format.
         """
-        dem, _, _ = self._build_structured_dem(p1=p1, p2=p2, p_meas=p_meas, p_prep=p_prep)
+        cached = self._build_structured_dem_from_cached_templates(
+            p1=p1,
+            p2=p2,
+            p_meas=p_meas,
+            p_prep=p_prep,
+        )
+        if cached is None:
+            dem, _, _ = self._build_structured_dem(p1=p1, p2=p2, p_meas=p_meas, p_prep=p_prep)
+        else:
+            dem, _ = cached
         return str(dem)
 
     def build_sampler_and_decoder(
@@ -631,7 +748,16 @@ class LogicalCircuitBuilder:
         """
         from pecos_rslib.qec import LogicalSubgraphDecoder
 
-        dem, _, _ = self._build_structured_dem(p1=p1, p2=p2, p_meas=p_meas, p_prep=p_prep)
+        cached = self._build_structured_dem_from_cached_templates(
+            p1=p1,
+            p2=p2,
+            p_meas=p_meas,
+            p_prep=p_prep,
+        )
+        if cached is None:
+            dem, _, _ = self._build_structured_dem(p1=p1, p2=p2, p_meas=p_meas, p_prep=p_prep)
+        else:
+            dem, _ = cached
         sampler = dem.to_sampler()
         dem_str = str(dem)
 
@@ -651,12 +777,14 @@ class LogicalCircuitBuilder:
     ) -> dict:
         """Extract per-segment DEMs and boundary gates for LogicalAlgorithmDecoder.
 
-        Splits the full circuit DEM at gate boundaries. Each memory operation
+        Splits the structured circuit DEM at gate boundaries. Each memory operation
         becomes a segment; each transversal gate becomes a boundary gate with
         Pauli frame propagation rules. By default, each non-terminal segment
         derives the minimum safe look-ahead from the source-tracked model.
         Passing ``buffer`` requests that exact amount of look-behind and
         look-ahead; a value below the model's required look-ahead is rejected.
+        Eligible single-patch memories are assembled directly from the bounded
+        physical-template cache; other circuits retain full-model fallback.
 
         Returns:
             Dict with keys: segments, boundary_gates, num_observables, full_dem.
@@ -665,14 +793,26 @@ class LogicalCircuitBuilder:
             msg = "buffer must be non-negative or None"
             raise ValueError(msg)
 
-        # Keep the structured DEM and the exact source-tracking context used to
-        # build it. Per-segment projection happens in Rust before serialization.
-        structured_dem, influence_map, dag_circuit = self._build_structured_dem(
+        # A single memory operation with at least two SEC rounds is assembled
+        # entirely from the bounded physical-template cache. Other algorithms
+        # retain the full structured path as an equivalence oracle and fallback
+        # until their logical-operation families are available.
+        cached = self._build_structured_dem_from_cached_templates(
             p1=p1,
             p2=p2,
             p_meas=p_meas,
             p_prep=p_prep,
         )
+        if cached is None:
+            structured_dem, influence_map, dag_circuit = self._build_structured_dem(
+                p1=p1,
+                p2=p2,
+                p_meas=p_meas,
+                p_prep=p_prep,
+            )
+            round_schedule = structured_dem.round_schedule(influence_map, dag_circuit)
+        else:
+            structured_dem, round_schedule = cached
         full_dem = str(structured_dem)
         sc = self.stab_coords()
 
@@ -776,7 +916,6 @@ class LogicalCircuitBuilder:
         seg_dems = []
         segment_detector_counts = []
         detector_rounds = [int(coords[2]) for _, coords in structured_dem.detector_coordinates() if coords is not None]
-        round_schedule = structured_dem.round_schedule(influence_map, dag_circuit)
         explicit_buffer = 0 if buffer is None else buffer
         for segment_index, seg in enumerate(segments):
             start_round = max(0, int(seg["time_start"]) - explicit_buffer)

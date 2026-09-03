@@ -1207,8 +1207,8 @@ impl DemSliceRoundSchedule {
 fn detector_round_layout(
     model: &DetectorErrorModel,
 ) -> Result<BTreeMap<u32, (u32, i64)>, DemSliceStitchError> {
-    let mut stream_ids = BTreeMap::new();
-    let mut detector_keys = BTreeMap::new();
+    let mut parsed_detectors = Vec::with_capacity(model.detectors.len());
+    let mut detectors_per_round = BTreeMap::<i64, usize>::new();
     for detector in &model.detectors {
         let Some([x, y, time]) = detector.coords else {
             return Err(DemSliceStitchError::MissingDetectorCoordinates {
@@ -1226,17 +1226,44 @@ fn detector_round_layout(
             });
         };
         let round = integral_detector_round(detector.id, time)?;
-        let spatial = (x, y);
-        let stream = if let Some(&stream) = stream_ids.get(&spatial) {
-            stream
-        } else {
+        *detectors_per_round.entry(round).or_default() += 1;
+        parsed_detectors.push((detector.id, (x, y), round));
+    }
+
+    // Boundary rounds may declare only one stabilizer family. Seed stream IDs
+    // from the earliest fullest round so their order matches the stationary
+    // physical syndrome record, then append any boundary-only streams.
+    let anchor_round = detectors_per_round
+        .into_iter()
+        .max_by(|(left_round, left_count), (right_round, right_count)| {
+            left_count
+                .cmp(right_count)
+                .then_with(|| right_round.cmp(left_round))
+        })
+        .map(|(round, _)| round);
+    let mut stream_ids = BTreeMap::new();
+    for &(_, spatial, round) in &parsed_detectors {
+        if Some(round) == anchor_round && !stream_ids.contains_key(&spatial) {
             let stream = u32::try_from(stream_ids.len())
                 .map_err(|_| DemSliceStitchError::TooManyDetectorStreams)?;
             stream_ids.insert(spatial, stream);
-            stream
-        };
-        detector_keys.insert(detector.id, (stream, round));
+        }
     }
+    for &(_, spatial, _) in &parsed_detectors {
+        if !stream_ids.contains_key(&spatial) {
+            let stream = u32::try_from(stream_ids.len())
+                .map_err(|_| DemSliceStitchError::TooManyDetectorStreams)?;
+            stream_ids.insert(spatial, stream);
+        }
+    }
+
+    let detector_keys = parsed_detectors
+        .into_iter()
+        .map(|(source_detector, spatial, round)| {
+            let stream = stream_ids[&spatial];
+            (source_detector, (stream, round))
+        })
+        .collect();
     Ok(detector_keys)
 }
 
@@ -2203,6 +2230,21 @@ mod tests {
 
     fn target(detector: u32, round_offset: i32) -> RelativeDetectorTarget {
         RelativeDetectorTarget::new(detector, round_offset)
+    }
+
+    #[test]
+    fn detector_streams_follow_the_earliest_full_round_order() {
+        use crate::fault_tolerance::dem_builder::DetectorDef;
+
+        let mut model = DetectorErrorModel::new();
+        model.add_detector(DetectorDef::new(0).with_coords([9.0, 0.0, 0.0]));
+        model.add_detector(DetectorDef::new(1).with_coords([1.0, 0.0, 1.0]));
+        model.add_detector(DetectorDef::new(2).with_coords([9.0, 0.0, 1.0]));
+
+        let layout = detector_round_layout(&model).unwrap();
+        assert_eq!(layout[&0], (1, 0));
+        assert_eq!(layout[&1], (0, 1));
+        assert_eq!(layout[&2], (1, 1));
     }
 
     fn direct(

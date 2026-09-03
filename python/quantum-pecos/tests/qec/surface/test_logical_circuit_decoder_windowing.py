@@ -83,6 +83,92 @@ def test_algorithm_segments_keep_structured_boundary_correlations():
     )
 
 
+def test_memory_provider_reuses_bounded_templates_and_preserves_detector_order(monkeypatch):
+    """The public memory path caches a bounded compile, not an algorithm DEM."""
+    from pecos.qec.surface.logical_circuit import _cached_surface_memory_dem_templates
+
+    _cached_surface_memory_dem_templates.cache_clear()
+    patch = SurfacePatch.create(3)
+    builder = LogicalCircuitBuilder()
+    builder.add_patch(patch, "A")
+    builder.add_memory("A", 7, "Z")
+
+    oracle, _, _ = builder._build_structured_dem(  # noqa: SLF001
+        p1=0.001,
+        p2=0.001,
+        p_meas=0.001,
+        p_prep=0.0,
+    )
+    descriptor = builder.build_algorithm_descriptor(
+        p1=0.001,
+        p2=0.001,
+        p_meas=0.001,
+        p_prep=0.0,
+    )
+    assert descriptor["full_dem"] == oracle.to_string()
+    after_first = _cached_surface_memory_dem_templates.cache_info()
+    assert after_first.misses == 1
+    assert after_first.currsize == 1
+
+    equivalent = LogicalCircuitBuilder()
+    equivalent.add_patch(
+        SurfacePatch.create(3),
+        "renamed",
+        qubit_offset=29,
+        coord_offset=(17.0, -8.0),
+    )
+    equivalent.add_memory("renamed", 11, "Z")
+    equivalent.build_dem(p1=0.001, p2=0.001, p_meas=0.001, p_prep=0.0)
+    after_second = _cached_surface_memory_dem_templates.cache_info()
+    assert after_second.misses == after_first.misses
+    assert after_second.hits == after_first.hits + 1
+
+    equivalent.build_dem(p1=0.002, p2=0.001, p_meas=0.001, p_prep=0.0)
+    assert _cached_surface_memory_dem_templates.cache_info().misses == after_second.misses + 1
+
+    def reject_full_compile(*_args, **_kwargs):
+        message = "a warm bounded-template request compiled the full circuit"
+        raise AssertionError(message)
+
+    monkeypatch.setattr(LogicalCircuitBuilder, "_build_structured_dem", reject_full_compile)
+    warm = LogicalCircuitBuilder()
+    warm.add_patch(SurfacePatch.create(3), "another")
+    warm.add_memory("another", 13, "Z")
+    warm.build_dem(p1=0.001, p2=0.001, p_meas=0.001, p_prep=0.0)
+
+
+@pytest.mark.parametrize(
+    ("dx", "dz", "basis", "rounds"),
+    [
+        (2, 2, "Z", 2),
+        (3, 3, "X", 5),
+        (2, 3, "Z", 4),
+        (3, 2, "X", 6),
+    ],
+)
+def test_cached_memory_provider_matches_full_compile_across_geometries(dx, dz, basis, rounds):
+    patch = SurfacePatch.create(dx=dx, dz=dz)
+    builder = LogicalCircuitBuilder()
+    builder.add_patch(patch, "data", qubit_offset=7, coord_offset=(11.0, -4.0))
+    builder.add_memory("data", rounds, basis)
+    oracle, _, _ = builder._build_structured_dem(  # noqa: SLF001
+        p1=0.002,
+        p2=0.003,
+        p_meas=0.004,
+        p_prep=0.005,
+    )
+    assert builder.build_dem(p1=0.002, p2=0.003, p_meas=0.004, p_prep=0.005) == oracle.to_string()
+
+
+def test_logical_gate_algorithm_conservatively_bypasses_memory_template_cache():
+    """Unsupported logical-operation families retain the full structured path."""
+    from pecos.qec.surface.logical_circuit import _cached_surface_memory_dem_templates
+
+    _cached_surface_memory_dem_templates.cache_clear()
+    _h_boundary_descriptor()
+    assert _cached_surface_memory_dem_templates.cache_info().currsize == 0
+
+
 def test_explicit_algorithm_buffer_cannot_truncate_a_boundary_correlation():
     patch = SurfacePatch.create(3)
     builder = LogicalCircuitBuilder()

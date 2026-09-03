@@ -97,6 +97,25 @@ opaque `DemSliceTemplate` values returned by `schedule.template(...)` and
 uses identity detector/output mappings, appropriate when reusing one geometry;
 general patch placement and logical relabeling remain in the Rust instance API.
 
+The production `LogicalCircuitBuilder` uses a bounded three-round compile for
+eligible single-patch memory operations of two or more rounds. Its cache key
+contains the circuit family, complete patch geometry, measurement basis, and
+noise parameters, but deliberately excludes the requested memory length, patch
+label, qubit offset, and spatial placement. Detector coordinates are translated
+on `DemSliceInstance` construction. Consequently, a later memory experiment of
+any supported length or placement reuses the same initialization, stationary
+bulk, pre-terminal, and terminal objects.
+`build_dem`, `build_sampler_and_decoder`, and `build_algorithm_descriptor` all
+share this provider. One-round memories, multiple patches, and circuits with
+logical gates conservatively retain the full structured fallback until their
+bounded families and instance mappings are implemented.
+
+Stable detector-stream IDs are seeded from the earliest round with the maximum
+number of declarations. This uses stationary SEC record order instead of a
+partial initialization boundary, ensuring composed `D<n>` ordering matches the
+physical syndrome stream exactly. Surface-memory tests therefore compare the
+entire rendered model byte for byte, not only up to detector relabeling.
+
 ## Native round schedule
 
 `DemSliceRoundSchedule::from_annotated_circuit` derives the repetitive layout
@@ -171,9 +190,10 @@ converted to mechanism columns.
 This layer provides the stable slice, cache, structured-DEM adapter, automatic
 round layout, ownership, bounded template extraction, mapping, and stitching
 API. Initialization, stationary bulk SEC, pre-terminal SEC, and terminal
-surface-memory families have exact composition coverage. It does not yet
-provide production cache-key/provider integration for surface builders,
-compile logical-Clifford operation families, mutate a decoder's prior vector,
-enable the anti-snake logical-subgraph window decoder, or support adaptive
+surface-memory families have exact composition coverage and a production
+single-patch memory provider. It does not yet compile logical-Clifford or
+multi-patch operation families, mutate a decoder's prior vector, enable the
+anti-snake logical-subgraph window decoder, or support adaptive
 syndrome-extraction templates. Full-circuit DEM construction remains the
-equivalence oracle rather than the intended online algorithm path.
+equivalence oracle and the conservative fallback outside the supported memory
+family.

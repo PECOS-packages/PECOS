@@ -414,6 +414,12 @@ def test_cached_surface_templates_reconstruct_a_longer_memory_experiment():
             (init, 0),
         ],
     )
+    with pytest.raises(ValueError, match="coordinate_offset values must be finite"):
+        DemSliceRoundSchedule.from_templates(
+            template_model,
+            [(init, 0)],
+            coordinate_offset=(float("inf"), 0.0),
+        )
     assert composed.rounds() == [0, 1, 2, 3, 4, 5]
     stitched = composed.stitch(
         start_round=0,
@@ -423,6 +429,7 @@ def test_cached_surface_templates_reconstruct_a_longer_memory_experiment():
     )
 
     reference, _, _ = build_model(5)
+    assert stitched.to_string() == reference.to_string()
     assert _coordinate_normalized_sources(stitched) == _coordinate_normalized_sources(reference)
 
 

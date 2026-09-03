@@ -121,6 +121,7 @@ class DemSliceRoundSchedule:
     def from_templates(
         output_model: DetectorErrorModel,
         templates: Sequence[tuple[DemSliceTemplate, int]],
+        coordinate_offset: tuple[float, float] | None = ...,
     ) -> DemSliceRoundSchedule: ...
     @property
     def num_instances(self) -> int: ...

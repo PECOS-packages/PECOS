@@ -55,14 +55,15 @@ use pecos_qec::fault_tolerance::dem_builder::{
     ContributionRenderStrategy as RustContributionRenderStrategy,
     ContributionRenderSummary as RustContributionRenderSummary,
     DemBoundaryKind as RustDemBoundaryKind, DemBuilder as RustDemBuilder,
-    DemSampler as RustNewDemSampler, DemSamplerBuilder as RustNewDemSamplerBuilder,
-    DemSlice as RustDemSlice, DemSliceInstance as RustDemSliceInstance,
-    DemSliceRoundSchedule as RustDemSliceRoundSchedule, DemWindowSpec as RustDemWindowSpec,
-    DetectorErrorModel as RustDetectorErrorModel, DirectSourceFamily as RustDirectSourceFamily,
-    EquivalenceResult as RustEquivalenceResult, FaultContribution as RustFaultContribution,
-    FaultSourceType as RustFaultSourceType, IdleNoiseFamily, MeasurementCrosstalkDemMode,
-    MeasurementCrosstalkTransitionModel, NoiseConfig, OutputMode, PAULI_2Q_ORDER,
-    ParsedDem as RustParsedDem, PauliWeights, ReplacementBranchApproximation,
+    DemDetectorPlacement as RustDemDetectorPlacement, DemSampler as RustNewDemSampler,
+    DemSamplerBuilder as RustNewDemSamplerBuilder, DemSlice as RustDemSlice,
+    DemSliceInstance as RustDemSliceInstance, DemSliceRoundSchedule as RustDemSliceRoundSchedule,
+    DemWindowSpec as RustDemWindowSpec, DetectorErrorModel as RustDetectorErrorModel,
+    DirectSourceFamily as RustDirectSourceFamily, EquivalenceResult as RustEquivalenceResult,
+    FaultContribution as RustFaultContribution, FaultSourceType as RustFaultSourceType,
+    IdleNoiseFamily, MeasurementCrosstalkDemMode, MeasurementCrosstalkTransitionModel, NoiseConfig,
+    OutputMode, PAULI_2Q_ORDER, ParsedDem as RustParsedDem, PauliWeights,
+    ReplacementBranchApproximation,
     TwoDetectorDirectRenderPolicy as RustTwoDetectorDirectRenderPolicy,
     compare_dems_exact as rust_compare_dems_exact,
     compare_dems_statistical as rust_compare_dems_statistical,
@@ -1628,23 +1629,51 @@ impl PyDemSliceRoundSchedule {
     ///
     /// Identity stream and output mappings are used. ``output_model`` supplies
     /// only standard-output and tracked-Pauli declarations; its detector and
-    /// contribution contents are ignored.
+    /// contribution contents are ignored. ``coordinate_offset`` translates
+    /// every available template-local detector coordinate at instantiation.
     #[staticmethod]
+    #[pyo3(signature = (output_model, templates, coordinate_offset=None))]
     fn from_templates(
         py: Python<'_>,
         output_model: &PyDetectorErrorModel,
         templates: Vec<(Py<PyDemSliceTemplate>, i64)>,
-    ) -> Self {
+        coordinate_offset: Option<(f64, f64)>,
+    ) -> PyResult<Self> {
+        if let Some((x, y)) = coordinate_offset
+            && (!x.is_finite() || !y.is_finite())
+        {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "coordinate_offset values must be finite",
+            ));
+        }
         let instances = templates
             .into_iter()
-            .map(|(template, round)| {
+            .map(|(template, round)| -> PyResult<_> {
                 let template = template.borrow(py);
-                RustDemSliceInstance::identity(Arc::clone(&template.inner), round)
+                let mut instance =
+                    RustDemSliceInstance::identity(Arc::clone(&template.inner), round);
+                if let Some((offset_x, offset_y)) = coordinate_offset {
+                    for detector in template.inner.detectors() {
+                        if let Some([x, y]) = detector.coords {
+                            let translated = [x + offset_x, y + offset_y];
+                            if !translated.into_iter().all(f64::is_finite) {
+                                return Err(pyo3::exceptions::PyValueError::new_err(
+                                    "translated detector coordinates must be finite",
+                                ));
+                            }
+                            instance = instance.with_detector_placement(
+                                detector.id,
+                                RustDemDetectorPlacement::new(detector.id).with_coords(translated),
+                            );
+                        }
+                    }
+                }
+                Ok(instance)
             })
-            .collect();
-        Self {
+            .collect::<PyResult<Vec<_>>>()?;
+        Ok(Self {
             inner: RustDemSliceRoundSchedule::from_instances(&output_model.inner, instances),
-        }
+        })
     }
 
     /// Number of scheduled owner rounds.

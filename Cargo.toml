@@ -192,6 +192,7 @@ sprs = "=0.11.3"
 # =============================================================================
 
 pecos = { version = "0.2.0-dev.0", path = "crates/pecos", default-features = false }
+pecos-bp = { version = "0.2.0-dev.0", path = "crates/pecos-bp" }
 pecos-build = { version = "0.2.0-dev.0", path = "crates/pecos-build", default-features = false }
 pecos-chromobius = { version = "0.2.0-dev.0", path = "crates/pecos-chromobius" }
 pecos-core = { version = "0.2.0-dev.0", path = "crates/pecos-core" }

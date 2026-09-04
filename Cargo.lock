@@ -4069,6 +4069,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "pecos-bp"
+version = "0.2.0-dev.0"
+dependencies = [
+ "pecos-decoder-core",
+]
+
+[[package]]
 name = "pecos-bp-trellis"
 version = "0.2.0-dev.0"
 dependencies = [
@@ -4204,6 +4211,7 @@ dependencies = [
 name = "pecos-decoders"
 version = "0.2.0-dev.0"
 dependencies = [
+ "pecos-bp",
  "pecos-chromobius",
  "pecos-decoder-core",
  "pecos-fusion-blossom",
@@ -4916,6 +4924,7 @@ name = "pecos-trellis"
 version = "0.2.0-dev.0"
 dependencies = [
  "libm",
+ "pecos-bp",
  "pecos-decoder-core",
  "rand 0.10.2",
  "rand_xoshiro 0.8.1",
@@ -4926,6 +4935,7 @@ name = "pecos-uf-decoder"
 version = "0.2.0-dev.0"
 dependencies = [
  "fastrand",
+ "pecos-bp",
  "pecos-decoder-core",
  "pecos-random",
  "rayon",

@@ -622,6 +622,13 @@ pub struct DagCircuit {
     removed_meas_ids: BTreeSet<usize>,
 }
 
+fn supports_measurement_target(gate_type: GateType) -> bool {
+    matches!(
+        gate_type,
+        GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked | GateType::MPZ
+    )
+}
+
 impl DagCircuit {
     /// Creates a new empty circuit DAG.
     #[must_use]
@@ -1008,6 +1015,16 @@ impl DagCircuit {
             return Err(DagGateError::InvalidGate {
                 message: "an in-place update cannot change measurement-record consumption"
                     .to_string(),
+                node: Some(node),
+            });
+        }
+        if self.measurement_targets.contains_key(&node)
+            && !supports_measurement_target(replacement.gate_type)
+        {
+            return Err(DagGateError::InvalidGate {
+                message:
+                    "an in-place update cannot leave a measurement target on a non-measurement gate"
+                        .to_string(),
                 node: Some(node),
             });
         }
@@ -1639,10 +1656,7 @@ impl DagCircuit {
             .gate(node)
             .unwrap_or_else(|| panic!("measurement target references missing gate {node}"));
         assert!(
-            matches!(
-                gate.gate_type,
-                GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked | GateType::MPZ
-            ),
+            supports_measurement_target(gate.gate_type),
             "measurement target requires a measurement gate, got {:?}",
             gate.gate_type
         );
@@ -3685,6 +3699,96 @@ mod tests {
 
         assert!(err.to_string().contains("requires distinct qubits"));
         assert!(circuit.nodes().is_empty());
+    }
+
+    #[test]
+    fn update_gate_refuses_changed_qubit_support() {
+        let mut circuit = DagCircuit::new();
+        let node = circuit.add_gate_auto_wire(Gate::h(&[0]));
+
+        let error = circuit
+            .update_gate(node, |gate| gate.qubits[0] = QubitId(1))
+            .expect_err("an in-place update must preserve graph wire support");
+
+        assert!(
+            error
+                .to_string()
+                .contains("cannot change gate qubit support")
+        );
+        assert_eq!(circuit.gate(node), Some(&Gate::h(&[0])));
+        assert_eq!(circuit.qubit_timeline(QubitId(0)), vec![node]);
+        assert!(circuit.qubit_timeline(QubitId(1)).is_empty());
+    }
+
+    #[test]
+    fn update_gate_refuses_changed_measurement_record_consumption() {
+        let mut circuit = DagCircuit::new();
+        let node = circuit.add_gate_auto_wire(Gate::h(&[0]));
+
+        let error = circuit
+            .update_gate(node, |gate| gate.gate_type = GateType::MZ)
+            .expect_err("an in-place update must preserve measurement-record allocation");
+
+        assert!(
+            error
+                .to_string()
+                .contains("cannot change measurement-record consumption")
+        );
+        assert_eq!(circuit.gate(node), Some(&Gate::h(&[0])));
+        assert_eq!(circuit.num_measurement_ids(), 0);
+    }
+
+    #[test]
+    fn update_gate_refuses_stale_measurement_target() {
+        let mut circuit = DagCircuit::new();
+        let node = circuit.add_gate_auto_wire(Gate::measure_leaked(&[0]));
+        let target = ClassicalBitId::new(3);
+        circuit.set_measurement_target(node, target);
+
+        let error = circuit
+            .update_gate(node, |gate| gate.gate_type = GateType::H)
+            .expect_err("a measurement target must not survive on a non-measurement gate");
+
+        assert!(
+            error
+                .to_string()
+                .contains("cannot leave a measurement target on a non-measurement gate")
+        );
+        assert_eq!(
+            circuit.gate(node).map(|gate| gate.gate_type),
+            Some(GateType::MeasureLeaked)
+        );
+        assert_eq!(circuit.measurement_targets().get(&node), Some(&target));
+    }
+
+    #[test]
+    fn panicking_update_gate_closure_leaves_gate_and_indices_unchanged() {
+        let mut circuit = DagCircuit::new();
+        circuit.h(&[0]);
+        let node = circuit.add_gate_auto_wire(Gate::cx(&[(0, 1)]));
+        circuit.z(&[1]);
+        let original_gate = circuit.gate(node).cloned();
+        let original_order = circuit.topological_order();
+        let original_edges = circuit.edge_qubits.clone();
+        let original_heads = circuit.qubit_heads.clone();
+        let original_last_node = circuit.last_node;
+        let original_max_qubit = circuit.max_qubit;
+
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = circuit.update_gate(node, |gate| {
+                gate.gate_type = GateType::CZ;
+                gate.qubits.reverse();
+                panic!("abort update");
+            });
+        }));
+
+        assert!(panic.is_err());
+        assert_eq!(circuit.gate(node).cloned(), original_gate);
+        assert_eq!(circuit.topological_order(), original_order);
+        assert_eq!(circuit.edge_qubits, original_edges);
+        assert_eq!(circuit.qubit_heads, original_heads);
+        assert_eq!(circuit.last_node, original_last_node);
+        assert_eq!(circuit.max_qubit, original_max_qubit);
     }
 
     #[test]

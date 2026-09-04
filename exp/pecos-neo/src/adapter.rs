@@ -65,9 +65,9 @@
 use crate::command::{CommandQueue, GateCommand, GateType as NeoGateType};
 use crate::outcome::{MeasurementOutcome, MeasurementOutcomes};
 use crate::program::{CommandSource, DynProgramRunner, ProgramResult};
+use pecos_core::QubitId;
 use pecos_core::gate_type::GateType as CoreGateType;
 use pecos_core::gates::Gate;
-use pecos_core::{Angle64, GateAngleArityError, QubitId};
 
 /// Convert pecos-core `GateType` to pecos-neo `GateType`.
 ///
@@ -136,21 +136,13 @@ fn convert_gate_type(core_type: CoreGateType) -> Option<NeoGateType> {
 
 /// Convert a pecos-core `Gate` to a pecos-neo `GateCommand`.
 fn convert_gate(gate: &Gate) -> Result<GateCommand, pecos_core::errors::PecosError> {
-    let neo_type = convert_gate_type(gate.gate_type).ok_or_else(|| {
+    convert_gate_type(gate.gate_type).ok_or_else(|| {
         pecos_core::errors::PecosError::Input(format!(
             "pecos-neo adapter does not support gate type {:?}",
             gate.gate_type
         ))
     })?;
-
-    let qubits = gate.qubits.iter().copied().collect();
-    let angles = gate.angles.iter().copied().collect();
-
-    Ok(GateCommand {
-        gate_type: neo_type,
-        qubits,
-        angles,
-    })
+    Ok(gate.into())
 }
 
 /// Convert a `ByteMessage` containing quantum operations to a `CommandQueue`.
@@ -166,7 +158,9 @@ pub fn byte_message_to_command_queue(
     let mut queue = CommandQueue::with_capacity(gates.len());
 
     for gate in &gates {
-        queue.push(convert_gate(gate)?);
+        queue.try_push(convert_gate(gate)?).map_err(|error| {
+            pecos_core::errors::PecosError::Input(format!("invalid quantum command: {error}"))
+        })?;
     }
 
     Ok(queue)
@@ -366,13 +360,11 @@ impl QuantumEngineProgramRunner {
         Self { engine }
     }
 
-    fn commands_to_message(
-        commands: &CommandQueue,
-    ) -> Result<pecos_engines::ByteMessage, GateAngleArityError> {
-        let gates = command_queue_to_gates(commands)?;
+    fn commands_to_message(commands: &CommandQueue) -> pecos_engines::ByteMessage {
+        let gates = command_queue_to_gates(commands);
         let mut builder = pecos_engines::ByteMessage::quantum_operations_builder();
         builder.add_gate_commands(&gates);
-        Ok(builder.build())
+        builder.build()
     }
 
     fn measured_qubits(commands: &CommandQueue) -> Vec<QubitId> {
@@ -435,8 +427,7 @@ impl DynProgramRunner for QuantumEngineProgramRunner {
             match commands {
                 Some(cmds) if !cmds.is_empty() => {
                     let measured_qubits = Self::measured_qubits(&cmds);
-                    let message = Self::commands_to_message(&cmds)
-                        .expect("validated command source produced invalid gate angles");
+                    let message = Self::commands_to_message(&cmds);
                     let response = self
                         .engine
                         .process(message)
@@ -495,7 +486,9 @@ pub fn gates_to_command_queue(
 ) -> Result<CommandQueue, pecos_core::errors::PecosError> {
     let mut queue = CommandQueue::with_capacity(gates.len());
     for gate in gates {
-        queue.push(convert_gate(gate)?);
+        queue.try_push(convert_gate(gate)?).map_err(|error| {
+            pecos_core::errors::PecosError::Input(format!("invalid quantum command: {error}"))
+        })?;
     }
     Ok(queue)
 }
@@ -504,73 +497,16 @@ pub fn gates_to_command_queue(
 ///
 /// This is useful for interoperability with code that expects Gate objects.
 ///
-/// # Errors
-///
-/// Returns [`GateAngleArityError`] if a command has the wrong number of angles
-/// for its gate type.
-pub fn command_queue_to_gates(queue: &CommandQueue) -> Result<Vec<Gate>, GateAngleArityError> {
-    queue.iter().map(command_to_gate).collect()
-}
-
-/// Convert a `GateCommand` back to a pecos-core Gate.
-fn command_to_gate(cmd: &GateCommand) -> Result<Gate, GateAngleArityError> {
-    let core_type = convert_neo_to_core_gate_type(cmd.gate_type);
-    let qubits: Vec<QubitId> = cmd.qubits.iter().copied().collect();
-    let angles: Vec<Angle64> = cmd.angles.iter().copied().collect();
-
-    Gate::try_new(core_type, angles, vec![], qubits)
-}
-
-/// Convert pecos-neo `GateType` back to pecos-core `GateType`.
-fn convert_neo_to_core_gate_type(neo_type: NeoGateType) -> CoreGateType {
-    match neo_type {
-        NeoGateType::I => CoreGateType::I,
-        NeoGateType::X => CoreGateType::X,
-        NeoGateType::Y => CoreGateType::Y,
-        NeoGateType::Z => CoreGateType::Z,
-        NeoGateType::H => CoreGateType::H,
-        NeoGateType::F => CoreGateType::F,
-        NeoGateType::Fdg => CoreGateType::Fdg,
-        NeoGateType::SX => CoreGateType::SX,
-        NeoGateType::SXdg => CoreGateType::SXdg,
-        NeoGateType::SY => CoreGateType::SY,
-        NeoGateType::SYdg => CoreGateType::SYdg,
-        NeoGateType::SZ => CoreGateType::SZ,
-        NeoGateType::SZdg => CoreGateType::SZdg,
-        NeoGateType::T => CoreGateType::T,
-        NeoGateType::Tdg => CoreGateType::Tdg,
-        NeoGateType::RX => CoreGateType::RX,
-        NeoGateType::RY => CoreGateType::RY,
-        NeoGateType::RZ => CoreGateType::RZ,
-        NeoGateType::U => CoreGateType::U,
-        NeoGateType::RXY1Q => CoreGateType::RXY1Q,
-        NeoGateType::CX => CoreGateType::CX,
-        NeoGateType::CY => CoreGateType::CY,
-        NeoGateType::CZ => CoreGateType::CZ,
-        NeoGateType::SZZ => CoreGateType::SZZ,
-        NeoGateType::SZZdg => CoreGateType::SZZdg,
-        NeoGateType::SXX => CoreGateType::SXX,
-        NeoGateType::SXXdg => CoreGateType::SXXdg,
-        NeoGateType::SYY => CoreGateType::SYY,
-        NeoGateType::SYYdg => CoreGateType::SYYdg,
-        NeoGateType::SWAP => CoreGateType::SWAP,
-        NeoGateType::RXX => CoreGateType::RXX,
-        NeoGateType::RYY => CoreGateType::RYY,
-        NeoGateType::RZZ => CoreGateType::RZZ,
-        NeoGateType::CCX => CoreGateType::CCX,
-        NeoGateType::MZ => CoreGateType::MZ,
-        NeoGateType::MeasureLeaked => CoreGateType::MeasureLeaked,
-        NeoGateType::MeasureFree => CoreGateType::MeasureFree,
-        NeoGateType::PZ => CoreGateType::PZ,
-        NeoGateType::QAlloc => CoreGateType::QAlloc,
-        NeoGateType::QFree => CoreGateType::QFree,
-        NeoGateType::Idle => CoreGateType::Idle,
-    }
+pub fn command_queue_to_gates(queue: &CommandQueue) -> Vec<Gate> {
+    queue.iter().map(GateCommand::to_core_gate).collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::command::GateCommandError;
+    use crate::program::StaticProgram;
+    use pecos_core::Angle64;
 
     #[test]
     fn test_gate_type_conversion_roundtrip() {
@@ -589,7 +525,7 @@ mod tests {
 
         for core_type in test_types {
             let neo_type = convert_gate_type(core_type).expect("should convert");
-            let back = convert_neo_to_core_gate_type(neo_type);
+            let back = neo_type.into();
             assert_eq!(core_type, back, "roundtrip failed for {core_type:?}");
         }
     }
@@ -643,29 +579,46 @@ mod tests {
                 vec![],
                 vec![QubitId(0), QubitId(1)],
             ),
+            Gate::idle(23.0, vec![QubitId(1)]),
         ];
 
         let queue = gates_to_command_queue(&original_gates).expect("should convert");
-        let back = command_queue_to_gates(&queue).expect("queue should convert");
+        let back = command_queue_to_gates(&queue);
 
-        assert_eq!(back.len(), 2);
+        assert_eq!(back.len(), 3);
         assert_eq!(back[0].gate_type, CoreGateType::H);
         assert_eq!(back[1].gate_type, CoreGateType::CX);
+        assert_eq!(back[2].gate_type, CoreGateType::Idle);
+        assert!((back[2].idle_duration() - 23.0).abs() < f64::EPSILON);
     }
 
     #[test]
-    fn command_queue_to_gates_reports_bad_angle_arity() {
+    fn malformed_command_cannot_reach_quantum_engine_runner() {
         let mut queue = CommandQueue::new();
-        queue.push(GateCommand::new(
-            NeoGateType::RZ,
-            smallvec::smallvec![QubitId(0)],
-        ));
-
-        let error = command_queue_to_gates(&queue)
-            .expect_err("data-driven conversion must not panic on a missing angle");
-        assert_eq!(error.gate_type, CoreGateType::RZ);
+        let error = queue
+            .try_push(GateCommand::new(
+                NeoGateType::RZ,
+                smallvec::smallvec![QubitId(0)],
+            ))
+            .expect_err("a malformed command must be rejected before runner execution");
+        let GateCommandError::AngleArity(error) = error else {
+            panic!("wrong error variant");
+        };
+        assert_eq!(error.gate_type, NeoGateType::RZ);
         assert_eq!(error.expected, 1);
         assert_eq!(error.actual, 0);
+
+        queue.push(GateCommand::pz(QubitId(0)));
+        queue.push(GateCommand::h(QubitId(0)));
+        queue.push(GateCommand::mz(QubitId(0)));
+        let mut source = StaticProgram::new(queue, 1);
+        let mut runner = QuantumEngineProgramRunner::new(Box::new(
+            pecos_engines::quantum::SparseStabEngine::with_seed(1, 17),
+        ));
+        let result = runner.run_shot(&mut source);
+
+        assert_eq!(result.num_batches, 1);
+        assert_eq!(result.outcomes.len(), 1);
     }
 
     #[test]

@@ -3355,7 +3355,7 @@ mod tests {
     }
 
     #[test]
-    fn recognized_rotations_with_wrong_angle_count_use_rotation_error() {
+    fn recognized_rotations_with_wrong_angle_count_cannot_enter_queue() {
         for gate_type in [
             GateType::RZ,
             GateType::RX,
@@ -3372,24 +3372,23 @@ mod tests {
                 smallvec::smallvec![QubitId(0)]
             };
             let mut circuit = CommandQueue::new();
-            circuit.push(GateCommand::with_angles(
-                gate_type,
-                qubits,
-                smallvec::SmallVec::new(),
-            ));
-            let mut state = SparseStab::with_seed(2, 42);
-            let mut runner = CircuitRunner::<SparseStab>::new();
-            let err = runner
-                .apply_circuit(&mut state, &circuit)
-                .expect_err("wrong angle count must error");
+            let err = circuit
+                .try_push(GateCommand::with_angles(
+                    gate_type,
+                    qubits,
+                    smallvec::SmallVec::new(),
+                ))
+                .expect_err("wrong angle count must be rejected at queue insertion");
             assert!(matches!(
                 err,
-                ExecutionError::AngleArity {
-                    gate,
+                crate::command::GateCommandError::AngleArity(
+                    crate::command::GateCommandAngleArityError {
+                    gate_type: gate,
                     expected,
-                    got: 0
-                } if gate == gate_type && expected == gate_type.angle_arity()
+                    actual: 0
+                }) if gate == gate_type && expected == gate_type.angle_arity()
             ));
+            assert!(circuit.is_empty());
         }
     }
 

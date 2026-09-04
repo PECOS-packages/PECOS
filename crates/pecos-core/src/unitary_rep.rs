@@ -53,7 +53,7 @@ use crate::gate_type::GateType;
 use crate::pauli::PauliOperator;
 use crate::phase::Phase;
 use crate::qubit_support::{assert_distinct_qubits, duplicate_qubits, overlapping_qubits};
-use crate::{Angle64, Pauli, PauliString, QuarterPhase, QubitId};
+use crate::{Angle64, GateAngleArityError, Pauli, PauliString, QuarterPhase, QubitId};
 use smallvec::SmallVec;
 use std::ops::{BitAnd, Mul, Neg};
 use std::str::FromStr;
@@ -1014,10 +1014,37 @@ impl UnitaryRep {
     ///
     /// # Panics
     ///
-    /// Panics if `qubits` does not match the gate arity, or if a
-    /// multi-qubit gate repeats a qubit.
+    /// Panics if `gate_type` requires angle parameters, if `qubits` does not
+    /// match the gate arity, or if a multi-qubit gate repeats a qubit. Use
+    /// [`Self::try_gate`] when the gate type is data-driven.
     #[must_use]
     pub fn gate(gate_type: GateType, qubits: impl Into<SmallVec<[usize; 3]>>) -> Self {
+        Self::try_gate(gate_type, qubits).unwrap_or_else(|error| panic!("{error}"))
+    }
+
+    /// Tries to create a fixed gate expression.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GateAngleArityError`] if `gate_type` requires angles and must
+    /// therefore be represented by a parameterized [`Unitary`] variant.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `qubits` does not match the gate arity, or if a multi-qubit
+    /// gate repeats a qubit.
+    pub fn try_gate(
+        gate_type: GateType,
+        qubits: impl Into<SmallVec<[usize; 3]>>,
+    ) -> Result<Self, GateAngleArityError> {
+        let angle_arity = gate_type.angle_arity();
+        if angle_arity != 0 {
+            return Err(GateAngleArityError {
+                gate_type,
+                expected: angle_arity,
+                actual: 0,
+            });
+        }
         let qubits = qubits.into();
         let expected = gate_type.quantum_arity();
         assert_eq!(
@@ -1029,7 +1056,7 @@ impl UnitaryRep {
         if expected > 1 {
             assert_distinct_qubits(&format!("{gate_type:?}"), qubits.iter().copied());
         }
-        Self::Gate(Unitary::Named(gate_type), qubits)
+        Ok(Self::Gate(Unitary::Named(gate_type), qubits))
     }
 
     /// Returns the adjoint (Hermitian conjugate) of this expression.
@@ -3940,6 +3967,22 @@ mod tests {
     #[should_panic(expected = "CX requires 2 qubit(s), got 1")]
     fn test_low_level_gate_constructor_rejects_wrong_arity() {
         let _ = UnitaryRep::gate(GateType::CX, smallvec::smallvec![0]);
+    }
+
+    #[test]
+    fn try_gate_rejects_parameterized_gate_type_at_construction() {
+        let error = UnitaryRep::try_gate(GateType::RZ, smallvec::smallvec![0])
+            .expect_err("a named unitary cannot defer a missing angle until decomposition");
+
+        assert_eq!(error.gate_type, GateType::RZ);
+        assert_eq!(error.expected, 1);
+        assert_eq!(error.actual, 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "Gate RZ expected 1 angle parameters, got 0")]
+    fn gate_rejects_parameterized_gate_type_at_construction() {
+        let _ = UnitaryRep::gate(GateType::RZ, smallvec::smallvec![0]);
     }
 
     #[test]

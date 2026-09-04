@@ -21,8 +21,9 @@ pub(crate) mod signal_store;
 pub use builder::CommandBuilder;
 pub use signal_store::{SignalIter, SignalStore};
 
-use pecos_core::{Angle64, QubitId, Signal, TimeUnits};
+use pecos_core::{Angle64, Gate, QubitId, Signal, TimeUnits};
 use smallvec::SmallVec;
+use std::fmt;
 
 /// The type of a quantum gate operation.
 ///
@@ -139,7 +140,11 @@ impl GateType {
     /// Returns the number of angle parameters this gate requires.
     #[must_use]
     pub fn angle_arity(self) -> usize {
-        pecos_core::gate_type::GateType::from(self).angle_arity()
+        if self == Self::Idle {
+            1
+        } else {
+            pecos_core::gate_type::GateType::from(self).angle_arity()
+        }
     }
 
     /// Returns true if this is a single-qubit gate.
@@ -191,6 +196,54 @@ impl GateType {
             && !self.is_resource_management()
     }
 }
+
+/// Error returned when a command has the wrong number of angle values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GateCommandAngleArityError {
+    /// The command gate type being validated.
+    pub gate_type: GateType,
+    /// The number of angles required by the command representation.
+    pub expected: usize,
+    /// The number of angles supplied by the command.
+    pub actual: usize,
+}
+
+impl fmt::Display for GateCommandAngleArityError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "Gate {:?} expected {} angle parameters, got {}",
+            self.gate_type, self.expected, self.actual
+        )
+    }
+}
+
+impl std::error::Error for GateCommandAngleArityError {}
+
+/// Error returned when a command cannot be admitted to a [`CommandQueue`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GateCommandError {
+    /// The command carries the wrong number of angles.
+    AngleArity(GateCommandAngleArityError),
+    /// The corresponding core gate payload is invalid.
+    InvalidGate {
+        /// The command gate type being validated.
+        gate_type: GateType,
+        /// The validation failure reported by the core gate invariant.
+        message: String,
+    },
+}
+
+impl fmt::Display for GateCommandError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::AngleArity(error) => error.fmt(f),
+            Self::InvalidGate { message, .. } => f.write_str(message),
+        }
+    }
+}
+
+impl std::error::Error for GateCommandError {}
 
 /// A single quantum gate command.
 ///
@@ -424,6 +477,19 @@ impl GateCommand {
             None
         }
     }
+
+    pub(crate) fn to_core_gate(&self) -> Gate {
+        let qubits = self.qubits.iter().copied().collect::<Vec<_>>();
+        if self.gate_type == GateType::Idle {
+            return Gate::idle(TimeUnits::new(self.angles[0].fraction()).as_f64(), qubits);
+        }
+        Gate::new(
+            self.gate_type.into(),
+            self.angles.iter().copied().collect::<Vec<_>>(),
+            Vec::new(),
+            qubits,
+        )
+    }
 }
 
 /// A queue of gate commands representing a quantum circuit or layer.
@@ -454,8 +520,42 @@ impl CommandQueue {
     }
 
     /// Add a command to the queue.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the command has the wrong number of angles. Use
+    /// [`Self::try_push`] for data-driven commands.
     pub fn push(&mut self, command: GateCommand) {
+        if let Err(error) = self.try_push(command) {
+            panic!("{error}");
+        }
+    }
+
+    /// Try to add a command to the queue after validating its angle count.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GateCommandAngleArityError`] without changing the queue when
+    /// the command's angle count does not match its gate type.
+    pub fn try_push(&mut self, command: GateCommand) -> Result<(), GateCommandError> {
+        let expected = command.gate_type.angle_arity();
+        let actual = command.angles.len();
+        if actual != expected {
+            return Err(GateCommandError::AngleArity(GateCommandAngleArityError {
+                gate_type: command.gate_type,
+                expected,
+                actual,
+            }));
+        }
+        command
+            .to_core_gate()
+            .validate()
+            .map_err(|message| GateCommandError::InvalidGate {
+                gate_type: command.gate_type,
+                message,
+            })?;
         self.commands.push(command);
+        Ok(())
     }
 
     /// Push a signal at the current position (after the last pushed command).
@@ -539,10 +639,12 @@ impl CommandQueue {
 
 impl FromIterator<GateCommand> for CommandQueue {
     fn from_iter<I: IntoIterator<Item = GateCommand>>(iter: I) -> Self {
-        Self {
-            commands: iter.into_iter().collect(),
-            signals: SignalStore::default(),
+        let iter = iter.into_iter();
+        let mut queue = Self::with_capacity(iter.size_hint().0);
+        for command in iter {
+            queue.push(command);
         }
+        queue
     }
 }
 
@@ -602,5 +704,60 @@ mod tests {
         assert_eq!(GateType::RXY1Q.angle_arity(), 2);
         assert_eq!(GateType::U.angle_arity(), 3);
         assert_eq!(GateType::H.angle_arity(), 0);
+        assert_eq!(GateType::Idle.angle_arity(), 1);
+    }
+
+    #[test]
+    fn try_push_rejects_wrong_angle_arity_without_changing_queue() {
+        let mut queue = CommandQueue::new();
+        let error = queue
+            .try_push(GateCommand::new(
+                GateType::RZ,
+                smallvec::smallvec![QubitId(0)],
+            ))
+            .expect_err("a malformed rotation must not enter a command queue");
+
+        let GateCommandError::AngleArity(error) = error else {
+            panic!("wrong error variant");
+        };
+        assert_eq!(error.gate_type, GateType::RZ);
+        assert_eq!(error.expected, 1);
+        assert_eq!(error.actual, 0);
+        assert!(queue.is_empty());
+    }
+
+    #[test]
+    fn try_push_rejects_surplus_angles_on_fixed_gate() {
+        let mut queue = CommandQueue::new();
+        let error = queue
+            .try_push(GateCommand::with_angles(
+                GateType::H,
+                smallvec::smallvec![QubitId(0)],
+                smallvec::smallvec![Angle64::QUARTER_TURN],
+            ))
+            .expect_err("a fixed gate must not silently discard supplied angles");
+
+        let GateCommandError::AngleArity(error) = error else {
+            panic!("wrong error variant");
+        };
+        assert_eq!(error.gate_type, GateType::H);
+        assert_eq!(error.expected, 0);
+        assert_eq!(error.actual, 1);
+        assert!(queue.is_empty());
+    }
+
+    #[test]
+    fn try_push_rejects_invalid_core_gate_payload_without_changing_queue() {
+        let mut queue = CommandQueue::new();
+        let error = queue
+            .try_push(GateCommand::cx(QubitId(0), QubitId(0)))
+            .expect_err("a command with duplicate operands must not enter the queue");
+
+        let GateCommandError::InvalidGate { gate_type, message } = error else {
+            panic!("wrong error variant");
+        };
+        assert_eq!(gate_type, GateType::CX);
+        assert!(message.contains("requires distinct qubits"));
+        assert!(queue.is_empty());
     }
 }

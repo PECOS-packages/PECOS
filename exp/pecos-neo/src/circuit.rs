@@ -250,52 +250,9 @@ impl From<&CommandQueue> for TickCircuit {
         let mut circuit = TickCircuit::new();
 
         for cmd in queue.iter() {
-            let gate_type: pecos_core::gate_type::GateType = cmd.gate_type.into();
-            let qubits: Vec<usize> = cmd.qubits.iter().map(|q| q.0).collect();
-
-            // Create a new tick for each command
             let mut tick = circuit.tick();
-
-            // Handle different gate types
-            match gate_type {
-                pecos_core::gate_type::GateType::PZ => {
-                    tick.pz(&qubits);
-                }
-                pecos_core::gate_type::GateType::MZ => {
-                    tick.mz(&qubits);
-                }
-                pecos_core::gate_type::GateType::H => {
-                    tick.h(&qubits);
-                }
-                pecos_core::gate_type::GateType::X => {
-                    tick.x(&qubits);
-                }
-                pecos_core::gate_type::GateType::Y => {
-                    tick.y(&qubits);
-                }
-                pecos_core::gate_type::GateType::Z => {
-                    tick.z(&qubits);
-                }
-                pecos_core::gate_type::GateType::CX => {
-                    if qubits.len() >= 2 {
-                        tick.cx(&[(qubits[0], qubits[1])]);
-                    }
-                }
-                pecos_core::gate_type::GateType::CZ => {
-                    if qubits.len() >= 2 {
-                        tick.cz(&[(qubits[0], qubits[1])]);
-                    }
-                }
-                _ => {
-                    // For other gate types, add as a raw gate
-                    let angles: SmallVec<[Angle64; 3]> = cmd.angles.iter().copied().collect();
-                    let qubit_ids: SmallVec<[QubitId; 4]> =
-                        qubits.iter().map(|&q| QubitId(q)).collect();
-                    let gate = Gate::try_new(gate_type, angles, SmallVec::new(), qubit_ids)
-                        .expect("validated command queue must have exact gate angle arity");
-                    tick.try_add_gate(gate)
-                        .expect("one gate per tick should not have qubit conflicts");
-                }
+            if let Err(error) = tick.try_add_gate(cmd.to_core_gate()) {
+                unreachable!("validated command queue produced an invalid tick gate: {error}");
             }
         }
 
@@ -312,6 +269,8 @@ impl From<CommandQueue> for TickCircuit {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::command::GateCommandError;
+    use pecos_core::Angle64;
 
     #[test]
     fn test_gate_type_conversion_roundtrip() {
@@ -412,6 +371,34 @@ mod tests {
 
         // Each command becomes its own tick
         assert_eq!(circuit.num_ticks(), 6);
+    }
+
+    #[test]
+    fn malformed_fixed_gate_cannot_reach_tick_circuit_conversion() {
+        let mut commands = CommandQueue::new();
+        let error = commands
+            .try_push(GateCommand::with_angles(
+                GateType::H,
+                smallvec::smallvec![QubitId(0)],
+                smallvec::smallvec![Angle64::QUARTER_TURN],
+            ))
+            .expect_err("surplus angles must be rejected before TickCircuit conversion");
+        let GateCommandError::AngleArity(error) = error else {
+            panic!("wrong error variant");
+        };
+        assert_eq!(error.gate_type, GateType::H);
+        assert_eq!(error.expected, 0);
+        assert_eq!(error.actual, 1);
+
+        commands.push(GateCommand::h(QubitId(0)));
+        let circuit = TickCircuit::from(&commands);
+        let gate = circuit.ticks()[0]
+            .iter_gate_batches()
+            .next()
+            .expect("converted tick contains H")
+            .as_gate();
+        assert_eq!(gate.gate_type, pecos_core::gate_type::GateType::H);
+        assert!(gate.angles.is_empty());
     }
 
     #[test]

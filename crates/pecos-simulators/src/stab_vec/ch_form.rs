@@ -625,6 +625,17 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CHFormGeneric<S, R> {
         let g1 = self.gamma();
         let g2 = other.gamma();
 
+        #[cfg(debug_assertions)]
+        if let Some(diff_qubits) = diff_qubits {
+            debug_assert!(
+                g1.iter()
+                    .zip(g2)
+                    .enumerate()
+                    .all(|(q, (g1q, g2q))| { g1q == g2q || diff_qubits.contains(&q) }),
+                "diff_qubits must contain every qubit whose gamma differs"
+            );
+        }
+
         // Iterate diff qubits only. Track l-value counts instead of complex multiplies.
         // Factor from free qubits with l!=0: (1+i)^{count_l1} * (1-i)^{count_l3}
         // = 2^{(count_l1+count_l3)/2} * exp(i*pi/4*(count_l1-count_l3))

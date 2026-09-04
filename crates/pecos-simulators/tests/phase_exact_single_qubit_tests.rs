@@ -14,7 +14,7 @@ use pecos_core::{Angle64, Clifford, QubitId};
 use pecos_simulators::state_vector_test_utils::StateVectorSimulator;
 use pecos_simulators::{
     ArbitraryRotationGateable, CHForm, CliffordGateable, SparseStateVecAoS, SparseStateVecSoA,
-    StateVecAoS, StateVecSoA, StateVecSoA32,
+    StabVec, StateVecAoS, StateVecSoA, StateVecSoA32,
 };
 
 const F64_TOLERANCE: f64 = 1e-12;
@@ -451,12 +451,14 @@ fn phase_carrying_cpu_simulators_match_named_gate_conventions() {
     check_state_vector::<SparseStateVecSoA>("SparseStateVecSoA", F64_TOLERANCE);
     check_state_vector::<SparseStateVecAoS>("SparseStateVecAoS", F64_TOLERANCE);
     check_state_vector::<StateVecSoA32>("StateVecSoA32", F32_TOLERANCE);
+    check_state_vector::<StabVec>("StabVec", F64_TOLERANCE);
 
     check_state_vector_cliffords::<StateVecSoA>("StateVecSoA", F64_TOLERANCE);
     check_state_vector_cliffords::<StateVecAoS>("StateVecAoS", F64_TOLERANCE);
     check_state_vector_cliffords::<SparseStateVecSoA>("SparseStateVecSoA", F64_TOLERANCE);
     check_state_vector_cliffords::<SparseStateVecAoS>("SparseStateVecAoS", F64_TOLERANCE);
     check_state_vector_cliffords::<StateVecSoA32>("StateVecSoA32", F32_TOLERANCE);
+    check_state_vector_cliffords::<StabVec>("StabVec", F64_TOLERANCE);
 }
 
 #[test]
@@ -483,6 +485,7 @@ fn phase_carrying_cpu_simulators_match_multi_target_conventions_on_three_qubits(
         F32_TOLERANCE,
         |sim| sim.set_fusion(false),
     );
+    check_three_qubit_multi_target_calls::<StabVec, _>("StabVec", F64_TOLERANCE, |_| {});
 }
 
 #[test]

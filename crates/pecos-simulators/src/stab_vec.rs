@@ -232,6 +232,14 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
         (norm_sq, 0.5 * twice_prob0)
     }
 
+    fn projection_coefficient_scale(ch: &CHFormGeneric<S, R>, q: usize) -> f64 {
+        if ch.expectation_value_zq(q) == 0.0 {
+            std::f64::consts::FRAC_1_SQRT_2
+        } else {
+            1.0
+        }
+    }
+
     /// Merge shared-structure terms with identical gamma and omega.
     ///
     /// The shared F/G/M/v/s precondition makes matching gamma and omega
@@ -775,23 +783,28 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
 
         // Compute probability of measuring 0. Optimized multi-term paths are
         // valid only while all terms share the CH structure they precompute.
+        // Exact branches carry the input norm they already compute; optimized
+        // shared-structure branches use StabVec's normalized-state invariant.
         let structure_uniform = self.has_shared_projection_structure();
-        let prob0 = if self.terms.len() == 1 {
+        let (state_norm_sq, prob0) = if self.terms.len() == 1 {
             // Single term: O(n) using CH-form structure directly
             let (coeff, ch) = &self.terms[0];
-            coeff.norm_sqr() * ch.prob_z_zero(q)
+            let norm_sq = coeff.norm_sqr();
+            (norm_sq, norm_sq * ch.prob_z_zero(q))
         } else if self.num_qubits <= 6 {
             // For small qubit counts, state vector is fast enough.
             let sv = self.state_vector();
+            let mut norm_sq = 0.0;
             let mut p = 0.0;
             for (x, sv_x) in sv.iter().enumerate() {
+                norm_sq += sv_x.norm_sqr();
                 if (x >> q) & 1 == 0 {
                     p += sv_x.norm_sqr();
                 }
             }
-            p
+            (norm_sq, p)
         } else if !structure_uniform {
-            self.exact_norm_and_prob0(q).1
+            self.exact_norm_and_prob0(q)
         } else if self.terms.len() <= 8 {
             // expectation_value_zq depends only on shared structure (G/v/s), same for all terms.
             let ez0 = self.terms[0].1.expectation_value_zq(q);
@@ -842,17 +855,17 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
                         prob += 2.0 * (cjk * (ip + ip_z)).re;
                     }
                 }
-                0.5 * prob
+                (1.0, 0.5 * prob)
             } else {
                 // Deterministic: all terms have the same Z_q expectation.
-                0.5 * (1.0 + ez0)
+                (1.0, 0.5 * (1.0 + ez0))
             }
         } else {
             // Large T: first check if measurement is deterministic from structure.
             let ez = self.terms[0].1.expectation_value_zq(q);
             if ez != 0.0 {
                 // Deterministic: all terms have the same Z_q expectation.
-                0.5 * (1.0 + ez)
+                (1.0, 0.5 * (1.0 + ez))
             } else if self.mc_threshold.is_some_and(|t| self.terms.len() > t) {
                 // Very large T: Monte Carlo term sampling. Pick a term proportional
                 // to |c_j|², use its single-term probability as Pr(0).
@@ -870,7 +883,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
                         break;
                     }
                 }
-                self.terms[chosen].1.prob_z_zero(q)
+                (1.0, self.terms[chosen].1.prob_z_zero(q))
             } else {
                 // Non-deterministic: sort-based bucketing.
                 let sc = self.terms[0].1.precompute_shared_constraints();
@@ -943,7 +956,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
                     }
                     group_start = group_end;
                 }
-                0.5 * prob
+                (1.0, 0.5 * prob)
             } // end non-deterministic
         };
 
@@ -969,8 +982,8 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
         // But that loses the stabilizer structure.
         //
         // Better: measure each term independently with the forced outcome.
-        // The CH-form measurement correctly projects each term.
-        // The coefficients stay the same. Then renormalize.
+        // CH-form keeps a nondeterministic stabilizer post-state normalized,
+        // so its corresponding coefficient carries the projector's 1/sqrt(2).
 
         // Apply the projector once only when every structural input is shared
         // and gamma[q] is uniform; otherwise project each term independently.
@@ -985,9 +998,11 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
             // All terms have the same gamma[q], so delta is identical.
             // Structural changes and omega transform are the same for all terms.
             // Apply the projector once, compute deltas, propagate to others.
+            let projection_scale = Self::projection_coefficient_scale(&self.terms[0].1, q);
             let gamma_before = self.terms[0].1.gamma().to_vec();
             let omega_before = self.terms[0].1.omega_exact();
             self.terms[0].1.project_z(q, outcome);
+            self.terms[0].0 *= projection_scale;
             let omega_after = self.terms[0].1.omega_exact();
             let mut gamma_delta = vec![0u8; self.num_qubits];
             for p in 0..self.num_qubits {
@@ -998,9 +1013,10 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
             let shared_m = self.terms[0].1.arc_m();
             let shared_v = self.terms[0].1.arc_v();
             let shared_s = self.terms[0].1.arc_s();
-            for (_, ch) in &mut self.terms[1..] {
+            for (coefficient, ch) in &mut self.terms[1..] {
                 ch.apply_gamma_delta(&gamma_delta);
                 ch.apply_omega_transform(omega_before, omega_after);
+                *coefficient *= projection_scale;
                 ch.set_arcs(
                     shared_f.clone(),
                     shared_g.clone(),
@@ -1010,8 +1026,10 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
                 );
             }
         } else {
-            for (_coeff, ch) in &mut self.terms {
+            for (coefficient, ch) in &mut self.terms {
+                let projection_scale = Self::projection_coefficient_scale(ch, q);
                 ch.project_z(q, outcome);
+                *coefficient *= projection_scale;
             }
         }
 
@@ -1038,11 +1056,15 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
             self.merge_identical_terms();
         }
 
-        // Renormalize using the actual CH-form overlaps. Distinct gamma values
-        // are not generally orthogonal.
-        let norm_sq = self.exact_norm_and_prob0(q).0;
-        if norm_sq > 0.0 {
-            let inv_norm = 1.0 / norm_sq.sqrt();
+        // P0 and P1 are complementary orthogonal projectors, so the squared
+        // norm after projection is the probability weight already computed.
+        let projected_norm_sq = if outcome {
+            state_norm_sq - prob0
+        } else {
+            prob0
+        };
+        if projected_norm_sq > 0.0 {
+            let inv_norm = 1.0 / projected_norm_sq.sqrt();
             for (coeff, _) in &mut self.terms {
                 *coeff *= inv_norm;
             }
@@ -1229,6 +1251,18 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
         // Correct the projective frame composition to canonical H4 phase.
         for _ in qubits {
             self.frame_phase = (self.frame_phase + 7) & 7;
+        }
+        self
+    }
+
+    fn h6(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.sx(qubits)
+            .y(qubits)
+            .apply_global_phase(-(Angle64::QUARTER_TURN / 2u64), qubits);
+        // Compensate for the current Y-frame cocycle so the composition has
+        // the canonical H6 phase. Remove this with the issue #699 fix.
+        for _ in qubits {
+            self.frame_phase = (self.frame_phase + 2) & 7;
         }
         self
     }
@@ -3209,6 +3243,21 @@ mod tests {
     }
 
     #[test]
+    fn nondeterministic_single_term_projection_preserves_norm() {
+        let mut stab = StabVec::builder(1).pruning_threshold(0.0).build();
+        stab.h(&qid(0));
+        let _ = stab.state_vector();
+        assert_eq!(stab.num_terms(), 1);
+
+        stab.measure_qubit(0, Some(false));
+        assert_phase_exact_state_matches(
+            &stab.state_vector(),
+            &[Complex64::new(1.0, 0.0), Complex64::new(0.0, 0.0)],
+            "nondeterministic single-term projection",
+        );
+    }
+
+    #[test]
     fn impossible_forced_measurement_retains_zero_term() {
         let mut stab = StabVec::builder(7).pruning_threshold(0.0).build();
         stab.measure_qubit(0, Some(true));
@@ -3262,5 +3311,21 @@ mod tests {
             }));
             assert!(result.is_err(), "missing {changed} contract assertion");
         }
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn exact_overlap_contract_asserts_complete_gamma_diff_set() {
+        let mut stab = StabVec::builder(2).pruning_threshold(0.0).build();
+        let mut unused_reference = StateVecSoA::new(2);
+        prepare_uniform_terms(&mut stab, &mut unused_reference, 2);
+        assert!(stab.has_shared_projection_structure());
+        assert_eq!(stab.gamma_diff_qubits, vec![0]);
+
+        stab.gamma_diff_qubits.clear();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            stab.exact_norm_and_prob0(1);
+        }));
+        assert!(result.is_err(), "incomplete gamma diff set was accepted");
     }
 }

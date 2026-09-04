@@ -291,14 +291,8 @@ impl From<&CommandQueue> for TickCircuit {
                     let angles: SmallVec<[Angle64; 3]> = cmd.angles.iter().copied().collect();
                     let qubit_ids: SmallVec<[QubitId; 4]> =
                         qubits.iter().map(|&q| QubitId(q)).collect();
-                    let gate = Gate {
-                        gate_type,
-                        angles,
-                        params: SmallVec::new(),
-                        qubits: qubit_ids,
-                        meas_ids: SmallVec::new(),
-                        channel: None,
-                    };
+                    let gate = Gate::try_new(gate_type, angles, SmallVec::new(), qubit_ids)
+                        .expect("validated command queue must have exact gate angle arity");
                     tick.try_add_gate(gate)
                         .expect("one gate per tick should not have qubit conflicts");
                 }

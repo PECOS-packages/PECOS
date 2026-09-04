@@ -780,7 +780,8 @@ impl ByteMessage {
             );
         }
 
-        let gate = Gate::new(gate_type, angles, params, qubits);
+        let gate = Gate::try_new(gate_type, angles, params, qubits)
+            .map_err(|err| PecosError::Input(format!("Invalid gate command payload: {err}")))?;
         gate.validate().map_err(|err| {
             PecosError::Input(format!(
                 "Invalid gate command payload for {gate_type:?}: {err}"

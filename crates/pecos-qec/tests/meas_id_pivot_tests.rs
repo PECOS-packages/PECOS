@@ -262,30 +262,27 @@ fn scrambled_ids_dual_output_xors_the_named_raw_channels() {
     );
 }
 
-/// A `gate_mut` edit can leave two measurements holding one id. The sampler's
-/// annotation resolution refuses the whole map instead of silently binding to
-/// the first holder.
+/// DAG mutation refuses to leave two measurements holding one id, so sampler
+/// annotation resolution continues to use the original distinct identities.
 #[test]
-fn sampler_annotations_refuse_a_map_with_duplicate_ids() {
+fn dag_update_refuses_duplicate_measurement_ids() {
     use pecos_qec::fault_tolerance::propagator::DagFaultAnalyzer;
 
     let mut dag = DagCircuit::new();
     dag.pz(&[0, 1]);
     let a = dag.mz(&[0]);
     let b = dag.mz(&[1]);
-    dag.gate_mut(b[0].node).expect("gate exists").meas_ids[0] = a[0].meas_id;
+    let error = dag
+        .update_gate(b[0].node, |gate| gate.meas_ids[0] = a[0].meas_id)
+        .expect_err("measurement IDs are DAG-owned identity data");
+    assert!(error.to_string().contains("cannot change measurement IDs"));
 
     let map = DagFaultAnalyzer::new(&dag).build_influence_map();
-    let err = DemSamplerBuilder::new(&map)
+    DemSamplerBuilder::new(&map)
         .with_uniform_noise(0.01)
         .raw_measurements()
         .with_circuit_annotations(&dag)
-        .map(|_| ())
-        .expect_err("two measurements hold one id");
-    assert!(matches!(
-        err,
-        pecos_qec::fault_tolerance::dem_builder::DetectorValidationError::InvalidMetadata { .. }
-    ));
+        .expect("the rejected edit must leave distinct measurement IDs");
 }
 
 /// `measurement_order` is a legacy escape hatch for id-less circuits; on a

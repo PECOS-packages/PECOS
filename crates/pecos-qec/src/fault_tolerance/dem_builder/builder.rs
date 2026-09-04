@@ -3556,7 +3556,9 @@ fn circuit_with_omitted_two_qubit_gate(
 
     let mut branch = circuit.clone();
     let replacement = pecos_core::Gate::simple(GateType::I, original.qubits.clone());
-    *branch.gate_mut(node).expect("gate existed before clone") = replacement;
+    branch
+        .update_gate(node, |gate| *gate = replacement)
+        .map_err(|err| DemBuilderError::ConfigurationError(err.to_string()))?;
     Ok(branch)
 }
 

@@ -840,7 +840,10 @@ pub fn hugr_to_dag_circuit(hugr: &Hugr) -> Result<DagCircuit, HugrConvertError> 
             .into()
         } else {
             let angles: Vec<Angle64> = op.params.iter().map(|&p| Angle64::from_turns(p)).collect();
-            vec![Gate::with_angles(op.gate_type, angles, qubits.clone())]
+            vec![
+                Gate::try_with_angles(op.gate_type, angles, qubits.clone())
+                    .map_err(|err| HugrConvertError::UnknownOperation(err.to_string()))?,
+            ]
         };
         for gate in gates {
             let dag_node_idx = dag.add_gate_auto_wire(gate);
@@ -1497,7 +1500,10 @@ impl SimpleHugr {
             } else {
                 let angles: Vec<Angle64> =
                     op.params.iter().map(|&p| Angle64::from_turns(p)).collect();
-                vec![Gate::with_angles(op.gate_type, angles, qubits.clone())]
+                vec![
+                    Gate::try_with_angles(op.gate_type, angles, qubits.clone())
+                        .map_err(|err| HugrConvertError::UnknownOperation(err.to_string()))?,
+                ]
             };
             for gate in native_gates {
                 let gate_idx = gates.len();
@@ -2169,16 +2175,20 @@ mod tests {
     }
 
     #[test]
-    fn dag_circuit_to_hugr_rejects_rotation_without_angle() {
+    fn dag_circuit_refuses_rotation_without_angle() {
         let mut dag = DagCircuit::new();
         let node = dag.add_gate(Gate::rz(Angle64::ZERO, &[QubitId(0)]));
-        dag.gate_mut(node).expect("RZ node").angles.clear();
+        let before = dag.gate(node).cloned().expect("RZ node");
+        let error = dag
+            .update_gate(node, |gate| gate.angles.clear())
+            .expect_err("RZ without an angle must be refused");
 
-        let error = dag_circuit_to_hugr(&dag).expect_err("RZ without an angle must fail");
         assert_eq!(
             error.to_string(),
-            "Unknown quantum operation: RZ is missing its rotation angle"
+            "Invalid gate at DAG node 0: Gate RZ expected 1 angle parameters, got 0"
         );
+        assert_eq!(dag.gate(node), Some(&before));
+        dag_circuit_to_hugr(&dag).expect("the refused update must leave a valid DAG");
     }
 
     #[test]

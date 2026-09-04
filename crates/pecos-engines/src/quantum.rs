@@ -1821,24 +1821,16 @@ mod tests {
 
     #[test]
     fn dispatch_validation_uses_exact_core_angle_arity() {
-        let missing = Gate::new(
-            GateType::RZ,
-            Vec::<Angle64>::new(),
-            Vec::<f64>::new(),
-            vec![QubitId(0)],
-        );
+        let mut missing = Gate::rz(Angle64::ZERO, &[QubitId(0)]);
+        missing.angles.clear();
         let err = validate_dispatch_gate(&missing).expect_err("missing angle must fail");
         assert!(
             err.to_string()
                 .contains("Gate RZ expected 1 angle parameters, got 0")
         );
 
-        let surplus = Gate::new(
-            GateType::RZ,
-            vec![Angle64::ZERO, Angle64::ZERO],
-            Vec::<f64>::new(),
-            vec![QubitId(0)],
-        );
+        let mut surplus = Gate::rz(Angle64::ZERO, &[QubitId(0)]);
+        surplus.angles.push(Angle64::ZERO);
         let err = validate_dispatch_gate(&surplus).expect_err("surplus angle must fail");
         assert!(
             err.to_string()

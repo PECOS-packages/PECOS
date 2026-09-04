@@ -74,7 +74,7 @@ pub use gate_registry::{
     AngleSource, ConcreteStep, DecompStep, GateDefinition, GateDefinitionBuilder, GateRegistry,
     GateSignature,
 };
-pub use gates::{Gate, GateAngles, GateMeasIds, GateParams, GateQubits};
+pub use gates::{Gate, GateAngleArityError, GateAngles, GateMeasIds, GateParams, GateQubits};
 pub use pauli::pauli_bitmap::PauliBitmap;
 pub use pauli::pauli_bitmask::{
     BitmaskStorage, Conjugated, PauliBitmask, PauliBitmaskGeneric, PauliBitmaskSmall,

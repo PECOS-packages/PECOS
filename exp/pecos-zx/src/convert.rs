@@ -322,6 +322,7 @@ pub fn zx_circuit_to_dag(zx_circ: &ZxCircuit) -> Result<DagCircuit, ConvertError
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pecos_core::Gate;
     use quizx::graph::GraphLike;
 
     #[test]
@@ -361,6 +362,23 @@ mod tests {
         let zx_circ = dag_to_zx_circuit(&dag).expect("conversion should succeed");
         assert_eq!(zx_circ.num_qubits(), 2);
         assert_eq!(zx_circ.num_gates(), 4);
+    }
+
+    #[test]
+    fn rejected_dag_update_leaves_zx_conversion_safe() {
+        let mut dag = DagCircuit::new();
+        let rotation = dag.add_gate_auto_wire(Gate::rz(Angle64::QUARTER_TURN, &[0]));
+        let before = dag.gate(rotation).cloned().expect("rotation exists");
+
+        let error = dag
+            .update_gate(rotation, |gate| gate.angles.clear())
+            .expect_err("a stored RZ cannot lose its required angle");
+        assert_eq!(
+            error.to_string(),
+            "Invalid gate at DAG node 0: Gate RZ expected 1 angle parameters, got 0"
+        );
+        assert_eq!(dag.gate(rotation), Some(&before));
+        dag_to_zx_circuit(&dag).expect("the refused update must leave valid ZX input");
     }
 
     #[test]

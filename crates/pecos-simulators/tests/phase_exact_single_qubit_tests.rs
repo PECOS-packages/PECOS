@@ -568,3 +568,47 @@ fn ch_form_matches_named_clifford_conventions() {
         );
     }
 }
+
+#[test]
+fn ch_form_matches_two_qubit_root_conventions() {
+    for gate in NAMED_TWO_QUBIT_ROOT_GATES {
+        let matrix = gate
+            .canonical_2q_matrix()
+            .expect("named two-qubit root must have a canonical matrix");
+        for (case, pairs) in [
+            ("scalar pair", vec![(QubitId(0), QubitId(1))]),
+            ("reversed pair", vec![(QubitId(4), QubitId(1))]),
+            ("distant vectorized pair", vec![(QubitId(2), QubitId(5))]),
+            (
+                "batched pairs",
+                vec![(QubitId(0), QubitId(1)), (QubitId(2), QubitId(5))],
+            ),
+        ] {
+            let mut sim = CHForm::new(6);
+            sim.h(&[QubitId(0), QubitId(1), QubitId(4)])
+                .sz(&[QubitId(2), QubitId(5)])
+                .cx(&[
+                    (QubitId(0), QubitId(2)),
+                    (QubitId(1), QubitId(4)),
+                    (QubitId(3), QubitId(5)),
+                ])
+                .cz(&[(QubitId(0), QubitId(1)), (QubitId(2), QubitId(5))])
+                .h4(&[QubitId(3)]);
+            let input = sim.state_vector();
+            let mut expected = input.clone();
+            for &(q1, q2) in &pairs {
+                apply_canonical_two_qubit_matrix(&mut expected, matrix, q1, q2);
+            }
+
+            apply_named_two_qubit_gate(&mut sim, gate, &pairs);
+
+            assert_phase_exact_state(
+                "CHForm",
+                &format!("{gate:?} {case}"),
+                &sim.state_vector(),
+                &expected,
+                F64_TOLERANCE,
+            );
+        }
+    }
+}

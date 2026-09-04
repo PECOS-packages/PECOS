@@ -215,7 +215,31 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CHFormGeneric<S, R> {
         self.s.clone()
     }
 
-    /// Replace structural Arcs (after measurement, all terms should share the same structure).
+    /// Whether two terms share the structural inputs used by C-type gates.
+    ///
+    /// `S`, `Sdg`, `CZ`, `SZZ`, and `SZZdg` derive their `M` update only from `G` and `M`.
+    /// They leave `F`, `G`, `v`, and `s` unchanged, so those per-term values need not
+    /// be shared for the common-update optimization to be sound.
+    pub(crate) fn shares_c_type_structure(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.g, &other.g) && std::sync::Arc::ptr_eq(&self.m, &other.m)
+    }
+
+    /// Whether two terms share every structural input used by Z projection.
+    pub(crate) fn shares_projection_structure(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.f, &other.f)
+            && std::sync::Arc::ptr_eq(&self.g, &other.g)
+            && std::sync::Arc::ptr_eq(&self.m, &other.m)
+            && std::sync::Arc::ptr_eq(&self.v, &other.v)
+            && std::sync::Arc::ptr_eq(&self.s, &other.s)
+    }
+
+    /// Replace M after applying a shared C-type structural update once.
+    pub(crate) fn set_shared_m(&mut self, m: std::sync::Arc<SparseBinaryMatrix<S>>) {
+        self.m = m;
+    }
+
+    /// Replace structural Arcs after one proven-uniform transformation is
+    /// applied to a representative term.
     pub(crate) fn set_arcs(
         &mut self,
         f: std::sync::Arc<SparseBinaryMatrix<S>>,
@@ -1951,7 +1975,12 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CHFormGeneric<S, R> {
     /// 1. Create w by copying s, randomizing bits where v[j]=1
     /// 2. Outcome = sum(w & G[q,:]) mod 2
     /// 3. Project state via `update_sum`
-    fn apply_mz(&mut self, q: usize, forced: Option<bool>) -> MeasurementResult {
+    fn apply_mz(
+        &mut self,
+        q: usize,
+        forced: Option<bool>,
+        project_deterministic: bool,
+    ) -> MeasurementResult {
         // Step 1: Create w. Copy s, then randomize positions where v[j]=1.
         // Also determine if measurement is deterministic:
         // It's deterministic iff G[q,:] has no overlap with v.
@@ -1988,7 +2017,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CHFormGeneric<S, R> {
         // Actually, a simpler approach: if forced and outcome doesn't match,
         // flip one of the random bits that affects the outcome.
         let outcome = if let Some(forced_val) = forced {
-            if is_deterministic {
+            if is_deterministic && !project_deterministic {
                 // Can't change deterministic outcome
                 outcome
             } else if outcome != forced_val {
@@ -2045,7 +2074,13 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CHFormGeneric<S, R> {
 
     /// Measure qubit q in Z basis, forcing the outcome for non-deterministic cases.
     pub fn mz_forced(&mut self, qubit: usize, forced_outcome: bool) -> MeasurementResult {
-        self.apply_mz(qubit, Some(forced_outcome))
+        self.apply_mz(qubit, Some(forced_outcome), false)
+    }
+
+    /// Project onto a specified Z outcome, including zeroing the state when a
+    /// deterministic term is incompatible with that outcome.
+    pub(crate) fn project_z(&mut self, qubit: usize, outcome: bool) {
+        self.apply_mz(qubit, Some(outcome), true);
     }
 }
 
@@ -2149,7 +2184,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CliffordGateable for CHFormGener
     fn mz(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
         qubits
             .iter()
-            .map(|&q| self.apply_mz(q.index(), None))
+            .map(|&q| self.apply_mz(q.index(), None, false))
             .collect()
     }
 
@@ -2291,7 +2326,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CliffordGateable for CHFormGener
     }
 
     fn szz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
-        // SZZ = CZ * S * S * phase. Batch M updates in single make_mut.
+        // SZZ = CZ * S * S. Batch M updates in single make_mut.
         for &(q0, q1) in pairs {
             let q = q0.index();
             let r = q1.index();
@@ -2305,13 +2340,12 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CliffordGateable for CHFormGener
             m.row_xor_from(r, &self.g, r); // S(r)
             self.gamma[q] = (self.gamma[q] + 3) & 3;
             self.gamma[r] = (self.gamma[r] + 3) & 3;
-            self.omega.mul_phase(1);
         }
         self
     }
 
     fn szzdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
-        // SZZdg = CZ * Sdg * Sdg * phase. Sdg = Z*S.
+        // SZZdg = CZ * Sdg * Sdg. Sdg = Z*S.
         for &(q0, q1) in pairs {
             let q = q0.index();
             let r = q1.index();
@@ -2323,13 +2357,12 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CliffordGateable for CHFormGener
             // Sdg gamma: Z adds +2, S adds +3 = total +5 = +1 mod 4
             self.gamma[q] = (self.gamma[q] + 1) & 3;
             self.gamma[r] = (self.gamma[r] + 1) & 3;
-            self.omega.mul_phase(7);
         }
         self
     }
 
     fn sxx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
-        // SXX = CX * (H*S*H) * CX * phase. Faster than 4H for standalone SXX.
+        // SXX = CX * (H*S*H) * CX. Faster than 4H for standalone SXX.
         for &(q0, q1) in pairs {
             let q = q0.index();
             let r = q1.index();
@@ -2338,13 +2371,12 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CliffordGateable for CHFormGener
             self.apply_s(q);
             self.apply_h(q);
             self.apply_cx(q, r);
-            self.omega.mul_phase(7);
         }
         self
     }
 
     fn sxxdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
-        // SXXdg = CX * (H*Sdg*H) * CX * e^{i*pi/4}
+        // SXXdg = CX * (H*Sdg*H) * CX
         for &(q0, q1) in pairs {
             let q = q0.index();
             let r = q1.index();
@@ -2353,7 +2385,6 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CliffordGateable for CHFormGener
             self.apply_szdg(q);
             self.apply_h(q);
             self.apply_cx(q, r);
-            self.omega.mul_phase(1);
         }
         self
     }

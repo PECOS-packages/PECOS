@@ -13,5 +13,7 @@
 //! Native belief-propagation primitives for PECOS decoders.
 
 pub mod min_sum;
+pub mod relay;
 
-pub use min_sum::{BpGraph, BpScratch, min_sum_bp_into};
+pub use min_sum::{BpGraph, BpScratch, LLR_SATURATION, min_sum_bp_into};
+pub use relay::{LegOutcome, RelayBp, RelayConfig, RelayOutcome, Schedule};

@@ -266,7 +266,9 @@ python-ci-build-docs profile="debug": _msvc-bootstrap (validate-profile "python-
     set -euo pipefail
     PROFILE="{{profile}}"
     PECOS_BUILD_MWPF=0 {{pecos}} python build --profile "$PROFILE" --no-cuda
-    uv run --frozen --package pecos-rslib-exp maturin develop --uv --locked --manifest-path python/pecos-rslib-exp/Cargo.toml
+    # --no-sync: a package-scoped `uv run` otherwise syncs pecos-rslib-exp into the
+    # environment first, i.e. builds the release wheel this very command replaces.
+    uv run --frozen --no-sync --package pecos-rslib-exp maturin develop --uv --locked --manifest-path python/pecos-rslib-exp/Cargo.toml
 
 # Build the extra experimental bindings exercised by the fast Python core test lane.
 [group('build')]
@@ -275,7 +277,9 @@ python-ci-build-test profile="debug": _msvc-bootstrap (validate-profile "python-
     set -euo pipefail
     PROFILE="{{profile}}"
     {{pecos}} python build --profile "$PROFILE" --no-cuda
-    uv run --frozen --package pecos-rslib-exp maturin develop --uv --locked --manifest-path python/pecos-rslib-exp/Cargo.toml
+    # --no-sync: a package-scoped `uv run` otherwise syncs pecos-rslib-exp into the
+    # environment first, i.e. builds the release wheel this very command replaces.
+    uv run --frozen --no-sync --package pecos-rslib-exp maturin develop --uv --locked --manifest-path python/pecos-rslib-exp/Cargo.toml
 
 # =============================================================================
 # Testing
@@ -308,6 +312,45 @@ pytest-ci-core:
     uv run --frozen --group numpy-compat pytest -n auto python/pecos-rslib/tests -m "numpy and not performance"
     uv run --frozen pytest -n auto python/quantum-pecos/tests -m "not optional_dependency and not slow"
     uv run --frozen pytest -n auto python/pecos-rslib-exp/tests
+
+# One shard of `pytest-ci-core`, for the pr-core-python matrix. The four shards
+# partition the lane: `qec-surface-harvest` owns one file, `qec-surface` the
+# rest of that directory, `qec-guppy` the rest of qec/ plus guppy/, and `rest`
+# is everything else, ignoring exactly the paths the other shards own. Keep
+# the owned paths and the `--ignore` lists in step so the union stays equal to
+# `pytest-ci-core`; a shard whose path disappears fails (pytest exit 4/5).
+# Balance (CPU-seconds, 2026-09-02): harvest file ~1040, rest of qec/surface
+# ~700, qec-rest + guppy ~1100, rest ~950. The harvest file is split out
+# because its tests are compile-bound and barely parallelize: on CI the whole
+# surface directory took 15 min of a 4-worker run.
+[group('test')]
+pytest-ci-core-shard shard:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    QP=python/quantum-pecos/tests
+    CORE_MARKERS="not optional_dependency and not slow"
+    HARVEST="$QP/qec/surface/test_pauli_mask_harvest.py"
+    case "{{shard}}" in
+      qec-surface-harvest)
+        uv run --frozen pytest -n auto "$HARVEST" -m "$CORE_MARKERS"
+        ;;
+      qec-surface)
+        uv run --frozen pytest -n auto "$QP/qec/surface" --ignore="$HARVEST" -m "$CORE_MARKERS"
+        ;;
+      qec-guppy)
+        uv run --frozen pytest -n auto "$QP/qec" --ignore="$QP/qec/surface" "$QP/guppy" -m "$CORE_MARKERS"
+        ;;
+      rest)
+        uv run --frozen pytest -n auto python/pecos-rslib/tests -m "not performance"
+        uv run --frozen --group numpy-compat pytest -n auto python/pecos-rslib/tests -m "numpy and not performance"
+        uv run --frozen pytest -n auto "$QP" --ignore="$QP/qec" --ignore="$QP/guppy" -m "$CORE_MARKERS"
+        uv run --frozen pytest -n auto python/pecos-rslib-exp/tests
+        ;;
+      *)
+        echo "unknown pytest-ci-core shard: {{shard}} (expected qec-surface-harvest, qec-surface, qec-guppy, or rest)" >&2
+        exit 1
+        ;;
+    esac
 
 # Run the experimental zluppy package's independent Python test project.
 [group('test')]
@@ -961,6 +1004,12 @@ sync-deps:
     fi
     uv sync "${SYNC_ARGS[@]}"
 
+# The python-ci-sync* recipes install the pure-Python side of the workspace
+# only. The native packages are listed with `--package` so their dependencies
+# land in the environment, but are excluded from installation with
+# `--no-install-package`: otherwise uv builds release wheels of each one
+# (~20 min on a 4-core runner) that the following `pecos python build` /
+# `maturin develop` step immediately replaces with a debug build.
 [group('setup')]
 python-ci-sync:
     #!/usr/bin/env bash
@@ -970,7 +1019,9 @@ python-ci-sync:
       --group test \
       --package pecos-rslib \
       --package pecos-rslib-llvm \
-      --package quantum-pecos
+      --package quantum-pecos \
+      --no-install-package pecos-rslib \
+      --no-install-package pecos-rslib-llvm
 
 [group('setup')]
 python-ci-sync-test:
@@ -982,7 +1033,10 @@ python-ci-sync-test:
       --package pecos-rslib \
       --package pecos-rslib-exp \
       --package pecos-rslib-llvm \
-      --package quantum-pecos
+      --package quantum-pecos \
+      --no-install-package pecos-rslib \
+      --no-install-package pecos-rslib-exp \
+      --no-install-package pecos-rslib-llvm
 
 [group('setup')]
 python-ci-sync-docs:

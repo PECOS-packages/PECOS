@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import pytest
 from pecos.qec.surface import LogicalCircuitBuilder, SurfacePatch
+from pecos.qec.surface.patch import PatchOrientation
 from pecos_rslib.qec import LogicalCircuitDecoder
 
 
@@ -55,6 +56,392 @@ def test_unlimited_budget_reports_unlimited():
     assert dec.effective_windowing == "unlimited"
     assert dec.can_window is False
     assert dec.actual_num_windows == []
+
+
+def test_algorithm_segments_keep_structured_boundary_correlations():
+    """A local segment DEM may overlap the next detector round without moving
+    the streaming boundary or projecting away the cross-round mechanism."""
+    desc = _h_boundary_descriptor()
+    full_detector_count = sum(line.startswith("detector(") for line in desc["full_dem"].splitlines())
+    local_detector_counts = [
+        sum(line.startswith("detector(") for line in segment["dem"].splitlines()) for segment in desc["segments"]
+    ]
+
+    assert sum(segment["num_detectors"] for segment in desc["segments"]) == full_detector_count
+    assert local_detector_counts[0] > desc["segments"][0]["num_detectors"]
+
+    first_dem = desc["segments"][0]["dem"]
+    detector_times = {}
+    for line in first_dem.splitlines():
+        if line.startswith("detector("):
+            coords, detector = line.split(") D")
+            detector_times[int(detector)] = float(coords.rsplit(",", maxsplit=1)[-1])
+    assert any(
+        min(times) < 3 <= max(times)
+        for line in first_dem.splitlines()
+        if line.startswith("error(")
+        and (times := [detector_times[int(token[1:])] for token in line.split()[1:] if token.startswith("D")])
+    )
+
+
+def test_memory_provider_reuses_bounded_templates_and_preserves_detector_order(monkeypatch):
+    """The public memory path caches a bounded compile, not an algorithm DEM."""
+    from pecos.qec.surface.logical_circuit import _cached_surface_memory_dem_templates
+
+    _cached_surface_memory_dem_templates.cache_clear()
+    patch = SurfacePatch.create(3)
+    builder = LogicalCircuitBuilder()
+    builder.add_patch(patch, "A")
+    builder.add_memory("A", 7, "Z")
+
+    oracle, _, _ = builder._build_structured_dem(  # noqa: SLF001
+        p1=0.001,
+        p2=0.001,
+        p_meas=0.001,
+        p_prep=0.0,
+    )
+    descriptor = builder.build_algorithm_descriptor(
+        p1=0.001,
+        p2=0.001,
+        p_meas=0.001,
+        p_prep=0.0,
+    )
+    assert descriptor["full_dem"] == oracle.to_string()
+    after_first = _cached_surface_memory_dem_templates.cache_info()
+    assert after_first.misses == 1
+    assert after_first.currsize == 1
+
+    equivalent = LogicalCircuitBuilder()
+    equivalent.add_patch(
+        SurfacePatch.create(3),
+        "renamed",
+        qubit_offset=29,
+        coord_offset=(17.0, -8.0),
+    )
+    equivalent.add_memory("renamed", 11, "Z")
+    equivalent.build_dem(p1=0.001, p2=0.001, p_meas=0.001, p_prep=0.0)
+    after_second = _cached_surface_memory_dem_templates.cache_info()
+    assert after_second.misses == after_first.misses
+    assert after_second.hits == after_first.hits + 1
+
+    equivalent.build_dem(p1=0.002, p2=0.001, p_meas=0.001, p_prep=0.0)
+    assert _cached_surface_memory_dem_templates.cache_info().misses == after_second.misses + 1
+
+    def reject_full_compile(*_args, **_kwargs):
+        message = "a warm bounded-template request compiled the full circuit"
+        raise AssertionError(message)
+
+    monkeypatch.setattr(LogicalCircuitBuilder, "_build_structured_dem", reject_full_compile)
+    warm = LogicalCircuitBuilder()
+    warm.add_patch(SurfacePatch.create(3), "another")
+    warm.add_memory("another", 13, "Z")
+    warm.build_dem(p1=0.001, p2=0.001, p_meas=0.001, p_prep=0.0)
+
+
+@pytest.mark.parametrize(
+    ("dx", "dz", "basis", "rounds"),
+    [
+        (2, 2, "Z", 2),
+        (3, 3, "X", 5),
+        (2, 3, "Z", 4),
+        (3, 2, "X", 6),
+    ],
+)
+def test_cached_memory_provider_matches_full_compile_across_geometries(dx, dz, basis, rounds):
+    patch = SurfacePatch.create(dx=dx, dz=dz)
+    builder = LogicalCircuitBuilder()
+    builder.add_patch(patch, "data", qubit_offset=7, coord_offset=(11.0, -4.0))
+    builder.add_memory("data", rounds, basis)
+    oracle, _, _ = builder._build_structured_dem(  # noqa: SLF001
+        p1=0.002,
+        p2=0.003,
+        p_meas=0.004,
+        p_prep=0.005,
+    )
+    assert builder.build_dem(p1=0.002, p2=0.003, p_meas=0.004, p_prep=0.005) == oracle.to_string()
+
+
+def test_logical_h_provider_reuses_bounded_templates(monkeypatch):
+    """The H provider caches its boundary families independently of depth."""
+    from pecos.qec.surface.logical_circuit import (
+        _cached_surface_h_dem_templates,
+        _cached_surface_memory_dem_templates,
+    )
+
+    _cached_surface_h_dem_templates.cache_clear()
+    _cached_surface_memory_dem_templates.cache_clear()
+    patch = SurfacePatch.create(3)
+    builder = LogicalCircuitBuilder()
+    builder.add_patch(patch, "A")
+    builder.add_memory("A", 3, "Z")
+    builder.add_transversal_h("A")
+    builder.add_memory("A", 3, "X")
+    oracle, _, _ = builder._build_structured_dem(  # noqa: SLF001
+        p1=0.001,
+        p2=0.002,
+        p_meas=0.003,
+        p_prep=0.004,
+    )
+    descriptor = builder.build_algorithm_descriptor(
+        p1=0.001,
+        p2=0.002,
+        p_meas=0.003,
+        p_prep=0.004,
+    )
+    assert descriptor["full_dem"] == oracle.to_string()
+    after_first = _cached_surface_h_dem_templates.cache_info()
+    assert after_first.misses == 1
+    assert after_first.currsize == 1
+    assert _cached_surface_memory_dem_templates.cache_info().currsize == 0
+
+    equivalent = LogicalCircuitBuilder()
+    equivalent.add_patch(
+        SurfacePatch.create(3),
+        "renamed",
+        qubit_offset=29,
+        coord_offset=(17.0, -8.0),
+    )
+    equivalent.add_memory("renamed", 7, "Z")
+    equivalent.add_transversal_h("renamed")
+    equivalent.add_memory("renamed", 5, "X")
+    equivalent.build_dem(p1=0.001, p2=0.002, p_meas=0.003, p_prep=0.004)
+    after_second = _cached_surface_h_dem_templates.cache_info()
+    assert after_second.misses == after_first.misses
+    assert after_second.hits == after_first.hits + 1
+
+    equivalent.build_dem(p1=0.002, p2=0.002, p_meas=0.003, p_prep=0.004)
+    assert _cached_surface_h_dem_templates.cache_info().misses == after_second.misses + 1
+
+    def reject_full_compile(*_args, **_kwargs):
+        message = "a warm bounded H-template request compiled the full circuit"
+        raise AssertionError(message)
+
+    monkeypatch.setattr(LogicalCircuitBuilder, "_build_structured_dem", reject_full_compile)
+    warm = LogicalCircuitBuilder()
+    warm.add_patch(SurfacePatch.create(3), "another")
+    warm.add_memory("another", 9, "Z")
+    warm.add_transversal_h("another")
+    warm.add_memory("another", 4, "X")
+    warm.build_algorithm_descriptor(p1=0.001, p2=0.002, p_meas=0.003, p_prep=0.004)
+
+
+@pytest.mark.parametrize(
+    ("distance", "orientation", "initial_basis", "final_basis", "before_rounds", "after_rounds"),
+    [
+        (2, PatchOrientation.X_TOP_BOTTOM, "Z", "X", 2, 2),
+        (3, PatchOrientation.Z_TOP_BOTTOM, "X", "Z", 5, 3),
+        (3, PatchOrientation.X_TOP_BOTTOM, "Z", "Z", 3, 6),
+        (4, PatchOrientation.X_TOP_BOTTOM, "X", "X", 6, 4),
+    ],
+)
+def test_cached_logical_h_provider_matches_full_compile_across_families(
+    distance,
+    orientation,
+    initial_basis,
+    final_basis,
+    before_rounds,
+    after_rounds,
+):
+    patch = SurfacePatch.create(distance, orientation=orientation)
+    builder = LogicalCircuitBuilder()
+    builder.add_patch(patch, "data", qubit_offset=7, coord_offset=(11.0, -4.0))
+    builder.add_memory("data", before_rounds, initial_basis)
+    builder.add_transversal_h("data")
+    builder.add_memory("data", after_rounds, final_basis)
+    oracle, _, _ = builder._build_structured_dem(  # noqa: SLF001
+        p1=0.002,
+        p2=0.003,
+        p_meas=0.004,
+        p_prep=0.005,
+    )
+    assert builder.build_dem(p1=0.002, p2=0.003, p_meas=0.004, p_prep=0.005) == oracle.to_string()
+
+
+def test_logical_cx_provider_reuses_bounded_templates_and_routes_patch_coordinates(monkeypatch):
+    """CX templates ignore depth and independently translate both patches."""
+    from pecos.qec.surface.logical_circuit import _cached_surface_cx_dem_templates
+
+    _cached_surface_cx_dem_templates.cache_clear()
+    builder = LogicalCircuitBuilder()
+    builder.add_patch(SurfacePatch.create(3), "control", qubit_offset=11, coord_offset=(-13.0, 7.0))
+    builder.add_patch(SurfacePatch.create(3), "target", qubit_offset=51, coord_offset=(27.0, -9.0))
+    builder.add_memory(["control", "target"], 3, {"control": "Z", "target": "X"})
+    builder.add_transversal_cx("control", "target")
+    builder.add_memory(["control", "target"], 3, {"control": "X", "target": "Z"})
+    oracle, _, _ = builder._build_structured_dem(  # noqa: SLF001
+        p1=0.001,
+        p2=0.002,
+        p_meas=0.003,
+        p_prep=0.004,
+    )
+    descriptor = builder.build_algorithm_descriptor(
+        p1=0.001,
+        p2=0.002,
+        p_meas=0.003,
+        p_prep=0.004,
+    )
+    assert descriptor["full_dem"] == oracle.to_string()
+    assert descriptor["boundary_gates"][0][0]["type"] == "Cnot"
+    after_first = _cached_surface_cx_dem_templates.cache_info()
+    assert after_first.misses == 1
+    assert after_first.currsize == 1
+
+    equivalent = LogicalCircuitBuilder()
+    equivalent.add_patch(SurfacePatch.create(3), "C", qubit_offset=5, coord_offset=(101.0, 53.0))
+    equivalent.add_patch(SurfacePatch.create(3), "T", qubit_offset=85, coord_offset=(-41.0, 12.0))
+    equivalent.add_memory(["C", "T"], 7, {"C": "Z", "T": "X"})
+    equivalent.add_transversal_cx("C", "T")
+    equivalent.add_memory(["C", "T"], 5, {"C": "X", "T": "Z"})
+    equivalent.build_dem(p1=0.001, p2=0.002, p_meas=0.003, p_prep=0.004)
+    after_second = _cached_surface_cx_dem_templates.cache_info()
+    assert after_second.misses == after_first.misses
+    assert after_second.hits == after_first.hits + 1
+
+    equivalent.build_dem(p1=0.001, p2=0.003, p_meas=0.003, p_prep=0.004)
+    assert _cached_surface_cx_dem_templates.cache_info().misses == after_second.misses + 1
+
+    def reject_full_compile(*_args, **_kwargs):
+        message = "a warm bounded CX-template request compiled the full circuit"
+        raise AssertionError(message)
+
+    monkeypatch.setattr(LogicalCircuitBuilder, "_build_structured_dem", reject_full_compile)
+    warm = LogicalCircuitBuilder()
+    warm.add_patch(SurfacePatch.create(3), "left", qubit_offset=17, coord_offset=(9.0, -2.0))
+    warm.add_patch(SurfacePatch.create(3), "right", qubit_offset=117, coord_offset=(39.0, 22.0))
+    warm.add_memory(["left", "right"], 9, {"left": "Z", "right": "X"})
+    warm.add_transversal_cx("left", "right")
+    warm.add_memory(["left", "right"], 4, {"left": "X", "right": "Z"})
+    warm.build_algorithm_descriptor(p1=0.001, p2=0.002, p_meas=0.003, p_prep=0.004)
+
+
+@pytest.mark.parametrize(
+    (
+        "distance",
+        "control_orientation",
+        "target_orientation",
+        "initial_bases",
+        "final_bases",
+        "before_rounds",
+        "after_rounds",
+    ),
+    [
+        (
+            2,
+            PatchOrientation.X_TOP_BOTTOM,
+            PatchOrientation.X_TOP_BOTTOM,
+            ("Z", "X"),
+            ("X", "Z"),
+            2,
+            2,
+        ),
+        (
+            3,
+            PatchOrientation.X_TOP_BOTTOM,
+            PatchOrientation.Z_TOP_BOTTOM,
+            ("X", "Z"),
+            ("Z", "X"),
+            5,
+            3,
+        ),
+        (
+            4,
+            PatchOrientation.Z_TOP_BOTTOM,
+            PatchOrientation.Z_TOP_BOTTOM,
+            ("Z", "Z"),
+            ("X", "X"),
+            3,
+            6,
+        ),
+    ],
+)
+def test_cached_logical_cx_provider_matches_full_compile_across_families(
+    distance,
+    control_orientation,
+    target_orientation,
+    initial_bases,
+    final_bases,
+    before_rounds,
+    after_rounds,
+):
+    builder = LogicalCircuitBuilder()
+    builder.add_patch(
+        SurfacePatch.create(distance, orientation=control_orientation),
+        "control",
+        qubit_offset=7,
+        coord_offset=(11.0, -4.0),
+    )
+    builder.add_patch(
+        SurfacePatch.create(distance, orientation=target_orientation),
+        "target",
+        qubit_offset=107,
+        coord_offset=(-23.0, 31.0),
+    )
+    initial = dict(zip(("control", "target"), initial_bases, strict=True))
+    final = dict(zip(("control", "target"), final_bases, strict=True))
+    builder.add_memory(["control", "target"], before_rounds, initial)
+    builder.add_transversal_cx("control", "target")
+    builder.add_memory(["control", "target"], after_rounds, final)
+    oracle, _, _ = builder._build_structured_dem(  # noqa: SLF001
+        p1=0.002,
+        p2=0.003,
+        p_meas=0.004,
+        p_prep=0.005,
+    )
+    assert builder.build_dem(p1=0.002, p2=0.003, p_meas=0.004, p_prep=0.005) == oracle.to_string()
+
+
+def test_unsupported_logical_gate_and_shallow_boundaries_retain_full_fallback():
+    """Only complete bounded H and CX families bypass full construction."""
+    from pecos.qec.surface.logical_circuit import (
+        _cached_surface_cx_dem_templates,
+        _cached_surface_h_dem_templates,
+    )
+
+    _cached_surface_h_dem_templates.cache_clear()
+    _cached_surface_cx_dem_templates.cache_clear()
+    sz_builder = LogicalCircuitBuilder()
+    sz_builder.add_patch(SurfacePatch.create(3), "A")
+    sz_builder.add_memory("A", 3, "Z")
+    sz_builder.add_transversal_sz("A")
+    sz_builder.add_memory("A", 3, "Z")
+    sz_builder.build_dem()
+
+    shallow_h_builder = LogicalCircuitBuilder()
+    shallow_h_builder.add_patch(SurfacePatch.create(3), "A")
+    shallow_h_builder.add_memory("A", 1, "Z")
+    shallow_h_builder.add_transversal_h("A")
+    shallow_h_builder.add_memory("A", 3, "X")
+    shallow_h_builder.build_dem()
+
+    shallow_cx_builder = LogicalCircuitBuilder()
+    shallow_cx_builder.add_patch(SurfacePatch.create(3), "C", qubit_offset=0)
+    shallow_cx_builder.add_patch(SurfacePatch.create(3), "T", qubit_offset=50)
+    shallow_cx_builder.add_memory(["C", "T"], 3, "Z")
+    shallow_cx_builder.add_transversal_cx("C", "T")
+    shallow_cx_builder.add_memory(["C", "T"], 1, "Z")
+    shallow_cx_builder.build_dem()
+
+    mismatched_cx_builder = LogicalCircuitBuilder()
+    mismatched_cx_builder.add_patch(SurfacePatch.create(dx=1, dz=4), "C", qubit_offset=0)
+    mismatched_cx_builder.add_patch(SurfacePatch.create(dx=2, dz=2), "T", qubit_offset=50)
+    mismatched_cx_builder.add_memory(["C", "T"], 3, "Z")
+    mismatched_cx_builder.add_transversal_cx("C", "T")
+    mismatched_cx_builder.add_memory(["C", "T"], 3, "Z")
+    mismatched_cx_builder.build_dem()
+    assert _cached_surface_h_dem_templates.cache_info().currsize == 0
+    assert _cached_surface_cx_dem_templates.cache_info().currsize == 0
+
+
+def test_explicit_algorithm_buffer_cannot_truncate_a_boundary_correlation():
+    patch = SurfacePatch.create(3)
+    builder = LogicalCircuitBuilder()
+    builder.add_patch(patch, "A")
+    builder.add_memory("A", 3, "Z")
+    builder.add_transversal_h("A")
+    builder.add_memory("A", 3, "X")
+
+    with pytest.raises(ValueError, match="requires at least 1 look-ahead rounds"):
+        builder.build_algorithm_descriptor(buffer=0)
 
 
 def test_windowed_budget_is_explicit_full_fallback_not_silent():

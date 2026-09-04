@@ -43,7 +43,7 @@
 //! ```
 
 use crate::code_matrix_bindings::PyParityCheckMatrix;
-use crate::dag_circuit_bindings::PyTickCircuit;
+use crate::dag_circuit_bindings::{PyDagCircuit, PyTickCircuit};
 use crate::decoder_spec_bindings::PyDecoderSpec;
 use crate::pecos_array::{Array, ArrayData};
 use crate::stabilizer_code_spec_bindings::PyStabilizerCodeSpec;
@@ -53,13 +53,17 @@ use pecos_qec::fault_tolerance::dem_builder::{
     ContributionEffectSummary as RustContributionEffectSummary,
     ContributionRenderRecord as RustContributionRenderRecord,
     ContributionRenderStrategy as RustContributionRenderStrategy,
-    ContributionRenderSummary as RustContributionRenderSummary, DemBuilder as RustDemBuilder,
-    DemSampler as RustNewDemSampler, DemSamplerBuilder as RustNewDemSamplerBuilder,
-    DetectorErrorModel as RustDetectorErrorModel, DirectSourceFamily as RustDirectSourceFamily,
-    EquivalenceResult as RustEquivalenceResult, FaultContribution as RustFaultContribution,
-    FaultSourceType as RustFaultSourceType, IdleNoiseFamily, MeasurementCrosstalkDemMode,
-    MeasurementCrosstalkTransitionModel, NoiseConfig, OutputMode, PAULI_2Q_ORDER,
-    ParsedDem as RustParsedDem, PauliWeights, ReplacementBranchApproximation,
+    ContributionRenderSummary as RustContributionRenderSummary,
+    DemBoundaryKind as RustDemBoundaryKind, DemBuilder as RustDemBuilder,
+    DemDetectorPlacement as RustDemDetectorPlacement, DemSampler as RustNewDemSampler,
+    DemSamplerBuilder as RustNewDemSamplerBuilder, DemSlice as RustDemSlice,
+    DemSliceInstance as RustDemSliceInstance, DemSliceRoundSchedule as RustDemSliceRoundSchedule,
+    DemWindowSpec as RustDemWindowSpec, DetectorErrorModel as RustDetectorErrorModel,
+    DirectSourceFamily as RustDirectSourceFamily, EquivalenceResult as RustEquivalenceResult,
+    FaultContribution as RustFaultContribution, FaultSourceType as RustFaultSourceType,
+    IdleNoiseFamily, MeasurementCrosstalkDemMode, MeasurementCrosstalkTransitionModel, NoiseConfig,
+    OutputMode, PAULI_2Q_ORDER, ParsedDem as RustParsedDem, PauliWeights,
+    ReplacementBranchApproximation,
     TwoDetectorDirectRenderPolicy as RustTwoDetectorDirectRenderPolicy,
     compare_dems_exact as rust_compare_dems_exact,
     compare_dems_statistical as rust_compare_dems_statistical,
@@ -124,6 +128,7 @@ use pyo3::types::PyString;
 use crate::observable_flips_bindings::{PyObservableFlips, obsmask_to_py, py_to_obsmask};
 use std::collections::BTreeMap;
 use std::str::FromStr;
+use std::sync::Arc;
 
 mod batch_decode;
 mod decoder_comparison;
@@ -1559,6 +1564,232 @@ pub struct PyDetectorErrorModel {
     inner: RustDetectorErrorModel,
 }
 
+/// One reusable, absolute-round-independent DEM slice compiled from a bounded template.
+#[pyclass(name = "DemSliceTemplate", module = "pecos_rslib.qec")]
+pub struct PyDemSliceTemplate {
+    inner: Arc<RustDemSlice>,
+}
+
+#[pymethods]
+impl PyDemSliceTemplate {
+    /// Human-readable template name.
+    #[getter]
+    fn name(&self) -> String {
+        self.inner.name().to_owned()
+    }
+
+    /// Validated ``(past_rounds, future_rounds)`` temporal horizon.
+    #[getter]
+    fn temporal_horizon(&self) -> (u32, u32) {
+        let horizon = self.inner.horizon();
+        (horizon.past_rounds, horizon.future_rounds)
+    }
+
+    /// Number of independent physical-source contributions in the template.
+    #[getter]
+    fn num_contributions(&self) -> usize {
+        self.inner.contributions().len()
+    }
+
+    fn __repr__(&self) -> String {
+        let (past, future) = self.temporal_horizon();
+        format!(
+            "DemSliceTemplate(name={:?}, num_contributions={}, temporal_horizon=({}, {}))",
+            self.inner.name(),
+            self.inner.contributions().len(),
+            past,
+            future
+        )
+    }
+}
+
+/// A reusable round schedule compiled from one source-tracked DEM and annotated circuit.
+///
+/// Compile this once and call ``stitch`` for each decoding window. The schedule
+/// owns its relative DEM slices, so subsequent window assembly does not repeat
+/// detector-stream discovery or source-ownership partitioning.
+#[pyclass(name = "DemSliceRoundSchedule", module = "pecos_rslib.qec")]
+pub struct PyDemSliceRoundSchedule {
+    inner: RustDemSliceRoundSchedule,
+}
+
+fn parse_dem_boundary_kind(forward_boundary: &str) -> PyResult<RustDemBoundaryKind> {
+    match forward_boundary {
+        "soft" => Ok(RustDemBoundaryKind::Soft),
+        "hard" => Ok(RustDemBoundaryKind::Hard),
+        _ => Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "forward_boundary must be 'soft' or 'hard', got {forward_boundary:?}"
+        ))),
+    }
+}
+
+#[pymethods]
+impl PyDemSliceRoundSchedule {
+    /// Assemble a schedule from cached templates at requested absolute rounds.
+    ///
+    /// Identity stream and output mappings are used. ``output_model`` supplies
+    /// only standard-output and tracked-Pauli declarations; its detector and
+    /// contribution contents are ignored. ``coordinate_offset`` translates
+    /// every available template-local detector coordinate at instantiation.
+    /// ``detector_coordinate_offsets`` adds a further translation selected by
+    /// local detector-stream ID, allowing independently placed code blocks.
+    #[staticmethod]
+    #[pyo3(signature = (output_model, templates, coordinate_offset=None, detector_coordinate_offsets=None))]
+    fn from_templates(
+        py: Python<'_>,
+        output_model: &PyDetectorErrorModel,
+        templates: Vec<(Py<PyDemSliceTemplate>, i64)>,
+        coordinate_offset: Option<(f64, f64)>,
+        detector_coordinate_offsets: Option<BTreeMap<u32, (f64, f64)>>,
+    ) -> PyResult<Self> {
+        if let Some((x, y)) = coordinate_offset
+            && (!x.is_finite() || !y.is_finite())
+        {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "coordinate_offset values must be finite",
+            ));
+        }
+        if let Some(offsets) = &detector_coordinate_offsets {
+            for (&detector, &(x, y)) in offsets {
+                if !x.is_finite() || !y.is_finite() {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "detector_coordinate_offsets[{detector}] values must be finite"
+                    )));
+                }
+                let known = templates.iter().any(|(template, _)| {
+                    template
+                        .borrow(py)
+                        .inner
+                        .detectors()
+                        .iter()
+                        .any(|candidate| candidate.id == detector)
+                });
+                if !known {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "detector_coordinate_offsets contains unknown detector stream {detector}"
+                    )));
+                }
+            }
+        }
+        let instances = templates
+            .into_iter()
+            .map(|(template, round)| -> PyResult<_> {
+                let template = template.borrow(py);
+                let mut instance =
+                    RustDemSliceInstance::identity(Arc::clone(&template.inner), round);
+                if coordinate_offset.is_some() || detector_coordinate_offsets.is_some() {
+                    let (global_x, global_y) = coordinate_offset.unwrap_or((0.0, 0.0));
+                    for detector in template.inner.detectors() {
+                        if let Some([x, y]) = detector.coords {
+                            let (local_x, local_y) = detector_coordinate_offsets
+                                .as_ref()
+                                .and_then(|offsets| offsets.get(&detector.id))
+                                .copied()
+                                .unwrap_or((0.0, 0.0));
+                            let translated = [x + global_x + local_x, y + global_y + local_y];
+                            if !translated.into_iter().all(f64::is_finite) {
+                                return Err(pyo3::exceptions::PyValueError::new_err(
+                                    "translated detector coordinates must be finite",
+                                ));
+                            }
+                            instance = instance.with_detector_placement(
+                                detector.id,
+                                RustDemDetectorPlacement::new(detector.id).with_coords(translated),
+                            );
+                        }
+                    }
+                }
+                Ok(instance)
+            })
+            .collect::<PyResult<Vec<_>>>()?;
+        Ok(Self {
+            inner: RustDemSliceRoundSchedule::from_instances(&output_model.inner, instances),
+        })
+    }
+
+    /// Number of scheduled owner rounds.
+    #[getter]
+    fn num_instances(&self) -> usize {
+        self.inner.instances().len()
+    }
+
+    /// Owner rounds in deterministic assembly order.
+    fn rounds(&self) -> Vec<i64> {
+        self.inner
+            .instances()
+            .iter()
+            .map(pecos_qec::DemSliceInstance::round)
+            .collect()
+    }
+
+    /// Extract one compiled owner-round slice for caching and later reuse.
+    fn template(&self, owner_round: i64) -> PyResult<PyDemSliceTemplate> {
+        let instance = self
+            .inner
+            .instances()
+            .iter()
+            .find(|instance| instance.round() == owner_round)
+            .ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "DEM round schedule has no template at owner round {owner_round}"
+                ))
+            })?;
+        Ok(PyDemSliceTemplate {
+            inner: Arc::clone(instance.slice()),
+        })
+    }
+
+    /// Return the exact minimum safe look-ahead for a commit region.
+    fn required_buffer_rounds(&self, start_round: i64, commit_rounds: u32) -> PyResult<u32> {
+        self.inner
+            .required_buffer_rounds(start_round, commit_rounds)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
+    }
+
+    /// Assemble one structured commit-plus-buffer window.
+    ///
+    /// ``buffer_rounds=None`` derives the minimum safe look-ahead from this
+    /// schedule. An explicit undersized buffer fails instead of truncating a
+    /// commit-region correlation.
+    #[pyo3(signature = (start_round, commit_rounds, buffer_rounds=None, forward_boundary="soft"))]
+    fn stitch(
+        &self,
+        start_round: i64,
+        commit_rounds: u32,
+        buffer_rounds: Option<u32>,
+        forward_boundary: &str,
+    ) -> PyResult<PyDetectorErrorModel> {
+        let forward_boundary = parse_dem_boundary_kind(forward_boundary)?;
+        let buffer_rounds = match buffer_rounds {
+            Some(buffer_rounds) => buffer_rounds,
+            None => self
+                .inner
+                .required_buffer_rounds(start_round, commit_rounds)
+                .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?,
+        };
+        let stitched = self
+            .inner
+            .stitch(RustDemWindowSpec::new(
+                start_round,
+                commit_rounds,
+                buffer_rounds,
+                forward_boundary,
+            ))
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+        Ok(PyDetectorErrorModel {
+            inner: stitched.model,
+        })
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "DemSliceRoundSchedule(num_instances={}, rounds={:?})",
+            self.inner.instances().len(),
+            self.rounds()
+        )
+    }
+}
+
 fn split_dem_outputs_for_dem(
     dem_outputs: &[u32],
     dem: &RustDetectorErrorModel,
@@ -1925,6 +2156,94 @@ impl PyDetectorErrorModel {
     #[getter]
     fn num_tracked_paulis(&self) -> usize {
         self.inner.num_tracked_paulis()
+    }
+
+    /// Detector identities and their optional ``[x, y, time]`` coordinates.
+    fn detector_coordinates(&self) -> Vec<(u32, Option<[f64; 3]>)> {
+        self.inner
+            .detectors
+            .iter()
+            .map(|detector| (detector.id, detector.coords))
+            .collect()
+    }
+
+    /// Compile a reusable round schedule from this source-tracked model.
+    ///
+    /// The influence map and DAG circuit must be the same pair used to build
+    /// the model. Every referenced gate must carry an integer
+    /// ``dem_slice_round`` attribute.
+    fn round_schedule(
+        &self,
+        influence_map: &PyDagFaultInfluenceMap,
+        circuit: &PyDagCircuit,
+    ) -> PyResult<PyDemSliceRoundSchedule> {
+        let inner = RustDemSliceRoundSchedule::from_annotated_circuit(
+            "python DEM round",
+            &self.inner,
+            &influence_map.inner,
+            &circuit.inner,
+        )
+        .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+        Ok(PyDemSliceRoundSchedule { inner })
+    }
+
+    /// Return the minimum safe look-ahead for an annotated round window.
+    ///
+    /// Sources owned by the commit region, plus source-halo contributions that
+    /// reach it, determine the required buffer. The result includes all of
+    /// their later detector targets.
+    ///
+    /// Raises:
+    ///     ValueError: If metadata, ownership, mapping, or round validation fails.
+    fn required_buffer_rounds(
+        &self,
+        influence_map: &PyDagFaultInfluenceMap,
+        circuit: &PyDagCircuit,
+        start_round: i64,
+        commit_rounds: u32,
+    ) -> PyResult<u32> {
+        let schedule = self.round_schedule(influence_map, circuit)?;
+        schedule
+            .inner
+            .required_buffer_rounds(start_round, commit_rounds)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
+    }
+
+    /// Build a structured DEM for one annotated commit-plus-buffer round window.
+    ///
+    /// The influence map and DAG circuit must be the same pair used to build
+    /// this source-tracked model. Every physical gate referenced by the map must
+    /// carry an integer ``dem_slice_round`` attribute. Detector ``[x, y, t]``
+    /// coordinates define stable streams and syndrome rounds.
+    ///
+    /// Args:
+    ///     influence_map: Source influence map for this model.
+    ///     circuit: Annotated physical DAG circuit.
+    ///     start_round: First round included in the window.
+    ///     commit_rounds: Number of rounds whose corrections may be committed.
+    ///     buffer_rounds: Look-ahead rounds after the commit region. ``None``
+    ///         derives the minimum safe value from source correlations.
+    ///     forward_boundary: ``"soft"`` for a sliding window or ``"hard"``
+    ///         for a terminal window.
+    ///
+    /// Raises:
+    ///     ValueError: If metadata, ownership, mapping, or boundary validation fails.
+    #[pyo3(signature = (influence_map, circuit, start_round, commit_rounds, buffer_rounds=None, forward_boundary="soft"))]
+    fn stitched_round_window(
+        &self,
+        influence_map: &PyDagFaultInfluenceMap,
+        circuit: &PyDagCircuit,
+        start_round: i64,
+        commit_rounds: u32,
+        buffer_rounds: Option<u32>,
+        forward_boundary: &str,
+    ) -> PyResult<Self> {
+        self.round_schedule(influence_map, circuit)?.stitch(
+            start_round,
+            commit_rounds,
+            buffer_rounds,
+            forward_boundary,
+        )
     }
 
     /// Compute exact fault distance when every mechanism is graphlike.
@@ -7546,6 +7865,8 @@ pub fn register_qec_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     qec.add_class::<PyFaultDistanceUpperBoundConfig>()?;
     qec.add_class::<PyFaultDistanceUpperBoundResult>()?;
     qec.add_class::<PyDetectorErrorModel>()?;
+    qec.add_class::<PyDemSliceTemplate>()?;
+    qec.add_class::<PyDemSliceRoundSchedule>()?;
     qec.add_class::<PyDemBuilder>()?;
     qec.add_class::<PySampleBatch>()?;
     qec.add_class::<batch_decode::PyDecodeResult>()?;

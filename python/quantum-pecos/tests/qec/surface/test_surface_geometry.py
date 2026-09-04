@@ -16,6 +16,27 @@ import pytest
 from pecos.qec.surface import SurfacePatch
 from pecos.qec.surface.schedule import compute_cnot_schedule
 
+
+def _coordinate_normalized_sources(dem):
+    """Describe a DEM independently of its dense local detector numbering."""
+    detector_coords = {}
+    for line in dem.to_string().splitlines():
+        if not line.startswith("detector("):
+            continue
+        coords_text, target = line.removeprefix("detector(").split(") D")
+        detector_coords[int(target)] = tuple(float(value) for value in coords_text.split(","))
+    sources = [
+        (
+            record["probability"],
+            tuple(sorted(detector_coords[detector] for detector in record["detectors"])),
+            tuple(record["dem_outputs"]),
+            record["source_type"],
+        )
+        for record in dem.contribution_render_records()
+    ]
+    return set(detector_coords.values()), sorted(sources)
+
+
 # ============================================================
 # Code parameters: n, k, d
 # ============================================================
@@ -277,6 +298,151 @@ def test_circuit_generation(dx, dz):
 
     assert tc.num_ticks() > 0
     assert tc.gate_count() > 0
+
+
+def test_logical_circuit_marks_dag_gates_with_dem_slice_rounds():
+    """Every physical gate carries the owner consumed by the JIT DEM frontend."""
+    from pecos.qec.surface import LogicalCircuitBuilder
+
+    patch = SurfacePatch.create(distance=3)
+    lcb = LogicalCircuitBuilder()
+    lcb.add_patch(patch, "A")
+    lcb.add_memory("A", rounds=2, basis="Z")
+    dag = lcb.to_dag_circuit()
+
+    owners = [dag.get_gate_attr(node, "dem_slice_round") for node in dag.nodes()]
+    assert owners
+    assert all(isinstance(owner, int) for owner in owners)
+    # Two SEC rounds plus the terminal data-measurement boundary.
+    assert sorted(set(owners)) == [0, 1, 2]
+
+
+def test_surface_dem_round_schedule_reconstructs_the_terminal_model():
+    """The Python surface path reaches the structured Rust slice frontend."""
+    from pecos.qec.surface import LogicalCircuitBuilder
+    from pecos_rslib.qec import DagFaultAnalyzer, DemSliceRoundSchedule, DetectorErrorModel
+
+    patch = SurfacePatch.create(distance=3)
+    lcb = LogicalCircuitBuilder()
+    lcb.add_patch(patch, "A")
+    lcb.add_memory("A", rounds=2, basis="Z")
+    dag = lcb.to_dag_circuit()
+    influence_map = DagFaultAnalyzer(dag).build_influence_map()
+    reference = DetectorErrorModel.from_circuit(
+        dag,
+        p1=0.001,
+        p2=0.001,
+        p_meas=0.001,
+        p_prep=0.001,
+    )
+
+    schedule = reference.round_schedule(influence_map, dag)
+    assert isinstance(schedule, DemSliceRoundSchedule)
+    assert schedule.num_instances == 3
+    assert schedule.rounds() == [0, 1, 2]
+    assert schedule.required_buffer_rounds(0, 2) == 1
+    assert schedule.required_buffer_rounds(0, 3) == 0
+    assert reference.required_buffer_rounds(influence_map, dag, 0, 2) == 1
+    with pytest.raises(ValueError, match="increase the buffer"):
+        schedule.stitch(
+            start_round=0,
+            commit_rounds=2,
+            buffer_rounds=0,
+        )
+
+    stitched = schedule.stitch(
+        start_round=0,
+        commit_rounds=3,
+        forward_boundary="hard",
+    )
+    one_shot = reference.stitched_round_window(
+        influence_map,
+        dag,
+        start_round=0,
+        commit_rounds=3,
+        forward_boundary="hard",
+    )
+
+    # Dense local D<n> numbering is intentionally schedule-derived. Compare
+    # physical detector coordinates and independent sources across that relabeling.
+    assert _coordinate_normalized_sources(stitched) == _coordinate_normalized_sources(reference)
+    assert _coordinate_normalized_sources(stitched) == _coordinate_normalized_sources(one_shot)
+
+
+def test_cached_surface_templates_reconstruct_a_longer_memory_experiment():
+    """A bounded compile supplies reusable bulk and distinct boundary slices."""
+    from pecos.qec.surface import LogicalCircuitBuilder
+    from pecos_rslib.qec import DagFaultAnalyzer, DemSliceRoundSchedule, DetectorErrorModel
+
+    def build_model(rounds):
+        patch = SurfacePatch.create(distance=3)
+        builder = LogicalCircuitBuilder()
+        builder.add_patch(patch, "A")
+        builder.add_memory("A", rounds=rounds, basis="Z")
+        dag = builder.to_dag_circuit()
+        influence_map = DagFaultAnalyzer(dag).build_influence_map()
+        model = DetectorErrorModel.from_circuit(
+            dag,
+            p1=0.001,
+            p2=0.001,
+            p_meas=0.001,
+            p_prep=0.001,
+        )
+        return model, influence_map, dag
+
+    # Compile only the bounded halo needed to distinguish initialization,
+    # stationary bulk SEC, and the terminal measurement boundary.
+    template_model, template_influence, template_dag = build_model(3)
+    bounded = template_model.round_schedule(template_influence, template_dag)
+    init = bounded.template(0)
+    bulk = bounded.template(1)
+    pre_terminal = bounded.template(2)
+    terminal = bounded.template(3)
+    assert init.name.endswith("round@0")
+    assert bulk.temporal_horizon == (0, 1)
+
+    # Reuse one bulk Arc at four distinct absolute rounds. Deliberately supply
+    # the instances out of order to exercise deterministic schedule ordering.
+    composed = DemSliceRoundSchedule.from_templates(
+        template_model,
+        [
+            (terminal, 5),
+            (pre_terminal, 4),
+            (bulk, 3),
+            (bulk, 2),
+            (bulk, 1),
+            (init, 0),
+        ],
+    )
+    with pytest.raises(ValueError, match="coordinate_offset values must be finite"):
+        DemSliceRoundSchedule.from_templates(
+            template_model,
+            [(init, 0)],
+            coordinate_offset=(float("inf"), 0.0),
+        )
+    with pytest.raises(ValueError, match=r"detector_coordinate_offsets\[0\] values must be finite"):
+        DemSliceRoundSchedule.from_templates(
+            template_model,
+            [(init, 0)],
+            detector_coordinate_offsets={0: (float("inf"), 0.0)},
+        )
+    with pytest.raises(ValueError, match="unknown detector stream 999"):
+        DemSliceRoundSchedule.from_templates(
+            template_model,
+            [(init, 0)],
+            detector_coordinate_offsets={999: (0.0, 0.0)},
+        )
+    assert composed.rounds() == [0, 1, 2, 3, 4, 5]
+    stitched = composed.stitch(
+        start_round=0,
+        commit_rounds=6,
+        buffer_rounds=0,
+        forward_boundary="hard",
+    )
+
+    reference, _, _ = build_model(5)
+    assert stitched.to_string() == reference.to_string()
+    assert _coordinate_normalized_sources(stitched) == _coordinate_normalized_sources(reference)
 
 
 # ============================================================

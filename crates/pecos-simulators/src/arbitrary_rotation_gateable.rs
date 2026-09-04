@@ -133,8 +133,11 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
     /// `[[cos(theta/2), -i*exp(-i*phi)*sin(theta/2)],
     ///   [-i*exp(i*phi)*sin(theta/2), cos(theta/2)]]`.
     ///
-    /// The default `RZ(pi/2-phi)`, `RY(theta)`, `RZ(phi-pi/2)` decomposition
-    /// is phase-exact because the two Z angles sum to zero.
+    /// The default uses `z = pi/2 - phi` and the decomposition
+    /// `RZ(z)`, `RY(theta)`, `RZ(-z)`. The two Z rotations cancel exactly
+    /// unless the stored `z` is [`Angle64::HALF_TURN`]: then `-z` is also
+    /// stored as `pi`, leaving a scalar `-1` per target qubit. That residue is
+    /// delivered through [`Self::apply_global_phase`].
     ///
     /// # Parameters
     /// - `theta`: The rotation angle.
@@ -145,27 +148,13 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
     /// A mutable reference to `Self` for method chaining.
     #[inline]
     fn rxy1q(&mut self, theta: Angle64, phi: Angle64, qubits: &[QubitId]) -> &mut Self {
-        self.rz(-phi + Angle64::QUARTER_TURN, qubits)
-            .ry(theta, qubits)
-            .rz(phi - Angle64::QUARTER_TURN, qubits)
-    }
-
-    /// Applies the scalar `exp(i * phase)` once for every target qubit.
-    ///
-    /// The default is a no-op, which is correct for representations where global
-    /// phase is unobservable, such as density matrices, measurement-only mocks,
-    /// foreign interfaces without a global-phase operation, and compile-only
-    /// resource analyzers. Amplitude-exposing simulators must override this hook.
-    ///
-    /// # Parameters
-    /// - `phase`: The phase angle for one scalar application.
-    /// - `qubits`: The targets whose gate applications each contribute the scalar.
-    ///
-    /// # Returns
-    /// A mutable reference to `Self` for method chaining.
-    #[inline]
-    fn apply_global_phase(&mut self, _phase: Angle64, _qubits: &[QubitId]) -> &mut Self {
-        self
+        let z = -phi + Angle64::QUARTER_TURN;
+        self.rz(z, qubits).ry(theta, qubits).rz(-z, qubits);
+        if z == Angle64::HALF_TURN {
+            self.apply_global_phase(Angle64::HALF_TURN, qubits)
+        } else {
+            self
+        }
     }
 
     /// Applies the conventional T gate, `diag(1, exp(i*pi/4))`.
@@ -355,6 +344,11 @@ mod tests {
     }
 
     impl CliffordGateable for RecordingSimulator {
+        fn apply_global_phase(&mut self, phase: Angle64, qubits: &[QubitId]) -> &mut Self {
+            self.global_phase_calls.push((phase, qubits.to_vec()));
+            self
+        }
+
         fn sz(&mut self, _qubits: &[QubitId]) -> &mut Self {
             self
         }
@@ -385,11 +379,6 @@ mod tests {
 
         fn rz(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
             self.rz_calls.push((theta, qubits.to_vec()));
-            self
-        }
-
-        fn apply_global_phase(&mut self, phase: Angle64, qubits: &[QubitId]) -> &mut Self {
-            self.global_phase_calls.push((phase, qubits.to_vec()));
             self
         }
 

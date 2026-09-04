@@ -35,6 +35,7 @@ from pecos.simulators import (
 )
 from pecos.simulators.custatevec._cuquantum_compat import custatevec_available
 from pecos.testing import assert_allclose
+from pecos_rslib.simulators import StateVec as StateVecRs
 
 str_to_sim = {
     "StateVec": StateVec,
@@ -406,6 +407,38 @@ def test_controlled_rotations_statevec() -> None:
             expected = reference(symbol, theta)
             assert_one_phase(binding_columns, expected, theta)
             assert_one_phase(circuit_columns, expected, theta)
+
+
+def _run_crz_angle_circuit(simulator: StateVec | StateVecRs, theta: float) -> list[complex]:
+    circuit = QuantumCircuit()
+    circuit.append("H", {0})
+    circuit.append("CRZ", {(0, 1)}, angle=theta)
+    simulator.run_circuit(circuit)
+    vector = [complex(value) for value in simulator.vector]
+    if isinstance(simulator, StateVecRs):
+        vector = [vector[index] for index in (0, 2, 1, 3)]
+    return vector
+
+
+def _assert_three_pi_differs_by_control_z(pi_state: list[complex], three_pi_state: list[complex]) -> None:
+    expected = [pi_state[0], pi_state[1], -pi_state[2], -pi_state[3]]
+    assert all(abs(actual - wanted) < 1e-12 for actual, wanted in zip(three_pi_state, expected, strict=True))
+
+
+def test_quantum_circuit_angle_preserves_controlled_rotation_sheet() -> None:
+    """The Python StateVec route must halve CRZ's unreduced source angle."""
+    pi_state = _run_crz_angle_circuit(StateVec(2), pc.f64.pi)
+    three_pi_state = _run_crz_angle_circuit(StateVec(2), 3 * pc.f64.pi)
+
+    _assert_three_pi_differs_by_control_z(pi_state, three_pi_state)
+
+
+def test_statevecrs_run_circuit_preserves_controlled_rotation_sheet() -> None:
+    """The direct Rust runner must receive CRZ's unreduced source angle."""
+    pi_state = _run_crz_angle_circuit(StateVecRs(2), pc.f64.pi)
+    three_pi_state = _run_crz_angle_circuit(StateVecRs(2), 3 * pc.f64.pi)
+
+    _assert_three_pi_differs_by_control_z(pi_state, three_pi_state)
 
 
 @pytest.mark.parametrize(

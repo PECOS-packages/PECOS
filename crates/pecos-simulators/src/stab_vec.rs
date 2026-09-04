@@ -83,6 +83,8 @@ pub struct StabVecGeneric<S: IndexSet = BitSet, R: SeedableRng + Rng + Debug = P
     cliff_frame: Vec<CliffordFrame>,
     /// Global phase from frame compositions: e^{i*`frame_phase`*pi/4}, mod 8.
     frame_phase: u8,
+    /// Other global phase accumulated by phase-exact default decompositions.
+    global_phase: Angle64,
     gamma_diff_qubits: Vec<usize>,
     rel_pruning_threshold: f64,
     /// Monte Carlo measurement threshold. When `Some(n)`, uses MC term sampling
@@ -148,6 +150,7 @@ impl StabVecBuilder {
             pending_rz: vec![Angle64::default(); self.num_qubits],
             cliff_frame: vec![CliffordFrame::IDENTITY; self.num_qubits],
             frame_phase: 0,
+            global_phase: Angle64::ZERO,
             gamma_diff_qubits: Vec::new(),
             rel_pruning_threshold: self.rel_pruning_threshold,
             mc_threshold: self.mc_threshold,
@@ -172,12 +175,78 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
         }
     }
 
-    /// Merge terms with identical gamma and omega. This is exact (no approximation).
-    /// Terms with the same gamma and omega produce identical amplitudes, so their
-    /// coefficients can be summed. Reduces T without loss of precision.
-    /// Only worth calling when duplicates are likely (e.g., after measurement projection).
+    /// Whether every term shares all CH-form structure that is independent of
+    /// gamma and omega.
+    fn has_shared_projection_structure(&self) -> bool {
+        self.terms.first().is_none_or(|(_, first)| {
+            self.terms[1..]
+                .iter()
+                .all(|(_, ch)| ch.shares_projection_structure(first))
+        })
+    }
+
+    /// Compute the exact norm and Z=0 probability of the represented state.
+    ///
+    /// Both quantities use the same pairwise CH-form overlaps. The shared-
+    /// structure implementation is selected only when pointer equality proves
+    /// its precondition; structurally divergent terms use the general overlap.
+    fn exact_norm_and_prob0(&self, q: usize) -> (f64, f64) {
+        let shared_structure = self.has_shared_projection_structure();
+        let shared_constraints =
+            shared_structure.then(|| self.terms[0].1.precompute_shared_constraints());
+        let omegas: Vec<_> = if shared_structure {
+            self.terms
+                .iter()
+                .map(|(_, ch)| ch.omega_complex())
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        let mut norm_sq = 0.0;
+        let mut twice_prob0 = 0.0;
+        for (coefficient, ch) in &self.terms {
+            let weight = coefficient.norm_sqr();
+            norm_sq += weight;
+            twice_prob0 += weight * (1.0 + ch.expectation_value_zq(q));
+        }
+        for j in 0..self.terms.len() {
+            for k in (j + 1)..self.terms.len() {
+                let (inner, inner_z) = if let Some(constraints) = &shared_constraints {
+                    self.terms[j].1.inner_product_pair_precomputed(
+                        &self.terms[k].1,
+                        q,
+                        constraints,
+                        omegas[j],
+                        omegas[k],
+                        Some(&self.gamma_diff_qubits),
+                    )
+                } else {
+                    self.terms[j].1.inner_product_pair(&self.terms[k].1, q)
+                };
+                let coefficient_product = self.terms[j].0.conj() * self.terms[k].0;
+                norm_sq += 2.0 * (coefficient_product * inner).re;
+                twice_prob0 += 2.0 * (coefficient_product * (inner + inner_z)).re;
+            }
+        }
+        (norm_sq, 0.5 * twice_prob0)
+    }
+
+    fn projection_coefficient_scale(ch: &CHFormGeneric<S, R>, q: usize) -> f64 {
+        if ch.expectation_value_zq(q) == 0.0 {
+            std::f64::consts::FRAC_1_SQRT_2
+        } else {
+            1.0
+        }
+    }
+
+    /// Merge shared-structure terms with identical gamma and omega.
+    ///
+    /// The shared F/G/M/v/s precondition makes matching gamma and omega
+    /// sufficient to prove identical amplitudes. Only worth calling when
+    /// duplicates are likely (e.g., after measurement projection).
     fn merge_identical_terms(&mut self) {
-        if self.terms.len() <= 4 {
+        if self.terms.len() <= 4 || !self.has_shared_projection_structure() {
             return;
         }
 
@@ -286,6 +355,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
             pending_rz: vec![Angle64::default(); num_qubits],
             cliff_frame: vec![CliffordFrame::IDENTITY; num_qubits],
             frame_phase: 0,
+            global_phase: Angle64::ZERO,
             gamma_diff_qubits: Vec::new(),
             rel_pruning_threshold: 1e-8,
             mc_threshold: Some(2048),
@@ -377,6 +447,15 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
         self.apply_rz_immediate(angle, q);
     }
 
+    /// Materialize a pending RZ together with its current Clifford frame before
+    /// applying a gate that does not commute with Z on this qubit.
+    fn flush_noncommuting_pending_rz(&mut self, q: usize) {
+        if self.pending_rz[q] != Angle64::ZERO {
+            self.flush_cliff_frame(q);
+            self.flush_pending_rz(q);
+        }
+    }
+
     /// Flush the Clifford frame on qubit q by applying its H+S generator sequence.
     fn flush_cliff_frame(&mut self, q: usize) {
         let cf = self.cliff_frame[q];
@@ -442,14 +521,17 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
         for q in 0..self.num_qubits {
             self.flush_cliff_frame(q);
         }
-        if self.frame_phase != 0 {
+        if self.frame_phase != 0 || self.global_phase != Angle64::ZERO {
             use crate::clifford_frame::PHASE_ROOTS;
             let [re, im] = PHASE_ROOTS[(self.frame_phase & 7) as usize];
-            let phase = Complex64::new(re, im);
+            let frame_phase = Complex64::new(re, im);
+            let global_phase = Complex64::from_polar(1.0, self.global_phase.to_radians_signed());
+            let phase = frame_phase * global_phase;
             for (coeff, _) in &mut self.terms {
                 *coeff *= phase;
             }
             self.frame_phase = 0;
+            self.global_phase = Angle64::ZERO;
         }
     }
 
@@ -459,58 +541,103 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
         }
     }
 
-    /// Apply a Clifford gate that produces identical structural changes (F,G,M,v,s)
-    /// for all terms. Apply to term[0], share Arcs, compute gamma delta.
-    fn apply_clifford_structural(&mut self, f: impl Fn(&mut CHFormGeneric<S, R>)) {
+    fn apply_c_type_checked(
+        ch: &mut CHFormGeneric<S, R>,
+        operation: &impl Fn(&mut CHFormGeneric<S, R>),
+    ) {
+        let f_before = ch.arc_f();
+        let g_before = ch.arc_g();
+        let v_before = ch.arc_v();
+        let s_before = ch.arc_s();
+        operation(ch);
+        debug_assert!(
+            std::sync::Arc::ptr_eq(&f_before, &ch.arc_f()),
+            "C-type operation changed F"
+        );
+        debug_assert!(
+            std::sync::Arc::ptr_eq(&g_before, &ch.arc_g()),
+            "C-type operation changed G"
+        );
+        debug_assert!(
+            std::sync::Arc::ptr_eq(&v_before, &ch.arc_v()),
+            "C-type operation changed v"
+        );
+        debug_assert!(
+            std::sync::Arc::ptr_eq(&s_before, &ch.arc_s()),
+            "C-type operation changed s"
+        );
+    }
+
+    /// Apply a C-type Clifford whose M and gamma transforms are identical for
+    /// terms sharing G and M. F, G, v, and s must be left unchanged.
+    fn apply_c_type_clifford(&mut self, operation: impl Fn(&mut CHFormGeneric<S, R>)) {
         if self.terms.len() <= 1 {
             for (_, ch) in &mut self.terms {
-                f(ch);
+                Self::apply_c_type_checked(ch, &operation);
             }
             return;
         }
-        // Structural optimization is only valid when all terms share the same
-        // F, G, M, v, s matrices (differ only in gamma/omega/coefficient).
-        // After H is applied to terms with different gammas, the structural
-        // matrices can diverge. Check Arc pointer equality as a fast guard.
-        let structurally_uniform =
-            std::sync::Arc::ptr_eq(&self.terms[0].1.arc_f(), &self.terms[1].1.arc_f());
+
+        // Pointer equality is a conservative proof that every term has the
+        // same G/M inputs. Checking every term is essential: H can make later
+        // terms structurally diverge while an earlier pair remains shared.
+        let structurally_uniform = self
+            .terms
+            .iter()
+            .enumerate()
+            .all(|(index, (_, ch))| index == 0 || ch.shares_c_type_structure(&self.terms[0].1));
         if !structurally_uniform {
             for (_, ch) in &mut self.terms {
-                f(ch);
+                Self::apply_c_type_checked(ch, &operation);
             }
             return;
         }
+
         let n = self.num_qubits;
         let gamma_before = self.terms[0].1.gamma().to_vec();
-        f(&mut self.terms[0].1);
-        // Compute gamma delta
+        Self::apply_c_type_checked(&mut self.terms[0].1, &operation);
+
+        // C-type gates apply a term-independent additive gamma delta.
         let mut delta = vec![0u8; n];
         let gamma_after = self.terms[0].1.gamma();
         for p in 0..n {
             delta[p] = (gamma_after[p] + 4 - gamma_before[p]) & 3;
         }
-        // Share Arcs
-        let shared_f = self.terms[0].1.arc_f();
-        let shared_g = self.terms[0].1.arc_g();
+
+        // Only M changes structurally. Preserve each term's F/G/v/s and
+        // propagate the exact gamma transform.
         let shared_m = self.terms[0].1.arc_m();
-        let shared_v = self.terms[0].1.arc_v();
-        let shared_s = self.terms[0].1.arc_s();
         for (_, ch) in &mut self.terms[1..] {
             ch.apply_gamma_delta(&delta);
-            ch.set_arcs(
-                shared_f.clone(),
-                shared_g.clone(),
-                shared_m.clone(),
-                shared_v.clone(),
-                shared_s.clone(),
-            );
+            ch.set_shared_m(shared_m.clone());
         }
     }
 
     /// Buffer an RZ gate. Fuses with any pending RZ on the same qubit.
-    /// Uses Angle64 fixed-point addition for exact fusion (T+T=S, 4T=Z, 8T=I).
+    /// Uses Angle64 fixed-point addition for exact fusion of the rotation angle.
+    /// The stored angle is only defined mod 2pi while RZ has period 4pi, so the
+    /// scalar -1 lost when a signed sum wraps is tracked in `global_phase`
+    /// (e.g. 8T = RZ(2pi) = -I).
     fn apply_rz(&mut self, theta: Angle64, q: usize) {
-        self.pending_rz[q] += theta;
+        const HALF: i128 = 1_i128 << 63;
+        const FULL: i128 = 1_i128 << 64;
+
+        let signed_fraction = |angle: Angle64| {
+            let fraction = i128::from(angle.fraction());
+            if fraction > HALF {
+                fraction - FULL
+            } else {
+                fraction
+            }
+        };
+        let previous = self.pending_rz[q];
+        let combined = previous + theta;
+        if signed_fraction(previous) + signed_fraction(theta) != signed_fraction(combined) {
+            // Replacing a signed sum that crossed the principal-value boundary
+            // by its stored representative changes RZ by a scalar -1.
+            self.global_phase += Angle64::HALF_TURN;
+        }
+        self.pending_rz[q] = combined;
     }
 
     /// Apply RZ(theta) immediately (decompose into terms).
@@ -629,10 +756,10 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
 
     /// Measure a qubit. Returns the measurement result and projects the state.
     ///
-    /// For a single term, uses O(n) probability computation.
-    /// For multiple terms, computes the combined state vector O(T * 2^n * n)
-    /// and sums probabilities. Future optimization: O(T^2 * n^3) pairwise
-    /// inner products using `ExponentialSum` would avoid the 2^n factor.
+    /// For a single term, uses O(n) probability computation. Small systems use
+    /// their state vector; larger shared-structure decompositions use optimized
+    /// pairwise overlaps. Structurally divergent decompositions use the general
+    /// pairwise CH-form overlap.
     fn measure_qubit(&mut self, q: usize, forced: Option<bool>) -> MeasurementResult {
         // Z-basis measurement on qubit q.
         // Frames and pending_rz on OTHER qubits commute with Z_q -- no flush needed.
@@ -654,21 +781,30 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
         // After measurement, qubit is in Z eigenstate; pending phase is irrelevant.
         self.pending_rz[q] = Angle64::default();
 
-        // Compute probability of measuring 0
-        let prob0 = if self.terms.len() == 1 {
+        // Compute probability of measuring 0. Optimized multi-term paths are
+        // valid only while all terms share the CH structure they precompute.
+        // Exact branches carry the input norm they already compute; optimized
+        // shared-structure branches use StabVec's normalized-state invariant.
+        let structure_uniform = self.has_shared_projection_structure();
+        let (state_norm_sq, prob0) = if self.terms.len() == 1 {
             // Single term: O(n) using CH-form structure directly
             let (coeff, ch) = &self.terms[0];
-            coeff.norm_sqr() * ch.prob_z_zero(q)
+            let norm_sq = coeff.norm_sqr();
+            (norm_sq, norm_sq * ch.prob_z_zero(q))
         } else if self.num_qubits <= 6 {
             // For small qubit counts, state vector is fast enough.
             let sv = self.state_vector();
+            let mut norm_sq = 0.0;
             let mut p = 0.0;
             for (x, sv_x) in sv.iter().enumerate() {
+                norm_sq += sv_x.norm_sqr();
                 if (x >> q) & 1 == 0 {
                     p += sv_x.norm_sqr();
                 }
             }
-            p
+            (norm_sq, p)
+        } else if !structure_uniform {
+            self.exact_norm_and_prob0(q)
         } else if self.terms.len() <= 8 {
             // expectation_value_zq depends only on shared structure (G/v/s), same for all terms.
             let ez0 = self.terms[0].1.expectation_value_zq(q);
@@ -719,19 +855,17 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
                         prob += 2.0 * (cjk * (ip + ip_z)).re;
                     }
                 }
-                0.5 * prob
+                (1.0, 0.5 * prob)
             } else {
                 // Deterministic: all terms have the same Z_q expectation.
-                let norm: f64 = self.terms.iter().map(|(c, _)| c.norm_sqr()).sum();
-                0.5 * norm * (1.0 + ez0)
+                (1.0, 0.5 * (1.0 + ez0))
             }
         } else {
             // Large T: first check if measurement is deterministic from structure.
             let ez = self.terms[0].1.expectation_value_zq(q);
             if ez != 0.0 {
                 // Deterministic: all terms have the same Z_q expectation.
-                let norm: f64 = self.terms.iter().map(|(c, _)| c.norm_sqr()).sum();
-                0.5 * norm * (1.0 + ez)
+                (1.0, 0.5 * (1.0 + ez))
             } else if self.mc_threshold.is_some_and(|t| self.terms.len() > t) {
                 // Very large T: Monte Carlo term sampling. Pick a term proportional
                 // to |c_j|², use its single-term probability as Pr(0).
@@ -749,7 +883,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
                         break;
                     }
                 }
-                self.terms[chosen].1.prob_z_zero(q) * norm_sq
+                (1.0, self.terms[chosen].1.prob_z_zero(q))
             } else {
                 // Non-deterministic: sort-based bucketing.
                 let sc = self.terms[0].1.precompute_shared_constraints();
@@ -822,7 +956,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
                     }
                     group_start = group_end;
                 }
-                0.5 * prob
+                (1.0, 0.5 * prob)
             } // end non-deterministic
         };
 
@@ -848,26 +982,27 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
         // But that loses the stabilizer structure.
         //
         // Better: measure each term independently with the forced outcome.
-        // The CH-form measurement correctly projects each term.
-        // The coefficients stay the same. Then renormalize.
+        // CH-form keeps a nondeterministic stabilizer post-state normalized,
+        // so its corresponding coefficient carries the projector's 1/sqrt(2).
 
-        // Project each term. The structural changes (F,G,M,v,s) are identical
-        // for all terms. Gamma deltas from right_cz/right_s are also identical
-        // (constant +2 or +3 independent of starting gamma). Omega changes are
-        // the same (depend only on shared state). Apply mz_forced to term[0],
-        // compute deltas, propagate to others.
-        // Project each term. When gamma[q] is the same for all terms, delta is
-        // identical and all terms take the same structural path -- we can apply
-        // mz_forced once and share Arcs. Otherwise, apply individually.
-        // gamma[q] is uniform if q is not in the diff set (diff tracks all divergent qubits).
+        // Apply the projector once only when every structural input is shared
+        // and gamma[q] is uniform; otherwise project each term independently.
+        // The diff set tracks every qubit whose gamma varies between terms.
         let gamma_q_uniform = self.terms.len() <= 1 || !self.gamma_diff_qubits.contains(&q);
-        if gamma_q_uniform && self.terms.len() > 1 {
+        let structure_uniform = self.has_shared_projection_structure();
+        if gamma_q_uniform && structure_uniform && self.terms.len() > 1 {
+            debug_assert!(
+                self.terms.iter().all(|(_, ch)| !ch.omega_exact().is_zero()),
+                "zero-omega terms must be removed after projection"
+            );
             // All terms have the same gamma[q], so delta is identical.
             // Structural changes and omega transform are the same for all terms.
-            // Apply mz_forced once, compute deltas, propagate to others.
+            // Apply the projector once, compute deltas, propagate to others.
+            let projection_scale = Self::projection_coefficient_scale(&self.terms[0].1, q);
             let gamma_before = self.terms[0].1.gamma().to_vec();
             let omega_before = self.terms[0].1.omega_exact();
-            self.terms[0].1.mz_forced(q, outcome);
+            self.terms[0].1.project_z(q, outcome);
+            self.terms[0].0 *= projection_scale;
             let omega_after = self.terms[0].1.omega_exact();
             let mut gamma_delta = vec![0u8; self.num_qubits];
             for p in 0..self.num_qubits {
@@ -878,9 +1013,10 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
             let shared_m = self.terms[0].1.arc_m();
             let shared_v = self.terms[0].1.arc_v();
             let shared_s = self.terms[0].1.arc_s();
-            for (_, ch) in &mut self.terms[1..] {
+            for (coefficient, ch) in &mut self.terms[1..] {
                 ch.apply_gamma_delta(&gamma_delta);
                 ch.apply_omega_transform(omega_before, omega_after);
+                *coefficient *= projection_scale;
                 ch.set_arcs(
                     shared_f.clone(),
                     shared_g.clone(),
@@ -890,10 +1026,22 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
                 );
             }
         } else {
-            for (_coeff, ch) in &mut self.terms {
-                ch.mz_forced(q, outcome);
+            for (coefficient, ch) in &mut self.terms {
+                let projection_scale = Self::projection_coefficient_scale(ch, q);
+                ch.project_z(q, outcome);
+                *coefficient *= projection_scale;
             }
         }
+
+        // Incompatible stabilizer terms project to the zero state. Remove them
+        // before merging and normalization so they cannot act as structural
+        // representatives or contribute their coefficients to the norm.
+        self.terms.retain(|(_, ch)| !ch.omega_exact().is_zero());
+        if self.terms.is_empty() {
+            let ch = CHFormGeneric::with_rng(self.num_qubits, self.rng.clone());
+            self.terms.push((Complex64::new(0.0, 0.0), ch));
+        }
+        self.recompute_gamma_diff();
 
         // Merge terms with identical gamma+omega (exact, reduces T).
         // Skip merge when diff_qubits is large relative to T (no collisions possible).
@@ -908,16 +1056,17 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
             self.merge_identical_terms();
         }
 
-        // Renormalize.
-        // After merging, all terms have distinct gamma+omega, so all cross-term
-        // inner products are zero. Norm is simply sum of |c_j|^2.
-        if self.terms.len() > 1 {
-            let norm_sq: f64 = self.terms.iter().map(|(c, _)| c.norm_sqr()).sum();
-            if norm_sq > 1e-15 && (norm_sq - 1.0).abs() > 1e-10 {
-                let inv_norm = 1.0 / norm_sq.sqrt();
-                for (coeff, _) in &mut self.terms {
-                    *coeff *= inv_norm;
-                }
+        // P0 and P1 are complementary orthogonal projectors, so the squared
+        // norm after projection is the probability weight already computed.
+        let projected_norm_sq = if outcome {
+            state_norm_sq - prob0
+        } else {
+            prob0
+        };
+        if projected_norm_sq > 0.0 {
+            let inv_norm = 1.0 / projected_norm_sq.sqrt();
+            for (coeff, _) in &mut self.terms {
+                *coeff *= inv_norm;
             }
         }
 
@@ -974,6 +1123,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> QuantumSimulator for Sta
         self.pending_rz.fill(Angle64::default());
         self.cliff_frame.fill(CliffordFrame::IDENTITY);
         self.frame_phase = 0;
+        self.global_phase = Angle64::ZERO;
         self.gamma_diff_qubits.clear();
         // rel_pruning_threshold preserved across reset
         self
@@ -981,6 +1131,13 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> QuantumSimulator for Sta
 }
 
 impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for StabVecGeneric<S, R> {
+    fn apply_global_phase(&mut self, phase: Angle64, qubits: &[QubitId]) -> &mut Self {
+        for _ in qubits {
+            self.global_phase += phase;
+        }
+        self
+    }
+
     // === Single-qubit Cliffords: all compose into the frame in O(1) ===
     // Diagonal gates (Z, S, Sdg) commute with pending_rz.
     // Non-diagonal gates (H, X, Y, SX, etc.) negate pending_rz if they
@@ -1074,6 +1231,42 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
         self
     }
 
+    fn h3(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            self.flush_noncommuting_pending_rz(q.index());
+        }
+        self.sz(qubits).y(qubits);
+        // Correct the projective frame composition to canonical H3 phase.
+        for _ in qubits {
+            self.frame_phase = (self.frame_phase + 1) & 7;
+        }
+        self
+    }
+
+    fn h4(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            self.flush_noncommuting_pending_rz(q.index());
+        }
+        self.sz(qubits).x(qubits);
+        // Correct the projective frame composition to canonical H4 phase.
+        for _ in qubits {
+            self.frame_phase = (self.frame_phase + 7) & 7;
+        }
+        self
+    }
+
+    fn h6(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.sx(qubits)
+            .y(qubits)
+            .apply_global_phase(-(Angle64::QUARTER_TURN / 2u64), qubits);
+        // Compensate for the current Y-frame cocycle so the composition has
+        // the canonical H6 phase. Remove this with the issue #699 fix.
+        for _ in qubits {
+            self.frame_phase = (self.frame_phase + 2) & 7;
+        }
+        self
+    }
+
     // === Two-qubit gates ===
     // Pauli frames propagate through CX/CZ in O(1) with phase correction.
     // Non-Pauli frames must be flushed.
@@ -1117,7 +1310,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
                 self.flush_cliff_frame(r);
             }
         }
-        self.apply_clifford_structural(|ch| {
+        self.apply_c_type_clifford(|ch| {
             ch.cz(pairs);
         });
         self
@@ -1139,7 +1332,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
                 self.flush_cliff_frame(r);
             }
         }
-        self.apply_clifford_structural(|ch| {
+        self.apply_c_type_clifford(|ch| {
             ch.szz(pairs);
         });
         self
@@ -1163,7 +1356,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
                 self.flush_cliff_frame(r);
             }
         }
-        self.apply_clifford_structural(|ch| {
+        self.apply_c_type_clifford(|ch| {
             ch.szzdg(pairs);
         });
         self
@@ -1173,6 +1366,9 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
         for &(q0, q1) in pairs {
             let q = q0.index();
             let r = q1.index();
+            for target in [q, r] {
+                self.flush_noncommuting_pending_rz(target);
+            }
             let fq = self.cliff_frame[q];
             let fr = self.cliff_frame[r];
             if fq.is_pauli() && fr.is_pauli() {
@@ -1192,7 +1388,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
             ch.h(&q0s);
             ch.h(&q1s);
         });
-        self.apply_clifford_structural(|ch| {
+        self.apply_c_type_clifford(|ch| {
             ch.szz(pairs);
         });
         self.apply_clifford(|ch| {
@@ -1206,6 +1402,9 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
         for &(q0, q1) in pairs {
             let q = q0.index();
             let r = q1.index();
+            for target in [q, r] {
+                self.flush_noncommuting_pending_rz(target);
+            }
             let fq = self.cliff_frame[q];
             let fr = self.cliff_frame[r];
             if fq.is_pauli() && fr.is_pauli() {
@@ -1224,7 +1423,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
             ch.h(&q0s);
             ch.h(&q1s);
         });
-        self.apply_clifford_structural(|ch| {
+        self.apply_c_type_clifford(|ch| {
             ch.szzdg(pairs);
         });
         self.apply_clifford(|ch| {
@@ -1252,11 +1451,11 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
         }
         // SYY = S*S * SXX * Sdg*Sdg
         let all_qubits: Vec<QubitId> = pairs.iter().flat_map(|&(q0, q1)| [q0, q1]).collect();
-        self.apply_clifford_structural(|ch| {
+        self.apply_c_type_clifford(|ch| {
             ch.sz(&all_qubits);
         });
         self.sxx(pairs);
-        self.apply_clifford_structural(|ch| {
+        self.apply_c_type_clifford(|ch| {
             ch.szdg(&all_qubits);
         });
         self
@@ -1279,11 +1478,11 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
             }
         }
         let all_qubits: Vec<QubitId> = pairs.iter().flat_map(|&(q0, q1)| [q0, q1]).collect();
-        self.apply_clifford_structural(|ch| {
+        self.apply_c_type_clifford(|ch| {
             ch.sz(&all_qubits);
         });
         self.sxxdg(pairs);
-        self.apply_clifford_structural(|ch| {
+        self.apply_c_type_clifford(|ch| {
             ch.szdg(&all_qubits);
         });
         self
@@ -1383,24 +1582,6 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> ArbitraryRotationGateabl
         self
     }
 
-    fn apply_global_phase(&mut self, phase: Angle64, qubits: &[QubitId]) -> &mut Self {
-        // Materialize the rotation before applying its scalar correction. The
-        // pending Angle64 sum is projective: wrapping by one turn drops the -1
-        // from RZ(theta + 2*pi) = -RZ(theta).
-        for &q in qubits {
-            self.flush_pending_rz(q.index());
-        }
-        let unit_phase = Complex64::from_polar(1.0, phase.to_radians_signed());
-        let mut global_phase = Complex64::new(1.0, 0.0);
-        for _ in qubits {
-            global_phase *= unit_phase;
-        }
-        for (coeff, _) in &mut self.terms {
-            *coeff *= global_phase;
-        }
-        self
-    }
-
     fn rzz(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         // RZZ = CX * RZ_tgt * CX. Use frame-aware CX and RZ.
         self.cx(pairs);
@@ -1455,7 +1636,8 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> pecos_core::RngManageabl
 #[allow(clippy::cast_precision_loss)] // statistical tests use count as f64
 mod tests {
     use super::*;
-    use crate::StateVec;
+    use crate::{StateVec, StateVecSoA};
+    use pecos_core::gate_type::{GateType, NAMED_TWO_QUBIT_ROOT_GATES};
     use pecos_core::qid;
 
     const EPS: f64 = 1e-8;
@@ -1495,6 +1677,25 @@ mod tests {
         let sv = sim.state_vector();
         assert!((sv[0] - Complex64::new(1.0, 0.0)).norm() < EPS);
         assert!(sv[1].norm() < EPS);
+    }
+
+    #[test]
+    fn test_inherited_defaults_preserve_many_terms_and_exact_state() {
+        // h2 and h4 are inherited defaults that deliver their residual phase
+        // through apply_global_phase. h2's residues cancel to zero; h4 carries
+        // a net -pi/4, so a dropped accumulator shows up on the state.
+        let mut sim = StabVec::new(1);
+        let term = sim.terms[0].1.clone();
+        let coefficient = Complex64::new(1.0 / 4094.0, 0.0);
+        sim.terms = (0..4094).map(|_| (coefficient, term.clone())).collect();
+        let mut expected = StateVec::new(1);
+
+        sim.h2(&[QubitId(0)]).h4(&[QubitId(0)]);
+        expected.h2(&[QubitId(0)]).h4(&[QubitId(0)]);
+        assert_eq!(sim.num_terms(), 4094);
+        for (actual, expected) in sim.state_vector().iter().zip(expected.state()) {
+            assert!((actual - expected).norm() < 1e-12);
+        }
     }
 
     #[test]
@@ -2592,5 +2793,539 @@ mod tests {
         crz.rx(Angle64::from_radians(0.6), &[QubitId(0)]);
         sv.rx(Angle64::from_radians(0.6), &[QubitId(0)]);
         states_match_up_to_phase(&crz.state_vector(), &sv.state(), "after RX0");
+    }
+
+    fn apply_two_qubit_root<S: CliffordGateable>(sim: &mut S, gate: GateType) {
+        let pair = [(QubitId(0), QubitId(1))];
+        match gate {
+            GateType::SXX => {
+                sim.sxx(&pair);
+            }
+            GateType::SXXdg => {
+                sim.sxxdg(&pair);
+            }
+            GateType::SYY => {
+                sim.syy(&pair);
+            }
+            GateType::SYYdg => {
+                sim.syydg(&pair);
+            }
+            GateType::SZZ => {
+                sim.szz(&pair);
+            }
+            GateType::SZZdg => {
+                sim.szzdg(&pair);
+            }
+            other => panic!("unsupported two-qubit root gate {other:?}"),
+        }
+    }
+
+    fn prepare_nonuniform_terms(
+        stab_vec: &mut StabVec,
+        state_vec: &mut StateVecSoA,
+        term_count: usize,
+    ) {
+        let q0 = qid(0);
+        stab_vec.h(&q0);
+        state_vec.h(&q0);
+        for step in 0..term_count.ilog2() {
+            let angle = Angle64::from_radians(0.37 + 0.11 * f64::from(step));
+            stab_vec.rz(angle, &q0).h(&q0);
+            state_vec.rz(angle, &q0).h(&q0);
+        }
+        assert_eq!(stab_vec.num_terms(), term_count);
+    }
+
+    fn prepare_uniform_terms(
+        stab_vec: &mut StabVec,
+        state_vec: &mut StateVecSoA,
+        term_count: usize,
+    ) {
+        let q0 = qid(0);
+        stab_vec.h(&q0);
+        state_vec.h(&q0);
+        stab_vec.flush_all_cliff_frames();
+        let _ = state_vec.state();
+        for step in 0..term_count.ilog2() {
+            let angle = Angle64::from_radians(0.37 + 0.11 * f64::from(step));
+            stab_vec.rz(angle, &q0);
+            stab_vec.flush_all_pending_rz();
+            state_vec.rz(angle, &q0);
+        }
+        assert_eq!(stab_vec.num_terms(), term_count);
+    }
+
+    fn assert_phase_exact_state_matches(actual: &[Complex64], expected: &[Complex64], label: &str) {
+        let actual_norm: f64 = actual.iter().map(Complex64::norm_sqr).sum();
+        let expected_norm: f64 = expected.iter().map(Complex64::norm_sqr).sum();
+        assert!(
+            (actual_norm - 1.0).abs() < EPS,
+            "{label}: StabVec norm is {actual_norm:.12}, expected 1"
+        );
+        assert!(
+            (actual_norm - expected_norm).abs() < EPS,
+            "{label}: norm mismatch: StabVec={actual_norm:.12}, StateVecSoA={expected_norm:.12}"
+        );
+        for (index, (actual, expected)) in actual.iter().zip(expected).enumerate() {
+            assert!(
+                (actual - expected).norm() < EPS,
+                "{label}: amplitude[{index}] mismatch: StabVec={actual:.12}, \
+                 StateVecSoA={expected:.12}"
+            );
+        }
+    }
+
+    #[test]
+    fn two_qubit_roots_match_state_vec_soa_across_term_counts() {
+        for gate in NAMED_TWO_QUBIT_ROOT_GATES {
+            for term_count in [2, 4, 8, 16] {
+                for (structure, prepare) in [
+                    (
+                        "shared structure",
+                        prepare_uniform_terms as fn(&mut StabVec, &mut StateVecSoA, usize),
+                    ),
+                    ("divergent structure", prepare_nonuniform_terms),
+                ] {
+                    let mut stab_vec = StabVec::builder(2).pruning_threshold(0.0).build();
+                    let mut state_vec = StateVecSoA::new(2);
+                    prepare(&mut stab_vec, &mut state_vec, term_count);
+                    assert_phase_exact_state_matches(
+                        &stab_vec.state_vector(),
+                        &state_vec.state(),
+                        &format!("input with {term_count} terms and {structure}"),
+                    );
+
+                    apply_two_qubit_root(&mut stab_vec, gate);
+                    apply_two_qubit_root(&mut state_vec, gate);
+
+                    let actual = stab_vec.state_vector();
+                    let expected = state_vec.state();
+                    assert_phase_exact_state_matches(
+                        &actual,
+                        &expected,
+                        &format!("{gate:?} with {term_count} terms and {structure}"),
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn two_qubit_roots_match_state_vec_soa_with_pending_rz_across_term_counts() {
+        for gate in NAMED_TWO_QUBIT_ROOT_GATES {
+            for term_count in [2, 4, 8, 16] {
+                let mut stab_vec = StabVec::builder(2).pruning_threshold(0.0).build();
+                let mut state_vec = StateVecSoA::new(2);
+                prepare_nonuniform_terms(&mut stab_vec, &mut state_vec, term_count / 2);
+                let q0 = qid(0);
+                let angle = Angle64::from_radians(0.37);
+                stab_vec.rz(angle, &q0);
+                state_vec.rz(angle, &q0);
+
+                apply_two_qubit_root(&mut stab_vec, gate);
+                apply_two_qubit_root(&mut state_vec, gate);
+
+                let actual = stab_vec.state_vector();
+                let expected = state_vec.state();
+                assert_eq!(stab_vec.num_terms(), term_count);
+                assert_phase_exact_state_matches(
+                    &actual,
+                    &expected,
+                    &format!("{gate:?} with pending RZ and {term_count} terms"),
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn c_type_fast_path_checks_every_term_structure() {
+        let mut stab_vec = StabVec::builder(2).pruning_threshold(0.0).build();
+        let mut discarded_reference = StateVecSoA::new(2);
+        prepare_uniform_terms(&mut stab_vec, &mut discarded_reference, 4);
+
+        // Keep terms 0 and 1 shared while making only a later term's M distinct.
+        stab_vec.terms[2].1.sz(&qid(0));
+        assert!(
+            stab_vec.terms[0]
+                .1
+                .shares_c_type_structure(&stab_vec.terms[1].1)
+        );
+        assert!(
+            !stab_vec.terms[0]
+                .1
+                .shares_c_type_structure(&stab_vec.terms[2].1)
+        );
+
+        let norm = stab_vec
+            .state_vector()
+            .iter()
+            .map(Complex64::norm_sqr)
+            .sum::<f64>()
+            .sqrt();
+        for (coefficient, _) in &mut stab_vec.terms {
+            *coefficient /= norm;
+        }
+        let input = stab_vec.state_vector();
+        let mut state_vec = StateVecSoA::from_state(&input, PecosRng::seed_from_u64(42));
+
+        stab_vec.szz(&[(QubitId(0), QubitId(1))]);
+        state_vec.szz(&[(QubitId(0), QubitId(1))]);
+        assert_phase_exact_state_matches(
+            &stab_vec.state_vector(),
+            &state_vec.state(),
+            "SZZ with divergence after the first two terms",
+        );
+    }
+
+    #[test]
+    fn inherited_h3_h4_match_state_vec_soa_with_decomposed_terms_and_pending_rz() {
+        for gate in ["H3", "H4"] {
+            for term_count in [2, 4, 8, 16] {
+                let mut stab_vec = StabVec::builder(2).pruning_threshold(0.0).build();
+                let mut state_vec = StateVecSoA::new(2);
+                prepare_nonuniform_terms(&mut stab_vec, &mut state_vec, term_count);
+                match gate {
+                    "H3" => {
+                        stab_vec.h3(&qid(0));
+                        state_vec.h3(&qid(0));
+                    }
+                    "H4" => {
+                        stab_vec.h4(&qid(0));
+                        state_vec.h4(&qid(0));
+                    }
+                    _ => unreachable!(),
+                }
+                assert_phase_exact_state_matches(
+                    &stab_vec.state_vector(),
+                    &state_vec.state(),
+                    &format!("{gate} with {term_count} terms"),
+                );
+            }
+
+            let mut stab_vec = StabVec::builder(2).pruning_threshold(0.0).build();
+            let mut state_vec = StateVecSoA::new(2);
+            let angle = Angle64::from_radians(0.37);
+            stab_vec.h(&qid(0)).rz(angle, &qid(0));
+            state_vec.h(&qid(0)).rz(angle, &qid(0));
+            match gate {
+                "H3" => {
+                    stab_vec.h3(&qid(0));
+                    state_vec.h3(&qid(0));
+                }
+                "H4" => {
+                    stab_vec.h4(&qid(0));
+                    state_vec.h4(&qid(0));
+                }
+                _ => unreachable!(),
+            }
+            assert_phase_exact_state_matches(
+                &stab_vec.state_vector(),
+                &state_vec.state(),
+                &format!("{gate} with pending RZ"),
+            );
+        }
+    }
+
+    #[test]
+    fn measurement_projection_removes_zero_omega_terms_before_uniform_gamma_path() {
+        let mut stab_vec = StabVec::builder(3).pruning_threshold(0.0).build();
+        let mut state_vec = StateVecSoA::new(3);
+        // Each H RZ H decomposes its qubit into terms with opposite
+        // deterministic Z support. Projecting q0 onto |1> makes term 0 a
+        // zero-omega term while two compatible q1 terms remain live.
+        for (qubit, angle) in [(QubitId(0), 0.37), (QubitId(1), 0.53)] {
+            let angle = Angle64::from_radians(angle);
+            stab_vec.h(&[qubit]).rz(angle, &[qubit]).h(&[qubit]);
+            state_vec.h(&[qubit]).rz(angle, &[qubit]).h(&[qubit]);
+        }
+        assert_eq!(stab_vec.num_terms(), 4);
+        assert!((stab_vec.terms[0].1.prob_z_zero(0) - 1.0).abs() < EPS);
+        stab_vec.measure_qubit(0, Some(true));
+
+        let mut expected = state_vec.state();
+        for (index, amplitude) in expected.iter_mut().enumerate() {
+            if index & 1 == 0 {
+                *amplitude = Complex64::new(0.0, 0.0);
+            }
+        }
+        let norm = expected.iter().map(Complex64::norm_sqr).sum::<f64>().sqrt();
+        for amplitude in &mut expected {
+            *amplitude /= norm;
+        }
+        assert_phase_exact_state_matches(
+            &stab_vec.state_vector(),
+            &expected,
+            "first forced projection",
+        );
+        assert_eq!(stab_vec.num_terms(), 2);
+        assert!(
+            stab_vec
+                .terms
+                .iter()
+                .all(|(_, ch)| !ch.omega_exact().is_zero())
+        );
+        assert!(!stab_vec.has_shared_projection_structure());
+
+        // q2 has uniform gamma and multiple live terms. The surviving terms'
+        // other structure differs, so projection must process them separately.
+        stab_vec.measure_qubit(2, Some(false));
+        assert_phase_exact_state_matches(
+            &stab_vec.state_vector(),
+            &expected,
+            "second forced projection after zero-omega cleanup",
+        );
+    }
+
+    fn prepare_divergent_probability_counterexample() -> (StabVec, Vec<Complex64>) {
+        let mut stab = StabVec::builder(7).pruning_threshold(0.0).seed(694).build();
+        let mut dense = StateVecSoA::with_seed(7, 694);
+        for (q, angle) in [(0, 0.37), (1, 0.53), (2, 0.71)] {
+            let qubit = QubitId(q);
+            let angle = Angle64::from_radians(angle);
+            stab.h(&[qubit]).rz(angle, &[qubit]).h(&[qubit]);
+            dense.h(&[qubit]).rz(angle, &[qubit]).h(&[qubit]);
+        }
+        stab.measure_qubit(0, Some(true));
+
+        let mut projected = dense.state();
+        for (basis, amplitude) in projected.iter_mut().enumerate() {
+            if basis & 1 == 0 {
+                *amplitude = Complex64::new(0.0, 0.0);
+            }
+        }
+        let inv_norm = 1.0
+            / projected
+                .iter()
+                .map(Complex64::norm_sqr)
+                .sum::<f64>()
+                .sqrt();
+        for amplitude in &mut projected {
+            *amplitude *= inv_norm;
+        }
+        let mut dense = StateVecSoA::from_state(&projected, PecosRng::seed_from_u64(694));
+
+        stab.sz(&[QubitId(2)])
+            .h(&[QubitId(5)])
+            .cx(&[(QubitId(4), QubitId(5))])
+            .h(&[QubitId(1)])
+            .sz(&[QubitId(0), QubitId(0), QubitId(4)])
+            .h(&[QubitId(2)]);
+        dense
+            .sz(&[QubitId(2)])
+            .h(&[QubitId(5)])
+            .cx(&[(QubitId(4), QubitId(5))])
+            .h(&[QubitId(1)])
+            .sz(&[QubitId(0), QubitId(0), QubitId(4)])
+            .h(&[QubitId(2)]);
+        let _ = stab.state_vector();
+        (stab, dense.state())
+    }
+
+    #[test]
+    fn divergent_structure_measurement_probability_matches_state_vec_soa() {
+        let (stab, expected_state) = prepare_divergent_probability_counterexample();
+        assert_eq!(stab.num_terms(), 4);
+        assert!(!stab.has_shared_projection_structure());
+        let expected_prob0 = expected_state
+            .iter()
+            .enumerate()
+            .filter(|(basis, _)| (basis >> 2) & 1 == 0)
+            .map(|(_, amplitude)| amplitude.norm_sqr())
+            .sum::<f64>();
+        assert!((expected_prob0 - 0.825_916_885_511).abs() < EPS);
+
+        let samples = 20_000_u32;
+        let mut zero_count = 0_u32;
+        for seed in 0..samples {
+            let mut sample = stab.clone();
+            sample.rng = PecosRng::seed_from_u64(u64::from(seed));
+            if !sample.mz(&[QubitId(2)])[0].outcome {
+                zero_count += 1;
+            }
+        }
+        let observed_prob0 = f64::from(zero_count) / f64::from(samples);
+        assert!(
+            (observed_prob0 - expected_prob0).abs() < 0.015,
+            "observed Pr(0)={observed_prob0}, expected {expected_prob0}"
+        );
+    }
+
+    #[test]
+    fn divergent_projection_uses_exact_norm_and_preserves_state() {
+        let (stab, state) = prepare_divergent_probability_counterexample();
+        for outcome in [false, true] {
+            let mut expected = state.clone();
+            for (basis, amplitude) in expected.iter_mut().enumerate() {
+                if (((basis >> 2) & 1) != 0) != outcome {
+                    *amplitude = Complex64::new(0.0, 0.0);
+                }
+            }
+            let inv_norm = 1.0 / expected.iter().map(Complex64::norm_sqr).sum::<f64>().sqrt();
+            for amplitude in &mut expected {
+                *amplitude *= inv_norm;
+            }
+            let mut measured = stab.clone();
+            measured.measure_qubit(2, Some(outcome));
+            assert_phase_exact_state_matches(
+                &measured.state_vector(),
+                &expected,
+                &format!("divergent projection outcome {outcome}"),
+            );
+        }
+    }
+
+    #[test]
+    fn divergent_projection_does_not_merge_by_gamma_and_omega_alone() {
+        let mut stab = StabVec::builder(3).pruning_threshold(0.0).build();
+        let mut dense = StateVecSoA::new(3);
+        for (q, radians) in [(0, 0.339_52), (1, 0.721_75), (2, 0.090_18)] {
+            let qubit = QubitId(q);
+            let angle = Angle64::from_radians(radians);
+            stab.h(&[qubit]).rz(angle, &[qubit]).h(&[qubit]);
+            dense.h(&[qubit]).rz(angle, &[qubit]).h(&[qubit]);
+        }
+        stab.rz(Angle64::from_radians(0.409_39), &qid(0))
+            .cx(&[(QubitId(2), QubitId(0))])
+            .sz(&qid(2))
+            .rz(Angle64::from_radians(0.661_47), &qid(0))
+            .cx(&[(QubitId(2), QubitId(0))])
+            .sz(&qid(0))
+            .rz(Angle64::from_radians(0.562_83), &qid(0))
+            .cx(&[(QubitId(1), QubitId(2))])
+            .sz(&qid(1))
+            .rz(Angle64::from_radians(0.606_67), &qid(2));
+        dense
+            .rz(Angle64::from_radians(0.409_39), &qid(0))
+            .cx(&[(QubitId(2), QubitId(0))])
+            .sz(&qid(2))
+            .rz(Angle64::from_radians(0.661_47), &qid(0))
+            .cx(&[(QubitId(2), QubitId(0))])
+            .sz(&qid(0))
+            .rz(Angle64::from_radians(0.562_83), &qid(0))
+            .cx(&[(QubitId(1), QubitId(2))])
+            .sz(&qid(1))
+            .rz(Angle64::from_radians(0.606_67), &qid(2));
+
+        let mut expected = dense.state();
+        let _ = stab.state_vector();
+        assert!(!stab.has_shared_projection_structure());
+        stab.measure_qubit(1, Some(false));
+        for (basis, amplitude) in expected.iter_mut().enumerate() {
+            if (basis >> 1) & 1 != 0 {
+                *amplitude = Complex64::new(0.0, 0.0);
+            }
+        }
+        let inv_norm = 1.0 / expected.iter().map(Complex64::norm_sqr).sum::<f64>().sqrt();
+        for amplitude in &mut expected {
+            *amplitude *= inv_norm;
+        }
+        assert_phase_exact_state_matches(
+            &stab.state_vector(),
+            &expected,
+            "divergent terms with matching gamma and omega",
+        );
+    }
+
+    #[test]
+    fn single_surviving_term_is_renormalized() {
+        let mut stab = StabVec::builder(1).pruning_threshold(0.0).build();
+        let angle = Angle64::from_radians(0.37);
+        stab.h(&qid(0)).rz(angle, &qid(0)).h(&qid(0));
+        assert_eq!(stab.num_terms(), 2);
+
+        stab.measure_qubit(0, Some(false));
+        assert_eq!(stab.num_terms(), 1);
+        assert_phase_exact_state_matches(
+            &stab.state_vector(),
+            &[Complex64::new(1.0, 0.0), Complex64::new(0.0, 0.0)],
+            "single surviving term",
+        );
+    }
+
+    #[test]
+    fn nondeterministic_single_term_projection_preserves_norm() {
+        let mut stab = StabVec::builder(1).pruning_threshold(0.0).build();
+        stab.h(&qid(0));
+        let _ = stab.state_vector();
+        assert_eq!(stab.num_terms(), 1);
+
+        stab.measure_qubit(0, Some(false));
+        assert_phase_exact_state_matches(
+            &stab.state_vector(),
+            &[Complex64::new(1.0, 0.0), Complex64::new(0.0, 0.0)],
+            "nondeterministic single-term projection",
+        );
+    }
+
+    #[test]
+    fn impossible_forced_measurement_retains_zero_term() {
+        let mut stab = StabVec::builder(7).pruning_threshold(0.0).build();
+        stab.measure_qubit(0, Some(true));
+        assert_eq!(stab.num_terms(), 1);
+        assert_eq!(stab.terms[0].0, Complex64::new(0.0, 0.0));
+
+        stab.measure_qubit(1, Some(false));
+        assert!(
+            stab.state_vector()
+                .iter()
+                .all(|amplitude| *amplitude == Complex64::new(0.0, 0.0))
+        );
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn c_type_contract_asserts_unchanged_structure() {
+        for changed in ["F", "G", "v", "s"] {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let mut stab = StabVec::new(2);
+                stab.apply_c_type_clifford(|ch| {
+                    let f = ch.arc_f();
+                    let g = ch.arc_g();
+                    let m = ch.arc_m();
+                    let v = ch.arc_v();
+                    let s = ch.arc_s();
+                    ch.set_arcs(
+                        if changed == "F" {
+                            std::sync::Arc::new((*f).clone())
+                        } else {
+                            f
+                        },
+                        if changed == "G" {
+                            std::sync::Arc::new((*g).clone())
+                        } else {
+                            g
+                        },
+                        m,
+                        if changed == "v" {
+                            std::sync::Arc::new((*v).clone())
+                        } else {
+                            v
+                        },
+                        if changed == "s" {
+                            std::sync::Arc::new((*s).clone())
+                        } else {
+                            s
+                        },
+                    );
+                });
+            }));
+            assert!(result.is_err(), "missing {changed} contract assertion");
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn exact_overlap_contract_asserts_complete_gamma_diff_set() {
+        let mut stab = StabVec::builder(2).pruning_threshold(0.0).build();
+        let mut unused_reference = StateVecSoA::new(2);
+        prepare_uniform_terms(&mut stab, &mut unused_reference, 2);
+        assert!(stab.has_shared_projection_structure());
+        assert_eq!(stab.gamma_diff_qubits, vec![0]);
+
+        stab.gamma_diff_qubits.clear();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            stab.exact_norm_and_prob0(1);
+        }));
+        assert!(result.is_err(), "incomplete gamma diff set was accepted");
     }
 }

@@ -303,6 +303,12 @@ fn qasm_gate_to_phir(name: &str) -> Result<String, String> {
         "cx" | "cnot" => "CX",
         "cy" => "CY",
         "cz" => "CZ",
+        "sxx" => "SXX",
+        "sxxdg" => "SXXdg",
+        "syy" => "SYY",
+        "syydg" => "SYYdg",
+        "szz" => "SZZ",
+        "szzdg" => "SZZdg",
         "swap" => "SWAP",
         "rx" => "RX",
         "ry" => "RY",
@@ -505,6 +511,30 @@ mod tests {
         let cx_op = ops.iter().find(|o| o["qop"] == "CX").unwrap();
         // Multi-qubit: args is list of tuples
         assert_eq!(cx_op["args"], json!([[["q", 0], ["q", 1]]]));
+    }
+
+    #[test]
+    fn all_named_two_qubit_roots_convert_to_phir_json() {
+        let phir = convert(
+            r"
+            OPENQASM 2.0;
+            qreg q[2];
+            SXX q[0],q[1];
+            SXXDG q[0],q[1];
+            SYY q[0],q[1];
+            SYYDG q[0],q[1];
+            SZZ q[0],q[1];
+            SZZDG q[0],q[1];
+        ",
+        );
+        let roots: Vec<_> = get_ops(&phir)
+            .iter()
+            .filter_map(|op| op.get("qop").and_then(Value::as_str))
+            .collect();
+        assert_eq!(roots, ["SXX", "SXXdg", "SYY", "SYYdg", "SZZ", "SZZdg"]);
+        for op in get_ops(&phir).iter().filter(|op| op.get("qop").is_some()) {
+            assert_eq!(op["args"], json!([[["q", 0], ["q", 1]]]));
+        }
     }
 
     #[test]

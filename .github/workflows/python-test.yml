@@ -203,9 +203,11 @@ jobs:
         cache-bin: false
         prefix-key: v1-rust-no-bin
         save-if: ${{ github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name) }}
-        workspaces: |
-          python/pecos-rslib
-          python/pecos-rslib-llvm
+        # The cache saved here is what pr-core-python (pr-core-gate.yml)
+        # restores on every PR. The default (root) workspace is the right one:
+        # the rslib crates are members of the root Cargo workspace and build
+        # into the top-level target/.
+        shared-key: python-core
 
     - name: Cache LLVM ${{ env.LLVM_VERSION }}
       if: github.event_name != 'pull_request'
@@ -483,6 +485,8 @@ jobs:
       uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
       with:
         version-file: ".github/uv.toml"
+        enable-cache: true
+        save-cache: ${{ github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name) }}
 
     - name: Set up Rust (Windows)
       if: runner.os == 'Windows' && matrix.include-llvm

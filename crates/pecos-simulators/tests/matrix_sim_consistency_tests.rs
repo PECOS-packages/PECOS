@@ -49,6 +49,22 @@ fn matrix_times_state(mat: &UnitaryMatrix, state: &[Complex64]) -> Vec<Complex64
         .collect()
 }
 
+fn assert_states_exactly_equal(
+    actual: impl AsRef<[Complex64]>,
+    expected: impl AsRef<[Complex64]>,
+    tolerance: f64,
+) {
+    let actual = actual.as_ref();
+    let expected = expected.as_ref();
+    assert_eq!(actual.len(), expected.len());
+    for (index, (actual, expected)) in actual.iter().zip(expected).enumerate() {
+        assert!(
+            (actual - expected).norm() < tolerance,
+            "States differ at index {index}: {actual} vs {expected}"
+        );
+    }
+}
+
 // ============================================================================
 // 1-qubit Cliffords: simulator vs matrix
 // ============================================================================
@@ -64,30 +80,7 @@ fn sim_matches_matrix_1q_cliffords() {
         apply_1q_clifford(&mut sim, cliff);
         let actual = sim.state();
 
-        // Compare with tolerance, report gate name on failure
-        let tolerance = 1e-10;
-        let matches = if actual[0].norm() < tolerance && expected[0].norm() < tolerance {
-            actual
-                .iter()
-                .zip(expected.iter())
-                .all(|(a, b)| (a.norm() - b.norm()).abs() < tolerance)
-        } else if let Some((a, b)) = actual
-            .iter()
-            .zip(expected.iter())
-            .find(|(a, b)| a.norm() > tolerance && b.norm() > tolerance)
-        {
-            let ratio = b / a;
-            actual
-                .iter()
-                .zip(expected.iter())
-                .all(|(a, b)| (a * ratio - b).norm() < tolerance)
-        } else {
-            false
-        };
-        assert!(
-            matches,
-            "Simulator disagrees with matrix for 1q gate {cliff}"
-        );
+        assert_states_exactly_equal(actual, &expected, 1e-10);
 
         let mut sim32 = StateVecSoA32::new(1);
         apply_1q_clifford(&mut sim32, cliff);
@@ -97,29 +90,7 @@ fn sim_matches_matrix_1q_cliffords() {
                 Complex64::new(f64::from(amplitude.re), f64::from(amplitude.im))
             })
             .collect();
-        let tolerance = 1e-6;
-        let matches32 = if actual32[0].norm() < tolerance && expected[0].norm() < tolerance {
-            actual32
-                .iter()
-                .zip(expected.iter())
-                .all(|(a, b)| (a.norm() - b.norm()).abs() < tolerance)
-        } else if let Some((a, b)) = actual32
-            .iter()
-            .zip(expected.iter())
-            .find(|(a, b)| a.norm() > tolerance && b.norm() > tolerance)
-        {
-            let ratio = b / a;
-            actual32
-                .iter()
-                .zip(expected.iter())
-                .all(|(a, b)| (a * ratio - b).norm() < tolerance)
-        } else {
-            false
-        };
-        assert!(
-            matches32,
-            "StateVecSoA32 disagrees with matrix for 1q gate {cliff}"
-        );
+        assert_states_exactly_equal(actual32, &expected, 1e-6);
     }
 }
 
@@ -289,28 +260,7 @@ fn sim_matches_matrix_2q_cliffords() {
         apply_fn(&mut sim);
         let actual = sim.state();
 
-        // Report gate name on failure
-        let tolerance = 1e-10;
-        let matches = if let Some((a, b)) = actual
-            .iter()
-            .zip(expected.iter())
-            .find(|(a, b)| a.norm() > tolerance && b.norm() > tolerance)
-        {
-            let ratio = b / a;
-            actual
-                .iter()
-                .zip(expected.iter())
-                .all(|(a, b)| (a * ratio - b).norm() < tolerance)
-        } else {
-            actual
-                .iter()
-                .zip(expected.iter())
-                .all(|(a, b)| (a.norm() - b.norm()).abs() < tolerance)
-        };
-        assert!(
-            matches,
-            "Simulator disagrees with matrix for 2q gate {cliff}"
-        );
+        assert_states_exactly_equal(actual, &expected, 1e-10);
     }
 }
 
@@ -417,27 +367,7 @@ fn sim_matches_matrix_2q_on_superposition() {
         apply_fn(&mut sim);
         let actual = sim.state();
 
-        let tolerance = 1e-10;
-        let matches = if let Some((a, b)) = actual
-            .iter()
-            .zip(expected.iter())
-            .find(|(a, b)| a.norm() > tolerance && b.norm() > tolerance)
-        {
-            let ratio = b / a;
-            actual
-                .iter()
-                .zip(expected.iter())
-                .all(|(a, b)| (a * ratio - b).norm() < tolerance)
-        } else {
-            actual
-                .iter()
-                .zip(expected.iter())
-                .all(|(a, b)| (a.norm() - b.norm()).abs() < tolerance)
-        };
-        assert!(
-            matches,
-            "Simulator disagrees with matrix on |++> for 2q gate {cliff}"
-        );
+        assert_states_exactly_equal(actual, &expected, 1e-10);
     }
 }
 
@@ -464,21 +394,21 @@ fn sim_matches_matrix_1q_rotations() {
         let expected = matrix_times_zero_state(&mat);
         let mut sim = StateVec::new(1);
         sim.rx(angle, &qid(0));
-        assert_states_equal(sim.state(), &expected);
+        assert_states_exactly_equal(sim.state(), &expected, 1e-10);
 
         // RY
         let mat = unitary_rep::RY(angle, 0).to_matrix();
         let expected = matrix_times_zero_state(&mat);
         let mut sim = StateVec::new(1);
         sim.ry(angle, &qid(0));
-        assert_states_equal(sim.state(), &expected);
+        assert_states_exactly_equal(sim.state(), &expected, 1e-10);
 
         // RZ
         let mat = unitary_rep::RZ(angle, 0).to_matrix();
         let expected = matrix_times_zero_state(&mat);
         let mut sim = StateVec::new(1);
         sim.rz(angle, &qid(0));
-        assert_states_equal(sim.state(), &expected);
+        assert_states_exactly_equal(sim.state(), &expected, 1e-10);
     }
 }
 
@@ -498,21 +428,21 @@ fn sim_matches_matrix_2q_rotations() {
         let expected = matrix_times_zero_state(&mat);
         let mut sim = StateVec::new(2);
         sim.rxx(angle, &[(QubitId(0), QubitId(1))]);
-        assert_states_equal(sim.state(), &expected);
+        assert_states_exactly_equal(sim.state(), &expected, 1e-10);
 
         // RYY
         let mat = unitary_rep::RYY(angle, 0, 1).to_matrix();
         let expected = matrix_times_zero_state(&mat);
         let mut sim = StateVec::new(2);
         sim.ryy(angle, &[(QubitId(0), QubitId(1))]);
-        assert_states_equal(sim.state(), &expected);
+        assert_states_exactly_equal(sim.state(), &expected, 1e-10);
 
         // RZZ
         let mat = unitary_rep::RZZ(angle, 0, 1).to_matrix();
         let expected = matrix_times_zero_state(&mat);
         let mut sim = StateVec::new(2);
         sim.rzz(angle, &[(QubitId(0), QubitId(1))]);
-        assert_states_equal(sim.state(), &expected);
+        assert_states_exactly_equal(sim.state(), &expected, 1e-10);
     }
 }
 
@@ -546,7 +476,7 @@ fn sim_matches_matrix_1q_rotations_on_plus() {
         let mut sim = StateVec::new(1);
         sim.h(&qid(0));
         sim.rx(angle, &qid(0));
-        assert_states_equal(sim.state(), &expected);
+        assert_states_exactly_equal(sim.state(), &expected, 1e-10);
 
         // RY on |+>
         let mat = unitary_rep::RY(angle, 0).to_matrix();
@@ -554,7 +484,7 @@ fn sim_matches_matrix_1q_rotations_on_plus() {
         let mut sim = StateVec::new(1);
         sim.h(&qid(0));
         sim.ry(angle, &qid(0));
-        assert_states_equal(sim.state(), &expected);
+        assert_states_exactly_equal(sim.state(), &expected, 1e-10);
 
         // RZ on |+>
         let mat = unitary_rep::RZ(angle, 0).to_matrix();
@@ -562,7 +492,7 @@ fn sim_matches_matrix_1q_rotations_on_plus() {
         let mut sim = StateVec::new(1);
         sim.h(&qid(0));
         sim.rz(angle, &qid(0));
-        assert_states_equal(sim.state(), &expected);
+        assert_states_exactly_equal(sim.state(), &expected, 1e-10);
     }
 }
 
@@ -593,7 +523,7 @@ fn sim_matches_matrix_2q_rotations_on_superposition() {
         sim.h(&qid(0));
         sim.h(&qid(1));
         sim.rxx(angle, &[(QubitId(0), QubitId(1))]);
-        assert_states_equal(sim.state(), &expected);
+        assert_states_exactly_equal(sim.state(), &expected, 1e-10);
 
         // RYY on |++>
         let mat = unitary_rep::RYY(angle, 0, 1).to_matrix();
@@ -602,7 +532,7 @@ fn sim_matches_matrix_2q_rotations_on_superposition() {
         sim.h(&qid(0));
         sim.h(&qid(1));
         sim.ryy(angle, &[(QubitId(0), QubitId(1))]);
-        assert_states_equal(sim.state(), &expected);
+        assert_states_exactly_equal(sim.state(), &expected, 1e-10);
 
         // RZZ on |++>
         let mat = unitary_rep::RZZ(angle, 0, 1).to_matrix();
@@ -611,7 +541,7 @@ fn sim_matches_matrix_2q_rotations_on_superposition() {
         sim.h(&qid(0));
         sim.h(&qid(1));
         sim.rzz(angle, &[(QubitId(0), QubitId(1))]);
-        assert_states_equal(sim.state(), &expected);
+        assert_states_exactly_equal(sim.state(), &expected, 1e-10);
     }
 }
 
@@ -1286,7 +1216,7 @@ fn sim_matches_matrix_2q_nonadjacent_on_zero_state() {
         apply_fn(&mut sim);
         let actual = sim.state();
 
-        assert_states_equal(actual, &expected);
+        assert_states_exactly_equal(actual, &expected, 1e-10);
     }
 }
 
@@ -1402,7 +1332,7 @@ fn sim_matches_matrix_2q_nonadjacent_on_superposition() {
         apply_fn(&mut sim);
         let actual = sim.state();
 
-        assert_states_equal(actual, &expected);
+        assert_states_exactly_equal(actual, &expected, 1e-10);
     }
 }
 
@@ -1518,7 +1448,7 @@ fn sim_matches_matrix_2q_nonadjacent_with_entangled_spectator() {
         apply_fn(&mut sim);
         let actual = sim.state();
 
-        assert_states_equal(actual, &expected);
+        assert_states_exactly_equal(actual, &expected, 1e-10);
     }
 }
 

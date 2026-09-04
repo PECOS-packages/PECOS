@@ -139,7 +139,8 @@ pub fn run(command: &super::RustCommands) -> Result<()> {
         super::RustCommands::Test {
             profile,
             include_ffi,
-        } => run_test(*profile, *include_ffi),
+            nextest,
+        } => run_test(*profile, *include_ffi, *nextest),
     }
 }
 
@@ -452,8 +453,57 @@ fn run_clippy(include_ffi: bool, fix: bool) -> Result<()> {
     Ok(())
 }
 
+/// The cargo invocations for the workspace test phase.
+///
+/// With `cargo test` this is one command. With nextest it is two: `cargo
+/// nextest run` for the test binaries (nextest schedules tests across all
+/// binaries at once, where `cargo test` runs one binary after another) and
+/// `cargo test --doc` for the doctests, which nextest does not run. Both use
+/// the same package selection and features. nextest's own `--profile` selects
+/// a nextest profile, so the cargo profile goes through `--release` /
+/// `--cargo-profile`.
+fn workspace_test_commands<'a>(
+    nextest: bool,
+    profile: super::BuildProfile,
+    excludes: &[&'a str],
+) -> Vec<Vec<&'a str>> {
+    let selection = ["--workspace", "--features=runtime,hugr,neo"];
+    let cargo_profile_args: &[&str] = match profile {
+        super::BuildProfile::Dev | super::BuildProfile::Debug => &[],
+        super::BuildProfile::Release => &["--release"],
+        super::BuildProfile::Native => &["--profile", "native"],
+    };
+    let nextest_profile_args: &[&str] = match profile {
+        super::BuildProfile::Dev | super::BuildProfile::Debug => &[],
+        super::BuildProfile::Release => &["--release"],
+        super::BuildProfile::Native => &["--cargo-profile", "native"],
+    };
+    let mut commands = Vec::new();
+    if nextest {
+        // `--locked` is placed explicitly: run_cargo_command_with_rustflags
+        // only inserts it for the plain cargo subcommands.
+        let mut run_args = vec!["nextest", "run", "--locked"];
+        run_args.extend(selection);
+        run_args.extend(excludes);
+        run_args.extend(nextest_profile_args);
+        commands.push(run_args);
+        let mut doc_args = vec!["test", "--doc"];
+        doc_args.extend(selection);
+        doc_args.extend(excludes);
+        doc_args.extend(cargo_profile_args);
+        commands.push(doc_args);
+    } else {
+        let mut args = vec!["test"];
+        args.extend(selection);
+        args.extend(excludes);
+        args.extend(cargo_profile_args);
+        commands.push(args);
+    }
+    commands
+}
+
 /// Run cargo test with GPU-aware feature handling
-fn run_test(profile: super::BuildProfile, include_ffi: bool) -> Result<()> {
+fn run_test(profile: super::BuildProfile, include_ffi: bool, nextest: bool) -> Result<()> {
     // Warn about any C++ dependency version differences across crates
     check_dep_consistency();
 
@@ -495,14 +545,12 @@ fn run_test(profile: super::BuildProfile, include_ffi: bool) -> Result<()> {
     // neo = sim() routing to the pecos-neo stack (contract tests)
     // pecos-cli is excluded here and tested separately below with --features=runtime
     // to ensure the pecos binary has PHIR/QIS support for integration tests.
-    let mut args: Vec<&str> = vec!["test", "--workspace", "--features=runtime,hugr,neo"];
-
+    let mut excludes: Vec<&str> = Vec::new();
     for crate_name in FFI_CRATES.iter().chain(PYO3_CDYLIB_TEST_EXCLUDES) {
-        args.push("--exclude");
-        args.push(*crate_name);
+        excludes.push("--exclude");
+        excludes.push(*crate_name);
     }
-
-    args.extend(&[
+    excludes.extend(&[
         "--exclude",
         "pecos-cuquantum", // Requires cuQuantum SDK, test separately if available
         "--exclude",
@@ -513,11 +561,15 @@ fn run_test(profile: super::BuildProfile, include_ffi: bool) -> Result<()> {
         "pecos-gpu-sims", // Always exclude from workspace test, test separately if GPU available
     ]);
 
-    args.extend(profile_args);
     reject_static_llvm_workspace_test()?;
 
-    if !run(&args) {
-        return Err(Error::Config("cargo test (workspace) failed".to_string()));
+    for args in workspace_test_commands(nextest, profile, &excludes) {
+        if !run(&args) {
+            return Err(Error::Config(format!(
+                "cargo {} (workspace) failed",
+                args.first().copied().unwrap_or("test")
+            )));
+        }
     }
 
     // Test pecos-cli separately with --features=runtime.
@@ -604,6 +656,63 @@ fn run_test(profile: super::BuildProfile, include_ffi: bool) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn workspace_test_commands_cargo_test_is_one_command_with_excludes() {
+        let excludes = ["--exclude", "pecos-cli"];
+        let commands =
+            workspace_test_commands(false, super::super::BuildProfile::Native, &excludes);
+        assert_eq!(commands.len(), 1);
+        assert_eq!(
+            commands[0],
+            vec![
+                "test",
+                "--workspace",
+                "--features=runtime,hugr,neo",
+                "--exclude",
+                "pecos-cli",
+                "--profile",
+                "native"
+            ]
+        );
+    }
+
+    #[test]
+    fn workspace_test_commands_nextest_adds_doctests_and_maps_the_cargo_profile() {
+        let excludes = ["--exclude", "pecos-cli"];
+        let commands = workspace_test_commands(true, super::super::BuildProfile::Native, &excludes);
+        assert_eq!(commands.len(), 2);
+        assert_eq!(
+            commands[0],
+            vec![
+                "nextest",
+                "run",
+                "--locked",
+                "--workspace",
+                "--features=runtime,hugr,neo",
+                "--exclude",
+                "pecos-cli",
+                "--cargo-profile",
+                "native"
+            ]
+        );
+        assert_eq!(
+            commands[1],
+            vec![
+                "test",
+                "--doc",
+                "--workspace",
+                "--features=runtime,hugr,neo",
+                "--exclude",
+                "pecos-cli",
+                "--profile",
+                "native"
+            ]
+        );
+        let debug = workspace_test_commands(true, super::super::BuildProfile::Debug, &excludes);
+        assert!(!debug[0].contains(&"--cargo-profile"));
+        assert!(!debug[1].contains(&"--profile"));
+    }
 
     #[test]
     fn llvm_link_mode_parses_llvm_config_output() {

@@ -65,6 +65,13 @@ pub enum RustCommands {
         /// --include-ffi`.
         #[arg(long)]
         include_ffi: bool,
+
+        /// Run the workspace test binaries with cargo-nextest, which runs
+        /// them in parallel instead of one binary after another. Doctests
+        /// still run through `cargo test --doc` with the same selection.
+        /// Requires cargo-nextest on PATH (CI: scripts/ci/ensure-nextest.sh).
+        #[arg(long)]
+        nextest: bool,
     },
 }
 

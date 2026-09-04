@@ -228,6 +228,10 @@ jobs:
           export PATH="$HOME/.cargo/bin:$PATH"
           rustup show
 
+      - name: Install cargo-nextest
+        if: steps.detect.outputs.run == 'true'
+        run: bash scripts/ci/ensure-nextest.sh
+
       - name: Verify cmake is available (MWPF decoder build)
         if: steps.detect.outputs.run == 'true'
         run: cmake --version
@@ -262,8 +266,9 @@ jobs:
       - name: Run core Rust tests
         if: steps.detect.outputs.run == 'true'
         # debug profile keeps this sentinel fast; the full release matrix runs
-        # post-merge on push via rust-test.yml.
-        run: just rstest debug
+        # post-merge on push via rust-test.yml. nextest runs the ~320 workspace
+        # test binaries in parallel (cargo test runs them one after another).
+        run: just rstest debug nextest
 
       - name: Core Rust gate passed (no core-relevant changes)
         if: steps.detect.outputs.run != 'true'

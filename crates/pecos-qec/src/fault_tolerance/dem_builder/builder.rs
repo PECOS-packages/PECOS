@@ -20,7 +20,8 @@ use super::types::{
     FaultMechanism, IdleChannelFamilies, MeasurementCrosstalkDemMode, NoiseChannelKind,
     NoiseChannelResidual, NoiseConfig, PauliProbs, PerGateTypeNoise,
     ReplacementBranchApproximation, SourceMetadata, fit_exclusive_signatures,
-    record_offset_to_absolute_index, validate_exclusive_probabilities, validate_idle_probabilities,
+    is_two_qubit_noise_gate, record_offset_to_absolute_index, validate_exclusive_probabilities,
+    validate_idle_probabilities,
 };
 use crate::fault_tolerance::propagator::dag::DagSpacetimeLocation;
 use crate::fault_tolerance::propagator::{
@@ -3245,25 +3246,6 @@ fn extract_measurement_refs(
     // `logical_circuit` path legitimately emits both (records = legacy Stim
     // offsets, meas_ids = the same measurements as stable ids).
     Ok((records, meas_ids))
-}
-
-fn is_two_qubit_noise_gate(gate_type: GateType) -> bool {
-    matches!(
-        gate_type,
-        GateType::CX
-            | GateType::CZ
-            | GateType::CY
-            | GateType::SZZ
-            | GateType::SZZdg
-            | GateType::SXX
-            | GateType::SXXdg
-            | GateType::SYY
-            | GateType::SYYdg
-            | GateType::SWAP
-            | GateType::RXX
-            | GateType::RYY
-            | GateType::RZZ
-    )
 }
 
 fn two_qubit_after_location_pairs(locations: &[DagSpacetimeLocation]) -> Vec<[usize; 2]> {

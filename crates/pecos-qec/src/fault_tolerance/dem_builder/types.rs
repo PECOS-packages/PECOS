@@ -66,6 +66,25 @@ use std::hash::{Hash, Hasher};
 
 use crate::fault_tolerance::propagator::{DemOutputKind, DemOutputMetadata, Pauli};
 
+pub(crate) fn is_two_qubit_noise_gate(gate_type: GateType) -> bool {
+    matches!(
+        gate_type,
+        GateType::CX
+            | GateType::CZ
+            | GateType::CY
+            | GateType::SZZ
+            | GateType::SZZdg
+            | GateType::SXX
+            | GateType::SXXdg
+            | GateType::SYY
+            | GateType::SYYdg
+            | GateType::SWAP
+            | GateType::RXX
+            | GateType::RYY
+            | GateType::RZZ
+    )
+}
+
 // ============================================================================
 // Error Source Tracking
 // ============================================================================
@@ -7042,6 +7061,35 @@ fn trim_trailing_zeros(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::is_two_qubit_noise_gate;
+    use pecos_core::gate_type::GateType;
+
+    #[test]
+    fn two_qubit_noise_gate_membership_is_pinned() {
+        let actual: Vec<_> = (0..=u8::MAX)
+            .filter_map(|value| GateType::try_from(value).ok())
+            .filter(|gate_type| is_two_qubit_noise_gate(*gate_type))
+            .collect();
+
+        assert_eq!(
+            actual,
+            [
+                GateType::CX,
+                GateType::CY,
+                GateType::CZ,
+                GateType::SXX,
+                GateType::SXXdg,
+                GateType::SYY,
+                GateType::SYYdg,
+                GateType::SZZ,
+                GateType::SZZdg,
+                GateType::SWAP,
+                GateType::RXX,
+                GateType::RYY,
+                GateType::RZZ,
+            ]
+        );
+    }
 
     /// The boundary fit trades total-variation distance for exact preservation of
     /// the requested per-Pauli probabilities. Pin both halves of that trade so it

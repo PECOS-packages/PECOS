@@ -142,7 +142,11 @@ fn convert_gate(gate: &Gate) -> Result<GateCommand, pecos_core::errors::PecosErr
             gate.gate_type
         ))
     })?;
-    Ok(gate.into())
+    GateCommand::try_from(gate).map_err(|error| {
+        pecos_core::errors::PecosError::Input(format!(
+            "invalid pecos-core gate for pecos-neo conversion: {error}"
+        ))
+    })
 }
 
 /// Convert a `ByteMessage` containing quantum operations to a `CommandQueue`.
@@ -579,7 +583,7 @@ mod tests {
                 vec![],
                 vec![QubitId(0), QubitId(1)],
             ),
-            Gate::idle(23.0, vec![QubitId(1)]),
+            Gate::idle(23.0, vec![QubitId(1), QubitId(2)]),
         ];
 
         let queue = gates_to_command_queue(&original_gates).expect("should convert");
@@ -589,7 +593,26 @@ mod tests {
         assert_eq!(back[0].gate_type, CoreGateType::H);
         assert_eq!(back[1].gate_type, CoreGateType::CX);
         assert_eq!(back[2].gate_type, CoreGateType::Idle);
+        assert_eq!(back[2].qubits.as_slice(), &[QubitId(1), QubitId(2)]);
         assert!((back[2].idle_duration() - 23.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn idle_adapter_rejects_empty_and_lossy_core_values() {
+        for gate in [
+            Gate::idle(23.0, Vec::<QubitId>::new()),
+            Gate::idle(23.5, vec![QubitId(0)]),
+            Gate::idle(-1.0, vec![QubitId(0)]),
+            Gate::idle(f64::INFINITY, vec![QubitId(0)]),
+            Gate::idle(f64::NAN, vec![QubitId(0)]),
+        ] {
+            let error = gates_to_command_queue(&[gate])
+                .expect_err("the adapter must reject an unrepresentable Idle");
+            assert!(
+                error.to_string().contains("Idle"),
+                "unexpected error: {error}"
+            );
+        }
     }
 
     #[test]

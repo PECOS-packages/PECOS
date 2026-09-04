@@ -19,7 +19,8 @@
 //! - [`TickCircuitEngine`]: Tick-by-tick execution of a `TickCircuit`
 //! - [`DagCircuitEngine`]: Topological-order execution of a `DagCircuit`
 
-use crate::command::CommandQueue;
+use crate::circuit::CircuitConversionError;
+use crate::command::{CommandQueue, GateCommand};
 use crate::outcome::MeasurementOutcomes;
 use crate::program::CommandSource;
 use pecos_quantum::{DagCircuit, TickCircuit};
@@ -105,48 +106,60 @@ impl CommandSource for CommandQueueEngine {
 /// circuit.tick().cx(&[(0, 1)]);
 /// circuit.tick().mz(&[0, 1]);
 ///
-/// let engine = TickCircuitEngine::new(circuit);
+/// let engine = TickCircuitEngine::new(circuit).unwrap();
 /// ```
 #[derive(Debug, Clone)]
 pub struct TickCircuitEngine {
-    circuit: TickCircuit,
+    commands: Vec<CommandQueue>,
     current_tick: usize,
     num_qubits: usize,
 }
 
 impl TickCircuitEngine {
     /// Create a new engine from a tick circuit.
-    #[must_use]
-    pub fn new(circuit: TickCircuit) -> Self {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a core gate has no lossless pecos-neo command
+    /// representation.
+    pub fn new(circuit: TickCircuit) -> Result<Self, CircuitConversionError> {
         let num_qubits = circuit.all_qubits().last().map_or(0, |q| q.0 + 1);
-        Self {
-            circuit,
+        let commands = circuit
+            .ticks()
+            .iter()
+            .map(|tick| {
+                let mut queue = CommandQueue::new();
+                for gate in tick.iter_gate_batches() {
+                    let command = GateCommand::try_from(gate.as_gate())?;
+                    queue
+                        .try_push(command)
+                        .map_err(CircuitConversionError::InvalidCommand)?;
+                }
+                Ok(queue)
+            })
+            .collect::<Result<Vec<_>, CircuitConversionError>>()?;
+        drop(circuit);
+        Ok(Self {
+            commands,
             current_tick: 0,
             num_qubits,
-        }
+        })
     }
 }
 
 impl CommandSource for TickCircuitEngine {
     fn next_commands(&mut self, _outcomes: Option<&MeasurementOutcomes>) -> Option<CommandQueue> {
-        let ticks = self.circuit.ticks();
-        if self.current_tick >= ticks.len() {
+        if self.current_tick >= self.commands.len() {
             return None;
         }
 
-        let tick = &ticks[self.current_tick];
+        let commands = self.commands[self.current_tick].clone();
         self.current_tick += 1;
-
-        let mut queue = CommandQueue::new();
-        for gate in tick.iter_gate_batches() {
-            queue.push(gate.as_gate().into());
-        }
-
-        Some(queue)
+        Some(commands)
     }
 
     fn is_complete(&self) -> bool {
-        self.current_tick >= self.circuit.ticks().len()
+        self.current_tick >= self.commands.len()
     }
 
     fn reset(&mut self) {
@@ -178,22 +191,30 @@ impl CommandSource for TickCircuitEngine {
 /// dag.h(&[0]);
 /// dag.mz(&[0]);
 ///
-/// let engine = DagCircuitEngine::new(dag);
+/// let engine = DagCircuitEngine::new(dag).unwrap();
 /// ```
 #[derive(Debug, Clone)]
 pub struct DagCircuitEngine {
-    circuit: DagCircuit,
+    commands: CommandQueue,
     executed: bool,
+    num_qubits: usize,
 }
 
 impl DagCircuitEngine {
     /// Create a new engine from a DAG circuit.
-    #[must_use]
-    pub fn new(circuit: DagCircuit) -> Self {
-        Self {
-            circuit,
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a core gate has no lossless pecos-neo command
+    /// representation.
+    pub fn new(circuit: DagCircuit) -> Result<Self, CircuitConversionError> {
+        let num_qubits = circuit.qubits().last().map_or(0, |q| q.0 + 1);
+        let commands = CommandQueue::try_from(circuit)?;
+        Ok(Self {
+            commands,
             executed: false,
-        }
+            num_qubits,
+        })
     }
 }
 
@@ -203,7 +224,7 @@ impl CommandSource for DagCircuitEngine {
             return None;
         }
         self.executed = true;
-        Some(CommandQueue::from(&self.circuit))
+        Some(self.commands.clone())
     }
 
     fn is_complete(&self) -> bool {
@@ -215,7 +236,7 @@ impl CommandSource for DagCircuitEngine {
     }
 
     fn num_qubits(&self) -> usize {
-        self.circuit.qubits().last().map_or(0, |q| q.0 + 1)
+        self.num_qubits
     }
 }
 
@@ -256,7 +277,7 @@ mod tests {
         circuit.tick().cx(&[(0usize, 1)]);
         circuit.tick().mz(&[0usize, 1]);
 
-        let mut engine = TickCircuitEngine::new(circuit);
+        let mut engine = TickCircuitEngine::new(circuit).expect("circuit should convert");
 
         assert!(!engine.is_complete());
         assert_eq!(engine.num_qubits(), 2);
@@ -283,7 +304,7 @@ mod tests {
         dag.mz(&[0usize]);
         dag.mz(&[1usize]);
 
-        let mut engine = DagCircuitEngine::new(dag);
+        let mut engine = DagCircuitEngine::new(dag).expect("DAG should convert");
 
         assert!(!engine.is_complete());
         assert_eq!(engine.num_qubits(), 2);

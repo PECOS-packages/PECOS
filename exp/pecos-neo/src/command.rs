@@ -232,6 +232,11 @@ pub enum GateCommandError {
         /// The validation failure reported by the core gate invariant.
         message: String,
     },
+    /// An Idle command has no target qubits.
+    EmptyIdleBatch,
+    /// An Idle duration cannot be represented exactly by the core `f64`
+    /// duration field.
+    IdleDurationNotRepresentable { duration: u64 },
 }
 
 impl fmt::Display for GateCommandError {
@@ -239,11 +244,24 @@ impl fmt::Display for GateCommandError {
         match self {
             Self::AngleArity(error) => error.fmt(f),
             Self::InvalidGate { message, .. } => f.write_str(message),
+            Self::EmptyIdleBatch => f.write_str("an Idle command must target at least one qubit"),
+            Self::IdleDurationNotRepresentable { duration } => write!(
+                f,
+                "Idle duration {duration} cannot be represented exactly as a core f64 duration"
+            ),
         }
     }
 }
 
 impl std::error::Error for GateCommandError {}
+
+fn u64_is_exactly_representable_as_f64(value: u64) -> bool {
+    if value == 0 {
+        return true;
+    }
+    let significant_bits = u64::BITS - value.leading_zeros();
+    significant_bits <= 53 || value.trailing_zeros() >= significant_bits - 53
+}
 
 /// A single quantum gate command.
 ///
@@ -547,6 +565,15 @@ impl CommandQueue {
                 actual,
             }));
         }
+        if command.gate_type == GateType::Idle {
+            if command.qubits.is_empty() {
+                return Err(GateCommandError::EmptyIdleBatch);
+            }
+            let duration = command.angles[0].fraction();
+            if !u64_is_exactly_representable_as_f64(duration) {
+                return Err(GateCommandError::IdleDurationNotRepresentable { duration });
+            }
+        }
         command
             .to_core_gate()
             .validate()
@@ -758,6 +785,44 @@ mod tests {
         };
         assert_eq!(gate_type, GateType::CX);
         assert!(message.contains("requires distinct qubits"));
+        assert!(queue.is_empty());
+    }
+
+    #[test]
+    fn try_push_rejects_idle_that_core_cannot_represent_losslessly() {
+        let mut queue = CommandQueue::new();
+        let duration = (1_u64 << 53) + 1;
+        let error = queue
+            .try_push(GateCommand::idle(QubitId(0), TimeUnits::new(duration)))
+            .expect_err("an inexact core f64 conversion must be rejected");
+
+        assert_eq!(
+            error,
+            GateCommandError::IdleDurationNotRepresentable { duration }
+        );
+        assert!(queue.is_empty());
+
+        let exactly_representable = 1_u64 << 54;
+        queue
+            .try_push(GateCommand::idle(
+                QubitId(0),
+                TimeUnits::new(exactly_representable),
+            ))
+            .expect("exact powers of two remain representable above 2^53");
+    }
+
+    #[test]
+    fn try_push_rejects_empty_idle_batch_without_panicking() {
+        let mut queue = CommandQueue::new();
+        let error = queue
+            .try_push(GateCommand::with_angles(
+                GateType::Idle,
+                SmallVec::new(),
+                smallvec::smallvec![Angle64::ZERO],
+            ))
+            .expect_err("a zero-width Idle must be rejected before conversion");
+
+        assert_eq!(error, GateCommandError::EmptyIdleBatch);
         assert!(queue.is_empty());
     }
 }

@@ -160,6 +160,7 @@ pub mod sampling;
 pub mod tool;
 
 // Re-export main types at crate root
+pub use circuit::CircuitConversionError;
 pub use command::{
     CommandBuilder, CommandQueue, GateCommand, GateCommandAngleArityError, GateCommandError,
     GateType,
@@ -267,6 +268,7 @@ pub use adapter::{
 /// use pecos_neo::prelude::*;
 /// ```
 pub mod prelude {
+    pub use crate::circuit::CircuitConversionError;
     pub use crate::command::{
         CommandBuilder, CommandQueue, GateCommand, GateCommandAngleArityError, GateCommandError,
         GateType,

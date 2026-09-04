@@ -58,6 +58,29 @@ use smallvec::SmallVec;
 use std::ops::{BitAnd, Mul, Neg};
 use std::str::FromStr;
 
+/// Error returned when a [`GateType`] cannot be represented by
+/// [`UnitaryRep::try_gate`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnitaryGateError {
+    /// The gate is unitary but requires a parameterized representation.
+    AngleArity(GateAngleArityError),
+    /// The gate type does not describe a fixed unitary operation.
+    NotFixedUnitary { gate_type: GateType },
+}
+
+impl std::fmt::Display for UnitaryGateError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::AngleArity(error) => error.fmt(f),
+            Self::NotFixedUnitary { gate_type } => {
+                write!(f, "Gate {gate_type:?} is not a fixed unitary gate")
+            }
+        }
+    }
+}
+
+impl std::error::Error for UnitaryGateError {}
+
 // --- Phase macros for exact arithmetic ---
 
 /// Creates a `PhaseValue` from a pi-based expression for use with operators.
@@ -1014,7 +1037,7 @@ impl UnitaryRep {
     ///
     /// # Panics
     ///
-    /// Panics if `gate_type` requires angle parameters, if `qubits` does not
+    /// Panics if `gate_type` is not a fixed unitary gate, if `qubits` does not
     /// match the gate arity, or if a multi-qubit gate repeats a qubit. Use
     /// [`Self::try_gate`] when the gate type is data-driven.
     #[must_use]
@@ -1026,8 +1049,11 @@ impl UnitaryRep {
     ///
     /// # Errors
     ///
-    /// Returns [`GateAngleArityError`] if `gate_type` requires angles and must
-    /// therefore be represented by a parameterized [`Unitary`] variant.
+    /// Returns [`UnitaryGateError::AngleArity`] if `gate_type` requires angles
+    /// and must therefore be represented by a parameterized [`Unitary`]
+    /// variant. Returns [`UnitaryGateError::NotFixedUnitary`] for measurement,
+    /// preparation, resource-management, idle, channel, metadata, and custom
+    /// gate types.
     ///
     /// # Panics
     ///
@@ -1036,14 +1062,17 @@ impl UnitaryRep {
     pub fn try_gate(
         gate_type: GateType,
         qubits: impl Into<SmallVec<[usize; 3]>>,
-    ) -> Result<Self, GateAngleArityError> {
+    ) -> Result<Self, UnitaryGateError> {
         let angle_arity = gate_type.angle_arity();
         if angle_arity != 0 {
-            return Err(GateAngleArityError {
+            return Err(UnitaryGateError::AngleArity(GateAngleArityError {
                 gate_type,
                 expected: angle_arity,
                 actual: 0,
-            });
+            }));
+        }
+        if !gate_type.is_fixed_unitary() {
+            return Err(UnitaryGateError::NotFixedUnitary { gate_type });
         }
         let qubits = qubits.into();
         let expected = gate_type.quantum_arity();
@@ -3017,6 +3046,7 @@ pub fn rotation_to_gate_type(rotation_type: RotationType, angle: Angle64) -> Opt
 trait GateTypeExt {
     fn is_clifford(&self) -> bool;
     fn is_self_adjoint(&self) -> bool;
+    fn is_fixed_unitary(&self) -> bool;
 }
 
 impl GateTypeExt for GateType {
@@ -3055,6 +3085,20 @@ impl GateTypeExt for GateType {
     fn is_self_adjoint(&self) -> bool {
         use GateType::{CCX, CX, CY, CZ, H, I, SWAP, X, Y, Z};
         matches!(self, I | X | Y | Z | H | CX | CY | CZ | SWAP | CCX)
+    }
+
+    fn is_fixed_unitary(&self) -> bool {
+        self.canonical_1q_matrix().is_some()
+            || self.canonical_2q_matrix().is_some()
+            || matches!(
+                self,
+                GateType::CX
+                    | GateType::CY
+                    | GateType::CZ
+                    | GateType::CH
+                    | GateType::SWAP
+                    | GateType::CCX
+            )
     }
 }
 
@@ -3973,7 +4017,9 @@ mod tests {
     fn try_gate_rejects_parameterized_gate_type_at_construction() {
         let error = UnitaryRep::try_gate(GateType::RZ, smallvec::smallvec![0])
             .expect_err("a named unitary cannot defer a missing angle until decomposition");
-
+        let UnitaryGateError::AngleArity(error) = error else {
+            panic!("wrong error variant");
+        };
         assert_eq!(error.gate_type, GateType::RZ);
         assert_eq!(error.expected, 1);
         assert_eq!(error.actual, 0);
@@ -3983,6 +4029,35 @@ mod tests {
     #[should_panic(expected = "Gate RZ expected 1 angle parameters, got 0")]
     fn gate_rejects_parameterized_gate_type_at_construction() {
         let _ = UnitaryRep::gate(GateType::RZ, smallvec::smallvec![0]);
+    }
+
+    #[test]
+    fn try_gate_rejects_every_non_unitary_family() {
+        for gate_type in [
+            GateType::MZ,
+            GateType::PX,
+            GateType::QAlloc,
+            GateType::QFree,
+            GateType::Idle,
+            GateType::TrackedPauliMeta,
+            GateType::MeasCrosstalkGlobalPayload,
+            GateType::Channel,
+            GateType::Custom,
+        ] {
+            let error = UnitaryRep::try_gate(gate_type, smallvec::smallvec![0])
+                .expect_err("a non-unitary type must not enter UnitaryRep");
+            assert_eq!(
+                error,
+                UnitaryGateError::NotFixedUnitary { gate_type },
+                "{gate_type:?}"
+            );
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "Gate Idle is not a fixed unitary gate")]
+    fn gate_rejects_idle_at_construction() {
+        let _ = UnitaryRep::gate(GateType::Idle, smallvec::smallvec![0]);
     }
 
     #[test]

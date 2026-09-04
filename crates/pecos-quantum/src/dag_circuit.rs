@@ -625,7 +625,11 @@ pub struct DagCircuit {
 fn supports_measurement_target(gate_type: GateType) -> bool {
     matches!(
         gate_type,
-        GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked | GateType::MPZ
+        GateType::MX
+            | GateType::MZ
+            | GateType::MeasureFree
+            | GateType::MeasureLeaked
+            | GateType::MPZ
     )
 }
 
@@ -3759,6 +3763,25 @@ mod tests {
             Some(GateType::MeasureLeaked)
         );
         assert_eq!(circuit.measurement_targets().get(&node), Some(&target));
+    }
+
+    #[test]
+    fn measurement_target_survives_compatible_mz_to_mx_update() {
+        let mut circuit = DagCircuit::new();
+        let node = circuit.mz(&[0])[0].node;
+        let target = ClassicalBitId::new(3);
+        circuit.set_measurement_target(node, target);
+
+        circuit
+            .update_gate(node, |gate| gate.gate_type = GateType::MX)
+            .expect("MZ and MX both produce one classical measurement record");
+
+        assert_eq!(
+            circuit.gate(node).map(|gate| gate.gate_type),
+            Some(GateType::MX)
+        );
+        assert_eq!(circuit.measurement_targets().get(&node), Some(&target));
+        assert_eq!(circuit.num_measurement_ids(), 1);
     }
 
     #[test]

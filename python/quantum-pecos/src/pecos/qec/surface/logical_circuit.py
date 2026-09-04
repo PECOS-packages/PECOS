@@ -38,6 +38,18 @@ if TYPE_CHECKING:
 PatchSnapshot = dict[str, tuple[bool, list[str], list[str], list[str], list[str]]]
 
 
+def _validate_boundary_cardinality(segments: list[object], boundary_gates: list[object]) -> None:
+    """Require exactly one boundary list between consecutive segments."""
+    expected_boundaries = len(segments) - 1
+    if len(boundary_gates) != expected_boundaries:
+        msg = (
+            f"algorithm descriptor has {len(boundary_gates)} boundary gate lists and "
+            f"{len(segments)} segments; expected exactly one boundary list between "
+            "consecutive segments"
+        )
+        raise ValueError(msg)
+
+
 class LogicalGateType(Enum):
     """Types of logical operations in a surface code circuit."""
 
@@ -662,7 +674,10 @@ class LogicalCircuitBuilder:
         Pauli frame propagation rules.
 
         Returns:
-            Dict with keys: segments, boundary_gates, num_observables, full_dem.
+            Dict with keys: segments, boundary_gates, num_observables,
+            num_frame_slots, full_dem. ``num_observables`` is the full DEM's
+            declared observable count; ``num_frame_slots`` is two per patch
+            (X then Z).
         """
         # Build the full DEM
         full_dem = self.build_dem(p1=p1, p2=p2, p_meas=p_meas, p_prep=p_prep)
@@ -698,6 +713,14 @@ class LogicalCircuitBuilder:
 
         for i, op in enumerate(self._operations):
             if op.gate_type == LogicalGateType.MEMORY:
+                if not segments and pending_gates:
+                    gate_kinds = ", ".join(dict.fromkeys(gate["type"] for gate in pending_gates))
+                    msg = (
+                        f"leading logical gates before any syndrome round have no representable "
+                        f"boundary (no preceding segment): {gate_kinds}"
+                    )
+                    raise ValueError(msg)
+
                 # If there are pending gates, they form the boundary
                 # between the previous segment and this one.
                 if segments and pending_gates:
@@ -791,6 +814,21 @@ class LogicalCircuitBuilder:
                     },
                 )
 
+        if not segments:
+            msg = "algorithm descriptor must contain at least one segment"
+            raise ValueError(msg)
+
+        if pending_gates:
+            gate_kinds = ", ".join(dict.fromkeys(gate["type"] for gate in pending_gates))
+            msg = (
+                f"trailing logical gates would be dropped ({gate_kinds}): logical gates after "
+                "a patch's final MEMORY would execute after final data measurement; representing "
+                "them requires terminal-segment support, tracked in issue #595"
+            )
+            raise ValueError(msg)
+
+        _validate_boundary_cardinality(segments, boundary_gates)
+
         # Build per-segment sub-DEMs by filtering the full DEM.
         # Each segment gets only the mechanisms involving its detectors.
         seg_dems = []
@@ -844,6 +882,10 @@ class LogicalCircuitBuilder:
             default=0,
         )
 
+        from pecos_rslib.qec import ParsedDem
+
+        num_observables = ParsedDem.from_string(full_dem).num_observables
+
         return {
             "segments": [
                 {
@@ -854,7 +896,8 @@ class LogicalCircuitBuilder:
                 for i in range(len(segments))
             ],
             "boundary_gates": boundary_gates,
-            "num_observables": num_patches * 2,
+            "num_observables": num_observables,
+            "num_frame_slots": num_patches * 2,
             "full_dem": full_dem,
             "distance": distance,
         }

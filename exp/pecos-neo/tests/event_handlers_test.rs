@@ -40,7 +40,8 @@ fn event_handlers_on_before_gate_fires_through_sim_neo() {
         .event_handlers(handlers)
         .sampling(monte_carlo(10))
         .seed(42)
-        .run();
+        .run()
+        .expect("simulation should succeed");
 
     assert_eq!(results.len(), 10);
     // H gate fires on_before_gate once per shot
@@ -64,7 +65,8 @@ fn event_handlers_parallel_workers_fire_per_worker() {
         .event_handlers(handlers)
         .sampling(monte_carlo(20).workers(2))
         .seed(42)
-        .run();
+        .run()
+        .expect("simulation should succeed");
 
     assert_eq!(results.len(), 20);
     // Each shot has 1 H gate -> 20 on_before_gate calls total across workers
@@ -84,13 +86,15 @@ fn event_handlers_empty_is_noop() {
         .event_handlers(handlers)
         .sampling(monte_carlo(10))
         .seed(42)
-        .run();
+        .run()
+        .expect("simulation should succeed");
 
     let results_without = sim_neo(circuit)
         .auto()
         .sampling(monte_carlo(10))
         .seed(42)
-        .run();
+        .run()
+        .expect("simulation should succeed");
 
     assert_eq!(results_with.len(), results_without.len());
     for (a, b) in results_with
@@ -138,7 +142,8 @@ fn event_handlers_multiple_handler_types() {
         .event_handlers(handlers)
         .sampling(monte_carlo(5))
         .seed(42)
-        .run();
+        .run()
+        .expect("simulation should succeed");
 
     assert_eq!(results.len(), 5);
     assert_eq!(gate_count.load(Ordering::Relaxed), 5); // 1 H per shot
@@ -189,7 +194,8 @@ fn signal_handler_fires_through_sim_neo() {
         .event_handlers(handlers)
         .sampling(monte_carlo(5))
         .seed(42)
-        .run();
+        .run()
+        .expect("simulation should succeed");
 
     assert_eq!(results.len(), 5);
     assert_eq!(counter.load(Ordering::Relaxed), 5);
@@ -217,7 +223,8 @@ fn signal_handler_fires_through_sim_neo_parallel() {
         .event_handlers(handlers)
         .sampling(monte_carlo(10).workers(2))
         .seed(42)
-        .run();
+        .run()
+        .expect("simulation should succeed");
 
     assert_eq!(results.len(), 10);
     // 2 signals per shot, 10 shots = 20 handler calls

@@ -39,7 +39,8 @@ fn test_hugr_bell_state_auto() {
         .seed(42)
         .sampling(monte_carlo(100))
         .build()
-        .run();
+        .run()
+        .expect("simulation should succeed");
 
     assert_eq!(results.len(), 100);
 
@@ -57,7 +58,8 @@ fn test_hugr_single_hadamard_auto() {
         .seed(42)
         .sampling(monte_carlo(200))
         .build()
-        .run();
+        .run()
+        .expect("simulation should succeed");
 
     assert_eq!(results.len(), 200);
 
@@ -82,7 +84,8 @@ fn test_hugr_explicit_engine() {
         .seed(42)
         .sampling(monte_carlo(10))
         .build()
-        .run();
+        .run()
+        .expect("simulation should succeed");
 
     assert_eq!(results.len(), 10);
 }
@@ -95,7 +98,8 @@ fn test_hugr_via_program_enum_auto() {
         .seed(42)
         .sampling(monte_carlo(10))
         .build()
-        .run();
+        .run()
+        .expect("simulation should succeed");
     assert_eq!(results.len(), 10);
 }
 
@@ -106,14 +110,16 @@ fn test_hugr_seeded_reproducibility() {
         .seed(123)
         .sampling(monte_carlo(50))
         .build()
-        .run();
+        .run()
+        .expect("simulation should succeed");
 
     let results2 = sim_neo(load_hugr("single_hadamard.hugr"))
         .auto()
         .seed(123)
         .sampling(monte_carlo(50))
         .build()
-        .run();
+        .run()
+        .expect("simulation should succeed");
 
     assert_eq!(results1.len(), results2.len());
     for (o1, o2) in results1.outcomes.iter().zip(results2.outcomes.iter()) {
@@ -132,14 +138,16 @@ fn test_hugr_different_seeds_differ() {
         .seed(42)
         .sampling(monte_carlo(50))
         .build()
-        .run();
+        .run()
+        .expect("simulation should succeed");
 
     let results2 = sim_neo(load_hugr("single_hadamard.hugr"))
         .auto()
         .seed(99)
         .sampling(monte_carlo(50))
         .build()
-        .run();
+        .run()
+        .expect("simulation should succeed");
 
     let same_count: usize = results1
         .outcomes

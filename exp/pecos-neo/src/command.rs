@@ -85,6 +85,69 @@ pub enum GateType {
     Idle,
 }
 
+macro_rules! declare_all_gate_types {
+    ($($variant:ident),+ $(,)?) => {
+        impl GateType {
+            /// Every built-in gate type.
+            pub const ALL: &'static [Self] = &[$(Self::$variant),+];
+        }
+
+        // Adding a `GateType` variant without listing it above makes this
+        // match non-exhaustive, so `ALL` cannot silently fall behind the enum.
+        const fn gate_type_all_is_exhaustive(gate: GateType) {
+            match gate {
+                $(GateType::$variant => {}),+
+            }
+        }
+
+        const _: () = gate_type_all_is_exhaustive(GateType::ALL[0]);
+    };
+}
+
+declare_all_gate_types!(
+    I,
+    X,
+    Y,
+    Z,
+    H,
+    F,
+    Fdg,
+    SX,
+    SXdg,
+    SY,
+    SYdg,
+    SZ,
+    SZdg,
+    T,
+    Tdg,
+    RX,
+    RY,
+    RZ,
+    U,
+    RXY1Q,
+    CX,
+    CY,
+    CZ,
+    SZZ,
+    SZZdg,
+    SXX,
+    SXXdg,
+    SYY,
+    SYYdg,
+    SWAP,
+    RXX,
+    RYY,
+    RZZ,
+    CCX,
+    MZ,
+    MeasureLeaked,
+    MeasureFree,
+    PZ,
+    QAlloc,
+    QFree,
+    Idle,
+);
+
 impl GateType {
     /// Returns the number of qubits this gate operates on.
     #[must_use]
@@ -211,6 +274,15 @@ pub struct GateCommand {
 }
 
 impl GateCommand {
+    /// Whether this command has complete qubit groups and the required angles.
+    #[must_use]
+    pub(crate) fn has_valid_shape(&self) -> bool {
+        let arity = self.gate_type.quantum_arity();
+        !self.qubits.is_empty()
+            && self.qubits.len().is_multiple_of(arity)
+            && self.angles.len() == self.gate_type.angle_arity()
+    }
+
     /// Create a new gate command.
     #[must_use]
     pub fn new(gate_type: GateType, qubits: impl Into<SmallVec<[QubitId; 4]>>) -> Self {

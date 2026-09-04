@@ -40,7 +40,7 @@
 //!     .sampling(monte_carlo(1000))
 //!     .seed(42)
 //!     .build()
-//!     .run();
+//!     .run().expect("simulation should succeed");
 //! ```
 //!
 //! ## QASM Programs
@@ -69,7 +69,7 @@
 //!     .sampling(monte_carlo(1000))
 //!     .seed(42)
 //!     .build()
-//!     .run();
+//!     .run().expect("simulation should succeed");
 //! ```
 //!
 //! ## Other Program Types
@@ -85,13 +85,13 @@
 //! let results = sim_neo(hugr_engine().hugr(&hugr_module)).auto()
 //!     .sampling(monte_carlo(1000))
 //!     .build()
-//!     .run();
+//!     .run().expect("simulation should succeed");
 //!
 //! // QIS programs
 //! let results = sim_neo(qis_engine().qis(&qis_program)).auto()
 //!     .sampling(monte_carlo(1000))
 //!     .build()
-//!     .run();
+//!     .run().expect("simulation should succeed");
 //! ```
 //!
 //! ## Reusable Simulations
@@ -107,12 +107,12 @@
 //!     .sampling(monte_carlo(1000))
 //!     .build();
 //!
-//! let results1 = sim.run();
-//! let results2 = sim.seed(123).run();  // Different seed
-//! let results3 = sim.shots(5000).run(); // More shots
+//! let results1 = sim.run().expect("simulation should succeed");
+//! let results2 = sim.seed(123).run().expect("simulation should succeed");  // Different seed
+//! let results3 = sim.shots(5000).run().expect("simulation should succeed"); // More shots
 //! ```
 
-use crate::command::CommandQueue;
+use crate::command::{CommandQueue, GateCommand};
 use crate::extensible::GateDefinitions;
 use crate::noise::ComposableNoiseModel;
 use crate::outcome::{MeasurementOutcomes, RegisterMap};
@@ -120,7 +120,10 @@ use crate::program::{CommandSource, DynProgramRunner, ProgramRunner, StaticProgr
 use crate::runner::{EventHandlers, GateOverrides};
 use crate::sampling::importance_runner::ImportanceSamplingRunner;
 use crate::sampling::path::{PathEnumerator, PathExplorer};
-use crate::sampling::subset::{SubsetConfig, SubsetResult, SubsetSimulation};
+use crate::sampling::subset::{
+    SubsetConfig, SubsetResult, SubsetSimulation, supports as subset_sampler_supports,
+};
+use pecos_core::errors::PecosError;
 use pecos_core::rng::RngManageable;
 use pecos_core::rng::rng_manageable::derive_seed;
 use pecos_random::PecosRng;
@@ -272,7 +275,8 @@ impl From<StateVecBuilder> for QuantumBackend {
 ///     .quantum(sparse_stab())
 ///     .sampling(monte_carlo(1000))
 ///     .build()
-///     .run();
+///     .run()
+///     .expect("simulation should succeed");
 /// ```
 #[must_use]
 pub fn sparse_stab() -> SparseStabBuilder {
@@ -296,7 +300,7 @@ pub fn sparse_stab() -> SparseStabBuilder {
 ///     .quantum(stabilizer())
 ///     .sampling(monte_carlo(1000))
 ///     .build()
-///     .run();
+///     .run().expect("simulation should succeed");
 /// ```
 #[must_use]
 pub fn stabilizer() -> StabilizerBuilder {
@@ -319,7 +323,7 @@ pub fn stabilizer() -> StabilizerBuilder {
 ///     .quantum(state_vector())
 ///     .sampling(monte_carlo(1000))
 ///     .build()
-///     .run();
+///     .run().expect("simulation should succeed");
 /// ```
 #[must_use]
 pub fn state_vector() -> StateVecBuilder {
@@ -370,12 +374,13 @@ pub trait SimulatorFactory: Send + Sync {
 }
 #[doc(hidden)]
 pub trait AdaptedQuantumEngineFactory: Send + Sync {
-    fn create_runner(&self, num_qubits: usize, seed: Option<u64>) -> Box<dyn DynProgramRunner>;
-
-    fn create_parallel_runner_factory(
+    fn create_runner(
         &self,
         num_qubits: usize,
-    ) -> Box<dyn ParallelQuantumRunnerFactory>;
+        seed: Option<u64>,
+    ) -> Result<Box<dyn DynProgramRunner>, PecosError>;
+
+    fn create_parallel_runner_factory(&self) -> Box<dyn ParallelQuantumRunnerFactory>;
 }
 struct QuantumEngineSimulatorFactory<B>
 where
@@ -387,25 +392,25 @@ impl<B> AdaptedQuantumEngineFactory for QuantumEngineSimulatorFactory<B>
 where
     B: pecos_engines::QuantumEngineBuilder + Clone + 'static,
 {
-    fn create_runner(&self, num_qubits: usize, seed: Option<u64>) -> Box<dyn DynProgramRunner> {
+    fn create_runner(
+        &self,
+        num_qubits: usize,
+        seed: Option<u64>,
+    ) -> Result<Box<dyn DynProgramRunner>, PecosError> {
         let mut builder = self.builder.clone();
         builder.set_qubits_if_needed(num_qubits);
-        let mut engine = builder
-            .build()
-            .expect("Failed to build quantum engine backend");
+        let mut engine = builder.build()?;
         if let Some(seed) = seed {
             engine.set_seed(seed);
         }
-        Box::new(crate::adapter::QuantumEngineProgramRunner::new(engine))
+        Ok(Box::new(crate::adapter::QuantumEngineProgramRunner::new(
+            engine,
+        )))
     }
 
-    fn create_parallel_runner_factory(
-        &self,
-        num_qubits: usize,
-    ) -> Box<dyn ParallelQuantumRunnerFactory> {
+    fn create_parallel_runner_factory(&self) -> Box<dyn ParallelQuantumRunnerFactory> {
         Box::new(AdaptedQuantumEngineRunnerFactory {
             builder: self.builder.clone(),
-            num_qubits,
         })
     }
 }
@@ -486,7 +491,7 @@ impl From<CustomBackendBuilder> for QuantumBackend {
 ///     .sampling(monte_carlo(100))
 ///     .seed(42)
 ///     .build()
-///     .run();
+///     .run().expect("simulation should succeed");
 /// ```
 #[must_use]
 pub fn custom_backend<S, F>(factory: F) -> CustomBackendBuilder
@@ -533,7 +538,7 @@ pub fn custom_backend_from_factory(
 ///     .sampling(monte_carlo(100))
 ///     .seed(42)
 ///     .build()
-///     .run();
+///     .run().expect("simulation should succeed");
 /// ```
 #[must_use]
 pub fn custom_backend_with_rotations<S, F>(factory: F) -> CustomBackendBuilder
@@ -670,7 +675,7 @@ impl SimNeoInput for &pecos_quantum::DagCircuit {
 ///     .classical(qasm_engine())
 ///     .sampling(monte_carlo(1000))
 ///     .build()
-///     .run();
+///     .run().expect("simulation should succeed");
 /// ```
 impl SimNeoInput for &str {
     fn into_sim_neo_builder(self) -> SimNeoBuilder {
@@ -702,14 +707,14 @@ impl SimNeoInput for String {
 ///     .auto()
 ///     .sampling(monte_carlo(1000))
 ///     .build()
-///     .run();
+///     .run().expect("simulation should succeed");
 ///
 /// // Explicit mode
 /// sim_neo(Qasm::from_string(qasm_code)).auto()
 ///     .classical(qasm_engine())
 ///     .sampling(monte_carlo(1000))
 ///     .build()
-///     .run();
+///     .run().expect("simulation should succeed");
 /// ```
 impl SimNeoInput for pecos_programs::Qasm {
     fn into_sim_neo_builder(self) -> SimNeoBuilder {
@@ -730,7 +735,7 @@ impl SimNeoInput for pecos_programs::Qasm {
 ///     .auto()
 ///     .sampling(monte_carlo(1000))
 ///     .build()
-///     .run();
+///     .run().expect("simulation should succeed");
 /// ```
 impl SimNeoInput for pecos_programs::Hugr {
     fn into_sim_neo_builder(self) -> SimNeoBuilder {
@@ -752,7 +757,7 @@ impl SimNeoInput for pecos_programs::Hugr {
 ///     .auto()
 ///     .sampling(monte_carlo(1000))
 ///     .build()
-///     .run();
+///     .run().expect("simulation should succeed");
 /// ```
 impl SimNeoInput for pecos_programs::Program {
     fn into_sim_neo_builder(self) -> SimNeoBuilder {
@@ -808,7 +813,7 @@ impl Default for SimConfig {
 ///         .with_p_meas(0.001)
 ///         .with_boost(10.0))
 ///     .build()
-///     .run();
+///     .run().expect("simulation should succeed");
 /// ```
 #[derive(Debug, Clone)]
 pub struct ImportanceSamplingBuilder {
@@ -960,7 +965,8 @@ impl From<ImportanceSamplingBuilder> for Sampling {
 ///         .with_p2(0.01)
 ///         .with_boost(10.0))
 ///     .build()
-///     .run();
+///     .run()
+///     .expect("simulation should succeed");
 ///
 /// // Compute weighted statistics
 /// if let Some(rate) = results.weighted_mean(|outcome| {
@@ -1042,7 +1048,8 @@ impl From<PathEnumerationBuilder> for Sampling {
 /// let results = sim_neo(circuit)
 ///     .quantum(sparse_stab())
 ///     .sampling(path_enumeration(1))
-///     .run();
+///     .run()
+///     .expect("simulation should succeed");
 ///
 /// // Two paths (00 and 11), each with probability 0.5.
 /// for (outcome, weight) in results
@@ -1215,7 +1222,8 @@ impl From<SubsetSimulationBuilder> for Sampling {
 ///             .failure(|o| o.iter().all(|m| m.outcome)),
 ///     )
 ///     .seed(42)
-///     .run();
+///     .run()
+///     .expect("simulation should succeed");
 ///
 /// let subset = results.subset.expect("subset strategy produces an estimate");
 /// println!("P(failure) = {:.2e}", subset.probability());
@@ -1509,7 +1517,8 @@ impl SimulationResults {
     /// let mut reg = RegisterMap::new();
     /// reg.add_register("c", &[QubitId(0), QubitId(1)]);
     ///
-    /// let results = sim_neo(circuit).auto().sampling(monte_carlo(100)).seed(42).run();
+    /// let results = sim_neo(circuit).auto().sampling(monte_carlo(100)).seed(42)
+    ///     .run().expect("simulation should succeed");
     /// let columns = results.as_register_columns(&reg);
     /// assert_eq!(columns["c"].len(), 100);
     /// ```
@@ -1557,7 +1566,8 @@ impl SimulationResults {
     /// let mut reg = RegisterMap::new();
     /// reg.add_register("c", &[QubitId(0)]);
     ///
-    /// let results = sim_neo(circuit).auto().sampling(monte_carlo(1000)).seed(42).run();
+    /// let results = sim_neo(circuit).auto().sampling(monte_carlo(1000)).seed(42)
+    ///     .run().expect("simulation should succeed");
     /// let counts = results.register_counts(&reg, "c");
     /// // Should have entries for [false] and [true]
     /// ```
@@ -1786,6 +1796,20 @@ fn infer_num_qubits_from_circuit(circuit: &CommandQueue) -> usize {
         .map_or(1, |max| max + 1)
 }
 
+fn validate_sampler_circuit(
+    circuit: &CommandQueue,
+    sampler_name: &str,
+    supports: impl Fn(&GateCommand) -> bool,
+) {
+    if let Some(command) = circuit.iter().find(|command| !supports(command)) {
+        panic!(
+            "{sampler_name} cannot execute static circuit gate {:?}; use Monte Carlo sampling \
+             with a backend that supports this gate.",
+            command.gate_type
+        );
+    }
+}
+
 // --- SimNeoBuilder ---
 
 /// Builder for configuring simulation tools (builder-of-builders pattern).
@@ -1810,7 +1834,7 @@ fn infer_num_qubits_from_circuit(circuit: &CommandQueue) -> usize {
 ///     .sampling(monte_carlo(1000))
 ///     .seed(42)
 ///     .build()
-///     .run();
+///     .run().expect("simulation should succeed");
 /// ```
 ///
 /// ## QASM Program (builder-of-builders pattern)
@@ -1826,7 +1850,7 @@ fn infer_num_qubits_from_circuit(circuit: &CommandQueue) -> usize {
 ///     .sampling(monte_carlo(1000))
 ///     .seed(42)
 ///     .build()
-///     .run();
+///     .run().expect("simulation should succeed");
 /// ```
 ///
 /// ## Pre-configured Engine Builder
@@ -1841,7 +1865,7 @@ fn infer_num_qubits_from_circuit(circuit: &CommandQueue) -> usize {
 ///     .with_engine(qasm_engine().qasm(qasm_code))
 ///     .sampling(monte_carlo(1000))
 ///     .build()
-///     .run();
+///     .run().expect("simulation should succeed");
 /// ```
 pub struct SimNeoBuilder {
     /// The program source (circuit, raw source, or engine builder).
@@ -1960,7 +1984,7 @@ impl SimNeoBuilder {
     ///     .classical(qasm_engine())  // stores builder as data
     ///     .sampling(monte_carlo(1000))
     ///     .build()  // configures builder, builds engine, creates Tool
-    ///     .run();
+    ///     .run().expect("simulation should succeed");
     /// ```
     ///
     /// For pre-configured engine builders, use `.with_engine()` instead:
@@ -1974,7 +1998,7 @@ impl SimNeoBuilder {
     ///     .with_engine(qasm_engine().qasm(qasm_code))
     ///     .sampling(monte_carlo(1000))
     ///     .build()
-    ///     .run();
+    ///     .run().expect("simulation should succeed");
     /// ```
     ///
     /// # Panics
@@ -2053,7 +2077,7 @@ impl SimNeoBuilder {
     ///     .with_engine(qasm_engine().qasm(qasm_code))
     ///     .sampling(monte_carlo(1000))
     ///     .build()
-    ///     .run();
+    ///     .run().expect("simulation should succeed");
     /// ```
     #[must_use]
     pub fn with_engine<B>(mut self, engine_builder: B) -> Self
@@ -2094,7 +2118,7 @@ impl SimNeoBuilder {
     ///     .auto()
     ///     .sampling(monte_carlo(1000))
     ///     .build()
-    ///     .run();
+    ///     .run().expect("simulation should succeed");
     /// ```
     ///
     /// # Panics
@@ -2200,13 +2224,13 @@ impl SimNeoBuilder {
     /// let results = sim_neo(circuit.clone()).auto()
     ///     .sampling(monte_carlo(1000).workers(4))
     ///     .build()
-    ///     .run();
+    ///     .run().expect("simulation should succeed");
     ///
     /// // Auto-detect worker count
     /// let results = sim_neo(circuit).auto()
     ///     .sampling(monte_carlo(1000).auto_workers())
     ///     .build()
-    ///     .run();
+    ///     .run().expect("simulation should succeed");
     /// ```
     #[must_use]
     pub fn sampling(mut self, sampling: impl Into<Sampling>) -> Self {
@@ -2261,14 +2285,14 @@ impl SimNeoBuilder {
     ///     .quantum(sparse_stab())
     ///     .sampling(monte_carlo(1000))
     ///     .build()
-    ///     .run();
+    ///     .run().expect("simulation should succeed");
     ///
     /// // Use state vector (supports T gates, rotations)
     /// let results = sim_neo(circuit)
     ///     .quantum(state_vector())
     ///     .sampling(monte_carlo(1000))
     ///     .build()
-    ///     .run();
+    ///     .run().expect("simulation should succeed");
     /// ```
     #[must_use]
     pub fn quantum<B: Into<QuantumBackend>>(mut self, backend: B) -> Self {
@@ -2333,7 +2357,7 @@ impl SimNeoBuilder {
     ///     .sampling(monte_carlo(100))
     ///     .seed(42)
     ///     .build()
-    ///     .run();
+    ///     .run().expect("simulation should succeed");
     /// ```
     #[must_use]
     pub fn gate_definitions(mut self, definitions: GateDefinitions) -> Self {
@@ -2358,7 +2382,7 @@ impl SimNeoBuilder {
     ///     .max_decomp_depth(20)
     ///     .sampling(monte_carlo(100))
     ///     .seed(42)
-    ///     .run();
+    ///     .run().expect("simulation should succeed");
     /// ```
     #[must_use]
     pub fn max_decomp_depth(mut self, depth: usize) -> Self {
@@ -2399,7 +2423,7 @@ impl SimNeoBuilder {
     ///     .gate_overrides(overrides)
     ///     .sampling(monte_carlo(100))
     ///     .seed(42)
-    ///     .run();
+    ///     .run().expect("simulation should succeed");
     /// ```
     #[must_use]
     pub fn gate_overrides(mut self, overrides: impl Into<StoredOverrides>) -> Self {
@@ -2434,7 +2458,7 @@ impl SimNeoBuilder {
     ///     .event_handlers(handlers)
     ///     .sampling(monte_carlo(100))
     ///     .seed(42)
-    ///     .run();
+    ///     .run().expect("simulation should succeed");
     /// ```
     #[must_use]
     pub fn event_handlers(mut self, handlers: EventHandlers) -> Self {
@@ -2675,6 +2699,11 @@ impl SimNeoBuilder {
                          Classical engines are not supported."
                     )
                 };
+                validate_sampler_circuit(
+                    circuit,
+                    "Importance sampling",
+                    ImportanceSamplingRunner::<SparseStab>::supports,
+                );
                 if is_config.workers > 1 {
                     let circuit = circuit.clone();
                     let num_qubits = self
@@ -2710,6 +2739,11 @@ impl SimNeoBuilder {
                          and dynamic command sources are not supported."
                     ),
                 };
+                validate_sampler_circuit(
+                    &circuit,
+                    "Path enumeration",
+                    PathExplorer::<SparseStab>::supports,
+                );
                 assert!(
                     matches!(quantum_backend, QuantumBackend::SparseStab),
                     "Path enumeration currently supports only the sparse_stab() backend \
@@ -2738,6 +2772,11 @@ impl SimNeoBuilder {
         let subset_spec = match &sampling {
             Sampling::SubsetSimulation { config: ss_config } => {
                 assert!(
+                    ss_config.samples_per_level > 0,
+                    "Subset simulation requires samples_per_level > 0; \
+                     call subset_simulation with at least one sample."
+                );
+                assert!(
                     ss_config.score.is_some() && ss_config.failure.is_some(),
                     "Subset simulation requires both .score(..) and .failure(..) on the \
                      subset_simulation(..) builder; neither has a sensible default."
@@ -2756,6 +2795,7 @@ impl SimNeoBuilder {
                          and dynamic command sources are not supported."
                     ),
                 };
+                validate_sampler_circuit(&circuit, "Subset simulation", subset_sampler_supports);
                 assert!(
                     matches!(quantum_backend, QuantumBackend::SparseStab),
                     "Subset simulation currently supports only the sparse_stab() backend \
@@ -2845,10 +2885,13 @@ impl SimNeoBuilder {
     /// let results = sim_neo(qasm_code).auto()
     ///     .classical(qasm_engine())
     ///     .sampling(monte_carlo(1000))
-    ///     .run();  // builds and runs
+    ///     .run().expect("simulation should succeed");  // builds and runs
     /// ```
-    #[must_use]
-    pub fn run(self) -> SimulationResults {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if simulation startup or execution fails.
+    pub fn run(self) -> Result<SimulationResults, PecosError> {
         self.build().run()
     }
 }
@@ -2883,7 +2926,10 @@ impl Plugin for UnifiedSimulationPlugin {
 
         // Add simulation systems
         tool.add_system_mut(Stage::Startup, unified_simulation_startup);
-        tool.add_system_mut(Stage::PreShot, unified_simulation_pre_shot);
+        tool.add_system_mut(Stage::PreShot, |resources: &mut Resources| {
+            unified_simulation_pre_shot(resources);
+            Ok(())
+        });
         tool.add_system_mut(Stage::Execute, unified_simulation_execute);
         tool.add_system_mut(Stage::PostShot, unified_simulation_post_shot);
     }
@@ -2907,7 +2953,10 @@ pub enum QuantumRunner {
 
 impl QuantumRunner {
     /// Run a shot and return the result.
-    pub fn run_shot(&mut self, source: &mut dyn CommandSource) -> crate::program::ProgramResult {
+    pub fn run_shot(
+        &mut self,
+        source: &mut dyn CommandSource,
+    ) -> Result<crate::program::ProgramResult, PecosError> {
         match self {
             Self::SparseStab(runner) => runner.run_shot(source),
             Self::Stabilizer(runner) => runner.run_shot(source),
@@ -2936,6 +2985,9 @@ pub struct UnifiedShotState {
     /// Current shot index.
     pub shot_index: usize,
 }
+
+/// Global shot index assigned to the first shot of a parallel worker.
+struct ParallelShotStart(usize);
 
 /// Validate that stored gate overrides match the resolved backend.
 ///
@@ -3094,79 +3146,91 @@ where
 }
 
 /// Startup system for unified simulation.
-fn unified_simulation_startup(resources: &mut Resources) {
+fn unified_simulation_startup(resources: &mut Resources) -> Result<(), PecosError> {
     let config = resources.get::<SimConfig>().clone();
     let explicit_qubits = resources.get::<ExplicitNumQubits>().0;
 
     // Check if we already have a UnifiedShotState (from a previous run)
     // If so, just reset it instead of rebuilding
     if resources.contains::<UnifiedShotState>() {
+        let shot_index = resources
+            .try_get::<ParallelShotStart>()
+            .map_or(0, |start| start.0);
         let state = resources.get_mut::<UnifiedShotState>();
-        state.shot_index = 0;
-        state.command_source.reset();
+        state.shot_index = shot_index;
+        state.command_source.reset()?;
 
         // Clear previous results
         resources.get_mut::<SimulationResults>().clear();
-        return;
+        return Ok(());
     }
 
-    // First run - take the program source and build
-    let source_resource = resources.remove::<ProgramSourceResource>();
+    // Prepare the command source without consuming the stored input. A failing
+    // startup must leave the simulation reusable for another run attempt.
+    let (prepared_command_source, num_qubits): (
+        Option<Box<dyn CommandSource + Send + Sync>>,
+        usize,
+    ) = match &resources.get::<ProgramSourceResource>().0 {
+        ProgramSource::Static(circuit) => {
+            // Determine num_qubits from circuit
+            let inferred_qubits = circuit
+                .iter()
+                .flat_map(|cmd| cmd.qubits.iter())
+                .map(|q| q.0)
+                .max()
+                .map_or(1, |max| max + 1);
 
-    // Build the command source and determine num_qubits
-    let (command_source, num_qubits): (Box<dyn CommandSource + Send + Sync>, usize) =
-        match source_resource.0 {
-            ProgramSource::Static(circuit) => {
-                // Determine num_qubits from circuit
-                let inferred_qubits = circuit
-                    .iter()
-                    .flat_map(|cmd| cmd.qubits.iter())
-                    .map(|q| q.0)
-                    .max()
-                    .map_or(1, |max| max + 1);
-
-                let num_qubits = explicit_qubits.unwrap_or(inferred_qubits);
-                let program = StaticProgram::new(circuit, num_qubits);
-                (Box::new(program), num_qubits)
-            }
-            ProgramSource::Dynamic(source) => {
-                let num_qubits = explicit_qubits.unwrap_or_else(|| source.num_qubits());
-                (source, num_qubits)
-            }
-            ProgramSource::RawSource(_) => {
-                // This should never happen - build() resolves RawSource with engine factory
-                unreachable!(
-                    "RawSource should be resolved to Classical by SimNeoBuilder::build(). \
+            let num_qubits = explicit_qubits.unwrap_or(inferred_qubits);
+            let program = StaticProgram::new(circuit.clone(), num_qubits);
+            (Some(Box::new(program)), num_qubits)
+        }
+        ProgramSource::Dynamic(source) => {
+            let num_qubits = explicit_qubits.unwrap_or_else(|| source.num_qubits());
+            (None, num_qubits)
+        }
+        ProgramSource::RawSource(_) => {
+            // This should never happen - build() resolves RawSource with engine factory
+            unreachable!(
+                "RawSource should be resolved to Classical by SimNeoBuilder::build(). \
                      This is a bug in the simulation builder."
-                );
-            }
-            ProgramSource::Typed(_) => {
-                // This should never happen - build() catches Typed without .auto()
-                unreachable!(
-                    "Typed program should be resolved by .auto() or caught by build(). \
+            );
+        }
+        ProgramSource::Typed(_) => {
+            // This should never happen - build() catches Typed without .auto()
+            unreachable!(
+                "Typed program should be resolved by .auto() or caught by build(). \
                      This is a bug in the simulation builder."
-                );
-            }
-            ProgramSource::Classical(engine_builder) => {
-                // Build the engine adapter
-                let adapter = engine_builder
-                    .build_adapter()
-                    .expect("Failed to build classical engine");
+            );
+        }
+        ProgramSource::Classical(engine_builder) => {
+            // Build the engine adapter
+            let adapter = engine_builder.clone().build_adapter().map_err(|error| {
+                PecosError::with_context(error, "Failed to build classical engine")
+            })?;
 
-                let num_qubits = explicit_qubits.unwrap_or_else(|| adapter.num_qubits());
-                (adapter, num_qubits)
-            }
-        };
+            let num_qubits = explicit_qubits.unwrap_or_else(|| adapter.num_qubits());
+            (Some(adapter), num_qubits)
+        }
+    };
 
-    // Take quantum backend choice (take ownership for Custom variant)
-    let backend = resources.remove::<QuantumBackendResource>().0;
-
-    // Create quantum runner based on backend choice
-    let noise = resources.try_remove::<NoiseResource>();
-    let definitions = resources.try_remove::<GateDefinitionsResource>();
-    let max_depth = resources.try_remove::<MaxDecompDepthResource>();
-    let overrides = resources.try_remove::<GateOverridesResource>();
-    let event_handlers = resources.try_remove::<EventHandlersResource>();
+    // Clone runner configuration so a fallible backend build cannot consume
+    // the inputs needed by a retry.
+    let noise = resources
+        .try_get::<NoiseResource>()
+        .map(|noise| NoiseResource(noise.0.clone()));
+    let definitions = resources
+        .try_get::<GateDefinitionsResource>()
+        .map(|definitions| GateDefinitionsResource(definitions.0.clone()));
+    let max_depth = resources
+        .try_get::<MaxDecompDepthResource>()
+        .map(|depth| MaxDecompDepthResource(depth.0));
+    let overrides = resources
+        .try_get::<GateOverridesResource>()
+        .map(|overrides| GateOverridesResource(overrides.0.clone()));
+    let event_handlers = resources
+        .try_get::<EventHandlersResource>()
+        .map(|handlers| EventHandlersResource(handlers.0.clone()));
+    let backend = &resources.get::<QuantumBackendResource>().0;
     let quantum_runner = match backend {
         QuantumBackend::SparseStab => {
             let mut runner = clifford_runner(
@@ -3271,7 +3335,11 @@ fn unified_simulation_startup(resources: &mut Resources) {
                 "QuantumEngineBuilder backends do not support sim_neo noise modeling. \
                  Use a noise-modeling runner/backend instead."
             );
-            let runner = factory.create_runner(num_qubits, config.seed);
+            let runner = factory
+                .create_runner(num_qubits, config.seed)
+                .map_err(|error| {
+                    PecosError::with_context(error, "Failed to build quantum engine backend")
+                })?;
             QuantumRunner::Custom(runner)
         }
         QuantumBackend::Custom(factory) => {
@@ -3289,6 +3357,19 @@ fn unified_simulation_startup(resources: &mut Resources) {
         }
     };
 
+    // Initialization has succeeded. Only now consume the startup inputs.
+    let source_resource = resources.remove::<ProgramSourceResource>();
+    let command_source = prepared_command_source.unwrap_or_else(|| match source_resource.0 {
+        ProgramSource::Dynamic(source) => source,
+        _ => unreachable!("only dynamic sources are deferred until startup succeeds"),
+    });
+    resources.remove::<QuantumBackendResource>();
+    resources.try_remove::<NoiseResource>();
+    resources.try_remove::<GateDefinitionsResource>();
+    resources.try_remove::<MaxDecompDepthResource>();
+    resources.try_remove::<GateOverridesResource>();
+    resources.try_remove::<EventHandlersResource>();
+
     // Store unified shot state
     resources.insert(UnifiedShotState {
         quantum_runner,
@@ -3298,6 +3379,7 @@ fn unified_simulation_startup(resources: &mut Resources) {
 
     // Clear previous results
     resources.get_mut::<SimulationResults>().clear();
+    Ok(())
 }
 
 /// Pre-shot system for unified simulation.
@@ -3313,18 +3395,19 @@ fn unified_simulation_pre_shot(resources: &mut Resources) {
 }
 
 /// Execute system for unified simulation.
-fn unified_simulation_execute(resources: &mut Resources) {
+fn unified_simulation_execute(resources: &mut Resources) -> Result<(), PecosError> {
     let state = resources.get_mut::<UnifiedShotState>();
 
     // Run the program (handles both static and dynamic programs)
-    let result = state.quantum_runner.run_shot(&mut *state.command_source);
+    let result = state.quantum_runner.run_shot(&mut *state.command_source)?;
 
     // Store outcomes temporarily for post-shot processing
     resources.insert(CurrentOutcomes(result.outcomes));
+    Ok(())
 }
 
 /// Post-shot system for unified simulation.
-fn unified_simulation_post_shot(resources: &mut Resources) {
+fn unified_simulation_post_shot(resources: &mut Resources) -> Result<(), PecosError> {
     // Move outcomes to results
     let outcomes = resources.remove::<CurrentOutcomes>();
     resources
@@ -3337,7 +3420,7 @@ fn unified_simulation_post_shot(resources: &mut Resources) {
     let shot = resources
         .get::<UnifiedShotState>()
         .command_source
-        .shot_results();
+        .shot_results()?;
     if let Some(shot) = shot {
         resources
             .get_mut::<SimulationResults>()
@@ -3365,6 +3448,7 @@ fn unified_simulation_post_shot(resources: &mut Resources) {
 
     // Increment shot counter
     resources.get_mut::<UnifiedShotState>().shot_index += 1;
+    Ok(())
 }
 
 // --- Importance Sampling Simulation Plugin ---
@@ -3390,10 +3474,22 @@ impl Plugin for ImportanceSamplingSimPlugin {
         tool.insert_resource_mut(ExplicitNumQubits(self.explicit_num_qubits));
         tool.insert_resource_mut(ISConfigResource(self.is_config.clone()));
 
-        tool.add_system_mut(Stage::Startup, is_sim_startup);
-        tool.add_system_mut(Stage::PreShot, is_sim_pre_shot);
-        tool.add_system_mut(Stage::Execute, is_sim_execute);
-        tool.add_system_mut(Stage::PostShot, is_sim_post_shot);
+        tool.add_system_mut(Stage::Startup, |resources: &mut Resources| {
+            is_sim_startup(resources);
+            Ok(())
+        });
+        tool.add_system_mut(Stage::PreShot, |resources: &mut Resources| {
+            is_sim_pre_shot(resources);
+            Ok(())
+        });
+        tool.add_system_mut(Stage::Execute, |resources: &mut Resources| {
+            is_sim_execute(resources);
+            Ok(())
+        });
+        tool.add_system_mut(Stage::PostShot, |resources: &mut Resources| {
+            is_sim_post_shot(resources);
+            Ok(())
+        });
     }
 }
 
@@ -3456,6 +3552,7 @@ fn is_sim_startup(resources: &mut Resources) {
         return;
     }
 
+    // These inputs may only stay consumed while this startup function is infallible.
     // First run - consume resources and build the runner
     let source_resource = resources.remove::<ProgramSourceResource>();
     let is_config = resources.remove::<ISConfigResource>().0;
@@ -3562,11 +3659,11 @@ fn is_sim_post_shot(resources: &mut Resources) {
 /// let circuit = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 /// let mut sim = sim_neo(circuit).auto().sampling(monte_carlo(1000)).build();
 ///
-/// let results1 = sim.run();
+/// let results1 = sim.run().expect("simulation should succeed");
 ///
 /// // Reconfigure and run again
 /// sim.shots(2000).seed(123);
-/// let results2 = sim.run();
+/// let results2 = sim.run().expect("simulation should succeed");
 /// ```
 pub struct Simulation {
     tool: Tool,
@@ -3605,17 +3702,22 @@ enum NativeParallelBackend {
 }
 
 trait ParallelCommandSourceFactory: Send + Sync {
-    fn create_source(&self) -> Box<dyn CommandSource + Send + Sync>;
+    fn create_source(&self) -> Result<Box<dyn CommandSource + Send + Sync>, PecosError>;
 }
 
 #[doc(hidden)]
 pub trait ParallelQuantumRunnerFactory: Send + Sync {
-    fn create_runner(&self, seed: Option<u64>) -> QuantumRunner;
+    fn create_runner(
+        &self,
+        num_qubits: usize,
+        seed: Option<u64>,
+    ) -> Result<QuantumRunner, PecosError>;
 }
 
 struct ParallelExecutionPlan {
     command_source_factory: Box<dyn ParallelCommandSourceFactory>,
     quantum_runner_factory: Box<dyn ParallelQuantumRunnerFactory>,
+    explicit_num_qubits: Option<usize>,
 }
 
 struct StaticCommandSourceFactory {
@@ -3624,25 +3726,26 @@ struct StaticCommandSourceFactory {
 }
 
 impl ParallelCommandSourceFactory for StaticCommandSourceFactory {
-    fn create_source(&self) -> Box<dyn CommandSource + Send + Sync> {
-        Box::new(StaticProgram::new(self.circuit.clone(), self.num_qubits))
+    fn create_source(&self) -> Result<Box<dyn CommandSource + Send + Sync>, PecosError> {
+        Ok(Box::new(StaticProgram::new(
+            self.circuit.clone(),
+            self.num_qubits,
+        )))
     }
 }
 struct ClassicalCommandSourceFactory {
     builder: Box<dyn BoxedEngineBuilder>,
 }
 impl ParallelCommandSourceFactory for ClassicalCommandSourceFactory {
-    fn create_source(&self) -> Box<dyn CommandSource + Send + Sync> {
-        self.builder
-            .clone()
-            .build_adapter()
-            .expect("Failed to build classical engine for worker")
+    fn create_source(&self) -> Result<Box<dyn CommandSource + Send + Sync>, PecosError> {
+        self.builder.clone().build_adapter().map_err(|error| {
+            PecosError::with_context(error, "Failed to build classical engine for worker")
+        })
     }
 }
 
 struct NativeQuantumRunnerFactory {
     backend: NativeParallelBackend,
-    num_qubits: usize,
     noise: Option<ComposableNoiseModel>,
     definitions: Option<GateDefinitions>,
     max_decomp_depth: Option<usize>,
@@ -3651,16 +3754,20 @@ struct NativeQuantumRunnerFactory {
 }
 
 impl ParallelQuantumRunnerFactory for NativeQuantumRunnerFactory {
-    fn create_runner(&self, seed: Option<u64>) -> QuantumRunner {
+    fn create_runner(
+        &self,
+        num_qubits: usize,
+        seed: Option<u64>,
+    ) -> Result<QuantumRunner, PecosError> {
         let noise = self.noise.clone().map(NoiseResource);
         let definitions = self.definitions.clone().map(GateDefinitionsResource);
         let max_depth = self.max_decomp_depth.map(MaxDecompDepthResource);
         let event_handlers = self.event_handlers.clone().map(EventHandlersResource);
 
-        match self.backend {
+        Ok(match self.backend {
             NativeParallelBackend::SparseStab => {
                 let mut runner = clifford_runner(
-                    SparseStab::new(self.num_qubits),
+                    SparseStab::new(num_qubits),
                     definitions,
                     noise,
                     seed,
@@ -3688,7 +3795,7 @@ impl ParallelQuantumRunnerFactory for NativeQuantumRunnerFactory {
             }
             NativeParallelBackend::Stabilizer => {
                 let mut runner = clifford_runner(
-                    Stabilizer::new(self.num_qubits),
+                    Stabilizer::new(num_qubits),
                     definitions,
                     noise,
                     seed,
@@ -3716,7 +3823,7 @@ impl ParallelQuantumRunnerFactory for NativeQuantumRunnerFactory {
             }
             NativeParallelBackend::StateVec => {
                 let mut runner = rotation_runner(
-                    StateVec::new(self.num_qubits),
+                    StateVec::new(num_qubits),
                     definitions,
                     noise,
                     seed,
@@ -3742,7 +3849,7 @@ impl ParallelQuantumRunnerFactory for NativeQuantumRunnerFactory {
                 runner = apply_event_handlers(runner, event_handlers);
                 QuantumRunner::StateVec(runner)
             }
-        }
+        })
     }
 }
 /// Per-worker runner factory for custom `SimulatorFactory` backends.
@@ -3752,16 +3859,20 @@ impl ParallelQuantumRunnerFactory for NativeQuantumRunnerFactory {
 /// schedule, exactly as for built-in backends.
 struct CustomRunnerFactory {
     factory: Arc<dyn SimulatorFactory>,
-    num_qubits: usize,
     noise: Option<ComposableNoiseModel>,
 }
 
 impl ParallelQuantumRunnerFactory for CustomRunnerFactory {
-    fn create_runner(&self, seed: Option<u64>) -> QuantumRunner {
-        QuantumRunner::Custom(
-            self.factory
-                .create_runner(self.num_qubits, self.noise.clone(), seed),
-        )
+    fn create_runner(
+        &self,
+        num_qubits: usize,
+        seed: Option<u64>,
+    ) -> Result<QuantumRunner, PecosError> {
+        Ok(QuantumRunner::Custom(self.factory.create_runner(
+            num_qubits,
+            self.noise.clone(),
+            seed,
+        )))
     }
 }
 
@@ -3770,23 +3881,26 @@ where
     B: pecos_engines::QuantumEngineBuilder + Clone + 'static,
 {
     builder: B,
-    num_qubits: usize,
 }
 impl<B> ParallelQuantumRunnerFactory for AdaptedQuantumEngineRunnerFactory<B>
 where
     B: pecos_engines::QuantumEngineBuilder + Clone + 'static,
 {
-    fn create_runner(&self, seed: Option<u64>) -> QuantumRunner {
+    fn create_runner(
+        &self,
+        num_qubits: usize,
+        seed: Option<u64>,
+    ) -> Result<QuantumRunner, PecosError> {
         let mut builder = self.builder.clone();
-        builder.set_qubits_if_needed(self.num_qubits);
-        let mut engine = builder
-            .build()
-            .expect("Failed to build quantum engine backend for worker");
+        builder.set_qubits_if_needed(num_qubits);
+        let mut engine = builder.build().map_err(|error| {
+            PecosError::with_context(error, "Failed to build quantum engine backend for worker")
+        })?;
         if let Some(seed) = seed {
             engine.set_seed(seed);
         }
-        QuantumRunner::Custom(Box::new(crate::adapter::QuantumEngineProgramRunner::new(
-            engine,
+        Ok(QuantumRunner::Custom(Box::new(
+            crate::adapter::QuantumEngineProgramRunner::new(engine),
         )))
     }
 }
@@ -3802,33 +3916,19 @@ fn build_parallel_execution_plan(
     overrides: Option<StoredOverrides>,
     event_handlers: Option<EventHandlers>,
 ) -> Option<ParallelExecutionPlan> {
-    let (source_factory, num_qubits): (Box<dyn ParallelCommandSourceFactory>, usize) = match source
-    {
+    let source_factory: Box<dyn ParallelCommandSourceFactory> = match source {
         ProgramSource::Static(circuit) => {
             let num_qubits =
                 explicit_num_qubits.unwrap_or_else(|| infer_num_qubits_from_circuit(circuit));
-            (
-                Box::new(StaticCommandSourceFactory {
-                    circuit: circuit.clone(),
-                    num_qubits,
-                }),
+            Box::new(StaticCommandSourceFactory {
+                circuit: circuit.clone(),
                 num_qubits,
-            )
+            })
         }
         ProgramSource::Dynamic(_) => return None,
-        ProgramSource::Classical(engine_builder) => {
-            let probe = engine_builder
-                .clone()
-                .build_adapter()
-                .expect("Failed to build classical engine while preparing parallel plan");
-            let num_qubits = explicit_num_qubits.unwrap_or_else(|| probe.num_qubits());
-            (
-                Box::new(ClassicalCommandSourceFactory {
-                    builder: engine_builder.clone(),
-                }),
-                num_qubits,
-            )
-        }
+        ProgramSource::Classical(engine_builder) => Box::new(ClassicalCommandSourceFactory {
+            builder: engine_builder.clone(),
+        }),
         ProgramSource::RawSource(_) | ProgramSource::Typed(_) => {
             unreachable!("raw and typed sources should be resolved before plan construction")
         }
@@ -3837,7 +3937,6 @@ fn build_parallel_execution_plan(
     let runner_factory: Box<dyn ParallelQuantumRunnerFactory> = match backend {
         QuantumBackend::SparseStab => Box::new(NativeQuantumRunnerFactory {
             backend: NativeParallelBackend::SparseStab,
-            num_qubits,
             noise,
             definitions,
             max_decomp_depth,
@@ -3846,7 +3945,6 @@ fn build_parallel_execution_plan(
         }),
         QuantumBackend::Stabilizer => Box::new(NativeQuantumRunnerFactory {
             backend: NativeParallelBackend::Stabilizer,
-            num_qubits,
             noise,
             definitions,
             max_decomp_depth,
@@ -3855,7 +3953,6 @@ fn build_parallel_execution_plan(
         }),
         QuantumBackend::StateVec => Box::new(NativeQuantumRunnerFactory {
             backend: NativeParallelBackend::StateVec,
-            num_qubits,
             noise,
             definitions,
             max_decomp_depth,
@@ -3870,11 +3967,10 @@ fn build_parallel_execution_plan(
                 overrides.as_ref(),
                 event_handlers.as_ref(),
             );
-            factory.create_parallel_runner_factory(num_qubits)
+            factory.create_parallel_runner_factory()
         }
         QuantumBackend::Custom(factory) => Box::new(CustomRunnerFactory {
             factory: Arc::clone(factory),
-            num_qubits,
             noise,
         }),
     };
@@ -3882,6 +3978,7 @@ fn build_parallel_execution_plan(
     Some(ParallelExecutionPlan {
         command_source_factory: source_factory,
         quantum_runner_factory: runner_factory,
+        explicit_num_qubits,
     })
 }
 
@@ -3919,7 +4016,13 @@ impl Simulation {
     /// Panics if the parallel execution plan or subset spec is missing for
     /// the corresponding strategy; `SimNeoBuilder::build()` validates both,
     /// so it cannot happen for simulations constructed through the builder.
-    pub fn run(&mut self) -> SimulationResults {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a source, simulator, startup system, or scheduled
+    /// system fails. Parallel Monte Carlo returns the lowest-indexed worker's
+    /// error when multiple workers fail.
+    pub fn run(&mut self) -> Result<SimulationResults, PecosError> {
         let config = self.tool.resource::<SimConfig>().clone();
 
         // Dispatch based on sampling strategy
@@ -3936,7 +4039,7 @@ impl Simulation {
                     .is_parallel_spec
                     .as_ref()
                     .expect("parallel IS spec captured at build time");
-                Self::run_parallel_importance(&config, is_config, spec)
+                Ok(Self::run_parallel_importance(&config, is_config, spec))
             }
             Sampling::PathEnumeration { config: pe_config } => {
                 let spec = self
@@ -3960,12 +4063,12 @@ impl Simulation {
                     }
                 }
 
-                SimulationResults {
+                Ok(SimulationResults {
                     outcomes,
                     weights: Some(weights),
                     subset: None,
                     shots: None,
-                }
+                })
             }
             Sampling::SubsetSimulation { config: ss_config } => {
                 let spec = self
@@ -3999,23 +4102,23 @@ impl Simulation {
                 .with_noise_builder(move || noise.clone())
                 .with_config(subset_config)
                 .run();
-                SimulationResults {
+                Ok(SimulationResults {
                     outcomes: Vec::new(),
                     weights: None,
                     subset: Some(result),
                     shots: None,
-                }
+                })
             }
             _ => {
                 // Both MonteCarlo{workers:1} and ImportanceSampling run via the Tool.
                 // IS uses ImportanceSamplingSimPlugin instead of UnifiedSimulationPlugin.
                 self.tool.reset();
-                self.tool.run_shots(config.shots);
+                self.tool.run_shots(config.shots)?;
 
                 // Take results and re-insert empty for next run
                 let results = self.tool.take_resource::<SimulationResults>();
                 self.tool.insert_resource_mut(SimulationResults::new());
-                results
+                Ok(results)
             }
         }
     }
@@ -4100,7 +4203,7 @@ impl Simulation {
         config: &SimConfig,
         plan: &ParallelExecutionPlan,
         num_workers: usize,
-    ) -> SimulationResults {
+    ) -> Result<SimulationResults, PecosError> {
         let shots = config.shots;
 
         // Distribute shots among workers and compute starting indices
@@ -4110,16 +4213,28 @@ impl Simulation {
             start_indices[i] = start_indices[i - 1] + shots_per_worker[i - 1];
         }
 
-        let schedule = self.tool.schedule();
+        // Resolve an inferred qubit count once for the entire run. Builders
+        // can be stateful across clones, so sizing from each worker's source
+        // independently would make behavior depend on the worker count.
+        // This probe also makes zero-shot runs surface source-build failures.
+        let num_qubits = match plan.explicit_num_qubits {
+            Some(num_qubits) => num_qubits,
+            None => plan.command_source_factory.create_source()?.num_qubits(),
+        };
 
         // Run in parallel, each worker with its own Resources
-        let all_results: Vec<SimulationResults> = (0..num_workers)
+        let all_results: Vec<Result<SimulationResults, PecosError>> = (0..num_workers)
             .into_par_iter()
             .map(|worker_id| {
                 let worker_shots = shots_per_worker[worker_id];
                 if worker_shots == 0 {
-                    return SimulationResults::new();
+                    return Ok(SimulationResults::new());
                 }
+
+                let command_source = plan.command_source_factory.create_source()?;
+                let quantum_runner = plan
+                    .quantum_runner_factory
+                    .create_runner(num_qubits, config.seed)?;
 
                 // Build per-worker Resources with the same configuration
                 let mut resources = Resources::new();
@@ -4128,32 +4243,20 @@ impl Simulation {
                     seed: config.seed,
                 });
                 resources.insert(ExplicitNumQubits(None));
+                resources.insert(ParallelShotStart(start_indices[worker_id]));
                 resources.insert(SimulationResults::new());
                 resources.insert(UnifiedShotState {
-                    quantum_runner: plan.quantum_runner_factory.create_runner(config.seed),
-                    command_source: plan.command_source_factory.create_source(),
+                    quantum_runner,
+                    command_source,
                     shot_index: 0,
                 });
 
-                // Run Startup. Since the worker state is already assembled, the
-                // unified startup system only resets the command source and clears results.
-                schedule.run_stage(Stage::Startup, &mut resources);
-
-                // Set global starting shot index so per-shot seeding matches sequential
-                resources.get_mut::<UnifiedShotState>().shot_index = start_indices[worker_id];
-
-                // Run shot loop (PreShot/Execute/PostShot per shot)
-                for _ in 0..worker_shots {
-                    schedule.run_stage(Stage::PreShot, &mut resources);
-                    schedule.run_stage(Stage::Execute, &mut resources);
-                    schedule.run_stage(Stage::PostShot, &mut resources);
-                }
-
-                // Run Finish
-                schedule.run_stage(Stage::Finish, &mut resources);
+                // Run the shared fallible schedule. The worker start resource
+                // preserves global shot indices for deterministic seeding.
+                self.tool.run_shots_on(&mut resources, worker_shots)?;
 
                 // Extract results
-                resources.remove::<SimulationResults>()
+                Ok(resources.remove::<SimulationResults>())
             })
             .collect();
 
@@ -4162,6 +4265,7 @@ impl Simulation {
         let mut outcomes = Vec::new();
         let mut shots: Option<pecos_results::ShotVec> = None;
         for worker_results in all_results {
+            let worker_results = worker_results?;
             outcomes.extend(worker_results.outcomes);
             if let Some(worker_shots) = worker_results.shots {
                 shots
@@ -4185,12 +4289,12 @@ impl Simulation {
             outcomes.len(),
         );
 
-        SimulationResults {
+        Ok(SimulationResults {
             outcomes,
             weights: None,
             subset: None,
             shots,
-        }
+        })
     }
 
     /// Get a reference to the current configuration.
@@ -4239,7 +4343,7 @@ impl Simulation {
 ///     .sampling(monte_carlo(1000))
 ///     .seed(42)
 ///     .build()
-///     .run();
+///     .run().expect("simulation should succeed");
 /// ```
 ///
 /// ## QASM Program
@@ -4265,7 +4369,7 @@ impl Simulation {
 ///     .sampling(monte_carlo(1000))
 ///     .seed(42)
 ///     .build()
-///     .run();
+///     .run().expect("simulation should succeed");
 /// ```
 ///
 /// ## Reusable Simulation
@@ -4279,8 +4383,8 @@ impl Simulation {
 ///     .sampling(monte_carlo(1000))
 ///     .build();
 ///
-/// let results1 = sim.run();
-/// let results2 = sim.seed(123).shots(2000).run();
+/// let results1 = sim.run().expect("simulation should succeed");
+/// let results2 = sim.seed(123).shots(2000).run().expect("simulation should succeed");
 /// ```
 #[must_use]
 pub fn sim_neo<I: SimNeoInput>(input: I) -> SimNeoBuilder {
@@ -4315,7 +4419,7 @@ pub fn sim_neo<I: SimNeoInput>(input: I) -> SimNeoBuilder {
 ///     .sampling(monte_carlo(1000))
 ///     .seed(42)
 ///     .build()
-///     .run();
+///     .run().expect("simulation should succeed");
 /// ```
 #[must_use]
 pub fn sim_neo_builder() -> SimNeoBuilder {
@@ -4396,7 +4500,7 @@ mod tests {
             .seed(42)
             .build();
 
-        let results = sim.run();
+        let results = sim.run().expect("simulation should succeed");
 
         assert_eq!(results.len(), 10);
 
@@ -4415,12 +4519,12 @@ mod tests {
 
         let mut sim = sim_neo(circuit).auto().sampling(monte_carlo(5)).build();
 
-        let results1 = sim.run();
+        let results1 = sim.run().expect("simulation should succeed");
         assert_eq!(results1.len(), 5);
 
         // Reconfigure and run again
         sim.shots(10);
-        let results2 = sim.run();
+        let results2 = sim.run().expect("simulation should succeed");
         assert_eq!(results2.len(), 10);
     }
 
@@ -4438,14 +4542,16 @@ mod tests {
             .sampling(monte_carlo(20))
             .seed(42)
             .build()
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         let results2 = sim_neo(circuit)
             .auto()
             .sampling(monte_carlo(20))
             .seed(42)
             .build()
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         assert_eq!(results1.outcomes.len(), results2.outcomes.len());
         for (o1, o2) in results1.outcomes.iter().zip(results2.outcomes.iter()) {
@@ -4477,7 +4583,8 @@ mod tests {
             .sampling(monte_carlo(100))
             .seed(42)
             .build()
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         assert_eq!(results.len(), 100);
 
@@ -4515,7 +4622,8 @@ mod tests {
             .sampling(monte_carlo(20))
             .seed(42)
             .build()
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         let results2 = sim_neo(circuit)
             .auto()
@@ -4523,7 +4631,8 @@ mod tests {
             .sampling(monte_carlo(20))
             .seed(42)
             .build()
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         for (o1, o2) in results1.outcomes.iter().zip(results2.outcomes.iter()) {
             assert_eq!(
@@ -4546,7 +4655,8 @@ mod tests {
             .sampling(monte_carlo(50))
             .seed(42)
             .build()
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         assert_eq!(results.len(), 50);
 
@@ -4574,7 +4684,8 @@ mod tests {
             .sampling(monte_carlo(100))
             .seed(42)
             .build()
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         assert_eq!(results.len(), 100);
 
@@ -4609,7 +4720,8 @@ mod tests {
             .sampling(monte_carlo(100))
             .seed(42)
             .build()
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         assert_eq!(results.len(), 100);
 
@@ -4641,7 +4753,8 @@ mod tests {
             .sampling(monte_carlo(200))
             .seed(42)
             .build()
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         assert_eq!(results.len(), 200);
 
@@ -4672,7 +4785,8 @@ mod tests {
             .sampling(monte_carlo(200))
             .seed(42)
             .build()
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         assert_eq!(results.len(), 200);
 
@@ -4711,7 +4825,8 @@ mod tests {
             .auto()
             .sampling(monte_carlo(10))
             .seed(42)
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         assert_eq!(results.len(), 10);
 
@@ -4743,7 +4858,8 @@ mod tests {
             .classical(pecos_qasm::qasm_engine())
             .sampling(monte_carlo(10))
             .seed(42)
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         assert_eq!(results.len(), 10);
 
@@ -4778,7 +4894,8 @@ mod tests {
             .sampling(monte_carlo(50))
             .seed(42)
             .build()
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         assert_eq!(results.len(), 50);
 
@@ -4804,7 +4921,8 @@ mod tests {
             .auto()
             .sampling(monte_carlo(100).workers(4))
             .seed(42)
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         assert_eq!(results.len(), 100);
 
@@ -4830,13 +4948,15 @@ mod tests {
             .auto()
             .sampling(monte_carlo(50).workers(4))
             .seed(42)
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         let results2 = sim_neo(circuit)
             .auto()
             .sampling(monte_carlo(50).workers(4))
             .seed(42)
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         assert_eq!(results1.outcomes.len(), results2.outcomes.len());
         for (o1, o2) in results1.outcomes.iter().zip(results2.outcomes.iter()) {
@@ -4857,7 +4977,8 @@ mod tests {
             .auto()
             .sampling(monte_carlo(20).workers(2))
             .seed(42)
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         assert_eq!(results.len(), 20);
 
@@ -4880,12 +5001,14 @@ mod tests {
             .auto()
             .sampling(monte_carlo(30))
             .seed(7)
-            .run();
+            .run()
+            .expect("simulation should succeed");
         let r2 = sim_neo(circuit)
             .auto()
             .seed(7)
             .sampling(monte_carlo(30))
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         assert_eq!(r1.outcomes.len(), r2.outcomes.len());
         for (o1, o2) in r1.outcomes.iter().zip(r2.outcomes.iter()) {
@@ -4918,7 +5041,8 @@ mod tests {
             .auto()
             .sampling(monte_carlo(10))
             .seed(1)
-            .run();
+            .run()
+            .expect("simulation should succeed");
         assert_eq!(results.len(), 10);
         for outcome in &results.outcomes {
             assert!(outcome.get_bit(QubitId(0)).unwrap());
@@ -4942,7 +5066,8 @@ mod tests {
             .quantum(state_vector())
             .sampling(monte_carlo(5))
             .seed(1)
-            .run();
+            .run()
+            .expect("simulation should succeed");
         assert_eq!(results.len(), 5);
     }
 
@@ -4991,12 +5116,18 @@ mod tests {
         // the blessed shorthand for that common case.
         let circuit = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
 
-        let shortcut = sim_neo(circuit.clone()).auto().shots(40).seed(11).run();
+        let shortcut = sim_neo(circuit.clone())
+            .auto()
+            .shots(40)
+            .seed(11)
+            .run()
+            .expect("simulation should succeed");
         let explicit = sim_neo(circuit)
             .auto()
             .sampling(monte_carlo(40))
             .seed(11)
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         assert_eq!(shortcut.outcomes.len(), 40);
         assert_eq!(shortcut.outcomes.len(), explicit.outcomes.len());
@@ -5012,7 +5143,13 @@ mod tests {
         let circuit = CommandBuilder::new().pz(&[0]).x(&[0]).mz(&[0]).build();
 
         #[allow(deprecated)]
-        let results = sim_neo(circuit).auto().workers(2).shots(30).seed(5).run();
+        let results = sim_neo(circuit)
+            .auto()
+            .workers(2)
+            .shots(30)
+            .seed(5)
+            .run()
+            .expect("simulation should succeed");
 
         assert_eq!(results.len(), 30);
         for outcome in &results.outcomes {
@@ -5029,7 +5166,8 @@ mod tests {
             .auto()
             .sampling(importance_sampling(35).with_uniform_error(0.01))
             .seed(3)
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         assert_eq!(results.len(), 35);
         assert!(results.has_weights());
@@ -5056,6 +5194,7 @@ mod tests {
                 )
                 .seed(42)
                 .run()
+                .expect("simulation should succeed")
         };
 
         let sequential = run(1);
@@ -5101,6 +5240,7 @@ mod tests {
                 .sampling(importance_sampling(30).with_uniform_error(0.01).workers(3))
                 .seed(5)
                 .run()
+                .expect("simulation should succeed")
         };
         let r1 = run();
         let r2 = run();
@@ -5130,7 +5270,8 @@ mod tests {
             .quantum(sparse_stab())
             .sampling(monte_carlo(10))
             .seed(1)
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         for outcome in &results.outcomes {
             assert_eq!(
@@ -5154,7 +5295,8 @@ mod tests {
             .auto()
             .sampling(monte_carlo(3))
             .seed(1)
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         assert!(
             results.shots.is_none(),
@@ -5190,7 +5332,8 @@ mod tests {
             .quantum(sparse_stab())
             .sampling(monte_carlo(5))
             .seed(42)
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         let shots = results
             .shots
@@ -5213,7 +5356,8 @@ mod tests {
             .quantum(sparse_stab())
             .sampling(monte_carlo(6).workers(2))
             .seed(42)
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         let shots = results
             .shots
@@ -5242,7 +5386,8 @@ mod tests {
         let results = sim_neo(circuit)
             .quantum(sparse_stab())
             .sampling(path_enumeration(1))
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         assert_eq!(results.outcomes.len(), 2, "Two measurement branches");
         let weights = results.weights.as_ref().unwrap();
@@ -5270,7 +5415,11 @@ mod tests {
         // even though 2^2 forced paths are enumerated.
         let circuit = CommandBuilder::new().pz(&[0]).x(&[0]).mz(&[0]).build();
 
-        let results = sim_neo(circuit).auto().sampling(path_enumeration(2)).run();
+        let results = sim_neo(circuit)
+            .auto()
+            .sampling(path_enumeration(2))
+            .run()
+            .expect("simulation should succeed");
 
         assert_eq!(results.outcomes.len(), 1, "One distinct path");
         let weights = results.weights.as_ref().unwrap();
@@ -5284,7 +5433,8 @@ mod tests {
         let results = sim_neo(three_qubit_h_circuit())
             .auto()
             .sampling(path_enumeration(3))
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         assert_eq!(results.outcomes.len(), 8);
         let weights = results.weights.as_ref().unwrap();
@@ -5354,7 +5504,8 @@ mod tests {
             .quantum(sparse_stab())
             .sampling(subset_simulation(2000).score(count_ones).failure(all_ones))
             .seed(42)
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         assert!(results.outcomes.is_empty());
         let subset = results.subset.expect("subset strategy returns an estimate");
@@ -5374,7 +5525,8 @@ mod tests {
             .auto()
             .sampling(subset_simulation(200).score(count_ones).failure(all_ones))
             .seed(7)
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         let subset = results.subset.expect("subset estimate");
         assert!(
@@ -5395,7 +5547,8 @@ mod tests {
             .noise(noise)
             .sampling(subset_simulation(2000).score(count_ones).failure(all_ones))
             .seed(11)
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         let p = results.subset.expect("subset estimate").probability();
         assert!(
@@ -5412,6 +5565,7 @@ mod tests {
                 .sampling(subset_simulation(500).score(count_ones).failure(all_ones))
                 .seed(99)
                 .run()
+                .expect("simulation should succeed")
                 .subset
                 .expect("subset estimate")
                 .probability()
@@ -5475,7 +5629,8 @@ mod tests {
                     .allow_biased_multilevel(),
             )
             .seed(42)
-            .run();
+            .run()
+            .expect("simulation should succeed");
         assert!(
             results.subset.is_some(),
             "multi-level opt-in must produce an estimate"
@@ -5490,7 +5645,8 @@ mod tests {
             .auto()
             .sampling(subset_simulation(500).score(count_ones).failure(all_ones))
             .seed(42)
-            .run();
+            .run()
+            .expect("simulation should succeed");
         let subset = results.subset.expect("subset estimate");
         assert_eq!(
             subset.levels.len(),
@@ -5514,14 +5670,16 @@ mod tests {
             .auto()
             .sampling(monte_carlo(50))
             .seed(42)
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         // Run with parallel Monte Carlo sampling (4 workers)
         let parallel_results = sim_neo(circuit)
             .auto()
             .sampling(monte_carlo(50).workers(4))
             .seed(42)
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         // Results should be identical
         assert_eq!(
@@ -5564,7 +5722,8 @@ mod tests {
             .noise(noise_single)
             .sampling(monte_carlo(50))
             .seed(42)
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         // Run with parallel Monte Carlo sampling
         let parallel_results = sim_neo(circuit)
@@ -5572,7 +5731,8 @@ mod tests {
             .noise(noise_par)
             .sampling(monte_carlo(50).workers(4))
             .seed(42)
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         // Results should be identical shot-for-shot
         assert_eq!(
@@ -5612,14 +5772,16 @@ mod tests {
             .noise(noise1)
             .sampling(monte_carlo(50).workers(4))
             .seed(42)
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         let results2 = sim_neo(circuit)
             .auto()
             .noise(noise2)
             .sampling(monte_carlo(50).workers(4))
             .seed(42)
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         for (i, (r1, r2)) in results1
             .outcomes
@@ -5646,7 +5808,8 @@ mod tests {
             .quantum(sparse_stab())
             .sampling(monte_carlo(10))
             .seed(42)
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         assert_eq!(results.len(), 10);
 
@@ -5669,7 +5832,8 @@ mod tests {
             .quantum(stabilizer())
             .sampling(monte_carlo(10))
             .seed(42)
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         assert_eq!(results.len(), 10);
 
@@ -5695,7 +5859,8 @@ mod tests {
             .quantum(pecos_engines::stabilizer())
             .sampling(monte_carlo(12))
             .seed(42)
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         assert_eq!(results.len(), 12);
         for outcome in &results.outcomes {
@@ -5722,7 +5887,8 @@ mod tests {
             .quantum(pecos_engines::state_vector())
             .sampling(monte_carlo(8))
             .seed(123)
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         assert_eq!(results.len(), 8);
         for outcome in &results.outcomes {
@@ -5744,7 +5910,8 @@ mod tests {
             .quantum(pecos_engines::stabilizer())
             .noise(noise)
             .sampling(monte_carlo(1))
-            .run();
+            .run()
+            .expect("simulation should succeed");
     }
     #[test]
     #[should_panic(
@@ -5758,7 +5925,8 @@ mod tests {
             .quantum(pecos_engines::stabilizer())
             .noise(noise)
             .sampling(monte_carlo(2).workers(2))
-            .run();
+            .run()
+            .expect("simulation should succeed");
     }
     #[test]
     #[should_panic(
@@ -5773,7 +5941,8 @@ mod tests {
             .quantum(pecos_engines::stabilizer())
             .gate_definitions(GateDefinitions::new())
             .sampling(monte_carlo(1))
-            .run();
+            .run()
+            .expect("simulation should succeed");
     }
     #[test]
     #[should_panic(
@@ -5786,7 +5955,8 @@ mod tests {
             .quantum(pecos_engines::stabilizer())
             .max_decomp_depth(20)
             .sampling(monte_carlo(1))
-            .run();
+            .run()
+            .expect("simulation should succeed");
     }
     #[test]
     #[should_panic(
@@ -5804,7 +5974,8 @@ mod tests {
             .quantum(pecos_engines::stabilizer())
             .gate_overrides(overrides)
             .sampling(monte_carlo(1))
-            .run();
+            .run()
+            .expect("simulation should succeed");
     }
     #[test]
     #[should_panic(
@@ -5819,7 +5990,8 @@ mod tests {
             .quantum(pecos_engines::stabilizer())
             .event_handlers(handlers)
             .sampling(monte_carlo(1))
-            .run();
+            .run()
+            .expect("simulation should succeed");
     }
     #[test]
     fn test_sim_neo_quantum_engine_builder_parallel_static_circuit() {
@@ -5829,7 +6001,8 @@ mod tests {
             .quantum(pecos_engines::stabilizer())
             .sampling(monte_carlo(6).workers(2))
             .seed(42)
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         assert_eq!(results.len(), 6);
         for outcome in &results.outcomes {
@@ -5850,7 +6023,8 @@ mod tests {
             .quantum(pecos_engines::state_vector())
             .sampling(monte_carlo(6).workers(2))
             .seed(42)
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         assert_eq!(results.len(), 6);
         for outcome in &results.outcomes {
@@ -5891,7 +6065,8 @@ mod tests {
             .quantum(stabilizer())
             .sampling(monte_carlo(6))
             .seed(42)
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         assert_eq!(results.len(), 6);
         for outcome in &results.outcomes {
@@ -5909,7 +6084,7 @@ mod tests {
             .seed(42)
             .build();
 
-        let first = sim.run();
+        let first = sim.run().expect("simulation should succeed");
         assert_eq!(first.len(), 2);
         for outcome in &first.outcomes {
             assert_eq!(outcome.get_bit(QubitId(0)), Some(true));
@@ -5917,7 +6092,7 @@ mod tests {
         }
 
         sim.shots(4);
-        let second = sim.run();
+        let second = sim.run().expect("simulation should succeed");
         assert_eq!(second.len(), 4);
         for outcome in &second.outcomes {
             assert_eq!(outcome.get_bit(QubitId(0)), Some(true));
@@ -5933,7 +6108,8 @@ mod tests {
             .quantum(stabilizer())
             .sampling(monte_carlo(6))
             .seed(42)
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         assert_eq!(results.len(), 6);
         for outcome in &results.outcomes {
@@ -5948,7 +6124,8 @@ mod tests {
             .quantum(pecos_engines::stabilizer())
             .sampling(monte_carlo(6))
             .seed(42)
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         assert_eq!(results.len(), 6);
         for outcome in &results.outcomes {
@@ -5966,7 +6143,8 @@ mod tests {
             .quantum(pecos_engines::stabilizer())
             .sampling(monte_carlo(6))
             .seed(42)
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         assert_eq!(results.len(), 6);
         for outcome in &results.outcomes {
@@ -5984,7 +6162,8 @@ mod tests {
             .quantum(stabilizer())
             .sampling(monte_carlo(6).workers(2))
             .seed(42)
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         assert_eq!(results.len(), 6);
         for outcome in &results.outcomes {
@@ -6002,7 +6181,8 @@ mod tests {
             .quantum(pecos_engines::stabilizer())
             .sampling(monte_carlo(6).workers(2))
             .seed(42)
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         assert_eq!(results.len(), 6);
         for outcome in &results.outcomes {
@@ -6021,7 +6201,8 @@ mod tests {
             .quantum(pecos_engines::stabilizer())
             .sampling(monte_carlo(6).workers(2))
             .seed(42)
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         assert_eq!(results.len(), 6);
         for outcome in &results.outcomes {
@@ -6038,7 +6219,8 @@ mod tests {
         let _ = sim_neo(deterministic_conditional_program())
             .quantum(pecos_engines::stabilizer())
             .sampling(monte_carlo(2).workers(2))
-            .run();
+            .run()
+            .expect("simulation should succeed");
     }
 
     #[test]
@@ -6052,7 +6234,8 @@ mod tests {
             .quantum(state_vector())
             .sampling(monte_carlo(10))
             .seed(42)
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         assert_eq!(results.len(), 10);
 
@@ -6076,13 +6259,15 @@ mod tests {
             .quantum(sparse_stab())
             .sampling(monte_carlo(20))
             .seed(42)
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         let sparse2 = sim_neo(circuit.clone())
             .quantum(sparse_stab())
             .sampling(monte_carlo(20))
             .seed(42)
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         for (o1, o2) in sparse1.outcomes.iter().zip(sparse2.outcomes.iter()) {
             assert_eq!(
@@ -6097,13 +6282,15 @@ mod tests {
             .quantum(state_vector())
             .sampling(monte_carlo(20))
             .seed(42)
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         let sv2 = sim_neo(circuit)
             .quantum(state_vector())
             .sampling(monte_carlo(20))
             .seed(42)
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         for (o1, o2) in sv1.outcomes.iter().zip(sv2.outcomes.iter()) {
             assert_eq!(
@@ -6125,7 +6312,8 @@ mod tests {
             .quantum(state_vector())
             .sampling(monte_carlo(100).workers(4))
             .seed(42)
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         assert_eq!(results.len(), 100);
 
@@ -6147,7 +6335,8 @@ mod tests {
         let _ = sim_neo(deterministic_conditional_program())
             .auto()
             .sampling(importance_sampling(1))
-            .run();
+            .run()
+            .expect("simulation should succeed");
     }
 
     #[test]
@@ -6171,7 +6360,8 @@ mod tests {
                     .with_boost(5.0),
             )
             .seed(42)
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         assert_eq!(results.len(), 100);
         assert!(
@@ -6198,7 +6388,8 @@ mod tests {
                         .workers(workers),
                 )
                 .seed(42)
-                .run();
+                .run()
+                .expect("simulation should succeed");
 
             for outcomes in &results.outcomes {
                 let outcome = outcomes.get(QubitId(0)).unwrap();
@@ -6257,7 +6448,8 @@ mod tests {
                     .with_boost(10.0),
             )
             .seed(123)
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         assert_eq!(results.len(), 50);
         assert!(results.has_weights());
@@ -6284,7 +6476,8 @@ mod tests {
                     .with_boost(100.0), // Very aggressive boost
             )
             .seed(42)
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         // Compute weighted mean of outcome
         let weighted_one_rate = results
@@ -6319,9 +6512,15 @@ mod tests {
             .auto()
             .sampling(is_builder.clone())
             .seed(42)
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
-        let results2 = sim_neo(circuit).auto().sampling(is_builder).seed(42).run();
+        let results2 = sim_neo(circuit)
+            .auto()
+            .sampling(is_builder)
+            .seed(42)
+            .run()
+            .expect("simulation should succeed");
 
         assert_eq!(results1.outcomes.len(), results2.outcomes.len());
         for (i, (o1, o2)) in results1
@@ -6372,7 +6571,8 @@ mod tests {
                     .with_boost(10.0),
             )
             .seed(42)
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         assert_eq!(results.len(), 100);
         assert!(results.has_weights());
@@ -6393,7 +6593,8 @@ mod tests {
                     .with_boost(10.0),
             )
             .seed(42)
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         // Use weighted_stats to compute mean and variance
         let stats = results.weighted_stats(|outcome| {
@@ -6430,7 +6631,8 @@ mod tests {
             .sampling(monte_carlo(10))
             .seed(42)
             .build()
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         assert_eq!(results.len(), 10);
 
@@ -6456,13 +6658,15 @@ mod tests {
             .quantum(sparse_stab())
             .sampling(monte_carlo(50))
             .seed(42)
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         let custom_results = sim_neo(circuit)
             .quantum(custom_backend(|n| SparseStab::with_seed(n, 42)))
             .sampling(monte_carlo(50))
             .seed(42)
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         assert_eq!(
             builtin_results.outcomes.len(),
@@ -6498,7 +6702,8 @@ mod tests {
             .sampling(monte_carlo(100))
             .seed(42)
             .build()
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         assert_eq!(results.len(), 100);
 
@@ -6523,13 +6728,15 @@ mod tests {
             .quantum(custom_backend(|n| SparseStab::with_seed(n, 42)))
             .sampling(monte_carlo(20))
             .seed(42)
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         let results2 = sim_neo(circuit)
             .quantum(custom_backend(|n| SparseStab::with_seed(n, 42)))
             .sampling(monte_carlo(20))
             .seed(42)
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         for (o1, o2) in results1.outcomes.iter().zip(results2.outcomes.iter()) {
             assert_eq!(
@@ -6551,6 +6758,7 @@ mod tests {
                 .sampling(monte_carlo(50).workers(workers))
                 .seed(42)
                 .run()
+                .expect("simulation should succeed")
         };
 
         let sequential = run(1);
@@ -6583,6 +6791,7 @@ mod tests {
                 .sampling(monte_carlo(40).workers(workers))
                 .seed(7)
                 .run()
+                .expect("simulation should succeed")
         };
 
         let sequential = run(1);
@@ -6611,7 +6820,8 @@ mod tests {
             .quantum(custom_backend(|n| StateVec::with_seed(n, 42)))
             .sampling(monte_carlo(10))
             .seed(42)
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         assert_eq!(results.len(), 10);
 
@@ -6637,7 +6847,8 @@ mod tests {
             .auto()
             .sampling(monte_carlo(200))
             .seed(42)
-            .run();
+            .run()
+            .expect("simulation should succeed");
         let counts = results.register_counts(&reg, "c");
 
         // Should have entries for both [false] and [true]
@@ -6669,7 +6880,8 @@ mod tests {
             .auto()
             .sampling(monte_carlo(100))
             .seed(42)
-            .run();
+            .run()
+            .expect("simulation should succeed");
         let counts = results.register_counts(&reg, "c");
 
         // Bell state: only |00> and |11> should appear
@@ -6699,7 +6911,8 @@ mod tests {
             .auto()
             .sampling(monte_carlo(5))
             .seed(42)
-            .run();
+            .run()
+            .expect("simulation should succeed");
         let columns = results.as_register_columns(&reg);
 
         assert_eq!(columns.len(), 2);
@@ -6726,7 +6939,8 @@ mod tests {
             .auto()
             .sampling(monte_carlo(10))
             .seed(42)
-            .run();
+            .run()
+            .expect("simulation should succeed");
         let counts = results.register_counts(&reg, "missing");
 
         assert!(
@@ -6753,7 +6967,8 @@ mod tests {
             .sampling(monte_carlo(10))
             .seed(42)
             .build()
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         assert_eq!(results.len(), 10);
 
@@ -6780,7 +6995,8 @@ mod tests {
             .sampling(monte_carlo(10))
             .seed(42)
             .build()
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         assert_eq!(results.len(), 10);
 
@@ -6808,7 +7024,8 @@ mod tests {
             .sampling(monte_carlo(10))
             .seed(42)
             .build()
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         assert_eq!(results.len(), 10);
 
@@ -6839,7 +7056,8 @@ mod tests {
             .sampling(monte_carlo(10))
             .seed(42)
             .build()
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         assert_eq!(results.len(), 10);
 
@@ -6866,7 +7084,8 @@ mod tests {
             .sampling(monte_carlo(10).workers(2))
             .seed(42)
             .build()
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         assert_eq!(results.len(), 10);
 
@@ -6889,7 +7108,8 @@ mod tests {
             .sampling(monte_carlo(10))
             .seed(42)
             .build()
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         assert_eq!(results.len(), 10);
 
@@ -6912,7 +7132,8 @@ mod tests {
             .sampling(monte_carlo(10).workers(2))
             .seed(42)
             .build()
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         assert_eq!(results.len(), 10);
 
@@ -6939,7 +7160,8 @@ mod tests {
             .sampling(monte_carlo(10))
             .seed(42)
             .build()
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         assert_eq!(results.len(), 10);
 
@@ -6972,7 +7194,8 @@ mod tests {
             .sampling(monte_carlo(10))
             .seed(42)
             .build()
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         assert_eq!(results.len(), 10);
 
@@ -7002,7 +7225,8 @@ mod tests {
             .sampling(monte_carlo(10).workers(2))
             .seed(42)
             .build()
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         assert_eq!(results.len(), 10);
 
@@ -7031,7 +7255,8 @@ mod tests {
             .sampling(monte_carlo(10))
             .seed(42)
             .build()
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         assert_eq!(results.len(), 10);
 
@@ -7059,7 +7284,8 @@ mod tests {
             .sampling(monte_carlo(1))
             .seed(42)
             .build()
-            .run();
+            .run()
+            .expect("simulation should succeed");
     }
 
     #[test]
@@ -7077,7 +7303,8 @@ mod tests {
             .sampling(monte_carlo(1))
             .seed(42)
             .build()
-            .run();
+            .run()
+            .expect("simulation should succeed");
     }
 
     #[test]
@@ -7102,7 +7329,8 @@ mod tests {
             .sampling(monte_carlo(10))
             .seed(42)
             .build()
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         // Z|0> = |0>, so all outcomes should be 0
         for outcome in &results.outcomes {
@@ -7127,7 +7355,8 @@ mod tests {
             .sampling(monte_carlo(10).workers(2))
             .seed(42)
             .build()
-            .run();
+            .run()
+            .expect("simulation should succeed");
 
         assert_eq!(results.len(), 10);
 

@@ -23,16 +23,22 @@ esac
 dest="${CARGO_HOME:-$HOME/.cargo}/bin"
 if [[ -x "$dest/cargo-nextest" ]] && "$dest/cargo-nextest" --version | grep -q "^cargo-nextest ${version} "; then
     echo "cargo-nextest ${version} already installed at $dest"
-    exit 0
+else
+    tmp_dir="$(mktemp -d)"
+    trap 'rm -rf "$tmp_dir"' EXIT
+    archive="cargo-nextest-${version}-${target}.tar.gz"
+    curl --proto '=https' --tlsv1.2 -fsSL --retry 3 --retry-all-errors \
+        -o "$tmp_dir/$archive" \
+        "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-${version}/${archive}"
+    echo "${sha256}  ${tmp_dir}/${archive}" | sha256sum -c -
+    mkdir -p "$dest"
+    tar -xzf "$tmp_dir/$archive" -C "$dest" cargo-nextest
 fi
-
-tmp_dir="$(mktemp -d)"
-trap 'rm -rf "$tmp_dir"' EXIT
-archive="cargo-nextest-${version}-${target}.tar.gz"
-curl --proto '=https' --tlsv1.2 -fsSL --retry 3 --retry-all-errors \
-    -o "$tmp_dir/$archive" \
-    "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-${version}/${archive}"
-echo "${sha256}  ${tmp_dir}/${archive}" | sha256sum -c -
-mkdir -p "$dest"
-tar -xzf "$tmp_dir/$archive" -C "$dest" cargo-nextest
 "$dest/cargo-nextest" --version
+
+# `cargo nextest` is resolved through PATH by cargo, so expose the install
+# directory to later workflow steps (a custom CARGO_HOME is not the directory
+# ensure-rust.sh adds).
+if [[ -n "${GITHUB_PATH:-}" ]]; then
+    echo "$dest" >>"$GITHUB_PATH"
+fi

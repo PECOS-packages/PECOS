@@ -11,7 +11,7 @@
 // CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-//! The dense named-unitary matrices must agree with what the simulators do.
+//! Dense unitary matrices must agree with what the simulators do entrywise.
 //!
 //! `pecos-quantum`'s `to_matrix` and `pecos-simulators`' `CliffordGateable` are
 //! independent implementations of the same gate set, and nothing compared them.
@@ -19,17 +19,18 @@
 //! `SX * SZ` instead of `SZ * SX`, making it the `F4` face gate. Every other
 //! layer agreed with every other layer, so no existing test could see it.
 //!
-//! This walks every named Clifford, reconstructs the simulator's unitary one
-//! basis state at a time, and compares it to the dense matrix up to global
-//! phase.
+//! This walks every named Clifford and every parameterised [`Unitary`] kind,
+//! reconstructs the simulator's unitary one basis state at a time, and compares
+//! it exactly to the dense matrix.
 
-use pecos_core::{QubitId, Unitary};
+use pecos_core::unitary_rep::RotationType;
+use pecos_core::{Angle64, Clifford, QubitId, Unitary, UnitaryRep};
 use pecos_quantum::GateType;
 use pecos_quantum::unitary_matrix::to_matrix_with_size;
-use pecos_simulators::{CliffordGateable, StateVecSoA};
+use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, StateVecSoA};
 
 /// Apply a named gate through the `CliffordGateable` API.
-fn apply(sim: &mut StateVecSoA, gate_type: GateType, qubits: &[QubitId]) {
+fn apply_named(sim: &mut StateVecSoA, gate_type: GateType, qubits: &[QubitId]) {
     let one = &[qubits[0]];
     match gate_type {
         GateType::I => sim.identity(one),
@@ -59,9 +60,34 @@ fn apply(sim: &mut StateVecSoA, gate_type: GateType, qubits: &[QubitId]) {
     };
 }
 
+/// Apply a two-qubit Clifford, including variants with no `GateType` spelling.
+fn apply_two_qubit_clifford(sim: &mut StateVecSoA, clifford: Clifford) {
+    let pair = &[(QubitId(0), QubitId(1))];
+    match clifford {
+        Clifford::CX => sim.cx(pair),
+        Clifford::CY => sim.cy(pair),
+        Clifford::CZ => sim.cz(pair),
+        Clifford::SXX => sim.sxx(pair),
+        Clifford::SXXdg => sim.sxxdg(pair),
+        Clifford::SYY => sim.syy(pair),
+        Clifford::SYYdg => sim.syydg(pair),
+        Clifford::SZZ => sim.szz(pair),
+        Clifford::SZZdg => sim.szzdg(pair),
+        Clifford::SWAP => sim.swap(pair),
+        Clifford::G => sim.g(pair),
+        Clifford::Gdg => sim.gdg(pair),
+        Clifford::ISWAP => sim.iswap(pair),
+        Clifford::ISWAPdg => sim.iswapdg(pair),
+        other => panic!("Clifford {other:?} is not a two-qubit gate covered by this test"),
+    };
+}
+
 /// Rebuild the simulator's unitary column by column: column `j` is the state
 /// produced by applying the gate to basis state `|j>`.
-fn simulator_unitary(gate_type: GateType, num_qubits: usize) -> Vec<Vec<num_complex::Complex64>> {
+fn simulator_unitary(
+    num_qubits: usize,
+    apply: &dyn Fn(&mut StateVecSoA),
+) -> Vec<Vec<num_complex::Complex64>> {
     let dim = 1usize << num_qubits;
     let qubits: Vec<QubitId> = (0..num_qubits).map(QubitId).collect();
     let mut columns = Vec::with_capacity(dim);
@@ -72,56 +98,80 @@ fn simulator_unitary(gate_type: GateType, num_qubits: usize) -> Vec<Vec<num_comp
                 sim.x(&[q]);
             }
         }
-        apply(&mut sim, gate_type, &qubits);
+        apply(&mut sim);
         columns.push(sim.state());
     }
     columns
 }
 
-/// Compare two matrices up to a single global phase.
-fn assert_equal_up_to_phase(
-    gate_type: GateType,
+/// Compare two matrices entrywise. A global phase difference is a defect here.
+fn assert_exactly_equal(
+    name: &str,
     dense: &[Vec<num_complex::Complex64>],
     sim: &[Vec<num_complex::Complex64>],
 ) {
-    let phase = dense
-        .iter()
-        .flatten()
-        .zip(sim.iter().flatten())
-        .find(|(d, _)| d.norm() > 1e-9)
-        .map(|(d, s)| s / d)
-        .expect("a unitary has at least one non-zero entry");
-    assert!(
-        (phase.norm() - 1.0).abs() < 1e-9,
-        "{gate_type:?}: ratio between dense and simulator matrices is not a phase ({phase})"
-    );
     for (col_idx, (d_col, s_col)) in dense.iter().zip(sim).enumerate() {
         for (row_idx, (d, s)) in d_col.iter().zip(s_col).enumerate() {
             assert!(
-                (d * phase - s).norm() < 1e-9,
-                "{gate_type:?}: dense matrix disagrees with the simulator at \
-                 (row {row_idx}, col {col_idx}): dense {d} (x phase {phase}) vs simulator {s}. \
-                 The dense named-unitary and CliffordGateable have drifted apart."
+                (d - s).norm() < 1e-12,
+                "{name}: dense matrix disagrees with the simulator at \
+                 (row {row_idx}, col {col_idx}): dense {d} vs simulator {s}. \
+                 A global phase difference is a defect."
             );
         }
     }
 }
 
-fn check(gate_type: GateType, num_qubits: usize) {
+fn matrix_columns(rep: &UnitaryRep, num_qubits: usize) -> Vec<Vec<num_complex::Complex64>> {
+    let matrix = to_matrix_with_size(rep, num_qubits).into_inner();
+    let dim = 1usize << num_qubits;
+    // to_matrix is column-major-agnostic; take explicit columns to match the
+    // simulator reconstruction.
+    (0..dim)
+        .map(|col| (0..dim).map(|row| matrix[(row, col)]).collect())
+        .collect()
+}
+
+fn check_named(gate_type: GateType, num_qubits: usize) {
     let named = Unitary::Named(gate_type);
     let rep = if num_qubits == 1 {
         named.on_qubit(0)
     } else {
         named.on_qubits(0, 1)
     };
-    let matrix = to_matrix_with_size(&rep, num_qubits).into_inner();
-    let dim = 1usize << num_qubits;
-    // to_matrix is column-major-agnostic; take explicit columns to match the
-    // simulator reconstruction.
-    let dense: Vec<Vec<num_complex::Complex64>> = (0..dim)
-        .map(|col| (0..dim).map(|row| matrix[(row, col)]).collect())
-        .collect();
-    assert_equal_up_to_phase(gate_type, &dense, &simulator_unitary(gate_type, num_qubits));
+    let qubits: Vec<QubitId> = (0..num_qubits).map(QubitId).collect();
+    assert_exactly_equal(
+        &format!("{gate_type:?}"),
+        &matrix_columns(&rep, num_qubits),
+        &simulator_unitary(num_qubits, &|sim| {
+            apply_named(sim, gate_type, &qubits);
+        }),
+    );
+}
+
+fn check_two_qubit_clifford(clifford: Clifford) {
+    let rep = clifford.to_unitary_rep_on_qubits(0, 1);
+    assert_exactly_equal(
+        &format!("{clifford:?}"),
+        &matrix_columns(&rep, 2),
+        &simulator_unitary(2, &|sim| {
+            apply_two_qubit_clifford(sim, clifford);
+        }),
+    );
+}
+
+fn check_parameterised(name: &str, unitary: Unitary, apply: &dyn Fn(&mut StateVecSoA)) {
+    let num_qubits = unitary.num_qubits();
+    let rep = if num_qubits == 1 {
+        unitary.on_qubit(0)
+    } else {
+        unitary.on_qubits(0, 1)
+    };
+    assert_exactly_equal(
+        name,
+        &matrix_columns(&rep, num_qubits),
+        &simulator_unitary(num_qubits, apply),
+    );
 }
 
 #[test]
@@ -141,25 +191,130 @@ fn dense_matrices_match_the_simulator_for_one_qubit_cliffords() {
         GateType::SZ,
         GateType::SZdg,
     ] {
-        check(gate_type, 1);
+        check_named(gate_type, 1);
     }
 }
 
 #[test]
 fn dense_matrices_match_the_simulator_for_two_qubit_cliffords() {
-    for gate_type in [
-        GateType::CX,
-        GateType::CY,
-        GateType::CZ,
-        GateType::SXX,
-        GateType::SXXdg,
-        GateType::SYY,
-        GateType::SYYdg,
-        GateType::SZZ,
-        GateType::SZZdg,
-        GateType::SWAP,
+    for clifford in [
+        Clifford::CX,
+        Clifford::CY,
+        Clifford::CZ,
+        Clifford::SXX,
+        Clifford::SXXdg,
+        Clifford::SYY,
+        Clifford::SYYdg,
+        Clifford::SZZ,
+        Clifford::SZZdg,
+        Clifford::SWAP,
+        Clifford::G,
+        Clifford::Gdg,
+        Clifford::ISWAP,
+        Clifford::ISWAPdg,
     ] {
-        check(gate_type, 2);
+        check_two_qubit_clifford(clifford);
+    }
+}
+
+#[test]
+fn dense_matrices_match_the_simulator_for_parameterised_unitaries() {
+    let q = [QubitId(0)];
+    let pair = [(QubitId(0), QubitId(1))];
+    for sign in [1.0, -1.0] {
+        let angle = |magnitude| Angle64::from_radians(sign * magnitude);
+
+        for (name, rotation_type) in [
+            ("RX", RotationType::RX),
+            ("RY", RotationType::RY),
+            ("RZ", RotationType::RZ),
+        ] {
+            let theta = angle(0.37);
+            let unitary = Unitary::Rotation {
+                rotation_type,
+                angle: theta,
+            };
+            check_parameterised(&format!("{name}({:+.2})", sign * 0.37), unitary, &|sim| {
+                match rotation_type {
+                    RotationType::RX => sim.rx(theta, &q),
+                    RotationType::RY => sim.ry(theta, &q),
+                    RotationType::RZ => sim.rz(theta, &q),
+                    _ => unreachable!("the one-qubit table contains only RX, RY, and RZ"),
+                };
+            });
+        }
+
+        for (name, rotation_type) in [
+            ("RXX", RotationType::RXX),
+            ("RYY", RotationType::RYY),
+            ("RZZ", RotationType::RZZ),
+        ] {
+            let theta = angle(0.41);
+            let unitary = Unitary::Rotation {
+                rotation_type,
+                angle: theta,
+            };
+            check_parameterised(&format!("{name}({:+.2})", sign * 0.41), unitary, &|sim| {
+                match rotation_type {
+                    RotationType::RXX => sim.rxx(theta, &pair),
+                    RotationType::RYY => sim.ryy(theta, &pair),
+                    RotationType::RZZ => sim.rzz(theta, &pair),
+                    _ => unreachable!("the two-qubit table contains only RXX, RYY, and RZZ"),
+                };
+            });
+        }
+
+        let theta = angle(0.43);
+        let phi = angle(0.67);
+        check_parameterised(
+            &format!("RXY1Q(sign={sign:+.0})"),
+            Unitary::RXY1Q { theta, phi },
+            &|sim| {
+                sim.rxy1q(theta, phi, &q);
+            },
+        );
+
+        let lambda = angle(0.89);
+        check_parameterised(
+            &format!("U3(sign={sign:+.0})"),
+            Unitary::U3 { theta, phi, lambda },
+            &|sim| {
+                sim.u(theta, phi, lambda, &q);
+            },
+        );
+
+        let interaction = [angle(0.31), angle(0.47), angle(0.59)];
+        check_parameterised(
+            &format!("RXXRYYRZZ(sign={sign:+.0})"),
+            Unitary::RXXRYYRZZ {
+                alpha: interaction[0],
+                beta: interaction[1],
+                gamma: interaction[2],
+            },
+            &|sim| {
+                sim.rxxryyrzz(interaction[0], interaction[1], interaction[2], &pair);
+            },
+        );
+
+        let before = [
+            [angle(0.11), angle(0.13), angle(0.17)],
+            [angle(0.19), angle(0.23), angle(0.29)],
+        ];
+        let after = [
+            [angle(0.61), angle(0.71), angle(0.73)],
+            [angle(0.79), angle(0.83), angle(0.97)],
+        ];
+        check_parameterised(
+            &format!("U2q(sign={sign:+.0})"),
+            Unitary::U2q {
+                before,
+                interaction,
+                after,
+            },
+            &|sim| {
+                sim.u2q(before, interaction, after, &pair);
+            },
+        );
     }
 }
 
@@ -188,7 +343,7 @@ fn face_gate_composition_order_is_pinned() {
             sim.h(&[QubitId(0)]);
             sim.sz(&[QubitId(0)]);
             for gate_type in decomposition {
-                apply(&mut sim, gate_type, &[QubitId(0)]);
+                apply_named(&mut sim, gate_type, &[QubitId(0)]);
             }
             sim.state()
         };
@@ -196,7 +351,7 @@ fn face_gate_composition_order_is_pinned() {
             let mut sim = StateVecSoA::new(1);
             sim.h(&[QubitId(0)]);
             sim.sz(&[QubitId(0)]);
-            apply(&mut sim, face, &[QubitId(0)]);
+            apply_named(&mut sim, face, &[QubitId(0)]);
             sim.state()
         };
         for (a, b) in composed.iter().zip(&native) {

@@ -63,8 +63,9 @@ def install_clifford_rotation_bindings(bindings: dict[str, Callable[..., object]
     """Install projective rotation lowerings for stabilizer/tableau consumers.
 
     Results are equivalent only up to global phase and are unsuitable for
-    phase-carrying simulation or matrix-exact rewriting. For example,
-    ``RZZ(3*pi/2) = -SZZdg``, while the lowering installs ``SZZdg``.
+    phase-carrying simulation or matrix-exact rewriting. For example, direct
+    ``RX(pi)`` applies ``-i*X`` while the lowering installs ``X``, so the
+    lowered result is ``+i`` times the direct result.
     """
     for symbol in (*_ONE_ANGLE_ROTATIONS, "RXY1Q", "R1XY"):
         bindings[symbol] = _rotation_binding(symbol)

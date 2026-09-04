@@ -2166,7 +2166,7 @@ pub enum ReplacementBranchApproximation {
     /// Pauli entries. Useful as a baseline comparison.
     IgnoreGateRemoval,
     /// Convolve replacement entries with the Pauli twirl of the omitted ideal
-    /// gate's dagger. This is the default approximation for starred entries.
+    /// gate's dagger. This is the default approximation for replacement entries.
     #[default]
     PauliTwirlOmittedGate,
     /// Evaluate Pauli-projected replacement branches as their own contribution
@@ -2306,8 +2306,8 @@ impl PauliWeights {
     /// Look up the effective two-qubit Pauli weight for a specific gate.
     ///
     /// Plain entries contribute directly. Replacement entries first convolve with
-    /// the Pauli twirl of the omitted gate, so `*II` on `SZZ` contributes half
-    /// `II` and half `ZZ`, while `*XX` on `SZZ` contributes half `XX` and half
+    /// the Pauli twirl of the omitted gate, so `~II` on `SZZ` contributes half
+    /// `II` and half `ZZ`, while `~XX` on `SZZ` contributes half `XX` and half
     /// `YY`. The identity component is intentionally not returned by callers that
     /// query only non-identity Pauli labels.
     #[must_use]
@@ -2358,7 +2358,7 @@ impl PauliWeights {
 
     /// Non-identity branch-impact terms from replacement entries.
     ///
-    /// Each starred replacement entry is convolved with the Pauli twirl of the
+    /// Each replacement entry is convolved with the Pauli twirl of the
     /// omitted ideal gate. The returned terms are deliberately not aggregated:
     /// the builder should evaluate each branch term as a separate contribution
     /// before the DEM's normal contribution grouping combines equivalent
@@ -2416,7 +2416,7 @@ impl PauliWeights {
         &self.replacement_entries
     }
 
-    /// Whether this weight table contains starred replacement branches.
+    /// Whether this weight table contains replacement branches.
     #[must_use]
     pub fn has_replacement_entries(&self) -> bool {
         !self.replacement_entries.is_empty()

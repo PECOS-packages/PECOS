@@ -68,7 +68,7 @@ fn rz_three_quarters_equiv_szdg() {
     assert_residual_phase(
         &szdg,
         &rz,
-        3.0 * FRAC_PI_4,
+        -FRAC_PI_4,
         "RZ(3pi/2) should equal SZdg up to global phase",
     );
 }
@@ -80,7 +80,7 @@ fn rz_neg_quarter_equiv_szdg() {
     assert_residual_phase(
         &szdg,
         &rz,
-        3.0 * FRAC_PI_4,
+        -FRAC_PI_4,
         "RZ(-pi/2) should equal SZdg up to global phase",
     );
 }
@@ -139,7 +139,7 @@ fn rx_three_quarters_equiv_sxdg() {
     assert_residual_phase(
         &sxdg,
         &rx,
-        3.0 * FRAC_PI_4,
+        -FRAC_PI_4,
         "RX(3pi/2) should equal SXdg up to global phase",
     );
 }
@@ -151,7 +151,7 @@ fn rx_neg_quarter_equiv_sxdg() {
     assert_residual_phase(
         &sxdg,
         &rx,
-        3.0 * FRAC_PI_4,
+        -FRAC_PI_4,
         "RX(-pi/2) should equal SXdg up to global phase",
     );
 }
@@ -210,7 +210,7 @@ fn ry_three_quarters_equiv_sydg() {
     assert_residual_phase(
         &sydg,
         &ry,
-        3.0 * FRAC_PI_4,
+        -FRAC_PI_4,
         "RY(3pi/2) should equal SYdg up to global phase",
     );
 }
@@ -222,7 +222,7 @@ fn ry_neg_quarter_equiv_sydg() {
     assert_residual_phase(
         &sydg,
         &ry,
-        3.0 * FRAC_PI_4,
+        -FRAC_PI_4,
         "RY(-pi/2) should equal SYdg up to global phase",
     );
 }
@@ -257,7 +257,7 @@ fn rzz_three_quarters_equiv_szzdg() {
     assert_residual_phase(
         &szzdg,
         &rzz,
-        3.0 * FRAC_PI_4,
+        -FRAC_PI_4,
         "RZZ(3pi/2) should equal SZZdg up to global phase",
     );
 }
@@ -269,7 +269,7 @@ fn rzz_neg_quarter_equiv_szzdg() {
     assert_residual_phase(
         &szzdg,
         &rzz,
-        3.0 * FRAC_PI_4,
+        -FRAC_PI_4,
         "RZZ(-pi/2) should equal SZZdg up to global phase",
     );
 }
@@ -317,7 +317,7 @@ fn rxx_three_quarters_equiv_sxxdg() {
     assert_residual_phase(
         &sxxdg,
         &rxx,
-        3.0 * FRAC_PI_4,
+        -FRAC_PI_4,
         "RXX(3pi/2) should equal SXXdg up to global phase",
     );
 }
@@ -364,7 +364,7 @@ fn ryy_three_quarters_equiv_syydg() {
     assert_residual_phase(
         &syydg,
         &ryy,
-        3.0 * FRAC_PI_4,
+        -FRAC_PI_4,
         "RYY(3pi/2) should equal SYYdg up to global phase",
     );
 }
@@ -488,7 +488,7 @@ fn rxy1q_three_quarter_zero_equiv_sxdg() {
     assert_residual_phase(
         &sxdg,
         &rx,
-        3.0 * FRAC_PI_4,
+        -FRAC_PI_4,
         "RXY1Q(3pi/2, 0) should equal SXdg up to global phase",
     );
 }
@@ -514,7 +514,7 @@ fn rxy1q_three_quarter_half_equiv_sydg() {
     assert_residual_phase(
         &sydg,
         &ry,
-        3.0 * FRAC_PI_4,
+        -FRAC_PI_4,
         "RXY1Q(3pi/2, pi/2) should equal SYdg up to global phase",
     );
 }

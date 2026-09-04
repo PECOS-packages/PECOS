@@ -8,7 +8,9 @@ name: PR core gate
 # A shared detect script short-circuits to a pass when a PR changes nothing the
 # core suites depend on, so docs-only / unrelated PRs stay fast.
 #
-# Intended required contexts (not yet enforced): pr-core-python, pr-core-rust.
+# Intended required contexts (not yet enforced): the four pr-core-python
+# shards (`pr-core-python (qec-surface-harvest)`, `pr-core-python (qec-surface)`,
+# `pr-core-python (qec-guppy)`, `pr-core-python (rest)`) and pr-core-rust.
 #
 # The setup below mirrors the Linux legs of python-test.yml (python-core) and
 # rust-test.yml. Keep their action SHAs, uv/just/LLVM versions, and cache keys
@@ -46,7 +48,16 @@ defaults:
 
 jobs:
   pr-core-python:
+    name: pr-core-python (${{ matrix.shard }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Shards of the core Python lane; each rebuilds the native packages
+        # (cheaper than shipping wheels between jobs) and runs its slice of
+        # the suite. The slices are defined once, in the Justfile recipe
+        # `pytest-ci-core-shard`, and partition `pytest-ci-core` exactly.
+        shard: [qec-surface-harvest, qec-surface, qec-guppy, rest]
     # 75 min: a cold-cache build plus the core suite exceeded 45 (timed
     # out at 45:17 on the first branch with a large Cargo-graph change).
     timeout-minutes: 75
@@ -141,9 +152,13 @@ jobs:
         if: steps.detect.outputs.run == 'true'
         run: just ci-env
 
-      - name: Run core Python tests
+      - name: Build the Python packages the core lane needs
         if: steps.detect.outputs.run == 'true'
-        run: just python-ci-core
+        run: just python-ci-build-test
+
+      - name: Run core Python tests (${{ matrix.shard }} shard)
+        if: steps.detect.outputs.run == 'true'
+        run: just pytest-ci-core-shard ${{ matrix.shard }}
 
       - name: Core Python gate passed (no core-relevant changes)
         if: steps.detect.outputs.run != 'true'

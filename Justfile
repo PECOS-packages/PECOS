@@ -313,6 +313,45 @@ pytest-ci-core:
     uv run --frozen pytest -n auto python/quantum-pecos/tests -m "not optional_dependency and not slow"
     uv run --frozen pytest -n auto python/pecos-rslib-exp/tests
 
+# One shard of `pytest-ci-core`, for the pr-core-python matrix. The four shards
+# partition the lane: `qec-surface-harvest` owns one file, `qec-surface` the
+# rest of that directory, `qec-guppy` the rest of qec/ plus guppy/, and `rest`
+# is everything else, ignoring exactly the paths the other shards own. Keep
+# the owned paths and the `--ignore` lists in step so the union stays equal to
+# `pytest-ci-core`; a shard whose path disappears fails (pytest exit 4/5).
+# Balance (CPU-seconds, 2026-09-02): harvest file ~1040, rest of qec/surface
+# ~700, qec-rest + guppy ~1100, rest ~950. The harvest file is split out
+# because its tests are compile-bound and barely parallelize: on CI the whole
+# surface directory took 15 min of a 4-worker run.
+[group('test')]
+pytest-ci-core-shard shard:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    QP=python/quantum-pecos/tests
+    CORE_MARKERS="not optional_dependency and not slow"
+    HARVEST="$QP/qec/surface/test_pauli_mask_harvest.py"
+    case "{{shard}}" in
+      qec-surface-harvest)
+        uv run --frozen pytest -n auto "$HARVEST" -m "$CORE_MARKERS"
+        ;;
+      qec-surface)
+        uv run --frozen pytest -n auto "$QP/qec/surface" --ignore="$HARVEST" -m "$CORE_MARKERS"
+        ;;
+      qec-guppy)
+        uv run --frozen pytest -n auto "$QP/qec" --ignore="$QP/qec/surface" "$QP/guppy" -m "$CORE_MARKERS"
+        ;;
+      rest)
+        uv run --frozen pytest -n auto python/pecos-rslib/tests -m "not performance"
+        uv run --frozen --group numpy-compat pytest -n auto python/pecos-rslib/tests -m "numpy and not performance"
+        uv run --frozen pytest -n auto "$QP" --ignore="$QP/qec" --ignore="$QP/guppy" -m "$CORE_MARKERS"
+        uv run --frozen pytest -n auto python/pecos-rslib-exp/tests
+        ;;
+      *)
+        echo "unknown pytest-ci-core shard: {{shard}} (expected qec-surface-harvest, qec-surface, qec-guppy, or rest)" >&2
+        exit 1
+        ;;
+    esac
+
 # Run the experimental zluppy package's independent Python test project.
 [group('test')]
 pytest-zluppy:

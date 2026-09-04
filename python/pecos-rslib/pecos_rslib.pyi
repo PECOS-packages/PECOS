@@ -144,8 +144,9 @@ def lower_clifford_rotation(symbol: str, angles: Sequence[float | ScalarAngle64]
     """Lower a rotation for projective stabilizer/tableau consumers.
 
     Results are equivalent only up to global phase and are not suitable for
-    phase-carrying simulation or matrix-exact rewriting. For example,
-    ``RZZ(3*pi/2) = -SZZdg``, while this function returns ``SZZdg``.
+    phase-carrying simulation or matrix-exact rewriting. For example, direct
+    ``RX(pi)`` applies ``-i*X`` while this function returns ``X``, so the
+    lowered result is ``+i`` times the direct result.
     """
     ...
 

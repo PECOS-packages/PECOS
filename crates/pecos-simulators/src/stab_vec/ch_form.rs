@@ -2120,6 +2120,9 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> QuantumSimulator for CHFormGener
 }
 
 impl<S: IndexSet, R: SeedableRng + Rng + Debug> CliffordGateable for CHFormGeneric<S, R> {
+    // All phase-sensitive Clifford defaults are overridden below. If any override
+    // is removed, implement apply_global_phase here or the inherited operation
+    // will silently become projective through the trait's no-op hook.
     fn sz(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
             self.apply_s(q.index());

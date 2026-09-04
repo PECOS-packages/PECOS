@@ -83,6 +83,8 @@ pub struct StabVecGeneric<S: IndexSet = BitSet, R: SeedableRng + Rng + Debug = P
     cliff_frame: Vec<CliffordFrame>,
     /// Global phase from frame compositions: e^{i*`frame_phase`*pi/4}, mod 8.
     frame_phase: u8,
+    /// Other global phase accumulated by phase-exact default decompositions.
+    global_phase: Angle64,
     gamma_diff_qubits: Vec<usize>,
     rel_pruning_threshold: f64,
     /// Monte Carlo measurement threshold. When `Some(n)`, uses MC term sampling
@@ -148,6 +150,7 @@ impl StabVecBuilder {
             pending_rz: vec![Angle64::default(); self.num_qubits],
             cliff_frame: vec![CliffordFrame::IDENTITY; self.num_qubits],
             frame_phase: 0,
+            global_phase: Angle64::ZERO,
             gamma_diff_qubits: Vec::new(),
             rel_pruning_threshold: self.rel_pruning_threshold,
             mc_threshold: self.mc_threshold,
@@ -344,6 +347,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
             pending_rz: vec![Angle64::default(); num_qubits],
             cliff_frame: vec![CliffordFrame::IDENTITY; num_qubits],
             frame_phase: 0,
+            global_phase: Angle64::ZERO,
             gamma_diff_qubits: Vec::new(),
             rel_pruning_threshold: 1e-8,
             mc_threshold: Some(2048),
@@ -509,14 +513,17 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
         for q in 0..self.num_qubits {
             self.flush_cliff_frame(q);
         }
-        if self.frame_phase != 0 {
+        if self.frame_phase != 0 || self.global_phase != Angle64::ZERO {
             use crate::clifford_frame::PHASE_ROOTS;
             let [re, im] = PHASE_ROOTS[(self.frame_phase & 7) as usize];
-            let phase = Complex64::new(re, im);
+            let frame_phase = Complex64::new(re, im);
+            let global_phase = Complex64::from_polar(1.0, self.global_phase.to_radians_signed());
+            let phase = frame_phase * global_phase;
             for (coeff, _) in &mut self.terms {
                 *coeff *= phase;
             }
             self.frame_phase = 0;
+            self.global_phase = Angle64::ZERO;
         }
     }
 
@@ -599,9 +606,30 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
     }
 
     /// Buffer an RZ gate. Fuses with any pending RZ on the same qubit.
-    /// Uses Angle64 fixed-point addition for exact fusion (T+T=S, 4T=Z, 8T=I).
+    /// Uses Angle64 fixed-point addition for exact fusion of the rotation angle.
+    /// The stored angle is only defined mod 2pi while RZ has period 4pi, so the
+    /// scalar -1 lost when a signed sum wraps is tracked in `global_phase`
+    /// (e.g. 8T = RZ(2pi) = -I).
     fn apply_rz(&mut self, theta: Angle64, q: usize) {
-        self.pending_rz[q] += theta;
+        const HALF: i128 = 1_i128 << 63;
+        const FULL: i128 = 1_i128 << 64;
+
+        let signed_fraction = |angle: Angle64| {
+            let fraction = i128::from(angle.fraction());
+            if fraction > HALF {
+                fraction - FULL
+            } else {
+                fraction
+            }
+        };
+        let previous = self.pending_rz[q];
+        let combined = previous + theta;
+        if signed_fraction(previous) + signed_fraction(theta) != signed_fraction(combined) {
+            // Replacing a signed sum that crossed the principal-value boundary
+            // by its stored representative changes RZ by a scalar -1.
+            self.global_phase += Angle64::HALF_TURN;
+        }
+        self.pending_rz[q] = combined;
     }
 
     /// Apply RZ(theta) immediately (decompose into terms).
@@ -1073,6 +1101,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> QuantumSimulator for Sta
         self.pending_rz.fill(Angle64::default());
         self.cliff_frame.fill(CliffordFrame::IDENTITY);
         self.frame_phase = 0;
+        self.global_phase = Angle64::ZERO;
         self.gamma_diff_qubits.clear();
         // rel_pruning_threshold preserved across reset
         self
@@ -1080,6 +1109,13 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> QuantumSimulator for Sta
 }
 
 impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for StabVecGeneric<S, R> {
+    fn apply_global_phase(&mut self, phase: Angle64, qubits: &[QubitId]) -> &mut Self {
+        for _ in qubits {
+            self.global_phase += phase;
+        }
+        self
+    }
+
     // === Single-qubit Cliffords: all compose into the frame in O(1) ===
     // Diagonal gates (Z, S, Sdg) commute with pending_rz.
     // Non-diagonal gates (H, X, Y, SX, etc.) negate pending_rz if they
@@ -1512,24 +1548,6 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> ArbitraryRotationGateabl
         self
     }
 
-    fn apply_global_phase(&mut self, phase: Angle64, qubits: &[QubitId]) -> &mut Self {
-        // Materialize the rotation before applying its scalar correction. The
-        // pending Angle64 sum is projective: wrapping by one turn drops the -1
-        // from RZ(theta + 2*pi) = -RZ(theta).
-        for &q in qubits {
-            self.flush_pending_rz(q.index());
-        }
-        let unit_phase = Complex64::from_polar(1.0, phase.to_radians_signed());
-        let mut global_phase = Complex64::new(1.0, 0.0);
-        for _ in qubits {
-            global_phase *= unit_phase;
-        }
-        for (coeff, _) in &mut self.terms {
-            *coeff *= global_phase;
-        }
-        self
-    }
-
     fn rzz(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         // RZZ = CX * RZ_tgt * CX. Use frame-aware CX and RZ.
         self.cx(pairs);
@@ -1625,6 +1643,25 @@ mod tests {
         let sv = sim.state_vector();
         assert!((sv[0] - Complex64::new(1.0, 0.0)).norm() < EPS);
         assert!(sv[1].norm() < EPS);
+    }
+
+    #[test]
+    fn test_inherited_defaults_preserve_many_terms_and_exact_state() {
+        // h2 and h4 are inherited defaults that deliver their residual phase
+        // through apply_global_phase. h2's residues cancel to zero; h4 carries
+        // a net -pi/4, so a dropped accumulator shows up on the state.
+        let mut sim = StabVec::new(1);
+        let term = sim.terms[0].1.clone();
+        let coefficient = Complex64::new(1.0 / 4094.0, 0.0);
+        sim.terms = (0..4094).map(|_| (coefficient, term.clone())).collect();
+        let mut expected = StateVec::new(1);
+
+        sim.h2(&[QubitId(0)]).h4(&[QubitId(0)]);
+        expected.h2(&[QubitId(0)]).h4(&[QubitId(0)]);
+        assert_eq!(sim.num_terms(), 4094);
+        for (actual, expected) in sim.state_vector().iter().zip(expected.state()) {
+            assert!((actual - expected).norm() < 1e-12);
+        }
     }
 
     #[test]

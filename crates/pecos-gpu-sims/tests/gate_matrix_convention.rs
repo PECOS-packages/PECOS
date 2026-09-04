@@ -15,9 +15,12 @@
 //! independent state-vector/GPU single-qubit tables.
 
 use num_complex::Complex64;
-use pecos_core::gate_type::{GateType, NAMED_SINGLE_QUBIT_GATES};
+use pecos_core::gate_type::{
+    GateType, NAMED_SINGLE_QUBIT_GATES, NAMED_TWO_QUBIT_ROOT_GATES, TwoQubitGateMatrix,
+};
 use pecos_core::{Angle64, Clifford, QubitId};
 use pecos_gpu_sims::gates as gpu_gates;
+use pecos_gpu_sims::{GpuDensityMatrix32, GpuDensityMatrix64, GpuStateVec32, GpuStateVec64};
 use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, StateVecSoA, StateVecSoA32};
 
 type Matrix2 = [[Complex64; 2]; 2];
@@ -122,6 +125,133 @@ fn assert_phase_exact_matrix_eq(label: &str, actual: &Matrix2, expected: &Matrix
     assert!(
         max_entrywise_error(&phase_mutant, expected) > tolerance,
         "{label}: exp(i*pi/4) global-phase mutant escaped the exactness guard"
+    );
+}
+
+fn apply_two_qubit_matrix(
+    state: &mut [Complex64],
+    matrix: TwoQubitGateMatrix,
+    qubit1: QubitId,
+    qubit2: QubitId,
+) {
+    let mask1 = 1 << qubit1.index();
+    let mask2 = 1 << qubit2.index();
+    for base in 0..state.len() {
+        if base & (mask1 | mask2) != 0 {
+            continue;
+        }
+        let indices = [base, base | mask2, base | mask1, base | mask1 | mask2];
+        let input = indices.map(|index| state[index]);
+        for row in 0..4 {
+            let mut output = Complex64::new(0.0, 0.0);
+            for (column, amplitude) in input.into_iter().enumerate() {
+                let index = 2 * (4 * row + column);
+                output += Complex64::new(matrix[index], matrix[index + 1]) * amplitude;
+            }
+            state[indices[row]] = output;
+        }
+    }
+}
+
+fn relocate_one_matrix_entry(mut matrix: TwoQubitGateMatrix) -> TwoQubitGateMatrix {
+    // The roots are symmetric, so transposition is the identity mutation and
+    // cannot guard placement. Move only U[0,0] to U[0,1] instead.
+    matrix[2] = matrix[0];
+    matrix[3] = matrix[1];
+    matrix[0] = 0.0;
+    matrix[1] = 0.0;
+    matrix
+}
+
+fn assert_phase_exact_vector_eq(
+    label: &str,
+    actual: &[Complex64],
+    expected: &[Complex64],
+    tolerance: f64,
+) {
+    let error = actual
+        .iter()
+        .zip(expected)
+        .map(|(actual, expected)| (actual - expected).norm())
+        .fold(0.0, f64::max);
+    assert!(
+        error <= tolerance,
+        "{label}: max state error {error:e} exceeds {tolerance:e}"
+    );
+
+    let phase = Complex64::from_polar(1.0, std::f64::consts::FRAC_PI_4);
+    let mutant_error = actual
+        .iter()
+        .zip(expected)
+        .map(|(actual, expected)| (actual - expected * phase).norm())
+        .fold(0.0, f64::max);
+    assert!(
+        mutant_error > tolerance,
+        "{label}: exp(i*pi/4) phase mutant escaped the GPU kernel guard"
+    );
+}
+
+fn apply_two_qubit_root<S: CliffordGateable>(
+    sim: &mut S,
+    gate: GateType,
+    pair: (QubitId, QubitId),
+) {
+    let pairs = [pair];
+    match gate {
+        GateType::SXX => sim.sxx(&pairs),
+        GateType::SXXdg => sim.sxxdg(&pairs),
+        GateType::SYY => sim.syy(&pairs),
+        GateType::SYYdg => sim.syydg(&pairs),
+        GateType::SZZ => sim.szz(&pairs),
+        GateType::SZZdg => sim.szzdg(&pairs),
+        other => panic!("unsupported named two-qubit root {other:?}"),
+    };
+}
+
+fn apply_projectively_equivalent_rotation<S: ArbitraryRotationGateable>(
+    sim: &mut S,
+    gate: GateType,
+) {
+    let pairs = [(QubitId(0), QubitId(1))];
+    let angle = if matches!(gate, GateType::SXX | GateType::SYY | GateType::SZZ) {
+        Angle64::QUARTER_TURN
+    } else {
+        Angle64::THREE_QUARTERS_TURN
+    };
+    match gate {
+        GateType::SXX | GateType::SXXdg => sim.rxx(angle, &pairs),
+        GateType::SYY | GateType::SYYdg => sim.ryy(angle, &pairs),
+        GateType::SZZ | GateType::SZZdg => sim.rzz(angle, &pairs),
+        other => panic!("unsupported named two-qubit root {other:?}"),
+    };
+}
+
+fn prepare_two_qubit_kernel_input<S: CliffordGateable + ArbitraryRotationGateable>(
+    sim: &mut S,
+    pair: (QubitId, QubitId),
+) {
+    sim.ry(Angle64::from_radians(0.731), &[pair.0])
+        .rz(Angle64::from_radians(-0.417), &[pair.0])
+        .rx(Angle64::from_radians(-0.293), &[pair.1])
+        .ry(Angle64::from_radians(0.619), &[pair.1])
+        .cx(&[pair]);
+}
+
+fn assert_density_eq(
+    label: &str,
+    actual: &[Vec<Complex64>],
+    expected: &[Vec<Complex64>],
+    tolerance: f64,
+) {
+    let error = actual
+        .iter()
+        .flatten()
+        .zip(expected.iter().flatten())
+        .map(|(actual, expected)| (actual - expected).norm())
+        .fold(0.0, f64::max);
+    assert!(
+        error <= tolerance,
+        "{label}: max density-matrix error {error:e} exceeds {tolerance:e}"
     );
 }
 
@@ -499,5 +629,168 @@ fn single_qubit_simulator_tables_match_canonical_phase_exactly() {
             &expected,
             F32_TOLERANCE,
         );
+    }
+}
+
+#[test]
+fn gpu_two_qubit_root_kernels_match_canonical_phase_exactly() {
+    // Cover persistent/dispatched kernels, reversed ordering, and distant pairs.
+    for (case, num_qubits, pair) in [
+        ("persistent adjacent", 2, (QubitId(0), QubitId(1))),
+        ("persistent reversed", 6, (QubitId(4), QubitId(1))),
+        ("persistent distant", 6, (QubitId(2), QubitId(5))),
+        ("dispatched distant", 14, (QubitId(2), QubitId(11))),
+    ] {
+        for gate in NAMED_TWO_QUBIT_ROOT_GATES {
+            let canonical = gate
+                .canonical_2q_matrix()
+                .expect("named two-qubit root must have a canonical matrix");
+
+            if let Ok(mut sim) = GpuStateVec32::new(num_qubits) {
+                prepare_two_qubit_kernel_input(&mut sim, pair);
+                let input: Vec<_> = sim
+                    .state()
+                    .into_iter()
+                    .map(|[re, im]| Complex64::new(f64::from(re), f64::from(im)))
+                    .collect();
+                let mut expected = input.clone();
+                apply_two_qubit_matrix(&mut expected, canonical, pair.0, pair.1);
+                let mut relocated = input;
+                apply_two_qubit_matrix(
+                    &mut relocated,
+                    relocate_one_matrix_entry(canonical),
+                    pair.0,
+                    pair.1,
+                );
+                apply_two_qubit_root(&mut sim, gate, pair);
+                let actual: Vec<_> = sim
+                    .state()
+                    .into_iter()
+                    .map(|[re, im]| Complex64::new(f64::from(re), f64::from(im)))
+                    .collect();
+                assert_phase_exact_vector_eq(
+                    &format!("GpuStateVec32 {case} N={num_qubits} {gate:?}"),
+                    &actual,
+                    &expected,
+                    F32_TOLERANCE,
+                );
+                assert!(
+                    actual
+                        .iter()
+                        .zip(&relocated)
+                        .any(|(actual, mutant)| (actual - mutant).norm() > F32_TOLERANCE),
+                    "GpuStateVec32 {case} {gate:?}: entry-relocation mutant escaped"
+                );
+            }
+
+            if let Ok(mut sim) = GpuStateVec64::new(num_qubits) {
+                prepare_two_qubit_kernel_input(&mut sim, pair);
+                let input: Vec<_> = sim
+                    .state()
+                    .into_iter()
+                    .map(|[re, im]| Complex64::new(re, im))
+                    .collect();
+                let mut expected = input.clone();
+                apply_two_qubit_matrix(&mut expected, canonical, pair.0, pair.1);
+                let mut relocated = input;
+                apply_two_qubit_matrix(
+                    &mut relocated,
+                    relocate_one_matrix_entry(canonical),
+                    pair.0,
+                    pair.1,
+                );
+                apply_two_qubit_root(&mut sim, gate, pair);
+                let actual: Vec<_> = sim
+                    .state()
+                    .into_iter()
+                    .map(|[re, im]| Complex64::new(re, im))
+                    .collect();
+                assert_phase_exact_vector_eq(
+                    &format!("GpuStateVec64 {case} N={num_qubits} {gate:?}"),
+                    &actual,
+                    &expected,
+                    F64_TOLERANCE,
+                );
+                assert!(
+                    actual
+                        .iter()
+                        .zip(&relocated)
+                        .any(|(actual, mutant)| (actual - mutant).norm() > F64_TOLERANCE),
+                    "GpuStateVec64 {case} {gate:?}: entry-relocation mutant escaped"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn gpu_density_matrix_two_qubit_roots_preserve_rotation_channels() {
+    for gate in NAMED_TWO_QUBIT_ROOT_GATES {
+        if let (Ok(mut sim), Ok(mut reference)) =
+            (GpuDensityMatrix32::new(2), GpuDensityMatrix32::new(2))
+        {
+            prepare_two_qubit_kernel_input(&mut sim, (QubitId(0), QubitId(1)));
+            prepare_two_qubit_kernel_input(&mut reference, (QubitId(0), QubitId(1)));
+            apply_two_qubit_root(&mut sim, gate, (QubitId(0), QubitId(1)));
+            apply_projectively_equivalent_rotation(&mut reference, gate);
+            let actual = sim.get_density_matrix();
+            let expected = reference.get_density_matrix();
+            assert_density_eq(
+                &format!("GpuDensityMatrix32 {gate:?}"),
+                &actual,
+                &expected,
+                F32_TOLERANCE,
+            );
+        }
+
+        if let (Ok(mut sim), Ok(mut reference)) =
+            (GpuDensityMatrix64::new(2), GpuDensityMatrix64::new(2))
+        {
+            prepare_two_qubit_kernel_input(&mut sim, (QubitId(0), QubitId(1)));
+            prepare_two_qubit_kernel_input(&mut reference, (QubitId(0), QubitId(1)));
+            apply_two_qubit_root(&mut sim, gate, (QubitId(0), QubitId(1)));
+            apply_projectively_equivalent_rotation(&mut reference, gate);
+            let actual = sim.get_density_matrix();
+            let expected = reference.get_density_matrix();
+            assert_density_eq(
+                &format!("GpuDensityMatrix64 {gate:?}"),
+                &actual,
+                &expected,
+                F64_TOLERANCE,
+            );
+        }
+    }
+}
+
+#[test]
+fn two_qubit_root_shader_sources_validate() {
+    let sources = [
+        (
+            "dispatched f32",
+            include_str!("../src/shaders.wgsl").to_owned(),
+        ),
+        (
+            "dispatched f64",
+            include_str!("../src/shaders_f64.wgsl").to_owned(),
+        ),
+        (
+            "persistent f32",
+            include_str!("../src/persistent_kernel_f32.wgsl").replace("{SHARED_SIZE}", "1024"),
+        ),
+        (
+            "persistent f64",
+            include_str!("../src/persistent_kernel_f64.wgsl").replace("{SHARED_SIZE}", "1024"),
+        ),
+    ];
+
+    for (label, source) in sources {
+        let module = wgpu::naga::front::wgsl::parse_str(&source)
+            .unwrap_or_else(|error| panic!("{label} shader failed to parse: {error}"));
+        wgpu::naga::valid::Validator::new(
+            wgpu::naga::valid::ValidationFlags::all(),
+            wgpu::naga::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .unwrap_or_else(|error| panic!("{label} shader failed validation: {error:?}"));
     }
 }

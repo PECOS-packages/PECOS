@@ -8,11 +8,17 @@ name: PR core gate
 # A shared detect script short-circuits to a pass when a PR changes nothing the
 # core suites depend on, so docs-only / unrelated PRs stay fast.
 #
-# Intended required contexts (not yet enforced): pr-core-python, pr-core-rust.
+# Intended required contexts (not yet enforced): the four pr-core-python
+# shards (`pr-core-python (qec-surface-harvest)`, `pr-core-python (qec-surface)`,
+# `pr-core-python (qec-guppy)`, `pr-core-python (rest)`) and pr-core-rust.
 #
 # The setup below mirrors the Linux legs of python-test.yml (python-core) and
 # rust-test.yml. Keep their action SHAs, uv/just/LLVM versions, and cache keys
-# in sync when editing either side. The change-detection rule lives in
+# in sync when editing either side. The Rust caches are shared with those two
+# jobs through `shared-key` (they save on dev pushes, this workflow only
+# restores); rust-cache hashes the RUSTFLAGS/CARGO_*/RUST_BACKTRACE values into
+# the key, so the `env:` block here must stay identical to theirs or every
+# restore silently misses. The change-detection rule lives in
 # scripts/ci/pr-core-changed.sh (single source of truth for both jobs).
 
 permissions:
@@ -42,7 +48,16 @@ defaults:
 
 jobs:
   pr-core-python:
+    name: pr-core-python (${{ matrix.shard }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Shards of the core Python lane; each rebuilds the native packages
+        # (cheaper than shipping wheels between jobs) and runs its slice of
+        # the suite. The slices are defined once, in the Justfile recipe
+        # `pytest-ci-core-shard`, and partition `pytest-ci-core` exactly.
+        shard: [qec-surface-harvest, qec-surface, qec-guppy, rest]
     # 75 min: a cold-cache build plus the core suite exceeded 45 (timed
     # out at 45:17 on the first branch with a large Cargo-graph change).
     timeout-minutes: 75
@@ -121,9 +136,9 @@ jobs:
           cache-bin: false
           prefix-key: v1-rust-no-bin
           save-if: ${{ github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name) }}
-          workspaces: |
-            python/pecos-rslib
-            python/pecos-rslib-llvm
+          # Read the cache the post-merge python-core job (python-test.yml)
+          # saves on dev pushes; this workflow never saves one (PR events).
+          shared-key: python-core
 
       - name: Cache LLVM ${{ env.LLVM_VERSION }}
         if: steps.detect.outputs.run == 'true'
@@ -137,9 +152,13 @@ jobs:
         if: steps.detect.outputs.run == 'true'
         run: just ci-env
 
-      - name: Run core Python tests
+      - name: Build the Python packages the core lane needs
         if: steps.detect.outputs.run == 'true'
-        run: just python-ci-core
+        run: just python-ci-build-test
+
+      - name: Run core Python tests (${{ matrix.shard }} shard)
+        if: steps.detect.outputs.run == 'true'
+        run: just pytest-ci-core-shard ${{ matrix.shard }}
 
       - name: Core Python gate passed (no core-relevant changes)
         if: steps.detect.outputs.run != 'true'
@@ -224,9 +243,9 @@ jobs:
           cache-bin: false
           prefix-key: v1-rust-no-bin
           save-if: ${{ github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name) }}
-          workspaces: |
-            python/pecos-rslib
-            python/pecos-rslib-llvm
+          # Read the cache the post-merge rust-test job (rust-test.yml) saves
+          # on dev pushes; this workflow never saves one (PR events).
+          shared-key: rust-test
 
       - name: Cache LLVM ${{ env.LLVM_VERSION }}
         if: steps.detect.outputs.run == 'true'

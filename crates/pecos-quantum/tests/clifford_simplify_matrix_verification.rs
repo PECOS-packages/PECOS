@@ -163,7 +163,10 @@ fn rzz_zero_equiv_identity() {
 fn rzz_quarter_equiv_szz() {
     let rzz = RZZ(Angle64::QUARTER_TURN, 0, 1);
     let szz = SZZ(0, 1);
-    assert!(unitaries_equiv(&rzz, &szz), "RZZ(pi/2) should equal SZZ");
+    assert!(
+        unitaries_equiv(&rzz, &szz),
+        "RZZ(pi/2) should equal SZZ up to global phase"
+    );
 }
 
 #[test]
@@ -172,7 +175,7 @@ fn rzz_three_quarters_equiv_szzdg() {
     let szzdg = SZZ(0, 1).dg();
     assert!(
         unitaries_equiv(&rzz, &szzdg),
-        "RZZ(3pi/2) should equal SZZdg"
+        "RZZ(3pi/2) should equal SZZdg up to global phase"
     );
 }
 
@@ -182,7 +185,7 @@ fn rzz_neg_quarter_equiv_szzdg() {
     let szzdg = SZZ(0, 1).dg();
     assert!(
         unitaries_equiv(&rzz, &szzdg),
-        "RZZ(-pi/2) should equal SZZdg"
+        "RZZ(-pi/2) should equal SZZdg up to global phase"
     );
 }
 
@@ -207,16 +210,15 @@ fn rxx_zero_equiv_identity() {
 
 #[test]
 fn rxx_quarter_equiv_sxx() {
-    // SXX = RXX(pi/2)
     let rxx = RXX(Angle64::QUARTER_TURN, 0, 1);
-    let sxx = RXX(Angle64::QUARTER_TURN, 0, 1);
+    let sxx = SXX(0, 1);
     assert!(unitaries_equiv(&rxx, &sxx), "RXX(pi/2) should equal SXX");
 }
 
 #[test]
 fn rxx_three_quarters_equiv_sxxdg() {
     let rxx = RXX(Angle64::THREE_QUARTERS_TURN, 0, 1);
-    let sxxdg = RXX(Angle64::QUARTER_TURN, 0, 1).dg();
+    let sxxdg = SXX(0, 1).dg();
     assert!(
         unitaries_equiv(&rxx, &sxxdg),
         "RXX(3pi/2) should equal SXXdg"
@@ -244,14 +246,14 @@ fn ryy_zero_equiv_identity() {
 #[test]
 fn ryy_quarter_equiv_syy() {
     let ryy = RYY(Angle64::QUARTER_TURN, 0, 1);
-    let syy = RYY(Angle64::QUARTER_TURN, 0, 1);
+    let syy = SYY(0, 1);
     assert!(unitaries_equiv(&ryy, &syy), "RYY(pi/2) should equal SYY");
 }
 
 #[test]
 fn ryy_three_quarters_equiv_syydg() {
     let ryy = RYY(Angle64::THREE_QUARTERS_TURN, 0, 1);
-    let syydg = RYY(Angle64::QUARTER_TURN, 0, 1).dg();
+    let syydg = SYY(0, 1).dg();
     assert!(
         unitaries_equiv(&ryy, &syydg),
         "RYY(3pi/2) should equal SYYdg"
@@ -271,7 +273,7 @@ fn ryy_pi_equiv_y_tensor_y() {
 
 /// Build CRZ(angle) as a composition: RZ(angle/2) on target, CX, RZ(-angle/2) on target, CX.
 fn crz_operator(angle: Angle64, control: usize, target: usize) -> UnitaryRep {
-    let half = angle / 2u64;
+    let half = Angle64::from_radians(angle.to_radians_signed() / 2.0);
     // CRZ(theta) = CX * RZ(-theta/2)_target * CX * RZ(theta/2)_target
     // Read right-to-left: first RZ(theta/2), then CX, then RZ(-theta/2), then CX
     RZ(half, target) * CX(control, target) * RZ(-half, target) * CX(control, target)

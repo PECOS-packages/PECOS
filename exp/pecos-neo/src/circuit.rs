@@ -30,25 +30,27 @@
 //! circuit.tick().mz(&[0, 1]);
 //!
 //! // Convert to CommandQueue and execute
-//! let commands = CommandQueue::from(&circuit);
+//! let commands = CommandQueue::try_from(&circuit).unwrap();
 //! let mut state = SparseStab::new(2);
 //! let mut runner = CircuitRunner::<SparseStab>::new().with_seed(42);
 //! let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
 //! ```
 
-use crate::command::{CommandQueue, GateCommand, GateType};
-use pecos_core::{Angle64, Gate, QubitId, TimeUnits};
-use pecos_quantum::{DagCircuit, TickCircuit};
+use crate::command::{CommandQueue, GateCommand, GateCommandError, GateType};
+use pecos_core::gate_type::GateType as CoreGateType;
+use pecos_core::{Angle64, Gate, MeasId, QubitId};
+use pecos_quantum::{DagCircuit, TickCircuit, TickGateError};
 use smallvec::SmallVec;
+use std::fmt;
 
 // ============================================================================
 // GateType Conversion
 // ============================================================================
 
-impl From<pecos_core::gate_type::GateType> for GateType {
-    fn from(gt: pecos_core::gate_type::GateType) -> Self {
+impl GateType {
+    fn try_from_core(gt: CoreGateType) -> Option<Self> {
         use pecos_core::gate_type::GateType as CoreGT;
-        match gt {
+        Some(match gt {
             CoreGT::I => Self::I,
             CoreGT::X => Self::X,
             CoreGT::Y => Self::Y,
@@ -90,8 +92,16 @@ impl From<pecos_core::gate_type::GateType> for GateType {
             CoreGT::QAlloc => Self::QAlloc,
             CoreGT::QFree => Self::QFree,
             CoreGT::Idle => Self::Idle,
-            other => panic!("unsupported pecos-core gate type for pecos-neo conversion: {other:?}"),
-        }
+            _ => return None,
+        })
+    }
+}
+
+impl From<CoreGateType> for GateType {
+    fn from(gt: CoreGateType) -> Self {
+        Self::try_from_core(gt).unwrap_or_else(|| {
+            panic!("unsupported pecos-core gate type for pecos-neo conversion: {gt:?}")
+        })
     }
 }
 
@@ -148,34 +158,124 @@ impl From<GateType> for pecos_core::gate_type::GateType {
 // Gate to GateCommand Conversion
 // ============================================================================
 
-impl From<&Gate> for GateCommand {
-    fn from(gate: &Gate) -> Self {
-        let gate_type: GateType = gate.gate_type.into();
-        let qubits: SmallVec<[QubitId; 4]> = gate.qubits.iter().copied().collect();
+/// Error converting between core circuits and pecos-neo commands.
+#[derive(Debug, Clone, PartialEq)]
+pub enum CircuitConversionError {
+    /// The core gate type has no pecos-neo command representation.
+    UnsupportedGateType { gate_type: CoreGateType },
+    /// A core gate failed its own payload validation.
+    InvalidCoreGate {
+        gate_type: CoreGateType,
+        message: String,
+    },
+    /// An Idle batch has no target qubits.
+    EmptyIdleBatch,
+    /// A core floating-point Idle duration is not an exactly representable
+    /// pecos-neo integer duration.
+    InvalidCoreIdleDuration { duration: f64 },
+    /// A command could not enter the destination queue.
+    InvalidCommand(GateCommandError),
+    /// Measurement records could not be reserved in the destination circuit.
+    MeasurementRecords(String),
+    /// A validated command could not be inserted into its destination tick.
+    InvalidTickGate(TickGateError),
+}
 
-        // Handle idle gates specially - they store duration in params
-        if gate_type == GateType::Idle
-            && let Some(&duration) = gate.params.first()
-        {
-            #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
-            // duration is a non-negative time value
-            return GateCommand::idle(qubits[0], TimeUnits::new(duration as u64));
-        }
-
-        // Copy angles
-        let angles: SmallVec<[Angle64; 2]> = gate.angles.iter().copied().collect();
-
-        GateCommand {
-            gate_type,
-            qubits,
-            angles,
+impl fmt::Display for CircuitConversionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnsupportedGateType { gate_type } => {
+                write!(f, "pecos-neo does not support core gate type {gate_type:?}")
+            }
+            Self::InvalidCoreGate { message, .. } | Self::MeasurementRecords(message) => {
+                f.write_str(message)
+            }
+            Self::EmptyIdleBatch => f.write_str("an Idle command must target at least one qubit"),
+            Self::InvalidCoreIdleDuration { duration } => write!(
+                f,
+                "core Idle duration {duration:?} is not an exactly representable non-negative integer"
+            ),
+            Self::InvalidCommand(error) => error.fmt(f),
+            Self::InvalidTickGate(error) => error.fmt(f),
         }
     }
 }
 
-impl From<Gate> for GateCommand {
-    fn from(gate: Gate) -> Self {
-        (&gate).into()
+impl std::error::Error for CircuitConversionError {}
+
+fn exact_nonnegative_f64_to_u64(value: f64) -> Option<u64> {
+    if !value.is_finite() || value < 0.0 {
+        return None;
+    }
+    if value == 0.0 {
+        return Some(0);
+    }
+
+    let bits = value.to_bits();
+    let raw_exponent = (bits >> 52) & 0x7ff;
+    if raw_exponent < 1023 {
+        return None;
+    }
+    let exponent = raw_exponent - 1023;
+    if exponent > 63 {
+        return None;
+    }
+
+    let significand = (1_u64 << 52) | (bits & ((1_u64 << 52) - 1));
+    if exponent >= 52 {
+        significand.checked_shl(u32::try_from(exponent - 52).ok()?)
+    } else {
+        let shift = exponent.abs_diff(52);
+        let discarded_mask = (1_u64 << shift) - 1;
+        (significand & discarded_mask == 0).then_some(significand >> shift)
+    }
+}
+
+impl TryFrom<&Gate> for GateCommand {
+    type Error = CircuitConversionError;
+
+    fn try_from(gate: &Gate) -> Result<Self, Self::Error> {
+        gate.validate()
+            .map_err(|message| CircuitConversionError::InvalidCoreGate {
+                gate_type: gate.gate_type,
+                message,
+            })?;
+        let gate_type = GateType::try_from_core(gate.gate_type).ok_or(
+            CircuitConversionError::UnsupportedGateType {
+                gate_type: gate.gate_type,
+            },
+        )?;
+        let qubits: SmallVec<[QubitId; 4]> = gate.qubits.iter().copied().collect();
+
+        if gate_type == GateType::Idle {
+            if qubits.is_empty() {
+                return Err(CircuitConversionError::EmptyIdleBatch);
+            }
+            let duration = gate.params[0];
+            let duration = exact_nonnegative_f64_to_u64(duration)
+                .ok_or(CircuitConversionError::InvalidCoreIdleDuration { duration })?;
+            return Ok(GateCommand::with_angles(
+                GateType::Idle,
+                qubits,
+                smallvec::smallvec![Angle64::new(duration)],
+            ));
+        }
+
+        let angles: SmallVec<[Angle64; 2]> = gate.angles.iter().copied().collect();
+
+        Ok(GateCommand {
+            gate_type,
+            qubits,
+            angles,
+        })
+    }
+}
+
+impl TryFrom<Gate> for GateCommand {
+    type Error = CircuitConversionError;
+
+    fn try_from(gate: Gate) -> Result<Self, Self::Error> {
+        Self::try_from(&gate)
     }
 }
 
@@ -183,27 +283,34 @@ impl From<Gate> for GateCommand {
 // TickCircuit to CommandQueue Conversion
 // ============================================================================
 
-impl From<&TickCircuit> for CommandQueue {
+impl TryFrom<&TickCircuit> for CommandQueue {
+    type Error = CircuitConversionError;
+
     /// Convert a `TickCircuit` to a `CommandQueue`.
     ///
     /// Gate batches are added in tick order - all commands from tick 0, then tick 1, etc.
     /// Within each tick, commands are added in the order they appear.
-    fn from(circuit: &TickCircuit) -> Self {
+    fn try_from(circuit: &TickCircuit) -> Result<Self, Self::Error> {
         let mut queue = CommandQueue::new();
 
         for tick in circuit.ticks() {
             for gate in tick.iter_gate_batches() {
-                queue.push(gate.as_gate().into());
+                let command = GateCommand::try_from(gate.as_gate())?;
+                queue
+                    .try_push(command)
+                    .map_err(CircuitConversionError::InvalidCommand)?;
             }
         }
 
-        queue
+        Ok(queue)
     }
 }
 
-impl From<TickCircuit> for CommandQueue {
-    fn from(circuit: TickCircuit) -> Self {
-        (&circuit).into()
+impl TryFrom<TickCircuit> for CommandQueue {
+    type Error = CircuitConversionError;
+
+    fn try_from(circuit: TickCircuit) -> Result<Self, Self::Error> {
+        Self::try_from(&circuit)
     }
 }
 
@@ -211,28 +318,35 @@ impl From<TickCircuit> for CommandQueue {
 // DagCircuit to CommandQueue Conversion
 // ============================================================================
 
-impl From<&DagCircuit> for CommandQueue {
+impl TryFrom<&DagCircuit> for CommandQueue {
+    type Error = CircuitConversionError;
+
     /// Convert a `DagCircuit` to a `CommandQueue`.
     ///
     /// Gates are added in topological order, ensuring that dependencies
     /// are respected.
-    fn from(circuit: &DagCircuit) -> Self {
+    fn try_from(circuit: &DagCircuit) -> Result<Self, Self::Error> {
         let mut queue = CommandQueue::new();
 
         // Get gates in topological order
         for node_id in circuit.topological_order() {
             if let Some(gate) = circuit.gate(node_id) {
-                queue.push(gate.into());
+                let command = GateCommand::try_from(gate)?;
+                queue
+                    .try_push(command)
+                    .map_err(CircuitConversionError::InvalidCommand)?;
             }
         }
 
-        queue
+        Ok(queue)
     }
 }
 
-impl From<DagCircuit> for CommandQueue {
-    fn from(circuit: DagCircuit) -> Self {
-        (&circuit).into()
+impl TryFrom<DagCircuit> for CommandQueue {
+    type Error = CircuitConversionError;
+
+    fn try_from(circuit: DagCircuit) -> Result<Self, Self::Error> {
+        Self::try_from(&circuit)
     }
 }
 
@@ -240,84 +354,48 @@ impl From<DagCircuit> for CommandQueue {
 // CommandQueue to TickCircuit Conversion (Round-trip support)
 // ============================================================================
 
-impl From<&CommandQueue> for TickCircuit {
+impl TryFrom<&CommandQueue> for TickCircuit {
+    type Error = CircuitConversionError;
+
     /// Convert a `CommandQueue` to a `TickCircuit`.
     ///
     /// Each command becomes its own tick. For better parallelization,
     /// consider using the `CommandBuilder` to construct circuits directly,
     /// or manually building a `TickCircuit`.
-    fn from(queue: &CommandQueue) -> Self {
+    fn try_from(queue: &CommandQueue) -> Result<Self, Self::Error> {
         let mut circuit = TickCircuit::new();
 
         for cmd in queue.iter() {
-            let gate_type: pecos_core::gate_type::GateType = cmd.gate_type.into();
-            let qubits: Vec<usize> = cmd.qubits.iter().map(|q| q.0).collect();
-
-            // Create a new tick for each command
-            let mut tick = circuit.tick();
-
-            // Handle different gate types
-            match gate_type {
-                pecos_core::gate_type::GateType::PZ => {
-                    tick.pz(&qubits);
-                }
-                pecos_core::gate_type::GateType::MZ => {
-                    tick.mz(&qubits);
-                }
-                pecos_core::gate_type::GateType::H => {
-                    tick.h(&qubits);
-                }
-                pecos_core::gate_type::GateType::X => {
-                    tick.x(&qubits);
-                }
-                pecos_core::gate_type::GateType::Y => {
-                    tick.y(&qubits);
-                }
-                pecos_core::gate_type::GateType::Z => {
-                    tick.z(&qubits);
-                }
-                pecos_core::gate_type::GateType::CX => {
-                    if qubits.len() >= 2 {
-                        tick.cx(&[(qubits[0], qubits[1])]);
-                    }
-                }
-                pecos_core::gate_type::GateType::CZ => {
-                    if qubits.len() >= 2 {
-                        tick.cz(&[(qubits[0], qubits[1])]);
-                    }
-                }
-                _ => {
-                    // For other gate types, add as a raw gate
-                    let angles: SmallVec<[Angle64; 3]> = cmd.angles.iter().copied().collect();
-                    let qubit_ids: SmallVec<[QubitId; 4]> =
-                        qubits.iter().map(|&q| QubitId(q)).collect();
-                    let gate = Gate {
-                        gate_type,
-                        angles,
-                        params: SmallVec::new(),
-                        qubits: qubit_ids,
-                        meas_ids: SmallVec::new(),
-                        channel: None,
-                    };
-                    tick.try_add_gate(gate)
-                        .expect("one gate per tick should not have qubit conflicts");
-                }
+            let mut gate = cmd.to_core_gate();
+            if gate.gate_type.consumes_measurement_record() {
+                let base = circuit
+                    .try_advance_meas_counter(gate.qubits.len())
+                    .map_err(CircuitConversionError::MeasurementRecords)?;
+                gate.meas_ids
+                    .extend((base..base + gate.qubits.len()).map(MeasId::from_raw));
             }
+            let mut tick = circuit.tick();
+            tick.try_add_gate(gate)
+                .map_err(CircuitConversionError::InvalidTickGate)?;
         }
 
-        circuit
+        Ok(circuit)
     }
 }
 
-impl From<CommandQueue> for TickCircuit {
-    fn from(queue: CommandQueue) -> Self {
-        (&queue).into()
+impl TryFrom<CommandQueue> for TickCircuit {
+    type Error = CircuitConversionError;
+
+    fn try_from(queue: CommandQueue) -> Result<Self, Self::Error> {
+        Self::try_from(&queue)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::command::GateCommandError;
+    use pecos_core::Angle64;
 
     #[test]
     fn test_gate_type_conversion_roundtrip() {
@@ -348,7 +426,7 @@ mod tests {
         circuit.tick().mz(&[0]);
         circuit.tick().mz(&[1]);
 
-        let queue = CommandQueue::from(&circuit);
+        let queue = CommandQueue::try_from(&circuit).expect("circuit should convert");
 
         // Should have: 2 preps + 1 H + 1 CX + 2 measures = 6 commands
         assert_eq!(queue.len(), 6);
@@ -371,7 +449,7 @@ mod tests {
         circuit.tick().h(&[0, 1]); // One H gate with 2 qubits
         circuit.tick().mz(&[0, 1]); // One measure gate with 2 qubits
 
-        let queue = CommandQueue::from(&circuit);
+        let queue = CommandQueue::try_from(&circuit).expect("circuit should convert");
 
         // Bulk ops create single gates with multiple qubits
         assert_eq!(queue.len(), 3);
@@ -392,7 +470,7 @@ mod tests {
         dag.mz(&[0]);
         dag.mz(&[1]);
 
-        let queue = CommandQueue::from(&dag);
+        let queue = CommandQueue::try_from(&dag).expect("DAG should convert");
 
         // Should have 6 commands
         assert_eq!(queue.len(), 6);
@@ -412,12 +490,56 @@ mod tests {
             .cx(&[(0, 1)])
             .mz(&[0])
             .mz(&[1])
+            .mz_free(&[2])
             .build();
 
-        let circuit = TickCircuit::from(&commands);
+        let circuit = TickCircuit::try_from(&commands).expect("commands should convert");
 
         // Each command becomes its own tick
-        assert_eq!(circuit.num_ticks(), 6);
+        assert_eq!(circuit.num_ticks(), 7);
+        assert_eq!(circuit.num_measurements(), 3);
+        let measurement_ids: Vec<_> = circuit
+            .ticks()
+            .iter()
+            .flat_map(pecos_quantum::Tick::iter_gate_batches)
+            .flat_map(|gate| gate.as_gate().meas_ids.iter().copied())
+            .collect();
+        assert_eq!(
+            measurement_ids,
+            vec![
+                MeasId::from_raw(0),
+                MeasId::from_raw(1),
+                MeasId::from_raw(2)
+            ]
+        );
+    }
+
+    #[test]
+    fn malformed_fixed_gate_cannot_reach_tick_circuit_conversion() {
+        let mut commands = CommandQueue::new();
+        let error = commands
+            .try_push(GateCommand::with_angles(
+                GateType::H,
+                smallvec::smallvec![QubitId(0)],
+                smallvec::smallvec![Angle64::QUARTER_TURN],
+            ))
+            .expect_err("surplus angles must be rejected before TickCircuit conversion");
+        let GateCommandError::AngleArity(error) = error else {
+            panic!("wrong error variant");
+        };
+        assert_eq!(error.gate_type, GateType::H);
+        assert_eq!(error.expected, 0);
+        assert_eq!(error.actual, 1);
+
+        commands.push(GateCommand::h(QubitId(0)));
+        let circuit = TickCircuit::try_from(&commands).expect("valid commands should convert");
+        let gate = circuit.ticks()[0]
+            .iter_gate_batches()
+            .next()
+            .expect("converted tick contains H")
+            .as_gate();
+        assert_eq!(gate.gate_type, pecos_core::gate_type::GateType::H);
+        assert!(gate.angles.is_empty());
     }
 
     #[test]
@@ -433,12 +555,52 @@ mod tests {
             channel: None,
         };
 
-        let cmd: GateCommand = (&gate).into();
+        let cmd = GateCommand::try_from(&gate).expect("gate should convert");
 
         assert_eq!(cmd.gate_type, GateType::RZ);
         assert_eq!(cmd.angles.len(), 1);
         assert_eq!(cmd.angles[0], Angle64::QUARTER_TURN);
         assert_eq!(cmd.qubits.len(), 1);
         assert_eq!(cmd.qubits[0], QubitId(0));
+    }
+
+    #[test]
+    fn batched_idle_round_trips_without_losing_targets_or_duration() {
+        let gate = Gate::idle(23.0, vec![QubitId(1), QubitId(2)]);
+
+        let command = GateCommand::try_from(&gate).expect("integral Idle should convert");
+        assert_eq!(command.qubits.as_slice(), &[QubitId(1), QubitId(2)]);
+        assert_eq!(
+            command.get_idle_duration(),
+            Some(pecos_core::TimeUnits::new(23))
+        );
+
+        let mut queue = CommandQueue::new();
+        queue
+            .try_push(command)
+            .expect("Idle command should enter queue");
+        let back = queue.iter().next().expect("Idle command").to_core_gate();
+        assert_eq!(back.qubits.as_slice(), &[QubitId(1), QubitId(2)]);
+        assert!((back.idle_duration() - 23.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn core_idle_conversion_rejects_empty_and_non_integer_durations() {
+        let empty = Gate::idle(23.0, Vec::<QubitId>::new());
+        assert_eq!(
+            GateCommand::try_from(&empty),
+            Err(CircuitConversionError::EmptyIdleBatch)
+        );
+
+        for duration in [23.5, -1.0, f64::INFINITY, f64::NAN] {
+            let gate = Gate::idle(duration, vec![QubitId(0)]);
+            let error = GateCommand::try_from(&gate)
+                .expect_err("non-integral, negative, and non-finite durations must fail");
+            assert!(matches!(
+                error,
+                CircuitConversionError::InvalidCoreIdleDuration { duration: actual }
+                    if actual.to_bits() == duration.to_bits()
+            ));
+        }
     }
 }

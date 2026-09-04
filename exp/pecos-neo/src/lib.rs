@@ -160,7 +160,11 @@ pub mod sampling;
 pub mod tool;
 
 // Re-export main types at crate root
-pub use command::{CommandBuilder, CommandQueue, GateCommand, GateType};
+pub use circuit::CircuitConversionError;
+pub use command::{
+    CommandBuilder, CommandQueue, GateCommand, GateCommandAngleArityError, GateCommandError,
+    GateType,
+};
 pub use engines::{CommandQueueEngine, DagCircuitEngine, TickCircuitEngine};
 pub use extensible::{
     AdaptedGate,
@@ -264,7 +268,11 @@ pub use adapter::{
 /// use pecos_neo::prelude::*;
 /// ```
 pub mod prelude {
-    pub use crate::command::{CommandBuilder, CommandQueue, GateCommand, GateType};
+    pub use crate::circuit::CircuitConversionError;
+    pub use crate::command::{
+        CommandBuilder, CommandQueue, GateCommand, GateCommandAngleArityError, GateCommandError,
+        GateType,
+    };
     pub use crate::extensible::{
         // Extended operations
         AdaptedOp,

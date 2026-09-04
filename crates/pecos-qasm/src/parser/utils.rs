@@ -29,6 +29,16 @@ fn split_parameters(gate_type: GateType, parameters: &[f64]) -> (Vec<Angle64>, V
     (angles, other_params)
 }
 
+fn try_native_gate(
+    gate_type: GateType,
+    angles: Vec<Angle64>,
+    params: Vec<f64>,
+    qubits: impl Into<GateQubits>,
+) -> Result<Gate, PecosError> {
+    Gate::try_new(gate_type, angles, params, qubits)
+        .map_err(|err| invalid_operation(err.to_string()))
+}
+
 /// Expand all gate operations in the program to native gates
 ///
 /// # Errors
@@ -127,18 +137,18 @@ fn expand_gate_operation(
             (1, n) if n > 1 => {
                 // Single-qubit gate applied to multiple qubits
                 let (angles, params) = split_parameters(gate_type, parameters);
-                Ok(qubits
+                qubits
                     .iter()
                     .map(|&qubit| {
-                        let gate = Gate::new(
+                        try_native_gate(
                             gate_type,
                             angles.clone(),
                             params.clone(),
                             vec![QubitId(qubit)],
-                        );
-                        Operation::NativeGate(gate)
+                        )
+                        .map(Operation::NativeGate)
                     })
-                    .collect())
+                    .collect()
             }
             (2, n) if n > 2 => {
                 // Two-qubit gate applied to multiple qubits
@@ -148,18 +158,18 @@ fn expand_gate_operation(
                     )));
                 }
                 let (angles, params) = split_parameters(gate_type, parameters);
-                Ok((0..n)
+                (0..n)
                     .step_by(2)
                     .map(|i| {
-                        let gate = Gate::new(
+                        try_native_gate(
                             gate_type,
                             angles.clone(),
                             params.clone(),
                             vec![QubitId(qubits[i]), QubitId(qubits[i + 1])],
-                        );
-                        Operation::NativeGate(gate)
+                        )
+                        .map(Operation::NativeGate)
                     })
-                    .collect())
+                    .collect()
             }
             (expected, actual) if expected != actual => {
                 // Wrong number of qubits
@@ -168,12 +178,12 @@ fn expand_gate_operation(
             _ => {
                 // Correct number of qubits, no expansion needed
                 let (angles, params) = split_parameters(gate_type, parameters);
-                let gate = Gate::new(
+                let gate = try_native_gate(
                     gate_type,
                     angles,
                     params,
                     qubits.iter().map(|&q| QubitId(q)).collect::<GateQubits>(),
-                );
+                )?;
                 Ok(vec![Operation::NativeGate(gate)])
             }
         }

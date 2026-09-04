@@ -23,7 +23,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use pecos_core::gate_type::GateType;
-use pecos_core::{Angle64, Gate, QubitId};
+use pecos_core::{Angle64, Gate, GateAngleArityError, QubitId};
 use tket::TketOp;
 use tket::extension::rotation::ConstRotation;
 use tket::hugr::builder::{DFGBuilder, Dataflow, DataflowHugr};
@@ -42,6 +42,8 @@ pub enum HugrConvertError {
     UnsupportedStructure(String),
     /// An unknown quantum operation was encountered.
     UnknownOperation(String),
+    /// A native gate operation carries the wrong number of angles.
+    InvalidGateAngles(GateAngleArityError),
     /// The operation is not from a supported extension.
     UnsupportedExtension(String),
 }
@@ -55,6 +57,7 @@ impl std::fmt::Display for HugrConvertError {
             HugrConvertError::UnknownOperation(op) => {
                 write!(f, "Unknown quantum operation: {op}")
             }
+            HugrConvertError::InvalidGateAngles(error) => error.fmt(f),
             HugrConvertError::UnsupportedExtension(ext) => {
                 write!(f, "Unsupported extension: {ext}")
             }
@@ -840,7 +843,10 @@ pub fn hugr_to_dag_circuit(hugr: &Hugr) -> Result<DagCircuit, HugrConvertError> 
             .into()
         } else {
             let angles: Vec<Angle64> = op.params.iter().map(|&p| Angle64::from_turns(p)).collect();
-            vec![Gate::with_angles(op.gate_type, angles, qubits.clone())]
+            vec![
+                Gate::try_with_angles(op.gate_type, angles, qubits.clone())
+                    .map_err(HugrConvertError::InvalidGateAngles)?,
+            ]
         };
         for gate in gates {
             let dag_node_idx = dag.add_gate_auto_wire(gate);
@@ -1497,7 +1503,10 @@ impl SimpleHugr {
             } else {
                 let angles: Vec<Angle64> =
                     op.params.iter().map(|&p| Angle64::from_turns(p)).collect();
-                vec![Gate::with_angles(op.gate_type, angles, qubits.clone())]
+                vec![
+                    Gate::try_with_angles(op.gate_type, angles, qubits.clone())
+                        .map_err(HugrConvertError::InvalidGateAngles)?,
+                ]
             };
             for gate in native_gates {
                 let gate_idx = gates.len();
@@ -1915,6 +1924,33 @@ mod tests {
             .expect("finish HUGR")
     }
 
+    fn dynamic_rz_hugr() -> Hugr {
+        let mut builder = DFGBuilder::new(Signature::new(
+            vec![tket::extension::rotation::rotation_type()],
+            vec![],
+        ))
+        .expect("create HUGR");
+        let rotation = builder.input_wires().next().expect("rotation input wire");
+        let qubit = builder
+            .add_dataflow_op(TketOp::QAlloc, vec![])
+            .expect("allocate qubit")
+            .outputs()
+            .next()
+            .expect("qubit output");
+        let qubit = builder
+            .add_dataflow_op(TketOp::Rz, vec![qubit, rotation])
+            .expect("add dynamic Rz")
+            .outputs()
+            .next()
+            .expect("Rz output");
+        builder
+            .add_dataflow_op(TketOp::QFree, vec![qubit])
+            .expect("free qubit");
+        builder
+            .finish_hugr_with_outputs(vec![])
+            .expect("finish HUGR")
+    }
+
     fn assert_wire_chain(dag: &DagCircuit, qubit: QubitId, expected: &[GateType]) {
         let timeline = dag.qubit_timeline(qubit);
         let actual: Vec<_> = timeline
@@ -2077,6 +2113,28 @@ mod tests {
     }
 
     #[test]
+    fn malformed_rotation_angle_is_structured_error_in_both_hugr_ingress_paths() {
+        let hugr = dynamic_rz_hugr();
+        let dag_error = hugr_to_dag_circuit(&hugr)
+            .expect_err("DAG conversion must reject a dynamically angled Rz");
+        let HugrConvertError::InvalidGateAngles(dag_error) = dag_error else {
+            panic!("wrong DAG conversion error variant");
+        };
+        assert_eq!(dag_error.gate_type, GateType::RZ);
+        assert_eq!(dag_error.expected, 1);
+        assert_eq!(dag_error.actual, 0);
+
+        let simple_error = SimpleHugr::new_relaxed(hugr)
+            .expect_err("SimpleHugr must reject a dynamically angled Rz");
+        let HugrConvertError::InvalidGateAngles(simple_error) = simple_error else {
+            panic!("wrong SimpleHugr conversion error variant");
+        };
+        assert_eq!(simple_error.gate_type, GateType::RZ);
+        assert_eq!(simple_error.expected, 1);
+        assert_eq!(simple_error.actual, 0);
+    }
+
+    #[test]
     fn test_hugr_op_to_gate_type() {
         assert_eq!(hugr_op_to_gate_type("H"), Some(GateType::H));
         assert_eq!(hugr_op_to_gate_type("CX"), Some(GateType::CX));
@@ -2169,16 +2227,20 @@ mod tests {
     }
 
     #[test]
-    fn dag_circuit_to_hugr_rejects_rotation_without_angle() {
+    fn dag_circuit_refuses_rotation_without_angle() {
         let mut dag = DagCircuit::new();
         let node = dag.add_gate(Gate::rz(Angle64::ZERO, &[QubitId(0)]));
-        dag.gate_mut(node).expect("RZ node").angles.clear();
+        let before = dag.gate(node).cloned().expect("RZ node");
+        let error = dag
+            .update_gate(node, |gate| gate.angles.clear())
+            .expect_err("RZ without an angle must be refused");
 
-        let error = dag_circuit_to_hugr(&dag).expect_err("RZ without an angle must fail");
         assert_eq!(
             error.to_string(),
-            "Unknown quantum operation: RZ is missing its rotation angle"
+            "Invalid gate at DAG node 0: Gate RZ expected 1 angle parameters, got 0"
         );
+        assert_eq!(dag.gate(node), Some(&before));
+        dag_circuit_to_hugr(&dag).expect("the refused update must leave a valid DAG");
     }
 
     #[test]

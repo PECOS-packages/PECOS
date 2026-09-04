@@ -627,8 +627,12 @@ impl CircuitPass for SimplifyRotations {
             }
 
             // In-place simplification for single-qubit and two-qubit named replacements.
-            if let Some(gate) = circuit.gate_mut(node) {
-                simplify_gate_in_place(gate);
+            if circuit.gate(node).is_some() {
+                circuit
+                    .update_gate(node, |gate| {
+                        simplify_gate_in_place(gate);
+                    })
+                    .expect("simplification must preserve a valid gate");
             }
         }
     }
@@ -883,9 +887,8 @@ impl CircuitPass for MergeAdjacentRotations {
 
                 // Merge angle and remove successor.
                 circuit
-                    .gate_mut(node)
-                    .expect("node must exist in circuit")
-                    .angles[0] += succ_angle;
+                    .update_gate(node, |gate| gate.angles[0] += succ_angle)
+                    .expect("merging rotation angles must preserve a valid gate");
                 circuit.remove_gate(succ);
 
                 for (q, succ_succ) in rewire {
@@ -1037,9 +1040,12 @@ impl CircuitPass for PeepholeOptimize {
                     circuit.remove_gate(pred);
                     circuit.remove_gate(succ);
                     // Update the middle gate in place.
-                    let g = circuit.gate_mut(node).expect("node must exist in circuit");
-                    g.gate_type = new_gt;
-                    g.qubits = new_qubits;
+                    circuit
+                        .update_gate(node, |gate| {
+                            gate.gate_type = new_gt;
+                            gate.qubits = new_qubits;
+                        })
+                        .expect("peephole replacement must preserve a valid gate");
                     // Rewire: h_pred -> node, node -> h_succ
                     if let Some(hp) = h_pred {
                         let _ = circuit.connect(hp, node, q);
@@ -2420,11 +2426,8 @@ mod tests {
 
     #[test]
     fn rotation_with_multiple_angles_is_not_an_identity() {
-        let gate = Gate::with_angles(
-            GateType::RZ,
-            smallvec::smallvec![Angle64::ZERO, Angle64::ZERO],
-            smallvec::smallvec![QubitId::from(0)],
-        );
+        let mut gate = Gate::rz(Angle64::ZERO, &[QubitId(0)]);
+        gate.angles.push(Angle64::ZERO);
         assert!(!is_identity_gate(&gate));
     }
 

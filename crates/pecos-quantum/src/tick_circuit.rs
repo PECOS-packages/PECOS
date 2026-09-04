@@ -3708,7 +3708,7 @@ impl TryFrom<&TickCircuit> for DagCircuit {
                         dag.try_add_gate(split_gate.clone())
                             .map_err(|reason| TickToDagError {
                                 tick: tick_idx,
-                                reason,
+                                reason: reason.to_string(),
                             })?;
                     split_nodes.push(node);
 

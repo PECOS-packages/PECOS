@@ -10,6 +10,7 @@ use crate::QubitId;
 use crate::gate_type::GateType;
 use crate::qubit_support::duplicate_qubits;
 use smallvec::SmallVec;
+use std::fmt;
 
 /// Stack-allocated qubit buffer for gates (up to 4 qubits inline).
 /// Most gates operate on 1-2 qubits, so this avoids heap allocation.
@@ -26,6 +27,29 @@ pub type GateParams = SmallVec<[f64; 2]>;
 /// Measurement result identities for measurement gates.
 /// Empty for non-measurement gates. One entry per qubit for MZ/MX/MY.
 pub type GateMeasIds = SmallVec<[MeasId; 1]>;
+
+/// Error returned when constructing a native gate with the wrong number of angles.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GateAngleArityError {
+    /// The gate type being constructed.
+    pub gate_type: GateType,
+    /// The number of angles required by the gate type.
+    pub expected: usize,
+    /// The number of angles supplied by the caller.
+    pub actual: usize,
+}
+
+impl fmt::Display for GateAngleArityError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "Gate {:?} expected {} angle parameters, got {}",
+            self.gate_type, self.expected, self.actual
+        )
+    }
+}
+
+impl std::error::Error for GateAngleArityError {}
 
 /// Flat gate command representation for quantum operations
 ///
@@ -73,6 +97,12 @@ pub struct Gate {
 ///
 impl Gate {
     /// Create a new gate command with angles and params
+    ///
+    /// # Panics
+    ///
+    /// Panics when a native gate's angle count does not exactly match
+    /// [`GateType::angle_arity`]. Use [`try_new`](Self::try_new) for data-driven
+    /// construction.
     #[must_use]
     pub fn new(
         gate_type: GateType,
@@ -80,9 +110,17 @@ impl Gate {
         params: impl Into<GateParams>,
         qubits: impl Into<GateQubits>,
     ) -> Self {
+        let angles = angles.into();
+        assert!(
+            gate_type == GateType::Custom || angles.len() == gate_type.angle_arity(),
+            "Gate {:?} expected {} angle parameters, got {}",
+            gate_type,
+            gate_type.angle_arity(),
+            angles.len()
+        );
         Self {
             gate_type,
-            angles: angles.into(),
+            angles,
             params: params.into(),
             qubits: qubits.into(),
             meas_ids: GateMeasIds::new(),
@@ -90,7 +128,49 @@ impl Gate {
         }
     }
 
+    /// Try to create a new gate command with angles and params.
+    ///
+    /// Unlike [`new`](Self::new), this reports angle-arity mismatches from
+    /// data-driven construction without panicking. Custom gates have a
+    /// registry-defined angle arity and therefore accept any angle count here.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GateAngleArityError`] when a native gate's angle count does
+    /// not exactly match [`GateType::angle_arity`].
+    pub fn try_new(
+        gate_type: GateType,
+        angles: impl Into<GateAngles>,
+        params: impl Into<GateParams>,
+        qubits: impl Into<GateQubits>,
+    ) -> Result<Self, GateAngleArityError> {
+        let angles = angles.into();
+        let expected = gate_type.angle_arity();
+        let actual = angles.len();
+        if gate_type != GateType::Custom && actual != expected {
+            return Err(GateAngleArityError {
+                gate_type,
+                expected,
+                actual,
+            });
+        }
+        Ok(Self {
+            gate_type,
+            angles,
+            params: params.into(),
+            qubits: qubits.into(),
+            meas_ids: GateMeasIds::new(),
+            channel: None,
+        })
+    }
+
     /// Create a new gate command with angles only (no other params)
+    ///
+    /// # Panics
+    ///
+    /// Panics when a native gate's angle count does not exactly match
+    /// [`GateType::angle_arity`]. Use
+    /// [`try_with_angles`](Self::try_with_angles) for data-driven construction.
     #[must_use]
     pub fn with_angles(
         gate_type: GateType,
@@ -100,7 +180,27 @@ impl Gate {
         Self::new(gate_type, angles, GateParams::new(), qubits)
     }
 
+    /// Try to create a new gate command with angles only (no other params).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GateAngleArityError`] when a native gate's angle count does
+    /// not exactly match [`GateType::angle_arity`].
+    pub fn try_with_angles(
+        gate_type: GateType,
+        angles: impl Into<GateAngles>,
+        qubits: impl Into<GateQubits>,
+    ) -> Result<Self, GateAngleArityError> {
+        Self::try_new(gate_type, angles, GateParams::new(), qubits)
+    }
+
     /// Create a new gate command with no angles or params
+    ///
+    /// # Panics
+    ///
+    /// Panics when `gate_type` requires angles. Use
+    /// [`try_with_angles`](Self::try_with_angles) when `gate_type` comes from
+    /// data.
     #[must_use]
     pub fn simple(gate_type: GateType, qubits: impl Into<GateQubits>) -> Self {
         Self::new(gate_type, GateAngles::new(), GateParams::new(), qubits)
@@ -1536,33 +1636,27 @@ mod tests {
         assert!(valid_rzz.validate().is_ok());
 
         // Test invalid gates - wrong angle count
-        let invalid_angles = Gate::new(
+        let invalid_angles = Gate::try_new(
             GateType::RZ,
             vec![Angle64::from_turns(0.25), Angle64::from_turns(0.5)],
             Vec::<f64>::new(),
             vec![QubitId::from(0)],
-        );
-        assert!(invalid_angles.validate().is_err());
-        assert!(
-            invalid_angles
-                .validate()
-                .unwrap_err()
-                .contains("expected 1 angle parameters, got 2")
-        );
+        )
+        .expect_err("surplus angles must be rejected during construction");
+        assert_eq!(invalid_angles.gate_type, GateType::RZ);
+        assert_eq!(invalid_angles.expected, 1);
+        assert_eq!(invalid_angles.actual, 2);
 
-        let missing_angles = Gate::new(
+        let missing_angles = Gate::try_new(
             GateType::U,
             vec![Angle64::from_turns(0.25)],
             Vec::<f64>::new(),
             vec![QubitId::from(0)],
-        );
-        assert!(missing_angles.validate().is_err());
-        assert!(
-            missing_angles
-                .validate()
-                .unwrap_err()
-                .contains("expected 3 angle parameters, got 1")
-        );
+        )
+        .expect_err("missing angles must be rejected during construction");
+        assert_eq!(missing_angles.gate_type, GateType::U);
+        assert_eq!(missing_angles.expected, 3);
+        assert_eq!(missing_angles.actual, 1);
 
         // Test invalid gates - wrong qubit count (not a multiple of quantum arity)
         let invalid_qubits = Gate::new(
@@ -1614,6 +1708,23 @@ mod tests {
             ],
         );
         assert!(multi_cx_gates.validate().is_ok()); // Multiple CX gates
+    }
+
+    #[test]
+    #[should_panic(expected = "Gate RZ expected 1 angle parameters, got 0")]
+    fn with_angles_asserts_exact_angle_arity() {
+        let _ = Gate::with_angles(GateType::RZ, GateAngles::new(), vec![QubitId(0)]);
+    }
+
+    #[test]
+    #[should_panic(expected = "Gate H expected 0 angle parameters, got 1")]
+    fn new_asserts_exact_angle_arity() {
+        let _ = Gate::new(
+            GateType::H,
+            vec![Angle64::ZERO],
+            GateParams::new(),
+            vec![QubitId(0)],
+        );
     }
 
     #[test]

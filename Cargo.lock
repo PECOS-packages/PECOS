@@ -4299,6 +4299,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "pecos-frontier-wasm"
+version = "0.2.0-dev.0"
+dependencies = [
+ "pecos-frontier",
+]
+
+[[package]]
 name = "pecos-fusion-blossom"
 version = "0.2.0-dev.0"
 dependencies = [

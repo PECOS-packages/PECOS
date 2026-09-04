@@ -1,0 +1,19 @@
+[package]
+name = "pecos-frontier-wasm"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+description = "Bare-WebAssembly adapter for the PECOS Frontier decoder"
+publish = false
+
+[dependencies]
+pecos-frontier.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[lints]
+workspace = true

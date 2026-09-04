@@ -65,6 +65,7 @@
 use crate::command::{CommandQueue, GateCommand, GateType as NeoGateType};
 use crate::outcome::{MeasurementOutcome, MeasurementOutcomes};
 use crate::program::{CommandSource, DynProgramRunner, ProgramResult};
+use pecos_core::errors::PecosError;
 use pecos_core::gate_type::GateType as CoreGateType;
 use pecos_core::gates::Gate;
 use pecos_core::{Angle64, QubitId};
@@ -287,38 +288,21 @@ impl<E> CommandSource for ClassicalEngineAdapter<E>
 where
     E: pecos_engines::ClassicalControlEngine,
 {
-    fn next_commands(&mut self, outcomes: Option<&MeasurementOutcomes>) -> Option<CommandQueue> {
+    fn next_commands(
+        &mut self,
+        outcomes: Option<&MeasurementOutcomes>,
+    ) -> Result<Option<CommandQueue>, PecosError> {
         match self.state {
-            AdapterState::NotStarted => {
-                // Start the engine
-                match self.start_engine() {
-                    Ok(cmds) => cmds,
-                    Err(e) => {
-                        // Log error and complete
-                        eprintln!("ClassicalEngineAdapter: start error: {e}");
-                        self.state = AdapterState::Complete;
-                        None
-                    }
-                }
-            }
-            AdapterState::Running => {
-                // Continue with outcomes from previous batch
-                if let Some(outcomes) = outcomes {
-                    match self.continue_with_outcomes(outcomes) {
-                        Ok(cmds) => cmds,
-                        Err(e) => {
-                            eprintln!("ClassicalEngineAdapter: continue error: {e}");
-                            self.state = AdapterState::Complete;
-                            None
-                        }
-                    }
-                } else {
-                    // No outcomes but running - shouldn't happen in normal flow
-                    self.state = AdapterState::Complete;
-                    None
-                }
-            }
-            AdapterState::Complete => None,
+            AdapterState::NotStarted => self.start_engine(),
+            AdapterState::Running => match outcomes {
+                Some(outcomes) => self.continue_with_outcomes(outcomes),
+                None => Err(PecosError::Processing(
+                    "ClassicalEngineAdapter: continuation requested without the previous \
+                     batch's outcomes"
+                        .to_string(),
+                )),
+            },
+            AdapterState::Complete => Ok(None),
         }
     }
 
@@ -326,26 +310,21 @@ where
         self.state == AdapterState::Complete
     }
 
-    fn reset(&mut self) {
+    fn reset(&mut self) -> Result<(), PecosError> {
         // Reset both the adapter state and the underlying engine
         self.state = AdapterState::NotStarted;
         self.pending_commands = None;
         self.measurement_count = 0;
 
-        // Try to reset the engine (ignore errors - some engines don't need reset)
-        let _ = pecos_engines::ControlEngine::reset(&mut self.engine);
+        pecos_engines::ControlEngine::reset(&mut self.engine)
     }
 
     fn num_qubits(&self) -> usize {
         self.num_qubits
     }
 
-    fn shot_results(&self) -> Option<pecos_results::Shot> {
-        Some(
-            self.engine
-                .get_results()
-                .expect("classical engine failed to produce results for a completed shot"),
-        )
+    fn shot_results(&self) -> Result<Option<pecos_results::Shot>, PecosError> {
+        self.engine.get_results().map(Some)
     }
 }
 
@@ -417,29 +396,23 @@ impl QuantumEngineProgramRunner {
     }
 }
 impl DynProgramRunner for QuantumEngineProgramRunner {
-    fn run_shot(&mut self, source: &mut dyn CommandSource) -> ProgramResult {
-        source.reset();
-        self.engine
-            .reset()
-            .expect("quantum engine reset should not fail");
+    fn run_shot(&mut self, source: &mut dyn CommandSource) -> Result<ProgramResult, PecosError> {
+        source.reset()?;
+        self.engine.reset()?;
 
         let mut all_outcomes = MeasurementOutcomes::new();
         let mut num_batches = 0;
         let mut last_outcomes: Option<MeasurementOutcomes> = None;
 
         loop {
-            let commands = source.next_commands(last_outcomes.as_ref());
+            let commands = source.next_commands(last_outcomes.as_ref())?;
 
             match commands {
                 Some(cmds) if !cmds.is_empty() => {
                     let measured_qubits = Self::measured_qubits(&cmds);
                     let message = Self::commands_to_message(&cmds);
-                    let response = self
-                        .engine
-                        .process(message)
-                        .expect("quantum engine command batch should execute");
-                    let outcomes = Self::outcomes_from_message(&response, &measured_qubits)
-                        .expect("quantum engine outcomes should match measured qubits");
+                    let response = self.engine.process(message)?;
+                    let outcomes = Self::outcomes_from_message(&response, &measured_qubits)?;
 
                     num_batches += 1;
                     for outcome in outcomes.iter() {
@@ -455,10 +428,10 @@ impl DynProgramRunner for QuantumEngineProgramRunner {
             }
         }
 
-        ProgramResult {
+        Ok(ProgramResult {
             outcomes: all_outcomes,
             num_batches,
-        }
+        })
     }
 
     fn set_full_seed(&mut self, seed: u64) {

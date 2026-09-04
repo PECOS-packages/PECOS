@@ -336,7 +336,7 @@ impl ProgrammedSimBuilder {
             builder = builder.noise(noise);
         }
 
-        let results = builder.run();
+        let results = builder.run()?;
         let shot_vec = results.shots.ok_or_else(|| {
             PecosError::Generic(
                 "The neo stack produced no register results for a classical-engine program; \

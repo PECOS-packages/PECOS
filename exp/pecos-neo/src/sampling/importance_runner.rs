@@ -183,6 +183,42 @@ pub struct ImportanceSamplingRunner<S: CliffordGateable> {
 }
 
 impl<S: CliffordGateable> ImportanceSamplingRunner<S> {
+    /// Whether this runner can execute a well-formed static circuit command.
+    pub(crate) fn supports(command: &GateCommand) -> bool {
+        command.has_valid_shape()
+            && matches!(
+                command.gate_type,
+                GateType::I
+                    | GateType::X
+                    | GateType::Y
+                    | GateType::Z
+                    | GateType::H
+                    | GateType::F
+                    | GateType::Fdg
+                    | GateType::SX
+                    | GateType::SXdg
+                    | GateType::SY
+                    | GateType::SYdg
+                    | GateType::SZ
+                    | GateType::SZdg
+                    | GateType::CX
+                    | GateType::CY
+                    | GateType::CZ
+                    | GateType::SZZ
+                    | GateType::SZZdg
+                    | GateType::SXX
+                    | GateType::SXXdg
+                    | GateType::SYY
+                    | GateType::SYYdg
+                    | GateType::SWAP
+                    | GateType::MZ
+                    | GateType::MeasureLeaked
+                    | GateType::MeasureFree
+                    | GateType::PZ
+                    | GateType::QAlloc
+            )
+    }
+
     /// Create a new importance sampling runner with the given simulator.
     pub fn new(simulator: S) -> Self {
         Self {
@@ -1041,6 +1077,54 @@ mod tests {
                 ]
             })
             .collect()
+    }
+
+    fn well_formed_commands(gate_type: GateType) -> Vec<(&'static str, GateCommand)> {
+        let qubits = (0..gate_type.quantum_arity())
+            .map(QubitId)
+            .collect::<Vec<_>>();
+        let angle_arity = gate_type.angle_arity();
+        if angle_arity == 0 {
+            return vec![("no angles", GateCommand::new(gate_type, qubits))];
+        }
+        vec![
+            (
+                "Clifford angles",
+                GateCommand::with_angles(
+                    gate_type,
+                    qubits.clone(),
+                    vec![pecos_core::Angle64::QUARTER_TURN; angle_arity],
+                ),
+            ),
+            (
+                "non-Clifford angles",
+                GateCommand::with_angles(
+                    gate_type,
+                    qubits,
+                    vec![pecos_core::Angle64::from_radians(0.3); angle_arity],
+                ),
+            ),
+        ]
+    }
+
+    #[test]
+    fn supports_agrees_with_executor_for_every_gate_type() {
+        for &gate_type in GateType::ALL {
+            for (angle_case, command) in well_formed_commands(gate_type) {
+                let declared = ImportanceSamplingRunner::<SparseStab>::supports(&command);
+                let executed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    let num_qubits = gate_type.quantum_arity();
+                    let mut runner =
+                        ImportanceSamplingRunner::new(SparseStab::with_seed(num_qubits, 42));
+                    runner.execute_command(&command);
+                }))
+                .is_ok();
+                assert_eq!(
+                    declared, executed,
+                    "ImportanceSamplingRunner support mismatch for {gate_type:?} with {angle_case}"
+                );
+            }
+        }
     }
 
     #[test]

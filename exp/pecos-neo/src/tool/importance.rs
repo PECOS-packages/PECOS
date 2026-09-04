@@ -32,7 +32,7 @@
 //! // Add importance sampling with 10x boost
 //! sim.tool_mut().add_plugin_mut(&ImportanceSamplingPlugin::new(0.001, 10.0));
 //!
-//! let results = sim.run();
+//! let results = sim.run().expect("simulation should succeed");
 //! // Use weighted statistics to analyze results...
 //! ```
 
@@ -207,9 +207,18 @@ impl Plugin for ImportanceSamplingPlugin {
         }
 
         // Add systems for weight tracking
-        tool.add_system_mut(Stage::PreShot, importance_pre_shot);
-        tool.add_system_mut(Stage::PostShot, importance_post_shot);
-        tool.add_system_mut(Stage::Finish, importance_finish);
+        tool.add_system_mut(Stage::PreShot, |resources: &mut Resources| {
+            importance_pre_shot(resources);
+            Ok(())
+        });
+        tool.add_system_mut(Stage::PostShot, |resources: &mut Resources| {
+            importance_post_shot(resources);
+            Ok(())
+        });
+        tool.add_system_mut(Stage::Finish, |resources: &mut Resources| {
+            importance_finish(resources);
+            Ok(())
+        });
     }
 }
 

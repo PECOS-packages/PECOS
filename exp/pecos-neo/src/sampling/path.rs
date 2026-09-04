@@ -371,6 +371,42 @@ pub struct PathExplorer<S: CliffordGateable + ForcedMeasurement> {
 }
 
 impl<S: CliffordGateable + ForcedMeasurement> PathExplorer<S> {
+    /// Whether this explorer can execute a well-formed static circuit command.
+    pub(crate) fn supports(command: &GateCommand) -> bool {
+        command.has_valid_shape()
+            && matches!(
+                command.gate_type,
+                GateType::I
+                    | GateType::X
+                    | GateType::Y
+                    | GateType::Z
+                    | GateType::H
+                    | GateType::F
+                    | GateType::Fdg
+                    | GateType::SX
+                    | GateType::SXdg
+                    | GateType::SY
+                    | GateType::SYdg
+                    | GateType::SZ
+                    | GateType::SZdg
+                    | GateType::CX
+                    | GateType::CY
+                    | GateType::CZ
+                    | GateType::SZZ
+                    | GateType::SZZdg
+                    | GateType::SXX
+                    | GateType::SXXdg
+                    | GateType::SYY
+                    | GateType::SYYdg
+                    | GateType::SWAP
+                    | GateType::MZ
+                    | GateType::MeasureLeaked
+                    | GateType::MeasureFree
+                    | GateType::PZ
+                    | GateType::QAlloc
+            )
+    }
+
     /// Create a new path explorer with the given simulator.
     pub fn new(simulator: S) -> Self {
         Self {
@@ -735,6 +771,55 @@ mod tests {
     use super::*;
     use crate::command::CommandBuilder;
     use pecos_simulators::SparseStab;
+
+    fn well_formed_commands(gate_type: GateType) -> Vec<(&'static str, GateCommand)> {
+        let qubits = (0..gate_type.quantum_arity())
+            .map(QubitId)
+            .collect::<Vec<_>>();
+        let angle_arity = gate_type.angle_arity();
+        if angle_arity == 0 {
+            return vec![("no angles", GateCommand::new(gate_type, qubits))];
+        }
+        vec![
+            (
+                "Clifford angles",
+                GateCommand::with_angles(
+                    gate_type,
+                    qubits.clone(),
+                    vec![pecos_core::Angle64::QUARTER_TURN; angle_arity],
+                ),
+            ),
+            (
+                "non-Clifford angles",
+                GateCommand::with_angles(
+                    gate_type,
+                    qubits,
+                    vec![pecos_core::Angle64::from_radians(0.3); angle_arity],
+                ),
+            ),
+        ]
+    }
+
+    #[test]
+    fn supports_agrees_with_executor_for_every_gate_type() {
+        for &gate_type in GateType::ALL {
+            for (angle_case, command) in well_formed_commands(gate_type) {
+                let declared = PathExplorer::<SparseStab>::supports(&command);
+                let executed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    let mut explorer =
+                        PathExplorer::new(SparseStab::with_seed(gate_type.quantum_arity(), 42));
+                    let mut outcomes = MeasurementOutcomes::new();
+                    let mut path = MeasurementPath::new();
+                    explorer.execute_command_recording(&command, &mut outcomes, &mut path);
+                }))
+                .is_ok();
+                assert_eq!(
+                    declared, executed,
+                    "PathExplorer support mismatch for {gate_type:?} with {angle_case}"
+                );
+            }
+        }
+    }
 
     #[test]
     #[should_panic(expected = "PathExplorer cannot execute circuit gate T")]

@@ -73,7 +73,8 @@
 //! println!("P(failure) = {:.2e}", result.probability());
 //! ```
 
-use crate::command::CommandQueue;
+use crate::command::{CommandQueue, GateCommand, GateType};
+use crate::extensible::is_clifford_angle;
 use crate::noise::ComposableNoiseModel;
 use crate::outcome::MeasurementOutcomes;
 use crate::runner::CircuitRunner;
@@ -81,6 +82,59 @@ use crate::sampling::weight::SampleWeight;
 use pecos_random::{PecosRng, resolve_seed};
 use pecos_simulators::{CliffordGateable, SparseStab};
 use rand::RngExt;
+
+/// Whether subset simulation's `CircuitRunner<SparseStab>` can execute a
+/// well-formed static circuit command.
+pub(crate) fn supports(command: &GateCommand) -> bool {
+    if !command.has_valid_shape() {
+        return false;
+    }
+    if matches!(
+        command.gate_type,
+        GateType::I
+            | GateType::X
+            | GateType::Y
+            | GateType::Z
+            | GateType::H
+            | GateType::F
+            | GateType::Fdg
+            | GateType::SX
+            | GateType::SXdg
+            | GateType::SY
+            | GateType::SYdg
+            | GateType::SZ
+            | GateType::SZdg
+            | GateType::CX
+            | GateType::CY
+            | GateType::CZ
+            | GateType::SZZ
+            | GateType::SZZdg
+            | GateType::SXX
+            | GateType::SXXdg
+            | GateType::SYY
+            | GateType::SYYdg
+            | GateType::SWAP
+            | GateType::MZ
+            | GateType::MeasureLeaked
+            | GateType::MeasureFree
+            | GateType::PZ
+            | GateType::QAlloc
+            | GateType::Idle
+    ) {
+        return true;
+    }
+    matches!(
+        command.gate_type,
+        GateType::RX
+            | GateType::RY
+            | GateType::RZ
+            | GateType::RXX
+            | GateType::RYY
+            | GateType::RZZ
+            | GateType::RXY1Q
+            | GateType::U
+    ) && command.angles.iter().copied().all(is_clifford_angle)
+}
 
 /// Configuration for subset simulation.
 #[derive(Debug, Clone)]
@@ -2326,6 +2380,52 @@ pub fn phase_flip_syndrome_circuit() -> CommandQueue {
 #[allow(clippy::float_cmp, clippy::cast_precision_loss)]
 mod tests {
     use super::*;
+
+    fn well_formed_commands(gate_type: GateType) -> Vec<(&'static str, GateCommand)> {
+        let qubits = (0..gate_type.quantum_arity())
+            .map(pecos_core::QubitId)
+            .collect::<Vec<_>>();
+        let angle_arity = gate_type.angle_arity();
+        if angle_arity == 0 {
+            return vec![("no angles", GateCommand::new(gate_type, qubits))];
+        }
+        vec![
+            (
+                "Clifford angles",
+                GateCommand::with_angles(
+                    gate_type,
+                    qubits.clone(),
+                    vec![pecos_core::Angle64::QUARTER_TURN; angle_arity],
+                ),
+            ),
+            (
+                "non-Clifford angles",
+                GateCommand::with_angles(
+                    gate_type,
+                    qubits,
+                    vec![pecos_core::Angle64::from_radians(0.3); angle_arity],
+                ),
+            ),
+        ]
+    }
+
+    #[test]
+    fn supports_agrees_with_executor_for_every_gate_type() {
+        for &gate_type in GateType::ALL {
+            for (angle_case, command) in well_formed_commands(gate_type) {
+                let declared = supports(&command);
+                let circuit = std::iter::once(command).collect();
+                let mut simulator = SparseStab::with_seed(gate_type.quantum_arity(), 42);
+                let executed = CircuitRunner::new()
+                    .apply_circuit(&mut simulator, &circuit)
+                    .is_ok();
+                assert_eq!(
+                    declared, executed,
+                    "SubsetSimulation support mismatch for {gate_type:?} with {angle_case}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn test_subset_config_builder() {

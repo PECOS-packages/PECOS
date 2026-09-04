@@ -16,6 +16,7 @@ use super::Stage;
 use super::plugin::{Plugin, PluginGroup};
 use super::resource::{Resource, Resources};
 use super::system::{IntoSystem, Schedule};
+use pecos_core::errors::PecosError;
 
 /// The core Tool type - a Bevy-inspired application container.
 ///
@@ -35,9 +36,10 @@ use super::system::{IntoSystem, Schedule};
 ///     .add_system(Stage::Startup, |res: &mut Resources| {
 ///         let value = res.get::<u32>();
 ///         println!("Starting with value: {}", value);
+///         Ok(())
 ///     });
 ///
-/// tool.run();
+/// tool.run().unwrap();
 /// ```
 pub struct Tool {
     resources: Resources,
@@ -195,19 +197,26 @@ impl Tool {
     ///
     /// For multi-shot simulation, this runs a single "iteration".
     /// Use `run_shots()` for multiple iterations.
-    pub fn run(&mut self) {
+    ///
+    /// # Errors
+    ///
+    /// Returns the first error produced by a system.
+    pub fn run(&mut self) -> Result<(), PecosError> {
         // Startup runs only once
         if !self.has_run_startup {
-            self.schedule.run_stage(Stage::Startup, &mut self.resources);
+            self.schedule
+                .run_stage(Stage::Startup, &mut self.resources)?;
             self.has_run_startup = true;
         }
 
         // Main execution stages
-        self.schedule.run_stage(Stage::PreShot, &mut self.resources);
-        self.schedule.run_stage(Stage::Execute, &mut self.resources);
         self.schedule
-            .run_stage(Stage::PostShot, &mut self.resources);
-        self.schedule.run_stage(Stage::Finish, &mut self.resources);
+            .run_stage(Stage::PreShot, &mut self.resources)?;
+        self.schedule
+            .run_stage(Stage::Execute, &mut self.resources)?;
+        self.schedule
+            .run_stage(Stage::PostShot, &mut self.resources)?;
+        self.schedule.run_stage(Stage::Finish, &mut self.resources)
     }
 
     /// Run multiple shots.
@@ -219,23 +228,30 @@ impl Tool {
     ///    - `Execute`
     ///    - `PostShot`
     /// 3. `Finish` (once)
-    pub fn run_shots(&mut self, shots: usize) {
+    ///
+    /// # Errors
+    ///
+    /// Returns the first error produced by a system and stops the schedule.
+    pub fn run_shots(&mut self, shots: usize) -> Result<(), PecosError> {
         // Startup runs only once
         if !self.has_run_startup {
-            self.schedule.run_stage(Stage::Startup, &mut self.resources);
+            self.schedule
+                .run_stage(Stage::Startup, &mut self.resources)?;
             self.has_run_startup = true;
         }
 
         // Shot loop
         for _ in 0..shots {
-            self.schedule.run_stage(Stage::PreShot, &mut self.resources);
-            self.schedule.run_stage(Stage::Execute, &mut self.resources);
             self.schedule
-                .run_stage(Stage::PostShot, &mut self.resources);
+                .run_stage(Stage::PreShot, &mut self.resources)?;
+            self.schedule
+                .run_stage(Stage::Execute, &mut self.resources)?;
+            self.schedule
+                .run_stage(Stage::PostShot, &mut self.resources)?;
         }
 
         // Finish runs once at end
-        self.schedule.run_stage(Stage::Finish, &mut self.resources);
+        self.schedule.run_stage(Stage::Finish, &mut self.resources)
     }
 
     /// Run the complete shot loop using the schedule directly on provided resources.
@@ -243,8 +259,12 @@ impl Tool {
     /// Unlike `run_shots()`, this always runs Startup (no `has_run_startup` guard)
     /// and operates on the provided resources rather than the Tool's own resources.
     /// Used by parallel workers that each have their own Resources.
-    pub fn run_shots_on(&self, resources: &mut Resources, shots: usize) {
-        self.schedule.run_shots(resources, shots);
+    ///
+    /// # Errors
+    ///
+    /// Returns the first error produced by a system and stops the schedule.
+    pub fn run_shots_on(&self, resources: &mut Resources, shots: usize) -> Result<(), PecosError> {
+        self.schedule.run_shots(resources, shots)
     }
 
     /// Reset the tool for another run.
@@ -284,12 +304,13 @@ mod tests {
                 .insert_resource(0u32)
                 .add_system(Stage::Execute, |res: &mut Resources| {
                     *res.get_mut::<u32>() += 1;
+                    Ok(())
                 });
 
-        tool.run();
+        tool.run().unwrap();
         assert_eq!(*tool.resource::<u32>(), 1);
 
-        tool.run();
+        tool.run().unwrap();
         assert_eq!(*tool.resource::<u32>(), 2);
     }
 
@@ -299,13 +320,15 @@ mod tests {
             .insert_resource(Vec::<&str>::new())
             .add_system(Stage::Startup, |res: &mut Resources| {
                 res.get_mut::<Vec<&str>>().push("startup");
+                Ok(())
             })
             .add_system(Stage::Execute, |res: &mut Resources| {
                 res.get_mut::<Vec<&str>>().push("execute");
+                Ok(())
             });
 
-        tool.run();
-        tool.run();
+        tool.run().unwrap();
+        tool.run().unwrap();
 
         // Startup should only appear once
         assert_eq!(
@@ -321,9 +344,10 @@ mod tests {
                 .insert_resource(0u32)
                 .add_system(Stage::PreShot, |res: &mut Resources| {
                     *res.get_mut::<u32>() += 1;
+                    Ok(())
                 });
 
-        tool.run_shots(5);
+        tool.run_shots(5).unwrap();
         assert_eq!(*tool.resource::<u32>(), 5);
     }
 
@@ -333,21 +357,26 @@ mod tests {
             .insert_resource(Vec::<&str>::new())
             .add_system(Stage::Startup, |res: &mut Resources| {
                 res.get_mut::<Vec<&str>>().push("startup");
+                Ok(())
             })
             .add_system(Stage::PreShot, |res: &mut Resources| {
                 res.get_mut::<Vec<&str>>().push("pre_shot");
+                Ok(())
             })
             .add_system(Stage::Execute, |res: &mut Resources| {
                 res.get_mut::<Vec<&str>>().push("execute");
+                Ok(())
             })
             .add_system(Stage::PostShot, |res: &mut Resources| {
                 res.get_mut::<Vec<&str>>().push("post_shot");
+                Ok(())
             })
             .add_system(Stage::Finish, |res: &mut Resources| {
                 res.get_mut::<Vec<&str>>().push("finish");
+                Ok(())
             });
 
-        tool.run();
+        tool.run().unwrap();
 
         assert_eq!(
             *tool.resource::<Vec<&str>>(),

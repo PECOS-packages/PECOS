@@ -164,7 +164,7 @@ jobs:
 
       - name: Run clippy without LLVM features
         run: |
-          for crate in pecos-core pecos-engines pecos-simulators pecos-programs pecos-random pecos-qasm pecos-phir-json pecos-qis-ffi-types; do
+          for crate in pecos-core pecos-engines pecos-simulators pecos-programs pecos-random pecos-qasm pecos-phir-json pecos-qis-ffi-types pecos-decoders; do
             echo "Testing $crate..."
             cd "crates/$crate" && cargo clippy --locked --all-targets -- -D warnings && cd ../..
           done

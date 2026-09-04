@@ -1432,10 +1432,23 @@ mod tests {
 
     const DEM: &str = "error(0.1) D0 D1 L0\nerror(0.05) D1\n";
 
+    // The wide-observable helpers below serve only feature-gated tests, so
+    // they carry the union of their users' gates; a default-feature build
+    // would otherwise see dead code.
+    #[cfg(any(
+        feature = "pymatching",
+        feature = "ldpc",
+        feature = "relay-bp",
+        feature = "tesseract",
+        feature = "fusion-blossom",
+        feature = "uf",
+        feature = "mwpf"
+    ))]
     fn width_dem(highest_observable: usize) -> String {
         format!("error(0.1) D0 L{highest_observable}\ndetector(0, 0, 0) D0\n")
     }
 
+    #[cfg(any(feature = "pymatching", feature = "ldpc", feature = "relay-bp"))]
     fn assert_wide_correct(spec: &DecoderSpec) {
         for observable in [63, 64] {
             let mut decoder = spec
@@ -1449,6 +1462,12 @@ mod tests {
         }
     }
 
+    #[cfg(any(
+        feature = "tesseract",
+        feature = "fusion-blossom",
+        feature = "uf",
+        feature = "mwpf"
+    ))]
     fn assert_64_then_65_rejected(spec: &DecoderSpec) {
         let mut decoder = spec
             .clone()

@@ -166,7 +166,12 @@ where
             .fraction
             .to_u128()
             .expect("Failed to convert fraction to u128");
-        let signed_half = fraction / 2 + if fraction > half_turn { half_turn } else { 0 };
+        let signed_half = fraction / 2
+            + if self.uses_negative_signed_representative() {
+                half_turn
+            } else {
+                0
+            };
         Self::new(
             T::from_u128(signed_half).expect("Failed to convert signed half to angle fraction"),
         )
@@ -800,6 +805,14 @@ mod tests {
                     negative.signed_half().fraction(),
                     negative.fraction() / 2 + half_turn
                 );
+
+                // Exactly a half turn is the POSITIVE representative (+pi), so it
+                // halves to +pi/2. This is the boundary the signed rule turns on:
+                // treating it as negative yields -pi/2, the sign flip this helper
+                // exists to prevent. The expectation is stated directly rather than
+                // re-derived from the implementation's own comparison.
+                let boundary = <$angle>::new(half_turn);
+                assert_eq!(boundary.signed_half().fraction(), half_turn / 2);
             }};
         }
 

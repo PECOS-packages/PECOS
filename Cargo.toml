@@ -297,6 +297,9 @@ clone_on_copy = "allow" # `cxx::bridge` derives `Clone` for its generated FFI st
 # statistical validation tests (e.g. the surface-code LER equivalence
 # gate) need tens of thousands of simulated shots and are unusably slow
 # unoptimized (>10 min vs ~2 min). Debug assertions remain enabled.
+# pecos-stab-tn is on the list for the same reason: its unit tests take
+# 159 s unoptimized and 6 s at opt-level 2 (measured 2026-09-04), and they
+# were the second-largest share of the PR gate's Rust test time.
 [profile.dev.package.pecos-core]
 opt-level = 2
 [profile.dev.package.pecos-random]
@@ -314,6 +317,8 @@ opt-level = 2
 [profile.dev.package.pecos-fusion-blossom]
 opt-level = 2
 [profile.dev.package.fusion-blossom]
+opt-level = 2
+[profile.dev.package.pecos-stab-tn]
 opt-level = 2
 
 # batsat's solver core is tested and shipped by upstream with release arithmetic;

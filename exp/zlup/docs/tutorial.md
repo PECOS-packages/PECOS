@@ -136,7 +136,7 @@ ry(1/4 turns) q[0];              // Rotate by 1/4 turn (pi/2 rad) around Y
 rz(1/2 turns) q[0];              // Rotate by 1/2 turn (pi rad) around Z
 
 // Or use a64 constants
-rz(std.a64.t_angle turns) q[0];  // T-gate (1/8 turn)
+rz(std.a64.t_angle) q[0];        // T-gate (1/8 turn)
 
 // Or use radians with f64 constants
 rx(std.f64.pi/4 rad) q[0];       // Same as 1/8 turns
@@ -353,8 +353,8 @@ pub fn main() -> unit {
     q := qalloc(8);
     pz q;
 
-    // Apply rotation (using turns)
-    rz(angle turns) q[0];
+    // Apply the angle; its a64 type carries the unit.
+    rz(angle) q[0];
 
     // Measure and compute parity
     syndrome: u8 = mz(pack u8) [q[0], q[1], q[2], q[3], q[4], q[5], q[6], q[7]];

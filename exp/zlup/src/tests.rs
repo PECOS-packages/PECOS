@@ -967,7 +967,7 @@ fn test_batch_apply() {
         r#"
         fn main() -> unit {
             mut q := qalloc(4);
-            rz(pi/4) { q[0], q[1] };
+            rz((pi / 4) rad) { q[0], q[1] };
         }
         "#
     );

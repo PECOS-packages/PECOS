@@ -78,8 +78,8 @@ Angle constants in turns (the native unit for a64). All values are exact in the 
 std := @import("std");
 
 // Preferred: use a64 constants with turns unit
-rz(std.a64.t_angle turns) q[0];       // T-gate
-rz(std.a64.quarter_turn turns) q[0];  // S-gate
+rz(std.a64.t_angle) q[0];             // T-gate
+rz(std.a64.quarter_turn) q[0];        // S-gate
 
 // Or use f64.pi with rad unit
 rz(std.f64.pi/4 rad) q[0];            // Also T-gate

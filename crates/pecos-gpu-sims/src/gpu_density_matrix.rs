@@ -1071,6 +1071,11 @@ mod tests {
     }
 
     impl CliffordGateable for RoundedF32StateVec {
+        fn apply_global_phase(&mut self, phase: Angle64, qubits: &[QubitId]) -> &mut Self {
+            self.0.apply_global_phase(phase, qubits);
+            self
+        }
+
         fn x(&mut self, qubits: &[QubitId]) -> &mut Self {
             self.0.x(qubits);
             self

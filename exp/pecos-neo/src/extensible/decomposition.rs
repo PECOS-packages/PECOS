@@ -145,9 +145,7 @@ impl AngleSource {
             Self::Input(idx) => input_angles[idx as usize],
             Self::Fixed(a) => a,
             Self::NegInput(idx) => -input_angles[idx as usize],
-            Self::HalfInput(idx) => {
-                Angle64::from_radians(input_angles[idx as usize].to_radians_signed() / 2.0)
-            }
+            Self::HalfInput(idx) => input_angles[idx as usize].signed_half(),
         }
     }
 }
@@ -878,6 +876,7 @@ macro_rules! requires {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rand::RngExt;
 
     #[test]
     fn test_decomposition_registry_new() {
@@ -1078,11 +1077,29 @@ mod tests {
     #[test]
     fn test_angle_source_half_input() {
         let src = AngleSource::HalfInput(0);
-        for (input, expected) in [
-            (Angle64::QUARTER_TURN, Angle64::QUARTER_TURN / 2_u64),
-            (-Angle64::QUARTER_TURN, -(Angle64::QUARTER_TURN / 2_u64)),
+        for input in [
+            Angle64::QUARTER_TURN,
+            -Angle64::QUARTER_TURN,
+            Angle64::new(0x1234_5678_9abc_def0),
+            Angle64::new(Angle64::HALF_TURN.fraction() + 2),
+            Angle64::new(u64::MAX - 1),
         ] {
+            let fraction = input.fraction();
+            let unsigned_half = fraction / 2;
+            let expected = if fraction > Angle64::HALF_TURN.fraction() {
+                Angle64::new(unsigned_half + Angle64::HALF_TURN.fraction())
+            } else {
+                Angle64::new(unsigned_half)
+            };
             assert_eq!(src.resolve(&[input]), expected);
+        }
+
+        let mut rng = rand::rng();
+        for _ in 0..20_000 {
+            // Even fractions have an exactly representable half, so doubling must
+            // recover every bit of the input rather than round-tripping through f64.
+            let input = Angle64::new(rng.random::<u64>() & !1);
+            assert_eq!(src.resolve(&[input]) * 2_u64, input);
         }
     }
 

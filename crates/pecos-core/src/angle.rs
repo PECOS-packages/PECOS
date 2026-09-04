@@ -148,6 +148,30 @@ where
         }
     }
 
+    /// Halves the signed principal-value representative in fixed-point arithmetic.
+    ///
+    /// Unlike scalar division, angles strictly above a half turn are first interpreted
+    /// as negative. Keeping the calculation in the underlying integer width avoids the
+    /// precision loss of a round trip through `f64`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the underlying unsigned integer cannot be converted to or from `u128`.
+    #[inline]
+    #[must_use]
+    pub fn signed_half(&self) -> Self {
+        let bit_count = std::mem::size_of::<T>() * 8;
+        let half_turn = 1_u128 << (bit_count - 1);
+        let fraction = self
+            .fraction
+            .to_u128()
+            .expect("Failed to convert fraction to u128");
+        let signed_half = fraction / 2 + if fraction > half_turn { half_turn } else { 0 };
+        Self::new(
+            T::from_u128(signed_half).expect("Failed to convert signed half to angle fraction"),
+        )
+    }
+
     /// Whether the stored fraction lies strictly above the positive half-turn boundary.
     fn uses_negative_signed_representative(&self) -> bool {
         let bit_count = std::mem::size_of::<T>() * 8;
@@ -761,6 +785,29 @@ mod tests {
         // round-trip turns.
         let b = Angle64::from_turns(0.3);
         assert!((b.to_turns() - 0.3).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_signed_half_uses_the_underlying_integer_width() {
+        macro_rules! check_width {
+            ($angle:ty, $integer:ty) => {{
+                let half_turn: $integer = 1 << (<$integer>::BITS - 1);
+                let positive = <$angle>::new(half_turn / 2 + 2);
+                assert_eq!(positive.signed_half().fraction(), positive.fraction() / 2);
+
+                let negative = <$angle>::new(half_turn + 2);
+                assert_eq!(
+                    negative.signed_half().fraction(),
+                    negative.fraction() / 2 + half_turn
+                );
+            }};
+        }
+
+        check_width!(Angle8, u8);
+        check_width!(Angle16, u16);
+        check_width!(Angle32, u32);
+        check_width!(Angle64, u64);
+        check_width!(Angle128, u128);
     }
 
     // Basic Construction and Properties

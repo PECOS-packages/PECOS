@@ -3951,6 +3951,8 @@ where
             let q1 = qa.index();
             let q2 = qb.index();
 
+            self.flush_two_qubit(q1, q2);
+
             let n = self.real.len();
             let (q_lo, q_hi) = if q1 < q2 { (q1, q2) } else { (q2, q1) };
 
@@ -3967,8 +3969,8 @@ where
                         let mut offset = 0;
                         while offset + 4 <= step_lo {
                             let idx_00 = i_lo + offset;
-                            let idx_01 = idx_00 | mask2;
-                            let idx_10 = idx_00 | mask1;
+                            let idx_01 = idx_00 | mask1;
+                            let idx_10 = idx_00 | mask2;
                             let idx_11 = idx_00 | mask1 | mask2;
 
                             let re_00 = f64x4::from(&self.real[idx_00..idx_00 + 4]);
@@ -4024,8 +4026,8 @@ where
                         for offset in 0..step_lo {
                             let base = i_lo + offset;
                             let idx_00 = base & !(mask1 | mask2);
-                            let idx_01 = idx_00 | mask2;
-                            let idx_10 = idx_00 | mask1;
+                            let idx_01 = idx_00 | mask1;
+                            let idx_10 = idx_00 | mask2;
                             let idx_11 = idx_00 | mask1 | mask2;
 
                             // Skip if we've already processed this quartet

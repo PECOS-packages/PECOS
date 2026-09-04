@@ -236,7 +236,7 @@ impl Reference {
 struct ReferenceOutcome {
     converged: bool,
     correction: Vec<u8>,
-    weight: f64,
+    weight: Option<f64>,
     posterior: Vec<f64>,
     legs_converged: Vec<bool>,
     legs_iterations: Vec<usize>,
@@ -283,11 +283,10 @@ fn reference_relay(
         leg += 1;
     }
     let (converged, correction, weight) = if let Some((w, e)) = best {
-        (true, e, w)
+        (true, e, Some(w))
     } else {
         let e = r.hard_decision();
-        let w = r.weight(&e);
-        (false, e, w)
+        (false, e, None)
     };
     ReferenceOutcome {
         converged,
@@ -414,8 +413,8 @@ fn check_against_reference(
                 "correction ({dem:?}, {syndrome:?})"
             );
             assert_eq!(
-                got.weight.to_bits(),
-                expected.weight.to_bits(),
+                got.weight.map(f64::to_bits),
+                expected.weight.map(f64::to_bits),
                 "weight ({dem:?}, {syndrome:?})"
             );
             assert_eq!(

@@ -24,10 +24,6 @@ use crate::{BpGraph, LLR_SATURATION};
 use pecos_decoder_core::errors::DecoderError;
 use pecos_random::PecosRng;
 
-const GOLDEN_RATIO_64: u64 = 0x9E37_79B9_7F4A_7C15;
-const MURMUR3_MIX_1: u64 = 0xFF51_AFD7_ED55_8CCD;
-const MURMUR3_MIX_2: u64 = 0xC4CE_B9FE_1A85_EC53;
-
 /// Message-passing update schedule used within each Relay-BP leg.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Schedule {
@@ -48,7 +44,7 @@ pub struct RelayConfig {
     pub gamma0: f64,
     /// Maximum number of iterations in leg zero.
     pub pre_iterations: usize,
-    /// Number of relayed legs after leg zero.
+    /// Number of relayed legs after leg zero; must be less than [`usize::MAX`].
     pub num_legs: usize,
     /// Maximum number of iterations in each relayed leg.
     pub leg_iterations: usize,
@@ -113,8 +109,8 @@ pub struct RelayOutcome {
     pub converged: bool,
     /// Minimum-cost converged correction, or the final hard decision.
     pub correction: Vec<u8>,
-    /// Signed prior-LLR cost of `correction`; lower is more likely.
-    pub weight: f64,
+    /// Signed prior-LLR cost, present only when `correction` converged.
+    pub weight: Option<f64>,
     /// Posterior at the end of the last executed leg.
     pub posterior: Vec<f64>,
     /// Outcomes of the executed legs, beginning with leg zero.
@@ -168,8 +164,8 @@ impl RelayBp {
     /// Decode one syndrome with a deterministic, per-shot gamma stream.
     ///
     /// Relayed leg `r` samples its gammas from a fresh [`PecosRng`] seeded by
-    /// an avalanche mix of `(shot_seed, r)`. Consequently no RNG or message
-    /// state is shared between shots.
+    /// the combined `(shot_seed, r)` pair. `PecosRng` expands that seed with
+    /// `SplitMix64`, and no RNG or message state is shared between shots.
     ///
     /// # Errors
     ///
@@ -253,9 +249,9 @@ impl RelayBp {
 
         let converged = best_weight.is_some();
         let (correction, weight) = if let Some(weight) = best_weight {
-            (self.best_correction.clone(), weight)
+            (self.best_correction.clone(), Some(weight))
         } else {
-            (self.hard_decision.clone(), self.correction_weight())
+            (self.hard_decision.clone(), None)
         };
 
         Ok(RelayOutcome {
@@ -418,6 +414,11 @@ fn validate_config(graph: &BpGraph, config: &RelayConfig) -> Result<(), DecoderE
             "Relay-BP pre_iterations must be at least one".into(),
         ));
     }
+    if config.num_legs == usize::MAX {
+        return Err(DecoderError::InvalidConfiguration(
+            "Relay-BP num_legs must be less than usize::MAX".into(),
+        ));
+    }
     if config.num_legs > 0 && config.leg_iterations == 0 {
         return Err(DecoderError::InvalidConfiguration(
             "Relay-BP leg_iterations must be at least one when num_legs is nonzero".into(),
@@ -513,16 +514,11 @@ fn update_check(
     }
 }
 
-/// Avalanche the shot/leg tuple before seeding the per-leg RNG.
+/// Combine the shot and one-based leg indices before `PecosRng` applies its
+/// own `SplitMix64` seed expansion.
 fn leg_seed(shot_seed: u64, leg: usize) -> u64 {
     let leg = u64::try_from(leg).expect("relay leg index does not fit in u64");
-    let mut z = shot_seed ^ leg.wrapping_add(1).wrapping_mul(GOLDEN_RATIO_64);
-    z ^= z >> 33;
-    z = z.wrapping_mul(MURMUR3_MIX_1);
-    z ^= z >> 33;
-    z = z.wrapping_mul(MURMUR3_MIX_2);
-    z ^= z >> 33;
-    z
+    shot_seed ^ leg.wrapping_add(1)
 }
 
 fn update_variable_flooding(
@@ -565,7 +561,7 @@ fn update_variable_serial(
 
 #[cfg(test)]
 mod tests {
-    use super::{RelayBp, RelayConfig, Schedule, leg_seed};
+    use super::{RelayBp, RelayConfig, Schedule, leg_seed, message_sign};
     use crate::{BpGraph, LLR_SATURATION};
     use pecos_decoder_core::dem::DemCheckMatrix;
     use pecos_decoder_core::errors::DecoderError;
@@ -591,7 +587,7 @@ mod tests {
     }
 
     #[test]
-    fn degree_one_checks_use_finite_certainty_messages() {
+    fn degree_one_checks_send_saturated_not_maximum_messages() {
         for schedule in [Schedule::Flooding, Schedule::CheckSerial] {
             let mut decoder =
                 RelayBp::new(degree_one_graph(), one_iteration_config(schedule)).unwrap();
@@ -600,8 +596,38 @@ mod tests {
             assert!(outcome.converged);
             assert_eq!(outcome.correction, vec![1]);
             assert!(outcome.posterior.iter().all(|value| value.is_finite()));
+            assert!(decoder.c_to_v[0].is_finite());
             assert_eq!(decoder.c_to_v[0].to_bits(), (-LLR_SATURATION).to_bits());
         }
+    }
+
+    #[test]
+    fn zero_posterior_has_zero_hard_decision() {
+        let dcm = DemCheckMatrix::from_dem_str("error(0) D0\n").unwrap();
+        let graph = BpGraph::from_dcm(&dcm);
+
+        for schedule in [Schedule::Flooding, Schedule::CheckSerial] {
+            let mut decoder = RelayBp::new(graph.clone(), one_iteration_config(schedule)).unwrap();
+            let outcome = decoder.decode(&[1], 0).unwrap();
+
+            assert_eq!(outcome.posterior[0].to_bits(), 0.0_f64.to_bits());
+            assert!(!outcome.converged);
+            assert_eq!(outcome.correction, vec![0]);
+            assert_eq!(outcome.weight, None);
+        }
+    }
+
+    #[test]
+    fn negative_zero_message_has_positive_sign() {
+        let alpha = 1.0;
+        let negative_sign = -1.0;
+        let zero_magnitude = 0.0;
+        let reachable_negative_zero: f64 = alpha * negative_sign * zero_magnitude;
+        assert_eq!(reachable_negative_zero.to_bits(), (-0.0_f64).to_bits());
+        assert_eq!(
+            message_sign(reachable_negative_zero).to_bits(),
+            1.0_f64.to_bits()
+        );
     }
 
     #[test]
@@ -632,8 +658,72 @@ mod tests {
             assert_eq!(correction[0] ^ correction[1], 1);
         }
         assert_eq!(outcome.correction, vec![0, 1]);
-        assert_eq!(outcome.weight.to_bits(), high_probability_cost.to_bits());
-        assert!(outcome.legs[0].weight < outcome.legs[1].weight);
+        assert_eq!(
+            outcome.weight.unwrap().to_bits(),
+            high_probability_cost.to_bits()
+        );
+        assert!(outcome.legs[0].weight.unwrap() < outcome.legs[1].weight.unwrap());
+    }
+
+    #[test]
+    fn failed_relay_returns_the_last_legs_hard_decision_without_a_weight() {
+        let dcm = DemCheckMatrix::from_dem_str("error(0.1) D0 D1\nerror(0.4) D1\n").unwrap();
+        let config = RelayConfig {
+            schedule: Schedule::Flooding,
+            alpha: 1.0,
+            gamma0: 0.0,
+            pre_iterations: 1,
+            num_legs: 1,
+            leg_iterations: 1,
+            gamma_range: (-2.0, 1.0),
+            stop_after_converged: usize::MAX,
+            explicit_gammas: Some(vec![vec![-2.0, 1.0]]),
+        };
+        let mut decoder = RelayBp::new(BpGraph::from_dcm(&dcm), config).unwrap();
+
+        let outcome = decoder.decode(&[1, 0], 0).unwrap();
+
+        assert_eq!(outcome.legs.len(), 2);
+        assert!(outcome.legs.iter().all(|leg| !leg.converged));
+        assert_eq!(outcome.correction, vec![0, 0]);
+        assert_eq!(
+            outcome
+                .posterior
+                .iter()
+                .map(|p| u8::from(*p < 0.0))
+                .collect::<Vec<_>>(),
+            vec![0, 0]
+        );
+        assert_eq!(outcome.weight, None);
+    }
+
+    #[test]
+    fn relay_ranking_uses_saturated_prior_costs() {
+        let dcm = DemCheckMatrix::from_dem_str("error(1e-300) D0\nerror(9.3e-14) D0\n").unwrap();
+        let graph = BpGraph::from_dcm(&dcm);
+        assert_eq!(graph.prior_llrs(), &[LLR_SATURATION, LLR_SATURATION]);
+        let config = RelayConfig {
+            schedule: Schedule::Flooding,
+            alpha: 1.0,
+            gamma0: 0.0,
+            pre_iterations: 1,
+            num_legs: 2,
+            leg_iterations: 1,
+            gamma_range: (-1.0, 2.0),
+            stop_after_converged: usize::MAX,
+            explicit_gammas: Some(vec![vec![0.5, -0.5], vec![-1.0, 2.0]]),
+        };
+        let mut decoder = RelayBp::new(graph, config).unwrap();
+
+        let outcome = decoder.decode(&[1], 0).unwrap();
+
+        assert_eq!(outcome.legs[0].correction, None);
+        assert_eq!(outcome.legs[1].correction, Some(vec![1, 0]));
+        assert_eq!(outcome.legs[2].correction, Some(vec![0, 1]));
+        assert_eq!(outcome.legs[1].weight, Some(LLR_SATURATION));
+        assert_eq!(outcome.legs[2].weight, Some(LLR_SATURATION));
+        assert_eq!(outcome.correction, vec![1, 0]);
+        assert_eq!(outcome.weight, Some(LLR_SATURATION));
     }
 
     #[test]
@@ -660,6 +750,18 @@ mod tests {
     }
 
     #[test]
+    fn validation_rejects_unbounded_leg_count() {
+        let mut config = one_iteration_config(Schedule::Flooding);
+        config.num_legs = usize::MAX;
+        config.leg_iterations = 1;
+        assert!(matches!(
+            RelayBp::new(degree_one_graph(), config),
+            Err(DecoderError::InvalidConfiguration(message))
+                if message.contains("num_legs")
+        ));
+    }
+
+    #[test]
     fn non_binary_syndrome_is_rejected_before_state_mutation() {
         let mut decoder =
             RelayBp::new(degree_one_graph(), one_iteration_config(Schedule::Flooding)).unwrap();
@@ -671,12 +773,13 @@ mod tests {
     }
 
     #[test]
-    fn leg_gamma_streams_are_avalanched() {
+    fn leg_gamma_streams_depend_on_the_shot_and_leg() {
         fn gamma_bits(shot_seed: u64, leg: usize) -> [u64; 8] {
             let mut rng = PecosRng::seed_from_u64(leg_seed(shot_seed, leg));
             std::array::from_fn(|_| (-0.24 + (0.66 - -0.24) * rng.next_f64()).to_bits())
         }
 
+        assert_eq!(leg_seed(0x1234_5678_9abc_def0, 7), 0x1234_5678_9abc_def8);
         let mut shot_zero_leg_one = None;
         let mut shot_one_leg_one = None;
         for shot_seed in [0, 1, u64::MAX] {

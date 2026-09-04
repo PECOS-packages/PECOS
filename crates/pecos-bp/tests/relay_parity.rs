@@ -18,10 +18,10 @@
 //! memory term, and the relay structure, but not floating-point summation
 //! order, so per-shot agreement is high but not bitwise. Three contracts:
 //!
-//! 1. Leg 0 only (no randomness on either side), at iteration budgets small
-//!    enough that some shots fail: per-shot convergence flags and corrections
-//!    must agree on almost every shot, and at least one budget must sit in a
-//!    mixed regime so the comparison discriminates.
+//! 1. Leg 0 only (`num_legs`/`num_sets` are both zero, so no relay gamma is
+//!    sampled), at iteration budgets where both successes and failures occur:
+//!    per-shot convergence flags and corrections must agree on almost every
+//!    shot.
 //! 2. Relayed legs with one explicit gamma vector shared by both decoders:
 //!    the same per-shot agreement, now exercising the memory term with
 //!    signed gammas and the warm start.
@@ -176,8 +176,7 @@ fn leg_zero_agrees_per_shot_across_iteration_budgets() {
     let (dcm, shots) = load_fixture();
     let graph = BpGraph::from_dcm(&dcm);
     let gamma0 = 0.1;
-    let mut mixed_regime_seen = false;
-    for pre_iterations in [2, 4, 8, 16] {
+    for pre_iterations in [8, 16] {
         let cfg = RelayConfig {
             schedule: Schedule::Flooding,
             alpha: 1.0,
@@ -195,7 +194,7 @@ fn leg_zero_agrees_per_shot_across_iteration_budgets() {
             .alpha(Some(1.0))
             .gamma0(Some(gamma0))
             .pre_iter(pre_iterations)
-            .num_sets(1)
+            .num_sets(0)
             .set_max_iter(1)
             .stopping_criterion(StoppingCriterion::PreIter)
             .seed(7)
@@ -205,14 +204,19 @@ fn leg_zero_agrees_per_shot_across_iteration_budgets() {
         let t = compare(&dcm, &shots, &mut native, &mut external);
         assert_per_shot_agreement(&t, &format!("pre_iterations={pre_iterations}"));
         assert!(t.native_legs_ran.iter().all(|&legs| legs == 1));
-        if (5..=95).contains(&t.native_converged) {
-            mixed_regime_seen = true;
-        }
+        assert!(
+            (1..SHOTS).contains(&t.native_converged),
+            "pre_iterations={pre_iterations}: native comparison is degenerate"
+        );
+        assert!(
+            (1..SHOTS).contains(&t.external_converged),
+            "pre_iterations={pre_iterations}: external comparison is degenerate"
+        );
+        assert!(
+            t.external_max_iterations <= pre_iterations,
+            "pre_iterations={pre_iterations}: external decoder ran a relay leg"
+        );
     }
-    assert!(
-        mixed_regime_seen,
-        "no iteration budget produced a mixed success regime"
-    );
 }
 
 fn shared_explicit_gamma_case(rows: Vec<Vec<f64>>, label: &str) {
@@ -340,7 +344,7 @@ fn full_operating_point_smoke() {
         .build()
         .unwrap();
     let t = compare(&dcm, &shots, &mut native, &mut external);
-    assert!(t.native_converged + 5 >= t.external_converged);
+    assert_eq!(t.native_converged, SHOTS);
+    assert_eq!(t.external_converged, SHOTS);
     assert!(t.native_errors <= t.external_errors + 5);
-    assert!(t.native_converged >= 80);
 }

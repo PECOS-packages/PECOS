@@ -1131,9 +1131,8 @@ impl<R: Rng> SparseStateVecSoA<R> {
 
     /// Apply SZZ diagonal phase gate in-place.
     ///
-    /// SZZ = diag(e^{-iπ/4}, e^{iπ/4}, e^{iπ/4}, e^{-iπ/4}).
-    /// Same parity (both bits equal) → multiply by e^{-iπ/4} = (1-i)/√2.
-    /// Different parity → multiply by e^{iπ/4} = (1+i)/√2.
+    /// SZZ = diag(1, i, i, 1). Same-parity amplitudes are unchanged;
+    /// different-parity amplitudes are multiplied by i.
     /// No index changes; pure O(k) phase application.
     fn apply_szz_gate(&mut self, q1: usize, q2: usize) {
         let mask1 = 1usize << q1;
@@ -1152,29 +1151,21 @@ impl<R: Rng> SparseStateVecSoA<R> {
                 &mut self.imag_b[..len],
             )
         };
-        let c = std::f64::consts::FRAC_1_SQRT_2;
         for i in 0..len {
             let bit1 = (indices[i] & mask1) != 0;
             let bit2 = (indices[i] & mask2) != 0;
-            let r = real[i];
-            let im = imag[i];
-            if bit1 == bit2 {
-                // Same parity: e^{-iπ/4} = (1-i)/√2
-                real[i] = (r + im) * c;
-                imag[i] = (im - r) * c;
-            } else {
-                // Different parity: e^{iπ/4} = (1+i)/√2
-                real[i] = (r - im) * c;
-                imag[i] = (im + r) * c;
+            if bit1 != bit2 {
+                let r = real[i];
+                real[i] = -imag[i];
+                imag[i] = r;
             }
         }
     }
 
     /// Apply `SZZdg` diagonal phase gate in-place.
     ///
-    /// `SZZdg` = diag(e^{iπ/4}, e^{-iπ/4}, e^{-iπ/4}, e^{iπ/4}).
-    /// Same parity → multiply by e^{iπ/4} = (1+i)/√2.
-    /// Different parity → multiply by e^{-iπ/4} = (1-i)/√2.
+    /// `SZZdg` = diag(1, -i, -i, 1). Same-parity amplitudes are unchanged;
+    /// different-parity amplitudes are multiplied by -i.
     fn apply_szzdg_gate(&mut self, q1: usize, q2: usize) {
         let mask1 = 1usize << q1;
         let mask2 = 1usize << q2;
@@ -1192,20 +1183,13 @@ impl<R: Rng> SparseStateVecSoA<R> {
                 &mut self.imag_b[..len],
             )
         };
-        let c = std::f64::consts::FRAC_1_SQRT_2;
         for i in 0..len {
             let bit1 = (indices[i] & mask1) != 0;
             let bit2 = (indices[i] & mask2) != 0;
-            let r = real[i];
-            let im = imag[i];
-            if bit1 == bit2 {
-                // Same parity: e^{iπ/4} = (1+i)/√2
-                real[i] = (r - im) * c;
-                imag[i] = (im + r) * c;
-            } else {
-                // Different parity: e^{-iπ/4} = (1-i)/√2
-                real[i] = (r + im) * c;
-                imag[i] = (im - r) * c;
+            if bit1 != bit2 {
+                let r = real[i];
+                real[i] = imag[i];
+                imag[i] = -r;
             }
         }
     }
@@ -2330,7 +2314,6 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
                 }
             }
             // Batched physical SZZ: single pass, combined parity phase
-            let n_pairs = pairs.len();
             let len = self.len;
             let (indices, real, imag) = if self.active_a {
                 (
@@ -2356,18 +2339,23 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
                         n_diff += 1;
                     }
                 }
-                // Phase index = (2*n_diff - n_pairs) mod 8
-                // n_diff different-parity pairs contribute e^{iπ/4} each,
-                // (n_pairs - n_diff) same-parity pairs contribute e^{-iπ/4} each.
-                #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
-                // n_diff and n_pairs are small counts
-                let k = ((2 * n_diff as i32 - n_pairs as i32).rem_euclid(8)) as usize;
-                if k != 0 {
-                    let [cos_k, sin_k] = PHASE_ROOTS[k];
-                    let r = real[i];
-                    let im = imag[i];
-                    real[i] = r * cos_k - im * sin_k;
-                    imag[i] = r * sin_k + im * cos_k;
+                let r = real[i];
+                let im = imag[i];
+                match n_diff % 4 {
+                    0 => {}
+                    1 => {
+                        real[i] = -im;
+                        imag[i] = r;
+                    }
+                    2 => {
+                        real[i] = -r;
+                        imag[i] = -im;
+                    }
+                    3 => {
+                        real[i] = im;
+                        imag[i] = -r;
+                    }
+                    _ => unreachable!(),
                 }
             }
         }
@@ -2408,7 +2396,6 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
                 }
             }
             // Batched physical SZZdg: single pass, conjugated parity phase
-            let n_pairs = pairs.len();
             let len = self.len;
             let (indices, real, imag) = if self.active_a {
                 (
@@ -2434,18 +2421,23 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
                         n_diff += 1;
                     }
                 }
-                // SZZdg: conjugated phase = (8 - szz_phase) % 8
-                // SZZ phase = (2*n_diff - n_pairs) mod 8
-                // SZZdg phase = (n_pairs - 2*n_diff) mod 8
-                #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
-                // n_pairs and n_diff are small counts
-                let k = ((n_pairs as i32 - 2 * n_diff as i32).rem_euclid(8)) as usize;
-                if k != 0 {
-                    let [cos_k, sin_k] = PHASE_ROOTS[k];
-                    let r = real[i];
-                    let im = imag[i];
-                    real[i] = r * cos_k - im * sin_k;
-                    imag[i] = r * sin_k + im * cos_k;
+                let r = real[i];
+                let im = imag[i];
+                match n_diff % 4 {
+                    0 => {}
+                    1 => {
+                        real[i] = im;
+                        imag[i] = -r;
+                    }
+                    2 => {
+                        real[i] = -r;
+                        imag[i] = -im;
+                    }
+                    3 => {
+                        real[i] = -im;
+                        imag[i] = r;
+                    }
+                    _ => unreachable!(),
                 }
             }
         }

@@ -9,6 +9,12 @@ env:
   RUST_BACKTRACE: 1
   LLVM_VERSION: "21.1"
   LLVM_RELEASE_VERSION: "21.1.8"
+  # Same cargo network settings as python-test.yml / pr-core-gate.yml. Beyond
+  # robustness, rust-cache hashes these values into its key, so the rust-test
+  # cache is only restorable by pr-core-rust if the sets match exactly.
+  CARGO_HTTP_MULTIPLEXING: "false"
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  CARGO_NET_RETRY: "10"
 
 on:
   workflow_dispatch:
@@ -253,6 +259,9 @@ jobs:
           cache-bin: false
           prefix-key: v1-rust-no-bin
           save-if: ${{ github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev') }}
+          # The cache saved here is what pr-core-rust (pr-core-gate.yml)
+          # restores on every PR.
+          shared-key: rust-test
 
       - name: Cache LLVM ${{ env.LLVM_VERSION }}
         if: github.event_name != 'pull_request' || matrix.os == 'ubuntu-latest'

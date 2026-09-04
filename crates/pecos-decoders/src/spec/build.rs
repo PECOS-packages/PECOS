@@ -1441,7 +1441,8 @@ mod tests {
         feature = "relay-bp",
         feature = "tesseract",
         feature = "fusion-blossom",
-        feature = "uf"
+        feature = "uf",
+        feature = "mwpf"
     ))]
     fn width_dem(highest_observable: usize) -> String {
         format!("error(0.1) D0 L{highest_observable}\ndetector(0, 0, 0) D0\n")
@@ -1461,7 +1462,12 @@ mod tests {
         }
     }
 
-    #[cfg(any(feature = "tesseract", feature = "fusion-blossom", feature = "uf"))]
+    #[cfg(any(
+        feature = "tesseract",
+        feature = "fusion-blossom",
+        feature = "uf",
+        feature = "mwpf"
+    ))]
     fn assert_64_then_65_rejected(spec: &DecoderSpec) {
         let mut decoder = spec
             .clone()

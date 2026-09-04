@@ -25,6 +25,7 @@ bitflags.workspace = true
 dyn-clone.workspace = true
 num-bigint.workspace = true
 bitvec.workspace = true
+tempfile.workspace = true
 
 pecos-core.workspace = true
 pecos-results.workspace = true

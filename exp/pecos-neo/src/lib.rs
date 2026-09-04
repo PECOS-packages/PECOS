@@ -149,7 +149,6 @@ pub mod adapter;
 pub mod circuit;
 pub mod command;
 pub mod ecs;
-pub mod engines;
 pub mod extensible;
 pub mod inline_channel;
 pub mod noise;
@@ -161,7 +160,6 @@ pub mod tool;
 
 // Re-export main types at crate root
 pub use command::{CommandBuilder, CommandQueue, GateCommand, GateType};
-pub use engines::{CommandQueueEngine, DagCircuitEngine, TickCircuitEngine};
 pub use extensible::{
     AdaptedGate,
     // Extended operations for stabilizer measurements/preparations

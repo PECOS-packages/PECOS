@@ -16,6 +16,7 @@
 
 use super::Stage;
 use super::resource::Resources;
+use pecos_core::errors::PecosError;
 
 /// A system that can be executed during a stage.
 ///
@@ -25,17 +26,23 @@ use super::resource::Resources;
 /// # Example
 ///
 /// ```no_run
+/// use pecos_core::errors::PecosError;
 /// use pecos_neo::tool::Resources;
 ///
-/// fn my_system(resources: &mut Resources) {
+/// fn my_system(resources: &mut Resources) -> Result<(), PecosError> {
 ///     // Access resources and do work
 ///     // let config = resources.get::<MyConfig>();
 ///     // let mut results = resources.get_mut::<MyResults>();
+///     Ok(())
 /// }
 /// ```
 pub trait System: Send + Sync {
     /// Execute this system with access to resources.
-    fn run(&self, resources: &mut Resources);
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the system cannot complete its work.
+    fn run(&self, resources: &mut Resources) -> Result<(), PecosError>;
 
     /// Optional: name for debugging/logging.
     fn name(&self) -> &str {
@@ -46,7 +53,7 @@ pub trait System: Send + Sync {
 /// Wrapper to convert a function into a System.
 pub struct FnSystem<F>
 where
-    F: Fn(&mut Resources) + Send + Sync,
+    F: Fn(&mut Resources) -> Result<(), PecosError> + Send + Sync,
 {
     func: F,
     name: &'static str,
@@ -54,7 +61,7 @@ where
 
 impl<F> FnSystem<F>
 where
-    F: Fn(&mut Resources) + Send + Sync,
+    F: Fn(&mut Resources) -> Result<(), PecosError> + Send + Sync,
 {
     /// Create a new function-based system.
     pub fn new(func: F, name: &'static str) -> Self {
@@ -64,10 +71,10 @@ where
 
 impl<F> System for FnSystem<F>
 where
-    F: Fn(&mut Resources) + Send + Sync,
+    F: Fn(&mut Resources) -> Result<(), PecosError> + Send + Sync,
 {
-    fn run(&self, resources: &mut Resources) {
-        (self.func)(resources);
+    fn run(&self, resources: &mut Resources) -> Result<(), PecosError> {
+        (self.func)(resources)
     }
 
     fn name(&self) -> &str {
@@ -80,7 +87,7 @@ where
 /// This is the primary way to create systems from closures or functions.
 pub fn into_system<F>(func: F) -> Box<dyn System>
 where
-    F: Fn(&mut Resources) + Send + Sync + 'static,
+    F: Fn(&mut Resources) -> Result<(), PecosError> + Send + Sync + 'static,
 {
     Box::new(FnSystem::new(func, std::any::type_name::<F>()))
 }
@@ -126,23 +133,32 @@ impl Schedule {
     }
 
     /// Run all systems in a stage.
-    pub fn run_stage(&self, stage: Stage, resources: &mut Resources) {
+    ///
+    /// # Errors
+    ///
+    /// Returns the first system error and stops the stage.
+    pub fn run_stage(&self, stage: Stage, resources: &mut Resources) -> Result<(), PecosError> {
         for system in self.systems(stage) {
-            system.run(resources);
+            system.run(resources)?;
         }
+        Ok(())
     }
 
     /// Run a complete shot loop: Startup, then per-shot PreShot/Execute/PostShot, then Finish.
-    pub fn run_shots(&self, resources: &mut Resources, shots: usize) {
-        self.run_stage(Stage::Startup, resources);
+    ///
+    /// # Errors
+    ///
+    /// Returns the first system error and stops the schedule.
+    pub fn run_shots(&self, resources: &mut Resources, shots: usize) -> Result<(), PecosError> {
+        self.run_stage(Stage::Startup, resources)?;
 
         for _ in 0..shots {
-            self.run_stage(Stage::PreShot, resources);
-            self.run_stage(Stage::Execute, resources);
-            self.run_stage(Stage::PostShot, resources);
+            self.run_stage(Stage::PreShot, resources)?;
+            self.run_stage(Stage::Execute, resources)?;
+            self.run_stage(Stage::PostShot, resources)?;
         }
 
-        self.run_stage(Stage::Finish, resources);
+        self.run_stage(Stage::Finish, resources)
     }
 }
 
@@ -163,7 +179,7 @@ impl IntoSystem for Box<dyn System> {
 
 impl<F> IntoSystem for F
 where
-    F: Fn(&mut Resources) + Send + Sync + 'static,
+    F: Fn(&mut Resources) -> Result<(), PecosError> + Send + Sync + 'static,
 {
     fn into_system(self) -> Box<dyn System> {
         into_system(self)
@@ -181,12 +197,13 @@ mod tests {
 
         let system = into_system(|res: &mut Resources| {
             *res.get_mut::<u32>() += 1;
+            Ok(())
         });
 
-        system.run(&mut resources);
+        system.run(&mut resources).unwrap();
         assert_eq!(*resources.get::<u32>(), 1);
 
-        system.run(&mut resources);
+        system.run(&mut resources).unwrap();
         assert_eq!(*resources.get::<u32>(), 2);
     }
 
@@ -200,6 +217,7 @@ mod tests {
             Stage::Startup,
             into_system(|res: &mut Resources| {
                 res.get_mut::<Vec<&str>>().push("startup");
+                Ok(())
             }),
         );
 
@@ -207,6 +225,7 @@ mod tests {
             Stage::Execute,
             into_system(|res: &mut Resources| {
                 res.get_mut::<Vec<&str>>().push("execute");
+                Ok(())
             }),
         );
 
@@ -214,12 +233,13 @@ mod tests {
             Stage::Finish,
             into_system(|res: &mut Resources| {
                 res.get_mut::<Vec<&str>>().push("finish");
+                Ok(())
             }),
         );
 
-        schedule.run_stage(Stage::Startup, &mut resources);
-        schedule.run_stage(Stage::Execute, &mut resources);
-        schedule.run_stage(Stage::Finish, &mut resources);
+        schedule.run_stage(Stage::Startup, &mut resources).unwrap();
+        schedule.run_stage(Stage::Execute, &mut resources).unwrap();
+        schedule.run_stage(Stage::Finish, &mut resources).unwrap();
 
         assert_eq!(
             *resources.get::<Vec<&str>>(),

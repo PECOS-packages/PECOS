@@ -448,7 +448,11 @@ class QuantumCircuit(MutableSequence):
                 if len(angle_parts) >= 3:
                     params["angles"] = [float(a) for a in angle_parts[:3]]
             elif hasattr(gate, "angles"):
-                angles = gate.angles
+                # The serialized parameters are the source values supplied to
+                # the generic API.  Prefer them to the gate's Angle64 values:
+                # controlled rotations must be halved before reduction, and
+                # that sheet information cannot be reconstructed afterward.
+                angles = self._extract_angles_full(params) or gate.angles
                 if angles:
                     if len(angles) == 1:
                         # Single angle gates (RX, RY, RZ, RXX, RYY, RZZ)

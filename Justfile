@@ -266,7 +266,9 @@ python-ci-build-docs profile="debug": _msvc-bootstrap (validate-profile "python-
     set -euo pipefail
     PROFILE="{{profile}}"
     PECOS_BUILD_MWPF=0 {{pecos}} python build --profile "$PROFILE" --no-cuda
-    uv run --frozen --package pecos-rslib-exp maturin develop --uv --locked --manifest-path python/pecos-rslib-exp/Cargo.toml
+    # --no-sync: a package-scoped `uv run` otherwise syncs pecos-rslib-exp into the
+    # environment first, i.e. builds the release wheel this very command replaces.
+    uv run --frozen --no-sync --package pecos-rslib-exp maturin develop --uv --locked --manifest-path python/pecos-rslib-exp/Cargo.toml
 
 # Build the extra experimental bindings exercised by the fast Python core test lane.
 [group('build')]
@@ -275,7 +277,9 @@ python-ci-build-test profile="debug": _msvc-bootstrap (validate-profile "python-
     set -euo pipefail
     PROFILE="{{profile}}"
     {{pecos}} python build --profile "$PROFILE" --no-cuda
-    uv run --frozen --package pecos-rslib-exp maturin develop --uv --locked --manifest-path python/pecos-rslib-exp/Cargo.toml
+    # --no-sync: a package-scoped `uv run` otherwise syncs pecos-rslib-exp into the
+    # environment first, i.e. builds the release wheel this very command replaces.
+    uv run --frozen --no-sync --package pecos-rslib-exp maturin develop --uv --locked --manifest-path python/pecos-rslib-exp/Cargo.toml
 
 # =============================================================================
 # Testing
@@ -961,6 +965,12 @@ sync-deps:
     fi
     uv sync "${SYNC_ARGS[@]}"
 
+# The python-ci-sync* recipes install the pure-Python side of the workspace
+# only. The native packages are listed with `--package` so their dependencies
+# land in the environment, but are excluded from installation with
+# `--no-install-package`: otherwise uv builds release wheels of each one
+# (~20 min on a 4-core runner) that the following `pecos python build` /
+# `maturin develop` step immediately replaces with a debug build.
 [group('setup')]
 python-ci-sync:
     #!/usr/bin/env bash
@@ -970,7 +980,9 @@ python-ci-sync:
       --group test \
       --package pecos-rslib \
       --package pecos-rslib-llvm \
-      --package quantum-pecos
+      --package quantum-pecos \
+      --no-install-package pecos-rslib \
+      --no-install-package pecos-rslib-llvm
 
 [group('setup')]
 python-ci-sync-test:
@@ -982,7 +994,10 @@ python-ci-sync-test:
       --package pecos-rslib \
       --package pecos-rslib-exp \
       --package pecos-rslib-llvm \
-      --package quantum-pecos
+      --package quantum-pecos \
+      --no-install-package pecos-rslib \
+      --no-install-package pecos-rslib-exp \
+      --no-install-package pecos-rslib-llvm
 
 [group('setup')]
 python-ci-sync-docs:

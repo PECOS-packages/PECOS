@@ -1932,48 +1932,33 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CHFormGeneric<S, R> {
 
     /// Right-multiply `U_C` by CX(q, r): maps |j> -> |j> with `j_r` ^= `j_q`.
     fn right_cx(&mut self, q: usize, r: usize) {
-        let gr_rows: Vec<usize> = self.g.col(r).iter().collect();
-        let fq_rows: Vec<usize> = self.f.col(q).iter().collect();
-        let mr_rows: Vec<usize> = self.m.col(r).iter().collect();
-        for &i in &gr_rows {
-            std::sync::Arc::make_mut(&mut self.g).toggle(i, q);
-        }
-        for &i in &fq_rows {
-            std::sync::Arc::make_mut(&mut self.f).toggle(i, r);
-        }
-        for &i in &mr_rows {
-            std::sync::Arc::make_mut(&mut self.m).toggle(i, q);
-        }
+        debug_assert_ne!(
+            q, r,
+            "update_sum chooses distinct pivot and partner indices"
+        );
+        std::sync::Arc::make_mut(&mut self.g).col_xor_assign(q, r);
+        std::sync::Arc::make_mut(&mut self.f).col_xor_assign(r, q);
+        std::sync::Arc::make_mut(&mut self.m).col_xor_assign(q, r);
     }
 
     /// Right-multiply `U_C` by CZ(q, r).
     fn right_cz(&mut self, q: usize, r: usize) {
-        let fr_rows: Vec<usize> = self.f.col(r).iter().collect();
-        let fq_rows: Vec<usize> = self.f.col(q).iter().collect();
         for j in 0..self.num_qubits {
             if self.f.get(j, q) && self.f.get(j, r) {
                 self.gamma[j] = (self.gamma[j] + 2) & 3;
             }
         }
         let m = std::sync::Arc::make_mut(&mut self.m);
-        for &i in &fr_rows {
-            m.toggle(i, q);
-        }
-        for &i in &fq_rows {
-            m.toggle(i, r);
-        }
+        m.col_xor_from(q, &self.f, r);
+        m.col_xor_from(r, &self.f, q);
     }
 
     /// Right-multiply `U_C` by S on qubit q.
     fn right_s(&mut self, q: usize) {
-        let fq_rows: Vec<usize> = self.f.col(q).iter().collect();
-        for &i in &fq_rows {
+        for i in self.f.col(q).iter() {
             self.gamma[i] = (self.gamma[i] + 3) & 3;
         }
-        let m = std::sync::Arc::make_mut(&mut self.m);
-        for &i in &fq_rows {
-            m.toggle(i, q);
-        }
+        std::sync::Arc::make_mut(&mut self.m).col_xor_from(q, &self.f, q);
     }
 
     // ========================================================================

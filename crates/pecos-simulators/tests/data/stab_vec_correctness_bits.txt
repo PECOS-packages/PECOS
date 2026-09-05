@@ -3424,3 +3424,67 @@ amplitude 1021 bc84a1c4c0b908c7 3fa6a09e667f3bb6
 amplitude 1022 bc869bc4c0b908c7 3fa6a09e667f3bbb
 amplitude 1023 bfa6a09e667f3ae4 3cbaf58600000000
 end
+case mixed_cx_pivots
+amplitude 0 3fc6a09e667f3bcf bfb2bec333018868
+amplitude 1 bfb2bec333018868 bfc6a09e667f3bcf
+amplitude 2 3fc6a09e667f3bcc 3fdb504f333f9de5
+amplitude 3 3fdb504f333f9de5 bfc6a09e667f3bcc
+amplitude 4 3fc6a09e667f3bcc 3fdb504f333f9de5
+amplitude 5 3fdb504f333f9de5 bfc6a09e667f3bcc
+amplitude 6 3fc6a09e667f3bcf bfb2bec333018868
+amplitude 7 bfb2bec333018868 bfc6a09e667f3bcf
+end
+
+case mixed_cz_phase_pivots
+amplitude 0 bfc6a09e667f3bcc 3fc6a09e667f3bcb
+amplitude 1 bfc6a09e667f3bcb 3fc6a09e667f3bcc
+amplitude 2 3fd0000000000000 bc6c000000000000
+amplitude 3 bc64000000000000 3fd0000000000000
+amplitude 4 bc64000000000000 3fd0000000000000
+amplitude 5 3fd0000000000000 bc6c000000000000
+amplitude 6 bfc6a09e667f3bcb 3fc6a09e667f3bcc
+amplitude 7 bfc6a09e667f3bcc 3fc6a09e667f3bcb
+amplitude 8 3fc6a09e667f3bcd bfc6a09e667f3bcb
+amplitude 9 bfc6a09e667f3bcb 3fc6a09e667f3bcd
+amplitude 10 3fcfffffffffffff bc72000000000000
+amplitude 11 3c72000000000000 bfcfffffffffffff
+amplitude 12 3c72000000000000 bfcfffffffffffff
+amplitude 13 3fcfffffffffffff bc72000000000000
+amplitude 14 bfc6a09e667f3bcb 3fc6a09e667f3bcd
+amplitude 15 3fc6a09e667f3bcd bfc6a09e667f3bcb
+end
+
+case mixed_shared_then_divergent
+amplitude 0 bfbd413cccfe77a1 3fd1a827999fcef5
+amplitude 1 bfb0000000000004 3fc3504f333f9deb
+amplitude 2 bf9a827999fcef3d 3fb0000000000004
+amplitude 3 bf9a827999fcef38 3fb0000000000000
+amplitude 4 3faffffffffffffe 3f9a827999fcef32
+amplitude 5 bfcea09e667f3bd1 bfb95f619980c437
+amplitude 6 3fc3504f333f9de7 3fb0000000000001
+amplitude 7 3fc3504f333f9de7 3fb0000000000004
+amplitude 8 3fc3504f333f9de9 3fb0000000000001
+amplitude 9 3fc3504f333f9de9 3fb0000000000004
+amplitude 10 3fcea09e667f3bcf 3fb95f619980c435
+amplitude 11 bfb0000000000001 bf9a827999fcef31
+amplitude 12 bf9a827999fcef35 3fb0000000000002
+amplitude 13 bf9a827999fcef39 3fb0000000000004
+amplitude 14 3fb0000000000003 bfc3504f333f9dea
+amplitude 15 3fbd413cccfe77a1 bfd1a827999fcef5
+amplitude 16 bf9a827999fcef35 3fb0000000000002
+amplitude 17 bf9a827999fcef39 3fb0000000000004
+amplitude 18 3fb0000000000003 bfc3504f333f9dea
+amplitude 19 3fbd413cccfe77a1 bfd1a827999fcef5
+amplitude 20 3fc3504f333f9de9 3fb0000000000001
+amplitude 21 3fc3504f333f9de9 3fb0000000000004
+amplitude 22 3fcea09e667f3bcf 3fb95f619980c435
+amplitude 23 bfb0000000000001 bf9a827999fcef31
+amplitude 24 3faffffffffffffe 3f9a827999fcef32
+amplitude 25 bfcea09e667f3bd1 bfb95f619980c437
+amplitude 26 3fc3504f333f9de7 3fb0000000000001
+amplitude 27 3fc3504f333f9de7 3fb0000000000004
+amplitude 28 bfbd413cccfe77a1 3fd1a827999fcef5
+amplitude 29 bfb0000000000004 3fc3504f333f9deb
+amplitude 30 bf9a827999fcef3d 3fb0000000000004
+amplitude 31 bf9a827999fcef38 3fb0000000000000
+end

@@ -2632,6 +2632,20 @@ impl<R> CliffordGateable for StateVecSoA<R>
 where
     R: Rng,
 {
+    fn apply_global_phase(&mut self, phase: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let unit_phase = Complex64::from_polar(1.0, phase.to_radians_signed());
+        let mut global_phase = Complex64::new(1.0, 0.0);
+        for _ in qubits {
+            global_phase *= unit_phase;
+        }
+        for (real, imag) in self.real.iter_mut().zip(&mut self.imag) {
+            let amplitude = Complex64::new(*real, *imag) * global_phase;
+            *real = amplitude.re;
+            *imag = amplitude.im;
+        }
+        self
+    }
+
     #[inline]
     fn h(&mut self, qubits: &[QubitId]) -> &mut Self {
         if self.fusion_enabled {
@@ -3937,6 +3951,8 @@ where
             let q1 = qa.index();
             let q2 = qb.index();
 
+            self.flush_two_qubit(q1, q2);
+
             let n = self.real.len();
             let (q_lo, q_hi) = if q1 < q2 { (q1, q2) } else { (q2, q1) };
 
@@ -3953,8 +3969,8 @@ where
                         let mut offset = 0;
                         while offset + 4 <= step_lo {
                             let idx_00 = i_lo + offset;
-                            let idx_01 = idx_00 | mask2;
-                            let idx_10 = idx_00 | mask1;
+                            let idx_01 = idx_00 | mask1;
+                            let idx_10 = idx_00 | mask2;
                             let idx_11 = idx_00 | mask1 | mask2;
 
                             let re_00 = f64x4::from(&self.real[idx_00..idx_00 + 4]);
@@ -4010,8 +4026,8 @@ where
                         for offset in 0..step_lo {
                             let base = i_lo + offset;
                             let idx_00 = base & !(mask1 | mask2);
-                            let idx_01 = idx_00 | mask2;
-                            let idx_10 = idx_00 | mask1;
+                            let idx_01 = idx_00 | mask1;
+                            let idx_10 = idx_00 | mask2;
                             let idx_11 = idx_00 | mask1 | mask2;
 
                             // Skip if we've already processed this quartet
@@ -4339,20 +4355,6 @@ where
             for &q in qubits {
                 self.apply_rz_gate(q.index(), theta);
             }
-        }
-        self
-    }
-
-    fn apply_global_phase(&mut self, phase: Angle64, qubits: &[QubitId]) -> &mut Self {
-        let unit_phase = Complex64::from_polar(1.0, phase.to_radians_signed());
-        let mut global_phase = Complex64::new(1.0, 0.0);
-        for _ in qubits {
-            global_phase *= unit_phase;
-        }
-        for (real, imag) in self.real.iter_mut().zip(&mut self.imag) {
-            let amplitude = Complex64::new(*real, *imag) * global_phase;
-            *real = amplitude.re;
-            *imag = amplitude.im;
         }
         self
     }

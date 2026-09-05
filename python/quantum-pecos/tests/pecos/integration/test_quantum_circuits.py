@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 
 from pecos.circuits import QuantumCircuit
 
@@ -911,6 +912,17 @@ def test_json_str_is_valid_json() -> None:
     parsed = json.loads(json_str)
     assert parsed["prog_type"] == "PECOS.QuantumCircuit"
     assert "gates" in parsed
+
+
+def test_to_phir_dict_preserves_controlled_rotation_source_angle() -> None:
+    """PHIR angles retain the CRZ sheet and include their unit."""
+    qc = QuantumCircuit()
+    qc.append("CRZ", {(0, 1)}, angle=3 * math.pi)
+
+    phir = qc.to_phir_dict()
+
+    crz_op = next(op for op in phir["ops"] if op.get("qop") == "CRZ")
+    assert crz_op["angles"] == [[3 * math.pi], "rad"]
 
 
 # ---------------------------------------------------------------------------

@@ -1058,14 +1058,31 @@ mod tests {
     }
 
     #[test]
-    fn only_computational_basis_diagonal_frames_are_diagonal() {
-        assert!(CliffordFrame::IDENTITY.is_diagonal());
-        assert!(CliffordFrame::Z.is_diagonal());
-        assert!(CliffordFrame::SZ.is_diagonal());
-        assert!(CliffordFrame::SZDG.is_diagonal());
-        assert!(!CliffordFrame::X.is_diagonal());
-        assert!(!CliffordFrame::Y.is_diagonal());
-        assert!(!CliffordFrame::H.is_diagonal());
+    fn computational_basis_phases_match_all_element_matrices() {
+        for index in 0..24 {
+            let frame = CliffordFrame::from_index(index);
+            for outcome in [false, true] {
+                let phase = frame.computational_basis_phase(outcome);
+                assert_eq!(
+                    frame.is_diagonal(),
+                    phase.is_some(),
+                    "element {index}, outcome {outcome}: diagonal/phase disagreement"
+                );
+
+                if let Some(phase) = phase {
+                    let matrix = ELEMENT_MATRIX[index as usize];
+                    let diagonal_offset = if outcome { 6 } else { 0 };
+                    let expected =
+                        Complex64::new(matrix[diagonal_offset], matrix[diagonal_offset + 1]);
+                    let actual = phase.cis();
+                    assert!(
+                        (actual - expected).norm() < 1e-12,
+                        "element {index}, outcome {outcome}: basis phase {actual:?} does not match \
+                         ELEMENT_MATRIX eigenvalue {expected:?}"
+                    );
+                }
+            }
+        }
     }
 
     fn mat_mul(a: &Mat2, b: &Mat2) -> Mat2 {

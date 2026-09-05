@@ -3,9 +3,7 @@
 These are pytest-compatible tests.
 """
 
-import pytest
-
-pytestmark = pytest.mark.optional_dependency
+from guppylang import guppy
 
 
 def test_backend_detection() -> None:
@@ -27,7 +25,6 @@ def test_backend_detection() -> None:
 
 def test_guppy_frontend_creation() -> None:
     """Test that GuppyFrontend can be created."""
-    pytest.importorskip("guppylang")
     from pecos._compilation import GuppyFrontend
 
     frontend = GuppyFrontend()
@@ -41,23 +38,11 @@ def test_guppy_frontend_creation() -> None:
         frontend.cleanup()
 
 
-def test_guppy_import_if_available() -> None:
-    """Test Guppy import if available (may be skipped)."""
-    try:
-        from guppylang import guppy
+def test_guppy_function_decoration() -> None:
+    """The required Guppy dependency exposes compilable decorated functions."""
 
-        # If we get here, guppylang is available
-        @guppy
-        def simple_func(x: int) -> int:
-            return x + 1
+    @guppy
+    def simple_func(x: int) -> int:
+        return x + 1
 
-        # Function should be decorated (check for guppy-specific attributes)
-        assert hasattr(simple_func, "wrapped") or str(type(simple_func)).startswith(
-            "<class 'guppylang",
-        )
-
-    except ImportError:
-        # Guppy not available, skip this test
-        import pytest
-
-        pytest.skip("guppylang not available")
+    assert callable(simple_func.compile)

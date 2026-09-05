@@ -98,35 +98,27 @@ class TestQasmSimComprehensive:
         results_dict = results.to_dict()
         assert len(results_dict["c"]) == 1000
 
-    def test_multiple_registers(self) -> None:
-        """Test circuits with multiple classical registers."""
+    @pytest.mark.parametrize("input_bits", range(16))
+    def test_multiple_registers(self, input_bits: int) -> None:
+        """Distinct basis patterns expose swapped registers and bit ordering."""
         from pecos import Qasm, qasm_engine
 
-        qasm = """
+        preparation = "\n".join(f"x q[{i}];" for i in range(4) if input_bits & (1 << i))
+        qasm = f"""
         OPENQASM 2.0;
         include "qelib1.inc";
         qreg q[4];
         creg c1[2];
         creg c2[2];
-        x q[0];
-        x q[2];
+        {preparation}
         measure q[0] -> c1[0];
         measure q[1] -> c1[1];
         measure q[2] -> c2[0];
         measure q[3] -> c2[1];
         """
-
-        results = qasm_engine().program(Qasm.from_string(qasm)).to_sim().run(10)
-        results_dict = results.to_dict()
-
-        assert "c1" in results_dict
-        assert "c2" in results_dict
-        assert len(results_dict["c1"]) == 10
-        assert len(results_dict["c2"]) == 10
-        # c1 should always be |10> = 1
-        assert all(val == 1 for val in results_dict["c1"])
-        # c2 should always be |10> = 1
-        assert all(val == 1 for val in results_dict["c2"])
+        results = qasm_engine().program(Qasm.from_string(qasm)).to_sim().run(8).to_dict()
+        assert results["c1"] == [input_bits & 3] * 8
+        assert results["c2"] == [input_bits >> 2] * 8
 
     def test_empty_circuit(self) -> None:
         """Test empty circuit (no gates, just measurements)."""
@@ -144,7 +136,7 @@ class TestQasmSimComprehensive:
 
         results_dict = results.to_dict()
         # Should always measure |00> = 0
-        assert all(val == 0 for val in results_dict["c"])
+        assert results_dict["c"] == [0] * 100
 
     def test_no_measurements(self) -> None:
         """Test circuit with no measurements."""
@@ -163,29 +155,26 @@ class TestQasmSimComprehensive:
         # Should return empty dict when no measurements
         assert results.to_dict() == {}
 
-    def test_partial_measurements(self) -> None:
-        """Test measuring only some qubits."""
+    @pytest.mark.parametrize("input_bits", range(16))
+    @pytest.mark.parametrize("measured_qubits", [(0, 2), (2, 0)], ids=["forward", "reversed"])
+    def test_partial_measurements(self, input_bits: int, measured_qubits: tuple[int, int]) -> None:
+        """Only the selected qubits populate the specified classical bit positions."""
         from pecos import Qasm, qasm_engine
 
-        qasm = """
+        first, second = measured_qubits
+        preparation = "\n".join(f"x q[{i}];" for i in range(4) if input_bits & (1 << i))
+        qasm = f"""
         OPENQASM 2.0;
         include "qelib1.inc";
         qreg q[4];
         creg c[2];
-        x q[0];
-        x q[1];
-        x q[2];
-        x q[3];
-        measure q[0] -> c[0];
-        measure q[2] -> c[1];
+        {preparation}
+        measure q[{first}] -> c[0];
+        measure q[{second}] -> c[1];
         """
-
-        results = qasm_engine().program(Qasm.from_string(qasm)).to_sim().run(50)
-
-        results_dict = results.to_dict()
-        assert len(results_dict["c"]) == 50
-        # Should measure |11> = 3 (only q[0] and q[2])
-        assert all(val == 3 for val in results_dict["c"])
+        results = qasm_engine().program(Qasm.from_string(qasm)).to_sim().run(8).to_dict()
+        expected = ((input_bits >> first) & 1) | (((input_bits >> second) & 1) << 1)
+        assert results["c"] == [expected] * 8
 
     def test_one_shot(self) -> None:
         """Test running with just 1 shot."""

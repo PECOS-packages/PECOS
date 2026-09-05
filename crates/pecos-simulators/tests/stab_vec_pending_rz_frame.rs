@@ -374,9 +374,9 @@ enum CliffordTGate {
     Tdg(usize),
 }
 
-fn random_gate(rng: &mut StdRng, num_qubits: usize) -> CliffordTGate {
+fn random_gate(rng: &mut StdRng, num_qubits: usize, include_t: bool) -> CliffordTGate {
     let q = rng.random_range(0..num_qubits);
-    match rng.random_range(0..11) {
+    match rng.random_range(0..if include_t { 11 } else { 9 }) {
         0 => CliffordTGate::H(q),
         1 => CliffordTGate::S(q),
         2 => CliffordTGate::Sdg(q),
@@ -492,7 +492,16 @@ fn phase_alignment_removes_only_global_phase() {
 }
 
 #[test]
-fn seeded_random_clifford_t_circuits_match_after_global_phase_alignment() {
+fn seeded_random_clifford_t_circuits_match_raw_amplitudes() {
+    check_seeded_random_circuits(true);
+}
+
+#[test]
+fn seeded_random_clifford_circuits_match_raw_amplitudes() {
+    check_seeded_random_circuits(false);
+}
+
+fn check_seeded_random_circuits(include_t: bool) {
     const NUM_QUBITS: usize = 5;
     const DEPTH: usize = 30;
     const CIRCUITS: usize = 200;
@@ -507,7 +516,7 @@ fn seeded_random_clifford_t_circuits_match_after_global_phase_alignment() {
 
     for circuit_index in 0..CIRCUITS {
         let gates: Vec<_> = (0..DEPTH)
-            .map(|_| random_gate(&mut rng, NUM_QUBITS))
+            .map(|_| random_gate(&mut rng, NUM_QUBITS, include_t))
             .collect();
         let mut stab = StabVec::builder(NUM_QUBITS)
             .pruning_threshold(0.0)
@@ -540,10 +549,14 @@ fn seeded_random_clifford_t_circuits_match_after_global_phase_alignment() {
     }
 
     eprintln!(
-        "random Clifford+T differential: raw={raw_mismatches}/{CIRCUITS}, \
+        "random differential (include_t={include_t}): raw={raw_mismatches}/{CIRCUITS}, \
          global-phase-only={global_phase_only_mismatches}/{CIRCUITS}, \
          aligned={aligned_mismatches}/{CIRCUITS}, \
          worst-aligned={worst_aligned_error:e} at circuit {worst_circuit}"
+    );
+    assert_eq!(
+        raw_mismatches, 0,
+        "random differential (include_t={include_t}) must preserve raw complex amplitudes; seed=0x720_C11F_F04D"
     );
     assert_eq!(
         aligned_mismatches, 0,
@@ -552,4 +565,33 @@ fn seeded_random_clifford_t_circuits_match_after_global_phase_alignment() {
          ({raw_mismatches} raw mismatches, {global_phase_only_mismatches} global-phase-only); \
          seed=0x720_C11F_F04D, gates={worst_gates:?}"
     );
+}
+
+#[test]
+fn pure_clifford_cz_global_sign_reproducers() {
+    for gates in [
+        vec![
+            CliffordTGate::X(0),
+            CliffordTGate::X(1),
+            CliffordTGate::Cz(0, 1),
+        ],
+        vec![
+            CliffordTGate::X(0),
+            CliffordTGate::Cx(0, 1),
+            CliffordTGate::Cz(1, 0),
+        ],
+    ] {
+        let mut stab = StabVec::builder(2).seed(1).build();
+        let mut dense = StateVecSoA::with_seed(2, 1);
+        for &gate in &gates {
+            apply_gate(&mut stab, gate);
+            apply_gate(&mut dense, gate);
+        }
+        assert_phase_exact_state_matches(
+            &stab.state_vector(),
+            &dense.state(),
+            TOLERANCE,
+            &format!("{gates:?}"),
+        );
+    }
 }

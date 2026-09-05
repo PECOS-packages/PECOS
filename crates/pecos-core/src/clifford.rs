@@ -269,6 +269,76 @@ impl Clifford {
         self.num_qubits() == 2
     }
 
+    /// Returns the canonical phase-fixed matrix for a named two-qubit Clifford.
+    ///
+    /// Rows and columns use `|q0 q1>` order, with q0 the most significant bit.
+    /// Controlled gates embed the canonical Pauli table; roots reuse the
+    /// `GateType` table. SWAP exchanges `|01>` and `|10>`, iSWAP multiplies
+    /// those exchanges by i, and G is CZ (H tensor H) CZ. Daggers are adjoints.
+    #[must_use]
+    pub const fn canonical_2q_matrix(self) -> Option<crate::gate_type::TwoQubitGateMatrix> {
+        let mut matrix = [0.0; 32];
+        match self {
+            Self::CX | Self::CY | Self::CZ => {
+                let pauli = match self {
+                    Self::CX => gate_type_matrix(GateType::X),
+                    Self::CY => gate_type_matrix(GateType::Y),
+                    _ => gate_type_matrix(GateType::Z),
+                };
+                matrix[0] = 1.0;
+                matrix[10] = 1.0;
+                let mut row = 0;
+                while row < 2 {
+                    let mut col = 0;
+                    while col < 2 {
+                        let dst = 2 * (4 * (row + 2) + col + 2);
+                        let src = 2 * (2 * row + col);
+                        matrix[dst] = pauli[src];
+                        matrix[dst + 1] = pauli[src + 1];
+                        col += 1;
+                    }
+                    row += 1;
+                }
+            }
+            Self::SWAP | Self::ISWAP | Self::ISWAPdg => {
+                matrix[0] = 1.0;
+                matrix[30] = 1.0;
+                if matches!(self, Self::SWAP) {
+                    matrix[12] = 1.0;
+                    matrix[18] = 1.0;
+                } else {
+                    let sign = if matches!(self, Self::ISWAP) {
+                        1.0
+                    } else {
+                        -1.0
+                    };
+                    matrix[13] = sign;
+                    matrix[19] = sign;
+                }
+            }
+            Self::G | Self::Gdg => {
+                // G is real, symmetric and self-inverse.
+                let entries = [
+                    0.5, 0.5, 0.5, -0.5, 0.5, -0.5, 0.5, 0.5, 0.5, 0.5, -0.5, 0.5, -0.5, 0.5, 0.5,
+                    0.5,
+                ];
+                let mut i = 0;
+                while i < 16 {
+                    matrix[2 * i] = entries[i];
+                    i += 1;
+                }
+            }
+            Self::SXX => return GateType::SXX.canonical_2q_matrix(),
+            Self::SXXdg => return GateType::SXXdg.canonical_2q_matrix(),
+            Self::SYY => return GateType::SYY.canonical_2q_matrix(),
+            Self::SYYdg => return GateType::SYYdg.canonical_2q_matrix(),
+            Self::SZZ => return GateType::SZZ.canonical_2q_matrix(),
+            Self::SZZdg => return GateType::SZZdg.canonical_2q_matrix(),
+            _ => return None,
+        }
+        Some(matrix)
+    }
+
     /// Returns the canonical phase-fixed matrix for a single-qubit Clifford.
     ///
     /// Each representative has its exact Clifford-group order: H is H1 and

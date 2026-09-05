@@ -275,6 +275,10 @@ impl Clifford {
     /// Controlled gates embed the canonical Pauli table; roots reuse the
     /// `GateType` table. SWAP exchanges `|01>` and `|10>`, iSWAP multiplies
     /// those exchanges by i, and G is CZ (H tensor H) CZ. Daggers are adjoints.
+    ///
+    /// Covers all 14 two-qubit variants and returns `None` for single-qubit
+    /// variants. Unlike this method, [`GateType::canonical_2q_matrix`] covers
+    /// only the six Pauli roots; its entries for the other eight gates are `None`.
     #[must_use]
     pub const fn canonical_2q_matrix(self) -> Option<crate::gate_type::TwoQubitGateMatrix> {
         let mut matrix = [0.0; 32];

@@ -810,20 +810,22 @@ fn deferred_frames_preserve_phase_across_disjoint_batched_pairs() {
 }
 
 fn check_disjoint_batched_pairs<S: StateVectorSimulator + Clone>() {
-    let mut input_sim = S::with_seed(4, 721);
-    let mut input = vec![Complex64::new(0.0, 0.0); 16];
+    let mut input_sim = S::with_seed(6, 721);
+    let mut input = vec![Complex64::new(0.0, 0.0); 64];
     input[0] = Complex64::new(1.0, 0.0);
     for (gate, q) in [
         (Clifford::H, 0),
         (Clifford::H, 1),
         (Clifford::H, 2),
         (Clifford::H, 3),
+        (Clifford::H, 4),
+        (Clifford::H, 5),
         (Clifford::SZ, 3),
     ] {
         apply_clifford_gate(&mut input_sim, gate, &[QubitId(q)]);
         apply_canonical_matrix(&mut input, gate.canonical_1q_matrix().unwrap(), QubitId(q));
     }
-    let actual: Vec<_> = (0..16).map(|i| input_sim.get_amplitude(i)).collect();
+    let actual: Vec<_> = (0..64).map(|i| input_sim.get_amplitude(i)).collect();
     assert_phase_exact_state(
         std::any::type_name::<S>(),
         "batched input",
@@ -831,7 +833,12 @@ fn check_disjoint_batched_pairs<S: StateVectorSimulator + Clone>() {
         &input,
         F64_TOLERANCE,
     );
-    let pairs = [(QubitId(3), QubitId(1)), (QubitId(0), QubitId(2))];
+    // An odd pair count prevents a per-pair global sign error from cancelling.
+    let pairs = [
+        (QubitId(3), QubitId(1)),
+        (QubitId(0), QubitId(2)),
+        (QubitId(5), QubitId(4)),
+    ];
     for &left in Clifford::all_1q() {
         for &right in Clifford::all_1q() {
             let mut framed = input_sim.clone();
@@ -841,6 +848,8 @@ fn check_disjoint_batched_pairs<S: StateVectorSimulator + Clone>() {
                 (right, pairs[0].1),
                 (right, pairs[1].0),
                 (left, pairs[1].1),
+                (left, pairs[2].0),
+                (right, pairs[2].1),
             ] {
                 apply_clifford_gate(&mut framed, local, &[q]);
                 apply_canonical_matrix(
@@ -861,7 +870,7 @@ fn check_disjoint_batched_pairs<S: StateVectorSimulator + Clone>() {
                         r,
                     );
                 }
-                let actual: Vec<_> = (0..16).map(|i| sim.get_amplitude(i)).collect();
+                let actual: Vec<_> = (0..64).map(|i| sim.get_amplitude(i)).collect();
                 assert_phase_exact_state(
                     std::any::type_name::<S>(),
                     &format!("{gate} batched, local=({left},{right})"),

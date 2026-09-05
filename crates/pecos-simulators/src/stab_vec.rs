@@ -38,6 +38,9 @@ pub mod exact_scalar;
 pub mod quadratic_form;
 pub mod sparse_binary_matrix;
 
+use crate::clifford_frame::{
+    CliffordFrame, GATE_PHASE_DELTA, GEN_LENS, GENERATORS, PHASE_COCYCLE, PauliFrameGate,
+};
 use crate::{
     ArbitraryRotationGateable, CliffordGateable, MeasurementResult, QuantumSimulator, StateVecSoA,
 };
@@ -83,10 +86,6 @@ const DENSE_CROSSOVER_DENOMINATOR: usize = 2;
 ///     .build();
 /// ```
 ///
-use crate::clifford_frame::{
-    CliffordFrame, GATE_PHASE_DELTA, GEN_LENS, GENERATORS, PHASE_COCYCLE, PauliFrameGate,
-};
-
 #[derive(Clone, Debug)]
 pub struct StabVecGeneric<S: IndexSet = BitSet, R: SeedableRng + Rng + Debug = PecosRng> {
     num_qubits: usize,

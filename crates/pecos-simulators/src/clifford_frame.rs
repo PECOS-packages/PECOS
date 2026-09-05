@@ -84,6 +84,8 @@ impl PauliFrameGate {
 
     /// Propagate the transposed representatives used by `StabVec`'s sequential
     /// execution of `GENERATORS`. Both frames and the phase are updated together.
+    /// Requires a symmetric canonical gate matrix, enforced by
+    /// `test_pauli_frame_gate_canonical_matrices_are_symmetric`.
     pub(crate) fn propagate_transposed(
         self,
         frames: &mut [CliffordFrame],
@@ -1713,6 +1715,49 @@ mod tests {
         assert_eq!(s2, CliffordFrame::Z, "S² should be Z");
         assert_eq!(s3, CliffordFrame::SZDG, "S³ should be Sdg");
         assert_eq!(s4, CliffordFrame::IDENTITY, "S⁴ should be I");
+    }
+
+    #[test]
+    fn test_pauli_frame_gate_canonical_matrices_are_symmetric() {
+        use pecos_core::Clifford;
+
+        for gate in [
+            PauliFrameGate::Cx,
+            PauliFrameGate::Cz,
+            PauliFrameGate::Sxx,
+            PauliFrameGate::SxxDg,
+            PauliFrameGate::Syy,
+            PauliFrameGate::SyyDg,
+            PauliFrameGate::Szz,
+            PauliFrameGate::SzzDg,
+            PauliFrameGate::ISwap,
+        ] {
+            // Keep this exhaustive: every new propagation variant must have
+            // its canonical matrix checked before using the transpose identity.
+            let clifford = match gate {
+                PauliFrameGate::Cx => Clifford::CX,
+                PauliFrameGate::Cz => Clifford::CZ,
+                PauliFrameGate::Sxx => Clifford::SXX,
+                PauliFrameGate::SxxDg => Clifford::SXXdg,
+                PauliFrameGate::Syy => Clifford::SYY,
+                PauliFrameGate::SyyDg => Clifford::SYYdg,
+                PauliFrameGate::Szz => Clifford::SZZ,
+                PauliFrameGate::SzzDg => Clifford::SZZdg,
+                PauliFrameGate::ISwap => Clifford::ISWAP,
+            };
+            let matrix = clifford.canonical_2q_matrix().unwrap();
+            for row in 0..4 {
+                for col in 0..4 {
+                    let entry = 2 * (4 * row + col);
+                    let transposed = 2 * (4 * col + row);
+                    assert_eq!(
+                        &matrix[entry..entry + 2],
+                        &matrix[transposed..transposed + 2],
+                        "{clifford} must be symmetric for transposed frame propagation"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

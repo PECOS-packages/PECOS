@@ -23,6 +23,9 @@ use std::collections::BTreeMap;
 use std::convert::Infallible;
 use std::fmt::Write as _;
 
+#[path = "stab_vec_correctness/matrix_cow.rs"]
+mod matrix_cow;
+
 const ORACLE_TOLERANCE: f64 = 1e-12;
 const REFERENCE_DATA: &str = include_str!("data/stab_vec_correctness_bits.txt");
 const REGENERATE_CONFIRMATION: &str = "I_UNDERSTAND_THIS_REPLACES_PINNED_RESULTS";
@@ -400,8 +403,152 @@ fn measurement_probability_boundary() -> CaseResult {
     }
 }
 
-fn fast_corpus() -> Vec<CaseResult> {
+#[derive(Clone, Copy, Debug)]
+enum MixedGate {
+    H(usize),
+    T(usize),
+    S(usize),
+    Cx(usize, usize),
+    Cz(usize, usize),
+}
+
+impl MixedGate {
+    fn apply(self, sim: &mut impl ArbitraryRotationGateable) {
+        match self {
+            Self::H(q) => {
+                sim.h(&qid(q));
+            }
+            Self::T(q) => {
+                sim.t(&qid(q));
+            }
+            Self::S(q) => {
+                sim.sz(&qid(q));
+            }
+            Self::Cx(q, r) => {
+                sim.cx(&[(QubitId(q), QubitId(r))]);
+            }
+            Self::Cz(q, r) => {
+                sim.cz(&[(QubitId(q), QubitId(r))]);
+            }
+        }
+    }
+}
+
+fn mixed_clifford_t(name: &'static str, num_qubits: usize, gates: &[MixedGate]) -> CaseResult {
+    let mut stab = exact_stab(num_qubits, 0x00C0_1C0A);
+    let mut dense = StateVecSoA::with_seed(num_qubits, 0x00C0_1C0A);
+    let mut max_error = 0.0_f64;
+    let mut amplitudes = Vec::new();
+    for (step, &gate) in gates.iter().enumerate() {
+        gate.apply(&mut stab);
+        gate.apply(&mut dense);
+        // Materialize every gate, including T, so sibling terms share matrices
+        // before later entangling gates and H drive update_sum's pivot reduction.
+        amplitudes = compare_to_oracle(&mut stab, &mut dense, &format!("{name}/{step}:{gate:?}"));
+        for (actual, expected) in amplitudes.iter().zip(dense.state()) {
+            max_error = max_error.max((*actual - expected).norm());
+        }
+    }
+    assert!(stab.num_terms() > 1, "{name}: must exercise sibling terms");
+    println!(
+        "{name}: StateVecSoA accepted all {} checkpoints; max amplitude error {max_error:.3e}; {} terms",
+        gates.len(),
+        stab.num_terms()
+    );
+    CaseResult {
+        name,
+        amplitudes,
+        measurements: Vec::new(),
+    }
+}
+
+fn mixed_corpus() -> Vec<CaseResult> {
+    use MixedGate::{Cx, Cz, H, S, T};
     vec![
+        mixed_clifford_t(
+            "mixed_cx_pivots",
+            3,
+            &[
+                H(0),
+                T(0),
+                Cx(0, 1),
+                H(0),
+                S(1),
+                T(1),
+                Cx(1, 2),
+                H(1),
+                Cz(0, 2),
+                T(2),
+                H(2),
+                Cx(2, 0),
+                S(0),
+                H(0),
+            ],
+        ),
+        mixed_clifford_t(
+            "mixed_cz_phase_pivots",
+            4,
+            &[
+                H(0),
+                H(1),
+                T(0),
+                Cz(0, 1),
+                S(0),
+                H(0),
+                T(1),
+                Cx(1, 2),
+                H(1),
+                H(3),
+                Cz(2, 3),
+                S(2),
+                T(2),
+                H(2),
+                Cx(3, 0),
+                T(3),
+                S(3),
+                H(3),
+                Cz(0, 2),
+                H(0),
+            ],
+        ),
+        mixed_clifford_t(
+            "mixed_shared_then_divergent",
+            5,
+            &[
+                H(0),
+                H(1),
+                H(2),
+                H(3),
+                H(4),
+                T(0),
+                T(1),
+                T(2),
+                Cx(0, 1),
+                Cz(1, 2),
+                S(2),
+                Cx(2, 3),
+                Cz(3, 4),
+                H(0),
+                H(2),
+                H(4),
+                T(3),
+                Cx(4, 1),
+                S(1),
+                H(1),
+                Cz(0, 3),
+                T(4),
+                H(3),
+                Cx(3, 2),
+                S(0),
+                H(0),
+                H(4),
+            ],
+        ),
+    ]
+}
+
+fn fast_corpus() -> Vec<CaseResult> {
+    let mut results = vec![
         clifford_only(),
         small_non_clifford(),
         crossover_case(8),
@@ -410,7 +557,9 @@ fn fast_corpus() -> Vec<CaseResult> {
         divergent_structure_measurement(),
         pending_rz_repeated_measurements(),
         measurement_probability_boundary(),
-    ]
+    ];
+    results.extend(mixed_corpus());
+    results
 }
 
 fn parse_bool(value: &str, line_number: usize) -> bool {
@@ -490,8 +639,8 @@ fn assert_matches_reference(results: &[CaseResult]) {
     let mut reference = parse_reference();
     assert_eq!(
         reference.len(),
-        9,
-        "reference data must contain the complete nine-case corpus"
+        12,
+        "reference data must contain the complete twelve-case corpus"
     );
     for result in results {
         let expected = reference
@@ -568,6 +717,13 @@ fn render_reference(results: &[CaseResult]) -> String {
 #[test]
 fn fast_corpus_matches_oracle_and_reference_bits() {
     assert_matches_reference(&fast_corpus());
+}
+
+/// Validate additions independently before copying their rendered bits into the reference.
+#[test]
+#[ignore = "oracle-only validation for reviewing new mixed-circuit reference data"]
+fn validate_mixed_corpus_before_pinning() {
+    println!("{}", render_reference(&mixed_corpus()));
 }
 
 #[test]

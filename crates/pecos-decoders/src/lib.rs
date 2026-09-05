@@ -25,6 +25,9 @@ pub use pecos_decoder_core::{
     SoftDecoder,
 };
 
+/// Re-export native belief-propagation primitives.
+pub use pecos_bp::{BpGraph, BpScratch, min_sum_bp_into};
+
 // Re-export observable subgraph decoder (for transversal gates)
 pub use pecos_decoder_core::logical_subgraph::{
     DetectorGroup, LogicalSubgraph, LogicalSubgraphDecoder, ParallelLogicalSubgraphDecoder,

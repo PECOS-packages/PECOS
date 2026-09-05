@@ -68,7 +68,7 @@ use pecos_random::{PecosRng, Rng, RngExt, SeedableRng};
 ///     .build();
 /// ```
 ///
-use crate::clifford_frame::{CliffordFrame, GEN_LENS, GENERATORS, PHASE_COCYCLE};
+use crate::clifford_frame::{CliffordFrame, GATE_PHASE_DELTA, GEN_LENS, GENERATORS, PHASE_COCYCLE};
 
 #[derive(Clone, Debug)]
 pub struct StabVecGeneric<S: IndexSet = BitSet, R: SeedableRng + Rng + Debug = PecosRng> {
@@ -77,7 +77,7 @@ pub struct StabVecGeneric<S: IndexSet = BitSet, R: SeedableRng + Rng + Debug = P
     /// Pending RZ angles per qubit.
     pending_rz: Vec<Angle64>,
     /// Single-qubit Clifford frame per qubit. All 24 Clifford elements tracked.
-    /// State = frame * `pending_rz` * |`stored_state`⟩.
+    /// State = `pending_rz` * frame * |`stored_state`⟩.
     /// Single-qubit Cliffords compose into the frame in O(1).
     /// Flushed via H+S generator sequence when a two-qubit gate or measurement arrives.
     cliff_frame: Vec<CliffordFrame>,
@@ -175,9 +175,13 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
         }
     }
 
-    /// Whether every term shares all CH-form structure that is independent of
-    /// gamma and omega.
-    fn has_shared_projection_structure(&self) -> bool {
+    /// Whether every term currently shares the structural inputs used by Z projection.
+    ///
+    /// This is exposed for correctness tests that must prove both projection
+    /// dispatch paths are represented in their corpus.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn has_shared_projection_structure(&self) -> bool {
         self.terms.first().is_none_or(|(_, first)| {
             self.terms[1..]
                 .iter()
@@ -456,6 +460,17 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
         }
     }
 
+    /// Compose a named gate into the deferred Clifford frame, including the
+    /// phase conversion between the gate and element-matrix conventions.
+    fn compose_cliff_frame(&mut self, q: usize, gate: CliffordFrame) {
+        let old = self.cliff_frame[q];
+        self.frame_phase = (self.frame_phase
+            + (8 - GATE_PHASE_DELTA[gate.index() as usize])
+            + PHASE_COCYCLE[gate.index() as usize][old.index() as usize])
+            & 7;
+        self.cliff_frame[q] = gate.compose(old);
+    }
+
     /// Flush the Clifford frame on qubit q by applying its H+S generator sequence.
     fn flush_cliff_frame(&mut self, q: usize) {
         let cf = self.cliff_frame[q];
@@ -484,6 +499,11 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
                     self.apply_clifford(|ch| {
                         ch.y(&[qid]);
                     });
+                    // The frame phase is relative to ELEMENT_MATRIX[2], while
+                    // CH-form's named Y emits the standard Y matrix.
+                    self.frame_phase = (self.frame_phase
+                        + GATE_PHASE_DELTA[CliffordFrame::Y.index() as usize])
+                        & 7;
                 }
                 3 => {
                     // Z: diagonal, commutes with RZ
@@ -494,6 +514,22 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
                 _ => {}
             }
             return;
+        }
+
+        // A pending RZ can coexist only with a frame that preserves the Z axis.
+        // Anti-diagonal frames carry the sign negation performed by X/Y
+        // composition; restore it before materializing the frame to the right
+        // of the RZ. The Pauli X/Y fast paths above do the same thing.
+        if self.pending_rz[q] != Angle64::ZERO {
+            let z_image = cf.z_image();
+            debug_assert_eq!(
+                z_image.axis,
+                crate::clifford_frame::PauliAxis::Z,
+                "a pending RZ requires a frame that preserves the Z axis"
+            );
+            if !z_image.positive {
+                self.pending_rz[q] = -self.pending_rz[q];
+            }
         }
 
         // Flush pending RZ first (non-diagonal Cliffords don't commute with RZ).
@@ -764,22 +800,27 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
         // Z-basis measurement on qubit q.
         // Frames and pending_rz on OTHER qubits commute with Z_q -- no flush needed.
         // Only qubit q's frame matters:
-        // - Diagonal frame (Z→+Z): discard frame.
+        // - Diagonal frame (Z→+Z): retain its selected branch's phase.
         // - Non-diagonal frame: must flush (changes measurement basis).
-        // Pending_rz on q is diagonal: doesn't affect Z measurement. Discard after.
+        // Pending_rz on q is diagonal: retain its selected branch's phase too.
         let cf_q = self.cliff_frame[q];
-        if !cf_q.is_identity() {
-            if cf_q.is_diagonal() {
-                // is_diagonal() guarantees Z→+Z, so this cannot flip the outcome.
-                self.cliff_frame[q] = CliffordFrame::IDENTITY;
-            } else {
-                // Non-diagonal: flush this qubit's frame (needs pending_rz flushed first).
-                self.flush_cliff_frame(q);
-            }
+        let discarded_diagonal_frame = if cf_q.is_diagonal() {
+            // A diagonal frame cannot flip the outcome, but its eigenvalue on
+            // the selected basis state remains as a branch-global phase.
+            self.cliff_frame[q] = CliffordFrame::IDENTITY;
+            Some(cf_q)
+        } else {
+            // Non-diagonal: flush this qubit's frame (needs pending_rz flushed first).
+            self.flush_cliff_frame(q);
+            None
+        };
+        // A non-diagonal frame flush materialized its pending RZ. Otherwise,
+        // defer the diagonal RZ eigenvalue until the outcome has been selected.
+        let discarded_pending_rz = self.pending_rz[q];
+        self.pending_rz[q] = Angle64::ZERO;
+        if discarded_diagonal_frame.is_none() {
+            debug_assert_eq!(discarded_pending_rz, Angle64::ZERO);
         }
-        // Pending RZ on q doesn't affect Z measurement. Discard it.
-        // After measurement, qubit is in Z eigenstate; pending phase is irrelevant.
-        self.pending_rz[q] = Angle64::default();
 
         // Compute probability of measuring 0. Optimized multi-term paths are
         // valid only while all terms share the CH structure they precompute.
@@ -1070,6 +1111,21 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
             }
         }
 
+        // RZ(theta) = diag(exp(-i*theta/2), exp(i*theta/2)). The discarded
+        // diagonal Clifford likewise acts on the surviving basis state by a
+        // scalar eigenvalue. Preserve both through the simulator's global-phase hook.
+        let rz_branch_phase = if outcome {
+            discarded_pending_rz.signed_half()
+        } else {
+            -discarded_pending_rz.signed_half()
+        };
+        let frame_branch_phase = discarded_diagonal_frame.map_or(Angle64::ZERO, |frame| {
+            frame
+                .computational_basis_phase(outcome)
+                .expect("a diagonal frame must have a basis phase")
+        });
+        self.apply_global_phase(rz_branch_phase + frame_branch_phase, &[QubitId(q)]);
+
         MeasurementResult {
             outcome,
             is_deterministic,
@@ -1147,11 +1203,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
         for &q in qubits {
             let qi = q.index();
             self.pending_rz[qi] = -self.pending_rz[qi]; // X anticommutes with RZ
-            let old = self.cliff_frame[qi];
-            self.frame_phase = (self.frame_phase
-                + PHASE_COCYCLE[CliffordFrame::X.index() as usize][old.index() as usize])
-                & 7;
-            self.cliff_frame[qi] = CliffordFrame::X.compose(old);
+            self.compose_cliff_frame(qi, CliffordFrame::X);
         }
         self
     }
@@ -1160,11 +1212,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
         for &q in qubits {
             let qi = q.index();
             self.pending_rz[qi] = -self.pending_rz[qi]; // Y anticommutes with RZ
-            let old = self.cliff_frame[qi];
-            self.frame_phase = (self.frame_phase
-                + PHASE_COCYCLE[CliffordFrame::Y.index() as usize][old.index() as usize])
-                & 7;
-            self.cliff_frame[qi] = CliffordFrame::Y.compose(old);
+            self.compose_cliff_frame(qi, CliffordFrame::Y);
         }
         self
     }
@@ -1173,11 +1221,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
         for &q in qubits {
             let qi = q.index();
             // Z commutes with RZ, no negation needed.
-            let old = self.cliff_frame[qi];
-            self.frame_phase = (self.frame_phase
-                + PHASE_COCYCLE[CliffordFrame::Z.index() as usize][old.index() as usize])
-                & 7;
-            self.cliff_frame[qi] = CliffordFrame::Z.compose(old);
+            self.compose_cliff_frame(qi, CliffordFrame::Z);
         }
         self
     }
@@ -1186,11 +1230,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
         for &q in qubits {
             let qi = q.index();
             // S is diagonal, commutes with RZ.
-            let old = self.cliff_frame[qi];
-            self.frame_phase = (self.frame_phase
-                + PHASE_COCYCLE[CliffordFrame::SZ.index() as usize][old.index() as usize])
-                & 7;
-            self.cliff_frame[qi] = CliffordFrame::SZ.compose(old);
+            self.compose_cliff_frame(qi, CliffordFrame::SZ);
         }
         self
     }
@@ -1198,11 +1238,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
     fn szdg(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
             let qi = q.index();
-            let old = self.cliff_frame[qi];
-            self.frame_phase = (self.frame_phase
-                + PHASE_COCYCLE[CliffordFrame::SZDG.index() as usize][old.index() as usize])
-                & 7;
-            self.cliff_frame[qi] = CliffordFrame::SZDG.compose(old);
+            self.compose_cliff_frame(qi, CliffordFrame::SZDG);
         }
         self
     }
@@ -1214,11 +1250,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
             let qi = q.index();
             if self.pending_rz[qi] == Angle64::default() {
                 // No pending RZ: safe to compose H into frame.
-                let old = self.cliff_frame[qi];
-                self.frame_phase = (self.frame_phase
-                    + PHASE_COCYCLE[CliffordFrame::H.index() as usize][old.index() as usize])
-                    & 7;
-                self.cliff_frame[qi] = CliffordFrame::H.compose(old);
+                self.compose_cliff_frame(qi, CliffordFrame::H);
             } else {
                 // Pending RZ exists: must flush frame and RZ, then apply H.
                 self.flush_cliff_frame(qi);
@@ -1236,9 +1268,9 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
             self.flush_noncommuting_pending_rz(q.index());
         }
         self.sz(qubits).y(qubits);
-        // Correct the projective frame composition to canonical H3 phase.
+        // H3 = exp(-i*pi/4) * Y * SZ.
         for _ in qubits {
-            self.frame_phase = (self.frame_phase + 1) & 7;
+            self.frame_phase = (self.frame_phase + 7) & 7;
         }
         self
     }
@@ -1259,11 +1291,6 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
         self.sx(qubits)
             .y(qubits)
             .apply_global_phase(-(Angle64::QUARTER_TURN / 2u64), qubits);
-        // Compensate for the current Y-frame cocycle so the composition has
-        // the canonical H6 phase. Remove this with the issue #699 fix.
-        for _ in qubits {
-            self.frame_phase = (self.frame_phase + 2) & 7;
-        }
         self
     }
 
@@ -1514,34 +1541,6 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
         let results = self.mz(qubits);
         self.x(qubits);
         results
-    }
-
-    fn pz(&mut self, qubits: &[QubitId]) -> &mut Self {
-        // Prep |0⟩: discard diagonal frame and pending_rz (they don't survive reset).
-        for &q in qubits {
-            let qi = q.index();
-            if self.cliff_frame[qi].is_diagonal() {
-                // Diagonal frame: outcome might flip but we force |0⟩ anyway. Discard.
-                self.cliff_frame[qi] = CliffordFrame::IDENTITY;
-                self.pending_rz[qi] = Angle64::default();
-            }
-            // Non-diagonal: default mpz handles it (flushes everything).
-        }
-        self.mpz(qubits);
-        self
-    }
-
-    fn pnz(&mut self, qubits: &[QubitId]) -> &mut Self {
-        // Prep |1⟩: same as pz but flip.
-        for &q in qubits {
-            let qi = q.index();
-            if self.cliff_frame[qi].is_diagonal() {
-                self.cliff_frame[qi] = CliffordFrame::IDENTITY;
-                self.pending_rz[qi] = Angle64::default();
-            }
-        }
-        self.mpnz(qubits);
-        self
     }
 }
 
@@ -2026,11 +2025,10 @@ mod tests {
         let q1 = qid(1);
 
         // Leave both non-zero rotations pending while accumulating X/Y frames.
-        // The extra Z composition also leaves a non-trivial global frame phase.
+        // Y's standard-gate phase leaves a non-trivial global frame phase.
         reset_sim
             .rz(Angle64::from_radians(0.37), &q0)
-            .y(&q0)
-            .z(&q0)
+            .x(&q0)
             .rz(Angle64::from_radians(-0.91), &q1)
             .y(&q1);
         assert_eq!(reset_sim.cliff_frame[0], CliffordFrame::X);
@@ -2873,6 +2871,485 @@ mod tests {
                  StateVecSoA={expected:.12}"
             );
         }
+    }
+
+    fn normalized_z_projection(
+        input: &[Complex64],
+        measured_qubit: usize,
+        outcome: bool,
+        label: &str,
+    ) -> Vec<Complex64> {
+        let mut projected = input.to_vec();
+        for (basis, amplitude) in projected.iter_mut().enumerate() {
+            if (((basis >> measured_qubit) & 1) != 0) != outcome {
+                *amplitude = Complex64::new(0.0, 0.0);
+            }
+        }
+        let norm = projected
+            .iter()
+            .map(Complex64::norm_sqr)
+            .sum::<f64>()
+            .sqrt();
+        assert!(
+            norm > EPS,
+            "{label}: outcome {outcome} has zero probability"
+        );
+        for amplitude in &mut projected {
+            *amplitude /= norm;
+        }
+        projected
+    }
+
+    fn apply_deferred_test_gate<S: CliffordGateable>(
+        simulator: &mut S,
+        gate: &str,
+        qubits: &[QubitId],
+    ) {
+        match gate {
+            "X" => {
+                simulator.x(qubits);
+            }
+            "Y" => {
+                simulator.y(qubits);
+            }
+            _ => unreachable!("test gate must be X or Y"),
+        }
+    }
+
+    #[test]
+    fn x_and_y_preserve_phase_on_every_clifford_input_frame() {
+        let q0 = qid(0);
+        for input_frame in 0..24 {
+            for pauli in ["X", "Y"] {
+                let mut stab_vec = StabVec::builder(1).seed(0x715).build();
+                let mut state_vec = StateVecSoA::with_seed(1, 0x715);
+                stab_vec
+                    .ry(Angle64::from_radians(0.731), &q0)
+                    .rz(Angle64::from_radians(-0.417), &q0);
+                state_vec
+                    .ry(Angle64::from_radians(0.731), &q0)
+                    .rz(Angle64::from_radians(-0.417), &q0);
+                let _ = stab_vec.state_vector();
+                let _ = state_vec.state();
+
+                for &generator in &GENERATORS[input_frame][..GEN_LENS[input_frame] as usize] {
+                    match generator {
+                        0 => {
+                            stab_vec.h(&q0);
+                            state_vec.h(&q0);
+                        }
+                        1 => {
+                            stab_vec.sz(&q0);
+                            state_vec.sz(&q0);
+                        }
+                        _ => unreachable!("generator sequence contains only H and S"),
+                    }
+                }
+                assert_eq!(usize::from(stab_vec.cliff_frame[0].index()), input_frame);
+                apply_deferred_test_gate(&mut stab_vec, pauli, &q0);
+                apply_deferred_test_gate(&mut state_vec, pauli, &q0);
+                assert_phase_exact_state_matches(
+                    &stab_vec.state_vector(),
+                    &state_vec.state(),
+                    &format!("frame {input_frame}; {pauli} on a generic state"),
+                );
+            }
+        }
+
+        for input_frame in [0, 3, 4, 5] {
+            for pauli in ["X", "Y"] {
+                let mut stab_vec = StabVec::builder(1).seed(0x715).build();
+                let mut state_vec = StateVecSoA::with_seed(1, 0x715);
+                for &generator in &GENERATORS[input_frame][..GEN_LENS[input_frame] as usize] {
+                    match generator {
+                        0 => {
+                            stab_vec.h(&q0);
+                            state_vec.h(&q0);
+                        }
+                        1 => {
+                            stab_vec.sz(&q0);
+                            state_vec.sz(&q0);
+                        }
+                        _ => unreachable!("generator sequence contains only H and S"),
+                    }
+                }
+                let angle = Angle64::from_radians(0.37);
+                stab_vec.rz(angle, &q0);
+                state_vec.rz(angle, &q0);
+                assert_eq!(stab_vec.pending_rz[0], angle);
+
+                apply_deferred_test_gate(&mut stab_vec, pauli, &q0);
+                apply_deferred_test_gate(&mut state_vec, pauli, &q0);
+                assert_phase_exact_state_matches(
+                    &stab_vec.state_vector(),
+                    &state_vec.state(),
+                    &format!("diagonal frame {input_frame}; RZ; {pauli}"),
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn pauli_gates_preserve_phase_when_flushing_an_existing_frame() {
+        let q0 = qid(0);
+
+        let mut stab_x = StabVec::builder(1).seed(0x715).build();
+        let mut state_x = StateVecSoA::with_seed(1, 0x715);
+        stab_x.z(&q0).x(&q0);
+        state_x.z(&q0).x(&q0);
+        assert_phase_exact_state_matches(&stab_x.state_vector(), &state_x.state(), "Z; X");
+
+        let angle = Angle64::from_radians(0.37);
+        let mut stab_rz_x = StabVec::builder(1).seed(0x715).build();
+        let mut state_rz_x = StateVecSoA::with_seed(1, 0x715);
+        stab_rz_x.sz(&q0).rz(angle, &q0).x(&q0);
+        state_rz_x.sz(&q0).rz(angle, &q0).x(&q0);
+        assert_phase_exact_state_matches(
+            &stab_rz_x.state_vector(),
+            &state_rz_x.state(),
+            "S; RZ(0.37); X",
+        );
+
+        let mut stab_y = StabVec::builder(1).seed(0x715).build();
+        let mut state_y = StateVecSoA::with_seed(1, 0x715);
+        stab_y.z(&q0).y(&q0);
+        state_y.z(&q0).y(&q0);
+        assert_phase_exact_state_matches(&stab_y.state_vector(), &state_y.state(), "Z; Y");
+
+        let mut stab_rz_y = StabVec::builder(1).seed(0x715).build();
+        let mut state_rz_y = StateVecSoA::with_seed(1, 0x715);
+        stab_rz_y.sz(&q0).rz(angle, &q0).y(&q0);
+        state_rz_y.sz(&q0).rz(angle, &q0).y(&q0);
+        assert_phase_exact_state_matches(
+            &stab_rz_y.state_vector(),
+            &state_rz_y.state(),
+            "S; RZ(0.37); Y",
+        );
+    }
+
+    #[test]
+    fn negative_z_measurements_preserve_phase_when_flushing_an_existing_frame() {
+        let q0 = qid(0);
+        let mut stab_mnz = StabVec::builder(1).seed(0x715).build();
+        let mut state_mnz = StateVecSoA::with_seed(1, 0x715);
+        stab_mnz.z(&q0);
+        state_mnz.z(&q0);
+        let stab_result = stab_mnz.mnz(&q0);
+        let state_result = state_mnz.mnz(&q0);
+        assert_eq!(stab_result[0].outcome, state_result[0].outcome);
+        assert_eq!(
+            stab_result[0].is_deterministic,
+            state_result[0].is_deterministic
+        );
+        assert_phase_exact_state_matches(&stab_mnz.state_vector(), &state_mnz.state(), "Z; MNZ");
+
+        let mut stab_mpnz = StabVec::builder(1).seed(0x715).build();
+        let mut state_mpnz = StateVecSoA::with_seed(1, 0x715);
+        stab_mpnz.z(&q0);
+        state_mpnz.z(&q0);
+        let stab_result = stab_mpnz.mpnz(&q0);
+        let state_result = state_mpnz.mpnz(&q0);
+        assert_eq!(stab_result[0].outcome, state_result[0].outcome);
+        assert_eq!(
+            stab_result[0].is_deterministic,
+            state_result[0].is_deterministic
+        );
+        assert_phase_exact_state_matches(&stab_mpnz.state_vector(), &state_mpnz.state(), "Z; MPNZ");
+    }
+
+    #[test]
+    fn measurement_preserves_pending_rz_branch_phase() {
+        let q0 = qid(0);
+        let ordinary = Angle64::from_radians(0.37);
+        for (label, angles, expected_pending, expected_global_phase) in [
+            (
+                "ordinary pending RZ",
+                vec![ordinary],
+                ordinary,
+                Angle64::ZERO,
+            ),
+            (
+                "pending RZ above a half turn",
+                vec![Angle64::THREE_QUARTERS_TURN],
+                Angle64::THREE_QUARTERS_TURN,
+                Angle64::ZERO,
+            ),
+            (
+                "pending RZ at pi",
+                vec![Angle64::HALF_TURN],
+                Angle64::HALF_TURN,
+                Angle64::ZERO,
+            ),
+            (
+                "pending RZ accumulated across the 2pi wrap",
+                vec![Angle64::THREE_QUARTERS_TURN, Angle64::THREE_QUARTERS_TURN],
+                Angle64::HALF_TURN,
+                Angle64::HALF_TURN,
+            ),
+        ] {
+            let mut stab_vec = StabVec::builder(1).seed(0x714).build();
+            let mut state_vec = StateVecSoA::with_seed(1, 0x714);
+
+            stab_vec.h(&q0);
+            state_vec.h(&q0);
+            for angle in angles {
+                stab_vec.rz(angle, &q0);
+                state_vec.rz(angle, &q0);
+            }
+            assert_eq!(stab_vec.cliff_frame[0], CliffordFrame::IDENTITY);
+            assert_eq!(stab_vec.pending_rz[0], expected_pending);
+            assert_eq!(stab_vec.global_phase, expected_global_phase);
+
+            let input = state_vec.state();
+            for outcome in [false, true] {
+                let expected = normalized_z_projection(&input, 0, outcome, label);
+                let mut measured = stab_vec.clone();
+                let result = measured.measure_qubit(0, Some(outcome));
+                assert_eq!(result.outcome, outcome);
+                assert_phase_exact_state_matches(
+                    &measured.state_vector(),
+                    &expected,
+                    &format!("{label}, outcome {outcome}"),
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn measurement_preserves_every_diagonal_clifford_branch_phase() {
+        let q0 = qid(0);
+        for (name, frame) in [
+            ("I", CliffordFrame::IDENTITY),
+            ("Z", CliffordFrame::Z),
+            ("S", CliffordFrame::SZ),
+            ("Sdg", CliffordFrame::SZDG),
+        ] {
+            let mut stab_vec = StabVec::builder(1).seed(0x714).build();
+            let mut state_vec = StateVecSoA::with_seed(1, 0x714);
+
+            stab_vec.h(&q0);
+            stab_vec.flush_all_cliff_frames();
+            state_vec.h(&q0);
+            match frame.index() {
+                0 => {}
+                3 => {
+                    stab_vec.z(&q0);
+                    state_vec.z(&q0);
+                }
+                4 => {
+                    stab_vec.sz(&q0);
+                    state_vec.sz(&q0);
+                }
+                5 => {
+                    stab_vec.szdg(&q0);
+                    state_vec.szdg(&q0);
+                }
+                _ => unreachable!("test table contains only diagonal frames"),
+            }
+            assert_eq!(stab_vec.cliff_frame[0], frame);
+            assert_eq!(stab_vec.pending_rz[0], Angle64::ZERO);
+
+            let label = format!("diagonal {name} frame");
+            let input = state_vec.state();
+            for outcome in [false, true] {
+                let expected = normalized_z_projection(&input, 0, outcome, &label);
+                let mut measured = stab_vec.clone();
+                let result = measured.measure_qubit(0, Some(outcome));
+                assert_eq!(result.outcome, outcome);
+                assert_phase_exact_state_matches(
+                    &measured.state_vector(),
+                    &expected,
+                    &format!("{label}, outcome {outcome}"),
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn diagonal_phase_emission_does_not_change_seeded_outcome_streams() {
+        let q0 = qid(0);
+        let angle = Angle64::from_radians(0.37);
+        let mut with_phase = Vec::with_capacity(16_750);
+        let mut without_phase = Vec::with_capacity(16_750);
+
+        for seed in 0..67 {
+            let mut phase_sim = StabVec::builder(1).seed(seed).build();
+            let mut reference_sim = StabVec::builder(1).seed(seed).build();
+            for _ in 0..250 {
+                phase_sim.h(&q0);
+                phase_sim.flush_all_cliff_frames();
+                phase_sim.sz(&q0).rz(angle, &q0);
+                with_phase.push(u8::from(phase_sim.mz(&q0)[0].outcome));
+
+                reference_sim.h(&q0);
+                without_phase.push(u8::from(reference_sim.mz(&q0)[0].outcome));
+
+                phase_sim.reset();
+                reference_sim.reset();
+            }
+        }
+
+        assert_eq!(with_phase.len(), 16_750);
+        assert_eq!(with_phase, without_phase);
+    }
+
+    #[test]
+    fn measurement_preserves_combined_diagonal_frame_and_rz_branch_phase() {
+        let q0 = qid(0);
+        let angle = Angle64::from_radians(-0.43);
+        let mut stab_vec = StabVec::builder(1).seed(0x714).build();
+        let mut state_vec = StateVecSoA::with_seed(1, 0x714);
+
+        stab_vec.h(&q0);
+        stab_vec.flush_all_cliff_frames();
+        stab_vec.sz(&q0).rz(angle, &q0);
+        state_vec.h(&q0).sz(&q0).rz(angle, &q0);
+        assert_eq!(stab_vec.cliff_frame[0], CliffordFrame::SZ);
+        assert_eq!(stab_vec.pending_rz[0], angle);
+
+        let label = "diagonal S frame with pending negative RZ";
+        let input = state_vec.state();
+        for outcome in [false, true] {
+            let expected = normalized_z_projection(&input, 0, outcome, label);
+            let mut measured = stab_vec.clone();
+            let result = measured.measure_qubit(0, Some(outcome));
+            assert_eq!(result.outcome, outcome);
+            assert_phase_exact_state_matches(
+                &measured.state_vector(),
+                &expected,
+                &format!("{label}, outcome {outcome}"),
+            );
+        }
+    }
+
+    #[test]
+    fn entangled_measurement_preserves_branch_phase_with_other_amplitudes() {
+        let q0 = qid(0);
+        let q1 = qid(1);
+        let measured_angle = Angle64::from_radians(0.37);
+        let other_angle = Angle64::from_radians(0.61);
+        let mut stab_vec = StabVec::builder(3).seed(0x714).build();
+        let mut state_vec = StateVecSoA::with_seed(3, 0x714);
+
+        stab_vec
+            .h(&q0)
+            .h(&q1)
+            .cx(&[(QubitId(0), QubitId(2))])
+            .rz(other_angle, &q1)
+            .sz(&q0)
+            .rz(measured_angle, &q0);
+        state_vec
+            .h(&q0)
+            .h(&q1)
+            .cx(&[(QubitId(0), QubitId(2))])
+            .rz(other_angle, &q1)
+            .sz(&q0)
+            .rz(measured_angle, &q0);
+        assert_eq!(stab_vec.cliff_frame[0], CliffordFrame::SZ);
+        assert_eq!(stab_vec.pending_rz[0], measured_angle);
+        assert_eq!(stab_vec.pending_rz[1], other_angle);
+
+        let input = state_vec.state();
+        for outcome in [false, true] {
+            let expected = normalized_z_projection(&input, 0, outcome, "entangled measured qubit");
+            let mut measured = stab_vec.clone();
+            let result = measured.measure_qubit(0, Some(outcome));
+            assert_eq!(result.outcome, outcome);
+            assert_phase_exact_state_matches(
+                &measured.state_vector(),
+                &expected,
+                &format!("entangled measured qubit, outcome {outcome}"),
+            );
+        }
+    }
+
+    #[test]
+    fn z_preparations_preserve_both_sampled_branches_and_reference_trajectories() {
+        let q0 = qid(0);
+        let q1 = qid(1);
+        let angle = Angle64::from_radians(0.37);
+        let preparation_angle = Angle64::from_radians(0.8);
+        let mut workaround_complement_count = 0;
+
+        for prepare_negative_z in [false, true] {
+            let name = if prepare_negative_z { "PNZ" } else { "PZ" };
+            let mut saw_partner_branch = [false; 2];
+
+            for seed in 0..40 {
+                let mut stab_vec = StabVec::builder(2).seed(seed).build();
+                let mut state_vec = StateVecSoA::with_seed(2, seed);
+                stab_vec
+                    .ry(preparation_angle, &q0)
+                    .cx(&[(QubitId(0), QubitId(1))])
+                    .sz(&q0)
+                    .rz(angle, &q0);
+                state_vec
+                    .ry(preparation_angle, &q0)
+                    .cx(&[(QubitId(0), QubitId(1))])
+                    .sz(&q0)
+                    .rz(angle, &q0);
+
+                let mut old_pnz_workaround = prepare_negative_z.then(|| stab_vec.clone());
+                let mut explicit_reference = stab_vec.clone();
+                if prepare_negative_z {
+                    stab_vec.pnz(&q0);
+                    explicit_reference.mpnz(&q0);
+                } else {
+                    stab_vec.pz(&q0);
+                    explicit_reference.mpz(&q0);
+                }
+
+                let actual = stab_vec.state_vector();
+                let partner_is_one = actual
+                    .iter()
+                    .enumerate()
+                    .filter(|(basis, _)| basis & (1 << q1[0].index()) != 0)
+                    .map(|(_, amplitude)| amplitude.norm_sqr())
+                    .sum::<f64>()
+                    > 0.5;
+                saw_partner_branch[usize::from(partner_is_one)] = true;
+
+                let label = format!("{name} sampled trajectory for seed {seed}");
+                let mut expected =
+                    normalized_z_projection(&state_vec.state(), 0, partner_is_one, &label);
+                if partner_is_one != prepare_negative_z {
+                    for amplitudes in expected.as_chunks_mut::<2>().0 {
+                        amplitudes.swap(0, 1);
+                    }
+                }
+                assert_phase_exact_state_matches(&actual, &expected, &label);
+                assert_phase_exact_state_matches(
+                    &actual,
+                    &explicit_reference.state_vector(),
+                    &format!("{name} reference decomposition for seed {seed}"),
+                );
+
+                if let Some(workaround) = &mut old_pnz_workaround {
+                    workaround.mpz(&q0);
+                    workaround.x(&q0);
+                    let workaround_state = workaround.state_vector();
+                    let workaround_partner_is_one = workaround_state
+                        .iter()
+                        .enumerate()
+                        .filter(|(basis, _)| basis & (1 << q1[0].index()) != 0)
+                        .map(|(_, amplitude)| amplitude.norm_sqr())
+                        .sum::<f64>()
+                        > 0.5;
+                    workaround_complement_count +=
+                        usize::from(workaround_partner_is_one != partner_is_one);
+                }
+            }
+
+            assert!(
+                saw_partner_branch.into_iter().all(std::convert::identity),
+                "{name} did not cover both nondeterministic input branches"
+            );
+        }
+
+        assert_eq!(
+            workaround_complement_count, 9,
+            "the removed MPZ; X workaround no longer witnesses the reviewed trajectory divergence"
+        );
     }
 
     #[test]

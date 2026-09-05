@@ -29,6 +29,8 @@
 //! Anders & Briegel, "Fast simulation of stabilizer circuits using a graph-state
 //! representation", [arXiv:quant-ph/0504117](https://arxiv.org/abs/quant-ph/0504117).
 
+use pecos_core::Angle64;
+
 /// Which Pauli axis.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
@@ -774,6 +776,23 @@ impl CliffordFrame {
         z_axis == 2 && !z_neg
     }
 
+    /// Phase contributed when this diagonal Clifford acts on a computational-basis state.
+    ///
+    /// Returns `None` for a non-diagonal Clifford. For a diagonal Clifford and
+    /// basis state `|b⟩`, the returned angle `phase` satisfies
+    /// `ELEMENT_MATRIX[self] |b⟩ = exp(i * phase) |b⟩`.
+    #[inline]
+    #[must_use]
+    pub(crate) fn computational_basis_phase(self, outcome: bool) -> Option<Angle64> {
+        match (self.0, outcome) {
+            (0 | 3 | 4 | 5, false) | (0, true) => Some(Angle64::ZERO),
+            (3, true) => Some(Angle64::HALF_TURN),
+            (4, true) => Some(Angle64::QUARTER_TURN),
+            (5, true) => Some(-Angle64::QUARTER_TURN),
+            _ => None,
+        }
+    }
+
     /// Decompose into Pauli × Coset: `self_matrix` = pauli · coset.
     ///
     /// The coset representative is one of {I, S, H, SH, HS, SHS}.
@@ -1039,14 +1058,31 @@ mod tests {
     }
 
     #[test]
-    fn only_computational_basis_diagonal_frames_are_diagonal() {
-        assert!(CliffordFrame::IDENTITY.is_diagonal());
-        assert!(CliffordFrame::Z.is_diagonal());
-        assert!(CliffordFrame::SZ.is_diagonal());
-        assert!(CliffordFrame::SZDG.is_diagonal());
-        assert!(!CliffordFrame::X.is_diagonal());
-        assert!(!CliffordFrame::Y.is_diagonal());
-        assert!(!CliffordFrame::H.is_diagonal());
+    fn computational_basis_phases_match_all_element_matrices() {
+        for index in 0..24 {
+            let frame = CliffordFrame::from_index(index);
+            for outcome in [false, true] {
+                let phase = frame.computational_basis_phase(outcome);
+                assert_eq!(
+                    frame.is_diagonal(),
+                    phase.is_some(),
+                    "element {index}, outcome {outcome}: diagonal/phase disagreement"
+                );
+
+                if let Some(phase) = phase {
+                    let matrix = ELEMENT_MATRIX[index as usize];
+                    let diagonal_offset = if outcome { 6 } else { 0 };
+                    let expected =
+                        Complex64::new(matrix[diagonal_offset], matrix[diagonal_offset + 1]);
+                    let actual = phase.cis();
+                    assert!(
+                        (actual - expected).norm() < 1e-12,
+                        "element {index}, outcome {outcome}: basis phase {actual:?} does not match \
+                         ELEMENT_MATRIX eigenvalue {expected:?}"
+                    );
+                }
+            }
+        }
     }
 
     fn mat_mul(a: &Mat2, b: &Mat2) -> Mat2 {

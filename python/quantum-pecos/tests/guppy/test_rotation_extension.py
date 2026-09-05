@@ -1,8 +1,10 @@
 """Test suite for rotation extension support."""
 
+import pecos as pc
 import pecos_rslib_llvm
 from guppylang import guppy
-from guppylang.std.quantum import angle, measure, pi, qubit, rz
+from guppylang.std.builtins import result
+from guppylang.std.quantum import angle, h, measure, pi, qubit, rz
 
 
 class TestRotationExtension:
@@ -90,24 +92,25 @@ class TestRotationExtension:
         assert "___rz" in output
         assert "double" in output
 
-    def test_rotation_selene_compatibility(self) -> None:
-        """Test rotation compatibility with Selene."""
+    def test_rotation_angle_arithmetic_executes_on_selene(self) -> None:
+        """Two quarter-turn Z rotations flip an X-basis state."""
 
         @guppy
-        def simple_rotation() -> bool:
+        def simple_rotation() -> None:
             q = qubit()
-            rz(q, pi / 8)
-            return measure(q).read()
+            h(q)
+            rz(q, pi / 3 + pi / 6)
+            rz(q, pi / 2)
+            h(q)
+            result("outcome", measure(q).read())
 
-        hugr = simple_rotation.compile()
-        try:
-            pecos_out = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
-            selene_out = pecos_rslib_llvm.compile_hugr_to_qis_selene(hugr.to_bytes())
-
-            # Both should compile successfully
-            assert "___rz" in pecos_out
-            assert "___rz" in selene_out
-        except Exception as e:
-            # If there are compatibility issues, don't fail the test
-            print(f"Rotation compatibility test failed: {e}")
-            assert True
+        results = (
+            pc.sim(simple_rotation)
+            .classical(pc.selene_engine())
+            .quantum(pc.state_vector())
+            .qubits(1)
+            .seed(42)
+            .run(8)
+            .to_dict()
+        )
+        assert results["outcome"] == [1] * 8

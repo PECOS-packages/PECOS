@@ -3,22 +3,9 @@
 These are pytest-compatible tests.
 """
 
-import sys
-from pathlib import Path
-
 import pytest
 
 pytestmark = pytest.mark.optional_dependency
-
-# Add PECOS to path
-PECOS_ROOT = Path(__file__).parent.parent.parent.parent
-sys.path.insert(0, str(PECOS_ROOT / "python" / "quantum-pecos" / "src"))
-
-
-def test_python_imports() -> None:
-    """Test that basic Python imports work."""
-    # If we get here, imports worked
-    assert True
 
 
 def test_backend_detection() -> None:

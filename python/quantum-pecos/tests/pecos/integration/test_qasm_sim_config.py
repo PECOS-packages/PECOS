@@ -2,6 +2,8 @@
 
 from collections import Counter
 
+import pytest
+
 
 class TestQasmSimStructuredConfig:
     """Test qasm_engine structured configuration functionality."""
@@ -31,7 +33,7 @@ class TestQasmSimStructuredConfig:
 
         # Check Bell state results
         counts = Counter(results_dict["c"])
-        assert set(counts.keys()) <= {0, 3}  # Only |00> and |11>
+        assert set(counts.keys()) == {0, 3}  # Only |00> and |11>
 
     def test_config_with_noise(self) -> None:
         """Test configuration with noise model."""
@@ -123,52 +125,67 @@ class TestQasmSimStructuredConfig:
         results_dict = results.to_dict()
         assert len(results_dict["c"]) == 100
 
-    def test_custom_noise_config(self) -> None:
-        """Test configuration with custom noise parameters."""
+    @pytest.mark.parametrize("probability", [0.0, 1.0], ids=["disabled", "enabled"])
+    @pytest.mark.parametrize(
+        ("setting", "instructions", "noisy_distribution"),
+        [
+            pytest.param("p_prep", "reset q;", {3: 1.0}, id="preparation"),
+            pytest.param("p_meas", "", {3: 1.0}, id="measurement"),
+            pytest.param("p1", "z q[0];", {0: 1 / 3, 1: 2 / 3}, id="one-qubit"),
+            pytest.param("p2", "cx q[0], q[1];", {0: 3 / 15, 1: 4 / 15, 2: 4 / 15, 3: 4 / 15}, id="two-qubit"),
+        ],
+    )
+    def test_custom_noise_config(self, probability, setting, instructions, noisy_distribution) -> None:
+        """Each probability controls its own channel, with all other channels disabled."""
         from pecos import Qasm, depolarizing_noise, qasm_engine
 
-        qasm = """
+        program = Qasm.from_string(f"""
             OPENQASM 2.0;
             include "qelib1.inc";
             qreg q[2];
             creg c[2];
-            h q[0];
-            cx q[0], q[1];
+            {instructions}
             measure q -> c;
-            """
-
-        sim = (
-            qasm_engine()
-            .program(Qasm.from_string(qasm))
-            .to_sim()
-            .seed(42)
-            .noise(
-                depolarizing_noise().with_p_prep(0.001).with_p_meas(0.002).with_p1(0.003).with_p2(0.004),
-            )
-            .build()
-        )
-        results = sim.run(100)
-
-        results_dict = results.to_dict()
-        assert len(results_dict["c"]) == 100
+        """)
+        noise = getattr(depolarizing_noise().with_uniform_probability(0.0), f"with_{setting}")(probability)
+        shots = 4096
+        values = qasm_engine().program(program).to_sim().noise(noise).seed(42).run(shots).to_dict()["c"]
+        assert len(values) == shots
+        expected = noisy_distribution if probability else {0: 1.0}
+        counts = Counter(values)
+        assert set(counts) == set(expected)
+        # One-qubit Pauli faults flip a Z measurement for X and Y (2/3).
+        # Of the 15 nonidentity two-qubit Paulis, three preserve 00 and
+        # four produce each other outcome. Use six binomial standard errors;
+        # deterministic channels must match exactly.
+        for outcome, expected_rate in expected.items():
+            tolerance = 6 * (expected_rate * (1 - expected_rate) / shots) ** 0.5
+            assert counts[outcome] / shots == pytest.approx(expected_rate, abs=tolerance, rel=0)
 
     def test_missing_qasm_raises_error(self) -> None:
-        """Test that missing QASM code raises error."""
-        # This test is no longer relevant since QASM is now a required parameter
-        # QASM is now a required parameter to sim(), not part of the config
+        from pecos import qasm_engine
 
-    def test_invalid_noise_type_raises_error(self) -> None:
-        """Test that invalid noise type raises error."""
-        # In the new API, invalid noise types are caught at the type level
-        # This test is no longer relevant as we use builder methods
+        with pytest.raises(RuntimeError, match="No QASM source specified"):
+            qasm_engine().to_sim().build()
 
-    def test_invalid_engine_raises_error(self) -> None:
-        """Test that invalid quantum engine raises error."""
-        # In the new API, invalid engines are caught at the type level
-        # This test is no longer relevant as we use builder methods
+    @pytest.mark.parametrize("invalid", ["invalid", object()], ids=["string", "python-object"])
+    def test_invalid_noise_type_raises_error(self, invalid) -> None:
+        from pecos import Qasm, qasm_engine
 
-    def test_builder_pattern_serialization(self) -> None:
-        """Test the new builder pattern approach."""
+        program = Qasm.from_string('OPENQASM 2.0; include "qelib1.inc"; qreg q[1];')
+        with pytest.raises(TypeError, match="Unrecognized noise builder type"):
+            qasm_engine().program(program).to_sim().noise(invalid).build()
+
+    @pytest.mark.parametrize("invalid", ["invalid", object()], ids=["string", "python-object"])
+    def test_invalid_engine_raises_error(self, invalid) -> None:
+        from pecos import Qasm, qasm_engine
+
+        program = Qasm.from_string('OPENQASM 2.0; include "qelib1.inc"; qreg q[1];')
+        with pytest.raises(TypeError, match="Unrecognized quantum engine builder type"):
+            qasm_engine().program(program).to_sim().quantum(invalid).build()
+
+    def test_combined_builder_options_smoke(self) -> None:
+        """Combined worker, engine, and noise settings produce the requested shots."""
         from pecos import (
             Qasm,
             depolarizing_noise,

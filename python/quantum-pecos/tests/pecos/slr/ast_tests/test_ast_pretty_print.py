@@ -20,6 +20,7 @@ from pecos.slr.ast.nodes import (
     BitRef,
     GateKind,
     GateOp,
+    IfStmt,
     LiteralExpr,
     SlotRef,
     UnaryExpr,
@@ -556,10 +557,9 @@ class TestEdgeCases:
     """Edge case tests."""
 
     def test_empty_if_body(self) -> None:
-        """Test If with no operations in then body (unusual but valid)."""
-        # This would require manual AST construction since SLR requires content
-        # Skip - SLR requires at least one statement
-
+        """An empty AST branch still renders a complete conditional."""
+        statement = IfStmt(condition=LiteralExpr(value=True), then_body=())
+        assert format_statement(statement) == "If(True).Then(\n)"
     def test_multiple_allocators(self) -> None:
         """Multiple allocators are rendered correctly."""
         prog = Main(

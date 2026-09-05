@@ -415,14 +415,6 @@ class TestGraphUseCases:
         assert matching[d0] == d1
         assert matching[d2] == d3
 
-    def test_empty_matching_use_case(self) -> None:
-        """Test when no detection events occur (empty graph)."""
-        graph = pc.graph.Graph()
-        matching = graph.max_weight_matching(False)
-
-        # Empty matching is valid (no errors detected)
-        assert len(matching) == 0
-
 
 class TestEdgeData:
     """Test edge data/attributes functionality."""

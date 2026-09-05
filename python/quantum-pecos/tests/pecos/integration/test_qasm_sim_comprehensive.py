@@ -335,26 +335,6 @@ class TestQasmSimComprehensive:
         # With 1000 shots and noise, the exact counts should differ
         assert counts1 != counts3
 
-    def test_no_noise_config(self) -> None:
-        """Test building without noise."""
-        from pecos import Qasm, qasm_engine
-
-        qasm = """
-            OPENQASM 2.0;
-            include "qelib1.inc";
-            qreg q[1];
-            creg c[1];
-            x q[0];
-            measure q[0] -> c[0];
-            """
-
-        sim = qasm_engine().program(Qasm.from_string(qasm)).to_sim().build()
-        results = sim.run(10)
-
-        results_dict = results.to_dict()
-        # Should work without noise
-        assert all(val == 1 for val in results_dict["c"])
-
     def test_invalid_qasm_syntax(self) -> None:
         """Test handling of invalid QASM syntax."""
         from pecos import Qasm, qasm_engine

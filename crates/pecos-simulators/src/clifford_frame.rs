@@ -54,6 +54,82 @@ pub struct SignedPauli {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CliffordFrame(u8);
 
+/// Gates with a direct Pauli-frame propagation path in amplitude simulators.
+/// The transition owns the two output frames AND their scalar, so callers cannot
+/// install the projective result without also accumulating its phase.
+#[derive(Clone, Copy)]
+pub(crate) enum PauliFrameGate {
+    Cx,
+    Cz,
+    Sxx,
+    SxxDg,
+    Syy,
+    SyyDg,
+    Szz,
+    SzzDg,
+    ISwap,
+}
+
+impl PauliFrameGate {
+    /// Propagate frames represented by `ELEMENT_MATRIX` through the named gate.
+    /// Returns false without changing anything if either frame is non-Pauli.
+    pub(crate) fn propagate(
+        self,
+        frames: &mut [CliffordFrame],
+        phase: &mut u8,
+        pair: (usize, usize),
+    ) -> bool {
+        self.propagate_with_convention(frames, phase, pair, false)
+    }
+
+    /// Propagate the transposed representatives used by `StabVec`'s sequential
+    /// execution of `GENERATORS`. Both frames and the phase are updated together.
+    /// Requires a symmetric canonical gate matrix, enforced by
+    /// `test_pauli_frame_gate_canonical_matrices_are_symmetric`.
+    pub(crate) fn propagate_transposed(
+        self,
+        frames: &mut [CliffordFrame],
+        phase: &mut u8,
+        pair: (usize, usize),
+    ) -> bool {
+        self.propagate_with_convention(frames, phase, pair, true)
+    }
+
+    fn propagate_with_convention(
+        self,
+        frames: &mut [CliffordFrame],
+        phase: &mut u8,
+        (q, r): (usize, usize),
+        transposed: bool,
+    ) -> bool {
+        let (left, right) = (frames[q], frames[r]);
+        if !left.is_pauli() || !right.is_pauli() {
+            return false;
+        }
+        // These kernels compute U† E U = omega^k E'. All gates here have
+        // symmetric canonical matrices. Transposing the identity gives
+        // U E^T U† = omega^k E'^T, exactly StabVec's physical frame update.
+        // For untransposed E, forward propagation instead conjugates the
+        // phase. Dagger gates reverse that choice again.
+        let (new_left, new_right, mut delta) = match self {
+            Self::Cx => CliffordFrame::push_through_cx(left, right),
+            Self::Cz => CliffordFrame::push_through_cz(left, right),
+            Self::Sxx | Self::SxxDg => CliffordFrame::push_through_sxx(left, right),
+            Self::Syy | Self::SyyDg => CliffordFrame::push_through_syy(left, right),
+            Self::Szz | Self::SzzDg => CliffordFrame::push_through_szz(left, right),
+            Self::ISwap => CliffordFrame::push_through_iswap(left, right),
+        };
+        let dagger = matches!(self, Self::SxxDg | Self::SyyDg | Self::SzzDg);
+        if dagger == transposed {
+            delta = (8 - delta) & 7;
+        }
+        frames[q] = new_left;
+        frames[r] = new_right;
+        *phase = (*phase + delta) & 7;
+        true
+    }
+}
+
 // ============================================================================
 // Heisenberg action data
 // ============================================================================
@@ -567,7 +643,7 @@ pub const ELEMENT_MATRIX: [[f64; 8]; 24] = {
     [
         [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0],  //  0: I
         [0.0, 0.0, 1.0, 0.0, 1.0, 0.0, 0.0, 0.0],  //  1: X
-        [0.0, 0.0, 1.0, 0.0, -1.0, 0.0, 0.0, 0.0], //  2: Y (= iXZ, differs from std Y by phase -i)
+        [0.0, 0.0, 1.0, 0.0, -1.0, 0.0, 0.0, 0.0], //  2: Y representative = ZX = i * standard Y
         [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0, 0.0], //  3: Z
         [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0],  //  4: S
         [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0], //  5: Sdg
@@ -849,15 +925,15 @@ impl CliffordFrame {
     #[inline]
     #[must_use]
     pub fn push_through_cx(ctrl_pauli: Self, targ_pauli: Self) -> (Self, Self, u8) {
-        // Phase: CX†(P1⊗P2)CX = phase * P1'⊗P2'. Nonzero only for XZ→YY and YY→XZ.
-        // Lookup: index = ctrl_pauli * 4 + targ_pauli (both 0-3).
-        const CX_PHASE: [u8; 16] = [0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 4, 0, 0, 0, 0, 0];
+        // ELEMENT_MATRIX Paulis are Z^z X^x (Y_elem = ZX = iY).
+        // Conjugation preserves this Z-before-X ordering under CX:
+        // Zc^zc Zt^zt Xc^xc Xt^xt ->
+        // Zc^(zc xor zt) Zt^zt Xc^xc Xt^(xc xor xt), with no scalar.
         let (xc, zc) = ctrl_pauli.pauli_xz_bits();
         let (xt, zt) = targ_pauli.pauli_xz_bits();
         let new_ctrl = Self::pauli_from_xz(xc, zc ^ zt);
         let new_targ = Self::pauli_from_xz(xc ^ xt, zt);
-        let phase = CX_PHASE[ctrl_pauli.0 as usize * 4 + targ_pauli.0 as usize];
-        (new_ctrl, new_targ, phase)
+        (new_ctrl, new_targ, 0)
     }
 
     /// Push Pauli frames through a CZ gate.
@@ -867,13 +943,15 @@ impl CliffordFrame {
     #[inline]
     #[must_use]
     pub fn push_through_cz(ctrl_pauli: Self, targ_pauli: Self) -> (Self, Self, u8) {
-        // Phase: nonzero only for XY→YX and YX→XY.
-        const CZ_PHASE: [u8; 16] = [0, 0, 0, 0, 0, 0, 4, 0, 0, 4, 0, 0, 0, 0, 0, 0];
+        // CZ maps Xc -> Xc Zt and Xt -> Zc Xt. Putting the product
+        // back into ELEMENT_MATRIX's Z-before-X order crosses Xc and Zc
+        // exactly when xc && xt, giving (-1)^(xc*xt). Standard-Y sign
+        // tables are incompatible with this generator-based convention.
         let (xc, zc) = ctrl_pauli.pauli_xz_bits();
         let (xt, zt) = targ_pauli.pauli_xz_bits();
         let new_ctrl = Self::pauli_from_xz(xc, zc ^ xt);
         let new_targ = Self::pauli_from_xz(xt, zt ^ xc);
-        let phase = CZ_PHASE[ctrl_pauli.0 as usize * 4 + targ_pauli.0 as usize];
+        let phase = if xc && xt { 4 } else { 0 };
         (new_ctrl, new_targ, phase)
     }
 
@@ -1640,202 +1718,66 @@ mod tests {
     }
 
     #[test]
+    fn test_pauli_frame_gate_canonical_matrices_are_symmetric() {
+        use pecos_core::Clifford;
+
+        for gate in [
+            PauliFrameGate::Cx,
+            PauliFrameGate::Cz,
+            PauliFrameGate::Sxx,
+            PauliFrameGate::SxxDg,
+            PauliFrameGate::Syy,
+            PauliFrameGate::SyyDg,
+            PauliFrameGate::Szz,
+            PauliFrameGate::SzzDg,
+            PauliFrameGate::ISwap,
+        ] {
+            // Keep this exhaustive: every new propagation variant must have
+            // its canonical matrix checked before using the transpose identity.
+            let clifford = match gate {
+                PauliFrameGate::Cx => Clifford::CX,
+                PauliFrameGate::Cz => Clifford::CZ,
+                PauliFrameGate::Sxx => Clifford::SXX,
+                PauliFrameGate::SxxDg => Clifford::SXXdg,
+                PauliFrameGate::Syy => Clifford::SYY,
+                PauliFrameGate::SyyDg => Clifford::SYYdg,
+                PauliFrameGate::Szz => Clifford::SZZ,
+                PauliFrameGate::SzzDg => Clifford::SZZdg,
+                PauliFrameGate::ISwap => Clifford::ISWAP,
+            };
+            let matrix = clifford.canonical_2q_matrix().unwrap();
+            for row in 0..4 {
+                for col in 0..4 {
+                    let entry = 2 * (4 * row + col);
+                    let transposed = 2 * (4 * col + row);
+                    assert_eq!(
+                        &matrix[entry..entry + 2],
+                        &matrix[transposed..transposed + 2],
+                        "{clifford} must be symmetric for transposed frame propagation"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn test_cx_cz_pauli_passthrough() {
-        // Verify CX and CZ Pauli pass-through in the ELEMENT_MATRIX convention.
-        //
-        // CX is phase-free: conjugating any Pauli tensor product by CX yields
-        // exactly the expected Pauli tensor product with no extra phase.
-        //
-        // CZ picks up a sign of (-1)^{xc * xt} in the element convention,
-        // where xc, xt are the X-bits of the input Paulis. This comes from
-        // two sources: (1) the Pauli anticommutation sign when CZ introduces
-        // Z factors that must be moved past X factors on the same qubit, and
-        // (2) the element convention phase for Y (Y_elem = i * Y_std). These
-        // combine to give phase = -1 exactly when both inputs have X-bit set
-        // (i.e., both are X or Y).
-
-        const ELEM: &[[f64; 8]; 24] = &ELEMENT_MATRIX;
-
-        // --- 4x4 complex matrix helpers using [re, im] pairs ---
-        // A 4x4 complex matrix is [[f64; 2]; 16], stored row-major:
-        //   entry (r, c) at index r*4 + c.
-        type Mat4 = [[f64; 2]; 16];
-
-        const CZERO: [f64; 2] = [0.0, 0.0];
-
-        fn cmul(a: [f64; 2], b: [f64; 2]) -> [f64; 2] {
-            [a[0] * b[0] - a[1] * b[1], a[0] * b[1] + a[1] * b[0]]
-        }
-
-        fn cadd(a: [f64; 2], b: [f64; 2]) -> [f64; 2] {
-            [a[0] + b[0], a[1] + b[1]]
-        }
-
-        fn mat4_zero() -> Mat4 {
-            [CZERO; 16]
-        }
-
-        fn mat4_mul(a: &Mat4, b: &Mat4) -> Mat4 {
-            let mut r = mat4_zero();
-            for i in 0..4 {
-                for j in 0..4 {
-                    let mut s = CZERO;
-                    for k in 0..4 {
-                        s = cadd(s, cmul(a[i * 4 + k], b[k * 4 + j]));
-                    }
-                    r[i * 4 + j] = s;
-                }
-            }
-            r
-        }
-
-        fn mat4_dag(a: &Mat4) -> Mat4 {
-            let mut r = mat4_zero();
-            for i in 0..4 {
-                for j in 0..4 {
-                    let v = a[j * 4 + i];
-                    r[i * 4 + j] = [v[0], -v[1]]; // conjugate transpose
-                }
-            }
-            r
-        }
-
-        /// Build a 4x4 matrix from the tensor product of two `ELEMENT_MATRIX` entries.
-        fn tensor(a_idx: usize, b_idx: usize) -> Mat4 {
-            let a = &ELEM[a_idx];
-            let b = &ELEM[b_idx];
-            // a is [[a00, a01], [a10, a11]] with a_rc = (a[r*4+c*2], a[r*4+c*2+1])
-            // tensor product: (A tensor B)_{(ia,ib),(ja,jb)} = A_{ia,ja} * B_{ib,jb}
-            let mut r = mat4_zero();
-            for ia in 0..2 {
-                for ja in 0..2 {
-                    let a_val = [a[ia * 4 + ja * 2], a[ia * 4 + ja * 2 + 1]];
-                    for ib in 0..2 {
-                        for jb in 0..2 {
-                            let b_val = [b[ib * 4 + jb * 2], b[ib * 4 + jb * 2 + 1]];
-                            let row = ia * 2 + ib;
-                            let col = ja * 2 + jb;
-                            r[row * 4 + col] = cmul(a_val, b_val);
-                        }
-                    }
-                }
-            }
-            r
-        }
-
-        /// CX matrix in computational basis (control qubit 0, target qubit 1):
-        /// |00> -> |00>, |01> -> |01>, |10> -> |11>, |11> -> |10>
-        fn mat_cx() -> Mat4 {
-            let mut m = mat4_zero();
-            let one = [1.0, 0.0];
-            m[0] = one; // |00> -> |00>
-            m[4 + 1] = one; // |01> -> |01>
-            m[2 * 4 + 3] = one; // |10> -> |11>
-            m[3 * 4 + 2] = one; // |11> -> |10>
-            m
-        }
-
-        /// CZ matrix: diag(1, 1, 1, -1)
-        fn mat_cz() -> Mat4 {
-            let mut m = mat4_zero();
-            let one = [1.0, 0.0];
-            m[0] = one;
-            m[4 + 1] = one;
-            m[2 * 4 + 2] = one;
-            m[3 * 4 + 3] = [-1.0, 0.0];
-            m
-        }
-
-        fn mat4_eq(a: &Mat4, b: &Mat4, tol: f64) -> bool {
-            for i in 0..16 {
-                let dr = a[i][0] - b[i][0];
-                let di = a[i][1] - b[i][1];
-                if (dr * dr + di * di).sqrt() > tol {
-                    return false;
-                }
-            }
-            true
-        }
-
-        /// Extract (`x_bit`, `z_bit`) from Pauli index 0..3.
-        fn pauli_xz(idx: usize) -> (bool, bool) {
-            match idx {
-                0 => (false, false), // I
-                1 => (true, false),  // X
-                2 => (true, true),   // Y
-                3 => (false, true),  // Z
-                _ => unreachable!(),
-            }
-        }
-
-        /// Construct Pauli index from (`x_bit`, `z_bit`).
-        fn pauli_from_xz(x: bool, z: bool) -> usize {
-            match (x, z) {
-                (false, false) => 0,
-                (true, false) => 1,
-                (true, true) => 2,
-                (false, true) => 3,
-            }
-        }
-
-        // --- Test CX ---
-        let cx = mat_cx();
-        let cx_dag = mat4_dag(&cx); // CX is self-adjoint, but compute anyway
-
-        for pc in 0..4 {
-            for pt in 0..4 {
-                let input = tensor(pc, pt);
-                // CX * input * CX^dag
-                let conjugated = mat4_mul(&cx, &mat4_mul(&input, &cx_dag));
-
-                // Compute expected output Paulis via symplectic rules
-                let (xc, zc) = pauli_xz(pc);
-                let (xt, zt) = pauli_xz(pt);
-                let pc_out = pauli_from_xz(xc, zc ^ zt);
-                let pt_out = pauli_from_xz(xc ^ xt, zt);
-
-                let expected = tensor(pc_out, pt_out);
-
-                assert!(
-                    mat4_eq(&conjugated, &expected, 1e-10),
-                    "CX phase-free check failed for pc={pc}, pt={pt}: \
-                     expected Pauli ({pc_out}, {pt_out})"
-                );
-            }
-        }
-
-        // --- Test CZ ---
-        // CZ picks up (-1)^{xc*xt} in the element convention.
-        let cz = mat_cz();
-        let cz_dag = mat4_dag(&cz); // CZ is self-adjoint
-
-        for pc in 0..4 {
-            for pt in 0..4 {
-                let input = tensor(pc, pt);
-                // CZ * input * CZ^dag
-                let conjugated = mat4_mul(&cz, &mat4_mul(&input, &cz_dag));
-
-                // Compute expected output Paulis via symplectic rules
-                let (xc, zc) = pauli_xz(pc);
-                let (xt, zt) = pauli_xz(pt);
-                let pc_out = pauli_from_xz(xc, zc ^ xt);
-                let pt_out = pauli_from_xz(xt, zt ^ xc);
-
-                // Element-convention phase: (-1) when both X-bits are set
-                let phase: f64 = if xc && xt { -1.0 } else { 1.0 };
-
-                let raw_expected = tensor(pc_out, pt_out);
-                let mut expected = mat4_zero();
-                for i in 0..16 {
-                    expected[i] = [raw_expected[i][0] * phase, raw_expected[i][1] * phase];
-                }
-
-                assert!(
-                    mat4_eq(&conjugated, &expected, 1e-10),
-                    "CZ check failed for pc={pc}, pt={pt}: \
-                     expected Pauli ({pc_out}, {pt_out}) with phase={phase}"
-                );
-            }
+        // Exercise the production phase-returning API, not a separate copy of
+        // its symplectic formulas: the old check verified the right algebra
+        // while the production methods returned standard-Y phases.
+        for (gate, propagate) in [
+            (
+                pecos_core::Clifford::CX,
+                CliffordFrame::push_through_cx as fn(_, _) -> _,
+            ),
+            (
+                pecos_core::Clifford::CZ,
+                CliffordFrame::push_through_cz as fn(_, _) -> _,
+            ),
+        ] {
+            let matrix = gate.canonical_2q_matrix().unwrap();
+            let matrix = std::array::from_fn(|i| [matrix[2 * i], matrix[2 * i + 1]]);
+            verify_push_through_all_16(&matrix, propagate, &gate.to_string());
         }
     }
 

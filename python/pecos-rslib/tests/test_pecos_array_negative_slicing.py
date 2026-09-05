@@ -12,10 +12,7 @@ from pecos_rslib import Array
         pytest.param(slice(None, None, -1), id="reverse"),
         pytest.param(slice(3, None, -1), id="reverse-from-index"),
         pytest.param(slice(-1, None, -1), id="negative-start"),
-        *[
-            pytest.param(slice(3, stop, -1), id=f"stop-{stop}")
-            for stop in [-1, -2, -3, -4, -5, -10, -100, -1000]
-        ],
+        *[pytest.param(slice(3, stop, -1), id=f"stop-{stop}") for stop in [-1, -2, -3, -4, -5, -10, -100, -1000]],
         pytest.param(slice(3, 3, -1), id="equal-bounds"),
         pytest.param(slice(None, None, -2), id="step-minus-two"),
     ],

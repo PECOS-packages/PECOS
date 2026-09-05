@@ -94,6 +94,9 @@ class TestRotationExtension:
 
     def test_rotation_angle_arithmetic_executes_on_selene(self) -> None:
         """Two quarter-turn Z rotations flip an X-basis state."""
+        # Dropping pi/6 still gives P(1) ~= 0.933. At 128 shots its chance
+        # of passing an all-ones assertion is below 0.00015.
+        shots = 128
 
         @guppy
         def simple_rotation() -> None:
@@ -110,7 +113,7 @@ class TestRotationExtension:
             .quantum(pc.state_vector())
             .qubits(1)
             .seed(42)
-            .run(8)
+            .run(shots)
             .to_dict()
         )
-        assert results["outcome"] == [1] * 8
+        assert results["outcome"] == [1] * shots

@@ -20,9 +20,10 @@ def test_default_simulation_is_noiseless(build_first: bool) -> None:
     assert simulation.run(16).to_dict()["c"] == [1] * 16
 
 
-def test_general_noise_defaults_are_noiseless() -> None:
+@pytest.mark.parametrize("flip_target", [False, True], ids=["11", "01"])
+def test_general_noise_defaults_are_noiseless(flip_target: bool) -> None:
     """General noise requires explicit settings or auto() to introduce errors."""
-    program = Qasm.from_string("""
+    program = Qasm.from_string(f"""
         OPENQASM 2.0;
         include "qelib1.inc";
         qreg q[2];
@@ -30,7 +31,8 @@ def test_general_noise_defaults_are_noiseless() -> None:
         reset q;
         x q[0];
         cx q[0], q[1];
+        {"x q[1];" if flip_target else ""}
         measure q -> c;
     """)
     results = qasm_engine().program(program).to_sim().noise(general_noise()).seed(42).run(64)
-    assert results.to_dict()["c"] == [3] * 64
+    assert results.to_dict()["c"] == [1 if flip_target else 3] * 64

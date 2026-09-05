@@ -125,11 +125,11 @@ class TestQasmSimStructuredConfig:
         results_dict = results.to_dict()
         assert len(results_dict["c"]) == 100
 
-    @pytest.mark.parametrize("probability", [0.0, 1.0], ids=["disabled", "enabled"])
+    @pytest.mark.parametrize("probability", [0.0, 0.5, 1.0], ids=["disabled", "half", "enabled"])
     @pytest.mark.parametrize(
         ("setting", "instructions", "noisy_distribution"),
         [
-            pytest.param("p_prep", "reset q;", {3: 1.0}, id="preparation"),
+            pytest.param("p_prep", "reset q; cx q[0], q[1];", {1: 1.0}, id="preparation"),
             pytest.param("p_meas", "", {3: 1.0}, id="measurement"),
             pytest.param("p1", "z q[0];", {0: 1 / 3, 1: 2 / 3}, id="one-qubit"),
             pytest.param("p2", "cx q[0], q[1];", {0: 3 / 15, 1: 4 / 15, 2: 4 / 15, 3: 4 / 15}, id="two-qubit"),
@@ -151,7 +151,19 @@ class TestQasmSimStructuredConfig:
         shots = 4096
         values = qasm_engine().program(program).to_sim().noise(noise).seed(42).run(shots).to_dict()["c"]
         assert len(values) == shots
-        expected = noisy_distribution if probability else {0: 1.0}
+        p = probability
+        if setting == "p_prep":
+            # Independent preparation flips precede CX: 11 becomes 01,
+            # distinguishing preparation faults from measurement faults.
+            expected = {0: (1 - p) ** 2, 1: p**2, 2: p * (1 - p), 3: p * (1 - p)}
+        elif setting == "p_meas":
+            # Each of the two measured bits flips independently.
+            expected = {0: (1 - p) ** 2, 1: p * (1 - p), 2: p * (1 - p), 3: p**2}
+        else:
+            # A single noisy gate either preserves 00 or applies a Pauli fault.
+            expected = {outcome: p * rate for outcome, rate in noisy_distribution.items()}
+            expected[0] += 1 - p
+        expected = {outcome: rate for outcome, rate in expected.items() if rate > 0}
         counts = Counter(values)
         assert set(counts) == set(expected)
         # One-qubit Pauli faults flip a Z measurement for X and Y (2/3).

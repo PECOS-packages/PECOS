@@ -560,6 +560,7 @@ class TestEdgeCases:
         """An empty AST branch still renders a complete conditional."""
         statement = IfStmt(condition=LiteralExpr(value=True), then_body=())
         assert format_statement(statement) == "If(True).Then(\n)"
+
     def test_multiple_allocators(self) -> None:
         """Multiple allocators are rendered correctly."""
         prog = Main(

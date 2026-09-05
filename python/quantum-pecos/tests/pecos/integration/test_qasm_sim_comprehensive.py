@@ -27,7 +27,7 @@ class TestQasmSimComprehensive:
         results_dict = results.to_dict()
 
         # Should always measure |11> = 3
-        assert all(val == 3 for val in results_dict["c"])
+        assert results_dict["c"] == [3] * 100
 
     def test_general_noise(self) -> None:
         """Test GeneralNoise model."""

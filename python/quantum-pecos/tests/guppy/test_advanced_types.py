@@ -1,5 +1,7 @@
 """Test suite for advanced type support (futures, collections, etc)."""
 
+import re
+
 import pecos as pc
 import pecos_rslib_llvm
 from guppylang import guppy
@@ -44,8 +46,8 @@ class TestAdvancedTypes:
         output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
 
         # Should handle multiple futures correctly
-        measure_calls = output.count("___lazy_measure")
-        assert measure_calls >= 2, f"Expected at least 2 measurements, got {measure_calls}"
+        measure_calls = re.findall(r"\bcall\b[^\n]*@___lazy_measure\(", output)
+        assert len(measure_calls) == 2, f"Expected 2 measurement calls, got {len(measure_calls)}"
 
     def test_advanced_types_compilation(self) -> None:
         """Test that advanced types don't break compilation."""

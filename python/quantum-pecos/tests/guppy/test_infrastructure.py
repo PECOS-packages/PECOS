@@ -30,18 +30,15 @@ def test_guppy_frontend_creation() -> None:
     pytest.importorskip("guppylang")
     from pecos._compilation import GuppyFrontend
 
+    frontend = GuppyFrontend()
     try:
-        frontend = GuppyFrontend()
         # Should be able to get backend info
         info = frontend.get_backend_info()
         assert isinstance(info, dict)
         assert "backend" in info
 
-        # Clean up
+    finally:
         frontend.cleanup()
-    except ImportError as e:
-        if "guppylang is not available" in str(e):
-            pytest.skip("GuppyFrontend import check happens at module import time")
 
 
 def test_guppy_import_if_available() -> None:

@@ -3424,4 +3424,3 @@ amplitude 1021 bc84a1c4c0b908c7 3fa6a09e667f3bb6
 amplitude 1022 bc869bc4c0b908c7 3fa6a09e667f3bbb
 amplitude 1023 bfa6a09e667f3ae4 3cbaf58600000000
 end
-

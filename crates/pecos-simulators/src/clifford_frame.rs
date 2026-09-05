@@ -29,6 +29,8 @@
 //! Anders & Briegel, "Fast simulation of stabilizer circuits using a graph-state
 //! representation", [arXiv:quant-ph/0504117](https://arxiv.org/abs/quant-ph/0504117).
 
+use pecos_core::Angle64;
+
 /// Which Pauli axis.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
@@ -772,6 +774,23 @@ impl CliffordFrame {
     pub fn is_diagonal(self) -> bool {
         let (_, _, z_axis, z_neg) = HEIS[self.0 as usize];
         z_axis == 2 && !z_neg
+    }
+
+    /// Phase contributed when this diagonal Clifford acts on a computational-basis state.
+    ///
+    /// Returns `None` for a non-diagonal Clifford. For a diagonal Clifford and
+    /// basis state `|b⟩`, the returned angle `phase` satisfies
+    /// `ELEMENT_MATRIX[self] |b⟩ = exp(i * phase) |b⟩`.
+    #[inline]
+    #[must_use]
+    pub(crate) fn computational_basis_phase(self, outcome: bool) -> Option<Angle64> {
+        match (self.0, outcome) {
+            (0 | 3 | 4 | 5, false) | (0, true) => Some(Angle64::ZERO),
+            (3, true) => Some(Angle64::HALF_TURN),
+            (4, true) => Some(Angle64::QUARTER_TURN),
+            (5, true) => Some(-Angle64::QUARTER_TURN),
+            _ => None,
+        }
     }
 
     /// Decompose into Pauli × Coset: `self_matrix` = pauli · coset.

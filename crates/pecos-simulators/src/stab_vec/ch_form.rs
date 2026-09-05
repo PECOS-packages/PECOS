@@ -1932,6 +1932,10 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CHFormGeneric<S, R> {
 
     /// Right-multiply `U_C` by CX(q, r): maps |j> -> |j> with `j_r` ^= `j_q`.
     fn right_cx(&mut self, q: usize, r: usize) {
+        debug_assert_ne!(
+            q, r,
+            "update_sum chooses distinct pivot and partner indices"
+        );
         std::sync::Arc::make_mut(&mut self.g).col_xor_assign(q, r);
         std::sync::Arc::make_mut(&mut self.f).col_xor_assign(r, q);
         std::sync::Arc::make_mut(&mut self.m).col_xor_assign(q, r);

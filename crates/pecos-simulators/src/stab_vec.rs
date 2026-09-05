@@ -525,14 +525,35 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
         }
     }
 
-    /// Flush pending RZ on a specific qubit.
+    /// Flush pending RZ on a specific qubit through its deferred Clifford frame.
     fn flush_pending_rz(&mut self, q: usize) {
-        let angle = self.pending_rz[q];
-        if angle == Angle64::default() {
+        let pending_angle = self.pending_rz[q];
+        if pending_angle == Angle64::default() {
             return;
         }
+
+        // The represented state is RZ(p) F |stored>. To retain F while
+        // materializing the rotation, apply
+        //
+        //     F^-1 RZ(p) F = RZ(s p)
+        //
+        // to |stored>, where F^-1 Z F = s Z. A pending RZ can coexist only
+        // with a frame that preserves the Z axis. X/Y composition already
+        // negated p when it moved the Pauli to the right of the rotation, so
+        // the negative Z image here restores the angle needed on |stored>.
+        let z_image = self.cliff_frame[q].z_image();
+        debug_assert_eq!(
+            z_image.axis,
+            crate::clifford_frame::PauliAxis::Z,
+            "a pending RZ requires a frame that preserves the Z axis"
+        );
+        let materialized_angle = if z_image.positive {
+            pending_angle
+        } else {
+            -pending_angle
+        };
         self.pending_rz[q] = Angle64::default();
-        self.apply_rz_immediate(angle, q);
+        self.apply_rz_immediate(materialized_angle, q);
     }
 
     /// Materialize a pending RZ together with its current Clifford frame before
@@ -561,25 +582,25 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
         if cf.is_identity() {
             return;
         }
-        self.cliff_frame[q] = CliffordFrame::IDENTITY;
 
         // Fast paths for common frames (avoid GENERATORS lookup overhead).
         let qid = QubitId(q);
         if cf.is_pauli() {
+            // X and Y carry an angle negation paired with the frame. Consume
+            // that pair while the frame is still visible to flush_pending_rz.
+            if matches!(cf.index(), 1 | 2) {
+                self.flush_pending_rz(q);
+            }
+            self.cliff_frame[q] = CliffordFrame::IDENTITY;
+
             // Paulis: diagonal part is cheap, non-diagonal part uses X/Y gate.
             match cf.index() {
                 1 => {
-                    // X: must flush pending_rz (X anticommutes with RZ)
-                    self.pending_rz[q] = -self.pending_rz[q];
-                    self.flush_pending_rz(q);
                     self.apply_clifford(|ch| {
                         ch.x(&[qid]);
                     });
                 }
                 2 => {
-                    // Y: anticommutes with RZ
-                    self.pending_rz[q] = -self.pending_rz[q];
-                    self.flush_pending_rz(q);
                     self.apply_clifford(|ch| {
                         ch.y(&[qid]);
                     });
@@ -600,24 +621,10 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
             return;
         }
 
-        // A pending RZ can coexist only with a frame that preserves the Z axis.
-        // Anti-diagonal frames carry the sign negation performed by X/Y
-        // composition; restore it before materializing the frame to the right
-        // of the RZ. The Pauli X/Y fast paths above do the same thing.
-        if self.pending_rz[q] != Angle64::ZERO {
-            let z_image = cf.z_image();
-            debug_assert_eq!(
-                z_image.axis,
-                crate::clifford_frame::PauliAxis::Z,
-                "a pending RZ requires a frame that preserves the Z axis"
-            );
-            if !z_image.positive {
-                self.pending_rz[q] = -self.pending_rz[q];
-            }
-        }
-
         // Flush pending RZ first (non-diagonal Cliffords don't commute with RZ).
+        // Keep the frame visible until the paired angle has been materialized.
         self.flush_pending_rz(q);
+        self.cliff_frame[q] = CliffordFrame::IDENTITY;
 
         // General path: apply via H+S generator decomposition.
         let idx = cf.index() as usize;
@@ -731,6 +738,28 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
             ch.apply_gamma_delta(&delta);
             ch.set_shared_m(shared_m.clone());
         }
+    }
+
+    /// Apply an XX root to stored terms after its caller has handled frames.
+    /// YY roots reuse this decomposition without propagating their frames again.
+    fn apply_xx_root(&mut self, pairs: &[(QubitId, QubitId)], dagger: bool) {
+        let q0s: Vec<QubitId> = pairs.iter().map(|p| p.0).collect();
+        let q1s: Vec<QubitId> = pairs.iter().map(|p| p.1).collect();
+        self.apply_clifford(|ch| {
+            ch.h(&q0s);
+            ch.h(&q1s);
+        });
+        self.apply_c_type_clifford(|ch| {
+            if dagger {
+                ch.szzdg(pairs);
+            } else {
+                ch.szz(pairs);
+            }
+        });
+        self.apply_clifford(|ch| {
+            ch.h(&q0s);
+            ch.h(&q1s);
+        });
     }
 
     /// Buffer an RZ gate. Fuses with any pending RZ on the same qubit.
@@ -855,23 +884,6 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
             self.terms.push((z_coeff, ch_z));
             self.terms[i].0 *= cos_half_val;
         }
-    }
-
-    /// Apply RX(theta) on a qubit.
-    ///
-    /// RX(theta) = H * RZ(theta) * H
-    #[allow(dead_code)]
-    fn apply_rx(&mut self, theta: Angle64, q: usize) {
-        self.h(&[QubitId(q)]);
-        self.apply_rz(theta, q);
-        self.h(&[QubitId(q)]);
-    }
-
-    #[allow(dead_code)]
-    fn apply_rzz(&mut self, theta: Angle64, q0: usize, q1: usize) {
-        self.cx(&[(QubitId(q0), QubitId(q1))]);
-        self.apply_rz(theta, q1);
-        self.cx(&[(QubitId(q0), QubitId(q1))]);
     }
 
     /// Measure a qubit. Returns the measurement result and projects the state.
@@ -1456,6 +1468,9 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
         for &(q0, q1) in pairs {
             let c = q0.index();
             let t = q1.index();
+            // A target RZ does not commute with CX. Materialize it against the
+            // frame it is paired with, before CX propagation changes that frame.
+            self.flush_pending_rz(t);
             let fc = self.cliff_frame[c];
             let ft = self.cliff_frame[t];
             if fc.is_pauli() && ft.is_pauli() {
@@ -1467,7 +1482,6 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
                 self.flush_cliff_frame(c);
                 self.flush_cliff_frame(t);
             }
-            self.flush_pending_rz(t);
         }
         self.apply_clifford(|ch| {
             ch.cx(pairs);
@@ -1579,19 +1593,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
             }
         }
         // SXX = H*H * SZZ * H*H
-        let q0s: Vec<QubitId> = pairs.iter().map(|p| p.0).collect();
-        let q1s: Vec<QubitId> = pairs.iter().map(|p| p.1).collect();
-        self.apply_clifford(|ch| {
-            ch.h(&q0s);
-            ch.h(&q1s);
-        });
-        self.apply_c_type_clifford(|ch| {
-            ch.szz(pairs);
-        });
-        self.apply_clifford(|ch| {
-            ch.h(&q0s);
-            ch.h(&q1s);
-        });
+        self.apply_xx_root(pairs, false);
         self
     }
 
@@ -1618,19 +1620,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
                 self.flush_cliff_frame(r);
             }
         }
-        let q0s: Vec<QubitId> = pairs.iter().map(|p| p.0).collect();
-        let q1s: Vec<QubitId> = pairs.iter().map(|p| p.1).collect();
-        self.apply_clifford(|ch| {
-            ch.h(&q0s);
-            ch.h(&q1s);
-        });
-        self.apply_c_type_clifford(|ch| {
-            ch.szzdg(pairs);
-        });
-        self.apply_clifford(|ch| {
-            ch.h(&q0s);
-            ch.h(&q1s);
-        });
+        self.apply_xx_root(pairs, true);
         self
     }
 
@@ -1642,6 +1632,9 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
         for &(q0, q1) in pairs {
             let q = q0.index();
             let r = q1.index();
+            for target in [q, r] {
+                self.flush_noncommuting_pending_rz(target);
+            }
             let fq = self.cliff_frame[q];
             let fr = self.cliff_frame[r];
             if fq.is_pauli() && fr.is_pauli() {
@@ -1659,7 +1652,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
         self.apply_c_type_clifford(|ch| {
             ch.sz(&all_qubits);
         });
-        self.sxx(pairs);
+        self.apply_xx_root(pairs, false);
         self.apply_c_type_clifford(|ch| {
             ch.szdg(&all_qubits);
         });
@@ -1674,6 +1667,9 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
         for &(q0, q1) in pairs {
             let q = q0.index();
             let r = q1.index();
+            for target in [q, r] {
+                self.flush_noncommuting_pending_rz(target);
+            }
             let fq = self.cliff_frame[q];
             let fr = self.cliff_frame[r];
             if fq.is_pauli() && fr.is_pauli() {
@@ -1690,7 +1686,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
         self.apply_c_type_clifford(|ch| {
             ch.sz(&all_qubits);
         });
-        self.sxxdg(pairs);
+        self.apply_xx_root(pairs, true);
         self.apply_c_type_clifford(|ch| {
             ch.szdg(&all_qubits);
         });
@@ -1703,6 +1699,9 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
             return self;
         }
         for &(q0, q1) in pairs {
+            // Target RZ does not commute with CY. An identity or Z frame
+            // flush would leave it pending, so consume it explicitly.
+            self.flush_pending_rz(q1.index());
             self.flush_cliff_frame(q0.index());
             self.flush_cliff_frame(q1.index());
         }

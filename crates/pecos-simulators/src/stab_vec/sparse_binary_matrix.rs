@@ -120,7 +120,12 @@ impl<S: IndexSet> SparseBinaryMatrix<S> {
     /// `self.rows[dst] ^= other.rows[src]`.
     ///
     /// This is used for cross-matrix operations in CH-form (e.g., M[q,:] ^= G[r,:]).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the matrices have different dimensions.
     pub fn row_xor_from(&mut self, dst: usize, other: &Self, src: usize) {
+        assert_eq!(self.n, other.n, "row_xor_from: dimensions must match");
         // Update columns: for each column j in other's src row, toggle dst in our column j
         for j in other.rows[src].iter() {
             Arc::make_mut(&mut self.cols[j]).toggle(dst);
@@ -161,7 +166,12 @@ impl<S: IndexSet> SparseBinaryMatrix<S> {
 
     /// XOR a column from another matrix into column `dst` of this matrix:
     /// `self.cols[dst] ^= other.cols[src]`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the matrices have different dimensions.
     pub fn col_xor_from(&mut self, dst: usize, other: &Self, src: usize) {
+        assert_eq!(self.n, other.n, "col_xor_from: dimensions must match");
         for i in other.cols[src].iter() {
             Arc::make_mut(&mut self.rows[i]).toggle(dst);
         }
@@ -244,22 +254,27 @@ impl<S: IndexSet> SparseBinaryMatrix<S> {
 
     /// Reset to zero matrix.
     pub fn reset_to_zero(&mut self) {
-        for r in &mut self.rows {
-            Arc::make_mut(r).clear();
-        }
-        for c in &mut self.cols {
-            Arc::make_mut(c).clear();
+        for set in self.rows.iter_mut().chain(&mut self.cols) {
+            Self::set_for_overwrite(set, self.n).clear();
         }
     }
 
     /// Reset to identity matrix.
     pub fn reset_to_identity(&mut self) {
         for (i, r) in self.rows.iter_mut().enumerate() {
-            Arc::make_mut(r).set_single(i);
+            Self::set_for_overwrite(r, self.n).set_single(i);
         }
         for (j, c) in self.cols.iter_mut().enumerate() {
-            Arc::make_mut(c).set_single(j);
+            Self::set_for_overwrite(c, self.n).set_single(j);
         }
+    }
+
+    /// Reuse unique storage, but discard shared contents without cloning them.
+    fn set_for_overwrite(set: &mut Arc<S>, n: usize) -> &mut S {
+        if Arc::get_mut(set).is_none() {
+            *set = Arc::new(S::with_capacity(n));
+        }
+        Arc::get_mut(set).expect("set for overwrite is uniquely owned")
     }
 }
 
@@ -272,6 +287,14 @@ fn debug_assert_consistent<S: IndexSet>(mat: &SparseBinaryMatrix<S>) {
                 debug_assert!(
                     mat.cols[j].contains(i),
                     "Row-column inconsistency: rows[{i}] has {j} but cols[{j}] missing {i}"
+                );
+            }
+        }
+        for j in 0..mat.n {
+            for i in mat.cols[j].iter() {
+                debug_assert!(
+                    mat.rows[i].contains(j),
+                    "Column-row inconsistency: cols[{j}] has {i} but rows[{i}] missing {j}"
                 );
             }
         }
@@ -496,6 +519,64 @@ mod tests {
         assert!(!Arc::ptr_eq(&original.cols[1], &cloned.cols[1]));
         assert!(!original.get(0, 1));
         assert!(cloned.get(0, 1));
+    }
+
+    fn snapshot(mat: &Mat) -> Vec<Vec<bool>> {
+        (0..mat.dim())
+            .map(|i| (0..mat.dim()).map(|j| mat.get(i, j)).collect())
+            .collect()
+    }
+
+    fn assert_views_match(mat: &Mat, expected: &[Vec<bool>]) {
+        for (i, row) in expected.iter().enumerate() {
+            for (j, &bit) in row.iter().enumerate() {
+                assert_eq!(mat.row(i).contains(j), bit, "row view [{i}][{j}]");
+                assert_eq!(mat.col(j).contains(i), bit, "column view [{i}][{j}]");
+            }
+        }
+    }
+
+    fn assert_dimension_mismatch_is_atomic(operation: impl Fn(&mut Mat, &Mat)) {
+        for other_dim in [2, 4] {
+            let mut mat = Mat::identity(3);
+            let before = snapshot(&mat);
+            let mut other = Mat::identity(other_dim);
+            other.set(0, other_dim - 1, true);
+            other.set(other_dim - 1, 0, true);
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                operation(&mut mat, &other);
+            }));
+            assert!(result.is_err(), "unequal dimensions must be rejected");
+            assert_views_match(&mat, &before);
+        }
+    }
+
+    #[test]
+    fn row_xor_from_rejects_unequal_dimensions_before_mutation() {
+        assert_dimension_mismatch_is_atomic(|m, other| m.row_xor_from(1, other, 0));
+    }
+
+    #[test]
+    fn col_xor_from_rejects_unequal_dimensions_before_mutation() {
+        assert_dimension_mismatch_is_atomic(|m, other| m.col_xor_from(1, other, 0));
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "Column-row inconsistency")]
+    fn consistency_check_rejects_extra_column_bit() {
+        let mut mat = Mat::new(3);
+        Arc::make_mut(&mut mat.cols[2]).insert(0);
+        debug_assert_consistent(&mat);
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "Row-column inconsistency")]
+    fn consistency_check_rejects_extra_row_bit() {
+        let mut mat = Mat::new(3);
+        Arc::make_mut(&mut mat.rows[0]).insert(2);
+        debug_assert_consistent(&mat);
     }
 
     #[test]

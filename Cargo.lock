@@ -4072,7 +4072,10 @@ dependencies = [
 name = "pecos-bp"
 version = "0.2.0-dev.0"
 dependencies = [
+ "ndarray 0.17.2",
  "pecos-decoder-core",
+ "pecos-random",
+ "pecos-relay-bp",
 ]
 
 [[package]]

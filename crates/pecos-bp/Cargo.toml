@@ -13,6 +13,11 @@ description = "Native belief-propagation primitives for PECOS decoders"
 
 [dependencies]
 pecos-decoder-core.workspace = true
+pecos-random.workspace = true
+
+[dev-dependencies]
+ndarray.workspace = true
+pecos-relay-bp.workspace = true
 
 [lib]
 name = "pecos_bp"

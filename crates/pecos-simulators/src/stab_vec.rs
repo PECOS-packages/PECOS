@@ -175,9 +175,13 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
         }
     }
 
-    /// Whether every term shares all CH-form structure that is independent of
-    /// gamma and omega.
-    fn has_shared_projection_structure(&self) -> bool {
+    /// Whether every term currently shares the structural inputs used by Z projection.
+    ///
+    /// This is exposed for correctness tests that must prove both projection
+    /// dispatch paths are represented in their corpus.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn has_shared_projection_structure(&self) -> bool {
         self.terms.first().is_none_or(|(_, first)| {
             self.terms[1..]
                 .iter()

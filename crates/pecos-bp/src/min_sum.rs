@@ -17,8 +17,11 @@
 //! never corrections: deciding how to consume the soft information belongs to
 //! a decoder.
 
-use crate::dem::{DemCheckMatrix, SparseDem};
-use crate::errors::DecoderError;
+use pecos_decoder_core::dem::{DemCheckMatrix, SparseDem};
+use pecos_decoder_core::errors::DecoderError;
+
+/// Finite LLR magnitude used to represent certainty throughout native BP.
+pub const LLR_SATURATION: f64 = 30.0;
 
 /// Precomputed sparse Tanner graph for BP message passing.
 ///
@@ -88,7 +91,7 @@ impl BpGraph {
         Ok(Self::from_connections(
             dem.num_detectors,
             &probabilities,
-            |check, mechanism| dem.mechanisms[mechanism].1.contains(&(check as u32)),
+            |check, mechanism| dem.mechanisms[mechanism].1.contains(&index(check)),
         ))
     }
 
@@ -136,8 +139,8 @@ impl BpGraph {
         for (check, check_entries) in temp_check.iter_mut().enumerate() {
             for (mechanism, variable_entries) in temp_var.iter_mut().enumerate() {
                 if connected(check, mechanism) {
-                    check_entries.push((mechanism as u32, message_index));
-                    variable_entries.push((check as u32, message_index));
+                    check_entries.push((index(mechanism), message_index));
+                    variable_entries.push((index(check), message_index));
                     message_index += 1;
                 }
             }
@@ -146,18 +149,18 @@ impl BpGraph {
         let mut check_data = Vec::new();
         let mut check_offset = Vec::with_capacity(num_checks + 1);
         for entries in &temp_check {
-            check_offset.push(check_data.len() as u32);
+            check_offset.push(index(check_data.len()));
             check_data.extend_from_slice(entries);
         }
-        check_offset.push(check_data.len() as u32);
+        check_offset.push(index(check_data.len()));
 
         let mut var_data = Vec::new();
         let mut var_offset = Vec::with_capacity(num_vars + 1);
         for entries in &temp_var {
-            var_offset.push(var_data.len() as u32);
+            var_offset.push(index(var_data.len()));
             var_data.extend_from_slice(entries);
         }
-        var_offset.push(var_data.len() as u32);
+        var_offset.push(index(var_data.len()));
 
         Self {
             num_checks,
@@ -172,18 +175,27 @@ impl BpGraph {
     }
 
     #[inline]
-    fn check_entries(&self, check: usize) -> &[(u32, u32)] {
+    pub(crate) fn check_entries(&self, check: usize) -> &[(u32, u32)] {
         let start = self.check_offset[check] as usize;
         let end = self.check_offset[check + 1] as usize;
         &self.check_data[start..end]
     }
 
     #[inline]
-    fn var_entries(&self, variable: usize) -> &[(u32, u32)] {
+    pub(crate) fn var_entries(&self, variable: usize) -> &[(u32, u32)] {
         let start = self.var_offset[variable] as usize;
         let end = self.var_offset[variable + 1] as usize;
         &self.var_data[start..end]
     }
+}
+
+/// Narrow a graph index to the `u32` the CSR arrays store.
+///
+/// Indices are `u32` to keep the graph compact. A Tanner graph with more
+/// than `u32::MAX` checks, mechanisms, or edges is outside the supported
+/// size, so the narrowing fails loudly instead of wrapping.
+fn index(value: usize) -> u32 {
+    u32::try_from(value).expect("Tanner graph index exceeds the u32 index space")
 }
 
 /// Reusable work buffers for [`min_sum_bp_into`].
@@ -414,9 +426,9 @@ pub fn min_sum_bp_into(
 
 fn prior_llr(probability: f64) -> f64 {
     if probability <= 0.0 {
-        30.0
+        LLR_SATURATION
     } else if probability >= 1.0 {
-        -30.0
+        -LLR_SATURATION
     } else {
         // The clamp keeps the computed branch inside the same +-30 saturation
         // the boundary branches already use, which changes the result exactly
@@ -425,14 +437,16 @@ fn prior_llr(probability: f64) -> f64 {
         // `ln`, and one infinite prior turns downstream exponentially-weighted
         // updates into NaN. Clamp returns the input bit-identically whenever
         // it is in range.
-        ((1.0 - probability) / probability).ln().clamp(-30.0, 30.0)
+        ((1.0 - probability) / probability)
+            .ln()
+            .clamp(-LLR_SATURATION, LLR_SATURATION)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{BpGraph, BpScratch, min_sum_bp_into, prior_llr};
-    use crate::dem::DemCheckMatrix;
+    use super::{BpGraph, BpScratch, LLR_SATURATION, min_sum_bp_into, prior_llr};
+    use pecos_decoder_core::dem::DemCheckMatrix;
 
     /// A subnormal probability overflows `(1 - p) / p` to infinity before the
     /// logarithm; the prior must saturate at the same +-30 the boundary
@@ -440,11 +454,11 @@ mod tests {
     /// exponentially-weighted update with NaN.
     #[test]
     fn prior_llr_is_finite_and_saturated_for_subnormal_probabilities() {
-        assert_eq!(prior_llr(5e-324).to_bits(), 30.0_f64.to_bits());
+        assert_eq!(prior_llr(5e-324).to_bits(), LLR_SATURATION.to_bits());
         // The mirrored extreme saturates at the negative bound.
         assert_eq!(
             prior_llr(1.0 - f64::EPSILON).to_bits(),
-            (-30.0_f64).to_bits()
+            (-LLR_SATURATION).to_bits()
         );
         // Ordinary probabilities are untouched bit-for-bit.
         let ordinary = 0.03_f64;

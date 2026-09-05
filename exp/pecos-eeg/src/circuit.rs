@@ -211,7 +211,7 @@ pub fn analyze_with_noise(
         {
             for &q in &qubits {
                 let label = Bm::z(q);
-                let (pl, coeff) = propagate_h(label, angle.to_radians() / 2.0, remaining);
+                let (pl, coeff) = propagate_h(label, angle.to_radians_signed() / 2.0, remaining);
                 generators.push(PropagatedEeg {
                     eeg_type: EegType::H,
                     label: pl,
@@ -402,6 +402,23 @@ mod tests {
                 g.coeff
             );
         }
+    }
+
+    #[test]
+    fn test_explicit_negative_rz_has_negative_half_angle_coefficient() {
+        let theta = -0.37;
+        let gates = vec![Gate::with_angles(
+            GateType::RZ,
+            vec![pecos_core::Angle64::from_radians(theta)],
+            vec![QubitId(0)],
+        )];
+        let result = analyze_expanded(&gates, &NoiseModel::coherent_only(0.0));
+
+        assert_eq!(result.generators.len(), 1);
+        let generator = &result.generators[0];
+        assert_eq!(generator.eeg_type, EegType::H);
+        assert_eq!(generator.label, Bm::z(0));
+        assert!((generator.coeff - theta / 2.0).abs() < 1e-12);
     }
 
     #[test]

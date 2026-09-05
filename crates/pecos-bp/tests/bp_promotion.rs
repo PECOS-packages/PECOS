@@ -10,7 +10,7 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-use pecos_decoder_core::bp::{BpGraph, BpScratch, min_sum_bp_into};
+use pecos_bp::{BpGraph, BpScratch, min_sum_bp_into};
 use pecos_decoder_core::dem::{DemCheckMatrix, SparseDem};
 use pecos_decoder_core::errors::DecoderError;
 use std::collections::BTreeMap;

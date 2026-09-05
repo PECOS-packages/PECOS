@@ -27,8 +27,8 @@
 pub mod factor;
 
 use factor::{FactorModel, NormalizedFactor, Outcome};
+use pecos_bp::{BpGraph, BpScratch, min_sum_bp_into};
 use pecos_decoder_core::ObservableDecoder;
-use pecos_decoder_core::bp::{BpGraph, BpScratch, min_sum_bp_into};
 pub use pecos_decoder_core::dem::SparseDem;
 pub use pecos_decoder_core::errors::DecoderError;
 pub use pecos_decoder_core::obs_mask::ObsMask;

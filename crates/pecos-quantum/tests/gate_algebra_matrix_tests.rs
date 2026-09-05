@@ -13,13 +13,16 @@
 //! Matrix-level verification of cross-type gate algebra operators.
 //!
 //! Each test builds a result via the gate algebra operators (`*`, `&`) on
-//! base types (Pauli, Clifford, Unitary) and verifies it is matrix-equivalent
+//! base types (Pauli, Clifford, Unitary) and verifies it is phase-exactly equal
 //! to the independently constructed reference built from `UnitaryRep` constructors.
 
 use pecos_core::clifford::Clifford;
 use pecos_core::unitary_rep::{self, RotationType, Unitary, UnitaryRep};
 use pecos_core::{Angle64, Pauli, PauliString};
 use pecos_quantum::unitary_matrix::unitaries_equiv;
+
+mod common;
+use common::assert_residual_phase;
 
 // ============================================================================
 // Pauli * Pauli: verify via PauliString -> UnitaryRep matrix
@@ -30,10 +33,7 @@ fn matrix_pauli_mul_xx_is_identity() {
     let result: PauliString = Pauli::X * Pauli::X;
     let result_ur = UnitaryRep::from(result);
     let reference = unitary_rep::I(0);
-    assert!(
-        unitaries_equiv(&result_ur, &reference),
-        "X * X should equal I"
-    );
+    assert_residual_phase(&result_ur, &reference, 0.0, "X * X should equal I");
 }
 
 #[test]
@@ -42,10 +42,7 @@ fn matrix_pauli_mul_xz_is_neg_iy() {
     let result_ur = UnitaryRep::from(result);
     // X * Z = -iY
     let reference = -pecos_core::unitary_rep::i * unitary_rep::Y(0);
-    assert!(
-        unitaries_equiv(&result_ur, &reference),
-        "X * Z should equal -iY"
-    );
+    assert_residual_phase(&result_ur, &reference, 0.0, "X * Z should equal -iY");
 }
 
 #[test]
@@ -54,10 +51,7 @@ fn matrix_pauli_mul_yz_is_ix() {
     let result_ur = UnitaryRep::from(result);
     // Y * Z = iX
     let reference = pecos_core::unitary_rep::i * unitary_rep::X(0);
-    assert!(
-        unitaries_equiv(&result_ur, &reference),
-        "Y * Z should equal iX"
-    );
+    assert_residual_phase(&result_ur, &reference, 0.0, "Y * Z should equal iX");
 }
 
 #[test]
@@ -66,10 +60,7 @@ fn matrix_pauli_mul_zx_is_iy() {
     let result_ur = UnitaryRep::from(result);
     // Z * X = iY
     let reference = pecos_core::unitary_rep::i * unitary_rep::Y(0);
-    assert!(
-        unitaries_equiv(&result_ur, &reference),
-        "Z * X should equal iY"
-    );
+    assert_residual_phase(&result_ur, &reference, 0.0, "Z * X should equal iY");
 }
 
 // ============================================================================
@@ -81,9 +72,11 @@ fn matrix_pauli_tensor_xz() {
     let result: PauliString = Pauli::X & Pauli::Z;
     let result_ur = UnitaryRep::from(result);
     let reference = unitary_rep::X(0) & unitary_rep::Z(1);
-    assert!(
-        unitaries_equiv(&result_ur, &reference),
-        "X & Z should equal X(0) tensor Z(1)"
+    assert_residual_phase(
+        &result_ur,
+        &reference,
+        0.0,
+        "X & Z should equal X(0) tensor Z(1)",
     );
 }
 
@@ -92,9 +85,11 @@ fn matrix_pauli_tensor_yz() {
     let result: PauliString = Pauli::Y & Pauli::Z;
     let result_ur = UnitaryRep::from(result);
     let reference = unitary_rep::Y(0) & unitary_rep::Z(1);
-    assert!(
-        unitaries_equiv(&result_ur, &reference),
-        "Y & Z should equal Y(0) tensor Z(1)"
+    assert_residual_phase(
+        &result_ur,
+        &reference,
+        0.0,
+        "Y & Z should equal Y(0) tensor Z(1)",
     );
 }
 
@@ -208,7 +203,7 @@ fn matrix_clifford_cx_tensor_cz() {
 }
 
 // ============================================================================
-// Unitary cross-type ops: matrix-level verification via unitaries_equiv
+// Unitary cross-type ops: exact residual-phase verification
 // ============================================================================
 
 #[test]
@@ -219,9 +214,11 @@ fn matrix_pauli_x_mul_unitary_rz() {
     };
     let result = Pauli::X * rz;
     let reference = unitary_rep::X(0) * unitary_rep::RZ(Angle64::from_turn_ratio(1, 8), 0);
-    assert!(
-        unitaries_equiv(&result, &reference),
-        "Pauli::X * RZ(1/8) should match X(0) * RZ(1/8, 0)"
+    assert_residual_phase(
+        &result,
+        &reference,
+        0.0,
+        "Pauli::X * RZ(1/8) should match X(0) * RZ(1/8, 0)",
     );
 }
 
@@ -233,9 +230,11 @@ fn matrix_unitary_rz_mul_pauli_x() {
     };
     let result = rz * Pauli::X;
     let reference = unitary_rep::RZ(Angle64::from_turn_ratio(1, 8), 0) * unitary_rep::X(0);
-    assert!(
-        unitaries_equiv(&result, &reference),
-        "RZ(1/8) * Pauli::X should match RZ(1/8, 0) * X(0)"
+    assert_residual_phase(
+        &result,
+        &reference,
+        0.0,
+        "RZ(1/8) * Pauli::X should match RZ(1/8, 0) * X(0)",
     );
 }
 
@@ -247,9 +246,11 @@ fn matrix_pauli_x_tensor_unitary_rz() {
     };
     let result = Pauli::X & rz;
     let reference = unitary_rep::X(0) & unitary_rep::RZ(Angle64::QUARTER_TURN, 1);
-    assert!(
-        unitaries_equiv(&result, &reference),
-        "X & RZ should match X(0) tensor RZ(1)"
+    assert_residual_phase(
+        &result,
+        &reference,
+        0.0,
+        "X & RZ should match X(0) tensor RZ(1)",
     );
 }
 
@@ -261,9 +262,11 @@ fn matrix_clifford_h_mul_unitary_rz() {
     };
     let result = Clifford::H * rz;
     let reference = unitary_rep::H(0) * unitary_rep::RZ(Angle64::from_turn_ratio(1, 8), 0);
-    assert!(
-        unitaries_equiv(&result, &reference),
-        "Clifford::H * RZ(1/8) should match H(0) * RZ(1/8, 0)"
+    assert_residual_phase(
+        &result,
+        &reference,
+        0.0,
+        "Clifford::H * RZ(1/8) should match H(0) * RZ(1/8, 0)",
     );
 }
 
@@ -275,9 +278,11 @@ fn matrix_unitary_rz_mul_clifford_h() {
     };
     let result = rz * Clifford::H;
     let reference = unitary_rep::RZ(Angle64::from_turn_ratio(1, 8), 0) * unitary_rep::H(0);
-    assert!(
-        unitaries_equiv(&result, &reference),
-        "RZ(1/8) * Clifford::H should match RZ(1/8, 0) * H(0)"
+    assert_residual_phase(
+        &result,
+        &reference,
+        0.0,
+        "RZ(1/8) * Clifford::H should match RZ(1/8, 0) * H(0)",
     );
 }
 
@@ -289,9 +294,11 @@ fn matrix_clifford_h_tensor_unitary_rz() {
     };
     let result = Clifford::H & rz;
     let reference = unitary_rep::H(0) & unitary_rep::RZ(Angle64::QUARTER_TURN, 1);
-    assert!(
-        unitaries_equiv(&result, &reference),
-        "H & RZ should match H(0) tensor RZ(1)"
+    assert_residual_phase(
+        &result,
+        &reference,
+        0.0,
+        "H & RZ should match H(0) tensor RZ(1)",
     );
 }
 
@@ -303,9 +310,11 @@ fn matrix_unitary_rz_tensor_clifford_cx() {
     };
     let result = rz & Clifford::CX;
     let reference = unitary_rep::RZ(Angle64::QUARTER_TURN, 0) & unitary_rep::CX(1, 2);
-    assert!(
-        unitaries_equiv(&result, &reference),
-        "RZ & CX should match RZ(0) tensor CX(1,2)"
+    assert_residual_phase(
+        &result,
+        &reference,
+        0.0,
+        "RZ & CX should match RZ(0) tensor CX(1,2)",
     );
 }
 
@@ -322,9 +331,11 @@ fn matrix_unitary_h_mul_rz() {
     };
     let result = h * rz;
     let reference = unitary_rep::H(0) * unitary_rep::RZ(Angle64::from_turn_ratio(1, 8), 0);
-    assert!(
-        unitaries_equiv(&result, &reference),
-        "Unitary H * Unitary RZ should match H(0) * RZ(0)"
+    assert_residual_phase(
+        &result,
+        &reference,
+        0.0,
+        "Unitary H * Unitary RZ should match H(0) * RZ(0)",
     );
 }
 
@@ -334,9 +345,11 @@ fn matrix_unitary_h_tensor_cx() {
     let cx = Unitary::Named(pecos_core::gate_type::GateType::CX);
     let result = h & cx;
     let reference = unitary_rep::H(0) & unitary_rep::CX(1, 2);
-    assert!(
-        unitaries_equiv(&result, &reference),
-        "Unitary H & CX should match H(0) tensor CX(1,2)"
+    assert_residual_phase(
+        &result,
+        &reference,
+        0.0,
+        "Unitary H & CX should match H(0) tensor CX(1,2)",
     );
 }
 
@@ -349,8 +362,10 @@ fn matrix_unitary_cx_tensor_rz() {
     };
     let result = cx & rz;
     let reference = unitary_rep::CX(0, 1) & unitary_rep::RZ(Angle64::QUARTER_TURN, 2);
-    assert!(
-        unitaries_equiv(&result, &reference),
-        "CX & RZ should match CX(0,1) tensor RZ(2)"
+    assert_residual_phase(
+        &result,
+        &reference,
+        0.0,
+        "CX & RZ should match CX(0,1) tensor RZ(2)",
     );
 }

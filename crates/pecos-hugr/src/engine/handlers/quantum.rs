@@ -202,7 +202,10 @@ impl HugrEngine {
             }
             "radd" => {
                 // radd: (Rotation, Rotation) -> Rotation
-                // Add two rotations
+                // Keep the sum unreduced. Controlled rotations need the source
+                // angle's winding so they can halve it before constructing an
+                // Angle64; reducing here would make CRz 2π-periodic instead of
+                // 4π-periodic.
                 let a = self
                     .get_input_value(hugr, node, 0)
                     .and_then(|v| v.as_rotation());
@@ -214,8 +217,7 @@ impl HugrEngine {
                     return HandlerOutcome::Defer;
                 };
 
-                // Rotation addition, normalized to [0, 2) half-turns
-                let sum = (a + b).rem_euclid(2.0);
+                let sum = a + b;
 
                 self.wire_state
                     .classical_values

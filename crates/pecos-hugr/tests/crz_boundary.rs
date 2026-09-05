@@ -12,12 +12,15 @@
 
 use pecos_engines::Engine;
 use pecos_engines::byte_message::builder::ByteMessageBuilder;
-use pecos_engines::quantum::StateVecEngine;
+use pecos_engines::hybrid::HybridEngineBuilder;
+use pecos_engines::quantum::{DenseStateVecEngine, StateVecEngine};
+use pecos_hugr::HugrEngine;
 use pecos_quantum::hugr_convert::hugr_to_dag_circuit;
 use tket::TketOp;
-use tket::extension::rotation::ConstRotation;
+use tket::extension::rotation::{ConstRotation, RotationOp, RotationOpBuilder};
 use tket::hugr::Hugr;
 use tket::hugr::builder::{DFGBuilder, Dataflow, DataflowHugr};
+use tket::hugr::std_extensions::arithmetic::float_types::ConstF64;
 use tket::hugr::types::Signature;
 
 fn crz_hugr(theta: f64, basis: usize) -> Hugr {
@@ -89,6 +92,109 @@ fn execute(theta: f64, basis: usize) -> Vec<(f64, f64)> {
         .iter()
         .map(|amplitude| (amplitude.re, amplitude.im))
         .collect()
+}
+
+fn dynamic_radd_crz_hugr() -> Hugr {
+    let mut builder = DFGBuilder::new(Signature::new(vec![], vec![])).expect("create HUGR");
+    let target = builder
+        .add_dataflow_op(TketOp::QAlloc, vec![])
+        .expect("allocate target")
+        .out_wire(0);
+    let control = builder
+        .add_dataflow_op(TketOp::QAlloc, vec![])
+        .expect("allocate control")
+        .out_wire(0);
+    let control = builder
+        .add_dataflow_op(TketOp::H, [control])
+        .expect("prepare superposed control")
+        .out_wire(0);
+
+    let halfturns_a = builder.add_load_value(ConstF64::new(1.5));
+    let halfturns_b = builder.add_load_value(ConstF64::new(1.5));
+    let rotation_a = builder
+        .add_from_halfturns_unchecked(halfturns_a)
+        .expect("construct first rotation");
+    let rotation_b = builder
+        .add_from_halfturns_unchecked(halfturns_b)
+        .expect("construct second rotation");
+    let rotation_sum = builder
+        .add_dataflow_op(RotationOp::radd, [rotation_a, rotation_b])
+        .expect("add rotations")
+        .out_wire(0);
+
+    let crz = builder
+        .add_dataflow_op(TketOp::CRz, [control, target, rotation_sum])
+        .expect("apply CRz");
+    builder
+        .add_dataflow_op(TketOp::QFree, [crz.out_wire(1)])
+        .expect("free target");
+    builder
+        .add_dataflow_op(TketOp::QFree, [crz.out_wire(0)])
+        .expect("free control");
+    builder
+        .finish_hugr_with_outputs(vec![])
+        .expect("finish HUGR")
+}
+
+fn execute_dynamic_radd_crz() -> Vec<(f64, f64)> {
+    let hugr_engine = HugrEngine::from_hugr(dynamic_radd_crz_hugr());
+    let mut hybrid = HybridEngineBuilder::new()
+        .with_classical_engine(Box::new(hugr_engine))
+        .with_quantum_engine(Box::new(DenseStateVecEngine::new(2)))
+        .build();
+    hybrid.run_shot().expect("execute dynamic CRz HUGR");
+
+    let state_vector = hybrid
+        .quantum_system
+        .quantum_engine_mut()
+        .as_any_mut()
+        .downcast_mut::<DenseStateVecEngine>()
+        .expect("dense state-vector engine")
+        .simulator_mut()
+        .state();
+    state_vector
+        .iter()
+        .map(|amplitude| (amplitude.re, amplitude.im))
+        .collect()
+}
+
+fn expected_superposed_control(theta: f64) -> [(f64, f64); 4] {
+    let amplitude = std::f64::consts::FRAC_1_SQRT_2;
+    let controlled_amplitude = (
+        amplitude * (-theta / 2.0).cos(),
+        amplitude * (-theta / 2.0).sin(),
+    );
+    [
+        (amplitude, 0.0),
+        (0.0, 0.0),
+        controlled_amplitude,
+        (0.0, 0.0),
+    ]
+}
+
+fn state_matches_up_to_global_phase(actual: &[(f64, f64)], expected: &[(f64, f64)]) -> bool {
+    let reference = std::f64::consts::FRAC_1_SQRT_2;
+    let phase = (actual[0].0 / reference, actual[0].1 / reference);
+    actual.iter().zip(expected).all(|(&(re, im), expected)| {
+        let normalized = (re * phase.0 + im * phase.1, im * phase.0 - re * phase.1);
+        (normalized.0 - expected.0).abs() < 1e-12 && (normalized.1 - expected.1).abs() < 1e-12
+    })
+}
+
+#[test]
+fn dynamic_radd_preserves_crz_winding() {
+    let actual = execute_dynamic_radd_crz();
+    let expected_three_pi = expected_superposed_control(3.0 * std::f64::consts::PI);
+    let wrong_pi = expected_superposed_control(std::f64::consts::PI);
+
+    assert!(
+        state_matches_up_to_global_phase(&actual, &expected_three_pi),
+        "dynamic CRz state {actual:?} did not match CRz(3π) on |+0>"
+    );
+    assert!(
+        !state_matches_up_to_global_phase(&actual, &wrong_pi),
+        "dynamic CRz state {actual:?} incorrectly matched CRz(π) on |+0>"
+    );
 }
 
 #[test]

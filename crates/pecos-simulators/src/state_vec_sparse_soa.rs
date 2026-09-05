@@ -1929,6 +1929,25 @@ impl<R: Rng + Debug> QuantumSimulator for SparseStateVecSoA<R> {
 // --- CliffordGateable trait implementation ---
 
 impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
+    fn apply_global_phase(&mut self, phase: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let unit_phase = Complex64::from_polar(1.0, phase.to_radians_signed());
+        let mut global_phase = Complex64::new(1.0, 0.0);
+        for _ in qubits {
+            global_phase *= unit_phase;
+        }
+        let (real, imag) = if self.active_a {
+            (&mut self.real_a[..self.len], &mut self.imag_a[..self.len])
+        } else {
+            (&mut self.real_b[..self.len], &mut self.imag_b[..self.len])
+        };
+        for (real, imag) in real.iter_mut().zip(imag) {
+            let amplitude = Complex64::new(*real, *imag) * global_phase;
+            *real = amplitude.re;
+            *imag = amplitude.im;
+        }
+        self
+    }
+
     // ---- Single-qubit Clifford gates: O(1) frame composition ----
 
     // -- Pauli gates (delta: X=0, Y=6, Z=0) --

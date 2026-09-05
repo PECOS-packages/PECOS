@@ -192,6 +192,7 @@ sprs = "=0.11.3"
 # =============================================================================
 
 pecos = { version = "0.2.0-dev.0", path = "crates/pecos", default-features = false }
+pecos-bp = { version = "0.2.0-dev.0", path = "crates/pecos-bp" }
 pecos-build = { version = "0.2.0-dev.0", path = "crates/pecos-build", default-features = false }
 pecos-chromobius = { version = "0.2.0-dev.0", path = "crates/pecos-chromobius" }
 pecos-core = { version = "0.2.0-dev.0", path = "crates/pecos-core" }
@@ -314,6 +315,15 @@ opt-level = 2
 [profile.dev.package.pecos-fusion-blossom]
 opt-level = 2
 [profile.dev.package.fusion-blossom]
+opt-level = 2
+# Belief-propagation kernels and their external oracle: the Relay-BP parity
+# tests run thousands of iterations over a 30k-edge Tanner graph (~30x
+# slower unoptimized: 82 s vs 2.6 s for one test).
+[profile.dev.package.pecos-bp]
+opt-level = 2
+[profile.dev.package.pecos-relay-bp]
+opt-level = 2
+[profile.dev.package.relay-bp]
 opt-level = 2
 
 # batsat's solver core is tested and shipped by upstream with release arithmetic;

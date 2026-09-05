@@ -14,7 +14,7 @@ use pecos_core::{Angle64, Clifford, QubitId};
 use pecos_simulators::state_vector_test_utils::StateVectorSimulator;
 use pecos_simulators::{
     ArbitraryRotationGateable, CHForm, CliffordGateable, SparseStateVecAoS, SparseStateVecSoA,
-    StateVecAoS, StateVecSoA, StateVecSoA32,
+    StabVec, StateVecAoS, StateVecSoA, StateVecSoA32,
 };
 
 const F64_TOLERANCE: f64 = 1e-12;
@@ -451,12 +451,14 @@ fn phase_carrying_cpu_simulators_match_named_gate_conventions() {
     check_state_vector::<SparseStateVecSoA>("SparseStateVecSoA", F64_TOLERANCE);
     check_state_vector::<SparseStateVecAoS>("SparseStateVecAoS", F64_TOLERANCE);
     check_state_vector::<StateVecSoA32>("StateVecSoA32", F32_TOLERANCE);
+    check_state_vector::<StabVec>("StabVec", F64_TOLERANCE);
 
     check_state_vector_cliffords::<StateVecSoA>("StateVecSoA", F64_TOLERANCE);
     check_state_vector_cliffords::<StateVecAoS>("StateVecAoS", F64_TOLERANCE);
     check_state_vector_cliffords::<SparseStateVecSoA>("SparseStateVecSoA", F64_TOLERANCE);
     check_state_vector_cliffords::<SparseStateVecAoS>("SparseStateVecAoS", F64_TOLERANCE);
     check_state_vector_cliffords::<StateVecSoA32>("StateVecSoA32", F32_TOLERANCE);
+    check_state_vector_cliffords::<StabVec>("StabVec", F64_TOLERANCE);
 }
 
 #[test]
@@ -483,6 +485,7 @@ fn phase_carrying_cpu_simulators_match_multi_target_conventions_on_three_qubits(
         F32_TOLERANCE,
         |sim| sim.set_fusion(false),
     );
+    check_three_qubit_multi_target_calls::<StabVec, _>("StabVec", F64_TOLERANCE, |_| {});
 }
 
 #[test]
@@ -566,5 +569,49 @@ fn ch_form_matches_named_clifford_conventions() {
             &expected,
             F64_TOLERANCE,
         );
+    }
+}
+
+#[test]
+fn ch_form_matches_two_qubit_root_conventions() {
+    for gate in NAMED_TWO_QUBIT_ROOT_GATES {
+        let matrix = gate
+            .canonical_2q_matrix()
+            .expect("named two-qubit root must have a canonical matrix");
+        for (case, pairs) in [
+            ("scalar pair", vec![(QubitId(0), QubitId(1))]),
+            ("reversed pair", vec![(QubitId(4), QubitId(1))]),
+            ("distant vectorized pair", vec![(QubitId(2), QubitId(5))]),
+            (
+                "batched pairs",
+                vec![(QubitId(0), QubitId(1)), (QubitId(2), QubitId(5))],
+            ),
+        ] {
+            let mut sim = CHForm::new(6);
+            sim.h(&[QubitId(0), QubitId(1), QubitId(4)])
+                .sz(&[QubitId(2), QubitId(5)])
+                .cx(&[
+                    (QubitId(0), QubitId(2)),
+                    (QubitId(1), QubitId(4)),
+                    (QubitId(3), QubitId(5)),
+                ])
+                .cz(&[(QubitId(0), QubitId(1)), (QubitId(2), QubitId(5))])
+                .h4(&[QubitId(3)]);
+            let input = sim.state_vector();
+            let mut expected = input.clone();
+            for &(q1, q2) in &pairs {
+                apply_canonical_two_qubit_matrix(&mut expected, matrix, q1, q2);
+            }
+
+            apply_named_two_qubit_gate(&mut sim, gate, &pairs);
+
+            assert_phase_exact_state(
+                "CHForm",
+                &format!("{gate:?} {case}"),
+                &sim.state_vector(),
+                &expected,
+                F64_TOLERANCE,
+            );
+        }
     }
 }

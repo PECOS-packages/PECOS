@@ -13,7 +13,7 @@
 //! Adapter for integrating pecos-engines classical engines with pecos-neo.
 //!
 //! This module provides adapters that wrap existing classical control engines
-//! (like `QASMEngine` or `HugrEngine`) from pecos-engines to implement the
+//! (like `QASMEngine`) from pecos-engines to implement the
 //! pecos-neo `CommandSource` trait, enabling integration with the DOD-style
 //! simulation infrastructure.
 //!
@@ -186,7 +186,7 @@ pub fn outcomes_to_byte_message(outcomes: &MeasurementOutcomes) -> pecos_engines
 
 /// Adapter that wraps a classical control engine to implement `CommandSource`.
 ///
-/// This allows existing engines (`QASMEngine`, `HugrEngine`, etc.) to be used
+/// This allows existing engines (`QASMEngine`, etc.) to be used
 /// with pecos-neo's `ProgramRunner` and sampling infrastructure.
 pub struct ClassicalEngineAdapter<E> {
     /// The wrapped classical control engine.

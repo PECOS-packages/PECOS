@@ -78,14 +78,7 @@
 //!
 //! ```text
 //! use pecos_neo::tool::{monte_carlo, sim_neo};
-//! use pecos_hugr::hugr_engine;
 //! use pecos_qis::qis_engine;
-//!
-//! // HUGR programs
-//! let results = sim_neo(hugr_engine().hugr(&hugr_module)).auto()
-//!     .sampling(monte_carlo(1000))
-//!     .build()
-//!     .run();
 //!
 //! // QIS programs
 //! let results = sim_neo(qis_engine().qis(&qis_program)).auto()
@@ -592,7 +585,7 @@ where
 ///
 /// This trait enables `sim_neo()` to accept various program types:
 /// - Static circuits (`CommandQueue`)
-/// - Classical engine builders (QASM, HUGR, PHIR, QIS, etc.)
+/// - Classical engine builders (QASM, PHIR, QIS, etc.)
 ///
 /// # Implementing for Custom Types
 ///
@@ -691,19 +684,8 @@ impl SimNeoInput for pecos_programs::Qasm {
 
 /// Implementation for HUGR programs.
 ///
-/// Use `.auto()` to automatically select the HUGR interpreter engine:
-///
-/// ```no_run
-/// use pecos_neo::tool::{monte_carlo, sim_neo};
-/// use pecos_programs::Hugr;
-///
-/// let hugr = Hugr::from_file("program.hugr").unwrap();
-/// sim_neo(hugr)
-///     .auto()
-///     .sampling(monte_carlo(1000))
-///     .build()
-///     .run();
-/// ```
+/// HUGR programs are lowered to QIS at the Python boundary and are not
+/// auto-selected by `sim_neo`.
 impl SimNeoInput for pecos_programs::Hugr {
     fn into_sim_neo_builder(self) -> SimNeoBuilder {
         SimNeoBuilder::with_typed_program(TypedProgram::Hugr(self))
@@ -1667,7 +1649,7 @@ where
 /// Engine builder stored as data, waiting for source text to be configured at build time.
 ///
 /// This keeps `.classical(builder)` shape-based instead of tying it to a closed
-/// list of built-in language frontends. Built-in QASM/HUGR builders provide
+/// list of built-in language frontends. Built-in QASM builders provide
 /// `From` impls when those optional frontend features are enabled, and external
 /// crates can construct this wrapper with [`PendingEngineBuilder::from_source_builder`].
 pub struct PendingEngineBuilder {
@@ -1708,14 +1690,6 @@ impl From<pecos_qasm::QasmEngineBuilder> for PendingEngineBuilder {
     }
 }
 
-// Conversion from HugrEngineBuilder to PendingEngineBuilder
-#[cfg(feature = "hugr")]
-impl From<pecos_hugr::HugrEngineBuilder> for PendingEngineBuilder {
-    fn from(builder: pecos_hugr::HugrEngineBuilder) -> Self {
-        Self::from_source_builder(move |source| builder.hugr_bytes(source.into_bytes()))
-    }
-}
-
 /// The source of quantum operations for simulation.
 pub enum ProgramSource {
     /// A static circuit (no mid-circuit feedback).
@@ -1737,7 +1711,7 @@ pub enum ProgramSource {
 pub enum TypedProgram {
     /// QASM program - uses `qasm_engine()`
     Qasm(pecos_programs::Qasm),
-    /// HUGR program - uses `hugr_engine()`
+    /// HUGR program - lowered to QIS at the Python boundary.
     Hugr(pecos_programs::Hugr),
     /// Unsupported program type (for error messages)
     Unsupported(String),
@@ -1971,7 +1945,7 @@ impl SimNeoBuilder {
                     TypedProgram::Hugr(_) => {
                         panic!(
                             "HUGR programs cannot be used with .classical(engine_builder). \
-                             Use .auto() or pass the HUGR bytes directly to the engine builder."
+                             HUGR programs are lowered to QIS at the Python boundary."
                         );
                     }
                     TypedProgram::Unsupported(name) => {
@@ -2044,8 +2018,8 @@ impl SimNeoBuilder {
     /// `.auto()` is explicit-about-being-implicit: it lets the builder fill
     /// in components you did not set, instead of failing at build time.
     /// Currently it selects:
-    /// - The classical engine for typed programs (`Qasm` uses `qasm_engine()`,
-    ///   `Hugr` uses `hugr_engine()`); other sources are left unchanged.
+    /// - The classical engine for typed `Qasm` programs (`qasm_engine()`).
+    ///   Typed HUGR programs are rejected; other sources are left unchanged.
     /// - The quantum backend, if `.quantum()` was not called
     ///   (currently `SparseStab`).
     ///
@@ -2094,19 +2068,10 @@ impl SimNeoBuilder {
                          Enable it with: features = [\"qasm\"]"
                     );
                 }
-                #[cfg(feature = "hugr")]
-                TypedProgram::Hugr(hugr) => {
-                    // Auto-select hugr_engine() and configure with the program.
-                    let builder = pecos_hugr::hugr_engine().hugr_bytes(hugr.hugr);
-                    Some(ProgramSource::Classical(Box::new(EngineBuilderWrapper {
-                        builder,
-                    })))
-                }
-                #[cfg(not(feature = "hugr"))]
                 TypedProgram::Hugr(_) => {
                     panic!(
-                        "HUGR auto-selection requires the 'hugr' feature. \
-                         Enable it with: features = [\"hugr\"]"
+                        "HUGR programs are lowered to QIS at the Python boundary and are not \
+                         auto-selected by sim_neo."
                     );
                 }
                 TypedProgram::Unsupported(type_name) => {
@@ -2479,7 +2444,12 @@ impl SimNeoBuilder {
                 (Some(ProgramSource::Typed(typed)), _) => {
                     let type_name = match &typed {
                         TypedProgram::Qasm(_) => "Qasm",
-                        TypedProgram::Hugr(_) => "Hugr",
+                        TypedProgram::Hugr(_) => {
+                            panic!(
+                                "HUGR programs are lowered to QIS at the Python boundary and are not \
+                                 auto-selected by sim_neo."
+                            );
+                        }
                         TypedProgram::Unsupported(name) => name,
                     };
                     panic!(
@@ -4192,7 +4162,7 @@ impl Simulation {
 /// the Tool/ECS architecture. It accepts any type that implements [`SimNeoInput`]:
 ///
 /// - **Static circuits**: `CommandQueue`, `TickCircuit`, `DagCircuit`
-/// - **Classical engines**: Any `ClassicalControlEngineBuilder` (QASM, HUGR, PHIR, QIS)
+/// - **Classical engines**: Any `ClassicalControlEngineBuilder` (QASM, PHIR, QIS)
 ///
 /// # Examples
 ///
@@ -4863,6 +4833,29 @@ mod tests {
         for (o1, o2) in r1.outcomes.iter().zip(r2.outcomes.iter()) {
             assert_eq!(o1.get_bit(QubitId(0)), o2.get_bit(QubitId(0)));
         }
+    }
+
+    #[test]
+    #[should_panic(expected = "HUGR programs are lowered to QIS at the Python boundary")]
+    fn test_sim_neo_rejects_hugr_auto_selection() {
+        let _ = sim_neo(pecos_programs::Hugr::from_bytes(Vec::new())).auto();
+    }
+
+    #[test]
+    #[should_panic(expected = "HUGR programs are lowered to QIS at the Python boundary")]
+    fn test_sim_neo_rejects_hugr_without_auto_selection() {
+        let _ = sim_neo(pecos_programs::Hugr::from_bytes(Vec::new()))
+            .sampling(monte_carlo(1))
+            .quantum(sparse_stab())
+            .build();
+    }
+
+    #[test]
+    #[cfg(feature = "qasm")]
+    #[should_panic(expected = "HUGR programs are lowered to QIS at the Python boundary")]
+    fn test_sim_neo_rejects_hugr_with_classical_builder() {
+        let _ = sim_neo(pecos_programs::Hugr::from_bytes(Vec::new()))
+            .classical(pecos_qasm::qasm_engine());
     }
 
     #[test]

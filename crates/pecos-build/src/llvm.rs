@@ -128,7 +128,13 @@ pub fn parse_llvm_version_output(output: &str) -> Option<String> {
 /// Run `<tool_path> --version` and parse the LLVM version it reports.
 #[must_use]
 pub fn get_tool_llvm_version(tool_path: &Path) -> Option<String> {
-    let output = Command::new(tool_path).arg("--version").output().ok()?;
+    let output = match Command::new(tool_path).arg("--version").output() {
+        Ok(output) => output,
+        Err(error) => {
+            log::warn!("Could not run {} --version: {error}", tool_path.display());
+            return None;
+        }
+    };
     if !output.status.success() {
         return None;
     }
@@ -322,14 +328,28 @@ pub fn is_valid_llvm(path: &Path) -> bool {
         return false;
     }
 
-    if let Ok(output) = Command::new(&llvm_config).arg("--version").output()
-        && output.status.success()
-    {
-        let version = String::from_utf8_lossy(&output.stdout);
-        return is_required_llvm_version(&version);
+    // A failure to *run* llvm-config is not the same as an incompatible LLVM,
+    // and reporting it as one leaves no trace of the real cause. Callers scan
+    // candidate paths, so the answer stays a bool, but the reason is logged.
+    match Command::new(&llvm_config).arg("--version").output() {
+        Ok(output) if output.status.success() => {
+            let version = String::from_utf8_lossy(&output.stdout);
+            is_required_llvm_version(&version)
+        }
+        Ok(output) => {
+            log::warn!(
+                "{} --version exited with {}: {}",
+                llvm_config.display(),
+                output.status,
+                String::from_utf8_lossy(&output.stderr).trim()
+            );
+            false
+        }
+        Err(error) => {
+            log::warn!("Could not run {}: {error}", llvm_config.display());
+            false
+        }
     }
-
-    false
 }
 
 /// Get the version of LLVM at the given path

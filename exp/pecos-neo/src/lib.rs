@@ -149,7 +149,6 @@ pub mod adapter;
 pub mod circuit;
 pub mod command;
 pub mod ecs;
-pub mod engines;
 pub mod extensible;
 pub mod inline_channel;
 pub mod noise;
@@ -160,8 +159,7 @@ pub mod sampling;
 pub mod tool;
 
 // Re-export main types at crate root
-pub use command::{CommandBuilder, CommandQueue, GateCommand, GateType};
-pub use engines::{CommandQueueEngine, DagCircuitEngine, TickCircuitEngine};
+pub use command::{CommandBuilder, CommandQueue, GateCommand, GatePayload, GateType};
 pub use extensible::{
     AdaptedGate,
     // Extended operations for stabilizer measurements/preparations
@@ -264,7 +262,7 @@ pub use adapter::{
 /// use pecos_neo::prelude::*;
 /// ```
 pub mod prelude {
-    pub use crate::command::{CommandBuilder, CommandQueue, GateCommand, GateType};
+    pub use crate::command::{CommandBuilder, CommandQueue, GateCommand, GatePayload, GateType};
     pub use crate::extensible::{
         // Extended operations
         AdaptedOp,

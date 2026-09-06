@@ -1245,7 +1245,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         sim: &mut S,
         command: &GateCommand,
     ) -> Result<(), ExecutionError> {
-        validate_angle_arity(command.gate_type, command.angles.as_slice())?;
+        validate_angle_arity(command.gate_type, command.angles())?;
         let qubits = command.qubits.as_slice();
 
         match command.gate_type {
@@ -1279,7 +1279,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
                     gate_id,
                     command.gate_type,
                     qubits,
-                    command.angles.as_slice(),
+                    command.angles(),
                 );
                 if skip {
                     // Still emit after-gate for channels that want to inject errors
@@ -1288,7 +1288,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
                         gate_id,
                         command.gate_type,
                         qubits,
-                        command.angles.as_slice(),
+                        command.angles(),
                     );
                     return Ok(());
                 }
@@ -1300,30 +1300,24 @@ impl<S: CliffordGateable> CircuitRunner<S> {
                 // angles too (see execute_gate for the rationale).
                 let mut rotation_attempt = CliffordRotationAttempt::NotARotation;
                 let mut executed =
-                    self.try_execute_override(sim, gate_id, qubits, command.angles.as_slice())
+                    self.try_execute_override(sim, gate_id, qubits, command.angles())
                         || Self::try_execute_clifford(sim, gate_id, qubits)
                         || self.rotation_executor.is_some_and(|executor| {
-                            executor(sim, gate_id, command.angles.as_slice(), qubits)
+                            executor(sim, gate_id, command.angles(), qubits)
                         });
                 if !executed && !self.definitions.has_decomposition(gate_id) {
                     rotation_attempt = Self::try_execute_clifford_rotation(
                         sim,
                         gate_id,
                         qubits,
-                        command.angles.as_slice(),
+                        command.angles(),
                     )?;
                     executed = rotation_attempt == CliffordRotationAttempt::Executed;
                 }
 
                 if !executed {
-                    self.execute_via_decomposition(
-                        sim,
-                        gate_id,
-                        qubits,
-                        command.angles.as_slice(),
-                        0,
-                    )
-                    .map_err(|e| upgrade_rotation_error(e, rotation_attempt))?;
+                    self.execute_via_decomposition(sim, gate_id, qubits, command.angles(), 0)
+                        .map_err(|e| upgrade_rotation_error(e, rotation_attempt))?;
                 }
 
                 self.dispatch_after_gate_for_id(
@@ -1331,7 +1325,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
                     gate_id,
                     command.gate_type,
                     qubits,
-                    command.angles.as_slice(),
+                    command.angles(),
                 );
             }
         }
@@ -1840,7 +1834,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         DispatchContext {
             gate_type: command.gate_type,
             qubits: command.qubits.as_slice(),
-            angles: command.angles.as_slice(),
+            angles: command.angles(),
             gate_id: Some(command.gate_type.to_gate_id()),
             outcomes: None,
             duration: None,
@@ -1959,7 +1953,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         let ctx = DispatchContext {
             gate_type: command.gate_type,
             qubits,
-            angles: command.angles.as_slice(),
+            angles: command.angles(),
             gate_id: Some(command.gate_type.to_gate_id()),
             outcomes: Some(outcomes),
             duration: None,
@@ -2003,7 +1997,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         let ctx = DispatchContext {
             gate_type: command.gate_type,
             qubits,
-            angles: command.angles.as_slice(),
+            angles: command.angles(),
             gate_id: None,
             outcomes: None,
             duration: Some(duration),
@@ -2342,7 +2336,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
             && Self::try_execute_clifford(sim, gate_id, qubits))
             || self
                 .rotation_executor
-                .is_some_and(|executor| executor(sim, gate_id, gate.angles.as_slice(), qubits));
+                .is_some_and(|executor| executor(sim, gate_id, gate.angles(), qubits));
 
         assert!(
             executed,

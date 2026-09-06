@@ -56,7 +56,7 @@ impl CommandQueueValidation for CommandQueue {
         self.iter()
             .map(|cmd| GateForValidation {
                 gate_id: cmd.gate_type.to_gate_id(),
-                angles: cmd.angles.iter().copied().collect(),
+                angles: cmd.angles().to_vec(),
             })
             .collect()
     }
@@ -87,12 +87,12 @@ pub fn snap_command_queue(
     let mut result = CommandQueue::with_capacity(commands.len());
 
     for (idx, cmd) in commands.iter().enumerate() {
-        if cmd.angles.is_empty() {
+        if cmd.angles().is_empty() {
             result.push(cmd.clone());
         } else {
             let mut snapped_angles = smallvec::SmallVec::<[Angle64; 2]>::new();
 
-            for angle in &cmd.angles {
+            for angle in cmd.angles() {
                 match policy {
                     SnapPolicy::Exact => {
                         snapped_angles.push(*angle);
@@ -131,13 +131,13 @@ pub fn is_clifford_circuit(commands: &CommandQueue) -> bool {
         }
 
         let expected = cmd.gate_type.angle_arity();
-        if expected > 0 && cmd.angles.len() != expected {
+        if expected > 0 && cmd.angles().len() != expected {
             return false;
         }
 
         // For parameterized gates, check if angles are Clifford angles
         if expected > 0 {
-            return cmd.angles.iter().all(|a| is_clifford_angle(*a));
+            return cmd.angles().iter().all(|a| is_clifford_angle(*a));
         }
 
         true

@@ -192,10 +192,19 @@ impl GateType {
     }
 }
 
+/// Rotation angles or an idle duration for a gate command.
+#[derive(Debug, Clone, PartialEq)]
+pub enum GatePayload {
+    /// Rotation angles, empty for non-parameterized gates.
+    Angles(SmallVec<[Angle64; 2]>),
+    /// An idle duration in abstract time units.
+    Duration(TimeUnits),
+}
+
 /// A single quantum gate command.
 ///
 /// This is a typed representation of a gate operation with its target qubits
-/// and any angle parameters.
+/// and either rotation angles or an idle duration.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GateCommand {
     /// The type of gate to apply.
@@ -205,9 +214,8 @@ pub struct GateCommand {
     /// Uses `SmallVec` to avoid heap allocation for common cases (1-4 qubits).
     pub qubits: SmallVec<[QubitId; 4]>,
 
-    /// Angle parameters for parameterized gates.
-    /// Empty for non-parameterized gates.
-    pub angles: SmallVec<[Angle64; 2]>,
+    /// Rotation angles or an idle duration, never both.
+    pub payload: GatePayload,
 }
 
 impl GateCommand {
@@ -217,7 +225,7 @@ impl GateCommand {
         Self {
             gate_type,
             qubits: qubits.into(),
-            angles: SmallVec::new(),
+            payload: GatePayload::Angles(SmallVec::new()),
         }
     }
 
@@ -231,7 +239,16 @@ impl GateCommand {
         Self {
             gate_type,
             qubits: qubits.into(),
-            angles: angles.into(),
+            payload: GatePayload::Angles(angles.into()),
+        }
+    }
+
+    /// Get the rotation angles. Duration payloads have no angles.
+    #[must_use]
+    pub fn angles(&self) -> &[Angle64] {
+        match &self.payload {
+            GatePayload::Angles(angles) => angles,
+            GatePayload::Duration(_) => &[],
         }
     }
 
@@ -258,7 +275,7 @@ impl GateCommand {
         let q = self.qubits.clone();
         let same = |t: GateType| Some(Self::new(t, q.clone()));
         let neg_first = |t: GateType| -> Option<Self> {
-            let theta = *self.angles.first()?;
+            let theta = *self.angles().first()?;
             Some(Self::with_angles(t, q.clone(), smallvec::smallvec![-theta]))
         };
         match self.gate_type {
@@ -299,8 +316,8 @@ impl GateCommand {
             | GateType::RZZ => neg_first(self.gate_type),
             // RXY1Q(theta, phi) dagger = RXY1Q(-theta, phi).
             GateType::RXY1Q => {
-                let theta = *self.angles.first()?;
-                let phi = *self.angles.get(1)?;
+                let theta = *self.angles().first()?;
+                let phi = *self.angles().get(1)?;
                 Some(Self::with_angles(
                     GateType::RXY1Q,
                     q,
@@ -309,9 +326,9 @@ impl GateCommand {
             }
             // U(theta, phi, lambda) dagger = U(-theta, -lambda, -phi).
             GateType::U => {
-                let theta = *self.angles.first()?;
-                let phi = *self.angles.get(1)?;
-                let lambda = *self.angles.get(2)?;
+                let theta = *self.angles().first()?;
+                let phi = *self.angles().get(1)?;
+                let lambda = *self.angles().get(2)?;
                 Some(Self::with_angles(
                     GateType::U,
                     q,
@@ -398,19 +415,17 @@ impl GateCommand {
 
     /// Create an idle gate with a specified duration.
     ///
-    /// The duration is stored in the angles field as abstract time units.
     /// Use [`Self::get_idle_duration`] to retrieve the duration.
     ///
     /// Time units are abstract - the interpretation (nanoseconds, clock cycles, etc.)
     /// is defined by the noise model configuration.
     #[must_use]
     pub fn idle(qubit: QubitId, duration: TimeUnits) -> Self {
-        // Store duration in the angles field (repurposing Angle64's u64 storage)
-        Self::with_angles(
-            GateType::Idle,
-            smallvec::smallvec![qubit],
-            smallvec::smallvec![Angle64::new(duration.as_u64())],
-        )
+        Self {
+            gate_type: GateType::Idle,
+            qubits: smallvec::smallvec![qubit],
+            payload: GatePayload::Duration(duration),
+        }
     }
 
     /// Get the idle duration for an Idle gate.
@@ -418,10 +433,9 @@ impl GateCommand {
     /// Returns `None` if this is not an Idle gate or has no duration.
     #[must_use]
     pub fn get_idle_duration(&self) -> Option<TimeUnits> {
-        if self.gate_type == GateType::Idle {
-            self.angles.first().map(|a| TimeUnits::new(a.fraction()))
-        } else {
-            None
+        match (self.gate_type, &self.payload) {
+            (GateType::Idle, GatePayload::Duration(duration)) => Some(*duration),
+            _ => None,
         }
     }
 }
@@ -573,7 +587,7 @@ mod tests {
         let x = GateCommand::x(QubitId(0));
         assert_eq!(x.gate_type, GateType::X);
         assert_eq!(x.qubits.as_slice(), &[QubitId(0)]);
-        assert!(x.angles.is_empty());
+        assert!(x.angles().is_empty());
 
         let cx = GateCommand::cx(QubitId(0), QubitId(1));
         assert_eq!(cx.gate_type, GateType::CX);

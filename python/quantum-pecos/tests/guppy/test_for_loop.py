@@ -4,6 +4,8 @@
 import os
 
 from guppylang.decorator import guppy
+from guppylang.std.builtins import array
+from guppylang.std.builtins import result as record_result
 from guppylang.std.quantum import h, measure, qubit
 from pecos import Guppy, sim
 from pecos_rslib import state_vector
@@ -13,12 +15,17 @@ from pecos_rslib import state_vector
 def loop_with_measure() -> int:
     """For-loop with quantum operations inside."""
     count = 0
-    for _i in range(3):
+    outcomes = array(False for _ in range(3))
+    for i in range(3):
         q = qubit()
         h(q)
-        if measure(q).read():
+        outcomes[i] = measure(q).read()
+        if outcomes[i]:
             count = count + 1
-    return count
+    record_result("outcome", outcomes)
+    output_value = count
+    record_result("value", output_value)
+    return output_value
 
 
 def test_for_loop_with_measurements() -> None:
@@ -26,7 +33,7 @@ def test_for_loop_with_measurements() -> None:
     with H per iteration both outcomes must occur across 20 seeded shots --
     a zero-iteration or frozen loop cannot satisfy either."""
     results = sim(Guppy(loop_with_measure)).qubits(10).quantum(state_vector()).seed(42).run(20).to_dict()
-    measurements = results["measurements"]
+    measurements = results["outcome"]
     assert len(measurements) == 20
     for shot in measurements:
         assert len(shot) == 3, f"expected 3 loop measurements, got {shot}"

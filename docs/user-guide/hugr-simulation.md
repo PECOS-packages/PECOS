@@ -2,10 +2,16 @@
 
 This guide walks you through running quantum circuit simulations using PECOS's HUGR interface and the Guppy quantum programming language. HUGR (Hierarchical Unified Graph Representation) is a modern intermediate representation for quantum programs that supports native control flow based on measurement results.
 
+Python Guppy and HUGR programs are lowered to QIS and executed by the QIS engine
+with the Selene simple runtime and Helios interface. This requires the
+`pecos-rslib-llvm` package and a built Selene runtime. Every simulation must
+specify `.qubits(N)`; this is the runtime allocation capacity, including when
+using a state-vector simulator.
+
 ## What You'll Learn
 
 - How to write quantum programs in Guppy
-- Running simulations with `sim(Guppy(...))`
+- Running simulations with `sim(Guppy(...)).qubits(N)`
 - Using pre-compiled HUGR files
 - Measurement-based control flow (conditionals and loops)
 - Choosing the right simulation engine
@@ -36,6 +42,7 @@ Let's create a Bell state using Guppy. First, define a quantum function:
     import os
     from guppylang import guppy
     from guppylang.std.quantum import h, cx, measure, qubit
+    from guppylang.std.builtins import result
     from pecos import sim, Guppy
     from pecos_rslib import state_vector
 
@@ -52,7 +59,10 @@ Let's create a Bell state using Guppy. First, define a quantum function:
         cx(q0, q1)
 
         # Measure both qubits
-        return measure(q0).read(), measure(q1).read()
+        left, right = measure(q0).read(), measure(q1).read()
+        result("left", left)
+        result("right", right)
+        return left, right
 
 
     # Run simulation
@@ -64,34 +74,38 @@ Let's create a Bell state using Guppy. First, define a quantum function:
     # Save compiled HUGR for later examples
     os.makedirs("/tmp/pecos-doc-tests", exist_ok=True)
     _hugr = bell_state.compile()
-    with open("/tmp/pecos-doc-tests/bell_state.hugr", "w") as f:
-        f.write(_hugr.to_str())
+    with open("/tmp/pecos-doc-tests/bell_state.hugr", "wb") as f:
+        f.write(_hugr.to_bytes())
     ```
 
 === ":fontawesome-brands-rust: Rust"
 
+    HUGR execution uses Guppy and Selene through the Python boundary.
+    In Rust, the equivalent Bell circuit uses the QASM facade:
+
     ```hidden-rust
-    use pecos_hugr::{hugr_engine, hugr_sim};
-    use pecos_engines::{ClassicalControlEngineBuilder, ClassicalEngine};
-    use std::path::PathBuf;
+    use pecos::prelude::*;
 
     fn main() -> Result<(), Box<dyn std::error::Error>> {
-        let mut hugr_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        hugr_path.push("../../../../../crates/pecos/tests/test_data/hugr/bell_state.hugr");
-
         // CODE
         Ok(())
     }
     ```
 
     ```rust
-    use pecos_hugr::{hugr_engine, hugr_sim};
+    use pecos::prelude::*;
 
-    // Load a pre-compiled HUGR file
-    let results = hugr_sim(&hugr_path)
-        .seed(42)
-        .run(1000)?;
+    let program = Qasm::from_string(r#"
+        OPENQASM 2.0;
+        include "qelib1.inc";
+        qreg q[2];
+        creg c[2];
+        h q[0];
+        cx q[0], q[1];
+        measure q -> c;
+    "#);
 
+    let results = sim(program).seed(42).shots(1000).run()?;
     println!("Results: {:?}", results);
     ```
 
@@ -143,6 +157,7 @@ If you have HUGR files (compiled from Guppy or other tools), you can run them di
 
     from guppylang import guppy
     from guppylang.std.quantum import h, cx, measure, qubit
+    from guppylang.std.builtins import result
 
 
     @guppy
@@ -150,14 +165,17 @@ If you have HUGR files (compiled from Guppy or other tools), you can run them di
         q0, q1 = qubit(), qubit()
         h(q0)
         cx(q0, q1)
-        return measure(q0).read(), measure(q1).read()
+        left, right = measure(q0).read(), measure(q1).read()
+        result("left", left)
+        result("right", right)
+        return left, right
 
 
     # Compile and save to file
     os.makedirs("/tmp/pecos-doc-tests", exist_ok=True)
     hugr = my_circuit.compile()
-    with open("/tmp/pecos-doc-tests/circuit.hugr", "w") as f:
-        f.write(hugr.to_str())
+    with open("/tmp/pecos-doc-tests/circuit.hugr", "wb") as f:
+        f.write(hugr.to_bytes())
     ```
 
     Now load and run the pre-compiled HUGR:
@@ -178,34 +196,34 @@ If you have HUGR files (compiled from Guppy or other tools), you can run them di
 
 === ":fontawesome-brands-rust: Rust"
 
+    HUGR execution uses Guppy and Selene through the Python boundary.
+    In Rust, the equivalent Bell circuit uses the QASM facade:
+
     ```hidden-rust
-    use pecos_hugr::{hugr_engine, hugr_sim};
-    use pecos_engines::{ClassicalControlEngineBuilder, ClassicalEngine};
-    use std::path::PathBuf;
+    use pecos::prelude::*;
 
     fn main() -> Result<(), Box<dyn std::error::Error>> {
-        let mut hugr_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        hugr_path.push("../../../../../crates/pecos/tests/test_data/hugr/bell_state.hugr");
-
         // CODE
         Ok(())
     }
     ```
 
     ```rust
-    use pecos_hugr::{hugr_engine, hugr_sim};
+    use pecos::prelude::*;
 
-    // Quick simulation from file
-    let results = hugr_sim(&hugr_path)
-        .seed(42)
-        .run(1000)?;
+    let program = Qasm::from_string(r#"
+        OPENQASM 2.0;
+        include "qelib1.inc";
+        qreg q[2];
+        creg c[2];
+        h q[0];
+        cx q[0], q[1];
+        measure q -> c;
+    "#);
 
-    // Or use the builder for more control
-    let engine = hugr_engine()
-        .hugr_file(&hugr_path)
-        .build()?;
-
-    println!("Circuit uses {} qubits", engine.num_qubits());
+    let mut experiment = sim(program).seed(42).build()?;
+    let results = experiment.run(1000)?;
+    println!("Results: {:?}", results);
     ```
 
 ## Capturing the Runtime QIS Operation Trace
@@ -333,6 +351,7 @@ Guppy supports modular quantum programs with helper functions:
     from guppylang import guppy
     from guppylang.std.builtins import owned
     from guppylang.std.quantum import h, cx, measure, qubit
+    from guppylang.std.builtins import result
     from pecos import sim, Guppy
     from pecos_rslib import state_vector
 
@@ -398,6 +417,7 @@ Add realistic noise to your Guppy simulations:
     ```python
     from guppylang import guppy
     from guppylang.std.quantum import h, cx, measure, qubit
+    from guppylang.std.builtins import result
     from pecos import sim, Guppy, depolarizing_noise, GeneralNoiseModelBuilder
     from pecos_rslib import state_vector
 
@@ -408,7 +428,10 @@ Add realistic noise to your Guppy simulations:
         q1 = qubit()
         h(q0)
         cx(q0, q1)
-        return measure(q0).read(), measure(q1).read()
+        left, right = measure(q0).read(), measure(q1).read()
+        result("left", left)
+        result("right", right)
+        return left, right
 
 
     # Simple depolarizing noise
@@ -460,7 +483,15 @@ Add realistic noise to your Guppy simulations:
 
 ## Understanding Results
 
-Results from Guppy simulations work the same as QASM:
+Results follow the QIS engine contract. Untagged measurements appear as
+`measurement_<result_id>` columns. Use Guppy's `result("tag", value)` to record
+classical values or measurements under a stable tag. Function return values
+are not automatically recorded. Untagged measurements inside loops can produce
+a different register count in each shot; tag the results you want to collect.
+
+WASM foreign objects remain a PECOS capability, but they are not yet wired into
+the QIS route for HUGR/Guppy programs. `.foreign_object()` therefore raises an
+error on these programs.
 
 === ":fontawesome-brands-python: Python"
 
@@ -468,6 +499,7 @@ Results from Guppy simulations work the same as QASM:
     from collections import Counter
     from guppylang import guppy
     from guppylang.std.quantum import h, cx, measure, qubit
+    from guppylang.std.builtins import result
     from pecos import sim, Guppy
     from pecos_rslib import state_vector
 
@@ -477,19 +509,19 @@ Results from Guppy simulations work the same as QASM:
         q0, q1 = qubit(), qubit()
         h(q0)
         cx(q0, q1)
-        return measure(q0).read(), measure(q1).read()
+        left, right = measure(q0).read(), measure(q1).read()
+        result("left", left)
+        result("right", right)
+        return left, right
 
 
     results = sim(Guppy(bell_state)).qubits(2).quantum(state_vector()).run(1000)
 
     # Convert to dictionary
     data = results.to_dict()
-    # For a Bell state returning tuple[bool, bool], results are per-shot measurement pairs
-    # q0 and q1 will be correlated (both 0 or both 1)
-
-    # Count correlated outcomes using the measurements array
-    # Each entry is [m0, m1] for the two measurements
-    outcomes = [tuple(shot) for shot in data["measurements"]]
+    # Tagged columns contain one value per shot.
+    # Example: {"left": [0, 1, ...], "right": [0, 1, ...]}
+    outcomes = list(zip(data["left"], data["right"], strict=True))
     print(Counter(outcomes))  # {(0, 0): ~500, (1, 1): ~500}
     ```
 

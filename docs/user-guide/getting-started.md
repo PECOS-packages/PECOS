@@ -28,10 +28,10 @@ This guide will help you get up and running with PECOS quickly.
 
     ```toml
     [dependencies]
-    pecos = { version = "0.1", features = ["hugr"] }
+    pecos = { version = "0.1", features = ["runtime"] }
     ```
 
-    The `hugr` feature enables HUGR simulation. For QASM support, add `qasm`. See the [Rust API docs](https://docs.rs/pecos) for all available features.
+    The `runtime` feature enables the simulation facade with QASM and PHIR parsers. The optional `hugr` feature adds static HUGR/DAG conversion. See the [Rust API docs](https://docs.rs/pecos) for all available features.
 
 ## Verify Installation
 
@@ -74,6 +74,7 @@ A repetition code encodes a single logical qubit across multiple physical qubits
     from pecos import Guppy, sim, state_vector, depolarizing_noise
     from guppylang import guppy
     from guppylang.std.quantum import qubit, cx, measure
+    from guppylang.std.builtins import result
 
 
     @guppy
@@ -94,8 +95,8 @@ A repetition code encodes a single logical qubit across multiple physical qubits
         cx(d2, s1)
 
         # Measure syndromes (first two measurements)
-        _ = measure(s0).read()
-        _ = measure(s1).read()
+        result("s0", measure(s0).read())
+        result("s1", measure(s1).read())
 
         # Measure data qubits (required by Guppy)
         _ = measure(d0).read(), measure(d1).read(), measure(d2).read()
@@ -107,42 +108,50 @@ A repetition code encodes a single logical qubit across multiple physical qubits
 
     # Extract syndromes from first two measured qubits (s0, s1)
     d = results.to_dict()
-    syndrome = [[d["q0"][i], d["q1"][i]] for i in range(10)]
+    syndrome = [[d["s0"][i], d["s1"][i]] for i in range(10)]
     print(syndrome)
     # [[0, 0], [1, 0], [0, 0], [0, 0], [0, 0], [0, 1], [0, 1], [0, 0], [0, 0], [0, 0]]
     ```
 
 === ":fontawesome-brands-rust: Rust"
 
-    In Rust, we load pre-compiled **HUGR** (Hierarchical Unified Graph Representation) files:
+    In Rust, use the QASM facade for the same repetition-code circuit:
 
     ```hidden-rust
-    use pecos_hugr::hugr_sim;
-    use std::path::PathBuf;
+    use pecos::prelude::*;
 
     fn main() -> Result<(), Box<dyn std::error::Error>> {
-        let mut hugr_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        hugr_path.push("../../../../../crates/pecos/tests/test_data/hugr/bell_state.hugr");
-
         // CODE
         Ok(())
     }
     ```
 
     ```rust
-    use pecos_hugr::hugr_sim;
+    use pecos::prelude::*;
 
-    // Load and run a pre-compiled HUGR circuit
-    let results = hugr_sim(&hugr_path)
+    let program = Qasm::from_string(r#"
+        OPENQASM 2.0;
+        include "qelib1.inc";
+        qreg d[3];
+        qreg s[2];
+        creg syndrome[2];
+        creg data[3];
+        cx d[0], s[0];
+        cx d[1], s[0];
+        cx d[1], s[1];
+        cx d[2], s[1];
+        measure s -> syndrome;
+        measure d -> data;
+    "#);
+    let results = sim(program)
+        .noise(DepolarizingNoiseModel::builder().with_uniform_probability(0.1))
         .seed(42)
-        .run(10)?;
+        .shots(10)
+        .run()?;
 
-    println!("Got {} shots", results.shots.len());
+    let shot_map = results.try_as_shot_map()?;
+    println!("Syndromes: {:?}", shot_map.try_bits_as_u64("syndrome")?);
     ```
-
-    !!! note "HUGR Files"
-        HUGR files are compiled from Guppy programs or other quantum tools.
-        See [HUGR & Guppy Simulation](hugr-simulation.md) for how to generate them.
 
 ### Understanding the Output
 

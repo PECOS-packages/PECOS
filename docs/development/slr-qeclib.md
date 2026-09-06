@@ -410,7 +410,7 @@ results = sim(Qasm(qasm)).seed(42).run(100)
 
 # Option 2: Compile to HUGR and run
 hugr = SlrConverter(prog).hugr()
-# Use with PECOS HUGR engine
+# Lower to QIS at the Python boundary for execution with Selene
 ```
 
 ## Building QEC Circuits with SLR

@@ -45,7 +45,7 @@ Example:
     >>>
     >>> # Guppy function
     >>> from guppylang import guppy
-    >>> from guppylang.std.quantum import qubit, h, measure
+    >>> from guppylang.std.quantum import qubit, h, cx, measure
     >>>
     >>> @guppy
     ... def my_circuit():
@@ -107,10 +107,10 @@ class Guppy:
 
     Example:
         >>> from guppylang import guppy
-        >>> from guppylang.std.quantum import qubit, h, measure
+        >>> from guppylang.std.quantum import qubit, h, cx, measure
         >>>
         >>> @guppy
-        ... def bell_state():
+        ... def bell_state() -> tuple[bool, bool]:
         ...     q0, q1 = qubit(), qubit()
         ...     h(q0)
         ...     cx(q0, q1)
@@ -118,7 +118,7 @@ class Guppy:
         ...
         >>>
         >>> from pecos import sim, Guppy
-        >>> results = sim(Guppy(bell_state)).run(1000)
+        >>> results = sim(Guppy(bell_state)).qubits(2).run(1000)
     """
 
     def __init__(self, func: GuppyFunction) -> None:
@@ -135,12 +135,7 @@ class Guppy:
         """Convert to the underlying Rust program type."""
         if self._program is None:
             hugr_package = self._func.compile()
-            # Use the BINARY HUGR envelope (Model format). The Selene/QIS engine's
-            # HUGR reader does not accept the S-expression *text* envelope
-            # (`to_str`) -- loading it fails with "Failed to read HUGR" -- whereas the
-            # binary Model form round-trips cleanly, including CFG loops (while
-            # statements). (The `Hugr.from_bytes` sim loader is more permissive and
-            # accepts either, but the QIS engine path used for DEM tracing is not.)
+            # The QIS compiler needs the binary Model envelope, including for CFG loops.
             hugr_bytes = hugr_package.to_bytes()
             self._program = pecos_rslib.Hugr.from_bytes(hugr_bytes)
         return self._program
@@ -149,16 +144,17 @@ class Guppy:
 class Hugr:
     """Wrapper for HUGR (Higher-order Unified Graph Representation) programs.
 
-    Accepts HUGR data as bytes or a file path.
+    Accepts HUGR data as bytes or a file path. Simulation lowers to QIS and
+    requires pecos-rslib-llvm, a built Selene runtime, and explicit .qubits(N).
 
     Example:
         >>> from pecos import sim, Hugr
         >>>
         >>> # From bytes
-        >>> results = sim(Hugr(hugr_bytes)).run(1000)
+        >>> results = sim(Hugr(hugr_bytes)).qubits(2).run(1000)
         >>>
         >>> # From file
-        >>> results = sim(Hugr.from_file("program.hugr")).run(1000)
+        >>> results = sim(Hugr.from_file("program.hugr")).qubits(2).run(1000)
     """
 
     def __init__(self, data: bytes) -> None:

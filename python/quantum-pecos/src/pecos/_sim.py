@@ -74,7 +74,8 @@ def get_guppy_backends() -> dict:
 
     Returns a dict with:
         - guppy_available: Always True (guppylang is now a required dependency)
-        - rust_backend: Always True (HUGR support is built into pecos-rslib)
+        - rust_backend: Always True (program wrappers are built into pecos-rslib;
+          HUGR execution also requires pecos-rslib-llvm and Selene)
     """
     return {"guppy_available": True, "rust_backend": True}
 

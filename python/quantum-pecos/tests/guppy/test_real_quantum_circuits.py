@@ -56,7 +56,7 @@ def test_bell_state_preparation() -> None:
 def test_measurements_rows_are_qubit_id_ordered() -> None:
     """Pin the raw-results contract: "measurements" rows are in QUBIT-ID order.
 
-    HugrEngine::get_results assembles the rows from the per-qubit measurement
+    The historical raw-results API assembled the rows from the per-qubit measurement
     map sorted by qubit id, NOT from the guppy return-tuple order. A program
     returning its measurements reversed must still yield qubit-id-ordered
     rows; if tuple-order capture is ever implemented, this test documents the

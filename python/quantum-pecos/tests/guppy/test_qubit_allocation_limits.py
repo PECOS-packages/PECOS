@@ -3,6 +3,7 @@
 import pytest
 from guppylang import guppy
 from guppylang.std.builtins import array
+from guppylang.std.builtins import result as record_result
 from guppylang.std.quantum import h, measure, qubit
 from pecos import Guppy, sim
 from pecos_rslib import state_vector
@@ -25,14 +26,11 @@ class TestQubitAllocationLimits:
         results = sim(Guppy(static_test)).qubits(5).quantum(state_vector()).run(10).to_dict()
 
         # Check we got results - format is [[m0, m1, m2], [m0, m1, m2], ...]
-        measurements = results["measurements"]
+        measurements = [list(row) for row in zip(*(results[f"measurement_{i}"] for i in range(3)), strict=True)]
         assert len(measurements) == 10, "Should have 10 measurements"
         for m in measurements:
             assert len(m) == 3, f"Each shot should have 3 measurements, got {len(m)}"
 
-    @pytest.mark.skip(
-        reason="For-loop with int return not supported by HUGR interpreter",
-    )
     def test_dynamic_allocation_in_loop(self) -> None:
         """Test dynamic allocation in a loop - requires sufficient max_qubits."""
 
@@ -51,7 +49,7 @@ class TestQubitAllocationLimits:
         results = sim(Guppy(dynamic_loop_test)).qubits(10).quantum(state_vector()).seed(42).run(100)
 
         # Extract measurements
-        measurements = results.get("measurement_0", results["measurements"])
+        measurements = results["measurement_2"]
         assert len(measurements) == 100, "Should have 100 measurements"
 
         # Due to Guppy limitation, only returns 0 or 1 (last measurement)
@@ -94,18 +92,11 @@ class TestQubitAllocationLimits:
             # Measure all
             return measure(q0).read(), measure(q1).read(), measure(q2).read(), measure(q3).read()
 
-        with pytest.raises(RuntimeError, match=r"targets qubit 3.*holds 3 qubits"):
+        with pytest.raises(RuntimeError, match="Selene runtime failed to allocate a qubit"):
             sim(Guppy(four_qubit_program)).qubits(3).quantum(sparse_stab()).run(10)
 
-    def test_allocation_exceeds_limit_state_vector_grows(self) -> None:
-        """The state-vector engine grows past the configured qubit count.
-
-        Unlike the fixed-size simulators, the state-vector engine expands to
-        the highest qubit index a message touches, so a 4-qubit program with
-        .qubits(3) runs anyway -- and must still produce CORRECT physics
-        (a GHZ chain measures all-equal), not results computed on a
-        truncated register.
-        """
+    def test_allocation_exceeds_limit_state_vector(self) -> None:
+        """Selene capacity applies even with a growing state-vector backend."""
         from guppylang.std.quantum import cx
 
         @guppy
@@ -122,16 +113,22 @@ class TestQubitAllocationLimits:
 
             return measure(q0).read(), measure(q1).read(), measure(q2).read(), measure(q3).read()
 
-        results = sim(Guppy(four_qubit_ghz)).qubits(3).quantum(state_vector()).seed(42).run(10).to_dict()
+        with pytest.raises(RuntimeError, match="Selene runtime failed to allocate a qubit"):
+            sim(Guppy(four_qubit_ghz)).qubits(3).quantum(state_vector()).seed(42).run(10)
 
-        measurements = results["measurements"]
+        results = sim(Guppy(four_qubit_ghz)).qubits(4).quantum(state_vector()).seed(42).run(10).to_dict()
+
+        measurements = [list(row) for row in zip(*(results[f"measurement_{i}"] for i in range(4)), strict=True)]
         assert len(measurements) == 10, "Should have 10 shots"
         for m in measurements:
             assert len(m) == 4, f"Each shot should measure 4 qubits, got {len(m)}"
             assert len(set(m)) == 1, f"GHZ measurements must all agree, got {m}"
 
     @pytest.mark.skip(
-        reason="Nested loops with int return not supported by HUGR interpreter",
+        reason=(
+            "print_int drops integer results other than 0/1, "
+            "causing missing tags or per-shot register-count mismatches"
+        ),
     )
     def test_nested_loop_allocation(self) -> None:
         """Test nested loops with qubit allocation."""
@@ -151,18 +148,18 @@ class TestQubitAllocationLimits:
                         # Direct measurement of |0⟩
                         if measure(q).read():
                             count += 1
+            record_result("count", count)
             return count
 
         # Need sufficient qubits for nested allocation
         results = sim(Guppy(nested_loop_test)).qubits(10).quantum(state_vector()).seed(42).run(50)
 
-        measurements = results.get("measurement_0", results["measurements"])
+        measurements = results["count"]
         assert len(measurements) == 50, "Should have 50 measurements"
 
         # Count should be 0-6 (depends on measurements)
         assert all(0 <= v <= 6 for v in measurements), "Values should be 0-6"
 
-    @pytest.mark.skip(reason="Loops with int return not supported by HUGR interpreter")
     def test_allocation_with_measurement_reuse(self) -> None:
         """Test that measuring and discarding allows potential qubit reuse."""
 
@@ -181,7 +178,7 @@ class TestQubitAllocationLimits:
         for max_qubits in [5, 10]:
             results = sim(measurement_reuse_test).qubits(max_qubits).quantum(state_vector()).seed(42).run(50)
 
-            measurements = results.get("measurement_0", results["measurements"])
+            measurements = results["measurement_4"]
             assert len(measurements) == 50, f"Should have 50 measurements with max_qubits={max_qubits}"
 
             # Due to Guppy limitation, only returns 0 or 1 (last measurement)
@@ -205,16 +202,12 @@ class TestQubitAllocationLimits:
         for max_q in [1, 5, 10, 20]:
             results = sim(single_qubit_test).qubits(max_q).quantum(state_vector()).seed(42).run(10).to_dict()
 
-            raw_measurements = results["measurements"]
-            measurements = [m[-1] if isinstance(m, list) else m for m in raw_measurements]
+            measurements = results["measurement_0"]
             assert len(measurements) == 10, f"Should have 10 measurements with max_qubits={max_q}"
 
             # Single qubit program should work with any max_qubits >= 1
             assert all(isinstance(m, bool | int) for m in measurements), "Measurements should be bool/int"
 
-    @pytest.mark.skip(
-        reason="TailLoop/CFG control flow with arrays needs work - loop iterations not completing",
-    )
     def test_qubit_array_allocation(self) -> None:
         """Test allocation of qubit arrays using Guppy's array type with proper ownership."""
         from guppylang.std.builtins import owned
@@ -245,7 +238,7 @@ class TestQubitAllocationLimits:
 
         # The result should be an array of 3 booleans for each shot
         # Results format is [[m0, m1, m2], [m0, m1, m2], ...]
-        measurements = results["measurements"]
+        measurements = [list(row) for row in zip(*(results[f"measurement_{i}"] for i in range(3)), strict=True)]
         assert len(measurements) == 50, "Should have 50 measurement sets"
 
         # Each measurement should be an array/tuple of 3 booleans
@@ -281,15 +274,14 @@ class TestQubitAllocationLimits:
         # Use 500 shots for better statistics; seed 1000 produces [253, 259, 255, 258]
         results = sim(Guppy(parallel_ops)).qubits(4).quantum(state_vector()).seed(1000).run(500)
 
-        if "measurement_0" in results:
-            # Check all 4 measurements are present
-            for i in range(4):
-                key = f"measurement_{i}"
-                assert key in results, f"Should have {key}"
-                assert len(results[key]) == 500, f"Should have 500 measurements for {key}"
+        # Check all 4 measurements are present
+        for i in range(4):
+            key = f"measurement_{i}"
+            assert key in results, f"Should have {key}"
+            assert len(results[key]) == 500, f"Should have 500 measurements for {key}"
 
-                # Each qubit in superposition should give roughly 50/50 results
-                # 2 sigma for 500 shots: expected=250, std=11.18, range=228-272
-                ones = sum(results[key])
-                zeros = 500 - ones
-                assert 228 < ones < 272, f"Should be roughly 50/50 distribution, got {ones}/{zeros}"
+            # Each qubit in superposition should give roughly 50/50 results
+            # 2 sigma for 500 shots: expected=250, std=11.18, range=228-272
+            ones = sum(results[key])
+            zeros = 500 - ones
+            assert 228 < ones < 272, f"Should be roughly 50/50 distribution, got {ones}/{zeros}"

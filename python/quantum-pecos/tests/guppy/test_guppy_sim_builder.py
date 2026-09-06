@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 from guppylang import guppy
+from guppylang.std.builtins import array
+from guppylang.std.builtins import result as record_result
 from guppylang.std.quantum import cx, h, measure, qubit
 from pecos import Guppy, sim
 from pecos_rslib import state_vector
@@ -30,14 +32,18 @@ class TestGuppySimBuilder:
         q0, q1 = qubit(), qubit()
         h(q0)
         cx(q0, q1)
-        return measure(q0).read(), measure(q1).read()
+        output_value = measure(q0).read(), measure(q1).read()
+        record_result("outcome", array(output_value[0], output_value[1]))
+        return output_value
 
     @guppy
     def single_qubit() -> bool:
         """Single qubit in superposition."""
         q = qubit()
         h(q)
-        return measure(q).read()
+        output_value = measure(q).read()
+        record_result("outcome", output_value)
+        return output_value
 
     def test_basic_build_and_run(self) -> None:
         """Test basic build() and run() pattern."""
@@ -56,8 +62,8 @@ class TestGuppySimBuilder:
             assert len(results2["measurement_0"]) == 10
         else:
             # Fallback to old format
-            measurements1 = results1["measurements"]
-            measurements2 = results2["measurements"]
+            measurements1 = results1["outcome"]
+            measurements2 = results2["outcome"]
             assert len(measurements1) == 10
             assert len(measurements2) == 10
 
@@ -66,8 +72,7 @@ class TestGuppySimBuilder:
         results = sim(self.single_qubit).qubits(10).quantum(state_vector()).run(10).to_dict()
 
         # Check that we have measurement results
-        raw_measurements = results["measurements"]
-        measurements = [m[-1] if isinstance(m, list) else m for m in raw_measurements]
+        measurements = results["outcome"]
         assert len(measurements) == 10
         assert all(r in [0, 1] for r in measurements)
 
@@ -86,7 +91,7 @@ class TestGuppySimBuilder:
         sim_obj = builder.build()
         results = sim_obj.run(100)
 
-        measurements = results["measurements"]
+        measurements = results["outcome"]
         assert measurements is not None
         assert len(measurements) > 0
         assert len(measurements) == 100  # 100 shots, each with integer-encoded 2 qubits
@@ -96,8 +101,8 @@ class TestGuppySimBuilder:
         # Run with same seed twice
         results1 = sim(self.single_qubit).qubits(10).quantum(state_vector()).seed(12345).run(100)
         results2 = sim(self.single_qubit).qubits(10).quantum(state_vector()).seed(12345).run(100)
-        measurements1 = results1["measurements"]
-        measurements2 = results2["measurements"]
+        measurements1 = results1["outcome"]
+        measurements2 = results2["outcome"]
         assert len(measurements1) == 100, "seeded run should produce one row per shot"
         assert measurements1 == measurements2
 
@@ -109,7 +114,7 @@ class TestGuppySimBuilder:
             assert len(results["measurement_0"]) == 50
             assert len(results["measurement_1"]) == 50
         else:
-            measurements = results["measurements"]
+            measurements = results["outcome"]
             assert len(measurements) == 50
 
     def test_bell_state_correlation(self) -> None:
@@ -117,7 +122,7 @@ class TestGuppySimBuilder:
         results = sim(self.bell_state).qubits(10).quantum(state_vector()).seed(42).run(1000).to_dict()
 
         # Measurements format is [[m0, m1], [m0, m1], ...]
-        raw_measurements = results["measurements"]
+        raw_measurements = results["outcome"]
         correlated = sum(1 for m in raw_measurements if m[0] == m[1])
         assert correlated == len(
             raw_measurements,
@@ -143,8 +148,7 @@ class TestGuppySimBuilder:
 
         # Run simulation
         results = sim_obj.run(10).to_dict()
-        raw_measurements = results["measurements"]
-        measurements = [m[-1] if isinstance(m, list) else m for m in raw_measurements]
+        measurements = results["outcome"]
         assert len(measurements) == 10
 
         # Files should still exist after run
@@ -157,57 +161,44 @@ class TestGuppySimBuilder:
 
 def test_api_demonstration() -> None:
     """Demonstrate the builder pattern API."""
-    try:
-        from guppylang import guppy
-        from guppylang.std.quantum import h, measure, qubit
-    except ImportError:
-        pytest.skip("Guppy not available")
-        return
+    from guppylang import guppy
+    from guppylang.std.quantum import h, measure, qubit
 
     @guppy
     def demo_circuit() -> bool:
         """Demo circuit that creates superposition and measures."""
         q = qubit()
         h(q)
-        return measure(q).read()
+        output_value = measure(q).read()
+        record_result("outcome", output_value)
+        return output_value
 
     # Show builder pattern
     sim_obj = sim(demo_circuit).qubits(10).quantum(state_vector()).seed(42).verbose(True).build()
     results = sim_obj.run(100)
-    results.get(
-        "measurements",
-        results.get("measurement_0", results.get("result", [])),
-    )
+    assert len(results["outcome"]) == 100
 
     # print("\n3. Running 1000 shots with a new builder...")
     # Need to create a new builder since the previous one is consumed
     results = sim(Guppy(demo_circuit)).qubits(10).quantum(state_vector()).seed(42).run(1000)
-    results.get(
-        "measurements",
-        results.get("measurement_0", results.get("result", [])),
-    )
+    assert len(results["outcome"]) == 1000
     results = sim(Guppy(demo_circuit)).qubits(10).quantum(state_vector()).seed(123).run(50)
-    results.get(
-        "measurements",
-        results.get("measurement_0", results.get("result", [])),
-    )
+    assert len(results["outcome"]) == 50
 
 
 def test_simulation_reset() -> None:
     """Test that reset() returns the simulator and allows re-running."""
-    try:
-        from guppylang import guppy
-        from guppylang.std.quantum import h, measure, qubit
-    except ImportError:
-        pytest.skip("Guppy not available")
-        return
+    from guppylang import guppy
+    from guppylang.std.quantum import h, measure, qubit
 
     @guppy
     def superposition() -> bool:
         """Create superposition and measure."""
         q = qubit()
         h(q)
-        return measure(q).read()
+        output_value = measure(q).read()
+        record_result("outcome", output_value)
+        return output_value
 
     # Build a simulation
     sim_obj = sim(superposition).qubits(10).quantum(state_vector()).seed(42).build()
@@ -236,25 +227,23 @@ def test_simulation_reset() -> None:
 
 def test_reset_returns_to_zero_state() -> None:
     """Test that reset() returns the quantum state to all |0⟩."""
-    try:
-        from guppylang import guppy
-        from guppylang.std.quantum import measure, qubit
-    except ImportError:
-        pytest.skip("Guppy not available")
-        return
+    from guppylang import guppy
+    from guppylang.std.quantum import measure, qubit
 
     @guppy
     def measure_without_gates() -> bool:
         """Measure a qubit without any gates - should always be 0 in |0⟩ state."""
         q = qubit()
-        return measure(q).read()
+        output_value = measure(q).read()
+        record_result("outcome", output_value)
+        return output_value
 
     # Build a simulation
     sim_obj = sim(measure_without_gates).qubits(10).quantum(state_vector()).seed(42).build()
 
     # First run - all measurements should be 0 since qubit starts in |0⟩
     results1 = sim_obj.run(100)
-    measurements1 = results1.to_dict()["measurements"]
+    measurements1 = results1.to_dict()["outcome"]
     assert all(
         m == 0 or m == [0] or m == (0,) or m is False for m in measurements1
     ), f"Expected all measurements to be 0, got: {measurements1[:5]}..."
@@ -264,7 +253,7 @@ def test_reset_returns_to_zero_state() -> None:
 
     # After reset, qubit should be back in |0⟩, so all measurements should still be 0
     results2 = sim_obj.run(100)
-    measurements2 = results2.to_dict()["measurements"]
+    measurements2 = results2.to_dict()["outcome"]
     assert all(
         m == 0 or m == [0] or m == (0,) or m is False for m in measurements2
     ), f"After reset, expected all measurements to be 0, got: {measurements2[:5]}..."

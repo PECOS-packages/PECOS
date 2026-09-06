@@ -1090,7 +1090,7 @@ class QisProgram:
     ...
 
 class HugrProgram:
-    """HUGR program representation."""
+    """HUGR program lowered to QIS for simulation; requires explicit qubits."""
 
     ...
 

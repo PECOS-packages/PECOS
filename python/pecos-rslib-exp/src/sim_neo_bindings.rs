@@ -1458,7 +1458,7 @@ impl PySimNeoBuilder {
             p_prep: noise_config.p_prep,
         };
 
-        let gates = commands_to_gates(&self.commands);
+        let gates = commands_to_gates(&self.commands)?;
         let generator = select_generator(method, noise_config.idle_rz_angle);
 
         let (shots, _) = self.resolved_monte_carlo("meas_sampling")?;
@@ -1476,29 +1476,11 @@ impl PySimNeoBuilder {
 }
 
 /// Convert CommandQueue to Vec<Gate> for EEG analysis.
-fn commands_to_gates(commands: &pecos_neo::command::CommandQueue) -> Vec<pecos_core::Gate> {
-    use pecos_core::{GateAngles, GateMeasIds, GateParams};
-
-    commands
-        .iter()
-        .map(|cmd| {
-            let qubits = cmd.qubits.iter().copied().collect();
-            let mut angles = GateAngles::new();
-            for &a in &cmd.angles {
-                angles.push(a);
-            }
-            // Convert pecos_neo::GateType to pecos_core::GateType
-            let gate_type: pecos_core::gate_type::GateType = cmd.gate_type.into();
-            Gate {
-                gate_type,
-                qubits,
-                angles,
-                params: GateParams::new(),
-                meas_ids: GateMeasIds::new(),
-                channel: None,
-            }
-        })
-        .collect()
+fn commands_to_gates(
+    commands: &pecos_neo::command::CommandQueue,
+) -> PyResult<Vec<pecos_core::Gate>> {
+    pecos_neo::adapter::command_queue_to_gates(commands)
+        .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))
 }
 
 // ============================================================================
@@ -1892,7 +1874,7 @@ fn build_gate_from_python(
     qubit_ids: &[pecos_core::QubitId],
 ) -> PyResult<pecos_core::Gate> {
     use pecos_core::gate_type::GateType;
-    use pecos_core::{Gate, GateAngles, GateMeasIds, GateParams};
+    use pecos_core::{Gate, GateAngles, GateParams};
 
     if gate_name == "Channel" {
         return Ok(Gate::channel(channel_expr_from_python_gate(gate)?));
@@ -1952,14 +1934,8 @@ fn build_gate_from_python(
         }
     }
 
-    Ok(Gate {
-        gate_type,
-        qubits: qubit_ids.iter().copied().collect(),
-        angles,
-        params: GateParams::new(),
-        meas_ids: GateMeasIds::new(),
-        channel: None,
-    })
+    Gate::try_new(gate_type, angles, GateParams::new(), qubit_ids.to_vec())
+        .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))
 }
 
 // ============================================================================

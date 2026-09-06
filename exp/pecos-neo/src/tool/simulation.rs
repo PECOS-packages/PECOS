@@ -629,34 +629,6 @@ impl SimNeoInput for Box<dyn CommandSource + Send + Sync> {
     }
 }
 
-/// Implementation for `TickCircuit`.
-impl SimNeoInput for pecos_quantum::TickCircuit {
-    fn into_sim_neo_builder(self) -> SimNeoBuilder {
-        SimNeoBuilder::with_circuit(self.into())
-    }
-}
-
-/// Implementation for `&TickCircuit`.
-impl SimNeoInput for &pecos_quantum::TickCircuit {
-    fn into_sim_neo_builder(self) -> SimNeoBuilder {
-        SimNeoBuilder::with_circuit(self.into())
-    }
-}
-
-/// Implementation for `DagCircuit`.
-impl SimNeoInput for pecos_quantum::DagCircuit {
-    fn into_sim_neo_builder(self) -> SimNeoBuilder {
-        SimNeoBuilder::with_circuit(self.into())
-    }
-}
-
-/// Implementation for `&DagCircuit`.
-impl SimNeoInput for &pecos_quantum::DagCircuit {
-    fn into_sim_neo_builder(self) -> SimNeoBuilder {
-        SimNeoBuilder::with_circuit(self.into())
-    }
-}
-
 /// Implementation for `&str` (program source code like QASM).
 ///
 /// When passing a string, use `.classical(engine)` to specify how to interpret it:

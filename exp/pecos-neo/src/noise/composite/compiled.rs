@@ -32,7 +32,7 @@
 use super::Primitive;
 use super::action::PauliWeights;
 use super::response::CompositeResponse;
-use crate::command::{GateCommand, GateType};
+use crate::command::{GateCommand, GatePayload, GateType};
 use crate::noise::{
     NoiseContext, NoiseGateRequirement, SingleQubitEmissionWeights, TwoQubitEmissionWeights,
     TwoQubitPauliWeights,
@@ -119,7 +119,7 @@ impl CompiledAction {
                 let cmd = GateCommand {
                     gate_type: *gate_type,
                     qubits: smallvec![qubit],
-                    angles: smallvec![],
+                    payload: GatePayload::Angles(smallvec![]),
                 };
                 CompositeResponse::InjectGates(vec![cmd])
             }
@@ -365,7 +365,7 @@ fn apply_pauli(qubit: QubitId, rng: &mut PecosRng, weights: &PauliWeights) -> Co
     let cmd = GateCommand {
         gate_type,
         qubits: smallvec![qubit],
-        angles: smallvec![],
+        payload: GatePayload::Angles(smallvec![]),
     };
     CompositeResponse::InjectGates(vec![cmd])
 }
@@ -398,7 +398,7 @@ fn apply_seep(
     let cmd = GateCommand {
         gate_type,
         qubits: smallvec![qubit],
-        angles: smallvec![],
+        payload: GatePayload::Angles(smallvec![]),
     };
 
     CompositeResponse::Unleak.combine(CompositeResponse::InjectGates(vec![cmd]))
@@ -419,7 +419,7 @@ fn apply_emission(
             let cmd = GateCommand {
                 gate_type,
                 qubits: smallvec![qubit],
-                angles: smallvec![],
+                payload: GatePayload::Angles(smallvec![]),
             };
             CompositeResponse::InjectGates(vec![cmd])
         }
@@ -464,7 +464,7 @@ fn apply_two_qubit_pauli(
         let cmd = GateCommand {
             gate_type: my_pauli,
             qubits: smallvec![qubit],
-            angles: smallvec![],
+            payload: GatePayload::Angles(smallvec![]),
         };
         CompositeResponse::InjectGates(vec![cmd])
     }
@@ -512,7 +512,7 @@ fn apply_two_qubit_emission(
             let cmd = GateCommand {
                 gate_type,
                 qubits: smallvec![qubit],
-                angles: smallvec![],
+                payload: GatePayload::Angles(smallvec![]),
             };
             CompositeResponse::InjectGates(vec![cmd])
         }
@@ -539,7 +539,7 @@ fn apply_crosstalk_transitions(
             let cmd = GateCommand {
                 gate_type: GateType::X,
                 qubits: smallvec![qubit],
-                angles: smallvec![],
+                payload: GatePayload::Angles(smallvec![]),
             };
             CompositeResponse::InjectGates(vec![cmd])
         }

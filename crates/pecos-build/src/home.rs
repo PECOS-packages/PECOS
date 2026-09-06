@@ -546,7 +546,7 @@ mod tests {
     /// actually be executed.
     ///
     /// Every test using this stub executes it immediately, which races the
-    /// write. See [`crate::executable::wait_until_executable`] for why, and why
+    /// write. See [`crate::executable::run_when_executable`] for why, and why
     /// waiting is the available remedy.
     #[cfg(unix)]
     fn create_fake_llvm_config(llvm_dir: &Path, version: &str) {
@@ -567,7 +567,7 @@ mod tests {
         fs::set_permissions(&llvm_config, permissions)
             .expect("Should make fake llvm-config executable");
 
-        crate::executable::wait_until_executable(&llvm_config, &["--version"]).unwrap_or_else(
+        crate::executable::run_when_executable(&llvm_config, &["--version"]).unwrap_or_else(
             |error| {
                 panic!(
                     "fake llvm-config at {} never became executable: {error}",

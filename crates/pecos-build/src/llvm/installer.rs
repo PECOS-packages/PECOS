@@ -812,7 +812,7 @@ fn apply_platform_fixes(llvm_dir: &Path) -> Result<()> {
     // A readiness failure is not evidence that the platform fix is
     // unnecessary. Skipping here would let a broken install proceed to a
     // generic "verification failed" later, with the real cause only on stdout.
-    if let Err(error) = crate::executable::wait_until_executable(&llvm_config, &["--version"]) {
+    if let Err(error) = crate::executable::run_when_executable(&llvm_config, &["--version"]) {
         println!("FAILED");
         return Err(Error::Llvm(format!(
             "Could not execute {} after extraction: {error}",
@@ -872,7 +872,7 @@ printf '%s\n' "$output"
     // The caller verifies the installation by executing this wrapper straight
     // away, which would otherwise race the write and report a good install as
     // a failed one.
-    if let Err(error) = crate::executable::wait_until_executable(&llvm_config, &["--version"]) {
+    if let Err(error) = crate::executable::run_when_executable(&llvm_config, &["--version"]) {
         return Err(Error::Llvm(format!(
             "Wrote {} but it could not be executed: {error}",
             llvm_config.display()

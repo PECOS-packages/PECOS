@@ -127,14 +127,10 @@ pub fn get_cuda_version(cuda_path: &Path) -> Result<String> {
     let nvcc = cuda_path.join("bin").join(format!("nvcc{exe_ext}"));
 
     // nvcc may have been copied into place moments ago by the installer, so
-    // this can be its first execution and races the copy.
-    crate::executable::wait_until_executable(&nvcc, &["--version"])
+    // this can be its first execution and races the copy. The helper returns
+    // the successful run's output, so nvcc is launched once, not twice.
+    let output = crate::executable::run_when_executable(&nvcc, &["--version"])
         .map_err(|e| Error::Cuda(format!("Failed to execute {}: {e}", nvcc.display())))?;
-
-    let output = Command::new(&nvcc)
-        .arg("--version")
-        .output()
-        .map_err(|e| Error::Cuda(format!("Failed to execute nvcc: {e}")))?;
 
     if !output.status.success() {
         return Err(Error::Cuda("nvcc --version failed".into()));

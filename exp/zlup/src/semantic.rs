@@ -37,8 +37,9 @@ use std::collections::BTreeSet;
 use thiserror::Error;
 
 use crate::ast::{
-    self, BinaryOp, Binding, Block, ElseBranch, Expr, FStringPart, FnDecl, ForRange, PrimitiveType,
-    Program, SourceLocation, Stmt, StructDecl, TopLevelDecl, TypeExpr, UnaryOp,
+    self, AssignOp, BinaryOp, Binding, Block, ElseBranch, Expr, FStringPart, FnDecl, ForRange,
+    GateKind, PrimitiveType, Program, SourceLocation, Stmt, StructDecl, TopLevelDecl, TypeExpr,
+    UnaryOp,
 };
 use crate::comptime::{ComptimeEvaluator, ComptimeValue};
 use crate::module::{ExportedSymbol, ModuleLoader};
@@ -72,6 +73,38 @@ pub enum SemanticError {
     #[error("cannot infer type for '{name}'")]
     CannotInferType {
         name: String,
+        location: SourceLocation,
+    },
+
+    #[error(
+        "angle binding '{name}' requires an explicit unit; write a value such as `0.25 turns` or `1.5707963267948966 rad`"
+    )]
+    AngleUnitRequired {
+        name: String,
+        location: SourceLocation,
+    },
+
+    #[error(
+        "angle value requires an explicit unit; write a value such as `0.25 turns` or `1.5707963267948966 rad`"
+    )]
+    AngleValueUnitRequired { location: SourceLocation },
+
+    #[error(
+        "angle unit cannot be applied to value of type '{found}'; an a64 value already carries its unit"
+    )]
+    AngleUnitAlreadyApplied {
+        found: String,
+        location: SourceLocation,
+    },
+
+    #[error(
+        "rotation gate '{gate}' parameter {parameter} ('{expression}') has type '{found}' but requires a unit-bearing angle; write an explicit unit such as `0.25 turns` or `1.5707963267948966 rad`"
+    )]
+    GateAngleUnitRequired {
+        gate: String,
+        parameter: usize,
+        expression: String,
+        found: String,
         location: SourceLocation,
     },
 
@@ -431,6 +464,10 @@ impl SemanticError {
             Self::DuplicateSymbol { location, .. } => Some(location),
             Self::TypeMismatch { location, .. } => Some(location),
             Self::CannotInferType { location, .. } => Some(location),
+            Self::AngleUnitRequired { location, .. } => Some(location),
+            Self::AngleValueUnitRequired { location } => Some(location),
+            Self::AngleUnitAlreadyApplied { location, .. } => Some(location),
+            Self::GateAngleUnitRequired { location, .. } => Some(location),
             Self::EmptyArrayNeedsType { location } => Some(location),
             Self::EmptySetNeedsType { location } => Some(location),
             Self::InvalidBitWidth { location, .. } => Some(location),
@@ -1522,6 +1559,8 @@ pub struct SemanticAnalyzer {
     module_loader: ModuleLoader,
     /// Current file path (for resolving relative imports)
     current_file: Option<std::path::PathBuf>,
+    /// Modules whose exports are currently being resolved recursively.
+    import_analysis_stack: Vec<std::path::PathBuf>,
     /// Loop nesting depth (for validating break/continue)
     loop_depth: usize,
     /// Inline for nesting depth (to disallow break/continue in inline for)
@@ -1604,6 +1643,7 @@ impl SemanticAnalyzer {
             comptime_values: BTreeMap::new(),
             module_loader: ModuleLoader::new(),
             current_file: None,
+            import_analysis_stack: Vec::new(),
             loop_depth: 0,
             inline_for_depth: 0,
             tick_depth: 0,
@@ -2498,10 +2538,21 @@ impl SemanticAnalyzer {
     /// Analyze a binding declaration.
     fn analyze_binding(&mut self, binding: &Binding) -> SemanticResult<()> {
         if let Some(value) = &binding.value {
+            if Self::contains_unitless_a64_ascription(value) {
+                return Err(SemanticError::AngleUnitRequired {
+                    name: binding.name.clone(),
+                    location: binding.location.clone().unwrap_or_default(),
+                });
+            }
             let expr_ty = self.analyze_expr(value)?;
 
-            if let Some(type_expr) = &binding.ty {
-                let declared_ty = self.resolve_type(type_expr);
+            let declared_ty = binding
+                .ty
+                .as_ref()
+                .map_or_else(|| expr_ty.clone(), |type_expr| self.resolve_type(type_expr));
+            self.validate_angle_binding_initializer(binding, &declared_ty, &expr_ty, value)?;
+
+            if binding.ty.is_some() {
                 self.check_assignable(&declared_ty, &expr_ty, binding.location.clone())?;
             }
         }
@@ -2509,16 +2560,175 @@ impl SemanticAnalyzer {
         Ok(())
     }
 
-    /// Analyze a block.
-    fn analyze_block(&mut self, block: &Block) -> SemanticResult<()> {
-        self.symbols.push_scope(ScopeKind::Block)?;
-
-        for stmt in &block.statements {
-            self.analyze_stmt(stmt)?;
+    fn validate_angle_binding_initializer(
+        &self,
+        binding: &Binding,
+        binding_ty: &Type,
+        value_ty: &Type,
+        value: &Expr,
+    ) -> SemanticResult<()> {
+        if *binding_ty != Type::A64 {
+            return Ok(());
         }
 
-        self.symbols.pop_scope();
+        let has_unit = matches!(value, Expr::AngleLit(_))
+            || (*value_ty == Type::A64 && !Self::is_unitless_angle_expression(value))
+            || self.expr_references_declared_angle(value);
+        if has_unit {
+            return Ok(());
+        }
+
+        Err(SemanticError::AngleUnitRequired {
+            name: binding.name.clone(),
+            location: binding.location.clone().unwrap_or_default(),
+        })
+    }
+
+    fn validate_gate_angle_parameters(
+        &mut self,
+        gate_kind: GateKind,
+        params: &[Expr],
+        gate_location: Option<SourceLocation>,
+    ) -> SemanticResult<()> {
+        for (index, param) in params.iter().enumerate() {
+            if Self::contains_unitless_a64_ascription(param) {
+                return Err(Self::gate_angle_unit_error(
+                    gate_kind,
+                    index,
+                    param,
+                    Type::A64,
+                    gate_location.clone(),
+                ));
+            }
+
+            let param_ty = self.analyze_expr(param)?;
+            if param_ty != Type::A64 {
+                return Err(Self::gate_angle_unit_error(
+                    gate_kind,
+                    index,
+                    param,
+                    param_ty,
+                    gate_location.clone(),
+                ));
+            }
+        }
         Ok(())
+    }
+
+    fn gate_angle_unit_error(
+        gate_kind: GateKind,
+        index: usize,
+        param: &Expr,
+        param_ty: Type,
+        gate_location: Option<SourceLocation>,
+    ) -> SemanticError {
+        SemanticError::GateAngleUnitRequired {
+            gate: gate_kind.keyword().to_string(),
+            parameter: index + 1,
+            expression: Self::describe_gate_parameter(param, index),
+            found: param_ty.display_name(),
+            location: param.get_location().or(gate_location).unwrap_or_default(),
+        }
+    }
+
+    fn describe_gate_parameter(expr: &Expr, index: usize) -> String {
+        match expr {
+            Expr::Ident(ident) => ident.name.clone(),
+            Expr::IntLit(lit) => lit.value.to_string(),
+            Expr::FloatLit(lit) => lit.value.to_string(),
+            Expr::TypeAscription(ascription) => {
+                format!("parameter {} as {}", index + 1, ascription.type_name)
+            }
+            _ => format!("parameter {} expression", index + 1),
+        }
+    }
+
+    fn contains_unitless_a64_ascription(expr: &Expr) -> bool {
+        match expr {
+            Expr::TypeAscription(ascription) => {
+                ascription.type_name == "a64"
+                    && Self::is_unitless_angle_expression(&ascription.value)
+            }
+            Expr::Binary(binary) => {
+                Self::contains_unitless_a64_ascription(&binary.left)
+                    || Self::contains_unitless_a64_ascription(&binary.right)
+            }
+            Expr::Unary(unary) => Self::contains_unitless_a64_ascription(&unary.operand),
+            Expr::Comptime(comptime) => Self::contains_unitless_a64_ascription(&comptime.inner),
+            _ => false,
+        }
+    }
+
+    fn is_unitless_angle_expression(expr: &Expr) -> bool {
+        match expr {
+            Expr::IntLit(_) | Expr::FloatLit(_) => true,
+            Expr::Ident(ident) => {
+                matches!(ident.name.as_str(), "PI" | "pi" | "TAU" | "tau" | "e")
+            }
+            Expr::Binary(binary) => {
+                Self::is_unitless_angle_expression(&binary.left)
+                    && Self::is_unitless_angle_expression(&binary.right)
+            }
+            Expr::Unary(unary) => Self::is_unitless_angle_expression(&unary.operand),
+            Expr::TypeAscription(ascription) => {
+                Self::is_unitless_angle_expression(&ascription.value)
+            }
+            Expr::Comptime(comptime) => Self::is_unitless_angle_expression(&comptime.inner),
+            _ => false,
+        }
+    }
+
+    fn expr_references_declared_angle(&self, expr: &Expr) -> bool {
+        match expr {
+            Expr::AngleLit(_) => true,
+            Expr::Ident(ident) => self.symbols.lookup(&ident.name).is_some_and(|symbol| {
+                matches!(
+                    &symbol.kind,
+                    SymbolKind::Variable { ty: Type::A64, .. }
+                        | SymbolKind::Parameter { ty: Type::A64, .. }
+                )
+            }),
+            Expr::Binary(binary) => {
+                self.expr_references_declared_angle(&binary.left)
+                    || self.expr_references_declared_angle(&binary.right)
+            }
+            Expr::Unary(unary) => self.expr_references_declared_angle(&unary.operand),
+            Expr::TypeAscription(ascription) => {
+                self.expr_references_declared_angle(&ascription.value)
+            }
+            Expr::Comptime(comptime) => self.expr_references_declared_angle(&comptime.inner),
+            Expr::Block(block) => block
+                .trailing_expr
+                .as_deref()
+                .is_some_and(|tail| self.expr_references_declared_angle(tail)),
+            _ => false,
+        }
+    }
+
+    /// Analyze a block.
+    fn analyze_block(&mut self, block: &Block) -> SemanticResult<()> {
+        self.analyze_scoped_block(&block.statements, block.trailing_expr.as_deref())
+            .map(|_| ())
+    }
+
+    fn analyze_block_expr(&mut self, block: &ast::BlockExpr) -> SemanticResult<Type> {
+        self.analyze_scoped_block(&block.statements, block.trailing_expr.as_deref())
+    }
+
+    fn analyze_scoped_block(
+        &mut self,
+        statements: &[Stmt],
+        trailing_expr: Option<&Expr>,
+    ) -> SemanticResult<Type> {
+        self.symbols.push_scope(ScopeKind::Block)?;
+        let result = (|| {
+            for stmt in statements {
+                self.analyze_stmt(stmt)?;
+            }
+            trailing_expr.map_or(Ok(Type::Unit), |expr| self.analyze_expr(expr))
+        })();
+        self.symbols.pop_scope();
+        result
     }
 
     /// Analyze a statement.
@@ -2526,7 +2736,24 @@ impl SemanticAnalyzer {
         match stmt {
             Stmt::Binding(binding) => {
                 let ty = if let Some(value) = &binding.value {
+                    if Self::contains_unitless_a64_ascription(value) {
+                        return Err(SemanticError::AngleUnitRequired {
+                            name: binding.name.clone(),
+                            location: binding.location.clone().unwrap_or_default(),
+                        });
+                    }
                     let expr_ty = self.analyze_expr(value)?;
+
+                    let declared_ty = binding
+                        .ty
+                        .as_ref()
+                        .map(|type_expr| self.resolve_type(type_expr));
+                    self.validate_angle_binding_initializer(
+                        binding,
+                        declared_ty.as_ref().unwrap_or(&expr_ty),
+                        &expr_ty,
+                        value,
+                    )?;
 
                     // Register allocator if this is a qalloc() call
                     // (gates don't require mut, only .child() does)
@@ -2566,8 +2793,7 @@ impl SemanticAnalyzer {
                         }
                     }
 
-                    if let Some(type_expr) = &binding.ty {
-                        let declared_ty = self.resolve_type(type_expr);
+                    if let Some(declared_ty) = declared_ty {
                         self.check_assignable(&declared_ty, &expr_ty, binding.location.clone())?;
                         declared_ty
                     } else {
@@ -2627,7 +2853,52 @@ impl SemanticAnalyzer {
 
                 let target_ty = self.analyze_expr(&assign.target)?;
                 let value_ty = self.analyze_expr(&assign.value)?;
-                self.check_assignable(&target_ty, &value_ty, assign.location.clone())?;
+                let result_ty = match assign.op {
+                    AssignOp::Assign => value_ty,
+                    AssignOp::AddAssign => self.check_binary_op(
+                        BinaryOp::Add,
+                        &target_ty,
+                        &value_ty,
+                        assign.location.clone(),
+                    )?,
+                    AssignOp::SubAssign => self.check_binary_op(
+                        BinaryOp::Sub,
+                        &target_ty,
+                        &value_ty,
+                        assign.location.clone(),
+                    )?,
+                    AssignOp::MulAssign => self.check_binary_op(
+                        BinaryOp::Mul,
+                        &target_ty,
+                        &value_ty,
+                        assign.location.clone(),
+                    )?,
+                    AssignOp::DivAssign => self.check_binary_op(
+                        BinaryOp::Div,
+                        &target_ty,
+                        &value_ty,
+                        assign.location.clone(),
+                    )?,
+                    AssignOp::AndAssign => self.check_binary_op(
+                        BinaryOp::BitAnd,
+                        &target_ty,
+                        &value_ty,
+                        assign.location.clone(),
+                    )?,
+                    AssignOp::OrAssign => self.check_binary_op(
+                        BinaryOp::BitOr,
+                        &target_ty,
+                        &value_ty,
+                        assign.location.clone(),
+                    )?,
+                    AssignOp::XorAssign => self.check_binary_op(
+                        BinaryOp::BitXor,
+                        &target_ty,
+                        &value_ty,
+                        assign.location.clone(),
+                    )?,
+                };
+                self.check_assignable(&target_ty, &result_ty, assign.location.clone())?;
             }
             Stmt::If(if_stmt) => {
                 let cond_ty = self.analyze_expr(&if_stmt.condition)?;
@@ -2882,15 +3153,15 @@ impl SemanticAnalyzer {
                     }
                 }
 
-                // Validate parameters for parameterized gates
-                for param in &gate_op.params {
-                    let param_ty = self.analyze_expr(param)?;
-                    if !param_ty.is_float() && param_ty != Type::Unknown {
-                        self.errors.push(SemanticError::TypeMismatch {
-                            expected: "float".to_string(),
-                            found: param_ty.display_name(),
-                            location: gate_op.location.clone().unwrap_or_default(),
-                        });
+                if gate_op.kind.is_parameterized() {
+                    self.validate_gate_angle_parameters(
+                        gate_op.kind,
+                        &gate_op.params,
+                        gate_op.location.clone(),
+                    )?;
+                } else {
+                    for param in &gate_op.params {
+                        self.analyze_expr(param)?;
                     }
                 }
             }
@@ -3027,6 +3298,12 @@ impl SemanticAnalyzer {
                 // Analyze the inner value expression
                 let inner_type = self.analyze_expr(&angle.value)?;
                 // Inner must be numeric
+                if inner_type == Type::A64 {
+                    return Err(SemanticError::AngleUnitAlreadyApplied {
+                        found: inner_type.display_name(),
+                        location: angle.location.clone().unwrap_or_default(),
+                    });
+                }
                 if !matches!(
                     inner_type,
                     Type::IInt { .. }
@@ -3038,7 +3315,7 @@ impl SemanticAnalyzer {
                 ) {
                     return Err(SemanticError::TypeMismatch {
                         expected: "numeric".to_string(),
-                        found: format!("{:?}", inner_type),
+                        found: inner_type.display_name(),
                         location: angle.location.clone().unwrap_or_default(),
                     });
                 }
@@ -3047,14 +3324,24 @@ impl SemanticAnalyzer {
             }
             Expr::TypeAscription(asc) => {
                 // Analyze the inner value expression
-                let _inner_type = self.analyze_expr(&asc.value)?;
+                let inner_type = self.analyze_expr(&asc.value)?;
                 // Parse the type name and return that type
                 match asc.type_name.as_str() {
                     "f16" => Ok(Type::F16),
                     "f32" => Ok(Type::F32),
                     "f64" => Ok(Type::F64),
                     "f128" => Ok(Type::F128),
-                    "a64" => Ok(Type::A64),
+                    "a64" => {
+                        if inner_type == Type::A64
+                            && !Self::is_unitless_angle_expression(&asc.value)
+                        {
+                            Ok(Type::A64)
+                        } else {
+                            Err(SemanticError::AngleValueUnitRequired {
+                                location: asc.location.clone().unwrap_or_default(),
+                            })
+                        }
+                    }
                     "u8" => Ok(Type::UInt { bits: BitWidth::BITS_8 }),
                     "u16" => Ok(Type::UInt { bits: BitWidth::BITS_16 }),
                     "u32" => Ok(Type::UInt { bits: BitWidth::BITS_32 }),
@@ -3307,7 +3594,7 @@ impl SemanticAnalyzer {
             }
 
             Expr::BatchApply(batch) => {
-                // Batch apply: h { q[0], q[1] } or rz(pi/4) { q[0], q[1] }
+                // Batch apply: h { q[0], q[1] } or rz((pi / 4) rad) { q[0], q[1] }
                 // Analyze the operation and targets
                 self.analyze_expr(&batch.operation)?;
 
@@ -3470,10 +3757,11 @@ impl SemanticAnalyzer {
                             location: gate.location.clone().unwrap_or_default(),
                         });
                     }
-                    // Analyze parameter expressions
-                    for param in &gate.params {
-                        self.analyze_expr(param)?;
-                    }
+                    self.validate_gate_angle_parameters(
+                        gate_kind,
+                        &gate.params,
+                        gate.location.clone(),
+                    )?;
                 }
 
                 // For multi-qubit gates (arity > 1), reject bare allocator targets
@@ -3692,21 +3980,27 @@ impl SemanticAnalyzer {
                 let then_ty = self.analyze_expr(&if_expr.then_expr)?;
                 let else_ty = self.analyze_expr(&if_expr.else_expr)?;
 
-                if then_ty == else_ty {
-                    Ok(then_ty)
-                } else {
-                    Ok(Type::Unknown) // Could be improved with type unification
+                let then_returns = self.expr_always_returns(&if_expr.then_expr);
+                let else_returns = self.expr_always_returns(&if_expr.else_expr);
+                match (then_returns, else_returns) {
+                    (true, true) => Ok(Type::Unit),
+                    (true, false) => Ok(else_ty),
+                    (false, true) => Ok(then_ty),
+                    (false, false) => {
+                        self.check_assignable(
+                            &then_ty,
+                            &else_ty,
+                            if_expr
+                                .else_expr
+                                .get_location()
+                                .or_else(|| if_expr.location.clone()),
+                        )?;
+                        Ok(then_ty)
+                    }
                 }
             }
 
-            Expr::Block(block) => {
-                self.symbols.push_scope(ScopeKind::Block)?;
-                for stmt in &block.statements {
-                    self.analyze_stmt(stmt)?;
-                }
-                self.symbols.pop_scope();
-                Ok(Type::Unknown) // Block expression type depends on break value
-            }
+            Expr::Block(block) => self.analyze_block_expr(block),
 
             Expr::Comptime(comptime) => {
                 // First, analyze the inner expression to get its type
@@ -3804,11 +4098,24 @@ impl SemanticAnalyzer {
             Expr::AnonStruct(anon) => {
                 // Anonymous struct type definition: struct { x: i32, y: i32 }
                 // This creates a type, not a value
-                let fields: Vec<(String, Type)> = anon
-                    .fields
-                    .iter()
-                    .map(|f| (f.name.clone(), self.resolve_type(&f.ty)))
-                    .collect();
+                let mut fields = Vec::with_capacity(anon.fields.len());
+                for field in &anon.fields {
+                    let field_ty = self.resolve_type(&field.ty);
+                    if let Some(default) = &field.default {
+                        if field_ty == Type::A64
+                            && (Self::contains_unitless_a64_ascription(default)
+                                || Self::is_unitless_angle_expression(default))
+                        {
+                            return Err(SemanticError::AngleUnitRequired {
+                                name: field.name.clone(),
+                                location: field.location.clone().unwrap_or_default(),
+                            });
+                        }
+                        let default_ty = self.analyze_expr(default)?;
+                        self.check_assignable(&field_ty, &default_ty, field.location.clone())?;
+                    }
+                    fields.push((field.name.clone(), field_ty));
+                }
                 Ok(Type::Struct {
                     name: "<anonymous>".to_string(),
                     fields,
@@ -3840,7 +4147,12 @@ impl SemanticAnalyzer {
 
             Expr::ArrayInit(init) => {
                 let element_type = if let Some(elem) = init.elements.first() {
-                    self.analyze_expr(elem)?
+                    let element_type = self.analyze_expr(elem)?;
+                    for element in init.elements.iter().skip(1) {
+                        let found = self.analyze_expr(element)?;
+                        self.check_assignable(&element_type, &found, element.get_location())?;
+                    }
+                    element_type
                 } else {
                     Type::Unknown
                 };
@@ -3868,9 +4180,10 @@ impl SemanticAnalyzer {
                     })
                 } else {
                     let element_ty = self.analyze_expr(&arr.elements[0])?;
-                    // Analyze all elements for side effects/validation
+                    // Every element must agree with the inferred element type.
                     for elem in arr.elements.iter().skip(1) {
-                        let _ = self.analyze_expr(elem)?;
+                        let found = self.analyze_expr(elem)?;
+                        self.check_assignable(&element_ty, &found, elem.get_location())?;
                     }
                     Ok(Type::Array {
                         element: Box::new(element_ty),
@@ -4290,9 +4603,11 @@ impl SemanticAnalyzer {
             return Ok(());
         }
 
-        // Allow numeric coercion between numeric types only
-        // (but NOT from numeric to bool or vice versa)
-        if target.is_numeric() && value.is_numeric() {
+        // Angles cannot be created by implicitly coercing a unitless number.
+        if target.is_numeric()
+            && value.is_numeric()
+            && (*target == Type::A64) == (*value == Type::A64)
+        {
             return Ok(());
         }
 
@@ -4386,8 +4701,11 @@ impl SemanticAnalyzer {
             return true;
         }
 
-        // Allow numeric coercion between numeric types
-        if value.is_numeric() && expected.is_numeric() {
+        // Angles cannot be created by implicitly coercing a unitless number.
+        if value.is_numeric()
+            && expected.is_numeric()
+            && (*value == Type::A64) == (*expected == Type::A64)
+        {
             return true;
         }
 
@@ -4532,24 +4850,21 @@ impl SemanticAnalyzer {
         right: &Type,
         location: Option<SourceLocation>,
     ) -> SemanticResult<Type> {
+        let numeric_type_error = |expected: &str| SemanticError::TypeMismatch {
+            expected: expected.to_string(),
+            found: format!("{} and {}", left.display_name(), right.display_name()),
+            location: location.clone().unwrap_or_default(),
+        };
+        let left_is_angle = *left == Type::A64;
+        let right_is_angle = *right == Type::A64;
         match op {
-            BinaryOp::Add | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod => {
-                if left.is_numeric() && right.is_numeric() {
-                    Ok(left.clone())
-                } else {
-                    Err(SemanticError::TypeMismatch {
-                        expected: "numeric".to_string(),
-                        found: format!("{} and {}", left.display_name(), right.display_name()),
-                        location: location.unwrap_or_default(),
-                    })
-                }
-            }
-            BinaryOp::Sub => {
+            BinaryOp::Add | BinaryOp::Sub => {
                 // - works for numeric (subtraction) and Set (difference)
-                if left.is_numeric() && right.is_numeric() {
+                if left.is_numeric() && right.is_numeric() && left_is_angle == right_is_angle {
                     Ok(left.clone())
-                } else if let (Type::Set { element: l_elem }, Type::Set { element: r_elem }) =
-                    (left, right)
+                } else if op == BinaryOp::Sub
+                    && let (Type::Set { element: l_elem }, Type::Set { element: r_elem }) =
+                        (left, right)
                 {
                     // Set difference returns a set of the same element type
                     let _ = r_elem; // Both sets should have compatible element types
@@ -4557,17 +4872,45 @@ impl SemanticAnalyzer {
                         element: l_elem.clone(),
                     })
                 } else {
-                    Err(SemanticError::TypeMismatch {
-                        expected: "numeric or Set".to_string(),
-                        found: format!("{} and {}", left.display_name(), right.display_name()),
-                        location: location.unwrap_or_default(),
-                    })
+                    Err(numeric_type_error(if op == BinaryOp::Sub {
+                        "matching numeric angle types or Set"
+                    } else {
+                        "matching numeric angle types"
+                    }))
                 }
             }
-            BinaryOp::Eq | BinaryOp::Ne => Ok(Type::Bool),
+            BinaryOp::Mul => match (left_is_angle, right_is_angle) {
+                (true, true) => Err(numeric_type_error("one a64 angle and one numeric scalar")),
+                (true, false) | (false, true) if left.is_numeric() && right.is_numeric() => {
+                    Ok(Type::A64)
+                }
+                (false, false) if left.is_numeric() && right.is_numeric() => Ok(left.clone()),
+                _ => Err(numeric_type_error("numeric")),
+            },
+            BinaryOp::Div => match (left_is_angle, right_is_angle) {
+                (true, true) => Ok(Type::F64),
+                (true, false) if right.is_numeric() => Ok(Type::A64),
+                (false, true) => Err(numeric_type_error("a64 divided by a numeric scalar")),
+                (false, false) if left.is_numeric() && right.is_numeric() => Ok(left.clone()),
+                _ => Err(numeric_type_error("numeric")),
+            },
+            BinaryOp::Mod => {
+                if left.is_numeric() && right.is_numeric() && !left_is_angle && !right_is_angle {
+                    Ok(left.clone())
+                } else {
+                    Err(numeric_type_error("non-angle numeric operands"))
+                }
+            }
+            BinaryOp::Eq | BinaryOp::Ne => {
+                if left_is_angle == right_is_angle {
+                    Ok(Type::Bool)
+                } else {
+                    Err(numeric_type_error("matching angle dimensions"))
+                }
+            }
             BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => {
                 // These work for numeric (comparison) and Set (subset/superset)
-                if left.is_numeric() && right.is_numeric() {
+                if left.is_numeric() && right.is_numeric() && left_is_angle == right_is_angle {
                     Ok(Type::Bool)
                 } else if matches!((left, right), (Type::Set { .. }, Type::Set { .. })) {
                     // Set comparisons: < (proper subset), <= (subset), > (proper superset), >= (superset)
@@ -5059,7 +5402,7 @@ impl SemanticAnalyzer {
                 }
                 Vec::new()
             }
-            // Batch apply: h { q[0], q[1] } or rz(pi/4) { q[0], q[1] }
+            // Batch apply: h { q[0], q[1] } or rz((pi / 4) rad) { q[0], q[1] }
             Expr::BatchApply(batch) => {
                 // Extract gate name from operation
                 let gate_name = match &batch.operation {
@@ -5500,82 +5843,120 @@ impl SemanticAnalyzer {
             }
         };
 
-        // Try to load the module
+        // Try to load the module.
         let from_file = self.current_file.as_deref();
-        match self.module_loader.load(&import_path, from_file) {
-            Ok(module) => {
-                // Clone the exports and path to release the borrow on module_loader
-                let module_exports = module.exports.clone();
-                let module_path = module.path.display().to_string();
-                // module reference is now released after cloning
+        let module = self
+            .module_loader
+            .load(&import_path, from_file)
+            .map_err(|error| SemanticError::ModuleError {
+                message: error.to_string(),
+                location: location.clone(),
+            })?
+            .clone();
 
-                // Build exports map for the type
-                let mut exports = std::collections::BTreeMap::new();
-                for (name, export) in &module_exports {
-                    let (kind, ty) = match export {
-                        ExportedSymbol::Function {
-                            params,
-                            return_type,
-                            ..
-                        } => {
-                            // Extract function signature from AST
-                            let param_types: Vec<Type> =
-                                params.iter().map(|(_, ty)| self.resolve_type(ty)).collect();
-                            let ret_type = return_type
-                                .as_ref()
-                                .map(|t| self.resolve_type(t))
-                                .unwrap_or(Type::Unit);
-                            (
-                                ModuleExportKind::Function,
-                                Type::Function {
-                                    params: param_types,
-                                    return_type: Box::new(ret_type),
-                                },
-                            )
-                        }
-                        ExportedSymbol::Const { .. } => (ModuleExportKind::Const, Type::Unknown),
-                        ExportedSymbol::Type { .. } => (ModuleExportKind::Type, Type::Type),
-                        ExportedSymbol::ErrorSet { variants, .. } => {
-                            // Imported error sets don't carry associated data types
-                            let errors: Vec<(String, Option<Box<Type>>)> =
-                                variants.iter().map(|v| (v.clone(), None)).collect();
-                            (
-                                ModuleExportKind::ErrorSet,
-                                Type::ErrorSet {
-                                    name: name.clone(),
-                                    errors,
-                                },
-                            )
-                        }
-                        ExportedSymbol::FaultSet { variants, .. } => {
-                            // Imported fault sets don't carry associated data types
-                            let faults: Vec<(String, Option<Box<Type>>)> =
-                                variants.iter().map(|v| (v.clone(), None)).collect();
-                            (
-                                ModuleExportKind::FaultSet,
-                                Type::FaultSet {
-                                    name: name.clone(),
-                                    faults,
-                                },
-                            )
-                        }
-                    };
-                    exports.insert(name.clone(), (kind, ty));
-                }
-
-                Ok(Type::Module {
-                    path: module_path,
-                    exports,
-                })
-            }
-            Err(e) => {
-                // Module loading failed - report as semantic error
-                Err(SemanticError::ModuleError {
-                    message: e.to_string(),
-                    location,
-                })
-            }
+        if let Some(cycle_start) = self
+            .import_analysis_stack
+            .iter()
+            .position(|path| path == &module.path)
+        {
+            let mut cycle = self.import_analysis_stack[cycle_start..]
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>();
+            cycle.push(module.path.display().to_string());
+            return Err(SemanticError::ModuleError {
+                message: format!("circular import detected: {}", cycle.join(" -> ")),
+                location,
+            });
         }
+
+        self.import_analysis_stack.push(module.path.clone());
+        let result = self.analyze_module_type(&module);
+        let popped = self.import_analysis_stack.pop();
+        debug_assert_eq!(popped.as_ref(), Some(&module.path));
+        result
+    }
+
+    fn analyze_module_type(&mut self, module: &crate::module::Module) -> SemanticResult<Type> {
+        let mut exports = std::collections::BTreeMap::new();
+        for (name, export) in &module.exports {
+            let (kind, ty) = match export {
+                ExportedSymbol::Function {
+                    params,
+                    return_type,
+                    ..
+                } => {
+                    let param_types = params.iter().map(|(_, ty)| self.resolve_type(ty)).collect();
+                    let return_type = return_type
+                        .as_ref()
+                        .map(|ty| self.resolve_type(ty))
+                        .unwrap_or(Type::Unit);
+                    (
+                        ModuleExportKind::Function,
+                        Type::Function {
+                            params: param_types,
+                            return_type: Box::new(return_type),
+                        },
+                    )
+                }
+                ExportedSymbol::Const { ty, .. } => {
+                    let ty = if let Some(ty) = ty {
+                        self.resolve_type(ty)
+                    } else if let Some(value) = module.program.declarations.iter().find_map(|decl| {
+                        match decl {
+                            TopLevelDecl::Binding(binding) if binding.name == *name => binding
+                                .value
+                                .as_ref()
+                                .filter(|value| {
+                                    matches!(value, Expr::Builtin(builtin) if builtin.name == "import")
+                                }),
+                            _ => None,
+                        }
+                    }) {
+                        let previous_file = self.current_file.replace(module.path.clone());
+                        let result = self.analyze_expr(value);
+                        self.current_file = previous_file;
+                        result?
+                    } else {
+                        Type::Unknown
+                    };
+                    (ModuleExportKind::Const, ty)
+                }
+                ExportedSymbol::Type { .. } => (ModuleExportKind::Type, Type::Type),
+                ExportedSymbol::ErrorSet { variants, .. } => {
+                    let errors = variants
+                        .iter()
+                        .map(|variant| (variant.clone(), None))
+                        .collect();
+                    (
+                        ModuleExportKind::ErrorSet,
+                        Type::ErrorSet {
+                            name: name.clone(),
+                            errors,
+                        },
+                    )
+                }
+                ExportedSymbol::FaultSet { variants, .. } => {
+                    let faults = variants
+                        .iter()
+                        .map(|variant| (variant.clone(), None))
+                        .collect();
+                    (
+                        ModuleExportKind::FaultSet,
+                        Type::FaultSet {
+                            name: name.clone(),
+                            faults,
+                        },
+                    )
+                }
+            };
+            exports.insert(name.clone(), (kind, ty));
+        }
+
+        Ok(Type::Module {
+            path: module.path.display().to_string(),
+            exports,
+        })
     }
 
     // =========================================================================
@@ -5916,13 +6297,13 @@ fn is_gate_name(name: &str) -> bool {
 
 /// Check if a name is a built-in constant.
 fn is_builtin_constant(name: &str) -> bool {
-    matches!(name, "pi" | "tau" | "e")
+    matches!(name, "PI" | "pi" | "TAU" | "tau" | "e")
 }
 
 /// Get the type of a built-in constant.
 fn get_builtin_constant_type(name: &str) -> Type {
     match name {
-        "pi" | "tau" | "e" => Type::A64,
+        "PI" | "pi" | "TAU" | "tau" | "e" => Type::F64,
         _ => Type::Unknown,
     }
 }
@@ -6034,12 +6415,36 @@ fn float_suffix_to_type(suffix: &str) -> Type {
 mod tests {
     use super::*;
     use crate::ast::GateKind;
+    #[cfg(feature = "hugr")]
+    use crate::codegen::HugrCodegen;
+    use crate::codegen::{PhirJsonCodegen, QasmCodegen, SlrCodegen};
     use crate::parse;
 
     fn analyze(source: &str) -> SemanticResult<()> {
         let program = parse(source).expect("parse failed");
         let mut analyzer = SemanticAnalyzer::new();
         analyzer.analyze(&program)
+    }
+
+    fn analyze_and_compile_all(source: &str, label: &str) {
+        let program =
+            parse(source).unwrap_or_else(|error| panic!("failed to parse {label}: {error}"));
+        SemanticAnalyzer::new_permissive()
+            .analyze(&program)
+            .unwrap_or_else(|error| panic!("failed to analyze {label}: {error}"));
+        SlrCodegen::new()
+            .compile(&program)
+            .unwrap_or_else(|error| panic!("failed to compile {label} to SLR: {error}"));
+        PhirJsonCodegen::new()
+            .compile(&program)
+            .unwrap_or_else(|error| panic!("failed to compile {label} to PHIR: {error}"));
+        QasmCodegen::new()
+            .compile(&program)
+            .unwrap_or_else(|error| panic!("failed to compile {label} to QASM: {error}"));
+        #[cfg(feature = "hugr")]
+        HugrCodegen::new()
+            .compile(&program)
+            .unwrap_or_else(|error| panic!("failed to compile {label} to HUGR: {error}"));
     }
 
     #[test]
@@ -7206,6 +7611,43 @@ mod tests {
     }
 
     #[test]
+    fn test_semantic_import_cycle_is_reported_without_recursing() {
+        use std::io::Write;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let a_path = temp_dir.path().join("a.zlp");
+        let b_path = temp_dir.path().join("b.zlp");
+        let main_path = temp_dir.path().join("main.zlp");
+
+        let mut a = std::fs::File::create(&a_path).unwrap();
+        writeln!(a, "pub b := @import(\"b.zlp\"); pub aa: a64 = 1/8 turns;").unwrap();
+        let mut b = std::fs::File::create(&b_path).unwrap();
+        writeln!(b, "pub a := @import(\"a.zlp\"); pub bb: a64 = 1/4 turns;").unwrap();
+
+        let source = r#"
+            m := @import("a.zlp");
+            fn main() -> unit {
+                q := qalloc(1);
+                rz(m.aa) q[0];
+                return unit;
+            }
+        "#;
+        let program = crate::parse_file(source, main_path.display().to_string()).unwrap();
+        let mut analyzer = SemanticAnalyzer::new();
+        analyzer.set_current_file(&main_path);
+        let error = analyzer
+            .analyze(&program)
+            .expect_err("cyclic import should fail semantic analysis");
+        let SemanticError::ModuleError { message, .. } = error else {
+            panic!("expected module error, got {error:?}");
+        };
+        assert!(message.contains("circular import detected"), "{message}");
+        assert!(message.contains("a.zlp"), "{message}");
+        assert!(message.contains("b.zlp"), "{message}");
+    }
+
+    #[test]
     fn test_module_import_call_function() {
         use std::io::Write;
         use tempfile::TempDir;
@@ -8303,6 +8745,650 @@ mod tests {
             "Expected angle literal to be a64 type: {:?}",
             result
         );
+    }
+
+    #[test]
+    fn test_a64_binding_accepts_explicit_and_inherited_units() {
+        let result = analyze(
+            r#"
+            half: a64 = 1/2 turns;
+            three_eighths: a64 = 3/8 turns;
+            half_pi: a64 = pi rad;
+            upper_half_pi: a64 = PI rad;
+            full_tau: a64 = TAU rad;
+            one_rad: a64 = 1.0 rad;
+
+            fn main() -> unit {
+                angle := half;
+                check: a64 = angle;
+                scaled: a64 = three_eighths / 2;
+                combined: a64 = half_pi + upper_half_pi + full_tau + scaled;
+                return unit;
+            }
+            "#,
+        );
+
+        assert!(
+            result.is_ok(),
+            "unit-bearing angles should pass: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_unitless_a64_binding_requires_unit() {
+        let result = analyze("angle: a64 = 0.25;");
+        let error = result.expect_err("unitless a64 binding should fail");
+
+        assert!(matches!(
+            &error,
+            SemanticError::AngleUnitRequired { name, .. } if name == "angle"
+        ));
+        let message = error.to_string();
+        assert!(message.contains("angle"));
+        assert!(message.contains("0.25 turns"));
+        assert!(message.contains("1.5707963267948966 rad"));
+    }
+
+    #[test]
+    fn test_unitless_a64_binding_spellings_are_rejected() {
+        for source in [
+            "angle: a64 = 1;",
+            "angle: a64 = 0.25;",
+            "angle: a64 = pi;",
+            "angle: a64 = PI;",
+            "angle: a64 = TAU;",
+            "angle: a64 = pi / 4;",
+            "angle := 1.57_a64;",
+            "angle: a64 = 1.57 a64;",
+        ] {
+            assert!(
+                matches!(
+                    analyze(source),
+                    Err(SemanticError::AngleUnitRequired { name, .. }) if name == "angle"
+                ),
+                "unitless angle declaration passed: {source}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_rotation_gate_accepts_unit_bearing_angle_parameters() {
+        let result = analyze(
+            r#"
+            half: a64 = 0.5 turns;
+
+            fn rotate(angle: a64) -> unit {
+                q := qalloc(2);
+                pz q;
+                rz(angle) q[0];
+                rz(0.25 turns) q[0];
+                rz(pi rad) q[0];
+                rz(half / 2) q[0];
+                crz(angle + half) (q[0], q[1]);
+                return unit;
+            }
+            "#,
+        );
+
+        assert!(
+            result.is_ok(),
+            "unit-bearing gate parameters should pass: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_imported_std_angle_constant_propagates_a64_type() {
+        let std_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("std/std.zlp")
+            .canonicalize()
+            .expect("canonical stdlib path");
+        let source = format!(
+            r#"
+            std := @import("{}");
+            fn main() -> unit {{
+                angle := std.a64.t_angle;
+                q := qalloc(1);
+                pz q;
+                rz(angle) q[0];
+                return unit;
+            }}
+        "#,
+            std_path.display()
+        );
+
+        analyze_and_compile_all(&source, "docs/tutorial standard-library angle example");
+    }
+
+    #[test]
+    fn test_imported_unannotated_constant_is_not_an_angle() {
+        use std::io::Write;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().expect("create temp directory");
+        let values_path = temp_dir.path().join("values.zlp");
+        let mut values = std::fs::File::create(&values_path).expect("create values module");
+        writeln!(values, "pub mystery := 0.25 turns;").expect("write values module");
+
+        let main_path = temp_dir.path().join("main.zlp");
+        let source = r#"
+            values := @import("values.zlp");
+            fn main() -> unit {
+                q := qalloc(1);
+                pz q;
+                rz(values.mystery) q[0];
+                return unit;
+            }
+        "#;
+        let program = crate::parse_file(source, main_path.display().to_string())
+            .expect("parse importing program");
+        let mut analyzer = SemanticAnalyzer::new();
+        analyzer.set_current_file(&main_path);
+        let error = analyzer
+            .analyze(&program)
+            .expect_err("unannotated imported constant should remain Unknown");
+
+        assert!(matches!(
+            error,
+            SemanticError::GateAngleUnitRequired { found, .. } if found == "unknown"
+        ));
+    }
+
+    #[test]
+    fn test_rotation_gate_rejects_unitless_numeric_parameters() {
+        for (source, gate, parameter, found) in [
+            (
+                r#"
+                plain_pi: f64 = pi;
+                fn main() -> unit {
+                    q := qalloc(2);
+                    pz q;
+                    crz(plain_pi) (q[0], q[1]);
+                    return unit;
+                }
+                "#,
+                "crz",
+                "plain_pi",
+                "f64",
+            ),
+            (
+                "fn main() -> unit { q := qalloc(1); pz q; rz(0.25) q[0]; return unit; }",
+                "rz",
+                "0.25",
+                "f64",
+            ),
+            (
+                "fn main() -> unit { q := qalloc(1); pz q; rx(1) q[0]; return unit; }",
+                "rx",
+                "1",
+                "i64",
+            ),
+            (
+                "fn main() -> unit { q := qalloc(1); pz q; ry(1.0 + 2.0) q[0]; return unit; }",
+                "ry",
+                "parameter 1 expression",
+                "f64",
+            ),
+            (
+                "fn main() -> unit { q := qalloc(1); pz q; rzz(1.0 f64) (q[0], q[0]); return unit; }",
+                "rzz",
+                "parameter 1 as f64",
+                "f64",
+            ),
+            (
+                "fn main() -> unit { q := qalloc(1); pz q; rz(1.0 a64) q[0]; return unit; }",
+                "rz",
+                "parameter 1 as a64",
+                "a64",
+            ),
+        ] {
+            let error = analyze(source).expect_err("unitless rotation angle should fail");
+            assert!(
+                matches!(
+                    &error,
+                    SemanticError::GateAngleUnitRequired {
+                        gate: actual_gate,
+                        parameter: 1,
+                        expression,
+                        found: actual_found,
+                        ..
+                    } if actual_gate == gate && expression == parameter && actual_found == found
+                ),
+                "unexpected error for {source}: {error:?}"
+            );
+            let message = error.to_string();
+            assert!(message.contains("explicit unit"), "message: {message}");
+            assert!(message.contains("0.25 turns"), "message: {message}");
+            assert!(
+                message.contains("1.5707963267948966 rad"),
+                "message: {message}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_a64_cannot_be_constructed_by_numeric_coercion() {
+        for source in [
+            "fn make() -> a64 { return 0.25; }",
+            "fn use_angle(angle: a64) -> unit { return unit; } fn main() -> unit { use_angle(0.25); return unit; }",
+            "fn main() -> unit { mut angle: a64 = 0.25 turns; angle = 0.5; return unit; }",
+        ] {
+            let error = analyze(source).expect_err("numeric value must not become a64");
+            assert!(
+                matches!(
+                    error,
+                    SemanticError::TypeMismatch {
+                        ref expected,
+                        ref found,
+                        ..
+                    } if expected == "a64" && (found == "f64" || found == "i64")
+                ),
+                "unexpected error for {source}: {error:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_reapplying_angle_unit_names_the_a64_rule() {
+        let error = analyze(
+            "half: a64 = 0.5 turns; fn main() -> unit { q := qalloc(1); rz(half turns) q[0]; return unit; }",
+        )
+        .expect_err("re-applying a unit to a64 must fail");
+
+        assert!(matches!(
+            &error,
+            SemanticError::AngleUnitAlreadyApplied { found, .. } if found == "a64"
+        ));
+        assert!(error.to_string().contains("already carries its unit"));
+    }
+
+    #[test]
+    fn test_array_literals_require_every_element_to_match() {
+        for (source, expected, found) in [
+            (
+                "fn main() -> unit { arr: [2]a64 = [0.5 turns, 0.25]; return unit; }",
+                "a64",
+                "f64",
+            ),
+            (
+                "fn main() -> unit { arr: [2]a64 = [0.25, 0.5 turns]; return unit; }",
+                "f64",
+                "a64",
+            ),
+            (
+                "fn main() -> unit { half := 0.5 turns; arr := [half, 0.25]; return unit; }",
+                "a64",
+                "f64",
+            ),
+        ] {
+            let error = analyze(source).expect_err("heterogeneous angle array must fail");
+            assert!(
+                matches!(
+                    error,
+                    SemanticError::TypeMismatch {
+                        expected: ref actual_expected,
+                        found: ref actual_found,
+                        ..
+                    } if actual_expected == expected && actual_found == found
+                ),
+                "unexpected error for {source}: {error:?}"
+            );
+        }
+
+        analyze("fn main() -> unit { arr: [2]a64 = [0.5 turns, 0.25 turns]; return unit; }")
+            .expect("homogeneous angle array should pass");
+    }
+
+    #[test]
+    fn test_block_if_expression_propagates_angle_type() {
+        analyze(
+            r#"
+            fn main() -> unit {
+                half := 0.5 turns;
+                quarter := 0.25 turns;
+                angle: a64 = if (true) { half } else { quarter };
+                q := qalloc(1);
+                pz q;
+                rz(angle) q[0];
+                return unit;
+            }
+            "#,
+        )
+        .expect("block-bodied if should propagate a64 from its tail expressions");
+    }
+
+    #[test]
+    fn test_block_if_rejects_mismatched_branch_types() {
+        let error = analyze(
+            "fn main() -> unit { angle: a64 = if (true) { (0.25 turns) } else { (1.0) }; return unit; }",
+        )
+        .expect_err("mismatched if branches must fail at the if expression");
+        assert!(matches!(
+            error,
+            SemanticError::TypeMismatch {
+                expected,
+                found,
+                ..
+            } if expected == "a64" && found == "f64"
+        ));
+    }
+
+    #[test]
+    fn test_empty_and_tail_less_blocks_have_unit_type() {
+        analyze(
+            "fn main() -> unit { first: unit = if (true) {} else {}; second: unit = if (true) { value := 1; } else { value := 2; }; return unit; }",
+        )
+        .expect("empty and tail-less blocks should have unit type");
+    }
+
+    #[test]
+    fn test_returning_if_blocks_do_not_produce_a_value() {
+        let error = analyze(
+            "fn choose(c: bool) -> i32 { y: i32 = if (c) { return 1; } else { return 2; }; return y; }",
+        )
+        .expect_err("returning blocks have unit type at the unreachable binding");
+        assert!(matches!(
+            error,
+            SemanticError::TypeMismatch {
+                expected,
+                found,
+                ..
+            } if expected == "i32" && found == "unit"
+        ));
+    }
+
+    #[test]
+    fn test_diverging_if_branch_does_not_participate_in_value_type() {
+        for source in [
+            "fn choose(c: bool) -> i32 { y: i32 = if (c) { return 1; } else { 2 }; return y; }",
+            "fn choose(c: bool) -> i32 { y: i32 = if (c) { 2 } else { return 1; }; return y; }",
+        ] {
+            analyze(source).expect("the non-diverging branch supplies the if expression's type");
+        }
+    }
+
+    #[test]
+    fn test_unitless_a64_value_ascription_requires_unit() {
+        let error = analyze("fn make() -> a64 { return 1.0 a64; }")
+            .expect_err("unitless a64 value ascription should fail");
+        assert!(matches!(
+            error,
+            SemanticError::AngleValueUnitRequired { .. }
+        ));
+    }
+
+    #[test]
+    fn test_angle_addition_and_subtraction_require_two_angles() {
+        for expression in ["half + 1", "1 + half", "half - 0.5", "0.5 - half"] {
+            let source = format!(
+                "half: a64 = 0.5 turns; fn main() -> unit {{ q := qalloc(1); pz q; rz({expression}) q[0]; return unit; }}"
+            );
+            let error = analyze(&source).expect_err("mixed angle/scalar arithmetic should fail");
+            assert!(
+                matches!(error, SemanticError::TypeMismatch { ref found, .. } if found.contains("a64") && (found.contains("i64") || found.contains("f64"))),
+                "unexpected error for {expression}: {error:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_angle_scaling_rules_are_dimensional() {
+        for expression in ["half * quarter", "quarter * half", "2 / half", "0.5 / half"] {
+            let source = format!(
+                "half: a64 = 0.5 turns; quarter: a64 = 0.25 turns; fn main() -> unit {{ q := qalloc(1); rz({expression}) q[0]; return unit; }}"
+            );
+            assert!(
+                matches!(analyze(&source), Err(SemanticError::TypeMismatch { .. })),
+                "dimensionally invalid angle arithmetic passed: {expression}"
+            );
+        }
+
+        analyze(
+            r#"
+            half: a64 = 0.5 turns;
+            fn main() -> unit {
+                q := qalloc(1);
+                pz q;
+                rz(half * 2) q[0];
+                rz(2 * half) q[0];
+                rz(half / 2) q[0];
+                ratio: f64 = half / half;
+                return unit;
+            }
+            "#,
+        )
+        .expect("dimensionally valid angle scaling should pass");
+    }
+
+    #[test]
+    fn test_angle_compound_assignments_use_dimensional_rules() {
+        analyze(
+            r#"
+            fn main() -> unit {
+                mut angle: a64 = 0.5 turns;
+                other: a64 = 0.25 turns;
+                angle *= 2;
+                angle /= 2;
+                angle += other;
+                angle -= other;
+                return unit;
+            }
+            "#,
+        )
+        .expect("dimensionally valid compound assignments should pass");
+
+        for assignment in [
+            "angle += 1",
+            "angle -= 1",
+            "angle *= other",
+            "angle /= other",
+        ] {
+            let source = format!(
+                "fn main() -> unit {{ mut angle: a64 = 0.5 turns; other: a64 = 0.25 turns; {assignment}; return unit; }}"
+            );
+            assert!(
+                matches!(analyze(&source), Err(SemanticError::TypeMismatch { .. })),
+                "dimensionally invalid compound assignment passed: {assignment}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_angle_comparisons_require_matching_dimensions() {
+        for op in ["<", "<=", ">", ">=", "==", "!="] {
+            for expression in [format!("half {op} 1"), format!("1 {op} half")] {
+                let source = format!(
+                    "half: a64 = 0.5 turns; fn main() -> unit {{ result := {expression}; return unit; }}"
+                );
+                assert!(
+                    matches!(analyze(&source), Err(SemanticError::TypeMismatch { .. })),
+                    "mixed angle/scalar comparison passed: {expression}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_angle_modulo_is_rejected_in_both_orders() {
+        for expression in ["half % 1", "1 % half", "half % quarter", "quarter % half"] {
+            let source = format!(
+                "half: a64 = 0.5 turns; quarter: a64 = 0.25 turns; fn main() -> unit {{ value := {expression}; return unit; }}"
+            );
+            assert!(
+                matches!(analyze(&source), Err(SemanticError::TypeMismatch { .. })),
+                "angle modulo passed: {expression}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_dimensional_error_uses_binary_expression_location() {
+        let source = "half: a64 = 0.5 turns;\nfn main() -> unit {\n    q := qalloc(1);\n    rz(half * half) q[0];\n    return unit;\n}";
+        let error = analyze(source).expect_err("angle multiplication must fail");
+        assert!(matches!(
+            error,
+            SemanticError::TypeMismatch { location, .. } if location.line == 4
+        ));
+    }
+
+    #[test]
+    fn test_builder_gate_statement_rejects_unitless_angle() {
+        let mut program = parse("fn main() -> unit { q := qalloc(2); pz q; return unit; }")
+            .expect("parse failed");
+        let TopLevelDecl::Fn(main) = &mut program.declarations[0] else {
+            panic!("expected main function");
+        };
+        let slot = |index| crate::ast::SlotRef {
+            allocator: "q".to_string(),
+            index: Box::new(Expr::IntLit(crate::ast::IntLit {
+                value: index,
+                suffix: None,
+                location: None,
+            })),
+            location: None,
+        };
+        main.body.statements.insert(
+            2,
+            Stmt::Gate(crate::ast::GateOp {
+                kind: GateKind::CRZ,
+                targets: vec![slot(0), slot(1)],
+                params: vec![Expr::FloatLit(crate::ast::FloatLit {
+                    value: 0.5,
+                    suffix: None,
+                    location: None,
+                })],
+                attrs: Vec::new(),
+                location: None,
+            }),
+        );
+
+        let mut analyzer = SemanticAnalyzer::new();
+        assert!(matches!(
+            analyzer.analyze(&program),
+            Err(SemanticError::GateAngleUnitRequired {
+                gate,
+                parameter: 1,
+                found,
+                ..
+            }) if gate == "crz" && found == "f64"
+        ));
+    }
+
+    #[test]
+    fn test_std_a64_and_all_examples_compile_to_every_backend() {
+        let std_a64 = include_str!("../std/a64.zlp");
+        analyze_and_compile_all(std_a64, "std/a64.zlp");
+
+        let examples_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("examples");
+        let mut examples = std::fs::read_dir(&examples_dir)
+            .expect("failed to read examples directory")
+            .map(|entry| entry.expect("failed to read example entry").path())
+            .filter(|path| path.extension().is_some_and(|extension| extension == "zlp"))
+            .collect::<Vec<_>>();
+        examples.sort();
+        assert!(!examples.is_empty(), "no .zlp examples found");
+
+        for path in examples {
+            let source = std::fs::read_to_string(&path)
+                .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
+            analyze_and_compile_all(&source, &path.display().to_string());
+        }
+    }
+
+    #[test]
+    fn test_qft_module_angles_are_inlined_outside_hugr() {
+        let source = include_str!("../examples/qft_3qubit.zlp");
+        let program = parse(source).expect("failed to parse qft_3qubit.zlp");
+        SemanticAnalyzer::new_permissive()
+            .analyze(&program)
+            .expect("failed to analyze qft_3qubit.zlp");
+
+        let slr = SlrCodegen::new()
+            .compile(&program)
+            .expect("failed to compile QFT to SLR");
+        let slr_json = serde_json::to_string(&slr).expect("failed to serialize SLR");
+        assert!(!slr_json.contains("pi_2"));
+        assert!(!slr_json.contains("pi_4"));
+        assert!(slr_json.contains("\"value\":0.25"));
+        assert!(slr_json.contains("\"value\":0.125"));
+
+        let qasm = QasmCodegen::new()
+            .compile(&program)
+            .expect("failed to compile QFT to QASM");
+        assert!(!qasm.contains("pi_2"));
+        assert!(!qasm.contains("pi_4"));
+        assert!(qasm.contains("crz(1.5707963267948966)"));
+        assert!(qasm.contains("crz(0.7853981633974483)"));
+    }
+
+    #[test]
+    fn test_backend_angle_resolution_uses_local_comptime_shadow() {
+        let source = r#"
+            theta: a64 = 0.25 turns;
+            pub fn main() -> unit {
+                q := qalloc(1);
+                theta := 0.5 turns;
+                rz(theta) q[0];
+                return unit;
+            }
+        "#;
+        let program = parse(source).expect("failed to parse shadowing program");
+        SemanticAnalyzer::new_permissive()
+            .analyze(&program)
+            .expect("failed to analyze shadowing program");
+
+        let slr = SlrCodegen::new()
+            .compile(&program)
+            .expect("SLR should resolve the local constant");
+        let slr_json = serde_json::to_string(&slr).expect("failed to serialize SLR");
+        assert!(!slr_json.contains("\"name\":\"theta\""));
+        assert!(!slr_json.contains("\"value\":0.25"));
+        assert!(slr_json.contains("\"value\":0.5"));
+
+        PhirJsonCodegen::new()
+            .compile(&program)
+            .expect("PHIR should resolve the local constant");
+        QasmCodegen::new()
+            .compile(&program)
+            .expect("QASM should resolve the local constant");
+        #[cfg(feature = "hugr")]
+        HugrCodegen::new()
+            .compile(&program)
+            .expect("HUGR should resolve the local constant");
+    }
+
+    #[test]
+    fn test_runtime_angles_fail_without_dangling_backend_references() {
+        let source = r#"
+            pub fn main(theta: a64) -> unit {
+                q := qalloc(1);
+                rz(theta) q[0];
+                return unit;
+            }
+        "#;
+        let program = parse(source).expect("failed to parse runtime angle program");
+        SemanticAnalyzer::new_permissive()
+            .analyze(&program)
+            .expect("runtime a64 parameter is semantically valid");
+
+        let slr_error = SlrCodegen::new()
+            .compile(&program)
+            .expect_err("SLR cannot declare runtime angle values");
+        assert!(slr_error.to_string().contains("theta"));
+        let phir_error = PhirJsonCodegen::new()
+            .compile(&program)
+            .expect_err("PHIR requires a compile-time angle");
+        assert!(phir_error.to_string().contains("theta"));
+        let qasm_error = QasmCodegen::new()
+            .compile(&program)
+            .expect_err("QASM requires a compile-time angle");
+        assert!(qasm_error.to_string().contains("theta"));
+        #[cfg(feature = "hugr")]
+        {
+            let hugr_error = HugrCodegen::new()
+                .compile(&program)
+                .expect_err("HUGR requires a compile-time angle");
+            assert!(hugr_error.to_string().contains("theta"));
+        }
     }
 
     // =========================================================================

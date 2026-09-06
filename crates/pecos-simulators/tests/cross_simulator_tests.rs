@@ -1186,7 +1186,12 @@ fn batch_cx_matches_sequential() {
 
 #[test]
 fn batch_2q_gates_match_sequential() {
-    let batch_qubits = [(QubitId(0), QubitId(1)), (QubitId(2), QubitId(3))];
+    // An odd pair count prevents a per-pair global sign error from cancelling.
+    let batch_qubits = [
+        (QubitId(0), QubitId(1)),
+        (QubitId(2), QubitId(3)),
+        (QubitId(4), QubitId(5)),
+    ];
 
     // Test several 2q gates in batch mode
     let gates: Vec<BatchGateTestEntry> = vec![
@@ -1197,7 +1202,8 @@ fn batch_2q_gates_match_sequential() {
             }),
             Box::new(|s: &mut StateVec| {
                 s.cz(&[(QubitId(0), QubitId(1))])
-                    .cz(&[(QubitId(2), QubitId(3))]);
+                    .cz(&[(QubitId(2), QubitId(3))])
+                    .cz(&[(QubitId(4), QubitId(5))]);
             }),
         ),
         (
@@ -1207,7 +1213,8 @@ fn batch_2q_gates_match_sequential() {
             }),
             Box::new(|s: &mut StateVec| {
                 s.swap(&[(QubitId(0), QubitId(1))])
-                    .swap(&[(QubitId(2), QubitId(3))]);
+                    .swap(&[(QubitId(2), QubitId(3))])
+                    .swap(&[(QubitId(4), QubitId(5))]);
             }),
         ),
         (
@@ -1217,7 +1224,8 @@ fn batch_2q_gates_match_sequential() {
             }),
             Box::new(|s: &mut StateVec| {
                 s.sxx(&[(QubitId(0), QubitId(1))])
-                    .sxx(&[(QubitId(2), QubitId(3))]);
+                    .sxx(&[(QubitId(2), QubitId(3))])
+                    .sxx(&[(QubitId(4), QubitId(5))]);
             }),
         ),
         (
@@ -1227,7 +1235,8 @@ fn batch_2q_gates_match_sequential() {
             }),
             Box::new(|s: &mut StateVec| {
                 s.syy(&[(QubitId(0), QubitId(1))])
-                    .syy(&[(QubitId(2), QubitId(3))]);
+                    .syy(&[(QubitId(2), QubitId(3))])
+                    .syy(&[(QubitId(4), QubitId(5))]);
             }),
         ),
         (
@@ -1237,7 +1246,8 @@ fn batch_2q_gates_match_sequential() {
             }),
             Box::new(|s: &mut StateVec| {
                 s.szz(&[(QubitId(0), QubitId(1))])
-                    .szz(&[(QubitId(2), QubitId(3))]);
+                    .szz(&[(QubitId(2), QubitId(3))])
+                    .szz(&[(QubitId(4), QubitId(5))]);
             }),
         ),
         (
@@ -1247,7 +1257,8 @@ fn batch_2q_gates_match_sequential() {
             }),
             Box::new(|s: &mut StateVec| {
                 s.iswap(&[(QubitId(0), QubitId(1))])
-                    .iswap(&[(QubitId(2), QubitId(3))]);
+                    .iswap(&[(QubitId(2), QubitId(3))])
+                    .iswap(&[(QubitId(4), QubitId(5))]);
             }),
         ),
         (
@@ -1257,7 +1268,8 @@ fn batch_2q_gates_match_sequential() {
             }),
             Box::new(|s: &mut StateVec| {
                 s.iswapdg(&[(QubitId(0), QubitId(1))])
-                    .iswapdg(&[(QubitId(2), QubitId(3))]);
+                    .iswapdg(&[(QubitId(2), QubitId(3))])
+                    .iswapdg(&[(QubitId(4), QubitId(5))]);
             }),
         ),
         (
@@ -1267,20 +1279,21 @@ fn batch_2q_gates_match_sequential() {
             }),
             Box::new(|s: &mut StateVec| {
                 s.g(&[(QubitId(0), QubitId(1))])
-                    .g(&[(QubitId(2), QubitId(3))]);
+                    .g(&[(QubitId(2), QubitId(3))])
+                    .g(&[(QubitId(4), QubitId(5))]);
             }),
         ),
     ];
 
     for (name, batch_fn, seq_fn) in &gates {
-        let mut sv_batch = StateVec::new(4);
-        for q in 0..4 {
+        let mut sv_batch = StateVec::new(6);
+        for q in 0..6 {
             sv_batch.h(&qid(q));
         }
         batch_fn(&mut sv_batch, &batch_qubits);
 
-        let mut sv_seq = StateVec::new(4);
-        for q in 0..4 {
+        let mut sv_seq = StateVec::new(6);
+        for q in 0..6 {
             sv_seq.h(&qid(q));
         }
         seq_fn(&mut sv_seq);

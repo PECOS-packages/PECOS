@@ -18,7 +18,8 @@ use pecos_neo::extensible::{
     AngleSnapper, CommandQueueValidation, SnapPolicy, is_clifford_circuit, snap_command_queue,
 };
 use pecos_neo::{
-    CircuitRunner, CommandBuilder, CommandQueue, GateCommand, GatePayload, NoiseResponse,
+    CircuitRunner, CommandBuilder, CommandQueue, GateCommand, GateCommandError, GatePayload,
+    NoiseResponse,
 };
 use pecos_quantum::TickCircuit;
 use pecos_simulators::SparseStab;
@@ -87,21 +88,25 @@ fn idle_payload_has_no_angles() {
 
 #[test]
 fn idle_payload_round_trips_through_core_and_wire() {
-    // Core Gate and ByteMessage use f64 durations. Keep their existing rounding
-    // and saturating cast behavior at the boundary; neo itself stays exact.
-    let core_round_trip = [0, 1, 23, 1 << 53, 1 << 53, u64::MAX];
-    for (duration, expected) in DURATIONS.into_iter().zip(core_round_trip) {
+    // Native durations stay exact; core Gate and ByteMessage use f64, so
+    // conversion must reject durations that would lose precision.
+    for duration in DURATIONS {
         let commands = CommandBuilder::new()
             .h(&[0])
             .rz(&[0], Angle64::QUARTER_TURN)
             .idle(&[0], duration)
             .build();
-        let expected = CommandBuilder::new()
-            .h(&[0])
-            .rz(&[0], Angle64::QUARTER_TURN)
-            .idle(&[0], expected)
-            .build();
-        let gates = command_queue_to_gates(&commands);
+        if duration == (1 << 53) + 1 || duration == u64::MAX {
+            assert_eq!(
+                command_queue_to_gates(&commands),
+                Err(GateCommandError::IdleDurationNotRepresentable { duration })
+            );
+            assert!(TickCircuit::try_from(&commands).is_err());
+            assert!(TickCircuit::try_from(commands.clone()).is_err());
+            continue;
+        }
+        let expected = &commands;
+        let gates = command_queue_to_gates(&commands).unwrap();
         assert_eq!(
             gates[2],
             Gate::idle(TimeUnits::new(duration).as_f64(), vec![QubitId(0)])
@@ -110,13 +115,24 @@ fn idle_payload_round_trips_through_core_and_wire() {
             gates_to_command_queue(&gates).unwrap().as_slice(),
             expected.as_slice()
         );
-        assert_eq!(GateCommand::from(&gates[2]), expected.as_slice()[2]);
-        assert_eq!(GateCommand::from(gates[2].clone()), expected.as_slice()[2]);
-
-        let circuit = TickCircuit::from(&commands);
-        assert_eq!(CommandQueue::from(&circuit).as_slice(), expected.as_slice());
         assert_eq!(
-            CommandQueue::from(TickCircuit::from(commands.clone())).as_slice(),
+            GateCommand::try_from(&gates[2]).unwrap(),
+            expected.as_slice()[2]
+        );
+        assert_eq!(
+            GateCommand::try_from(gates[2].clone()).unwrap(),
+            expected.as_slice()[2]
+        );
+
+        let circuit = TickCircuit::try_from(&commands).unwrap();
+        assert_eq!(
+            CommandQueue::try_from(&circuit).unwrap().as_slice(),
+            expected.as_slice()
+        );
+        assert_eq!(
+            CommandQueue::try_from(TickCircuit::try_from(commands.clone()).unwrap())
+                .unwrap()
+                .as_slice(),
             expected.as_slice()
         );
 

@@ -48,6 +48,11 @@ impl CommandQueueValidation for CommandQueue {
         validator: &dyn CircuitValidator,
         registry: &GateRegistry,
     ) -> Result<(), ValidationError> {
+        for (position, command) in self.iter().enumerate() {
+            command
+                .validate()
+                .map_err(|error| ValidationError::InvalidCommand { position, error })?;
+        }
         let gates = self.to_gate_validations();
         validator.validate(&gates, registry)
     }
@@ -84,7 +89,8 @@ pub fn snap_command_queue(
     policy: &SnapPolicy,
     snapper: &AngleSnapper,
 ) -> Result<CommandQueue, (usize, SnapError)> {
-    let mut result = CommandQueue::with_capacity(commands.len());
+    let mut result = commands.clone();
+    result.clear_commands();
 
     for (idx, cmd) in commands.iter().enumerate() {
         if cmd.angles().is_empty() {
@@ -131,7 +137,7 @@ pub fn is_clifford_circuit(commands: &CommandQueue) -> bool {
         }
 
         let expected = cmd.gate_type.angle_arity();
-        if expected > 0 && cmd.angles().len() != expected {
+        if cmd.validate().is_err() {
             return false;
         }
 

@@ -610,6 +610,8 @@ pub enum ExecutionError {
         expected: usize,
         got: usize,
     },
+    /// The command has invalid qubit support or payload.
+    InvalidCommand(crate::command::GateCommandError),
     /// Maximum decomposition depth exceeded (possible infinite recursion).
     MaxDecompositionDepthExceeded,
 }
@@ -637,6 +639,7 @@ impl std::fmt::Display for ExecutionError {
                 f,
                 "Gate {gate:?} expected {expected} angle parameters, got {got}"
             ),
+            Self::InvalidCommand(error) => error.fmt(f),
             Self::MaxDecompositionDepthExceeded => {
                 write!(f, "Maximum decomposition depth exceeded")
             }
@@ -672,9 +675,12 @@ fn upgrade_rotation_error(
     }
 }
 
-fn validate_angle_arity(gate: GateType, angles: &[Angle64]) -> Result<(), ExecutionError> {
+pub(crate) fn validate_angle_arity(
+    gate: GateType,
+    angles: &[Angle64],
+) -> Result<(), ExecutionError> {
     let expected = gate.angle_arity();
-    if expected > 0 && angles.len() != expected {
+    if angles.len() != expected {
         return Err(ExecutionError::AngleArity {
             gate,
             expected,
@@ -1246,6 +1252,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         command: &GateCommand,
     ) -> Result<(), ExecutionError> {
         validate_angle_arity(command.gate_type, command.angles())?;
+        command.validate().map_err(ExecutionError::InvalidCommand)?;
         let qubits = command.qubits.as_slice();
 
         match command.gate_type {
@@ -2319,9 +2326,13 @@ impl<S: CliffordGateable> CircuitRunner<S> {
     /// # Panics
     ///
     /// Panics if neither the Clifford simulator nor the configured rotation
-    /// executor can execute the injected gate. Configuration validation should
-    /// make this unreachable for declared noise mechanisms.
+    /// executor can execute the injected gate, or if the gate carries the wrong
+    /// number of angles. Configuration validation should make this unreachable
+    /// for declared noise mechanisms.
     fn execute_noise_gate(&self, sim: &mut S, gate: &GateCommand) {
+        if let Err(error) = validate_angle_arity(gate.gate_type, gate.angles()) {
+            panic!("CircuitRunner invariant violated: injected noise {error}");
+        }
         let qubits = gate.qubits.as_slice();
         let arity = gate.gate_type.quantum_arity();
         assert!(
@@ -2331,6 +2342,9 @@ impl<S: CliffordGateable> CircuitRunner<S> {
             gate.gate_type,
             qubits.len()
         );
+        if let Err(error) = gate.validate() {
+            panic!("CircuitRunner invariant violated: injected noise {error}");
+        }
         let gate_id = GateId::from(gate.gate_type);
         let executed = (gate.gate_type != GateType::Idle
             && Self::try_execute_clifford(sim, gate_id, qubits))
@@ -2907,6 +2921,22 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(
+        expected = "CircuitRunner invariant violated: injected noise Gate H expected 0 angle parameters, got 1"
+    )]
+    fn surplus_fixed_gate_angle_panics_on_noise_injection() {
+        let mut state = SparseStab::with_seed(1, 42);
+        CircuitRunner::<SparseStab>::new().execute_noise_gate(
+            &mut state,
+            &GateCommand::with_angles(
+                GateType::H,
+                smallvec::smallvec![QubitId(0)],
+                smallvec::smallvec![Angle64::QUARTER_TURN],
+            ),
+        );
+    }
+
+    #[test]
     fn test_with_gate_definitions() {
         use crate::extensible::{GateCategory, GateDefinitions};
         use crate::noise::CategoryBasedChannel;
@@ -3349,7 +3379,7 @@ mod tests {
     }
 
     #[test]
-    fn recognized_rotations_with_wrong_angle_count_use_rotation_error() {
+    fn recognized_rotations_with_wrong_angle_count_cannot_enter_queue() {
         for gate_type in [
             GateType::RZ,
             GateType::RX,
@@ -3366,25 +3396,46 @@ mod tests {
                 smallvec::smallvec![QubitId(0)]
             };
             let mut circuit = CommandQueue::new();
-            circuit.push(GateCommand::with_angles(
-                gate_type,
-                qubits,
-                smallvec::SmallVec::new(),
-            ));
-            let mut state = SparseStab::with_seed(2, 42);
-            let mut runner = CircuitRunner::<SparseStab>::new();
-            let err = runner
-                .apply_circuit(&mut state, &circuit)
-                .expect_err("wrong angle count must error");
+            let err = circuit
+                .try_push(GateCommand::with_angles(
+                    gate_type,
+                    qubits,
+                    smallvec::SmallVec::new(),
+                ))
+                .expect_err("wrong angle count must be rejected at queue insertion");
             assert!(matches!(
                 err,
-                ExecutionError::AngleArity {
-                    gate,
+                crate::command::GateCommandError::AngleArity(
+                    crate::command::GateCommandAngleArityError {
+                    gate_type: gate,
                     expected,
-                    got: 0
-                } if gate == gate_type && expected == gate_type.angle_arity()
+                    actual: 0
+                }) if gate == gate_type && expected == gate_type.angle_arity()
             ));
+            assert!(circuit.is_empty());
         }
+    }
+
+    #[test]
+    fn public_apply_gate_rejects_surplus_angles_on_fixed_gate() {
+        let mut state = SparseStab::with_seed(1, 42);
+        let error = CircuitRunner::<SparseStab>::new()
+            .apply_gate(
+                &mut state,
+                GateType::H,
+                &[QubitId(0)],
+                &[Angle64::QUARTER_TURN],
+            )
+            .expect_err("fixed gates must reject supplied angles on every execution path");
+
+        assert!(matches!(
+            error,
+            ExecutionError::AngleArity {
+                gate: GateType::H,
+                expected: 0,
+                got: 1
+            }
+        ));
     }
 
     #[test]
@@ -3703,5 +3754,13 @@ mod tests {
                 );
             }
         }
+    }
+    #[test]
+    #[should_panic(expected = "only an Idle command can carry a duration payload")]
+    fn injected_noise_rejects_duration_on_fixed_gate() {
+        let mut gate = GateCommand::h(QubitId(0));
+        gate.payload = crate::command::GatePayload::Duration(pecos_core::TimeUnits::new(23));
+        CircuitRunner::<SparseStab>::new()
+            .execute_noise_gate(&mut SparseStab::with_seed(1, 42), &gate);
     }
 }

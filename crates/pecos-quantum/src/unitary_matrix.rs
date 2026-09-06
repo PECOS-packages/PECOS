@@ -884,7 +884,7 @@ const NAMED_GATE_2Q: [GateType; 11] = [
 
 const NAMED_GATE_3Q: [GateType; 1] = [GateType::CCX];
 
-/// Builds a cached lookup table mapping `Unitary::Named(gate)` to its canonical matrix.
+/// Builds a cached lookup table mapping `Unitary::named(gate)` to its canonical matrix.
 fn build_unitary_table(
     gates: &[GateType],
     num_qubits: usize,
@@ -895,7 +895,7 @@ fn build_unitary_table(
         .map(|&g| {
             let mat = gate_to_matrix(g, &qubits, num_qubits);
             let canon = canonicalize_matrix(&mat).expect("gate matrix should not be zero");
-            (Unitary::Named(g), canon)
+            (Unitary::named(g), canon)
         })
         .collect()
 }
@@ -1300,7 +1300,8 @@ fn to_matrix_with_size_impl(op: &UnitaryRep, num_qubits: usize) -> DMatrix<Compl
             qubits,
         ) => u2q_to_matrix(before, interaction, after, qubits, num_qubits),
 
-        UnitaryRep::Gate(pecos_core::Unitary::Named(gate_type), qubits) => {
+        UnitaryRep::Gate(pecos_core::Unitary::Named(named), qubits) => {
+            let gate_type = &named.gate_type();
             gate_to_matrix(*gate_type, qubits, num_qubits)
         }
 
@@ -2792,7 +2793,7 @@ mod tests {
             let mat = UnitaryMatrix(super::gate_to_matrix(gate, &[0], 1));
             assert_eq!(
                 mat.try_to_unitary(),
-                Some(Unitary::Named(gate)),
+                Some(Unitary::named(gate)),
                 "failed to identify {gate:?}"
             );
         }
@@ -2819,18 +2820,18 @@ mod tests {
     #[test]
     fn try_to_unitary_identifies_ccx() {
         let mat = UnitaryMatrix(super::gate_to_matrix(GateType::CCX, &[0, 1, 2], 3));
-        assert_eq!(mat.try_to_unitary(), Some(Unitary::Named(GateType::CCX)));
+        assert_eq!(mat.try_to_unitary(), Some(Unitary::named(GateType::CCX)));
     }
 
     #[test]
     fn try_to_unitary_finds_t_gate() {
         let t_mat = T(0).to_matrix();
-        assert_eq!(t_mat.try_to_unitary(), Some(Unitary::Named(GateType::T)));
+        assert_eq!(t_mat.try_to_unitary(), Some(Unitary::named(GateType::T)));
 
         let tdg_mat = pecos_core::unitary_rep::T(0).dg().to_matrix();
         assert_eq!(
             tdg_mat.try_to_unitary(),
-            Some(Unitary::Named(GateType::Tdg))
+            Some(Unitary::named(GateType::Tdg))
         );
     }
 
@@ -2839,22 +2840,22 @@ mod tests {
         // iX should still be identified as X
         let x_mat = X(0).to_matrix();
         let ix = &x_mat * Complex64::new(0.0, 1.0);
-        assert_eq!(ix.try_to_unitary(), Some(Unitary::Named(GateType::X)));
+        assert_eq!(ix.try_to_unitary(), Some(Unitary::named(GateType::X)));
 
         // 2*H (non-unitary scalar) should still be identified as H
         let h_mat = H(0).to_matrix();
         let two_h = &h_mat * 2.0;
-        assert_eq!(two_h.try_to_unitary(), Some(Unitary::Named(GateType::H)));
+        assert_eq!(two_h.try_to_unitary(), Some(Unitary::named(GateType::H)));
 
         // (3+4i)*Z should still be identified as Z
         let z_mat = Z(0).to_matrix();
         let scaled_z = &z_mat * Complex64::new(3.0, 4.0);
-        assert_eq!(scaled_z.try_to_unitary(), Some(Unitary::Named(GateType::Z)));
+        assert_eq!(scaled_z.try_to_unitary(), Some(Unitary::named(GateType::Z)));
 
         // -iT should still be identified as T
         let t_mat = T(0).to_matrix();
         let phased = &t_mat * Complex64::new(0.0, -1.0);
-        assert_eq!(phased.try_to_unitary(), Some(Unitary::Named(GateType::T)));
+        assert_eq!(phased.try_to_unitary(), Some(Unitary::named(GateType::T)));
 
         // The phase-fixed SY table entry must remain recognizable after its
         // convention change, including through the documented up-to-phase path.
@@ -2862,13 +2863,13 @@ mod tests {
         let phased_sy = &sy_mat * Complex64::from_polar(1.0, PI / 4.0);
         assert_eq!(
             phased_sy.try_to_unitary(),
-            Some(Unitary::Named(GateType::SY))
+            Some(Unitary::named(GateType::SY))
         );
 
         // 5*CX should still be identified as CX
         let cx_mat = CX(0, 1).to_matrix();
         let scaled = &cx_mat * 5.0;
-        assert_eq!(scaled.try_to_unitary(), Some(Unitary::Named(GateType::CX)));
+        assert_eq!(scaled.try_to_unitary(), Some(Unitary::named(GateType::CX)));
     }
 
     #[test]
@@ -3106,7 +3107,7 @@ mod tests {
         let rz_pi = RZ(Angle64::from_radians(PI), 0).to_matrix();
         let u = rz_pi.try_to_unitary().unwrap();
         assert!(
-            matches!(u, Unitary::Named(GateType::Z)),
+            matches!(u, Unitary::Named(named) if named.gate_type() == GateType::Z),
             "RZ(pi) should match as Z, got {u:?}"
         );
 
@@ -3114,7 +3115,7 @@ mod tests {
         let rz_half = RZ(Angle64::from_radians(PI / 2.0), 0).to_matrix();
         let u = rz_half.try_to_unitary().unwrap();
         assert!(
-            matches!(u, Unitary::Named(GateType::SZ)),
+            matches!(u, Unitary::Named(named) if named.gate_type() == GateType::SZ),
             "RZ(pi/2) should match as SZ, got {u:?}"
         );
     }
@@ -3520,7 +3521,7 @@ mod tests {
         let cx = UnitaryMatrix::from(gate_to_matrix(GateType::CX, &[0, 1], 2));
         let u = cx.try_to_unitary().unwrap();
         assert!(
-            matches!(u, Unitary::Named(GateType::CX)),
+            matches!(u, Unitary::Named(named) if named.gate_type() == GateType::CX),
             "CNOT should be Named(CX), got {u:?}"
         );
 

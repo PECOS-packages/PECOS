@@ -128,15 +128,8 @@ impl PyQisEngineBuilder {
         }
         // Check if it's a Hugr
         else if let Ok(hugr_prog) = program.extract::<PyHugr>(py) {
-            self.inner = self
-                .inner
-                .clone()
-                .try_program(hugr_prog.inner)
-                .map_err(|e| {
-                    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                        "Failed to load HUGR program: {e}"
-                    ))
-                })?;
+            self.inner =
+                crate::sim::load_hugr_into_qis(py, &hugr_prog.inner.hugr, self.inner.clone())?.0;
         } else {
             return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
                 "program must be either a Qis or Hugr instance",
@@ -566,7 +559,8 @@ impl PyPhirSimulation {
     }
 }
 
-/// Internal HUGR simulation builder state
+/// Internal HUGR simulation builder state.
+/// The holder can run repeatedly, lowering anew each time; lowered builders are single-use.
 pub struct PyHugrSimBuilder {
     pub(crate) seed: Option<u64>,
     pub(crate) workers: Option<usize>,

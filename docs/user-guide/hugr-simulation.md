@@ -483,8 +483,10 @@ Add realistic noise to your Guppy simulations:
 
 ## Understanding Results
 
-Results follow the QIS engine contract. Untagged measurements appear as
-`measurement_<result_id>` columns. Use Guppy's `result("tag", value)` to record
+Results follow the QIS engine contract. If there are no named results, untagged
+measurements appear as `measurement_<result_id>` columns. If any `result()` tag
+exists, only tagged results are reported; untagged measurements are omitted.
+Use Guppy's `result("tag", value)` to record
 classical values or measurements under a stable tag. Function return values
 are not automatically recorded. Untagged measurements inside loops can produce
 a different register count in each shot; tag the results you want to collect.
@@ -524,6 +526,27 @@ error on these programs.
     outcomes = list(zip(data["left"], data["right"], strict=True))
     print(Counter(outcomes))  # {(0, 0): ~500, (1, 1): ~500}
     ```
+
+For example, this program measures two qubits but tags only the second:
+
+```python
+from guppylang import guppy
+from guppylang.std.builtins import result
+from guppylang.std.quantum import measure, qubit, x
+from pecos import Guppy, sim
+
+
+@guppy
+def partially_tagged() -> None:
+    first, second = qubit(), qubit()
+    _ = measure(first).read()
+    x(second)
+    result("second", measure(second).read())
+
+
+data = sim(Guppy(partially_tagged)).qubits(2).run(2).to_dict()
+assert data == {"second": [1, 1]}  # Neither raw measurement appears.
+```
 
 ## Common Issues and Solutions
 

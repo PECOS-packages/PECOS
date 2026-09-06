@@ -307,8 +307,11 @@ class TestLoopCircuits:
         results = run_program(bounded_loop, num_qubits=20, shots=100)
 
         # The count should vary between 0 and 5 across shots
-        # We just verify it runs without hanging
-        assert results is not None
+        counts = results["m0"]
+        assert len(counts) == 100
+        assert all(0 <= count <= 5 for count in counts)
+        assert len(set(counts)) >= 2
+        assert 200 < sum(counts) < 300, f"Expected five fair measurements per shot, got {counts}"
 
 
 class TestGHZStates:

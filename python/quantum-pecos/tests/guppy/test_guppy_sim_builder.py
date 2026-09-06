@@ -52,20 +52,8 @@ class TestGuppySimBuilder:
         results1 = sim(self.bell_state).qubits(10).quantum(state_vector()).run(10)
         results2 = sim(self.bell_state).qubits(10).quantum(state_vector()).run(10)
 
-        # Check format has measurement results
-        # Bell state returns tuple, so we should have measurement_0 and measurement_0
-        if "measurement_0" in results1 and "measurement_0" in results1:
-            # New format with individual measurement keys
-            assert len(results1["measurement_0"]) == 10
-            assert len(results1["measurement_0"]) == 10
-            assert len(results2["measurement_0"]) == 10
-            assert len(results2["measurement_0"]) == 10
-        else:
-            # Fallback to old format
-            measurements1 = results1["outcome"]
-            measurements2 = results2["outcome"]
-            assert len(measurements1) == 10
-            assert len(measurements2) == 10
+        assert len(results1["outcome"]) == 10
+        assert len(results2["outcome"]) == 10
 
     def test_direct_run(self) -> None:
         """Test direct run() without explicit build()."""
@@ -110,12 +98,7 @@ class TestGuppySimBuilder:
         """Test configuration via dictionary."""
         # Test seed configuration (most commonly used)
         results = sim(self.bell_state).qubits(10).quantum(state_vector()).seed(42).run(50)
-        if "measurement_0" in results:
-            assert len(results["measurement_0"]) == 50
-            assert len(results["measurement_1"]) == 50
-        else:
-            measurements = results["outcome"]
-            assert len(measurements) == 50
+        assert len(results["outcome"]) == 50
 
     def test_bell_state_correlation(self) -> None:
         """Test that Bell state results are correlated."""

@@ -6,7 +6,7 @@ from guppylang.std.builtins import array
 from guppylang.std.builtins import result as record_result
 from guppylang.std.quantum import h, measure, qubit
 from pecos import Guppy, sim
-from pecos_rslib import state_vector
+from pecos_rslib import sparse_stab, state_vector
 
 
 class TestQubitAllocationLimits:
@@ -64,39 +64,9 @@ class TestQubitAllocationLimits:
         average = sum(measurements) / len(measurements)
         assert 0.3 < average < 0.7, f"Average should be around 0.5 (last measurement only), got {average}"
 
-    def test_allocation_exceeds_limit_fixed_size_simulator(self) -> None:
-        """A fixed-size simulator must reject allocation past the qubit limit.
-
-        Stabilizer-family simulators do not grow: a program that touches a
-        qubit index at or beyond the configured capacity must fail with the
-        capacity-guard error naming the op, the qubit, and the capacity --
-        not succeed silently or die with an unrelated IPC failure.
-        """
-        from guppylang.std.quantum import cx
-        from pecos_rslib import sparse_stab
-
-        @guppy
-        def four_qubit_program() -> tuple[bool, bool, bool, bool]:
-            """Program that uses 4 qubits simultaneously."""
-            q0 = qubit()
-            q1 = qubit()
-            q2 = qubit()
-            q3 = qubit()
-
-            # Create entanglement chain
-            h(q0)
-            cx(q0, q1)
-            cx(q1, q2)
-            cx(q2, q3)
-
-            # Measure all
-            return measure(q0).read(), measure(q1).read(), measure(q2).read(), measure(q3).read()
-
-        with pytest.raises(RuntimeError, match="Selene runtime failed to allocate a qubit"):
-            sim(Guppy(four_qubit_program)).qubits(3).quantum(sparse_stab()).run(10)
-
-    def test_allocation_exceeds_limit_state_vector(self) -> None:
-        """Selene capacity applies even with a growing state-vector backend."""
+    @pytest.mark.parametrize("quantum_engine", [sparse_stab, state_vector], ids=["stabilizer", "state-vector"])
+    def test_allocation_exceeds_runtime_capacity(self, quantum_engine) -> None:
+        """Selene capacity bounds allocation for fixed and growing backends alike."""
         from guppylang.std.quantum import cx
 
         @guppy
@@ -114,9 +84,9 @@ class TestQubitAllocationLimits:
             return measure(q0).read(), measure(q1).read(), measure(q2).read(), measure(q3).read()
 
         with pytest.raises(RuntimeError, match="Selene runtime failed to allocate a qubit"):
-            sim(Guppy(four_qubit_ghz)).qubits(3).quantum(state_vector()).seed(42).run(10)
+            sim(Guppy(four_qubit_ghz)).qubits(3).quantum(quantum_engine()).seed(42).run(10)
 
-        results = sim(Guppy(four_qubit_ghz)).qubits(4).quantum(state_vector()).seed(42).run(10).to_dict()
+        results = sim(Guppy(four_qubit_ghz)).qubits(4).quantum(quantum_engine()).seed(42).run(10).to_dict()
 
         measurements = [list(row) for row in zip(*(results[f"measurement_{i}"] for i in range(4)), strict=True)]
         assert len(measurements) == 10, "Should have 10 shots"
@@ -124,12 +94,6 @@ class TestQubitAllocationLimits:
             assert len(m) == 4, f"Each shot should measure 4 qubits, got {len(m)}"
             assert len(set(m)) == 1, f"GHZ measurements must all agree, got {m}"
 
-    @pytest.mark.skip(
-        reason=(
-            "print_int drops integer results other than 0/1, "
-            "causing missing tags or per-shot register-count mismatches"
-        ),
-    )
     def test_nested_loop_allocation(self) -> None:
         """Test nested loops with qubit allocation."""
 

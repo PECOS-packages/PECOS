@@ -3,6 +3,7 @@
 import pytest
 from guppylang import guppy
 from guppylang.std.angles import angle
+from guppylang.std.builtins import result
 from guppylang.std.quantum import cx, h, measure, qubit, ry, rz, x, z
 from pecos import Guppy, sim
 from pecos_rslib import state_vector
@@ -27,15 +28,17 @@ def test_bell_state_preparation() -> None:
         m1 = measure(q1).read()
         m2 = measure(q2).read()
 
+        result("first", m1)
+        result("second", m2)
         return (m1, m2)
 
     # Run simulation with state_vector backend
     # Use seed for reproducibility
     shot_vec = sim(Guppy(prepare_bell_state)).qubits(2).quantum(state_vector()).seed(42).run(1000)
     assert shot_vec is not None, "Should get results"
-    # "measurements" holds one row per shot in qubit-id order (each qubit is
-    # measured once here, so this matches the returned tuple's order).
-    shots = shot_vec.to_dict()["measurements"]
+    # Assemble rows by explicit measurement tags in qubit-id order.
+    data = shot_vec.to_dict()
+    shots = list(zip(data["first"], data["second"], strict=True))
     assert len(shots) == 1000, "Should have one measurement row per shot"
 
     both_zero = sum(1 for m1, m2 in shots if (m1, m2) == (0, 0))
@@ -54,14 +57,7 @@ def test_bell_state_preparation() -> None:
 
 
 def test_measurements_rows_are_qubit_id_ordered() -> None:
-    """Pin the raw-results contract: "measurements" rows are in QUBIT-ID order.
-
-    The historical raw-results API assembled the rows from the per-qubit measurement
-    map sorted by qubit id, NOT from the guppy return-tuple order. A program
-    returning its measurements reversed must still yield qubit-id-ordered
-    rows; if tuple-order capture is ever implemented, this test documents the
-    intentional behavior change.
-    """
+    """Explicit tags preserve qubit-id row order regardless of return-tuple order."""
 
     @guppy
     def reversed_return() -> tuple[bool, bool]:
@@ -70,10 +66,13 @@ def test_measurements_rows_are_qubit_id_ordered() -> None:
         x(q1)  # deterministically flip qubit 0 to |1>
         m1 = measure(q1).read()
         m2 = measure(q2).read()
+        result("first", m1)
+        result("second", m2)
         return (m2, m1)  # reversed relative to qubit-id order
 
     shot_vec = sim(Guppy(reversed_return)).qubits(2).quantum(state_vector()).seed(42).run(20)
-    shots = shot_vec.to_dict()["measurements"]
+    data = shot_vec.to_dict()
+    shots = list(zip(data["first"], data["second"], strict=True))
     assert len(shots) == 20, "Should have one measurement row per shot"
 
     # Qubit-id order puts the X-flipped qubit 0 first even though the guppy
@@ -101,14 +100,17 @@ def test_ghz_state() -> None:
         m2 = measure(q2).read()
         m3 = measure(q3).read()
 
+        result("first", m1)
+        result("second", m2)
+        result("third", m3)
         return (m1, m2, m3)
 
     # Run simulation with state_vector backend
     shot_vec = sim(Guppy(prepare_ghz_state)).qubits(3).quantum(state_vector()).seed(42).run(1000)
     assert shot_vec is not None, "Should get results"
-    # "measurements" holds one row per shot in qubit-id order (each qubit is
-    # measured once here, so this matches the returned tuple's order).
-    shots = shot_vec.to_dict()["measurements"]
+    # Assemble rows by explicit measurement tags in qubit-id order.
+    data = shot_vec.to_dict()
+    shots = list(zip(data["first"], data["second"], data["third"], strict=True))
     assert len(shots) == 1000, "Should have one measurement row per shot"
 
     # GHZ state should give either all 0s or all 1s
@@ -150,14 +152,16 @@ def test_quantum_phase_kickback() -> None:
         # Measure target in Z basis
         m2 = measure(target).read()
 
+        result("first", m1)
+        result("second", m2)
         return (m1, m2)
 
     # Run simulation with state_vector backend
     shot_vec = sim(Guppy(phase_kickback_circuit)).qubits(2).quantum(state_vector()).seed(42).run(1000)
     assert shot_vec is not None, "Should get results"
-    # "measurements" holds one row per shot in qubit-id order (each qubit is
-    # measured once here, so this matches the returned tuple's order).
-    shots = shot_vec.to_dict()["measurements"]
+    # Assemble rows by explicit measurement tags in qubit-id order.
+    data = shot_vec.to_dict()
+    shots = list(zip(data["first"], data["second"], strict=True))
     assert len(shots) == 1000, "Should have one measurement row per shot"
 
     # The control qubit should measure |1⟩ in X basis (due to phase kickback)
@@ -192,17 +196,19 @@ def test_quantum_interference() -> None:
         h(q)
 
         # Should measure |1⟩ due to destructive interference
-        return measure(q).read()
+        outcome = measure(q).read()
+        result("outcome", outcome)
+        return outcome
 
     # Run simulation with state_vector backend
     shot_vec = sim(Guppy(quantum_interferometer)).qubits(1).quantum(state_vector()).seed(42).run(1000)
     assert shot_vec is not None, "Should get results"
-    # "measurements" holds one single-element row per shot.
-    shots = shot_vec.to_dict()["measurements"]
+    # The outcome tag contains one scalar per shot.
+    shots = shot_vec.to_dict()["outcome"]
     assert len(shots) == 1000, "Should have one measurement row per shot"
 
     # Due to interference, should measure |1⟩ ~100% of the time
-    one_count = sum(1 for (m,) in shots if m == 1)
+    one_count = sum(1 for m in shots if m == 1)
     total = len(shots)
 
     assert one_count / total > 0.95, f"Should measure |1⟩ due to interference, got {one_count / total}"
@@ -225,19 +231,21 @@ def test_rotation_gates() -> None:
         rz(q, angle(0.25))  # π/4
 
         # Measure
-        return measure(q).read()
+        outcome = measure(q).read()
+        result("outcome", outcome)
+        return outcome
 
     # Run simulation with state_vector backend
     shot_vec = sim(Guppy(rotation_circuit)).qubits(1).quantum(state_vector()).seed(42).run(1000)
 
     assert shot_vec is not None, "Should get results"
-    # "measurements" holds one single-element row per shot.
-    shots = shot_vec.to_dict()["measurements"]
+    # The outcome tag contains one scalar per shot.
+    shots = shot_vec.to_dict()["outcome"]
     assert len(shots) == 1000, "Should have one measurement row per shot"
 
     # After Ry(π/2), should be in equal superposition
     # Rz just adds phase, doesn't change measurement probabilities
-    zero_count = sum(1 for (m,) in shots if m == 0)
+    zero_count = sum(1 for m in shots if m == 0)
     one_count = len(shots) - zero_count
 
     total = len(shots)

@@ -52,7 +52,7 @@ def sim(
         ...     q = qubit()
         ...     return measure(q)
         ...
-        >>> results = sim(my_circuit).run(100)
+        >>> results = sim(my_circuit).qubits(1).run(100)
     """
     from pecos.programs import (
         Guppy,

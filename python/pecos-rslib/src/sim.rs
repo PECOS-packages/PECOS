@@ -57,13 +57,12 @@ fn default_qis_engine() -> PyResult<pecos_qis::QisEngineBuilder> {
     Ok(builder)
 }
 
-/// Lower held HUGR bytes and transfer the complete simulation configuration.
-fn lower_hugr(
+/// Compile HUGR through the wheel's runtime LLVM package and load the QIS engine.
+pub(crate) fn load_hugr_into_qis(
     py: Python<'_>,
-    sim_builder: &PyHugrSimBuilder,
+    hugr_bytes: &[u8],
     qis_engine: pecos_qis::QisEngineBuilder,
-) -> PyResult<PySimBuilder> {
-    let hugr_bytes = sim_builder.hugr_bytes.clone();
+) -> PyResult<(pecos_qis::QisEngineBuilder, String)> {
     // HUGR -> QIS lowering lives in the pecos-rslib-llvm
     // extension (this wheel does not LINK LLVM): call it
     // through Python at runtime, failing loudly when it
@@ -78,7 +77,7 @@ fn lower_hugr(
             )
         })?
         .getattr("compile_hugr_to_qis")?
-        .call1((pyo3::types::PyBytes::new(py, &hugr_bytes), py.None()))?
+        .call1((pyo3::types::PyBytes::new(py, hugr_bytes), py.None()))?
         .extract()?;
     let qis_engine = qis_engine
         .try_program(pecos_programs::Qis::from_string(&ir))
@@ -87,6 +86,24 @@ fn lower_hugr(
                 "Failed to load lowered HUGR program into QIS engine: {e}"
             ))
         })?;
+
+    Ok((qis_engine, ir))
+}
+
+/// Lower held HUGR bytes and transfer the complete simulation configuration.
+fn lower_hugr(
+    py: Python<'_>,
+    sim_builder: &PyHugrSimBuilder,
+    qis_engine: pecos_qis::QisEngineBuilder,
+) -> PyResult<PySimBuilder> {
+    let hugr_bytes = sim_builder.hugr_bytes.clone();
+    if sim_builder.stack == Some(PySimStack::Neo) {
+        return Err(PyRuntimeError::new_err(
+            "Explicit .classical() engine builders and QIS operation tracing are not routed to the neo stack; \
+             use the engines stack for .classical(), trace_operations(), or capture_operation_trace()",
+        ));
+    }
+    let (qis_engine, ir) = load_hugr_into_qis(py, &hugr_bytes, qis_engine)?;
 
     Ok(PySimBuilder {
         inner: SimBuilderInner::QisControl(PyQisControlSimBuilder {
@@ -369,7 +386,8 @@ impl PySimBuilder {
                 }
                 SimBuilderInner::Hugr(sim_builder) => {
                     if let Ok(qis_engine) = engine_builder.extract::<PyQisEngineBuilder>(py) {
-                        lower_hugr(py, sim_builder, qis_engine.inner)
+                        self.inner = lower_hugr(py, sim_builder, qis_engine.inner)?.inner;
+                        Ok(self.clone())
                     } else {
                         Err(PyTypeError::new_err(
                             "For HUGR/Guppy programs, classical() requires a QisEngineBuilder",
@@ -431,8 +449,8 @@ impl PySimBuilder {
             SimBuilderInner::QisControl(builder) if builder.hugr_bytes.is_some() => {
                 if parsed == PySimStack::Neo {
                     return Err(PyValueError::new_err(
-                        "This HUGR/Guppy program is already on the engines stack after .classical(...); \
-                         call .stack(\"neo\") before .classical(...).",
+                        "This HUGR/Guppy program is already on the engines stack after choosing a QIS engine or operation tracing; \
+                         neo does not support explicit .classical() engines or QIS operation tracing.",
                     ));
                 }
             }

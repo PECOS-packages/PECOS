@@ -387,12 +387,6 @@ class TestControlFlow:
         measurements_false = get_single_measurements(results_false)
         assert all(r == 0 for r in measurements_false), "False condition should not apply X gate"
 
-    @pytest.mark.skip(
-        reason=(
-            "print_int drops integer results other than 0/1, "
-            "causing missing tags or per-shot register-count mismatches"
-        ),
-    )
     def test_loop_with_quantum(self) -> None:
         """Test loop with quantum operations."""
 

@@ -54,7 +54,7 @@ Example:
     ...     return measure(q).read()
     ...
     >>>
-    >>> results = sim(Guppy(my_circuit)).run(1000)
+    >>> results = sim(Guppy(my_circuit)).qubits(1).run(1000)
 """
 
 from pathlib import Path

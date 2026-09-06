@@ -293,12 +293,6 @@ class TestArrayOperations:
 class TestAdvancedControlFlow:
     """Test complex control flow patterns."""
 
-    @pytest.mark.skip(
-        reason=(
-            "print_int drops integer results other than 0/1, "
-            "causing missing tags or per-shot register-count mismatches"
-        ),
-    )
     def test_nested_loops(self) -> None:
         """Test loops with quantum operations."""
 

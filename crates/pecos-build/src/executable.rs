@@ -243,8 +243,8 @@ mod tests {
         assert_eq!(error.kind(), ErrorKind::ExecutableFileBusy);
         assert_eq!(attempts.runs, MAX_EXEC_WAIT_ATTEMPTS);
         assert_eq!(
-            attempts.sleeps.len() as u32,
-            MAX_EXEC_WAIT_ATTEMPTS - 1,
+            attempts.sleeps.len(),
+            usize::try_from(MAX_EXEC_WAIT_ATTEMPTS - 1).expect("attempt count fits a usize"),
             "no sleep after the last attempt"
         );
         assert_eq!(

@@ -144,12 +144,12 @@ fn convert_gate(gate: &Gate) -> Result<GateCommand, pecos_core::errors::PecosErr
     })?;
 
     let qubits = gate.qubits.iter().copied().collect();
-    let angles = gate.angles.iter().copied().collect();
+    let payload = crate::circuit::gate_payload(gate);
 
     Ok(GateCommand {
         gate_type: neo_type,
         qubits,
-        angles,
+        payload,
     })
 }
 
@@ -506,12 +506,18 @@ pub fn command_queue_to_gates(queue: &CommandQueue) -> Vec<Gate> {
 }
 
 /// Convert a `GateCommand` back to a pecos-core Gate.
-fn command_to_gate(cmd: &GateCommand) -> Gate {
+pub(crate) fn command_to_gate(cmd: &GateCommand) -> Gate {
     let core_type = convert_neo_to_core_gate_type(cmd.gate_type);
     let qubits: Vec<QubitId> = cmd.qubits.iter().copied().collect();
-    let angles: Vec<Angle64> = cmd.angles.iter().copied().collect();
+    let angles: Vec<Angle64> = cmd.angles().to_vec();
 
-    Gate::new(core_type, angles, vec![], qubits)
+    // Core Gate parameters are f64, so durations above 2^53 can lose precision.
+    let params: Vec<f64> = cmd
+        .get_idle_duration()
+        .map(pecos_core::TimeUnits::as_f64)
+        .into_iter()
+        .collect();
+    Gate::new(core_type, angles, params, qubits)
 }
 
 /// Convert pecos-neo `GateType` back to pecos-core `GateType`.
@@ -606,7 +612,7 @@ mod tests {
         let cmd = gate_to_command(&gate).expect("should convert");
         assert_eq!(cmd.gate_type, NeoGateType::RZ);
         assert_eq!(cmd.qubits.as_slice(), &[QubitId(0)]);
-        assert_eq!(cmd.angles.len(), 1);
+        assert_eq!(cmd.angles().len(), 1);
     }
 
     #[test]

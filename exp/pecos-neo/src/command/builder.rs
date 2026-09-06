@@ -655,9 +655,9 @@ mod tests {
 
         let cmds: Vec<_> = commands.iter().collect();
         assert_eq!(cmds[0].gate_type, GateType::RZ);
-        assert_eq!(cmds[0].angles.len(), 1);
+        assert_eq!(cmds[0].angles().len(), 1);
         assert_eq!(cmds[1].gate_type, GateType::RZZ);
-        assert_eq!(cmds[1].angles.len(), 1);
+        assert_eq!(cmds[1].angles().len(), 1);
     }
 
     #[test]

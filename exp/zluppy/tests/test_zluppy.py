@@ -59,7 +59,7 @@ def test_compile_to_slr_rotation_gate():
     """Test compiling a rotation gate program."""
     source = """pub fn main() -> unit {
         q := qalloc(1);
-        rz(1.57) q[0];
+        rz(1.57 rad) q[0];
         return unit;
     }"""
 
@@ -295,7 +295,7 @@ def test_slr_program_add_rotation_gate():
     """Test adding rotation gate with parameters."""
     prog = zluppy.SlrProgram("test")
     prog.add_allocator("q", 1)
-    prog.add_gate("RZ", [("q", 0)], [3.14159])
+    prog.add_gate("RZ", [("q", 0)], [math.pi], unit="rad")
 
     result = prog.to_dict()
 
@@ -303,6 +303,7 @@ def test_slr_program_add_rotation_gate():
     assert len(body) == 1
     assert body[0]["gate"] == "RZ"
     assert len(body[0]["params"]) == 1
+    assert body[0]["params"][0]["value"] == pytest.approx(0.5)
 
 
 def test_slr_program_add_prepare():
@@ -439,7 +440,7 @@ def test_all_rotation_gates():
     for gate in ["RX", "RY", "RZ"]:
         prog = zluppy.SlrProgram("test")
         prog.add_allocator("q", 1)
-        prog.add_gate(gate, [("q", 0)], [1.57])
+        prog.add_gate(gate, [("q", 0)], [1.57], unit="rad")
 
         result = prog.to_dict()
         assert result["body"][0]["gate"] == gate
@@ -452,7 +453,7 @@ def test_two_qubit_rotation_gates():
     for gate in ["CRZ", "RZZ"]:
         prog = zluppy.SlrProgram("test")
         prog.add_allocator("q", 2)
-        prog.add_gate(gate, [("q", 0), ("q", 1)], [1.57])
+        prog.add_gate(gate, [("q", 0), ("q", 1)], [1.57], unit="rad")
 
         result = prog.to_dict()
         assert result["body"][0]["gate"] == gate
@@ -468,7 +469,7 @@ def test_lowercase_gate_aliases():
         if gate in ["cx"]:
             prog.add_gate(gate, [("q", 0), ("q", 1)])
         elif gate in ["rx"]:
-            prog.add_gate(gate, [("q", 0)], [0.5])
+            prog.add_gate(gate, [("q", 0)], [0.5], unit="rad")
         else:
             prog.add_gate(gate, [("q", 0)])
 
@@ -695,7 +696,7 @@ def test_engine_rzz_gate():
     """Test RZZ (ZZ rotation) gate compiles to HUGR."""
     source = """pub fn main() -> unit {
         q := qalloc(2);
-        rzz(1.57) (q[0], q[1]);
+        rzz(1.57 rad) (q[0], q[1]);
         return unit;
     }"""
 
@@ -778,8 +779,8 @@ def test_compile_all_new_gates():
         swap (q[0], q[1]);
         iswap (q[0], q[1]);
         // Rotation
-        rzz(0.5) (q[0], q[1]);
-        crz(0.5) (q[0], q[1]);
+        rzz(0.5 rad) (q[0], q[1]);
+        crz(0.5 rad) (q[0], q[1]);
         // Three-qubit
         ccx (q[0], q[1], q[2]);
         return unit;
@@ -795,8 +796,8 @@ def test_slr_program_accepts_both_crz_spellings():
     """CRZ remains an accepted SLR boundary spelling in either case."""
     prog = zluppy.SlrProgram("main")
     prog.add_allocator("q", 2)
-    prog.add_gate("CRZ", [("q", 0), ("q", 1)], params=[0.5])
-    prog.add_gate("crz", [("q", 0), ("q", 1)], params=[0.25])
+    prog.add_gate("CRZ", [("q", 0), ("q", 1)], params=[0.5], unit="turns")
+    prog.add_gate("crz", [("q", 0), ("q", 1)], params=[0.25], unit="turns")
 
     result = json.loads(prog.to_json())
     assert [op["gate"] for op in result["body"]] == ["CRZ", "CRZ"]
@@ -819,7 +820,7 @@ def test_zlup_parser_to_phir_crz_preserves_full_matrix():
 pub fn main() -> unit {{
     mut q := qalloc(2);
     {" ".join(prep)}
-    crz ({source_angle}) (q[1], q[0]);
+    crz (({source_angle}) turns) (q[1], q[0]);
     return unit;
 }}
 """
@@ -899,10 +900,46 @@ def test_zlup_program_add_rotation_gate():
     """Test adding a rotation gate with parameters."""
     prog = zluppy.ZlupProgram("main")
     prog.add_allocator("q", 1)
-    prog.add_gate("rz", [("q", 0)], params=[1.57])
+    prog.add_gate("rz", [("q", 0)], params=[1.57], unit="rad")
 
     source = prog.to_source()
-    assert "rz(1.57) q[0];" in source
+    assert "rz(1.57 rad) q[0];" in source
+
+
+@pytest.mark.parametrize(
+    ("program_type", "gate"),
+    [(zluppy.SlrProgram, "RZ"), (zluppy.ZlupProgram, "rz")],
+)
+def test_program_builder_rotation_gate_requires_explicit_unit(program_type, gate):
+    """Both Python gate builders reject unitless rotation parameters."""
+    prog = program_type("main")
+    prog.add_allocator("q", 1)
+
+    with pytest.raises(
+        ValueError,
+        match=rf"rotation gate '{gate}'.*'turns' or 'rad'",
+    ) as exc_info:
+        prog.add_gate(gate, [("q", 0)], params=[0.5])
+
+    message = str(exc_info.value)
+    assert f"rotation gate '{gate}'" in message
+    assert "'turns' or 'rad'" in message
+
+
+@pytest.mark.parametrize("program_type", [zluppy.SlrProgram, zluppy.ZlupProgram])
+def test_program_builder_rejects_invalid_or_inapplicable_angle_unit(program_type):
+    """Gate builders accept only valid units on parameterized gates."""
+    prog = program_type("main")
+    prog.add_allocator("q", 1)
+
+    with pytest.raises(ValueError, match="unrecognized angle unit 'degrees'"):
+        prog.add_gate("rz", [("q", 0)], params=[90.0], unit="degrees")
+    with pytest.raises(ValueError, match="rotation gate 'rz'.*explicit angle unit"):
+        prog.add_gate("rz", [("q", 0)])
+    with pytest.raises(ValueError, match="rotation gate 'rz'.*requires an angle parameter"):
+        prog.add_gate("rz", [("q", 0)], params=[], unit="turns")
+    with pytest.raises(ValueError, match="non-parameterized gate 'h' takes no angle unit"):
+        prog.add_gate("h", [("q", 0)], unit="turns")
 
 
 def test_zlup_program_compile_to_slr():
@@ -990,10 +1027,10 @@ def test_zlup_program_rotation_gates():
     """Test rotation gates in ZlupProgram."""
     prog = zluppy.ZlupProgram("main")
     prog.add_allocator("q", 2)
-    prog.add_gate("rx", [("q", 0)], params=[0.5])
-    prog.add_gate("ry", [("q", 0)], params=[0.5])
-    prog.add_gate("rz", [("q", 0)], params=[0.5])
-    prog.add_gate("rzz", [("q", 0), ("q", 1)], params=[0.5])
+    prog.add_gate("rx", [("q", 0)], params=[0.5], unit="turns")
+    prog.add_gate("ry", [("q", 0)], params=[0.5], unit="turns")
+    prog.add_gate("rz", [("q", 0)], params=[0.5], unit="turns")
+    prog.add_gate("rzz", [("q", 0), ("q", 1)], params=[0.5], unit="turns")
 
     result = json.loads(prog.compile_to_slr())
     assert len(result["body"]) == 4
@@ -1115,7 +1152,7 @@ def test_zlup_program_roundtrip_all_gates():
         prog.add_gate(gate, [("q", 0)])
     for gate in two_qubit:
         prog.add_gate(gate, [("q", 0), ("q", 1)])
-    prog.add_gate("rz", [("q", 0)], params=[1.57])
+    prog.add_gate("rz", [("q", 0)], params=[1.57], unit="rad")
 
     # Should compile successfully via source
     slr = prog.compile_via_source_to_slr()

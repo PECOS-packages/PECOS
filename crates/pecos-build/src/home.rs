@@ -567,10 +567,13 @@ mod tests {
         fs::set_permissions(&llvm_config, permissions)
             .expect("Should make fake llvm-config executable");
 
-        assert!(
-            crate::executable::wait_until_executable(&llvm_config, &["--version"]),
-            "fake llvm-config at {} never became executable",
-            llvm_config.display()
+        crate::executable::wait_until_executable(&llvm_config, &["--version"]).unwrap_or_else(
+            |error| {
+                panic!(
+                    "fake llvm-config at {} never became executable: {error}",
+                    llvm_config.display()
+                )
+            },
         );
     }
 

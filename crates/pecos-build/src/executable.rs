@@ -21,8 +21,7 @@ use std::path::{Path, PathBuf};
 /// of roughly half a second.
 const MAX_EXEC_WAIT_ATTEMPTS: u32 = 20;
 
-/// Run `path` with `args` until it is not reported as busy, and return whether
-/// it became executable.
+/// Run `path` with `args` until it is no longer reported as busy.
 ///
 /// Writing a file and immediately executing it races with process creation
 /// elsewhere in the same process. A concurrent `fork` inherits the still-open
@@ -43,13 +42,20 @@ const MAX_EXEC_WAIT_ATTEMPTS: u32 = 20;
 /// it, which is the situation this is for.
 ///
 /// A program that runs and exits non-zero still counts as executable.
-pub(crate) fn wait_until_executable(path: &Path, args: &[&str]) -> bool {
-    use std::io::ErrorKind;
+///
+/// # Errors
+/// Returns the operating system's error when the file cannot be run for a
+/// reason other than being busy, or an [`ErrorKind::ExecutableFileBusy`] error
+/// naming the attempt count when it stayed busy for the whole budget. Callers
+/// report the cause; a bare boolean would leave it only in the log, which a
+/// library consumer need not have initialized.
+pub(crate) fn wait_until_executable(path: &Path, args: &[&str]) -> std::io::Result<()> {
+    use std::io::{Error, ErrorKind};
     use std::process::Command;
 
     for attempt in 0..MAX_EXEC_WAIT_ATTEMPTS {
         match Command::new(path).args(args).output() {
-            Ok(_) => return true,
+            Ok(_) => return Ok(()),
             Err(error) if error.kind() == ErrorKind::ExecutableFileBusy => {
                 // No point sleeping when no attempt remains.
                 if attempt + 1 == MAX_EXEC_WAIT_ATTEMPTS {
@@ -59,7 +65,7 @@ pub(crate) fn wait_until_executable(path: &Path, args: &[&str]) -> bool {
             }
             Err(error) => {
                 log::warn!("Could not run {}: {error}", path.display());
-                return false;
+                return Err(error);
             }
         }
     }
@@ -67,7 +73,13 @@ pub(crate) fn wait_until_executable(path: &Path, args: &[&str]) -> bool {
         "{} was still busy after {MAX_EXEC_WAIT_ATTEMPTS} attempts",
         path.display()
     );
-    false
+    Err(Error::new(
+        ErrorKind::ExecutableFileBusy,
+        format!(
+            "{} was still busy after {MAX_EXEC_WAIT_ATTEMPTS} attempts",
+            path.display()
+        ),
+    ))
 }
 
 /// Resolve an executable via `PATH` using the caller's platform suffix policy.
@@ -99,14 +111,15 @@ mod tests {
     /// that load and assert the barrier absorbs it.
     ///
     /// The second execution is the part that matters. Asserting only on the
-    /// helper's return value would pass even if the helper returned `true`
+    /// helper's return value would pass even if the helper returned `Ok`
     /// without doing anything, so each stub is run again afterwards to confirm
     /// the barrier really did make it executable.
     #[test]
     fn newly_written_scripts_are_executable_while_other_threads_spawn() {
-        let dir = std::env::temp_dir().join(format!("pecos_exec_wait_{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).expect("Should create probe dir");
+        // TempDir removes itself even if a worker panics, and its name cannot
+        // collide with another run's directory.
+        let temp = tempfile::tempdir().expect("Should create probe dir");
+        let dir = temp.path().to_path_buf();
 
         let failures = AtomicUsize::new(0);
         let post_barrier_busy = AtomicUsize::new(0);
@@ -131,7 +144,7 @@ mod tests {
                         permissions.set_mode(0o755);
                         fs::set_permissions(&path, permissions).expect("Should chmod stub");
 
-                        if !wait_until_executable(&path, &["--version"]) {
+                        if wait_until_executable(&path, &["--version"]).is_err() {
                             failures.fetch_add(1, Ordering::Relaxed);
                             let _ = fs::remove_file(&path);
                             continue;
@@ -153,7 +166,6 @@ mod tests {
             }
         });
 
-        let _ = fs::remove_dir_all(&dir);
         assert_eq!(
             failures.load(Ordering::Relaxed),
             0,

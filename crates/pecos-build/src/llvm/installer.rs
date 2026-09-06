@@ -809,8 +809,8 @@ fn apply_platform_fixes(llvm_dir: &Path) -> Result<()> {
 
     // This is the first execution of the just-extracted llvm-config, so it
     // races the archive write the same way the wrapper below does.
-    if !crate::executable::wait_until_executable(&llvm_config, &["--version"]) {
-        println!("Skipped (llvm-config could not be executed)");
+    if let Err(error) = crate::executable::wait_until_executable(&llvm_config, &["--version"]) {
+        println!("Skipped ({error})");
         return Ok(());
     }
 
@@ -866,9 +866,9 @@ printf '%s\n' "$output"
     // The caller verifies the installation by executing this wrapper straight
     // away, which would otherwise race the write and report a good install as
     // a failed one.
-    if !crate::executable::wait_until_executable(&llvm_config, &["--version"]) {
+    if let Err(error) = crate::executable::wait_until_executable(&llvm_config, &["--version"]) {
         return Err(Error::Llvm(format!(
-            "Wrote {} but it could not be executed",
+            "Wrote {} but it could not be executed: {error}",
             llvm_config.display()
         )));
     }

@@ -128,7 +128,17 @@ def pytest_sessionfinish(session: pytest.Session) -> None:
     collection order, so a test asserting on executed coverage would only ever see the
     channels from files sorted before it.
     """
-    if not session.config.getoption("--require-full-noise-coverage"):
+    # The option is registered by the pytest_addoption above, but pytest only honours
+    # pytest_addoption for conftests between the rootdir and the command-line anchor.
+    # This plugin's pyproject.toml carries [tool.pytest.ini_options], so pointing pytest
+    # at these tests makes this directory the rootdir and the option registers; pointing
+    # it at python/selene-plugins/ makes the repo root the rootdir, leaving this conftest
+    # below the cutoff -- its hooks still run, but the option was never added. An absent
+    # option means the gate was not requested, which is exactly the fast lane's intent.
+    # The gated run (selene-general-noise-semantics.yml) is scoped to this directory and
+    # passes the flag explicitly, so a misconfiguration there fails loudly as an unknown
+    # option rather than silently skipping the check.
+    if not session.config.getoption("--require-full-noise-coverage", default=False):
         return
     passed = session.config.stash.get(PASSED_KEY, {})
     unexecuted = sorted(channel for channel in REQUIRED_CHANNELS if not passed.get(channel))

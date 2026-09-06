@@ -360,10 +360,9 @@ where
     ///
     /// The sign test is made on the fixed-point fraction, not on a converted
     /// f64. Near half a turn that is strictly more accurate: fractions one
-    /// unit above `HALF_TURN` have a negative principal value, but converting
-    /// them to radians rounds to exactly pi, so an f64-based test would call
-    /// them positive. Do not "simplify" this to agree with
-    /// `to_radians_signed` bit for bit.
+    /// unit above `HALF_TURN` have a negative principal value, even when their
+    /// converted magnitude rounds to exactly pi. This is the same raw-fraction
+    /// sign rule used by [`to_radians_signed`](Self::to_radians_signed).
     ///
     /// # Panics
     /// Panics if `T` cannot represent the value 2 or its fraction cannot be
@@ -788,6 +787,28 @@ mod tests {
             (c - expected).abs() < TOL,
             "cos(pi/4) = {c}, expected {expected}"
         );
+    }
+
+    #[test]
+    fn half_angle_matches_signed_radians_at_half_turn_boundary() {
+        let half = Angle64::HALF_TURN.fraction();
+        for fraction in [half - 1, half, half + 1] {
+            let angle = Angle64::new(fraction);
+            let actual = angle.half_angle_sin_cos();
+            let expected = (angle.to_radians_signed() / 2.0).sin_cos();
+            assert!(
+                (actual.0 - expected.0).abs() < TOL,
+                "sin(theta/2) mismatch for fraction {fraction}: {} vs {}",
+                actual.0,
+                expected.0
+            );
+            assert!(
+                (actual.1 - expected.1).abs() < TOL,
+                "cos(theta/2) mismatch for fraction {fraction}: {} vs {}",
+                actual.1,
+                expected.1
+            );
+        }
     }
 
     #[test]

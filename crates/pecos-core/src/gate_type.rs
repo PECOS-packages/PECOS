@@ -533,6 +533,11 @@ impl GateType {
     /// multiplicative order four. The parameterized rotation family remains
     /// `RP(theta) = exp(-i theta P / 2)` and is deliberately not represented
     /// by this table.
+    ///
+    /// Only `SXX`, `SXXdg`, `SYY`, `SYYdg`, `SZZ`, and `SZZdg` have entries.
+    /// All other variants, including `CX`, `CY`, `CZ`, `SWAP`, `ISWAP`,
+    /// `ISWAPdg`, `G`, and `Gdg`, return `None`. For all 14 named two-qubit
+    /// Cliffords, use [`Clifford::canonical_2q_matrix`](crate::Clifford::canonical_2q_matrix).
     #[must_use]
     pub const fn canonical_2q_matrix(self) -> Option<TwoQubitGateMatrix> {
         match self {

@@ -145,7 +145,7 @@ impl AngleSource {
             Self::Input(idx) => input_angles[idx as usize],
             Self::Fixed(a) => a,
             Self::NegInput(idx) => -input_angles[idx as usize],
-            Self::HalfInput(idx) => input_angles[idx as usize] / 2_u64,
+            Self::HalfInput(idx) => input_angles[idx as usize].signed_half(),
         }
     }
 }
@@ -876,6 +876,7 @@ macro_rules! requires {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rand::RngExt;
 
     #[test]
     fn test_decomposition_registry_new() {
@@ -1075,12 +1076,31 @@ mod tests {
 
     #[test]
     fn test_angle_source_half_input() {
-        let input_angles = [Angle64::QUARTER_TURN];
         let src = AngleSource::HalfInput(0);
-        let resolved = src.resolve(&input_angles);
+        for input in [
+            Angle64::QUARTER_TURN,
+            -Angle64::QUARTER_TURN,
+            Angle64::new(0x1234_5678_9abc_def0),
+            Angle64::new(Angle64::HALF_TURN.fraction() + 2),
+            Angle64::new(u64::MAX - 1),
+        ] {
+            let fraction = input.fraction();
+            let unsigned_half = fraction / 2;
+            let expected = if fraction > Angle64::HALF_TURN.fraction() {
+                Angle64::new(unsigned_half + Angle64::HALF_TURN.fraction())
+            } else {
+                Angle64::new(unsigned_half)
+            };
+            assert_eq!(src.resolve(&[input]), expected);
+        }
 
-        // Half of quarter turn is eighth turn
-        assert_eq!(resolved, Angle64::QUARTER_TURN / 2_u64);
+        let mut rng = rand::rng();
+        for _ in 0..20_000 {
+            // Even fractions have an exactly representable half, so doubling must
+            // recover every bit of the input rather than round-tripping through f64.
+            let input = Angle64::new(rng.random::<u64>() & !1);
+            assert_eq!(src.resolve(&[input]) * 2_u64, input);
+        }
     }
 
     #[test]

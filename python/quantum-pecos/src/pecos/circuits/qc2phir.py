@@ -320,13 +320,21 @@ def to_phir_dict(qc: pecos.QuantumCircuit) -> dict:
             )
 
             angles = None
-            if "angle" in metadata:
+            if "angles" in metadata:
+                angles = list(metadata["angles"])
+            elif "angle" in metadata:
                 angles = [metadata["angle"]]
-            elif "angles" in metadata:
-                angles = metadata["angles"]
+            elif "theta" in metadata:
+                angles = [metadata["theta"]]
+                if "phi" in metadata:
+                    angles.append(metadata["phi"])
+                if "lambda" in metadata:
+                    angles.append(metadata["lambda"])
+                elif "lambda_" in metadata:
+                    angles.append(metadata["lambda_"])
 
             if angles:
-                op["angles"] = angles
+                op["angles"] = [angles, "rad"]
 
             if sym.startswith("measure"):
                 # Getting return values:

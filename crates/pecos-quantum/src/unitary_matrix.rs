@@ -1598,8 +1598,7 @@ fn rotation_to_matrix(
     qubits: &[usize],
     num_qubits: usize,
 ) -> DMatrix<Complex64> {
-    let half = angle / 2u64;
-    let (sin_half, cos_half) = half.sin_cos();
+    let (sin_half, cos_half) = angle.half_angle_sin_cos();
     let cos_half = Complex64::new(cos_half, 0.0);
     let sin_half = Complex64::new(sin_half, 0.0);
     let neg_i = Complex64::new(0.0, -1.0);
@@ -1629,7 +1628,7 @@ fn rotation_to_matrix(
             embed_single_qubit_gate(&gate, qubits[0], num_qubits)
         }
         RotationType::RXX | RotationType::RYY | RotationType::RZZ => {
-            // For two-qubit rotations, use matrix exponential: exp(-i * θ/2 * PP)
+            // exp(-i * θ/2 * PP) = cos(θ/2) I - i sin(θ/2) PP
             let generator = match rotation_type {
                 RotationType::RXX => {
                     two_qubit_pauli_matrix(Pauli::X, Pauli::X, qubits[0], qubits[1], num_qubits)
@@ -1642,8 +1641,8 @@ fn rotation_to_matrix(
                 }
                 _ => unreachable!("outer match already filtered for RXX/RYY/RZZ"),
             };
-            let scaled = generator * Complex64::new(0.0, -half.to_radians());
-            pecos_num::matrix_exp(&scaled)
+            DMatrix::identity(generator.nrows(), generator.ncols()) * cos_half
+                + generator * (neg_i * sin_half)
         }
     }
 }
@@ -1655,10 +1654,8 @@ fn rxy1q_to_matrix(
     qubits: &[usize],
     num_qubits: usize,
 ) -> DMatrix<Complex64> {
-    let half_theta = (theta / 2u64).to_radians_signed();
+    let (sin_t, cos_t) = theta.half_angle_sin_cos();
     let phi_rad = phi.to_radians_signed();
-    let cos_t = half_theta.cos();
-    let sin_t = half_theta.sin();
     // RXY1Q: [[cos, r01], [r10, cos]]
     // r01 = -i*sin*e^{-i*phi}
     // r10 = -i*sin*e^{i*phi}
@@ -1679,11 +1676,9 @@ fn u3_to_matrix(
     qubits: &[usize],
     num_qubits: usize,
 ) -> DMatrix<Complex64> {
-    let t = (theta / 2u64).to_radians_signed();
+    let (sin_t, cos_t) = theta.half_angle_sin_cos();
     let p = phi.to_radians_signed();
     let l = lambda.to_radians_signed();
-    let cos_t = t.cos();
-    let sin_t = t.sin();
     let u00 = Complex64::new(cos_t, 0.0);
     let u01 = Complex64::new(-sin_t * l.cos(), -sin_t * l.sin());
     let u10 = Complex64::new(sin_t * p.cos(), sin_t * p.sin());

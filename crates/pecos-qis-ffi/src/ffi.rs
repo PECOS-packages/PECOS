@@ -925,25 +925,81 @@ pub unsafe extern "C" fn teardown() -> i64 {
     0
 }
 
-/// Panic function (called on program errors)
+thread_local! {
+    // Installed only while this thread is inside the C shim's setjmp wrapper.
+    static PROGRAM_PANIC_TRANSFER: std::cell::Cell<Option<unsafe extern "C" fn()>> = const {
+        std::cell::Cell::new(None)
+    };
+}
+
+/// Register the shim's C longjmp function, or clear it after leaving the guard.
 ///
 /// # Safety
-/// This function is safe to call from C/LLVM code. The message pointer may be null or must point
-/// to a valid null-terminated C string. Invalid pointers will cause undefined behavior.
+/// A non-null handler must target a live setjmp on this thread and remain valid
+/// until cleared. Only the execution wrapper may install it.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pecos_set_program_panic_handler(handler: Option<unsafe extern "C" fn()>) {
+    PROGRAM_PANIC_TRANSFER.set(handler);
+}
+
+/// Whether this thread has a live execution guard. The C transfer checks this.
+#[unsafe(no_mangle)]
+pub extern "C" fn pecos_program_panic_handler_is_installed() -> bool {
+    PROGRAM_PANIC_TRANSFER.get().is_some()
+}
+
+/// Record a panic with plain string data, also used by the Selene shim.
 ///
-/// # Panics
-/// This function intentionally panics to propagate errors from the quantum program.
+/// # Safety
+/// `message` must be null or reference `len` readable bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pecos_record_program_panic(code: i32, message: *const u8, len: usize) {
+    let message = if message.is_null() {
+        "Unknown error (null panic message)".to_string()
+    } else {
+        String::from_utf8_lossy(unsafe { std::slice::from_raw_parts(message, len) }).into_owned()
+    };
+    if let Some(ctx) = crate::get_execution_context() {
+        // guppylang std/platform.py's exit/panic convention lowers to exit
+        // codes 0..=1000 and panic codes signal + 1000. Apply it at the C ABI
+        // to every producer, independently of the source function's name.
+        let termination = if (0..=1000).contains(&code) {
+            crate::ProgramError::Exit { code, message }
+        } else {
+            crate::ProgramError::Panic { code, message }
+        };
+        if matches!(termination, crate::ProgramError::Exit { .. }) {
+            log::debug!("{termination}");
+        }
+        unsafe { &*ctx }.record_program_error(termination);
+    } else {
+        log::error!(
+            "Cannot record program termination: code={code}, message={message}: no execution context registered"
+        );
+    }
+}
+
+/// Panic function called on program errors, with tket's length-prefixed message.
+///
+/// Recording finishes before the C transfer is invoked: this deliberately
+/// skipped Rust frame owns only raw pointers, integers and a function pointer,
+/// and no destructor or TLS borrow remains live across longjmp. Outside an
+/// execution guard there is no program to jump out of; the error stays recorded.
+///
+/// # Safety
+/// `message` must be null or point to a length byte followed by that many bytes.
+/// Program execution must take place inside the shim's setjmp wrapper.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn panic(code: i32, message: *const std::ffi::c_char) {
-    let msg = if message.is_null() {
-        "Unknown error".to_string()
+    if message.is_null() {
+        unsafe { pecos_record_program_panic(code, std::ptr::null(), 0) };
     } else {
-        unsafe {
-            let cstr = std::ffi::CStr::from_ptr(message);
-            cstr.to_string_lossy().to_string()
-        }
-    };
-    std::panic!("QIS program panic: code={code}, message={msg}");
+        let ptr = message.cast::<u8>();
+        unsafe { pecos_record_program_panic(code, ptr.add(1), usize::from(*ptr)) };
+    }
+    if let Some(transfer) = PROGRAM_PANIC_TRANSFER.get() {
+        unsafe { transfer() };
+    }
 }
 
 /// Record measurement result output (for compatibility with QIR)
@@ -1000,319 +1056,206 @@ pub unsafe extern "C" fn __quantum__qis__mz__body(qubit: i64) -> i32 {
 
 // --- Result printing functions ---
 
-/// Print a boolean result with a label
-///
-/// This function is called by QIS programs to output measurement results
-/// with labels like "`measurement_0`", "`measurement_1`", etc.
-///
-/// # Arguments
-/// * `label_ptr` - Pointer to the label struct: `{len: u8, data: [u8; len]}`
-/// * `label_len` - Length of the label string (same as the len byte in the struct)
-/// * `value` - Boolean value to print
-///
-/// # Note
-/// The tket2 LLVM codegen emits strings as `{u8 len, u8[] data}` structs.
-/// The `label_ptr` points to this struct, and `label_len` is the length value.
-/// We need to skip the first byte (the length) to get to the actual string data.
-///
-/// # Safety
-/// This function is safe to call from C/LLVM code. The `label_ptr` must point to a valid
-/// string struct with at least `label_len + 1` bytes. Invalid pointers will cause undefined behavior.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn print_bool(label_ptr: *const u8, label_len: i64, value: bool) {
-    let thread_id = std::thread::current().id();
-    let Ok(label_len_usize) = usize::try_from(label_len) else {
-        log::error!("print_bool: invalid label length {label_len}");
-        return;
-    };
-
-    // The tket2 string format is: {len: u8, data: [u8; len]}
-    // label_ptr points to the len byte, so we need to skip it to get the actual data
-    let data_ptr = unsafe { label_ptr.add(1) };
-    let label_slice = unsafe { std::slice::from_raw_parts(data_ptr, label_len_usize) };
-
-    let Ok(label) = std::str::from_utf8(label_slice) else {
-        log::error!("print_bool: invalid UTF-8 in label");
-        return;
-    };
-
-    // Strip the USER:BOOL: or USER:BOOLARR: prefix if present
-    let name = if let Some(stripped) = label.strip_prefix("USER:BOOL:") {
-        stripped
-    } else if let Some(stripped) = label.strip_prefix("USER:BOOLARR:") {
-        stripped
-    } else {
-        label
-    };
-
-    // Get execution context and store the result
-    let ctx_ptr = crate::get_execution_context();
-    log::debug!(
-        "print_bool: thread {thread_id:?}, name='{name}', value={value}, context={ctx_ptr:?}"
-    );
-
-    if let Some(ctx) = ctx_ptr {
-        // SAFETY: Context is valid for duration of execution
-        let ctx = unsafe { &*ctx };
-        ctx.store_named_bool(name, value);
-    } else {
-        log::warn!(
-            "print_bool: NO EXECUTION CONTEXT on thread {thread_id:?} for '{name}' = {value}"
-        );
-    }
-}
-
-/// Record an integer result whose value is in the detector-compatible 0/1 domain.
-///
-/// Guppy permits integer literals in ``result(...)`` calls. PECOS named results
-/// are currently Boolean, but cultivation programs use integer zero for a
-/// detector known to be satisfied. Preserve those 0/1 outputs and reject other
-/// integers instead of silently coercing arbitrary values.
-///
-/// # Safety
-/// `label_ptr` must reference a tket2 string with at least `label_len + 1`
-/// bytes, as for [`print_bool`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn print_int(label_ptr: *const u8, label_len: i64, value: i64) {
-    let Ok(label_len_usize) = usize::try_from(label_len) else {
-        log::error!("print_int: invalid label length {label_len}");
-        return;
-    };
-    let data_ptr = unsafe { label_ptr.add(1) };
-    let label_slice = unsafe { std::slice::from_raw_parts(data_ptr, label_len_usize) };
-    let Ok(label) = std::str::from_utf8(label_slice) else {
-        log::error!("print_int: invalid UTF-8 in label");
-        return;
-    };
-    let name = label.strip_prefix("USER:INT:").unwrap_or(label);
-    let value = match value {
-        0 => false,
-        1 => true,
-        _ => {
-            log::error!(
-                "print_int: named result '{name}' has value {value}; PECOS currently supports only Boolean 0/1 named results"
-            );
-            return;
-        }
-    };
-
-    if let Some(ctx) = crate::get_execution_context() {
-        // SAFETY: The registered context is valid for the execution duration.
-        unsafe { &*ctx }.store_named_bool(name, value);
-    } else {
-        log::warn!("print_int: no execution context for '{name}' = {value}");
-    }
-}
-
-/// Dense 1D array struct matching the LLVM ABI from tket2
-///
-/// This struct is passed by pointer from LLVM-compiled code.
-/// The layout matches what `struct_1d_arr_t` in tket-qsystem creates:
-/// - x: array length (i32)
-/// - y: always 1 (i32)
-/// - data: pointer to the data array
-/// - mask: pointer to mask array (unused for dense arrays)
+/// Dense 1D array matching tket's `{i32 x, i32 y, ptr data, ptr mask}` ABI.
 #[repr(C)]
-pub struct Dense1DArrayBool {
+pub struct Dense1DArray<T> {
     pub x: i32,
     pub y: i32,
-    pub data: *const bool,
+    pub data: *const T,
     pub mask: *const bool,
 }
 
-/// Print a boolean array result with a label
-///
-/// This function is called by Guppy-generated QIS programs to output arrays of
-/// measurement results (e.g., syndrome arrays, final measurements).
-///
-/// # Arguments
-/// * `label_ptr` - Pointer to the label struct: `{len: u8, data: [u8; len]}`
-/// * `label_len` - Length of the label string (same as the len byte in the struct)
-/// * `arr` - Pointer to the `Dense1DArrayBool` struct containing the array data
-///
-/// # Note
-/// The tket2 LLVM codegen emits strings as `{u8 len, u8[] data}` structs.
-/// The `label_ptr` points to this struct, and `label_len` is the length value.
-/// We need to skip the first byte (the length) to get to the actual string data.
-///
-/// # Safety
-/// This function is safe to call from C/LLVM code. The `label_ptr` must point to a valid
-/// string struct with at least `label_len + 1` bytes. The `arr` must point to a valid
-/// `Dense1DArrayBool` struct. Invalid pointers will cause undefined behavior.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn print_bool_arr(
+pub type Dense1DArrayBool = Dense1DArray<bool>;
+pub type Dense1DArrayInt = Dense1DArray<i64>;
+pub type Dense1DArrayUint = Dense1DArray<u64>;
+pub type Dense1DArrayFloat = Dense1DArray<f64>;
+
+fn record_output_error(message: String) {
+    if let Some(ctx) = crate::get_execution_context() {
+        // SAFETY: The registered context lives for the duration of execution.
+        unsafe { &*ctx }.record_program_error(crate::ProgramError::NamedResult(message));
+    }
+}
+
+/// Both string ABIs converge here after the direct form skips its length byte.
+unsafe fn record_named_output(
     label_ptr: *const u8,
     label_len: i64,
-    arr: *const Dense1DArrayBool,
+    values: crate::NamedResult,
+    scalar_prefix: &str,
+    array_prefix: &str,
 ) {
-    // Validate label length
-    let Ok(label_len_usize) = usize::try_from(label_len) else {
-        log::error!("print_bool_arr: invalid label length {label_len}");
+    let Ok(len) = usize::try_from(label_len) else {
+        record_output_error(format!("Invalid named result label length {label_len}"));
         return;
     };
-
-    // Check that arr pointer is valid
-    if arr.is_null() {
-        log::error!("print_bool_arr: null array pointer");
+    if label_ptr.is_null() {
+        record_output_error("Null named result label pointer".to_string());
         return;
     }
-
-    // The tket2 string format is: {len: u8, data: [u8; len]}
-    // label_ptr points to the len byte, so we need to skip it to get the actual data
-    let data_ptr = unsafe { label_ptr.add(1) };
-    let label_slice = unsafe { std::slice::from_raw_parts(data_ptr, label_len_usize) };
-    let Ok(label) = std::str::from_utf8(label_slice) else {
-        log::error!("print_bool_arr: invalid UTF-8 in label");
+    // SAFETY: The caller provides label_len readable bytes of string data.
+    let bytes = unsafe { std::slice::from_raw_parts(label_ptr, len) };
+    let Ok(label) = std::str::from_utf8(bytes) else {
+        record_output_error("Invalid UTF-8 in named result label".to_string());
         return;
     };
-
-    // Read the array struct
-    let arr_struct = unsafe { &*arr };
-    let Ok(arr_len) = usize::try_from(arr_struct.x) else {
-        log::error!("print_bool_arr: invalid array length {}", arr_struct.x);
-        return;
-    };
-
-    // Validate data pointer
-    if arr_struct.data.is_null() {
-        log::error!("print_bool_arr: null data pointer in array struct");
-        return;
-    }
-
-    // Convert the array to a Rust slice
-    let arr_slice = unsafe { std::slice::from_raw_parts(arr_struct.data, arr_len) };
-
-    // Log the array for debugging
-    log::debug!("print_bool_arr called: {label} = {arr_slice:?}");
-
-    // Strip the USER:BOOLARR: prefix if present
-    let name = if let Some(stripped) = label.strip_prefix("USER:BOOLARR:") {
-        stripped
-    } else if let Some(stripped) = label.strip_prefix("USER:BOOL:") {
-        stripped
-    } else {
-        label
-    };
-
-    // Store in the execution context's named results
+    let name = label
+        .strip_prefix(scalar_prefix)
+        .or_else(|| label.strip_prefix(array_prefix))
+        .unwrap_or(label);
     if let Some(ctx) = crate::get_execution_context() {
-        // SAFETY: Context is valid for duration of execution
-        let ctx = unsafe { &*ctx };
-        ctx.store_named_array(name, arr_slice);
+        // SAFETY: The registered context lives for the duration of execution.
+        unsafe { &*ctx }.store_named_result(name, values);
+    } else {
+        log::error!("Cannot record named result '{name}': no execution context registered");
     }
 }
 
-// --- Selene-compatible print functions ---
-//
-// The Selene runtime uses a different string format (selene_string_t has direct
-// data pointer, not tket2's {len: u8, data: [u8]} format). These functions are
-// called from the selene_shim.c and expect direct string data.
-
-/// Print a boolean result with a label (Selene-compatible format)
-///
-/// This function is called from the Selene shim with direct string data pointer.
-/// Unlike `print_bool`, this does NOT skip the first byte (no tket2 format).
-///
-/// # Safety
-/// This function is safe to call from C/LLVM code. The `label_ptr` must point to valid
-/// string data of at least `label_len` bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn print_bool_selene(label_ptr: *const u8, label_len: i64, value: bool) {
-    let thread_id = std::thread::current().id();
-    let Ok(label_len_usize) = usize::try_from(label_len) else {
-        log::error!("print_bool_selene: invalid label length {label_len}");
-        return;
+unsafe fn result_array<'a, T>(ptr: *const T, len: u64) -> Option<&'a [T]> {
+    let Ok(len) = usize::try_from(len) else {
+        record_output_error(format!("Invalid named result array length {len}"));
+        return None;
     };
-
-    // Direct string data - no need to skip any bytes
-    let label_slice = unsafe { std::slice::from_raw_parts(label_ptr, label_len_usize) };
-
-    let Ok(label) = std::str::from_utf8(label_slice) else {
-        log::error!("print_bool_selene: invalid UTF-8 in label");
-        return;
-    };
-
-    // Strip the USER:BOOL: or USER:BOOLARR: prefix if present
-    let name = if let Some(stripped) = label.strip_prefix("USER:BOOL:") {
-        stripped
-    } else if let Some(stripped) = label.strip_prefix("USER:BOOLARR:") {
-        stripped
-    } else {
-        label
-    };
-
-    // Get execution context and store the result
-    let ctx_ptr = crate::get_execution_context();
-    log::debug!(
-        "print_bool_selene: thread {thread_id:?}, name='{name}', value={value}, context={ctx_ptr:?}"
-    );
-
-    if let Some(ctx) = ctx_ptr {
-        let ctx = unsafe { &*ctx };
-        ctx.store_named_bool(name, value);
-    } else {
-        log::warn!(
-            "print_bool_selene: NO EXECUTION CONTEXT on thread {thread_id:?} for '{name}' = {value}"
-        );
+    if len == 0 {
+        return Some(&[]);
     }
+    if ptr.is_null() {
+        record_output_error("Null named result array data pointer".to_string());
+        return None;
+    }
+    // SAFETY: The caller supplies len initialized, aligned elements.
+    Some(unsafe { std::slice::from_raw_parts(ptr, len) })
 }
 
-/// Print a boolean array result with a label (Selene-compatible format)
-///
-/// This function is called from the Selene shim with direct string/array pointers.
-/// Unlike `print_bool_arr`, this does NOT expect tket2 format or `Dense1DArrayBool` struct.
-///
-/// # Safety
-/// This function is safe to call from C/LLVM code. The `label_ptr` must point to valid
-/// string data of at least `label_len` bytes. The `arr_ptr` must point to valid bool
-/// data of at least `arr_len` elements.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn print_bool_arr_selene(
-    label_ptr: *const u8,
-    label_len: i64,
-    arr_ptr: *const bool,
-    arr_len: u64,
-) {
-    let Ok(label_len_usize) = usize::try_from(label_len) else {
-        log::error!("print_bool_arr_selene: invalid label length {label_len}");
-        return;
+// As with the gate export macros, keep ABI variants together so every type
+// receives identical validation, label handling, and storage behavior.
+macro_rules! named_result_exports {
+    ($scalar:ident, $array:ident, $selene_scalar:ident, $selene_array:ident,
+     $ty:ty, $dense:ident, $variant:ident, $prefix:literal) => {
+        /// Record a scalar using tket's length-prefixed string format.
+        ///
+        /// # Safety
+        /// `label_ptr` must reference a tket string with at least `label_len + 1`
+        /// bytes. The first byte is the length, and the data starts at byte one.
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn $scalar(label_ptr: *const u8, label_len: i64, value: $ty) {
+            let data = if label_ptr.is_null() {
+                label_ptr
+            } else {
+                unsafe { label_ptr.add(1) }
+            };
+            unsafe { $selene_scalar(data, label_len, value) };
+        }
+
+        /// Record an array using tket's string and dense array formats.
+        ///
+        /// # Safety
+        /// `label_ptr` must reference `label_len + 1` bytes. `arr` must point to
+        /// a valid dense array with `x` initialized elements (data may be null
+        /// when `x` is zero).
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn $array(label_ptr: *const u8, label_len: i64, arr: *const $dense) {
+            if arr.is_null() {
+                record_output_error("Null named result array pointer".to_string());
+                return;
+            }
+            let arr = unsafe { &*arr };
+            let Ok(len) = u64::try_from(arr.x) else {
+                record_output_error(format!("Invalid named result array length {}", arr.x));
+                return;
+            };
+            let data = if label_ptr.is_null() {
+                label_ptr
+            } else {
+                unsafe { label_ptr.add(1) }
+            };
+            unsafe { $selene_array(data, label_len, arr.data, len) };
+        }
+
+        /// Record a scalar using Selene's plain string data pointer.
+        ///
+        /// # Safety
+        /// `label_ptr` must reference at least `label_len` bytes of string data.
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn $selene_scalar(label_ptr: *const u8, label_len: i64, value: $ty) {
+            unsafe {
+                record_named_output(
+                    label_ptr,
+                    label_len,
+                    crate::NamedResult::$variant(vec![value]),
+                    concat!("USER:", $prefix, ":"),
+                    concat!("USER:", $prefix, "ARR:"),
+                )
+            };
+        }
+
+        /// Record an array using Selene's plain string and array pointers.
+        ///
+        /// # Safety
+        /// `label_ptr` must reference `label_len` bytes. `arr_ptr` must reference
+        /// `arr_len` initialized elements, or may be null for an empty array.
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn $selene_array(
+            label_ptr: *const u8,
+            label_len: i64,
+            arr_ptr: *const $ty,
+            arr_len: u64,
+        ) {
+            if let Some(values) = unsafe { result_array(arr_ptr, arr_len) } {
+                unsafe {
+                    record_named_output(
+                        label_ptr,
+                        label_len,
+                        crate::NamedResult::$variant(values.to_vec()),
+                        concat!("USER:", $prefix, ":"),
+                        concat!("USER:", $prefix, "ARR:"),
+                    )
+                };
+            }
+        }
     };
-
-    let Ok(arr_len_usize) = usize::try_from(arr_len) else {
-        log::error!("print_bool_arr_selene: invalid array length {arr_len}");
-        return;
-    };
-
-    if arr_ptr.is_null() {
-        log::error!("print_bool_arr_selene: null array pointer");
-        return;
-    }
-
-    // Direct string data - no need to skip any bytes
-    let label_slice = unsafe { std::slice::from_raw_parts(label_ptr, label_len_usize) };
-    let Ok(label) = std::str::from_utf8(label_slice) else {
-        log::error!("print_bool_arr_selene: invalid UTF-8 in label");
-        return;
-    };
-
-    // Direct array data
-    let arr_slice = unsafe { std::slice::from_raw_parts(arr_ptr, arr_len_usize) };
-
-    // Strip the USER:BOOLARR: or USER:BOOL: prefix if present
-    let name = if let Some(stripped) = label.strip_prefix("USER:BOOLARR:") {
-        stripped
-    } else if let Some(stripped) = label.strip_prefix("USER:BOOL:") {
-        stripped
-    } else {
-        label
-    };
-
-    // Store in the execution context's named results
-    if let Some(ctx) = crate::get_execution_context() {
-        let ctx = unsafe { &*ctx };
-        ctx.store_named_array(name, arr_slice);
-    }
 }
+
+named_result_exports!(
+    print_bool,
+    print_bool_arr,
+    print_bool_selene,
+    print_bool_arr_selene,
+    bool,
+    Dense1DArrayBool,
+    Bool,
+    "BOOL"
+);
+named_result_exports!(
+    print_int,
+    print_int_arr,
+    print_int_selene,
+    print_int_arr_selene,
+    i64,
+    Dense1DArrayInt,
+    I64,
+    "INT"
+);
+named_result_exports!(
+    print_uint,
+    print_uint_arr,
+    print_uint_selene,
+    print_uint_arr_selene,
+    u64,
+    Dense1DArrayUint,
+    U64,
+    "UINT"
+);
+named_result_exports!(
+    print_float,
+    print_float_arr,
+    print_float_selene,
+    print_float_arr_selene,
+    f64,
+    Dense1DArrayFloat,
+    F64,
+    "FLOAT"
+);
 
 // --- Interface Management (C exports for dlsym access) ---
 
@@ -2098,7 +2041,7 @@ mod tests {
     }
 
     #[test]
-    fn test_print_int_records_boolean_detector_literals() {
+    fn test_print_int_records_integer_detector_literals() {
         let ctx = crate::pecos_create_execution_context();
         unsafe { crate::pecos_register_execution_context(ctx) };
         let label = b"\x08DETECTOR";
@@ -2106,7 +2049,7 @@ mod tests {
         unsafe { print_int(label.as_ptr(), 8, 0) };
         assert_eq!(
             unsafe { &*ctx }.get_named_results()["DETECTOR"],
-            vec![false]
+            crate::NamedResult::I64(vec![0])
         );
 
         unsafe {

@@ -1661,31 +1661,36 @@ impl ClassicalEngine for QisEngine {
         // Convert stored measurement results to PECOS shot format
         let mut shot = Shot::default();
 
-        // First, try to get named results from print_bool/print_bool_arr calls
+        if let Some(error) = self.terminal_failure_error() {
+            return Err(error);
+        }
+
+        // Named outputs preserve the scalar-for-one, vector-otherwise rule.
         let mut has_named_results = false;
         if let Some(state) = &self.dynamic_state
             && let Some(handle) = &state.sync_handle
         {
-            match handle.get_named_results() {
-                Ok(named_results) => {
-                    has_named_results = !named_results.is_empty();
-                    for (name, values) in named_results {
-                        // Convert Vec<bool> to Data
-                        // For single values, store as U32; for arrays, store as Vec<U32>
-                        if values.len() == 1 {
-                            shot.data.insert(name, Data::U32(u32::from(values[0])));
-                        } else {
-                            // Store as Vec of U32 values (0 or 1)
-                            let data_vec: Vec<Data> =
-                                values.iter().map(|&b| Data::U32(u32::from(b))).collect();
-                            shot.data.insert(name, Data::Vec(data_vec));
-                        }
-                    }
-                    debug!("QisEngine: Added named results to shot");
-                }
-                Err(e) => {
-                    debug!("QisEngine: Failed to get named results: {e}");
-                }
+            let named_results = handle.get_named_results().map_err(|error| {
+                PecosError::Generic(format!("Failed to get named results: {error}"))
+            })?;
+            has_named_results = !named_results.is_empty();
+            for (name, values) in named_results {
+                use pecos_qis_ffi_types::NamedResult;
+                let mut data: Vec<Data> = match values {
+                    NamedResult::Bool(values) => values
+                        .into_iter()
+                        .map(|b| Data::U32(u32::from(b)))
+                        .collect(),
+                    NamedResult::I64(values) => values.into_iter().map(Data::I64).collect(),
+                    NamedResult::U64(values) => values.into_iter().map(Data::U64).collect(),
+                    NamedResult::F64(values) => values.into_iter().map(Data::F64).collect(),
+                };
+                let value = if data.len() == 1 {
+                    data.remove(0)
+                } else {
+                    Data::Vec(data)
+                };
+                shot.data.insert(name, value);
             }
         }
 

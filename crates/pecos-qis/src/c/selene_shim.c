@@ -235,6 +235,13 @@ IMPORT_API extern void print_bool_selene(const uint8_t *label_ptr, int64_t label
 IMPORT_API extern void print_bool_arr_selene(const uint8_t *label_ptr, int64_t label_len,
                                              const bool *arr_ptr, uint64_t arr_len);
 
+IMPORT_API extern void pecos_record_program_panic(int32_t code, const uint8_t *message, size_t len);
+IMPORT_API extern void pecos_set_program_panic_handler(void (*handler)(void));
+IMPORT_API extern void pecos_clear_program_error(void);
+IMPORT_API extern bool pecos_program_panic_handler_is_installed(void);
+IMPORT_API extern bool pecos_program_exited(void);
+static void pecos_program_panic_transfer(void);
+
 EXPORT_API selene_void_result_t selene_print_bool(SeleneInstance *instance, selene_string_t tag, bool value) {
     (void)instance;
     // Use the Selene-compatible FFI function (direct string data format)
@@ -242,21 +249,33 @@ EXPORT_API selene_void_result_t selene_print_bool(SeleneInstance *instance, sele
     return SUCCESS(selene_void_result_t);
 }
 
+IMPORT_API extern void print_int_selene(const uint8_t *label_ptr, int64_t label_len, int64_t value);
+IMPORT_API extern void print_int_arr_selene(const uint8_t *label_ptr, int64_t label_len,
+                                            const int64_t *arr_ptr, uint64_t arr_len);
+
 EXPORT_API selene_void_result_t selene_print_i64(SeleneInstance *instance, selene_string_t tag, int64_t value) {
     (void)instance;
-    printf("%.*s: %" PRId64 "\n", (int)tag.length, tag.data, value);
+    print_int_selene((const uint8_t*)tag.data, (int64_t)tag.length, value);
     return SUCCESS(selene_void_result_t);
 }
+
+IMPORT_API extern void print_uint_selene(const uint8_t *label_ptr, int64_t label_len, uint64_t value);
+IMPORT_API extern void print_uint_arr_selene(const uint8_t *label_ptr, int64_t label_len,
+                                            const uint64_t *arr_ptr, uint64_t arr_len);
 
 EXPORT_API selene_void_result_t selene_print_u64(SeleneInstance *instance, selene_string_t tag, uint64_t value) {
     (void)instance;
-    printf("%.*s: %" PRIu64 "\n", (int)tag.length, tag.data, value);
+    print_uint_selene((const uint8_t*)tag.data, (int64_t)tag.length, value);
     return SUCCESS(selene_void_result_t);
 }
 
+IMPORT_API extern void print_float_selene(const uint8_t *label_ptr, int64_t label_len, double value);
+IMPORT_API extern void print_float_arr_selene(const uint8_t *label_ptr, int64_t label_len,
+                                            const double *arr_ptr, uint64_t arr_len);
+
 EXPORT_API selene_void_result_t selene_print_f64(SeleneInstance *instance, selene_string_t tag, double value) {
     (void)instance;
-    printf("%.*s: %f\n", (int)tag.length, tag.data, value);
+    print_float_selene((const uint8_t*)tag.data, (int64_t)tag.length, value);
     return SUCCESS(selene_void_result_t);
 }
 
@@ -271,41 +290,29 @@ EXPORT_API selene_void_result_t selene_print_bool_array(SeleneInstance *instance
 EXPORT_API selene_void_result_t selene_print_i64_array(SeleneInstance *instance, selene_string_t tag,
                                             const int64_t *ptr, uint64_t length) {
     (void)instance;
-    printf("%.*s: [", (int)tag.length, tag.data);
-    for (uint64_t i = 0; i < length; i++) {
-        printf("%" PRId64 "%s", ptr[i], (i < length - 1) ? ", " : "");
-    }
-    printf("]\n");
+    print_int_arr_selene((const uint8_t*)tag.data, (int64_t)tag.length, ptr, length);
     return SUCCESS(selene_void_result_t);
 }
 
 EXPORT_API selene_void_result_t selene_print_u64_array(SeleneInstance *instance, selene_string_t tag,
                                             const uint64_t *ptr, uint64_t length) {
     (void)instance;
-    printf("%.*s: [", (int)tag.length, tag.data);
-    for (uint64_t i = 0; i < length; i++) {
-        printf("%" PRIu64 "%s", ptr[i], (i < length - 1) ? ", " : "");
-    }
-    printf("]\n");
+    print_uint_arr_selene((const uint8_t*)tag.data, (int64_t)tag.length, ptr, length);
     return SUCCESS(selene_void_result_t);
 }
 
 EXPORT_API selene_void_result_t selene_print_f64_array(SeleneInstance *instance, selene_string_t tag,
                                             const double *ptr, uint64_t length) {
     (void)instance;
-    printf("%.*s: [", (int)tag.length, tag.data);
-    for (uint64_t i = 0; i < length; i++) {
-        printf("%f%s", ptr[i], (i < length - 1) ? ", " : "");
-    }
-    printf("]\n");
+    print_float_arr_selene((const uint8_t*)tag.data, (int64_t)tag.length, ptr, length);
     return SUCCESS(selene_void_result_t);
 }
 
 EXPORT_API selene_void_result_t selene_print_panic(SeleneInstance *instance, selene_string_t message,
                                        uint32_t error_code) {
     (void)instance;
-    fprintf(stderr, "PANIC [%u]: %.*s\n", error_code, (int)message.length, message.data);
-    fflush(stderr);
+    pecos_record_program_panic((int32_t)error_code, (const uint8_t*)message.data, message.length);
+    pecos_program_panic_transfer();
     return SUCCESS(selene_void_result_t);
 }
 
@@ -428,6 +435,15 @@ EXPORT_API selene_u64_result_t selene_custom_runtime_call(SeleneInstance *instan
 // pecos_call_qmain_with_setjmp concurrently, and each needs its own jmpbuf.
 __thread jmp_buf user_program_jmpbuf;
 
+// Always jump with sentinel 1. The recorded Exit/Panic variant determines
+// success or failure; the original signed code remains in the context.
+// Both output ABIs use this guard, including calls made outside a wrapper.
+static void pecos_program_panic_transfer(void) {
+    if (pecos_program_panic_handler_is_installed()) {
+        longjmp(user_program_jmpbuf, 1);
+    }
+}
+
 /**
  * Wrapper function to safely call qmain with setjmp/longjmp support
  *
@@ -449,27 +465,25 @@ EXPORT_API uint64_t pecos_call_qmain_with_setjmp(qmain_fn_t qmain) {
         return start_result.error_code;
     }
 
+    pecos_clear_program_error();
     int error_code = setjmp(user_program_jmpbuf);
     if (error_code == 0) {
+        pecos_set_program_panic_handler(pecos_program_panic_transfer);
         // Normal path - call qmain
         uint64_t result = qmain(0);
 
         // Clean up shot context
+        pecos_set_program_panic_handler(NULL);
         selene_on_shot_end(&dummy_instance);
 
         return result;
     } else {
         // longjmp was called - an error occurred
         // Clean up even on error
+        pecos_set_program_panic_handler(NULL);
         selene_on_shot_end(&dummy_instance);
 
-        if (error_code < 1000) {
-            // Recoverable error - return 0
-            return 0;
-        } else {
-            // Fatal error - return error code
-            return (uint64_t)error_code;
-        }
+        return pecos_program_exited() ? 0 : (uint64_t)error_code;
     }
 }
 
@@ -497,17 +511,17 @@ EXPORT_API uint64_t pecos_call_void_main_with_setjmp(void_main_fn_t main_func) {
         return start_result.error_code;
     }
 
+    pecos_clear_program_error();
     int error_code = setjmp(user_program_jmpbuf);
     if (error_code == 0) {
+        pecos_set_program_panic_handler(pecos_program_panic_transfer);
         main_func();
+        pecos_set_program_panic_handler(NULL);
         selene_on_shot_end(&dummy_instance);
         return 0;
     } else {
+        pecos_set_program_panic_handler(NULL);
         selene_on_shot_end(&dummy_instance);
-        if (error_code < 1000) {
-            return 0;
-        } else {
-            return (uint64_t)error_code;
-        }
+        return pecos_program_exited() ? 0 : (uint64_t)error_code;
     }
 }

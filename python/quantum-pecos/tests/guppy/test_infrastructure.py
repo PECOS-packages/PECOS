@@ -3,22 +3,7 @@
 These are pytest-compatible tests.
 """
 
-import sys
-from pathlib import Path
-
-import pytest
-
-pytestmark = pytest.mark.optional_dependency
-
-# Add PECOS to path
-PECOS_ROOT = Path(__file__).parent.parent.parent.parent
-sys.path.insert(0, str(PECOS_ROOT / "python" / "quantum-pecos" / "src"))
-
-
-def test_python_imports() -> None:
-    """Test that basic Python imports work."""
-    # If we get here, imports worked
-    assert True
+from guppylang import guppy
 
 
 def test_backend_detection() -> None:
@@ -40,40 +25,24 @@ def test_backend_detection() -> None:
 
 def test_guppy_frontend_creation() -> None:
     """Test that GuppyFrontend can be created."""
-    pytest.importorskip("guppylang")
     from pecos._compilation import GuppyFrontend
 
+    frontend = GuppyFrontend()
     try:
-        frontend = GuppyFrontend()
         # Should be able to get backend info
         info = frontend.get_backend_info()
         assert isinstance(info, dict)
         assert "backend" in info
 
-        # Clean up
+    finally:
         frontend.cleanup()
-    except ImportError as e:
-        if "guppylang is not available" in str(e):
-            pytest.skip("GuppyFrontend import check happens at module import time")
 
 
-def test_guppy_import_if_available() -> None:
-    """Test Guppy import if available (may be skipped)."""
-    try:
-        from guppylang import guppy
+def test_guppy_function_decoration() -> None:
+    """The required Guppy dependency exposes compilable decorated functions."""
 
-        # If we get here, guppylang is available
-        @guppy
-        def simple_func(x: int) -> int:
-            return x + 1
+    @guppy
+    def simple_func(x: int) -> int:
+        return x + 1
 
-        # Function should be decorated (check for guppy-specific attributes)
-        assert hasattr(simple_func, "wrapped") or str(type(simple_func)).startswith(
-            "<class 'guppylang",
-        )
-
-    except ImportError:
-        # Guppy not available, skip this test
-        import pytest
-
-        pytest.skip("guppylang not available")
+    assert callable(simple_func.compile)

@@ -52,17 +52,47 @@ const MAX_EXEC_WAIT_ATTEMPTS: u32 = 20;
 /// report the cause; a bare boolean would leave it only in the log, which a
 /// library consumer need not have initialized.
 pub(crate) fn run_when_executable(path: &Path, args: &[&str]) -> std::io::Result<Output> {
+    retry_while_busy(path, &mut RealAttempts, |runner| runner.run(path, args))
+}
+
+/// The two effects the retry loop performs, so tests can supply them directly.
+///
+/// Timing-based tests of this loop were repeatedly vacuous: a fixed delay long
+/// enough to outlast the test's own writer passes without ever retrying. Making
+/// the attempt and the sleep injectable lets the retry behaviour be asserted
+/// exactly, on every platform, without racing the scheduler.
+trait Attempts {
+    fn run(&mut self, path: &Path, args: &[&str]) -> std::io::Result<Output>;
+    fn sleep(&mut self, duration: std::time::Duration);
+}
+
+struct RealAttempts;
+
+impl Attempts for RealAttempts {
+    fn run(&mut self, path: &Path, args: &[&str]) -> std::io::Result<Output> {
+        Command::new(path).args(args).output()
+    }
+    fn sleep(&mut self, duration: std::time::Duration) {
+        std::thread::sleep(duration);
+    }
+}
+
+fn retry_while_busy<A: Attempts>(
+    path: &Path,
+    attempts: &mut A,
+    mut run: impl FnMut(&mut A) -> std::io::Result<Output>,
+) -> std::io::Result<Output> {
     use std::io::{Error, ErrorKind};
 
     for attempt in 0..MAX_EXEC_WAIT_ATTEMPTS {
-        match Command::new(path).args(args).output() {
+        match run(attempts) {
             Ok(output) => return Ok(output),
             Err(error) if error.kind() == ErrorKind::ExecutableFileBusy => {
                 // No point sleeping when no attempt remains.
                 if attempt + 1 == MAX_EXEC_WAIT_ATTEMPTS {
                     break;
                 }
-                std::thread::sleep(std::time::Duration::from_millis(1 << attempt.min(5)));
+                attempts.sleep(std::time::Duration::from_millis(1 << attempt.min(5)));
             }
             Err(error) => {
                 log::warn!("Could not run {}: {error}", path.display());
@@ -106,6 +136,153 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
     use std::process::Command;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use super::{Attempts, MAX_EXEC_WAIT_ATTEMPTS, retry_while_busy};
+    use std::io::Error;
+    use std::os::unix::process::ExitStatusExt;
+    use std::process::{ExitStatus, Output};
+    use std::time::Duration;
+
+    /// Reports busy for the first `busy_before_success` attempts, then hands
+    /// back `result`. Records every attempt and every requested sleep.
+    struct ScriptedAttempts {
+        busy_before_success: u32,
+        result: Option<std::io::Result<Output>>,
+        runs: u32,
+        sleeps: Vec<Duration>,
+    }
+
+    impl ScriptedAttempts {
+        fn busy_then(busy_before_success: u32, result: std::io::Result<Output>) -> Self {
+            Self {
+                busy_before_success,
+                result: Some(result),
+                runs: 0,
+                sleeps: Vec::new(),
+            }
+        }
+        fn always_busy() -> Self {
+            Self {
+                busy_before_success: u32::MAX,
+                result: None,
+                runs: 0,
+                sleeps: Vec::new(),
+            }
+        }
+    }
+
+    impl Attempts for ScriptedAttempts {
+        fn run(&mut self, _path: &std::path::Path, _args: &[&str]) -> std::io::Result<Output> {
+            self.runs += 1;
+            if self.runs <= self.busy_before_success {
+                return Err(Error::from_raw_os_error(26));
+            }
+            self.result
+                .take()
+                .expect("the scripted result is consumed once")
+        }
+        fn sleep(&mut self, duration: Duration) {
+            self.sleeps.push(duration);
+        }
+    }
+
+    fn output(stdout: &str, stderr: &str, code: i32) -> Output {
+        Output {
+            status: ExitStatus::from_raw(code << 8),
+            stdout: stdout.as_bytes().to_vec(),
+            stderr: stderr.as_bytes().to_vec(),
+        }
+    }
+
+    /// The loop must keep re-attempting while busy, and hand back the
+    /// successful attempt's result untouched: same stdout, stderr and exit
+    /// status, from exactly one successful execution.
+    #[test]
+    fn a_busy_target_is_retried_and_its_eventual_output_returned_verbatim() {
+        let mut attempts = ScriptedAttempts::busy_then(3, Ok(output("21.1.8", "a warning", 3)));
+        let result = retry_while_busy(std::path::Path::new("/probe"), &mut attempts, |a| {
+            a.run(std::path::Path::new("/probe"), &["--version"])
+        })
+        .expect("the fourth attempt succeeds");
+
+        assert_eq!(attempts.runs, 4, "three busy attempts then one success");
+        assert_eq!(String::from_utf8_lossy(&result.stdout), "21.1.8");
+        assert_eq!(String::from_utf8_lossy(&result.stderr), "a warning");
+        assert_eq!(
+            result.status.code(),
+            Some(3),
+            "a non-zero exit is preserved"
+        );
+    }
+
+    /// Backoff doubles and then caps, so a widened budget cannot slip in.
+    #[test]
+    fn the_backoff_doubles_up_to_the_cap() {
+        let mut attempts = ScriptedAttempts::busy_then(5, Ok(output("ok", "", 0)));
+        retry_while_busy(std::path::Path::new("/probe"), &mut attempts, |a| {
+            a.run(std::path::Path::new("/probe"), &[])
+        })
+        .expect("succeeds after five busy attempts");
+        assert_eq!(
+            attempts.sleeps,
+            [1, 2, 4, 8, 16].map(Duration::from_millis),
+            "backoff should double from 1ms"
+        );
+    }
+
+    /// A target that never stops being busy is given up on after the bounded
+    /// number of attempts, with no sleep after the final one.
+    #[test]
+    fn a_permanently_busy_target_is_abandoned_after_the_bounded_attempts() {
+        let mut attempts = ScriptedAttempts::always_busy();
+        let error = retry_while_busy(std::path::Path::new("/probe"), &mut attempts, |a| {
+            a.run(std::path::Path::new("/probe"), &[])
+        })
+        .expect_err("a permanently busy target is not executable");
+
+        assert_eq!(error.kind(), ErrorKind::ExecutableFileBusy);
+        assert_eq!(attempts.runs, MAX_EXEC_WAIT_ATTEMPTS);
+        assert_eq!(
+            attempts.sleeps.len() as u32,
+            MAX_EXEC_WAIT_ATTEMPTS - 1,
+            "no sleep after the last attempt"
+        );
+        assert_eq!(
+            attempts.sleeps.iter().max(),
+            Some(&Duration::from_millis(32)),
+            "backoff is capped"
+        );
+    }
+
+    /// An error that is not "busy" is returned as it came from the operating
+    /// system, not reclassified or replaced.
+    #[test]
+    fn a_non_busy_error_is_returned_unchanged() {
+        let mut attempts = ScriptedAttempts::busy_then(0, Err(Error::from_raw_os_error(13)));
+        let error = retry_while_busy(std::path::Path::new("/probe"), &mut attempts, |a| {
+            a.run(std::path::Path::new("/probe"), &[])
+        })
+        .expect_err("a permission error is not retried");
+
+        assert_eq!(error.raw_os_error(), Some(13), "the OS error is preserved");
+        assert_eq!(attempts.runs, 1, "a non-busy error is not retried");
+        assert!(attempts.sleeps.is_empty());
+    }
+
+    /// Produce an executable at `name`: a shell stub, or a copy of `source`
+    /// when a native binary is wanted.
+    #[cfg(target_os = "linux")]
+    fn materialise(dir: &std::path::Path, name: &str, source: Option<&str>) -> std::path::PathBuf {
+        let Some(binary) = source else {
+            return write_stub(dir, name);
+        };
+        let path = dir.join(name);
+        fs::copy(binary, &path).expect("Should copy a native binary");
+        let mut permissions = fs::metadata(&path).expect("Should stat copy").permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&path, permissions).expect("Should chmod copy");
+        path
+    }
 
     /// Write an executable shell stub and return its path.
     fn write_stub(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
@@ -172,37 +349,16 @@ mod tests {
     fn a_held_writable_descriptor_is_reported_rather_than_waited_out() {
         let temp = tempfile::tempdir().expect("Should create probe dir");
         for (name, source) in [("held-script", None), ("held-binary", Some("/bin/true"))] {
-            let path = match source {
-                None => write_stub(temp.path(), name),
-                // A native binary, not just a shell script: the barrier must
-                // not special-case one kind of executable.
-                Some(binary) => {
-                    let path = temp.path().join(name);
-                    fs::copy(binary, &path).expect("Should copy a native binary");
-                    let mut permissions =
-                        fs::metadata(&path).expect("Should stat copy").permissions();
-                    permissions.set_mode(0o755);
-                    fs::set_permissions(&path, permissions).expect("Should chmod copy");
-                    path
-                }
-            };
+            let path = materialise(temp.path(), name, source);
 
             let writer = fs::OpenOptions::new()
                 .write(true)
                 .open(&path)
                 .expect("Should hold the target open for writing");
 
-            let started = std::time::Instant::now();
             let error = run_when_executable(&path, &["--version"])
                 .expect_err("a target held open for writing is not executable");
             assert_eq!(error.kind(), ErrorKind::ExecutableFileBusy, "{name}");
-            // The retry budget is bounded; a regression that widened it would
-            // otherwise only show up as a slow or hanging CI run.
-            assert!(
-                started.elapsed() < std::time::Duration::from_secs(5),
-                "{name} gave up only after {:?}",
-                started.elapsed()
-            );
 
             drop(writer);
             run_when_executable(&path, &["--version"]).unwrap_or_else(|error| {
@@ -222,25 +378,32 @@ mod tests {
     #[test]
     fn the_barrier_waits_for_the_writer_to_be_released() {
         let temp = tempfile::tempdir().expect("Should create probe dir");
-        let path = write_stub(temp.path(), "released-midway");
+        // A shell script and a native binary: recovery from a real busy launch
+        // must work for both, so an ELF special case cannot hide here.
+        for (name, source) in [
+            ("released-script", None),
+            ("released-binary", Some("/bin/true")),
+        ] {
+            let path = materialise(temp.path(), name, source);
 
-        let writer = fs::OpenOptions::new()
-            .write(true)
-            .open(&path)
-            .expect("Should hold the stub open for writing");
+            let writer = fs::OpenOptions::new()
+                .write(true)
+                .open(&path)
+                .expect("Should hold the target open for writing");
 
-        std::thread::scope(|scope| {
-            scope.spawn(move || {
-                std::thread::sleep(std::time::Duration::from_millis(250));
-                drop(writer);
+            std::thread::scope(|scope| {
+                scope.spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(250));
+                    drop(writer);
+                });
+                run_when_executable(&path, &["--version"])
+                    .unwrap_or_else(|error| panic!("{name} should wait for release: {error}"));
+                Command::new(&path)
+                    .arg("--version")
+                    .output()
+                    .unwrap_or_else(|error| panic!("{name} should run once ready: {error}"));
             });
-            run_when_executable(&path, &["--version"])
-                .expect("the barrier should wait until the writer is released");
-            Command::new(&path)
-                .arg("--version")
-                .output()
-                .expect("the stub runs once the barrier reports it ready");
-        });
+        }
     }
 
     /// Writing a script and executing it immediately fails with `ETXTBSY` at a

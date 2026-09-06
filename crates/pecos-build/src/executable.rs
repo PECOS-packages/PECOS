@@ -138,18 +138,26 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::{Attempts, MAX_EXEC_WAIT_ATTEMPTS, retry_while_busy};
-    use std::io::Error;
     use std::os::unix::process::ExitStatusExt;
     use std::process::{ExitStatus, Output};
     use std::time::Duration;
 
+    /// What the loop did, in order. Recording runs and sleeps in one sequence
+    /// pins their interleaving; separate counters would accept an
+    /// implementation that performed all its sleeps at the end.
+    #[derive(Debug, PartialEq, Eq)]
+    enum Event {
+        Ran,
+        Slept(Duration),
+    }
+
     /// Reports busy for the first `busy_before_success` attempts, then hands
-    /// back `result`. Records every attempt and every requested sleep.
+    /// back `result`, recording every event in order.
     struct ScriptedAttempts {
         busy_before_success: u32,
         result: Option<std::io::Result<Output>>,
         runs: u32,
-        sleeps: Vec<Duration>,
+        events: Vec<Event>,
     }
 
     impl ScriptedAttempts {
@@ -158,7 +166,7 @@ mod tests {
                 busy_before_success,
                 result: Some(result),
                 runs: 0,
-                sleeps: Vec::new(),
+                events: Vec::new(),
             }
         }
         fn always_busy() -> Self {
@@ -166,107 +174,165 @@ mod tests {
                 busy_before_success: u32::MAX,
                 result: None,
                 runs: 0,
-                sleeps: Vec::new(),
+                events: Vec::new(),
             }
+        }
+        fn sleeps(&self) -> Vec<Duration> {
+            self.events
+                .iter()
+                .filter_map(|event| match event {
+                    Event::Slept(duration) => Some(*duration),
+                    Event::Ran => None,
+                })
+                .collect()
         }
     }
 
     impl Attempts for ScriptedAttempts {
         fn run(&mut self, _path: &std::path::Path, _args: &[&str]) -> std::io::Result<Output> {
             self.runs += 1;
+            self.events.push(Event::Ran);
             if self.runs <= self.busy_before_success {
-                return Err(Error::from_raw_os_error(26));
+                // The kind, not a raw errno: the numeric value of ETXTBSY is
+                // not the same on every unix.
+                return Err(ErrorKind::ExecutableFileBusy.into());
             }
             self.result
                 .take()
                 .expect("the scripted result is consumed once")
         }
         fn sleep(&mut self, duration: Duration) {
-            self.sleeps.push(duration);
+            self.events.push(Event::Slept(duration));
         }
     }
 
-    fn output(stdout: &str, stderr: &str, code: i32) -> Output {
+    fn output(stdout: &[u8], stderr: &[u8], code: i32) -> Output {
         Output {
             status: ExitStatus::from_raw(code << 8),
-            stdout: stdout.as_bytes().to_vec(),
-            stderr: stderr.as_bytes().to_vec(),
+            stdout: stdout.to_vec(),
+            stderr: stderr.to_vec(),
         }
+    }
+
+    fn drive(attempts: &mut ScriptedAttempts) -> std::io::Result<Output> {
+        retry_while_busy(std::path::Path::new("/probe"), attempts, |a| {
+            a.run(std::path::Path::new("/probe"), &["--version"])
+        })
+    }
+
+    /// The budget and backoff are asserted against literals, not against the
+    /// production constant. Deriving them from `MAX_EXEC_WAIT_ATTEMPTS` would
+    /// accept any value that constant was changed to.
+    #[test]
+    fn the_retry_budget_and_backoff_are_exactly_as_documented() {
+        assert_eq!(MAX_EXEC_WAIT_ATTEMPTS, 20);
+        let mut attempts = ScriptedAttempts::always_busy();
+        drive(&mut attempts).expect_err("a permanently busy target is not executable");
+
+        assert_eq!(attempts.runs, 20);
+        let expected: Vec<Duration> = [1u64, 2, 4, 8, 16]
+            .into_iter()
+            .chain(std::iter::repeat_n(32, 14))
+            .map(Duration::from_millis)
+            .collect();
+        assert_eq!(
+            attempts.sleeps(),
+            expected,
+            "19 sleeps, doubling then capped"
+        );
+        assert_eq!(
+            attempts.events.first(),
+            Some(&Event::Ran),
+            "the first thing it does is try"
+        );
+        assert_eq!(
+            attempts.events.last(),
+            Some(&Event::Ran),
+            "no sleep after the final attempt"
+        );
+    }
+
+    /// A success on the very last permitted attempt is a success, not
+    /// exhaustion.
+    #[test]
+    fn a_success_on_the_final_permitted_attempt_is_returned() {
+        let mut attempts = ScriptedAttempts::busy_then(19, Ok(output(b"late", b"", 0)));
+        let result = drive(&mut attempts).expect("the twentieth attempt succeeds");
+        assert_eq!(result.stdout, b"late");
+        assert_eq!(attempts.runs, 20);
+    }
+
+    /// A non-busy error arriving after some busy attempts is still that error,
+    /// not reported as exhaustion.
+    #[test]
+    fn a_non_busy_error_after_busy_attempts_is_returned_as_itself() {
+        let mut attempts =
+            ScriptedAttempts::busy_then(3, Err(std::io::Error::from_raw_os_error(13)));
+        let error = drive(&mut attempts).expect_err("the permission error surfaces");
+        assert_eq!(error.raw_os_error(), Some(13));
+        assert_eq!(attempts.runs, 4);
     }
 
     /// The loop must keep re-attempting while busy, and hand back the
-    /// successful attempt's result untouched: same stdout, stderr and exit
-    /// status, from exactly one successful execution.
+    /// successful attempt's result untouched.
+    ///
+    /// The fixtures are deliberately hostile: stdout that is not valid UTF-8,
+    /// non-empty stderr, and a non-zero exit. Comparing bytes and the whole
+    /// `ExitStatus` stops a reconstructed-but-lossy result from passing.
     #[test]
     fn a_busy_target_is_retried_and_its_eventual_output_returned_verbatim() {
-        let mut attempts = ScriptedAttempts::busy_then(3, Ok(output("21.1.8", "a warning", 3)));
-        let result = retry_while_busy(std::path::Path::new("/probe"), &mut attempts, |a| {
-            a.run(std::path::Path::new("/probe"), &["--version"])
-        })
-        .expect("the fourth attempt succeeds");
+        let expected = output(&[0x21, 0xff, 0xfe, 0x2e], b"a warning", 3);
+        let mut attempts = ScriptedAttempts::busy_then(3, Ok(expected.clone()));
+        let result = drive(&mut attempts).expect("the fourth attempt succeeds");
 
         assert_eq!(attempts.runs, 4, "three busy attempts then one success");
-        assert_eq!(String::from_utf8_lossy(&result.stdout), "21.1.8");
-        assert_eq!(String::from_utf8_lossy(&result.stderr), "a warning");
+        assert_eq!(result.stdout, expected.stdout, "raw bytes, not lossy text");
+        assert_eq!(result.stderr, expected.stderr);
+        assert_eq!(result.status, expected.status, "the whole exit status");
         assert_eq!(
-            result.status.code(),
-            Some(3),
-            "a non-zero exit is preserved"
+            attempts.sleeps(),
+            [1, 2, 4].map(Duration::from_millis),
+            "one sleep between each pair of attempts"
         );
     }
 
-    /// Backoff doubles and then caps, so a widened budget cannot slip in.
+    /// A process killed by a signal has no exit code; the status must survive
+    /// rather than being flattened to success.
     #[test]
-    fn the_backoff_doubles_up_to_the_cap() {
-        let mut attempts = ScriptedAttempts::busy_then(5, Ok(output("ok", "", 0)));
-        retry_while_busy(std::path::Path::new("/probe"), &mut attempts, |a| {
-            a.run(std::path::Path::new("/probe"), &[])
-        })
-        .expect("succeeds after five busy attempts");
-        assert_eq!(
-            attempts.sleeps,
-            [1, 2, 4, 8, 16].map(Duration::from_millis),
-            "backoff should double from 1ms"
-        );
-    }
-
-    /// A target that never stops being busy is given up on after the bounded
-    /// number of attempts, with no sleep after the final one.
-    #[test]
-    fn a_permanently_busy_target_is_abandoned_after_the_bounded_attempts() {
-        let mut attempts = ScriptedAttempts::always_busy();
-        let error = retry_while_busy(std::path::Path::new("/probe"), &mut attempts, |a| {
-            a.run(std::path::Path::new("/probe"), &[])
-        })
-        .expect_err("a permanently busy target is not executable");
-
-        assert_eq!(error.kind(), ErrorKind::ExecutableFileBusy);
-        assert_eq!(attempts.runs, MAX_EXEC_WAIT_ATTEMPTS);
-        assert_eq!(
-            attempts.sleeps.len(),
-            usize::try_from(MAX_EXEC_WAIT_ATTEMPTS - 1).expect("attempt count fits a usize"),
-            "no sleep after the last attempt"
-        );
-        assert_eq!(
-            attempts.sleeps.iter().max(),
-            Some(&Duration::from_millis(32)),
-            "backoff is capped"
-        );
+    fn a_signal_terminated_result_is_returned_unchanged() {
+        let killed = Output {
+            status: ExitStatus::from_raw(9),
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+        };
+        let mut attempts = ScriptedAttempts::busy_then(1, Ok(killed.clone()));
+        let result = drive(&mut attempts).expect("the second attempt runs");
+        assert_eq!(result.status, killed.status);
+        assert_eq!(result.status.code(), None, "signal death has no exit code");
     }
 
     /// An error that is not "busy" is returned as it came from the operating
     /// system, not reclassified or replaced.
     #[test]
     fn a_non_busy_error_is_returned_unchanged() {
-        let mut attempts = ScriptedAttempts::busy_then(0, Err(Error::from_raw_os_error(13)));
-        let error = retry_while_busy(std::path::Path::new("/probe"), &mut attempts, |a| {
-            a.run(std::path::Path::new("/probe"), &[])
-        })
-        .expect_err("a permission error is not retried");
+        let mut attempts =
+            ScriptedAttempts::busy_then(0, Err(std::io::Error::from_raw_os_error(13)));
+        let error = drive(&mut attempts).expect_err("a permission error is not retried");
 
         assert_eq!(error.raw_os_error(), Some(13), "the OS error is preserved");
         assert_eq!(attempts.runs, 1, "a non-busy error is not retried");
-        assert!(attempts.sleeps.is_empty());
+        assert!(attempts.sleeps().is_empty());
+    }
+
+    /// Exhaustion says which file and how many attempts, so a build log
+    /// identifies the target without needing logging configured.
+    #[test]
+    fn exhaustion_reports_the_path_and_attempt_count() {
+        let mut attempts = ScriptedAttempts::always_busy();
+        let error = drive(&mut attempts).expect_err("permanently busy");
+        let message = error.to_string();
+        assert!(message.contains("/probe"), "{message}");
+        assert!(message.contains("20"), "{message}");
     }
 
     /// Produce an executable at `name`: a shell stub, or a copy of `source`

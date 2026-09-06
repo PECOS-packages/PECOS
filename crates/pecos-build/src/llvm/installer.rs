@@ -856,6 +856,16 @@ printf '%s\n' "$output"
     permissions.set_mode(0o755);
     fs::set_permissions(&llvm_config, permissions)?;
 
+    // The caller verifies the installation by executing this wrapper straight
+    // away, which would otherwise race the write and report a good install as
+    // a failed one.
+    if !crate::executable::wait_until_executable(&llvm_config, &["--version"]) {
+        return Err(Error::Llvm(format!(
+            "Wrote {} but it could not be executed",
+            llvm_config.display()
+        )));
+    }
+
     println!("OK");
     Ok(())
 }

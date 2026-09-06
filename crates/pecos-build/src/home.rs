@@ -545,23 +545,12 @@ mod tests {
     /// Write an executable stub reporting `version`, and return only once it can
     /// actually be executed.
     ///
-    /// Writing a file and immediately executing it races with process creation
-    /// anywhere else in this test binary. A concurrent `fork` inherits the
-    /// still-open write descriptor, and `execve` on that file reports
-    /// `ETXTBSY` until the child completes its own `exec` and the inherited
-    /// descriptor closes. `O_CLOEXEC` does not avoid this, because the
-    /// descriptor is still open when the kernel performs the check
-    /// (rust-lang/rust#39186). The condition cannot be prevented from inside a
-    /// multi-threaded process, so the stub waits for it to clear instead.
-    ///
-    /// One successful execution is enough. It proves every child that inherited
-    /// the write descriptor has finished exec'ing, and nothing opens this file
-    /// for writing again, so the window cannot reopen for this path.
+    /// Every test using this stub executes it immediately, which races the
+    /// write. See [`crate::executable::wait_until_executable`] for why, and why
+    /// waiting is the available remedy.
     #[cfg(unix)]
     fn create_fake_llvm_config(llvm_dir: &Path, version: &str) {
-        use std::io::ErrorKind;
         use std::os::unix::fs::PermissionsExt;
-        use std::process::Command;
 
         let bin_dir = llvm_dir.join("bin");
         fs::create_dir_all(&bin_dir).expect("Should create fake llvm bin dir");
@@ -578,24 +567,12 @@ mod tests {
         fs::set_permissions(&llvm_config, permissions)
             .expect("Should make fake llvm-config executable");
 
-        for attempt in 0..MAX_EXEC_WAIT_ATTEMPTS {
-            match Command::new(&llvm_config).arg("--version").output() {
-                Ok(_) => return,
-                Err(error) if error.kind() == ErrorKind::ExecutableFileBusy => {
-                    std::thread::sleep(std::time::Duration::from_millis(1 << attempt.min(5)));
-                }
-                Err(error) => panic!("fake llvm-config is not executable: {error}"),
-            }
-        }
-        panic!(
-            "fake llvm-config at {} stayed busy for {MAX_EXEC_WAIT_ATTEMPTS} attempts",
+        assert!(
+            crate::executable::wait_until_executable(&llvm_config, &["--version"]),
+            "fake llvm-config at {} never became executable",
             llvm_config.display()
         );
     }
-
-    /// Bounded so a genuinely stuck stub fails the test instead of hanging.
-    #[cfg(unix)]
-    const MAX_EXEC_WAIT_ATTEMPTS: u32 = 20;
 
     #[test]
     fn test_get_pecos_home_default() {

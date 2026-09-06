@@ -178,6 +178,40 @@ impl RotationType {
     }
 }
 
+/// A fixed unitary gate type checked by [`Unitary::try_named`].
+///
+/// The private payload prevents mutation into a rotation or non-unitary gate.
+///
+/// ```compile_fail
+/// use pecos_core::{Unitary, gate_type::GateType};
+/// let _ = Unitary::Named(GateType::RZ);
+/// ```
+/// ```compile_fail
+/// use pecos_core::{Unitary, gate_type::GateType};
+/// let _ = Unitary::Named(GateType::Idle);
+/// ```
+/// ```compile_fail
+/// use pecos_core::{Unitary, gate_type::GateType};
+/// let _ = Unitary::Named(GateType::MZ);
+/// ```
+/// ```compile_fail
+/// use pecos_core::{Unitary, gate_type::GateType};
+/// let mut unitary = Unitary::named(GateType::H);
+/// if let Unitary::Named(ref mut named) = unitary {
+///     named.0 = GateType::RZ;
+/// }
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct NamedGate(GateType);
+
+impl NamedGate {
+    /// The validated fixed unitary gate type.
+    #[must_use]
+    pub const fn gate_type(self) -> GateType {
+        self.0
+    }
+}
+
 // --- Unitary base type ---
 
 /// Base unitary gate descriptor.
@@ -215,10 +249,39 @@ pub enum Unitary {
         after: [[Angle64; 3]; 2],
     },
     /// Named gate (H, CX, SWAP, etc.) without angle parameter
-    Named(GateType),
+    Named(NamedGate),
 }
 
 impl Unitary {
+    /// Construct a named fixed unitary from data.
+    ///
+    /// # Errors
+    /// Rejects rotations requiring angles and all non-unitary gate types.
+    pub fn try_named(gate_type: GateType) -> Result<Self, UnitaryGateError> {
+        let angle_arity = gate_type.angle_arity();
+        if angle_arity != 0 {
+            return Err(UnitaryGateError::AngleArity(GateAngleArityError {
+                gate_type,
+                expected: angle_arity,
+                actual: 0,
+            }));
+        }
+        if !gate_type.is_fixed_unitary() {
+            return Err(UnitaryGateError::NotFixedUnitary { gate_type });
+        }
+        Ok(Self::Named(NamedGate(gate_type)))
+    }
+
+    /// Construct a named fixed unitary.
+    ///
+    /// # Panics
+    /// Panics for parameterized or non-unitary types. Use [`Self::try_named`]
+    /// when the type comes from input data.
+    #[must_use]
+    pub fn named(gate_type: GateType) -> Self {
+        Self::try_named(gate_type).unwrap_or_else(|error| panic!("{error}"))
+    }
+
     /// Returns the number of qubits this gate acts on.
     #[must_use]
     pub fn num_qubits(&self) -> usize {
@@ -226,7 +289,7 @@ impl Unitary {
             Self::Rotation { rotation_type, .. } => rotation_type.num_qubits(),
             Self::RXY1Q { .. } | Self::U3 { .. } => 1,
             Self::RXXRYYRZZ { .. } | Self::U2q { .. } => 2,
-            Self::Named(gate_type) => gate_type.quantum_arity(),
+            Self::Named(NamedGate(gate_type)) => gate_type.quantum_arity(),
         }
     }
 
@@ -259,7 +322,7 @@ impl Unitary {
                     .all(|u3| u3.iter().all(|a| is_multiple_of_quarter_turn(*a)))
                     && interaction.iter().all(|a| is_multiple_of_quarter_turn(*a))
             }
-            Self::Named(gate_type) => gate_type.is_clifford(),
+            Self::Named(NamedGate(gate_type)) => gate_type.is_clifford(),
         }
     }
 
@@ -287,7 +350,7 @@ impl Unitary {
                     .all(|u3| u3[0] == Angle64::ZERO && (u3[1] + u3[2]) == Angle64::ZERO)
                     && interaction.iter().all(|a| *a == Angle64::ZERO)
             }
-            Self::Named(gate_type) => *gate_type == GateType::I,
+            Self::Named(NamedGate(gate_type)) => *gate_type == GateType::I,
         }
     }
 
@@ -296,7 +359,9 @@ impl Unitary {
     pub fn is_pauli(&self) -> bool {
         matches!(
             self,
-            Self::Named(GateType::I | GateType::X | GateType::Y | GateType::Z)
+            Self::Named(NamedGate(
+                GateType::I | GateType::X | GateType::Y | GateType::Z
+            ))
         )
     }
 
@@ -304,10 +369,10 @@ impl Unitary {
     #[must_use]
     pub fn try_to_pauli(&self) -> Option<Pauli> {
         match self {
-            Self::Named(GateType::I) => Some(Pauli::I),
-            Self::Named(GateType::X) => Some(Pauli::X),
-            Self::Named(GateType::Y) => Some(Pauli::Y),
-            Self::Named(GateType::Z) => Some(Pauli::Z),
+            Self::Named(NamedGate(GateType::I)) => Some(Pauli::I),
+            Self::Named(NamedGate(GateType::X)) => Some(Pauli::X),
+            Self::Named(NamedGate(GateType::Y)) => Some(Pauli::Y),
+            Self::Named(NamedGate(GateType::Z)) => Some(Pauli::Z),
             _ => None,
         }
     }
@@ -324,7 +389,7 @@ impl Unitary {
             Self::U3 { .. } => Some(GateType::U),
             Self::RXXRYYRZZ { .. } => Some(GateType::RXXRYYRZZ),
             Self::U2q { .. } => Some(GateType::U2q),
-            Self::Named(gate_type) => Some(*gate_type),
+            Self::Named(NamedGate(gate_type)) => Some(*gate_type),
         }
     }
 
@@ -1063,17 +1128,7 @@ impl UnitaryRep {
         gate_type: GateType,
         qubits: impl Into<SmallVec<[usize; 3]>>,
     ) -> Result<Self, UnitaryGateError> {
-        let angle_arity = gate_type.angle_arity();
-        if angle_arity != 0 {
-            return Err(UnitaryGateError::AngleArity(GateAngleArityError {
-                gate_type,
-                expected: angle_arity,
-                actual: 0,
-            }));
-        }
-        if !gate_type.is_fixed_unitary() {
-            return Err(UnitaryGateError::NotFixedUnitary { gate_type });
-        }
+        let unitary = Unitary::try_named(gate_type)?;
         let qubits = qubits.into();
         let expected = gate_type.quantum_arity();
         assert_eq!(
@@ -1085,7 +1140,7 @@ impl UnitaryRep {
         if expected > 1 {
             assert_distinct_qubits(&format!("{gate_type:?}"), qubits.iter().copied());
         }
-        Ok(Self::Gate(Unitary::Named(gate_type), qubits))
+        Ok(Self::Gate(unitary, qubits))
     }
 
     /// Returns the adjoint (Hermitian conjugate) of this expression.
@@ -1168,11 +1223,11 @@ impl UnitaryRep {
                     qubits.clone(),
                 )
             }
-            Self::Gate(Unitary::Named(gate_type), qubits) => {
+            Self::Gate(Unitary::Named(NamedGate(gate_type)), qubits) => {
                 if gate_type.is_self_adjoint() {
                     self.clone()
                 } else if let Some(dagger) = phase_fixed_named_adjoint(*gate_type) {
-                    Self::Gate(Unitary::Named(dagger), qubits.clone())
+                    Self::Gate(Unitary::named(dagger), qubits.clone())
                 } else {
                     Self::Adjoint(Box::new(self.clone()))
                 }
@@ -1507,7 +1562,7 @@ impl UnitaryRep {
                 Some(ps)
             }
 
-            Self::Gate(Unitary::Named(gate_type), qubits) => {
+            Self::Gate(Unitary::Named(NamedGate(gate_type)), qubits) => {
                 let qubit = qubits.first().copied()?;
                 match gate_type {
                     GateType::X => Some(PauliString::x(qubit)),
@@ -1594,7 +1649,7 @@ impl UnitaryRep {
                         RotationType::RX | RotationType::RY | RotationType::RZ
                     )
             }
-            Self::Gate(Unitary::Named(gate_type), _) => {
+            Self::Gate(Unitary::Named(NamedGate(gate_type)), _) => {
                 matches!(gate_type, GateType::X | GateType::Y | GateType::Z)
             }
             _ => false,
@@ -1635,7 +1690,7 @@ impl UnitaryRep {
                     _ => None,
                 }
             }
-            Self::Gate(Unitary::Named(gate_type), qubits) => {
+            Self::Gate(Unitary::Named(NamedGate(gate_type)), qubits) => {
                 let qubit = qubits[0];
                 match gate_type {
                     GateType::X => Some(X(qubit)),
@@ -1843,7 +1898,7 @@ impl UnitaryRep {
         // For structural comparison, we check known Hermitian operators
         match self {
             Self::Pauli(_) => true, // All Paulis are Hermitian
-            Self::Gate(Unitary::Named(gate_type), _) => matches!(
+            Self::Gate(Unitary::Named(NamedGate(gate_type)), _) => matches!(
                 gate_type,
                 GateType::I
                     | GateType::X
@@ -1898,7 +1953,7 @@ impl UnitaryRep {
     pub fn pow(&self, n: u32) -> Self {
         match n {
             0 => Self::Gate(
-                Unitary::Named(GateType::I),
+                Unitary::Named(NamedGate(GateType::I)),
                 self.qubits()
                     .into_iter()
                     .next()
@@ -2091,7 +2146,7 @@ impl UnitaryRep {
                 )]
             }
 
-            Self::Gate(Unitary::Named(gate_type), qubits) => {
+            Self::Gate(Unitary::Named(NamedGate(gate_type)), qubits) => {
                 let qubit_ids: crate::GateQubits =
                     qubits.iter().map(|&q| crate::QubitId(q)).collect();
                 vec![Gate::simple(*gate_type, qubit_ids)]
@@ -2287,7 +2342,7 @@ impl UnitaryRep {
                 rep.to_clifford_rep(num_qubits)
             }
 
-            Self::Gate(Unitary::Named(gate_type), qubits) => {
+            Self::Gate(Unitary::Named(NamedGate(gate_type)), qubits) => {
                 gate_type_to_clifford_rep(*gate_type, qubits, num_qubits)
             }
 
@@ -2830,12 +2885,12 @@ fn phase_fixed_root(
     rep: &UnitaryRep,
 ) -> Option<(PhaseFixedRootFamily, u8, u8, SmallVec<[usize; 3]>)> {
     let (family, power, order, mut qubits) = match rep {
-        UnitaryRep::Gate(Unitary::Named(gate), qubits) => {
+        UnitaryRep::Gate(Unitary::Named(NamedGate(gate)), qubits) => {
             let (family, power, order) = phase_fixed_root_power(*gate)?;
             (family, power, order, qubits.clone())
         }
         UnitaryRep::Adjoint(inner) => match inner.as_ref() {
-            UnitaryRep::Gate(Unitary::Named(gate), qubits) => {
+            UnitaryRep::Gate(Unitary::Named(NamedGate(gate)), qubits) => {
                 let dagger = phase_fixed_named_adjoint(*gate)
                     .or_else(|| gate.is_self_adjoint().then_some(*gate))?;
                 let (family, power, order) = phase_fixed_root_power(dagger)?;
@@ -3438,7 +3493,10 @@ pub fn Ts(qubits: impl Into<Qubits>) -> UnitaryRep {
 #[allow(non_snake_case)]
 pub fn H(qubit: impl Into<QubitId>) -> UnitaryRep {
     let q = qubit.into().0;
-    UnitaryRep::Gate(Unitary::Named(GateType::H), smallvec::smallvec![q])
+    UnitaryRep::Gate(
+        Unitary::Named(NamedGate(GateType::H)),
+        smallvec::smallvec![q],
+    )
 }
 
 /// Hadamard gates on multiple qubits.
@@ -3872,7 +3930,7 @@ impl UnitaryRep {
                 diagram.add_gate(qubits[1], "U2q", CellColor::None, GateFamily::Default);
                 diagram.connect_vertical(qubits[0], qubits[1], CellColor::None);
             }
-            Self::Gate(Unitary::Named(gate_type), qubits) => match gate_type {
+            Self::Gate(Unitary::Named(NamedGate(gate_type)), qubits) => match gate_type {
                 GateType::CX => {
                     diagram.add_control(qubits[0]);
                     diagram.add_gate(qubits[1], "X", CellColor::XAxis, GateFamily::Default);
@@ -3947,6 +4005,21 @@ impl UnitaryRep {
 mod tests {
     use super::*;
     use crate::Pauli;
+
+    #[test]
+    fn sealed_named_gate_rejects_invalid_types_before_decomposition() {
+        for gate_type in [GateType::RZ, GateType::Idle, GateType::MZ] {
+            let error = Unitary::try_named(gate_type).expect_err("invalid Named payload");
+            assert_eq!(
+                UnitaryRep::try_gate(gate_type, smallvec::smallvec![0]),
+                Err(error)
+            );
+            println!("{gate_type:?}: checked Named construction returns {error}");
+        }
+        let named = Unitary::try_named(GateType::H).expect("fixed unitary");
+        let direct = UnitaryRep::Gate(named, smallvec::smallvec![0]);
+        assert_eq!(direct.decompose(), vec![crate::Gate::h(&[0])]);
+    }
 
     #[test]
     fn test_single_qubit_gates() {
@@ -4076,7 +4149,7 @@ mod tests {
         let t_dg = t.dg();
         assert!(matches!(
             t_dg,
-            UnitaryRep::Gate(Unitary::Named(GateType::Tdg), _)
+            UnitaryRep::Gate(Unitary::Named(NamedGate(GateType::Tdg)), _)
         ));
     }
 
@@ -4166,15 +4239,15 @@ mod tests {
             // All are phase-fixed named roots.
             assert!(matches!(
                 &parts[0],
-                UnitaryRep::Gate(Unitary::Named(GateType::SX), _)
+                UnitaryRep::Gate(Unitary::Named(NamedGate(GateType::SX)), _)
             ));
             assert!(matches!(
                 &parts[1],
-                UnitaryRep::Gate(Unitary::Named(GateType::SY), _)
+                UnitaryRep::Gate(Unitary::Named(NamedGate(GateType::SY)), _)
             ));
             assert!(matches!(
                 &parts[2],
-                UnitaryRep::Gate(Unitary::Named(GateType::SZ), _)
+                UnitaryRep::Gate(Unitary::Named(NamedGate(GateType::SZ)), _)
             ));
         } else {
             panic!("Expected Compose");
@@ -4209,7 +4282,7 @@ mod tests {
 
         assert!(matches!(
             simplified,
-            UnitaryRep::Gate(Unitary::Named(GateType::Z), _)
+            UnitaryRep::Gate(Unitary::Named(NamedGate(GateType::Z)), _)
         ));
     }
 
@@ -4249,7 +4322,7 @@ mod tests {
 
         assert!(matches!(
             simplified,
-            UnitaryRep::Gate(Unitary::Named(GateType::Z), _)
+            UnitaryRep::Gate(Unitary::Named(NamedGate(GateType::Z)), _)
         ));
     }
 
@@ -4678,15 +4751,15 @@ mod tests {
             // Each should be a phase-fixed named T gate.
             assert!(matches!(
                 &parts[0],
-                UnitaryRep::Gate(Unitary::Named(GateType::T), _)
+                UnitaryRep::Gate(Unitary::Named(NamedGate(GateType::T)), _)
             ));
             assert!(matches!(
                 &parts[1],
-                UnitaryRep::Gate(Unitary::Named(GateType::T), _)
+                UnitaryRep::Gate(Unitary::Named(NamedGate(GateType::T)), _)
             ));
             assert!(matches!(
                 &parts[2],
-                UnitaryRep::Gate(Unitary::Named(GateType::T), _)
+                UnitaryRep::Gate(Unitary::Named(NamedGate(GateType::T)), _)
             ));
         } else {
             panic!("Expected Tensor variant, got {multi:?}");
@@ -4718,11 +4791,11 @@ mod tests {
         assert!(matches!(x, UnitaryRep::Pauli(_)));
         assert!(matches!(
             t,
-            UnitaryRep::Gate(Unitary::Named(GateType::T), _)
+            UnitaryRep::Gate(Unitary::Named(NamedGate(GateType::T)), _)
         ));
         assert!(matches!(
             h,
-            UnitaryRep::Gate(Unitary::Named(GateType::H), _)
+            UnitaryRep::Gate(Unitary::Named(NamedGate(GateType::H)), _)
         ));
     }
 
@@ -4976,14 +5049,14 @@ mod tests {
             // First applied is the named phase-fixed SZdg.
             assert!(matches!(
                 &parts[0],
-                UnitaryRep::Gate(Unitary::Named(GateType::SZdg), _)
+                UnitaryRep::Gate(Unitary::Named(NamedGate(GateType::SZdg)), _)
             ));
             // Middle element is X
             assert!(matches!(&parts[1], UnitaryRep::Pauli(_)));
             // Last applied is the named phase-fixed SZ.
             assert!(matches!(
                 &parts[2],
-                UnitaryRep::Gate(Unitary::Named(GateType::SZ), _)
+                UnitaryRep::Gate(Unitary::Named(NamedGate(GateType::SZ)), _)
             ));
         } else {
             panic!("Expected Compose variant, got {result:?}");
@@ -5003,14 +5076,14 @@ mod tests {
             // First applied is the named phase-fixed SZ.
             assert!(matches!(
                 &parts[0],
-                UnitaryRep::Gate(Unitary::Named(GateType::SZ), _)
+                UnitaryRep::Gate(Unitary::Named(NamedGate(GateType::SZ)), _)
             ));
             // Middle element is X
             assert!(matches!(&parts[1], UnitaryRep::Pauli(_)));
             // Last applied is the named phase-fixed SZdg.
             assert!(matches!(
                 &parts[2],
-                UnitaryRep::Gate(Unitary::Named(GateType::SZdg), _)
+                UnitaryRep::Gate(Unitary::Named(NamedGate(GateType::SZdg)), _)
             ));
         } else {
             panic!("Expected Compose variant, got {result:?}");
@@ -5167,7 +5240,7 @@ mod tests {
 
         assert!(matches!(
             result,
-            UnitaryRep::Gate(Unitary::Named(GateType::SZ), _)
+            UnitaryRep::Gate(Unitary::Named(NamedGate(GateType::SZ)), _)
         ));
     }
 
@@ -5179,7 +5252,7 @@ mod tests {
 
         assert!(matches!(
             result,
-            UnitaryRep::Gate(Unitary::Named(GateType::Z), _)
+            UnitaryRep::Gate(Unitary::Named(NamedGate(GateType::Z)), _)
         ));
     }
 
@@ -5451,7 +5524,7 @@ mod tests {
         let op: UnitaryRep = "H 0".parse().unwrap();
         assert!(matches!(
             op,
-            UnitaryRep::Gate(Unitary::Named(GateType::H), _)
+            UnitaryRep::Gate(Unitary::Named(NamedGate(GateType::H)), _)
         ));
     }
 
@@ -5460,7 +5533,7 @@ mod tests {
         let op: UnitaryRep = "CX 0 1".parse().unwrap();
         assert!(matches!(
             op,
-            UnitaryRep::Gate(Unitary::Named(GateType::CX), _)
+            UnitaryRep::Gate(Unitary::Named(NamedGate(GateType::CX)), _)
         ));
     }
 
@@ -5469,7 +5542,7 @@ mod tests {
         let op: UnitaryRep = "CNOT 0 1".parse().unwrap();
         assert!(matches!(
             op,
-            UnitaryRep::Gate(Unitary::Named(GateType::CX), _)
+            UnitaryRep::Gate(Unitary::Named(NamedGate(GateType::CX)), _)
         ));
     }
 
@@ -5478,7 +5551,7 @@ mod tests {
         let op: UnitaryRep = "SWAP 2 3".parse().unwrap();
         assert!(matches!(
             op,
-            UnitaryRep::Gate(Unitary::Named(GateType::SWAP), _)
+            UnitaryRep::Gate(Unitary::Named(NamedGate(GateType::SWAP)), _)
         ));
     }
 
@@ -5487,7 +5560,7 @@ mod tests {
         let op: UnitaryRep = "CCX 0 1 2".parse().unwrap();
         assert!(matches!(
             op,
-            UnitaryRep::Gate(Unitary::Named(GateType::CCX), _)
+            UnitaryRep::Gate(Unitary::Named(NamedGate(GateType::CCX)), _)
         ));
     }
 
@@ -5496,7 +5569,7 @@ mod tests {
         let op: UnitaryRep = "T 0".parse().unwrap();
         assert!(matches!(
             op,
-            UnitaryRep::Gate(Unitary::Named(GateType::T), _)
+            UnitaryRep::Gate(Unitary::Named(NamedGate(GateType::T)), _)
         ));
     }
 
@@ -5505,7 +5578,7 @@ mod tests {
         let op: UnitaryRep = "S 0".parse().unwrap();
         assert!(matches!(
             op,
-            UnitaryRep::Gate(Unitary::Named(GateType::SZ), _)
+            UnitaryRep::Gate(Unitary::Named(NamedGate(GateType::SZ)), _)
         ));
     }
 
@@ -5771,7 +5844,7 @@ mod tests {
         let op: UnitaryRep = "Tdg 0".parse().unwrap();
         assert!(matches!(
             op,
-            UnitaryRep::Gate(Unitary::Named(GateType::Tdg), _)
+            UnitaryRep::Gate(Unitary::Named(NamedGate(GateType::Tdg)), _)
         ));
     }
 
@@ -5780,7 +5853,7 @@ mod tests {
         let op: UnitaryRep = "Sdg 0".parse().unwrap();
         assert!(matches!(
             op,
-            UnitaryRep::Gate(Unitary::Named(GateType::SZdg), _)
+            UnitaryRep::Gate(Unitary::Named(NamedGate(GateType::SZdg)), _)
         ));
     }
 
@@ -5840,7 +5913,7 @@ mod tests {
         let op: UnitaryRep = "CZ 0 1".parse().unwrap();
         assert!(matches!(
             op,
-            UnitaryRep::Gate(Unitary::Named(GateType::CZ), _)
+            UnitaryRep::Gate(Unitary::Named(NamedGate(GateType::CZ)), _)
         ));
     }
 
@@ -5849,7 +5922,7 @@ mod tests {
         let op: UnitaryRep = "CY 0 1".parse().unwrap();
         assert!(matches!(
             op,
-            UnitaryRep::Gate(Unitary::Named(GateType::CY), _)
+            UnitaryRep::Gate(Unitary::Named(NamedGate(GateType::CY)), _)
         ));
     }
 
@@ -5858,7 +5931,7 @@ mod tests {
         let op: UnitaryRep = "TOFFOLI 0 1 2".parse().unwrap();
         assert!(matches!(
             op,
-            UnitaryRep::Gate(Unitary::Named(GateType::CCX), _)
+            UnitaryRep::Gate(Unitary::Named(NamedGate(GateType::CCX)), _)
         ));
     }
 
@@ -5867,7 +5940,7 @@ mod tests {
         let op: UnitaryRep = "SX 0".parse().unwrap();
         assert!(matches!(
             op,
-            UnitaryRep::Gate(Unitary::Named(GateType::SX), _)
+            UnitaryRep::Gate(Unitary::Named(NamedGate(GateType::SX)), _)
         ));
     }
 
@@ -5876,7 +5949,7 @@ mod tests {
         let op: UnitaryRep = "F 0".parse().unwrap();
         assert!(matches!(
             op,
-            UnitaryRep::Gate(Unitary::Named(GateType::F), _)
+            UnitaryRep::Gate(Unitary::Named(NamedGate(GateType::F)), _)
         ));
     }
 
@@ -5884,11 +5957,11 @@ mod tests {
 
     #[test]
     fn unitary_named_is_clifford() {
-        assert!(Unitary::Named(GateType::H).is_clifford());
-        assert!(Unitary::Named(GateType::X).is_clifford());
-        assert!(Unitary::Named(GateType::CX).is_clifford());
-        assert!(Unitary::Named(GateType::SWAP).is_clifford());
-        assert!(!Unitary::Named(GateType::T).is_clifford());
+        assert!(Unitary::Named(NamedGate(GateType::H)).is_clifford());
+        assert!(Unitary::Named(NamedGate(GateType::X)).is_clifford());
+        assert!(Unitary::Named(NamedGate(GateType::CX)).is_clifford());
+        assert!(Unitary::Named(NamedGate(GateType::SWAP)).is_clifford());
+        assert!(!Unitary::Named(NamedGate(GateType::T)).is_clifford());
     }
 
     #[test]
@@ -5928,8 +6001,8 @@ mod tests {
 
     #[test]
     fn unitary_is_identity() {
-        assert!(Unitary::Named(GateType::I).is_identity());
-        assert!(!Unitary::Named(GateType::H).is_identity());
+        assert!(Unitary::Named(NamedGate(GateType::I)).is_identity());
+        assert!(!Unitary::Named(NamedGate(GateType::H)).is_identity());
 
         assert!(
             Unitary::Rotation {
@@ -5950,11 +6023,11 @@ mod tests {
     #[test]
     fn unitary_to_gate_type() {
         assert_eq!(
-            Unitary::Named(GateType::H).to_gate_type(),
+            Unitary::Named(NamedGate(GateType::H)).to_gate_type(),
             Some(GateType::H)
         );
         assert_eq!(
-            Unitary::Named(GateType::CX).to_gate_type(),
+            Unitary::Named(NamedGate(GateType::CX)).to_gate_type(),
             Some(GateType::CX)
         );
 
@@ -5991,10 +6064,10 @@ mod tests {
 
     #[test]
     fn unitary_num_qubits() {
-        assert_eq!(Unitary::Named(GateType::H).num_qubits(), 1);
-        assert_eq!(Unitary::Named(GateType::X).num_qubits(), 1);
-        assert_eq!(Unitary::Named(GateType::CX).num_qubits(), 2);
-        assert_eq!(Unitary::Named(GateType::SWAP).num_qubits(), 2);
+        assert_eq!(Unitary::Named(NamedGate(GateType::H)).num_qubits(), 1);
+        assert_eq!(Unitary::Named(NamedGate(GateType::X)).num_qubits(), 1);
+        assert_eq!(Unitary::Named(NamedGate(GateType::CX)).num_qubits(), 2);
+        assert_eq!(Unitary::Named(NamedGate(GateType::SWAP)).num_qubits(), 2);
         assert_eq!(
             Unitary::Rotation {
                 rotation_type: RotationType::RZ,
@@ -6015,38 +6088,38 @@ mod tests {
 
     #[test]
     fn unitary_on_qubit() {
-        let h = Unitary::Named(GateType::H);
+        let h = Unitary::Named(NamedGate(GateType::H));
         let rep = h.on_qubit(3);
         assert!(
-            matches!(rep, UnitaryRep::Gate(Unitary::Named(GateType::H), ref q) if q.as_slice() == [3])
+            matches!(rep, UnitaryRep::Gate(Unitary::Named(NamedGate(GateType::H)), ref q) if q.as_slice() == [3])
         );
     }
 
     #[test]
     fn unitary_on_qubits() {
-        let cx = Unitary::Named(GateType::CX);
+        let cx = Unitary::Named(NamedGate(GateType::CX));
         let rep = cx.on_qubits(2, 5);
         assert!(
-            matches!(rep, UnitaryRep::Gate(Unitary::Named(GateType::CX), ref q) if q.as_slice() == [2, 5])
+            matches!(rep, UnitaryRep::Gate(Unitary::Named(NamedGate(GateType::CX)), ref q) if q.as_slice() == [2, 5])
         );
 
         // 1q gate ignores second qubit
-        let h = Unitary::Named(GateType::H);
+        let h = Unitary::Named(NamedGate(GateType::H));
         let rep = h.on_qubits(3, 99);
         assert!(
-            matches!(rep, UnitaryRep::Gate(Unitary::Named(GateType::H), ref q) if q.as_slice() == [3])
+            matches!(rep, UnitaryRep::Gate(Unitary::Named(NamedGate(GateType::H)), ref q) if q.as_slice() == [3])
         );
     }
 
     #[test]
     #[should_panic(expected = "on_qubit called on 2-qubit gate")]
     fn unitary_on_qubit_panics_for_2q() {
-        let _ = Unitary::Named(GateType::CX).on_qubit(0);
+        let _ = Unitary::Named(NamedGate(GateType::CX)).on_qubit(0);
     }
 
     #[test]
     fn unitary_mul_produces_compose() {
-        let h = Unitary::Named(GateType::H);
+        let h = Unitary::Named(NamedGate(GateType::H));
         let sx = Unitary::Rotation {
             rotation_type: RotationType::RX,
             angle: Angle64::QUARTER_TURN,
@@ -6063,8 +6136,8 @@ mod tests {
 
     #[test]
     fn unitary_tensor_produces_tensor() {
-        let h = Unitary::Named(GateType::H);
-        let x = Unitary::Named(GateType::X);
+        let h = Unitary::Named(NamedGate(GateType::H));
+        let x = Unitary::Named(NamedGate(GateType::X));
         let result = h & x;
         // H on qubit 0, X on qubit 1
         if let UnitaryRep::Tensor(parts) = &result {
@@ -6079,8 +6152,8 @@ mod tests {
 
     #[test]
     fn unitary_tensor_2q_gates() {
-        let cx = Unitary::Named(GateType::CX);
-        let h = Unitary::Named(GateType::H);
+        let cx = Unitary::Named(NamedGate(GateType::CX));
+        let h = Unitary::Named(NamedGate(GateType::H));
         let result = cx & h;
         // CX on qubits 0,1 then H on qubit 2
         let qubits = result.qubits();
@@ -6091,9 +6164,9 @@ mod tests {
     fn unitary_eq_and_hash() {
         use std::collections::HashSet;
 
-        let a = Unitary::Named(GateType::H);
-        let b = Unitary::Named(GateType::H);
-        let c = Unitary::Named(GateType::X);
+        let a = Unitary::Named(NamedGate(GateType::H));
+        let b = Unitary::Named(NamedGate(GateType::H));
+        let c = Unitary::Named(NamedGate(GateType::X));
 
         assert_eq!(a, b);
         assert_ne!(a, c);

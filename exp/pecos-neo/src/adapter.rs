@@ -364,11 +364,14 @@ impl QuantumEngineProgramRunner {
         Self { engine }
     }
 
-    fn commands_to_message(commands: &CommandQueue) -> pecos_engines::ByteMessage {
-        let gates = command_queue_to_gates(commands);
+    fn commands_to_message(
+        commands: &CommandQueue,
+    ) -> Result<pecos_engines::ByteMessage, pecos_core::errors::PecosError> {
+        let gates = command_queue_to_gates(commands)
+            .map_err(|error| pecos_core::errors::PecosError::Input(error.to_string()))?;
         let mut builder = pecos_engines::ByteMessage::quantum_operations_builder();
         builder.add_gate_commands(&gates);
-        builder.build()
+        Ok(builder.build())
     }
 
     fn measured_qubits(commands: &CommandQueue) -> Vec<QubitId> {
@@ -414,12 +417,18 @@ impl QuantumEngineProgramRunner {
         Ok(outcomes)
     }
 }
-impl DynProgramRunner for QuantumEngineProgramRunner {
-    fn run_shot(&mut self, source: &mut dyn CommandSource) -> ProgramResult {
+impl QuantumEngineProgramRunner {
+    /// Run a command source, reporting conversion and engine errors.
+    ///
+    /// # Errors
+    /// Returns an error if a command cannot be converted losslessly, the engine
+    /// rejects it, or measurement results do not match the requested measurements.
+    pub fn try_run_shot(
+        &mut self,
+        source: &mut dyn CommandSource,
+    ) -> Result<ProgramResult, pecos_core::errors::PecosError> {
         source.reset();
-        self.engine
-            .reset()
-            .expect("quantum engine reset should not fail");
+        self.engine.reset()?;
 
         let mut all_outcomes = MeasurementOutcomes::new();
         let mut num_batches = 0;
@@ -431,13 +440,9 @@ impl DynProgramRunner for QuantumEngineProgramRunner {
             match commands {
                 Some(cmds) if !cmds.is_empty() => {
                     let measured_qubits = Self::measured_qubits(&cmds);
-                    let message = Self::commands_to_message(&cmds);
-                    let response = self
-                        .engine
-                        .process(message)
-                        .expect("quantum engine command batch should execute");
-                    let outcomes = Self::outcomes_from_message(&response, &measured_qubits)
-                        .expect("quantum engine outcomes should match measured qubits");
+                    let message = Self::commands_to_message(&cmds)?;
+                    let response = self.engine.process(message)?;
+                    let outcomes = Self::outcomes_from_message(&response, &measured_qubits)?;
 
                     num_batches += 1;
                     for outcome in outcomes.iter() {
@@ -453,10 +458,16 @@ impl DynProgramRunner for QuantumEngineProgramRunner {
             }
         }
 
-        ProgramResult {
+        Ok(ProgramResult {
             outcomes: all_outcomes,
             num_batches,
-        }
+        })
+    }
+}
+impl DynProgramRunner for QuantumEngineProgramRunner {
+    fn run_shot(&mut self, source: &mut dyn CommandSource) -> ProgramResult {
+        self.try_run_shot(source)
+            .expect("quantum engine command source should execute")
     }
 
     fn set_full_seed(&mut self, seed: u64) {
@@ -501,8 +512,14 @@ pub fn gates_to_command_queue(
 ///
 /// This is useful for interoperability with code that expects Gate objects.
 ///
-pub fn command_queue_to_gates(queue: &CommandQueue) -> Vec<Gate> {
-    queue.iter().map(GateCommand::to_core_gate).collect()
+/// # Errors
+/// Returns an error for invalid commands or Idle durations that cannot be
+/// represented exactly by the core gate duration field.
+#[must_use = "conversion errors must be handled"]
+pub fn command_queue_to_gates(
+    queue: &CommandQueue,
+) -> Result<Vec<Gate>, crate::command::GateCommandError> {
+    queue.iter().map(GateCommand::try_to_core_gate).collect()
 }
 
 #[cfg(test)]
@@ -587,7 +604,7 @@ mod tests {
         ];
 
         let queue = gates_to_command_queue(&original_gates).expect("should convert");
-        let back = command_queue_to_gates(&queue);
+        let back = command_queue_to_gates(&queue).expect("valid roundtrip");
 
         assert_eq!(back.len(), 3);
         assert_eq!(back[0].gate_type, CoreGateType::H);

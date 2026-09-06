@@ -440,3 +440,24 @@ fn a_huge_sparse_id_causes_no_id_sized_allocation() {
         "one measurement exists and the huge id ranks first"
     );
 }
+
+/// A public influence-map payload can contain duplicate stamped identities even
+/// though DAG admission refuses duplicate Gate measurement IDs.
+#[test]
+fn sampler_defends_against_duplicate_ids_in_literal_map() {
+    use pecos_qec::fault_tolerance::propagator::DagFaultInfluenceMap;
+    let gates = [0, 1].map(|q| Gate {
+        meas_ids: vec![MeasId::from_raw(5)].into(),
+        ..Gate::mz(&[q])
+    });
+    let mut map = DagFaultInfluenceMap::with_capacity(0);
+    map.meas_ids = gates
+        .iter()
+        .flat_map(|gate| gate.meas_ids.iter().copied())
+        .collect();
+    let result = DemSamplerBuilder::new(&map).with_circuit_annotations(&DagCircuit::new());
+    let Err(error) = result else {
+        panic!("duplicate IDs must not bind to the first record");
+    };
+    assert!(error.to_string().contains("duplicate stable MeasId 5"));
+}

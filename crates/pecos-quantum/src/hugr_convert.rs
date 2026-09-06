@@ -57,7 +57,13 @@ impl std::fmt::Display for HugrConvertError {
             HugrConvertError::UnknownOperation(op) => {
                 write!(f, "Unknown quantum operation: {op}")
             }
-            HugrConvertError::InvalidGateAngles(error) => error.fmt(f),
+            HugrConvertError::InvalidGateAngles(error) => write!(
+                f,
+                "Cannot represent HUGR {:?}: expected {} compile-time angle(s), extracted {}. \
+                 Runtime-computed angles are not yet representable by PECOS Gate; \
+                 supply constant angles until dynamic-angle support is available. TODO(dynamic-angles)",
+                error.gate_type, error.expected, error.actual,
+            ),
             HugrConvertError::UnsupportedExtension(ext) => {
                 write!(f, "Unsupported extension: {ext}")
             }
@@ -2117,6 +2123,10 @@ mod tests {
         let hugr = dynamic_rz_hugr();
         let dag_error = hugr_to_dag_circuit(&hugr)
             .expect_err("DAG conversion must reject a dynamically angled Rz");
+        let message = dag_error.to_string();
+        assert!(message.contains("HUGR RZ"));
+        assert!(message.contains("Runtime-computed angles are not yet representable"));
+        assert!(message.contains("TODO(dynamic-angles)"));
         let HugrConvertError::InvalidGateAngles(dag_error) = dag_error else {
             panic!("wrong DAG conversion error variant");
         };

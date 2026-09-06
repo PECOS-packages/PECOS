@@ -444,9 +444,9 @@ pub enum MeasResolveError {
     /// batch), held despite its measurement having been removed, or reserved
     /// yet erased from every gate without a removal.
     ///
-    /// Insertion and update validation make both states unrepresentable through
-    /// public APIs. Nothing resolved through such a circuit can be trusted; the
-    /// only safe reaction is to stop.
+    /// DAG insertion and update validate identity bookkeeping. This defensive
+    /// check also detects internal corruption; public `Gate` fields alone do
+    /// not enforce validity.
     Inconsistent(MeasId),
 }
 
@@ -633,6 +633,16 @@ fn supports_measurement_target(gate_type: GateType) -> bool {
     )
 }
 
+// A DAG has no custom-gate registry with which to validate angle payloads.
+// Apply this rule to insertion as well as transactional replacement.
+fn validate_dag_gate(gate: &Gate) -> Result<(), String> {
+    gate.validate()?;
+    if gate.gate_type == GateType::Custom && !gate.angles.is_empty() {
+        return Err("DAG Custom gates cannot carry angles without a gate registry".to_string());
+    }
+    Ok(())
+}
+
 impl DagCircuit {
     /// Creates a new empty circuit DAG.
     #[must_use]
@@ -712,11 +722,10 @@ impl DagCircuit {
     /// the gate carries a [`MeasId`] that another measurement in this circuit
     /// already holds.
     pub fn try_add_gate(&mut self, mut gate: Gate) -> Result<usize, DagGateError> {
-        gate.validate()
-            .map_err(|message| DagGateError::InvalidGate {
-                message,
-                node: None,
-            })?;
+        validate_dag_gate(&gate).map_err(|message| DagGateError::InvalidGate {
+            message,
+            node: None,
+        })?;
         self.assign_measurement_ids(&mut gate)
             .map_err(|message| DagGateError::InvalidGate {
                 message,
@@ -761,8 +770,8 @@ impl DagCircuit {
     ///
     /// # Panics
     ///
-    /// Panics if a gate holds more ids than qubits. [`Gate::validate`] makes
-    /// that unrepresentable through every insertion and update path.
+    /// Panics if a gate holds more ids than qubits. DAG insertion and update
+    /// reject such payloads using [`Gate::validate`]; `Gate` itself has public fields.
     pub fn find_measurement(&self, id: MeasId) -> Result<MeasRef, MeasResolveError> {
         // Scan the whole circuit rather than stopping at the first hit, so a
         // duplicate holder is reported instead of silently winning.
@@ -992,12 +1001,10 @@ impl DagCircuit {
         let consumed_measurement_record = existing.gate_type.consumes_measurement_record();
         let mut replacement = existing.clone();
         update(&mut replacement);
-        replacement
-            .validate()
-            .map_err(|message| DagGateError::InvalidGate {
-                message,
-                node: Some(node),
-            })?;
+        validate_dag_gate(&replacement).map_err(|message| DagGateError::InvalidGate {
+            message,
+            node: Some(node),
+        })?;
         let same_qubit_support = replacement.qubits.len() == original_qubits.len()
             && replacement
                 .qubits
@@ -2902,6 +2909,80 @@ mod tests {
             .iter()
             .map(|amplitude| (amplitude.re, amplitude.im))
             .collect()
+    }
+
+    #[test]
+    fn custom_angles_are_rejected_on_insertion_and_update() {
+        let custom = Gate::new(
+            GateType::Custom,
+            vec![Angle64::ZERO; 3],
+            vec![],
+            vec![QubitId(0)],
+        );
+        let mut dag = DagCircuit::new();
+        let error = dag
+            .try_add_gate(custom.clone())
+            .expect_err("no registry for custom arity");
+        assert!(error.to_string().contains("without a gate registry"));
+        assert!(dag.try_add_gate_auto_wire(custom).is_err());
+        let node = dag.add_gate_auto_wire(Gate::rz(Angle64::ZERO, &[0]));
+        let original = dag.gate(node).unwrap().clone();
+        let error = dag
+            .update_gate(node, |gate| {
+                gate.gate_type = GateType::Custom;
+                gate.angles = vec![Angle64::ZERO; 3].into();
+            })
+            .expect_err("type changes must obey the same registry rule");
+        assert!(error.to_string().contains("without a gate registry"));
+        assert_eq!(dag.gate(node), Some(&original));
+        dag.try_add_gate(Gate::custom(vec![QubitId(1)]))
+            .expect("unparameterized custom remains supported");
+    }
+
+    #[test]
+    fn measurement_resolution_defends_against_corrupt_gate_literals() {
+        let id = MeasId::from_raw(5);
+        let gate = Gate {
+            meas_ids: smallvec::smallvec![id],
+            ..Gate::mz(&[0])
+        };
+        // Internal fixtures intentionally bypass admission. Public Gate fields
+        // alone cannot bypass the DAG's private storage and bookkeeping.
+        let mut dag = DagCircuit::new();
+        dag.add_gate_unchecked(gate.clone());
+        assert_eq!(
+            dag.find_measurement(id),
+            Err(MeasResolveError::Inconsistent(id))
+        );
+
+        let mut dag = DagCircuit::new();
+        let node = dag.try_add_gate(gate.clone()).unwrap();
+        dag.add_gate_unchecked(Gate {
+            qubits: smallvec::smallvec![QubitId(1)],
+            ..gate.clone()
+        });
+        assert_eq!(
+            dag.find_measurement(id),
+            Err(MeasResolveError::Inconsistent(id))
+        );
+        dag.gates[node] = Some(Gate {
+            meas_ids: smallvec::smallvec![],
+            ..gate.clone()
+        });
+        dag.gates[node + 1] = None;
+        assert_eq!(
+            dag.find_measurement(id),
+            Err(MeasResolveError::Inconsistent(id))
+        );
+
+        let mut dag = DagCircuit::new();
+        let node = dag.try_add_gate(gate.clone()).unwrap();
+        dag.remove_gate(node);
+        dag.add_gate_unchecked(gate);
+        assert_eq!(
+            dag.find_measurement(id),
+            Err(MeasResolveError::Inconsistent(id))
+        );
     }
 
     #[test]

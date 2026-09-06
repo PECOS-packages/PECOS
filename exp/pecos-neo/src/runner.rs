@@ -610,6 +610,8 @@ pub enum ExecutionError {
         expected: usize,
         got: usize,
     },
+    /// The command has invalid qubit support or payload.
+    InvalidCommand(crate::command::GateCommandError),
     /// Maximum decomposition depth exceeded (possible infinite recursion).
     MaxDecompositionDepthExceeded,
 }
@@ -637,6 +639,7 @@ impl std::fmt::Display for ExecutionError {
                 f,
                 "Gate {gate:?} expected {expected} angle parameters, got {got}"
             ),
+            Self::InvalidCommand(error) => error.fmt(f),
             Self::MaxDecompositionDepthExceeded => {
                 write!(f, "Maximum decomposition depth exceeded")
             }
@@ -672,8 +675,11 @@ fn upgrade_rotation_error(
     }
 }
 
-fn validate_angle_arity(gate: GateType, angles: &[Angle64]) -> Result<(), ExecutionError> {
-    let expected = gate.angle_arity();
+pub(crate) fn validate_angle_arity(
+    gate: GateType,
+    angles: &[Angle64],
+) -> Result<(), ExecutionError> {
+    let expected = gate.payload_arity();
     if angles.len() != expected {
         return Err(ExecutionError::AngleArity {
             gate,
@@ -1246,6 +1252,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         command: &GateCommand,
     ) -> Result<(), ExecutionError> {
         validate_angle_arity(command.gate_type, command.angles.as_slice())?;
+        command.validate().map_err(ExecutionError::InvalidCommand)?;
         let qubits = command.qubits.as_slice();
 
         match command.gate_type {

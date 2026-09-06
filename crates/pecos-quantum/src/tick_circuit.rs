@@ -607,14 +607,15 @@ impl<'a> GateInstanceRef<'a> {
     /// materialized operation.
     #[must_use]
     pub fn to_gate(self) -> Gate {
-        Gate {
-            gate_type: self.gate_type(),
-            qubits: self.qubits.iter().copied().collect::<GateQubits>(),
-            angles: self.batch.gate.angles.clone(),
-            params: self.batch.gate.params.clone(),
-            meas_ids: self.meas_ids.iter().copied().collect::<GateMeasIds>(),
-            channel: self.batch.gate.channel.clone(),
-        }
+        let mut gate = Gate::new(
+            self.gate_type(),
+            self.batch.gate.angles.clone(),
+            self.batch.gate.params.clone(),
+            self.qubits.iter().copied().collect::<GateQubits>(),
+        );
+        gate.meas_ids = self.meas_ids.iter().copied().collect::<GateMeasIds>();
+        gate.channel.clone_from(&self.batch.gate.channel);
+        gate
     }
 }
 
@@ -3768,6 +3769,22 @@ mod tests {
     /// Conversion reports a circuit it cannot represent instead of panicking
     /// partway through building the DAG. `TickCircuit` does not enforce
     /// measurement-id uniqueness, so it can hold ids `DagCircuit` refuses.
+    #[test]
+    #[should_panic(expected = "Gate H expected 0 angle parameters, got 1")]
+    fn materializing_gate_instance_checks_constructor_arity() {
+        let gate = Gate {
+            angles: vec![Angle64::ZERO].into(),
+            ..Gate::h(&[0])
+        };
+        let instance = GateInstanceRef {
+            batch: GateBatchRef::new(0, &gate, None),
+            instance_index: 0,
+            qubits: &gate.qubits,
+            meas_ids: &gate.meas_ids,
+        };
+        let _ = instance.to_gate();
+    }
+
     #[test]
     fn converting_a_circuit_with_duplicate_ids_reports_the_tick() {
         let mut tc = TickCircuit::new();

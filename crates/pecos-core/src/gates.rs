@@ -62,6 +62,10 @@ impl std::error::Error for GateAngleArityError {}
 /// - Uses `Angle64` for rotation angles (in full turns)
 /// - Flat structure for easy access to gate data
 /// - Compatible with binary protocol serialization
+///
+/// Constructors check native angle arity. Fields remain public, so struct
+/// literals and later mutation can produce invalid payloads. Use [`Gate::validate`]
+/// at data boundaries; DAG insertion and mutation also validate their gates.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Gate {
     /// The type of the gate

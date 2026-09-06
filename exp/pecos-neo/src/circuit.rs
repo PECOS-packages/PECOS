@@ -366,7 +366,9 @@ impl TryFrom<&CommandQueue> for TickCircuit {
         let mut circuit = TickCircuit::new();
 
         for cmd in queue.iter() {
-            let mut gate = cmd.to_core_gate();
+            let mut gate = cmd
+                .try_to_core_gate()
+                .map_err(CircuitConversionError::InvalidCommand)?;
             if gate.gate_type.consumes_measurement_record() {
                 let base = circuit
                     .try_advance_meas_counter(gate.qubits.len())
@@ -579,7 +581,12 @@ mod tests {
         queue
             .try_push(command)
             .expect("Idle command should enter queue");
-        let back = queue.iter().next().expect("Idle command").to_core_gate();
+        let back = queue
+            .iter()
+            .next()
+            .expect("Idle command")
+            .try_to_core_gate()
+            .expect("valid Idle conversion");
         assert_eq!(back.qubits.as_slice(), &[QubitId(1), QubitId(2)]);
         assert!((back.idle_duration() - 23.0).abs() < f64::EPSILON);
     }

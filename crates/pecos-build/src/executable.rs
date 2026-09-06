@@ -26,18 +26,21 @@ const MAX_EXEC_WAIT_ATTEMPTS: u32 = 20;
 ///
 /// Writing a file and immediately executing it races with process creation
 /// elsewhere in the same process. A concurrent `fork` inherits the still-open
-/// write descriptor, and `execve` on that file reports `ETXTBSY` until the
-/// child completes its own `exec` and the inherited descriptor closes.
-/// `O_CLOEXEC` does not avoid this, because the descriptor is still open when
-/// the kernel performs the check (rust-lang/rust#39186). The condition cannot
-/// be prevented from inside a multi-threaded process, and writing to a
-/// temporary name and renaming does not help either, because the check tracks
-/// the inode rather than the path.
+/// write descriptor, and `execve` on that file reports `ETXTBSY` until the last
+/// reference to that writable file description is released. `O_CLOEXEC` does
+/// not avoid this, because the descriptor is still open when the kernel
+/// performs the check (rust-lang/rust#114554). Writing to a temporary name and
+/// renaming does not help either, because the check tracks the inode rather
+/// than the path.
 ///
-/// One successful execution closes the window permanently for this path. It
-/// proves every child that inherited the write descriptor has finished
-/// exec'ing, and nothing opens the file for writing again afterwards, so this
-/// is a one-time barrier rather than a standing retry.
+/// This is a barrier against writers that already exist, not a permanent
+/// guarantee about the path. A successful execution establishes that no
+/// writable description of that inode remains open, so writers inherited from
+/// earlier forks cannot recreate one. It does not promise the file stays
+/// executable: a later writer, including one reaching the same inode through a
+/// hard link, reopens the window, and replacing the inode at that path is a
+/// different file entirely. Both callers write a stub once and never rewrite
+/// it, which is the situation this is for.
 ///
 /// A program that runs and exits non-zero still counts as executable.
 pub(crate) fn wait_until_executable(path: &Path, args: &[&str]) -> bool {
@@ -48,6 +51,10 @@ pub(crate) fn wait_until_executable(path: &Path, args: &[&str]) -> bool {
         match Command::new(path).args(args).output() {
             Ok(_) => return true,
             Err(error) if error.kind() == ErrorKind::ExecutableFileBusy => {
+                // No point sleeping when no attempt remains.
+                if attempt + 1 == MAX_EXEC_WAIT_ATTEMPTS {
+                    break;
+                }
                 std::thread::sleep(std::time::Duration::from_millis(1 << attempt.min(5)));
             }
             Err(error) => {
@@ -82,14 +89,19 @@ pub(crate) fn which_in_path(name: &str, extensions: &[&str]) -> Option<PathBuf> 
 mod tests {
     use super::wait_until_executable;
     use std::fs;
+    use std::io::ErrorKind;
     use std::os::unix::fs::PermissionsExt;
     use std::process::Command;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     /// Writing a script and executing it immediately fails with `ETXTBSY` at a
     /// double-digit rate when other threads are spawning processes. Reproduce
-    /// that load and assert the barrier absorbs it: without the wait inside
-    /// [`wait_until_executable`] this fails within a few iterations.
+    /// that load and assert the barrier absorbs it.
+    ///
+    /// The second execution is the part that matters. Asserting only on the
+    /// helper's return value would pass even if the helper returned `true`
+    /// without doing anything, so each stub is run again afterwards to confirm
+    /// the barrier really did make it executable.
     #[test]
     fn newly_written_scripts_are_executable_while_other_threads_spawn() {
         let dir = std::env::temp_dir().join(format!("pecos_exec_wait_{}", std::process::id()));
@@ -97,6 +109,7 @@ mod tests {
         fs::create_dir_all(&dir).expect("Should create probe dir");
 
         let failures = AtomicUsize::new(0);
+        let post_barrier_busy = AtomicUsize::new(0);
         std::thread::scope(|scope| {
             for _ in 0..4 {
                 scope.spawn(|| {
@@ -108,6 +121,7 @@ mod tests {
             for worker in 0..4 {
                 let dir = &dir;
                 let failures = &failures;
+                let post_barrier_busy = &post_barrier_busy;
                 scope.spawn(move || {
                     for i in 0..150 {
                         let path = dir.join(format!("stub-{worker}-{i}"));
@@ -119,6 +133,19 @@ mod tests {
 
                         if !wait_until_executable(&path, &["--version"]) {
                             failures.fetch_add(1, Ordering::Relaxed);
+                            let _ = fs::remove_file(&path);
+                            continue;
+                        }
+                        // Execute independently of the helper's own return
+                        // value. Trusting that value would pass even if the
+                        // barrier did nothing at all.
+                        if let Err(error) = Command::new(&path).arg("--version").output() {
+                            assert_eq!(
+                                error.kind(),
+                                ErrorKind::ExecutableFileBusy,
+                                "unexpected failure running a stub: {error}"
+                            );
+                            post_barrier_busy.fetch_add(1, Ordering::Relaxed);
                         }
                         let _ = fs::remove_file(&path);
                     }
@@ -131,6 +158,11 @@ mod tests {
             failures.load(Ordering::Relaxed),
             0,
             "a freshly written script could not be executed"
+        );
+        assert_eq!(
+            post_barrier_busy.load(Ordering::Relaxed),
+            0,
+            "a script was still ETXTBSY after the barrier reported it ready"
         );
     }
 }

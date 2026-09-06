@@ -370,6 +370,15 @@ fn verify_runtime(cmake_dir: &Path) -> Result<()> {
         ));
     };
 
+    // First execution of the just-extracted binary, which races the unpack.
+    if !crate::executable::wait_until_executable(&cmake_bin, &["--version"]) {
+        println!("FAILED");
+        return Err(Error::Config(format!(
+            "extracted cmake at {} could not be executed",
+            cmake_bin.display()
+        )));
+    }
+
     let output = std::process::Command::new(&cmake_bin)
         .arg("--version")
         .output()

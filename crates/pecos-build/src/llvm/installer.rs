@@ -807,6 +807,13 @@ fn apply_platform_fixes(llvm_dir: &Path) -> Result<()> {
     .into_iter()
     .find(|path| path.exists());
 
+    // This is the first execution of the just-extracted llvm-config, so it
+    // races the archive write the same way the wrapper below does.
+    if !crate::executable::wait_until_executable(&llvm_config, &["--version"]) {
+        println!("Skipped (llvm-config could not be executed)");
+        return Ok(());
+    }
+
     let Ok(output) = Command::new(&llvm_config)
         .args(["--system-libs", "--link-static"])
         .output()

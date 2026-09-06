@@ -210,6 +210,12 @@ impl QuantumSimulator for ForeignSimulator {
 }
 
 impl CliffordGateable for ForeignSimulator {
+    /// Global phase is unobservable through the projective foreign protocol.
+    /// As with the trait default, this hook is therefore intentionally a no-op.
+    fn apply_global_phase(&mut self, _phase: Angle64, _qubits: &[QubitId]) -> &mut Self {
+        self
+    }
+
     fn sz(&mut self, qubits: &[QubitId]) -> &mut Self {
         let indices = Self::qubit_indices(qubits);
         unsafe {
@@ -301,13 +307,6 @@ impl ArbitraryRotationGateable for ForeignSimulator {
         } else {
             panic!("foreign simulator does not support rotation gates (rzz is null)")
         }
-    }
-
-    fn apply_global_phase(&mut self, _phase: Angle64, _qubits: &[QubitId]) -> &mut Self {
-        panic!(
-            "foreign simulator protocol cannot apply a global phase; \
-             use it only for projective or measurement-only simulation"
-        )
     }
 
     fn t(&mut self, _qubits: &[QubitId]) -> &mut Self {

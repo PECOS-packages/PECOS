@@ -1499,6 +1499,19 @@ fn canonical_single_qubit_matrix(gate: GateType) -> DMatrix<Complex64> {
     )
 }
 
+fn canonical_two_qubit_matrix(gate: GateType) -> DMatrix<Complex64> {
+    let entries = gate
+        .canonical_2q_matrix()
+        .expect("named two-qubit Pauli root must have a canonical matrix");
+    let entries: Vec<_> = entries
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|entry| Complex64::new(entry[0], entry[1]))
+        .collect();
+    DMatrix::from_row_slice(4, 4, &entries)
+}
+
 /// Converts a [`PauliString`] to a dense matrix (implementation).
 fn pauli_string_to_matrix_impl(ps: &PauliString, num_qubits: usize) -> DMatrix<Complex64> {
     let dim = 1 << num_qubits;
@@ -1553,6 +1566,31 @@ fn embed_single_qubit_gate(
     result
 }
 
+/// Embeds a two-qubit gate into a larger Hilbert space.
+fn embed_two_qubit_gate(
+    gate: &DMatrix<Complex64>,
+    first_qubit: usize,
+    second_qubit: usize,
+    num_qubits: usize,
+) -> DMatrix<Complex64> {
+    let dim = 1 << num_qubits;
+    let mut result = DMatrix::from_element(dim, dim, Complex64::new(0.0, 0.0));
+    let unaffected_mask = !((1 << first_qubit) | (1 << second_qubit));
+
+    for row in 0..dim {
+        for column in 0..dim {
+            if (row & unaffected_mask) == (column & unaffected_mask) {
+                let local_row = (((row >> first_qubit) & 1) << 1) | ((row >> second_qubit) & 1);
+                let local_column =
+                    (((column >> first_qubit) & 1) << 1) | ((column >> second_qubit) & 1);
+                result[(row, column)] = gate[(local_row, local_column)];
+            }
+        }
+    }
+
+    result
+}
+
 /// Converts a rotation to a matrix.
 fn rotation_to_matrix(
     rotation_type: RotationType,
@@ -1560,8 +1598,7 @@ fn rotation_to_matrix(
     qubits: &[usize],
     num_qubits: usize,
 ) -> DMatrix<Complex64> {
-    let half = angle / 2u64;
-    let (sin_half, cos_half) = half.sin_cos();
+    let (sin_half, cos_half) = angle.half_angle_sin_cos();
     let cos_half = Complex64::new(cos_half, 0.0);
     let sin_half = Complex64::new(sin_half, 0.0);
     let neg_i = Complex64::new(0.0, -1.0);
@@ -1591,7 +1628,7 @@ fn rotation_to_matrix(
             embed_single_qubit_gate(&gate, qubits[0], num_qubits)
         }
         RotationType::RXX | RotationType::RYY | RotationType::RZZ => {
-            // For two-qubit rotations, use matrix exponential: exp(-i * θ/2 * PP)
+            // exp(-i * θ/2 * PP) = cos(θ/2) I - i sin(θ/2) PP
             let generator = match rotation_type {
                 RotationType::RXX => {
                     two_qubit_pauli_matrix(Pauli::X, Pauli::X, qubits[0], qubits[1], num_qubits)
@@ -1604,8 +1641,8 @@ fn rotation_to_matrix(
                 }
                 _ => unreachable!("outer match already filtered for RXX/RYY/RZZ"),
             };
-            let scaled = generator * Complex64::new(0.0, -half.to_radians());
-            pecos_num::matrix_exp(&scaled)
+            DMatrix::identity(generator.nrows(), generator.ncols()) * cos_half
+                + generator * (neg_i * sin_half)
         }
     }
 }
@@ -1617,10 +1654,8 @@ fn rxy1q_to_matrix(
     qubits: &[usize],
     num_qubits: usize,
 ) -> DMatrix<Complex64> {
-    let half_theta = (theta / 2u64).to_radians_signed();
+    let (sin_t, cos_t) = theta.half_angle_sin_cos();
     let phi_rad = phi.to_radians_signed();
-    let cos_t = half_theta.cos();
-    let sin_t = half_theta.sin();
     // RXY1Q: [[cos, r01], [r10, cos]]
     // r01 = -i*sin*e^{-i*phi}
     // r10 = -i*sin*e^{i*phi}
@@ -1641,11 +1676,9 @@ fn u3_to_matrix(
     qubits: &[usize],
     num_qubits: usize,
 ) -> DMatrix<Complex64> {
-    let t = (theta / 2u64).to_radians_signed();
+    let (sin_t, cos_t) = theta.half_angle_sin_cos();
     let p = phi.to_radians_signed();
     let l = lambda.to_radians_signed();
-    let cos_t = t.cos();
-    let sin_t = t.sin();
     let u00 = Complex64::new(cos_t, 0.0);
     let u01 = Complex64::new(-sin_t * l.cos(), -sin_t * l.sin());
     let u10 = Complex64::new(sin_t * p.cos(), sin_t * p.sin());
@@ -1784,37 +1817,15 @@ fn gate_to_matrix(gate_type: GateType, qubits: &[usize], num_qubits: usize) -> D
             controlled_gate(&h_gate, qubits[0], qubits[1], num_qubits)
         }
         GateType::SWAP => swap_matrix(qubits[0], qubits[1], num_qubits),
-        GateType::SXX => {
-            // SXX = RXX(pi/2)
-            rotation_to_matrix(RotationType::RXX, Angle64::QUARTER_TURN, qubits, num_qubits)
+        GateType::SXX
+        | GateType::SXXdg
+        | GateType::SYY
+        | GateType::SYYdg
+        | GateType::SZZ
+        | GateType::SZZdg => {
+            let gate = canonical_two_qubit_matrix(gate_type);
+            embed_two_qubit_gate(&gate, qubits[0], qubits[1], num_qubits)
         }
-        GateType::SXXdg => {
-            // SXXdg = RXX(3pi/2)
-            rotation_to_matrix(
-                RotationType::RXX,
-                Angle64::THREE_QUARTERS_TURN,
-                qubits,
-                num_qubits,
-            )
-        }
-        GateType::SYY => {
-            rotation_to_matrix(RotationType::RYY, Angle64::QUARTER_TURN, qubits, num_qubits)
-        }
-        GateType::SYYdg => rotation_to_matrix(
-            RotationType::RYY,
-            Angle64::THREE_QUARTERS_TURN,
-            qubits,
-            num_qubits,
-        ),
-        GateType::SZZ => {
-            rotation_to_matrix(RotationType::RZZ, Angle64::QUARTER_TURN, qubits, num_qubits)
-        }
-        GateType::SZZdg => rotation_to_matrix(
-            RotationType::RZZ,
-            Angle64::THREE_QUARTERS_TURN,
-            qubits,
-            num_qubits,
-        ),
         GateType::CCX => {
             // Toffoli: flip target when both controls are |1>
             let dim = 1 << num_qubits;

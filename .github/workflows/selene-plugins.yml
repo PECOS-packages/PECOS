@@ -92,6 +92,16 @@ jobs:
           prefix-key: v1-rust-no-bin
           save-if: ${{ github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev') }}
 
+      # `uv pip install` re-resolves from PyPI and does NOT read uv.lock, so the
+      # plugins' test extras drifted to whatever PyPI offered. Exporting the lock
+      # as a constraints file keeps this lane on the same versions as every other
+      # recipe. Reproducibility comes from uv.lock, not from tightening the
+      # sub-packages' requires-dist -- those ship to PyPI and must stay installable.
+      - name: Export locked versions as pip constraints
+        run: |
+          uv export --frozen --no-hashes --all-packages --no-emit-workspace \
+            -o "${{ runner.temp }}/uv-constraints.txt"
+
       - name: Build and install Selene plugins (Unix)
         if: runner.os != 'Windows'
         run: |
@@ -115,7 +125,7 @@ jobs:
             DEST="python/selene-plugins/$PLUGIN/python/${LIB_NAME}/_dist/lib"
             mkdir -p "$DEST"
             cp "target/release/lib${LIB_NAME}.$EXT" "$DEST/"
-            uv pip install --system -e "${DIR}[test]"
+            uv pip install --system -c "${{ runner.temp }}/uv-constraints.txt" -e "${DIR}[test]"
           done
 
       - name: Build and install Selene plugins (Windows)
@@ -134,7 +144,7 @@ jobs:
           }
 
           foreach ($pluginDir in (Get-ChildItem -Directory python/selene-plugins/pecos-selene-*)) {
-            uv pip install --system -e "$($pluginDir.FullName)[test]"
+            uv pip install --system -c "$env:RUNNER_TEMP/uv-constraints.txt" -e "$($pluginDir.FullName)[test]"
           }
 
       - name: Run tests

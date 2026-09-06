@@ -248,7 +248,7 @@ impl Optimizer {
             Stmt::Binding(binding) => Some(Stmt::Binding(self.optimize_binding(binding))),
 
             Stmt::Expr(expr_stmt) => {
-                // Check for identity gates (e.g., rz(0)) before optimization
+                // Check for identity gates (e.g., rz(0 turns)) before optimization
                 if self.config.identity_removal
                     && let Expr::Gate(ref gate) = expr_stmt.expr
                     && let Some(angle) = gate.params.first()
@@ -2499,7 +2499,7 @@ pub fn main() -> i32 {
 pub fn main() -> unit {
     q := qalloc(2);
     pz q;
-    rz(0) q[0];
+    rz(0 turns) q[0];
     return unit;
 }
 "#;
@@ -2509,7 +2509,7 @@ pub fn main() -> unit {
 
         assert!(
             optimizer.stats.identities_removed > 0,
-            "rz(0) should be removed as identity"
+            "rz(0 turns) should be removed as identity"
         );
 
         // Verify the gate was removed
@@ -2523,7 +2523,7 @@ pub fn main() -> unit {
                 }
                 false
             });
-            assert!(!has_rz, "rz(0) identity gate should be removed");
+            assert!(!has_rz, "rz(0 turns) identity gate should be removed");
         }
     }
 

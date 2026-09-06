@@ -809,9 +809,15 @@ fn apply_platform_fixes(llvm_dir: &Path) -> Result<()> {
 
     // This is the first execution of the just-extracted llvm-config, so it
     // races the archive write the same way the wrapper below does.
+    // A readiness failure is not evidence that the platform fix is
+    // unnecessary. Skipping here would let a broken install proceed to a
+    // generic "verification failed" later, with the real cause only on stdout.
     if let Err(error) = crate::executable::wait_until_executable(&llvm_config, &["--version"]) {
-        println!("Skipped ({error})");
-        return Ok(());
+        println!("FAILED");
+        return Err(Error::Llvm(format!(
+            "Could not execute {} after extraction: {error}",
+            llvm_config.display()
+        )));
     }
 
     let Ok(output) = Command::new(&llvm_config)

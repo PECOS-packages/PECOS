@@ -126,6 +126,11 @@ pub fn get_cuda_version(cuda_path: &Path) -> Result<String> {
     let exe_ext = if cfg!(windows) { ".exe" } else { "" };
     let nvcc = cuda_path.join("bin").join(format!("nvcc{exe_ext}"));
 
+    // nvcc may have been copied into place moments ago by the installer, so
+    // this can be its first execution and races the copy.
+    crate::executable::wait_until_executable(&nvcc, &["--version"])
+        .map_err(|e| Error::Cuda(format!("Failed to execute {}: {e}", nvcc.display())))?;
+
     let output = Command::new(&nvcc)
         .arg("--version")
         .output()

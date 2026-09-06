@@ -106,6 +106,66 @@ mod tests {
     use std::process::Command;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    /// Write an executable stub and return its path.
+    fn write_stub(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
+        let path = dir.join(name);
+        fs::write(&path, "#!/bin/sh\necho 21.1.8\n").expect("Should write stub");
+        let mut permissions = fs::metadata(&path).expect("Should stat stub").permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&path, permissions).expect("Should chmod stub");
+        path
+    }
+
+    /// An open writable descriptor is exactly the condition that produces
+    /// `ETXTBSY`, so holding one ourselves reproduces it without any race.
+    /// Nothing about this test is timing-dependent.
+    #[test]
+    fn a_held_writable_descriptor_is_reported_rather_than_waited_out() {
+        let temp = tempfile::tempdir().expect("Should create probe dir");
+        let path = write_stub(temp.path(), "held-open");
+
+        let writer = fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .expect("Should hold the stub open for writing");
+
+        let error = wait_until_executable(&path, &["--version"])
+            .expect_err("a stub held open for writing must not be reported as executable");
+        assert_eq!(error.kind(), ErrorKind::ExecutableFileBusy);
+
+        drop(writer);
+        wait_until_executable(&path, &["--version"])
+            .expect("the stub becomes executable once the writer is gone");
+    }
+
+    /// The barrier must actually wait for the writer to go away, not simply
+    /// let enough wall-clock time pass. Releasing the descriptor part-way
+    /// through means only a helper that keeps re-checking can succeed.
+    #[test]
+    fn the_barrier_waits_for_the_writer_to_be_released() {
+        let temp = tempfile::tempdir().expect("Should create probe dir");
+        let path = write_stub(temp.path(), "released-midway");
+
+        let writer = fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .expect("Should hold the stub open for writing");
+
+        std::thread::scope(|scope| {
+            scope.spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(60));
+                drop(writer);
+            });
+            wait_until_executable(&path, &["--version"])
+                .expect("the barrier should wait until the writer is released");
+        });
+
+        Command::new(&path)
+            .arg("--version")
+            .output()
+            .expect("the stub runs once the barrier reports it ready");
+    }
+
     /// Writing a script and executing it immediately fails with `ETXTBSY` at a
     /// double-digit rate when other threads are spawning processes. Reproduce
     /// that load and assert the barrier absorbs it.

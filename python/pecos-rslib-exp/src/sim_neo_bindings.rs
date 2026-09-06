@@ -1477,28 +1477,7 @@ impl PySimNeoBuilder {
 
 /// Convert CommandQueue to Vec<Gate> for EEG analysis.
 fn commands_to_gates(commands: &pecos_neo::command::CommandQueue) -> Vec<pecos_core::Gate> {
-    use pecos_core::{GateAngles, GateMeasIds, GateParams};
-
-    commands
-        .iter()
-        .map(|cmd| {
-            let qubits = cmd.qubits.iter().copied().collect();
-            let mut angles = GateAngles::new();
-            for &a in &cmd.angles {
-                angles.push(a);
-            }
-            // Convert pecos_neo::GateType to pecos_core::GateType
-            let gate_type: pecos_core::gate_type::GateType = cmd.gate_type.into();
-            Gate {
-                gate_type,
-                qubits,
-                angles,
-                params: GateParams::new(),
-                meas_ids: GateMeasIds::new(),
-                channel: None,
-            }
-        })
-        .collect()
+    pecos_neo::adapter::command_queue_to_gates(commands)
 }
 
 // ============================================================================

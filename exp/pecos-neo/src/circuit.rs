@@ -36,8 +36,8 @@
 //! let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
 //! ```
 
-use crate::command::{CommandQueue, GateCommand, GateType};
-use pecos_core::{Angle64, Gate, QubitId, TimeUnits};
+use crate::command::{CommandQueue, GateCommand, GatePayload, GateType};
+use pecos_core::{Gate, QubitId, TimeUnits};
 use pecos_quantum::{DagCircuit, TickCircuit};
 use smallvec::SmallVec;
 
@@ -148,27 +148,31 @@ impl From<GateType> for pecos_core::gate_type::GateType {
 // Gate to GateCommand Conversion
 // ============================================================================
 
+pub(crate) fn gate_payload(gate: &Gate) -> GatePayload {
+    if gate.gate_type == pecos_core::gate_type::GateType::Idle
+        && let Some(&duration) = gate.params.first()
+    {
+        #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+        // Preserve the core f64-to-u64 duration conversion.
+        return GatePayload::Duration(TimeUnits::new(duration as u64));
+    }
+    GatePayload::Angles(gate.angles.iter().copied().collect())
+}
+
 impl From<&Gate> for GateCommand {
     fn from(gate: &Gate) -> Self {
         let gate_type: GateType = gate.gate_type.into();
         let qubits: SmallVec<[QubitId; 4]> = gate.qubits.iter().copied().collect();
 
-        // Handle idle gates specially - they store duration in params
-        if gate_type == GateType::Idle
-            && let Some(&duration) = gate.params.first()
-        {
-            #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
-            // duration is a non-negative time value
-            return GateCommand::idle(qubits[0], TimeUnits::new(duration as u64));
+        let payload = gate_payload(gate);
+        if let GatePayload::Duration(duration) = payload {
+            return GateCommand::idle(qubits[0], duration);
         }
-
-        // Copy angles
-        let angles: SmallVec<[Angle64; 2]> = gate.angles.iter().copied().collect();
 
         GateCommand {
             gate_type,
             qubits,
-            angles,
+            payload,
         }
     }
 }
@@ -288,17 +292,7 @@ impl From<&CommandQueue> for TickCircuit {
                 }
                 _ => {
                     // For other gate types, add as a raw gate
-                    let angles: SmallVec<[Angle64; 3]> = cmd.angles.iter().copied().collect();
-                    let qubit_ids: SmallVec<[QubitId; 4]> =
-                        qubits.iter().map(|&q| QubitId(q)).collect();
-                    let gate = Gate {
-                        gate_type,
-                        angles,
-                        params: SmallVec::new(),
-                        qubits: qubit_ids,
-                        meas_ids: SmallVec::new(),
-                        channel: None,
-                    };
+                    let gate = crate::adapter::command_to_gate(cmd);
                     tick.try_add_gate(gate)
                         .expect("one gate per tick should not have qubit conflicts");
                 }
@@ -318,6 +312,7 @@ impl From<CommandQueue> for TickCircuit {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pecos_core::Angle64;
 
     #[test]
     fn test_gate_type_conversion_roundtrip() {
@@ -436,8 +431,8 @@ mod tests {
         let cmd: GateCommand = (&gate).into();
 
         assert_eq!(cmd.gate_type, GateType::RZ);
-        assert_eq!(cmd.angles.len(), 1);
-        assert_eq!(cmd.angles[0], Angle64::QUARTER_TURN);
+        assert_eq!(cmd.angles().len(), 1);
+        assert_eq!(cmd.angles()[0], Angle64::QUARTER_TURN);
         assert_eq!(cmd.qubits.len(), 1);
         assert_eq!(cmd.qubits[0], QubitId(0));
     }

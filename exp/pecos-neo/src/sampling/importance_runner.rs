@@ -552,7 +552,7 @@ impl<S: CliffordGateable> ImportanceSamplingRunner<S> {
             let event = NoiseEvent::before_gate(
                 command.gate_type,
                 command.qubits.as_slice(),
-                command.angles.as_slice(),
+                command.angles(),
             );
             let response = noise.emit(&event, &mut self.rng);
             let should_skip = response.should_skip_gate();

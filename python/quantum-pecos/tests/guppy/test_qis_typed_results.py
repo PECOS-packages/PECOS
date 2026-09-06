@@ -7,7 +7,7 @@ from guppylang.std.builtins import array, nat, result
 from guppylang.std.platform import exit as guppy_exit
 from guppylang.std.platform import panic
 from guppylang.std.quantum import h, measure, qubit, x
-from pecos import Guppy, sim
+from pecos import Guppy, Qis, sim
 
 
 @guppy
@@ -228,3 +228,60 @@ def test_installed_runtime_plugin_forwards_numeric_outputs() -> None:
     finally:
         register(None)
         destroy(context)
+
+
+def test_exiting_shots_release_program_allocations() -> None:
+    """Two hundred exits leave no growth in live program allocations."""
+    import ctypes
+
+    # Exercise the program allocator explicitly: fixed Guppy arrays can be
+    # lowered without heap storage, which would make this leak test vacuous.
+    allocating_exit = Qis(r"""
+        @tag = private constant [7 x i8] c"\06before"
+        @message = private constant [5 x i8] c"\04done"
+        declare ptr @heap_alloc(i64)
+        declare void @print_int(ptr, i64, i64)
+        declare void @panic(i32, ptr)
+        define void @main() {
+            %allocation = call ptr @heap_alloc(i64 4096)
+            store i64 3, ptr %allocation
+            %value = load i64, ptr %allocation
+            call void @print_int(ptr @tag, i64 6, i64 %value)
+            call void @panic(i32 3, ptr @message)
+            ret void
+        }
+    """)
+
+    # Initialize the same process-wide FFI library the simulation uses.
+    sim(Guppy(typed_results)).classical(pecos.selene_engine()).qubits(1).run(1)
+    ffi = ctypes.CDLL(None)
+    live = ffi.pecos_get_live_allocation_count
+    live.restype = ctypes.c_size_t
+    total = ffi.pecos_get_total_allocation_count
+    total.restype = ctypes.c_size_t
+    before = live()
+    allocations_before = total()
+    data = sim(allocating_exit).classical(pecos.selene_engine()).qubits(1).run(200).to_dict()
+    after = live()
+    assert data == {"before": [3] * 200}
+    assert total() - allocations_before >= 200
+    assert before == after == 0
+    print(f"Live allocations before 200 exiting shots: {before}; after: {after}")
+
+
+def test_branch_dependent_types_name_register_shot_and_types() -> None:
+    """Cross-shot type mismatches identify the register, shot index, and types."""
+
+    @guppy
+    def mixed_branches() -> None:
+        q = qubit()
+        h(q)
+        if measure(q).read():
+            result("v", True)
+        else:
+            result("v", 7)
+
+    shots = sim(Guppy(mixed_branches)).classical(pecos.selene_engine()).qubits(1).seed(42).run(32)
+    with pytest.raises(RuntimeError, match=r"Register 'v' at shot 1: expected U32, received I64") as error:
+        shots.to_dict()
+    print(str(error.value))

@@ -236,8 +236,11 @@ IMPORT_API extern void print_bool_arr_selene(const uint8_t *label_ptr, int64_t l
                                              const bool *arr_ptr, uint64_t arr_len);
 
 IMPORT_API extern void pecos_record_program_panic(int32_t code, const uint8_t *message, size_t len);
-IMPORT_API extern void pecos_set_program_panic_handler(void (*handler)(void));
+typedef void (*program_panic_handler_t)(void);
+IMPORT_API extern void pecos_set_program_panic_handler(program_panic_handler_t handler);
+IMPORT_API extern program_panic_handler_t pecos_get_program_panic_handler(void);
 IMPORT_API extern void pecos_clear_program_error(void);
+IMPORT_API extern void pecos_cleanup_program_allocations(void);
 IMPORT_API extern bool pecos_program_panic_handler_is_installed(void);
 IMPORT_API extern bool pecos_program_exited(void);
 static void pecos_program_panic_transfer(void);
@@ -363,11 +366,13 @@ EXPORT_API selene_u64_result_t selene_shot_count(SeleneInstance *instance) {
 
 EXPORT_API selene_void_result_t selene_on_shot_start(SeleneInstance *instance, uint64_t shot_index) {
     (void)instance; (void)shot_index;
+    pecos_cleanup_program_allocations();
     return SUCCESS(selene_void_result_t);
 }
 
 EXPORT_API selene_void_result_t selene_on_shot_end(SeleneInstance *instance) {
     (void)instance;
+    pecos_cleanup_program_allocations();
     return SUCCESS(selene_void_result_t);
 }
 
@@ -452,6 +457,9 @@ static void pecos_program_panic_transfer(void) {
  * 2. Calls qmain(0) to execute the quantum program
  * 3. If an error occurs and longjmp is called, we catch it and return the error code
  *
+ * Safety: nested wrappers and re-entrant FFI calls while context mutexes are
+ * held are unsupported (one jump buffer per thread, non-reentrant mutexes).
+ *
  * Returns: 0 on success, error code on failure
  */
 typedef uint64_t (*qmain_fn_t)(uint64_t);
@@ -466,6 +474,7 @@ EXPORT_API uint64_t pecos_call_qmain_with_setjmp(qmain_fn_t qmain) {
     }
 
     pecos_clear_program_error();
+    program_panic_handler_t previous_handler = pecos_get_program_panic_handler();
     int error_code = setjmp(user_program_jmpbuf);
     if (error_code == 0) {
         pecos_set_program_panic_handler(pecos_program_panic_transfer);
@@ -473,14 +482,14 @@ EXPORT_API uint64_t pecos_call_qmain_with_setjmp(qmain_fn_t qmain) {
         uint64_t result = qmain(0);
 
         // Clean up shot context
-        pecos_set_program_panic_handler(NULL);
+        pecos_set_program_panic_handler(previous_handler);
         selene_on_shot_end(&dummy_instance);
 
         return result;
     } else {
         // longjmp was called - an error occurred
         // Clean up even on error
-        pecos_set_program_panic_handler(NULL);
+        pecos_set_program_panic_handler(previous_handler);
         selene_on_shot_end(&dummy_instance);
 
         return pecos_program_exited() ? 0 : (uint64_t)error_code;
@@ -500,6 +509,9 @@ EXPORT_API uint64_t pecos_call_qmain_with_setjmp(qmain_fn_t qmain) {
  * This wrapper exists so the Rust executor can dispatch on the entry-point
  * symbol it finds and call each kind through the matching ABI.
  *
+ * Safety: nested wrappers and re-entrant FFI calls while context mutexes are
+ * held are unsupported (one jump buffer per thread, non-reentrant mutexes).
+ *
  * Returns: 0 on success, error code on failure (when longjmp is used).
  */
 typedef void (*void_main_fn_t)(void);
@@ -512,15 +524,16 @@ EXPORT_API uint64_t pecos_call_void_main_with_setjmp(void_main_fn_t main_func) {
     }
 
     pecos_clear_program_error();
+    program_panic_handler_t previous_handler = pecos_get_program_panic_handler();
     int error_code = setjmp(user_program_jmpbuf);
     if (error_code == 0) {
         pecos_set_program_panic_handler(pecos_program_panic_transfer);
         main_func();
-        pecos_set_program_panic_handler(NULL);
+        pecos_set_program_panic_handler(previous_handler);
         selene_on_shot_end(&dummy_instance);
         return 0;
     } else {
-        pecos_set_program_panic_handler(NULL);
+        pecos_set_program_panic_handler(previous_handler);
         selene_on_shot_end(&dummy_instance);
         return pecos_program_exited() ? 0 : (uint64_t)error_code;
     }

@@ -2736,6 +2736,87 @@ mod tests {
     }
 
     #[test]
+    fn wrappers_free_program_heap_on_return_exit_panic_and_invalid_input() {
+        let _env_lock = ENV_MUTEX.lock().expect("environment lock");
+        let ffi = QisHeliosInterface::get_qis_ffi_lib_singleton().expect("FFI library");
+        let freed: Symbol<unsafe extern "C" fn() -> usize> = unsafe {
+            ffi.get(b"pecos_get_context_allocation_free_count\0")
+                .expect("free counter")
+        };
+        let live: Symbol<unsafe extern "C" fn() -> usize> = unsafe {
+            ffi.get(b"pecos_get_live_allocation_count\0")
+                .expect("live counter")
+        };
+        for (entry, return_type, args, return_value) in [
+            ("qmain", "i64", "i64 %arg", "i64 0"),
+            ("main", "void", "", "void"),
+        ] {
+            for (body, expected_error) in [
+                ("call void @heap_free(ptr %first)", None),
+                ("call void @panic(i32 3, ptr @message)", None),
+                ("call void @panic(i32 1001, ptr @message)", Some("done")),
+                ("%bad = call ptr @heap_alloc(i64 -1)", Some("heap_alloc")),
+                (
+                    "call void @print_float_arr_selene(ptr @tag, i64 1, ptr %first, i64 9223372036854775807)",
+                    Some("print_float_arr_selene"),
+                ),
+                (
+                    "call void @pecos_record_program_panic(i32 1001, ptr @tag, i64 -1)",
+                    Some("pecos_record_program_panic"),
+                ),
+                (
+                    "call void @__quantum__qis__h__body(i64 -1)",
+                    Some("__quantum__qis__h__body"),
+                ),
+            ] {
+                let mut interface = QisHeliosInterface::new();
+                let program = format!(
+                    r#"
+                    @message = private constant [5 x i8] c"\04done"
+                    @tag = private constant [1 x i8] c"x"
+                    declare ptr @heap_alloc(i64)
+                    declare void @heap_free(ptr)
+                    declare void @panic(i32, ptr)
+                    declare void @print_float_arr_selene(ptr, i64, ptr, i64)
+                    declare void @pecos_record_program_panic(i32, ptr, i64)
+                    declare void @__quantum__qis__h__body(i64)
+                    define {return_type} @{entry}({args}) {{
+                        %first = call ptr @heap_alloc(i64 64)
+                        %second = call ptr @heap_alloc(i64 128)
+                        {body}
+                        ret {return_value}
+                    }}
+                "#
+                );
+                interface
+                    .load_program(program.as_bytes(), ProgramFormat::LlvmIrText)
+                    .expect("load program");
+                interface.execution_context = Some(
+                    QisHeliosInterface::create_execution_context(ffi.inner()).expect("context"),
+                );
+                let live_before = unsafe { live() };
+                let result = interface.collect_operations();
+                if let Some(expected) = expected_error {
+                    let message = result
+                        .expect_err("invalid input or panic must fail")
+                        .to_string();
+                    assert!(message.contains(expected), "{message}");
+                } else {
+                    result.expect("normal return or exit");
+                }
+                assert_eq!(
+                    unsafe { freed() },
+                    2,
+                    "both allocations must actually be freed"
+                );
+                assert_eq!(unsafe { live() }, live_before);
+                // Free the test's context during normal execution, before TLS teardown.
+                drop(interface.execution_context.take());
+            }
+        }
+    }
+
+    #[test]
     fn program_termination_ranges_and_next_execution_succeed() {
         let _env_lock = ENV_MUTEX.lock().expect("environment lock");
         for (entry, return_type, args, return_value) in [

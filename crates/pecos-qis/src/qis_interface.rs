@@ -328,7 +328,8 @@ pub trait DynamicSyncHandle: Send + Sync {
     /// Get named result provenance from the execution context.
     ///
     /// Returns one record per nonempty bool output or integer call containing only 0/1,
-    /// including the runtime measurement result IDs read to produce that output.
+    /// Only real bool calls attach runtime measurement result IDs; integer
+    /// detector traces have empty IDs and leave pending reads for bool calls.
     ///
     /// # Errors
     /// Returns an error if the FFI call fails or JSON parsing fails.

@@ -107,6 +107,7 @@ pub enum ProgramError {
     Exit { code: i32, message: String },
     Panic { code: i32, message: String },
     NamedResult(String),
+    InvalidInput { entry: String, detail: String },
 }
 
 impl std::fmt::Display for ProgramError {
@@ -119,6 +120,9 @@ impl std::fmt::Display for ProgramError {
                 write!(f, "QIS program panic: code={code}, message={message}")
             }
             Self::NamedResult(message) => f.write_str(message),
+            Self::InvalidInput { entry, detail } => {
+                write!(f, "QIS invalid FFI input in {entry}: {detail}")
+            }
         }
     }
 }

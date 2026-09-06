@@ -128,7 +128,8 @@ macro_rules! test_exports {
             }
             assert_eq!(json_results()["empty"], NamedResult::$variant(vec![]));
             // A bool call always traces, so an empty bool array adds one
-            // zero-length trace per call (as on `dev`); other types add none.
+            // zero-length trace per call; other types add none. Accepting null
+            // data here is the documented exception to dev bool compatibility.
             let mut expected_traces = traces_before;
             if matches!(NamedResult::$variant(vec![]), NamedResult::Bool(_)) {
                 for _ in 0..2 {
@@ -262,7 +263,7 @@ macro_rules! integer_detector_trace_test {
                     vec![NamedResultTrace {
                         name: "i".to_string(),
                         values: vec![false],
-                        result_ids: vec![10],
+                        result_ids: vec![],
                     }]
                 );
                 let values: [$ty; 2] = [0, 1];
@@ -272,8 +273,7 @@ macro_rules! integer_detector_trace_test {
                     data: values.as_ptr(),
                     mask: std::ptr::null(),
                 };
-                ctx.record_result_read(11);
-                ctx.record_result_read(12);
+                assert_eq!(*ctx.pending_result_reads.lock().expect("reads"), vec![10]);
                 unsafe {
                     if selene {
                         $selene_array(label.as_ptr(), 1, values.as_ptr(), 2);
@@ -286,7 +286,7 @@ macro_rules! integer_detector_trace_test {
                     NamedResultTrace {
                         name: "i".to_string(),
                         values: vec![false, true],
-                        result_ids: vec![11, 12],
+                        result_ids: vec![],
                     }
                 );
                 // Bool output appends to the declared integer storage under the same tag.
@@ -317,12 +317,12 @@ macro_rules! integer_detector_trace_test {
                 assert_eq!(json_results()["i"], NamedResult::$variant(vec![7, 0, 7]));
                 assert!(ctx.get_named_result_traces().is_empty());
                 assert_eq!(*ctx.pending_result_reads.lock().expect("reads"), vec![13]);
-                // A later detector call keeps numeric storage and consumes the pending read.
+                // An integer detector trace leaves the pending read for a real bool.
                 unsafe { scalar(label.as_ptr(), 1, 1) };
                 assert!(ctx.program_error.lock().expect("error").is_none());
                 assert_eq!(json_results()["i"], NamedResult::$variant(vec![7, 0, 7, 1]));
-                assert_eq!(ctx.get_named_result_traces()[0].result_ids, vec![13]);
-                assert!(ctx.pending_result_reads.lock().expect("reads").is_empty());
+                assert!(ctx.get_named_result_traces()[0].result_ids.is_empty());
+                assert_eq!(*ctx.pending_result_reads.lock().expect("reads"), vec![13]);
 
                 ctx.reset();
                 ctx.record_result_read(17);
@@ -341,7 +341,7 @@ macro_rules! integer_detector_trace_test {
                         NamedResultTrace {
                             name: "i".to_string(),
                             values: vec![false],
-                            result_ids: vec![18]
+                            result_ids: vec![]
                         },
                     ]
                 );
@@ -514,6 +514,44 @@ fn panic_decodes_length_prefixed_message_and_clears_at_shot_start() {
 }
 
 #[test]
+fn panic_decodes_guppy_division_by_zero_constant() {
+    let registered = RegisteredContext::new();
+    // Exactly the [33 x i8] constant emitted by Guppylang: 0x20 + 32 bytes.
+    let message: &[u8; 33] = b"\x20EXIT:INT:Attempted division by 0";
+    unsafe { panic(1002, message.as_ptr().cast()) };
+    assert_eq!(
+        *registered
+            .context()
+            .program_error
+            .lock()
+            .expect("error lock"),
+        Some(ProgramError::Panic {
+            code: 1002,
+            message: "EXIT:INT:Attempted division by 0".to_string(),
+        })
+    );
+}
+
+#[test]
+fn inner_handler_scope_restores_outer_handler() {
+    unsafe extern "C" fn outer_handler() {}
+    unsafe extern "C" fn inner_handler() {}
+
+    let original = pecos_get_program_panic_handler();
+    unsafe { pecos_set_program_panic_handler(Some(outer_handler)) };
+    // The same save/install/restore sequence used by both C wrappers.
+    let previous = pecos_get_program_panic_handler();
+    unsafe { pecos_set_program_panic_handler(Some(inner_handler)) };
+    unsafe { pecos_set_program_panic_handler(previous) };
+    let restored = pecos_get_program_panic_handler();
+    unsafe { pecos_set_program_panic_handler(original) };
+    assert!(std::ptr::fn_addr_eq(
+        restored.expect("outer handler restored"),
+        outer_handler as unsafe extern "C" fn(),
+    ));
+}
+
+#[test]
 fn collection_reset_clears_reads_and_preserves_operation_reset_semantics() {
     let registered = RegisteredContext::new();
     let ctx = registered.context();
@@ -619,4 +657,115 @@ fn declared_types_widen_only_between_bool_and_integers() {
             }
         }
     }
+}
+
+#[test]
+fn integer_diagnostic_preserves_bool_provenance() {
+    for selene in [false, true] {
+        for unsigned in [false, true] {
+            let registered = RegisteredContext::new();
+            reset_interface();
+            with_interface(|interface| interface.store_result(0, true));
+            let m = unsafe { ___read_future_bool(0) };
+            unsafe {
+                match (selene, unsigned) {
+                    (false, false) => print_int(b"\x04diag".as_ptr(), 4, i64::from(m)),
+                    (false, true) => print_uint(b"\x04diag".as_ptr(), 4, u64::from(m)),
+                    (true, false) => print_int_selene(b"diag".as_ptr(), 4, i64::from(m)),
+                    (true, true) => print_uint_selene(b"diag".as_ptr(), 4, u64::from(m)),
+                }
+                print_bool_selene(b"a".as_ptr(), 1, m);
+            }
+            let json = serde_json::to_string(&registered.context().get_named_result_traces())
+                .expect("trace JSON");
+            assert_eq!(
+                json,
+                r#"[{"name":"diag","values":[true],"result_ids":[]},{"name":"a","values":[true],"result_ids":[0]}]"#
+            );
+            println!("{json}");
+        }
+    }
+}
+
+#[test]
+fn shot_cleanup_frees_live_allocations_after_exit() {
+    let registered = RegisteredContext::new();
+    let ctx = registered.context();
+    let first = unsafe { heap_alloc(64) };
+    let second = unsafe { heap_alloc(128) };
+    assert!(!first.is_null() && !second.is_null());
+    assert_eq!(
+        ctx.program_allocations.lock().expect("allocations").len(),
+        2
+    );
+    unsafe { heap_free(first) };
+    assert_eq!(ctx.program_allocation_frees.load(Ordering::SeqCst), 1);
+    unsafe { panic(3, b"\x04done".as_ptr().cast()) };
+    assert!(pecos_program_exited());
+    pecos_cleanup_program_allocations();
+    assert!(
+        ctx.program_allocations
+            .lock()
+            .expect("allocations")
+            .is_empty()
+    );
+    assert_eq!(ctx.program_allocation_frees.load(Ordering::SeqCst), 2);
+    pecos_cleanup_program_allocations();
+    assert_eq!(ctx.program_allocation_frees.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn invalid_inputs_without_handler_record_and_return() {
+    let registered = RegisteredContext::new();
+    let ctx = registered.context();
+    assert!(unsafe { heap_alloc(u64::MAX) }.is_null());
+    assert!(
+        ctx.program_error
+            .lock()
+            .expect("error")
+            .as_ref()
+            .expect("invalid input")
+            .to_string()
+            .contains("heap_alloc")
+    );
+    ctx.reset();
+    unsafe {
+        print_float_arr_selene(
+            b"f".as_ptr(),
+            1,
+            std::ptr::NonNull::<f64>::dangling().as_ptr(),
+            u64::MAX,
+        );
+    };
+    assert!(
+        ctx.program_error
+            .lock()
+            .expect("error")
+            .as_ref()
+            .expect("invalid input")
+            .to_string()
+            .contains("print_float_arr_selene")
+    );
+    ctx.reset();
+    unsafe { pecos_record_program_panic(1001, b"x".as_ptr(), usize::MAX) };
+    assert!(
+        ctx.program_error
+            .lock()
+            .expect("error")
+            .as_ref()
+            .expect("invalid input")
+            .to_string()
+            .contains("pecos_record_program_panic")
+    );
+    ctx.reset();
+    unsafe { __quantum__qis__h__body(-1) };
+    assert!(
+        ctx.program_error
+            .lock()
+            .expect("error")
+            .as_ref()
+            .expect("invalid input")
+            .to_string()
+            .contains("__quantum__qis__h__body")
+    );
 }

@@ -570,7 +570,7 @@ mod tests {
         let cmd = gate_to_command(&gate).expect("should convert");
         assert_eq!(cmd.gate_type, NeoGateType::RZ);
         assert_eq!(cmd.qubits.as_slice(), &[QubitId(0)]);
-        assert_eq!(cmd.angles.len(), 1);
+        assert_eq!(cmd.angles().len(), 1);
     }
 
     #[test]

@@ -595,7 +595,7 @@ impl<S: CliffordGateable> ImportanceSamplingRunner<S> {
             let event = NoiseEvent::before_gate(
                 command.gate_type,
                 command.qubits.as_slice(),
-                command.angles.as_slice(),
+                command.angles(),
             );
             let response = noise.emit(&event, &mut self.rng);
             let should_skip = response.should_skip_gate();
@@ -661,7 +661,7 @@ impl<S: CliffordGateable> ImportanceSamplingRunner<S> {
     /// Panics if the simulator cannot execute the injected gate. Configuration
     /// validation should make this unreachable for declared noise mechanisms.
     fn execute_noise_gate(&mut self, gate: &GateCommand) {
-        if let Err(error) = crate::runner::validate_angle_arity(gate.gate_type, &gate.angles) {
+        if let Err(error) = crate::runner::validate_angle_arity(gate.gate_type, gate.angles()) {
             panic!("ImportanceSamplingRunner invariant violated: injected noise {error}");
         }
         let arity = gate.gate_type.quantum_arity();
@@ -672,6 +672,9 @@ impl<S: CliffordGateable> ImportanceSamplingRunner<S> {
             gate.gate_type,
             gate.qubits.len()
         );
+        if let Err(error) = gate.validate() {
+            panic!("ImportanceSamplingRunner invariant violated: injected noise {error}");
+        }
         assert!(
             self.execute_clifford_gate(gate),
             "ImportanceSamplingRunner invariant violated: injected noise gate {:?} could not be \
@@ -1524,5 +1527,12 @@ mod tests {
                 "Weight should be 1 for deterministic measurement"
             );
         }
+    }
+    #[test]
+    #[should_panic(expected = "only an Idle command can carry a duration payload")]
+    fn injected_noise_rejects_duration_on_fixed_gate() {
+        let mut gate = GateCommand::h(QubitId(0));
+        gate.payload = crate::command::GatePayload::Duration(pecos_core::TimeUnits::new(23));
+        ImportanceSamplingRunner::new(SparseStab::with_seed(1, 42)).execute_noise_gate(&gate);
     }
 }

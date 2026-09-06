@@ -36,9 +36,9 @@
 //! let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
 //! ```
 
-use crate::command::{CommandQueue, GateCommand, GateCommandError, GateType};
+use crate::command::{CommandQueue, GateCommand, GateCommandError, GatePayload, GateType};
 use pecos_core::gate_type::GateType as CoreGateType;
-use pecos_core::{Angle64, Gate, MeasId, QubitId};
+use pecos_core::{Angle64, Gate, MeasId, QubitId, TimeUnits};
 use pecos_quantum::{DagCircuit, TickCircuit, TickGateError};
 use smallvec::SmallVec;
 use std::fmt;
@@ -254,11 +254,11 @@ impl TryFrom<&Gate> for GateCommand {
             let duration = gate.params[0];
             let duration = exact_nonnegative_f64_to_u64(duration)
                 .ok_or(CircuitConversionError::InvalidCoreIdleDuration { duration })?;
-            return Ok(GateCommand::with_angles(
-                GateType::Idle,
+            return Ok(GateCommand {
+                gate_type,
                 qubits,
-                smallvec::smallvec![Angle64::new(duration)],
-            ));
+                payload: GatePayload::Duration(TimeUnits::new(duration)),
+            });
         }
 
         let angles: SmallVec<[Angle64; 2]> = gate.angles.iter().copied().collect();
@@ -266,7 +266,7 @@ impl TryFrom<&Gate> for GateCommand {
         Ok(GateCommand {
             gate_type,
             qubits,
-            angles,
+            payload: GatePayload::Angles(angles),
         })
     }
 }
@@ -560,8 +560,8 @@ mod tests {
         let cmd = GateCommand::try_from(&gate).expect("gate should convert");
 
         assert_eq!(cmd.gate_type, GateType::RZ);
-        assert_eq!(cmd.angles.len(), 1);
-        assert_eq!(cmd.angles[0], Angle64::QUARTER_TURN);
+        assert_eq!(cmd.angles().len(), 1);
+        assert_eq!(cmd.angles()[0], Angle64::QUARTER_TURN);
         assert_eq!(cmd.qubits.len(), 1);
         assert_eq!(cmd.qubits[0], QubitId(0));
     }

@@ -1479,17 +1479,8 @@ impl PySimNeoBuilder {
 fn commands_to_gates(
     commands: &pecos_neo::command::CommandQueue,
 ) -> PyResult<Vec<pecos_core::Gate>> {
-    commands
-        .iter()
-        .map(|cmd| {
-            let qubits: Vec<_> = cmd.qubits.iter().copied().collect();
-            let angles: Vec<_> = cmd.angles.iter().copied().collect();
-            // Convert pecos_neo::GateType to pecos_core::GateType
-            let gate_type: pecos_core::gate_type::GateType = cmd.gate_type.into();
-            Gate::try_new(gate_type, angles, Vec::<f64>::new(), qubits)
-                .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))
-        })
-        .collect()
+    pecos_neo::adapter::command_queue_to_gates(commands)
+        .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))
 }
 
 // ============================================================================

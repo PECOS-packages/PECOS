@@ -226,3 +226,25 @@ fn malformed_idle_payload_is_not_hidden_by_angle_classification() {
         assert!(command_queue_to_gates(&queue).is_err());
     }
 }
+
+#[test]
+fn duration_payload_on_non_idle_gate_is_rejected_at_boundaries() {
+    use pecos_neo::GatePayload;
+
+    for gate_type in [GateType::H, GateType::RZ] {
+        let command = GateCommand {
+            gate_type,
+            qubits: vec![QubitId(0)].into(),
+            payload: GatePayload::Duration(TimeUnits::new(23)),
+        };
+        let queue = CommandBuilder::new().gate(command).build();
+        assert!(queue.validate_for_execution().is_err());
+        assert!(!is_clifford_circuit(&queue));
+        assert!(command_queue_to_gates(&queue).is_err());
+        assert!(
+            CircuitRunner::<SparseStab>::new()
+                .apply_circuit(&mut SparseStab::with_seed(1, 42), &queue)
+                .is_err()
+        );
+    }
+}

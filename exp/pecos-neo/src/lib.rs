@@ -149,7 +149,6 @@ pub mod adapter;
 pub mod circuit;
 pub mod command;
 pub mod ecs;
-pub mod engines;
 pub mod extensible;
 pub mod inline_channel;
 pub mod noise;
@@ -163,9 +162,8 @@ pub mod tool;
 pub use circuit::CircuitConversionError;
 pub use command::{
     CommandBuilder, CommandQueue, GateCommand, GateCommandAngleArityError, GateCommandError,
-    GateType,
+    GatePayload, GateType,
 };
-pub use engines::{CommandQueueEngine, DagCircuitEngine, TickCircuitEngine};
 pub use extensible::{
     AdaptedGate,
     // Extended operations for stabilizer measurements/preparations
@@ -271,7 +269,7 @@ pub mod prelude {
     pub use crate::circuit::CircuitConversionError;
     pub use crate::command::{
         CommandBuilder, CommandQueue, GateCommand, GateCommandAngleArityError, GateCommandError,
-        GateType,
+        GatePayload, GateType,
     };
     pub use crate::extensible::{
         // Extended operations

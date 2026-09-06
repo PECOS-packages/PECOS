@@ -679,7 +679,7 @@ pub(crate) fn validate_angle_arity(
     gate: GateType,
     angles: &[Angle64],
 ) -> Result<(), ExecutionError> {
-    let expected = gate.payload_arity();
+    let expected = gate.angle_arity();
     if angles.len() != expected {
         return Err(ExecutionError::AngleArity {
             gate,
@@ -1251,7 +1251,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         sim: &mut S,
         command: &GateCommand,
     ) -> Result<(), ExecutionError> {
-        validate_angle_arity(command.gate_type, command.angles.as_slice())?;
+        validate_angle_arity(command.gate_type, command.angles())?;
         command.validate().map_err(ExecutionError::InvalidCommand)?;
         let qubits = command.qubits.as_slice();
 
@@ -1286,7 +1286,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
                     gate_id,
                     command.gate_type,
                     qubits,
-                    command.angles.as_slice(),
+                    command.angles(),
                 );
                 if skip {
                     // Still emit after-gate for channels that want to inject errors
@@ -1295,7 +1295,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
                         gate_id,
                         command.gate_type,
                         qubits,
-                        command.angles.as_slice(),
+                        command.angles(),
                     );
                     return Ok(());
                 }
@@ -1307,30 +1307,24 @@ impl<S: CliffordGateable> CircuitRunner<S> {
                 // angles too (see execute_gate for the rationale).
                 let mut rotation_attempt = CliffordRotationAttempt::NotARotation;
                 let mut executed =
-                    self.try_execute_override(sim, gate_id, qubits, command.angles.as_slice())
+                    self.try_execute_override(sim, gate_id, qubits, command.angles())
                         || Self::try_execute_clifford(sim, gate_id, qubits)
                         || self.rotation_executor.is_some_and(|executor| {
-                            executor(sim, gate_id, command.angles.as_slice(), qubits)
+                            executor(sim, gate_id, command.angles(), qubits)
                         });
                 if !executed && !self.definitions.has_decomposition(gate_id) {
                     rotation_attempt = Self::try_execute_clifford_rotation(
                         sim,
                         gate_id,
                         qubits,
-                        command.angles.as_slice(),
+                        command.angles(),
                     )?;
                     executed = rotation_attempt == CliffordRotationAttempt::Executed;
                 }
 
                 if !executed {
-                    self.execute_via_decomposition(
-                        sim,
-                        gate_id,
-                        qubits,
-                        command.angles.as_slice(),
-                        0,
-                    )
-                    .map_err(|e| upgrade_rotation_error(e, rotation_attempt))?;
+                    self.execute_via_decomposition(sim, gate_id, qubits, command.angles(), 0)
+                        .map_err(|e| upgrade_rotation_error(e, rotation_attempt))?;
                 }
 
                 self.dispatch_after_gate_for_id(
@@ -1338,7 +1332,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
                     gate_id,
                     command.gate_type,
                     qubits,
-                    command.angles.as_slice(),
+                    command.angles(),
                 );
             }
         }
@@ -1847,7 +1841,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         DispatchContext {
             gate_type: command.gate_type,
             qubits: command.qubits.as_slice(),
-            angles: command.angles.as_slice(),
+            angles: command.angles(),
             gate_id: Some(command.gate_type.to_gate_id()),
             outcomes: None,
             duration: None,
@@ -1966,7 +1960,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         let ctx = DispatchContext {
             gate_type: command.gate_type,
             qubits,
-            angles: command.angles.as_slice(),
+            angles: command.angles(),
             gate_id: Some(command.gate_type.to_gate_id()),
             outcomes: Some(outcomes),
             duration: None,
@@ -2010,7 +2004,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         let ctx = DispatchContext {
             gate_type: command.gate_type,
             qubits,
-            angles: command.angles.as_slice(),
+            angles: command.angles(),
             gate_id: None,
             outcomes: None,
             duration: Some(duration),
@@ -2336,7 +2330,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
     /// number of angles. Configuration validation should make this unreachable
     /// for declared noise mechanisms.
     fn execute_noise_gate(&self, sim: &mut S, gate: &GateCommand) {
-        if let Err(error) = validate_angle_arity(gate.gate_type, gate.angles.as_slice()) {
+        if let Err(error) = validate_angle_arity(gate.gate_type, gate.angles()) {
             panic!("CircuitRunner invariant violated: injected noise {error}");
         }
         let qubits = gate.qubits.as_slice();
@@ -2348,12 +2342,15 @@ impl<S: CliffordGateable> CircuitRunner<S> {
             gate.gate_type,
             qubits.len()
         );
+        if let Err(error) = gate.validate() {
+            panic!("CircuitRunner invariant violated: injected noise {error}");
+        }
         let gate_id = GateId::from(gate.gate_type);
         let executed = (gate.gate_type != GateType::Idle
             && Self::try_execute_clifford(sim, gate_id, qubits))
             || self
                 .rotation_executor
-                .is_some_and(|executor| executor(sim, gate_id, gate.angles.as_slice(), qubits));
+                .is_some_and(|executor| executor(sim, gate_id, gate.angles(), qubits));
 
         assert!(
             executed,
@@ -3757,5 +3754,13 @@ mod tests {
                 );
             }
         }
+    }
+    #[test]
+    #[should_panic(expected = "only an Idle command can carry a duration payload")]
+    fn injected_noise_rejects_duration_on_fixed_gate() {
+        let mut gate = GateCommand::h(QubitId(0));
+        gate.payload = crate::command::GatePayload::Duration(pecos_core::TimeUnits::new(23));
+        CircuitRunner::<SparseStab>::new()
+            .execute_noise_gate(&mut SparseStab::with_seed(1, 42), &gate);
     }
 }

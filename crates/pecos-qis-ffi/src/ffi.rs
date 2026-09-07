@@ -10,7 +10,7 @@ use std::cell::Cell;
 
 /// C ABI return value for helpers that consume and return two qubits.
 #[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct QubitPair {
     pub first: i64,
     pub second: i64,
@@ -28,61 +28,92 @@ thread_local! {
 /// "repeat until success" patterns.
 const MAX_COLLECTION_READS: u32 = 100;
 
-/// Helper to convert i64 to usize
-#[inline]
-fn i64_to_usize(value: i64) -> usize {
-    usize::try_from(value).expect("Invalid ID: value must be non-negative and fit in usize")
+// Validate IDs before borrowing the interface. A transfer must never skip a
+// live RefMut/MutexGuard. With no handler, return the ABI's zero/empty value.
+macro_rules! checked_ffi_id {
+    ($entry:expr, $value:expr, $ty:ty) => {
+        match <$ty>::try_from($value) {
+            Ok(value) => value,
+            Err(_) => {
+                unsafe {
+                    fatal_ffi_input(
+                        $entry,
+                        format!("ID={} cannot be represented as {}", $value, stringify!($ty)),
+                    )
+                };
+                return Default::default();
+            }
+        }
+    };
 }
 
 const PACKED_TRACE_METADATA_JSON_KEY: &str = "__pecos_trace_metadata_json_v1__";
 
-unsafe fn read_tket_string_arg(
+unsafe fn read_tket_string_arg<'a>(
     func_name: &str,
     arg_name: &str,
     ptr: *const u8,
     len: i64,
-) -> Option<String> {
+) -> Option<&'a str> {
     let Ok(len) = usize::try_from(len) else {
-        log::error!("{func_name}: invalid {arg_name} length {len}");
+        unsafe { fatal_ffi_input(func_name, format!("{arg_name} length={len}")) };
         return None;
     };
     if ptr.is_null() {
-        log::error!("{func_name}: null {arg_name} pointer");
+        unsafe { fatal_ffi_input(func_name, format!("{arg_name} pointer=null, length={len}")) };
         return None;
     }
 
+    if len > isize::MAX as usize {
+        unsafe {
+            fatal_ffi_input(
+                func_name,
+                format!("{arg_name} length={len} exceeds isize::MAX"),
+            );
+        };
+        return None;
+    }
     // The tket2 string format is: {len: u8, data: [u8; len]}.
     // The pointer references the length byte, so skip it to read the payload.
     let data_ptr = unsafe { ptr.add(1) };
     let bytes = unsafe { std::slice::from_raw_parts(data_ptr, len) };
     if let Ok(value) = std::str::from_utf8(bytes) {
-        Some(value.to_string())
+        Some(value)
     } else {
-        log::error!("{func_name}: invalid UTF-8 in {arg_name}");
+        unsafe { fatal_ffi_input(func_name, format!("invalid UTF-8 in {arg_name}: {bytes:?}")) };
         None
     }
 }
 
-unsafe fn read_direct_string_arg(
+unsafe fn read_direct_string_arg<'a>(
     func_name: &str,
     arg_name: &str,
     ptr: *const u8,
     len: i64,
-) -> Option<String> {
+) -> Option<&'a str> {
     let Ok(len) = usize::try_from(len) else {
-        log::error!("{func_name}: invalid {arg_name} length {len}");
+        unsafe { fatal_ffi_input(func_name, format!("{arg_name} length={len}")) };
         return None;
     };
     if ptr.is_null() {
-        log::error!("{func_name}: null {arg_name} pointer");
+        unsafe { fatal_ffi_input(func_name, format!("{arg_name} pointer=null, length={len}")) };
         return None;
     }
 
+    if len > isize::MAX as usize {
+        unsafe {
+            fatal_ffi_input(
+                func_name,
+                format!("{arg_name} length={len} exceeds isize::MAX"),
+            );
+        };
+        return None;
+    }
     let bytes = unsafe { std::slice::from_raw_parts(ptr, len) };
     if let Ok(value) = std::str::from_utf8(bytes) {
-        Some(value.to_string())
+        Some(value)
     } else {
-        log::error!("{func_name}: invalid UTF-8 in {arg_name}");
+        unsafe { fatal_ffi_input(func_name, format!("invalid UTF-8 in {arg_name}: {bytes:?}")) };
         None
     }
 }
@@ -99,7 +130,7 @@ macro_rules! ffi_gate_1q {
         /// Called from C/LLVM code. Qubit must be a valid non-negative ID.
         #[unsafe(no_mangle)]
         pub unsafe extern "C" fn $name(qubit: i64) {
-            let qubit_id = i64_to_usize(qubit);
+            let qubit_id = checked_ffi_id!(stringify!($name), qubit, usize);
             with_interface(|interface| {
                 interface.queue_operation(QuantumOp::$op(qubit_id).into());
             });
@@ -114,8 +145,8 @@ macro_rules! ffi_gate_2q {
         /// Called from C/LLVM code. Qubit IDs must be valid non-negative values.
         #[unsafe(no_mangle)]
         pub unsafe extern "C" fn $name(q1: i64, q2: i64) {
-            let q1_id = i64_to_usize(q1);
-            let q2_id = i64_to_usize(q2);
+            let q1_id = checked_ffi_id!(stringify!($name), q1, usize);
+            let q2_id = checked_ffi_id!(stringify!($name), q2, usize);
             with_interface(|interface| {
                 interface.queue_operation(QuantumOp::$op(q1_id, q2_id).into());
             });
@@ -130,9 +161,9 @@ macro_rules! ffi_gate_3q {
         /// Called from C/LLVM code. Qubit IDs must be valid non-negative values.
         #[unsafe(no_mangle)]
         pub unsafe extern "C" fn $name(q1: i64, q2: i64, q3: i64) {
-            let q1_id = i64_to_usize(q1);
-            let q2_id = i64_to_usize(q2);
-            let q3_id = i64_to_usize(q3);
+            let q1_id = checked_ffi_id!(stringify!($name), q1, usize);
+            let q2_id = checked_ffi_id!(stringify!($name), q2, usize);
+            let q3_id = checked_ffi_id!(stringify!($name), q3, usize);
             with_interface(|interface| {
                 interface.queue_operation(QuantumOp::$op(q1_id, q2_id, q3_id).into());
             });
@@ -147,7 +178,7 @@ macro_rules! ffi_gate_rot_1q {
         /// Called from C/LLVM code. Qubit must be a valid non-negative ID.
         #[unsafe(no_mangle)]
         pub unsafe extern "C" fn $name(theta: f64, qubit: i64) {
-            let qubit_id = i64_to_usize(qubit);
+            let qubit_id = checked_ffi_id!(stringify!($name), qubit, usize);
             with_interface(|interface| {
                 interface.queue_operation(QuantumOp::$op(theta, qubit_id).into());
             });
@@ -162,8 +193,8 @@ macro_rules! ffi_gate_rot_2q {
         /// Called from C/LLVM code. Qubit IDs must be valid non-negative values.
         #[unsafe(no_mangle)]
         pub unsafe extern "C" fn $name(theta: f64, q1: i64, q2: i64) {
-            let q1_id = i64_to_usize(q1);
-            let q2_id = i64_to_usize(q2);
+            let q1_id = checked_ffi_id!(stringify!($name), q1, usize);
+            let q2_id = checked_ffi_id!(stringify!($name), q2, usize);
             with_interface(|interface| {
                 interface.queue_operation(QuantumOp::$op(theta, q1_id, q2_id).into());
             });
@@ -177,11 +208,11 @@ macro_rules! ffi_gate_rot_2q {
 ///
 /// # Safety
 /// This function is safe to call from C/LLVM code. The qubit parameter must be a valid
-/// non-negative qubit ID that fits in usize. Invalid IDs will cause a panic.
+/// non-negative qubit ID that fits in usize. Invalid IDs produce a program error.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn __quantum__qis__h__body(qubit: i64) {
     debug!("[FFI] __quantum__qis__h__body called with qubit={qubit}");
-    let qubit_id = i64_to_usize(qubit);
+    let qubit_id = checked_ffi_id!(stringify!(__quantum__qis__h__body), qubit, usize);
     with_interface(|interface| {
         debug!("[FFI] H gate: queuing operation for qubit {qubit_id}");
         interface.queue_operation(QuantumOp::H(qubit_id).into());
@@ -197,11 +228,11 @@ pub unsafe extern "C" fn __quantum__qis__h__body(qubit: i64) {
 ///
 /// # Safety
 /// This function is safe to call from C/LLVM code. The qubit parameter must be a valid
-/// non-negative qubit ID that fits in usize. Invalid IDs will cause a panic.
+/// non-negative qubit ID that fits in usize. Invalid IDs produce a program error.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn __quantum__qis__x__body(qubit: i64) {
     debug!("[FFI] __quantum__qis__x__body called with qubit={qubit}");
-    let qubit_id = i64_to_usize(qubit);
+    let qubit_id = checked_ffi_id!(stringify!(__quantum__qis__x__body), qubit, usize);
     with_interface(|interface| {
         debug!("[FFI] X gate: queuing operation for qubit {qubit_id}");
         interface.queue_operation(QuantumOp::X(qubit_id).into());
@@ -242,7 +273,7 @@ ffi_gate_rot_2q!(__quantum__qis__rzz__body, RZZ);
 /// Called from C/LLVM code. Qubit must be a valid non-negative ID.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn __quantum__qis__r1xy__body(theta: f64, phi: f64, qubit: i64) {
-    let qubit_id = i64_to_usize(qubit);
+    let qubit_id = checked_ffi_id!(stringify!(__quantum__qis__r1xy__body), qubit, usize);
     with_interface(|interface| {
         interface.queue_operation(QuantumOp::RXY(theta, phi, qubit_id).into());
     });
@@ -264,11 +295,11 @@ ffi_gate_2q!(__quantum__qis__zz__body, ZZ);
 ///
 /// # Safety
 /// This function is safe to call from C/LLVM code. The qubit and result parameters must be valid
-/// non-negative IDs that fit in usize. Invalid IDs will cause a panic.
+/// non-negative IDs that fit in usize. Invalid IDs produce a program error.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn __quantum__qis__m__body(qubit: i64, result: i64) -> i32 {
-    let qubit_id = i64_to_usize(qubit);
-    let result_id = i64_to_usize(result);
+    let qubit_id = checked_ffi_id!(stringify!(__quantum__qis__m__body), qubit, usize);
+    let result_id = checked_ffi_id!(stringify!(__quantum__qis__m__body), result, usize);
     with_interface(|interface| {
         interface.queue_operation(QuantumOp::Measure(qubit_id, result_id).into());
     });
@@ -284,26 +315,24 @@ ffi_gate_1q!(__quantum__qis__reset__body, Reset);
 ///
 /// # Safety
 /// This function is safe to call from C/LLVM code.
-///
-/// # Panics
-/// Panics if the allocated qubit ID is too large to fit in i64.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn __quantum__rt__qubit_allocate() -> i64 {
-    with_interface(|interface| {
+    let allocated_id = with_interface(|interface| {
         let id = interface.allocate_qubit();
         interface.queue_operation(Operation::AllocateQubit { id });
-        i64::try_from(id).expect("Qubit ID too large for i64")
-    })
+        id
+    });
+    checked_ffi_id!("__quantum__rt__qubit_allocate", allocated_id, i64)
 }
 
 /// Release (deallocate) a qubit
 ///
 /// # Safety
 /// This function is safe to call from C/LLVM code. The qubit parameter must be a valid
-/// non-negative qubit ID that fits in usize. Invalid IDs will cause a panic.
+/// non-negative qubit ID that fits in usize. Invalid IDs produce a program error.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn __quantum__rt__qubit_release(qubit: i64) {
-    let qubit_id = i64_to_usize(qubit);
+    let qubit_id = checked_ffi_id!(stringify!(__quantum__rt__qubit_release), qubit, usize);
     with_interface(|interface| {
         interface.queue_operation(Operation::ReleaseQubit { id: qubit_id });
     });
@@ -313,16 +342,14 @@ pub unsafe extern "C" fn __quantum__rt__qubit_release(qubit: i64) {
 ///
 /// # Safety
 /// This function is safe to call from C/LLVM code.
-///
-/// # Panics
-/// Panics if the allocated result ID is too large to fit in i64.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn __quantum__rt__result_allocate() -> i64 {
-    with_interface(|interface| {
+    let allocated_id = with_interface(|interface| {
         let id = interface.allocate_result();
         interface.queue_operation(Operation::AllocateResult { id });
-        i64::try_from(id).expect("Result ID too large for i64")
-    })
+        id
+    });
+    checked_ffi_id!("__quantum__rt__result_allocate", allocated_id, i64)
 }
 
 // --- Result Retrieval ---
@@ -342,11 +369,11 @@ fn record_result_read(result_id: usize) {
 ///
 /// # Safety
 /// This function is safe to call from C/LLVM code. The result parameter must be a valid
-/// non-negative result ID that fits in usize. Invalid IDs will cause a panic.
+/// non-negative result ID that fits in usize. Invalid IDs produce a program error.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn __quantum__rt__result_get_one(result: i64) -> i32 {
     log::debug!("__quantum__rt__result_get_one called with result={result}");
-    let result_id = i64_to_usize(result);
+    let result_id = checked_ffi_id!(stringify!(__quantum__rt__result_get_one), result, usize);
 
     // First check if result is already available
     let existing_result = with_interface(|interface| interface.get_result(result_id));
@@ -471,7 +498,12 @@ pub unsafe extern "C" fn pecos_qis_trace_metadata(
     }) else {
         return;
     };
-    queue_trace_metadata("pecos_qis_trace_metadata", key, value, None);
+    queue_trace_metadata(
+        "pecos_qis_trace_metadata",
+        key.to_owned(),
+        value.to_owned(),
+        None,
+    );
 }
 
 /// Attach source/runtime metadata to the next lowerable quantum operation.
@@ -511,7 +543,12 @@ pub unsafe extern "C" fn pecos_qis_trace_metadata_hugr(key_ptr: *const u8, value
     }) else {
         return;
     };
-    queue_trace_metadata("pecos_qis_trace_metadata_hugr", key, value, None);
+    queue_trace_metadata(
+        "pecos_qis_trace_metadata_hugr",
+        key.to_owned(),
+        value.to_owned(),
+        None,
+    );
 }
 
 /// Attach source/runtime metadata to the next operation on a specific qubit.
@@ -559,11 +596,16 @@ pub unsafe extern "C" fn pecos_qis_trace_metadata_qubit_hugr(
     }) else {
         return qubit;
     };
+    let qubit_id = checked_ffi_id!(
+        stringify!(pecos_qis_trace_metadata_qubit_hugr),
+        qubit,
+        usize
+    );
     queue_trace_metadata(
         "pecos_qis_trace_metadata_qubit_hugr",
-        key,
-        value,
-        Some(i64_to_usize(qubit)),
+        key.to_owned(),
+        value.to_owned(),
+        Some(qubit_id),
     );
     qubit
 }
@@ -579,7 +621,11 @@ pub unsafe extern "C" fn pecos_qis_trace_metadata_qubit_hugr(
 /// Called from C/LLVM code. Qubit must be a valid non-negative ID.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pecos_qis_runtime_barrier_qubit_hugr(qubit: i64) -> i64 {
-    let _ = i64_to_usize(qubit);
+    let _ = checked_ffi_id!(
+        stringify!(pecos_qis_runtime_barrier_qubit_hugr),
+        qubit,
+        usize
+    );
     with_interface(|interface| {
         interface.queue_operation(Operation::Barrier);
     });
@@ -599,8 +645,16 @@ pub unsafe extern "C" fn pecos_qis_runtime_barrier_qubits2_hugr(
     first: i64,
     second: i64,
 ) -> QubitPair {
-    let _ = i64_to_usize(first);
-    let _ = i64_to_usize(second);
+    let _ = checked_ffi_id!(
+        stringify!(pecos_qis_runtime_barrier_qubits2_hugr),
+        first,
+        usize
+    );
+    let _ = checked_ffi_id!(
+        stringify!(pecos_qis_runtime_barrier_qubits2_hugr),
+        second,
+        usize
+    );
     with_interface(|interface| {
         interface.queue_operation(Operation::Barrier);
     });
@@ -638,7 +692,12 @@ pub unsafe extern "C" fn pecos_qis_trace_metadata_direct(
     }) else {
         return;
     };
-    queue_trace_metadata("pecos_qis_trace_metadata_direct", key, value, None);
+    queue_trace_metadata(
+        "pecos_qis_trace_metadata_direct",
+        key.to_owned(),
+        value.to_owned(),
+        None,
+    );
 }
 
 // --- Selene-style FFI Functions ---
@@ -653,7 +712,7 @@ ffi_gate_1q!(___reset, Reset);
 ///
 /// # Safety
 /// This function is safe to call from C/LLVM code. The qubit parameter must be a valid
-/// non-negative qubit ID that fits in usize. Invalid IDs will cause a panic.
+/// non-negative qubit ID that fits in usize. Invalid IDs produce a program error.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ___rxy(qubit: i64, theta: f64, phi: f64) {
     // Delegate to the QIS-style function
@@ -664,7 +723,7 @@ pub unsafe extern "C" fn ___rxy(qubit: i64, theta: f64, phi: f64) {
 ///
 /// # Safety
 /// This function is safe to call from C/LLVM code. The qubit parameter must be a valid
-/// non-negative qubit ID that fits in usize. Invalid IDs will cause a panic.
+/// non-negative qubit ID that fits in usize. Invalid IDs produce a program error.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ___rz(qubit: i64, theta: f64) {
     // Delegate to the QIS-style function
@@ -675,7 +734,7 @@ pub unsafe extern "C" fn ___rz(qubit: i64, theta: f64) {
 ///
 /// # Safety
 /// This function is safe to call from C/LLVM code. The qubit parameters must be valid
-/// non-negative qubit IDs that fit in usize. Invalid IDs will cause a panic.
+/// non-negative qubit IDs that fit in usize. Invalid IDs produce a program error.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ___rzz(qubit1: i64, qubit2: i64, theta: f64) {
     // Delegate to the QIS-style function
@@ -696,7 +755,7 @@ pub unsafe extern "C" fn ___qalloc() -> i64 {
 ///
 /// # Safety
 /// This function is safe to call from C/LLVM code. The qubit parameter must be a valid
-/// non-negative qubit ID that fits in usize. Invalid IDs will cause a panic.
+/// non-negative qubit ID that fits in usize. Invalid IDs produce a program error.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ___qfree(qubit: i64) {
     // Delegate to the QIS-style function
@@ -723,17 +782,14 @@ ffi_gate_2q!(___cx, CX);
 ///
 /// # Safety
 /// This function is safe to call from C/LLVM code. The qubit parameter must be a valid
-/// non-negative qubit ID that fits in usize. Invalid IDs will cause a panic.
+/// non-negative qubit ID that fits in usize. Invalid IDs produce a program error.
 ///
 /// # Returns
 /// Returns the allocated result ID as i64.
-///
-/// # Panics
-/// Panics if the allocated result ID is too large to fit in i64.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ___lazy_measure(qubit: i64) -> i64 {
-    let qubit_id = i64_to_usize(qubit);
-    with_interface(|interface| {
+    let qubit_id = checked_ffi_id!(stringify!(___lazy_measure), qubit, usize);
+    let allocated_id = with_interface(|interface| {
         // Allocate a result ID for this measurement
         let result_id = interface.allocate_result();
         // Queue the allocation operation
@@ -741,26 +797,25 @@ pub unsafe extern "C" fn ___lazy_measure(qubit: i64) -> i64 {
         // Queue the measurement operation
         interface.queue_operation(QuantumOp::Measure(qubit_id, result_id).into());
         // Return the result ID
-        i64::try_from(result_id).expect("Result ID too large for i64")
-    })
+        result_id
+    });
+    checked_ffi_id!("___lazy_measure", allocated_id, i64)
 }
 
 /// Lazy leakage-aware measurement function (Selene/HUGR-LLVM style).
 ///
 /// # Safety
 /// The same requirements as [`___lazy_measure`] apply.
-///
-/// # Panics
-/// Panics if the allocated result ID is too large to fit in i64.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ___lazy_measure_leaked(qubit: i64) -> i64 {
-    let qubit_id = i64_to_usize(qubit);
-    with_interface(|interface| {
+    let qubit_id = checked_ffi_id!(stringify!(___lazy_measure_leaked), qubit, usize);
+    let allocated_id = with_interface(|interface| {
         let result_id = interface.allocate_result();
         interface.queue_operation(Operation::AllocateResult { id: result_id });
         interface.queue_operation(QuantumOp::MeasureLeaked(qubit_id, result_id).into());
-        i64::try_from(result_id).expect("Result ID too large for i64")
-    })
+        result_id
+    });
+    checked_ffi_id!("___lazy_measure_leaked", allocated_id, i64)
 }
 
 /// Read a future boolean value (Guppy/HUGR-LLVM style)
@@ -776,14 +831,14 @@ pub unsafe extern "C" fn ___lazy_measure_leaked(qubit: i64) -> i64 {
 ///
 /// # Safety
 /// This function is safe to call from C/LLVM code. The `future_id` parameter must be a valid
-/// result ID previously returned by `___lazy_measure`. Invalid IDs will cause a panic.
+/// result ID previously returned by `___lazy_measure`. Invalid IDs produce a program error.
 ///
 /// # Returns
 /// Returns the boolean measurement result (true = 1, false = 0).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ___read_future_bool(future_id: i64) -> bool {
     log::debug!("___read_future_bool called with future_id={future_id}");
-    let result_id = i64_to_usize(future_id);
+    let result_id = checked_ffi_id!(stringify!(___read_future_bool), future_id, usize);
 
     // Check if result is already available in thread-local storage
     let existing_result = with_interface(|interface| interface.get_result(result_id));
@@ -859,7 +914,7 @@ pub unsafe extern "C" fn ___read_future_bool(future_id: i64) -> bool {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ___read_future_uint(future_id: i64) -> u64 {
     log::debug!("___read_future_uint called with future_id={future_id}");
-    let result_id = i64_to_usize(future_id);
+    let result_id = checked_ffi_id!(stringify!(___read_future_uint), future_id, usize);
 
     if crate::is_dynamic_mode_active() {
         if let Some(result) = crate::get_measurement_outcome(result_id as u64) {
@@ -925,25 +980,142 @@ pub unsafe extern "C" fn teardown() -> i64 {
     0
 }
 
-/// Panic function (called on program errors)
+thread_local! {
+    // Installed only while this thread is inside the C shim's setjmp wrapper.
+    static PROGRAM_PANIC_TRANSFER: std::cell::Cell<Option<unsafe extern "C" fn()>> = const {
+        std::cell::Cell::new(None)
+    };
+}
+
+/// Register the shim's C longjmp function, or clear it after leaving the guard.
 ///
 /// # Safety
-/// This function is safe to call from C/LLVM code. The message pointer may be null or must point
-/// to a valid null-terminated C string. Invalid pointers will cause undefined behavior.
+/// A non-null handler must be safe to invoke on this thread and remain valid
+/// until replaced. A transferring handler must target a live setjmp. Only the
+/// execution wrapper may install it.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pecos_set_program_panic_handler(handler: Option<unsafe extern "C" fn()>) {
+    PROGRAM_PANIC_TRANSFER.set(handler);
+}
+
+/// Get the current handler so an execution wrapper can save and restore it.
+#[unsafe(no_mangle)]
+pub extern "C" fn pecos_get_program_panic_handler() -> Option<unsafe extern "C" fn()> {
+    PROGRAM_PANIC_TRANSFER.get()
+}
+
+/// Whether this thread has a live execution guard. The C transfer checks this.
+#[unsafe(no_mangle)]
+pub extern "C" fn pecos_program_panic_handler_is_installed() -> bool {
+    PROGRAM_PANIC_TRANSFER.get().is_some()
+}
+
+fn record_invalid_input(entry: &str, detail: String) {
+    if let Some(ctx) = crate::get_execution_context() {
+        unsafe { &*ctx }.record_program_error(crate::ProgramError::InvalidInput {
+            entry: entry.to_string(),
+            detail,
+        });
+    } else {
+        log::error!("QIS invalid FFI input in {entry}: {detail}: no execution context registered");
+    }
+}
+
+/// Record first, then transfer only after all recording temporaries are dropped.
 ///
-/// # Panics
-/// This function intentionally panics to propagate errors from the quantum program.
+/// # Safety
+/// Callers must release every owned value and mutex/TLS borrow before invoking
+/// this path. The skipped Rust frames must not own live destructors.
+unsafe fn fatal_ffi_input(entry: &str, detail: String) {
+    record_invalid_input(entry, detail);
+    if let Some(transfer) = PROGRAM_PANIC_TRANSFER.get() {
+        unsafe { transfer() };
+    }
+}
+
+fn checked_slice_len<T>(len: u64) -> Result<usize, String> {
+    let count = usize::try_from(len).map_err(|_| format!("length={len} does not fit usize"))?;
+    if count > (isize::MAX as usize) / std::mem::size_of::<T>() {
+        return Err(format!(
+            "length={len} with element size={} exceeds isize::MAX bytes",
+            std::mem::size_of::<T>()
+        ));
+    }
+    Ok(count)
+}
+
+/// Record a panic with plain string data, also used by the Selene shim.
+///
+/// # Safety
+/// `message` must be null or reference `len` readable bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pecos_record_program_panic(code: i32, message: *const u8, len: usize) {
+    if len > isize::MAX as usize {
+        unsafe {
+            fatal_ffi_input(
+                "pecos_record_program_panic",
+                format!("message length={len} exceeds isize::MAX"),
+            );
+        };
+        return;
+    }
+    let message = if message.is_null() {
+        "Unknown error (null panic message)".to_string()
+    } else {
+        String::from_utf8_lossy(unsafe { std::slice::from_raw_parts(message, len) }).into_owned()
+    };
+    if let Some(ctx) = crate::get_execution_context() {
+        // guppylang std/platform.py's exit/panic convention lowers to exit
+        // codes 0..=1000 and panic codes signal + 1000. Apply it at the C ABI
+        // to every producer, independently of the source function's name.
+        // Guppy documents supported signals 1..=1000. panic(msg, 0) lowers
+        // to 1000 (an exit here), but signal 0 is outside that contract.
+        let termination = if (0..=1000).contains(&code) {
+            crate::ProgramError::Exit { code, message }
+        } else {
+            crate::ProgramError::Panic { code, message }
+        };
+        if matches!(termination, crate::ProgramError::Exit { .. }) {
+            log::debug!("{termination}");
+        }
+        unsafe { &*ctx }.record_program_error(termination);
+    } else {
+        log::error!(
+            "Cannot record program termination: code={code}, message={message}: no execution context registered"
+        );
+    }
+}
+
+/// Panic function called on program errors, with tket's length-prefixed message.
+///
+/// Guppylang emits calls to this direct symbol, rather than routing through the
+/// Selene shim. For division by zero its LLVM IR contains:
+/// ```llvm
+/// @"e_Attempted .0BD5FABD.0" = private constant [33 x i8] c" EXIT:INT:Attempted division by 0"
+/// tail call void @panic(i32 1002, ptr nonnull @"e_Attempted .0BD5FABD.0")
+/// ```
+/// The leading space is the length byte 0x20: the following 32 bytes are the
+/// `EXIT:INT:Attempted division by 0` payload, without a C-string terminator.
+///
+/// Recording finishes before the C transfer is invoked: this deliberately
+/// skipped Rust frame owns only raw pointers, integers and a function pointer,
+/// and no destructor or TLS borrow remains live across longjmp. Outside an
+/// execution guard there is no program to jump out of; the error stays recorded.
+///
+/// # Safety
+/// `message` must be null or point to a length byte followed by that many bytes.
+/// Program execution must take place inside the shim's setjmp wrapper.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn panic(code: i32, message: *const std::ffi::c_char) {
-    let msg = if message.is_null() {
-        "Unknown error".to_string()
+    if message.is_null() {
+        unsafe { pecos_record_program_panic(code, std::ptr::null(), 0) };
     } else {
-        unsafe {
-            let cstr = std::ffi::CStr::from_ptr(message);
-            cstr.to_string_lossy().to_string()
-        }
-    };
-    std::panic!("QIS program panic: code={code}, message={msg}");
+        let ptr = message.cast::<u8>();
+        unsafe { pecos_record_program_panic(code, ptr.add(1), usize::from(*ptr)) };
+    }
+    if let Some(transfer) = PROGRAM_PANIC_TRANSFER.get() {
+        unsafe { transfer() };
+    }
 }
 
 /// Record measurement result output (for compatibility with QIR)
@@ -991,7 +1163,7 @@ pub unsafe extern "C" fn __quantum__rt__result_record_output(
 ///
 /// # Safety
 /// This function is safe to call from C/LLVM code. The qubit parameter must be a valid
-/// non-negative qubit ID that fits in usize. Invalid IDs will cause a panic.
+/// non-negative qubit ID that fits in usize. Invalid IDs produce a program error.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn __quantum__qis__mz__body(qubit: i64) -> i32 {
     // Call our standard measurement function with result ID = qubit ID
@@ -1000,319 +1172,233 @@ pub unsafe extern "C" fn __quantum__qis__mz__body(qubit: i64) -> i32 {
 
 // --- Result printing functions ---
 
-/// Print a boolean result with a label
-///
-/// This function is called by QIS programs to output measurement results
-/// with labels like "`measurement_0`", "`measurement_1`", etc.
-///
-/// # Arguments
-/// * `label_ptr` - Pointer to the label struct: `{len: u8, data: [u8; len]}`
-/// * `label_len` - Length of the label string (same as the len byte in the struct)
-/// * `value` - Boolean value to print
-///
-/// # Note
-/// The tket2 LLVM codegen emits strings as `{u8 len, u8[] data}` structs.
-/// The `label_ptr` points to this struct, and `label_len` is the length value.
-/// We need to skip the first byte (the length) to get to the actual string data.
-///
-/// # Safety
-/// This function is safe to call from C/LLVM code. The `label_ptr` must point to a valid
-/// string struct with at least `label_len + 1` bytes. Invalid pointers will cause undefined behavior.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn print_bool(label_ptr: *const u8, label_len: i64, value: bool) {
-    let thread_id = std::thread::current().id();
-    let Ok(label_len_usize) = usize::try_from(label_len) else {
-        log::error!("print_bool: invalid label length {label_len}");
-        return;
-    };
-
-    // The tket2 string format is: {len: u8, data: [u8; len]}
-    // label_ptr points to the len byte, so we need to skip it to get the actual data
-    let data_ptr = unsafe { label_ptr.add(1) };
-    let label_slice = unsafe { std::slice::from_raw_parts(data_ptr, label_len_usize) };
-
-    let Ok(label) = std::str::from_utf8(label_slice) else {
-        log::error!("print_bool: invalid UTF-8 in label");
-        return;
-    };
-
-    // Strip the USER:BOOL: or USER:BOOLARR: prefix if present
-    let name = if let Some(stripped) = label.strip_prefix("USER:BOOL:") {
-        stripped
-    } else if let Some(stripped) = label.strip_prefix("USER:BOOLARR:") {
-        stripped
-    } else {
-        label
-    };
-
-    // Get execution context and store the result
-    let ctx_ptr = crate::get_execution_context();
-    log::debug!(
-        "print_bool: thread {thread_id:?}, name='{name}', value={value}, context={ctx_ptr:?}"
-    );
-
-    if let Some(ctx) = ctx_ptr {
-        // SAFETY: Context is valid for duration of execution
-        let ctx = unsafe { &*ctx };
-        ctx.store_named_bool(name, value);
-    } else {
-        log::warn!(
-            "print_bool: NO EXECUTION CONTEXT on thread {thread_id:?} for '{name}' = {value}"
-        );
-    }
-}
-
-/// Record an integer result whose value is in the detector-compatible 0/1 domain.
-///
-/// Guppy permits integer literals in ``result(...)`` calls. PECOS named results
-/// are currently Boolean, but cultivation programs use integer zero for a
-/// detector known to be satisfied. Preserve those 0/1 outputs and reject other
-/// integers instead of silently coercing arbitrary values.
-///
-/// # Safety
-/// `label_ptr` must reference a tket2 string with at least `label_len + 1`
-/// bytes, as for [`print_bool`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn print_int(label_ptr: *const u8, label_len: i64, value: i64) {
-    let Ok(label_len_usize) = usize::try_from(label_len) else {
-        log::error!("print_int: invalid label length {label_len}");
-        return;
-    };
-    let data_ptr = unsafe { label_ptr.add(1) };
-    let label_slice = unsafe { std::slice::from_raw_parts(data_ptr, label_len_usize) };
-    let Ok(label) = std::str::from_utf8(label_slice) else {
-        log::error!("print_int: invalid UTF-8 in label");
-        return;
-    };
-    let name = label.strip_prefix("USER:INT:").unwrap_or(label);
-    let value = match value {
-        0 => false,
-        1 => true,
-        _ => {
-            log::error!(
-                "print_int: named result '{name}' has value {value}; PECOS currently supports only Boolean 0/1 named results"
-            );
-            return;
-        }
-    };
-
-    if let Some(ctx) = crate::get_execution_context() {
-        // SAFETY: The registered context is valid for the execution duration.
-        unsafe { &*ctx }.store_named_bool(name, value);
-    } else {
-        log::warn!("print_int: no execution context for '{name}' = {value}");
-    }
-}
-
-/// Dense 1D array struct matching the LLVM ABI from tket2
-///
-/// This struct is passed by pointer from LLVM-compiled code.
-/// The layout matches what `struct_1d_arr_t` in tket-qsystem creates:
-/// - x: array length (i32)
-/// - y: always 1 (i32)
-/// - data: pointer to the data array
-/// - mask: pointer to mask array (unused for dense arrays)
+/// Dense 1D array matching tket's `{i32 x, i32 y, ptr data, ptr mask}` ABI.
 #[repr(C)]
-pub struct Dense1DArrayBool {
+pub struct Dense1DArray<T> {
     pub x: i32,
     pub y: i32,
-    pub data: *const bool,
+    pub data: *const T,
     pub mask: *const bool,
 }
 
-/// Print a boolean array result with a label
-///
-/// This function is called by Guppy-generated QIS programs to output arrays of
-/// measurement results (e.g., syndrome arrays, final measurements).
-///
-/// # Arguments
-/// * `label_ptr` - Pointer to the label struct: `{len: u8, data: [u8; len]}`
-/// * `label_len` - Length of the label string (same as the len byte in the struct)
-/// * `arr` - Pointer to the `Dense1DArrayBool` struct containing the array data
-///
-/// # Note
-/// The tket2 LLVM codegen emits strings as `{u8 len, u8[] data}` structs.
-/// The `label_ptr` points to this struct, and `label_len` is the length value.
-/// We need to skip the first byte (the length) to get to the actual string data.
-///
-/// # Safety
-/// This function is safe to call from C/LLVM code. The `label_ptr` must point to a valid
-/// string struct with at least `label_len + 1` bytes. The `arr` must point to a valid
-/// `Dense1DArrayBool` struct. Invalid pointers will cause undefined behavior.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn print_bool_arr(
+pub type Dense1DArrayBool = Dense1DArray<bool>;
+pub type Dense1DArrayInt = Dense1DArray<i64>;
+pub type Dense1DArrayUint = Dense1DArray<u64>;
+pub type Dense1DArrayFloat = Dense1DArray<f64>;
+
+/// Both string ABIs converge here after the direct form skips its length byte.
+unsafe fn record_named_output(
     label_ptr: *const u8,
     label_len: i64,
-    arr: *const Dense1DArrayBool,
+    values: crate::NamedResult,
+    scalar_prefix: &str,
+    array_prefix: &str,
+    entry: &str,
+    is_scalar: bool,
 ) {
-    // Validate label length
-    let Ok(label_len_usize) = usize::try_from(label_len) else {
-        log::error!("print_bool_arr: invalid label length {label_len}");
+    let Ok(len) = usize::try_from(label_len) else {
+        drop(values);
+        unsafe {
+            fatal_ffi_input(
+                entry,
+                format!("label length={label_len} does not fit usize"),
+            );
+        };
         return;
     };
-
-    // Check that arr pointer is valid
-    if arr.is_null() {
-        log::error!("print_bool_arr: null array pointer");
+    if label_ptr.is_null() {
+        drop(values);
+        unsafe { fatal_ffi_input(entry, format!("label pointer=null, length={label_len}")) };
         return;
     }
-
-    // The tket2 string format is: {len: u8, data: [u8; len]}
-    // label_ptr points to the len byte, so we need to skip it to get the actual data
-    let data_ptr = unsafe { label_ptr.add(1) };
-    let label_slice = unsafe { std::slice::from_raw_parts(data_ptr, label_len_usize) };
-    let Ok(label) = std::str::from_utf8(label_slice) else {
-        log::error!("print_bool_arr: invalid UTF-8 in label");
-        return;
-    };
-
-    // Read the array struct
-    let arr_struct = unsafe { &*arr };
-    let Ok(arr_len) = usize::try_from(arr_struct.x) else {
-        log::error!("print_bool_arr: invalid array length {}", arr_struct.x);
-        return;
-    };
-
-    // Validate data pointer
-    if arr_struct.data.is_null() {
-        log::error!("print_bool_arr: null data pointer in array struct");
+    if len > isize::MAX as usize {
+        drop(values);
+        unsafe {
+            fatal_ffi_input(
+                entry,
+                format!("label length={label_len} exceeds isize::MAX"),
+            );
+        };
         return;
     }
-
-    // Convert the array to a Rust slice
-    let arr_slice = unsafe { std::slice::from_raw_parts(arr_struct.data, arr_len) };
-
-    // Log the array for debugging
-    log::debug!("print_bool_arr called: {label} = {arr_slice:?}");
-
-    // Strip the USER:BOOLARR: prefix if present
-    let name = if let Some(stripped) = label.strip_prefix("USER:BOOLARR:") {
-        stripped
-    } else if let Some(stripped) = label.strip_prefix("USER:BOOL:") {
-        stripped
-    } else {
-        label
+    // SAFETY: The caller provides label_len readable bytes of string data.
+    let bytes = unsafe { std::slice::from_raw_parts(label_ptr, len) };
+    let Ok(label) = std::str::from_utf8(bytes) else {
+        drop(values);
+        unsafe { fatal_ffi_input(entry, format!("invalid UTF-8 label={bytes:?}")) };
+        return;
     };
-
-    // Store in the execution context's named results
+    let name = label
+        .strip_prefix(scalar_prefix)
+        .or_else(|| label.strip_prefix(array_prefix))
+        .unwrap_or(label);
     if let Some(ctx) = crate::get_execution_context() {
-        // SAFETY: Context is valid for duration of execution
-        let ctx = unsafe { &*ctx };
-        ctx.store_named_array(name, arr_slice);
+        // SAFETY: The registered context lives for the duration of execution.
+        unsafe { &*ctx }.store_named_result(name, values, is_scalar);
+    } else {
+        log::error!("Cannot record named result '{name}': no execution context registered");
     }
 }
 
-// --- Selene-compatible print functions ---
-//
-// The Selene runtime uses a different string format (selene_string_t has direct
-// data pointer, not tket2's {len: u8, data: [u8]} format). These functions are
-// called from the selene_shim.c and expect direct string data.
-
-/// Print a boolean result with a label (Selene-compatible format)
-///
-/// This function is called from the Selene shim with direct string data pointer.
-/// Unlike `print_bool`, this does NOT skip the first byte (no tket2 format).
-///
-/// # Safety
-/// This function is safe to call from C/LLVM code. The `label_ptr` must point to valid
-/// string data of at least `label_len` bytes.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn print_bool_selene(label_ptr: *const u8, label_len: i64, value: bool) {
-    let thread_id = std::thread::current().id();
-    let Ok(label_len_usize) = usize::try_from(label_len) else {
-        log::error!("print_bool_selene: invalid label length {label_len}");
-        return;
-    };
-
-    // Direct string data - no need to skip any bytes
-    let label_slice = unsafe { std::slice::from_raw_parts(label_ptr, label_len_usize) };
-
-    let Ok(label) = std::str::from_utf8(label_slice) else {
-        log::error!("print_bool_selene: invalid UTF-8 in label");
-        return;
-    };
-
-    // Strip the USER:BOOL: or USER:BOOLARR: prefix if present
-    let name = if let Some(stripped) = label.strip_prefix("USER:BOOL:") {
-        stripped
-    } else if let Some(stripped) = label.strip_prefix("USER:BOOLARR:") {
-        stripped
-    } else {
-        label
-    };
-
-    // Get execution context and store the result
-    let ctx_ptr = crate::get_execution_context();
-    log::debug!(
-        "print_bool_selene: thread {thread_id:?}, name='{name}', value={value}, context={ctx_ptr:?}"
-    );
-
-    if let Some(ctx) = ctx_ptr {
-        let ctx = unsafe { &*ctx };
-        ctx.store_named_bool(name, value);
-    } else {
-        log::warn!(
-            "print_bool_selene: NO EXECUTION CONTEXT on thread {thread_id:?} for '{name}' = {value}"
-        );
+unsafe fn result_array<'a, T>(ptr: *const T, len: u64) -> Result<&'a [T], String> {
+    let len = checked_slice_len::<T>(len)?;
+    if len == 0 {
+        // Compatibility exception: the parent rejected null data even at zero
+        // length. Accepting it now records an empty Bool result and empty trace.
+        // This is the sole exception to bool byte-compatibility; it drains nothing.
+        return Ok(&[]);
     }
+    if ptr.is_null() || !ptr.is_aligned() {
+        return Err(format!(
+            "array pointer={ptr:?}, length={len} is null or misaligned"
+        ));
+    }
+    // SAFETY: The caller supplies len initialized elements; alignment and the
+    // isize::MAX byte bound were checked before constructing the slice.
+    Ok(unsafe { std::slice::from_raw_parts(ptr, len) })
 }
 
-/// Print a boolean array result with a label (Selene-compatible format)
-///
-/// This function is called from the Selene shim with direct string/array pointers.
-/// Unlike `print_bool_arr`, this does NOT expect tket2 format or `Dense1DArrayBool` struct.
-///
-/// # Safety
-/// This function is safe to call from C/LLVM code. The `label_ptr` must point to valid
-/// string data of at least `label_len` bytes. The `arr_ptr` must point to valid bool
-/// data of at least `arr_len` elements.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn print_bool_arr_selene(
-    label_ptr: *const u8,
-    label_len: i64,
-    arr_ptr: *const bool,
-    arr_len: u64,
-) {
-    let Ok(label_len_usize) = usize::try_from(label_len) else {
-        log::error!("print_bool_arr_selene: invalid label length {label_len}");
-        return;
+// As with the gate export macros, keep ABI variants together so every type
+// receives identical validation, label handling, and storage behavior.
+macro_rules! named_result_exports {
+    ($scalar:ident, $array:ident, $selene_scalar:ident, $selene_array:ident,
+     $ty:ty, $dense:ident, $variant:ident, $prefix:literal) => {
+        /// Record a scalar using tket's length-prefixed string format.
+        ///
+        /// # Safety
+        /// `label_ptr` must reference a tket string with at least `label_len + 1`
+        /// bytes. The first byte is the length, and the data starts at byte one.
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn $scalar(label_ptr: *const u8, label_len: i64, value: $ty) {
+            let data = if label_ptr.is_null() {
+                label_ptr
+            } else {
+                unsafe { label_ptr.add(1) }
+            };
+            unsafe { $selene_scalar(data, label_len, value) };
+        }
+
+        /// Record an array using tket's string and dense array formats.
+        ///
+        /// # Safety
+        /// `label_ptr` must reference `label_len + 1` bytes. `arr` must point to
+        /// a valid dense array with `x` initialized elements (data may be null
+        /// when `x` is zero).
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn $array(label_ptr: *const u8, label_len: i64, arr: *const $dense) {
+            if arr.is_null() || !arr.is_aligned() {
+                unsafe {
+                    fatal_ffi_input(
+                        stringify!($array),
+                        format!("array pointer={arr:?} is null or misaligned"),
+                    )
+                };
+                return;
+            }
+            let arr = unsafe { &*arr };
+            let Ok(len) = u64::try_from(arr.x) else {
+                unsafe { fatal_ffi_input(stringify!($array), format!("array length={}", arr.x)) };
+                return;
+            };
+            let data = if label_ptr.is_null() {
+                label_ptr
+            } else {
+                unsafe { label_ptr.add(1) }
+            };
+            unsafe { $selene_array(data, label_len, arr.data, len) };
+        }
+
+        /// Record a scalar using Selene's plain string data pointer.
+        ///
+        /// # Safety
+        /// `label_ptr` must reference at least `label_len` bytes of string data.
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn $selene_scalar(label_ptr: *const u8, label_len: i64, value: $ty) {
+            unsafe {
+                record_named_output(
+                    label_ptr,
+                    label_len,
+                    crate::NamedResult::$variant(vec![value]),
+                    concat!("USER:", $prefix, ":"),
+                    concat!("USER:", $prefix, "ARR:"),
+                    stringify!($selene_scalar),
+                    true,
+                )
+            };
+        }
+
+        /// Record an array using Selene's plain string and array pointers.
+        ///
+        /// # Safety
+        /// `label_ptr` must reference `label_len` bytes. `arr_ptr` must reference
+        /// `arr_len` initialized elements, or may be null for an empty array.
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn $selene_array(
+            label_ptr: *const u8,
+            label_len: i64,
+            arr_ptr: *const $ty,
+            arr_len: u64,
+        ) {
+            match unsafe { result_array(arr_ptr, arr_len) } {
+                Ok(values) => {
+                    unsafe {
+                        record_named_output(
+                            label_ptr,
+                            label_len,
+                            crate::NamedResult::$variant(values.to_vec()),
+                            concat!("USER:", $prefix, ":"),
+                            concat!("USER:", $prefix, "ARR:"),
+                            stringify!($selene_array),
+                            false,
+                        )
+                    };
+                }
+                Err(detail) => unsafe { fatal_ffi_input(stringify!($selene_array), detail) },
+            }
+        }
     };
-
-    let Ok(arr_len_usize) = usize::try_from(arr_len) else {
-        log::error!("print_bool_arr_selene: invalid array length {arr_len}");
-        return;
-    };
-
-    if arr_ptr.is_null() {
-        log::error!("print_bool_arr_selene: null array pointer");
-        return;
-    }
-
-    // Direct string data - no need to skip any bytes
-    let label_slice = unsafe { std::slice::from_raw_parts(label_ptr, label_len_usize) };
-    let Ok(label) = std::str::from_utf8(label_slice) else {
-        log::error!("print_bool_arr_selene: invalid UTF-8 in label");
-        return;
-    };
-
-    // Direct array data
-    let arr_slice = unsafe { std::slice::from_raw_parts(arr_ptr, arr_len_usize) };
-
-    // Strip the USER:BOOLARR: or USER:BOOL: prefix if present
-    let name = if let Some(stripped) = label.strip_prefix("USER:BOOLARR:") {
-        stripped
-    } else if let Some(stripped) = label.strip_prefix("USER:BOOL:") {
-        stripped
-    } else {
-        label
-    };
-
-    // Store in the execution context's named results
-    if let Some(ctx) = crate::get_execution_context() {
-        let ctx = unsafe { &*ctx };
-        ctx.store_named_array(name, arr_slice);
-    }
 }
+
+named_result_exports!(
+    print_bool,
+    print_bool_arr,
+    print_bool_selene,
+    print_bool_arr_selene,
+    bool,
+    Dense1DArrayBool,
+    Bool,
+    "BOOL"
+);
+named_result_exports!(
+    print_int,
+    print_int_arr,
+    print_int_selene,
+    print_int_arr_selene,
+    i64,
+    Dense1DArrayInt,
+    I64,
+    "INT"
+);
+named_result_exports!(
+    print_uint,
+    print_uint_arr,
+    print_uint_selene,
+    print_uint_arr_selene,
+    u64,
+    Dense1DArrayUint,
+    U64,
+    "UINT"
+);
+named_result_exports!(
+    print_float,
+    print_float_arr,
+    print_float_selene,
+    print_float_arr_selene,
+    f64,
+    Dense1DArrayFloat,
+    F64,
+    "FLOAT"
+);
 
 // --- Interface Management (C exports for dlsym access) ---
 
@@ -1362,10 +1448,30 @@ pub unsafe extern "C" fn pecos_qis_free_operations(ptr: *mut crate::OperationCol
 /// valid array of at least count elements. Invalid pointers or counts will cause undefined behavior.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pecos_qis_set_measurements(pairs_ptr: *const (usize, bool), count: usize) {
+    if count == 0 {
+        return;
+    }
     if pairs_ptr.is_null() {
+        unsafe {
+            fatal_ffi_input(
+                "pecos_qis_set_measurements",
+                format!("pointer=null, count={count}"),
+            );
+        };
         return;
     }
 
+    if count > (isize::MAX as usize) / std::mem::size_of::<(usize, bool)>()
+        || !pairs_ptr.is_aligned()
+    {
+        unsafe {
+            fatal_ffi_input(
+                "pecos_qis_set_measurements",
+                format!("pointer={pairs_ptr:?}, count={count} violates slice bounds or alignment"),
+            );
+        };
+        return;
+    }
     let pairs = unsafe { std::slice::from_raw_parts(pairs_ptr, count) };
 
     with_interface(|interface| {
@@ -1375,57 +1481,73 @@ pub unsafe extern "C" fn pecos_qis_set_measurements(pairs_ptr: *const (usize, bo
 
 // --- Heap Management Functions (Selene compatibility) ---
 
-/// Allocate heap memory
-///
-/// This is used by Guppy/HUGR for array allocation and other heap operations.
-/// Following Selene's approach, we use libc malloc/free which handle size tracking.
+/// Allocate program-owned libc memory, reclaimed at shot end if still live.
 ///
 /// # Safety
-/// This function is safe to call from C/LLVM code. Returns a null pointer for zero-sized allocations.
-///
-/// # Panics
-/// Panics if malloc fails to allocate the requested memory.
+/// The execution context must be registered. Zero size returns null.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn heap_alloc(size: u64) -> *mut u8 {
     if size == 0 {
-        // Return null for zero-sized allocations (standard malloc behavior)
         return std::ptr::null_mut();
     }
-
-    // Use libc malloc which tracks allocation sizes internally
-    // Convert u64 to size_t, handling potential overflow
-    let Ok(size_t) = libc::size_t::try_from(size) else {
-        // Size too large for this platform
-        std::panic!("heap_alloc: size {size} too large for platform");
-    };
-    let ptr = unsafe { libc::malloc(size_t).cast::<u8>() };
-
-    assert!(
-        !ptr.is_null(),
-        "heap_alloc: failed to allocate {size} bytes"
-    );
-
-    ptr
+    match allocate_program_memory(size) {
+        Ok(ptr) => ptr,
+        Err(detail) => {
+            unsafe { fatal_ffi_input("heap_alloc", detail) };
+            std::ptr::null_mut()
+        }
+    }
 }
 
-/// Free heap memory
-///
-/// This is used by Guppy/HUGR to deallocate arrays and other heap objects.
-/// Following Selene's approach, we use libc free which matches malloc.
+fn allocate_program_memory(size: u64) -> Result<*mut u8, String> {
+    let size_t = checked_slice_len::<u8>(size)?;
+    let ctx = crate::get_execution_context()
+        .ok_or_else(|| format!("size={size}: no execution context registered"))?;
+    let ctx = unsafe { &*ctx };
+    let mut allocations = ctx
+        .program_allocations
+        .lock()
+        .map_err(|e| format!("size={size}: allocation lock error: {e}"))?;
+    let ptr = unsafe { libc::malloc(size_t).cast::<u8>() };
+    if ptr.is_null() {
+        return Err(format!("size={size}: malloc returned null"));
+    }
+    allocations.insert(ptr as usize);
+    crate::LIVE_PROGRAM_ALLOCATIONS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    crate::TOTAL_PROGRAM_ALLOCATIONS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    Ok(ptr)
+}
+
+/// Free a live program allocation and remove it from shot ownership.
 ///
 /// # Safety
-/// This function is safe to call from C/LLVM code. The ptr must be either null or a valid pointer
-/// previously returned by `heap_alloc` that has not yet been freed. Double-freeing will cause
-/// undefined behavior.
+/// The pointer must be null or an allocation owned by the registered context.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn heap_free(ptr: *mut u8) {
     if ptr.is_null() {
-        // Ignore null pointer frees (standard free behavior)
         return;
     }
+    if let Err(detail) = free_program_memory(ptr) {
+        unsafe { fatal_ffi_input("heap_free", detail) };
+    }
+}
 
-    // Use libc free which pairs with malloc
-    unsafe { libc::free(ptr.cast::<libc::c_void>()) };
+fn free_program_memory(ptr: *mut u8) -> Result<(), String> {
+    let ctx = crate::get_execution_context()
+        .ok_or_else(|| format!("pointer={ptr:?}: no execution context registered"))?;
+    let ctx = unsafe { &*ctx };
+    let removed = ctx
+        .program_allocations
+        .lock()
+        .map_err(|e| format!("pointer={ptr:?}: allocation lock error: {e}"))?
+        .remove(&(ptr as usize));
+    if !removed {
+        return Err(format!(
+            "pointer={ptr:?} is not a live allocation owned by this context"
+        ));
+    }
+    unsafe { ctx.free_program_allocation(ptr.cast()) };
+    Ok(())
 }
 
 #[cfg(test)]
@@ -2098,7 +2220,7 @@ mod tests {
     }
 
     #[test]
-    fn test_print_int_records_boolean_detector_literals() {
+    fn test_print_int_records_integer_detector_literals() {
         let ctx = crate::pecos_create_execution_context();
         unsafe { crate::pecos_register_execution_context(ctx) };
         let label = b"\x08DETECTOR";
@@ -2106,7 +2228,7 @@ mod tests {
         unsafe { print_int(label.as_ptr(), 8, 0) };
         assert_eq!(
             unsafe { &*ctx }.get_named_results()["DETECTOR"],
-            vec![false]
+            crate::NamedResult::I64(vec![0])
         );
 
         unsafe {
@@ -2228,6 +2350,8 @@ mod tests {
 
     #[test]
     fn test_heap_alloc_and_free() {
+        let context = crate::pecos_create_execution_context();
+        unsafe { crate::pecos_register_execution_context(context) };
         let ptr = std::ptr::NonNull::new(unsafe { heap_alloc(100) })
             .expect("heap_alloc(100) should return non-null");
 
@@ -2237,6 +2361,7 @@ mod tests {
             std::ptr::write(ptr.as_ptr(), 42u8);
             assert_eq!(std::ptr::read(ptr.as_ptr()), 42u8);
             heap_free(ptr.as_ptr());
+            crate::pecos_destroy_execution_context(context);
         }
     }
 

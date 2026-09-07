@@ -25,11 +25,14 @@
 //! 5. Destroy with `pecos_destroy_execution_context()`
 
 use std::cell::RefCell;
-use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Condvar, Mutex};
 
 pub mod ffi;
+
+#[cfg(test)]
+mod named_results_tests;
 
 // --- Per-Execution Context for Parallel Execution Support ---
 
@@ -51,6 +54,9 @@ pub struct DynamicSyncState {
 ///
 /// The context is thread-safe and can be shared between the main thread and worker thread
 /// via Arc or raw pointers.
+///
+/// Nested execution wrappers and re-entrant FFI calls while a context mutex is
+/// held are unsupported: each thread has one jump buffer and non-reentrant mutexes.
 pub struct ExecutionContext {
     /// Flag indicating dynamic execution mode is active
     pub dynamic_mode_active: AtomicBool,
@@ -66,12 +72,51 @@ pub struct ExecutionContext {
     ///
     /// Ordinary measurements use 0/1. Leakage-aware measurements may also use 2.
     pub measurement_results: Mutex<Vec<Option<u64>>>,
-    /// Storage for named results from `print_bool`/`print_bool_arr` (e.g., "synx", "final")
-    pub named_results: Mutex<BTreeMap<String, Vec<bool>>>,
-    /// Runtime provenance for each `result(...)` output call.
+    /// Typed storage for named results from all `print_*` entry points.
+    pub named_results: Mutex<BTreeMap<String, NamedResult>>,
+    /// Runtime provenance for bool outputs and scalar integer 0/1 calls.
     pub named_result_traces: Mutex<Vec<NamedResultTrace>>,
     /// Result IDs read since the last named output consumed them.
     pub pending_result_reads: Mutex<Vec<usize>>,
+    /// First termination or output error; reset before the next program starts.
+    pub program_error: Mutex<Option<ProgramError>>,
+    /// Live libc allocations owned by this program execution, keyed by address.
+    pub program_allocations: Mutex<BTreeSet<usize>>,
+    /// Number of allocations actually freed for this context.
+    pub program_allocation_frees: AtomicUsize,
+}
+
+static LIVE_PROGRAM_ALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
+static TOTAL_PROGRAM_ALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
+
+/// Number of live tracked program allocations across this FFI library.
+#[unsafe(no_mangle)]
+pub extern "C" fn pecos_get_live_allocation_count() -> usize {
+    LIVE_PROGRAM_ALLOCATIONS.load(Ordering::SeqCst)
+}
+
+/// Number of program allocations made across this FFI library.
+#[unsafe(no_mangle)]
+pub extern "C" fn pecos_get_total_allocation_count() -> usize {
+    TOTAL_PROGRAM_ALLOCATIONS.load(Ordering::SeqCst)
+}
+
+/// Number of allocations actually freed for the registered context.
+#[unsafe(no_mangle)]
+pub extern "C" fn pecos_get_context_allocation_free_count() -> usize {
+    get_execution_context().map_or(0, |ctx| {
+        unsafe { &*ctx }
+            .program_allocation_frees
+            .load(Ordering::SeqCst)
+    })
+}
+
+/// Free any outstanding program allocations. Called at both shot boundaries.
+#[unsafe(no_mangle)]
+pub extern "C" fn pecos_cleanup_program_allocations() {
+    if let Some(ctx) = get_execution_context() {
+        unsafe { &*ctx }.release_program_allocations();
+    }
 }
 
 impl ExecutionContext {
@@ -88,11 +133,15 @@ impl ExecutionContext {
             named_results: Mutex::new(BTreeMap::new()),
             named_result_traces: Mutex::new(Vec::new()),
             pending_result_reads: Mutex::new(Vec::new()),
+            program_error: Mutex::new(None),
+            program_allocations: Mutex::new(BTreeSet::new()),
+            program_allocation_frees: AtomicUsize::new(0),
         }
     }
 
     /// Reset the context to initial state (for reuse)
     pub fn reset(&self) {
+        self.reset_outputs();
         self.dynamic_mode_active.store(false, Ordering::SeqCst);
         self.waiting_for_result.store(u64::MAX, Ordering::SeqCst);
         if let Ok(mut state) = self.sync_state.lock() {
@@ -106,6 +155,12 @@ impl ExecutionContext {
         if let Ok(mut ops) = self.pending_ops.lock() {
             ops.clear();
         }
+    }
+
+    /// Reset per-program output without changing dynamic synchronization state.
+    pub fn reset_outputs(&self) {
+        self.clear_program_error();
+        self.release_program_allocations();
         if let Ok(mut named) = self.named_results.lock() {
             named.clear();
         }
@@ -115,6 +170,35 @@ impl ExecutionContext {
         if let Ok(mut reads) = self.pending_result_reads.lock() {
             reads.clear();
         }
+    }
+
+    /// Free allocations skipped by program cleanup on normal return or transfer.
+    pub fn release_program_allocations(&self) {
+        let allocations = {
+            let mut allocations = match self.program_allocations.lock() {
+                Ok(allocations) => allocations,
+                Err(poisoned) => {
+                    self.record_program_error(ProgramError::InvalidInput {
+                        entry: "pecos_cleanup_program_allocations".to_string(),
+                        detail: "poisoned allocation set".to_string(),
+                    });
+                    // Ownership remains known even if a prior panic poisoned the lock.
+                    poisoned.into_inner()
+                }
+            };
+            std::mem::take(&mut *allocations)
+        };
+        for address in allocations {
+            unsafe { self.free_program_allocation(std::ptr::with_exposed_provenance_mut(address)) };
+        }
+    }
+
+    /// # Safety
+    /// The allocation must have been removed from this context's live set.
+    unsafe fn free_program_allocation(&self, ptr: *mut libc::c_void) {
+        unsafe { libc::free(ptr) };
+        self.program_allocation_frees.fetch_add(1, Ordering::SeqCst);
+        LIVE_PROGRAM_ALLOCATIONS.fetch_sub(1, Ordering::SeqCst);
     }
 
     /// Record that program execution read a runtime measurement result.
@@ -159,42 +243,90 @@ impl ExecutionContext {
         }
     }
 
-    /// Store a named result (single bool value)
-    pub fn store_named_bool(&self, name: &str, value: bool) {
-        let thread_id = std::thread::current().id();
-        if let Ok(mut named) = self.named_results.lock() {
-            let entry = named.entry(name.to_string()).or_default();
-            entry.push(value);
-            log::debug!(
-                "ExecutionContext::store_named_bool: thread {:?} stored '{}' = {} (now {} values: {:?})",
-                thread_id,
-                name,
-                value,
-                entry.len(),
-                entry
-            );
-        } else {
-            log::error!(
-                "ExecutionContext::store_named_bool: thread {thread_id:?} failed to acquire lock for '{name}'"
-            );
+    /// Clear the previous shot's error before entering the program.
+    pub fn clear_program_error(&self) {
+        if let Ok(mut error) = self.program_error.lock() {
+            *error = None;
         }
-        let result_ids = self.take_result_reads(1);
-        self.store_named_result_trace(name, &[value], result_ids);
     }
 
-    /// Store a named result array (multiple bool values)
-    pub fn store_named_array(&self, name: &str, values: &[bool]) {
-        if let Ok(mut named) = self.named_results.lock() {
-            let entry = named.entry(name.to_string()).or_default();
-            entry.extend_from_slice(values);
+    /// Keep the first program error so subsequent output cannot hide it.
+    pub fn record_program_error(&self, error: ProgramError) {
+        if let Ok(mut stored) = self.program_error.lock() {
+            stored.get_or_insert(error);
         }
-        let result_ids = self.take_result_reads(values.len());
-        self.store_named_result_trace(name, values, result_ids);
+    }
+
+    /// Append one call's values, consuming reads only for nonempty bool calls.
+    /// `is_scalar` describes the entry point, not the number of elements.
+    pub fn store_named_result(&self, name: &str, values: NamedResult, is_scalar: bool) {
+        let Ok(error) = self.program_error.lock() else {
+            return;
+        };
+        if error.is_some() {
+            return;
+        }
+        drop(error);
+        // DEM detector convention: scalar integer 0/1 calls retain bool traces
+        // in the single ideal tracing run, but never claim measurement provenance.
+        // Integer arrays never trace, including one-element arrays; the old
+        // integer detector convention had only scalar calls. Static certification
+        // recognizes only real bool outputs.
+        // Only real bool calls drain reads; an empty bool array has no reads to
+        // drain and keeps an empty trace. Storage follows declared call types.
+        let is_bool_call = matches!(&values, NamedResult::Bool(_));
+        let bool_values = match &values {
+            NamedResult::Bool(values) => Some(values.clone()),
+            _ if values.is_empty() => None,
+            NamedResult::I64(values) if is_scalar && matches!(values.as_slice(), [0 | 1]) => {
+                Some(values.iter().map(|&value| value == 1).collect())
+            }
+            NamedResult::U64(values) if is_scalar && matches!(values.as_slice(), [0 | 1]) => {
+                Some(values.iter().map(|&value| value == 1).collect())
+            }
+            _ => None,
+        };
+        let stored = match self.named_results.lock() {
+            Ok(mut named) => match named.entry(name.to_string()) {
+                std::collections::btree_map::Entry::Vacant(entry) => {
+                    entry.insert(values);
+                    Ok(())
+                }
+                std::collections::btree_map::Entry::Occupied(mut entry) => {
+                    entry.get_mut().append(values).map_err(|(existing, incoming)| {
+                        format!("Named result '{name}' has element type {existing}, but received {incoming}")
+                    })
+                }
+            },
+            Err(error) => Err(format!("Failed to store named result '{name}': {error}")),
+        };
+        if let Err(message) = stored {
+            self.record_program_error(ProgramError::NamedResult(message));
+            return;
+        }
+        if let Some(values) = bool_values {
+            let result_ids = if is_bool_call {
+                self.take_result_reads(values.len())
+            } else {
+                Vec::new()
+            };
+            self.store_named_result_trace(name, &values, result_ids);
+        }
+    }
+
+    /// Store a named result (single bool value).
+    pub fn store_named_bool(&self, name: &str, value: bool) {
+        self.store_named_result(name, NamedResult::Bool(vec![value]), true);
+    }
+
+    /// Store a named result array (multiple bool values).
+    pub fn store_named_array(&self, name: &str, values: &[bool]) {
+        self.store_named_result(name, NamedResult::Bool(values.to_vec()), false);
     }
 
     /// Get all named results (returns a clone)
     #[must_use]
-    pub fn get_named_results(&self) -> BTreeMap<String, Vec<bool>> {
+    pub fn get_named_results(&self) -> BTreeMap<String, NamedResult> {
         self.named_results
             .lock()
             .map(|guard| guard.clone())
@@ -249,15 +381,67 @@ pub extern "C" fn pecos_create_execution_context() -> *mut ExecutionContext {
     Box::into_raw(Box::new(ExecutionContext::new()))
 }
 
+/// Clear a previous program error at shot start, without resetting dynamic synchronization.
+#[unsafe(no_mangle)]
+pub extern "C" fn pecos_clear_program_error() {
+    if let Some(ctx) = get_execution_context() {
+        unsafe { &*ctx }.clear_program_error();
+    }
+}
+
+/// Return the recorded program error as JSON, or null if the shot has no error.
+/// Free the returned string with `pecos_free_named_results_json`.
+#[unsafe(no_mangle)]
+pub extern "C" fn pecos_get_program_error_json() -> *mut std::ffi::c_char {
+    let Some(ctx) = get_execution_context() else {
+        return std::ptr::null_mut();
+    };
+    let ctx = unsafe { &*ctx };
+    let error = match ctx.program_error.lock() {
+        Ok(error) => error.clone(),
+        Err(error) => Some(ProgramError::NamedResult(format!(
+            "Failed to read program error: {error}"
+        ))),
+    };
+    let Some(error) = error else {
+        return std::ptr::null_mut();
+    };
+    let Ok(json) = serde_json::to_string(&error) else {
+        return std::ptr::null_mut();
+    };
+    match std::ffi::CString::new(json) {
+        Ok(json) => json.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// Whether the current program terminated with a normal exit.
+#[unsafe(no_mangle)]
+pub extern "C" fn pecos_program_exited() -> bool {
+    let Some(ctx) = get_execution_context() else {
+        return false;
+    };
+    unsafe { &*ctx }
+        .program_error
+        .lock()
+        .is_ok_and(|error| matches!(*error, Some(ProgramError::Exit { .. })))
+}
+
 /// Destroy an execution context
 ///
 /// # Safety
 /// The pointer must have been created by `pecos_create_execution_context`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pecos_destroy_execution_context(ctx: *mut ExecutionContext) {
-    log::debug!("pecos_destroy_execution_context called: ctx={ctx:?}");
+    // Drop may run during TLS teardown. Do not initialize TLS or log here.
+    let _ = EXECUTION_CONTEXT.try_with(|ec| {
+        if *ec.borrow() == Some(ctx) {
+            *ec.borrow_mut() = None;
+        }
+    });
     if !ctx.is_null() {
         // SAFETY: ptr was allocated by Box::into_raw in pecos_create_execution_context
+        unsafe { &*ctx }.release_program_allocations();
         drop(unsafe { Box::from_raw(ctx) });
     }
 }
@@ -271,7 +455,8 @@ fn get_execution_context() -> Option<*mut ExecutionContext> {
 
 // Re-export all types from pecos-qis-ffi-types
 pub use pecos_qis_ffi_types::{
-    NamedResultTrace, Operation, OperationCollector, OperationList, QuantumOp, TraceMetadata,
+    NamedResult, NamedResultTrace, Operation, OperationCollector, OperationList, ProgramError,
+    QuantumOp, TraceMetadata,
 };
 
 /// Type alias for the quantum executor callback
@@ -307,6 +492,9 @@ where
 
 /// Reset the thread-local operation collector
 pub fn reset_interface() {
+    if let Some(ctx) = get_execution_context() {
+        unsafe { &*ctx }.reset_outputs();
+    }
     with_interface(OperationCollector::reset);
     // Also reset the collection mode read counter for loop termination
     ffi::reset_collection_read_count();
@@ -338,7 +526,7 @@ pub fn set_measurements(measurements: impl IntoIterator<Item = (usize, bool)>) {
 /// # Example
 /// ```
 /// use pecos_qis_ffi::set_quantum_executor;
-/// use std::collections::BTreeMap;
+/// use std::collections::{BTreeMap, BTreeSet};
 ///
 /// set_quantum_executor(|collector| {
 ///     let _ops = collector.take_operations();
@@ -891,15 +1079,16 @@ pub extern "C" fn pecos_get_named_result_traces_json() -> *mut std::ffi::c_char 
     }
 }
 
-/// Free a JSON string allocated by `pecos_get_named_results_json`
+/// Free a JSON string returned by the named-result or program-error exports.
 ///
 /// # Safety
-/// The pointer must have been allocated by `pecos_get_named_results_json` or
-/// `pecos_get_named_result_traces_json`.
+/// The pointer must have been allocated by `pecos_get_named_results_json`,
+/// `pecos_get_named_result_traces_json`, or `pecos_get_program_error_json`, and
+/// must not have been freed already.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pecos_free_named_results_json(ptr: *mut std::ffi::c_char) {
     if !ptr.is_null() {
-        // SAFETY: ptr was allocated by CString::into_raw in pecos_get_named_results_json
+        // SAFETY: All three JSON exports allocate with CString::into_raw.
         drop(unsafe { std::ffi::CString::from_raw(ptr) });
     }
 }

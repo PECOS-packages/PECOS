@@ -67,6 +67,14 @@ pub struct CHFormGeneric<S: IndexSet = BitSet, R: SeedableRng + Rng + Debug = Pe
 /// Default CH-form using `BitSet` and `PecosRng`.
 pub type CHForm<R = PecosRng> = CHFormGeneric<BitSet, R>;
 
+/// A term's augmented GF(2) constraint rows, in increasing non-v qubit order.
+/// Only one vector is populated: u64 rows for n <= 62, wide rows otherwise.
+/// These depend only on F, v and s and must be rebuilt if any of those change.
+pub(crate) struct ConstraintRows {
+    rows_u64: Vec<u64>,
+    rows_wide: Vec<Vec<u64>>,
+}
+
 /// Precomputed constraint solution for shared-structure inner products.
 /// When all terms share v, F, s, the GF(2) constraint system is identical
 /// for all pairs. Solve once, reuse for all T^2/2 inner products.
@@ -817,7 +825,19 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CHFormGeneric<S, R> {
         other: &Self,
         z_qubit: usize,
     ) -> (num_complex::Complex64, num_complex::Complex64) {
-        self.inner_product_fast(other, Some(z_qubit), false)
+        self.inner_product_fast(other, Some(z_qubit), false, None)
+    }
+
+    /// Like `inner_product_pair`, with rows precomputed from these two states.
+    /// The rows must correspond to the current F, v and s of self and other.
+    pub(crate) fn inner_product_pair_with_rows(
+        &self,
+        other: &Self,
+        z_qubit: usize,
+        self_rows: &ConstraintRows,
+        other_rows: &ConstraintRows,
+    ) -> (num_complex::Complex64, num_complex::Complex64) {
+        self.inner_product_fast(other, Some(z_qubit), false, Some((self_rows, other_rows)))
     }
 
     /// Like `inner_product_pair` but for states sharing F, M, v, s (only gamma/omega differ).
@@ -828,19 +848,63 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CHFormGeneric<S, R> {
         other: &Self,
         z_qubit: usize,
     ) -> (num_complex::Complex64, num_complex::Complex64) {
-        self.inner_product_fast(other, Some(z_qubit), true)
+        self.inner_product_fast(other, Some(z_qubit), true, None)
     }
 
     /// Compute the inner product `<self|other>`.
     #[must_use]
     pub fn inner_product(&self, other: &Self) -> num_complex::Complex64 {
-        self.inner_product_fast(other, None, false).0
+        self.inner_product_fast(other, None, false, None).0
     }
 
     /// Like `inner_product` but for states sharing F, M, v, s.
     #[must_use]
     pub fn inner_product_shared(&self, other: &Self) -> num_complex::Complex64 {
-        self.inner_product_fast(other, None, true).0
+        self.inner_product_fast(other, None, true, None).0
+    }
+
+    /// Build this term's rows once for a batch of divergent inner products.
+    pub(crate) fn precompute_constraint_rows(&self) -> ConstraintRows {
+        let mut rows = ConstraintRows {
+            rows_u64: Vec::with_capacity(if self.num_qubits <= 62 {
+                self.num_qubits - self.v.len()
+            } else {
+                0
+            }),
+            rows_wide: Vec::new(),
+        };
+        self.append_constraint_rows(&mut rows.rows_u64, &mut rows.rows_wide);
+        rows
+    }
+
+    /// Append [F.col(j) | s[j]] for each non-v qubit j, preserving qubit order.
+    fn append_constraint_rows(&self, rows_u64: &mut Vec<u64>, rows_wide: &mut Vec<Vec<u64>>) {
+        let n = self.num_qubits;
+        for j in 0..n {
+            if !self.v.contains(j) {
+                if n <= 62 {
+                    let mut row = 0u64;
+                    for k in self.f.col(j).iter() {
+                        row |= 1u64 << k;
+                    }
+                    if self.s.contains(j) {
+                        row |= 1u64 << n;
+                    }
+                    rows_u64.push(row);
+                } else {
+                    use super::quadratic_form::{set_bit as qf_set, words as qf_words};
+                    let aug_w = qf_words(n + 1);
+                    let mut row = vec![0u64; aug_w];
+                    for k in self.f.col(j).iter() {
+                        qf_set(&mut row, k);
+                    }
+                    if self.s.contains(j) {
+                        qf_set(&mut row, n);
+                    }
+                    rows_wide.push(row);
+                }
+            }
+        }
     }
 
     /// Compute the i-exponent of `<x|psi>` (without omega or magnitude).
@@ -897,6 +961,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CHFormGeneric<S, R> {
         other: &Self,
         z_qubit: Option<usize>,
         shared_structure: bool,
+        constraint_rows: Option<(&ConstraintRows, &ConstraintRows)>,
     ) -> (num_complex::Complex64, num_complex::Complex64) {
         use super::quadratic_form::QuadraticForm;
         let n = self.num_qubits;
@@ -1063,38 +1128,16 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CHFormGeneric<S, R> {
         let mut rows_u64: Vec<u64> = Vec::with_capacity(if use_u64 { 2 * n } else { 0 });
         let mut rows_wide: Vec<Vec<u64>> = Vec::new();
 
-        // Add constraints
-        for state_idx in 0..2 {
-            let (st_f, st_v, st_s) = if state_idx == 0 {
-                (&self.f, &self.v, &self.s)
-            } else {
-                (&other.f, &other.v, &other.s)
-            };
-            for j in 0..n {
-                if !st_v.contains(j) {
-                    if use_u64 {
-                        let mut row = 0u64;
-                        for k in st_f.col(j).iter() {
-                            row |= 1u64 << k;
-                        }
-                        if st_s.contains(j) {
-                            row |= 1u64 << rhs_bit_pos;
-                        }
-                        rows_u64.push(row);
-                    } else {
-                        use super::quadratic_form::{set_bit as qf_set, words as qf_words};
-                        let aug_w = qf_words(n + 1);
-                        let mut row = vec![0u64; aug_w];
-                        for k in st_f.col(j).iter() {
-                            qf_set(&mut row, k);
-                        }
-                        if st_s.contains(j) {
-                            qf_set(&mut row, n);
-                        }
-                        rows_wide.push(row);
-                    }
-                }
-            }
+        // Stack self's rows before other's, just as in the uncached path.
+        // Elimination mutates only these copies, leaving the cached rows intact.
+        if let Some((self_rows, other_rows)) = constraint_rows {
+            rows_u64.extend_from_slice(&self_rows.rows_u64);
+            rows_u64.extend_from_slice(&other_rows.rows_u64);
+            rows_wide.extend_from_slice(&self_rows.rows_wide);
+            rows_wide.extend_from_slice(&other_rows.rows_wide);
+        } else {
+            self.append_constraint_rows(&mut rows_u64, &mut rows_wide);
+            other.append_constraint_rows(&mut rows_u64, &mut rows_wide);
         }
 
         // Gaussian elimination (u64 fast path)
@@ -3547,6 +3590,92 @@ mod tests {
         let mut ch2 = ch1.clone();
         ch2.z(&[QubitId(0)]);
         (ch1, ch2)
+    }
+
+    #[test]
+    fn test_constraint_rows_match_matrix_columns() {
+        for n in [0, 1, 5, 62, 63, 64, 65, 127, 128, 150] {
+            let mut ch = CHForm::new_with_seed(n, 42);
+            for q in (0..n).step_by(3) {
+                ch.x(&[QubitId(q)]);
+            }
+            for q in (1..n).step_by(3) {
+                ch.h(&[QubitId(q)]);
+            }
+            for q in 1..n {
+                ch.cx(&[(QubitId(q - 1), QubitId(q))]);
+            }
+            let rows = ch.precompute_constraint_rows();
+            let expected_len = n - ch.v.len();
+            if n <= 62 {
+                assert_eq!(rows.rows_u64.len(), expected_len);
+                assert!(rows.rows_wide.is_empty());
+            } else {
+                assert!(rows.rows_u64.is_empty());
+                assert_eq!(rows.rows_wide.len(), expected_len);
+            }
+            for (r, j) in (0..n).filter(|&j| !ch.v.contains(j)).enumerate() {
+                // Read matrix entries independently of the column iterator used
+                // by row construction, including the RHS and padding bits.
+                let words: &[u64] = if n <= 62 {
+                    std::slice::from_ref(&rows.rows_u64[r])
+                } else {
+                    assert_eq!(rows.rows_wide[r].len(), (n + 1).div_ceil(64));
+                    &rows.rows_wide[r]
+                };
+                for k in 0..words.len() * 64 {
+                    let expected = if k < n {
+                        ch.f.get(k, j)
+                    } else {
+                        k == n && ch.s.contains(j)
+                    };
+                    assert_eq!((words[k / 64] >> (k % 64)) & 1 != 0, expected);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_cached_inner_product_rows_are_reusable() {
+        fn bits(value: num_complex::Complex64) -> (u64, u64) {
+            (value.re.to_bits(), value.im.to_bits())
+        }
+
+        for n in [1, 5, 62, 63, 64, 65, 127, 128, 150] {
+            let zero = CHForm::new_with_seed(n, 42);
+            let mut one = zero.clone();
+            one.x(&[QubitId(n - 1)]);
+            let mut few_free = one.clone();
+            for q in 0..n.min(3) {
+                few_free.h(&[QubitId(q)]);
+                few_free.sz(&[QubitId(q)]);
+            }
+            if n > 1 {
+                few_free.cx(&[(QubitId(0), QubitId(n - 1))]);
+            }
+            let mut all_free = zero.clone();
+            for q in 0..n {
+                all_free.h(&[QubitId(q)]);
+            }
+            let states = [zero, one, few_free, all_free];
+            let rows: Vec<_> = states
+                .iter()
+                .map(CHFormGeneric::precompute_constraint_rows)
+                .collect();
+            // Inconsistent systems, empty rows, enumeration, and quadratic
+            // sums; reverse pairs also exercise self-before-other stacking.
+            for (i, left) in states.iter().enumerate() {
+                for (j, right) in states.iter().enumerate() {
+                    for zq in [0, n / 2, n - 1] {
+                        let expected = left.inner_product_pair(right, zq);
+                        let actual =
+                            left.inner_product_pair_with_rows(right, zq, &rows[i], &rows[j]);
+                        assert_eq!(bits(actual.0), bits(expected.0), "n={n}, i={i}, j={j}");
+                        assert_eq!(bits(actual.1), bits(expected.1), "n={n}, zq={zq}");
+                    }
+                }
+            }
+        }
     }
 
     #[test]

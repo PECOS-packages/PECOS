@@ -4634,6 +4634,7 @@ dependencies = [
  "libc",
  "log",
  "pecos-qis-ffi-types",
+ "pecos-random",
  "serde_json",
 ]
 

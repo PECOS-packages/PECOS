@@ -27,16 +27,13 @@ def bell_state() -> None:
     result("right", measure(q1).read())
 
 
-@pytest.fixture(params=[pc.hugr_engine, pc.selene_engine], ids=["hugr", "selene"])
+@pytest.fixture(params=[pc.selene_engine], ids=["selene"])
 def engine_factory(request):
     return request.param
 
 
 def _run(program, engine_factory, qubits: int, shots: int, noise=None) -> dict:
-    if engine_factory is pc.hugr_engine:
-        builder = engine_factory().hugr_bytes(program.compile().to_bytes()).to_sim()
-    else:
-        builder = pc.sim(pc.Guppy(program)).classical(engine_factory())
+    builder = pc.sim(pc.Guppy(program)).classical(engine_factory())
     builder = builder.quantum(pc.state_vector()).qubits(qubits).seed(42)
     if noise is not None:
         builder = builder.noise(noise)
@@ -160,3 +157,118 @@ def test_hugr_to_qis_compilation(program, num_measurements: int) -> None:
     output = pecos_rslib_llvm.compile_hugr_to_qis(program.compile().to_bytes())
     assert re.search(r"define\b[^\n]*@qmain\(", output)
     assert len(re.findall(r"\bcall\b[^\n]*@___lazy_measure\(", output)) == num_measurements
+
+
+def test_default_hugr_lowering_is_deferred(monkeypatch) -> None:
+    """Builder configuration must not lower HUGR before build or execution."""
+    compile_hugr = pecos_rslib_llvm.compile_hugr_to_qis
+    calls = []
+
+    def compile_recorded(*args):
+        calls.append(args)
+        return compile_hugr(*args)
+
+    monkeypatch.setattr(pecos_rslib_llvm, "compile_hugr_to_qis", compile_recorded)
+    builder = pc.sim(pc.Guppy(bell_state)).qubits(2).seed(42).quantum(pc.state_vector())
+    assert calls == []
+    simulation = builder.build()
+    assert len(calls) == 1
+    data = simulation.run_with_workers(16, 2).to_dict()
+    assert len(data["left"]) == 16
+    assert data["left"] == data["right"]
+
+
+def test_hugr_foreign_object_reports_pending_qis_wiring() -> None:
+    """The refusal describes the pending QIS integration for WASM objects."""
+    builder = pc.sim(pc.Guppy(bell_state)).qubits(2)
+    message = "WASM foreign objects are not yet wired into the QIS route for HUGR/Guppy programs"
+    with pytest.raises(TypeError, match=message):
+        builder.foreign_object(object())
+    lowered = builder.classical(pc.selene_engine())
+    with pytest.raises(TypeError, match=message):
+        lowered.foreign_object(object())
+
+
+def test_explicit_qis_engine_refuses_neo_stack() -> None:
+    """Choosing a QIS engine ends the holder's experimental neo route."""
+    builder = pc.sim(pc.Guppy(bell_state)).qubits(2).classical(pc.selene_engine())
+    with pytest.raises(
+        ValueError,
+        match="already on the engines stack after choosing a QIS engine",
+    ):
+        builder.stack("neo")
+    results = builder.quantum(pc.state_vector()).seed(42).run(16).to_dict()
+    assert len(results["left"]) == 16
+    assert results["left"] == results["right"]
+
+
+def test_neo_hugr_refuses_explicit_classical_engine() -> None:
+    """An explicit engine cannot silently replace a selected neo stack."""
+    builder = pc.sim(pc.Guppy(bell_state)).qubits(2).stack("neo")
+    with pytest.raises(RuntimeError, match=r"Explicit \.classical\(\).*not routed to the neo stack"):
+        builder.classical(pc.selene_engine())
+
+
+@pytest.mark.parametrize("method", ["trace_operations", "capture_operation_trace"])
+def test_neo_hugr_refuses_operation_tracing(method, tmp_path) -> None:
+    """Both tracing entry points must preserve the selected stack by refusing."""
+    builder = pc.sim(pc.Guppy(bell_state)).qubits(2).stack("neo")
+    args = (str(tmp_path),) if method == "trace_operations" else ()
+    with pytest.raises(RuntimeError, match="QIS operation tracing are not routed to the neo stack"):
+        getattr(builder, method)(*args)
+
+
+def test_traced_hugr_refuses_neo_stack(tmp_path) -> None:
+    """Selecting QIS operation tracing first also prevents switching to neo."""
+    builder = pc.sim(pc.Guppy(bell_state)).qubits(2)
+    builder.trace_operations(str(tmp_path))
+    with pytest.raises(ValueError, match="already on the engines stack"):
+        builder.stack("neo")
+
+
+def test_hugr_classical_mutates_builder_when_return_discarded() -> None:
+    """Discarding classical()'s return must still select the explicit engine."""
+    builder = pc.sim(pc.Guppy(bell_state)).qubits(2)
+    builder.classical(pc.selene_engine())
+    with pytest.raises(ValueError, match="already on the engines stack"):
+        builder.stack("neo")
+    data = builder.quantum(pc.state_vector()).seed(42).run(16).to_dict()
+    assert len(data["left"]) == 16
+    assert data["left"] == data["right"]
+
+
+def test_qis_engine_program_lowers_hugr_at_runtime(monkeypatch) -> None:
+    """The engine's program(Hugr) entry point uses the runtime LLVM package."""
+    compile_hugr = pecos_rslib_llvm.compile_hugr_to_qis
+    calls = []
+
+    def compile_recorded(*args):
+        calls.append(args)
+        return compile_hugr(*args)
+
+    monkeypatch.setattr(pecos_rslib_llvm, "compile_hugr_to_qis", compile_recorded)
+    program = pc.Hugr(bell_state.compile().to_bytes())
+    engine = pc.selene_engine()
+    engine.program(program)
+    assert len(calls) == 1
+    data = engine.to_sim().qubits(2).quantum(pc.state_vector()).seed(42).run(16).to_dict()
+    assert len(data["left"]) == 16
+    assert data["left"] == data["right"]
+
+
+@pytest.mark.parametrize("entry_point", ["sim", "engine"])
+def test_hugr_lowering_requires_llvm_package(monkeypatch, entry_point) -> None:
+    """Both Python entry points explain the missing runtime lowering dependency."""
+    import sys
+
+    program = pc.Hugr(bell_state.compile().to_bytes())
+    engine = pc.selene_engine()
+    monkeypatch.setitem(sys.modules, "pecos_rslib_llvm", None)
+    if entry_point == "sim":
+        load_program = pc.sim(program).qubits(2).classical
+        argument = engine
+    else:
+        load_program = engine.program
+        argument = program
+    with pytest.raises(RuntimeError, match="requires the pecos-rslib-llvm package"):
+        load_program(argument)

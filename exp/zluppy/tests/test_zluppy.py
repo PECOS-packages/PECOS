@@ -531,13 +531,14 @@ def test_zluppy_engine_run():
     # Check we got results
     assert result is not None
     result_dict = result.to_dict()
-    assert "measurements" in result_dict
-    assert len(result_dict["measurements"]) == 100
+    assert set(result_dict) == {"measurement_0", "measurement_1"}
+    assert len(result_dict["measurement_0"]) == 100
+    shots = list(zip(result_dict["measurement_0"], result_dict["measurement_1"], strict=True))
 
     # Verify Bell state correlations (q0 == q1 for each shot)
-    for shot in result_dict["measurements"]:
+    for shot in shots:
         assert shot[0] == shot[1], f"Bell state violation: {shot}"
-    assert {tuple(shot) for shot in result_dict["measurements"]} == {(0, 0), (1, 1)}
+    assert set(shots) == {(0, 0), (1, 1)}
 
 
 def test_zluppy_engine_run_single_qubit():
@@ -552,8 +553,7 @@ def test_zluppy_engine_run_single_qubit():
     result_dict = result.to_dict()
 
     # X gate should always give |1⟩
-    for shot in result_dict["measurements"]:
-        assert shot == [1], f"Expected [1], got {shot}"
+    assert result_dict["measurement_0"] == [1] * 5
 
 
 def test_zluppy_engine_no_source_error():
@@ -615,7 +615,7 @@ def test_zluppy_engine_chaining():
 
     # All methods should be chainable
     result = zluppy.ZluppyEngine().source(source).run(shots=1)
-    assert result.to_dict()["measurements"] == [[1]]
+    assert result.to_dict()["measurement_0"] == [1]
 
 
 def test_zluppy_engine_repr():

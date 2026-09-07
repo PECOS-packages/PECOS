@@ -26,7 +26,7 @@ use std::io::Cursor;
 use tket::TketOp;
 use tket::extension::measurement::MeasurementOp;
 use tket::hugr::builder::{
-    BuildError, DFGBuilder, Dataflow, DataflowHugr, DataflowSubContainer, SubContainer,
+    BuildError, Dataflow, DataflowHugr, DataflowSubContainer, FunctionBuilder, SubContainer,
 };
 use tket::hugr::envelope::EnvelopeConfig;
 use tket::hugr::extension::prelude::{bool_t, qb_t};
@@ -461,6 +461,11 @@ impl HugrCodegen {
     /// Set the codegen mode.
     pub fn set_mode(&mut self, mode: CodegenMode) {
         self.mode = mode;
+    }
+
+    /// Number of qubits allocated by the compiled program.
+    pub fn num_qubits(&self) -> usize {
+        self.total_qubits
     }
 
     /// Compile a Zluppy program to HUGR.
@@ -1754,9 +1759,9 @@ impl HugrCodegen {
         let bool_row: Vec<_> = (0..self.total_qubits).map(|_| bool_t()).collect();
         let signature = Signature::new(vec![], bool_row);
 
-        // Create builder
-        let mut builder =
-            DFGBuilder::new(signature).map_err(|e| HugrError::BuilderError(e.to_string()))?;
+        // Build the body of main, the module's function-definition entry point.
+        let mut builder = FunctionBuilder::new("main", signature)
+            .map_err(|e| HugrError::BuilderError(e.to_string()))?;
 
         // Allocate qubits using QAlloc
         let mut qubit_wires: BTreeMap<QubitRef, Wire> = BTreeMap::new();
@@ -1830,8 +1835,8 @@ impl HugrCodegen {
 
     fn build_empty_hugr(&self) -> HugrResult<Hugr> {
         let signature = Signature::new(vec![], vec![]);
-        let builder =
-            DFGBuilder::new(signature).map_err(|e| HugrError::BuilderError(e.to_string()))?;
+        let builder = FunctionBuilder::new("main", signature)
+            .map_err(|e| HugrError::BuilderError(e.to_string()))?;
         builder
             .finish_hugr_with_outputs(vec![])
             .map_err(|e| HugrError::BuilderError(e.to_string()))
@@ -1839,7 +1844,7 @@ impl HugrCodegen {
 
     fn apply_gate(
         &self,
-        builder: &mut DFGBuilder<Hugr>,
+        builder: &mut FunctionBuilder<Hugr>,
         qubit_wires: &mut BTreeMap<QubitRef, Wire>,
         classical_wires: &mut BTreeMap<String, Wire>,
         gate_op: &GateOp,
@@ -2253,7 +2258,7 @@ impl HugrCodegen {
     /// Apply a direct TketOp gate.
     fn apply_direct_gate(
         &self,
-        builder: &mut DFGBuilder<Hugr>,
+        builder: &mut FunctionBuilder<Hugr>,
         qubit_wires: &mut BTreeMap<QubitRef, Wire>,
         op: TketOp,
         qubits: &[QubitRef],
@@ -2309,7 +2314,7 @@ impl HugrCodegen {
 
     /// Serialize a HUGR to bytes (text envelope format).
     ///
-    /// This format can be consumed by PECOS's hugr_engine() and sim().
+    /// This format can be loaded by PECOS and lowered to QIS at the Python boundary.
     pub fn to_bytes(&self, hugr: &Hugr) -> HugrResult<Vec<u8>> {
         let mut buffer = Cursor::new(Vec::new());
         hugr.store(&mut buffer, EnvelopeConfig::text())
@@ -2319,7 +2324,7 @@ impl HugrCodegen {
 
     /// Serialize a HUGR to a string (text envelope format).
     ///
-    /// This format can be consumed by PECOS's hugr_engine() and sim().
+    /// This format can be loaded by PECOS and lowered to QIS at the Python boundary.
     pub fn to_string(&self, hugr: &Hugr) -> HugrResult<String> {
         let bytes = self.to_bytes(hugr)?;
         String::from_utf8(bytes).map_err(|e| HugrError::SerializationError(e.to_string()))
@@ -2484,7 +2489,15 @@ mod tests {
     #[test]
     fn test_empty_program() {
         let hugr = compile_to_hugr("").unwrap();
-        assert!(hugr.num_nodes() > 0); // At least root node
+        assert!(hugr.num_nodes() > 0);
+        assert!(matches!(
+            hugr.get_optype(hugr.module_root()),
+            OpType::Module(_)
+        ));
+        let OpType::FuncDefn(main) = hugr.get_optype(hugr.entrypoint()) else {
+            panic!("expected a function-definition entry point");
+        };
+        assert_eq!(main.func_name(), "main");
     }
 
     #[test]
@@ -2544,8 +2557,16 @@ mod tests {
         );
 
         let hugr = compile_to_hugr(source).unwrap();
-        // Should have input, h, cx, output nodes
+        // The same Bell body is inside the module's main function.
         assert!(hugr.num_nodes() >= 4);
+        assert!(matches!(
+            hugr.get_optype(hugr.module_root()),
+            OpType::Module(_)
+        ));
+        let OpType::FuncDefn(main) = hugr.get_optype(hugr.entrypoint()) else {
+            panic!("expected a function-definition entry point");
+        };
+        assert_eq!(main.func_name(), "main");
     }
 
     #[test]

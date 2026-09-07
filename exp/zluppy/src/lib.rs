@@ -405,7 +405,7 @@ fn check_file(path: &str, strict: bool) -> PyResult<()> {
 
 /// Compile Zluppy source to HUGR bytes.
 ///
-/// The returned bytes can be passed directly to `hugr_engine()` or `sim()`.
+/// Wrap the returned bytes in `pecos.Hugr` and pass them to `pecos.sim()`.
 ///
 /// Args:
 ///     source: Zluppy source code as a string
@@ -441,7 +441,7 @@ fn compile_to_hugr(
 
 /// Compile a Zluppy source file to HUGR bytes.
 ///
-/// The returned bytes can be passed directly to `hugr_engine()` or `sim()`.
+/// Wrap the returned bytes in `pecos.Hugr` and pass them to `pecos.sim()`.
 ///
 /// Args:
 ///     path: Path to a .zlp file
@@ -1139,6 +1139,7 @@ impl ZlupProgram {
 struct ZluppyEngine {
     strict: bool,
     hugr_bytes: Option<Vec<u8>>,
+    num_qubits: Option<usize>,
 }
 
 #[pymethods]
@@ -1153,6 +1154,7 @@ impl ZluppyEngine {
         Self {
             strict,
             hugr_bytes: None,
+            num_qubits: None,
         }
     }
 
@@ -1176,6 +1178,7 @@ impl ZluppyEngine {
         let mut codegen = HugrCodegen::new();
         let hugr = codegen.compile(&program).map_err(hugr_error_to_py)?;
         self.hugr_bytes = Some(codegen.to_bytes(&hugr).map_err(hugr_error_to_py)?);
+        self.num_qubits = Some(codegen.num_qubits());
 
         Ok(self.clone())
     }
@@ -1203,8 +1206,17 @@ impl ZluppyEngine {
         let mut codegen = HugrCodegen::new();
         let hugr = codegen.compile(&program).map_err(hugr_error_to_py)?;
         self.hugr_bytes = Some(codegen.to_bytes(&hugr).map_err(hugr_error_to_py)?);
+        self.num_qubits = Some(codegen.num_qubits());
 
         Ok(self.clone())
+    }
+
+    /// Number of qubits allocated by the compiled program.
+    #[getter]
+    fn num_qubits(&self) -> PyResult<usize> {
+        self.num_qubits.ok_or_else(|| {
+            PyValueError::new_err("No source compiled. Call .source() or .file() first.")
+        })
     }
 
     /// Return the compiled HUGR bytes.

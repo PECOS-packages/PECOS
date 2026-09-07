@@ -225,6 +225,16 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
         let shared_structure = self.has_shared_projection_structure();
         let shared_constraints =
             shared_structure.then(|| self.terms[0].1.precompute_shared_constraints());
+        // Measurement-local rows cannot outlive mutations to a term's F, v or s.
+        // Build once per term, then copy them into each pair's elimination system.
+        let constraint_rows: Vec<_> = if shared_structure {
+            Vec::new()
+        } else {
+            self.terms
+                .iter()
+                .map(|(_, ch)| ch.precompute_constraint_rows())
+                .collect()
+        };
         let omegas: Vec<_> = if shared_structure {
             self.terms
                 .iter()
@@ -253,7 +263,12 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
                         Some(&self.gamma_diff_qubits),
                     )
                 } else {
-                    self.terms[j].1.inner_product_pair(&self.terms[k].1, q)
+                    self.terms[j].1.inner_product_pair_with_rows(
+                        &self.terms[k].1,
+                        q,
+                        &constraint_rows[j],
+                        &constraint_rows[k],
+                    )
                 };
                 let coefficient_product = self.terms[j].0.conj() * self.terms[k].0;
                 norm_sq += 2.0 * (coefficient_product * inner).re;

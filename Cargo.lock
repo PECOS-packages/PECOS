@@ -4049,7 +4049,6 @@ dependencies = [
  "pecos-decoders",
  "pecos-engines",
  "pecos-fusion-blossom",
- "pecos-hugr",
  "pecos-hugr-qis",
  "pecos-llvm",
  "pecos-neo",
@@ -4347,19 +4346,8 @@ name = "pecos-hugr"
 version = "0.2.0-dev.0"
 dependencies = [
  "anyhow",
- "env_logger",
- "log",
- "pecos-core",
- "pecos-engines",
- "pecos-quantum",
- "pecos-simulators",
- "pecos-wasm",
- "serde_json",
- "tempfile",
- "thiserror 2.0.18",
  "tket",
  "tket-qsystem",
- "wat",
 ]
 
 [[package]]
@@ -4447,7 +4435,6 @@ dependencies = [
  "num_cpus",
  "pecos-core",
  "pecos-engines",
- "pecos-hugr",
  "pecos-neo",
  "pecos-programs",
  "pecos-qasm",
@@ -4653,6 +4640,7 @@ dependencies = [
  "nalgebra",
  "num-complex 0.4.6",
  "pecos-core",
+ "pecos-engines",
  "pecos-num",
  "pecos-random",
  "pecos-simulators",

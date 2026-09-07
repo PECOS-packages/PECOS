@@ -13,7 +13,7 @@ Supports:
 - Qubit allocation via `VarDefine` (no explicit Alloc instructions)
 
 Scope: Straight-line quantum circuits (no classical control flow).
-For programs with control flow, use `HugrEngine` directly.
+Programs with control flow require lowering to QIS at the Python boundary.
 */
 
 use crate::builtin_ops::{BuiltinOp, FuncOp, ModuleOp, VarDefineOp};
@@ -157,7 +157,7 @@ impl HugrToPhirConverter {
         // keeps just the FIRST `DataflowBlock` of a CFG, so a HUGR with real
         // control flow would silently lose every other block (commonly
         // dropping the measurements -> empty results). Reject it up front so
-        // callers fall back to `HugrEngine` instead of getting wrong output.
+        // callers receive an explicit error instead of incorrect output.
         Self::reject_control_flow(hugr, hugr.entrypoint())?;
 
         let mut module = ModuleOp::new("hugr_module");

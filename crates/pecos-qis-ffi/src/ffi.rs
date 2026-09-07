@@ -1194,6 +1194,7 @@ unsafe fn record_named_output(
     scalar_prefix: &str,
     array_prefix: &str,
     entry: &str,
+    is_scalar: bool,
 ) {
     let Ok(len) = usize::try_from(label_len) else {
         drop(values);
@@ -1233,7 +1234,7 @@ unsafe fn record_named_output(
         .unwrap_or(label);
     if let Some(ctx) = crate::get_execution_context() {
         // SAFETY: The registered context lives for the duration of execution.
-        unsafe { &*ctx }.store_named_result(name, values);
+        unsafe { &*ctx }.store_named_result(name, values, is_scalar);
     } else {
         log::error!("Cannot record named result '{name}': no execution context registered");
     }
@@ -1321,6 +1322,7 @@ macro_rules! named_result_exports {
                     concat!("USER:", $prefix, ":"),
                     concat!("USER:", $prefix, "ARR:"),
                     stringify!($selene_scalar),
+                    true,
                 )
             };
         }
@@ -1347,6 +1349,7 @@ macro_rules! named_result_exports {
                             concat!("USER:", $prefix, ":"),
                             concat!("USER:", $prefix, "ARR:"),
                             stringify!($selene_array),
+                            false,
                         )
                     };
                 }

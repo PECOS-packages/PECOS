@@ -281,14 +281,9 @@ macro_rules! integer_detector_trace_test {
                         $array(label.as_ptr(), 1, &dense);
                     }
                 }
-                assert_eq!(
-                    ctx.get_named_result_traces()[1],
-                    NamedResultTrace {
-                        name: "i".to_string(),
-                        values: vec![false, true],
-                        result_ids: vec![],
-                    }
-                );
+                // Integer arrays never add a trace or consume pending reads.
+                assert_eq!(ctx.get_named_result_traces().len(), 1);
+                assert_eq!(*ctx.pending_result_reads.lock().expect("reads"), vec![10]);
                 // Bool output appends to the declared integer storage under the same tag.
                 unsafe { print_bool_selene(b"i".as_ptr(), 1, true) };
                 assert_eq!(json_results()["i"], NamedResult::$variant(vec![0, 0, 1, 1]));
@@ -345,6 +340,28 @@ macro_rules! integer_detector_trace_test {
                         },
                     ]
                 );
+
+                for values in [&[0][..], &[1][..], &[0, 1][..], &[0, 2][..]] {
+                    ctx.reset();
+                    ctx.record_result_read(19);
+                    let values: Vec<$ty> = values.to_vec();
+                    let dense = $dense {
+                        x: i32::try_from(values.len()).expect("array length"),
+                        y: 1,
+                        data: values.as_ptr(),
+                        mask: std::ptr::null(),
+                    };
+                    unsafe {
+                        if selene {
+                            $selene_array(label.as_ptr(), 1, values.as_ptr(), values.len() as u64);
+                        } else {
+                            $array(label.as_ptr(), 1, &dense);
+                        }
+                    }
+                    assert!(ctx.get_named_result_traces().is_empty());
+                    assert_eq!(*ctx.pending_result_reads.lock().expect("reads"), vec![19]);
+                    assert_eq!(json_results()["i"], NamedResult::$variant(values));
+                }
 
                 ctx.reset();
                 let empty = $dense {
@@ -628,8 +645,8 @@ fn declared_types_widen_only_between_bool_and_integers() {
     for first in &types {
         for second in &types {
             ctx.reset();
-            ctx.store_named_result("tag", first.clone());
-            ctx.store_named_result("tag", second.clone());
+            ctx.store_named_result("tag", first.clone(), true);
+            ctx.store_named_result("tag", second.clone(), true);
             let expected = match (first, second) {
                 (NamedResult::Bool(_), NamedResult::Bool(_)) => {
                     Some(NamedResult::Bool(vec![true, true]))

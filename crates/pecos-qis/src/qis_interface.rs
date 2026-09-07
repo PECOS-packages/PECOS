@@ -327,7 +327,8 @@ pub trait DynamicSyncHandle: Send + Sync {
 
     /// Get named result provenance from the execution context.
     ///
-    /// Returns one record per nonempty bool output or integer call containing only 0/1,
+    /// Returns one record per bool output or scalar integer 0/1 call.
+    /// Integer arrays never produce traces.
     /// Only real bool calls attach runtime measurement result IDs; integer
     /// detector traces have empty IDs and leave pending reads for bool calls.
     ///

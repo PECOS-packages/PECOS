@@ -53,8 +53,8 @@ def test_typed_named_results() -> None:
     }
 
 
-@pytest.mark.parametrize("seed", [1, 7, 42, 99])
-def test_measurement_dependent_integer(seed: int) -> None:
+@pytest.mark.parametrize(("seed", "trace_bit"), [(1, True), (7, True), (42, True), (99, False)])
+def test_measurement_dependent_integer(seed: int, trace_bit: bool) -> None:
     """Mixed 1/7 outcomes form a uniform integer column across shots and seeds.
 
     Conversion to ShotMap inside to_dict rejects any per-shot storage type flip;
@@ -76,6 +76,17 @@ def test_measurement_dependent_integer(seed: int) -> None:
     assert set(data["m"]) == {0, 1}
     assert data["count"] == [1 if m else 7 for m in data["m"]]
     assert data["constant"] == [2.5] * 32
+
+    chunks = pecos.capture_qis_operation_trace(conditional_result, 1, seed=seed)
+    traces = [item for chunk in chunks for item in chunk.get("named_result_traces", [])]
+    measured = next(item for item in traces if item["name"] == "m")
+    assert measured["result_ids"] == [0]
+    assert measured["values"] == [trace_bit]
+    count_traces = [item for item in traces if item["name"] == "count"]
+    if trace_bit:
+        assert count_traces == [{"name": "count", "values": [True], "result_ids": []}]
+    else:
+        assert count_traces == []
 
 
 def test_integer_aggregation_and_bool_widening() -> None:
@@ -285,3 +296,43 @@ def test_branch_dependent_types_name_register_shot_and_types() -> None:
     with pytest.raises(RuntimeError, match=r"Register 'v' at shot 1: expected U32, received I64") as error:
         shots.to_dict()
     print(str(error.value))
+
+
+def test_integer_array_traces_are_empty_and_scalar_zero_traces() -> None:
+    """Integer arrays never trace; the scalar integer detector convention remains."""
+
+    @guppy
+    def arrays() -> None:
+        result("t", array(0, 1))
+        result("t", array(0, 2))
+        result("u", array(nat(0), nat(1)))
+        result("single", array(1))
+
+    @guppy
+    def scalar() -> None:
+        result("det", 0)
+
+    array_chunks = pecos.capture_qis_operation_trace(arrays, 1)
+    assert [item for chunk in array_chunks for item in chunk.get("named_result_traces", [])] == []
+    scalar_chunks = pecos.capture_qis_operation_trace(scalar, 1)
+    assert [item for chunk in scalar_chunks for item in chunk.get("named_result_traces", [])] == [
+        {"name": "det", "values": [False], "result_ids": []},
+    ]
+
+
+def test_exit_before_first_result_reports_shot_register_count() -> None:
+    """Exiting before the first named result can change the registers across shots."""
+
+    @guppy
+    def early_exit() -> None:
+        q = qubit()
+        h(q)
+        if measure(q).read():
+            guppy_exit("done", 3)
+        result("first", 7)
+        result("last", 9)
+
+    shots = sim(Guppy(early_exit)).classical(pecos.selene_engine()).qubits(1).seed(42).run(32)
+    with pytest.raises(RuntimeError) as error:
+        shots.to_dict()
+    assert str(error.value) == ("Processing error: Shot 1 has 2 registers, but expected 1 based on first shot")

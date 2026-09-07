@@ -74,7 +74,7 @@ pub struct ExecutionContext {
     pub measurement_results: Mutex<Vec<Option<u64>>>,
     /// Typed storage for named results from all `print_*` entry points.
     pub named_results: Mutex<BTreeMap<String, NamedResult>>,
-    /// Runtime provenance for bool outputs and integer calls containing only 0/1.
+    /// Runtime provenance for bool outputs and scalar integer 0/1 calls.
     pub named_result_traces: Mutex<Vec<NamedResultTrace>>,
     /// Result IDs read since the last named output consumed them.
     pub pending_result_reads: Mutex<Vec<usize>>,
@@ -258,7 +258,8 @@ impl ExecutionContext {
     }
 
     /// Append one call's values, consuming reads only for nonempty bool calls.
-    pub fn store_named_result(&self, name: &str, values: NamedResult) {
+    /// `is_scalar` describes the entry point, not the number of elements.
+    pub fn store_named_result(&self, name: &str, values: NamedResult, is_scalar: bool) {
         let Ok(error) = self.program_error.lock() else {
             return;
         };
@@ -266,19 +267,21 @@ impl ExecutionContext {
             return;
         }
         drop(error);
-        // DEM detector convention: nonempty integer 0/1 calls retain bool
-        // traces in the single ideal tracing run, but never claim measurement
-        // provenance. Static certification recognizes only real bool outputs.
+        // DEM detector convention: scalar integer 0/1 calls retain bool traces
+        // in the single ideal tracing run, but never claim measurement provenance.
+        // Integer arrays never trace, including one-element arrays; the old
+        // integer detector convention had only scalar calls. Static certification
+        // recognizes only real bool outputs.
         // Only real bool calls drain reads; an empty bool array has no reads to
         // drain and keeps an empty trace. Storage follows declared call types.
         let is_bool_call = matches!(&values, NamedResult::Bool(_));
         let bool_values = match &values {
             NamedResult::Bool(values) => Some(values.clone()),
             _ if values.is_empty() => None,
-            NamedResult::I64(values) if values.iter().all(|&value| matches!(value, 0 | 1)) => {
+            NamedResult::I64(values) if is_scalar && matches!(values.as_slice(), [0 | 1]) => {
                 Some(values.iter().map(|&value| value == 1).collect())
             }
-            NamedResult::U64(values) if values.iter().all(|&value| matches!(value, 0 | 1)) => {
+            NamedResult::U64(values) if is_scalar && matches!(values.as_slice(), [0 | 1]) => {
                 Some(values.iter().map(|&value| value == 1).collect())
             }
             _ => None,
@@ -313,12 +316,12 @@ impl ExecutionContext {
 
     /// Store a named result (single bool value).
     pub fn store_named_bool(&self, name: &str, value: bool) {
-        self.store_named_result(name, NamedResult::Bool(vec![value]));
+        self.store_named_result(name, NamedResult::Bool(vec![value]), true);
     }
 
     /// Store a named result array (multiple bool values).
     pub fn store_named_array(&self, name: &str, values: &[bool]) {
-        self.store_named_result(name, NamedResult::Bool(values.to_vec()));
+        self.store_named_result(name, NamedResult::Bool(values.to_vec()), false);
     }
 
     /// Get all named results (returns a clone)

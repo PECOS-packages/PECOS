@@ -475,8 +475,9 @@ EXPORT_API uint64_t pecos_call_qmain_with_setjmp(qmain_fn_t qmain) {
 
     pecos_clear_program_error();
     program_panic_handler_t previous_handler = pecos_get_program_panic_handler();
-    int error_code = setjmp(user_program_jmpbuf);
-    if (error_code == 0) {
+    // C23 7.13.1.1p4-5 permits setjmp in this controlling comparison,
+    // but not in an initializer. The recorded termination determines status.
+    if (setjmp(user_program_jmpbuf) == 0) {
         pecos_set_program_panic_handler(pecos_program_panic_transfer);
         // Normal path - call qmain
         uint64_t result = qmain(0);
@@ -492,7 +493,7 @@ EXPORT_API uint64_t pecos_call_qmain_with_setjmp(qmain_fn_t qmain) {
         pecos_set_program_panic_handler(previous_handler);
         selene_on_shot_end(&dummy_instance);
 
-        return pecos_program_exited() ? 0 : (uint64_t)error_code;
+        return pecos_program_exited() ? 0 : 1;
     }
 }
 
@@ -525,8 +526,9 @@ EXPORT_API uint64_t pecos_call_void_main_with_setjmp(void_main_fn_t main_func) {
 
     pecos_clear_program_error();
     program_panic_handler_t previous_handler = pecos_get_program_panic_handler();
-    int error_code = setjmp(user_program_jmpbuf);
-    if (error_code == 0) {
+    // C23 7.13.1.1p4-5 permits setjmp in this controlling comparison,
+    // but not in an initializer. The recorded termination determines status.
+    if (setjmp(user_program_jmpbuf) == 0) {
         pecos_set_program_panic_handler(pecos_program_panic_transfer);
         main_func();
         pecos_set_program_panic_handler(previous_handler);
@@ -535,6 +537,6 @@ EXPORT_API uint64_t pecos_call_void_main_with_setjmp(void_main_fn_t main_func) {
     } else {
         pecos_set_program_panic_handler(previous_handler);
         selene_on_shot_end(&dummy_instance);
-        return pecos_program_exited() ? 0 : (uint64_t)error_code;
+        return pecos_program_exited() ? 0 : 1;
     }
 }

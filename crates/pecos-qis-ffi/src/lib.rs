@@ -30,9 +30,13 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Condvar, Mutex};
 
 pub mod ffi;
+mod random;
 
 #[cfg(test)]
 mod named_results_tests;
+
+#[cfg(test)]
+mod random_tests;
 
 // --- Per-Execution Context for Parallel Execution Support ---
 
@@ -80,6 +84,8 @@ pub struct ExecutionContext {
     pub pending_result_reads: Mutex<Vec<usize>>,
     /// First termination or output error; reset before the next program starts.
     pub program_error: Mutex<Option<ProgramError>>,
+    /// Program-seeded classical RNG; absent until seeded in the current shot.
+    program_rng: Mutex<Option<pecos_random::PCGRandom>>,
     /// Live libc allocations owned by this program execution, keyed by address.
     pub program_allocations: Mutex<BTreeSet<usize>>,
     /// Number of allocations actually freed for this context.
@@ -134,6 +140,7 @@ impl ExecutionContext {
             named_result_traces: Mutex::new(Vec::new()),
             pending_result_reads: Mutex::new(Vec::new()),
             program_error: Mutex::new(None),
+            program_rng: Mutex::new(None),
             program_allocations: Mutex::new(BTreeSet::new()),
             program_allocation_frees: AtomicUsize::new(0),
         }
@@ -160,6 +167,7 @@ impl ExecutionContext {
     /// Reset per-program output without changing dynamic synchronization state.
     pub fn reset_outputs(&self) {
         self.clear_program_error();
+        self.reset_program_rng();
         self.release_program_allocations();
         if let Ok(mut named) = self.named_results.lock() {
             named.clear();

@@ -241,6 +241,7 @@ IMPORT_API extern void pecos_set_program_panic_handler(program_panic_handler_t h
 IMPORT_API extern program_panic_handler_t pecos_get_program_panic_handler(void);
 IMPORT_API extern void pecos_clear_program_error(void);
 IMPORT_API extern void pecos_cleanup_program_allocations(void);
+IMPORT_API extern void pecos_reset_program_rng(void);
 IMPORT_API extern bool pecos_program_panic_handler_is_installed(void);
 IMPORT_API extern bool pecos_program_exited(void);
 static void pecos_program_panic_transfer(void);
@@ -366,6 +367,7 @@ EXPORT_API selene_u64_result_t selene_shot_count(SeleneInstance *instance) {
 
 EXPORT_API selene_void_result_t selene_on_shot_start(SeleneInstance *instance, uint64_t shot_index) {
     (void)instance; (void)shot_index;
+    pecos_reset_program_rng();
     pecos_cleanup_program_allocations();
     return SUCCESS(selene_void_result_t);
 }
@@ -396,30 +398,37 @@ EXPORT_API selene_void_result_t selene_print_exit(SeleneInstance *instance, sele
     return SUCCESS(selene_void_result_t);
 }
 
-// Random number generation stubs
+// Plain FFI exports share the execution context with direct QIS calls.
+IMPORT_API extern void random_seed_selene(uint64_t seed);
+IMPORT_API extern void random_advance_selene(uint64_t delta);
+IMPORT_API extern uint32_t random_u32_selene(void);
+IMPORT_API extern uint32_t random_u32_bounded_selene(uint32_t bound);
+IMPORT_API extern double random_f64_selene(void);
 EXPORT_API selene_void_result_t selene_random_seed(SeleneInstance *instance, uint64_t seed) {
-    (void)instance; (void)seed;
+    (void)instance;
+    random_seed_selene(seed);
     return SUCCESS(selene_void_result_t);
 }
 
 EXPORT_API selene_void_result_t selene_random_advance(SeleneInstance *instance, uint64_t delta) {
-    (void)instance; (void)delta;
+    (void)instance;
+    random_advance_selene(delta);
     return SUCCESS(selene_void_result_t);
 }
 
 EXPORT_API selene_u32_result_t selene_random_u32(SeleneInstance *instance) {
     (void)instance;
-    return (selene_u32_result_t){.error_code = 0, .value = 0};
+    return (selene_u32_result_t){.error_code = 0, .value = random_u32_selene()};
 }
 
 EXPORT_API selene_u32_result_t selene_random_u32_bounded(SeleneInstance *instance, uint32_t bound) {
-    (void)instance; (void)bound;
-    return (selene_u32_result_t){.error_code = 0, .value = 0};
+    (void)instance;
+    return (selene_u32_result_t){.error_code = 0, .value = random_u32_bounded_selene(bound)};
 }
 
 EXPORT_API selene_f64_result_t selene_random_f64(SeleneInstance *instance) {
     (void)instance;
-    return (selene_f64_result_t){.error_code = 0, .value = 0.0};
+    return (selene_f64_result_t){.error_code = 0, .value = random_f64_selene()};
 }
 
 EXPORT_API selene_u64_result_t selene_custom_runtime_call(SeleneInstance *instance, uint64_t tag,
@@ -435,7 +444,8 @@ EXPORT_API selene_u64_result_t selene_custom_runtime_call(SeleneInstance *instan
 // This is the jump buffer used by Helios's interface.c
 // We DEFINE it here (not extern) so it's available when program.so is loaded.
 // The program.so will have an `extern jmp_buf user_program_jmpbuf` declaration
-// that will resolve to this definition when loaded with RTLD_GLOBAL.
+// that resolves to this definition because the shim is loaded with RTLD_GLOBAL.
+// The program library stays RTLD_LOCAL to isolate its own definitions.
 // IMPORTANT: Must be thread-local because multiple rayon workers may call
 // pecos_call_qmain_with_setjmp concurrently, and each needs its own jmpbuf.
 __thread jmp_buf user_program_jmpbuf;

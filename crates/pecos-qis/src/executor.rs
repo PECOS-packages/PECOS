@@ -324,7 +324,7 @@ impl Drop for CompilationLock {
 /// to let the OS clean them up during process termination instead of explicitly
 /// calling `dlclose()`.
 struct SharedLibrary {
-    /// The `RTLD_GLOBAL` handle - keeps symbols visible to other libraries
+    /// The platform handle; runtime libraries expose their symbols globally
     /// Wrapped in `ManuallyDrop` to prevent `dlclose()` during process exit
     #[cfg(unix)]
     _global_handle: std::mem::ManuallyDrop<libloading::os::unix::Library>,
@@ -1148,9 +1148,10 @@ impl QisHeliosInterface {
                     lib_path.display()
                 );
 
-                match Self::load_library_with_rtld_global(
+                match Self::load_library(
                     &lib_path,
                     "Failed to load QIS FFI library singleton",
+                    true,
                 ) {
                     Ok((lib_global, lib)) => {
                         debug!("QIS FFI library singleton initialized successfully");
@@ -1198,8 +1199,7 @@ impl QisHeliosInterface {
 
         // Load library WITHOUT holding the lock - this is the slow part
         debug!("Loading program library (outside lock): {}", path.display());
-        let (lib_global, lib) =
-            Self::load_library_with_rtld_global(path, "Failed to load program library")?;
+        let (lib_global, lib) = Self::load_library(path, "Failed to load program library", false)?;
         let shared_lib = SharedLibrary {
             _global_handle: std::mem::ManuallyDrop::new(lib_global),
             lib: std::mem::ManuallyDrop::new(lib),
@@ -1245,9 +1245,10 @@ impl QisHeliosInterface {
                 shim_path.display()
             );
 
-            match Self::load_library_with_rtld_global(
+            match Self::load_library(
                 &shim_path,
                 "Failed to load PECOS C shim library singleton",
+                true,
             ) {
                 Ok((lib_global, lib)) => {
                     debug!("Shim library singleton initialized successfully");
@@ -1283,16 +1284,23 @@ impl QisHeliosInterface {
         Ok(*operations)
     }
 
-    /// Load a library with `RTLD_GLOBAL` and return both the global and lookup handles
+    /// Load runtime libraries globally and program libraries locally.
+    /// Program definitions must not interpose on later programs with the same names.
     #[cfg(unix)]
-    fn load_library_with_rtld_global(
+    fn load_library(
         path: &std::path::Path,
         error_msg: &str,
+        global: bool,
     ) -> Result<(libloading::os::unix::Library, Library), InterfaceError> {
         let lib_global = unsafe {
             libloading::os::unix::Library::open(
                 Some(path),
-                libloading::os::unix::RTLD_LAZY | libloading::os::unix::RTLD_GLOBAL,
+                libloading::os::unix::RTLD_LAZY
+                    | if global {
+                        libloading::os::unix::RTLD_GLOBAL
+                    } else {
+                        libloading::os::unix::RTLD_LOCAL
+                    },
             )
             .map_err(|e| InterfaceError::ExecutionError(format!("{error_msg}: {e}")))?
         };
@@ -1307,9 +1315,10 @@ impl QisHeliosInterface {
 
     /// Load a library on Windows (no `RTLD_GLOBAL` equivalent - symbols are searched in load order)
     #[cfg(windows)]
-    fn load_library_with_rtld_global(
+    fn load_library(
         path: &std::path::Path,
         error_msg: &str,
+        _global: bool,
     ) -> Result<(Library, Library), InterfaceError> {
         use std::os::windows::ffi::OsStrExt;
 
@@ -1482,7 +1491,8 @@ impl QisHeliosInterface {
             if cfg!(target_os = "macos") {
                 // macOS ld flags:
                 // - export_dynamic: Make all symbols visible for dlopen
-                // - undefined dynamic_lookup: Allow undefined symbols (resolved at runtime via RTLD_GLOBAL)
+                // - undefined dynamic_lookup: Resolve imports from the global FFI/shim libraries.
+                //   Program libraries remain RTLD_LOCAL to isolate their definitions.
                 debug!("Adding macOS-specific linker flags...");
                 clang_cmd.arg("-Wl,-export_dynamic");
                 clang_cmd.arg("-Wl,-undefined,dynamic_lookup");
@@ -2160,10 +2170,10 @@ entry:
         // Symbol resolution chain:
         //   qmain() → ___qalloc() → selene_qalloc() → __quantum__rt__qubit_allocate()
         //
-        // We need to load libs in order with RTLD_GLOBAL so symbols are visible:
+        // Load the FFI/shim globally for imports, then isolate program definitions:
         //   1. libpecos_qis_ffi.so (provides __quantum__*)
         //   2. libpecos_selene.so (provides selene_*, calls __quantum__*)
-        //   3. program.so (provides qmain, calls selene_*)
+        //   3. program.so (local symbols; provides qmain, calls selene_*)
 
         // Step 1: Get the process-wide QIS FFI library singleton
         // This provides the __quantum__* symbols for the shim to resolve.
@@ -2736,6 +2746,110 @@ mod tests {
     }
 
     #[test]
+    fn c_shim_rng_shares_direct_stream_and_resets_at_shot_start() {
+        #[repr(C)]
+        struct VoidResult {
+            error_code: u32,
+        }
+        #[repr(C)]
+        struct ValueResult<T> {
+            error_code: u32,
+            value: T,
+        }
+        type Instance = *mut std::ffi::c_void;
+        type WithU64 = unsafe extern "C" fn(Instance, u64) -> VoidResult;
+        let _env_lock = ENV_MUTEX.lock().expect("environment lock");
+        let ffi = QisHeliosInterface::get_qis_ffi_lib_singleton().expect("FFI library");
+        let shim = QisHeliosInterface::get_shim_lib_singleton().expect("shim library");
+        let context = QisHeliosInterface::create_execution_context(ffi.inner()).expect("context");
+        unsafe {
+            let register: Symbol<RegisterExecutionContextFn> = ffi
+                .get(b"pecos_register_execution_context\0")
+                .expect("register");
+            register(context.0);
+            let seed: Symbol<WithU64> = shim.get(b"selene_random_seed\0").expect("seed");
+            let advance: Symbol<WithU64> = shim.get(b"selene_random_advance\0").expect("advance");
+            let start: Symbol<WithU64> = shim.get(b"selene_on_shot_start\0").expect("shot start");
+            let draw: Symbol<unsafe extern "C" fn(Instance) -> ValueResult<u32>> =
+                shim.get(b"selene_random_u32\0").expect("draw");
+            let bounded: Symbol<unsafe extern "C" fn(Instance, u32) -> ValueResult<u32>> =
+                shim.get(b"selene_random_u32_bounded\0").expect("bounded");
+            let float: Symbol<unsafe extern "C" fn(Instance) -> ValueResult<f64>> =
+                shim.get(b"selene_random_f64\0").expect("float");
+            let direct: Symbol<unsafe extern "C" fn() -> i32> =
+                ffi.get(b"random_int\0").expect("direct draw");
+            let get: Symbol<GetProgramErrorJsonFn> =
+                ffi.get(b"pecos_get_program_error_json\0").expect("error");
+            let free: Symbol<FreeNamedResultsJsonFn> =
+                ffi.get(b"pecos_free_named_results_json\0").expect("free");
+            let instance = std::ptr::null_mut();
+            assert_eq!(seed(instance, 42).error_code, 0);
+            assert_eq!(draw(instance).value, 1_085_446_021);
+            assert_eq!(bounded(instance, 10).value, 0);
+            assert_eq!(
+                float(instance).value.to_bits(),
+                0.183_732_153_614_982_96_f64.to_bits()
+            );
+            assert_eq!(advance(instance, 3).error_code, 0);
+            assert_eq!(direct(), 1_312_053_665);
+            assert_eq!(start(instance, 1).error_code, 0);
+            direct();
+            let error = get();
+            assert!(
+                !error.is_null(),
+                "shot start must invalidate the old stream"
+            );
+            assert!(
+                std::ffi::CStr::from_ptr(error)
+                    .to_string_lossy()
+                    .contains("random_seed")
+            );
+            free(error);
+            register(std::ptr::null_mut());
+        }
+    }
+
+    #[test]
+    fn same_named_program_bodies_keep_their_own_constants() {
+        use pecos_qis_ffi_types::NamedResult;
+
+        let _env_lock = ENV_MUTEX.lock().expect("environment lock");
+        let ffi = QisHeliosInterface::get_qis_ffi_lib_singleton().expect("FFI library");
+        for value in [13, 29] {
+            let mut interface = QisHeliosInterface::new();
+            // Default-visible body definitions and their PLT calls mirror Guppy's
+            // output. With RTLD_GLOBAL, the second qmain calls the first body.
+            let program = format!(
+                r#"
+                @tag = private constant [1 x i8] c"x"
+                declare void @print_int_selene(ptr, i64, i64)
+                define void @__hugr__interposition.main.1() noinline {{
+                    call void @print_int_selene(ptr @tag, i64 1, i64 {value})
+                    ret void
+                }}
+                define i64 @qmain(i64 %arg) {{
+                    call void @__hugr__interposition.main.1()
+                    ret i64 0
+                }}
+                "#
+            );
+            interface
+                .load_program(program.as_bytes(), ProgramFormat::LlvmIrText)
+                .expect("load program");
+            interface.execution_context =
+                Some(QisHeliosInterface::create_execution_context(ffi.inner()).expect("context"));
+            interface.collect_operations().expect("run program");
+            assert_eq!(
+                HeliosSyncHandle::new()
+                    .get_named_results()
+                    .expect("outputs"),
+                BTreeMap::from([("x".to_string(), NamedResult::I64(vec![value]))])
+            );
+            drop(interface.execution_context.take());
+        }
+    }
+
+    #[test]
     fn wrappers_free_program_heap_on_return_exit_panic_and_invalid_input() {
         let _env_lock = ENV_MUTEX.lock().expect("environment lock");
         let ffi = QisHeliosInterface::get_qis_ffi_lib_singleton().expect("FFI library");
@@ -2756,6 +2870,21 @@ mod tests {
                 ("call void @panic(i32 3, ptr @message)", None),
                 ("call void @panic(i32 1001, ptr @message)", Some("done")),
                 ("%bad = call ptr @heap_alloc(i64 -1)", Some("heap_alloc")),
+                ("%random = call i32 @random_int()", Some("random_int")),
+                (
+                    "%random = call double @random_float()",
+                    Some("random_float"),
+                ),
+                ("call void @random_advance(i64 3)", Some("random_advance")),
+                ("%random = call i32 @random_rng(i32 10)", Some("random_rng")),
+                (
+                    "call void @random_seed(i64 42)\n%random = call i32 @random_rng(i32 0)",
+                    Some("random_rng"),
+                ),
+                (
+                    "%random = call i32 @random_u32_selene()",
+                    Some("random_u32_selene"),
+                ),
                 (
                     "call void @print_float_arr_selene(ptr @tag, i64 1, ptr %first, i64 9223372036854775807)",
                     Some("print_float_arr_selene"),
@@ -2774,6 +2903,12 @@ mod tests {
                     r#"
                     @message = private constant [5 x i8] c"\04done"
                     @tag = private constant [1 x i8] c"x"
+                    declare i32 @random_int()
+                    declare double @random_float()
+                    declare void @random_advance(i64)
+                    declare i32 @random_rng(i32)
+                    declare void @random_seed(i64)
+                    declare i32 @random_u32_selene()
                     declare ptr @heap_alloc(i64)
                     declare void @heap_free(ptr)
                     declare void @panic(i32, ptr)

@@ -4,6 +4,8 @@
 //! with Rust. These functions simply collect operations into the thread-local interface
 //! without performing any simulation or complex state management.
 
+pub use crate::random::*;
+
 use crate::{Operation, QuantumOp, TraceMetadata, with_interface};
 use log::debug;
 use std::cell::Cell;
@@ -1026,7 +1028,7 @@ fn record_invalid_input(entry: &str, detail: String) {
 /// # Safety
 /// Callers must release every owned value and mutex/TLS borrow before invoking
 /// this path. The skipped Rust frames must not own live destructors.
-unsafe fn fatal_ffi_input(entry: &str, detail: String) {
+pub(super) unsafe fn fatal_ffi_input(entry: &str, detail: String) {
     record_invalid_input(entry, detail);
     if let Some(transfer) = PROGRAM_PANIC_TRANSFER.get() {
         unsafe { transfer() };

@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """Test for-loop behavior."""
 
-import os
-
 from guppylang.decorator import guppy
 from guppylang.std.builtins import array
 from guppylang.std.builtins import result as record_result
@@ -39,16 +37,3 @@ def test_for_loop_with_measurements() -> None:
         assert len(shot) == 3, f"expected 3 loop measurements, got {shot}"
     outcomes = {m for shot in measurements for m in shot}
     assert outcomes == {0, 1}, f"H per iteration must yield both outcomes, got {outcomes}"
-
-
-if __name__ == "__main__":
-    os.environ["RUST_LOG"] = "pecos_hugr::engine=debug"
-    print("Testing for-loop with measurements...")
-    try:
-        results = sim(Guppy(loop_with_measure)).qubits(10).quantum(state_vector()).seed(42).run(1).to_dict()
-        print(f"Results: {results}")
-    except Exception as e:
-        print(f"Error: {e}")
-        import traceback
-
-        traceback.print_exc()

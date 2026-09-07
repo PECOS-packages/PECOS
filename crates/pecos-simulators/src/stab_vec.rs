@@ -44,7 +44,7 @@ use crate::clifford_frame::{
 use crate::{
     ArbitraryRotationGateable, CliffordGateable, MeasurementResult, QuantumSimulator, StateVecSoA,
 };
-use ch_form::CHFormGeneric;
+use ch_form::{CHFormGeneric, InnerProductScratch};
 use core::fmt::Debug;
 use core::mem::size_of;
 use num_complex::Complex64;
@@ -244,6 +244,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
             Vec::new()
         };
 
+        let mut scratch = InnerProductScratch::default();
         let mut norm_sq = 0.0;
         let mut twice_prob0 = 0.0;
         for (coefficient, ch) in &self.terms {
@@ -268,6 +269,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
                         q,
                         &constraint_rows[j],
                         &constraint_rows[k],
+                        &mut scratch,
                     )
                 };
                 let coefficient_product = self.terms[j].0.conj() * self.terms[k].0;

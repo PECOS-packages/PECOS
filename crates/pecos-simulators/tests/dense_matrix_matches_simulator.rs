@@ -133,7 +133,7 @@ fn matrix_columns(rep: &UnitaryRep, num_qubits: usize) -> Vec<Vec<num_complex::C
 }
 
 fn check_named(gate_type: GateType, num_qubits: usize) {
-    let named = Unitary::Named(gate_type);
+    let named = Unitary::named(gate_type);
     let rep = if num_qubits == 1 {
         named.on_qubit(0)
     } else {

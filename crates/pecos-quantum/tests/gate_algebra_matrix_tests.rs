@@ -324,7 +324,7 @@ fn matrix_unitary_rz_tensor_clifford_cx() {
 
 #[test]
 fn matrix_unitary_h_mul_rz() {
-    let h = Unitary::Named(pecos_core::gate_type::GateType::H);
+    let h = Unitary::named(pecos_core::gate_type::GateType::H);
     let rz = Unitary::Rotation {
         rotation_type: RotationType::RZ,
         angle: Angle64::from_turn_ratio(1, 8),
@@ -341,8 +341,8 @@ fn matrix_unitary_h_mul_rz() {
 
 #[test]
 fn matrix_unitary_h_tensor_cx() {
-    let h = Unitary::Named(pecos_core::gate_type::GateType::H);
-    let cx = Unitary::Named(pecos_core::gate_type::GateType::CX);
+    let h = Unitary::named(pecos_core::gate_type::GateType::H);
+    let cx = Unitary::named(pecos_core::gate_type::GateType::CX);
     let result = h & cx;
     let reference = unitary_rep::H(0) & unitary_rep::CX(1, 2);
     assert_residual_phase(
@@ -355,7 +355,7 @@ fn matrix_unitary_h_tensor_cx() {
 
 #[test]
 fn matrix_unitary_cx_tensor_rz() {
-    let cx = Unitary::Named(pecos_core::gate_type::GateType::CX);
+    let cx = Unitary::named(pecos_core::gate_type::GateType::CX);
     let rz = Unitary::Rotation {
         rotation_type: RotationType::RZ,
         angle: Angle64::QUARTER_TURN,

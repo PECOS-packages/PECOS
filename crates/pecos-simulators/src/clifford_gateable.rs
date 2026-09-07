@@ -893,9 +893,9 @@ pub trait CliffordGateable: QuantumSimulator {
     /// # Matrix Representation
     /// ```text
     /// CY = [[1,  0,  0,  0],
+    ///       [0,  1,  0,  0],
     ///       [0,  0,  0, -i],
-    ///       [0,  0,  1,  0],
-    ///       [0, +i,  0,  0]]
+    ///       [0,  0, +i,  0]]
     /// ```
     ///
     /// # Returns

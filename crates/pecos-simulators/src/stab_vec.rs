@@ -38,6 +38,9 @@ pub mod exact_scalar;
 pub mod quadratic_form;
 pub mod sparse_binary_matrix;
 
+use crate::clifford_frame::{
+    CliffordFrame, GATE_PHASE_DELTA, GEN_LENS, GENERATORS, PHASE_COCYCLE, PauliFrameGate,
+};
 use crate::{
     ArbitraryRotationGateable, CliffordGateable, MeasurementResult, QuantumSimulator, StateVecSoA,
 };
@@ -83,8 +86,6 @@ const DENSE_CROSSOVER_DENOMINATOR: usize = 2;
 ///     .build();
 /// ```
 ///
-use crate::clifford_frame::{CliffordFrame, GATE_PHASE_DELTA, GEN_LENS, GENERATORS, PHASE_COCYCLE};
-
 #[derive(Clone, Debug)]
 pub struct StabVecGeneric<S: IndexSet = BitSet, R: SeedableRng + Rng + Debug = PecosRng> {
     num_qubits: usize,
@@ -94,6 +95,8 @@ pub struct StabVecGeneric<S: IndexSet = BitSet, R: SeedableRng + Rng + Debug = P
     /// Pending RZ angles per qubit.
     pending_rz: Vec<Angle64>,
     /// Single-qubit Clifford frame per qubit. All 24 Clifford elements tracked.
+    /// The physical representative is `ELEMENT_MATRIX[frame]^T`: `GENERATORS`
+    /// are executed in listed order, reversing their documented matrix product.
     /// State = `pending_rz` * frame * |`stored_state`⟩.
     /// Single-qubit Cliffords compose into the frame in O(1).
     /// Flushed via H+S generator sequence when a two-qubit gate or measurement arrives.
@@ -574,6 +577,14 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
             + PHASE_COCYCLE[gate.index() as usize][old.index() as usize])
             & 7;
         self.cliff_frame[q] = gate.compose(old);
+    }
+
+    /// Move a deferred pair through a gate as one phase-exact transition.
+    fn propagate_cliff_frames(&mut self, q: usize, r: usize, gate: PauliFrameGate) {
+        if !gate.propagate_transposed(&mut self.cliff_frame, &mut self.frame_phase, (q, r)) {
+            self.flush_cliff_frame(q);
+            self.flush_cliff_frame(r);
+        }
     }
 
     /// Flush the Clifford frame on qubit q by applying its H+S generator sequence.
@@ -1471,17 +1482,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
             // A target RZ does not commute with CX. Materialize it against the
             // frame it is paired with, before CX propagation changes that frame.
             self.flush_pending_rz(t);
-            let fc = self.cliff_frame[c];
-            let ft = self.cliff_frame[t];
-            if fc.is_pauli() && ft.is_pauli() {
-                let (new_c, new_t, phase) = CliffordFrame::push_through_cx(fc, ft);
-                self.cliff_frame[c] = new_c;
-                self.cliff_frame[t] = new_t;
-                self.frame_phase = (self.frame_phase + phase) & 7;
-            } else {
-                self.flush_cliff_frame(c);
-                self.flush_cliff_frame(t);
-            }
+            self.propagate_cliff_frames(c, t, PauliFrameGate::Cx);
         }
         self.apply_clifford(|ch| {
             ch.cx(pairs);
@@ -1497,17 +1498,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
         for &(q0, q1) in pairs {
             let q = q0.index();
             let r = q1.index();
-            let fq = self.cliff_frame[q];
-            let fr = self.cliff_frame[r];
-            if fq.is_pauli() && fr.is_pauli() {
-                let (new_q, new_r, phase) = CliffordFrame::push_through_cz(fq, fr);
-                self.cliff_frame[q] = new_q;
-                self.cliff_frame[r] = new_r;
-                self.frame_phase = (self.frame_phase + phase) & 7;
-            } else {
-                self.flush_cliff_frame(q);
-                self.flush_cliff_frame(r);
-            }
+            self.propagate_cliff_frames(q, r, PauliFrameGate::Cz);
         }
         self.apply_c_type_clifford(|ch| {
             ch.cz(pairs);
@@ -1523,17 +1514,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
         for &(q0, q1) in pairs {
             let q = q0.index();
             let r = q1.index();
-            let fq = self.cliff_frame[q];
-            let fr = self.cliff_frame[r];
-            if fq.is_pauli() && fr.is_pauli() {
-                let (new_q, new_r, phase) = CliffordFrame::push_through_szz(fq, fr);
-                self.cliff_frame[q] = new_q;
-                self.cliff_frame[r] = new_r;
-                self.frame_phase = (self.frame_phase + phase) & 7;
-            } else {
-                self.flush_cliff_frame(q);
-                self.flush_cliff_frame(r);
-            }
+            self.propagate_cliff_frames(q, r, PauliFrameGate::Szz);
         }
         self.apply_c_type_clifford(|ch| {
             ch.szz(pairs);
@@ -1550,18 +1531,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
         for &(q0, q1) in pairs {
             let q = q0.index();
             let r = q1.index();
-            let fq = self.cliff_frame[q];
-            let fr = self.cliff_frame[r];
-            if fq.is_pauli() && fr.is_pauli() {
-                let (new_q, new_r, phase) = CliffordFrame::push_through_szz(fq, fr);
-                self.cliff_frame[q] = new_q;
-                self.cliff_frame[r] = new_r;
-                // SZZdg has opposite phase from SZZ propagation
-                self.frame_phase = (self.frame_phase + (8 - phase) % 8) & 7;
-            } else {
-                self.flush_cliff_frame(q);
-                self.flush_cliff_frame(r);
-            }
+            self.propagate_cliff_frames(q, r, PauliFrameGate::SzzDg);
         }
         self.apply_c_type_clifford(|ch| {
             ch.szzdg(pairs);
@@ -1580,17 +1550,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
             for target in [q, r] {
                 self.flush_noncommuting_pending_rz(target);
             }
-            let fq = self.cliff_frame[q];
-            let fr = self.cliff_frame[r];
-            if fq.is_pauli() && fr.is_pauli() {
-                let (new_q, new_r, phase) = CliffordFrame::push_through_sxx(fq, fr);
-                self.cliff_frame[q] = new_q;
-                self.cliff_frame[r] = new_r;
-                self.frame_phase = (self.frame_phase + phase) & 7;
-            } else {
-                self.flush_cliff_frame(q);
-                self.flush_cliff_frame(r);
-            }
+            self.propagate_cliff_frames(q, r, PauliFrameGate::Sxx);
         }
         // SXX = H*H * SZZ * H*H
         self.apply_xx_root(pairs, false);
@@ -1608,17 +1568,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
             for target in [q, r] {
                 self.flush_noncommuting_pending_rz(target);
             }
-            let fq = self.cliff_frame[q];
-            let fr = self.cliff_frame[r];
-            if fq.is_pauli() && fr.is_pauli() {
-                let (new_q, new_r, phase) = CliffordFrame::push_through_sxx(fq, fr);
-                self.cliff_frame[q] = new_q;
-                self.cliff_frame[r] = new_r;
-                self.frame_phase = (self.frame_phase + (8 - phase) % 8) & 7;
-            } else {
-                self.flush_cliff_frame(q);
-                self.flush_cliff_frame(r);
-            }
+            self.propagate_cliff_frames(q, r, PauliFrameGate::SxxDg);
         }
         self.apply_xx_root(pairs, true);
         self
@@ -1635,17 +1585,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
             for target in [q, r] {
                 self.flush_noncommuting_pending_rz(target);
             }
-            let fq = self.cliff_frame[q];
-            let fr = self.cliff_frame[r];
-            if fq.is_pauli() && fr.is_pauli() {
-                let (new_q, new_r, phase) = CliffordFrame::push_through_syy(fq, fr);
-                self.cliff_frame[q] = new_q;
-                self.cliff_frame[r] = new_r;
-                self.frame_phase = (self.frame_phase + phase) & 7;
-            } else {
-                self.flush_cliff_frame(q);
-                self.flush_cliff_frame(r);
-            }
+            self.propagate_cliff_frames(q, r, PauliFrameGate::Syy);
         }
         // SYY = S*S * SXX * Sdg*Sdg
         let all_qubits: Vec<QubitId> = pairs.iter().flat_map(|&(q0, q1)| [q0, q1]).collect();
@@ -1670,17 +1610,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> CliffordGateable for Sta
             for target in [q, r] {
                 self.flush_noncommuting_pending_rz(target);
             }
-            let fq = self.cliff_frame[q];
-            let fr = self.cliff_frame[r];
-            if fq.is_pauli() && fr.is_pauli() {
-                let (new_q, new_r, phase) = CliffordFrame::push_through_syy(fq, fr);
-                self.cliff_frame[q] = new_q;
-                self.cliff_frame[r] = new_r;
-                self.frame_phase = (self.frame_phase + (8 - phase) % 8) & 7;
-            } else {
-                self.flush_cliff_frame(q);
-                self.flush_cliff_frame(r);
-            }
+            self.propagate_cliff_frames(q, r, PauliFrameGate::SyyDg);
         }
         let all_qubits: Vec<QubitId> = pairs.iter().flat_map(|&(q0, q1)| [q0, q1]).collect();
         self.apply_c_type_clifford(|ch| {

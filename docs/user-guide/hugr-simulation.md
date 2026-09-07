@@ -162,6 +162,7 @@ If you have HUGR files (compiled from Guppy or other tools), you can run them di
 
     Now load and run the pre-compiled HUGR:
 
+    <!--continuation-->
     ```python
     from pecos import sim, Hugr
     from pecos_rslib import state_vector

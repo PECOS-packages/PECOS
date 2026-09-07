@@ -25,5 +25,6 @@
 pub use crate::unitary_rep::{
     CCX, CX, CXs, CY, CYs, CZ, CZs, Commutativity, H, Hs, I, Is, ParseUnitaryRepError, PhaseValue,
     QubitPairs, Qubits, RX, RXX, RXXs, RXs, RY, RYY, RYYs, RYs, RZ, RZZ, RZZs, RZs, RotationType,
-    SWAP, SWAPs, SX, SXs, SY, SYs, SZ, SZs, T, Ts, Unitary, UnitaryRep, X, Xs, Y, Ys, Z, Zs, phase,
+    SWAP, SWAPs, SX, SXs, SY, SYs, SZ, SZs, T, Ts, Unitary, UnitaryGateError, UnitaryRep, X, Xs, Y,
+    Ys, Z, Zs, phase,
 };

@@ -47,6 +47,14 @@ scheduled. Logical labels, absolute round numbers, patch placement, and
 zero-time automorphisms therefore do not multiply the cache entries for the
 same physical operation.
 
+Output mappings are GF(2) transformations rather than only permutations. One
+local `L<n>` or `TP<n>` column may route to several algorithm-wide columns;
+repeated destinations cancel by parity, including cancellation between routing
+rows. Empty target sets explicitly project a local column away, while missing
+mappings remain errors. This is needed to reuse a physical slice before later
+logical Clifford gates: H swaps logical X/Z columns and CX fans some Pauli
+effects into two output columns.
+
 The cache deliberately accepts a caller-defined ordered key. A physical
 template compiler should include circuit identity, code geometry, detector
 schema, temporal horizon, and noise-support topology in that key. It should not
@@ -94,10 +102,12 @@ At the Rust layer, callers compose cached `DemSliceInstance` values with
 `DemSliceRoundSchedule::from_instances`. Python exposes the same narrow path as
 opaque `DemSliceTemplate` values returned by `schedule.template(...)` and
 `DemSliceRoundSchedule.from_templates(...)`. The Python constructor currently
-uses identity detector/output mappings plus checked global or per-stream
-spatial translations. Per-stream translation lets independently placed code
-blocks reuse one physical template; general stream-identity routing and logical
-relabeling remain in the Rust instance API.
+uses identity detector/output mappings by default, accepts checked per-round
+GF(2) output routing tables, and supports checked global or per-stream spatial
+translations. Templates expose their referenced local output IDs so callers do
+not need to guess the routing domain. Per-stream translation lets independently
+placed code blocks reuse one physical template; general detector-stream identity
+routing remains in the Rust instance API.
 
 The production `LogicalCircuitBuilder` uses a bounded three-round compile for
 eligible single-patch memory operations of two or more rounds. Its cache key
@@ -221,7 +231,8 @@ converted to mechanism columns.
 
 This layer provides the stable slice, cache, structured-DEM adapter, automatic
 round layout, ownership, bounded template extraction, mapping, and stitching
-API. Initialization, stationary bulk SEC, pre-terminal SEC, and terminal
+API, including instance-time GF(2) routing for logical and tracked-Pauli output
+columns. Initialization, stationary bulk SEC, pre-terminal SEC, and terminal
 surface-memory families have exact composition coverage and a production
 single-patch memory provider. A single transversal-H boundary and its adjacent
 memory families also have exact composition coverage and a production provider,

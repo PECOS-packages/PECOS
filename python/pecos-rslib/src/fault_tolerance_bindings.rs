@@ -1672,6 +1672,18 @@ impl PyDemSliceTemplate {
         self.inner.contributions().len()
     }
 
+    /// Slice-local standard DEM-output identities.
+    #[getter]
+    fn dem_outputs(&self) -> Vec<u32> {
+        self.inner.local_dem_outputs().collect()
+    }
+
+    /// Slice-local PECOS tracked-Pauli identities.
+    #[getter]
+    fn tracked_paulis(&self) -> Vec<u32> {
+        self.inner.local_tracked_paulis().collect()
+    }
+
     fn __repr__(&self) -> String {
         let (past, future) = self.temporal_horizon();
         format!(
@@ -1704,6 +1716,41 @@ fn parse_dem_boundary_kind(forward_boundary: &str) -> PyResult<RustDemBoundaryKi
     }
 }
 
+type PyTemplateOutputRoutings = BTreeMap<i64, BTreeMap<u32, Vec<u32>>>;
+
+fn validate_template_output_routings(
+    argument: &str,
+    routings: Option<&PyTemplateOutputRoutings>,
+    known_by_round: &BTreeMap<i64, BTreeSet<u32>>,
+    declared_outputs: &BTreeSet<u32>,
+) -> PyResult<()> {
+    let Some(routings) = routings else {
+        return Ok(());
+    };
+    for (&round, local_routings) in routings {
+        let Some(known_outputs) = known_by_round.get(&round) else {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "{argument} contains unknown owner round {round}"
+            )));
+        };
+        for (&local_output, global_outputs) in local_routings {
+            if !known_outputs.contains(&local_output) {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "{argument}[{round}] contains unknown local output {local_output}"
+                )));
+            }
+            for global_output in global_outputs {
+                if !declared_outputs.contains(global_output) {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "{argument}[{round}][{local_output}] targets undeclared output {global_output}"
+                    )));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 #[pymethods]
 impl PyDemSliceRoundSchedule {
     /// Assemble a schedule from cached templates at requested absolute rounds.
@@ -1714,14 +1761,18 @@ impl PyDemSliceRoundSchedule {
     /// every available template-local detector coordinate at instantiation.
     /// ``detector_coordinate_offsets`` adds a further translation selected by
     /// local detector-stream ID, allowing independently placed code blocks.
+    /// Output routings select a GF(2) target set by owner round and local output;
+    /// repeated targets cancel, and an empty target set projects a column away.
     #[staticmethod]
-    #[pyo3(signature = (output_model, templates, coordinate_offset=None, detector_coordinate_offsets=None))]
+    #[pyo3(signature = (output_model, templates, coordinate_offset=None, detector_coordinate_offsets=None, dem_output_routings=None, tracked_pauli_routings=None))]
     fn from_templates(
         py: Python<'_>,
         output_model: &PyDetectorErrorModel,
         templates: Vec<(Py<PyDemSliceTemplate>, i64)>,
         coordinate_offset: Option<(f64, f64)>,
         detector_coordinate_offsets: Option<BTreeMap<u32, (f64, f64)>>,
+        dem_output_routings: Option<PyTemplateOutputRoutings>,
+        tracked_pauli_routings: Option<PyTemplateOutputRoutings>,
     ) -> PyResult<Self> {
         if let Some((x, y)) = coordinate_offset
             && (!x.is_finite() || !y.is_finite())
@@ -1752,6 +1803,41 @@ impl PyDemSliceRoundSchedule {
                 }
             }
         }
+        let mut known_dem_outputs = BTreeMap::<i64, BTreeSet<u32>>::new();
+        let mut known_tracked_paulis = BTreeMap::<i64, BTreeSet<u32>>::new();
+        for (template, round) in &templates {
+            let template = template.borrow(py);
+            known_dem_outputs
+                .entry(*round)
+                .or_default()
+                .extend(template.inner.local_dem_outputs());
+            known_tracked_paulis
+                .entry(*round)
+                .or_default()
+                .extend(template.inner.local_tracked_paulis());
+        }
+        let declared_dem_outputs = output_model
+            .inner
+            .observables()
+            .map(|output| output.id)
+            .collect();
+        let declared_tracked_paulis = output_model
+            .inner
+            .iter_tracked_paulis()
+            .map(|output| output.id)
+            .collect();
+        validate_template_output_routings(
+            "dem_output_routings",
+            dem_output_routings.as_ref(),
+            &known_dem_outputs,
+            &declared_dem_outputs,
+        )?;
+        validate_template_output_routings(
+            "tracked_pauli_routings",
+            tracked_pauli_routings.as_ref(),
+            &known_tracked_paulis,
+            &declared_tracked_paulis,
+        )?;
         let instances = templates
             .into_iter()
             .map(|(template, round)| -> PyResult<_> {
@@ -1778,6 +1864,26 @@ impl PyDemSliceRoundSchedule {
                                 RustDemDetectorPlacement::new(detector.id).with_coords(translated),
                             );
                         }
+                    }
+                }
+                if let Some(routings) = dem_output_routings
+                    .as_ref()
+                    .and_then(|routings| routings.get(&round))
+                {
+                    for (&local_output, global_outputs) in routings {
+                        instance = instance
+                            .with_dem_output_targets(local_output, global_outputs.iter().copied());
+                    }
+                }
+                if let Some(routings) = tracked_pauli_routings
+                    .as_ref()
+                    .and_then(|routings| routings.get(&round))
+                {
+                    for (&local_output, global_outputs) in routings {
+                        instance = instance.with_tracked_pauli_targets(
+                            local_output,
+                            global_outputs.iter().copied(),
+                        );
                     }
                 }
                 Ok(instance)

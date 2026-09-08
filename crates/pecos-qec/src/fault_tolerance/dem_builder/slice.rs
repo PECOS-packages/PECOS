@@ -636,6 +636,16 @@ impl DemSlice {
         &self.contributions
     }
 
+    /// Standard DEM-output identities referenced by this slice.
+    pub fn local_dem_outputs(&self) -> impl Iterator<Item = u32> + '_ {
+        self.local_dem_outputs.iter().copied()
+    }
+
+    /// PECOS tracked-Pauli identities referenced by this slice.
+    pub fn local_tracked_paulis(&self) -> impl Iterator<Item = u32> + '_ {
+        self.local_tracked_paulis.iter().copied()
+    }
+
     /// Validated temporal reach of the slice.
     #[must_use]
     pub const fn horizon(&self) -> DemTemporalHorizon {
@@ -812,8 +822,8 @@ pub struct DemSliceInstance {
     slice: Arc<DemSlice>,
     round: i64,
     detector_map: BTreeMap<u32, DemDetectorPlacement>,
-    dem_output_map: BTreeMap<u32, u32>,
-    tracked_pauli_map: BTreeMap<u32, u32>,
+    dem_output_map: BTreeMap<u32, SmallVec<[u32; 2]>>,
+    tracked_pauli_map: BTreeMap<u32, SmallVec<[u32; 2]>>,
 }
 
 impl DemSliceInstance {
@@ -828,12 +838,12 @@ impl DemSliceInstance {
         let dem_output_map = slice
             .local_dem_outputs
             .iter()
-            .map(|&output| (output, output))
+            .map(|&output| (output, std::iter::once(output).collect()))
             .collect();
         let tracked_pauli_map = slice
             .local_tracked_paulis
             .iter()
-            .map(|&output| (output, output))
+            .map(|&output| (output, std::iter::once(output).collect()))
             .collect();
         Self {
             slice,
@@ -857,15 +867,43 @@ impl DemSliceInstance {
 
     /// Replace a local standard DEM-output mapping.
     #[must_use]
-    pub fn with_dem_output(mut self, local_output: u32, global_output: u32) -> Self {
-        self.dem_output_map.insert(local_output, global_output);
+    pub fn with_dem_output(self, local_output: u32, global_output: u32) -> Self {
+        self.with_dem_output_targets(local_output, [global_output])
+    }
+
+    /// Replace a local standard DEM output with a GF(2) set of global outputs.
+    ///
+    /// Repeated targets cancel by parity. An empty target set deliberately
+    /// projects the local output away; an absent mapping remains an error.
+    #[must_use]
+    pub fn with_dem_output_targets(
+        mut self,
+        local_output: u32,
+        global_outputs: impl IntoIterator<Item = u32>,
+    ) -> Self {
+        self.dem_output_map
+            .insert(local_output, parity_sorted(global_outputs));
         self
     }
 
     /// Replace a local PECOS tracked-Pauli mapping.
     #[must_use]
-    pub fn with_tracked_pauli(mut self, local_output: u32, global_output: u32) -> Self {
-        self.tracked_pauli_map.insert(local_output, global_output);
+    pub fn with_tracked_pauli(self, local_output: u32, global_output: u32) -> Self {
+        self.with_tracked_pauli_targets(local_output, [global_output])
+    }
+
+    /// Replace a local tracked Pauli with a GF(2) set of global tracked Paulis.
+    ///
+    /// Repeated targets cancel by parity. An empty target set deliberately
+    /// projects the local output away; an absent mapping remains an error.
+    #[must_use]
+    pub fn with_tracked_pauli_targets(
+        mut self,
+        local_output: u32,
+        global_outputs: impl IntoIterator<Item = u32>,
+    ) -> Self {
+        self.tracked_pauli_map
+            .insert(local_output, parity_sorted(global_outputs));
         self
     }
 
@@ -1848,7 +1886,7 @@ fn instantiate_effect(
         });
     }
 
-    let mut outputs = Vec::with_capacity(local.dem_outputs.len());
+    let mut outputs = Vec::new();
     for output in &local.dem_outputs {
         let mapped = instance.dem_output_map.get(output).ok_or_else(|| {
             DemSliceStitchError::MissingDemOutputMapping {
@@ -1856,10 +1894,10 @@ fn instantiate_effect(
                 output: *output,
             }
         })?;
-        outputs.push(*mapped);
+        outputs.extend(mapped.iter().copied());
     }
 
-    let mut tracked_paulis = Vec::with_capacity(local.tracked_paulis.len());
+    let mut tracked_paulis = Vec::new();
     for output in &local.tracked_paulis {
         let mapped = instance.tracked_pauli_map.get(output).ok_or_else(|| {
             DemSliceStitchError::MissingTrackedPauliMapping {
@@ -1867,8 +1905,10 @@ fn instantiate_effect(
                 output: *output,
             }
         })?;
-        tracked_paulis.push(*mapped);
+        tracked_paulis.extend(mapped.iter().copied());
     }
+    let outputs: SmallVec<[u32; 2]> = parity_sorted(outputs);
+    let tracked_paulis: SmallVec<[u32; 2]> = parity_sorted(tracked_paulis);
 
     Ok(FaultMechanism::from_unsorted_with_tracked_paulis(
         detectors,
@@ -2378,6 +2418,38 @@ mod tests {
             vec![(0.125, vec![0], vec![3])]
         );
         assert_eq!(stitched.model.num_observables(), 4);
+    }
+
+    #[test]
+    fn output_routing_applies_a_gf2_transformation() {
+        let slice = Arc::new(
+            DemSlice::new(
+                "GF(2) routed",
+                vec![DemSliceDetector::new(0)],
+                vec![DemSliceContribution::direct(
+                    SliceFaultMechanism::from_unsorted_with_tracked_paulis(
+                        [target(0, 0)],
+                        [0, 1],
+                        [0, 1],
+                    ),
+                    0.125,
+                )],
+                DemTemporalHorizon::new(0, 0),
+            )
+            .unwrap(),
+        );
+        let instance = DemSliceInstance::identity(slice, 0)
+            .with_dem_output_targets(0, [3, 4, 4, 6])
+            .with_dem_output_targets(1, [5, 6])
+            .with_tracked_pauli_targets(0, [7, 8])
+            .with_tracked_pauli_targets(1, [8, 9]);
+        let stitched = DemStitcher::new(DemWindowSpec::new(0, 1, 0, DemBoundaryKind::Hard))
+            .stitch(&[instance])
+            .unwrap();
+
+        let contribution = &stitched.model.contributions()[0];
+        assert_eq!(contribution.effect.dem_outputs.as_slice(), &[3, 5]);
+        assert_eq!(contribution.effect.tracked_paulis.as_slice(), &[7, 9]);
     }
 
     #[test]

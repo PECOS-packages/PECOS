@@ -400,20 +400,20 @@ def test_cached_surface_templates_reconstruct_a_longer_memory_experiment():
     terminal = bounded.template(3)
     assert init.name.endswith("round@0")
     assert bulk.temporal_horizon == (0, 1)
+    assert all(template.dem_outputs == [0] for template in (init, bulk, pre_terminal, terminal))
+    assert all(not template.tracked_paulis for template in (init, bulk, pre_terminal, terminal))
 
     # Reuse one bulk Arc at four distinct absolute rounds. Deliberately supply
     # the instances out of order to exercise deterministic schedule ordering.
-    composed = DemSliceRoundSchedule.from_templates(
-        template_model,
-        [
-            (terminal, 5),
-            (pre_terminal, 4),
-            (bulk, 3),
-            (bulk, 2),
-            (bulk, 1),
-            (init, 0),
-        ],
-    )
+    instances = [
+        (terminal, 5),
+        (pre_terminal, 4),
+        (bulk, 3),
+        (bulk, 2),
+        (bulk, 1),
+        (init, 0),
+    ]
+    composed = DemSliceRoundSchedule.from_templates(template_model, instances)
     with pytest.raises(ValueError, match="coordinate_offset values must be finite"):
         DemSliceRoundSchedule.from_templates(
             template_model,
@@ -432,6 +432,24 @@ def test_cached_surface_templates_reconstruct_a_longer_memory_experiment():
             [(init, 0)],
             detector_coordinate_offsets={999: (0.0, 0.0)},
         )
+    with pytest.raises(ValueError, match="unknown owner round 999"):
+        DemSliceRoundSchedule.from_templates(
+            template_model,
+            [(init, 0)],
+            dem_output_routings={999: {0: [0]}},
+        )
+    with pytest.raises(ValueError, match="unknown local output 999"):
+        DemSliceRoundSchedule.from_templates(
+            template_model,
+            [(init, 0)],
+            dem_output_routings={0: {999: [0]}},
+        )
+    with pytest.raises(ValueError, match="targets undeclared output 999"):
+        DemSliceRoundSchedule.from_templates(
+            template_model,
+            [(init, 0)],
+            dem_output_routings={0: {0: [999]}},
+        )
     assert composed.rounds() == [0, 1, 2, 3, 4, 5]
     stitched = composed.stitch(
         start_round=0,
@@ -443,6 +461,21 @@ def test_cached_surface_templates_reconstruct_a_longer_memory_experiment():
     reference, _, _ = build_model(5)
     assert stitched.to_string() == reference.to_string()
     assert _coordinate_normalized_sources(stitched) == _coordinate_normalized_sources(reference)
+
+    # Two copies of the same destination cancel. This deliberately projects
+    # every local logical column while retaining the declared output schema.
+    projected = DemSliceRoundSchedule.from_templates(
+        template_model,
+        instances,
+        dem_output_routings={round_: {0: [0, 0]} for _, round_ in instances},
+    ).stitch(
+        start_round=0,
+        commit_rounds=6,
+        buffer_rounds=0,
+        forward_boundary="hard",
+    )
+    assert projected.num_observables == 1
+    assert all(not row["dem_outputs"] for row in projected.contribution_render_records())
 
 
 # ============================================================

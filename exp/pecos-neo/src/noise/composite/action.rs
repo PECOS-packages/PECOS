@@ -16,7 +16,7 @@
 //! concrete `CompositeResponse` values that specify what noise to apply.
 
 use super::response::CompositeResponse;
-use crate::command::{GateCommand, GateType};
+use crate::command::{GateCommand, GatePayload, GateType};
 use crate::noise::{NoiseContext, NoiseGateRequirement};
 use pecos_core::QubitId;
 use pecos_random::PecosRng;
@@ -177,7 +177,7 @@ impl GateAction for Inject {
         let cmd = GateCommand {
             gate_type: self.gate_type,
             qubits: smallvec![qubit],
-            angles: smallvec![],
+            payload: GatePayload::Angles(smallvec![]),
         };
         CompositeResponse::InjectGates(vec![cmd])
     }
@@ -304,7 +304,7 @@ impl GateAction for Pauli {
         let cmd = GateCommand {
             gate_type,
             qubits: smallvec![qubit],
-            angles: smallvec![],
+            payload: GatePayload::Angles(smallvec![]),
         };
         CompositeResponse::InjectGates(vec![cmd])
     }
@@ -371,7 +371,7 @@ impl GateAction for Seep {
         let cmd = GateCommand {
             gate_type,
             qubits: smallvec![qubit],
-            angles: smallvec![],
+            payload: GatePayload::Angles(smallvec![]),
         };
 
         CompositeResponse::Unleak.combine(CompositeResponse::InjectGates(vec![cmd]))
@@ -471,7 +471,7 @@ impl GateAction for TwoQubitPauli {
             let cmd = GateCommand {
                 gate_type: my_pauli,
                 qubits: smallvec![qubit],
-                angles: smallvec![],
+                payload: GatePayload::Angles(smallvec![]),
             };
             CompositeResponse::InjectGates(vec![cmd])
         }
@@ -552,7 +552,7 @@ impl GateAction for Emission {
                 let cmd = GateCommand {
                     gate_type,
                     qubits: smallvec![qubit],
-                    angles: smallvec![],
+                    payload: GatePayload::Angles(smallvec![]),
                 };
                 CompositeResponse::InjectGates(vec![cmd])
             }
@@ -655,7 +655,7 @@ impl GateAction for TwoQubitEmission {
                 let cmd = GateCommand {
                     gate_type,
                     qubits: smallvec![qubit],
-                    angles: smallvec![],
+                    payload: GatePayload::Angles(smallvec![]),
                 };
                 CompositeResponse::InjectGates(vec![cmd])
             }
@@ -858,7 +858,7 @@ impl GateAction for TwoQubitEmissionWithPartnerDepolarize {
                 let cmd = GateCommand {
                     gate_type: pauli,
                     qubits: smallvec![other],
-                    angles: smallvec![],
+                    payload: GatePayload::Angles(smallvec![]),
                 };
                 return CompositeResponse::Leak.combine(CompositeResponse::InjectGates(vec![cmd]));
             }
@@ -959,7 +959,7 @@ impl GateAction for IndependentEmissionWithPartnerDepolarize {
                     let cmd = GateCommand {
                         gate_type: pauli,
                         qubits: smallvec![qubit],
-                        angles: smallvec![],
+                        payload: GatePayload::Angles(smallvec![]),
                     };
                     response = response.combine(CompositeResponse::InjectGates(vec![cmd]));
                 }
@@ -970,7 +970,7 @@ impl GateAction for IndependentEmissionWithPartnerDepolarize {
                     let cmd = GateCommand {
                         gate_type: pauli,
                         qubits: smallvec![other],
-                        angles: smallvec![],
+                        payload: GatePayload::Angles(smallvec![]),
                     };
                     response = response.combine(CompositeResponse::InjectGates(vec![cmd]));
                 }
@@ -1060,7 +1060,7 @@ impl GateAction for PartnerDepolarize {
         let cmd = GateCommand {
             gate_type,
             qubits: smallvec![other],
-            angles: smallvec![],
+            payload: GatePayload::Angles(smallvec![]),
         };
         CompositeResponse::InjectGates(vec![cmd])
     }
@@ -1112,7 +1112,7 @@ impl GateAction for InjectCoherentRZ {
         let cmd = GateCommand {
             gate_type: GateType::RZ,
             qubits: smallvec![qubit],
-            angles: smallvec![pecos_core::Angle64::from_radians(angle)],
+            payload: GatePayload::Angles(smallvec![pecos_core::Angle64::from_radians(angle)]),
         };
         CompositeResponse::InjectGates(vec![cmd])
     }
@@ -1172,7 +1172,7 @@ impl GateAction for AmplitudeDamping {
         let cmd = GateCommand {
             gate_type,
             qubits: smallvec![qubit],
-            angles: smallvec![],
+            payload: GatePayload::Angles(smallvec![]),
         };
         CompositeResponse::InjectGates(vec![cmd])
     }
@@ -1243,7 +1243,7 @@ impl GateAction for BiasedAmplitudeDamping {
         let cmd = GateCommand {
             gate_type,
             qubits: smallvec![qubit],
-            angles: smallvec![],
+            payload: GatePayload::Angles(smallvec![]),
         };
         CompositeResponse::InjectGates(vec![cmd])
     }
@@ -1305,7 +1305,7 @@ impl GateAction for CoherentRotation {
         let cmd = GateCommand {
             gate_type: self.gate_type,
             qubits: smallvec![qubit],
-            angles: smallvec![pecos_core::Angle64::from_radians(self.angle)],
+            payload: GatePayload::Angles(smallvec![pecos_core::Angle64::from_radians(self.angle)]),
         };
         CompositeResponse::InjectGates(vec![cmd])
     }
@@ -1382,7 +1382,7 @@ impl GateAction for OverRotation {
         let cmd = GateCommand {
             gate_type: self.gate_type,
             qubits: smallvec![qubit],
-            angles: smallvec![pecos_core::Angle64::from_radians(error_angle)],
+            payload: GatePayload::Angles(smallvec![pecos_core::Angle64::from_radians(error_angle)]),
         };
         CompositeResponse::InjectGates(vec![cmd])
     }
@@ -1442,7 +1442,9 @@ impl GateAction for ZZDephasing {
             let cmd = GateCommand {
                 gate_type: GateType::RZ,
                 qubits: smallvec![qubit],
-                angles: smallvec![pecos_core::Angle64::from_radians(self.angle)],
+                payload: GatePayload::Angles(smallvec![pecos_core::Angle64::from_radians(
+                    self.angle
+                )]),
             };
             return CompositeResponse::InjectGates(vec![cmd]);
         };
@@ -1452,7 +1454,9 @@ impl GateAction for ZZDephasing {
             let cmd = GateCommand {
                 gate_type: GateType::RZZ,
                 qubits: smallvec![qubit, other],
-                angles: smallvec![pecos_core::Angle64::from_radians(self.angle)],
+                payload: GatePayload::Angles(smallvec![pecos_core::Angle64::from_radians(
+                    self.angle
+                )]),
             };
             CompositeResponse::InjectGates(vec![cmd])
         } else {
@@ -1503,7 +1507,7 @@ impl GateAction for ZZDephasingRate {
             let cmd = GateCommand {
                 gate_type: GateType::RZ,
                 qubits: smallvec![qubit],
-                angles: smallvec![pecos_core::Angle64::from_radians(angle)],
+                payload: GatePayload::Angles(smallvec![pecos_core::Angle64::from_radians(angle)]),
             };
             return CompositeResponse::InjectGates(vec![cmd]);
         };
@@ -1512,7 +1516,7 @@ impl GateAction for ZZDephasingRate {
             let cmd = GateCommand {
                 gate_type: GateType::RZZ,
                 qubits: smallvec![qubit, other],
-                angles: smallvec![pecos_core::Angle64::from_radians(angle)],
+                payload: GatePayload::Angles(smallvec![pecos_core::Angle64::from_radians(angle)]),
             };
             CompositeResponse::InjectGates(vec![cmd])
         } else {
@@ -1562,7 +1566,7 @@ impl GateAction for PrepFlip {
         let cmd = GateCommand {
             gate_type: GateType::X,
             qubits: smallvec![qubit],
-            angles: smallvec![],
+            payload: GatePayload::Angles(smallvec![]),
         };
         CompositeResponse::InjectGates(vec![cmd])
     }
@@ -1596,7 +1600,7 @@ impl GateAction for PrepPhase {
         let cmd = GateCommand {
             gate_type: GateType::Z,
             qubits: smallvec![qubit],
-            angles: smallvec![],
+            payload: GatePayload::Angles(smallvec![]),
         };
         CompositeResponse::InjectGates(vec![cmd])
     }
@@ -1685,7 +1689,7 @@ impl GateAction for ErasureWithReplacement {
         let cmd = GateCommand {
             gate_type,
             qubits: smallvec![qubit],
-            angles: smallvec![],
+            payload: GatePayload::Angles(smallvec![]),
         };
         CompositeResponse::InjectGates(vec![cmd])
     }
@@ -1765,7 +1769,7 @@ impl GateAction for CrosstalkAction {
                 let cmd = GateCommand {
                     gate_type: GateType::X,
                     qubits: smallvec![qubit],
-                    angles: smallvec![],
+                    payload: GatePayload::Angles(smallvec![]),
                 };
                 CompositeResponse::InjectGates(vec![cmd])
             }
@@ -2776,7 +2780,7 @@ mod tests {
         assert_eq!(gates.len(), 1);
         assert_eq!(gates[0].gate_type, GateType::RZ);
         // Angle should be 0.1 * 5 = 0.5 rad
-        let angle = gates[0].angles[0].to_radians();
+        let angle = gates[0].angles()[0].to_radians();
         assert!(
             (angle - 0.5).abs() < 1e-10,
             "Expected angle 0.5, got {angle}"

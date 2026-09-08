@@ -12,7 +12,7 @@ pub use quality_rng::{PecosQualityRng, SimdXoshiro256PlusPlus, nth_derived_seed}
 pub use rng::{ParallelRapidRng, PecosRng};
 pub use rng_ext::{RngBulkExt, RngProbabilityExt};
 pub use rng_manageable::{RngManageable, derive_seed, resolve_seed, time_seed};
-pub use rng_pcg::{PCG64Fast, PCGRandom};
+pub use rng_pcg::{PCG32_INIT_STATE, PCG64Fast, PCGRandom};
 pub use scalar_rng::PecosScalarRng;
 
 // Re-export rand_core traits

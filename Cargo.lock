@@ -4049,7 +4049,6 @@ dependencies = [
  "pecos-decoders",
  "pecos-engines",
  "pecos-fusion-blossom",
- "pecos-hugr",
  "pecos-hugr-qis",
  "pecos-llvm",
  "pecos-neo",
@@ -4066,6 +4065,16 @@ dependencies = [
  "pecos-wasm",
  "serde_json",
  "tempfile",
+]
+
+[[package]]
+name = "pecos-bp"
+version = "0.2.0-dev.0"
+dependencies = [
+ "ndarray 0.17.2",
+ "pecos-decoder-core",
+ "pecos-random",
+ "pecos-relay-bp",
 ]
 
 [[package]]
@@ -4204,6 +4213,7 @@ dependencies = [
 name = "pecos-decoders"
 version = "0.2.0-dev.0"
 dependencies = [
+ "pecos-bp",
  "pecos-chromobius",
  "pecos-decoder-core",
  "pecos-fusion-blossom",
@@ -4336,19 +4346,8 @@ name = "pecos-hugr"
 version = "0.2.0-dev.0"
 dependencies = [
  "anyhow",
- "env_logger",
- "log",
- "pecos-core",
- "pecos-engines",
- "pecos-quantum",
- "pecos-simulators",
- "pecos-wasm",
- "serde_json",
- "tempfile",
- "thiserror 2.0.18",
  "tket",
  "tket-qsystem",
- "wat",
 ]
 
 [[package]]
@@ -4436,7 +4435,6 @@ dependencies = [
  "num_cpus",
  "pecos-core",
  "pecos-engines",
- "pecos-hugr",
  "pecos-neo",
  "pecos-programs",
  "pecos-qasm",
@@ -4623,6 +4621,7 @@ dependencies = [
  "libc",
  "log",
  "pecos-qis-ffi-types",
+ "pecos-random",
  "serde_json",
 ]
 
@@ -4641,6 +4640,7 @@ dependencies = [
  "nalgebra",
  "num-complex 0.4.6",
  "pecos-core",
+ "pecos-engines",
  "pecos-num",
  "pecos-random",
  "pecos-simulators",
@@ -4917,6 +4917,7 @@ name = "pecos-trellis"
 version = "0.2.0-dev.0"
 dependencies = [
  "libm",
+ "pecos-bp",
  "pecos-decoder-core",
  "rand 0.10.2",
  "rand_xoshiro 0.8.1",
@@ -4927,6 +4928,7 @@ name = "pecos-uf-decoder"
 version = "0.2.0-dev.0"
 dependencies = [
  "fastrand",
+ "pecos-bp",
  "pecos-decoder-core",
  "pecos-random",
  "rayon",

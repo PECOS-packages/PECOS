@@ -23,6 +23,7 @@ tket = { workspace = true, optional = true }
 log.workspace = true
 
 [dev-dependencies]
+pecos-engines.workspace = true
 pecos-simulators.workspace = true
 
 [features]

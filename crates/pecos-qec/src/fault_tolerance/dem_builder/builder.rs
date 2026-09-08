@@ -20,7 +20,8 @@ use super::types::{
     FaultMechanism, IdleChannelFamilies, MeasurementCrosstalkDemMode, NoiseChannelKind,
     NoiseChannelResidual, NoiseConfig, PauliProbs, PerGateTypeNoise,
     ReplacementBranchApproximation, SourceMetadata, fit_exclusive_signatures,
-    record_offset_to_absolute_index, validate_exclusive_probabilities, validate_idle_probabilities,
+    is_two_qubit_noise_gate, record_offset_to_absolute_index, validate_exclusive_probabilities,
+    validate_idle_probabilities,
 };
 use crate::fault_tolerance::propagator::dag::DagSpacetimeLocation;
 use crate::fault_tolerance::propagator::{
@@ -971,7 +972,7 @@ impl<'a> DemBuilder<'a> {
                 return Ok(());
             }
             return Err(DemBuilderError::ConfigurationError(
-                "exact_branch_replay for starred p2 replacement branches requires a circuit-aware exact branch provider; use branch_impact or pauli_twirl_omitted_gate for the current Pauli-projected approximations"
+                "exact_branch_replay for p2 replacement branches requires a circuit-aware exact branch provider; use branch_impact or pauli_twirl_omitted_gate for the current Pauli-projected approximations"
                     .to_string(),
             ));
         }
@@ -1655,7 +1656,7 @@ impl<'a> DemBuilder<'a> {
         }
     }
 
-    /// Processes starred two-qubit replacement branches as explicit branch impacts.
+    /// Processes two-qubit replacement branches as explicit branch impacts.
     fn process_two_qubit_replacement_branch_impacts_source_tracked(
         &self,
         loc1: usize,
@@ -1697,7 +1698,7 @@ impl<'a> DemBuilder<'a> {
         }
     }
 
-    /// Processes starred two-qubit replacement branches by replaying the exact
+    /// Processes two-qubit replacement branches by replaying the exact
     /// omitted-gate branch against detector/observable metadata.
     fn process_two_qubit_exact_replacement_branches_source_tracked(
         &self,
@@ -3247,25 +3248,6 @@ fn extract_measurement_refs(
     Ok((records, meas_ids))
 }
 
-fn is_two_qubit_noise_gate(gate_type: GateType) -> bool {
-    matches!(
-        gate_type,
-        GateType::CX
-            | GateType::CZ
-            | GateType::CY
-            | GateType::SZZ
-            | GateType::SZZdg
-            | GateType::SXX
-            | GateType::SXXdg
-            | GateType::SYY
-            | GateType::SYYdg
-            | GateType::SWAP
-            | GateType::RXX
-            | GateType::RYY
-            | GateType::RZZ
-    )
-}
-
 fn two_qubit_after_location_pairs(locations: &[DagSpacetimeLocation]) -> Vec<[usize; 2]> {
     let mut groups: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
     for (loc_idx, loc) in locations.iter().enumerate() {
@@ -3556,7 +3538,9 @@ fn circuit_with_omitted_two_qubit_gate(
 
     let mut branch = circuit.clone();
     let replacement = pecos_core::Gate::simple(GateType::I, original.qubits.clone());
-    *branch.gate_mut(node).expect("gate existed before clone") = replacement;
+    branch
+        .update_gate(node, |gate| *gate = replacement)
+        .map_err(|err| DemBuilderError::ConfigurationError(err.to_string()))?;
     Ok(branch)
 }
 
@@ -4574,7 +4558,7 @@ mod tests {
                 .paulis
                 .iter()
                 .all(|pauli| *pauli == Pauli::I),
-            "omission-only replacement branch should be recorded as *II"
+            "omission-only replacement branch should be recorded as an identity replacement"
         );
         let (base_effect, branch_pauli_effect) = contributions[0]
             .direct_component_effects()

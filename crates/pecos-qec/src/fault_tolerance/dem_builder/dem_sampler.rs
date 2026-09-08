@@ -74,8 +74,8 @@ use wide::u64x4;
 use super::types::{
     FaultMechanism, IdleChannelFamilies, NoiseChannelKind, NoiseChannelResidual, NoiseConfig,
     PauliProbs, PauliWeights, PerGateTypeNoise, ReplacementBranchApproximation,
-    combine_probabilities, fit_exclusive_signatures, validate_exclusive_probabilities,
-    validate_idle_probabilities,
+    combine_probabilities, fit_exclusive_signatures, is_two_qubit_noise_gate,
+    validate_exclusive_probabilities, validate_idle_probabilities,
 };
 
 // ============================================================================
@@ -2205,7 +2205,7 @@ impl<'a> SamplingEngineBuilder<'a> {
                 .is_some_and(super::types::PauliWeights::has_replacement_entries)
         {
             panic!(
-                "exact_branch_replay for starred p2 replacement branches requires a circuit-aware exact branch provider; use branch_impact or pauli_twirl_omitted_gate for the current Pauli-projected approximations"
+                "exact_branch_replay for p2 replacement branches requires a circuit-aware exact branch provider; use branch_impact or pauli_twirl_omitted_gate for the current Pauli-projected approximations"
             );
         }
         let num_detectors = self.detector_records.len();
@@ -2287,21 +2287,9 @@ impl<'a> SamplingEngineBuilder<'a> {
                         );
                     }
                 }
-                GateType::CX
-                | GateType::CZ
-                | GateType::CY
-                | GateType::SZZ
-                | GateType::SZZdg
-                | GateType::SXX
-                | GateType::SXXdg
-                | GateType::SYY
-                | GateType::SYYdg
-                | GateType::SWAP
-                | GateType::RXX
-                | GateType::RYY
-                | GateType::RZZ
+                gate_type
                     // Two-qubit gate errors: only "after" locations, process as pairs
-                    if !loc.before => {
+                    if is_two_qubit_noise_gate(gate_type) && !loc.before => {
                         cx_groups.entry(loc.node).or_default().push(loc_idx);
                     }
                 GateType::H

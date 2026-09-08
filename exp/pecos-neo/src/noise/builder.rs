@@ -723,7 +723,7 @@ mod tests {
         let rz_angles = gates
             .iter()
             .filter(|gate| gate.gate_type == GateType::RZ)
-            .map(|gate| gate.angles[0].to_radians())
+            .map(|gate| gate.angles()[0].to_radians())
             .collect::<Vec<_>>();
 
         assert_eq!(x_count, 2);

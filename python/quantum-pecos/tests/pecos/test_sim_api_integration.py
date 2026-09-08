@@ -313,17 +313,13 @@ class TestHUGRSimulation:
             # If it works, verify results
             assert isinstance(results, dict), "Results should be a dictionary"
 
-            # Check for measurements
-            has_measurements = "measurement_1" in results or "measurements" in results or len(results) > 0
-            assert has_measurements, "Should have measurement results"
+            # One untagged measurement per shot lands in measurement_0.
+            measurements = results["measurement_0"]
+            assert len(measurements) == 100, "Should have 100 measurements"
 
-            if "measurement_1" in results:
-                measurements = results["measurement_1"]
-                assert len(measurements) == 100, "Should have 100 measurements"
-
-                # Should be roughly 50/50 for H gate
-                ones = sum(measurements)
-                assert 30 < ones < 70, f"H gate should give roughly 50/50, got {ones}/100"
+            # Should be roughly 50/50 for H gate
+            ones = sum(measurements)
+            assert 30 < ones < 70, f"H gate should give roughly 50/50, got {ones}/100"
 
         except (
             ImportError,

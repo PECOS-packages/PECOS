@@ -181,7 +181,6 @@ mod tests {
     //   computed:  result("eq", m0==m1) ; result("const", True)
     //   arr:       result("pair", measure_array(qs))   (array-valued)
     //   funcdecl:  @guppy.declare mystery(b: bool); prog calls mystery(measure(q))
-    //   indirect:  g = helper; g()   (LoadFunction + CallIndirect)
     const SCRAMBLED: &[u8] = include_bytes!("../tests/fixtures/scrambled.hugr");
     const LOOPED: &[u8] = include_bytes!("../tests/fixtures/looped.hugr");
     const COMPUTED: &[u8] = include_bytes!("../tests/fixtures/computed.hugr");

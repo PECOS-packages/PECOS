@@ -20,7 +20,8 @@ use super::types::{
     FaultMechanism, IdleChannelFamilies, MeasurementCrosstalkDemMode, NoiseChannelKind,
     NoiseChannelResidual, NoiseConfig, PauliProbs, PerGateTypeNoise,
     ReplacementBranchApproximation, SourceMetadata, fit_exclusive_signatures,
-    record_offset_to_absolute_index, validate_exclusive_probabilities, validate_idle_probabilities,
+    is_two_qubit_noise_gate, record_offset_to_absolute_index, validate_exclusive_probabilities,
+    validate_idle_probabilities,
 };
 use crate::fault_tolerance::propagator::dag::DagSpacetimeLocation;
 use crate::fault_tolerance::propagator::{
@@ -3247,25 +3248,6 @@ fn extract_measurement_refs(
     Ok((records, meas_ids))
 }
 
-fn is_two_qubit_noise_gate(gate_type: GateType) -> bool {
-    matches!(
-        gate_type,
-        GateType::CX
-            | GateType::CZ
-            | GateType::CY
-            | GateType::SZZ
-            | GateType::SZZdg
-            | GateType::SXX
-            | GateType::SXXdg
-            | GateType::SYY
-            | GateType::SYYdg
-            | GateType::SWAP
-            | GateType::RXX
-            | GateType::RYY
-            | GateType::RZZ
-    )
-}
-
 fn two_qubit_after_location_pairs(locations: &[DagSpacetimeLocation]) -> Vec<[usize; 2]> {
     let mut groups: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
     for (loc_idx, loc) in locations.iter().enumerate() {
@@ -3556,7 +3538,9 @@ fn circuit_with_omitted_two_qubit_gate(
 
     let mut branch = circuit.clone();
     let replacement = pecos_core::Gate::simple(GateType::I, original.qubits.clone());
-    *branch.gate_mut(node).expect("gate existed before clone") = replacement;
+    branch
+        .update_gate(node, |gate| *gate = replacement)
+        .map_err(|err| DemBuilderError::ConfigurationError(err.to_string()))?;
     Ok(branch)
 }
 

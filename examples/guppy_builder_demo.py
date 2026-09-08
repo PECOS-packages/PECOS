@@ -1,22 +1,17 @@
 #!/usr/bin/env python3
-"""Demonstrate the guppy_sim builder pattern and performance benefits.
+"""Demonstrate the Guppy simulation builder pattern and performance benefits.
 
 This example shows how the builder pattern improves performance by
 compiling once and running multiple times.
 """
 
-# Add quantum-pecos to path
-import sys
 import time
 
 from guppylang import guppy
+from guppylang.std.builtins import result
 from guppylang.std.quantum import cx, h, measure, qubit
-
-sys.path.append("python/quantum-pecos/src")
-
-from pecos._compilation import GuppyFrontend
-from pecos_rslib import selene_engine
-from pecos_rslib.programs import HugrProgram
+from pecos import Hugr
+from pecos import sim as build_sim
 
 
 @guppy
@@ -25,7 +20,10 @@ def bell_state() -> tuple[bool, bool]:
     q0, q1 = qubit(), qubit()
     h(q0)
     cx(q0, q1)
-    return measure(q0).read(), measure(q1).read()
+    left, right = measure(q0).read(), measure(q1).read()
+    result("left", left)
+    result("right", right)
+    return left, right
 
 
 @guppy
@@ -35,7 +33,11 @@ def ghz_3qubit() -> tuple[bool, bool, bool]:
     h(q0)
     cx(q0, q1)
     cx(q1, q2)
-    return measure(q0).read(), measure(q1).read(), measure(q2).read()
+    first, second, third = measure(q0).read(), measure(q1).read(), measure(q2).read()
+    result("first", first)
+    result("second", second)
+    result("third", third)
+    return first, second, third
 
 
 def demo_builder_pattern() -> None:
@@ -46,12 +48,11 @@ def demo_builder_pattern() -> None:
     print("1. Building simulation once...")
     start = time.time()
     # Convert Guppy function to HUGR
-    frontend = GuppyFrontend()
-    hugr_bytes = frontend.guppy_to_hugr(bell_state)
-    hugr_program = HugrProgram.from_bytes(hugr_bytes)
+    hugr_bytes = bell_state.compile().to_bytes()
+    hugr_program = Hugr(hugr_bytes)
 
     # Build simulation using new API
-    sim = selene_engine().program(hugr_program).to_sim().seed(42).build()
+    sim = build_sim(hugr_program).qubits(2).seed(42).build()
     build_time = time.time() - start
     print(f"   Build time: {build_time:.4f}s\n")
 
@@ -64,9 +65,9 @@ def demo_builder_pattern() -> None:
 
         # Count correlations
         results_dict = results.to_dict()
-        # The new API returns a dict with register names as keys
-        # For a single return value, it's typically under "_result" or similar key
-        result_values = next(iter(results_dict.values())) if results_dict else []
+        result_values = [
+            2 * left + right for left, right in zip(results_dict["left"], results_dict["right"], strict=True)
+        ]
         zeros = result_values.count(0)  # |00⟩
         threes = result_values.count(3)  # |11⟩
 
@@ -74,9 +75,9 @@ def demo_builder_pattern() -> None:
 
     print("\n3. Configuration options:")
     # The new API returns ShotVec objects
-    results = selene_engine().program(hugr_program).to_sim().run(10)
+    results = build_sim(hugr_program).qubits(2).run(10)
     results_dict = results.to_dict()
-    result_values = next(iter(results_dict.values())) if results_dict else []
+    result_values = [2 * left + right for left, right in zip(results_dict["left"], results_dict["right"], strict=True)]
     print(f"   Integer format: {result_values}")
 
     # Note: Binary string format is not directly available in the new API
@@ -97,23 +98,21 @@ def compare_performance() -> None:
     for i, shots in enumerate(shot_counts):
         start = time.time()
         # Convert Guppy to HUGR each time
-        frontend = GuppyFrontend()
-        hugr_bytes = frontend.guppy_to_hugr(bell_state)
-        hugr_program = HugrProgram.from_bytes(hugr_bytes)
-        selene_engine().program(hugr_program).to_sim().seed(42).run(shots)
+        hugr_bytes = bell_state.compile().to_bytes()
+        hugr_program = Hugr(hugr_bytes)
+        build_sim(hugr_program).qubits(2).seed(42).run(shots)
         elapsed = time.time() - start
         total_time += elapsed
         print(f"   Run {i+1}: {elapsed:.4f}s")
     print(f"   Total: {total_time:.4f}s\n")
 
     # Method 2: Using builder pattern (compile once)
-    print("2. Using selene_engine builder (compile once):")
+    print("2. Using the simulation builder (compile once):")
     start = time.time()
     # Convert once
-    frontend = GuppyFrontend()
-    hugr_bytes = frontend.guppy_to_hugr(bell_state)
-    hugr_program = HugrProgram.from_bytes(hugr_bytes)
-    sim = selene_engine().program(hugr_program).to_sim().seed(42).build()
+    hugr_bytes = bell_state.compile().to_bytes()
+    hugr_program = Hugr(hugr_bytes)
+    sim = build_sim(hugr_program).qubits(2).seed(42).build()
     build_time = time.time() - start
     print(f"   Build: {build_time:.4f}s")
 
@@ -139,39 +138,45 @@ def demo_advanced_features() -> None:
     # 1. Complex circuit with configuration
     print("1. GHZ state with full configuration:")
     # Convert Guppy function to HUGR
-    frontend = GuppyFrontend()
-    hugr_bytes = frontend.guppy_to_hugr(ghz_3qubit)
-    hugr_program = HugrProgram.from_bytes(hugr_bytes)
+    hugr_bytes = ghz_3qubit.compile().to_bytes()
+    hugr_program = Hugr(hugr_bytes)
 
-    sim = selene_engine().program(hugr_program).to_sim().seed(123).workers(2).build()
+    sim = build_sim(hugr_program).qubits(3).seed(123).workers(2).build()
 
     results = sim.run(1000)
     results_dict = results.to_dict()
-    result_values = next(iter(results_dict.values())) if results_dict else []
+    result_values = [
+        4 * first + 2 * second + third
+        for first, second, third in zip(
+            results_dict["first"],
+            results_dict["second"],
+            results_dict["third"],
+            strict=True,
+        )
+    ]
 
     # Count GHZ correlations
     all_zeros = result_values.count(0)  # |000⟩ = 0
     all_ones = result_values.count(7)  # |111⟩ = 7
 
-    print(f"   |000⟩: {all_zeros/10:.1%}, |111⟩: {all_ones/10:.1%}")
+    print(f"   |000⟩: {all_zeros/len(result_values):.1%}, |111⟩: {all_ones/len(result_values):.1%}")
 
     # 2. Multiple configurations
     print("\n2. Using multiple configurations:")
     # Convert bell_state once
-    frontend2 = GuppyFrontend()
-    hugr_bytes2 = frontend2.guppy_to_hugr(bell_state)
-    hugr_program2 = HugrProgram.from_bytes(hugr_bytes2)
+    hugr_bytes2 = bell_state.compile().to_bytes()
+    hugr_program2 = Hugr(hugr_bytes2)
 
-    results = selene_engine().program(hugr_program2).to_sim().seed(42).workers(4).run(20)
+    results = build_sim(hugr_program2).qubits(2).seed(42).workers(4).run(20)
     results_dict = results.to_dict()
-    result_values = next(iter(results_dict.values())) if results_dict else []
+    result_values = [2 * left + right for left, right in zip(results_dict["left"], results_dict["right"], strict=True)]
     print(f"   Results: {result_values[:10]}...")
 
     # 3. Direct run without explicit build
     print("\n3. Direct run (implicit build):")
-    results = selene_engine().program(hugr_program2).to_sim().seed(99).run(50)
+    results = build_sim(hugr_program2).qubits(2).seed(99).run(50)
     results_dict = results.to_dict()
-    result_values = next(iter(results_dict.values())) if results_dict else []
+    result_values = [2 * left + right for left, right in zip(results_dict["left"], results_dict["right"], strict=True)]
     print(f"   Got {len(result_values)} results")
 
 
@@ -181,4 +186,4 @@ if __name__ == "__main__":
     demo_advanced_features()
 
     print("\n=== Demo Complete ===")
-    print("This demo now uses the new unified selene_engine() API!")
+    print("This demo uses sim(Hugr(...)).qubits(N) on the Selene QIS route!")

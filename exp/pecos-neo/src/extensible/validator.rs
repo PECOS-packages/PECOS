@@ -14,6 +14,11 @@ fn angle_to_turns(angle: Angle64) -> f64 {
 /// Error from circuit validation.
 #[derive(Clone, Debug)]
 pub enum ValidationError {
+    /// The command payload or qubit support is invalid before angle classification.
+    InvalidCommand {
+        position: usize,
+        error: crate::command::GateCommandError,
+    },
     /// A gate is not allowed by this validator
     ForbiddenGate {
         gate_id: GateId,
@@ -50,6 +55,9 @@ pub enum ValidationError {
 impl std::fmt::Display for ValidationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::InvalidCommand { position, error } => {
+                write!(f, "Invalid command at position {position}: {error}")
+            }
             Self::ForbiddenGate {
                 gate_name,
                 position,
@@ -235,7 +243,7 @@ impl CircuitValidator for CliffordValidator {
             }
 
             let expected = usize::from(spec.angle_arity);
-            if expected > 0 && gate.angles.len() != expected {
+            if gate.angles.len() != expected {
                 return Err(ValidationError::AngleArity {
                     gate_id: gate.gate_id,
                     gate_name: spec.name.to_string(),
@@ -275,7 +283,7 @@ impl CircuitValidator for CliffordValidator {
         }
 
         if let Some(spec) = registry.get(gate_id) {
-            if spec.angle_arity > 0 && angles.len() != usize::from(spec.angle_arity) {
+            if angles.len() != usize::from(spec.angle_arity) {
                 return false;
             }
             if spec.angle_arity > 0 {
@@ -383,7 +391,7 @@ impl CircuitValidator for ExactAngleValidator {
             })?;
 
             let expected = usize::from(spec.angle_arity);
-            if expected > 0 && gate.angles.len() != expected {
+            if gate.angles.len() != expected {
                 return Err(ValidationError::AngleArity {
                     gate_id: gate.gate_id,
                     gate_name: spec.name.to_string(),
@@ -424,7 +432,7 @@ impl CircuitValidator for ExactAngleValidator {
         let Some(spec) = registry.get(gate_id) else {
             return angles.is_empty();
         };
-        if spec.angle_arity > 0 && angles.len() != usize::from(spec.angle_arity) {
+        if angles.len() != usize::from(spec.angle_arity) {
             return false;
         }
         if angles.len() == 1 {

@@ -41,8 +41,6 @@ from importlib import import_module
 from pecos_rslib import (
     ByteMessage,
     ByteMessageBuilder,
-    HugrEngineBuilder,
-    HugrSimulation,
     PhirJsonSimulation,
     PhirSimulation,
     QasmSimulation,
@@ -130,8 +128,6 @@ def __dir__() -> list[str]:
 __all__ = [
     "ByteMessage",
     "ByteMessageBuilder",
-    "HugrEngineBuilder",
-    "HugrSimulation",
     "HybridEngine",
     "PhirEngineBuilder",
     "PhirJsonEngine",

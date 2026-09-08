@@ -48,6 +48,11 @@ impl CommandQueueValidation for CommandQueue {
         validator: &dyn CircuitValidator,
         registry: &GateRegistry,
     ) -> Result<(), ValidationError> {
+        for (position, command) in self.iter().enumerate() {
+            command
+                .validate()
+                .map_err(|error| ValidationError::InvalidCommand { position, error })?;
+        }
         let gates = self.to_gate_validations();
         validator.validate(&gates, registry)
     }
@@ -56,7 +61,7 @@ impl CommandQueueValidation for CommandQueue {
         self.iter()
             .map(|cmd| GateForValidation {
                 gate_id: cmd.gate_type.to_gate_id(),
-                angles: cmd.angles.iter().copied().collect(),
+                angles: cmd.angles().to_vec(),
             })
             .collect()
     }
@@ -84,15 +89,16 @@ pub fn snap_command_queue(
     policy: &SnapPolicy,
     snapper: &AngleSnapper,
 ) -> Result<CommandQueue, (usize, SnapError)> {
-    let mut result = CommandQueue::with_capacity(commands.len());
+    let mut result = commands.clone();
+    result.clear_commands();
 
     for (idx, cmd) in commands.iter().enumerate() {
-        if cmd.angles.is_empty() {
+        if cmd.angles().is_empty() {
             result.push(cmd.clone());
         } else {
             let mut snapped_angles = smallvec::SmallVec::<[Angle64; 2]>::new();
 
-            for angle in &cmd.angles {
+            for angle in cmd.angles() {
                 match policy {
                     SnapPolicy::Exact => {
                         snapped_angles.push(*angle);
@@ -131,13 +137,13 @@ pub fn is_clifford_circuit(commands: &CommandQueue) -> bool {
         }
 
         let expected = cmd.gate_type.angle_arity();
-        if expected > 0 && cmd.angles.len() != expected {
+        if cmd.validate().is_err() {
             return false;
         }
 
         // For parameterized gates, check if angles are Clifford angles
         if expected > 0 {
-            return cmd.angles.iter().all(|a| is_clifford_angle(*a));
+            return cmd.angles().iter().all(|a| is_clifford_angle(*a));
         }
 
         true

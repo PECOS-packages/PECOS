@@ -110,9 +110,13 @@ impl ShotVec {
     /// }
     /// ```
     ///
+    /// A tag's shot type is decided per shot. Programs with branch-dependent
+    /// result types must record a consistent type on every branch; conversion
+    /// does not widen types across shots.
+    ///
     /// # Panics
-    /// This function should not panic under normal usage. The `unwrap()` call is protected
-    /// by prior validation that ensures the key exists in the `BTreeMap`.
+    /// The internal `expect` is protected by prior validation that ensures the
+    /// key exists in the `BTreeMap`.
     pub fn try_as_shot_map(&self) -> Result<super::shot_map::ShotMap, PecosError> {
         if self.is_empty() {
             return super::shot_map::ShotMap::new(BTreeMap::new());

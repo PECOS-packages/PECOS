@@ -67,6 +67,123 @@ pub struct CHFormGeneric<S: IndexSet = BitSet, R: SeedableRng + Rng + Debug = Pe
 /// Default CH-form using `BitSet` and `PecosRng`.
 pub type CHForm<R = PecosRng> = CHFormGeneric<BitSet, R>;
 
+/// A term's augmented GF(2) constraint rows, in increasing non-v qubit order.
+/// Only one vector is populated: u64 rows for n <= 62, wide rows otherwise.
+/// These depend only on F, v and s and must be rebuilt if any of those change.
+pub(crate) struct ConstraintRows {
+    rows_u64: Vec<u64>,
+    rows_wide: Vec<Vec<u64>>,
+}
+
+/// Mutable pair-local system, reusable across a batch of overlaps.
+#[derive(Default)]
+pub(crate) struct InnerProductScratch {
+    rows_u64: Vec<u64>,
+    rows_wide: Vec<Vec<u64>>,
+    // Keep unused wide rows allocated when the next pair has fewer constraints.
+    num_rows: usize,
+    pivot_cols: Vec<usize>,
+}
+
+impl InnerProductScratch {
+    fn load(&mut self, left: &ConstraintRows, right: &ConstraintRows) {
+        self.rows_u64.clear();
+        self.rows_u64.extend_from_slice(&left.rows_u64);
+        self.rows_u64.extend_from_slice(&right.rows_u64);
+        self.num_rows = left.rows_wide.len() + right.rows_wide.len();
+        if self.rows_wide.len() < self.num_rows {
+            self.rows_wide.resize_with(self.num_rows, Vec::new);
+        }
+        for (target, source) in self
+            .rows_wide
+            .iter_mut()
+            .zip(left.rows_wide.iter().chain(&right.rows_wide))
+        {
+            target.clone_from(source);
+        }
+    }
+
+    /// Leave consistent systems in RREF; inconsistent systems need only echelon form.
+    fn reduce(&mut self, n: usize) -> bool {
+        self.pivot_cols.clear();
+        let mut pivot_row = 0;
+        if n <= 62 {
+            let rows = &mut self.rows_u64;
+            for col in 0..n {
+                let col_bit = 1u64 << col;
+                let found = rows
+                    .iter()
+                    .enumerate()
+                    .skip(pivot_row)
+                    .find(|(_, row)| **row & col_bit != 0)
+                    .map(|(r, _)| r);
+                if let Some(r) = found {
+                    rows.swap(pivot_row, r);
+                    self.pivot_cols.push(col);
+                    let pivot = rows[pivot_row];
+                    for row in &mut rows[pivot_row + 1..] {
+                        if *row & col_bit != 0 {
+                            *row ^= pivot;
+                        }
+                    }
+                    pivot_row += 1;
+                }
+            }
+            let rhs_mask = 1u64 << n;
+            if rows[pivot_row..].iter().any(|row| row & rhs_mask != 0) {
+                return false;
+            }
+            // Only surviving pairs need the reduction above each pivot. Pivot
+            // order is unchanged, so x0 and the ordered basis are unchanged too.
+            for (r, &col) in self.pivot_cols.iter().enumerate().rev() {
+                let pivot = rows[r];
+                let col_bit = 1u64 << col;
+                for row in &mut rows[..r] {
+                    if *row & col_bit != 0 {
+                        *row ^= pivot;
+                    }
+                }
+            }
+        } else {
+            use super::quadratic_form::{get_bit, xor_words};
+            let rows = &mut self.rows_wide[..self.num_rows];
+            for col in 0..n {
+                let found = rows
+                    .iter()
+                    .enumerate()
+                    .skip(pivot_row)
+                    .find(|(_, row)| get_bit(row, col))
+                    .map(|(r, _)| r);
+                if let Some(r) = found {
+                    rows.swap(pivot_row, r);
+                    self.pivot_cols.push(col);
+                    let (above, below) = rows.split_at_mut(pivot_row + 1);
+                    let pivot = &above[pivot_row];
+                    for row in below {
+                        if get_bit(row, col) {
+                            xor_words(row, pivot);
+                        }
+                    }
+                    pivot_row += 1;
+                }
+            }
+            if rows[pivot_row..].iter().any(|row| get_bit(row, n)) {
+                return false;
+            }
+            for (r, &col) in self.pivot_cols.iter().enumerate().rev() {
+                let (above, below) = rows.split_at_mut(r);
+                let pivot = &below[0];
+                for row in above {
+                    if get_bit(row, col) {
+                        xor_words(row, pivot);
+                    }
+                }
+            }
+        }
+        true
+    }
+}
+
 /// Precomputed constraint solution for shared-structure inner products.
 /// When all terms share v, F, s, the GF(2) constraint system is identical
 /// for all pairs. Solve once, reuse for all T^2/2 inner products.
@@ -215,7 +332,31 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CHFormGeneric<S, R> {
         self.s.clone()
     }
 
-    /// Replace structural Arcs (after measurement, all terms should share the same structure).
+    /// Whether two terms share the structural inputs used by C-type gates.
+    ///
+    /// `S`, `Sdg`, `CZ`, `SZZ`, and `SZZdg` derive their `M` update only from `G` and `M`.
+    /// They leave `F`, `G`, `v`, and `s` unchanged, so those per-term values need not
+    /// be shared for the common-update optimization to be sound.
+    pub(crate) fn shares_c_type_structure(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.g, &other.g) && std::sync::Arc::ptr_eq(&self.m, &other.m)
+    }
+
+    /// Whether two terms share every structural input used by Z projection.
+    pub(crate) fn shares_projection_structure(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.f, &other.f)
+            && std::sync::Arc::ptr_eq(&self.g, &other.g)
+            && std::sync::Arc::ptr_eq(&self.m, &other.m)
+            && std::sync::Arc::ptr_eq(&self.v, &other.v)
+            && std::sync::Arc::ptr_eq(&self.s, &other.s)
+    }
+
+    /// Replace M after applying a shared C-type structural update once.
+    pub(crate) fn set_shared_m(&mut self, m: std::sync::Arc<SparseBinaryMatrix<S>>) {
+        self.m = m;
+    }
+
+    /// Replace structural Arcs after one proven-uniform transformation is
+    /// applied to a representative term.
     pub(crate) fn set_arcs(
         &mut self,
         f: std::sync::Arc<SparseBinaryMatrix<S>>,
@@ -601,6 +742,17 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CHFormGeneric<S, R> {
         let g1 = self.gamma();
         let g2 = other.gamma();
 
+        #[cfg(debug_assertions)]
+        if let Some(diff_qubits) = diff_qubits {
+            debug_assert!(
+                g1.iter()
+                    .zip(g2)
+                    .enumerate()
+                    .all(|(q, (g1q, g2q))| { g1q == g2q || diff_qubits.contains(&q) }),
+                "diff_qubits must contain every qubit whose gamma differs"
+            );
+        }
+
         // Iterate diff qubits only. Track l-value counts instead of complex multiplies.
         // Factor from free qubits with l!=0: (1+i)^{count_l1} * (1-i)^{count_l3}
         // = 2^{(count_l1+count_l3)/2} * exp(i*pi/4*(count_l1-count_l3))
@@ -782,7 +934,32 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CHFormGeneric<S, R> {
         other: &Self,
         z_qubit: usize,
     ) -> (num_complex::Complex64, num_complex::Complex64) {
-        self.inner_product_fast(other, Some(z_qubit), false)
+        self.inner_product_fast(
+            other,
+            Some(z_qubit),
+            false,
+            None,
+            &mut InnerProductScratch::default(),
+        )
+    }
+
+    /// Like `inner_product_pair`, with rows precomputed from these two states.
+    /// The rows must correspond to the current F, v and s of self and other.
+    pub(crate) fn inner_product_pair_with_rows(
+        &self,
+        other: &Self,
+        z_qubit: usize,
+        self_rows: &ConstraintRows,
+        other_rows: &ConstraintRows,
+        scratch: &mut InnerProductScratch,
+    ) -> (num_complex::Complex64, num_complex::Complex64) {
+        self.inner_product_fast(
+            other,
+            Some(z_qubit),
+            false,
+            Some((self_rows, other_rows)),
+            scratch,
+        )
     }
 
     /// Like `inner_product_pair` but for states sharing F, M, v, s (only gamma/omega differ).
@@ -793,19 +970,77 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CHFormGeneric<S, R> {
         other: &Self,
         z_qubit: usize,
     ) -> (num_complex::Complex64, num_complex::Complex64) {
-        self.inner_product_fast(other, Some(z_qubit), true)
+        self.inner_product_fast(
+            other,
+            Some(z_qubit),
+            true,
+            None,
+            &mut InnerProductScratch::default(),
+        )
     }
 
     /// Compute the inner product `<self|other>`.
     #[must_use]
     pub fn inner_product(&self, other: &Self) -> num_complex::Complex64 {
-        self.inner_product_fast(other, None, false).0
+        self.inner_product_fast(
+            other,
+            None,
+            false,
+            None,
+            &mut InnerProductScratch::default(),
+        )
+        .0
     }
 
     /// Like `inner_product` but for states sharing F, M, v, s.
     #[must_use]
     pub fn inner_product_shared(&self, other: &Self) -> num_complex::Complex64 {
-        self.inner_product_fast(other, None, true).0
+        self.inner_product_fast(other, None, true, None, &mut InnerProductScratch::default())
+            .0
+    }
+
+    /// Build this term's rows once for a batch of divergent inner products.
+    pub(crate) fn precompute_constraint_rows(&self) -> ConstraintRows {
+        let mut rows = ConstraintRows {
+            rows_u64: Vec::with_capacity(if self.num_qubits <= 62 {
+                self.num_qubits - self.v.len()
+            } else {
+                0
+            }),
+            rows_wide: Vec::new(),
+        };
+        self.append_constraint_rows(&mut rows.rows_u64, &mut rows.rows_wide);
+        rows
+    }
+
+    /// Append [F.col(j) | s[j]] for each non-v qubit j, preserving qubit order.
+    fn append_constraint_rows(&self, rows_u64: &mut Vec<u64>, rows_wide: &mut Vec<Vec<u64>>) {
+        let n = self.num_qubits;
+        for j in 0..n {
+            if !self.v.contains(j) {
+                if n <= 62 {
+                    let mut row = 0u64;
+                    for k in self.f.col(j).iter() {
+                        row |= 1u64 << k;
+                    }
+                    if self.s.contains(j) {
+                        row |= 1u64 << n;
+                    }
+                    rows_u64.push(row);
+                } else {
+                    use super::quadratic_form::{set_bit as qf_set, words as qf_words};
+                    let aug_w = qf_words(n + 1);
+                    let mut row = vec![0u64; aug_w];
+                    for k in self.f.col(j).iter() {
+                        qf_set(&mut row, k);
+                    }
+                    if self.s.contains(j) {
+                        qf_set(&mut row, n);
+                    }
+                    rows_wide.push(row);
+                }
+            }
+        }
     }
 
     /// Compute the i-exponent of `<x|psi>` (without omega or magnitude).
@@ -862,6 +1097,8 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CHFormGeneric<S, R> {
         other: &Self,
         z_qubit: Option<usize>,
         shared_structure: bool,
+        constraint_rows: Option<(&ConstraintRows, &ConstraintRows)>,
+        scratch: &mut InnerProductScratch,
     ) -> (num_complex::Complex64, num_complex::Complex64) {
         use super::quadratic_form::QuadraticForm;
         let n = self.num_qubits;
@@ -1025,106 +1262,24 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CHFormGeneric<S, R> {
         let rhs_bit_pos = n;
 
         let use_u64 = n <= 62;
-        let mut rows_u64: Vec<u64> = Vec::with_capacity(if use_u64 { 2 * n } else { 0 });
-        let mut rows_wide: Vec<Vec<u64>> = Vec::new();
-
-        // Add constraints
-        for state_idx in 0..2 {
-            let (st_f, st_v, st_s) = if state_idx == 0 {
-                (&self.f, &self.v, &self.s)
-            } else {
-                (&other.f, &other.v, &other.s)
-            };
-            for j in 0..n {
-                if !st_v.contains(j) {
-                    if use_u64 {
-                        let mut row = 0u64;
-                        for k in st_f.col(j).iter() {
-                            row |= 1u64 << k;
-                        }
-                        if st_s.contains(j) {
-                            row |= 1u64 << rhs_bit_pos;
-                        }
-                        rows_u64.push(row);
-                    } else {
-                        use super::quadratic_form::{set_bit as qf_set, words as qf_words};
-                        let aug_w = qf_words(n + 1);
-                        let mut row = vec![0u64; aug_w];
-                        for k in st_f.col(j).iter() {
-                            qf_set(&mut row, k);
-                        }
-                        if st_s.contains(j) {
-                            qf_set(&mut row, n);
-                        }
-                        rows_wide.push(row);
-                    }
-                }
-            }
-        }
-
-        // Gaussian elimination (u64 fast path)
-        let mut pivot_cols = Vec::with_capacity(n);
-        let mut pivot_row = 0;
-
-        if use_u64 {
-            for col in 0..n {
-                let col_bit = 1u64 << col;
-                let mut found = None;
-                for (r, &row) in rows_u64.iter().enumerate().skip(pivot_row) {
-                    if row & col_bit != 0 {
-                        found = Some(r);
-                        break;
-                    }
-                }
-                if let Some(r) = found {
-                    rows_u64.swap(pivot_row, r);
-                    pivot_cols.push(col);
-                    let pivot = rows_u64[pivot_row];
-                    for (r, row) in rows_u64.iter_mut().enumerate() {
-                        if r != pivot_row && *row & col_bit != 0 {
-                            *row ^= pivot;
-                        }
-                    }
-                    pivot_row += 1;
-                }
-            }
-            // Check consistency
-            let rhs_mask = 1u64 << rhs_bit_pos;
-            for &row in rows_u64.iter().skip(pivot_row) {
-                if row & rhs_mask != 0 {
-                    let z = num_complex::Complex64::new(0.0, 0.0);
-                    return (z, z);
-                }
-            }
+        // Stack self's rows before other's. Only scratch is mutated, and its
+        // buffers survive even when an inconsistent pair returns immediately.
+        if let Some((self_rows, other_rows)) = constraint_rows {
+            scratch.load(self_rows, other_rows);
         } else {
-            use super::quadratic_form::{get_bit as qf_get, xor_words};
-            for col in 0..n {
-                let mut found = None;
-                for (r, row) in rows_wide.iter().enumerate().skip(pivot_row) {
-                    if qf_get(row, col) {
-                        found = Some(r);
-                        break;
-                    }
-                }
-                if let Some(r) = found {
-                    rows_wide.swap(pivot_row, r);
-                    pivot_cols.push(col);
-                    let pivot = rows_wide[pivot_row].clone();
-                    for (r, row) in rows_wide.iter_mut().enumerate() {
-                        if r != pivot_row && qf_get(row, col) {
-                            xor_words(row, &pivot);
-                        }
-                    }
-                    pivot_row += 1;
-                }
-            }
-            for row in rows_wide.iter().skip(pivot_row) {
-                if qf_get(row, n) {
-                    let z = num_complex::Complex64::new(0.0, 0.0);
-                    return (z, z);
-                }
-            }
+            scratch.rows_u64.clear();
+            scratch.rows_wide.clear();
+            self.append_constraint_rows(&mut scratch.rows_u64, &mut scratch.rows_wide);
+            other.append_constraint_rows(&mut scratch.rows_u64, &mut scratch.rows_wide);
+            scratch.num_rows = scratch.rows_wide.len();
         }
+        if !scratch.reduce(n) {
+            let z = num_complex::Complex64::new(0.0, 0.0);
+            return (z, z);
+        }
+        let rows_u64 = &scratch.rows_u64;
+        let rows_wide = &scratch.rows_wide[..scratch.num_rows];
+        let pivot_cols = &scratch.pivot_cols;
 
         let rank = pivot_cols.len();
         let free_dim = n - rank;
@@ -1139,7 +1294,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CHFormGeneric<S, R> {
             pf_heap = vec![false; n];
             &mut pf_heap
         };
-        for &pc in &pivot_cols {
+        for &pc in pivot_cols {
             pivot_flags[pc] = true;
         }
 
@@ -1897,48 +2052,33 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CHFormGeneric<S, R> {
 
     /// Right-multiply `U_C` by CX(q, r): maps |j> -> |j> with `j_r` ^= `j_q`.
     fn right_cx(&mut self, q: usize, r: usize) {
-        let gr_rows: Vec<usize> = self.g.col(r).iter().collect();
-        let fq_rows: Vec<usize> = self.f.col(q).iter().collect();
-        let mr_rows: Vec<usize> = self.m.col(r).iter().collect();
-        for &i in &gr_rows {
-            std::sync::Arc::make_mut(&mut self.g).toggle(i, q);
-        }
-        for &i in &fq_rows {
-            std::sync::Arc::make_mut(&mut self.f).toggle(i, r);
-        }
-        for &i in &mr_rows {
-            std::sync::Arc::make_mut(&mut self.m).toggle(i, q);
-        }
+        debug_assert_ne!(
+            q, r,
+            "update_sum chooses distinct pivot and partner indices"
+        );
+        std::sync::Arc::make_mut(&mut self.g).col_xor_assign(q, r);
+        std::sync::Arc::make_mut(&mut self.f).col_xor_assign(r, q);
+        std::sync::Arc::make_mut(&mut self.m).col_xor_assign(q, r);
     }
 
     /// Right-multiply `U_C` by CZ(q, r).
     fn right_cz(&mut self, q: usize, r: usize) {
-        let fr_rows: Vec<usize> = self.f.col(r).iter().collect();
-        let fq_rows: Vec<usize> = self.f.col(q).iter().collect();
         for j in 0..self.num_qubits {
             if self.f.get(j, q) && self.f.get(j, r) {
                 self.gamma[j] = (self.gamma[j] + 2) & 3;
             }
         }
         let m = std::sync::Arc::make_mut(&mut self.m);
-        for &i in &fr_rows {
-            m.toggle(i, q);
-        }
-        for &i in &fq_rows {
-            m.toggle(i, r);
-        }
+        m.col_xor_from(q, &self.f, r);
+        m.col_xor_from(r, &self.f, q);
     }
 
     /// Right-multiply `U_C` by S on qubit q.
     fn right_s(&mut self, q: usize) {
-        let fq_rows: Vec<usize> = self.f.col(q).iter().collect();
-        for &i in &fq_rows {
+        for i in self.f.col(q).iter() {
             self.gamma[i] = (self.gamma[i] + 3) & 3;
         }
-        let m = std::sync::Arc::make_mut(&mut self.m);
-        for &i in &fq_rows {
-            m.toggle(i, q);
-        }
+        std::sync::Arc::make_mut(&mut self.m).col_xor_from(q, &self.f, q);
     }
 
     // ========================================================================
@@ -1951,7 +2091,12 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CHFormGeneric<S, R> {
     /// 1. Create w by copying s, randomizing bits where v[j]=1
     /// 2. Outcome = sum(w & G[q,:]) mod 2
     /// 3. Project state via `update_sum`
-    fn apply_mz(&mut self, q: usize, forced: Option<bool>) -> MeasurementResult {
+    fn apply_mz(
+        &mut self,
+        q: usize,
+        forced: Option<bool>,
+        project_deterministic: bool,
+    ) -> MeasurementResult {
         // Step 1: Create w. Copy s, then randomize positions where v[j]=1.
         // Also determine if measurement is deterministic:
         // It's deterministic iff G[q,:] has no overlap with v.
@@ -1988,7 +2133,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CHFormGeneric<S, R> {
         // Actually, a simpler approach: if forced and outcome doesn't match,
         // flip one of the random bits that affects the outcome.
         let outcome = if let Some(forced_val) = forced {
-            if is_deterministic {
+            if is_deterministic && !project_deterministic {
                 // Can't change deterministic outcome
                 outcome
             } else if outcome != forced_val {
@@ -2045,7 +2190,13 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CHFormGeneric<S, R> {
 
     /// Measure qubit q in Z basis, forcing the outcome for non-deterministic cases.
     pub fn mz_forced(&mut self, qubit: usize, forced_outcome: bool) -> MeasurementResult {
-        self.apply_mz(qubit, Some(forced_outcome))
+        self.apply_mz(qubit, Some(forced_outcome), false)
+    }
+
+    /// Project onto a specified Z outcome, including zeroing the state when a
+    /// deterministic term is incompatible with that outcome.
+    pub(crate) fn project_z(&mut self, qubit: usize, outcome: bool) {
+        self.apply_mz(qubit, Some(outcome), true);
     }
 }
 
@@ -2085,6 +2236,9 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> QuantumSimulator for CHFormGener
 }
 
 impl<S: IndexSet, R: SeedableRng + Rng + Debug> CliffordGateable for CHFormGeneric<S, R> {
+    // All phase-sensitive Clifford defaults are overridden below. If any override
+    // is removed, implement apply_global_phase here or the inherited operation
+    // will silently become projective through the trait's no-op hook.
     fn sz(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
             self.apply_s(q.index());
@@ -2149,7 +2303,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CliffordGateable for CHFormGener
     fn mz(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
         qubits
             .iter()
-            .map(|&q| self.apply_mz(q.index(), None))
+            .map(|&q| self.apply_mz(q.index(), None, false))
             .collect()
     }
 
@@ -2291,7 +2445,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CliffordGateable for CHFormGener
     }
 
     fn szz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
-        // SZZ = CZ * S * S * phase. Batch M updates in single make_mut.
+        // SZZ = CZ * S * S. Batch M updates in single make_mut.
         for &(q0, q1) in pairs {
             let q = q0.index();
             let r = q1.index();
@@ -2305,13 +2459,12 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CliffordGateable for CHFormGener
             m.row_xor_from(r, &self.g, r); // S(r)
             self.gamma[q] = (self.gamma[q] + 3) & 3;
             self.gamma[r] = (self.gamma[r] + 3) & 3;
-            self.omega.mul_phase(1);
         }
         self
     }
 
     fn szzdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
-        // SZZdg = CZ * Sdg * Sdg * phase. Sdg = Z*S.
+        // SZZdg = CZ * Sdg * Sdg. Sdg = Z*S.
         for &(q0, q1) in pairs {
             let q = q0.index();
             let r = q1.index();
@@ -2323,13 +2476,12 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CliffordGateable for CHFormGener
             // Sdg gamma: Z adds +2, S adds +3 = total +5 = +1 mod 4
             self.gamma[q] = (self.gamma[q] + 1) & 3;
             self.gamma[r] = (self.gamma[r] + 1) & 3;
-            self.omega.mul_phase(7);
         }
         self
     }
 
     fn sxx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
-        // SXX = CX * (H*S*H) * CX * phase. Faster than 4H for standalone SXX.
+        // SXX = CX * (H*S*H) * CX. Faster than 4H for standalone SXX.
         for &(q0, q1) in pairs {
             let q = q0.index();
             let r = q1.index();
@@ -2338,13 +2490,12 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CliffordGateable for CHFormGener
             self.apply_s(q);
             self.apply_h(q);
             self.apply_cx(q, r);
-            self.omega.mul_phase(7);
         }
         self
     }
 
     fn sxxdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
-        // SXXdg = CX * (H*Sdg*H) * CX * e^{i*pi/4}
+        // SXXdg = CX * (H*Sdg*H) * CX
         for &(q0, q1) in pairs {
             let q = q0.index();
             let r = q1.index();
@@ -2353,7 +2504,6 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CliffordGateable for CHFormGener
             self.apply_szdg(q);
             self.apply_h(q);
             self.apply_cx(q, r);
-            self.omega.mul_phase(1);
         }
         self
     }
@@ -3517,6 +3667,367 @@ mod tests {
         let mut ch2 = ch1.clone();
         ch2.z(&[QubitId(0)]);
         (ch1, ch2)
+    }
+
+    #[test]
+    fn test_constraint_rows_match_matrix_columns() {
+        for n in [0, 1, 5, 62, 63, 64, 65, 127, 128, 150] {
+            let mut ch = CHForm::new_with_seed(n, 42);
+            for q in (0..n).step_by(3) {
+                ch.x(&[QubitId(q)]);
+            }
+            for q in (1..n).step_by(3) {
+                ch.h(&[QubitId(q)]);
+            }
+            for q in 1..n {
+                ch.cx(&[(QubitId(q - 1), QubitId(q))]);
+            }
+            let rows = ch.precompute_constraint_rows();
+            let expected_len = n - ch.v.len();
+            if n <= 62 {
+                assert_eq!(rows.rows_u64.len(), expected_len);
+                assert!(rows.rows_wide.is_empty());
+            } else {
+                assert!(rows.rows_u64.is_empty());
+                assert_eq!(rows.rows_wide.len(), expected_len);
+            }
+            for (r, j) in (0..n).filter(|&j| !ch.v.contains(j)).enumerate() {
+                // Read matrix entries independently of the column iterator used
+                // by row construction, including the RHS and padding bits.
+                let words: &[u64] = if n <= 62 {
+                    std::slice::from_ref(&rows.rows_u64[r])
+                } else {
+                    assert_eq!(rows.rows_wide[r].len(), (n + 1).div_ceil(64));
+                    &rows.rows_wide[r]
+                };
+                for k in 0..words.len() * 64 {
+                    let expected = if k < n {
+                        ch.f.get(k, j)
+                    } else {
+                        k == n && ch.s.contains(j)
+                    };
+                    assert_eq!((words[k / 64] >> (k % 64)) & 1 != 0, expected);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_cached_inner_product_rows_are_reusable() {
+        fn bits(value: num_complex::Complex64) -> (u64, u64) {
+            (value.re.to_bits(), value.im.to_bits())
+        }
+
+        for n in [1, 5, 62, 63, 64, 65, 127, 128, 150] {
+            let zero = CHForm::new_with_seed(n, 42);
+            let mut one = zero.clone();
+            one.x(&[QubitId(n - 1)]);
+            let mut few_free = one.clone();
+            for q in 0..n.min(3) {
+                few_free.h(&[QubitId(q)]);
+                few_free.sz(&[QubitId(q)]);
+            }
+            if n > 1 {
+                few_free.cx(&[(QubitId(0), QubitId(n - 1))]);
+            }
+            let mut all_free = zero.clone();
+            for q in 0..n {
+                all_free.h(&[QubitId(q)]);
+            }
+            let states = [zero, one, few_free, all_free];
+            let rows: Vec<_> = states
+                .iter()
+                .map(CHFormGeneric::precompute_constraint_rows)
+                .collect();
+            let mut scratch = InnerProductScratch::default();
+            // Inconsistent systems, empty rows, enumeration, and quadratic
+            // sums; reverse pairs also exercise self-before-other stacking.
+            for (i, left) in states.iter().enumerate() {
+                for (j, right) in states.iter().enumerate() {
+                    for zq in [0, n / 2, n - 1] {
+                        let expected = left.inner_product_pair(right, zq);
+                        let actual = left.inner_product_pair_with_rows(
+                            right,
+                            zq,
+                            &rows[i],
+                            &rows[j],
+                            &mut scratch,
+                        );
+                        assert_eq!(bits(actual.0), bits(expected.0), "n={n}, i={i}, j={j}");
+                        assert_eq!(bits(actual.1), bits(expected.1), "n={n}, zq={zq}");
+                    }
+                }
+            }
+        }
+    }
+
+    /// Independent eager Gauss-Jordan reference using unpacked bits. Preserve
+    /// the old first-pivot selection and eliminate both above and below it.
+    fn eager_constraint_system(
+        n: usize,
+        left: &ConstraintRows,
+        right: &ConstraintRows,
+    ) -> (ConstraintRows, Vec<usize>, bool) {
+        let mut rows: Vec<Vec<bool>> = if n <= 62 {
+            left.rows_u64
+                .iter()
+                .chain(&right.rows_u64)
+                .map(|row| (0..=n).map(|c| row & (1 << c) != 0).collect())
+                .collect()
+        } else {
+            left.rows_wide
+                .iter()
+                .chain(&right.rows_wide)
+                .map(|row| {
+                    (0..=n)
+                        .map(|c| row[c / 64] & (1 << (c % 64)) != 0)
+                        .collect()
+                })
+                .collect()
+        };
+        let mut pivots = Vec::new();
+        for c in 0..n {
+            let pr = pivots.len();
+            if let Some(r) = (pr..rows.len()).find(|&r| rows[r][c]) {
+                rows.swap(pr, r);
+                pivots.push(c);
+                let pivot = rows[pr].clone();
+                for (r, row) in rows.iter_mut().enumerate() {
+                    if r != pr && row[c] {
+                        for (bit, pivot_bit) in row.iter_mut().zip(&pivot) {
+                            *bit ^= pivot_bit;
+                        }
+                    }
+                }
+            }
+        }
+        let consistent = rows[pivots.len()..].iter().all(|row| !row[n]);
+        (pack_constraint_system(n, &rows), pivots, consistent)
+    }
+
+    fn pack_constraint_system(n: usize, rows: &[Vec<bool>]) -> ConstraintRows {
+        let mut packed = ConstraintRows {
+            rows_u64: Vec::new(),
+            rows_wide: Vec::new(),
+        };
+        for row in rows {
+            let mut words = vec![0; (n + 1).div_ceil(64)];
+            for (c, &bit) in row.iter().enumerate() {
+                if bit {
+                    words[c / 64] |= 1 << (c % 64);
+                }
+            }
+            if n <= 62 {
+                packed.rows_u64.push(words[0]);
+            } else {
+                packed.rows_wide.push(words);
+            }
+        }
+        packed
+    }
+
+    #[test]
+    fn test_deferred_constraint_reduction_matches_eager() {
+        use pecos_random::RngExt;
+        let mut rng = PecosRng::seed_from_u64(704);
+        let empty = pack_constraint_system(0, &[]);
+        let mut scratch = InnerProductScratch::default();
+        for n in [0usize, 1, 5, 62, 63, 64, 65, 127, 128, 150] {
+            for rank in [n, n.saturating_sub(3), n.saturating_sub(4), n / 2, 0] {
+                let witness: Vec<bool> = (0..n).map(|_| rng.random()).collect();
+                let mut rows = Vec::new();
+                for r in 0..rank {
+                    let pivot = r * n / rank;
+                    let mut row = vec![false; n + 1];
+                    row[pivot] = true;
+                    for bit in &mut row[pivot + 1..n] {
+                        *bit = rng.random();
+                    }
+                    row[n] = row[..n]
+                        .iter()
+                        .zip(&witness)
+                        .fold(false, |b, (a, x)| b ^ (a & x));
+                    rows.push(row);
+                }
+                // Dependent rows, row swaps, nonzero RHS, and gaps in pivot columns.
+                if rank > 0 {
+                    let dependent = rows[0]
+                        .iter()
+                        .zip(&rows[rank - 1])
+                        .map(|(a, b)| a ^ b)
+                        .collect();
+                    rows.push(dependent);
+                }
+                rows.push(vec![false; n + 1]);
+                rows.reverse();
+                for consistent in [true, false] {
+                    if !consistent {
+                        let mut contradictory = rows.last().unwrap().clone();
+                        contradictory[n] ^= true;
+                        rows.push(contradictory);
+                    }
+                    let input = pack_constraint_system(n, &rows);
+                    let (eager, pivots, expected) = eager_constraint_system(n, &input, &empty);
+                    assert_eq!(expected, consistent, "n={n}, rank={rank}");
+                    scratch.load(&input, &empty);
+                    assert_eq!(scratch.reduce(n), expected, "n={n}, rank={rank}");
+                    assert_eq!(scratch.pivot_cols, pivots);
+                    if consistent {
+                        assert_eq!(scratch.rows_u64, eager.rows_u64);
+                        assert_eq!(scratch.rows_wide[..scratch.num_rows], eager.rows_wide);
+                    }
+                }
+            }
+        }
+        // An inconsistent triangular system must return before clearing the
+        // entry above the second pivot, in both representations.
+        for n in [5, 62, 63, 64, 65, 127, 128, 150] {
+            let mut rows = vec![vec![false; n + 1]; 3];
+            rows[0][0] = true;
+            rows[0][1] = true;
+            rows[1][1] = true;
+            rows[2][n] = true;
+            scratch.load(&pack_constraint_system(n, &rows), &empty);
+            assert!(!scratch.reduce(n));
+            let first = if n <= 62 {
+                scratch.rows_u64[0]
+            } else {
+                scratch.rows_wide[0][0]
+            };
+            assert_eq!(first & 3, 3);
+        }
+    }
+
+    #[test]
+    fn test_deferred_inner_products_match_eager_bits() {
+        fn bits(pair: (num_complex::Complex64, num_complex::Complex64)) -> [u64; 4] {
+            [
+                pair.0.re.to_bits(),
+                pair.0.im.to_bits(),
+                pair.1.re.to_bits(),
+                pair.1.im.to_bits(),
+            ]
+        }
+        let empty = pack_constraint_system(0, &[]);
+        let mut scratch = InnerProductScratch::default();
+        for n in [0, 1, 5, 62, 63, 64, 65, 127, 128, 150] {
+            let mut saw_consistent = false;
+            let mut saw_inconsistent = false;
+            // Include empty constraints, full rank, and both sides of the
+            // enumeration threshold. Common CX gates mix the constraint rows.
+            for free in [0, n.min(3), n.min(4), n] {
+                let mut left = CHForm::new_with_seed(n, 42);
+                for q in 0..free {
+                    left.h(&[QubitId(q)]);
+                    left.sz(&[QubitId(q)]);
+                }
+                for q in (free..n).step_by(3) {
+                    left.x(&[QubitId(q)]);
+                }
+                for inconsistent in [false, true] {
+                    if inconsistent && free == n {
+                        continue;
+                    }
+                    let mut right = left.clone();
+                    if inconsistent {
+                        right.x(&[QubitId(n - 1)]);
+                    } else if n > 0 {
+                        right.sz(&[QubitId(0)]);
+                        if free > 0 && n > 1 {
+                            right.cx(&[(QubitId(0), QubitId(n - 1))]);
+                        }
+                    }
+                    let mut left = left.clone();
+                    for q in 1..n {
+                        left.cx(&[(QubitId(q - 1), QubitId(q))]);
+                        right.cx(&[(QubitId(q - 1), QubitId(q))]);
+                    }
+                    for (left, right) in [(&left, &right), (&right, &left)] {
+                        let left_rows = left.precompute_constraint_rows();
+                        let right_rows = right.precompute_constraint_rows();
+                        let (eager, _, consistent) =
+                            eager_constraint_system(n, &left_rows, &right_rows);
+                        assert_eq!(consistent, !inconsistent, "n={n}, free={free}");
+                        saw_consistent |= consistent;
+                        saw_inconsistent |= !consistent;
+                        let z_qubits = if n == 0 {
+                            vec![None]
+                        } else {
+                            vec![None, Some(0), Some(n / 2), Some(n - 1)]
+                        };
+                        for zq in z_qubits {
+                            // Eager RREF is a fixed point of the production
+                            // solver. Feed it through the unchanged numerical
+                            // evaluation, preserving x0 and basis order exactly.
+                            let expected = if consistent {
+                                left.inner_product_fast(
+                                    right,
+                                    zq,
+                                    false,
+                                    Some((&eager, &empty)),
+                                    &mut InnerProductScratch::default(),
+                                )
+                            } else {
+                                let zero = num_complex::Complex64::new(0.0, 0.0);
+                                (zero, zero)
+                            };
+                            let actual = left.inner_product_fast(
+                                right,
+                                zq,
+                                false,
+                                Some((&left_rows, &right_rows)),
+                                &mut scratch,
+                            );
+                            assert_eq!(
+                                bits(actual),
+                                bits(expected),
+                                "n={n}, free={free}, zq={zq:?}, consistent={consistent}"
+                            );
+                            if let Some(q) = zq {
+                                assert_eq!(bits(left.inner_product_pair(right, q)), bits(expected));
+                            } else {
+                                let actual = left.inner_product(right);
+                                assert_eq!(
+                                    [actual.re.to_bits(), actual.im.to_bits()],
+                                    bits(expected)[..2]
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+            assert!(saw_consistent);
+            assert!(n == 0 || saw_inconsistent);
+        }
+    }
+
+    #[test]
+    fn test_inner_product_scratch_retains_row_storage() {
+        let empty = pack_constraint_system(0, &[]);
+        for n in [5, 62, 63, 64, 65, 127, 128, 150] {
+            let ch = CHForm::new_with_seed(n, 42);
+            let rows = ch.precompute_constraint_rows();
+            let mut scratch = InnerProductScratch::default();
+            scratch.load(&rows, &rows);
+            assert!(scratch.reduce(n));
+            let narrow_ptr = scratch.rows_u64.as_ptr();
+            let wide_ptrs: Vec<_> = scratch.rows_wide.iter().map(Vec::as_ptr).collect();
+            let pivot_ptr = scratch.pivot_cols.as_ptr();
+            for (left, right) in [(&rows, &empty), (&empty, &empty), (&rows, &rows)] {
+                scratch.load(left, right);
+                assert_eq!(scratch.rows_u64.as_ptr(), narrow_ptr);
+                assert_eq!(
+                    scratch
+                        .rows_wide
+                        .iter()
+                        .map(Vec::as_ptr)
+                        .collect::<Vec<_>>(),
+                    wide_ptrs
+                );
+                assert!(scratch.reduce(n));
+                assert_eq!(scratch.pivot_cols.as_ptr(), pivot_ptr);
+            }
+        }
     }
 
     #[test]

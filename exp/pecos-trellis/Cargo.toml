@@ -13,6 +13,7 @@ description = "Trellis dynamic-programming engine for coset-mass decoding in PEC
 publish = false
 
 [dependencies]
+pecos-bp.workspace = true
 pecos-decoder-core.workspace = true
 # Deterministic libm (musl-derived) so decode outputs are bit-identical across
 # platforms; the committed bitwise snapshot in pecos-frontier depends on this.

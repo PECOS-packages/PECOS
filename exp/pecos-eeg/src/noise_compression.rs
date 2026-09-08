@@ -254,14 +254,13 @@ fn forward_conjugate_label(label: &mut Bm, gate: &Gate) {
     };
 
     // Build a temporary gate with the adjoint type
-    let adj_gate = Gate {
-        gate_type: adjoint_type,
-        qubits: gate.qubits.clone(),
-        angles: gate.angles.clone(),
-        params: gate.params.clone(),
-        meas_ids: gate.meas_ids.clone(),
-        channel: None,
-    };
+    let mut adj_gate = Gate::new(
+        adjoint_type,
+        gate.angles.clone(),
+        gate.params.clone(),
+        gate.qubits.clone(),
+    );
+    adj_gate.meas_ids.clone_from(&gate.meas_ids);
 
     let mut sp = SparsePauli::from_bm(label);
     let _sign = sparse_conjugate(&mut sp, &adj_gate);
@@ -326,6 +325,17 @@ impl NoiseSpec for CompressedNoiseSpec {
 mod tests {
     use super::*;
     use crate::noise::UniformNoise;
+
+    #[test]
+    #[should_panic(expected = "Gate H expected 0 angle parameters, got 1")]
+    fn adjoint_materialization_checks_constructor_arity() {
+        let gate = Gate {
+            angles: vec![pecos_core::Angle64::ZERO].into(),
+            ..Gate::h(&[0])
+        };
+        let mut label = Bm::default();
+        forward_conjugate_label(&mut label, &gate);
+    }
 
     #[test]
     fn test_compression_reduces_count() {

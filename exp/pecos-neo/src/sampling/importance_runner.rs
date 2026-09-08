@@ -135,6 +135,28 @@ impl OutcomeBiasConfig {
     }
 }
 
+/// Error from validating or executing an importance-sampled circuit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ImportanceSamplingError {
+    /// A command has invalid payload or qubit support.
+    InvalidCommand(crate::command::GateCommandError),
+    /// This runner cannot execute the circuit gate.
+    UnsupportedGate { gate_type: GateType },
+}
+
+impl std::fmt::Display for ImportanceSamplingError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidCommand(error) => error.fmt(f),
+            Self::UnsupportedGate { gate_type } => write!(
+                f,
+                "ImportanceSamplingRunner cannot execute circuit gate {gate_type:?}"
+            ),
+        }
+    }
+}
+impl std::error::Error for ImportanceSamplingError {}
+
 /// Result of an importance-sampled shot.
 #[derive(Debug, Clone)]
 pub struct ImportanceSampledShot {
@@ -302,15 +324,35 @@ impl<S: CliffordGateable> ImportanceSamplingRunner<S> {
     ///
     /// Panics if the circuit or an injected noise response contains a gate
     /// that `ImportanceSamplingRunner` cannot execute. Declared noise
-    /// requirements are validated by [`Self::with_noise`].
+    /// requirements are validated by [`Self::with_noise`]. Use [`Self::try_run_shot`]
+    /// to handle malformed command payloads as errors.
     pub fn run_shot(&mut self, commands: &CommandQueue) -> ImportanceSampledShot {
+        self.try_run_shot(commands)
+            .unwrap_or_else(|error| panic!("{error}"))
+    }
+
+    /// Run a shot after validating the command payloads.
+    ///
+    /// # Errors
+    /// Returns an invalid-command error before changing simulator or shot state,
+    /// or an unsupported-gate error during execution.
+    ///
+    /// # Panics
+    /// Panics if an injected noise response violates its declared requirements.
+    pub fn try_run_shot(
+        &mut self,
+        commands: &CommandQueue,
+    ) -> Result<ImportanceSampledShot, ImportanceSamplingError> {
+        commands
+            .validate_for_execution()
+            .map_err(ImportanceSamplingError::InvalidCommand)?;
         // Reset for new shot
         self.weight = SampleWeight::one();
         self.outcomes.clear();
 
         // Execute all commands
         for command in commands {
-            self.execute_command(command);
+            self.execute_command(command)?;
         }
 
         // Take outcomes and weight
@@ -322,7 +364,7 @@ impl<S: CliffordGateable> ImportanceSamplingRunner<S> {
             noise.reset();
         }
 
-        ImportanceSampledShot { outcomes, weight }
+        Ok(ImportanceSampledShot { outcomes, weight })
     }
 
     /// Run a shot with simulator reset - optimized for Monte Carlo.
@@ -345,12 +387,12 @@ impl<S: CliffordGateable> ImportanceSamplingRunner<S> {
     }
 
     /// Execute a single command with importance-weighted noise.
-    fn execute_command(&mut self, command: &GateCommand) {
+    fn execute_command(&mut self, command: &GateCommand) -> Result<(), ImportanceSamplingError> {
         let qubits: Vec<QubitId> = command.qubits.iter().copied().collect();
 
         // Check for gate skip (e.g., due to leakage)
         if self.emit_before_gate(command) {
-            return;
+            return Ok(());
         }
 
         // Execute the gate
@@ -382,14 +424,15 @@ impl<S: CliffordGateable> ImportanceSamplingRunner<S> {
 
             // Gate execution with importance-weighted noise
             _ => {
-                assert!(
-                    self.execute_clifford_gate(command),
-                    "ImportanceSamplingRunner cannot execute circuit gate {:?}",
-                    command.gate_type
-                );
+                if !self.execute_clifford_gate(command) {
+                    return Err(ImportanceSamplingError::UnsupportedGate {
+                        gate_type: command.gate_type,
+                    });
+                }
                 self.apply_importance_sampled_gate_noise(command);
             }
         }
+        Ok(())
     }
 
     /// Sample gate noise with importance weighting.
@@ -552,7 +595,7 @@ impl<S: CliffordGateable> ImportanceSamplingRunner<S> {
             let event = NoiseEvent::before_gate(
                 command.gate_type,
                 command.qubits.as_slice(),
-                command.angles.as_slice(),
+                command.angles(),
             );
             let response = noise.emit(&event, &mut self.rng);
             let should_skip = response.should_skip_gate();
@@ -618,6 +661,9 @@ impl<S: CliffordGateable> ImportanceSamplingRunner<S> {
     /// Panics if the simulator cannot execute the injected gate. Configuration
     /// validation should make this unreachable for declared noise mechanisms.
     fn execute_noise_gate(&mut self, gate: &GateCommand) {
+        if let Err(error) = crate::runner::validate_angle_arity(gate.gate_type, gate.angles()) {
+            panic!("ImportanceSamplingRunner invariant violated: injected noise {error}");
+        }
         let arity = gate.gate_type.quantum_arity();
         assert!(
             !gate.qubits.is_empty() && gate.qubits.len().is_multiple_of(arity),
@@ -626,6 +672,9 @@ impl<S: CliffordGateable> ImportanceSamplingRunner<S> {
             gate.gate_type,
             gate.qubits.len()
         );
+        if let Err(error) = gate.validate() {
+            panic!("ImportanceSamplingRunner invariant violated: injected noise {error}");
+        }
         assert!(
             self.execute_clifford_gate(gate),
             "ImportanceSamplingRunner invariant violated: injected noise gate {:?} could not be \
@@ -854,15 +903,35 @@ where
     /// # Panics
     ///
     /// Panics if the circuit or an injected noise response contains a gate
-    /// that `ImportanceSamplingRunner` cannot execute.
+    /// that `ImportanceSamplingRunner` cannot execute. Use [`Self::try_run_shot_biased`]
+    /// to handle malformed command payloads as errors.
     pub fn run_shot_biased(&mut self, commands: &CommandQueue) -> ImportanceSampledShot {
+        self.try_run_shot_biased(commands)
+            .unwrap_or_else(|error| panic!("{error}"))
+    }
+
+    /// Run a shot after validating the command payloads.
+    ///
+    /// # Errors
+    /// Returns an invalid-command error before changing simulator or shot state,
+    /// or an unsupported-gate error during execution.
+    ///
+    /// # Panics
+    /// Panics if an injected noise response violates its declared requirements.
+    pub fn try_run_shot_biased(
+        &mut self,
+        commands: &CommandQueue,
+    ) -> Result<ImportanceSampledShot, ImportanceSamplingError> {
+        commands
+            .validate_for_execution()
+            .map_err(ImportanceSamplingError::InvalidCommand)?;
         // Reset for new shot
         self.weight = SampleWeight::one();
         self.outcomes.clear();
 
         // Execute all commands with biased measurements
         for command in commands {
-            self.execute_command_biased(command);
+            self.execute_command_biased(command)?;
         }
 
         // Take outcomes and weight
@@ -874,16 +943,19 @@ where
             noise.reset();
         }
 
-        ImportanceSampledShot { outcomes, weight }
+        Ok(ImportanceSampledShot { outcomes, weight })
     }
 
     /// Execute a single command with biased measurement outcomes.
-    fn execute_command_biased(&mut self, command: &GateCommand) {
+    fn execute_command_biased(
+        &mut self,
+        command: &GateCommand,
+    ) -> Result<(), ImportanceSamplingError> {
         let qubits: Vec<QubitId> = command.qubits.iter().copied().collect();
 
         // Check for gate skip (e.g., due to leakage)
         if self.emit_before_gate(command) {
-            return;
+            return Ok(());
         }
 
         // Execute the gate
@@ -916,14 +988,15 @@ where
 
             // Gate execution with importance-weighted noise (same as unbiased)
             _ => {
-                assert!(
-                    self.execute_clifford_gate(command),
-                    "ImportanceSamplingRunner cannot execute circuit gate {:?}",
-                    command.gate_type
-                );
+                if !self.execute_clifford_gate(command) {
+                    return Err(ImportanceSamplingError::UnsupportedGate {
+                        gate_type: command.gate_type,
+                    });
+                }
                 self.apply_importance_sampled_gate_noise(command);
             }
         }
+        Ok(())
     }
 
     /// Perform a biased measurement using forced outcomes.
@@ -1041,6 +1114,20 @@ mod tests {
                 ]
             })
             .collect()
+    }
+
+    #[test]
+    #[should_panic(expected = "injected noise Gate H expected 0 angle parameters, got 1")]
+    fn injected_noise_rejects_surplus_angles_in_importance_runner() {
+        let mut runner = ImportanceSamplingRunner::new(SparseStab::with_seed(1, 42));
+        let gate = GateCommand::with_angles(
+            GateType::H,
+            vec![QubitId(0)],
+            vec![pecos_core::Angle64::ZERO],
+        );
+        runner.apply_noise_response(NoiseResponse::InjectGates(Box::new(smallvec::smallvec![
+            gate
+        ])));
     }
 
     #[test]
@@ -1440,5 +1527,12 @@ mod tests {
                 "Weight should be 1 for deterministic measurement"
             );
         }
+    }
+    #[test]
+    #[should_panic(expected = "only an Idle command can carry a duration payload")]
+    fn injected_noise_rejects_duration_on_fixed_gate() {
+        let mut gate = GateCommand::h(QubitId(0));
+        gate.payload = crate::command::GatePayload::Duration(pecos_core::TimeUnits::new(23));
+        ImportanceSamplingRunner::new(SparseStab::with_seed(1, 42)).execute_noise_gate(&gate);
     }
 }

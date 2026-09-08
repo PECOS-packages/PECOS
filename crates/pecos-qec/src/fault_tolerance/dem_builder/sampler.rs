@@ -36,7 +36,7 @@
 //!   validated at build time.
 
 use super::dem_sampler::SamplingEngine;
-use super::types::{DemOutput, NoiseConfig, PerGateTypeNoise};
+use super::types::{DemOutput, NoiseConfig, PerGateTypeNoise, is_two_qubit_noise_gate};
 use crate::fault_tolerance::propagator::{
     DagFaultInfluenceMap, DemOutputKind, is_supported_prep_gate,
 };
@@ -1533,19 +1533,9 @@ pub(crate) fn compute_location_probs_from_noise(
             match loc.gate_type {
                 gate_type if is_supported_prep_gate(gate_type) => noise.p_prep,
                 GateType::MX | GateType::MZ | GateType::MeasureFree | GateType::MPZ => noise.p_meas,
-                GateType::CX
-                | GateType::CZ
-                | GateType::CY
-                | GateType::SZZ
-                | GateType::SZZdg
-                | GateType::SXX
-                | GateType::SXXdg
-                | GateType::SYY
-                | GateType::SYYdg
-                | GateType::SWAP
-                | GateType::RXX
-                | GateType::RYY
-                | GateType::RZZ => noise.p2_rate_for_gate(loc.gate_type),
+                gate_type if is_two_qubit_noise_gate(gate_type) => {
+                    noise.p2_rate_for_gate(loc.gate_type)
+                }
                 GateType::Idle => {
                     if noise.uses_dedicated_idle_noise() {
                         let duration = loc.idle_duration;

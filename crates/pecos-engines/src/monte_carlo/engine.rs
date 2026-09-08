@@ -15,9 +15,9 @@ use crate::byte_message::ByteMessage;
 use crate::engine_system::{
     ClassicalControlEngine, ClassicalEngine, ControlEngine, EngineStage, HybridEngine,
 };
+use crate::faults::{FaultCatalog, FaultHistory};
 use crate::hybrid::HybridEngineBuilder;
-use crate::noise::depolarizing::DepolarizingFaultCatalog;
-use crate::noise::{DepolarizingNoiseModel, DepolarizingSampledFault, NoiseModel};
+use crate::noise::NoiseModel;
 use crate::quantum::{QuantumEngine, StateVecEngine};
 use crate::shot_results::{Data, Shot, ShotVec};
 use log::debug;
@@ -100,9 +100,6 @@ pub struct MonteCarloEngine {
     pub fault_history_enabled: bool,
 }
 
-/// Per-shot sampled-fault history for depolarizing runs.
-pub type DepolarizingFaultHistory = Vec<DepolarizingSampledFault>;
-
 /// Result payload for Monte Carlo runs.
 ///
 /// When fault-history tracking is disabled, `fault_histories` is empty.
@@ -111,7 +108,7 @@ pub struct MonteCarloRunResult {
     /// Aggregated measurement results.
     pub results: ShotVec,
     /// One history vector per shot, in shot order.
-    pub fault_histories: Vec<DepolarizingFaultHistory>,
+    pub fault_histories: Vec<FaultHistory>,
 }
 
 impl MonteCarloEngine {
@@ -264,8 +261,16 @@ impl MonteCarloEngine {
     ///
     /// # Panics
     /// - If `num_shots` is zero.
-    pub fn run(&mut self, num_shots: usize) -> Result<MonteCarloRunResult, PecosError> {
+    pub fn run(&mut self, num_shots: usize) -> Result<ShotVec, PecosError> {
         self.run_with_workers(num_shots, self.default_workers)
+    }
+
+    /// Run shots and also return their generic fault histories.
+    pub fn run_with_fault_tracking(
+        &mut self,
+        num_shots: usize,
+    ) -> Result<MonteCarloRunResult, PecosError> {
+        self.run_with_workers_and_fault_tracking(num_shots, self.default_workers)
     }
 
     /// Run the Monte Carlo simulation with a specified number of worker threads.
@@ -290,6 +295,17 @@ impl MonteCarloEngine {
         &mut self,
         num_shots: usize,
         num_workers: usize,
+    ) -> Result<ShotVec, PecosError> {
+        Ok(self
+            .run_with_workers_and_fault_tracking(num_shots, num_workers)?
+            .results)
+    }
+
+    /// Run with an explicit worker count and also return generic fault histories.
+    pub fn run_with_workers_and_fault_tracking(
+        &mut self,
+        num_shots: usize,
+        num_workers: usize,
     ) -> Result<MonteCarloRunResult, PecosError> {
         assert!(num_shots > 0, "num_shots cannot be zero");
         assert!(num_workers > 0, "num_workers cannot be zero");
@@ -303,13 +319,9 @@ impl MonteCarloEngine {
 
         // Shared fault history collection if enabled
         let fault_histories_vec = if self.fault_history_enabled {
-            Some(Arc::new(Mutex::new(Vec::<(
-                usize,
-                usize,
-                DepolarizingFaultHistory,
-            )>::with_capacity(
-                num_shots
-            ))))
+            Some(Arc::new(Mutex::new(
+                Vec::<(usize, usize, FaultHistory)>::with_capacity(num_shots),
+            )))
         } else {
             None
         };
@@ -351,21 +363,12 @@ impl MonteCarloEngine {
                         return Ok(());
                     }
 
-                    // Check that fault history is enabled only if using depolarizing noise
+                    // Ask the configured noise model to collect its generic fault history.
                     if self.fault_history_enabled {
-                        let noise_model = engine.quantum_system.noise_model_mut();
-                        let depolarizing = noise_model
-                            .as_any_mut()
-                            .downcast_mut::<DepolarizingNoiseModel>()
-                            .ok_or_else(|| {
-                                PecosError::Input(
-                                    "fault_history_enabled requires DepolarizingNoiseModel"
-                                        .to_string(),
-                                )
-                            })?;
-
-                        // Turn on fault history collection
-                        depolarizing.set_sampled_fault_history_enabled(true);
+                        engine
+                            .quantum_system
+                            .noise_model_mut()
+                            .set_sampled_fault_history_enabled(true)?;
                     }
 
                     // Process all shots for this worker
@@ -409,21 +412,10 @@ impl MonteCarloEngine {
 
                         // Extract the fault history from the noise model
                         if let Some(histories_shared) = &fault_histories_vec {
-                            let history = {
-                                let noise_model = engine.quantum_system.noise_model_mut();
-                                let depolarizing = noise_model
-                                    .as_any_mut()
-                                    .downcast_mut::<DepolarizingNoiseModel>()
-                                    .ok_or_else(|| {
-                                        PecosError::Input(
-                                            "fault_history_enabled requires DepolarizingNoiseModel"
-                                                .to_string(),
-                                        )
-                                    })?;
-                                depolarizing
-                                    .sampled_fault_history()
-                                    .map_or_else(Vec::new, |history| history.to_vec())
-                            };
+                            let history = engine
+                                .quantum_system
+                                .noise_model_mut()
+                                .sampled_fault_history()?;
 
                             // Add history to the history vector
                             histories_shared
@@ -463,7 +455,7 @@ impl MonteCarloEngine {
             histories
                 .iter()
                 .map(|(_, _, history)| history.clone())
-                .collect::<Vec<DepolarizingFaultHistory>>()
+                .collect::<Vec<FaultHistory>>()
         } else {
             Vec::new()
         };
@@ -477,38 +469,34 @@ impl MonteCarloEngine {
 
     /// Performs a "dry run" of the Monte Carlo simulation to collect
     /// the fault locations without actually doing any sampling
-    pub fn return_fault_catalog(&mut self) -> Result<DepolarizingFaultCatalog, PecosError> {
+    pub fn return_fault_catalog(&mut self) -> Result<FaultCatalog, PecosError> {
         if !self.fault_history_enabled {
             return Err(PecosError::Input(
                 "catalog_faults requires fault_history_enabled to be true".to_string(),
             ));
         }
         let mut engine = self.hybrid_engine_template.clone();
-        let noise_model = engine.quantum_system.noise_model_mut();
-        let depolarizing = noise_model
-            .as_any_mut()
-            .downcast_mut::<DepolarizingNoiseModel>()
-            .ok_or_else(|| {
-                PecosError::Input("catalog_faults requires DepolarizingNoiseModel".to_string())
-            })?;
         let msg = engine
             .classical_engine
             .generate_commands()
             .unwrap_or_else(|e| {
                 panic!("Failed to generate commands for fault catalog: {e}");
             });
-        depolarizing.build_fault_catalog_from_message(&msg)
+        engine
+            .quantum_system
+            .noise_model_mut()
+            .build_fault_catalog_from_message(&msg)
     }
 
     /// Runs by specifying a set of fault histories. There should be one
     /// fault history per shot.
     ///
     /// # Errors
-    /// Returns [`PecosError::Input`] when the configured noise model is not
-    /// [`DepolarizingNoiseModel`].
+    /// Returns [`PecosError::Input`] when the configured noise model does not
+    /// support generic fault-history replay.
     pub fn run_with_fault_histories(
         &mut self,
-        fault_histories: Vec<DepolarizingFaultHistory>,
+        fault_histories: Vec<FaultHistory>,
     ) -> Result<MonteCarloRunResult, PecosError> {
         if fault_histories.is_empty() {
             return Err(PecosError::Input(
@@ -530,18 +518,8 @@ impl MonteCarloEngine {
             // Set the fault history in the noise model for this shot
             {
                 let noise_model = worker_engine.quantum_system.noise_model_mut();
-                // Throw an error for now if it is not depolarizing noise
-                let depolarizing = noise_model
-                    .as_any_mut()
-                    .downcast_mut::<DepolarizingNoiseModel>()
-                    .ok_or_else(|| {
-                        PecosError::Input(
-                            "run_with_specified_fault_histories requires DepolarizingNoiseModel"
-                                .to_string(),
-                        )
-                    })?;
-                depolarizing.set_sampled_fault_history_enabled(true);
-                depolarizing.set_replay_fault_history(Some(history));
+                noise_model.set_sampled_fault_history_enabled(true)?;
+                noise_model.set_replay_fault_history(Some(history))?;
             }
 
             // Run the simulation for this shot
@@ -550,19 +528,8 @@ impl MonteCarloEngine {
             // Extract the applied fault history from the noise model after execution
             let applied_history = {
                 let noise_model = worker_engine.quantum_system.noise_model_mut();
-                let depolarizing = noise_model
-                    .as_any_mut()
-                    .downcast_mut::<DepolarizingNoiseModel>()
-                    .ok_or_else(|| {
-                        PecosError::Input(
-                            "run_with_specified_fault_histories requires DepolarizingNoiseModel"
-                                .to_string(),
-                        )
-                    })?;
-                let applied = depolarizing
-                    .sampled_fault_history()
-                    .map_or_else(Vec::new, |faults| faults.to_vec());
-                depolarizing.clear_replay_fault_history();
+                let applied = noise_model.sampled_fault_history()?;
+                noise_model.clear_replay_fault_history()?;
                 applied
             };
 
@@ -579,7 +546,7 @@ impl MonteCarloEngine {
     // Simple function to run with a single fault history
     pub fn run_with_fault_history(
         &mut self,
-        fault_history: &DepolarizingFaultHistory,
+        fault_history: &FaultHistory,
     ) -> Result<MonteCarloRunResult, PecosError> {
         self.run_with_fault_histories(vec![fault_history.clone()])
     }
@@ -653,7 +620,7 @@ impl MonteCarloEngine {
             engine.set_seed(s);
         }
 
-        Ok(engine.run_with_workers(num_shots, num_workers)?.results)
+        engine.run_with_workers(num_shots, num_workers)
     }
 
     /// Static method to run a simulation with a classical engine and any noise model.
@@ -1065,27 +1032,28 @@ mod tests {
 
         mc.set_seed(1234);
 
-        let run = mc.run(16).expect("run should succeed");
+        let run = mc.run_with_fault_tracking(16).expect("run should succeed");
 
         assert_eq!(run.results.shots.len(), 16);
         assert_eq!(run.fault_histories.len(), 16);
 
         for per_shot in &run.fault_histories {
             assert_eq!(per_shot.len(), 4);
+            let faults = per_shot.iter().collect::<Vec<_>>();
 
-            assert_eq!(per_shot[0].site_uid, 0);
-            assert_eq!(per_shot[0].outcome_index, 1);
-            assert_eq!(per_shot[0].outcome_label, "X");
+            assert_eq!(faults[0].site_uid(), 0);
+            assert_eq!(faults[0].outcome_index(), 1);
+            assert_eq!(faults[0].outcome_label(), "X");
 
-            assert_eq!(per_shot[1].site_uid, 1);
-            assert!((1..=3).contains(&per_shot[1].outcome_index));
+            assert_eq!(faults[1].site_uid(), 1);
+            assert!((1..=3).contains(&faults[1].outcome_index()));
 
-            assert_eq!(per_shot[2].site_uid, 2);
-            assert!((1..=15).contains(&per_shot[2].outcome_index));
+            assert_eq!(faults[2].site_uid(), 2);
+            assert!((1..=15).contains(&faults[2].outcome_index()));
 
-            assert_eq!(per_shot[3].site_uid, 3);
-            assert_eq!(per_shot[3].outcome_index, 1);
-            assert_eq!(per_shot[3].outcome_label, "X");
+            assert_eq!(faults[3].site_uid(), 3);
+            assert_eq!(faults[3].outcome_index(), 1);
+            assert_eq!(faults[3].outcome_label(), "X");
         }
     }
 
@@ -1102,8 +1070,7 @@ mod tests {
 
         let run = mc.run(8).expect("run should succeed");
 
-        assert_eq!(run.results.shots.len(), 8);
-        assert!(run.fault_histories.is_empty());
+        assert_eq!(run.shots.len(), 8);
     }
 
     #[test]
@@ -1120,11 +1087,15 @@ mod tests {
 
         let mut mc1 = build_engine();
         mc1.set_seed(1234);
-        let run1 = mc1.run(20).expect("first run should succeed");
+        let run1 = mc1
+            .run_with_fault_tracking(20)
+            .expect("first run should succeed");
 
         let mut mc2 = build_engine();
         mc2.set_seed(1234);
-        let run2 = mc2.run(20).expect("second run should succeed");
+        let run2 = mc2
+            .run_with_fault_tracking(20)
+            .expect("second run should succeed");
 
         assert_eq!(run1.fault_histories, run2.fault_histories);
         assert_eq!(run1.results.shots.len(), run2.results.shots.len());
@@ -1143,7 +1114,9 @@ mod tests {
 
         sampler_mc.set_seed(0);
 
-        let sampled_run = sampler_mc.run(12).expect("initial run should succeed");
+        let sampled_run = sampler_mc
+            .run_with_fault_tracking(12)
+            .expect("initial run should succeed");
         let sampled_histories = sampled_run.fault_histories.clone();
 
         assert_eq!(sampled_histories.len(), 12);
@@ -1179,7 +1152,9 @@ mod tests {
 
         sampler_mc.set_seed(0);
 
-        let sampled_run = sampler_mc.run(2).expect("initial run should succeed");
+        let sampled_run = sampler_mc
+            .run_with_fault_tracking(2)
+            .expect("initial run should succeed");
         let sampled_histories = sampled_run.fault_histories.clone();
 
         assert_eq!(sampled_histories.len(), 2);

@@ -3,6 +3,7 @@ pub mod classical;
 pub mod engine;
 pub mod engine_builder;
 pub mod engine_system;
+pub mod faults;
 pub mod hybrid;
 pub mod monte_carlo;
 pub mod noise;
@@ -23,8 +24,9 @@ pub use engine_builder::{ClassicalControlEngineBuilder, SimInput};
 pub use engine_system::{
     ClassicalControlEngine, ClassicalEngine, ControlEngine, EngineStage, EngineSystem,
 };
+pub use faults::{FaultCatalog, FaultHistory, FaultOutcome, FaultSite, SampledFault};
 pub use hybrid::HybridEngine;
-pub use monte_carlo::{DepolarizingFaultHistory, MonteCarloEngine, MonteCarloRunResult};
+pub use monte_carlo::{MonteCarloEngine, MonteCarloRunResult};
 pub use noise::{
     DepolarizingNoiseModel, GeneralNoiseModel, GeneralNoiseModelBuilder, NoiseModel,
     PassThroughNoiseModel, PassThroughNoiseModelBuilder,

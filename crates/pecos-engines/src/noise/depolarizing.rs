@@ -20,11 +20,6 @@ use pecos_random::PecosRng;
 use pecos_random::rng_ext::RngProbabilityExt;
 use std::any::Any;
 use std::collections::BTreeMap;
-use std::collections::HashSet;
-
-/////////////////////////////////////////////////////////
-/// Tools for cataloging error opportunities and outcomes
-/////////////////////////////////////////////////////////
 
 /// The kinds of faults supported in cataloging
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,6 +39,18 @@ pub struct DepolarizingFaultOutcome {
     pub probability: f64,
 }
 
+impl DepolarizingFaultOutcome {
+    #[must_use]
+    pub fn label(&self) -> &'static str {
+        self.label
+    }
+
+    #[must_use]
+    pub fn probability(&self) -> f64 {
+        self.probability
+    }
+}
+
 /// Sites at which faults can occur
 #[derive(Debug, Clone, PartialEq)]
 pub struct DepolarizingFaultSite {
@@ -58,78 +65,6 @@ pub struct DepolarizingFaultSite {
     pub outcomes: Vec<DepolarizingFaultOutcome>,
 }
 
-impl DepolarizingFaultSite {
-    #[must_use]
-    pub fn outcome_label_probability(&self, outcome_label: &str) -> Option<f64> {
-        self.outcomes
-            .iter()
-            .find(|outcome| outcome.label == outcome_label)
-            .map(|outcome| outcome.probability)
-    }
-
-    #[must_use]
-    pub fn outcome_probability(&self, outcome: DepolarizingFaultOutcome) -> Option<f64> {
-        self.outcome_label_probability(outcome.label)
-    }
-
-    pub fn random_outcome(&self) -> DepolarizingFaultOutcome {
-        // Get a random number between zero and 1
-        let rand_val = rand::random::<f64>();
-        // Scale the random number to the cumulative probabilities of the outcomes
-        let scaled_val = rand_val * self.outcomes.iter().map(|o| o.probability).sum::<f64>();
-        // Loop through the outcomes and find the first one whose cumulative probability exceeds the random number
-        let mut cumulative_probability = 0.0;
-        for outcome in &self.outcomes {
-            cumulative_probability += outcome.probability;
-            if scaled_val < cumulative_probability {
-                return outcome.clone();
-            }
-        }
-        self.outcomes.last().unwrap().clone()
-    }
-
-    // Find a random outcome that is not the current outcome
-    pub fn random_outcome_except(&self, current_outcome_label: &str) -> DepolarizingFaultOutcome {
-        // Grab a list of all the outcomes except the specified one
-        let filtered_outcomes: Vec<&DepolarizingFaultOutcome> = self
-            .outcomes
-            .iter()
-            .filter(|outcome| outcome.label != current_outcome_label)
-            .collect();
-
-        assert!(
-            !filtered_outcomes.is_empty(),
-            "No outcomes available except the current one"
-        );
-
-        // Get a random number between zero and 1
-        let rand_val = rand::random::<f64>();
-
-        // Scale the random number to the cumulative probabilities of the filtered outcomes
-        let scaled_val = rand_val * filtered_outcomes.iter().map(|o| o.probability).sum::<f64>();
-        assert!(
-            scaled_val > f64::EPSILON,
-            "Random value is too small, check probabilities of outcomes"
-        );
-
-        // Loop through the outcomes and find the first one whose cumulative probability exceeds
-        // the random number
-        let mut cumulative_probability = 0.0;
-        for outcome in &filtered_outcomes {
-            cumulative_probability += outcome.probability;
-            if scaled_val < cumulative_probability {
-                return (*outcome).clone();
-            }
-        }
-        (*filtered_outcomes.last().unwrap()).clone()
-    }
-
-    #[must_use]
-    pub fn no_fault_probability(&self) -> Option<f64> {
-        self.outcome_label_probability("NoFault")
-    }
-}
-
 /// A single fault-site sampled fault (not a history of faults)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DepolarizingSampledFault {
@@ -141,12 +76,15 @@ pub struct DepolarizingSampledFault {
     pub outcome_label: &'static str,
 }
 
+/// Per-shot sampled-fault history for depolarizing runs.
+pub type DepolarizingFaultHistory = Vec<DepolarizingSampledFault>;
+
 // A fault catalog
 #[derive(Debug, Clone, PartialEq)]
 pub struct DepolarizingFaultCatalog {
     /// Ordered fault sites.
     pub sites: Vec<DepolarizingFaultSite>,
-    rng: Option<PecosRng>,
+    pub(crate) rng: Option<PecosRng>,
 }
 
 impl Default for DepolarizingFaultCatalog {
@@ -155,357 +93,6 @@ impl Default for DepolarizingFaultCatalog {
             sites: Vec::new(),
             rng: None,
         }
-    }
-}
-
-impl DepolarizingFaultCatalog {
-    // Function that computes the probability of a sampled fault history
-    pub fn fault_history_probability(
-        &self,
-        sampled_fault_history: &[DepolarizingSampledFault],
-    ) -> f64 {
-        self.check_valid_fault_history(sampled_fault_history);
-        let mut probability = 1.0;
-        let mut next_fault_history_ind = 0;
-
-        for site in &self.sites {
-            let no_fault_probability = site.no_fault_probability().unwrap_or_else(|| {
-                panic!("No-fault outcome not found for fault site {}", site.uid);
-            });
-
-            match sampled_fault_history.get(next_fault_history_ind) {
-                Some(fault) if fault.site_uid == site.uid => {
-                    let label = fault.outcome_label;
-                    probability *= site.outcome_label_probability(label).unwrap_or_else(|| {
-                        panic!(
-                            "Outcome label {} not found for fault site {}",
-                            label, site.uid
-                        );
-                    });
-                    next_fault_history_ind += 1;
-                }
-                Some(_) => {
-                    probability *= no_fault_probability;
-                }
-                None => {
-                    probability *= no_fault_probability;
-                }
-            }
-        }
-        probability
-    }
-
-    // TODO Implement a "next" function that takes a sampled
-    // fault history and returns the next sampled fault history
-
-    // TODO Implement a iterator function that returns an iterator
-    // over all fault histories
-
-    pub fn get_site(&self, site_uid: usize) -> &DepolarizingFaultSite {
-        self.sites
-            .iter()
-            .find(|s| s.uid == site_uid)
-            .unwrap_or_else(|| {
-                panic!("Site uid {} not found in fault catalog", site_uid);
-            })
-    }
-
-    // Function to set a random number generator seed for fault sampling
-    pub fn set_seed(&mut self, seed: u64) {
-        // Set the seed for the random number generator
-        self.rng = Some(PecosRng::seed_from_u64(seed));
-    }
-
-    // Function to grab a random site
-    fn random_site(&mut self) -> usize {
-        // Error if the rng is not set
-        if self.rng.is_none() {
-            panic!("Random number generator not set for fault catalog, set using catalog.set_seed()");
-        }
-
-        let nsite: u64 = self.sites.len() as u64;
-        let invalid_threshold = nsite.wrapping_neg() % nsite;
-
-        // Find a random site between these two
-        let mut bit = self.rng.as_mut().unwrap().next_u64();
-        while bit < invalid_threshold {
-            bit = self.rng.as_mut().unwrap().next_u64();
-        }
-
-        // Convert it to a site with modulo
-        (bit % nsite) as usize
-    }
-
-    // Given a site uid, this performs a random flip to one of the other outcomes
-    pub fn random_flip_at_site(
-        &mut self,
-        site_uid: usize,
-        sampled_fault_history: &[DepolarizingSampledFault],
-    ) -> Vec<DepolarizingSampledFault> {
-
-        self.check_valid_fault_history(sampled_fault_history);
-        // Generate a random value between 0 and 1
-        let rand_val = self.rng.as_mut().unwrap().next_f64();
-
-        let mut flipped_fault_history = sampled_fault_history.to_vec();
-
-        // Grab the site and capture the current outcome before removing the site.
-        let site = self.get_site(site_uid);
-        let current_outcome_label = sampled_fault_history
-            .iter()
-            .find(|fault| fault.site_uid == site_uid)
-            .map_or("NoFault", |fault| fault.outcome_label);
-
-        // Remove any existing sample at this site before inserting the flipped outcome.
-        flipped_fault_history.retain(|fault| fault.site_uid != site_uid);
-
-        // Grab a list of all of the outcomes except the current one
-        let outcomes = site
-            .outcomes
-            .iter()
-            .filter(|outcome| outcome.label != current_outcome_label)
-            .collect::<Vec<_>>();
-
-        // Scale down the probability to the sum of the probabilities of flips
-        let scaled_val = rand_val * outcomes.iter().map(|outcome| outcome.probability).sum::<f64>();
-
-        // Loop over outcomes until we find the first one whose cumulative probability exceeds the random number
-        let mut cumulative_probability = 0.0;
-        for outcome in &outcomes {
-            cumulative_probability += outcome.probability;
-            if scaled_val < cumulative_probability {
-                flipped_fault_history.push(DepolarizingSampledFault {
-                    site_uid,
-                    outcome_index: site
-                        .outcomes
-                        .iter()
-                        .position(|o| o.label == outcome.label)
-                        .unwrap() as u8,
-                    outcome_label: outcome.label,
-                });
-                break; // fixes a bug where the loop would continue after finding the correct outcome
-            }
-        }
-
-        // Resort by site_uid to maintain order
-        flipped_fault_history.sort_by_key(|fault| fault.site_uid);
-
-        flipped_fault_history
-    }
-
-    // Takes a fault history and randomly selects a site and flips it to a
-    // different outcome
-    pub fn random_flip(
-        &mut self,
-        sampled_fault_history: &[DepolarizingSampledFault],
-    ) -> Vec<DepolarizingSampledFault> {
-        // Pick a random site
-        let flip_site_uid = self.random_site();
-
-        // Flip the site
-        self.random_flip_at_site(flip_site_uid, sampled_fault_history)
-    }
-
-    // Takes a fault history and randomly selects a site and flips it to a
-    // different outcome. Returns the new history and the hastings correction
-    // p(s->s')/p(s'->s) used for the metropolis-hastings algorithm.
-    pub fn random_flip_hastings_correction(
-        &mut self,
-        sampled_fault_history: &[DepolarizingSampledFault],
-    ) -> (Vec<DepolarizingSampledFault>,f64) {
-        // Pick a random site
-        let flip_site_uid = self.random_site();
-        let chosen_site = self.sites[flip_site_uid].clone();
-        let outcome_at_site = |history: &[DepolarizingSampledFault]| {
-            history
-                .binary_search_by_key(&flip_site_uid, |fault| fault.site_uid)
-                .map_or("NoFault", |index| history[index].outcome_label)
-        };
-        // Get initial fault information pre-flip
-        let initial_fault = outcome_at_site(sampled_fault_history);
-
-        // Flip the site
-        let new_history = self.random_flip_at_site(flip_site_uid, sampled_fault_history);
-        // Get fault information post-flip
-        let new_fault = outcome_at_site(&new_history);
-
-        // get probability of each fault being sampled from the other.
-        let p_initial = chosen_site.outcome_label_probability(initial_fault).unwrap_or_else(|| {
-                        panic!(
-                            "Outcome label {} not found for fault site {}",
-                            initial_fault, chosen_site.uid
-                        );
-                    });
-        let p_new = chosen_site.outcome_label_probability(new_fault).unwrap_or_else(|| {
-                        panic!(
-                            "Outcome label {} not found for fault site {}",
-                            new_fault, chosen_site.uid
-                        );
-                    });
-
-        // compute hastings correction:
-        // P(proposing:new->init)/P(proposing:init->new)
-        let correction = (p_initial/(1.0-p_new)) / (p_new/(1.0-p_initial));
-
-        return (new_history, correction);
-    }
-
-    // Checks that two catalogs are compatible with each other
-    fn is_catalog_compatible(&self, other: &DepolarizingFaultCatalog) -> bool {
-        // Check that they have the same number of sites
-        if self.sites.len() != other.sites.len() {
-            return false;
-        }
-        // check that each site has the same uid and gate type
-        for (site, other_site) in self.sites.iter().zip(other.sites.iter()) {
-            if site.uid != other_site.uid || site.gate_type != other_site.gate_type {
-                return false;
-            }
-        }
-        true
-    }
-
-    // Checks that a history is compatible with this catalog
-    fn check_valid_fault_history(&self, history: &[DepolarizingSampledFault]) -> bool {
-        let mut fault_site_uids = history.iter().map(|fault| fault.site_uid).collect::<Vec<_>>();
-        let mut catalog_site_uids = self.sites.iter().map(|site| site.uid).collect::<Vec<_>>();
-
-        // Check that all of the site_uids in the history are present in the catalog
-        for site in fault_site_uids.iter() {
-            assert!(
-                catalog_site_uids.contains(site),
-                "Fault history contains site uid {} not present in catalog",
-                site
-            );
-        }
-
-        // Check that all of the site_uids are in ascending order
-        for (site1, site2) in fault_site_uids.iter().zip(fault_site_uids.iter().skip(1)) {
-            assert!(
-                site1 < site2,
-                "Fault catalog sites are not in ascending order: {} >= {}",
-                site1,
-                site2
-            );
-        }
-
-        // Check that there are no duplicate site_uids in the history
-        let fault_site_uids_set: HashSet<_> = fault_site_uids.into_iter().collect();
-        assert!(
-            fault_site_uids_set.len() == history.len(),
-            "Fault history contains duplicate site uids"
-        );
-
-        true
-    }
-
-    // Takes another fault catalog and returns the ratio of the
-    // probabilities of a single fault history.
-    pub fn fault_catalog_probability_ratio(
-        &self,
-        other: &DepolarizingFaultCatalog,
-        sampled_fault_history: &[DepolarizingSampledFault],
-    ) -> f64 {
-
-        self.check_valid_fault_history(sampled_fault_history);
-        assert!(
-            self.is_catalog_compatible(other),
-            "Fault catalogs are not compatible"
-        );
-        // Easiest to compute probabilities separately since
-        // we no fault probabilities will be different for each catalog
-        let prob_self = self.fault_history_probability(sampled_fault_history);
-        let prob_other = other.fault_history_probability(sampled_fault_history);
-        prob_self / prob_other
-    }
-
-    // Takes two fault histories and returns the ratio of their probabilitieis
-    pub fn fault_histories_probability_ratio(
-        &self,
-        sampled_fault_history_a: &[DepolarizingSampledFault],
-        sampled_fault_history_b: &[DepolarizingSampledFault],
-    ) -> f64 {
-
-        self.check_valid_fault_history(sampled_fault_history_a);
-        self.check_valid_fault_history(sampled_fault_history_b);
-
-        // Track the ratio
-        let mut ratio = 1.0;
-
-        // Counters to track the next fault sites
-        let mut next_fault_history_ind_a = 0;
-        let mut next_fault_history_ind_b = 0;
-        let mut next_fault_a = sampled_fault_history_a.get(next_fault_history_ind_a);
-        let mut next_fault_b = sampled_fault_history_b.get(next_fault_history_ind_b);
-        let mut next_fault_site_a = next_fault_a.map(|f| f.site_uid);
-        let mut next_fault_site_b = next_fault_b.map(|f| f.site_uid);
-
-        // Iterate through sites, only updating if there is a fault site
-        for site in &self.sites {
-            // Check if history_a or history_b both have a fault here
-            let has_fault_a = next_fault_site_a == Some(site.uid);
-            let has_fault_b = next_fault_site_b == Some(site.uid);
-            if has_fault_a && has_fault_b {
-                // Both histories have a fault here, compute ratio of probabilities
-                let label_a = next_fault_a.unwrap().outcome_label;
-                let label_b = next_fault_b.unwrap().outcome_label;
-                let prob_a = site.outcome_label_probability(label_a).unwrap_or_else(|| {
-                    panic!(
-                        "Outcome label {} not found for fault site {}",
-                        label_a, site.uid
-                    );
-                });
-                let prob_b = site.outcome_label_probability(label_b).unwrap_or_else(|| {
-                    panic!(
-                        "Outcome label {} not found for fault site {}",
-                        label_b, site.uid
-                    );
-                });
-                // Update the ratio
-                ratio *= prob_a / prob_b;
-            } else if has_fault_a {
-                // Only history_a has a fault here, multiply by its probability and divide by no-fault probability
-                let label_a = next_fault_a.unwrap().outcome_label;
-                let prob_a = site.outcome_label_probability(label_a).unwrap_or_else(|| {
-                    panic!(
-                        "Outcome label {} not found for fault site {}",
-                        label_a, site.uid
-                    );
-                });
-                let prob_b = site.no_fault_probability().unwrap_or_else(|| {
-                    panic!("No-fault outcome not found for fault site {}", site.uid);
-                });
-                // Update the ratio
-                ratio *= prob_a / prob_b;
-            } else if has_fault_b {
-                // Only history_b has a fault here, multiply by no-fault probability and divide by its probability
-                let label_b = next_fault_b.unwrap().outcome_label;
-                let prob_b = site.outcome_label_probability(label_b).unwrap_or_else(|| {
-                    panic!(
-                        "Outcome label {} not found for fault site {}",
-                        label_b, site.uid
-                    );
-                });
-                let prob_a = site.no_fault_probability().unwrap_or_else(|| {
-                    panic!("No-fault outcome not found for fault site {}", site.uid);
-                });
-                // Update the ratio
-                ratio *= prob_a / prob_b;
-            }
-
-            // Update to the next sites
-            if has_fault_a {
-                next_fault_history_ind_a += 1;
-                next_fault_a = sampled_fault_history_a.get(next_fault_history_ind_a);
-                next_fault_site_a = next_fault_a.map(|f| f.site_uid);
-            }
-            if has_fault_b {
-                next_fault_history_ind_b += 1;
-                next_fault_b = sampled_fault_history_b.get(next_fault_history_ind_b);
-                next_fault_site_b = next_fault_b.map(|f| f.site_uid);
-            }
-        }
-        ratio
     }
 }
 
@@ -1288,6 +875,38 @@ impl NoiseModel for DepolarizingNoiseModel {
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
+
+    fn set_sampled_fault_history_enabled(&mut self, enabled: bool) -> Result<(), PecosError> {
+        self.set_sampled_fault_history_enabled(enabled);
+        Ok(())
+    }
+
+    fn sampled_fault_history(&self) -> Result<crate::FaultHistory, PecosError> {
+        Ok(self
+            .sampled_fault_history()
+            .map_or_else(Vec::new, <[_]>::to_vec)
+            .into())
+    }
+
+    fn set_replay_fault_history(
+        &mut self,
+        history: Option<crate::FaultHistory>,
+    ) -> Result<(), PecosError> {
+        self.set_replay_fault_history(history.map(|history| history.as_depolarizing().to_vec()));
+        Ok(())
+    }
+
+    fn clear_replay_fault_history(&mut self) -> Result<(), PecosError> {
+        self.clear_replay_fault_history();
+        Ok(())
+    }
+
+    fn build_fault_catalog_from_message(
+        &self,
+        input: &ByteMessage,
+    ) -> Result<crate::FaultCatalog, PecosError> {
+        self.build_fault_catalog_from_message(input).map(Into::into)
+    }
 }
 
 impl RngManageable for DepolarizingNoiseModel {
@@ -1544,6 +1163,17 @@ impl ControlEngine for DepolarizingNoiseModel {
 mod tests {
     use super::*;
     use crate::engine_system::{ControlEngine, EngineStage};
+    use crate::faults::{FaultCatalog, FaultHistory};
+
+    // These helpers keep concrete values at the noise-model boundary while the
+    // catalog behavior itself is tested through the generic fault API.
+    fn generic_catalog(catalog: &DepolarizingFaultCatalog) -> FaultCatalog {
+        catalog.clone().into()
+    }
+
+    fn generic_history(history: &[DepolarizingSampledFault]) -> FaultHistory {
+        history.to_vec().into()
+    }
 
     #[test]
     fn test_probabilities_getter_and_setter() {
@@ -2200,7 +1830,8 @@ mod tests {
                                 outcome_label: &outcome4.label,
                             });
                         }
-                        let history_prob = catalog.fault_history_probability(&history);
+                        let history_prob = generic_catalog(&catalog)
+                            .fault_history_probability(&generic_history(&history));
                         prob += history_prob;
                     }
                 }
@@ -2234,7 +1865,8 @@ mod tests {
             .expect("catalog generation should succeed");
         let empty_history: Vec<DepolarizingSampledFault> = Vec::new();
 
-        let prob_empty = catalog.fault_history_probability(&empty_history);
+        let prob_empty =
+            generic_catalog(&catalog).fault_history_probability(&generic_history(&empty_history));
         assert!(
             (prob_empty - 1.0).abs() < f64::EPSILON,
             "empty history should have probability 1"
@@ -2245,7 +1877,8 @@ mod tests {
             outcome_index: 1,
             outcome_label: "X",
         }];
-        let prob_non_empty = catalog.fault_history_probability(&non_empty_history);
+        let prob_non_empty = generic_catalog(&catalog)
+            .fault_history_probability(&generic_history(&non_empty_history));
         assert!(
             (prob_non_empty).abs() < f64::EPSILON,
             "non-empty history should have probability 0"
@@ -2259,7 +1892,8 @@ mod tests {
             .expect("catalog generation should succeed");
         let empty_history: Vec<DepolarizingSampledFault> = Vec::new();
 
-        let prob_empty = catalog.fault_history_probability(&empty_history);
+        let prob_empty =
+            generic_catalog(&catalog).fault_history_probability(&generic_history(&empty_history));
         assert!(
             (prob_empty).abs() < f64::EPSILON,
             "empty history should have probability 0"
@@ -2273,7 +1907,8 @@ mod tests {
             .expect("catalog generation should succeed");
 
         let empty_history: Vec<DepolarizingSampledFault> = Vec::new();
-        let prob_empty = catalog.fault_history_probability(&empty_history);
+        let prob_empty =
+            generic_catalog(&catalog).fault_history_probability(&generic_history(&empty_history));
         assert!(
             (prob_empty - 0.9 * 0.8 * 0.7 * 0.6).abs() < f64::EPSILON,
             "empty history should have correct probability"
@@ -2291,7 +1926,8 @@ mod tests {
                 outcome_label: "Y",
             },
         ];
-        let prob_history = catalog.fault_history_probability(&history);
+        let prob_history =
+            generic_catalog(&catalog).fault_history_probability(&generic_history(&history));
         let expected_prob = 0.1 * 0.1 * 0.6 * 0.8;
         let tolerance = 1e-12;
         assert!(
@@ -2336,6 +1972,9 @@ mod tests {
             .to_vec();
 
         // Compute the probabilities & compare
+        let catalog = generic_catalog(&catalog);
+        let history1 = generic_history(&history1);
+        let history2 = generic_history(&history2);
         let prob1 = catalog.fault_history_probability(&history1);
         let prob2 = catalog.fault_history_probability(&history2);
 
@@ -2361,15 +2000,16 @@ mod tests {
         builder.mz(&[1]);
         let msg = builder.build();
 
-        let mut catalog_a = noise
+        let mut catalog_a: FaultCatalog = noise
             .build_fault_catalog_from_message(&msg)
-            .expect("catalog generation should succeed");
+            .expect("catalog generation should succeed")
+            .into();
         let mut catalog_b = catalog_a.clone();
         catalog_a.set_seed(0);
         catalog_b.set_seed(0);
 
-        let mut history_a = Vec::new();
-        let mut history_b = Vec::new();
+        let mut history_a: FaultHistory = Vec::new().into();
+        let mut history_b: FaultHistory = Vec::new().into();
         for _ in 0..10 {
             history_a = catalog_a.random_flip(&history_a);
             history_b = catalog_b.random_flip(&history_b);
@@ -2386,22 +2026,29 @@ mod tests {
         builder.x(&[0]);
         let msg = builder.build();
 
-        let mut catalog = noise
+        let raw_catalog = noise
             .build_fault_catalog_from_message(&msg)
             .expect("catalog generation should succeed");
+        let outcomes = raw_catalog.sites[0].outcomes.clone();
+        let mut catalog: FaultCatalog = raw_catalog.into();
         catalog.set_seed(0);
 
-        let outcomes = catalog.sites[0].outcomes.clone();
         for (outcome_index, outcome) in outcomes.iter().enumerate() {
-            let history = vec![DepolarizingSampledFault {
+            let history: FaultHistory = vec![DepolarizingSampledFault {
                 site_uid: 0,
                 outcome_index: outcome_index as u8,
                 outcome_label: outcome.label,
-            }];
+            }]
+            .into();
 
             let flipped_history = catalog.random_flip_at_site(0, &history);
 
-            assert_ne!(flipped_history[0].outcome_label, outcome.label);
+            // NoFault is represented by the absence of a sampled fault.
+            let flipped_label = flipped_history
+                .iter()
+                .next()
+                .map_or("NoFault", |fault| fault.outcome_label());
+            assert_ne!(flipped_label, outcome.label);
         }
     }
 
@@ -2417,32 +2064,33 @@ mod tests {
         builder.mz(&[1]);
         let msg = builder.build();
 
-        let mut catalog = noise
+        let mut catalog: FaultCatalog = noise
             .build_fault_catalog_from_message(&msg)
-            .expect("catalog generation should succeed");
+            .expect("catalog generation should succeed")
+            .into();
         catalog.set_seed(0);
 
-        let original_history = Vec::new();
+        let original_history: FaultHistory = Vec::new().into();
         let site_uid = 2;
         let sampled_history = catalog.random_flip_at_site(site_uid, &original_history);
 
         assert_ne!(sampled_history, original_history);
         assert_eq!(sampled_history.len(), 1);
 
-        let sampled_fault = &sampled_history[0];
-        assert_eq!(sampled_fault.site_uid, site_uid);
+        let sampled_fault = sampled_history.iter().next().expect("one sampled fault");
+        assert_eq!(sampled_fault.site_uid(), site_uid);
 
         let site = catalog.get_site(site_uid);
-        let outcome = &site.outcomes[usize::from(sampled_fault.outcome_index)];
-        assert_eq!(sampled_fault.outcome_label, outcome.label);
-        assert!(outcome.probability > 0.0);
+        let outcomes = site.outcomes();
+        let outcome = &outcomes[usize::from(sampled_fault.outcome_index())];
+        assert_eq!(sampled_fault.outcome_label(), outcome.label());
+        assert!(outcome.probability() > 0.0);
 
         let expected_probability = catalog
-            .sites
-            .iter()
+            .sites()
             .map(|catalog_site| {
-                if catalog_site.uid == site_uid {
-                    outcome.probability
+                if catalog_site.uid() == site_uid {
+                    outcome.probability()
                 } else {
                     catalog_site
                         .no_fault_probability()
@@ -2463,16 +2111,18 @@ mod tests {
         builder.x(&[0]);
         let msg = builder.build();
 
-        let mut catalog = noise
+        let mut catalog: FaultCatalog = noise
             .build_fault_catalog_from_message(&msg)
-            .expect("catalog generation should succeed");
+            .expect("catalog generation should succeed")
+            .into();
         catalog.set_seed(0);
 
-        let history = vec![DepolarizingSampledFault {
+        let history: FaultHistory = vec![DepolarizingSampledFault {
             site_uid: 0,
             outcome_index: 1,
             outcome_label: "X",
-        }];
+        }]
+        .into();
         let original_history = history.clone();
 
         let _ = catalog.random_flip_at_site(0, &history);

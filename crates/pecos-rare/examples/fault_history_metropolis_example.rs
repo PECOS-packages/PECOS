@@ -1,12 +1,12 @@
 // Demonstration of how to build a Metropolis stepper on top of a fault history
 use pecos_core::errors::PecosError;
-use pecos_random::PecosRng;
 use pecos_engines::byte_message::ByteMessage;
 use pecos_engines::engine_system::{ControlEngine, EngineStage};
 use pecos_engines::monte_carlo::MonteCarloEngine;
 use pecos_engines::quantum::StabilizerEngine;
 use pecos_engines::shot_results::Shot;
 use pecos_engines::{ClassicalControlEngine, ClassicalEngine, Engine};
+use pecos_random::PecosRng;
 use std::any::Any;
 
 // If I did everything right, this should be a d=5 surface code syndrome extraction circuit
@@ -248,17 +248,20 @@ fn main() -> Result<(), PecosError> {
 
     // Catalog all of the available faults in the circuit
     let mut fault_catalog = mc.return_fault_catalog()?;
-    println!("Fault catalog: {} fault sites", fault_catalog.sites.len());
+    println!("Fault catalog: {} fault sites", fault_catalog.len());
     println!("Fault catalog details:");
-    for fault in &fault_catalog.sites {
+    for fault in fault_catalog.sites() {
         println!(
             "\tFault at gate {} ({}) on qubits {:?} with fault id {}",
-            fault.gate_index, fault.gate_type, fault.qubits, fault.uid
+            fault.gate_index(),
+            fault.gate_type(),
+            fault.qubits(),
+            fault.uid()
         );
     }
 
     // Run the original sampling
-    let run = mc.run(10)?;
+    let run = mc.run_with_fault_tracking(10)?;
     let shots = run.results;
     let histories = run.fault_histories;
 
@@ -267,54 +270,53 @@ fn main() -> Result<(), PecosError> {
     println!("Collected {} shots:", shots.len());
     for per_shot in histories.clone() {
         let probability = fault_catalog.fault_history_probability(&per_shot);
-        println!("\tNew shot: probability {:e}, with {} faults", probability, per_shot.len());
-        for fault in per_shot {
+        println!(
+            "\tNew shot: probability {:e}, with {} faults",
+            probability,
+            per_shot.len()
+        );
+        for fault in per_shot.iter() {
             // Print out all of the faults that happened
             println!(
                 "\t\tFault at site {}: outcome {} ({})",
-                fault.site_uid, fault.outcome_index, fault.outcome_label
+                fault.site_uid(),
+                fault.outcome_index(),
+                fault.outcome_label()
             );
         }
     }
 
-    struct MetropolisStepper {rng: PecosRng }
+    // This tiny stepper is kept in the example; only its state type needs to be generic.
+    struct MetropolisStepper {
+        rng: PecosRng,
+    }
 
     struct MetropolisStep<State> {
         state: State,
         accepted: bool,
-        acceptance_probability: f64,
+        _acceptance_probability: f64,
     }
 
-    // metropolis stepper object
-    // implements `step` method which takes two states and performs a metropolis step,
-    // returning a metropolis step that has been accepted with probability `min(1,acceptance_ratio)`,
-    // and updating the state of the metropolis step based on if the step was accepted or not.
     impl MetropolisStepper {
-        #[must_use]
-        pub fn step<State>(
+        fn step<State>(
             &mut self,
             current: State,
             proposal: State,
-            acceptance_ratio: f64)
-            -> MetropolisStep<State> {
+            acceptance_ratio: f64,
+        ) -> MetropolisStep<State> {
             assert!(
                 acceptance_ratio >= 0.0,
-                "Acceptance ratio must be a non-negative value! got {}", acceptance_ratio
+                "Acceptance ratio must be non-negative"
             );
-
-            // Metropolis-hastings acceptance probability
-            // assuming that the hastings correction comes in `acceptance_ratio` if needed.
-            let acceptance_probability: f64 = acceptance_ratio.min(1.0);
-            // accept the new state with probability `acceptance_probability`
-            let accepted: bool = acceptance_probability == 1.0 || self.rng.next_f64() < acceptance_probability;
-            // return the updated state
+            let acceptance_probability = acceptance_ratio.min(1.0);
+            let accepted =
+                acceptance_probability == 1.0 || self.rng.next_f64() < acceptance_probability;
             MetropolisStep {
-                state: if accepted {proposal} else {current},
+                state: if accepted { proposal } else { current },
                 accepted,
-                acceptance_probability,
+                _acceptance_probability: acceptance_probability,
             }
         }
-
     }
 
     // Lets create a metropolis stepper object
@@ -331,7 +333,8 @@ fn main() -> Result<(), PecosError> {
 
     for _i in 1..1_000 {
         let (proposal, correction) = fault_catalog.random_flip_hastings_correction(&current);
-        let ratio: f64 = correction * fault_catalog.fault_histories_probability_ratio(&proposal, &current);
+        let ratio: f64 =
+            correction * fault_catalog.fault_histories_probability_ratio(&proposal, &current);
         let result = stepper.step(current.clone(), proposal.clone(), ratio);
         current = result.state;
         if result.accepted {

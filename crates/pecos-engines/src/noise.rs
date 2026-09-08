@@ -40,6 +40,7 @@ pub use self::weighted_sampler::{
 
 use crate::byte_message::ByteMessage;
 use crate::engine_system::{ControlEngine, EngineStage};
+use crate::faults::{FaultCatalog, FaultHistory};
 use dyn_clone::DynClone;
 use pecos_core::errors::PecosError;
 use pecos_random::PecosRng;
@@ -77,6 +78,47 @@ pub trait NoiseModel:
     /// This allows for type-checking and downcasting without requiring
     /// experimental trait upcasting.
     fn as_any_mut(&mut self) -> &mut dyn Any;
+
+    /// Enable generic fault-history collection for this noise model.
+    fn set_sampled_fault_history_enabled(&mut self, _enabled: bool) -> Result<(), PecosError> {
+        Err(PecosError::Input(
+            "The configured noise model does not support fault tracking".to_string(),
+        ))
+    }
+
+    /// Return the fault history collected during the most recent run.
+    fn sampled_fault_history(&self) -> Result<FaultHistory, PecosError> {
+        Err(PecosError::Input(
+            "The configured noise model does not support fault tracking".to_string(),
+        ))
+    }
+
+    /// Set or clear the generic fault history replayed by the next run.
+    fn set_replay_fault_history(
+        &mut self,
+        _history: Option<FaultHistory>,
+    ) -> Result<(), PecosError> {
+        Err(PecosError::Input(
+            "The configured noise model does not support fault replay".to_string(),
+        ))
+    }
+
+    /// Clear the generic fault history replayed by the next run.
+    fn clear_replay_fault_history(&mut self) -> Result<(), PecosError> {
+        Err(PecosError::Input(
+            "The configured noise model does not support fault replay".to_string(),
+        ))
+    }
+
+    /// Build this noise model's generic fault catalog for a circuit message.
+    fn build_fault_catalog_from_message(
+        &self,
+        _input: &ByteMessage,
+    ) -> Result<FaultCatalog, PecosError> {
+        Err(PecosError::Input(
+            "The configured noise model does not support fault catalogs".to_string(),
+        ))
+    }
 }
 
 /// Trait for types that can be converted into a noise model

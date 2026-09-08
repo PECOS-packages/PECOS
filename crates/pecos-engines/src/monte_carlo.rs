@@ -14,4 +14,4 @@ pub mod builder;
 pub mod engine;
 
 pub use builder::MonteCarloEngineBuilder;
-pub use engine::{DepolarizingFaultHistory, MonteCarloEngine, MonteCarloRunResult};
+pub use engine::{MonteCarloEngine, MonteCarloRunResult};

@@ -4667,6 +4667,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "pecos-rare"
+version = "0.2.0-dev.0"
+dependencies = [
+ "pecos-core",
+ "pecos-engines",
+ "pecos-random",
+]
+
+[[package]]
 name = "pecos-relay-bp"
 version = "0.2.0-dev.0"
 dependencies = [

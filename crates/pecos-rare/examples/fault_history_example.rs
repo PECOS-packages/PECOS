@@ -1,7 +1,23 @@
-// Demonstration of how to:
-// 1. Turn on fault history tracking in a simulation
-// 2. Rerun a circuit with a specified fault history
-// 3. Perturb the fault history and see how the outcome changes
+/// This is a simple demonstration of how fault histories can be
+/// tracked and analyzed. It is a stepping stone towards implementing
+/// various rare event sampling methods, particularly targeted at
+/// the splitting methods discussed in papers including:
+///
+/// * arXiv:1308.6270
+/// * arXiv:2511.15177
+/// * arXiv:2509.13678
+///
+/// Overall, the top of this file sets up a
+/// d=5 surface code syndrome extraction circuit,
+/// then sets up an engine for running the simulation.
+/// In the `main` function, the simulation is ran using a Monte Carlo
+/// engine with fault history tracking enabled. Overall, it
+/// demonstrates how to:
+/// 1. Turn on fault history tracking in a simulation
+/// 2. Run a circuit with a specified fault history
+/// 3. Perturb the fault history and see how the outcome changes
+/// 4. Compute the relative probabilities of sampled fault histories
+/// 4. Compute relative probabilities of a fault history under different noise parameters
 use pecos_core::errors::PecosError;
 use pecos_engines::byte_message::ByteMessage;
 use pecos_engines::engine_system::{ControlEngine, EngineStage};
@@ -11,8 +27,7 @@ use pecos_engines::shot_results::Shot;
 use pecos_engines::{ClassicalControlEngine, ClassicalEngine, Engine};
 use std::any::Any;
 
-// If I did everything right, this should be a d=5 surface code syndrome extraction circuit
-// If not, it is at least a good example
+/// This is a d=5 surface code syndrome extraction circuit
 fn sec_circuit() -> ByteMessage {
     let mut builder = ByteMessage::quantum_operations_builder();
 
@@ -135,12 +150,7 @@ fn sec_circuit() -> ByteMessage {
     builder.build()
 }
 
-/// A classical control engine that replays one fixed `ByteMessage` circuit.
-///
-/// `MonteCarloEngine` requires a full measurement round trip: it sends the
-/// circuit out via `start`, and the quantum engine's measurement results come
-/// back through `continue_processing`, which is where they must be captured
-/// into the returned `Shot` (otherwise every shot reports empty results).
+/// Simple circuit engine implementation
 #[derive(Clone)]
 struct FixedCircuitEngine {
     circuit: ByteMessage,
@@ -250,17 +260,20 @@ fn main() -> Result<(), PecosError> {
 
     // Catalog all of the available faults in the circuit
     let mut fault_catalog = mc.return_fault_catalog()?;
-    println!("Fault catalog: {} fault sites", fault_catalog.sites.len());
+    println!("Fault catalog: {} fault sites", fault_catalog.len());
     println!("Fault catalog details:");
-    for fault in &fault_catalog.sites {
+    for fault in fault_catalog.sites() {
         println!(
             "\tFault at gate {} ({}) on qubits {:?} with fault id {}",
-            fault.gate_index, fault.gate_type, fault.qubits, fault.uid
+            fault.gate_index(),
+            fault.gate_type(),
+            fault.qubits(),
+            fault.uid()
         );
     }
 
     // Run the original sampling
-    let run = mc.run(10)?;
+    let run = mc.run_with_fault_tracking(10)?;
     let shots = run.results;
     let histories = run.fault_histories;
 
@@ -269,12 +282,18 @@ fn main() -> Result<(), PecosError> {
     println!("Collected {} shots:", shots.len());
     for per_shot in histories.clone() {
         let probability = fault_catalog.fault_history_probability(&per_shot);
-        println!("\tNew shot: probability {:e}, with {} faults", probability, per_shot.len());
-        for fault in per_shot {
+        println!(
+            "\tNew shot: probability {:e}, with {} faults",
+            probability,
+            per_shot.len()
+        );
+        for fault in per_shot.iter() {
             // Print out all of the faults that happened
             println!(
                 "\t\tFault at site {}: outcome {} ({})",
-                fault.site_uid, fault.outcome_index, fault.outcome_label
+                fault.site_uid(),
+                fault.outcome_index(),
+                fault.outcome_label()
             );
         }
     }
@@ -284,7 +303,8 @@ fn main() -> Result<(), PecosError> {
     println!("Relative Probabilities of fault histories:");
     for (ind1, history1) in histories.clone().into_iter().enumerate() {
         for (ind2, history2) in histories.clone().into_iter().enumerate() {
-            let relative_prob = fault_catalog.fault_histories_probability_ratio(&history1, &history2);
+            let relative_prob =
+                fault_catalog.fault_histories_probability_ratio(&history1, &history2);
             println!(
                 "\tP(history {}) / P(history {}): {:e}",
                 ind1, ind2, relative_prob
@@ -298,13 +318,14 @@ fn main() -> Result<(), PecosError> {
     let mut mc2 = MonteCarloEngine::builder()
         .with_classical_engine(classical_engine.clone())
         .with_quantum_engine(Box::new(StabilizerEngine::new(num_qubits)))
-        .with_depolarizing_noise(p/10.0) // Change the error probability to 0.01
+        .with_depolarizing_noise(p / 10.0) // Change the error probability to 0.01
         .fault_history_enabled()
         .build();
     mc2.set_seed(0);
     let fault_catalog2 = mc2.return_fault_catalog()?;
     for (ind1, history1) in histories.clone().into_iter().enumerate() {
-        let relative_prob = fault_catalog.fault_catalog_probability_ratio(&fault_catalog2, &history1);
+        let relative_prob =
+            fault_catalog.fault_catalog_probability_ratio(&fault_catalog2, &history1);
         println!(
             "\tP(history {} | p=0.1) / P(history {} | p=0.01) = {:e}",
             ind1, ind1, relative_prob
@@ -331,12 +352,18 @@ fn main() -> Result<(), PecosError> {
     println!("Collected {} shots", shots2.len());
     for per_shot in histories2.clone() {
         let probability = fault_catalog.fault_history_probability(&per_shot);
-        println!("\tNew shot: probability {:e}, with {} faults", probability, per_shot.len());
-        for fault in per_shot {
+        println!(
+            "\tNew shot: probability {:e}, with {} faults",
+            probability,
+            per_shot.len()
+        );
+        for fault in per_shot.iter() {
             // Print out all of the faults that happened
             println!(
                 "\t\tFault at site {}: outcome {} ({})",
-                fault.site_uid, fault.outcome_index, fault.outcome_label
+                fault.site_uid(),
+                fault.outcome_index(),
+                fault.outcome_label()
             );
         }
     }
@@ -346,26 +373,28 @@ fn main() -> Result<(), PecosError> {
     // generator up for our fault catalog so that it can propose random flips
     fault_catalog.set_seed(1);
     let new_history = fault_catalog.random_flip(&histories[0]);
-    let relative_prob = fault_catalog.fault_histories_probability_ratio(&histories[0], &new_history);
+    let relative_prob =
+        fault_catalog.fault_histories_probability_ratio(&histories[0], &new_history);
     println!("------------------------------------------------------");
     println!("Flipped the fault history from:");
-    for fault in &histories[0] {
+    for fault in histories[0].iter() {
         println!(
             "\tFault at site {}: outcome {} ({})",
-            fault.site_uid, fault.outcome_index, fault.outcome_label
+            fault.site_uid(),
+            fault.outcome_index(),
+            fault.outcome_label()
         );
     }
     println!("to:");
-    for fault in &new_history {
+    for fault in new_history.iter() {
         println!(
             "\tFault at site {}: outcome {} ({})",
-            fault.site_uid, fault.outcome_index, fault.outcome_label
+            fault.site_uid(),
+            fault.outcome_index(),
+            fault.outcome_label()
         );
     }
-    println!(
-        "P(history 0) / P(perturbed history 0) = {}",
-        relative_prob
-    );
+    println!("P(history 0) / P(perturbed history 0) = {}", relative_prob);
 
     Ok(())
 }

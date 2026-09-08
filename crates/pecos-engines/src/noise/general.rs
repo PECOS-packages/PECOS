@@ -1201,8 +1201,7 @@ impl GeneralNoiseModel {
 
             // Check if the gate is acting on a leaked qubit in a way to
             let has_leakage = !self.leaked_qubits.is_empty()
-                && gate
-                    .qubits
+                && qubits
                     .iter()
                     .any(|&qubit| self.is_leaked(usize::from(qubit)));
 
@@ -1214,7 +1213,7 @@ impl GeneralNoiseModel {
                 if self.rng.occurs(self.p2_emission_ratio) {
                     if has_leakage {
                         // potentially seep qubits
-                        for qubit in &gate.qubits {
+                        for qubit in qubits {
                             if self.is_leaked(usize::from(*qubit))
                                 && let Some(gates) =
                                     self.seep(usize::from(*qubit), self.p2_seepage_prob)
@@ -3035,6 +3034,119 @@ mod tests {
             0, 1, 0, 0, 0, 10, 0, 0, 0, 12, 0, 0, 0, 2, 2, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 10, 0, 0,
             0, 8, 0, 0, 0, 2, 1, 0, 0, 0, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0, 2, 1, 0, 0, 2, 0, 0, 0,
             10, 0, 0, 0, 8, 0, 0, 0, 2, 1, 0, 0, 0, 0, 0, 0,
+        ];
+
+        assert_eq!(output, captured_legacy_bytes);
+    }
+
+    #[test]
+    fn tq_leakage_only_removes_the_affected_pair() {
+        let mut model = GeneralNoiseModel::default();
+        model.mark_as_leaked(0);
+
+        let mut builder = ByteMessage::quantum_operations_builder();
+        model.apply_tq_faults(&Gate::cz(&[(0, 1), (2, 3)]), 0.0, &mut builder);
+        let operations = builder.build().quantum_ops().unwrap();
+
+        assert_eq!(
+            operations,
+            vec![Gate::cz(&[(2, 3)])],
+            "leakage in pair [0, 1] must not suppress pair [2, 3]",
+        );
+    }
+
+    #[test]
+    fn tq_emission_and_seepage_are_pair_local() {
+        let emission_model = BTreeMap::from([("LX".to_string(), 1.0)]);
+        let mut batched_model = GeneralNoiseModel::builder()
+            .with_seed(42)
+            .with_leakage_scale(0.5)
+            .with_p2_emission_ratio(1.0)
+            .with_p2_emission_model(&emission_model)
+            .with_p2_seepage_prob(0.0)
+            .build();
+        batched_model.mark_as_leaked(0);
+        let mut pairwise_model = batched_model.clone();
+
+        // Processing the same sites as individual gates is the pair-local control: qubit 0 is
+        // considered for seepage once, then pair [2, 3] samples the emission model. The seeded
+        // leakage replacement also makes the latter path consume a distinct RNG sequence.
+        let mut pairwise_builder = ByteMessage::quantum_operations_builder();
+        pairwise_model.apply_tq_faults(&Gate::cz(&[(0, 1)]), 1.0, &mut pairwise_builder);
+        pairwise_model.apply_tq_faults(&Gate::cz(&[(2, 3)]), 1.0, &mut pairwise_builder);
+        let pairwise_operations = pairwise_builder.build().quantum_ops().unwrap();
+        assert_eq!(pairwise_operations, vec![Gate::z(&[2]), Gate::x(&[3])]);
+
+        let mut batched_builder = ByteMessage::quantum_operations_builder();
+        batched_model.apply_tq_faults(&Gate::cz(&[(0, 1), (2, 3)]), 1.0, &mut batched_builder);
+        let batched_operations = batched_builder.build().quantum_ops().unwrap();
+
+        assert!(batched_model.is_leaked(0));
+        assert_eq!(
+            batched_operations, pairwise_operations,
+            "pair [2, 3] must sample its emission model like an unleaked single pair",
+        );
+
+        let batched_next_draws: [u64; 16] =
+            std::array::from_fn(|_| batched_model.rng.inner_mut().next_u64());
+        let pairwise_next_draws: [u64; 16] =
+            std::array::from_fn(|_| pairwise_model.rng.inner_mut().next_u64());
+        assert_eq!(
+            batched_next_draws, pairwise_next_draws,
+            "batched pair processing must consume the same RNG stream as pairwise processing",
+        );
+    }
+
+    #[test]
+    fn tq_seepage_scan_is_pair_local() {
+        let emission_model = BTreeMap::from([("LX".to_string(), 1.0)]);
+        let mut batched_model = GeneralNoiseModel::builder()
+            .with_seed(42)
+            .with_leakage_scale(0.5)
+            .with_p2_emission_ratio(1.0)
+            .with_p2_emission_model(&emission_model)
+            .with_p2_seepage_prob(0.0)
+            .build();
+        batched_model.mark_as_leaked(0);
+        batched_model.mark_as_leaked(2);
+        let mut pairwise_model = batched_model.clone();
+
+        let mut pairwise_builder = ByteMessage::quantum_operations_builder();
+        pairwise_model.apply_tq_faults(&Gate::cz(&[(0, 1)]), 1.0, &mut pairwise_builder);
+        pairwise_model.apply_tq_faults(&Gate::cz(&[(2, 3)]), 1.0, &mut pairwise_builder);
+        let pairwise_operations = pairwise_builder.build().quantum_ops().unwrap();
+
+        let mut batched_builder = ByteMessage::quantum_operations_builder();
+        batched_model.apply_tq_faults(&Gate::cz(&[(0, 1), (2, 3)]), 1.0, &mut batched_builder);
+        let batched_operations = batched_builder.build().quantum_ops().unwrap();
+
+        assert_eq!(batched_operations, pairwise_operations);
+
+        let batched_next_draws: [u64; 16] =
+            std::array::from_fn(|_| batched_model.rng.inner_mut().next_u64());
+        let pairwise_next_draws: [u64; 16] =
+            std::array::from_fn(|_| pairwise_model.rng.inner_mut().next_u64());
+        assert_eq!(
+            batched_next_draws, pairwise_next_draws,
+            "each leaked qubit must receive exactly one seepage attempt at its own pair site",
+        );
+    }
+
+    #[test]
+    fn single_pair_tq_leakage_keeps_captured_legacy_bytes() {
+        let mut model = GeneralNoiseModel::builder()
+            .with_seed(4242)
+            .with_p2_emission_ratio(1.0)
+            .with_p2_seepage_prob(1.0)
+            .build();
+        model.mark_as_leaked(0);
+
+        let mut builder = ByteMessage::quantum_operations_builder();
+        model.apply_tq_faults(&Gate::cz(&[(0, 1)]), 1.0, &mut builder);
+        let output = builder.build().into_bytes();
+        let captured_legacy_bytes = vec![
+            83, 67, 69, 80, 1, 0, 0, 0, 1, 0, 0, 0, 32, 0, 0, 0, 10, 0, 0, 0, 8, 0, 0, 0, 134, 1,
+            0, 0, 0, 0, 0, 0,
         ];
 
         assert_eq!(output, captured_legacy_bytes);

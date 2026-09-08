@@ -122,8 +122,8 @@ share this provider. One-round memories, multiple patches, and circuits with
 unsupported logical gates conservatively retain the full structured fallback
 until their bounded families and instance mappings are implemented.
 
-A second bounded provider covers a single transversal H between two memory
-segments of at least two rounds each. A six-round canonical fixture yields
+A second bounded provider covers one or more transversal H gates separated by
+memory segments of at least two rounds each. A six-round canonical fixture yields
 initialization, ordinary pre-H bulk, the pre-H boundary round, H plus the first
 post-H SEC round, ordinary post-H bulk, pre-terminal, and terminal templates.
 The rounds adjacent to H are distinct physical families: faults immediately
@@ -132,7 +132,18 @@ the first post-gate detector round. The cache key adds the initial and final
 measurement bases but still excludes both requested segment lengths, patch
 label, qubit offset, and spatial placement. Exact tests cover different depths,
 orientations, bases, labels, offsets, and noise keys. Shallow boundary cases,
-multiple H gates, and other Clifford operations retain the full-model fallback.
+and other Clifford operations retain the full-model fallback.
+
+Repeated H composition selects from four possible boundary states: the physical
+X/Z swap parity before the boundary and the logical H parity still to come. An
+optional earlier H in the bounded fixture establishes the former; an optional
+later H establishes the latter for backward observable propagation. Three SEC
+rounds isolate the selected center boundary from both auxiliaries. Thus the
+physical cache has constant cardinality independent of the number of gates.
+PECOS's current surface frontend declares one final measured observable, so its
+instance routing row remains the checked identity; the effective final basis of
+each family carries the later-H swap parity. Two-, three-, and four-H tests
+cover all four states and repeated reuse of the same cached family.
 
 A third bounded provider covers a transversal CX between two matching patch
 shapes. Its seven families use the same temporal positions as H but contain two
@@ -234,11 +245,12 @@ round layout, ownership, bounded template extraction, mapping, and stitching
 API, including instance-time GF(2) routing for logical and tracked-Pauli output
 columns. Initialization, stationary bulk SEC, pre-terminal SEC, and terminal
 surface-memory families have exact composition coverage and a production
-single-patch memory provider. A single transversal-H boundary and its adjacent
-memory families also have exact composition coverage and a production provider,
+single-patch memory provider. Transversal-H boundaries and their adjacent memory
+families, including repeated H sequences, also have exact composition coverage
+and a production provider,
 as does a two-patch transversal CX between matching patch shapes. It does not
 yet implement the bounded mid-cycle SZ/SZdg circuit, general multi-patch or
-lattice-surgery families, repeated logical gates, decoder prior mutation, the
-anti-snake logical-subgraph window decoder, or adaptive syndrome-extraction
-templates. Full-circuit DEM construction remains the equivalence oracle and the
-conservative fallback outside supported families.
+lattice-surgery families, repeated CX or mixed logical gates, decoder prior
+mutation, the anti-snake logical-subgraph window decoder, or adaptive
+syndrome-extraction templates. Full-circuit DEM construction remains the
+equivalence oracle and the conservative fallback outside supported families.

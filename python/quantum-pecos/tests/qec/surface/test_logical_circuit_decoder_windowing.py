@@ -323,6 +323,87 @@ def test_cached_logical_h_provider_matches_full_compile_across_families(
     assert builder.build_dem(p1=0.002, p2=0.003, p_meas=0.004, p_prep=0.005) == oracle.to_string()
 
 
+@pytest.mark.parametrize(
+    ("orientation", "rounds", "bases"),
+    [
+        (PatchOrientation.X_TOP_BOTTOM, [3, 4, 5], ["Z", "X", "Z"]),
+        (PatchOrientation.Z_TOP_BOTTOM, [2, 3, 4, 2], ["X", "Z", "X", "Z"]),
+        (PatchOrientation.X_TOP_BOTTOM, [2, 2, 3, 2, 4], ["Z", "X", "Z", "X", "Z"]),
+    ],
+)
+def test_repeated_logical_h_provider_matches_full_compile(orientation, rounds, bases):
+    """Two through four H gates cover all physical/frame-parity families."""
+    builder = LogicalCircuitBuilder()
+    builder.add_patch(
+        SurfacePatch.create(3, orientation=orientation),
+        "data",
+        qubit_offset=17,
+        coord_offset=(-11.0, 6.0),
+    )
+    for segment_index, (segment_rounds, basis) in enumerate(zip(rounds, bases, strict=True)):
+        if segment_index:
+            builder.add_transversal_h("data")
+        builder.add_memory("data", segment_rounds, basis)
+
+    oracle, _, _ = builder._build_structured_dem(  # noqa: SLF001
+        p1=0.002,
+        p2=0.003,
+        p_meas=0.004,
+        p_prep=0.005,
+    )
+    assert builder.build_dem(p1=0.002, p2=0.003, p_meas=0.004, p_prep=0.005) == oracle.to_string()
+    descriptor = builder.build_algorithm_descriptor(
+        p1=0.002,
+        p2=0.003,
+        p_meas=0.004,
+        p_prep=0.005,
+    )
+    assert descriptor["full_dem"] == oracle.to_string()
+    assert len(descriptor["segments"]) == len(rounds)
+    assert len(descriptor["boundary_gates"]) == len(rounds) - 1
+
+
+def test_repeated_logical_h_provider_reuses_constant_boundary_families(monkeypatch):
+    """Repeated-H cache cardinality and compilation are independent of depth."""
+    from pecos.qec.surface.logical_circuit import _cached_surface_h_dem_templates
+
+    _cached_surface_h_dem_templates.cache_clear()
+
+    def build(rounds, *, label, qubit_offset, coord_offset):
+        builder = LogicalCircuitBuilder()
+        builder.add_patch(
+            SurfacePatch.create(3),
+            label,
+            qubit_offset=qubit_offset,
+            coord_offset=coord_offset,
+        )
+        for segment_index, segment_rounds in enumerate(rounds):
+            if segment_index:
+                builder.add_transversal_h(label)
+            builder.add_memory(label, segment_rounds, "Z" if segment_index % 2 == 0 else "X")
+        return builder
+
+    first = build([3, 4, 5], label="A", qubit_offset=0, coord_offset=(0.0, 0.0))
+    first.build_dem(p1=0.001, p2=0.002, p_meas=0.003, p_prep=0.004)
+    after_first = _cached_surface_h_dem_templates.cache_info()
+    assert after_first.misses == 2
+    assert after_first.currsize == 2
+
+    second = build([7, 2, 9], label="renamed", qubit_offset=29, coord_offset=(17.0, -8.0))
+    second.build_dem(p1=0.001, p2=0.002, p_meas=0.003, p_prep=0.004)
+    after_second = _cached_surface_h_dem_templates.cache_info()
+    assert after_second.misses == after_first.misses
+    assert after_second.hits == after_first.hits + 2
+
+    def reject_full_compile(*_args, **_kwargs):
+        message = "a warm repeated-H template request compiled the full circuit"
+        raise AssertionError(message)
+
+    monkeypatch.setattr(LogicalCircuitBuilder, "_build_structured_dem", reject_full_compile)
+    warm = build([11, 6, 3], label="warm", qubit_offset=41, coord_offset=(-2.0, 13.0))
+    warm.build_algorithm_descriptor(p1=0.001, p2=0.002, p_meas=0.003, p_prep=0.004)
+
+
 def test_logical_cx_provider_reuses_bounded_templates_and_routes_patch_coordinates(monkeypatch):
     """CX templates ignore depth and independently translate both patches."""
     from pecos.qec.surface.logical_circuit import _cached_surface_cx_dem_templates

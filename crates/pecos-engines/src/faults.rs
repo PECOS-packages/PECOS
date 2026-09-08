@@ -27,9 +27,9 @@ use std::collections::HashSet;
 /// qubits.
 ///
 /// In the current design, each fault is associated with a:
-///  - probability: the probability of the fault
+///  - log_probability: the log probability of the fault
 ///  - label: a human-readable label for the fault, e.g. "X"
-/// The `label()` and `probability()` functions provide
+/// The `label()`, `log_probability()`, and `probability()` functions provide
 /// access to these.
 #[derive(Debug, Clone, PartialEq)]
 pub enum FaultOutcome {
@@ -44,11 +44,19 @@ impl FaultOutcome {
         }
     }
 
+    // We store the log of the probability for numerical
+    // precision reasons
+    #[must_use]
+    pub fn log_probability(&self) -> f64 {
+        match self {
+            Self::Depolarizing(outcome) => outcome.log_probability,
+        }
+    }
+
+    // Compute the probability from the log of the probability
     #[must_use]
     pub fn probability(&self) -> f64 {
-        match self {
-            Self::Depolarizing(outcome) => outcome.probability,
-        }
+        self.log_probability().exp()
     }
 }
 
@@ -108,20 +116,33 @@ impl FaultSite {
         }
     }
 
+    // Returns the log of the probability of a given outcome, as specified
+    // by its human-readable string
+    #[must_use]
+    pub fn outcome_label_log_probability(&self, label: &str) -> Option<f64> {
+        self.outcomes()
+            .into_iter()
+            .find(|outcome| outcome.label() == label)
+            .map(|outcome| outcome.log_probability())
+    }
+
     // Returns the probability of a given outcome, as specified
     // by its human-readable string
     #[must_use]
     pub fn outcome_label_probability(&self, label: &str) -> Option<f64> {
-        self.outcomes()
-            .into_iter()
-            .find(|outcome| outcome.label() == label)
-            .map(|outcome| outcome.probability())
+        self.outcome_label_log_probability(label).map(f64::exp)
+    }
+
+    // Returns the log of the probability of no fault occurring
+    #[must_use]
+    pub fn no_fault_log_probability(&self) -> Option<f64> {
+        self.outcome_label_log_probability("NoFault")
     }
 
     // Returns the probability of no fault occurring
     #[must_use]
     pub fn no_fault_probability(&self) -> Option<f64> {
-        self.outcome_label_probability("NoFault")
+        self.no_fault_log_probability().map(f64::exp)
     }
 }
 
@@ -170,6 +191,7 @@ impl SampledFault {
 /// Each FaultCatalog contains the following methods:
 ///  - len: returns the number of sites in the fault catalog
 ///  - set_seed: specifies the seed for the PecosRng to be used
+///  - fault_history_log_probability: returns the log of the probability of a given fault history
 ///  - fault_history_probability: returns the probability of a given fault history
 ///  - fault_histories_probability_ratio: returns the ratio of probabilities of two fault histories
 
@@ -205,17 +227,10 @@ impl FaultCatalog {
             .unwrap_or_else(|| panic!("Site uid {site_uid} not found in fault catalog"))
     }
 
-    /// Seed the proposal RNG used when perturbing histories.
-    pub fn set_seed(&mut self, seed: u64) {
-        match self {
-            Self::Depolarizing(catalog) => catalog.rng = Some(PecosRng::seed_from_u64(seed)),
-        }
-    }
-
     #[must_use]
-    pub fn fault_history_probability(&self, history: &FaultHistory) -> f64 {
+    pub fn fault_history_log_probability(&self, history: &FaultHistory) -> f64 {
         self.check_valid_fault_history(history);
-        let mut probability = 1.0;
+        let mut log_probability = 0.0;
         let mut faults = history.iter().peekable();
         for site in self.sites() {
             let label = faults
@@ -225,21 +240,76 @@ impl FaultCatalog {
             if label != "NoFault" {
                 faults.next();
             }
-            probability *= site.outcome_label_probability(label).unwrap_or_else(|| {
+            log_probability += site.outcome_label_log_probability(label).unwrap_or_else(|| {
                 panic!(
                     "Outcome label {label} not found for fault site {}",
                     site.uid()
                 )
             });
         }
-        probability
+        log_probability
+    }
+
+    #[must_use]
+    pub fn fault_history_probability(&self, history: &FaultHistory) -> f64 {
+        self.fault_history_log_probability(history).exp()
+    }
+
+    // Computes the log of the ratio of probabilities between two fault histories
+    #[must_use]
+    pub fn fault_histories_log_probability_ratio(&self, a: &FaultHistory, b: &FaultHistory) -> f64 {
+        // Check that they are both valid histories
+        self.check_valid_fault_history(a);
+        self.check_valid_fault_history(b);
+
+        let mut ratio: f64 = 0.0;
+        let mut a_faults = a.iter().peekable();
+        let mut b_faults = b.iter().peekable();
+
+        // Iterate through sites, only updating if there is a fault site
+        for site in self.sites() {
+            // Check if the next faults are both at this site
+            let a_label = a_faults
+                .peek()
+                .filter(|fault| fault.site_uid() == site.uid())
+                .map_or("NoFault", SampledFault::outcome_label);
+            
+            let b_label = b_faults
+                .peek()
+                .filter(|fault| fault.site_uid() == site.uid())
+                .map_or("NoFault", SampledFault::outcome_label);
+
+            // Move both to the next fault
+            if a_label != "NoFault" {
+                a_faults.next();
+            }
+            if b_label != "NoFault" {
+                b_faults.next();
+            }
+
+            // Update the ratio if the labels are different
+            if a_label != b_label {
+                ratio += site.outcome_label_log_probability(a_label).unwrap_or_else(|| {
+                    panic!(
+                        "Outcome label {a_label} not found for fault site {}",
+                        site.uid()
+                    )
+                });
+                ratio -= site.outcome_label_log_probability(b_label).unwrap_or_else(|| {
+                    panic!(
+                        "Outcome label {b_label} not found for fault site {}",
+                        site.uid()
+                    )
+                });
+            }
+        }
+        ratio
     }
 
     // Computes the ratio of probabilities between two fault histories
     #[must_use]
     pub fn fault_histories_probability_ratio(&self, a: &FaultHistory, b: &FaultHistory) -> f64 {
-        // TODO there used to be a better way to do this where you go site-by-site
-        self.fault_history_probability(a) / self.fault_history_probability(b)
+        self.fault_histories_log_probability_ratio(a, b).exp()
     }
 
     // Computes the ratio of probabilities when a single fault history is specified
@@ -250,7 +320,51 @@ impl FaultCatalog {
             self.is_catalog_compatible(other),
             "Fault catalogs are not compatible"
         );
-        self.fault_history_probability(history) / other.fault_history_probability(history)
+        self.fault_catalog_log_probability_ratio(other, history).exp()
+    }
+
+    #[must_use]
+    pub fn fault_catalog_log_probability_ratio(&self, other: &Self, history: &FaultHistory) -> f64 {
+        assert!(
+            self.is_catalog_compatible(other),
+            "Fault catalogs are not compatible"
+        );
+        self.fault_history_log_probability(history) - other.fault_history_log_probability(history)
+    }
+
+    fn check_valid_fault_history(&self, history: &FaultHistory) {
+        // A history cannot be used with a catalog from another noise model.
+        assert!(
+            matches!(
+                (self, history),
+                (Self::Depolarizing(_), FaultHistory::Depolarizing(_))
+            ),
+            "Fault history and catalog were produced by different noise models"
+        );
+        let catalog_uids = self.sites().map(|site| site.uid()).collect::<HashSet<_>>();
+        let history_uids = history
+            .iter()
+            .map(|fault| fault.site_uid())
+            .collect::<Vec<_>>();
+        assert!(
+            history_uids.iter().all(|uid| catalog_uids.contains(uid)),
+            "Fault history contains a site uid not present in the catalog"
+        );
+        assert!(
+            history_uids.windows(2).all(|uids| uids[0] < uids[1]),
+            "Fault history site uids must be unique and ascending"
+        );
+    }
+
+    //////////////////////////////////////////
+    // All the random stuff after this
+    // should be moved to flipper.rs
+
+    /// Seed the proposal RNG used when perturbing histories.
+    pub fn set_seed(&mut self, seed: u64) {
+        match self {
+            Self::Depolarizing(catalog) => catalog.rng = Some(PecosRng::seed_from_u64(seed)),
+        }
     }
 
     /// Randomly change one site's outcome and return the proposed history.
@@ -357,30 +471,6 @@ impl FaultCatalog {
                 left.uid() == right.uid() && left.gate_type() == right.gate_type()
             })
     }
-
-    fn check_valid_fault_history(&self, history: &FaultHistory) {
-        // A history cannot be used with a catalog from another noise model.
-        assert!(
-            matches!(
-                (self, history),
-                (Self::Depolarizing(_), FaultHistory::Depolarizing(_))
-            ),
-            "Fault history and catalog were produced by different noise models"
-        );
-        let catalog_uids = self.sites().map(|site| site.uid()).collect::<HashSet<_>>();
-        let history_uids = history
-            .iter()
-            .map(|fault| fault.site_uid())
-            .collect::<Vec<_>>();
-        assert!(
-            history_uids.iter().all(|uid| catalog_uids.contains(uid)),
-            "Fault history contains a site uid not present in the catalog"
-        );
-        assert!(
-            history_uids.windows(2).all(|uids| uids[0] < uids[1]),
-            "Fault history site uids must be unique and ascending"
-        );
-    }
 }
 
 /// FaultHistory
@@ -421,6 +511,13 @@ impl FaultHistory {
             Self::Depolarizing(history) => history,
         }
     }
+
+    /// Returns a sampled fault at the specified index
+    pub fn get(&self, index: usize) -> Option<SampledFault> {
+        match self {
+            Self::Depolarizing(history) => history.get(index).cloned().map(Into::into),
+        }
+    }
 }
 
 // Promotion of depolarizing instances of fault classes
@@ -455,3 +552,6 @@ impl From<Vec<DepolarizingSampledFault>> for FaultHistory {
         Self::Depolarizing(value)
     }
 }
+
+
+// TODO: Add some tests for all of this.

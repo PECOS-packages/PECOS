@@ -30,13 +30,13 @@ pub enum DepolarizingFaultSiteKind {
     TwoQubit,
 }
 
-/// This class stores one possible outcome and its probability]
+/// This class stores one possible outcome and its log_probability
 #[derive(Debug, Clone, PartialEq)]
 pub struct DepolarizingFaultOutcome {
     /// Human-readable outcome label.
     pub label: &'static str,
-    /// Outcome probability at this site.
-    pub probability: f64,
+    /// Outcome log probability at this site.
+    pub log_probability: f64,
 }
 
 impl DepolarizingFaultOutcome {
@@ -46,8 +46,13 @@ impl DepolarizingFaultOutcome {
     }
 
     #[must_use]
+    pub fn log_probability(&self) -> f64 {
+        self.log_probability
+    }
+
+    #[must_use]
     pub fn probability(&self) -> f64 {
-        self.probability
+        self.log_probability.exp()
     }
 }
 
@@ -450,11 +455,11 @@ impl DepolarizingNoiseModel {
         vec![
             DepolarizingFaultOutcome {
                 label: "NoFault",
-                probability: 1.0 - p,
+                log_probability: (1.0 - p).ln(),
             },
             DepolarizingFaultOutcome {
                 label: "X",
-                probability: p,
+                log_probability: p.ln(),
             },
         ]
     }
@@ -464,19 +469,19 @@ impl DepolarizingNoiseModel {
         vec![
             DepolarizingFaultOutcome {
                 label: "NoFault",
-                probability: 1.0 - p,
+                log_probability: (1.0 - p).ln(),
             },
             DepolarizingFaultOutcome {
                 label: "X",
-                probability: branch,
+                log_probability: branch.ln(),
             },
             DepolarizingFaultOutcome {
                 label: "Y",
-                probability: branch,
+                log_probability: branch.ln(),
             },
             DepolarizingFaultOutcome {
                 label: "Z",
-                probability: branch,
+                log_probability: branch.ln(),
             },
         ]
     }
@@ -490,14 +495,14 @@ impl DepolarizingNoiseModel {
         let mut outcomes = Vec::with_capacity(16);
         outcomes.push(DepolarizingFaultOutcome {
             label: "NoFault",
-            probability: 1.0 - p,
+            log_probability: (1.0 - p).ln(),
         });
 
         let branch = p / 15.0;
         for label in LABELS {
             outcomes.push(DepolarizingFaultOutcome {
                 label,
-                probability: branch,
+                log_probability: branch.ln(),
             });
         }
 
@@ -1485,7 +1490,7 @@ mod tests {
             .expect("catalog generation should succeed");
 
         for site in &catalog.sites {
-            let sum: f64 = site.outcomes.iter().map(|o| o.probability).sum();
+            let sum: f64 = site.outcomes.iter().map(|o| o.probability()).sum();
             assert!((sum - 1.0).abs() < 1e-12, "outcomes must sum to one");
             // Check that the first outcome is always NoFault
             assert_eq!(site.outcomes[0].label, "NoFault");
@@ -1679,7 +1684,7 @@ mod tests {
                     .iter()
                     .enumerate()
                     .skip(1)
-                    .find(|(_, outcome)| outcome.probability > 0.0)
+                    .find(|(_, outcome)| outcome.probability() > 0.0)
                     .and_then(|(idx, outcome)| {
                         u8::try_from(idx)
                             .ok()
@@ -1983,7 +1988,7 @@ mod tests {
         let ratio_from_function = catalog.fault_histories_probability_ratio(&history1, &history2);
 
         assert!(
-            (ratio - ratio_from_function).abs() < f64::EPSILON,
+            (ratio - ratio_from_function).abs() < 1e-12,
             "ratios should match"
         );
     }

@@ -2205,7 +2205,7 @@ impl<'a> SamplingEngineBuilder<'a> {
                 .is_some_and(super::types::PauliWeights::has_replacement_entries)
         {
             panic!(
-                "exact_branch_replay for starred p2 replacement branches requires a circuit-aware exact branch provider; use branch_impact or pauli_twirl_omitted_gate for the current Pauli-projected approximations"
+                "exact_branch_replay for p2 replacement branches requires a circuit-aware exact branch provider; use branch_impact or pauli_twirl_omitted_gate for the current Pauli-projected approximations"
             );
         }
         let num_detectors = self.detector_records.len();

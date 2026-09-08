@@ -60,6 +60,31 @@ pub enum Data {
 }
 
 impl Data {
+    /// The declared type of this value, shared with columnar data.
+    #[must_use]
+    pub fn data_type(&self) -> super::data_vec::DataVecType {
+        use super::data_vec::DataVecType;
+        match self {
+            Self::U8(_) => DataVecType::U8,
+            Self::U16(_) => DataVecType::U16,
+            Self::U32(_) => DataVecType::U32,
+            Self::U64(_) => DataVecType::U64,
+            Self::I8(_) => DataVecType::I8,
+            Self::I16(_) => DataVecType::I16,
+            Self::I32(_) => DataVecType::I32,
+            Self::I64(_) => DataVecType::I64,
+            Self::F32(_) => DataVecType::F32,
+            Self::F64(_) => DataVecType::F64,
+            Self::String(_) => DataVecType::String,
+            Self::Bool(_) => DataVecType::Bool,
+            Self::BigInt(_) => DataVecType::BigInt,
+            Self::Bytes(_) => DataVecType::Bytes,
+            Self::BitVec(_) => DataVecType::BitVec,
+            Self::Json(_) => DataVecType::Json,
+            Self::Vec(_) => DataVecType::Vec,
+        }
+    }
+
     /// Create a Vec variant from a vector of Data values
     #[must_use]
     pub fn from_vec(values: Vec<Data>) -> Self {

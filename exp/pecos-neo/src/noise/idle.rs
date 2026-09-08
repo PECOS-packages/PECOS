@@ -748,7 +748,7 @@ mod tests {
         if let NoiseResponse::InjectGates(gates) = response {
             assert_eq!(gates.len(), 1);
             assert_eq!(gates[0].gate_type, GateType::RZ);
-            assert!((gates[0].angles[0].to_radians() - 1.0).abs() < 1e-10);
+            assert!((gates[0].angles()[0].to_radians() - 1.0).abs() < 1e-10);
         } else {
             panic!("Expected InjectGates response");
         }
@@ -1155,7 +1155,7 @@ mod tests {
 
         assert_eq!(gates.len(), 1);
         assert_eq!(gates[0].gate_type, GateType::RZ);
-        assert!((gates[0].angles[0].to_radians() - theta).abs() < 1e-15);
+        assert!((gates[0].angles()[0].to_radians() - theta).abs() < 1e-15);
     }
 
     #[test]

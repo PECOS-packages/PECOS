@@ -124,7 +124,7 @@ fn reject_static_llvm_workspace_test() -> Result<()> {
     );
 
     Err(Error::Config(format!(
-        "Refusing full workspace HUGR tests with {mode} LLVM at {}. \
+        "Refusing full workspace LLVM tests with {mode} LLVM at {}. \
          LLVM 21.1 static workspace tests can spawn many multi-GB linker jobs. \
          {setup_hint}",
         llvm_path.display()
@@ -491,7 +491,7 @@ fn run_test(profile: super::BuildProfile, include_ffi: bool) -> Result<()> {
 
     println!("Testing workspace packages...");
     // runtime = sim + qasm + phir (format parsers)
-    // hugr = qis (includes llvm) + hugr compilation
+    // hugr = static HUGR/DAG conversion (no LLVM)
     // neo = sim() routing to the pecos-neo stack (contract tests)
     // pecos-cli is excluded here and tested separately below with --features=runtime
     // to ensure the pecos binary has PHIR/QIS support for integration tests.

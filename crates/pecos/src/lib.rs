@@ -6,7 +6,7 @@
 //! - **`sim`**: Quantum simulation (includes core + num)
 //! - **`runtime`**: Full simulation with QASM + PHIR support
 //! - **`qis`**: QIS/LLVM IR execution (requires LLVM 21.1)
-//! - **`hugr`**: HUGR program support
+//! - **`hugr`**: Static HUGR/DAG conversion (no LLVM)
 //! - **`quest`/`qulacs`/`cppsparsestab`**: Simulator backends
 //! - **`num`**: Numerical computing (scipy-like)
 //!
@@ -33,8 +33,6 @@ pub mod unified_sim;
 /// Classical control engines (QASM, QIS, PHIR).
 #[cfg(feature = "sim")]
 pub mod engines {
-    #[cfg(feature = "hugr")]
-    pub use pecos_hugr::{HugrEngine, HugrEngineBuilder, hugr_engine, hugr_sim};
     #[cfg(feature = "phir")]
     pub use pecos_phir::{PhirEngine, PhirEngineBuilder, phir_engine};
     #[cfg(feature = "phir")]
@@ -205,8 +203,6 @@ pub use pecos_engines::{MonteCarloBuilder, SimInput, sim_builder};
 pub use pecos_engines::{
     coin_toss, density_matrix, sparse_stab, stab_vec, stabilizer, state_vector,
 };
-#[cfg(feature = "hugr")]
-pub use pecos_hugr::{HugrEngine, HugrEngineBuilder, hugr_engine, hugr_sim};
 #[cfg(feature = "num")]
 pub use pecos_num::{Poly1d, allclose, brentq, curve_fit, mean, newton, polyfit};
 #[cfg(feature = "phir")]

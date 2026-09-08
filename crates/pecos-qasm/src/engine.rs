@@ -443,14 +443,52 @@ impl QASMEngine {
         Ok(())
     }
 
-    #[allow(clippy::unnecessary_wraps)]
     fn handle_szz(
         engine: &mut QASMEngine,
         qubits: &[usize],
         _params: &[f64],
     ) -> Result<(), PecosError> {
-        engine.message_builder.szz(&[(qubits[0], qubits[1])]);
-        Ok(())
+        engine.process_two_qubit_gate(GateType::SZZ, qubits)
+    }
+
+    fn handle_sxx(
+        engine: &mut QASMEngine,
+        qubits: &[usize],
+        _params: &[f64],
+    ) -> Result<(), PecosError> {
+        engine.process_two_qubit_gate(GateType::SXX, qubits)
+    }
+
+    fn handle_sxxdg(
+        engine: &mut QASMEngine,
+        qubits: &[usize],
+        _params: &[f64],
+    ) -> Result<(), PecosError> {
+        engine.process_two_qubit_gate(GateType::SXXdg, qubits)
+    }
+
+    fn handle_syy(
+        engine: &mut QASMEngine,
+        qubits: &[usize],
+        _params: &[f64],
+    ) -> Result<(), PecosError> {
+        engine.process_two_qubit_gate(GateType::SYY, qubits)
+    }
+
+    fn handle_syydg(
+        engine: &mut QASMEngine,
+        qubits: &[usize],
+        _params: &[f64],
+    ) -> Result<(), PecosError> {
+        engine.process_two_qubit_gate(GateType::SYYdg, qubits)
+    }
+
+    fn handle_szzdg(
+        engine: &mut QASMEngine,
+        qubits: &[usize],
+        _params: &[f64],
+    ) -> Result<(), PecosError> {
+        engine.process_two_qubit_gate(GateType::SZZdg, qubits)
     }
 
     #[allow(clippy::unnecessary_wraps)]
@@ -789,10 +827,40 @@ impl QASMEngine {
                 handler: Self::handle_rzz,
             },
             G {
+                name: "sxx",
+                gate_type: GateType::SXX,
+                required_qubits: 2,
+                handler: Self::handle_sxx,
+            },
+            G {
+                name: "sxxdg",
+                gate_type: GateType::SXXdg,
+                required_qubits: 2,
+                handler: Self::handle_sxxdg,
+            },
+            G {
+                name: "syy",
+                gate_type: GateType::SYY,
+                required_qubits: 2,
+                handler: Self::handle_syy,
+            },
+            G {
+                name: "syydg",
+                gate_type: GateType::SYYdg,
+                required_qubits: 2,
+                handler: Self::handle_syydg,
+            },
+            G {
                 name: "szz",
                 gate_type: GateType::SZZ,
                 required_qubits: 2,
                 handler: Self::handle_szz,
+            },
+            G {
+                name: "szzdg",
+                gate_type: GateType::SZZdg,
+                required_qubits: 2,
+                handler: Self::handle_szzdg,
             },
             G {
                 name: "swap",
@@ -1751,5 +1819,52 @@ mod tests {
                 .process_gate_operation("cz", &[0, 1], &[])
                 .expect("CZ table dispatch should succeed")
         );
+    }
+
+    #[test]
+    fn qasm_engine_executes_all_named_two_qubit_roots() {
+        let qasm = r"
+            OPENQASM 2.0;
+            qreg q[2];
+            SXX q[0],q[1];
+            SXXDG q[0],q[1];
+            SYY q[0],q[1];
+            SYYDG q[0],q[1];
+            SZZ q[0],q[1];
+            SZZDG q[0],q[1];
+        ";
+        let mut engine = QASMEngine::from_str(qasm).expect("all roots should parse");
+        let stage = <QASMEngine as ControlEngine>::start(&mut engine, ())
+            .expect("all roots should execute");
+        let EngineStage::NeedsProcessing(message) = stage else {
+            panic!("root program should produce quantum commands");
+        };
+        let ops = message.quantum_ops().expect("commands should decode");
+        assert_eq!(
+            ops.iter().map(|op| op.gate_type).collect::<Vec<_>>(),
+            [
+                GateType::SXX,
+                GateType::SXXdg,
+                GateType::SYY,
+                GateType::SYYdg,
+                GateType::SZZ,
+                GateType::SZZdg,
+            ]
+        );
+    }
+
+    #[test]
+    fn gate_table_dispatches_all_named_two_qubit_roots() {
+        let mut engine = QASMEngine::default();
+        for name in ["sxx", "sxxdg", "syy", "syydg", "szz", "szzdg"] {
+            assert!(
+                engine
+                    .process_gate_operation(name, &[0, 1], &[])
+                    .expect("root table dispatch should succeed"),
+                "{name} did not dispatch"
+            );
+        }
+        let ops = engine.message_builder.build().quantum_ops().unwrap();
+        assert_eq!(ops.len(), 6);
     }
 }

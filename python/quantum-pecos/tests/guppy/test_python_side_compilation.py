@@ -63,36 +63,13 @@ class TestPythonSideCompilation:
         # Verify results structure
         assert hasattr(results, "__getitem__"), "Results should be dict-like"
 
-        # Check for measurement results
-        assert "measurement_1" in results or "measurements" in results, "Results should contain measurements"
-
-        if "measurement_1" in results and "measurement_2" in results:
-            # New format with separate measurement keys
-            m1 = results["measurement_1"]
-            m2 = results["measurement_2"]
-
-            assert len(m1) == 100, "Should have 100 measurements for qubit 1"
-            assert len(m2) == 100, "Should have 100 measurements for qubit 2"
-
-            # Bell pair should be correlated
-            correlated = sum(1 for i in range(100) if m1[i] == m2[i])
-            correlation_rate = correlated / 100
-
-            assert correlation_rate > 0.9, f"Bell pair should be highly correlated, got {correlation_rate:.2%}"
-
-        elif "measurements" in results:
-            # Old format or combined measurements
-            measurements = results["measurements"]
-            assert len(measurements) == 100, "Should have 100 measurements"
-            assert all(
-                isinstance(m, (tuple, list, int)) for m in measurements
-            ), "Measurements should be tuples, lists, or integers"
-
-            # Check correlation if measurements are pairs
-            if measurements and isinstance(measurements[0], (tuple, list)) and len(measurements[0]) == 2:
-                correlated = sum(1 for m in measurements if m[0] == m[1])
-                correlation_rate = correlated / len(measurements)
-                assert correlation_rate > 0.9, f"Bell pair should be highly correlated, got {correlation_rate:.2%}"
+        m1 = results["measurement_0"]
+        m2 = results["measurement_1"]
+        assert len(m1) == 100, "Should have 100 measurements for qubit 0"
+        assert len(m2) == 100, "Should have 100 measurements for qubit 1"
+        correlated = sum(1 for i in range(100) if m1[i] == m2[i])
+        correlation_rate = correlated / 100
+        assert correlation_rate > 0.9, f"Bell pair should be highly correlated, got {correlation_rate:.2%}"
 
     def test_compilation_output_structure(self, simple_circuit: object) -> None:
         """Test the structure of compilation outputs."""

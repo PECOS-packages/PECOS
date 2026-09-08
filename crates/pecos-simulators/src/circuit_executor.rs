@@ -396,12 +396,8 @@ mod tests {
 
     #[test]
     fn circuit_executor_rotation_with_wrong_arity_returns_error() {
-        let gate = Gate::new(
-            GateType::RZ,
-            Vec::<Angle64>::new(),
-            Vec::<f64>::new(),
-            vec![QubitId(0)],
-        );
+        let mut gate = Gate::rz(Angle64::ZERO, &[QubitId(0)]);
+        gate.angles.clear();
         let err = execute_gate_command(&mut SparseStab::new(1), &gate, &mut Vec::new())
             .expect_err("wrong rotation arity must fail");
 

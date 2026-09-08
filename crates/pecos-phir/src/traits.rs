@@ -95,6 +95,12 @@ fn get_quantum_traits(q_op: &QuantumOp) -> BTreeSet<OpTrait> {
         | QuantumOp::CZ
         | QuantumOp::CH
         | QuantumOp::SWAP
+        | QuantumOp::SXX
+        | QuantumOp::SXXdg
+        | QuantumOp::SYY
+        | QuantumOp::SYYdg
+        | QuantumOp::SZZ
+        | QuantumOp::SZZdg
         | QuantumOp::CPhase(_)
         | QuantumOp::RZZ(_) => {
             traits.insert(PureQuantum);

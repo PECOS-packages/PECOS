@@ -14,6 +14,12 @@ Wraps the Relay BP decoder for quantum low-density parity-check (qLDPC) code dec
 - `MinSumConfig` - Min-sum BP configuration
 - `RelayBpBuilder` / `MinSumBpBuilder` - Builder patterns for decoder construction
 
+Relay runs may use sampled memory strengths or reproducible explicit gamma
+sets. Configure the latter with `RelayConfig::explicit_gammas` or
+`RelayBpBuilder::explicit_gammas`; public row zero is the first relay leg,
+each set has one finite value per check-matrix column, and rows are reused
+cyclically when necessary.
+
 ## Acknowledgements
 
 This crate wraps [relay-bp](https://github.com/trmue/relay), a Relay BP decoder developed by Tristan Mueller, Thomas Alexander, Michael E. Beverland, Markus Buehler, Blake R. Johnson, Thilo Maurer, and Drew Vandeth.

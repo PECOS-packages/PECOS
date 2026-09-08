@@ -224,6 +224,54 @@ fn rxx_matrix(theta: f64) -> Matrix {
     ])
 }
 
+/// Conventional two-qubit root: `((1+i) I + (1-i) P) / 2` for an involution P.
+fn conventional_root(pauli: &Matrix) -> Matrix {
+    let a = complex(0.5, 0.5);
+    let b = complex(0.5, -0.5);
+    (0..4)
+        .map(|r| {
+            (0..4)
+                .map(|c| {
+                    let ident = if r == c {
+                        complex(1.0, 0.0)
+                    } else {
+                        complex(0.0, 0.0)
+                    };
+                    a * ident + b * pauli[r][c]
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// Adjoint of the conventional root: conjugate transpose (entries are symmetric).
+fn conventional_root_dagger(pauli: &Matrix) -> Matrix {
+    conventional_root(pauli)
+        .iter()
+        .map(|row| row.iter().map(num_complex::Complex::conj).collect())
+        .collect()
+}
+
+fn xx_pauli() -> Matrix {
+    let o = complex(0.0, 0.0);
+    let l = complex(1.0, 0.0);
+    matrix([[o, o, o, l], [o, o, l, o], [o, l, o, o], [l, o, o, o]])
+}
+
+fn yy_pauli() -> Matrix {
+    let o = complex(0.0, 0.0);
+    let l = complex(1.0, 0.0);
+    let m = complex(-1.0, 0.0);
+    matrix([[o, o, o, m], [o, o, l, o], [o, l, o, o], [m, o, o, o]])
+}
+
+fn zz_pauli() -> Matrix {
+    let o = complex(0.0, 0.0);
+    let l = complex(1.0, 0.0);
+    let m = complex(-1.0, 0.0);
+    matrix([[l, o, o, o], [o, m, o, o], [o, o, m, o], [o, o, o, l]])
+}
+
 fn szz_matrix() -> Matrix {
     matrix([
         [
@@ -296,6 +344,11 @@ fn reference_matrix(name: &str, parameters: &[f64]) -> Matrix {
         "rzz" => rzz_matrix(parameters[0]),
         "rxx" => rxx_matrix(parameters[0]),
         "szz" | "ZZ" => szz_matrix(),
+        "szzdg" => conventional_root_dagger(&zz_pauli()),
+        "sxx" => conventional_root(&xx_pauli()),
+        "sxxdg" => conventional_root_dagger(&xx_pauli()),
+        "syy" => conventional_root(&yy_pauli()),
+        "syydg" => conventional_root_dagger(&yy_pauli()),
         "ccx" => toffoli_matrix(),
         _ => panic!("gate '{name}' has no textbook reference"),
     }

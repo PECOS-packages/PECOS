@@ -212,66 +212,25 @@ impl NamedGate {
     }
 }
 
-/// A phase angle and operand count checked by [`Unitary::try_phase`].
-///
-/// The private payload prevents construction or mutation with unsupported arity.
-///
-/// ```compile_fail
-/// use pecos_core::{Angle64, Unitary};
-/// let gamma = Angle64::ZERO;
-/// let _ = Unitary::Phase { gamma, num_qubits: 3 };
-/// ```
-/// ```compile_fail
-/// use pecos_core::{Angle64, Unitary};
-/// let mut unitary = Unitary::try_phase(Angle64::ZERO, 1).unwrap();
-/// if let Unitary::Phase(ref mut phase) = unitary {
-///     phase.0 = (Angle64::ZERO, 200);
-/// }
-/// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct PhaseGate((Angle64, u8));
-
-impl PhaseGate {
-    /// The phase angle in `exp(i gamma)`.
-    #[must_use]
-    pub const fn gamma(self) -> Angle64 {
-        self.0.0
-    }
-
-    /// The validated number of operands (zero, one, or two).
-    #[must_use]
-    pub const fn num_qubits(self) -> u8 {
-        self.0.1
-    }
-
-    fn validate_qubits(self, qubits: &[usize]) -> Result<(), PhaseGateError> {
-        validate_phase_qubits(qubits)?;
-        if usize::from(self.num_qubits()) != qubits.len() {
-            return Err(PhaseGateError::InvalidArity {
-                declared: self.num_qubits(),
-                actual: qubits.len(),
-            });
-        }
-        Ok(())
-    }
-}
-
-/// Invalid operands for phase construction or hardware lowering.
+/// Invalid phase operands or an unsupported direct hardware lowering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PhaseGateError {
-    /// Phase supports at most two operands.
+    /// Direct hardware lowering supports at most two phase operands.
     TooManyQubits { num_qubits: usize },
     /// Operands must be distinct.
     DuplicateQubit { qubit: usize },
     /// A directly assembled representation disagrees with its descriptor.
-    InvalidArity { declared: u8, actual: usize },
+    InvalidArity { declared: usize, actual: usize },
 }
 
 impl std::fmt::Display for PhaseGateError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::TooManyQubits { num_qubits } => {
-                write!(f, "Phase supports at most two qubits, got {num_qubits}")
+                write!(
+                    f,
+                    "Phase direct hardware lowering supports at most two operands, got {num_qubits}"
+                )
             }
             Self::DuplicateQubit { qubit } => write!(
                 f,
@@ -288,13 +247,20 @@ impl std::fmt::Display for PhaseGateError {
 impl std::error::Error for PhaseGateError {}
 
 pub(crate) fn validate_phase_qubits(qubits: &[usize]) -> Result<(), PhaseGateError> {
-    if qubits.len() > 2 {
-        return Err(PhaseGateError::TooManyQubits {
-            num_qubits: qubits.len(),
-        });
-    }
     if let Some(&qubit) = duplicate_qubits(qubits.iter().copied()).first() {
         return Err(PhaseGateError::DuplicateQubit { qubit });
+    }
+    Ok(())
+}
+
+/// Checks the descriptor/operand-list pair independently of hardware limits.
+fn validate_phase_operands(num_qubits: usize, qubits: &[usize]) -> Result<(), PhaseGateError> {
+    validate_phase_qubits(qubits)?;
+    if num_qubits != qubits.len() {
+        return Err(PhaseGateError::InvalidArity {
+            declared: num_qubits,
+            actual: qubits.len(),
+        });
     }
     Ok(())
 }
@@ -321,11 +287,11 @@ pub enum Unitary {
         phi: Angle64,
         lambda: Angle64,
     },
-    /// Phase on the all-ones subspace of zero, one, or two operands.
+    /// Phase on the all-ones subspace of any number of operands.
     ///
     /// The operand count is stored here so a [`UnitaryRep::Gate`] can check that
     /// its qubit list agrees with the descriptor.
-    Phase(PhaseGate),
+    Phase { gamma: Angle64, num_qubits: usize },
     /// General 2-qubit Pauli rotation: exp(-i/2 * (alpha*XX + beta*YY + gamma*ZZ))
     RXXRYYRZZ {
         alpha: Angle64,
@@ -345,20 +311,6 @@ pub enum Unitary {
 }
 
 impl Unitary {
-    /// Construct a phase descriptor from data.
-    ///
-    /// # Errors
-    /// Rejects operand counts greater than two.
-    pub fn try_phase(gamma: Angle64, num_qubits: usize) -> Result<Self, PhaseGateError> {
-        let num_qubits = match num_qubits {
-            0 => 0,
-            1 => 1,
-            2 => 2,
-            _ => return Err(PhaseGateError::TooManyQubits { num_qubits }),
-        };
-        Ok(Self::Phase(PhaseGate((gamma, num_qubits))))
-    }
-
     /// Construct a named fixed unitary from data.
     ///
     /// # Errors
@@ -395,7 +347,7 @@ impl Unitary {
             Self::Rotation { rotation_type, .. } => rotation_type.num_qubits(),
             Self::RXY1Q { .. } | Self::U3 { .. } => 1,
             Self::RXXRYYRZZ { .. } | Self::U2q { .. } => 2,
-            Self::Phase(PhaseGate((_, num_qubits))) => usize::from(*num_qubits),
+            Self::Phase { num_qubits, .. } => *num_qubits,
             Self::Named(NamedGate(gate_type)) => gate_type.quantum_arity(),
         }
     }
@@ -415,7 +367,7 @@ impl Unitary {
             }
             // Phase(gamma) on one qubit is exp(i gamma / 2) RZ(gamma), so it is Clifford
             // exactly when RZ(gamma) is; on two qubits only 0 (identity) and pi (CZ) are.
-            Self::Phase(PhaseGate((gamma, num_qubits))) => match num_qubits {
+            Self::Phase { gamma, num_qubits } => match num_qubits {
                 0 => true,
                 1 => {
                     crate::clifford_simplify::try_simplify_rotation(GateType::RZ, *gamma).is_some()
@@ -452,7 +404,7 @@ impl Unitary {
             Self::U3 { theta, phi, lambda } => {
                 *theta == Angle64::ZERO && (*phi + *lambda) == Angle64::ZERO
             }
-            Self::Phase(PhaseGate((gamma, ..))) => *gamma == Angle64::ZERO,
+            Self::Phase { gamma, .. } => *gamma == Angle64::ZERO,
             Self::RXXRYYRZZ { alpha, beta, gamma } => {
                 *alpha == Angle64::ZERO && *beta == Angle64::ZERO && *gamma == Angle64::ZERO
             }
@@ -483,13 +435,18 @@ impl Unitary {
     pub fn try_to_pauli(&self) -> Option<Pauli> {
         match self {
             // Phase(0) and Phase(pi) on one qubit are exactly I and Z.
-            Self::Named(NamedGate(GateType::I)) | Self::Phase(PhaseGate((Angle64::ZERO, 1))) => {
-                Some(Pauli::I)
-            }
+            Self::Named(NamedGate(GateType::I))
+            | Self::Phase {
+                gamma: Angle64::ZERO,
+                num_qubits: 1,
+            } => Some(Pauli::I),
             Self::Named(NamedGate(GateType::X)) => Some(Pauli::X),
             Self::Named(NamedGate(GateType::Y)) => Some(Pauli::Y),
             Self::Named(NamedGate(GateType::Z))
-            | Self::Phase(PhaseGate((Angle64::HALF_TURN, 1))) => Some(Pauli::Z),
+            | Self::Phase {
+                gamma: Angle64::HALF_TURN,
+                num_qubits: 1,
+            } => Some(Pauli::Z),
             _ => None,
         }
     }
@@ -505,7 +462,7 @@ impl Unitary {
             Self::RXY1Q { .. } => Some(GateType::RXY1Q),
             Self::U3 { .. } => Some(GateType::U),
             // Exact matches only: Phase(pi/2) on one qubit is SZ itself, not SZ up to phase.
-            Self::Phase(PhaseGate((gamma, num_qubits))) => match (*num_qubits, *gamma) {
+            Self::Phase { gamma, num_qubits } => match (*num_qubits, *gamma) {
                 (1, Angle64::ZERO) => Some(GateType::I),
                 (1, Angle64::QUARTER_TURN) => Some(GateType::SZ),
                 (1, Angle64::HALF_TURN) => Some(GateType::Z),
@@ -524,7 +481,7 @@ impl Unitary {
     /// Embeds this gate on a specific qubit, returning a `UnitaryRep`.
     ///
     /// # Panics
-    /// Panics if called on a two-qubit gate. Use [`on_qubits`](Unitary::on_qubits) instead.
+    /// Panics unless the descriptor has exactly one operand.
     #[must_use]
     pub fn on_qubit(self, qubit: usize) -> UnitaryRep {
         assert!(
@@ -539,11 +496,20 @@ impl Unitary {
     ///
     /// For single-qubit gates, the second qubit is ignored and
     /// [`on_qubit`](Unitary::on_qubit) is preferred.
+    ///
+    /// # Panics
+    /// Panics unless the descriptor has one or two operands, or if two operands repeat.
     #[must_use]
     pub fn on_qubits(self, q0: usize, q1: usize) -> UnitaryRep {
         if self.num_qubits() == 1 {
             self.on_qubit(q0)
         } else {
+            assert_eq!(
+                self.num_qubits(),
+                2,
+                "on_qubits requires a two-operand descriptor"
+            );
+            assert_distinct_qubits("Unitary::on_qubits", [q0, q1]);
             UnitaryRep::Gate(self, SmallVec::from_slice(&[q0, q1]))
         }
     }
@@ -882,15 +848,12 @@ pub enum ControlError {
         /// The repeated control qubit.
         control: usize,
     },
-    /// Adding a control would exceed the supported two-operand phase gate.
-    TooManyQubits {
-        /// The operand count that the controlled gate would require.
-        num_qubits: usize,
-    },
+    /// The existing operand list repeats a qubit.
+    DuplicateQubit { qubit: usize },
     /// A directly constructed phase descriptor disagrees with its operand list.
     InvalidPhaseArity {
         /// The operand count stored in [`Unitary::Phase`].
-        declared: u8,
+        declared: usize,
         /// The number of qubits stored in [`UnitaryRep::Gate`].
         actual: usize,
     },
@@ -903,9 +866,9 @@ impl std::fmt::Display for ControlError {
             Self::ControlAlreadyPresent { control } => {
                 write!(f, "Phase control qubit {control} is already an operand")
             }
-            Self::TooManyQubits { num_qubits } => write!(
+            Self::DuplicateQubit { qubit } => write!(
                 f,
-                "controlled Phase would require {num_qubits} operands; at most two are supported"
+                "Phase requires distinct qubits; duplicated qubit: {qubit}"
             ),
             Self::InvalidPhaseArity { declared, actual } => write!(
                 f,
@@ -1278,7 +1241,7 @@ impl UnitaryRep {
     ///
     /// # Panics
     ///
-    /// Panics if more than two operands are supplied or if an operand is repeated.
+    /// Panics if an operand is repeated.
     /// Use [`Self::try_phase_gate`] for caller data.
     #[must_use]
     pub fn phase_gate(gamma: Angle64, qubits: impl Into<SmallVec<[usize; 3]>>) -> Self {
@@ -1288,13 +1251,16 @@ impl UnitaryRep {
     /// Creates a checked phase gate on the all-ones subspace of its operands.
     ///
     /// # Errors
-    /// Rejects more than two operands and repeated operands.
+    /// Rejects repeated operands.
     pub fn try_phase_gate(
         gamma: Angle64,
         qubits: impl Into<SmallVec<[usize; 3]>>,
     ) -> Result<Self, PhaseGateError> {
         let qubits = qubits.into();
-        let unitary = Unitary::try_phase(gamma, qubits.len())?;
+        let unitary = Unitary::Phase {
+            gamma,
+            num_qubits: qubits.len(),
+        };
         validate_phase_qubits(&qubits)?;
         Ok(Self::Gate(unitary, qubits))
     }
@@ -1353,14 +1319,14 @@ impl UnitaryRep {
     /// # Errors
     ///
     /// Returns [`ControlError`] if this is not a phase gate, if the control is
-    /// already an operand, if the result would have more than two operands, or
-    /// if a directly constructed phase has inconsistent arity metadata.
+    /// already an operand, or if a directly constructed phase has inconsistent
+    /// arity metadata or repeated operands.
     pub fn control(self, control: usize) -> Result<Self, ControlError> {
-        let Self::Gate(Unitary::Phase(PhaseGate((gamma, num_qubits))), mut qubits) = self else {
+        let Self::Gate(Unitary::Phase { gamma, num_qubits }, mut qubits) = self else {
             return Err(ControlError::NotPhase);
         };
 
-        if usize::from(num_qubits) != qubits.len() {
+        if num_qubits != qubits.len() {
             return Err(ControlError::InvalidPhaseArity {
                 declared: num_qubits,
                 actual: qubits.len(),
@@ -1369,24 +1335,18 @@ impl UnitaryRep {
         if qubits.contains(&control) {
             return Err(ControlError::ControlAlreadyPresent { control });
         }
-        if qubits.len() >= 2 {
-            return Err(ControlError::TooManyQubits {
-                num_qubits: qubits.len() + 1,
-            });
+        if let Some(&qubit) = duplicate_qubits(qubits.iter().copied()).first() {
+            return Err(ControlError::DuplicateQubit { qubit });
         }
 
         qubits.push(control);
-        Self::try_phase_gate(gamma, qubits).map_err(|error| match error {
-            PhaseGateError::TooManyQubits { num_qubits } => {
-                ControlError::TooManyQubits { num_qubits }
-            }
-            PhaseGateError::DuplicateQubit { qubit } => {
-                ControlError::ControlAlreadyPresent { control: qubit }
-            }
-            PhaseGateError::InvalidArity { declared, actual } => {
-                ControlError::InvalidPhaseArity { declared, actual }
-            }
-        })
+        Ok(Self::Gate(
+            Unitary::Phase {
+                gamma,
+                num_qubits: qubits.len(),
+            },
+            qubits,
+        ))
     }
 
     /// Returns the adjoint (Hermitian conjugate) of this expression.
@@ -1431,11 +1391,13 @@ impl UnitaryRep {
                 },
                 qubits.clone(),
             ),
-            Self::Gate(Unitary::Phase(phase), qubits) => {
-                let mut adjoint = *phase;
-                adjoint.0.0 = negate_angle(adjoint.gamma());
-                Self::Gate(Unitary::Phase(adjoint), qubits.clone())
-            }
+            Self::Gate(Unitary::Phase { gamma, num_qubits }, qubits) => Self::Gate(
+                Unitary::Phase {
+                    gamma: negate_angle(*gamma),
+                    num_qubits: *num_qubits,
+                },
+                qubits.clone(),
+            ),
             Self::Gate(Unitary::RXXRYYRZZ { alpha, beta, gamma }, qubits) => Self::Gate(
                 Unitary::RXXRYYRZZ {
                     alpha: negate_angle(*alpha),
@@ -1535,8 +1497,8 @@ impl UnitaryRep {
         match self {
             // Paulis are always Clifford
             Self::Pauli(_) => true,
-            Self::Gate(Unitary::Phase(phase), qubits) => {
-                phase.validate_qubits(qubits).is_ok() && Unitary::Phase(*phase).is_clifford()
+            Self::Gate(unitary @ Unitary::Phase { num_qubits, .. }, qubits) => {
+                validate_phase_operands(*num_qubits, qubits).is_ok() && unitary.is_clifford()
             }
             Self::Gate(unitary, _) => unitary.is_clifford(),
             Self::Tensor(parts) | Self::Compose(parts) => parts.iter().all(UnitaryRep::is_clifford),
@@ -1729,9 +1691,9 @@ impl UnitaryRep {
                     None
                 }
             }
-            Self::Gate(Unitary::Phase(phase), qubits) => {
-                phase.validate_qubits(qubits).ok()?;
-                Unitary::Phase(*phase).to_gate_type()
+            Self::Gate(unitary @ Unitary::Phase { num_qubits, .. }, qubits) => {
+                validate_phase_operands(*num_qubits, qubits).ok()?;
+                unitary.to_gate_type()
             }
             Self::Gate(unitary, _) => unitary.to_gate_type(),
             _ => None,
@@ -1865,9 +1827,9 @@ impl UnitaryRep {
                 Some(ps)
             }
 
-            Self::Gate(Unitary::Phase(phase), qubits) => {
-                phase.validate_qubits(&qubits).ok()?;
-                match (phase.num_qubits(), phase.gamma()) {
+            Self::Gate(Unitary::Phase { gamma, num_qubits }, qubits) => {
+                validate_phase_operands(num_qubits, &qubits).ok()?;
+                match (num_qubits, gamma) {
                     (0, angle) => {
                         let phase = angle_to_quarter_phase(angle)?;
                         Some(PauliString::with_phase_and_paulis(phase, Vec::new()))
@@ -1906,8 +1868,8 @@ impl UnitaryRep {
     pub fn is_pauli_equivalent(&self) -> bool {
         match self {
             Self::Pauli(_) => true,
-            Self::Gate(Unitary::Phase(phase), qubits) => {
-                phase.validate_qubits(qubits).is_ok() && Unitary::Phase(*phase).is_pauli()
+            Self::Gate(unitary @ Unitary::Phase { num_qubits, .. }, qubits) => {
+                validate_phase_operands(*num_qubits, qubits).is_ok() && unitary.is_pauli()
             }
             Self::Gate(
                 Unitary::Rotation {
@@ -1988,9 +1950,9 @@ impl UnitaryRep {
                     _ => None,
                 }
             }
-            Self::Gate(Unitary::Phase(phase), qubits) => {
-                phase.validate_qubits(&qubits).ok()?;
-                match Unitary::Phase(phase).try_to_pauli()? {
+            Self::Gate(unitary @ Unitary::Phase { num_qubits, .. }, qubits) => {
+                validate_phase_operands(num_qubits, &qubits).ok()?;
+                match unitary.try_to_pauli()? {
                     Pauli::I => Some(I(qubits[0])),
                     Pauli::Z => Some(Z(qubits[0])),
                     _ => None,
@@ -2131,7 +2093,13 @@ impl UnitaryRep {
         match self {
             Self::Pauli(ps) => GlobalPhase::from(ps.phase()),
             Self::Phase { phase, .. } => GlobalPhase::from(*phase),
-            Self::Gate(Unitary::Phase(PhaseGate((gamma, 0))), _) => GlobalPhase::from(*gamma),
+            Self::Gate(
+                Unitary::Phase {
+                    gamma,
+                    num_qubits: 0,
+                },
+                _,
+            ) => GlobalPhase::from(*gamma),
             _ => GlobalPhase::one(),
         }
     }
@@ -2221,7 +2189,7 @@ impl UnitaryRep {
                 (*theta == Angle64::ZERO || *theta == Angle64::HALF_TURN)
                     && *phi == negate_angle(*lambda)
             }
-            Self::Gate(Unitary::Phase(PhaseGate((gamma, ..))), _) => {
+            Self::Gate(Unitary::Phase { gamma, .. }, _) => {
                 matches!(*gamma, Angle64::ZERO | Angle64::HALF_TURN)
             }
             Self::Gate(Unitary::RXXRYYRZZ { alpha, beta, gamma }, _) => {
@@ -2340,7 +2308,8 @@ impl UnitaryRep {
     /// ```
     ///
     /// # Panics
-    /// Panics on invalid phase operands. Use [`Self::try_decompose`] for caller data.
+    /// Panics on invalid phase operands or phases exceeding the two-operand hardware
+    /// lowering limit. Use [`Self::try_decompose`] for caller data.
     #[must_use]
     pub fn decompose(&self) -> Vec<crate::Gate> {
         self.try_decompose()
@@ -2353,7 +2322,8 @@ impl UnitaryRep {
     ///
     /// # Errors
     /// Rejects phase descriptors whose operand lists have invalid arity or duplicates,
-    /// including those nested inside composed, tensor, adjoint, or phased expressions.
+    /// or exceed the two-operand direct hardware lowering limit, including those
+    /// nested inside composed, tensor, adjoint, or phased expressions.
     pub fn try_decompose(&self) -> Result<Vec<crate::Gate>, PhaseGateError> {
         use crate::{Gate, Pauli};
 
@@ -2419,14 +2389,11 @@ impl UnitaryRep {
                 )]
             }
 
-            Self::Gate(Unitary::Phase(phase), qubits) => {
-                phase.validate_qubits(qubits)?;
+            Self::Gate(Unitary::Phase { gamma, num_qubits }, qubits) => {
+                validate_phase_operands(*num_qubits, qubits)?;
                 let qubit_ids: crate::GateQubits =
                     qubits.iter().map(|&q| crate::QubitId(q)).collect();
-                crate::controlled_rotations::lower_phase(
-                    phase.gamma().to_radians_signed(),
-                    &qubit_ids,
-                )?
+                crate::controlled_rotations::lower_phase(gamma.to_radians_signed(), &qubit_ids)?
             }
 
             Self::Gate(Unitary::RXXRYYRZZ { alpha, beta, gamma }, qubits) => {
@@ -2676,7 +2643,7 @@ impl UnitaryRep {
                 rep.to_clifford_rep(num_qubits)
             }
 
-            Self::Gate(Unitary::Phase(PhaseGate((gamma, ..))), qubits) => {
+            Self::Gate(Unitary::Phase { gamma, .. }, qubits) => {
                 if qubits.is_empty() || *gamma == Angle64::ZERO {
                     Some(CliffordRep::identity(num_qubits))
                 } else {
@@ -4262,18 +4229,16 @@ impl UnitaryRep {
             Self::Gate(Unitary::U3 { .. }, qubits) => {
                 diagram.add_gate(qubits[0], "U", CellColor::None, GateFamily::Default);
             }
-            Self::Gate(Unitary::Phase(PhaseGate((..))), qubits) => match qubits.as_slice() {
-                [] => {}
-                [qubit] => {
-                    diagram.add_gate(*qubit, "Phase", CellColor::None, GateFamily::Default);
+            Self::Gate(Unitary::Phase { .. }, qubits) => {
+                let mut ordered = qubits.clone();
+                ordered.sort_unstable();
+                for &qubit in &ordered {
+                    diagram.add_gate(qubit, "Phase", CellColor::None, GateFamily::Default);
                 }
-                [first, second] => {
-                    diagram.add_gate(*first, "Phase", CellColor::None, GateFamily::Default);
-                    diagram.add_gate(*second, "Phase", CellColor::None, GateFamily::Default);
-                    diagram.connect_vertical(*first, *second, CellColor::None);
+                for pair in ordered.windows(2) {
+                    diagram.connect_vertical(pair[0], pair[1], CellColor::None);
                 }
-                _ => unreachable!("Phase supports at most two operands"),
-            },
+            }
             Self::Gate(Unitary::RXXRYYRZZ { .. }, qubits) => {
                 diagram.add_gate(qubits[0], "RXXRYYRZZ", CellColor::None, GateFamily::Default);
                 diagram.add_gate(qubits[1], "RXXRYYRZZ", CellColor::None, GateFamily::Default);
@@ -4366,7 +4331,10 @@ mod tests {
             (Angle64::ZERO, Pauli::I, GateType::I, I(7)),
             (Angle64::HALF_TURN, Pauli::Z, GateType::Z, Z(7)),
         ] {
-            let descriptor = Unitary::try_phase(gamma, 1).unwrap();
+            let descriptor = Unitary::Phase {
+                gamma,
+                num_qubits: 1,
+            };
             assert!(descriptor.is_pauli());
             assert_eq!(descriptor.try_to_pauli(), Some(pauli));
             assert_eq!(descriptor.to_gate_type(), Some(gate_type));
@@ -4383,52 +4351,57 @@ mod tests {
     }
 
     #[test]
-    fn checked_phase_construction_rejects_invalid_operands() {
-        for num_qubits in [3, 200, 256, usize::MAX] {
-            assert_eq!(
-                Unitary::try_phase(Angle64::ZERO, num_qubits),
-                Err(PhaseGateError::TooManyQubits { num_qubits }),
-            );
-        }
-        for num_qubits in [3, 200, 256] {
-            let qubits: SmallVec<[usize; 3]> = (0..num_qubits).collect();
-            assert_eq!(
-                UnitaryRep::try_phase_gate(Angle64::ZERO, qubits),
-                Err(PhaseGateError::TooManyQubits { num_qubits })
-            );
-        }
-        assert_eq!(
-            UnitaryRep::try_phase_gate(Angle64::ZERO, smallvec::smallvec![7, 7]),
-            Err(PhaseGateError::DuplicateQubit { qubit: 7 }),
-        );
-        for num_qubits in 0..=2 {
-            let gamma = Angle64::from_radians(0.37);
-            let unitary = Unitary::try_phase(gamma, num_qubits).unwrap();
-            let Unitary::Phase(phase) = unitary else {
-                panic!("expected Phase")
-            };
-            assert_eq!(phase.gamma(), gamma);
-            assert_eq!(usize::from(phase.num_qubits()), num_qubits);
+    fn phase_construction_accepts_arbitrary_arity_and_rejects_duplicates() {
+        let gamma = Angle64::from_radians(0.37);
+        for num_qubits in [0, 1, 2, 3, 4, 200, 256, usize::MAX] {
+            let mut unitary = Unitary::Phase { gamma, num_qubits };
             assert_eq!(unitary.num_qubits(), num_qubits);
+            // The descriptor is plain data and can also be edited directly.
+            if let Unitary::Phase { num_qubits, .. } = &mut unitary {
+                *num_qubits = 3;
+            }
+            assert_eq!(unitary.num_qubits(), 3);
+        }
+        for num_qubits in [0, 1, 2, 3, 4, 200, 256] {
             let qubits: SmallVec<[usize; 3]> = (0..num_qubits).collect();
-            let rep = UnitaryRep::try_phase_gate(gamma, qubits).unwrap();
+            let rep = UnitaryRep::try_phase_gate(gamma, qubits.clone()).unwrap();
+            assert_eq!(
+                rep,
+                UnitaryRep::Gate(Unitary::Phase { gamma, num_qubits }, qubits)
+            );
             assert_eq!(rep.dg().dg(), rep);
-            assert_eq!(rep.try_decompose().unwrap(), rep.decompose());
+            if num_qubits <= 2 {
+                assert_eq!(rep.try_decompose().unwrap(), rep.decompose());
+            } else {
+                assert_eq!(
+                    rep.try_decompose(),
+                    Err(PhaseGateError::TooManyQubits { num_qubits })
+                );
+            }
+        }
+        for qubits in [smallvec::smallvec![7, 7], smallvec::smallvec![0, 7, 2, 7]] {
+            assert_eq!(
+                UnitaryRep::try_phase_gate(gamma, qubits),
+                Err(PhaseGateError::DuplicateQubit { qubit: 7 }),
+            );
         }
     }
 
     #[test]
     fn invalid_phase_queries_degrade_and_decomposition_propagates_errors() {
         for gamma in [Angle64::ZERO, Angle64::HALF_TURN, Angle64::QUARTER_TURN] {
-            // Internal malformed payloads still degrade; external code cannot construct them.
-            for num_qubits in 3..=u8::MAX {
-                let descriptor = Unitary::Phase(PhaseGate((gamma, num_qubits)));
+            // Larger descriptors are valid operators with conservative classification.
+            for num_qubits in 3..=256 {
+                let descriptor = Unitary::Phase { gamma, num_qubits };
                 assert!(!descriptor.is_clifford());
                 assert_eq!(descriptor.to_gate_type(), None);
                 assert_eq!(descriptor.try_to_pauli(), None);
             }
-            // Gate remains public, so validate its operand list as well as the payload.
-            let descriptor = Unitary::try_phase(gamma, 1).unwrap();
+            // Validate the descriptor/operand-list pair at the representation layer.
+            let descriptor = Unitary::Phase {
+                gamma,
+                num_qubits: 1,
+            };
             for qubits in [
                 smallvec::smallvec![],
                 smallvec::smallvec![1, 2, 3],
@@ -4474,9 +4447,11 @@ mod tests {
         assert!(z.is_pauli_equivalent());
         assert_eq!(z.clone().try_to_pauli(), Some(Z(2)));
         assert_eq!(
-            Unitary::try_phase(Angle64::HALF_TURN, 1)
-                .unwrap()
-                .try_to_pauli(),
+            Unitary::Phase {
+                gamma: Angle64::HALF_TURN,
+                num_qubits: 1
+            }
+            .try_to_pauli(),
             Some(Pauli::Z)
         );
         assert!(
@@ -4490,7 +4465,7 @@ mod tests {
     }
 
     #[test]
-    fn phase_control_reports_each_refusal() {
+    fn phase_control_extends_arity_and_reports_caller_errors() {
         let gamma = Angle64::from_radians(0.37);
 
         assert_eq!(
@@ -4499,7 +4474,13 @@ mod tests {
         );
         assert_eq!(
             UnitaryRep::phase_gate(gamma, smallvec::smallvec![0usize, 1]).control(2),
-            Err(ControlError::TooManyQubits { num_qubits: 3 })
+            Ok(UnitaryRep::Gate(
+                Unitary::Phase {
+                    gamma,
+                    num_qubits: 3
+                },
+                smallvec::smallvec![0, 1, 2]
+            ))
         );
         assert_eq!(
             UnitaryRep::gate(GateType::H, smallvec::smallvec![0usize]).control(1),
@@ -4507,7 +4488,10 @@ mod tests {
         );
         assert_eq!(
             UnitaryRep::Gate(
-                Unitary::try_phase(gamma, 0).unwrap(),
+                Unitary::Phase {
+                    gamma,
+                    num_qubits: 0
+                },
                 smallvec::smallvec![0usize],
             )
             .control(1),
@@ -4516,6 +4500,61 @@ mod tests {
                 actual: 1,
             })
         );
+    }
+
+    #[test]
+    fn phase_control_and_diagram_support_more_than_three_operands() {
+        let gamma = Angle64::HALF_TURN;
+        for num_qubits in 0..=5 {
+            let qubits: SmallVec<[usize; 3]> = (0..num_qubits).collect();
+            let phase = UnitaryRep::phase_gate(gamma, qubits);
+            let controlled = phase.control(num_qubits).unwrap();
+            let expected_qubits: SmallVec<[usize; 3]> = (0..=num_qubits).collect();
+            assert_eq!(
+                controlled,
+                UnitaryRep::Gate(
+                    Unitary::Phase {
+                        gamma,
+                        num_qubits: num_qubits + 1
+                    },
+                    expected_qubits
+                )
+            );
+            assert_eq!(
+                controlled
+                    .to_diagram(num_qubits + 1)
+                    .matches("[Phase]")
+                    .count(),
+                num_qubits + 1
+            );
+            assert_eq!(
+                controlled.control(0),
+                Err(ControlError::ControlAlreadyPresent { control: 0 })
+            );
+        }
+        let reordered = UnitaryRep::phase_gate(gamma, smallvec::smallvec![4, 0, 2]);
+        assert_eq!(reordered.to_diagram(5).matches("[Phase]").count(), 3);
+        let malformed = UnitaryRep::Gate(
+            Unitary::Phase {
+                gamma,
+                num_qubits: 3,
+            },
+            smallvec::smallvec![0, 1, 1],
+        );
+        assert_eq!(
+            malformed.control(2),
+            Err(ControlError::DuplicateQubit { qubit: 1 })
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "on_qubits requires a two-operand descriptor")]
+    fn phase_two_qubit_placement_rejects_a_three_operand_descriptor() {
+        let _ = Unitary::Phase {
+            gamma: Angle64::HALF_TURN,
+            num_qubits: 3,
+        }
+        .on_qubits(0, 1);
     }
 
     #[test]

@@ -78,7 +78,8 @@ pub fn lower_cphase(lambda_radians: f64, control: QubitId, target: QubitId) -> [
 /// [`lower_cphase`] so its phase-carrying `U` leg is preserved.
 ///
 /// # Errors
-/// Returns an error if more than two operands are supplied or an operand is repeated.
+/// Returns an error if the phase exceeds the two-operand direct hardware lowering
+/// limit (the operator itself is valid), or an operand is repeated.
 pub fn lower_phase(gamma_radians: f64, qubits: &[QubitId]) -> Result<Vec<Gate>, PhaseGateError> {
     Ok(match qubits {
         [] => Vec::new(),

@@ -19,7 +19,7 @@
 //!   the hardware lowering emits no gates for it (hardware cannot see a scalar)
 //! - `S = {q}`  -> `diag(1, e^{i gamma})`, which is exactly `U(0, 0, gamma)`
 //! - `S = {c,t}` -> `diag(1, 1, 1, e^{i gamma})`
-//! - `|S| > 2`  -> unsupported; the constructor panics like every other arity-checked constructor
+//! - `|S| > 2`  -> the same mathematical rule; direct hardware lowering is unavailable
 //!
 //! `control()` is structural: controlling `Phase` on `S` by `c` is `Phase` on `S + {c}`.
 //!
@@ -29,14 +29,14 @@
 //! 1. The matrix comes from the rule, directly. A phase is 2pi-periodic, so unlike a rotation it
 //!    has no half-angle and no representative problem: negative angles need no special case.
 //! 2. The hardware lowering (`lower_phase`) produces the SAME matrix, entrywise, not up to a
-//!    global phase. Layer 2 agrees with layer 1 exactly.
-//! 3. `control()` composes with both, exactly, and refuses what it cannot represent.
+//!    global phase, for the supported hardware arities (zero, one, and two).
+//! 3. `control()` adds any fresh operand exactly; duplicate controls and malformed pairs fail.
 
 use num_complex::Complex64;
 use pecos_core::controlled_rotations::lower_phase;
 use pecos_core::gate_type::GateType;
 use pecos_core::{Angle64, QubitId, Unitary, UnitaryRep};
-use pecos_quantum::unitary_matrix::to_matrix_with_size;
+use pecos_quantum::unitary_matrix::{ToMatrix, to_matrix_with_size};
 use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, StateVecSoA};
 use smallvec::smallvec;
 use std::f64::consts::PI;
@@ -188,9 +188,120 @@ fn single_qubit_phase_is_exactly_u_0_0_gamma() {
 }
 
 #[test]
-#[should_panic(expected = "Phase")]
-fn phase_on_three_qubits_is_refused() {
-    let _ = UnitaryRep::phase_gate(Angle64::from_radians(0.37), smallvec![0usize, 1, 2]);
+fn phase_on_three_or_more_qubits_follows_the_rule() {
+    for &g in &ANGLES {
+        let gamma = Angle64::from_radians(g);
+        for num_qubits in 3..=5 {
+            let targets: Vec<usize> = (0..num_qubits).collect();
+            let descriptor = Unitary::Phase { gamma, num_qubits };
+            assert_eq!(descriptor.num_qubits(), num_qubits);
+            let matrix = descriptor.to_matrix();
+            assert_eq!(matrix.nrows(), 1 << num_qubits);
+            assert_eq!(matrix.ncols(), 1 << num_qubits);
+            let want = expected(g, &targets, num_qubits);
+            for (col, column) in want.iter().enumerate() {
+                for (row, value) in column.iter().enumerate() {
+                    assert!((matrix[(row, col)] - value).norm() < 1e-12);
+                }
+            }
+            let rep = UnitaryRep::phase_gate(gamma, targets);
+            assert_columns_exact("larger Phase", &columns(&rep, num_qubits), &want);
+            assert_columns_exact(
+                "larger Phase adjoint",
+                &columns(&rep.dg(), num_qubits),
+                &expected(-g, &(0..num_qubits).collect::<Vec<_>>(), num_qubits),
+            );
+        }
+        // Nonconsecutive operands in reverse order, embedded in a larger register.
+        let rep = UnitaryRep::phase_gate(gamma, smallvec![4, 0, 2]);
+        assert_columns_exact(
+            "embedded Phase",
+            &columns(&rep, 5),
+            &expected(g, &[4, 0, 2], 5),
+        );
+    }
+}
+
+#[test]
+fn three_operand_phase_exceeds_the_direct_hardware_lowering_limit() {
+    for &g in &ANGLES {
+        let error = lower_phase(g, &[QubitId(0), QubitId(1), QubitId(2)]).unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("hardware lowering"), "{message}");
+        assert!(message.contains("at most two"), "{message}");
+        assert!(message.contains('3'), "{message}");
+        let phase = UnitaryRep::phase_gate(Angle64::from_radians(g), smallvec![0, 1, 2]);
+        for rep in [
+            phase.clone(),
+            UnitaryRep::Compose(vec![phase.clone()]),
+            UnitaryRep::Tensor(vec![phase.clone()]),
+            UnitaryRep::Adjoint(Box::new(phase.clone())),
+            UnitaryRep::Phase {
+                phase: Angle64::QUARTER_TURN,
+                inner: Box::new(phase),
+            },
+        ] {
+            assert_eq!(rep.try_decompose(), Err(error));
+        }
+    }
+}
+
+#[test]
+fn three_operand_phase_queries_are_conservative() {
+    for gamma in [
+        Angle64::ZERO,
+        Angle64::HALF_TURN,
+        Angle64::QUARTER_TURN,
+        Angle64::from_radians(0.37),
+    ] {
+        let descriptor = Unitary::Phase {
+            gamma,
+            num_qubits: 3,
+        };
+        assert!(!descriptor.is_clifford());
+        assert_eq!(descriptor.to_gate_type(), None);
+        assert_eq!(descriptor.try_to_pauli(), None);
+        let rep = UnitaryRep::Gate(descriptor, smallvec![0, 1, 2]);
+        assert!(!rep.is_clifford());
+        assert_eq!(rep.to_named_gate(), None);
+        assert_eq!(rep.clone().try_to_pauli(), None);
+        assert_eq!(rep.clone().try_to_pauli_string(), None);
+        assert!(!rep.is_pauli_equivalent());
+        assert!(rep.to_clifford_rep(3).is_none());
+    }
+}
+
+#[test]
+#[should_panic(expected = "Phase descriptor declares 3 operands but its gate has 2")]
+fn dense_phase_rejects_mismatched_operand_metadata() {
+    let malformed = UnitaryRep::Gate(
+        Unitary::Phase {
+            gamma: Angle64::HALF_TURN,
+            num_qubits: 3,
+        },
+        smallvec![0, 1],
+    );
+    let _ = to_matrix_with_size(&malformed, 3);
+}
+
+#[test]
+#[should_panic(expected = "Phase requires distinct qubits")]
+fn dense_phase_rejects_duplicate_operands_in_a_public_gate_pair() {
+    let malformed = UnitaryRep::Gate(
+        Unitary::Phase {
+            gamma: Angle64::HALF_TURN,
+            num_qubits: 3,
+        },
+        smallvec![0, 1, 1],
+    );
+    let _ = to_matrix_with_size(&malformed, 3);
+}
+
+#[test]
+#[should_panic(expected = "Phase operand is outside the matrix register")]
+fn dense_phase_rejects_an_undersized_register() {
+    let phase = UnitaryRep::phase_gate(Angle64::HALF_TURN, smallvec![0, 1, 2]);
+    let _ = to_matrix_with_size(&phase, 2);
 }
 
 /// Layer 2: the hardware lowering, composed as a dense matrix, equals layer 1 exactly.
@@ -271,18 +382,39 @@ fn control_is_structural() {
             &columns(&promoted, 2),
             &expected(g, &[1], 2),
         );
-        // A control that is already in S, or a third qubit, is refused.
+        // A control that is already in S is refused.
         assert!(
             UnitaryRep::phase_gate(gamma, smallvec![1usize])
                 .control(1)
                 .is_err(),
             "control already in S"
         );
-        assert!(
-            UnitaryRep::phase_gate(gamma, smallvec![0usize, 1])
-                .control(2)
-                .is_err()
+        let controlled = UnitaryRep::phase_gate(gamma, smallvec![0usize, 1])
+            .control(2)
+            .unwrap();
+        assert_eq!(
+            controlled,
+            UnitaryRep::Gate(
+                Unitary::Phase {
+                    gamma,
+                    num_qubits: 3
+                },
+                smallvec![0, 1, 2]
+            )
         );
+        assert_columns_exact(
+            "control from two operands to three",
+            &columns(&controlled, 3),
+            &expected(g, &[0, 1, 2], 3),
+        );
+        let malformed = UnitaryRep::Gate(
+            Unitary::Phase {
+                gamma,
+                num_qubits: 2,
+            },
+            smallvec![0],
+        );
+        assert!(malformed.control(1).is_err());
         // Anything that is not a Phase is refused rather than guessed at.
         assert!(
             UnitaryRep::gate(GateType::H, smallvec![0usize])

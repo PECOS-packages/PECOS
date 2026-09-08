@@ -1188,7 +1188,7 @@ impl ToMatrix for Clifford {
 }
 
 impl ToMatrix for Unitary {
-    /// Converts to a matrix on default qubits (0 for 1q, 0-1 for 2q, 0-1-2 for 3q).
+    /// Converts to a matrix on consecutive default qubits starting at zero.
     fn to_matrix(&self) -> UnitaryMatrix {
         let qubits: smallvec::SmallVec<[usize; 3]> = (0..self.num_qubits()).collect();
         let ur = UnitaryRep::Gate(*self, qubits);
@@ -1289,9 +1289,13 @@ fn to_matrix_with_size_impl(op: &UnitaryRep, num_qubits: usize) -> DMatrix<Compl
             u3_to_matrix(*theta, *phi, *lambda, qubits, num_qubits)
         }
 
-        UnitaryRep::Gate(pecos_core::Unitary::Phase(phase), qubits) => {
-            phase_to_matrix(phase.gamma(), phase.num_qubits(), qubits, num_qubits)
-        }
+        UnitaryRep::Gate(
+            pecos_core::Unitary::Phase {
+                gamma,
+                num_qubits: operand_count,
+            },
+            qubits,
+        ) => phase_to_matrix(*gamma, *operand_count, qubits, num_qubits),
 
         UnitaryRep::Gate(pecos_core::Unitary::RXXRYYRZZ { alpha, beta, gamma }, qubits) => {
             rxxryyrzz_to_matrix(*alpha, *beta, *gamma, qubits, num_qubits)
@@ -1697,17 +1701,27 @@ fn u3_to_matrix(
 /// Constructs the diagonal matrix that phases exactly the all-ones operand subspace.
 fn phase_to_matrix(
     gamma: Angle64,
-    operand_count: u8,
+    operand_count: usize,
     qubits: &[usize],
     num_qubits: usize,
 ) -> DMatrix<Complex64> {
-    // Arity and distinctness are validated by `UnitaryRep::phase_gate`; only the
-    // descriptor/operand-list agreement is re-checked, since `UnitaryRep::Gate` is public.
+    // `UnitaryRep::Gate` is public, so validate the pair even when the caller
+    // bypassed `phase_gate`. The operand count has no hardware arity limit.
     assert_eq!(
         qubits.len(),
-        usize::from(operand_count),
+        operand_count,
         "Phase descriptor declares {operand_count} operands but its gate has {}",
         qubits.len()
+    );
+
+    let mut operands = std::collections::BTreeSet::new();
+    assert!(
+        qubits.iter().all(|q| operands.insert(*q)),
+        "Phase requires distinct qubits"
+    );
+    assert!(
+        qubits.iter().all(|&q| q < num_qubits),
+        "Phase operand is outside the matrix register"
     );
 
     let dim = 1usize << num_qubits;

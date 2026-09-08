@@ -1,5 +1,5 @@
 OPENQASM 2.0;
-include "hqslib1.inc";
+include "qelib1.inc";
 flag_x_test = 0;
 flag_z_test = 0;
 // X check 1, Z check 2, Z check 3

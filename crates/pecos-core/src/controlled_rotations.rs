@@ -14,7 +14,7 @@
 
 //! Exact lowering of controlled-rotation boundary spellings.
 
-use crate::{Angle64, Gate, QubitId};
+use crate::{Angle64, Gate, PhaseGateError, QubitId};
 
 /// Lower `CRZ(theta)` to native rotations.
 ///
@@ -77,12 +77,10 @@ pub fn lower_cphase(lambda_radians: f64, control: QubitId, target: QubitId) -> [
 /// one-operand phase becomes exactly `U(0, 0, gamma)`. A two-operand phase uses
 /// [`lower_cphase`] so its phase-carrying `U` leg is preserved.
 ///
-/// # Panics
-///
-/// Panics if more than two operands are supplied or if an operand is repeated.
-#[must_use]
-pub fn lower_phase(gamma_radians: f64, qubits: &[QubitId]) -> Vec<Gate> {
-    match qubits {
+/// # Errors
+/// Returns an error if more than two operands are supplied or an operand is repeated.
+pub fn lower_phase(gamma_radians: f64, qubits: &[QubitId]) -> Result<Vec<Gate>, PhaseGateError> {
+    Ok(match qubits {
         [] => Vec::new(),
         &[qubit] => vec![Gate::u(
             Angle64::ZERO,
@@ -91,14 +89,15 @@ pub fn lower_phase(gamma_radians: f64, qubits: &[QubitId]) -> Vec<Gate> {
             &[qubit],
         )],
         &[control, target] => {
-            assert_ne!(
-                control, target,
-                "Phase requires distinct qubits; duplicated qubit: {control:?}"
-            );
+            crate::unitary_rep::validate_phase_qubits(&[control.index(), target.index()])?;
             lower_cphase(gamma_radians, control, target).to_vec()
         }
-        _ => panic!("Phase supports at most two qubits, got {}", qubits.len()),
-    }
+        _ => {
+            return Err(PhaseGateError::TooManyQubits {
+                num_qubits: qubits.len(),
+            });
+        }
+    })
 }
 
 #[cfg(test)]
@@ -106,6 +105,25 @@ mod tests {
     use super::*;
     use crate::gate_type::GateType;
     use num_complex::Complex64;
+
+    #[test]
+    fn lower_phase_rejects_unsupported_arity_without_panicking() {
+        for num_qubits in [3, 200, 256] {
+            let qubits: Vec<QubitId> = (0..num_qubits).map(QubitId).collect();
+            assert_eq!(
+                lower_phase(0.37, &qubits),
+                Err(PhaseGateError::TooManyQubits { num_qubits })
+            );
+        }
+    }
+
+    #[test]
+    fn lower_phase_rejects_duplicate_operands_without_panicking() {
+        assert_eq!(
+            lower_phase(0.37, &[QubitId(7), QubitId(7)]),
+            Err(PhaseGateError::DuplicateQubit { qubit: 7 })
+        );
+    }
 
     const TOLERANCE: f64 = 1.0e-12;
 
@@ -313,6 +331,6 @@ mod tests {
 
     #[test]
     fn zero_qubit_phase_lowering_emits_no_hardware_gates() {
-        assert!(lower_phase(0.37, &[]).is_empty());
+        assert!(lower_phase(0.37, &[]).unwrap().is_empty());
     }
 }

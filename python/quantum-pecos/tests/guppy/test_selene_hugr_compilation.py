@@ -50,21 +50,17 @@ class TestSeleneHUGRCompilation:
             # Verify results structure
             assert hasattr(results, "__getitem__"), "Results should be dict-like"
 
-            # Check for measurement results
-            if "measurement_1" in results and "measurement_2" in results:
-                m1 = results["measurement_1"]
-                m2 = results["measurement_2"]
+            # Two untagged measurements per shot land in measurement_0 and measurement_1.
+            m1 = results["measurement_0"]
+            m2 = results["measurement_1"]
 
-                assert len(m1) == 100, "Should have 100 measurements for qubit 1"
-                assert len(m2) == 100, "Should have 100 measurements for qubit 2"
+            assert len(m1) == 100, "Should have 100 measurements for qubit 1"
+            assert len(m2) == 100, "Should have 100 measurements for qubit 2"
 
-                # Bell state measurements should be correlated
-                correlated = sum(1 for i in range(100) if m1[i] == m2[i])
-                correlation_rate = correlated / 100
-                assert correlation_rate > 0.95, f"Bell state should be highly correlated, got {correlation_rate:.2%}"
-            else:
-                # Alternative result format
-                assert "measurements" in results or len(results) > 0, "Results should contain measurements"
+            # Bell state measurements should be correlated
+            correlated = sum(1 for i in range(100) if m1[i] == m2[i])
+            correlation_rate = correlated / 100
+            assert correlation_rate > 0.95, f"Bell state should be highly correlated, got {correlation_rate:.2%}"
 
         except (ImportError, RuntimeError, ValueError) as e:
             if "not supported" in str(e).lower() or "not available" in str(e).lower():

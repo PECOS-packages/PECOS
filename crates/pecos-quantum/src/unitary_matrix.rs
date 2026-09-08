@@ -884,7 +884,7 @@ const NAMED_GATE_2Q: [GateType; 11] = [
 
 const NAMED_GATE_3Q: [GateType; 1] = [GateType::CCX];
 
-/// Builds a cached lookup table mapping `Unitary::Named(gate)` to its canonical matrix.
+/// Builds a cached lookup table mapping `Unitary::named(gate)` to its canonical matrix.
 fn build_unitary_table(
     gates: &[GateType],
     num_qubits: usize,
@@ -895,7 +895,7 @@ fn build_unitary_table(
         .map(|&g| {
             let mat = gate_to_matrix(g, &qubits, num_qubits);
             let canon = canonicalize_matrix(&mat).expect("gate matrix should not be zero");
-            (Unitary::Named(g), canon)
+            (Unitary::named(g), canon)
         })
         .collect()
 }
@@ -1289,13 +1289,9 @@ fn to_matrix_with_size_impl(op: &UnitaryRep, num_qubits: usize) -> DMatrix<Compl
             u3_to_matrix(*theta, *phi, *lambda, qubits, num_qubits)
         }
 
-        UnitaryRep::Gate(
-            pecos_core::Unitary::Phase {
-                gamma,
-                num_qubits: operand_count,
-            },
-            qubits,
-        ) => phase_to_matrix(*gamma, *operand_count, qubits, num_qubits),
+        UnitaryRep::Gate(pecos_core::Unitary::Phase(phase), qubits) => {
+            phase_to_matrix(phase.gamma(), phase.num_qubits(), qubits, num_qubits)
+        }
 
         UnitaryRep::Gate(pecos_core::Unitary::RXXRYYRZZ { alpha, beta, gamma }, qubits) => {
             rxxryyrzz_to_matrix(*alpha, *beta, *gamma, qubits, num_qubits)
@@ -1310,7 +1306,8 @@ fn to_matrix_with_size_impl(op: &UnitaryRep, num_qubits: usize) -> DMatrix<Compl
             qubits,
         ) => u2q_to_matrix(before, interaction, after, qubits, num_qubits),
 
-        UnitaryRep::Gate(pecos_core::Unitary::Named(gate_type), qubits) => {
+        UnitaryRep::Gate(pecos_core::Unitary::Named(named), qubits) => {
+            let gate_type = &named.gate_type();
             gate_to_matrix(*gate_type, qubits, num_qubits)
         }
 
@@ -1509,6 +1506,19 @@ fn canonical_single_qubit_matrix(gate: GateType) -> DMatrix<Complex64> {
     )
 }
 
+fn canonical_two_qubit_matrix(gate: GateType) -> DMatrix<Complex64> {
+    let entries = gate
+        .canonical_2q_matrix()
+        .expect("named two-qubit Pauli root must have a canonical matrix");
+    let entries: Vec<_> = entries
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|entry| Complex64::new(entry[0], entry[1]))
+        .collect();
+    DMatrix::from_row_slice(4, 4, &entries)
+}
+
 /// Converts a [`PauliString`] to a dense matrix (implementation).
 fn pauli_string_to_matrix_impl(ps: &PauliString, num_qubits: usize) -> DMatrix<Complex64> {
     let dim = 1 << num_qubits;
@@ -1563,6 +1573,31 @@ fn embed_single_qubit_gate(
     result
 }
 
+/// Embeds a two-qubit gate into a larger Hilbert space.
+fn embed_two_qubit_gate(
+    gate: &DMatrix<Complex64>,
+    first_qubit: usize,
+    second_qubit: usize,
+    num_qubits: usize,
+) -> DMatrix<Complex64> {
+    let dim = 1 << num_qubits;
+    let mut result = DMatrix::from_element(dim, dim, Complex64::new(0.0, 0.0));
+    let unaffected_mask = !((1 << first_qubit) | (1 << second_qubit));
+
+    for row in 0..dim {
+        for column in 0..dim {
+            if (row & unaffected_mask) == (column & unaffected_mask) {
+                let local_row = (((row >> first_qubit) & 1) << 1) | ((row >> second_qubit) & 1);
+                let local_column =
+                    (((column >> first_qubit) & 1) << 1) | ((column >> second_qubit) & 1);
+                result[(row, column)] = gate[(local_row, local_column)];
+            }
+        }
+    }
+
+    result
+}
+
 /// Converts a rotation to a matrix.
 fn rotation_to_matrix(
     rotation_type: RotationType,
@@ -1570,8 +1605,7 @@ fn rotation_to_matrix(
     qubits: &[usize],
     num_qubits: usize,
 ) -> DMatrix<Complex64> {
-    let half = angle.to_radians_signed() / 2.0;
-    let (sin_half, cos_half) = half.sin_cos();
+    let (sin_half, cos_half) = angle.half_angle_sin_cos();
     let cos_half = Complex64::new(cos_half, 0.0);
     let sin_half = Complex64::new(sin_half, 0.0);
     let neg_i = Complex64::new(0.0, -1.0);
@@ -1601,7 +1635,7 @@ fn rotation_to_matrix(
             embed_single_qubit_gate(&gate, qubits[0], num_qubits)
         }
         RotationType::RXX | RotationType::RYY | RotationType::RZZ => {
-            // For two-qubit rotations, use matrix exponential: exp(-i * θ/2 * PP)
+            // exp(-i * θ/2 * PP) = cos(θ/2) I - i sin(θ/2) PP
             let generator = match rotation_type {
                 RotationType::RXX => {
                     two_qubit_pauli_matrix(Pauli::X, Pauli::X, qubits[0], qubits[1], num_qubits)
@@ -1614,8 +1648,8 @@ fn rotation_to_matrix(
                 }
                 _ => unreachable!("outer match already filtered for RXX/RYY/RZZ"),
             };
-            let scaled = generator * Complex64::new(0.0, -half);
-            pecos_num::matrix_exp(&scaled)
+            DMatrix::identity(generator.nrows(), generator.ncols()) * cos_half
+                + generator * (neg_i * sin_half)
         }
     }
 }
@@ -1627,10 +1661,8 @@ fn rxy1q_to_matrix(
     qubits: &[usize],
     num_qubits: usize,
 ) -> DMatrix<Complex64> {
-    let half_theta = theta.to_radians_signed() / 2.0;
+    let (sin_t, cos_t) = theta.half_angle_sin_cos();
     let phi_rad = phi.to_radians_signed();
-    let cos_t = half_theta.cos();
-    let sin_t = half_theta.sin();
     // RXY1Q: [[cos, r01], [r10, cos]]
     // r01 = -i*sin*e^{-i*phi}
     // r10 = -i*sin*e^{i*phi}
@@ -1651,11 +1683,9 @@ fn u3_to_matrix(
     qubits: &[usize],
     num_qubits: usize,
 ) -> DMatrix<Complex64> {
-    let t = theta.to_radians_signed() / 2.0;
+    let (sin_t, cos_t) = theta.half_angle_sin_cos();
     let p = phi.to_radians_signed();
     let l = lambda.to_radians_signed();
-    let cos_t = t.cos();
-    let sin_t = t.sin();
     let u00 = Complex64::new(cos_t, 0.0);
     let u01 = Complex64::new(-sin_t * l.cos(), -sin_t * l.sin());
     let u10 = Complex64::new(sin_t * p.cos(), sin_t * p.sin());
@@ -1822,37 +1852,15 @@ fn gate_to_matrix(gate_type: GateType, qubits: &[usize], num_qubits: usize) -> D
             controlled_gate(&h_gate, qubits[0], qubits[1], num_qubits)
         }
         GateType::SWAP => swap_matrix(qubits[0], qubits[1], num_qubits),
-        GateType::SXX => {
-            // SXX = RXX(pi/2)
-            rotation_to_matrix(RotationType::RXX, Angle64::QUARTER_TURN, qubits, num_qubits)
+        GateType::SXX
+        | GateType::SXXdg
+        | GateType::SYY
+        | GateType::SYYdg
+        | GateType::SZZ
+        | GateType::SZZdg => {
+            let gate = canonical_two_qubit_matrix(gate_type);
+            embed_two_qubit_gate(&gate, qubits[0], qubits[1], num_qubits)
         }
-        GateType::SXXdg => {
-            // SXXdg = RXX(3pi/2)
-            rotation_to_matrix(
-                RotationType::RXX,
-                Angle64::THREE_QUARTERS_TURN,
-                qubits,
-                num_qubits,
-            )
-        }
-        GateType::SYY => {
-            rotation_to_matrix(RotationType::RYY, Angle64::QUARTER_TURN, qubits, num_qubits)
-        }
-        GateType::SYYdg => rotation_to_matrix(
-            RotationType::RYY,
-            Angle64::THREE_QUARTERS_TURN,
-            qubits,
-            num_qubits,
-        ),
-        GateType::SZZ => {
-            rotation_to_matrix(RotationType::RZZ, Angle64::QUARTER_TURN, qubits, num_qubits)
-        }
-        GateType::SZZdg => rotation_to_matrix(
-            RotationType::RZZ,
-            Angle64::THREE_QUARTERS_TURN,
-            qubits,
-            num_qubits,
-        ),
         GateType::CCX => {
             // Toffoli: flip target when both controls are |1>
             let dim = 1 << num_qubits;
@@ -2819,7 +2827,7 @@ mod tests {
             let mat = UnitaryMatrix(super::gate_to_matrix(gate, &[0], 1));
             assert_eq!(
                 mat.try_to_unitary(),
-                Some(Unitary::Named(gate)),
+                Some(Unitary::named(gate)),
                 "failed to identify {gate:?}"
             );
         }
@@ -2846,18 +2854,18 @@ mod tests {
     #[test]
     fn try_to_unitary_identifies_ccx() {
         let mat = UnitaryMatrix(super::gate_to_matrix(GateType::CCX, &[0, 1, 2], 3));
-        assert_eq!(mat.try_to_unitary(), Some(Unitary::Named(GateType::CCX)));
+        assert_eq!(mat.try_to_unitary(), Some(Unitary::named(GateType::CCX)));
     }
 
     #[test]
     fn try_to_unitary_finds_t_gate() {
         let t_mat = T(0).to_matrix();
-        assert_eq!(t_mat.try_to_unitary(), Some(Unitary::Named(GateType::T)));
+        assert_eq!(t_mat.try_to_unitary(), Some(Unitary::named(GateType::T)));
 
         let tdg_mat = pecos_core::unitary_rep::T(0).dg().to_matrix();
         assert_eq!(
             tdg_mat.try_to_unitary(),
-            Some(Unitary::Named(GateType::Tdg))
+            Some(Unitary::named(GateType::Tdg))
         );
     }
 
@@ -2866,22 +2874,22 @@ mod tests {
         // iX should still be identified as X
         let x_mat = X(0).to_matrix();
         let ix = &x_mat * Complex64::new(0.0, 1.0);
-        assert_eq!(ix.try_to_unitary(), Some(Unitary::Named(GateType::X)));
+        assert_eq!(ix.try_to_unitary(), Some(Unitary::named(GateType::X)));
 
         // 2*H (non-unitary scalar) should still be identified as H
         let h_mat = H(0).to_matrix();
         let two_h = &h_mat * 2.0;
-        assert_eq!(two_h.try_to_unitary(), Some(Unitary::Named(GateType::H)));
+        assert_eq!(two_h.try_to_unitary(), Some(Unitary::named(GateType::H)));
 
         // (3+4i)*Z should still be identified as Z
         let z_mat = Z(0).to_matrix();
         let scaled_z = &z_mat * Complex64::new(3.0, 4.0);
-        assert_eq!(scaled_z.try_to_unitary(), Some(Unitary::Named(GateType::Z)));
+        assert_eq!(scaled_z.try_to_unitary(), Some(Unitary::named(GateType::Z)));
 
         // -iT should still be identified as T
         let t_mat = T(0).to_matrix();
         let phased = &t_mat * Complex64::new(0.0, -1.0);
-        assert_eq!(phased.try_to_unitary(), Some(Unitary::Named(GateType::T)));
+        assert_eq!(phased.try_to_unitary(), Some(Unitary::named(GateType::T)));
 
         // The phase-fixed SY table entry must remain recognizable after its
         // convention change, including through the documented up-to-phase path.
@@ -2889,13 +2897,13 @@ mod tests {
         let phased_sy = &sy_mat * Complex64::from_polar(1.0, PI / 4.0);
         assert_eq!(
             phased_sy.try_to_unitary(),
-            Some(Unitary::Named(GateType::SY))
+            Some(Unitary::named(GateType::SY))
         );
 
         // 5*CX should still be identified as CX
         let cx_mat = CX(0, 1).to_matrix();
         let scaled = &cx_mat * 5.0;
-        assert_eq!(scaled.try_to_unitary(), Some(Unitary::Named(GateType::CX)));
+        assert_eq!(scaled.try_to_unitary(), Some(Unitary::named(GateType::CX)));
     }
 
     #[test]
@@ -3133,7 +3141,7 @@ mod tests {
         let rz_pi = RZ(Angle64::from_radians(PI), 0).to_matrix();
         let u = rz_pi.try_to_unitary().unwrap();
         assert!(
-            matches!(u, Unitary::Named(GateType::Z)),
+            matches!(u, Unitary::Named(named) if named.gate_type() == GateType::Z),
             "RZ(pi) should match as Z, got {u:?}"
         );
 
@@ -3141,7 +3149,7 @@ mod tests {
         let rz_half = RZ(Angle64::from_radians(PI / 2.0), 0).to_matrix();
         let u = rz_half.try_to_unitary().unwrap();
         assert!(
-            matches!(u, Unitary::Named(GateType::SZ)),
+            matches!(u, Unitary::Named(named) if named.gate_type() == GateType::SZ),
             "RZ(pi/2) should match as SZ, got {u:?}"
         );
     }
@@ -3547,7 +3555,7 @@ mod tests {
         let cx = UnitaryMatrix::from(gate_to_matrix(GateType::CX, &[0, 1], 2));
         let u = cx.try_to_unitary().unwrap();
         assert!(
-            matches!(u, Unitary::Named(GateType::CX)),
+            matches!(u, Unitary::Named(named) if named.gate_type() == GateType::CX),
             "CNOT should be Named(CX), got {u:?}"
         );
 

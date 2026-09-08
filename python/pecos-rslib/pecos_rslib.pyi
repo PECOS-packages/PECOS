@@ -1090,7 +1090,7 @@ class QisProgram:
     ...
 
 class HugrProgram:
-    """HUGR program representation."""
+    """HUGR program lowered to QIS for simulation; requires explicit qubits."""
 
     ...
 
@@ -2173,10 +2173,6 @@ def qis_selene_helios_interface(**kwargs: object) -> QisInterfaceBuilder:
 # =============================================================================
 # HUGR Compilation
 # =============================================================================
-def compile_hugr_to_qis(hugr_bytes: bytes, output_path: str | None = None) -> str:
-    """Compile HUGR bytes to QIS (LLVM IR with quantum instructions)."""
-    ...
-
 def get_compilation_backends() -> dict[str, object]:
     """Get information about available compilation backends."""
     ...
@@ -2877,8 +2873,12 @@ class qec:
         def actual_num_windows(self) -> list[int]: ...
         @property
         def effective_windowing(self) -> str: ...
-        def has_decision_points(self) -> bool: ...
-        def num_decision_points(self) -> int: ...
+        def has_decision_points(self) -> bool:
+            """Always false in phase 0; decision descriptors are rejected (issue #596). Phase 2 restores its meaning."""
+
+        def num_decision_points(self) -> int:
+            """Always 0 in phase 0; decision descriptors are rejected (issue #596). Phase 2 restores its meaning."""
+
         def total_detectors(self) -> int: ...
 
     @staticmethod

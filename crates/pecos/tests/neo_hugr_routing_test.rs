@@ -14,9 +14,7 @@
 //!
 //! The neo stack runs HUGR through the PHIR engine (HUGR -> PHIR), so its
 //! results use the same NAMED classical register contract (`c`) as the
-//! engines/QASM path -- not the per-qubit `q0`/`q1` + `measurements` shape that
-//! `pecos_hugr::hugr_engine` would emit -- and needs no Selene/LLVM. These
-//! tests lock that, using the Guppy-generated fixtures shared with
+//! engines/QASM path and need no Selene/LLVM. These tests lock that, using the Guppy-generated fixtures shared with
 //! `hugr_execution_tests.rs`, and cross-check against the engines PHIR engine.
 
 #![cfg(feature = "neo")]

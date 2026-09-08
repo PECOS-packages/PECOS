@@ -47,9 +47,10 @@ PECOS rotations modulo 2π; all relative phases are exact.
 
 Lowercase OpenQASM names instead expand through `qelib1.inc`, because only the
 uppercase native-gate names are resolved directly by the QASM parser. Its
-`crz` and `cphase` macros are correct (and `cu1` is the same controlled-phase
-operation); the current `ry`, `crx`, and `cry` macros are tracked separately by
-issue #637 and are not corrected by this boundary-lowering rule.
+`crx`, `cry`, `crz`, and controlled-phase macros are exact boundary expansions,
+and the include gate conformance tests assert their matrices against textbook
+references. SLR QASM output declares `qelib1.inc` to make those spellings
+available.
 
 ### R - Rotation
 

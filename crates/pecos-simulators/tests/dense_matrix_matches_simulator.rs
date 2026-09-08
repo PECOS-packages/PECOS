@@ -24,7 +24,7 @@
 //! it exactly to the dense matrix.
 
 use pecos_core::unitary_rep::RotationType;
-use pecos_core::{Angle64, QubitId, Unitary, UnitaryRep};
+use pecos_core::{Angle64, Clifford, QubitId, Unitary, UnitaryRep};
 use pecos_quantum::GateType;
 use pecos_quantum::unitary_matrix::to_matrix_with_size;
 use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, StateVecSoA};
@@ -57,6 +57,28 @@ fn apply_named(sim: &mut StateVecSoA, gate_type: GateType, qubits: &[QubitId]) {
         GateType::SZZdg => sim.szzdg(&[(qubits[0], qubits[1])]),
         GateType::SWAP => sim.swap(&[(qubits[0], qubits[1])]),
         other => panic!("gate {other:?} is not covered by this test's dispatch"),
+    };
+}
+
+/// Apply a two-qubit Clifford, including variants with no `GateType` spelling.
+fn apply_two_qubit_clifford(sim: &mut StateVecSoA, clifford: Clifford) {
+    let pair = &[(QubitId(0), QubitId(1))];
+    match clifford {
+        Clifford::CX => sim.cx(pair),
+        Clifford::CY => sim.cy(pair),
+        Clifford::CZ => sim.cz(pair),
+        Clifford::SXX => sim.sxx(pair),
+        Clifford::SXXdg => sim.sxxdg(pair),
+        Clifford::SYY => sim.syy(pair),
+        Clifford::SYYdg => sim.syydg(pair),
+        Clifford::SZZ => sim.szz(pair),
+        Clifford::SZZdg => sim.szzdg(pair),
+        Clifford::SWAP => sim.swap(pair),
+        Clifford::G => sim.g(pair),
+        Clifford::Gdg => sim.gdg(pair),
+        Clifford::ISWAP => sim.iswap(pair),
+        Clifford::ISWAPdg => sim.iswapdg(pair),
+        other => panic!("Clifford {other:?} is not a two-qubit gate covered by this test"),
     };
 }
 
@@ -111,7 +133,7 @@ fn matrix_columns(rep: &UnitaryRep, num_qubits: usize) -> Vec<Vec<num_complex::C
 }
 
 fn check_named(gate_type: GateType, num_qubits: usize) {
-    let named = Unitary::Named(gate_type);
+    let named = Unitary::named(gate_type);
     let rep = if num_qubits == 1 {
         named.on_qubit(0)
     } else {
@@ -123,6 +145,17 @@ fn check_named(gate_type: GateType, num_qubits: usize) {
         &matrix_columns(&rep, num_qubits),
         &simulator_unitary(num_qubits, &|sim| {
             apply_named(sim, gate_type, &qubits);
+        }),
+    );
+}
+
+fn check_two_qubit_clifford(clifford: Clifford) {
+    let rep = clifford.to_unitary_rep_on_qubits(0, 1);
+    assert_exactly_equal(
+        &format!("{clifford:?}"),
+        &matrix_columns(&rep, 2),
+        &simulator_unitary(2, &|sim| {
+            apply_two_qubit_clifford(sim, clifford);
         }),
     );
 }
@@ -164,19 +197,23 @@ fn dense_matrices_match_the_simulator_for_one_qubit_cliffords() {
 
 #[test]
 fn dense_matrices_match_the_simulator_for_two_qubit_cliffords() {
-    for gate_type in [
-        GateType::CX,
-        GateType::CY,
-        GateType::CZ,
-        GateType::SXX,
-        GateType::SXXdg,
-        GateType::SYY,
-        GateType::SYYdg,
-        GateType::SZZ,
-        GateType::SZZdg,
-        GateType::SWAP,
+    for clifford in [
+        Clifford::CX,
+        Clifford::CY,
+        Clifford::CZ,
+        Clifford::SXX,
+        Clifford::SXXdg,
+        Clifford::SYY,
+        Clifford::SYYdg,
+        Clifford::SZZ,
+        Clifford::SZZdg,
+        Clifford::SWAP,
+        Clifford::G,
+        Clifford::Gdg,
+        Clifford::ISWAP,
+        Clifford::ISWAPdg,
     ] {
-        check_named(gate_type, 2);
+        check_two_qubit_clifford(clifford);
     }
 }
 

@@ -7,6 +7,8 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from guppylang.std.builtins import array
+from guppylang.std.builtins import result as record_result
 
 
 def decode_integer_results(results: list[int], n_bits: int) -> list[tuple[bool, ...]]:
@@ -23,10 +25,7 @@ class TestGuppyLLVMPipeline:
 
     def test_backend_availability(self) -> None:
         """Test that backends are properly detected."""
-        try:
-            from pecos import get_guppy_backends
-        except ImportError:
-            pytest.skip("get_guppy_backends not available")
+        from pecos import get_guppy_backends
 
         backends = get_guppy_backends()
 
@@ -49,23 +48,14 @@ class TestGuppyLLVMPipeline:
         ), "rust_backend should be boolean"
 
         # If guppy is available, rust backend should also be available in most cases
-        if backends["guppy_available"] and not backends["rust_backend"]:
-            pytest.skip("Guppy available but Rust backend not available")
+        assert not backends["guppy_available"] or backends["rust_backend"], "Guppy requires the Rust backend"
 
     def test_guppy_frontend_initialization(self) -> None:
         """Test the GuppyFrontend class initialization."""
-        try:
-            from pecos._compilation import GuppyFrontend
-        except ImportError:
-            pytest.skip("GuppyFrontend not available")
+        from pecos._compilation import GuppyFrontend
 
-        try:
-            frontend = GuppyFrontend()
-            info = frontend.get_backend_info()
-        except (ImportError, RuntimeError) as e:
-            if "guppylang" in str(e) or "not available" in str(e):
-                pytest.skip(f"Guppy not available: {e}")
-            pytest.fail(f"Failed to create GuppyFrontend: {e}")
+        frontend = GuppyFrontend()
+        info = frontend.get_backend_info()
 
         # Verify backend info structure
         assert isinstance(info, dict), "Backend info should be a dictionary"
@@ -73,28 +63,22 @@ class TestGuppyLLVMPipeline:
 
     def test_simple_quantum_function_compilation(self) -> None:
         """Test compiling a simple quantum function."""
-        try:
-            from guppylang import guppy
-            from guppylang.std.quantum import h, measure, qubit
-            from pecos._compilation import GuppyFrontend
-        except ImportError as e:
-            pytest.skip(f"Required modules not available: {e}")
+        from guppylang import guppy
+        from guppylang.std.quantum import h, measure, qubit
+        from pecos._compilation import GuppyFrontend
 
         @guppy
         def random_bit() -> bool:
             """Generate a random bit using quantum superposition."""
             q = qubit()
             h(q)
-            return measure(q).read()
+            output_value = measure(q).read()
+            record_result("outcome", output_value)
+            return output_value
 
         # Test compilation
-        try:
-            frontend = GuppyFrontend()
-            qir_file = frontend.compile_function(random_bit)
-        except (ImportError, RuntimeError) as e:
-            if "HUGR version" in str(e) or "not available" in str(e):
-                pytest.skip(f"Known compatibility issue: {e}")
-            pytest.fail(f"Compilation failed: {e}")
+        frontend = GuppyFrontend()
+        qir_file = frontend.compile_function(random_bit)
 
         # Verify QIR file was created
         assert qir_file is not None, "Compilation should return a file path"
@@ -111,13 +95,10 @@ class TestGuppyLLVMPipeline:
 
     def test_bell_state_execution(self) -> None:
         """Test Bell state creation and measurement correlation."""
-        try:
-            from guppylang import guppy
-            from guppylang.std.quantum import cx, h, measure, qubit
-            from pecos import Guppy, sim
-            from pecos_rslib import state_vector
-        except ImportError as e:
-            pytest.skip(f"Required modules not available: {e}")
+        from guppylang import guppy
+        from guppylang.std.quantum import cx, h, measure, qubit
+        from pecos import Guppy, sim
+        from pecos_rslib import state_vector
 
         @guppy
         def bell_state() -> tuple[bool, bool]:
@@ -125,21 +106,18 @@ class TestGuppyLLVMPipeline:
             q0, q1 = qubit(), qubit()
             h(q0)
             cx(q0, q1)
-            return measure(q0).read(), measure(q1).read()
+            output_value = measure(q0).read(), measure(q1).read()
+            record_result("outcome", array(output_value[0], output_value[1]))
+            return output_value
 
         # Execute the Bell state circuit
-        try:
-            result = sim(Guppy(bell_state)).qubits(10).quantum(state_vector()).seed(42).run(100).to_dict()
-        except (RuntimeError, ImportError) as e:
-            if "PECOS" in str(e) or "compilation" in str(e):
-                pytest.skip(f"Execution environment issue: {e}")
-            pytest.fail(f"Bell state execution failed: {e}")
+        result = sim(Guppy(bell_state)).qubits(10).quantum(state_vector()).seed(42).run(100).to_dict()
 
         # Verify we got results
         assert result is not None, "Should get execution results"
 
         # Measurements format is [[m0, m1], [m0, m1], ...]
-        measurements = result["measurements"]
+        measurements = result["outcome"]
         assert len(measurements) == 100, "Should have 100 measurements"
 
         # Check correlation (Bell state should be perfectly correlated)
@@ -152,24 +130,19 @@ class TestGuppyLLVMPipeline:
     def test_rust_compilation_check(self) -> None:
         """Test that Rust components compile properly."""
         # Check if cargo is available
-        try:
-            result = subprocess.run(
-                ["cargo", "--version"],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            if result.returncode != 0:
-                pytest.skip("Cargo not available")
-        except FileNotFoundError:
-            pytest.skip("Cargo not found in PATH")
+        result = subprocess.run(
+            ["cargo", "--version"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, "Cargo not available"
 
         # Check if we're in a Rust project
         project_root = Path(__file__).resolve().parent.parent.parent.parent.parent
         cargo_toml = project_root / "Cargo.toml"
 
-        if not cargo_toml.exists():
-            pytest.skip("Not in a Rust project directory")
+        assert cargo_toml.exists(), "Not in a Rust project directory"
 
         # Check metadata to verify the project structure
         result = subprocess.run(
@@ -197,55 +170,56 @@ class TestGuppyLLVMPipeline:
 )
 def test_superposition_statistics(n_qubits: int, expected_avg: float) -> None:
     """Test that qubits in superposition give expected statistics."""
-    try:
-        from guppylang import guppy
-        from guppylang.std.quantum import h, measure, qubit
-        from pecos import Guppy, sim
-        from pecos_rslib import state_vector
-    except ImportError as e:
-        pytest.skip(f"Required modules not available: {e}")
+    from guppylang import guppy
+    from guppylang.std.quantum import h, measure, qubit
+    from pecos import Guppy, sim
+    from pecos_rslib import state_vector
 
     # Create a function that measures n qubits in superposition
     if n_qubits == 1:
 
-        @guppy
         def superposition_test() -> bool:
             q = qubit()
             h(q)
-            return measure(q).read()
+            output_value = measure(q).read()
+            record_result("outcome", output_value)
+            return output_value
 
     elif n_qubits == 2:
 
-        @guppy
         def superposition_test() -> tuple[bool, bool]:
             q1, q2 = qubit(), qubit()
             h(q1)
             h(q2)
-            return measure(q1).read(), measure(q2).read()
+            output_value = measure(q1).read(), measure(q2).read()
+            record_result("outcome", array(output_value[0], output_value[1]))
+            return output_value
 
     else:  # n_qubits == 3
 
-        @guppy
         def superposition_test() -> tuple[bool, bool, bool]:
             q1, q2, q3 = qubit(), qubit(), qubit()
             h(q1)
             h(q2)
             h(q3)
-            return measure(q1).read(), measure(q2).read(), measure(q3).read()
+            output_value = measure(q1).read(), measure(q2).read(), measure(q3).read()
+            record_result("outcome", array(output_value[0], output_value[1], output_value[2]))
+            return output_value
+
+    from pecos.guppy_gen import variant_scoped
+
+    superposition_test = guppy(variant_scoped(superposition_test, n_qubits))
 
     # Run the test
-    try:
-        result = sim(superposition_test).qubits(10).quantum(state_vector()).seed(42).run(1000).to_dict()
-    except (RuntimeError, ImportError) as e:
-        pytest.skip(f"Execution issue: {e}")
+    result = sim(superposition_test).qubits(10).quantum(state_vector()).seed(42).run(1000).to_dict()
 
     # Calculate average number of 1s
     # Measurements format is [[m0], [m0], ...] for single qubit
     # or [[m0, m1], [m0, m1], ...] for multiple qubits
-    measurements = result["measurements"]
+    measurements = result["outcome"]
 
     if n_qubits == 1:
-        ones_count = sum(m[-1] for m in measurements)
+        ones_count = sum(measurements)
         avg_ones = ones_count / 1000
     else:
         # For multiple qubits, sum up all the 1s from each shot

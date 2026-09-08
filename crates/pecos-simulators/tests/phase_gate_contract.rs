@@ -199,7 +199,7 @@ fn lowering_matches_the_rule_exactly_in_the_dense_path() {
     for &g in &ANGLES {
         for targets in [vec![0usize], vec![1usize], vec![0usize, 1], vec![1usize, 0]] {
             let qubits: Vec<QubitId> = targets.iter().map(|&q| QubitId(q)).collect();
-            let lowered = lower_phase(g, &qubits);
+            let lowered = lower_phase(g, &qubits).unwrap();
             let composed = UnitaryRep::Compose(lowered.iter().map(lowered_as_rep).collect());
             let rule = UnitaryRep::phase_gate(
                 Angle64::from_radians(g),
@@ -212,7 +212,7 @@ fn lowering_matches_the_rule_exactly_in_the_dense_path() {
             );
         }
         assert!(
-            lower_phase(g, &[]).is_empty(),
+            lower_phase(g, &[]).unwrap().is_empty(),
             "a bare global phase lowers to no gates"
         );
     }
@@ -224,7 +224,7 @@ fn lowering_matches_the_rule_exactly_when_executed() {
     for &g in &ANGLES {
         for targets in [vec![0usize], vec![0usize, 1], vec![1usize, 0]] {
             let qubits: Vec<QubitId> = targets.iter().map(|&q| QubitId(q)).collect();
-            let lowered = lower_phase(g, &qubits);
+            let lowered = lower_phase(g, &qubits).unwrap();
             let dim = 4usize;
             let got: Vec<Vec<Complex64>> = (0..dim)
                 .map(|basis| {

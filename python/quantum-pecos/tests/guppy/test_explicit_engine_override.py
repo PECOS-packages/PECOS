@@ -9,16 +9,8 @@ from pecos_rslib import qasm_engine, qis_engine
 
 def _verify_bell_correlation(results: dict, label: str) -> None:
     """Verify Bell state measurement correlation with detailed diagnostics."""
-    # Handle both key formats: measurement_0/measurement_1 or q0/q1
-    if "measurement_0" in results:
-        m0_key, m1_key = "measurement_0", "measurement_1"
-    elif "q0" in results:
-        m0_key, m1_key = "q0", "q1"
-    else:
-        msg = f"{label}: Expected measurement_0 or q0 in {list(results.keys())}"
-        raise AssertionError(
-            msg,
-        )
+    m0_key, m1_key = "measurement_0", "measurement_1"
+    assert m0_key in results, f"{label}: {m0_key} not found in {list(results.keys())}"
 
     assert m1_key in results, f"{label}: {m1_key} not found in {list(results.keys())}"
 
@@ -178,14 +170,7 @@ def test_engine_override_with_noise() -> None:
     )
 
     # With noise, we should see both 0 and 1 outcomes
-    # Handle both key formats: measurement_0 or q0
-    if "measurement_0" in results:
-        m_key = "measurement_0"
-    elif "q0" in results:
-        m_key = "q0"
-    else:
-        msg = f"Expected measurement_0 or q0 in {list(results.keys())}"
-        raise AssertionError(msg)
+    m_key = "measurement_0"
     values = results[m_key]
     # Values are integers (0 or 1), not strings
     zeros = sum(1 for v in values if v == 0)

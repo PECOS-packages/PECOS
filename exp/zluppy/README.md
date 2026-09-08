@@ -42,7 +42,13 @@ prog = zluppy.SlrProgram("main")
 prog.add_allocator("q", 2)
 prog.add_gate("H", [("q", 0)])
 prog.add_gate("CX", [("q", 0), ("q", 1)])
+prog.add_gate("RZ", [("q", 0)], params=[0.25], unit="turns")
 json_str = prog.to_json()
+
+# ZlupProgram uses the same explicit-unit rule and emits an angle literal.
+zlup_prog = zluppy.ZlupProgram("main")
+zlup_prog.add_allocator("q", 1)
+zlup_prog.add_gate("rz", [("q", 0)], params=[1.5707963267948966], unit="rad")
 ```
 
 ## License

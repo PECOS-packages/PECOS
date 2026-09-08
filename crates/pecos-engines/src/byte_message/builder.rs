@@ -695,6 +695,25 @@ impl ByteMessageBuilder {
         )
     }
 
+    /// Add controlled-Hadamard gates.
+    ///
+    /// Each tuple is a (control, target) pair.
+    pub fn ch(&mut self, pairs: &[(usize, usize)]) -> &mut Self {
+        if let [(control, target)] = pairs {
+            return self.add_two_qubit_gate_parts(GateType::CH, *control, *target, &[], &[]);
+        }
+        self.add_gate_parts_from_usizes(
+            GateType::CH,
+            pairs.len() * 2,
+            pairs
+                .iter()
+                .copied()
+                .flat_map(|(control, target)| [control, target]),
+            &[],
+            &[],
+        )
+    }
+
     /// Add an SX (sqrt-X) gate
     pub fn sx(&mut self, qubits: &[usize]) -> &mut Self {
         self.add_gate_parts(GateType::SX, qubits, &[], &[])

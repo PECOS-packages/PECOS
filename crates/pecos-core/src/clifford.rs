@@ -269,6 +269,80 @@ impl Clifford {
         self.num_qubits() == 2
     }
 
+    /// Returns the canonical phase-fixed matrix for a named two-qubit Clifford.
+    ///
+    /// Rows and columns use `|q0 q1>` order, with q0 the most significant bit.
+    /// Controlled gates embed the canonical Pauli table; roots reuse the
+    /// `GateType` table. SWAP exchanges `|01>` and `|10>`, iSWAP multiplies
+    /// those exchanges by i, and G is CZ (H tensor H) CZ. Daggers are adjoints.
+    ///
+    /// Covers all 14 two-qubit variants and returns `None` for single-qubit
+    /// variants. Unlike this method, [`GateType::canonical_2q_matrix`] covers
+    /// only the six Pauli roots; its entries for the other eight gates are `None`.
+    #[must_use]
+    pub const fn canonical_2q_matrix(self) -> Option<crate::gate_type::TwoQubitGateMatrix> {
+        let mut matrix = [0.0; 32];
+        match self {
+            Self::CX | Self::CY | Self::CZ => {
+                let pauli = match self {
+                    Self::CX => gate_type_matrix(GateType::X),
+                    Self::CY => gate_type_matrix(GateType::Y),
+                    _ => gate_type_matrix(GateType::Z),
+                };
+                matrix[0] = 1.0;
+                matrix[10] = 1.0;
+                let mut row = 0;
+                while row < 2 {
+                    let mut col = 0;
+                    while col < 2 {
+                        let dst = 2 * (4 * (row + 2) + col + 2);
+                        let src = 2 * (2 * row + col);
+                        matrix[dst] = pauli[src];
+                        matrix[dst + 1] = pauli[src + 1];
+                        col += 1;
+                    }
+                    row += 1;
+                }
+            }
+            Self::SWAP | Self::ISWAP | Self::ISWAPdg => {
+                matrix[0] = 1.0;
+                matrix[30] = 1.0;
+                if matches!(self, Self::SWAP) {
+                    matrix[12] = 1.0;
+                    matrix[18] = 1.0;
+                } else {
+                    let sign = if matches!(self, Self::ISWAP) {
+                        1.0
+                    } else {
+                        -1.0
+                    };
+                    matrix[13] = sign;
+                    matrix[19] = sign;
+                }
+            }
+            Self::G | Self::Gdg => {
+                // G is real, symmetric and self-inverse.
+                let entries = [
+                    0.5, 0.5, 0.5, -0.5, 0.5, -0.5, 0.5, 0.5, 0.5, 0.5, -0.5, 0.5, -0.5, 0.5, 0.5,
+                    0.5,
+                ];
+                let mut i = 0;
+                while i < 16 {
+                    matrix[2 * i] = entries[i];
+                    i += 1;
+                }
+            }
+            Self::SXX => return GateType::SXX.canonical_2q_matrix(),
+            Self::SXXdg => return GateType::SXXdg.canonical_2q_matrix(),
+            Self::SYY => return GateType::SYY.canonical_2q_matrix(),
+            Self::SYYdg => return GateType::SYYdg.canonical_2q_matrix(),
+            Self::SZZ => return GateType::SZZ.canonical_2q_matrix(),
+            Self::SZZdg => return GateType::SZZdg.canonical_2q_matrix(),
+            _ => return None,
+        }
+        Some(matrix)
+    }
+
     /// Returns the canonical phase-fixed matrix for a single-qubit Clifford.
     ///
     /// Each representative has its exact Clifford-group order: H is H1 and
@@ -699,10 +773,10 @@ impl Clifford {
             Clifford::CY => unitary_rep::CY(a, b),
             Clifford::CZ => unitary_rep::CZ(a, b),
             Clifford::SWAP => unitary_rep::SWAP(a, b),
-            Clifford::SXX => unitary_rep::RXX(Angle64::QUARTER_TURN, a, b),
-            Clifford::SXXdg => unitary_rep::RXX(Angle64::THREE_QUARTERS_TURN, a, b),
-            Clifford::SYY => unitary_rep::RYY(Angle64::QUARTER_TURN, a, b),
-            Clifford::SYYdg => unitary_rep::RYY(Angle64::THREE_QUARTERS_TURN, a, b),
+            Clifford::SXX => unitary_rep::SXX(a, b),
+            Clifford::SXXdg => unitary_rep::SXX(a, b).dg(),
+            Clifford::SYY => unitary_rep::SYY(a, b),
+            Clifford::SYYdg => unitary_rep::SYY(a, b).dg(),
             Clifford::SZZ => unitary_rep::SZZ(a, b),
             Clifford::SZZdg => unitary_rep::SZZ(a, b).dg(),
             // iSWAP = exp(+i*pi/4*(XX+YY)) = RXX(-pi/2) * RYY(-pi/2)

@@ -17,12 +17,17 @@
 //! measure q[0] -> c[0];
 //! ```
 
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::fmt::Write;
 use thiserror::Error;
 
 use crate::ast::{
     BinaryOp, Binding, Block, CallExpr, ElseBranch, Expr, FnDecl, Program, Stmt, TopLevelDecl,
+};
+use crate::comptime::{
+    ComptimeEvaluator, angle_evaluator, angle_expression_name, define_comptime_binding,
+    resolve_angle_turns,
 };
 
 // =============================================================================
@@ -56,6 +61,9 @@ pub enum QasmError {
 
     #[error("unsupported expression in QASM codegen")]
     UnsupportedExpression,
+
+    #[error("rotation angle '{expression}' is not known at compile time: {reason}")]
+    RuntimeAngle { expression: String, reason: String },
 
     #[error("unsupported control flow in QASM 2.0")]
     UnsupportedControlFlow,
@@ -249,6 +257,8 @@ pub struct QasmCodegen {
     creg_counter: usize,
     /// Output buffer.
     output: String,
+    /// Compile-time constants used to inline unit-bearing gate angles.
+    angle_evaluator: RefCell<ComptimeEvaluator>,
 }
 
 impl QasmCodegen {
@@ -259,6 +269,7 @@ impl QasmCodegen {
             total_qubits: 0,
             creg_counter: 0,
             output: String::new(),
+            angle_evaluator: RefCell::new(angle_evaluator()),
         }
     }
 
@@ -269,6 +280,12 @@ impl QasmCodegen {
         self.total_qubits = 0;
         self.creg_counter = 0;
         self.output.clear();
+        self.angle_evaluator = RefCell::new(angle_evaluator());
+        for decl in &program.declarations {
+            if let TopLevelDecl::Binding(binding) = decl {
+                define_comptime_binding(&mut self.angle_evaluator.borrow_mut(), binding);
+            }
+        }
 
         // First pass: collect allocators
         for decl in &program.declarations {
@@ -292,7 +309,16 @@ impl QasmCodegen {
             if let TopLevelDecl::Fn(fn_decl) = decl
                 && fn_decl.name == "main"
             {
-                let (body, mcount) = self.convert_block(&fn_decl.body)?;
+                self.angle_evaluator.borrow_mut().context.push_scope();
+                for param in &fn_decl.params {
+                    self.angle_evaluator
+                        .borrow_mut()
+                        .context
+                        .define(&param.name, crate::comptime::ComptimeValue::Undefined);
+                }
+                let converted = self.convert_block(&fn_decl.body);
+                self.angle_evaluator.borrow_mut().context.pop_scope();
+                let (body, mcount) = converted?;
                 body_output = body;
                 measurement_count = mcount;
             }
@@ -318,6 +344,7 @@ impl QasmCodegen {
         self.total_qubits = 0;
         self.creg_counter = 0;
         self.output.clear();
+        self.angle_evaluator = RefCell::new(angle_evaluator());
 
         // Collect from function body
         self.collect_block(&fn_decl.body)?;
@@ -333,7 +360,16 @@ impl QasmCodegen {
         }
 
         // Convert body
-        let (body, measurement_count) = self.convert_block(&fn_decl.body)?;
+        self.angle_evaluator.borrow_mut().context.push_scope();
+        for param in &fn_decl.params {
+            self.angle_evaluator
+                .borrow_mut()
+                .context
+                .define(&param.name, crate::comptime::ComptimeValue::Undefined);
+        }
+        let converted = self.convert_block(&fn_decl.body);
+        self.angle_evaluator.borrow_mut().context.pop_scope();
+        let (body, measurement_count) = converted?;
 
         // Write classical register
         if measurement_count > 0 {
@@ -439,6 +475,13 @@ impl QasmCodegen {
 
     /// Convert a block, returning (output, measurement_count)
     fn convert_block(&mut self, block: &Block) -> QasmResult<(String, usize)> {
+        self.angle_evaluator.borrow_mut().context.push_scope();
+        let result = self.convert_block_in_scope(block);
+        self.angle_evaluator.borrow_mut().context.pop_scope();
+        result
+    }
+
+    fn convert_block_in_scope(&mut self, block: &Block) -> QasmResult<(String, usize)> {
         let mut output = String::new();
         let mut measurement_count = 0;
 
@@ -484,11 +527,18 @@ impl QasmCodegen {
             Stmt::Block(block) => self.convert_block(block),
             // Handle declarations - check for measurement calls
             Stmt::Binding(binding) => {
-                if let Some(ref value) = binding.value {
+                let result = if let Some(ref value) = binding.value {
                     self.convert_decl_value(value)
                 } else {
                     Ok((String::new(), 0))
+                };
+                if !define_comptime_binding(&mut self.angle_evaluator.borrow_mut(), binding) {
+                    self.angle_evaluator
+                        .borrow_mut()
+                        .context
+                        .define(&binding.name, crate::comptime::ComptimeValue::Undefined);
                 }
+                result
             }
             // Skip unsupported control flow in QASM 2.0
             // (QASM 3.0 would support these)
@@ -579,7 +629,7 @@ impl QasmCodegen {
             let params: Vec<String> = gate
                 .params
                 .iter()
-                .map(|p| self.convert_expression(p))
+                .map(|p| self.convert_angle_expression(p))
                 .collect::<Result<_, _>>()?;
             return self.convert_batch_gate(&gate_info, &set_expr.elements, &params);
         }
@@ -588,7 +638,7 @@ impl QasmCodegen {
         let params: Vec<String> = gate
             .params
             .iter()
-            .map(|p| self.convert_expression(p))
+            .map(|p| self.convert_angle_expression(p))
             .collect::<Result<_, _>>()?;
 
         // Convert target(s)
@@ -680,7 +730,7 @@ impl QasmCodegen {
                 });
             }
             // Last argument is the parameter (angle)
-            let param = self.convert_expression(call.args.last().unwrap())?;
+            let param = self.convert_angle_expression(call.args.last().unwrap())?;
             // All but last are qubit args
             (vec![param], &call.args[..call.args.len() - 1])
         } else {
@@ -901,6 +951,17 @@ impl QasmCodegen {
         }
     }
 
+    fn convert_angle_expression(&self, expr: &Expr) -> QasmResult<String> {
+        let turns =
+            resolve_angle_turns(&mut self.angle_evaluator.borrow_mut(), expr).map_err(|error| {
+                QasmError::RuntimeAngle {
+                    expression: angle_expression_name(expr),
+                    reason: error.to_string(),
+                }
+            })?;
+        Ok(format!("{}", turns * std::f64::consts::TAU))
+    }
+
     // =========================================================================
     // Helpers
     // =========================================================================
@@ -1043,7 +1104,7 @@ mod tests {
         let source = r#"
             pub fn main() -> unit {
                 mut q := qalloc(1);
-                rz(1.57) q[0];
+                rz(1.57 rad) q[0];
             }
         "#;
 
@@ -1102,12 +1163,12 @@ mod tests {
         let source = r#"
             pub fn main() -> unit {
                 mut q := qalloc(1);
-                rz(pi / 4) q[0];
+                rz((pi / 4) rad) q[0];
             }
         "#;
 
         let qasm = compile_to_qasm(source).unwrap();
-        assert!(qasm.contains("rz((pi / 4)) q[0];"));
+        assert!(qasm.contains("rz(0.7853981633974483) q[0];"));
     }
 
     #[test]

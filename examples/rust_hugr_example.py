@@ -12,7 +12,7 @@ Features demonstrated:
 from guppylang import guppy
 from guppylang.std.quantum import cx, h, measure, qubit
 from pecos import Guppy, sim
-from pecos_rslib import compile_hugr_to_qis
+from pecos_rslib_llvm import compile_hugr_to_qis
 
 
 def example_hugr_compilation() -> None:
@@ -53,7 +53,7 @@ def example_simulation() -> None:
         return measure(q0).read(), measure(q1).read()
 
     # Run simulation
-    results = sim(Guppy(bell_state)).seed(42).run(100)
+    results = sim(Guppy(bell_state)).qubits(2).seed(42).run(100)
     print(f"Bell state results: {results}")
 
 
@@ -73,7 +73,7 @@ def example_direct_guppy() -> None:
         return measure(q0).read(), measure(q1).read(), measure(q2).read()
 
     # sim() accepts Guppy functions directly
-    results = sim(ghz_state).seed(42).run(50)
+    results = sim(ghz_state).qubits(3).seed(42).run(50)
     print(f"GHZ state results: {results}")
 
 

@@ -72,7 +72,7 @@ class QASMGenerator(Generator):
                     self.write(f'include "{inc!s}";')
             else:
                 # TODO: dump definitions in for things that are used instead of using includes
-                self.write('include "hqslib1.inc";')
+                self.write('include "qelib1.inc";')
             if self.add_versions:
                 self.write(f"// Generated using: PECOS version {pc.__version__}")
             for var in block.vars:
@@ -589,7 +589,7 @@ class QASMGenerator(Generator):
                 case "SYY":
                     op_str = self.qgate_tq_qasm(op, "SYY")
                 case "SZZ":
-                    op_str = self.qgate_tq_qasm(op, "ZZ")
+                    op_str = self.qgate_tq_qasm(op, "SZZ")
                 case "SXXdg":
                     op_str = self.qgate_tq_qasm(op, "SXXdg")
                 case "SYYdg":

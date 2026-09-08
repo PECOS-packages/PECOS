@@ -25,6 +25,10 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   global phases through `apply_global_phase`. Amplitude-exposing backends that
   inherit these defaults therefore change state by the required global phase;
   projective backends continue to use the no-op hook.
+- `StateVecSoA::g` and `gdg` were the only two-qubit kernels missing the
+  `flush_two_qubit` prologue, so they read stale amplitudes whenever a
+  single-qubit gate was still queued. Because gate fusion is enabled by
+  default, this produced wrong states on the common path.
 - `Angle::to_radians_signed`, `to_turns_signed`, and
   `to_half_turns_signed` now choose the principal-value sign from the stored
   fraction instead of a rounded floating-point value. Exactly `HALF_TURN`

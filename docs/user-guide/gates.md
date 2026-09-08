@@ -105,9 +105,10 @@ describe those executed native operations.
 
 OpenQASM is the exception: lowercase controlled-rotation names are not native
 PECOS gates and expand through `qelib1.inc` macros. The `crz` and `cphase`
-macros are correct (as is the `cu1` controlled-phase alias), while the current
-`ry`, `crx`, and `cry` macros have known correctness defects tracked by issue
-#637. Fixing those macros is outside the controlled-rotation IR removal.
+macros, the `cu1` controlled-phase alias, and the `ry`, `crx`, and `cry`
+expansions are asserted against their textbook matrices by the include gate
+conformance tests. SLR QASM output declares `qelib1.inc` for these exact
+boundary expansions.
 
 ### Measurements and Preparations
 

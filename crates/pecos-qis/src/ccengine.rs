@@ -18,7 +18,6 @@ use crate::runtime::QisRuntime;
 use log::{debug, warn};
 use pecos_core::Angle64;
 use pecos_core::prelude::PecosError;
-use pecos_engines::noise::utils::NoiseUtils;
 use pecos_engines::shot_results::{Data, Shot};
 use pecos_engines::{
     ByteMessage, ByteMessageBuilder, ClassicalEngine, ControlEngine, Engine, EngineStage,
@@ -334,12 +333,23 @@ impl QisEngine {
             .map_err(|e| PecosError::Generic(format!("Failed to parse measurements: {e}")))
     }
 
-    fn map_measurements(measurement_mapping: &[usize], measurements: &[u32]) -> Vec<(usize, u32)> {
-        measurement_mapping
-            .iter()
-            .copied()
+    /// Consume exactly one outcome for each measurement emitted in this batch.
+    /// A mismatch must fail before storing any outcomes or certifying the shot.
+    fn map_measurements(&mut self, measurements: &[u32]) -> Result<Vec<(usize, u32)>, PecosError> {
+        if let Some(error) = self.terminal_failure_error() {
+            return Err(error);
+        }
+        if self.measurement_mapping.len() != measurements.len() {
+            return Err(self.latch_terminal_error(format!(
+                "QIS measurement count mismatch: {} queued measurements, {} outcomes",
+                self.measurement_mapping.len(),
+                measurements.len()
+            )));
+        }
+        Ok(std::mem::take(&mut self.measurement_mapping)
+            .into_iter()
             .zip(measurements.iter().copied())
-            .collect()
+            .collect())
     }
 
     fn store_measurement_updates(&mut self, updates: &[(usize, u32)]) {
@@ -1661,31 +1671,36 @@ impl ClassicalEngine for QisEngine {
         // Convert stored measurement results to PECOS shot format
         let mut shot = Shot::default();
 
-        // First, try to get named results from print_bool/print_bool_arr calls
+        if let Some(error) = self.terminal_failure_error() {
+            return Err(error);
+        }
+
+        // Named outputs preserve the scalar-for-one, vector-otherwise rule.
         let mut has_named_results = false;
         if let Some(state) = &self.dynamic_state
             && let Some(handle) = &state.sync_handle
         {
-            match handle.get_named_results() {
-                Ok(named_results) => {
-                    has_named_results = !named_results.is_empty();
-                    for (name, values) in named_results {
-                        // Convert Vec<bool> to Data
-                        // For single values, store as U32; for arrays, store as Vec<U32>
-                        if values.len() == 1 {
-                            shot.data.insert(name, Data::U32(u32::from(values[0])));
-                        } else {
-                            // Store as Vec of U32 values (0 or 1)
-                            let data_vec: Vec<Data> =
-                                values.iter().map(|&b| Data::U32(u32::from(b))).collect();
-                            shot.data.insert(name, Data::Vec(data_vec));
-                        }
-                    }
-                    debug!("QisEngine: Added named results to shot");
-                }
-                Err(e) => {
-                    debug!("QisEngine: Failed to get named results: {e}");
-                }
+            let named_results = handle.get_named_results().map_err(|error| {
+                PecosError::Generic(format!("Failed to get named results: {error}"))
+            })?;
+            has_named_results = !named_results.is_empty();
+            for (name, values) in named_results {
+                use pecos_qis_ffi_types::NamedResult;
+                let mut data: Vec<Data> = match values {
+                    NamedResult::Bool(values) => values
+                        .into_iter()
+                        .map(|b| Data::U32(u32::from(b)))
+                        .collect(),
+                    NamedResult::I64(values) => values.into_iter().map(Data::I64).collect(),
+                    NamedResult::U64(values) => values.into_iter().map(Data::U64).collect(),
+                    NamedResult::F64(values) => values.into_iter().map(Data::F64).collect(),
+                };
+                let value = if data.len() == 1 {
+                    data.remove(0)
+                } else {
+                    Data::Vec(data)
+                };
+                shot.data.insert(name, value);
             }
         }
 
@@ -1727,7 +1742,7 @@ impl ClassicalEngine for QisEngine {
             self.measurement_mapping
         );
 
-        let updates = Self::map_measurements(&self.measurement_mapping, &measurements);
+        let updates = self.map_measurements(&measurements)?;
         self.store_measurement_updates(&updates);
 
         debug!(
@@ -1872,16 +1887,12 @@ impl ControlEngine for QisEngine {
             ));
         }
 
-        let measurement_updates = if NoiseUtils::has_measurements(&input) {
-            let measurements = Self::parse_measurement_outcomes(&input)?;
-            let mapping = std::mem::take(&mut self.measurement_mapping);
-            let updates = Self::map_measurements(&mapping, &measurements);
-            self.store_measurement_updates(&updates);
-            self.provide_measurements_terminal(&updates)?;
-            updates
-        } else {
-            Vec::new()
-        };
+        let measurements = Self::parse_measurement_outcomes(&input)?;
+        let measurement_updates = self.map_measurements(&measurements)?;
+        if !measurement_updates.is_empty() {
+            self.store_measurement_updates(&measurement_updates);
+            self.provide_measurements_terminal(&measurement_updates)?;
+        }
 
         // First, check if worker already completed (before processing anything else)
         // This avoids unnecessary work if the worker finished
@@ -2028,6 +2039,47 @@ mod tests {
 
         fn num_qubits(&self) -> usize {
             1
+        }
+    }
+
+    #[test]
+    fn measurement_count_mismatches_fail_before_storing_outcomes() {
+        for dynamic in [false, true] {
+            for (mapping, outcomes) in [
+                (vec![], vec![1]),
+                (vec![8], vec![0, 1]),
+                (vec![8, 9], vec![1]),
+                (vec![8], vec![]),
+            ] {
+                let mut engine = QisEngine::with_runtime(Box::new(DummyRuntime::default()));
+                engine.measurement_mapping.clone_from(&mapping);
+                engine.dynamic_state = Some(DynamicExecutionState {
+                    sync_handle: None,
+                    execution_complete: true,
+                    terminal_error: None,
+                    finalized: false,
+                });
+                let input = ByteMessage::builder().add_outcomes(&outcomes).build();
+                let error = if dynamic {
+                    engine
+                        .continue_processing(input)
+                        .err()
+                        .expect("count mismatch")
+                } else {
+                    engine
+                        .handle_measurements(input)
+                        .expect_err("count mismatch")
+                };
+                assert!(error.to_string().contains(&format!(
+                    "QIS measurement count mismatch: {} queued measurements, {} outcomes",
+                    mapping.len(),
+                    outcomes.len()
+                )));
+                assert!(engine.measurement_results.is_empty());
+                assert_eq!(engine.measurement_mapping, mapping);
+                assert!(engine.terminal_failure_error().is_some());
+                assert!(engine.get_results().is_err());
+            }
         }
     }
 

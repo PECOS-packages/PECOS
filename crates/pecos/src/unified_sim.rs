@@ -299,10 +299,7 @@ impl ProgrammedSimBuilder {
         // QASM auto-selects the QASM engine. HUGR is routed through the PHIR
         // engine (HUGR -> PHIR), which emits the program's NAMED classical
         // register (e.g. "c") -- matching the engines/QASM result contract --
-        // and needs no Selene/LLVM. (neo's own `hugr_engine` would instead emit
-        // per-qubit `q0`/`q1` and a `measurements` array, which is not
-        // drop-in compatible; the named-register PHIR path is, so it is the one
-        // routed here.) The PHIR converter is STRAIGHT-LINE only: HUGR with
+        // and needs no Selene/LLVM. The PHIR converter is STRAIGHT-LINE only: HUGR with
         // classical control flow is rejected by `from_hugr_bytes` below (and
         // any residual empty-result shape is caught by the contract guard after
         // `run`).

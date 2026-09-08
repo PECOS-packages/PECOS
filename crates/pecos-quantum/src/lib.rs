@@ -83,8 +83,8 @@ pub mod hugr_convert;
 
 pub use circuit::{Circuit, CircuitMut, GateHandle, GateView};
 pub use dag_circuit::{
-    AnnotationKind, AnnotationRefError, Attribute, DagCircuit, DagTraversalIndex, MeasRef,
-    MeasResolveError, PauliAnnotation, TraversalWorkBuffers,
+    AnnotationKind, AnnotationRefError, Attribute, DagCircuit, DagGateError, DagTraversalIndex,
+    MeasRef, MeasResolveError, PauliAnnotation, TraversalWorkBuffers,
 };
 pub use tick_circuit::{
     CustomGateError, GateSignatureMismatchError, PHYSICAL_DURATION_META_KEY, QubitConflictError,

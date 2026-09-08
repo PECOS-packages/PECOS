@@ -12,56 +12,32 @@
 """Tests for PyPHIR name resolver functionality."""
 
 import pecos as pc
+import pytest
 from pecos.reps.pyphir.name_resolver import sim_name_resolver
 from pecos.reps.pyphir.op_types import QOp
 
 
-def test_rzz2szz() -> None:
-    """Verify that a RZZ(pi/2) gate will be resolved to a SZZ gate."""
-    qop = QOp(name="RZZ", angles=(pc.f64.frac_pi_2,), args=[(0, 1), (2, 3)])
-    assert sim_name_resolver(qop) == "SZZ"
-
-
-def test_rzz2szzdg() -> None:
-    """Verify that a RZZ(-pi/2) gate will be resolved to a SZZdg gate."""
-    qop = QOp(name="RZZ", angles=(-pc.f64.frac_pi_2,), args=[(0, 1), (2, 3)])
-    assert sim_name_resolver(qop) == "SZZdg"
-
-
-def test_rzz2i() -> None:
-    """Verify that a RZZ(0.0) gate will be resolved to an I gate."""
-    qop = QOp(name="RZZ", angles=(0.0,), args=[(0, 1), (2, 3)])
-    assert sim_name_resolver(qop) == "I"
-
-
-def test_rzz2rzz() -> None:
-    """Verify that a RZZ(pi/4) gate will be resolved to a RZZ gate since it is non-Clifford."""
-    qop = QOp(name="RZZ", angles=(0.0,), args=[(0, 1), (2, 3)])
-    assert sim_name_resolver(qop) == "I"
-
-
-def test_rz2sz() -> None:
-    """Verify that a RZ(pi/2) gate will be resolved to a SZ gate."""
-    qop = QOp(name="RZ", angles=(pc.f64.frac_pi_2,), args=[0, 1, 2, 3])
-    assert sim_name_resolver(qop) == "SZ"
-
-
-def test_rz2szdg() -> None:
-    """Verify that a RZ(-pi/2) gate will be resolved to a SZdg gate."""
-    qop = QOp(name="RZ", angles=(-pc.f64.frac_pi_2,), args=[0, 1, 2, 3])
-    assert sim_name_resolver(qop) == "SZdg"
-
-
-def test_rz2i() -> None:
-    """Verify that a RZ(0.0) gate will be resolved to an I gate."""
-    qop = QOp(name="RZ", angles=(0.0,), args=[0, 1, 2, 3])
-    assert sim_name_resolver(qop) == "I"
-
-
-def test_rz2rz() -> None:
-    """Verify that a RZ(pi/4) will give back RZ since it is non-Clifford."""
-    qop = QOp(name="RZ", angles=(pc.f64.frac_pi_4,), args=[0, 1, 2, 3])
-    assert sim_name_resolver(qop) == "RZ"
+@pytest.mark.parametrize(
+    ("gate", "args", "positive", "negative"),
+    [
+        pytest.param("RZZ", [(0, 1), (2, 3)], "SZZ", "SZZdg", id="RZZ"),
+        pytest.param("RZ", [0, 1, 2, 3], "SZ", "SZdg", id="RZ"),
+    ],
+)
+@pytest.mark.parametrize(
+    ("angle", "resolution"),
+    [
+        pytest.param(0.0, "I", id="identity"),
+        pytest.param(pc.f64.frac_pi_2, "positive", id="positive-clifford"),
+        pytest.param(-pc.f64.frac_pi_2, "negative", id="negative-clifford"),
+        pytest.param(pc.f64.frac_pi_4, "unchanged", id="positive-non-clifford"),
+        pytest.param(-pc.f64.frac_pi_4, "unchanged", id="negative-non-clifford"),
+    ],
+)
+def test_z_rotation_resolution(gate, args, positive, negative, angle, resolution) -> None:
+    """Only Clifford rotations lower to discrete simulator gates."""
+    expected = {"I": "I", "positive": positive, "negative": negative, "unchanged": gate}[resolution]
+    assert sim_name_resolver(QOp(name=gate, angles=(angle,), args=args)) == expected
 
 
 def test_rxy1q2x() -> None:

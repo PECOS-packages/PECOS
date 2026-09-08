@@ -581,7 +581,7 @@ dev-preflight: _msvc-bootstrap
                 LINK_MODE=$("$LLVM_DIR/bin/llvm-config" --shared-mode 2>/dev/null || echo "unknown")
                 if [ "$LINK_MODE" != "shared" ]; then
                     echo "PECOS dev preflight failed: LLVM at $LLVM_DIR reports '$LINK_MODE' link mode."
-                    echo "Full workspace HUGR tests need shared LLVM 21.1 to avoid high-memory static links."
+                    echo "Full workspace LLVM tests need shared LLVM 21.1 to avoid high-memory static links."
                     print_llvm_hint
                     exit 1
                 fi

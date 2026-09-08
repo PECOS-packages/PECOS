@@ -35,6 +35,84 @@ fn test_pcg_bounded_random() {
     }
 }
 
+// This stream seed makes the state immediately after srandom(42, seed) zero:
+// (increment + 42) * 6364136223846793005 + increment == 0 modulo 2^64.
+// The first raw draw is therefore zero, forcing rejection for both 10 and 3.
+const REJECTION_STREAM_SEED: u64 = 4_127_919_050_579_163_524;
+
+fn compare_bounded_with_reference(bound: u32) {
+    let mut actual = PCGRandom::init_global_state();
+    PCGRandom::pcg32_srandom_r(&mut actual, 42, REJECTION_STREAM_SEED);
+    let mut reference = actual;
+    let mut probe = actual;
+    assert_eq!(PCGRandom::pcg32_random_r(&mut probe), 0);
+    // Compute 2^32 % bound in a wider type, independently of the helper's
+    // wrapping-negation implementation of the same rejection threshold.
+    let threshold = (1_u64 << 32) % u64::from(bound);
+    let mut rejected = 0;
+    let mut first_eight = Vec::new();
+    for index in 0..1_000 {
+        let expected = loop {
+            let draw = PCGRandom::pcg32_random_r(&mut reference);
+            if u64::from(draw) >= threshold {
+                break draw % bound;
+            }
+            rejected += 1;
+        };
+        let value = PCGRandom::pcg32_boundedrand_r(&mut actual, bound);
+        assert_eq!(value, expected, "bound {bound}, output {index}");
+        assert_eq!(
+            actual, reference,
+            "bound {bound}, consumed draws at output {index}"
+        );
+        if index < 8 {
+            first_eight.push(value);
+        }
+    }
+    assert!(rejected > 0, "the reference must actually reject a draw");
+    println!(
+        "bound={bound}: 1000 outputs matched, rejected={rejected}, first_eight={first_eight:?}"
+    );
+}
+
+#[test]
+fn test_pcg_bounded_rejection_reference_bound_10() {
+    compare_bounded_with_reference(10);
+}
+
+#[test]
+fn test_pcg_bounded_rejection_reference_bound_3() {
+    compare_bounded_with_reference(3);
+}
+
+#[test]
+fn test_pcg_bounded_high_unsigned_bounds() {
+    let mut rng = PCGRandom::init_global_state();
+    PCGRandom::pcg32_srandom_r(&mut rng, 42, 42);
+    for bound in [1_u32 << 31, u32::MAX] {
+        for _ in 0..1_000 {
+            assert!(PCGRandom::pcg32_boundedrand_r(&mut rng, bound) < bound);
+        }
+    }
+}
+
+#[test]
+fn test_pcg_bounded_selene_seed_42() {
+    let mut rng = PCGRandom::init_global_state();
+    PCGRandom::pcg32_srandom_r(&mut rng, 42, 42);
+    assert_eq!(PCGRandom::pcg32_random_r(&mut rng), 1_085_446_021);
+    let mut probe = rng;
+    assert_eq!(PCGRandom::pcg32_random_r(&mut probe), 176_895_750);
+    assert_eq!(PCGRandom::pcg32_boundedrand_r(&mut rng, 10), 0);
+}
+
+#[test]
+#[should_panic(expected = "PCGRandom::pcg32_boundedrand_r requires a positive bound")]
+fn test_pcg_bounded_zero_panics() {
+    let mut rng = PCGRandom::init_global_state();
+    PCGRandom::pcg32_boundedrand_r(&mut rng, 0);
+}
+
 #[test]
 fn test_pcg_frandom_range() {
     // Test that frandom returns values in [0.0, 1.0)

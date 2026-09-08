@@ -23,6 +23,7 @@ import math
 
 import pytest
 from guppylang import guppy
+from guppylang.std.builtins import result as record_result
 from guppylang.std.quantum import measure, qubit, x
 from pecos import Qasm, qasm_engine, sim
 from pecos_rslib import (
@@ -167,7 +168,9 @@ def test_auto_is_chainable_and_explicit_zeros_win_in_both_orders() -> None:
     def deterministic_x() -> bool:
         q = qubit()
         x(q)
-        return measure(q).read()
+        output_value = measure(q).read()
+        record_result("outcome", output_value)
+        return output_value
 
     auto_then_zeros = (
         general_noise()
@@ -190,8 +193,7 @@ def test_auto_is_chainable_and_explicit_zeros_win_in_both_orders() -> None:
 
     for noise in (auto_then_zeros, zeros_then_auto):
         results = sim(deterministic_x).qubits(1).quantum(state_vector()).noise(noise).seed(42).run(20).to_dict()
-        raw = results["measurements"]
-        measurements = [m[-1] if isinstance(m, list) else m for m in raw]
+        measurements = results["outcome"]
         assert measurements == [1] * 20
 
 
@@ -202,7 +204,9 @@ def test_auto_matches_explicit_legacy_preset_at_python_surface() -> None:
     def deterministic_x() -> bool:
         q = qubit()
         x(q)
-        return measure(q).read()
+        output_value = measure(q).read()
+        record_result("outcome", output_value)
+        return output_value
 
     explicit = (
         general_noise()
@@ -221,8 +225,7 @@ def test_auto_matches_explicit_legacy_preset_at_python_surface() -> None:
 
     def run(noise) -> list[bool]:
         results = sim(deterministic_x).qubits(1).quantum(state_vector()).noise(noise).seed(424).run(512).to_dict()
-        raw = results["measurements"]
-        return [m[-1] if isinstance(m, list) else m for m in raw]
+        return results["outcome"]
 
     auto_results = run(general_noise().auto())
     explicit_results = run(explicit)
@@ -299,11 +302,12 @@ def test_with_p_meas_actually_configures_measurement_noise() -> None:
     @guppy
     def prepare_and_measure() -> bool:
         q = qubit()
-        return measure(q).read()
+        output_value = measure(q).read()
+        record_result("outcome", output_value)
+        return output_value
 
     noise = general_noise().with_p_prep(0.0).with_p1(0.0).with_p2(0.0).with_p_meas(1.0)
     results = sim(prepare_and_measure).qubits(1).quantum(state_vector()).noise(noise).seed(42).run(20).to_dict()
 
-    raw = results["measurements"]
-    measurements = [m[-1] if isinstance(m, list) else m for m in raw]
+    measurements = results["outcome"]
     assert all(m == 1 for m in measurements), "p_meas=1.0 should flip every |0> measurement"

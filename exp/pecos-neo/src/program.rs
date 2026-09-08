@@ -195,8 +195,20 @@ impl<S: CliffordGateable> ProgramRunner<S> {
     /// clean state for programs that don't explicitly prepare qubits.
     ///
     /// # Panics
-    /// Panics if gate execution fails (e.g., an unsupported gate is encountered).
+    /// Panics if gate execution fails. Use [`Self::try_run_shot`] to handle the error.
     pub fn run_shot<P: CommandSource + ?Sized>(&mut self, program: &mut P) -> ProgramResult {
+        self.try_run_shot(program)
+            .expect("core gates should not fail")
+    }
+
+    /// Execute a shot, reporting malformed commands and execution failures.
+    ///
+    /// # Errors
+    /// Returns the first error reported by [`CircuitRunner`].
+    pub fn try_run_shot<P: CommandSource + ?Sized>(
+        &mut self,
+        program: &mut P,
+    ) -> Result<ProgramResult, crate::runner::ExecutionError> {
         program.reset();
 
         // Reset simulator to |0>^n state at the start of each shot
@@ -211,10 +223,7 @@ impl<S: CliffordGateable> ProgramRunner<S> {
 
             match commands {
                 Some(cmds) if !cmds.is_empty() => {
-                    let outcomes = self
-                        .runner
-                        .apply_circuit(&mut self.simulator, &cmds)
-                        .expect("core gates should not fail");
+                    let outcomes = self.runner.apply_circuit(&mut self.simulator, &cmds)?;
                     num_batches += 1;
 
                     for outcome in outcomes.iter() {
@@ -233,10 +242,10 @@ impl<S: CliffordGateable> ProgramRunner<S> {
             }
         }
 
-        ProgramResult {
+        Ok(ProgramResult {
             outcomes: all_outcomes,
             num_batches,
-        }
+        })
     }
 
     /// Get a reference to the underlying circuit runner.

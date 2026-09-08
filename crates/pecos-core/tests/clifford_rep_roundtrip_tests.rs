@@ -39,8 +39,8 @@ fn is_clifford_1q_named_gates() {
         GateType::Fdg,
     ];
     for gt in clifford_gates {
-        let u = Unitary::Named(gt);
-        assert!(u.is_clifford(), "Unitary::Named({gt:?}) should be Clifford");
+        let u = Unitary::named(gt);
+        assert!(u.is_clifford(), "Unitary::named({gt:?}) should be Clifford");
     }
 }
 
@@ -59,8 +59,8 @@ fn is_clifford_2q_named_gates() {
         GateType::SZZdg,
     ];
     for gt in clifford_gates {
-        let u = Unitary::Named(gt);
-        assert!(u.is_clifford(), "Unitary::Named({gt:?}) should be Clifford");
+        let u = Unitary::named(gt);
+        assert!(u.is_clifford(), "Unitary::named({gt:?}) should be Clifford");
     }
 }
 
@@ -68,10 +68,10 @@ fn is_clifford_2q_named_gates() {
 fn is_not_clifford_non_clifford_named_gates() {
     let non_clifford = [GateType::T, GateType::Tdg, GateType::CH, GateType::CCX];
     for gt in non_clifford {
-        let u = Unitary::Named(gt);
+        let u = Unitary::named(gt);
         assert!(
             !u.is_clifford(),
-            "Unitary::Named({gt:?}) should NOT be Clifford"
+            "Unitary::named({gt:?}) should NOT be Clifford"
         );
     }
 }
@@ -126,7 +126,7 @@ fn to_clifford_rep_1q_named_gates() {
         GateType::Fdg,
     ];
     for gt in gates {
-        let ur = Unitary::Named(gt).on_qubit(0);
+        let ur = Unitary::named(gt).on_qubit(0);
         let cr = ur.to_clifford_rep(1);
         assert!(
             cr.is_some(),
@@ -150,7 +150,7 @@ fn to_clifford_rep_2q_named_gates() {
         GateType::SZZdg,
     ];
     for gt in gates {
-        let ur = Unitary::Named(gt).on_qubits(0, 1);
+        let ur = Unitary::named(gt).on_qubits(0, 1);
         let cr = ur.to_clifford_rep(2);
         assert!(
             cr.is_some(),
@@ -269,7 +269,7 @@ fn to_clifford_rep_exact_match_for_named_1q_gates() {
         (Clifford::Fdg, GateType::Fdg),
     ];
     for (cliff, gt) in gates {
-        let ur = Unitary::Named(gt).on_qubit(0);
+        let ur = Unitary::named(gt).on_qubit(0);
         let cr = ur
             .to_clifford_rep(1)
             .unwrap_or_else(|| panic!("to_clifford_rep failed for Named({gt:?})"));
@@ -297,7 +297,7 @@ fn to_clifford_rep_matches_clifford_on_qubits_standard_2q() {
         (Clifford::SZZdg, GateType::SZZdg),
     ];
     for (cliff, gt) in gates {
-        let ur = Unitary::Named(gt).on_qubits(0, 1);
+        let ur = Unitary::named(gt).on_qubits(0, 1);
         let cr_from_ur = ur.to_clifford_rep(2);
         assert!(
             cr_from_ur.is_some(),
@@ -380,7 +380,7 @@ fn dg_is_identity_for_self_adjoint_gates() {
         GateType::H,
     ];
     for gt in self_adjoint_1q {
-        let ur = Unitary::Named(gt).on_qubit(0);
+        let ur = Unitary::named(gt).on_qubit(0);
         let dg = ur.dg();
         assert_eq!(
             ur, dg,
@@ -391,7 +391,7 @@ fn dg_is_identity_for_self_adjoint_gates() {
     // Self-adjoint 2q gates
     let self_adjoint_2q = [GateType::CX, GateType::CY, GateType::CZ, GateType::SWAP];
     for gt in self_adjoint_2q {
-        let ur = Unitary::Named(gt).on_qubits(0, 1);
+        let ur = Unitary::named(gt).on_qubits(0, 1);
         let dg = ur.dg();
         assert_eq!(
             ur, dg,
@@ -400,7 +400,7 @@ fn dg_is_identity_for_self_adjoint_gates() {
     }
 
     // CCX (3-qubit, self-adjoint)
-    let ur_ccx = UnitaryRep::Gate(Unitary::Named(GateType::CCX), smallvec::smallvec![0, 1, 2]);
+    let ur_ccx = UnitaryRep::Gate(Unitary::named(GateType::CCX), smallvec::smallvec![0, 1, 2]);
     let dg_ccx = ur_ccx.dg();
     assert_eq!(
         ur_ccx, dg_ccx,
@@ -424,7 +424,7 @@ fn dg_wraps_adjoint_for_non_self_adjoint_gates() {
         GateType::Fdg,
     ];
     for gt in not_self_adjoint {
-        let ur = Unitary::Named(gt).on_qubit(0);
+        let ur = Unitary::named(gt).on_qubit(0);
         let dg = ur.dg();
         assert_ne!(
             ur, dg,
@@ -546,7 +546,7 @@ fn dg_involution_phase() {
 #[test]
 fn dg_involution_adjoint() {
     // Adjoint(op).dg() should unwrap back to op
-    let ur = Unitary::Named(GateType::SX).on_qubit(0);
+    let ur = Unitary::named(GateType::SX).on_qubit(0);
     let adj = ur.dg(); // wraps in Adjoint
     assert_eq!(adj.dg(), ur, "dg(Adjoint(SX)) should unwrap to SX");
 }
@@ -600,14 +600,14 @@ fn is_clifford_tensor_cliffords() {
 
 #[test]
 fn is_not_clifford_composed_with_non_clifford() {
-    let t_gate = UnitaryRep::Gate(Unitary::Named(GateType::T), smallvec::smallvec![0]);
+    let t_gate = UnitaryRep::Gate(Unitary::named(GateType::T), smallvec::smallvec![0]);
     let composed = pecos_core::unitary_rep::H(0) * t_gate;
     assert!(!composed.is_clifford(), "H * T should NOT be Clifford");
 }
 
 #[test]
 fn is_not_clifford_tensor_with_non_clifford() {
-    let t_gate = UnitaryRep::Gate(Unitary::Named(GateType::T), smallvec::smallvec![1]);
+    let t_gate = UnitaryRep::Gate(Unitary::named(GateType::T), smallvec::smallvec![1]);
     let tensor = pecos_core::unitary_rep::H(0) & t_gate;
     assert!(!tensor.is_clifford(), "H & T should NOT be Clifford");
 }
@@ -620,7 +620,7 @@ fn is_clifford_adjoint_of_clifford() {
 
 #[test]
 fn is_not_clifford_adjoint_of_non_clifford() {
-    let t_gate = UnitaryRep::Gate(Unitary::Named(GateType::T), smallvec::smallvec![0]);
+    let t_gate = UnitaryRep::Gate(Unitary::named(GateType::T), smallvec::smallvec![0]);
     assert!(!t_gate.dg().is_clifford(), "T.dg() should NOT be Clifford");
 }
 

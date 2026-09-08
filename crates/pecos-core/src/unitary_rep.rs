@@ -810,9 +810,12 @@ pub enum UnitaryRep {
     /// Adjoint (Hermitian conjugate)
     Adjoint(Box<UnitaryRep>),
 
-    /// Global phase: e^{i*phase} * inner
-    /// Phase is represented as Angle64 for exact arithmetic
-    Phase {
+    /// A global phase applied to an inner expression: `e^{i*phase} * inner`.
+    ///
+    /// Distinct from [`Unitary::Phase`], which phases the all-ones subspace of
+    /// its operands. This one scales the whole expression.
+    /// The angle is an `Angle64` for exact arithmetic.
+    Phased {
         phase: Angle64,
         inner: Box<UnitaryRep>,
     },
@@ -1452,7 +1455,7 @@ impl UnitaryRep {
             // Double adjoint: unwrap
             Self::Adjoint(inner) => (**inner).clone(),
             // Phase adjoint: conjugate phase (negate), adjoint inner
-            Self::Phase { phase, inner } => Self::Phase {
+            Self::Phased { phase, inner } => Self::Phased {
                 phase: negate_angle(*phase),
                 inner: Box::new(inner.dg()),
             },
@@ -1477,13 +1480,13 @@ impl UnitaryRep {
                 ));
             }
             // Not a quarter turn multiple, wrap in Phase
-            return Self::Phase {
+            return Self::Phased {
                 phase,
                 inner: Box::new(Self::Pauli(ps)),
             };
         }
 
-        Self::Phase {
+        Self::Phased {
             phase,
             inner: Box::new(self),
         }
@@ -1503,7 +1506,7 @@ impl UnitaryRep {
             Self::Gate(unitary, _) => unitary.is_clifford(),
             Self::Tensor(parts) | Self::Compose(parts) => parts.iter().all(UnitaryRep::is_clifford),
             // Phase doesn't affect Clifford-ness (global phase)
-            Self::Adjoint(inner) | Self::Phase { inner, .. } => inner.is_clifford(),
+            Self::Adjoint(inner) | Self::Phased { inner, .. } => inner.is_clifford(),
         }
     }
 
@@ -1528,7 +1531,7 @@ impl UnitaryRep {
                     part.collect_qubits(result);
                 }
             }
-            Self::Adjoint(inner) | Self::Phase { inner, .. } => inner.collect_qubits(result),
+            Self::Adjoint(inner) | Self::Phased { inner, .. } => inner.collect_qubits(result),
         }
     }
 }
@@ -1760,7 +1763,7 @@ impl UnitaryRep {
                 Some(result)
             }
 
-            Self::Phase { phase, inner } => {
+            Self::Phased { phase, inner } => {
                 let mut ps = inner.try_to_pauli_string()?;
                 // Apply the global phase to the PauliString phase
                 // phase is Angle64, we need to convert to QuarterPhase if possible
@@ -2012,13 +2015,13 @@ impl UnitaryRep {
                 simplified_inner.dg()
             }
 
-            Self::Phase { phase, inner } => {
+            Self::Phased { phase, inner } => {
                 // Simplify inner and preserve phase
                 let simplified_inner = inner.simplify();
                 if *phase == Angle64::ZERO || *phase == Angle64::FULL_TURN {
                     simplified_inner
                 } else {
-                    Self::Phase {
+                    Self::Phased {
                         phase: *phase,
                         inner: Box::new(simplified_inner),
                     }
@@ -2092,7 +2095,7 @@ impl UnitaryRep {
 
         match self {
             Self::Pauli(ps) => GlobalPhase::from(ps.phase()),
-            Self::Phase { phase, .. } => GlobalPhase::from(*phase),
+            Self::Phased { phase, .. } => GlobalPhase::from(*phase),
             Self::Gate(
                 Unitary::Phase {
                     gamma,
@@ -2136,7 +2139,7 @@ impl UnitaryRep {
             Self::Gate(unitary, _) => unitary.is_identity(),
             Self::Tensor(parts) | Self::Compose(parts) => parts.iter().all(UnitaryRep::is_identity),
             Self::Adjoint(inner) => inner.is_identity(),
-            Self::Phase { phase, inner } => *phase == Angle64::ZERO && inner.is_identity(),
+            Self::Phased { phase, inner } => *phase == Angle64::ZERO && inner.is_identity(),
         }
     }
 
@@ -2200,7 +2203,7 @@ impl UnitaryRep {
             Self::Tensor(parts) => parts.iter().all(UnitaryRep::is_hermitian),
             // U2q Hermiticity is structurally complex; conservatively return false.
             // Composition of Hermitians isn't generally Hermitian; phase factors break Hermiticity.
-            Self::Gate(Unitary::U2q { .. }, _) | Self::Compose(_) | Self::Phase { .. } => false,
+            Self::Gate(Unitary::U2q { .. }, _) | Self::Compose(_) | Self::Phased { .. } => false,
             Self::Adjoint(inner) => inner.is_hermitian(), // (A†)† = A, so same as inner
         }
     }
@@ -2494,7 +2497,7 @@ impl UnitaryRep {
                 gates
             }
 
-            Self::Phase { inner, .. } => {
+            Self::Phased { inner, .. } => {
                 // Global phase doesn't affect gate sequence
                 // (Phase information is lost in decomposition)
                 inner.try_decompose()?
@@ -2682,7 +2685,7 @@ impl UnitaryRep {
                     .map(|cliff| cliff.inverse())
             }
 
-            Self::Phase { inner, .. } => {
+            Self::Phased { inner, .. } => {
                 // Global phase is ignored in CliffordRep (Heisenberg picture)
                 inner.to_clifford_rep(num_qubits)
             }
@@ -4313,7 +4316,7 @@ impl UnitaryRep {
                     diagram.advance();
                 }
             }
-            Self::Adjoint(inner) | Self::Phase { inner, .. } => {
+            Self::Adjoint(inner) | Self::Phased { inner, .. } => {
                 inner.add_to_diagram(diagram);
             }
         }
@@ -4419,7 +4422,7 @@ mod tests {
                     UnitaryRep::Compose(vec![H(0), invalid.clone()]),
                     UnitaryRep::Tensor(vec![H(0), invalid.clone()]),
                     UnitaryRep::Adjoint(Box::new(invalid.clone())),
-                    UnitaryRep::Phase {
+                    UnitaryRep::Phased {
                         phase: gamma,
                         inner: Box::new(invalid.clone()),
                     },
@@ -4983,7 +4986,7 @@ mod tests {
         let eighth_turn = Angle64::HALF_TURN / 4;
         let op = phase(eighth_turn) * X(0);
 
-        if let UnitaryRep::Phase { phase: p, inner } = op {
+        if let UnitaryRep::Phased { phase: p, inner } = op {
             assert_eq!(p, eighth_turn);
             // Inner should be Pauli(X)
             assert!(matches!(*inner, UnitaryRep::Pauli(_)));

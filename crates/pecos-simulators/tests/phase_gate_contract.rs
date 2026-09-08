@@ -236,7 +236,7 @@ fn three_operand_phase_exceeds_the_direct_hardware_lowering_limit() {
             UnitaryRep::Compose(vec![phase.clone()]),
             UnitaryRep::Tensor(vec![phase.clone()]),
             UnitaryRep::Adjoint(Box::new(phase.clone())),
-            UnitaryRep::Phase {
+            UnitaryRep::Phased {
                 phase: Angle64::QUARTER_TURN,
                 inner: Box::new(phase),
             },

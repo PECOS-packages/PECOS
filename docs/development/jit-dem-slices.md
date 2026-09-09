@@ -120,9 +120,13 @@ label, qubit offset, and spatial placement. Detector coordinates are translated
 on `DemSliceInstance` construction. Consequently, a later memory experiment of
 any supported length or placement reuses the corresponding physical family.
 `build_dem`, `build_sampler_and_decoder`, and `build_algorithm_descriptor` all
-share this provider. Multiple patches and circuits with unsupported logical
-gates conservatively retain the full structured fallback until their bounded
-families and instance mappings are implemented.
+share this provider. Simultaneous memory on multiple independent patches uses
+a combined canonical fixture, with a detector-stream partition translating
+each patch independently at instantiation. The physical cache key contains the
+ordered geometry and basis tuple but excludes every requested depth, label,
+qubit offset, and placement. Circuits with unsupported logical gates
+conservatively retain the full structured fallback until their bounded families
+and instance mappings are implemented.
 
 A second bounded provider covers one or more transversal H gates separated by
 memory segments of at least two rounds each. A six-round canonical fixture yields
@@ -266,12 +270,12 @@ round layout, ownership, bounded template extraction, mapping, and stitching
 API, including instance-time GF(2) routing for logical and tracked-Pauli output
 columns. Initialization, stationary bulk SEC, pre-terminal SEC, terminal, and
 fused one-round surface-memory families have exact composition coverage and a
-production single-patch memory provider. Transversal-H boundaries and their adjacent memory
-families, including repeated H sequences, also have exact composition coverage
+production single- and multi-patch memory provider. Transversal-H boundaries
+and their adjacent memory families, including repeated H sequences, have exact composition coverage
 and a production provider, as do repeated transversal CX gates and mixed H/CX
 schedules between matching patch shapes. It does not
-yet implement the bounded mid-cycle SZ/SZdg circuit, general multi-patch or
-lattice-surgery families, decoder prior mutation, the anti-snake
+yet implement the bounded mid-cycle SZ/SZdg circuit, multi-patch logical-gate
+or lattice-surgery families, decoder prior mutation, the anti-snake
 logical-subgraph window decoder, or adaptive syndrome-extraction templates.
 Full-circuit DEM construction remains the equivalence oracle and the
 conservative fallback outside supported families.

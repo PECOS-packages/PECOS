@@ -65,6 +65,19 @@ class _CachedSurfaceSingletonMemoryDemTemplates:
     terminal: object
 
 
+@dataclass(frozen=True)
+class _CachedSurfaceMultiMemoryDemTemplates:
+    """Canonical bounded templates for simultaneous independent patches."""
+
+    output_model: object
+    initialization: object
+    bulk: object | None
+    pre_terminal: object | None
+    terminal: object
+    stream_counts: tuple[int, ...]
+    coordinate_origins: tuple[tuple[float, float], ...]
+
+
 @cache
 def _cached_surface_memory_dem_templates(
     dx: int,
@@ -140,6 +153,79 @@ def _cached_surface_singleton_memory_dem_templates(
         output_model=model,
         initialization=schedule.template(0),
         terminal=schedule.template(1),
+    )
+
+
+@cache
+def _cached_surface_multi_memory_dem_templates(
+    patch_specs: tuple[tuple[int, int, str, bool], ...],
+    bases: tuple[str, ...],
+    singleton: bool,
+    p1: float,
+    p2: float,
+    p_meas: float,
+    p_prep: float,
+) -> _CachedSurfaceMultiMemoryDemTemplates:
+    """Compile one canonical simultaneous-memory family.
+
+    Patch labels, qubit offsets, and placements remain instance data. The
+    canonical fixture spaces patches apart only so each stream partition has an
+    unambiguous coordinate origin.
+    """
+    from pecos.qec.surface.patch import PatchOrientation, SurfacePatch
+
+    builder = LogicalCircuitBuilder()
+    labels = []
+    coordinate_origins = []
+    stream_counts = []
+    qubit_offset = 0
+    coordinate_x = 0.0
+    for patch_index, ((dx, dz, orientation_name, rotated), basis) in enumerate(
+        zip(patch_specs, bases, strict=True),
+    ):
+        patch = SurfacePatch.create(
+            dx=dx,
+            dz=dz,
+            orientation=PatchOrientation[orientation_name],
+            rotated=rotated,
+        )
+        label = f"template_{patch_index}"
+        labels.append(label)
+        coordinate_origins.append((coordinate_x, 0.0))
+        builder.add_patch(
+            patch,
+            label,
+            qubit_offset=qubit_offset,
+            coord_offset=(coordinate_x, 0.0),
+        )
+        qubit_offset += patch.geometry.num_qubits
+        coordinate_x += float(2 * dz + 4)
+        if singleton:
+            stabs = patch.geometry.z_stabilizers if basis == "Z" else patch.geometry.x_stabilizers
+            stream_counts.append(len(stabs))
+        else:
+            stream_counts.append(len(patch.geometry.x_stabilizers) + len(patch.geometry.z_stabilizers))
+
+    builder.add_memory(
+        labels,
+        rounds=1 if singleton else 3,
+        basis=dict(zip(labels, bases, strict=True)),
+    )
+    model, influence_map, dag_circuit = builder._build_structured_dem(  # noqa: SLF001
+        p1=p1,
+        p2=p2,
+        p_meas=p_meas,
+        p_prep=p_prep,
+    )
+    schedule = model.round_schedule(influence_map, dag_circuit)
+    return _CachedSurfaceMultiMemoryDemTemplates(
+        output_model=model,
+        initialization=schedule.template(0),
+        bulk=None if singleton else schedule.template(1),
+        pre_terminal=None if singleton else schedule.template(2),
+        terminal=schedule.template(1 if singleton else 3),
+        stream_counts=tuple(stream_counts),
+        coordinate_origins=tuple(coordinate_origins),
     )
 
 
@@ -1075,6 +1161,14 @@ class LogicalCircuitBuilder:
         p_prep: float,
     ) -> tuple[object, object] | None:
         """Assemble an eligible surface DEM from bounded template caches."""
+        cached_multi_memory = self._build_structured_multi_memory_dem_from_cached_templates(
+            p1=p1,
+            p2=p2,
+            p_meas=p_meas,
+            p_prep=p_prep,
+        )
+        if cached_multi_memory is not None:
+            return cached_multi_memory
         if len(self._patches) == 1 and len(self._operations) >= 3:
             cached_h = self._build_structured_h_dem_from_cached_templates(
                 p1=p1,
@@ -1152,6 +1246,89 @@ class LogicalCircuitBuilder:
             templates.output_model,
             instances,
             coordinate_offset=(float(coord_x), float(coord_y)),
+        )
+        model = schedule.stitch(
+            start_round=0,
+            commit_rounds=operation.rounds + 1,
+            buffer_rounds=0,
+            forward_boundary="hard",
+        )
+        return model, schedule
+
+    def _build_structured_multi_memory_dem_from_cached_templates(
+        self,
+        *,
+        p1: float,
+        p2: float,
+        p_meas: float,
+        p_prep: float,
+    ) -> tuple[object, object] | None:
+        """Assemble simultaneous independent patch memories from one family."""
+        if len(self._patches) < 2 or len(self._operations) != 1:
+            return None
+        operation = self._operations[0]
+        patch_order = list(self._patches)
+        if operation.gate_type != LogicalGateType.MEMORY or operation.patches != patch_order or operation.rounds < 1:
+            return None
+
+        patch_states = [self._patches[label] for label in patch_order]
+        patch_specs = tuple(
+            (
+                state.patch.geometry.dx,
+                state.patch.geometry.dz,
+                state.patch.geometry.orientation.name,
+                state.patch.geometry.rotated,
+            )
+            for state in patch_states
+        )
+        bases = tuple(operation.per_patch_basis.get(label, operation.basis).upper() for label in patch_order)
+        singleton = operation.rounds == 1
+        templates = _cached_surface_multi_memory_dem_templates(
+            patch_specs,
+            bases,
+            singleton,
+            p1,
+            p2,
+            p_meas,
+            p_prep,
+        )
+
+        instances = [(templates.initialization, 0)]
+        if singleton:
+            instances.append((templates.terminal, 1))
+        else:
+            if templates.bulk is None or templates.pre_terminal is None:  # pragma: no cover - cache invariant
+                msg = "multi-memory cache omitted a required non-singleton template"
+                raise ValueError(msg)
+            instances.extend((templates.bulk, round_) for round_ in range(1, operation.rounds - 1))
+            instances.extend(
+                [
+                    (templates.pre_terminal, operation.rounds - 1),
+                    (templates.terminal, operation.rounds),
+                ],
+            )
+
+        detector_coordinate_offsets = {}
+        stream_start = 0
+        for state, stream_count, (origin_x, origin_y) in zip(
+            patch_states,
+            templates.stream_counts,
+            templates.coordinate_origins,
+            strict=True,
+        ):
+            patch_x, patch_y = state.coord_offset
+            translation = (float(patch_x) - origin_x, float(patch_y) - origin_y)
+            detector_coordinate_offsets.update(
+                dict.fromkeys(range(stream_start, stream_start + stream_count), translation),
+            )
+            stream_start += stream_count
+
+        from pecos_rslib.qec import DemSliceRoundSchedule
+
+        schedule = DemSliceRoundSchedule.from_templates(
+            templates.output_model,
+            instances,
+            detector_coordinate_offsets=detector_coordinate_offsets,
         )
         model = schedule.stitch(
             start_round=0,

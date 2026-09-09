@@ -258,6 +258,78 @@ def test_single_round_memory_provider_reuses_bounded_templates(monkeypatch):
 
 
 @pytest.mark.parametrize(
+    ("rounds", "shapes", "bases"),
+    [
+        (1, [(3, 3), (3, 3)], ["Z", "X"]),
+        (3, [(3, 3), (2, 3)], ["Z", "X"]),
+        (7, [(2, 2), (3, 2), (3, 3)], ["X", "Z", "X"]),
+    ],
+)
+def test_multi_patch_memory_provider_matches_full_compile(rounds, shapes, bases):
+    """Independent patch streams retain full ordering and placement."""
+    builder = LogicalCircuitBuilder()
+    labels = []
+    for patch_index, (dx, dz) in enumerate(shapes):
+        label = f"patch_{patch_index}"
+        labels.append(label)
+        builder.add_patch(
+            SurfacePatch.create(dx=dx, dz=dz),
+            label,
+            qubit_offset=100 * patch_index + 7,
+            coord_offset=(31.0 * patch_index - 9.0, 13.0 * patch_index + 2.0),
+        )
+    builder.add_memory(labels, rounds, dict(zip(labels, bases, strict=True)))
+    oracle, _, _ = builder._build_structured_dem(  # noqa: SLF001
+        p1=0.001,
+        p2=0.002,
+        p_meas=0.003,
+        p_prep=0.004,
+    )
+    assert builder.build_dem(p1=0.001, p2=0.002, p_meas=0.003, p_prep=0.004) == oracle.to_string()
+
+
+def test_multi_patch_memory_provider_reuses_physical_family(monkeypatch):
+    """Labels, requested depth, qubit IDs, and placement are instance state."""
+    from pecos.qec.surface.logical_circuit import _cached_surface_multi_memory_dem_templates
+
+    _cached_surface_multi_memory_dem_templates.cache_clear()
+
+    def build(rounds, labels, offsets, coords):
+        builder = LogicalCircuitBuilder()
+        shapes = [(3, 3), (2, 3)]
+        bases = ["Z", "X"]
+        for label, (dx, dz), offset, coord in zip(labels, shapes, offsets, coords, strict=True):
+            builder.add_patch(
+                SurfacePatch.create(dx=dx, dz=dz),
+                label,
+                qubit_offset=offset,
+                coord_offset=coord,
+            )
+        builder.add_memory(labels, rounds, dict(zip(labels, bases, strict=True)))
+        return builder
+
+    first = build(3, ["A", "B"], [0, 50], [(-7.0, 5.0), (29.0, -3.0)])
+    first.build_dem(p1=0.001, p2=0.002, p_meas=0.003, p_prep=0.004)
+    after_first = _cached_surface_multi_memory_dem_templates.cache_info()
+    assert after_first.misses == 1
+    assert after_first.currsize == 1
+
+    second = build(11, ["left", "right"], [19, 119], [(41.0, 23.0), (-17.0, 12.0)])
+    second.build_algorithm_descriptor(p1=0.001, p2=0.002, p_meas=0.003, p_prep=0.004)
+    after_second = _cached_surface_multi_memory_dem_templates.cache_info()
+    assert after_second.misses == after_first.misses
+    assert after_second.hits == after_first.hits + 1
+
+    def reject_full_compile(*_args, **_kwargs):
+        message = "a warm multi-patch memory request compiled the full circuit"
+        raise AssertionError(message)
+
+    monkeypatch.setattr(LogicalCircuitBuilder, "_build_structured_dem", reject_full_compile)
+    warm = build(5, ["warm_0", "warm_1"], [31, 231], [(3.0, -19.0), (71.0, 8.0)])
+    warm.build_dem(p1=0.001, p2=0.002, p_meas=0.003, p_prep=0.004)
+
+
+@pytest.mark.parametrize(
     ("dx", "dz", "basis", "rounds"),
     [
         (3, 3, "Z", 1),

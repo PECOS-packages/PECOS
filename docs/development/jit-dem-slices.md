@@ -110,17 +110,19 @@ placed code blocks reuse one physical template; general detector-stream identity
 routing remains in the Rust instance API.
 
 The production `LogicalCircuitBuilder` uses a bounded three-round compile for
-eligible single-patch memory operations of two or more rounds. Its cache key
+eligible single-patch memory operations of two or more rounds. A separate
+one-round fixture supplies fused initialization/SEC and terminal families for
+the shallowest experiment, where ordinary initialization and pre-terminal
+roles cannot be overlaid as independent slices. Each cache key
 contains the circuit family, complete patch geometry, measurement basis, and
 noise parameters, but deliberately excludes the requested memory length, patch
 label, qubit offset, and spatial placement. Detector coordinates are translated
 on `DemSliceInstance` construction. Consequently, a later memory experiment of
-any supported length or placement reuses the same initialization, stationary
-bulk, pre-terminal, and terminal objects.
+any supported length or placement reuses the corresponding physical family.
 `build_dem`, `build_sampler_and_decoder`, and `build_algorithm_descriptor` all
-share this provider. One-round memories, multiple patches, and circuits with
-unsupported logical gates conservatively retain the full structured fallback
-until their bounded families and instance mappings are implemented.
+share this provider. Multiple patches and circuits with unsupported logical
+gates conservatively retain the full structured fallback until their bounded
+families and instance mappings are implemented.
 
 A second bounded provider covers one or more transversal H gates separated by
 memory segments of at least two rounds each. A six-round canonical fixture yields
@@ -262,9 +264,9 @@ converted to mechanism columns.
 This layer provides the stable slice, cache, structured-DEM adapter, automatic
 round layout, ownership, bounded template extraction, mapping, and stitching
 API, including instance-time GF(2) routing for logical and tracked-Pauli output
-columns. Initialization, stationary bulk SEC, pre-terminal SEC, and terminal
-surface-memory families have exact composition coverage and a production
-single-patch memory provider. Transversal-H boundaries and their adjacent memory
+columns. Initialization, stationary bulk SEC, pre-terminal SEC, terminal, and
+fused one-round surface-memory families have exact composition coverage and a
+production single-patch memory provider. Transversal-H boundaries and their adjacent memory
 families, including repeated H sequences, also have exact composition coverage
 and a production provider, as do repeated transversal CX gates and mixed H/CX
 schedules between matching patch shapes. It does not

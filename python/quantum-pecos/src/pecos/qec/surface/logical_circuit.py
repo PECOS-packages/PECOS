@@ -56,6 +56,15 @@ class _CachedSurfaceMemoryDemTemplates:
     terminal: object
 
 
+@dataclass(frozen=True)
+class _CachedSurfaceSingletonMemoryDemTemplates:
+    """Noise-weighted templates for a one-SEC-round memory experiment."""
+
+    output_model: object
+    initialization: object
+    terminal: object
+
+
 @cache
 def _cached_surface_memory_dem_templates(
     dx: int,
@@ -93,6 +102,44 @@ def _cached_surface_memory_dem_templates(
         bulk=schedule.template(1),
         pre_terminal=schedule.template(2),
         terminal=schedule.template(3),
+    )
+
+
+@cache
+def _cached_surface_singleton_memory_dem_templates(
+    dx: int,
+    dz: int,
+    orientation_name: str,
+    rotated: bool,
+    basis: str,
+    p1: float,
+    p2: float,
+    p_meas: float,
+    p_prep: float,
+) -> _CachedSurfaceSingletonMemoryDemTemplates:
+    """Compile the constant-depth one-round surface-memory family."""
+    from pecos.qec.surface.patch import PatchOrientation, SurfacePatch
+
+    patch = SurfacePatch.create(
+        dx=dx,
+        dz=dz,
+        orientation=PatchOrientation[orientation_name],
+        rotated=rotated,
+    )
+    builder = LogicalCircuitBuilder()
+    builder.add_patch(patch, "template", coord_offset=(0.0, 0.0))
+    builder.add_memory("template", rounds=1, basis=basis)
+    model, influence_map, dag_circuit = builder._build_structured_dem(  # noqa: SLF001
+        p1=p1,
+        p2=p2,
+        p_meas=p_meas,
+        p_prep=p_prep,
+    )
+    schedule = model.round_schedule(influence_map, dag_circuit)
+    return _CachedSurfaceSingletonMemoryDemTemplates(
+        output_model=model,
+        initialization=schedule.template(0),
+        terminal=schedule.template(1),
     )
 
 
@@ -1058,7 +1105,7 @@ class LogicalCircuitBuilder:
             return None
 
         operation = self._operations[0]
-        if operation.gate_type != LogicalGateType.MEMORY or len(operation.patches) != 1 or operation.rounds < 2:
+        if operation.gate_type != LogicalGateType.MEMORY or len(operation.patches) != 1 or operation.rounds < 1:
             return None
 
         patch_label = operation.patches[0]
@@ -1066,28 +1113,41 @@ class LogicalCircuitBuilder:
         geometry = patch_state.patch.geometry
         basis = operation.per_patch_basis.get(patch_label, operation.basis).upper()
         coord_x, coord_y = patch_state.coord_offset
-        templates = _cached_surface_memory_dem_templates(
-            geometry.dx,
-            geometry.dz,
-            geometry.orientation.name,
-            geometry.rotated,
-            basis,
-            p1,
-            p2,
-            p_meas,
-            p_prep,
-        )
-
         from pecos_rslib.qec import DemSliceRoundSchedule
 
-        instances = [(templates.initialization, 0)]
-        instances.extend((templates.bulk, round_) for round_ in range(1, operation.rounds - 1))
-        instances.extend(
-            [
-                (templates.pre_terminal, operation.rounds - 1),
-                (templates.terminal, operation.rounds),
-            ],
-        )
+        if operation.rounds == 1:
+            templates = _cached_surface_singleton_memory_dem_templates(
+                geometry.dx,
+                geometry.dz,
+                geometry.orientation.name,
+                geometry.rotated,
+                basis,
+                p1,
+                p2,
+                p_meas,
+                p_prep,
+            )
+            instances = [(templates.initialization, 0), (templates.terminal, 1)]
+        else:
+            templates = _cached_surface_memory_dem_templates(
+                geometry.dx,
+                geometry.dz,
+                geometry.orientation.name,
+                geometry.rotated,
+                basis,
+                p1,
+                p2,
+                p_meas,
+                p_prep,
+            )
+            instances = [(templates.initialization, 0)]
+            instances.extend((templates.bulk, round_) for round_ in range(1, operation.rounds - 1))
+            instances.extend(
+                [
+                    (templates.pre_terminal, operation.rounds - 1),
+                    (templates.terminal, operation.rounds),
+                ],
+            )
         schedule = DemSliceRoundSchedule.from_templates(
             templates.output_model,
             instances,

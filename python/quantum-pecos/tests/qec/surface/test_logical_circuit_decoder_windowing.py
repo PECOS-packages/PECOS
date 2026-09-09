@@ -209,9 +209,58 @@ def test_memory_provider_reuses_bounded_templates_and_preserves_detector_order(m
     warm.build_dem(p1=0.001, p2=0.001, p_meas=0.001, p_prep=0.0)
 
 
+def test_single_round_memory_provider_reuses_bounded_templates(monkeypatch):
+    """A one-round experiment is its own constant-depth boundary family."""
+    from pecos.qec.surface.logical_circuit import (
+        _cached_surface_memory_dem_templates,
+        _cached_surface_singleton_memory_dem_templates,
+    )
+
+    _cached_surface_memory_dem_templates.cache_clear()
+    _cached_surface_singleton_memory_dem_templates.cache_clear()
+    builder = LogicalCircuitBuilder()
+    builder.add_patch(SurfacePatch.create(3), "A", coord_offset=(-7.0, 5.0))
+    builder.add_memory("A", 1, "X")
+    oracle, _, _ = builder._build_structured_dem(  # noqa: SLF001
+        p1=0.001,
+        p2=0.002,
+        p_meas=0.003,
+        p_prep=0.004,
+    )
+    assert builder.build_dem(p1=0.001, p2=0.002, p_meas=0.003, p_prep=0.004) == oracle.to_string()
+    after_first = _cached_surface_singleton_memory_dem_templates.cache_info()
+    assert after_first.misses == 1
+    assert after_first.currsize == 1
+    assert _cached_surface_memory_dem_templates.cache_info().currsize == 0
+
+    equivalent = LogicalCircuitBuilder()
+    equivalent.add_patch(
+        SurfacePatch.create(3),
+        "renamed",
+        qubit_offset=47,
+        coord_offset=(23.0, -11.0),
+    )
+    equivalent.add_memory("renamed", 1, "X")
+    equivalent.build_algorithm_descriptor(p1=0.001, p2=0.002, p_meas=0.003, p_prep=0.004)
+    after_second = _cached_surface_singleton_memory_dem_templates.cache_info()
+    assert after_second.misses == after_first.misses
+    assert after_second.hits == after_first.hits + 1
+
+    def reject_full_compile(*_args, **_kwargs):
+        message = "a warm one-round template request compiled the full circuit"
+        raise AssertionError(message)
+
+    monkeypatch.setattr(LogicalCircuitBuilder, "_build_structured_dem", reject_full_compile)
+    warm = LogicalCircuitBuilder()
+    warm.add_patch(SurfacePatch.create(3), "warm", qubit_offset=17, coord_offset=(2.0, 19.0))
+    warm.add_memory("warm", 1, "X")
+    warm.build_dem(p1=0.001, p2=0.002, p_meas=0.003, p_prep=0.004)
+
+
 @pytest.mark.parametrize(
     ("dx", "dz", "basis", "rounds"),
     [
+        (3, 3, "Z", 1),
         (2, 2, "Z", 2),
         (3, 3, "X", 5),
         (2, 3, "Z", 4),

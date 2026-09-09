@@ -29,7 +29,7 @@ use rayon::{
     iter::{IntoParallelIterator, ParallelIterator},
 };
 use std::any::Any;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::{BufWriter, Write};
 use std::path::Path;
@@ -350,7 +350,10 @@ impl MonteCarloEngine {
     /// Runs a Monte Carlo simulation using the worker configuration and seeds
     /// recorded in `seed_report`.
     ///
-    /// The returned shots are ordered deterministically by worker and shot index.
+    /// The recorded worker indices, shot counts, and seeds drive replay; records
+    /// may be reordered or describe an uneven shot distribution. The returned
+    /// shots are ordered deterministically by worker and shot index.
+    /// Replay leaves the caller's root seed, RNG stream, and engine template unchanged.
     ///
     /// # Arguments
     /// * `seed_report` - The shot count, worker count, and worker seeds to replay
@@ -359,67 +362,48 @@ impl MonteCarloEngine {
     /// The aggregated shot results.
     ///
     /// # Errors
-    /// Returns `PecosError::Input` if the report contains fewer worker seed records
-    /// than its configured worker count. Returns a `PecosError` if the worker pool
-    /// cannot be created or any shot fails.
+    /// Returns `PecosError::Input` if the report has zero shots or workers, a
+    /// mismatched worker count or total shot count, duplicate worker indices,
+    /// or an overflowing total shot count. Returns a `PecosError` if the worker
+    /// pool cannot be created or any shot fails.
     ///
     /// # Panics
-    /// Panics if the report specifies zero shots or workers, or if a worker record's
-    /// index or shot count does not match the report configuration.
+    /// Panics if the results mutex is poisoned.
     pub fn run_with_workers_from_seed_report(
-        &mut self,
+        &self,
         seed_report: &SeedReport,
     ) -> Result<ShotVec, PecosError> {
-        // Import shot count, worker count, and all seeds from seed report.
-        let num_shots = seed_report.num_shots;
-        let num_workers = seed_report.num_workers;
+        seed_report.validate()?;
 
-        // check for invalid num_shots or num_workers
-        assert!(num_shots > 0, "num_shots cannot be zero");
-        assert!(num_workers > 0, "num_workers cannot be zero");
-        if seed_report.workers.len() < num_workers {
-            return Err(PecosError::Input(format!(
-                "Seed report contains {} worker records, but num_workers is {num_workers}",
-                seed_report.workers.len()
-            )));
-        }
+        debug!(
+            "Replaying Monte Carlo simulation: {} shots, {} workers",
+            seed_report.num_shots, seed_report.num_workers
+        );
 
-        let shots_per_worker = distribute_shots(num_shots, num_workers);
-        self.set_seed(seed_report.root_seed); // make sure to update root seed.
-
-        debug!("Running Monte Carlo simulation: {num_shots} shots, {num_workers} workers");
-
-        // Shared results collection
-        let results_vec = Arc::new(Mutex::new(Vec::<(usize, usize, Shot)>::with_capacity(
-            num_shots,
-        )));
+        // Shared results collection. Grow as shots complete instead of allocating
+        // from report metadata.
+        let results_vec = Arc::new(Mutex::new(Vec::<(usize, usize, Shot)>::new()));
 
         // CRITICAL: Pre-create worker engines on the main thread before parallel execution.
         // This avoids potential deadlocks when worker threads try to clone engines
         // simultaneously, which can trigger concurrent library loading operations
         // that contend with each other or the dynamic linker.
-        let worker_engines: Vec<_> = (0..num_workers)
-            .map(|worker_idx| {
+        let worker_engines: Vec<_> = seed_report
+            .workers
+            .iter()
+            .map(|record| {
                 let mut engine = self.hybrid_engine_template.clone();
-                engine.set_seed(seed_report.workers[worker_idx].seed);
-                (worker_idx, shots_per_worker[worker_idx], engine)
+                engine.set_seed(record.seed);
+                (record.worker_idx, record.shots, engine)
             })
             .collect();
-
-        // Verify that worker indices and shots per worker match the seed report
-        for (worker_index, item) in worker_engines.iter().enumerate().take(num_workers) {
-            // check that worker indices agree
-            assert!(seed_report.workers[worker_index].worker_idx == item.0, "..");
-            // check that worker shot counts agree
-            assert!(seed_report.workers[worker_index].shots == item.1, "..");
-        }
 
         // Create a dedicated thread pool for this simulation to avoid contention
         // with global Rayon thread pool when multiple simulations run concurrently.
         // CRITICAL: For QIS programs, we need to ensure each test gets its own
         // isolated thread pool to prevent TLS conflicts during library cleanup.
         let thread_pool = ThreadPoolBuilder::new()
-            .num_threads(num_workers)
+            .num_threads(seed_report.workers.len())
             .thread_name(|index| format!("pecos-mc-worker-{index}"))
             .build()
             .map_err(|e| PecosError::Processing(format!("Failed to create thread pool: {e}")))?;
@@ -764,6 +748,9 @@ pub struct WorkerSeedRecord {
 /// # Note
 /// `root_seed` alone cannot reproduce `base_seed` if the engine has a job history
 /// before this one. The per-worker seeds are the pieces that ensure deterministic replay.
+/// Worker indices must be unique but need not be contiguous or stored in order.
+/// The recorded shot counts must sum to `num_shots`; individual workers may have
+/// zero shots. Replay uses these counts rather than redistributing shots.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SeedReport {
     pub root_seed: u64,
@@ -778,6 +765,46 @@ pub struct SeedReport {
 /// Use these methods to save or reload reproducibility metadata when rerunning
 /// or investigating specific worker seeds.
 impl SeedReport {
+    /// Check consistency before allocating engines or executing a loaded report.
+    fn validate(&self) -> Result<(), PecosError> {
+        if self.num_shots == 0 {
+            return Err(PecosError::Input(
+                "Seed report num_shots cannot be zero".into(),
+            ));
+        }
+        if self.num_workers == 0 || self.workers.is_empty() {
+            return Err(PecosError::Input("Seed report contains no workers".into()));
+        }
+        if self.workers.len() != self.num_workers {
+            return Err(PecosError::Input(format!(
+                "Seed report contains {} worker records, but num_workers is {}",
+                self.workers.len(),
+                self.num_workers
+            )));
+        }
+
+        let mut indices = BTreeSet::new();
+        let mut total_shots = 0usize;
+        for record in &self.workers {
+            if !indices.insert(record.worker_idx) {
+                return Err(PecosError::Input(format!(
+                    "Seed report contains duplicate worker_idx {}",
+                    record.worker_idx
+                )));
+            }
+            total_shots = total_shots.checked_add(record.shots).ok_or_else(|| {
+                PecosError::Input("Seed report worker shot count total overflows usize".into())
+            })?;
+        }
+        if total_shots != self.num_shots {
+            return Err(PecosError::Input(format!(
+                "Seed report worker shots total {total_shots}, but num_shots is {}",
+                self.num_shots
+            )));
+        }
+        Ok(())
+    }
+
     /// Deserializes a `SeedReport` from a JSON string.
     ///
     /// # Returns
@@ -785,10 +812,12 @@ impl SeedReport {
     ///
     /// # Errors
     /// Returns `PecosError::Input` when the JSON is malformed or does not match
-    /// the expected seed report schema.
+    /// the expected seed report schema, or when worker metadata is inconsistent.
     pub fn from_json_str(json: &str) -> Result<Self, PecosError> {
-        serde_json::from_str(json)
-            .map_err(|err| PecosError::Input(format!("Failed to parse seed report JSON: {err}")))
+        let report: Self = serde_json::from_str(json)
+            .map_err(|err| PecosError::Input(format!("Failed to parse seed report JSON: {err}")))?;
+        report.validate()?;
+        Ok(report)
     }
 
     /// Reads and deserializes a `SeedReport` from a JSON file.
@@ -993,7 +1022,7 @@ impl ControlEngine for ExternalClassicalEngine {
         let commands = self.generate_commands()?;
 
         // Empty circuits complete immediately with the current result values.
-        let is_empty = commands.is_empty().unwrap_or(true);
+        let is_empty = commands.is_empty()?;
         if is_empty {
             let shot_result = self.get_results()?;
             Ok(EngineStage::Complete(shot_result))

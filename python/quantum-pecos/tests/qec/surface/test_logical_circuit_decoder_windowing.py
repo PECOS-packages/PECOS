@@ -260,7 +260,7 @@ def test_single_round_memory_provider_reuses_bounded_templates(monkeypatch):
 @pytest.mark.parametrize(
     ("rounds", "shapes", "bases"),
     [
-        (1, [(3, 3), (3, 3)], ["Z", "X"]),
+        (1, [(2, 2), (4, 3)], ["X", "Z"]),
         (3, [(3, 3), (2, 3)], ["Z", "X"]),
         (7, [(2, 2), (3, 2), (3, 3)], ["X", "Z", "X"]),
     ],

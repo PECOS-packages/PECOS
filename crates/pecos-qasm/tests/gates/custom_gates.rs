@@ -77,7 +77,7 @@ fn test_custom_gate_with_defined_params() {
     // After expansion, we should have operations from mygate
     // mygate expands to: anrz(theta) a; cx b, a; rx(phi) b;
     // anrz expands to: rz(p) a;
-    // So final expansion: rz(theta), cx, rx (plus any expansions of rx)
+    // So final expansion is RZ(theta), CX, and RXY1Q(phi, 0).
 
     assert!(
         !program.operations.is_empty(),
@@ -94,7 +94,7 @@ fn test_custom_gate_with_defined_params() {
             match name.to_uppercase().as_str() {
                 "RZ" => found_rz = true,
                 "CX" => found_cx = true,
-                "H" => found_rx_expansion = true, // rx expands to H-RZ-H
+                "RXY1Q" => found_rx_expansion = true,
                 _ => {}
             }
         }
@@ -103,8 +103,8 @@ fn test_custom_gate_with_defined_params() {
     assert!(found_rz, "Should have RZ gate from anrz expansion");
     assert!(found_cx, "Should have CX gate from mygate");
     assert!(
-        found_rx_expansion || program.operations.len() > 3,
-        "Should have rx expansion"
+        found_rx_expansion,
+        "Should have native RXY1Q from rx expansion"
     );
 }
 

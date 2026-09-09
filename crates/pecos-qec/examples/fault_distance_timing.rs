@@ -19,7 +19,7 @@ fn main() {
 
     let tick = build_surface_memory(distance, rounds);
     let dag = DagCircuit::try_from(&tick).unwrap();
-    let dem = DemBuilder::from_circuit(&dag, 0.001, 0.001, 0.001, 0.001);
+    let dem = DemBuilder::from_circuit(&dag, 0.001, 0.001, 0.001, 0.001).unwrap();
     let mechanism_count = dem.to_mechanisms().0.len();
 
     let started = Instant::now();

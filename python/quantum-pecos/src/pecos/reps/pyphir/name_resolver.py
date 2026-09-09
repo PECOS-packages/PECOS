@@ -16,7 +16,7 @@ simulators in the PECOS framework.
 """
 
 import pecos as pc
-from pecos.analysis.find_cliffs import r1xy2cliff, rz2cliff
+from pecos.analysis.find_cliffs import rxy1q2cliff, rz2cliff
 from pecos.reps.pyphir.op_types import QOp
 
 
@@ -45,8 +45,9 @@ def sim_name_resolver(qop: QOp) -> str:
 
     elif qop.name == "R1XY":
         angles = qop.angles
-        sym = r1xy2cliff(*angles)
+        sym = rxy1q2cliff(*angles)
         if isinstance(sym, str):
             return sym
+        return "RXY1Q"
 
     return qop.name

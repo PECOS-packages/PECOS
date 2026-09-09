@@ -74,8 +74,8 @@ use wide::u64x4;
 use super::types::{
     FaultMechanism, IdleChannelFamilies, NoiseChannelKind, NoiseChannelResidual, NoiseConfig,
     PauliProbs, PauliWeights, PerGateTypeNoise, ReplacementBranchApproximation,
-    combine_probabilities, fit_exclusive_signatures, validate_exclusive_probabilities,
-    validate_idle_probabilities,
+    combine_probabilities, fit_exclusive_signatures, is_two_qubit_noise_gate,
+    validate_exclusive_probabilities, validate_idle_probabilities,
 };
 
 // ============================================================================
@@ -451,13 +451,21 @@ impl SamplingEngine {
     ///
     /// Panics if a noise input or signature channel is invalid, or if a gate
     /// event has no corresponding fault location.
-    #[must_use]
+    ///
+    /// # Errors
+    ///
+    /// Returns the structured unsupported-gate diagnostic retained by the
+    /// influence map.
     pub fn from_influence_map(
         influence_map: &DagFaultInfluenceMap,
         per_location_probs: &[f64],
         noise: &super::NoiseConfig,
-    ) -> Self {
+    ) -> Result<Self, crate::fault_tolerance::propagator::UnsupportedGateError> {
         use pecos_core::gate_type::GateType;
+
+        if let Some(error) = influence_map.unsupported_gate() {
+            return Err(error.clone());
+        }
 
         let mut aggregated: BTreeMap<DemMechanism, f64> = BTreeMap::new();
         let mut idle_noise_residuals = Vec::new();
@@ -681,7 +689,7 @@ impl SamplingEngine {
 
         let mut engine = Self::from_mechanisms(mechanisms, num_detectors, num_dem_outputs);
         engine.idle_noise_residuals = idle_noise_residuals;
-        engine
+        Ok(engine)
     }
 
     /// Sample a single shot.
@@ -2179,8 +2187,17 @@ impl<'a> SamplingEngineBuilder<'a> {
     }
 
     /// Build the [`SamplingEngine`].
-    #[must_use]
-    pub fn build(self) -> SamplingEngine {
+    ///
+    /// # Errors
+    ///
+    /// Returns the structured unsupported-gate diagnostic retained by the
+    /// influence map.
+    pub fn build(
+        self,
+    ) -> Result<SamplingEngine, crate::fault_tolerance::propagator::UnsupportedGateError> {
+        if let Some(error) = self.influence_map.unsupported_gate() {
+            return Err(error.clone());
+        }
         if self.p2_replacement_approximation == ReplacementBranchApproximation::ExactBranchReplay
             && self
                 .p2_weights
@@ -2188,7 +2205,7 @@ impl<'a> SamplingEngineBuilder<'a> {
                 .is_some_and(super::types::PauliWeights::has_replacement_entries)
         {
             panic!(
-                "exact_branch_replay for starred p2 replacement branches requires a circuit-aware exact branch provider; use branch_impact or pauli_twirl_omitted_gate for the current Pauli-projected approximations"
+                "exact_branch_replay for p2 replacement branches requires a circuit-aware exact branch provider; use branch_impact or pauli_twirl_omitted_gate for the current Pauli-projected approximations"
             );
         }
         let num_detectors = self.detector_records.len();
@@ -2270,21 +2287,9 @@ impl<'a> SamplingEngineBuilder<'a> {
                         );
                     }
                 }
-                GateType::CX
-                | GateType::CZ
-                | GateType::CY
-                | GateType::SZZ
-                | GateType::SZZdg
-                | GateType::SXX
-                | GateType::SXXdg
-                | GateType::SYY
-                | GateType::SYYdg
-                | GateType::SWAP
-                | GateType::RXX
-                | GateType::RYY
-                | GateType::RZZ
+                gate_type
                     // Two-qubit gate errors: only "after" locations, process as pairs
-                    if !loc.before => {
+                    if is_two_qubit_noise_gate(gate_type) && !loc.before => {
                         cx_groups.entry(loc.node).or_default().push(loc_idx);
                     }
                 GateType::H
@@ -2305,7 +2310,7 @@ impl<'a> SamplingEngineBuilder<'a> {
                 | GateType::RY
                 | GateType::RZ
                 | GateType::U
-                | GateType::R1XY
+                | GateType::RXY1Q
                     // Single-qubit gate errors: only "after" locations, depolarizing
                     if !loc.before =>
                 {
@@ -2421,7 +2426,7 @@ impl<'a> SamplingEngineBuilder<'a> {
             dem_output_offsets.push(dem_output_data.len() as u32);
         }
 
-        SamplingEngine {
+        Ok(SamplingEngine {
             thresholds,
             inv_log_1_minus_p,
             detector_offsets,
@@ -2431,7 +2436,7 @@ impl<'a> SamplingEngineBuilder<'a> {
             num_detectors,
             num_dem_outputs,
             idle_noise_residuals,
-        }
+        })
     }
 
     /// Build mapping from influence map measurement indices to `TickCircuit` indices.
@@ -3200,7 +3205,8 @@ mod tests {
         // Zero noise should produce no errors
         let sampler = SamplingEngineBuilder::new(&influence_map)
             .with_noise(0.0, 0.0, 0.0, 0.0)
-            .build();
+            .build()
+            .unwrap();
 
         assert_eq!(sampler.num_mechanisms(), 0);
         assert_eq!(sampler.num_dem_outputs(), 0);
@@ -3236,7 +3242,8 @@ mod tests {
             .unwrap()
             .with_observables_json(observables_json)
             .unwrap()
-            .build();
+            .build()
+            .unwrap();
 
         assert_eq!(sampler.num_detectors(), 1);
         assert_eq!(sampler.num_observables(), 0);
@@ -3265,14 +3272,16 @@ mod tests {
             .unwrap()
             .with_observables_json(r#"[{"id": 0, "records": [-1]}]"#)
             .unwrap()
-            .build();
+            .build()
+            .unwrap();
         assert_eq!(json_sampler.num_detectors(), 1);
         assert_eq!(json_sampler.num_dem_outputs(), 1);
 
         let record_sampler = SamplingEngineBuilder::new(&influence_map)
             .with_detector_records(vec![vec![-1]])
             .with_observable_records(vec![vec![-1]])
-            .build();
+            .build()
+            .unwrap();
         assert_eq!(record_sampler.num_detectors(), 1);
         assert_eq!(record_sampler.num_dem_outputs(), 1);
     }
@@ -3300,7 +3309,8 @@ mod tests {
             .with_noise(0.01, 0.01, 0.01, 0.01)
             .with_detector_records(vec![vec![-1], vec![-2]])
             .with_observable_records(vec![])
-            .build();
+            .build()
+            .unwrap();
 
         // Sample with row-major method
         let mut rng1 = SmallRng::seed_from_u64(12345);
@@ -3344,7 +3354,8 @@ mod tests {
             .with_noise(0.5, 0.0, 0.0, 0.0) // High noise rate for testing
             .with_detector_records(vec![vec![-1]])
             .with_observable_records(vec![])
-            .build();
+            .build()
+            .unwrap();
 
         let num_shots = 100;
         let mut rng = SmallRng::seed_from_u64(42);
@@ -3380,7 +3391,8 @@ mod tests {
             .with_noise(0.01, 0.01, 0.01, 0.01)
             .with_detector_records(vec![vec![-1], vec![-2]])
             .with_observable_records(vec![])
-            .build();
+            .build()
+            .unwrap();
 
         // Compare SIMD to baseline
         let mut rng1 = SmallRng::seed_from_u64(42);
@@ -3421,7 +3433,8 @@ mod tests {
             .with_noise(0.001, 0.001, 0.001, 0.001)
             .with_detector_records(vec![vec![-1], vec![-2]])
             .with_observable_records(vec![])
-            .build();
+            .build()
+            .unwrap();
 
         // Compare geometric to baseline with many shots for statistical significance
         let mut rng1 = SmallRng::seed_from_u64(42);
@@ -3465,7 +3478,8 @@ mod tests {
             .with_noise(0.001, 0.001, 0.001, 0.001)
             .with_detector_records(vec![vec![-1]])
             .with_observable_records(vec![])
-            .build();
+            .build()
+            .unwrap();
 
         assert!(sampler.average_error_probability() < 0.01);
 
@@ -3495,7 +3509,8 @@ mod tests {
             .with_noise(0.1, 0.1, 0.1, 0.1)
             .with_detector_records(vec![vec![-1]])
             .with_observable_records(vec![])
-            .build();
+            .build()
+            .unwrap();
 
         assert!(sampler.average_error_probability() >= 0.01);
 
@@ -3527,7 +3542,8 @@ mod tests {
             .with_noise(0.001, 0.001, 0.001, 0.001)
             .with_detector_records(vec![vec![-1], vec![-2]])
             .with_observable_records(vec![])
-            .build();
+            .build()
+            .unwrap();
 
         // Compare parallel to sequential
         let mut rng = SmallRng::seed_from_u64(42);

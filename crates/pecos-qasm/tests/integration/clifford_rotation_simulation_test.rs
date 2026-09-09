@@ -1,9 +1,182 @@
 //! Integration tests verifying that QASM programs with Clifford-angle rotation gates
 //! execute correctly through the full QASM parse -> engine -> simulation pipeline.
 
+use pecos_core::gate_type::GateType;
 use pecos_engines::ClassicalControlEngineBuilder;
 use pecos_programs::Qasm;
-use pecos_qasm::qasm_engine;
+use pecos_qasm::{Operation, QASMParser, qasm_engine};
+use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, StateVecSoA32};
+
+fn zz_observable_snapshot(qasm: &str) -> ([f64; 4], [usize; 4]) {
+    let program = QASMParser::parse_str(qasm).unwrap();
+    let mut state = StateVecSoA32::new(2);
+    for operation in &program.operations {
+        match operation {
+            Operation::NativeGate(gate) if gate.gate_type == GateType::H => {
+                state.h(&gate.qubits);
+            }
+            Operation::NativeGate(gate) if gate.gate_type == GateType::SZZ => {
+                state.szz(&[(gate.qubits[0], gate.qubits[1])]);
+            }
+            Operation::MeasureWithMapping { .. } => {}
+            other => panic!("unexpected operation in ZZ observable probe: {other:?}"),
+        }
+    }
+    let probabilities =
+        std::array::from_fn(|basis| f64::from(state.get_amplitude(basis).norm_sqr()));
+
+    let results = qasm_engine()
+        .program(Qasm::from_string(qasm))
+        .to_sim()
+        .seed(42)
+        .workers(1)
+        .run(4096)
+        .unwrap();
+    let mut histogram = [0; 4];
+    for shot in &results.shots {
+        let value = shot.data.get("c").unwrap().as_u32().unwrap() as usize;
+        histogram[value] += 1;
+    }
+    (probabilities, histogram)
+}
+
+#[test]
+fn qasm_zz_alias_and_szz_have_identical_observables() {
+    let zz = r#"
+        OPENQASM 2.0;
+        include "hqslib1.inc";
+        qreg q[2];
+        creg c[2];
+        h q[0];
+        h q[1];
+        ZZ q[0], q[1];
+        h q[0];
+        h q[1];
+        measure q -> c;
+    "#;
+    let szz = r#"
+        OPENQASM 2.0;
+        include "pecos.inc";
+        qreg q[2];
+        creg c[2];
+        h q[0];
+        h q[1];
+        SZZ q[0], q[1];
+        h q[0];
+        h q[1];
+        measure q -> c;
+    "#;
+
+    let zz_snapshot = zz_observable_snapshot(zz);
+    let szz_snapshot = zz_observable_snapshot(szz);
+    eprintln!(
+        "ZZ probabilities={:?}, histogram={:?}",
+        zz_snapshot.0, zz_snapshot.1
+    );
+    eprintln!(
+        "SZZ probabilities={:?}, histogram={:?}",
+        szz_snapshot.0, szz_snapshot.1
+    );
+
+    for (actual, expected) in zz_snapshot.0.iter().zip([0.5, 0.0, 0.0, 0.5]) {
+        assert!((actual - expected).abs() < 3e-6);
+    }
+    assert_eq!(zz_snapshot.1, szz_snapshot.1);
+    for (zz_probability, szz_probability) in zz_snapshot.0.iter().zip(szz_snapshot.0) {
+        assert!((zz_probability - szz_probability).abs() < f64::EPSILON);
+    }
+}
+
+#[test]
+fn uppercase_native_swap_executes() {
+    let qasm = r"
+        OPENQASM 2.0;
+        qreg q[2];
+        creg c[2];
+        X q[0];
+        SWAP q[0], q[1];
+        measure q -> c;
+    ";
+
+    let results = qasm_engine()
+        .program(Qasm::from_string(qasm))
+        .to_sim()
+        .seed(42)
+        .workers(1)
+        .run(4)
+        .unwrap();
+
+    for shot in &results.shots {
+        assert_eq!(shot.data.get("c").unwrap().as_u32(), Some(2));
+    }
+}
+
+#[test]
+fn xy_plane_rotation_spellings_are_identical_native_gates() {
+    let programs = [
+        r#"
+            OPENQASM 2.0;
+            include "pecos.inc";
+            qreg q[1];
+            creg c[1];
+            rxy1q(pi, 0) q[0];
+            measure q -> c;
+        "#,
+        r#"
+            OPENQASM 2.0;
+            include "pecos.inc";
+            qreg q[1];
+            creg c[1];
+            r1xy(pi, 0) q[0];
+            measure q -> c;
+        "#,
+        r#"
+            OPENQASM 2.0;
+            include "hqslib1.inc";
+            qreg q[1];
+            creg c[1];
+            U1q(pi, 0) q[0];
+            measure q -> c;
+        "#,
+    ];
+
+    let mut result_snapshots = Vec::new();
+    let mut state_snapshots = Vec::new();
+    for qasm in programs {
+        let program = QASMParser::parse_str(qasm).unwrap();
+        let xy_gate = program
+            .operations
+            .iter()
+            .find_map(|op| match op {
+                Operation::NativeGate(gate) if gate.gate_type == GateType::RXY1Q => Some(gate),
+                _ => None,
+            })
+            .unwrap();
+
+        let mut columns = Vec::new();
+        for basis in 0..2 {
+            let mut state = StateVecSoA32::new(1);
+            if basis == 1 {
+                state.x(&xy_gate.qubits);
+            }
+            state.rxy1q(xy_gate.angles[0], xy_gate.angles[1], &xy_gate.qubits);
+            columns.push([state.get_amplitude(0), state.get_amplitude(1)]);
+        }
+        state_snapshots.push(columns);
+
+        let results = qasm_engine()
+            .program(Qasm::from_string(qasm))
+            .to_sim()
+            .seed(42)
+            .workers(1)
+            .run(1)
+            .unwrap();
+        result_snapshots.push(results.shots[0].data.clone());
+    }
+
+    assert!(state_snapshots.windows(2).all(|pair| pair[0] == pair[1]));
+    assert!(result_snapshots.windows(2).all(|pair| pair[0] == pair[1]));
+}
 
 #[test]
 fn qasm_rz_pi_acts_as_z_gate() {
@@ -158,9 +331,9 @@ fn qasm_rzz_pi_over_2_entangles_qubits() {
 }
 
 #[test]
-fn qasm_rx_pi_via_decomposition_acts_as_x() {
-    // In qelib1.inc, rx(theta) decomposes to h; rz(theta); h.
-    // rx(pi) = H*Z*H = X. So |0> -> |1>.
+fn qasm_rx_pi_via_rxy1q_acts_as_x() {
+    // In qelib1.inc, rx(theta) maps to RXY1Q(theta, 0).
+    // RXY1Q(pi, 0) = X up to global phase. So |0> -> |1>.
     let qasm = r#"
         OPENQASM 2.0;
         include "qelib1.inc";
@@ -215,9 +388,9 @@ fn qasm_hqslib1_rz_pi_acts_as_z() {
 }
 
 #[test]
-fn qasm_hqslib1_rx_pi_via_r1xy_acts_as_x() {
-    // In hqslib1.inc, rx(theta) maps to R1XY(theta, 0).
-    // R1XY(pi, 0) = X. So |0> -> |1>.
+fn qasm_hqslib1_rx_pi_via_rxy1q_acts_as_x() {
+    // In hqslib1.inc, rx(theta) maps to RXY1Q(theta, 0).
+    // RXY1Q(pi, 0) = X. So |0> -> |1>.
     let qasm = r#"
         OPENQASM 2.0;
         include "hqslib1.inc";
@@ -238,14 +411,14 @@ fn qasm_hqslib1_rx_pi_via_r1xy_acts_as_x() {
 
     for shot in &results.shots {
         let value = shot.data.get("c").unwrap().as_u32().unwrap();
-        assert_eq!(value, 1, "R1XY(pi, 0) = X, so |0> -> |1>");
+        assert_eq!(value, 1, "RXY1Q(pi, 0) = X, so |0> -> |1>");
     }
 }
 
 #[test]
-fn qasm_hqslib1_ry_pi_via_r1xy_acts_as_y() {
-    // In hqslib1.inc, ry(theta) maps to R1XY(theta, pi/2).
-    // R1XY(pi, pi/2) = Y. Y|0> = i|1>, outcome 1.
+fn qasm_hqslib1_ry_pi_via_rxy1q_acts_as_y() {
+    // In hqslib1.inc, ry(theta) maps to RXY1Q(theta, pi/2).
+    // RXY1Q(pi, pi/2) = Y. Y|0> = i|1>, outcome 1.
     let qasm = r#"
         OPENQASM 2.0;
         include "hqslib1.inc";
@@ -266,7 +439,7 @@ fn qasm_hqslib1_ry_pi_via_r1xy_acts_as_y() {
 
     for shot in &results.shots {
         let value = shot.data.get("c").unwrap().as_u32().unwrap();
-        assert_eq!(value, 1, "R1XY(pi, pi/2) = Y, so |0> -> |1>");
+        assert_eq!(value, 1, "RXY1Q(pi, pi/2) = Y, so |0> -> |1>");
     }
 }
 

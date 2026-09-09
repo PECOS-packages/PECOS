@@ -811,7 +811,7 @@ impl PrettyPrinter {
     // =========================================================================
 
     fn print_gate_op(&mut self, g: &GateOp) {
-        self.write(&format!("{:?}", g.kind).to_lowercase());
+        self.write(g.kind.keyword());
 
         if !g.params.is_empty() {
             self.write("(");
@@ -1218,7 +1218,7 @@ impl PrettyPrinter {
                 self.print_expr(&m.targets);
             }
             Expr::Gate(g) => {
-                self.write(&format!("{:?}", g.kind).to_lowercase());
+                self.write(g.kind.keyword());
                 if !g.params.is_empty() {
                     self.write("(");
                     for (i, param) in g.params.iter().enumerate() {
@@ -1697,9 +1697,9 @@ mod tests {
 
     #[test]
     fn test_parameterized_gate() {
-        let source = "fn test() -> unit { rx(0.5) q[0]; }";
+        let source = "fn test() -> unit { rx(0.5 turns) q[0]; }";
         let formatted = format(source);
-        assert!(formatted.contains("rx(0.5) q[0]"));
+        assert!(formatted.contains("rx(0.5 turns) q[0]"));
     }
 
     #[test]

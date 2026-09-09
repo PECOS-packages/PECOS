@@ -53,16 +53,16 @@ fn test_pecos_inc_rotation_gates() {
         rz(-pi/2) q[0];
         rz(2*pi) q[0];
 
-        r1xy(pi/2, 0) q[0];
-        r1xy(pi/3, pi/2) q[0];
-        r1xy(pi, pi/4) q[0];
+        rxy1q(pi/2, 0) q[0];
+        rxy1q(pi/3, pi/2) q[0];
+        rxy1q(pi, pi/4) q[0];
     "#;
 
     let program = QASMParser::parse_str(qasm).expect("Failed to parse pecos.inc rotation gates");
 
     // All should map to native gates
     assert_eq!(count_gate(&program.operations, "RZ"), 3);
-    assert_eq!(count_gate(&program.operations, "R1XY"), 3);
+    assert_eq!(count_gate(&program.operations, "RXY1Q"), 3);
 }
 
 #[test]
@@ -100,7 +100,7 @@ fn test_pecos_inc_native_gates_uppercase() {
         Y q[0];
         Z q[0];
         RZ(pi/2) q[0];
-        R1XY(pi/2, pi/4) q[0];
+        RXY1Q(pi/2, pi/4) q[0];
         CX q[0],q[1];
         SZZ q[0],q[1];
     "#;
@@ -113,7 +113,7 @@ fn test_pecos_inc_native_gates_uppercase() {
     assert_eq!(count_gate(&program.operations, "Y"), 1);
     assert_eq!(count_gate(&program.operations, "Z"), 1);
     assert_eq!(count_gate(&program.operations, "RZ"), 1);
-    assert_eq!(count_gate(&program.operations, "R1XY"), 1);
+    assert_eq!(count_gate(&program.operations, "RXY1Q"), 1);
     assert_eq!(count_gate(&program.operations, "CX"), 1);
     assert_eq!(count_gate(&program.operations, "SZZ"), 1);
 }
@@ -171,16 +171,16 @@ fn test_pecos_inc_parameter_expressions() {
         rz(-pi/2) q[0];
         rz(3*pi/4) q[0];
 
-        r1xy(pi/2, 0) q[0];
-        r1xy(pi, pi/2) q[0];
-        r1xy(2*pi, -pi/4) q[0];
-        r1xy(0.5*pi, 0.25*pi) q[0];
+        rxy1q(pi/2, 0) q[0];
+        rxy1q(pi, pi/2) q[0];
+        rxy1q(2*pi, -pi/4) q[0];
+        rxy1q(0.5*pi, 0.25*pi) q[0];
     "#;
 
     let program = QASMParser::parse_str(qasm).expect("Failed to parse parameter expressions");
 
     assert_eq!(count_gate(&program.operations, "RZ"), 5);
-    assert_eq!(count_gate(&program.operations, "R1XY"), 4);
+    assert_eq!(count_gate(&program.operations, "RXY1Q"), 4);
 }
 
 #[test]
@@ -205,9 +205,9 @@ fn test_pecos_inc_complex_circuit() {
 
         // Apply rotations
         rz(pi/4) q[0];
-        r1xy(pi/2, 0) q[1];
+        rxy1q(pi/2, 0) q[1];
         rz(-pi/2) q[2];
-        r1xy(pi/3, pi/2) q[3];
+        rxy1q(pi/3, pi/2) q[3];
 
         // ZZ interactions
         szz q[0],q[1];
@@ -221,7 +221,7 @@ fn test_pecos_inc_complex_circuit() {
 
         // More rotations
         rz(pi/8) q[0];
-        r1xy(pi/6, pi/4) q[4];
+        rxy1q(pi/6, pi/4) q[4];
 
         // Final entanglement
         cx q[0],q[4];
@@ -236,7 +236,7 @@ fn test_pecos_inc_complex_circuit() {
     assert_eq!(count_gate(&program.operations, "H"), 3);
     assert_eq!(count_gate(&program.operations, "CX"), 5);
     assert_eq!(count_gate(&program.operations, "RZ"), 3);
-    assert_eq!(count_gate(&program.operations, "R1XY"), 3);
+    assert_eq!(count_gate(&program.operations, "RXY1Q"), 3);
     assert_eq!(count_gate(&program.operations, "SZZ"), 3);
     assert_eq!(count_gate(&program.operations, "X"), 1);
     assert_eq!(count_gate(&program.operations, "Y"), 1);
@@ -269,7 +269,7 @@ fn test_pecos_inc_minimal_nature() {
     assert!(program.gate_definitions.contains_key("y"));
     assert!(program.gate_definitions.contains_key("z"));
     assert!(program.gate_definitions.contains_key("rz"));
-    assert!(program.gate_definitions.contains_key("r1xy"));
+    assert!(program.gate_definitions.contains_key("rxy1q"));
     assert!(program.gate_definitions.contains_key("cx"));
     assert!(program.gate_definitions.contains_key("szz"));
 
@@ -336,7 +336,7 @@ fn test_pecos_inc_native_gate_compatibility() {
         y q[0];      // -> Y
         z q[0];      // -> Z
         rz(pi) q[0]; // -> RZ
-        r1xy(pi/2, 0) q[0]; // -> R1XY
+        rxy1q(pi/2, 0) q[0]; // -> RXY1Q
         cx q[0],q[1];  // -> CX
         szz q[0],q[1]; // -> SZZ
     "#;
@@ -348,7 +348,7 @@ fn test_pecos_inc_native_gate_compatibility() {
         if let Operation::Gate { name, .. } = op {
             // Gate names should match what's defined in pecos.inc
             assert!(
-                ["h", "x", "y", "z", "rz", "r1xy", "cx", "szz"]
+                ["h", "x", "y", "z", "rz", "rxy1q", "cx", "szz"]
                     .contains(&name.to_lowercase().as_str()),
                 "Unexpected gate: {name}"
             );

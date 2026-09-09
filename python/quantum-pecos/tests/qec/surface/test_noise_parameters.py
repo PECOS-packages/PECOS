@@ -25,7 +25,7 @@ def _two_qubit_program() -> None:
     result("m1", measure(q1).read())
 
 
-def _dem_bytes(noise: NoiseParameters) -> bytes:
+def _build_dem(noise: NoiseParameters) -> DetectorErrorModel:
     build = (
         DetectorErrorModel.builder()
         .with_program(_two_qubit_program)
@@ -35,7 +35,11 @@ def _dem_bytes(noise: NoiseParameters) -> bytes:
         .with_noise(noise)
         .build()
     )
-    return build.dem.to_string().encode()
+    return build.dem
+
+
+def _dem_bytes(noise: NoiseParameters) -> bytes:
+    return _build_dem(noise).to_string().encode()
 
 
 def test_fluent_chain_matches_constructor_and_dem() -> None:
@@ -61,6 +65,22 @@ def test_fluent_chain_matches_constructor_and_dem() -> None:
 
     assert fluent == constructor
     assert _dem_bytes(fluent) == _dem_bytes(constructor)
+
+
+def test_replacement_p2_weight_builds_and_samples() -> None:
+    dem = _build_dem(NoiseParameters(p2=0.01, p2_weights={"~XX": 1.0}))
+
+    sampler = dem.to_sampler()
+    batch = sampler.sample_batch(8, seed=17)
+
+    assert dem.num_contributions > 0
+    assert batch.num_shots == 8
+    assert len(batch.get_syndrome(0)) == dem.num_detectors
+
+
+def test_removed_replacement_p2_weight_raises_with_migration_hint() -> None:
+    with pytest.raises(ValueError, match=r"~XX"):
+        _build_dem(NoiseParameters(p2=0.01, p2_weights={"*XX": 1.0}))
 
 
 # The idle-family model fields are the one deliberate exception to the

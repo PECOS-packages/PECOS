@@ -8,14 +8,18 @@ import math
 
 import pecos_rslib_exp as exp
 import pytest
-from pecos.quantum import TickCircuit
+from pecos.simulators import StateVec
 
 STATS_KEYS = {
     "total_nonclifford",
     "single_site",
     "multi_disent",
+    "deferred_disent_bypass",
     "numerical_redetect",
     "multi_std",
+    "multi_std_add",
+    "multi_std_cascade",
+    "signed_eigenstate_candidates",
     "stabilizer",
     "ofd_in_span",
     "ofd_new_dim",
@@ -31,22 +35,161 @@ def assert_complex_tuple(value):
     assert all(isinstance(component, float) for component in value)
 
 
-def test_sim_neo_stab_mps_boolean_builder_options():
+def assert_state_vector(actual, expected):
+    assert len(actual) == len(expected)
+    for actual_amplitude, expected_amplitude in zip(actual, expected, strict=True):
+        assert math.isclose(actual_amplitude[0], expected_amplitude[0], abs_tol=1e-12)
+        assert math.isclose(actual_amplitude[1], expected_amplitude[1], abs_tol=1e-12)
+
+
+def test_sim_neo_stab_mps_measurement_and_boolean_builder_options():
+    from pecos.quantum import TickCircuit
+
     circuit = TickCircuit()
     circuit.tick().x([0])
     circuit.tick().mz([0])
 
     backends = [
-        exp.stab_mps().lazy_measure().merge_rz(),
-        exp.stab_mps().lazy_measure(True).merge_rz(True),
-        exp.stab_mps().lazy_measure(False).merge_rz(False),
+        exp.stab_mps().measurement("exact").merge_rz(),
+        exp.stab_mps().measurement("lazy").merge_rz(True),
+        exp.stab_mps().measurement("pragmatic").merge_rz(False),
     ]
     for backend in backends:
         result = exp.sim_neo(circuit).quantum(backend).sampling(exp.monte_carlo(1)).seed(7).run()
         assert [list(row) for row in result] == [[1]]
 
+    with pytest.raises(ValueError, match="measurement must be one of"):
+        exp.stab_mps().measurement("eager")
+
+
+def test_sim_neo_rejects_rotation_with_wrong_angle_arity():
+    from pecos_rslib.quantum import Gate, GateType
+
+    class Tick:
+        def __init__(self):
+            self.calls = 0
+
+        def gate_batches(self):
+            self.calls += 1
+            if self.calls == 1:
+                return [Gate(GateType.RZ, params=[0.5], qubits=[0])]
+            return [Gate(GateType.RZ, qubits=[0])]
+
+    class Circuit:
+        def __init__(self):
+            self.tick = Tick()
+
+        def num_ticks(self):
+            return 1
+
+        def get_tick(self, _index):
+            return self.tick
+
+        def annotations(self):
+            return []
+
+    with pytest.raises(ValueError, match="Gate RZ expected 1 angle parameters, got 0"):
+        exp.sim_neo(Circuit())
+
+
+def test_sim_neo_python_fallback_crz_preserves_full_matrix():
+    class GateType:
+        def __init__(self, name):
+            self.name = name
+
+        def __repr__(self):
+            return f"GateType.{self.name}"
+
+    class Gate:
+        def __init__(self, name, qubits, angles=()):
+            self.gate_type = GateType(name)
+            self.qubits = list(qubits)
+            self.angles = list(angles)
+
+    class Tick:
+        def __init__(self, gates):
+            self.gates = gates
+
+        def gate_batches(self):
+            return self.gates
+
+    class Circuit:
+        def __init__(self, basis, theta):
+            prep = []
+            if basis & 1:
+                prep.append(Gate("X", [0]))
+            if basis & 2:
+                prep.append(Gate("X", [1]))
+            self.ticks = [Tick(prep), Tick([Gate("CRZ", [1, 0], [theta])])]
+
+        def num_ticks(self):
+            return len(self.ticks)
+
+        def get_tick(self, index):
+            return self.ticks[index]
+
+        def annotations(self):
+            return []
+
+    for theta in (-math.pi, math.pi / 3, math.pi, math.tau, 3 * math.pi):
+        columns = []
+        for basis in range(4):
+            native = exp.neo_fallback_native_gates(Circuit(basis, theta))
+            simulator = StateVec(2)
+            for _, name, qubits, angles in native:
+                if name in {"X", "RZ"}:
+                    params = {"angle": angles[0]} if name == "RZ" else None
+                    for qubit in qubits:
+                        simulator.backend.run_1q_gate(name, qubit, params)
+                elif name == "RZZ":
+                    for offset in range(0, len(qubits), 2):
+                        simulator.backend.run_2q_gate(
+                            name,
+                            (qubits[offset], qubits[offset + 1]),
+                            {"angle": angles[0]},
+                        )
+                else:
+                    msg = f"unexpected neo fallback gate {name}"
+                    raise AssertionError(msg)
+            columns.append([complex(value) for value in simulator.backend.vector])
+
+        half = theta / 2
+        reference = [
+            [1, 0, 0, 0],
+            [0, 1, 0, 0],
+            [0, 0, complex(math.cos(half), -math.sin(half)), 0],
+            [0, 0, 0, complex(math.cos(half), math.sin(half))],
+        ]
+        phase = columns[0][0] / reference[0][0]
+        assert abs(abs(phase) - 1) < 1e-12
+        if theta in {-math.pi, math.pi / 3, math.pi}:
+            assert abs(phase - 1) < 1e-12
+        else:
+            assert min(abs(phase - 1), abs(phase + 1)) < 1e-12
+        for column in range(4):
+            for row in range(4):
+                assert abs(columns[column][row] / phase - reference[row][column]) < 1e-12
+
+
+def test_stab_mps_measurement_selection_precedence_and_reset_retention():
+    assert exp.StabMps(1).measurement == "exact"
+    assert exp.StabMps(1, measurement="pragmatic").measurement == "pragmatic"
+    assert exp.StabMps(1, measurement="lazy").measurement == "lazy"
+    assert exp.StabMps(1, for_qec=True).measurement == "exact"
+    assert exp.StabMps(1, for_qec=True, measurement="exact").measurement == "exact"
+    assert exp.StabMps(1, for_qec=True, measurement="pragmatic").measurement == "pragmatic"
+    lazy = exp.StabMps(1, for_qec=True, measurement="lazy")
+    assert lazy.measurement == "lazy"
+    assert lazy.reset().measurement == "lazy"
+
+    with pytest.raises(ValueError, match="measurement must be one of"):
+        exp.StabMps(1, measurement="eager")
+
 
 def test_stab_mps_analysis_and_noise_exposure():
+    telemetry_enabled = exp.StabMps(1, saturation_telemetry=True)
+    assert telemetry_enabled.stats()["signed_eigenstate_candidates"] == 0
+
     bell = exp.StabMps(2, seed=7)
     bell.run_1q_gate("H", 0)
     bell.run_2q_gate("CX", (0, 1))
@@ -101,9 +244,32 @@ def test_stab_mps_analysis_and_noise_exposure():
     )
 
 
+def test_stab_mps_named_t_has_conventional_exact_amplitudes():
+    inv_sqrt_2 = 1 / math.sqrt(2)
+
+    ht = exp.StabMps(1, merge_rz=False)
+    ht.run_1q_gate("H", 0)
+    ht.run_1q_gate("T", 0)
+    assert_state_vector(ht.state_vector(), [(inv_sqrt_2, 0.0), (0.5, 0.5)])
+
+    t_squared = exp.StabMps(1, merge_rz=False)
+    t_squared.run_1q_gate("H", 0)
+    t_squared.run_1q_gate("T", 0)
+    t_squared.run_1q_gate("T", 0)
+
+    s = exp.StabMps(1, merge_rz=False)
+    s.run_1q_gate("H", 0)
+    s.run_1q_gate("S", 0)
+    expected = [(inv_sqrt_2, 0.0), (0.0, inv_sqrt_2)]
+    assert_state_vector(t_squared.state_vector(), expected)
+    assert_state_vector(s.state_vector(), expected)
+
+
 def test_stab_mps_bitstring_convention_auto_flush_and_validation():
     q0_one = exp.StabMps(2, seed=13)
     q0_one.run_1q_gate("X", 0)
+    assert not hasattr(q0_one, "sample_bit" + "string")
+    assert hasattr(q0_one, "sample_bit" + "strings")
     assert q0_one.sample_bitstrings(4) == [[True, False]] * 4
     assert q0_one.state_vector() == [
         (0.0, 0.0),
@@ -114,6 +280,10 @@ def test_stab_mps_bitstring_convention_auto_flush_and_validation():
     assert q0_one.amplitude([True, False]) == (1.0, 0.0)
     assert q0_one.amplitude_iterative([True, False]) == (1.0, 0.0)
     assert math.isclose(q0_one.prob_bitstring([True, False]), 1.0)
+    assert q0_one.prob_bitstrings(
+        [[True, False], [False, False], [True, False]],
+    ) == [1.0, 0.0, 1.0]
+    assert q0_one.prob_bitstrings([]) == []
 
     merged = exp.StabMps(2, seed=17, merge_rz=True)
     merged.run_1q_gate("H", 0)
@@ -123,7 +293,7 @@ def test_stab_mps_bitstring_convention_auto_flush_and_validation():
     assert_complex_tuple(merged_amplitude)
     assert merged.is_state_exact() is True
 
-    lazy = exp.StabMps(2, seed=19, lazy_measure=True)
+    lazy = exp.StabMps(2, seed=19, measurement="lazy")
     lazy.run_1q_gate("H", 1)
     lazy.run_1q_gate("T", 1)
     lazy.run_1q_gate("S", 0)
@@ -132,12 +302,32 @@ def test_stab_mps_bitstring_convention_auto_flush_and_validation():
     lazy.run_1q_gate("MZ", 0)
     assert lazy.is_state_exact() is False
     assert len(lazy.state_vector()) == 4
-    assert lazy.is_state_exact() is True
+    assert lazy.is_state_exact() is False
+    assert lazy.uncompensated_pre_reduction_count == 0
+    assert lazy.summed_discarded_weight == 0.0
+    assert lazy.branch_vanish_retry_count == 0
+    assert lazy.deferred_branch_lost_count == 0
+    assert isinstance(lazy.lifetime_peak_bond, int)
 
     with pytest.raises(ValueError, match="bitstring length 1, expected 2"):
         q0_one.amplitude([True])
     with pytest.raises(ValueError, match="bitstring item 0 must be bool"):
         q0_one.prob_bitstring([1, False])
+    with pytest.raises(
+        ValueError,
+        match="prob_bitstrings: query 0: bitstring item 0 must be bool",
+    ):
+        q0_one.prob_bitstrings([[1, False]])
+    with pytest.raises(
+        ValueError,
+        match="prob_bitstrings: query 1: bitstring length 1, expected 2",
+    ):
+        q0_one.prob_bitstrings([[True, False], [True]])
+    with pytest.raises(
+        ValueError,
+        match="prob_bitstrings: queries must be an iterable of bitstrings",
+    ):
+        q0_one.prob_bitstrings(1)
     with pytest.raises(IndexError):
         q0_one.frame_x_bit(2)
     with pytest.raises(IndexError):

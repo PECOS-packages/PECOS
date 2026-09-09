@@ -94,6 +94,8 @@ fn bptrellis_defaults_enable_bp_merge_and_deadline_order() {
             column_order: Some(deadline_order),
             merge_indistinguishable: true,
             bp_score_iterations: 5,
+            metric_mode: pecos_trellis::MetricMode::default(),
+            int_metric_scale: 1024,
         },
     )
     .unwrap();
@@ -106,6 +108,8 @@ fn bptrellis_defaults_enable_bp_merge_and_deadline_order() {
             column_order: None,
             merge_indistinguishable: true,
             bp_score_iterations: 5,
+            metric_mode: pecos_trellis::MetricMode::default(),
+            int_metric_scale: 1024,
         },
     )
     .unwrap();
@@ -178,6 +182,8 @@ fn bptrellis_matches_hand_mapped_trellis_for_every_ordering() {
                 column_order,
                 merge_indistinguishable: true,
                 bp_score_iterations: 0,
+                metric_mode: pecos_trellis::MetricMode::default(),
+                int_metric_scale: 1024,
             },
         )
         .unwrap();

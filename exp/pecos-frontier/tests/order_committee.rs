@@ -139,6 +139,8 @@ fn ordering_and_committee_match_upstream_fixtures() {
                 column_order: Some(fixture.forward_ordering.clone()),
                 merge_indistinguishable: false,
                 bp_score_iterations: 0,
+                metric_mode: pecos_frontier::MetricMode::default(),
+                int_metric_scale: 1024,
             },
         )
         .unwrap();

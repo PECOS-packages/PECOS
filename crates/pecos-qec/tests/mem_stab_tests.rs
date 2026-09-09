@@ -75,7 +75,8 @@ fn parity_with_raw_pipeline() {
     let influence_map = analyzer.build_influence_map();
     let mnm = MemBuilder::new(&influence_map)
         .with_noise(noise.p1, noise.p2, noise.p_meas, noise.p_prep)
-        .build();
+        .build()
+        .unwrap();
     let mut rng2 = SmallRng::seed_from_u64(seed);
     let mut batch2 = Vec::with_capacity(shots);
     let mut buf = vec![false; mnm.num_measurements];

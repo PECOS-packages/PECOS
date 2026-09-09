@@ -66,6 +66,25 @@ use std::hash::{Hash, Hasher};
 
 use crate::fault_tolerance::propagator::{DemOutputKind, DemOutputMetadata, Pauli};
 
+pub(crate) fn is_two_qubit_noise_gate(gate_type: GateType) -> bool {
+    matches!(
+        gate_type,
+        GateType::CX
+            | GateType::CZ
+            | GateType::CY
+            | GateType::SZZ
+            | GateType::SZZdg
+            | GateType::SXX
+            | GateType::SXXdg
+            | GateType::SYY
+            | GateType::SYYdg
+            | GateType::SWAP
+            | GateType::RXX
+            | GateType::RYY
+            | GateType::RZZ
+    )
+}
+
 // ============================================================================
 // Error Source Tracking
 // ============================================================================
@@ -2166,7 +2185,7 @@ pub enum ReplacementBranchApproximation {
     /// Pauli entries. Useful as a baseline comparison.
     IgnoreGateRemoval,
     /// Convolve replacement entries with the Pauli twirl of the omitted ideal
-    /// gate's dagger. This is the default approximation for starred entries.
+    /// gate's dagger. This is the default approximation for replacement entries.
     #[default]
     PauliTwirlOmittedGate,
     /// Evaluate Pauli-projected replacement branches as their own contribution
@@ -2306,8 +2325,8 @@ impl PauliWeights {
     /// Look up the effective two-qubit Pauli weight for a specific gate.
     ///
     /// Plain entries contribute directly. Replacement entries first convolve with
-    /// the Pauli twirl of the omitted gate, so `*II` on `SZZ` contributes half
-    /// `II` and half `ZZ`, while `*XX` on `SZZ` contributes half `XX` and half
+    /// the Pauli twirl of the omitted gate, so `~II` on `SZZ` contributes half
+    /// `II` and half `ZZ`, while `~XX` on `SZZ` contributes half `XX` and half
     /// `YY`. The identity component is intentionally not returned by callers that
     /// query only non-identity Pauli labels.
     #[must_use]
@@ -2358,7 +2377,7 @@ impl PauliWeights {
 
     /// Non-identity branch-impact terms from replacement entries.
     ///
-    /// Each starred replacement entry is convolved with the Pauli twirl of the
+    /// Each replacement entry is convolved with the Pauli twirl of the
     /// omitted ideal gate. The returned terms are deliberately not aggregated:
     /// the builder should evaluate each branch term as a separate contribution
     /// before the DEM's normal contribution grouping combines equivalent
@@ -2416,7 +2435,7 @@ impl PauliWeights {
         &self.replacement_entries
     }
 
-    /// Whether this weight table contains starred replacement branches.
+    /// Whether this weight table contains replacement branches.
     #[must_use]
     pub fn has_replacement_entries(&self) -> bool {
         !self.replacement_entries.is_empty()
@@ -4353,7 +4372,7 @@ fn core_gate_to_neo(gate: GateType) -> pecos_neo::GateType {
         GateType::T => pecos_neo::GateType::T,
         GateType::Tdg => pecos_neo::GateType::Tdg,
         GateType::U => pecos_neo::GateType::U,
-        GateType::R1XY => pecos_neo::GateType::R1XY,
+        GateType::RXY1Q => pecos_neo::GateType::RXY1Q,
         GateType::CX => pecos_neo::GateType::CX,
         GateType::CY => pecos_neo::GateType::CY,
         GateType::CZ => pecos_neo::GateType::CZ,
@@ -4364,7 +4383,6 @@ fn core_gate_to_neo(gate: GateType) -> pecos_neo::GateType {
         GateType::SZZ => pecos_neo::GateType::SZZ,
         GateType::SZZdg => pecos_neo::GateType::SZZdg,
         GateType::SWAP => pecos_neo::GateType::SWAP,
-        GateType::CRZ => pecos_neo::GateType::CRZ,
         GateType::RXX => pecos_neo::GateType::RXX,
         GateType::RYY => pecos_neo::GateType::RYY,
         GateType::RZZ => pecos_neo::GateType::RZZ,
@@ -7043,6 +7061,35 @@ fn trim_trailing_zeros(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::is_two_qubit_noise_gate;
+    use pecos_core::gate_type::GateType;
+
+    #[test]
+    fn two_qubit_noise_gate_membership_is_pinned() {
+        let actual: Vec<_> = (0..=u8::MAX)
+            .filter_map(|value| GateType::try_from(value).ok())
+            .filter(|gate_type| is_two_qubit_noise_gate(*gate_type))
+            .collect();
+
+        assert_eq!(
+            actual,
+            [
+                GateType::CX,
+                GateType::CY,
+                GateType::CZ,
+                GateType::SXX,
+                GateType::SXXdg,
+                GateType::SYY,
+                GateType::SYYdg,
+                GateType::SZZ,
+                GateType::SZZdg,
+                GateType::SWAP,
+                GateType::RXX,
+                GateType::RYY,
+                GateType::RZZ,
+            ]
+        );
+    }
 
     /// The boundary fit trades total-variation distance for exact preservation of
     /// the requested per-Pauli probabilities. Pin both halves of that trade so it

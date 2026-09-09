@@ -10,9 +10,11 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-use crate::dtypes::AngleParam;
 use crate::prelude::*;
-use pecos_simulators::StabVec;
+use crate::simulator_utils::{
+    SymbolEntry, extract_angle, extract_angles, supports_exact, validate_supported_symbol,
+};
+use pecos_simulators::{ArbitraryRotationGateable, StabVec};
 use pyo3::IntoPyObjectExt;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyList, PySet, PyTuple};
@@ -20,6 +22,77 @@ use pyo3::types::{PyAny, PyDict, PyList, PySet, PyTuple};
 #[pyclass(name = "StabVec", module = "pecos_rslib")]
 pub struct PyStabVec {
     inner: StabVec,
+}
+
+fn supports(entry: &SymbolEntry) -> bool {
+    supports_exact! { entry;
+        I => ["I"];
+        X => ["X"];
+        Y => ["Y"];
+        Z => ["Z"];
+        H => ["H", "H1", "H+z+x"];
+        H2 => ["H2", "H-z-x"];
+        H3 => ["H3", "H+y-z"];
+        H4 => ["H4", "H-y-z"];
+        H5 => ["H5", "H-x+y"];
+        H6 => ["H6", "H-x-y"];
+        F => ["F", "F1"];
+        Fdg => ["Fdg", "F1d", "F1dg"];
+        F2 => ["F2"];
+        F2dg => ["F2dg", "F2d"];
+        F3 => ["F3"];
+        F3dg => ["F3dg", "F3d"];
+        F4 => ["F4"];
+        F4dg => ["F4dg", "F4d"];
+        Sx => ["Q", "SX", "SqrtX"];
+        Sxdg => ["Qd", "SXdg", "SqrtXd", "SqrtXdg"];
+        Sy => ["R", "SY", "SqrtY"];
+        Sydg => ["Rd", "SYdg", "SqrtYd", "SqrtYdg"];
+        Sz => ["S", "SZ", "SqrtZ"];
+        Szdg => ["Sd", "SZdg", "SqrtZd", "SqrtZdg"];
+        T => ["T"];
+        Tdg => ["Tdg"];
+        Pz => ["PZ"];
+        Pnz => ["PNZ"];
+        Px => ["PX"];
+        Pnx => ["PNX"];
+        Py => ["PY"];
+        Pny => ["PNY"];
+        InitZ => ["Init", "Init +Z", "init |0>", "leak", "leak |0>", "unleak |0>"];
+        InitNz => ["Init -Z", "init |1>", "leak |1>", "unleak |1>"];
+        InitX => ["Init +X", "init |+>"];
+        InitNx => ["Init -X", "init |->"];
+        InitY => ["Init +Y", "init |+i>"];
+        InitNy => ["Init -Y", "init |-i>"];
+        Mz => ["MZ"];
+        MeasureZ => ["Measure", "measure Z", "Measure +Z"];
+        Mx => ["MX", "Measure +X"];
+        My => ["MY", "Measure +Y"];
+        Rx => ["RX"];
+        Ry => ["RY"];
+        Rz => ["RZ"];
+        Rxy1q => ["RXY1Q", "R1XY"];
+        U => ["U"];
+        Cx => ["CX", "CNOT"];
+        Cy => ["CY"];
+        Cz => ["CZ"];
+        Sxx => ["SXX", "SqrtXX"];
+        Sxxdg => ["SXXdg", "SqrtXXd", "SqrtXXdg"];
+        Syy => ["SYY", "SqrtYY"];
+        Syydg => ["SYYdg", "SqrtYYd", "SqrtYYdg"];
+        Szz => ["SZZ", "SqrtZZ"];
+        Szzdg => ["SZZdg", "SqrtZZd", "SqrtZZdg"];
+        Swap => ["SWAP"];
+        G => ["G", "G2"];
+        Gdg => ["Gdg"];
+        Iswap => ["ISWAP"];
+        Iswapdg => ["ISWAPdg"];
+        Rxx => ["RXX"];
+        Ryy => ["RYY"];
+        Rzz => ["RZZ"];
+        RxxRyyRzz => ["RXXRYYRZZ", "RZZRYYRXX", "R2XXYYZZ", "RXXYYZZ"];
+        Ii => ["II"];
+    }
 }
 
 #[pymethods]
@@ -203,6 +276,16 @@ impl PyStabVec {
                 self.inner.rz(angle, q);
                 Ok(None)
             }
+            "RXY1Q" | "R1XY" => {
+                let angles = extract_angles(params, "RXY1Q", GateType::RXY1Q.angle_arity())?;
+                self.inner.rxy1q(angles[0], angles[1], q);
+                Ok(None)
+            }
+            "U" => {
+                let angles = extract_angles(params, "U", GateType::U.angle_arity())?;
+                self.inner.u(angles[0], angles[1], angles[2], q);
+                Ok(None)
+            }
 
             // Preparations
             "PZ" | "Init" | "Init +Z" | "init |0>" | "leak" | "leak |0>" | "unleak |0>" => {
@@ -235,6 +318,24 @@ impl PyStabVec {
                 let result = self
                     .inner
                     .mz(q)
+                    .into_iter()
+                    .next()
+                    .expect("measurement returned no results");
+                Ok(Some(u8::from(result.outcome)))
+            }
+            "MX" | "Measure +X" => {
+                let result = self
+                    .inner
+                    .mx(q)
+                    .into_iter()
+                    .next()
+                    .expect("measurement returned no results");
+                Ok(Some(u8::from(result.outcome)))
+            }
+            "MY" | "Measure +Y" => {
+                let result = self
+                    .inner
+                    .my(q)
                     .into_iter()
                     .next()
                     .expect("measurement returned no results");
@@ -309,6 +410,18 @@ impl PyStabVec {
                 self.inner.g(pair);
                 Ok(None)
             }
+            "Gdg" => {
+                self.inner.gdg(pair);
+                Ok(None)
+            }
+            "ISWAP" => {
+                self.inner.iswap(pair);
+                Ok(None)
+            }
+            "ISWAPdg" => {
+                self.inner.iswapdg(pair);
+                Ok(None)
+            }
             "II" => Ok(None),
 
             // Two-qubit rotation gates
@@ -325,6 +438,12 @@ impl PyStabVec {
             "RZZ" => {
                 let angle = extract_angle(params, "RZZ")?;
                 self.inner.rzz(angle, pair);
+                Ok(None)
+            }
+            "RXXRYYRZZ" | "RZZRYYRXX" | "R2XXYYZZ" | "RXXYYZZ" => {
+                let angles =
+                    extract_angles(params, "RXXRYYRZZ", GateType::RXXRYYRZZ.angle_arity())?;
+                self.inner.rxxryyrzz(angles[0], angles[1], angles[2], pair);
                 Ok(None)
             }
 
@@ -353,6 +472,7 @@ impl PyStabVec {
         }
     }
 
+    /// Unsupported symbols raise for empty locations; supported symbols return an empty result.
     #[pyo3(signature = (symbol, locations, **params))]
     fn run_gate(
         &mut self,
@@ -373,6 +493,8 @@ impl PyStabVec {
         py: Python<'_>,
     ) -> PyResult<Py<PyDict>> {
         let output = PyDict::new(py);
+        let locations_set: Bound<PySet> = locations.clone().cast_into()?;
+        validate_supported_symbol(symbol, &locations_set, supports)?;
 
         if let Some(p) = params
             && let Ok(Some(sg)) = p.get_item("simulate_gate")
@@ -381,7 +503,6 @@ impl PyStabVec {
             return Ok(output.into());
         }
 
-        let locations_set: Bound<PySet> = locations.clone().cast_into()?;
         if locations_set.is_empty() {
             return Ok(output.into());
         }
@@ -465,26 +586,13 @@ impl PyStabVec {
     fn bindings(slf: PyRef<'_, Self>) -> PyResult<crate::simulator_utils::GateBindingsDict> {
         let py = slf.py();
         let sim_obj: Py<PyAny> = slf.into_bound_py_any(py)?.unbind();
-        Ok(crate::simulator_utils::GateBindingsDict::new(sim_obj))
+        Ok(crate::simulator_utils::GateBindingsDict::new(
+            sim_obj, supports,
+        ))
     }
 }
 
-/// Extract an angle from params dict under the "angle" key.
-fn extract_angle(params: Option<&Bound<'_, PyDict>>, gate_name: &str) -> PyResult<Angle64> {
-    let params = params.ok_or_else(|| {
-        PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-            "{gate_name} requires params with 'angle'"
-        ))
-    })?;
-    let py_any = params.get_item("angle")?.ok_or_else(|| {
-        PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-            "{gate_name} requires an 'angle' parameter"
-        ))
-    })?;
-    let angle: AngleParam = py_any.extract().map_err(|_| {
-        PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-            "Expected a valid angle parameter for {gate_name}"
-        ))
-    })?;
-    Ok(angle.0)
-}
+#[cfg(test)]
+crate::simulator_utils::direct_surface_test!(direct_surface_matches_predicate, {
+    PyStabVec::new(2, None, None, Some(2048))
+});

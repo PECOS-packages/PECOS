@@ -84,29 +84,30 @@ fn test_p_gate_expansion() {
 
     let program = QASMParser::parse_str(qasm).expect("Failed to parse phase gate");
 
-    // p(0) expands to rz(0)
+    // p(0) expands to phase-exact U(0,0,0).
     assert_eq!(program.operations.len(), 1);
 
     match &program.operations[0] {
         Operation::Gate {
             name, parameters, ..
         } => {
-            assert_eq!(name, "RZ");
-            assert_eq!(parameters.len(), 1);
+            assert_eq!(name, "U");
+            assert_eq!(parameters.len(), 3);
             assert!(
-                (parameters[0] - 0.0).abs() < f64::EPSILON,
-                "RZ angle should be 0"
+                parameters
+                    .iter()
+                    .all(|parameter| parameter.abs() < f64::EPSILON)
             );
         }
-        Operation::NativeGate(gate) if matches!(gate.gate_type, GateType::RZ) => {
-            // For native gates, check angles field (Angle64)
-            assert_eq!(gate.angles.len(), 1);
+        Operation::NativeGate(gate) if matches!(gate.gate_type, GateType::U) => {
+            assert_eq!(gate.angles.len(), 3);
             assert!(
-                (gate.angles[0].to_radians() - 0.0).abs() < f64::EPSILON,
-                "RZ angle should be 0"
+                gate.angles
+                    .iter()
+                    .all(|angle| angle.to_radians().abs() < f64::EPSILON)
             );
         }
-        _ => panic!("Expected RZ gate"),
+        _ => panic!("Expected U gate"),
     }
 }
 
@@ -236,23 +237,12 @@ fn test_zero_angle_gates() {
 
     let program = QASMParser::parse_str(qasm).expect("Failed to parse zero angle gates");
 
-    // p(0) expands to rz(0)
-    // u(0,0,0) now maps directly to native U gate
-    // So total: rz(0), U(0,0,0)
+    // Both p(0) and u(0,0,0) map to native U(0,0,0).
     assert_eq!(program.operations.len(), 2);
 
     // Check that we have the expected gates
-    for (i, op) in program.operations.iter().enumerate() {
+    for op in &program.operations {
         match op {
-            Operation::Gate {
-                name, parameters, ..
-            } if name == "RZ" => {
-                assert_eq!(parameters.len(), 1);
-                assert!(
-                    (parameters[0] - 0.0).abs() < f64::EPSILON,
-                    "RZ angle at operation {i} should be 0"
-                );
-            }
             Operation::Gate {
                 name, parameters, ..
             } if name == "U" => {
@@ -270,7 +260,15 @@ fn test_zero_angle_gates() {
                     "U lambda parameter should be 0"
                 );
             }
-            _ => {}
+            Operation::NativeGate(gate) if gate.gate_type == GateType::U => {
+                assert_eq!(gate.angles.len(), 3);
+                assert!(
+                    gate.angles
+                        .iter()
+                        .all(|angle| angle.to_radians().abs() < f64::EPSILON)
+                );
+            }
+            operation => panic!("Expected U gate, got {operation:?}"),
         }
     }
 }

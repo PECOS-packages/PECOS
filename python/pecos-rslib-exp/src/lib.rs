@@ -42,7 +42,7 @@ mod stab_mps_bindings;
 pub mod stabmps_builder;
 
 use pecos_core::Angle64;
-use pecos_stab_tn::stab_mps::StabMpsStats;
+use pecos_stab_tn::stab_mps::{MeasurementMode, StabMpsStats};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
@@ -51,8 +51,15 @@ pub(crate) fn stab_mps_stats_to_dict(py: Python<'_>, stats: &StabMpsStats) -> Py
     result.set_item("total_nonclifford", stats.total_nonclifford)?;
     result.set_item("single_site", stats.single_site)?;
     result.set_item("multi_disent", stats.multi_disent)?;
+    result.set_item("deferred_disent_bypass", stats.deferred_disent_bypass)?;
     result.set_item("numerical_redetect", stats.numerical_redetect)?;
     result.set_item("multi_std", stats.multi_std)?;
+    result.set_item("multi_std_add", stats.multi_std_add)?;
+    result.set_item("multi_std_cascade", stats.multi_std_cascade)?;
+    result.set_item(
+        "signed_eigenstate_candidates",
+        stats.signed_eigenstate_candidates,
+    )?;
     result.set_item("stabilizer", stats.stabilizer)?;
     result.set_item("ofd_in_span", stats.ofd_in_span)?;
     result.set_item("ofd_new_dim", stats.ofd_new_dim)?;
@@ -60,6 +67,17 @@ pub(crate) fn stab_mps_stats_to_dict(py: Python<'_>, stats: &StabMpsStats) -> Py
     result.set_item("ofd_in_span_single", stats.ofd_in_span_single)?;
     result.set_item("ofd_in_span_disent", stats.ofd_in_span_disent)?;
     Ok(result.unbind())
+}
+
+pub(crate) fn parse_measurement_mode(value: &str) -> PyResult<MeasurementMode> {
+    match value {
+        "exact" => Ok(MeasurementMode::Exact),
+        "pragmatic" => Ok(MeasurementMode::Pragmatic),
+        "lazy" => Ok(MeasurementMode::Lazy),
+        _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+            "measurement must be one of: 'exact', 'pragmatic', 'lazy'",
+        )),
+    }
 }
 
 pub(crate) fn extract_angle(
@@ -105,6 +123,10 @@ fn pecos_rslib_exp(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<sim_neo_bindings::PyStabMpsBuilder>()?;
     m.add_class::<sim_neo_bindings::PyNoiseModelBuilder>()?;
     m.add_function(wrap_pyfunction!(sim_neo_bindings::py_sim_neo, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        sim_neo_bindings::neo_fallback_native_gates,
+        m
+    )?)?;
     m.add_class::<sim_neo_bindings::PyMonteCarloBuilder>()?;
     m.add_function(wrap_pyfunction!(sim_neo_bindings::monte_carlo, m)?)?;
     m.add_class::<sim_neo_bindings::PyPathEnumerationBuilder>()?;

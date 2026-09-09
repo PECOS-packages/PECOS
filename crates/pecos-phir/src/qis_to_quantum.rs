@@ -5,7 +5,8 @@ Lowers QIS dialect `CustomOps` to standard PHIR `QuantumOps`:
 - `qis.qalloc` -> `QuantumOp::Alloc`
 - `qis.qfree` -> `QuantumOp::Dealloc`
 - `qis.reset` -> `QuantumOp::Reset`
-- `qis.rxy` -> `QuantumOp::R1XY(theta, phi)`
+- named `qis.h/x/y/z/s/sdg/t/tdg/cx` operations remain named `QuantumOp`s
+- `qis.rxy` -> `QuantumOp::RXY1Q(theta, phi)`
 - `qis.rz` -> `QuantumOp::RZ(angle)`
 - `qis.rzz` -> `QuantumOp::RZZ(angle)`
 - `qis.measure` / `qis.lazy_measure` -> `QuantumOp::Measure`
@@ -116,6 +117,40 @@ fn convert_qis_op(
             location: instr.location.clone(),
         })),
 
+        "h" | "x" | "y" | "z" | "s" | "sdg" | "t" | "tdg" | "sx" | "sxdg" => {
+            Ok(Some(Instruction {
+                results: vec![],
+                operation: Operation::Quantum(match custom.name() {
+                    "h" => QuantumOp::H,
+                    "x" => QuantumOp::X,
+                    "y" => QuantumOp::Y,
+                    "z" => QuantumOp::Z,
+                    "s" => QuantumOp::S,
+                    "sdg" => QuantumOp::Sdg,
+                    "t" => QuantumOp::T,
+                    "tdg" => QuantumOp::Tdg,
+                    "sx" => QuantumOp::SX,
+                    "sxdg" => QuantumOp::SXdg,
+                    _ => unreachable!(),
+                }),
+                operands: instr.operands.clone(),
+                result_types: vec![],
+                regions: vec![],
+                attributes: BTreeMap::new(),
+                location: instr.location.clone(),
+            }))
+        }
+
+        "cx" => Ok(Some(Instruction {
+            results: vec![],
+            operation: Operation::Quantum(QuantumOp::CX),
+            operands: instr.operands.clone(),
+            result_types: vec![],
+            regions: vec![],
+            attributes: BTreeMap::new(),
+            location: instr.location.clone(),
+        })),
+
         "rxy" => {
             // operands: [qubit, theta_ssa, phi_ssa]
             let theta = resolve_angle(&instr.operands, 1, const_map, "rxy theta")?;
@@ -123,7 +158,7 @@ fn convert_qis_op(
             let qubit = instr.operands[0];
             Ok(Some(Instruction {
                 results: vec![],
-                operation: Operation::Quantum(QuantumOp::R1XY(theta, phi)),
+                operation: Operation::Quantum(QuantumOp::RXY1Q(theta, phi)),
                 operands: vec![qubit],
                 result_types: vec![],
                 regions: vec![],
@@ -359,6 +394,53 @@ mod tests {
     }
 
     #[test]
+    fn test_named_gate_conversion() {
+        let q0 = SSAValue::new(0);
+        let q1 = SSAValue::new(1);
+        let mut instructions: Vec<_> = ["h", "x", "y", "z", "s", "sdg", "t", "tdg", "sx", "sxdg"]
+            .into_iter()
+            .map(|name| Instruction {
+                results: vec![],
+                operation: Operation::Custom(CustomOp::new("qis", name, vec![], BTreeMap::new())),
+                operands: vec![q0],
+                result_types: vec![],
+                regions: vec![],
+                attributes: BTreeMap::new(),
+                location: None,
+            })
+            .collect();
+        instructions.push(Instruction {
+            results: vec![],
+            operation: Operation::Custom(CustomOp::new("qis", "cx", vec![], BTreeMap::new())),
+            operands: vec![q0, q1],
+            result_types: vec![],
+            regions: vec![],
+            attributes: BTreeMap::new(),
+            location: None,
+        });
+        let mut module = make_module(instructions);
+
+        convert_qis_to_quantum(&mut module).unwrap();
+
+        let expected = [
+            QuantumOp::H,
+            QuantumOp::X,
+            QuantumOp::Y,
+            QuantumOp::Z,
+            QuantumOp::S,
+            QuantumOp::Sdg,
+            QuantumOp::T,
+            QuantumOp::Tdg,
+            QuantumOp::SX,
+            QuantumOp::SXdg,
+            QuantumOp::CX,
+        ];
+        for (instruction, expected) in module.body.blocks[0].operations.iter().zip(expected) {
+            assert_eq!(instruction.operation, Operation::Quantum(expected));
+        }
+    }
+
+    #[test]
     fn test_rxy_conversion() {
         let q = SSAValue::new(0);
         let theta_ssa = SSAValue::new(1);
@@ -387,7 +469,7 @@ mod tests {
         assert_eq!(quantum_ops.len(), 1);
         assert!(matches!(
             quantum_ops[0].operation,
-            Operation::Quantum(QuantumOp::R1XY(theta, phi))
+            Operation::Quantum(QuantumOp::RXY1Q(theta, phi))
                 if theta == Angle64::from_radians(FRAC_PI_2) && phi == Angle64::ZERO
         ));
     }

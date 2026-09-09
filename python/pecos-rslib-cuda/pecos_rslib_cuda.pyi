@@ -224,8 +224,8 @@ class CuStateVec:
         """Apply U gate (general single-qubit rotation)."""
         ...
 
-    def r1xy(self, theta: float, phi: float, qubits: List[int]) -> None:
-        """Apply R1XY gate (rotation in XY plane)."""
+    def rxy1q(self, theta: float, phi: float, qubits: List[int]) -> None:
+        """Apply RXY1Q gate (rotation in XY plane)."""
         ...
     # =========================================================================
     # Measurement

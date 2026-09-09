@@ -1,4 +1,4 @@
-// Copyright 2024 The PECOS Developers
+// Copyright 2026 The PECOS Developers
 //
 // Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
 // in compliance with the License.You may obtain a copy of the License at
@@ -11,7 +11,7 @@
 // the License.
 
 use super::quantum_simulator::QuantumSimulator;
-use pecos_core::QubitId;
+use pecos_core::{Angle64, QubitId};
 use smallvec::SmallVec;
 
 /// Stack-allocated qubit buffer for small batches (up to 8 qubits).
@@ -110,11 +110,37 @@ pub struct MeasurementResult {
 /// All other operations have default implementations in terms of these basic gates.
 /// Implementors may override any default implementation for efficiency.
 ///
+/// # Batched-target precondition
+///
+/// Qubits within one batch must be distinct, including across all pairs in a
+/// two-qubit batch. Several default decompositions collect one side of every
+/// pair into a single-qubit batch, so overlapping pairs would collapse into
+/// repeated applications. Validated [`pecos_core::Gate`] commands enforce this
+/// precondition before dispatch.
+///
 /// # References
 /// - Gottesman, "The Heisenberg Representation of Quantum Computers"
 ///   <https://arxiv.org/abs/quant-ph/9807006>
 #[expect(clippy::min_ident_chars)]
 pub trait CliffordGateable: QuantumSimulator {
+    /// Applies the scalar `exp(i * phase)` once for every target qubit.
+    ///
+    /// The default is a no-op, which is correct for representations where global
+    /// phase is unobservable, such as density matrices, measurement-only mocks,
+    /// foreign interfaces without a global-phase operation, and compile-only
+    /// resource analyzers. Amplitude-exposing simulators must override this hook.
+    ///
+    /// # Parameters
+    /// - `phase`: The phase angle for one scalar application.
+    /// - `qubits`: The targets whose gate applications each contribute the scalar.
+    ///
+    /// # Returns
+    /// A mutable reference to `Self` for method chaining.
+    #[inline]
+    fn apply_global_phase(&mut self, _phase: Angle64, _qubits: &[QubitId]) -> &mut Self {
+        self
+    }
+
     /// Applies the identity gate (I) to the specified qubits.
     ///
     /// The identity gate leaves the state unchanged.
@@ -178,9 +204,14 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
+    ///
+    /// The default `Z`-then-`X` decomposition evaluates to `X * Z = -i Y`;
+    /// [`Self::apply_global_phase`] supplies the compensating `i`.
     #[inline]
     fn y(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.z(qubits).x(qubits)
+        self.z(qubits)
+            .x(qubits)
+            .apply_global_phase(Angle64::QUARTER_TURN, qubits)
     }
 
     /// Applies a Pauli Z gate to the specified qubits.
@@ -212,8 +243,8 @@ pub trait CliffordGateable: QuantumSimulator {
 
     /// Applies a square root of X (SX) gate to the specified qubits.
     ///
-    /// The SX gate is equivalent to a rotation by π/2 radians around the X axis
-    /// of the Bloch sphere.
+    /// The conventional phase-fixed named gate is
+    /// `SX = exp(i*pi/4) RX(pi/2)`.
     ///
     /// # Arguments
     /// * `qubits` - Target qubit indices.
@@ -221,8 +252,8 @@ pub trait CliffordGateable: QuantumSimulator {
     /// # Pauli Transformation
     /// ```text
     /// X → X
-    /// Y → -Z
-    /// Z → Y
+    /// Y → Z
+    /// Z → -Y
     /// ```
     ///
     /// # Matrix Representation
@@ -240,8 +271,8 @@ pub trait CliffordGateable: QuantumSimulator {
 
     /// Applies the adjoint (inverse) of the square root of X gate.
     ///
-    /// The SX† gate is equivalent to a rotation by -π/2 radians around the X axis
-    /// of the Bloch sphere.
+    /// The conventional phase-fixed named gate is
+    /// `SX† = exp(-i*pi/4) RX(-pi/2)`.
     ///
     /// # Arguments
     /// * `qubits` - Target qubit indices.
@@ -249,8 +280,8 @@ pub trait CliffordGateable: QuantumSimulator {
     /// # Pauli Transformation
     /// ```text
     /// X → X
-    /// Y → Z
-    /// Z → -Y
+    /// Y → -Z
+    /// Z → Y
     /// ```
     ///
     /// # Matrix Representation
@@ -268,8 +299,8 @@ pub trait CliffordGateable: QuantumSimulator {
 
     /// Applies a square root of Y (SY) gate to the specified qubits.
     ///
-    /// The SY gate is equivalent to a rotation by π/2 radians around the Y axis
-    /// of the Bloch sphere.
+    /// The conventional phase-fixed named gate is
+    /// `SY = exp(i*pi/4) RY(pi/2)`.
     ///
     /// # Arguments
     /// * `qubits` - Target qubit indices.
@@ -283,21 +314,26 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Matrix Representation
     /// ```text
-    /// SY = 1/√2 [[1,  -1],
-    ///            [1,   1]]
+    /// SY = 1/2 [[1+i, -1-i],
+    ///           [1+i,  1+i]]
     /// ```
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
+    ///
+    /// The default `Z`-then-`H` decomposition evaluates to `RY(pi/2)`;
+    /// [`Self::apply_global_phase`] supplies the named gate's `exp(i*pi/4)`.
     #[inline]
     fn sy(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.z(qubits).h(qubits)
+        self.z(qubits)
+            .h(qubits)
+            .apply_global_phase(Angle64::QUARTER_TURN / 2u64, qubits)
     }
 
     /// Applies the adjoint (inverse) of the square root of Y gate.
     ///
-    /// The SY† gate is equivalent to a rotation by -π/2 radians around the Y axis
-    /// of the Bloch sphere.
+    /// The conventional phase-fixed named gate is
+    /// `SY† = exp(-i*pi/4) RY(-pi/2)`.
     ///
     /// # Arguments
     /// * `qubits` - Target qubit indices.
@@ -311,21 +347,26 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Matrix Representation
     /// ```text
-    /// SY† = 1/√2 [[ 1,  1],
-    ///            [-1,  1]]
+    /// SY† = 1/2 [[ 1-i, 1-i],
+    ///            [-1+i, 1-i]]
     /// ```
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
+    ///
+    /// The default `H`-then-`Z` decomposition evaluates to `RY(-pi/2)`;
+    /// [`Self::apply_global_phase`] supplies the named gate's `exp(-i*pi/4)`.
     #[inline]
     fn sydg(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.h(qubits).z(qubits)
+        self.h(qubits)
+            .z(qubits)
+            .apply_global_phase(-(Angle64::QUARTER_TURN / 2u64), qubits)
     }
 
     /// Applies a square root of Z (SZ) gate to the specified qubits.
     ///
-    /// The SZ gate (also known as the S gate) is equivalent to a rotation by π/2 radians
-    /// around the Z axis of the Bloch sphere.
+    /// The conventional phase-fixed named gate (also known as S) is
+    /// `SZ = exp(i*pi/4) RZ(pi/2)`.
     ///
     /// # Arguments
     /// * `qubits` - Target qubit indices.
@@ -349,8 +390,8 @@ pub trait CliffordGateable: QuantumSimulator {
 
     /// Applies the adjoint (inverse) of the square root of Z gate.
     ///
-    /// The SZ† gate is equivalent to a rotation by -π/2 radians around the Z axis
-    /// of the Bloch sphere.
+    /// The conventional phase-fixed named gate is
+    /// `SZ† = exp(-i*pi/4) RZ(-pi/2)`.
     ///
     /// # Arguments
     /// * `qubits` - Target qubit indices.
@@ -417,14 +458,18 @@ pub trait CliffordGateable: QuantumSimulator {
     /// # Matrix Representation
     /// ```text
     /// H2 = 1/√2 [[ 1, -1],
-    ///            [-1,  1]]
+    ///            [-1, -1]]
     /// ```
+    /// Equivalently, `H2 = exp(-i*pi/4) * Z * SY`; the default carries that
+    /// scalar through [`Self::apply_global_phase`].
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
     #[inline]
     fn h2(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.sy(qubits).z(qubits)
+        self.sy(qubits)
+            .z(qubits)
+            .apply_global_phase(-(Angle64::QUARTER_TURN / 2u64), qubits)
     }
 
     /// Applies the H3 variant of the Hadamard gate to the specified qubits.
@@ -443,15 +488,19 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Matrix Representation
     /// ```text
-    /// H3 = 1/√2 [[1,  i],
-    ///            [i,  1]]
+    /// H3 = [[0, (1-i)/√2],
+    ///       [(1+i)/√2, 0]]
     /// ```
+    /// Equivalently, `H3 = exp(-i*pi/4) * Y * SZ`; the default carries that
+    /// scalar through [`Self::apply_global_phase`].
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
     #[inline]
     fn h3(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.sz(qubits).y(qubits)
+        self.sz(qubits)
+            .y(qubits)
+            .apply_global_phase(-(Angle64::QUARTER_TURN / 2u64), qubits)
     }
 
     /// Applies the H4 variant of the Hadamard gate to the specified qubits.
@@ -470,15 +519,19 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Matrix Representation
     /// ```text
-    /// H4 = 1/√2 [[ 1, -i],
-    ///            [-i,  1]]
+    /// H4 = [[0, (1+i)/√2],
+    ///       [(1-i)/√2, 0]]
     /// ```
+    /// Equivalently, `H4 = exp(-i*pi/4) * X * SZ`; the default carries that
+    /// scalar through [`Self::apply_global_phase`].
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
     #[inline]
     fn h4(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.sz(qubits).x(qubits)
+        self.sz(qubits)
+            .x(qubits)
+            .apply_global_phase(-(Angle64::QUARTER_TURN / 2u64), qubits)
     }
 
     /// Applies the H5 variant of the Hadamard gate to the specified qubits.
@@ -497,15 +550,19 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Matrix Representation
     /// ```text
-    /// H5 = 1/√2 [[-1,  1],
-    ///            [ 1,  1]]
+    /// H5 = 1/√2 [[ 1, -i],
+    ///            [ i, -1]]
     /// ```
+    /// Equivalently, `H5 = exp(-i*pi/4) * Z * SX`; the default carries that
+    /// scalar through [`Self::apply_global_phase`].
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
     #[inline]
     fn h5(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.sx(qubits).z(qubits)
+        self.sx(qubits)
+            .z(qubits)
+            .apply_global_phase(-(Angle64::QUARTER_TURN / 2u64), qubits)
     }
 
     /// Applies the H6 variant of the Hadamard gate to the specified qubits.
@@ -524,15 +581,19 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Matrix Representation
     /// ```text
-    /// H6 = 1/√2 [[-1, -1],
-    ///            [-1,  1]]
+    /// H6 = 1/√2 [[-1, -i],
+    ///            [ i,  1]]
     /// ```
+    /// Equivalently, `H6 = exp(-i*pi/4) * Y * SX`; the default carries that
+    /// scalar through [`Self::apply_global_phase`].
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
     #[inline]
     fn h6(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.sx(qubits).y(qubits)
+        self.sx(qubits)
+            .y(qubits)
+            .apply_global_phase(-(Angle64::QUARTER_TURN / 2u64), qubits)
     }
 
     /// Applies the Face gate (F or F1) to the specified qubits.
@@ -551,15 +612,19 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Matrix Representation
     /// ```text
-    /// F = 1/√2 [[1,  -i],
-    ///           [i,   1]]
+    /// F = 1/2 [[-1+i,  1+i],
+    ///          [-1+i, -1-i]]
     /// ```
+    /// Equivalently, `F = i * SZ * SX`; the default carries that scalar through
+    /// [`Self::apply_global_phase`].
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
     #[inline]
     fn f(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.sx(qubits).sz(qubits)
+        self.sx(qubits)
+            .sz(qubits)
+            .apply_global_phase(Angle64::QUARTER_TURN, qubits)
     }
 
     /// Applies the adjoint of the Face gate (F† or F1†) to the specified qubits.
@@ -578,15 +643,19 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Matrix Representation
     /// ```text
-    /// F† = 1/√2 [[1,   i],
-    ///            [-i,  1]]
+    /// F† = 1/2 [[-1-i, -1-i],
+    ///           [ 1-i, -1+i]]
     /// ```
+    /// Equivalently, `Fdg = -i * SXdg * SZdg`; the default carries that scalar
+    /// through [`Self::apply_global_phase`].
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
     #[inline]
     fn fdg(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.szdg(qubits).sxdg(qubits)
+        self.szdg(qubits)
+            .sxdg(qubits)
+            .apply_global_phase(-Angle64::QUARTER_TURN, qubits)
     }
 
     /// Applies the F2 variant of the Face gate to the specified qubits.
@@ -605,15 +674,19 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Matrix Representation
     /// ```text
-    /// F2 = 1/√2 [[-1,  -i],
-    ///            [-i,   1]]
+    /// F2 = 1/2 [[-1+i,  1-i],
+    ///           [-1-i, -1-i]]
     /// ```
+    /// Equivalently, `F2 = -SY * SXdg`; the default carries that scalar through
+    /// [`Self::apply_global_phase`].
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
     #[inline]
     fn f2(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.sxdg(qubits).sy(qubits)
+        self.sxdg(qubits)
+            .sy(qubits)
+            .apply_global_phase(Angle64::HALF_TURN, qubits)
     }
 
     /// Applies the adjoint of the F2 gate (F2†) to the specified qubits.
@@ -632,15 +705,19 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Matrix Representation
     /// ```text
-    /// F2† = 1/√2 [[-1,   i],
-    ///            [ i,   1]]
+    /// F2† = 1/2 [[-1-i, -1+i],
+    ///           [ 1+i, -1+i]]
     /// ```
+    /// Equivalently, `F2dg = -SX * SYdg`; the default carries that scalar
+    /// through [`Self::apply_global_phase`].
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
     #[inline]
     fn f2dg(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.sydg(qubits).sx(qubits)
+        self.sydg(qubits)
+            .sx(qubits)
+            .apply_global_phase(Angle64::HALF_TURN, qubits)
     }
 
     /// Applies the F3 variant of the Face gate to the specified qubits.
@@ -659,15 +736,19 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Matrix Representation
     /// ```text
-    /// F3 = 1/√2 [[ 1,  -i],
-    ///            [-i,  -1]]
+    /// F3 = 1/2 [[-1+i, -1-i],
+    ///           [ 1-i, -1-i]]
     /// ```
+    /// Equivalently, `F3 = -SZ * SXdg`; the default carries that scalar through
+    /// [`Self::apply_global_phase`].
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
     #[inline]
     fn f3(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.sxdg(qubits).sz(qubits)
+        self.sxdg(qubits)
+            .sz(qubits)
+            .apply_global_phase(Angle64::HALF_TURN, qubits)
     }
 
     /// Applies the adjoint of the F3 gate (F3†) to the specified qubits.
@@ -686,15 +767,19 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Matrix Representation
     /// ```text
-    /// F3† = 1/√2 [[ 1,   i],
-    ///            [ i,  -1]]
+    /// F3† = 1/2 [[-1-i,  1+i],
+    ///           [-1+i, -1+i]]
     /// ```
+    /// Equivalently, `F3dg = -SX * SZdg`; the default carries that scalar
+    /// through [`Self::apply_global_phase`].
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
     #[inline]
     fn f3dg(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.szdg(qubits).sx(qubits)
+        self.szdg(qubits)
+            .sx(qubits)
+            .apply_global_phase(Angle64::HALF_TURN, qubits)
     }
 
     /// Applies the F4 variant of the Face gate to the specified qubits.
@@ -713,15 +798,19 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Matrix Representation
     /// ```text
-    /// F4 = 1/√2 [[-i,  -1],
-    ///            [ 1,  -i]]
+    /// F4 = 1/2 [[-1+i, -1+i],
+    ///           [ 1+i, -1-i]]
     /// ```
+    /// Equivalently, `F4 = i * SX * SZ`; the default carries that scalar through
+    /// [`Self::apply_global_phase`].
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
     #[inline]
     fn f4(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.sz(qubits).sx(qubits)
+        self.sz(qubits)
+            .sx(qubits)
+            .apply_global_phase(Angle64::QUARTER_TURN, qubits)
     }
 
     /// Applies the adjoint of the F4 gate (F4†) to the specified qubits.
@@ -740,15 +829,19 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Matrix Representation
     /// ```text
-    /// F4† = 1/√2 [[ i,   1],
-    ///            [-1,   i]]
+    /// F4† = 1/2 [[-1-i,  1-i],
+    ///           [-1-i, -1+i]]
     /// ```
+    /// Equivalently, `F4dg = -i * SZdg * SXdg`; the default carries that scalar
+    /// through [`Self::apply_global_phase`].
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
     #[inline]
     fn f4dg(&mut self, qubits: &[QubitId]) -> &mut Self {
-        self.sxdg(qubits).szdg(qubits)
+        self.sxdg(qubits)
+            .szdg(qubits)
+            .apply_global_phase(-Angle64::QUARTER_TURN, qubits)
     }
 
     /// Applies a controlled-X (CNOT) operation between qubit pairs.
@@ -800,9 +893,9 @@ pub trait CliffordGateable: QuantumSimulator {
     /// # Matrix Representation
     /// ```text
     /// CY = [[1,  0,  0,  0],
+    ///       [0,  1,  0,  0],
     ///       [0,  0,  0, -i],
-    ///       [0,  0,  1,  0],
-    ///       [0, +i,  0,  0]]
+    ///       [0,  0, +i,  0]]
     /// ```
     ///
     /// # Returns
@@ -850,7 +943,7 @@ pub trait CliffordGateable: QuantumSimulator {
 
     /// Applies a square root of XX (SXX) operation between qubit pairs.
     ///
-    /// The SXX gate implements evolution under XX coupling for time π/4.
+    /// This is the conventional phase-fixed root `((1+i)I + (1-i)XX)/2`.
     ///
     /// # Arguments
     /// * `pairs` - Pairs of qubit indices: `[(q0, q1), (q2, q3), ...]`
@@ -865,11 +958,13 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Matrix Representation
     /// ```text
-    /// SXX = 1/√2 [[1,  0,  0, -i],
-    ///             [0,  1, -i,  0],
-    ///             [0, -i,  1,  0],
-    ///             [-i, 0,  0,  1]]
+    /// SXX = 1/2 [[1+i,   0,   0, 1-i],
+    ///              [  0, 1+i, 1-i,   0],
+    ///              [  0, 1-i, 1+i,   0],
+    ///              [1-i,   0,   0, 1+i]]
     /// ```
+    /// The default Clifford decomposition evaluates to this phase-fixed matrix exactly.
+    /// See the [`CliffordGateable`] trait-level batched-target precondition.
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
@@ -882,7 +977,7 @@ pub trait CliffordGateable: QuantumSimulator {
 
     /// Applies the adjoint of the square root of XX operation.
     ///
-    /// The SXX† gate implements reverse evolution under XX coupling.
+    /// This is the exact adjoint of the conventional phase-fixed SXX.
     ///
     /// # Arguments
     /// * `pairs` - Pairs of qubit indices: `[(q0, q1), (q2, q3), ...]`
@@ -897,11 +992,13 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Matrix Representation
     /// ```text
-    /// SXX† = 1/√2 [[1,  0,  0,  i],
-    ///              [0,  1,  i,  0],
-    ///              [0,  i,  1,  0],
-    ///              [i,  0,  0,  1]]
+    /// SXX† = 1/2 [[1-i,   0,   0, 1+i],
+    ///               [  0, 1-i, 1+i,   0],
+    ///               [  0, 1+i, 1-i,   0],
+    ///               [1+i,   0,   0, 1-i]]
     /// ```
+    /// Multiplying the phase-fixed `SXX` by `XX` swaps its `I` and `XX`
+    /// coefficients, producing this adjoint exactly.
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
@@ -914,7 +1011,7 @@ pub trait CliffordGateable: QuantumSimulator {
 
     /// Applies a square root of YY (SYY) operation between qubit pairs.
     ///
-    /// The SYY gate implements evolution under YY coupling for time π/4.
+    /// This is the conventional phase-fixed root `((1+i)I + (1-i)YY)/2`.
     ///
     /// # Arguments
     /// * `pairs` - Pairs of qubit indices: `[(q0, q1), (q2, q3), ...]`
@@ -929,11 +1026,12 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Matrix Representation
     /// ```text
-    /// SYY = 1/√2 [[1,  0,   0, -i],
-    ///             [0, -i,   1,  0],
-    ///             [0,  1,  -i,  0],
-    ///             [-i, 0,   0,  1]]
+    /// SYY = 1/2 [[ 1+i,   0,   0, -1+i],
+    ///              [   0, 1+i, 1-i,    0],
+    ///              [   0, 1-i, 1+i,    0],
+    ///              [-1+i,   0,   0,  1+i]]
     /// ```
+    /// The default is an exact conjugation of the phase-corrected `SXX`.
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
@@ -946,7 +1044,7 @@ pub trait CliffordGateable: QuantumSimulator {
 
     /// Applies the adjoint of the square root of YY operation.
     ///
-    /// The SYY† gate implements reverse evolution under YY coupling.
+    /// This is the exact adjoint of the conventional phase-fixed SYY.
     ///
     /// # Arguments
     /// * `pairs` - Pairs of qubit indices: `[(q0, q1), (q2, q3), ...]`
@@ -961,11 +1059,13 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Matrix Representation
     /// ```text
-    /// SYY† = 1/√2 [[1,  0,  0,  i],
-    ///              [0,  i,  1,  0],
-    ///              [0,  1,  i,  0],
-    ///              [i,  0,  0,  1]]
+    /// SYY† = 1/2 [[ 1-i,   0,   0, -1-i],
+    ///               [   0, 1-i, 1+i,    0],
+    ///               [   0, 1+i, 1-i,    0],
+    ///               [-1-i,   0,   0,  1-i]]
     /// ```
+    /// Multiplying the phase-fixed `SYY` by `YY` swaps its `I` and `YY`
+    /// coefficients, producing this adjoint exactly.
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
@@ -978,7 +1078,7 @@ pub trait CliffordGateable: QuantumSimulator {
 
     /// Applies a square root of ZZ (SZZ) operation between qubit pairs.
     ///
-    /// The SZZ gate implements evolution under ZZ coupling for time π/4.
+    /// This is the conventional phase-fixed root `((1+i)I + (1-i)ZZ)/2`.
     ///
     /// # Arguments
     /// * `pairs` - Pairs of qubit indices: `[(q0, q1), (q2, q3), ...]`
@@ -993,11 +1093,13 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Matrix Representation
     /// ```text
-    /// SZZ = e^(-iπ/4) [[1,  0,  0,  0],
-    ///                  [0, -i,  0,  0],
-    ///                  [0,  0, -i,  0],
-    ///                  [0,  0,  0,  1]]
+    /// SZZ = [[1, 0, 0, 0],
+    ///        [0, i, 0, 0],
+    ///        [0, 0, i, 0],
+    ///        [0, 0, 0, 1]]
     /// ```
+    /// The default is an exact Hadamard conjugation of the phase-corrected
+    /// `SXX`.
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.
@@ -1010,7 +1112,7 @@ pub trait CliffordGateable: QuantumSimulator {
 
     /// Applies the adjoint of the square root of ZZ operation.
     ///
-    /// The SZZ† gate implements reverse evolution under ZZ coupling.
+    /// This is the exact adjoint of the conventional phase-fixed SZZ.
     ///
     /// # Arguments
     /// * `pairs` - Pairs of qubit indices: `[(q0, q1), (q2, q3), ...]`
@@ -1025,11 +1127,13 @@ pub trait CliffordGateable: QuantumSimulator {
     ///
     /// # Matrix Representation
     /// ```text
-    /// SZZ† = e^(iπ/4) [[1,  0,  0,  0],
-    ///                  [0,  i,  0,  0],
-    ///                  [0,  0,  i,  0],
-    ///                  [0,  0,  0,  1]]
+    /// SZZ† = [[1,  0,  0, 0],
+    ///         [0, -i,  0, 0],
+    ///         [0,  0, -i, 0],
+    ///         [0,  0,  0, 1]]
     /// ```
+    /// Multiplying the phase-fixed `SZZ` by `ZZ` swaps its `I` and `ZZ`
+    /// coefficients, producing this adjoint exactly.
     ///
     /// # Returns
     /// * `&mut Self` - Returns the simulator for method chaining.

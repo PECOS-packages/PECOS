@@ -168,6 +168,22 @@ impl BitmaskPauliProp {
         self.set_x_component(q, x);
         self.set_z_component(q, z);
     }
+
+    fn clear_qubits(&mut self, qubits: &[QubitId]) -> &mut Self {
+        for &q in qubits {
+            self.clear_qubit(q.index());
+        }
+        self
+    }
+
+    fn clear_qubits_after_measurement(
+        &mut self,
+        qubits: &[QubitId],
+        results: Vec<MeasurementResult>,
+    ) -> Vec<MeasurementResult> {
+        self.clear_qubits(qubits);
+        results
+    }
 }
 
 impl QuantumSimulator for BitmaskPauliProp {
@@ -370,6 +386,109 @@ impl CliffordGateable for BitmaskPauliProp {
     }
 
     #[inline]
+    fn px(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.clear_qubits(qubits)
+    }
+
+    #[inline]
+    fn pnx(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.clear_qubits(qubits)
+    }
+
+    #[inline]
+    fn py(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.clear_qubits(qubits)
+    }
+
+    #[inline]
+    fn pny(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.clear_qubits(qubits)
+    }
+
+    #[inline]
+    fn pz(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.clear_qubits(qubits)
+    }
+
+    #[inline]
+    fn pnz(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.clear_qubits(qubits)
+    }
+
+    #[inline]
+    fn mpx(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
+        let results = self.mx(qubits);
+        self.clear_qubits_after_measurement(qubits, results)
+    }
+
+    #[inline]
+    fn mpnx(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
+        let results = self.mnx(qubits);
+        self.clear_qubits_after_measurement(qubits, results)
+    }
+
+    #[inline]
+    fn mpy(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
+        let results = self.my(qubits);
+        self.clear_qubits_after_measurement(qubits, results)
+    }
+
+    #[inline]
+    fn mpny(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
+        let results = self.mny(qubits);
+        self.clear_qubits_after_measurement(qubits, results)
+    }
+
+    #[inline]
+    fn mpz(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
+        let results = self.mz(qubits);
+        self.clear_qubits_after_measurement(qubits, results)
+    }
+
+    #[inline]
+    fn mpnz(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
+        let results = self.mnz(qubits);
+        self.clear_qubits_after_measurement(qubits, results)
+    }
+
+    #[inline]
+    fn mx(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
+        qubits
+            .iter()
+            .map(|&q| MeasurementResult {
+                outcome: self.contains_z(q.index()),
+                is_deterministic: true,
+            })
+            .collect()
+    }
+
+    #[inline]
+    fn my(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
+        qubits
+            .iter()
+            .map(|&q| MeasurementResult {
+                outcome: self.contains_x(q.index()) ^ self.contains_z(q.index()),
+                is_deterministic: true,
+            })
+            .collect()
+    }
+
+    #[inline]
+    fn mnx(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
+        self.mx(qubits)
+    }
+
+    #[inline]
+    fn mny(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
+        self.my(qubits)
+    }
+
+    #[inline]
+    fn mnz(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
+        self.mz(qubits)
+    }
+
+    #[inline]
     fn mz(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
         qubits
             .iter()
@@ -444,6 +563,38 @@ mod tests {
                 bitmask.dense_string(),
                 sparse.dense_string(),
                 "{name}: {input}"
+            );
+        }
+    }
+
+    fn assert_measure_then_prep_matches_sparse<F, G>(
+        name: &str,
+        mut apply_sparse: F,
+        mut apply_bitmask: G,
+    ) where
+        F: FnMut(&mut PauliProp) -> Vec<MeasurementResult>,
+        G: FnMut(&mut BitmaskPauliProp) -> Vec<MeasurementResult>,
+    {
+        for input in all_paulis(1) {
+            let mut sparse = sparse_prop_from_dense(&input);
+            let mut bitmask = bitmask_prop_from_dense(&input);
+            let sparse_results = apply_sparse(&mut sparse);
+            let bitmask_results = apply_bitmask(&mut bitmask);
+            assert_eq!(
+                bitmask_results
+                    .iter()
+                    .map(|result| (result.outcome, result.is_deterministic))
+                    .collect::<Vec<_>>(),
+                sparse_results
+                    .iter()
+                    .map(|result| (result.outcome, result.is_deterministic))
+                    .collect::<Vec<_>>(),
+                "{name}: {input} results"
+            );
+            assert_eq!(
+                bitmask.dense_string(),
+                sparse.dense_string(),
+                "{name}: {input} frame"
             );
         }
     }
@@ -604,6 +755,50 @@ mod tests {
                 p.fdg(&[QubitId(0)]);
             },
         );
+    }
+
+    #[test]
+    fn preparations_match_sparse_pauli_prop() {
+        macro_rules! check_prep {
+            ($name:literal, $method:ident) => {
+                assert_matches_sparse_1q(
+                    $name,
+                    |prop| {
+                        prop.$method(&[QubitId(0)]);
+                    },
+                    |prop| {
+                        prop.$method(&[QubitId(0)]);
+                    },
+                );
+            };
+        }
+
+        check_prep!("PX", px);
+        check_prep!("PNX", pnx);
+        check_prep!("PY", py);
+        check_prep!("PNY", pny);
+        check_prep!("PZ", pz);
+        check_prep!("PNZ", pnz);
+    }
+
+    #[test]
+    fn measure_then_preparations_match_sparse_pauli_prop() {
+        macro_rules! check_measure_then_prep {
+            ($name:literal, $method:ident) => {
+                assert_measure_then_prep_matches_sparse(
+                    $name,
+                    |prop| prop.$method(&[QubitId(0)]),
+                    |prop| prop.$method(&[QubitId(0)]),
+                );
+            };
+        }
+
+        check_measure_then_prep!("MPX", mpx);
+        check_measure_then_prep!("MPNX", mpnx);
+        check_measure_then_prep!("MPY", mpy);
+        check_measure_then_prep!("MPNY", mpny);
+        check_measure_then_prep!("MPZ", mpz);
+        check_measure_then_prep!("MPNZ", mpnz);
     }
 
     #[test]

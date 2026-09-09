@@ -14,15 +14,21 @@ gate z a { Z a; }
 
 // Rotation gates
 gate rz(lambda) a { RZ(lambda) a; }
-gate r1xy(theta,phi) a { R1XY(theta,phi) a; }
+gate rxy1q(theta,phi) a { RXY1Q(theta,phi) a; }
+gate r1xy(theta,phi) a { RXY1Q(theta,phi) a; }
 
 // --- Two-qubit gates ---
 
 // Controlled-NOT (CNOT)
 gate cx c,t { CX c,t; }
 
-// ZZ interaction
+// Pauli-root interactions
+gate sxx a,b { SXX a,b; }
+gate sxxdg a,b { SXXDG a,b; }
+gate syy a,b { SYY a,b; }
+gate syydg a,b { SYYDG a,b; }
 gate szz a,b { SZZ a,b; }
+gate szzdg a,b { SZZDG a,b; }
 
 // --- Measurement ---
 // Note: Measurement is a built-in operation in QASM

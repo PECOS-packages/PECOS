@@ -1,6 +1,10 @@
-// Copyright 2024 The PECOS Developers
+// Copyright 2026 The PECOS Developers
 use crate::prelude::*;
+use crate::simulator_utils::{
+    SymbolEntry, extract_angle, extract_angles, supports_exact, validate_supported_symbol,
+};
 use pecos_core::BitSet;
+use pecos_simulators::clifford_rotation::CliffordRotation;
 //
 // Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
 // in compliance with the License.You may obtain a copy of the License at
@@ -19,6 +23,82 @@ use pyo3::types::{PyAny, PyDict, PyList, PySet, PyTuple};
 #[pyclass(name = "SparseStab", module = "pecos_rslib")]
 pub struct PySparseStab {
     inner: SparseStab,
+}
+
+#[cfg(test)]
+crate::simulator_utils::direct_surface_test!(direct_surface_matches_predicate, {
+    PySparseStab::new(2, None)
+});
+
+fn supports(entry: &SymbolEntry) -> bool {
+    supports_exact! { entry;
+        I => ["I"];
+        X => ["X"];
+        Y => ["Y"];
+        Z => ["Z"];
+        H => ["H", "H1", "H+z+x"];
+        H2 => ["H2", "H-z-x"];
+        H3 => ["H3", "H+y-z"];
+        H4 => ["H4", "H-y-z"];
+        H5 => ["H5", "H-x+y"];
+        H6 => ["H6", "H-x-y"];
+        F => ["F", "F1"];
+        Fdg => ["Fdg", "F1d", "F1dg"];
+        F2 => ["F2"];
+        F2dg => ["F2dg", "F2d"];
+        F3 => ["F3"];
+        F3dg => ["F3dg", "F3d"];
+        F4 => ["F4"];
+        F4dg => ["F4dg", "F4d"];
+        Sx => ["Q", "SX", "SqrtX"];
+        Sxdg => ["Qd", "SXdg", "SqrtXd", "SqrtXdg"];
+        Sy => ["R", "SY", "SqrtY"];
+        Sydg => ["Rd", "SYdg", "SqrtYd", "SqrtYdg"];
+        Sz => ["S", "SZ", "SqrtZ"];
+        Szdg => ["Sd", "SZdg", "SqrtZd", "SqrtZdg"];
+        Pz => ["PZ"];
+        PzForced => ["PZForced"];
+        Pnz => ["PNZ"];
+        Px => ["PX"];
+        Pnx => ["PNX"];
+        Py => ["PY"];
+        Pny => ["PNY"];
+        InitZ => ["Init", "Init +Z", "init |0>", "leak", "leak |0>", "unleak |0>"];
+        InitNz => ["Init -Z", "init |1>", "leak |1>", "unleak |1>"];
+        InitX => ["Init +X", "init |+>"];
+        InitNx => ["Init -X", "init |->"];
+        InitY => ["Init +Y", "init |+i>"];
+        InitNy => ["Init -Y", "init |-i>"];
+        Mz => ["MZ"];
+        MzForced => ["MZForced"];
+        MeasureZ => ["Measure", "measure Z", "Measure +Z"];
+        Mx => ["MX", "Measure +X"];
+        My => ["MY", "Measure +Y"];
+        Rx => ["RX"];
+        Ry => ["RY"];
+        Rz => ["RZ"];
+        Rxy1q => ["RXY1Q", "R1XY"];
+        U => ["U"];
+        Cx => ["CX", "CNOT"];
+        Cy => ["CY"];
+        Cz => ["CZ"];
+        Sxx => ["SXX", "SqrtXX"];
+        Sxxdg => ["SXXdg", "SqrtXXd", "SqrtXXdg"];
+        Syy => ["SYY", "SqrtYY"];
+        Syydg => ["SYYdg", "SqrtYYd", "SqrtYYdg"];
+        Szz => ["SZZ", "SqrtZZ"];
+        Szzdg => ["SZZdg", "SqrtZZd", "SqrtZZdg"];
+        Swap => ["SWAP"];
+        G => ["G", "G2"];
+        Gdg => ["Gdg"];
+        Iswap => ["ISWAP"];
+        Iswapdg => ["ISWAPdg"];
+        Rxx => ["RXX"];
+        Ryy => ["RYY"];
+        Rzz => ["RZZ"];
+        RxxRyyRzz => ["RXXRYYRZZ", "RZZRYYRXX", "R2XXYYZZ", "RXXYYZZ"];
+        Ii => ["II"];
+    }
 }
 
 #[pymethods]
@@ -217,6 +297,41 @@ impl PySparseStab {
                 self.inner.szdg(q);
                 Ok(None)
             }
+            "RX" => {
+                let angle = extract_angle(params, "RX")?;
+                self.inner
+                    .try_rx(angle, q)
+                    .map_err(pyo3::exceptions::PyValueError::new_err)?;
+                Ok(None)
+            }
+            "RY" => {
+                let angle = extract_angle(params, "RY")?;
+                self.inner
+                    .try_ry(angle, q)
+                    .map_err(pyo3::exceptions::PyValueError::new_err)?;
+                Ok(None)
+            }
+            "RZ" => {
+                let angle = extract_angle(params, "RZ")?;
+                self.inner
+                    .try_rz(angle, q)
+                    .map_err(pyo3::exceptions::PyValueError::new_err)?;
+                Ok(None)
+            }
+            "RXY1Q" | "R1XY" => {
+                let angles = extract_angles(params, "RXY1Q", GateType::RXY1Q.angle_arity())?;
+                self.inner
+                    .try_rxy1q(angles[0], angles[1], q)
+                    .map_err(pyo3::exceptions::PyValueError::new_err)?;
+                Ok(None)
+            }
+            "U" => {
+                let angles = extract_angles(params, "U", GateType::U.angle_arity())?;
+                self.inner
+                    .try_u(angles[0], angles[1], angles[2], q)
+                    .map_err(pyo3::exceptions::PyValueError::new_err)?;
+                Ok(None)
+            }
             // Initialization aliases
             "Init" | "Init +Z" | "init |0>" | "leak" | "leak |0>" | "unleak |0>" => {
                 // Check if forced_outcome parameter is provided
@@ -305,12 +420,12 @@ impl PySparseStab {
         }
     }
 
-    #[pyo3(signature = (symbol, location, _params))]
+    #[pyo3(signature = (symbol, location, params))]
     fn run_2q_gate(
         &mut self,
         symbol: &str,
         location: &Bound<'_, PyTuple>,
-        _params: Option<&Bound<'_, PyDict>>,
+        params: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Option<u8>> {
         if location.len() != 2 {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
@@ -367,6 +482,47 @@ impl PySparseStab {
                 self.inner.g(pair);
                 Ok(None)
             }
+            "Gdg" => {
+                self.inner.gdg(pair);
+                Ok(None)
+            }
+            "ISWAP" => {
+                self.inner.iswap(pair);
+                Ok(None)
+            }
+            "ISWAPdg" => {
+                self.inner.iswapdg(pair);
+                Ok(None)
+            }
+            "RXX" => {
+                let angle = extract_angle(params, "RXX")?;
+                self.inner
+                    .try_rxx(angle, pair)
+                    .map_err(pyo3::exceptions::PyValueError::new_err)?;
+                Ok(None)
+            }
+            "RYY" => {
+                let angle = extract_angle(params, "RYY")?;
+                self.inner
+                    .try_ryy(angle, pair)
+                    .map_err(pyo3::exceptions::PyValueError::new_err)?;
+                Ok(None)
+            }
+            "RZZ" => {
+                let angle = extract_angle(params, "RZZ")?;
+                self.inner
+                    .try_rzz(angle, pair)
+                    .map_err(pyo3::exceptions::PyValueError::new_err)?;
+                Ok(None)
+            }
+            "RXXRYYRZZ" | "RZZRYYRXX" | "R2XXYYZZ" | "RXXYYZZ" => {
+                let angles =
+                    extract_angles(params, "RXXRYYRZZ", GateType::RXXRYYRZZ.angle_arity())?;
+                self.inner
+                    .try_rxxryyrzz(angles[0], angles[1], angles[2], pair)
+                    .map_err(pyo3::exceptions::PyValueError::new_err)?;
+                Ok(None)
+            }
             // Two-qubit gate aliases
             "II" => Ok(None), // Two-qubit identity - no operation
             _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
@@ -395,7 +551,8 @@ impl PySparseStab {
         }
     }
 
-    /// High-level `run_gate` that accepts a set of locations (Python wrapper compatible)
+    /// High-level `run_gate` that accepts a set of locations (Python wrapper compatible).
+    /// Unsupported symbols raise for empty locations; supported symbols return an empty result.
     #[pyo3(signature = (symbol, locations, **params))]
     fn run_gate(
         &mut self,
@@ -472,6 +629,8 @@ impl PySparseStab {
         py: Python<'_>,
     ) -> PyResult<Py<PyDict>> {
         let output = PyDict::new(py);
+        let locations_set: Bound<PySet> = locations.clone().cast_into()?;
+        validate_supported_symbol(symbol, &locations_set, supports)?;
 
         // Check if simulate_gate is False
         if let Some(p) = params
@@ -481,7 +640,6 @@ impl PySparseStab {
             return Ok(output.into());
         }
 
-        let locations_set: Bound<PySet> = locations.clone().cast_into()?;
         if locations_set.is_empty() {
             return Ok(output.into());
         }
@@ -702,7 +860,9 @@ impl PySparseStab {
         // Create a Rust GateBindingsDict directly
         let py = slf.py();
         let sim_obj: Py<PyAny> = slf.into_bound_py_any(py)?.unbind();
-        Ok(crate::simulator_utils::GateBindingsDict::new(sim_obj))
+        Ok(crate::simulator_utils::GateBindingsDict::new(
+            sim_obj, supports,
+        ))
     }
 
     #[getter]

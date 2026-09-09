@@ -219,13 +219,13 @@ def RZ(
     _apply_one_qubit_matrix(state, qubit, matrix)
 
 
-def R1XY(
+def RXY1Q(
     state: CuStateVec,
     qubit: int,
     angles: tuple[float, float],
     **_params: SimulatorGateParams,
 ) -> None:
-    """Apply an R1XY gate.
+    """Apply an RXY1Q gate.
 
     Args:
         state: An instance of CuStateVec
@@ -356,7 +356,9 @@ def T(state: CuStateVec, qubit: int, **_params: SimulatorGateParams) -> None:
         state: An instance of CuStateVec
         qubit: The index of the qubit where the gate is applied
     """
-    RZ(state, qubit, angles=(pc.f64.frac_pi_4,))
+    phase = cmath.exp(1j * float(pc.f64.frac_pi_4))
+    matrix = cp.asarray([1, 0, 0, phase], dtype=state.cp_type)
+    _apply_one_qubit_matrix(state, qubit, matrix)
 
 
 def Tdg(state: CuStateVec, qubit: int, **_params: SimulatorGateParams) -> None:
@@ -366,7 +368,9 @@ def Tdg(state: CuStateVec, qubit: int, **_params: SimulatorGateParams) -> None:
         state: An instance of CuStateVec
         qubit: The index of the qubit where the gate is applied
     """
-    RZ(state, qubit, angles=(-pc.f64.frac_pi_4,))
+    phase = cmath.exp(-1j * float(pc.f64.frac_pi_4))
+    matrix = cp.asarray([1, 0, 0, phase], dtype=state.cp_type)
+    _apply_one_qubit_matrix(state, qubit, matrix)
 
 
 def H2(state: CuStateVec, qubit: int, **_params: SimulatorGateParams) -> None:

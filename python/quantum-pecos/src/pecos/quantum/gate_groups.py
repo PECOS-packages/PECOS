@@ -74,6 +74,7 @@ one_qubits = {
     "RY",
     "RZ",
     "U1q",
+    "R1XY",
     "RXY1Q",
 }
 

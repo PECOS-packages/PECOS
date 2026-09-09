@@ -20,14 +20,16 @@ from pecos.slr.qeclib.qubit.qgate_base import QGate
 
 
 class T(QGate):
-    """T gate (π/8 rotation).
+    """Conventional T phase gate, diag(1, exp(iπ/4)).
 
-    This gate performs a π/4 rotation around the Z-axis.
+    Its exact relationship to the symmetric rotation family is
+    T = exp(iπ/8) RZ(π/4).
     """
 
 
 class Tdg(QGate):
-    """T-dagger gate (inverse T gate).
+    """Conventional T-dagger phase gate, diag(1, exp(-iπ/4)).
 
-    This gate performs a -π/4 rotation around the Z-axis.
+    Its exact relationship to the symmetric rotation family is
+    Tdg = exp(-iπ/8) RZ(-π/4).
     """

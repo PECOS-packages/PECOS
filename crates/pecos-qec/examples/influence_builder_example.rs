@@ -83,7 +83,7 @@ fn main() {
     let num_locations = influence_map.locations.len();
     let per_location_probs = vec![p_error; num_locations];
 
-    let sampler = DemSampler::from_influence_map(&influence_map, &per_location_probs);
+    let sampler = DemSampler::from_influence_map(&influence_map, &per_location_probs).unwrap();
 
     println!("\n3. Sampling with DemSampler:");
     println!("   Error rate: {p_error}");
@@ -123,7 +123,7 @@ fn main() {
 
     for p in [0.0001, 0.0005, 0.001, 0.002, 0.005] {
         let probs = vec![p; num_locations];
-        let sampler = DemSampler::from_influence_map(&influence_map, &probs);
+        let sampler = DemSampler::from_influence_map(&influence_map, &probs).unwrap();
         let stats = sampler.sample_statistics(50_000, seed);
 
         println!(

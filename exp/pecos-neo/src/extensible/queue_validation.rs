@@ -48,6 +48,11 @@ impl CommandQueueValidation for CommandQueue {
         validator: &dyn CircuitValidator,
         registry: &GateRegistry,
     ) -> Result<(), ValidationError> {
+        for (position, command) in self.iter().enumerate() {
+            command
+                .validate()
+                .map_err(|error| ValidationError::InvalidCommand { position, error })?;
+        }
         let gates = self.to_gate_validations();
         validator.validate(&gates, registry)
     }
@@ -56,7 +61,7 @@ impl CommandQueueValidation for CommandQueue {
         self.iter()
             .map(|cmd| GateForValidation {
                 gate_id: cmd.gate_type.to_gate_id(),
-                angles: cmd.angles.iter().copied().collect(),
+                angles: cmd.angles().to_vec(),
             })
             .collect()
     }
@@ -84,15 +89,16 @@ pub fn snap_command_queue(
     policy: &SnapPolicy,
     snapper: &AngleSnapper,
 ) -> Result<CommandQueue, (usize, SnapError)> {
-    let mut result = CommandQueue::with_capacity(commands.len());
+    let mut result = commands.clone();
+    result.clear_commands();
 
     for (idx, cmd) in commands.iter().enumerate() {
-        if cmd.angles.is_empty() {
+        if cmd.angles().is_empty() {
             result.push(cmd.clone());
         } else {
             let mut snapped_angles = smallvec::SmallVec::<[Angle64; 2]>::new();
 
-            for angle in &cmd.angles {
+            for angle in cmd.angles() {
                 match policy {
                     SnapPolicy::Exact => {
                         snapped_angles.push(*angle);
@@ -130,9 +136,14 @@ pub fn is_clifford_circuit(commands: &CommandQueue) -> bool {
             return false;
         }
 
+        let expected = cmd.gate_type.angle_arity();
+        if cmd.validate().is_err() {
+            return false;
+        }
+
         // For parameterized gates, check if angles are Clifford angles
-        if cmd.gate_type.angle_arity() > 0 && !cmd.angles.is_empty() {
-            return cmd.angles.iter().all(|a| is_clifford_angle(*a));
+        if expected > 0 {
+            return cmd.angles().iter().all(|a| is_clifford_angle(*a));
         }
 
         true
@@ -270,7 +281,7 @@ mod tests {
     fn test_rz_at_non_clifford_angle() {
         let commands = CommandBuilder::new()
             .pz(&[0])
-            .rz(&[0], Angle64::HALF_TURN / 4) // RZ(pi/4) = T, not Clifford
+            .rz(&[0], Angle64::HALF_TURN / 4) // RZ(pi/4) is projectively T, not Clifford.
             .mz(&[0])
             .build();
 

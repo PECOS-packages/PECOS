@@ -82,7 +82,7 @@ def build_custom_message() -> None:
 
     # Parameterized gates
     builder.rz(0.5, [0])  # RZ(0.5) on qubit 0
-    builder.r1xy(0.1, 0.2, [1])  # R1XY(0.1, 0.2) on qubit 1
+    builder.rxy1q(0.1, 0.2, [1])  # RXY1Q(0.1, 0.2) on qubit 1
 
     # Two-qubit gates
     builder.cx([(0, 1)])  # CNOT with control=0, target=1

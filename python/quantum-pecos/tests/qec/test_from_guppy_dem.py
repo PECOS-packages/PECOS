@@ -165,7 +165,7 @@ def test_qubit_trace_metadata_stays_ordered_before_gate() -> None:
     chunks = capture_guppy_operation_trace(_metadata_before_h_gate, num_qubits=1, seed=0)
     lowered_ops = [op for chunk in chunks for op in chunk.get("lowered_quantum_ops", [])]
 
-    assert lowered_ops[1]["gate_type"] == "R1XY"
+    assert lowered_ops[1]["gate_type"] == "RXY1Q"
     assert lowered_ops[1]["metadata"] == {
         "host_id": "probe:host",
         "local_role": "basis_prefix",

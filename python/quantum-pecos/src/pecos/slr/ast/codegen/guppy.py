@@ -19,6 +19,7 @@ which local owns each logical slot while recursive descent emits statements.
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -102,14 +103,15 @@ FUNCTIONAL_GATES: dict[GateKind, str] = {
 
 # Native Guppy parameterized rotation gates: `fn(qubit..., angle)`.
 # Guppy's `angle` type stores half-turns (pi radians = 1.0 half-turn),
-# which is exactly `angle64.to_half_turns_signed()`, so the angle is
-# emitted as `angle(<half_turns>)` with no radians/pi conversion.
+# Stored rotations use `angle64.to_half_turns_signed()`; controlled boundary
+# spellings convert their unreduced radians float to Guppy half turns here.
 PARAMETERIZED_FUNCTIONAL_GATES: dict[GateKind, str] = {
     GateKind.RX: "rx",
     GateKind.RY: "ry",
     GateKind.RZ: "rz",
     GateKind.CRZ: "crz",
 }
+CONTROLLED_ROTATION_GATES = {GateKind.CRX, GateKind.CRY, GateKind.CRZ}
 
 FUNCTIONAL_GATE_IMPORTS = ", ".join(
     sorted(set(FUNCTIONAL_GATES.values()) | set(PARAMETERIZED_FUNCTIONAL_GATES.values()) | {"reset"}),
@@ -199,19 +201,30 @@ _ZZ_PHASE_GATES = frozenset(
 )
 
 
-def _param_to_half_turns(param: object, gate_name: str) -> float:
-    """Resolve a user gate angle param to signed half-turns for Guppy `angle`.
+def _param_to_half_turns(param: object, gate: GateKind) -> float:
+    """Resolve a gate parameter to half turns for Guppy's `angle`.
 
-    Guppy's `angle` is half-turn based (pi rad = 1.0), which is exactly
-    ``angle64.to_half_turns_signed()``. Requires a typed `Angle`
-    (`rad(...)` / `turns(...)`) -- a non-`Angle` param (bare float, or a
-    non-literal classical expression at a gate-param position) fails loud.
+    Stored rotations use a typed `Angle`. Controlled-rotation boundary
+    spellings use an unreduced real radians literal because Guppy owns their
+    external spellings.
     """
     from pecos.slr.angle import Angle  # noqa: PLC0415  (avoid import cycle)
 
+    if gate in CONTROLLED_ROTATION_GATES:
+        if (
+            isinstance(param, LiteralExpr)
+            and isinstance(param.value, int | float)
+            and not isinstance(param.value, bool)
+        ):
+            return float(param.value) / math.pi
+        msg = (
+            f"AST -> Guppy v1: controlled rotation {gate.name} requires an "
+            f"unreduced real radians literal; got {param!r}"
+        )
+        raise GuppyCodegenError(msg)
     if not isinstance(param, LiteralExpr) or not isinstance(param.value, Angle):
         msg = (
-            f"AST -> Guppy v1: parameterized gate {gate_name} requires a typed `Angle` "
+            f"AST -> Guppy v1: parameterized gate {gate.name} requires a typed `Angle` "
             f"parameter (use `rad(...)` / `turns(...)`); got {param!r}"
         )
         raise GuppyCodegenError(msg)
@@ -1165,18 +1178,14 @@ class AstToGuppy:
     def _emit_parameterized_gate(self, node: GateOp) -> list[str]:
         """Emit a native Guppy rotation: `fn(qubit..., angle(half_turns))`.
 
-        Guppy's `angle` stores half-turns (pi rad == 1.0 half-turn), so
-        the typed `Angle` param is emitted via
-        ``angle64.to_half_turns_signed()`` -- no radians/pi conversion.
-        Only typed `Angle` params are supported (a bare float or a
-        non-literal classical expression at a gate-param position fails
-        loud, mirroring the QIR backend's parameterized guard).
+        Stored rotations use typed `Angle` parameters, while controlled
+        rotations use unreduced real radians values.
         """
         gate = PARAMETERIZED_FUNCTIONAL_GATES[node.gate]
         if not node.params:
             msg = f"AST -> Guppy v1: parameterized gate {node.gate.name} requires an angle parameter"
             raise GuppyCodegenError(msg)
-        angle_args = [f"angle({_param_to_half_turns(param, node.gate.name)})" for param in node.params]
+        angle_args = [f"angle({_param_to_half_turns(param, node.gate)})" for param in node.params]
         angle_str = ", ".join(angle_args)
 
         slots = [self._slot_from_ref(target) for target in node.targets]
@@ -1232,7 +1241,7 @@ class AstToGuppy:
                 raise GuppyCodegenError(msg)
             # User params resolve to half-turns; the forwarding lambdas
             # (`p[0]`) then carry half-turns, matching the constant specs.
-            resolved_params = tuple(_param_to_half_turns(param, node.gate.name) for param in params)
+            resolved_params = tuple(_param_to_half_turns(param, node.gate) for param in params)
 
         linearity = self._linearity()
         lines: list[str] = []

@@ -169,7 +169,8 @@ pub fn execute_hugr_symbolic(
 
     // Convert to SimpleHugr using relaxed mode to allow guppy-generated HUGRs
     // which may have CFG wrapper structures but no actual control flow
-    let simple_hugr = SimpleHugr::new_relaxed(hugr);
+    let simple_hugr = SimpleHugr::new_relaxed(hugr)
+        .map_err(|e| PyRuntimeError::new_err(format!("Failed to convert HUGR: {e}")))?;
 
     // Determine number of qubits
     let n_qubits = num_qubits.unwrap_or_else(|| simple_hugr.qubits().len());
@@ -409,7 +410,8 @@ pub fn execute_hugr_symbolic_noisy(
         .map_err(|e| PyRuntimeError::new_err(format!("Failed to parse HUGR bytes: {e}")))?;
 
     // Convert to SimpleHugr
-    let simple_hugr = SimpleHugr::new_relaxed(hugr);
+    let simple_hugr = SimpleHugr::new_relaxed(hugr)
+        .map_err(|e| PyRuntimeError::new_err(format!("Failed to convert HUGR: {e}")))?;
 
     // Determine number of qubits
     let n_qubits = num_qubits.unwrap_or_else(|| simple_hugr.qubits().len());

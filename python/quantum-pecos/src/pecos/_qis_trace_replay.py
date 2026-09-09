@@ -151,7 +151,7 @@ def _replay_qis_trace_into_tick_circuit(
             tick.rz(float(theta), [mapped_slot(int(program_id), op_name)])
         elif op_name == "RXY":
             theta, phi, program_id = tuple_args(payload, op_name, 3)
-            tick.r1xy(float(theta), float(phi), [mapped_slot(int(program_id), op_name)])
+            tick.rxy1q(float(theta), float(phi), [mapped_slot(int(program_id), op_name)])
         elif op_name == "Idle":
             duration, program_id = tuple_args(payload, op_name, 2)
             tick.idle(
@@ -419,9 +419,9 @@ def _replay_lowered_qis_trace_into_tick_circuit(
             elif gate_type == "RZ":
                 (theta,) = _require_gate_angles(angles, gate_type, 1)
                 tick.rz(theta, qubits)
-            elif gate_type == "R1XY":
+            elif gate_type in {"RXY1Q", "R1XY"}:
                 theta, phi = _require_gate_angles(angles, gate_type, 2)
-                tick.r1xy(theta, phi, qubits)
+                tick.rxy1q(theta, phi, qubits)
             elif gate_type == "CX":
                 tick.cx(_gate_pairs(qubits, gate_type))
             elif gate_type == "CY":

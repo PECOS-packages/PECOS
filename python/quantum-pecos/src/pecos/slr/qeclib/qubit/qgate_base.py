@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import copy
 from abc import ABCMeta
+from numbers import Real
 from typing import TYPE_CHECKING, Self
 
 from pecos.slr.gen_codes.gen_qasm import QASMGenerator
@@ -44,6 +45,9 @@ class QGate:
     # `CRZ(theta, control, target)`, `RZZ(theta, q0, q1)`. A
     # parameterized gate must set `num_params` (and `has_parameters`).
     num_params = 0
+    # Boundary spellings that must consume an unreduced real radians value set
+    # this instead of accepting the typed `Angle` used by stored rotations.
+    has_unreduced_radian_parameters = False
 
     def __init__(self, *qargs: Qubit) -> None:
         """Initialize a quantum gate.
@@ -107,7 +111,9 @@ class QGate:
 
         For a parameterized gate the first `num_params` arguments are
         the rotation angle(s); the remaining arguments are the qubits:
-        `RX(theta, q)`, `CRZ(theta, control, target)`. For a
+        `RX(theta, q)`, `CRZ(theta_radians, control, target)`. Stored
+        rotations require a typed `Angle`; controlled-rotation boundary
+        spellings require an unreduced real number in radians. For a
         non-parameterized gate every argument is a qubit.
 
         Args:
@@ -130,9 +136,10 @@ class QGate:
                 raise TypeError(msg)
             params = tuple(args[:n])
             qargs = tuple(args[n:])
-            # Typed-angle guard: each angle slot must be a typed `Angle`
-            # (built with `rad(...)` / `turns(...)`), and each qubit slot
-            # must be a quantum qubit shape. This rejects the classic
+            # Parameter guard: stored rotations require a typed `Angle`
+            # (built with `rad(...)` / `turns(...)`), while controlled
+            # boundary spellings require an unreduced real radians value.
+            # Each qubit slot must be a quantum qubit shape. This rejects the classic
             # mis-ordered call (`RX(q, 0.5)` instead of `RX(rad(0.5), q)`)
             # AND the now-removed bare-float form (`RX(0.5, q)`) loudly at
             # the call, so a typo can never reach codegen as a no-op or as
@@ -144,15 +151,30 @@ class QGate:
 
             qubit_types = (Qubit, QReg, SymbolicQubit)
             for p in params:
-                if isinstance(p, Angle):
-                    continue
                 if isinstance(p, Var):
                     msg = (
                         f"{self.sym}: a register/qubit reference {p!r} was passed in an angle "
                         f"position. Call as `{self.sym}(angle, qubit...)` -- angles come before qubit "
-                        "ids, and the angle must be a typed `Angle` (use `rad(...)` / `turns(...)`)."
+                        "ids."
                     )
                     raise TypeError(msg)
+                if self.has_unreduced_radian_parameters:
+                    if isinstance(p, Angle):
+                        msg = (
+                            f"{self.sym}: controlled rotations are 4pi-periodic, but a typed `Angle` "
+                            "has already been reduced modulo 2pi. Pass the radians value directly "
+                            f"as a real number: `{self.sym}(theta_radians, control, target)`."
+                        )
+                        raise TypeError(msg)
+                    if isinstance(p, Real) and not isinstance(p, bool):
+                        continue
+                    msg = (
+                        f"{self.sym}: a controlled-rotation angle must be a real number in radians; "
+                        f"got {p!r}. Call as `{self.sym}(theta_radians, control, target)`."
+                    )
+                    raise TypeError(msg)
+                if isinstance(p, Angle):
+                    continue
                 if isinstance(p, (bool, int, float, complex)):
                     msg = (
                         f"{self.sym}: bare numeric angle {p!r} is no longer accepted. Wrap it in a "
@@ -192,7 +214,7 @@ class QGate:
                     f"got {len(qargs)}. (Pass a whole QReg to broadcast.)"
                 )
                 raise TypeError(msg)
-            g.params = params
+            g.params = tuple(float(p) for p in params) if self.has_unreduced_radian_parameters else params
             g.add_qargs(qargs)
         else:
             g.add_qargs(args)

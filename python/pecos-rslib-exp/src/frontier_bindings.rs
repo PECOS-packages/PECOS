@@ -11,11 +11,13 @@
 // the License.
 
 use pecos_frontier::{
-    CommitteeDirection, CommitteeMember, CommitteeStatus, DecoderError,
+    CommitteeDirection, CommitteeMember, CommitteeStatus, DecoderError, Factor, FactorModel,
     FrontierCommittee as RustFrontierCommittee,
     FrontierCommitteeResult as RustFrontierCommitteeResult, FrontierConfig as RustFrontierConfig,
     FrontierDecoder as RustFrontierDecoder, FrontierResult as RustFrontierResult, FrontierStatus,
-    ObsMask, SparseDem, backward_deadline_column_order, deadline_column_order,
+    MetricMode, ObsMask, Outcome, SparseDem, backward_deadline_column_order,
+    backward_deadline_column_order_for_factors, deadline_column_order,
+    deadline_column_order_for_factors,
 };
 use pyo3::Borrowed;
 use pyo3::exceptions::{PyAttributeError, PyRuntimeError, PyValueError};
@@ -26,6 +28,9 @@ enum ColumnOrderArgument {
     Name(String),
     Explicit(Vec<usize>),
 }
+
+type FactorOutcomeArgument = (f64, Vec<u32>, Vec<u32>);
+type FactorModelArgument = Vec<Vec<FactorOutcomeArgument>>;
 
 impl<'a, 'py> FromPyObject<'a, 'py> for ColumnOrderArgument {
     type Error = PyErr;
@@ -39,7 +44,7 @@ impl<'a, 'py> FromPyObject<'a, 'py> for ColumnOrderArgument {
         }
         Err(PyValueError::new_err(
             "column_order must be 'deadline_reorder', 'time_order', \
-             'backward_deadline_reorder', or a list of mechanism indices",
+             'backward_deadline_reorder', or a list of column indices",
         ))
     }
 }
@@ -52,6 +57,17 @@ impl Default for ColumnOrderArgument {
 
 fn runtime_error(error: &DecoderError) -> PyErr {
     PyRuntimeError::new_err(error.to_string())
+}
+
+fn parse_metric_mode(metric_mode: &str) -> PyResult<MetricMode> {
+    match metric_mode.trim() {
+        "logsumexp_float" | "float" | "exact" => Ok(MetricMode::LogSumExpFloat),
+        "frontierLite" | "frontier_lite" | "frontier-lite" | "frontierlite" | "maxlog_int"
+        | "max_log_int" | "viterbi_int" => Ok(MetricMode::MaxLogInt),
+        _ => Err(PyValueError::new_err(
+            "metric_mode must be 'logsumexp_float' or 'maxlog_int'",
+        )),
+    }
 }
 
 fn sparse_index_error(index: u64, num_detectors: usize) -> PyErr {
@@ -88,7 +104,29 @@ fn resolve_column_order(
                 .map_err(|e| runtime_error(&e)),
             _ => Err(PyValueError::new_err(format!(
                 "invalid column_order {name:?}; expected 'deadline_reorder', 'time_order', \
-                 'backward_deadline_reorder', or a list of mechanism indices"
+                 'backward_deadline_reorder', or a list of column indices"
+            ))),
+        },
+        ColumnOrderArgument::Explicit(order) => Ok(Some(order)),
+    }
+}
+
+fn resolve_factor_column_order(
+    model: &FactorModel,
+    column_order: ColumnOrderArgument,
+) -> PyResult<Option<Vec<usize>>> {
+    match column_order {
+        ColumnOrderArgument::Name(name) => match name.as_str() {
+            "deadline_reorder" => deadline_column_order_for_factors(model)
+                .map(Some)
+                .map_err(|error| runtime_error(&error)),
+            "time_order" => Ok(None),
+            "backward_deadline_reorder" => backward_deadline_column_order_for_factors(model)
+                .map(Some)
+                .map_err(|error| runtime_error(&error)),
+            _ => Err(PyValueError::new_err(format!(
+                "invalid column_order {name:?}; expected 'deadline_reorder', 'time_order', \
+                 'backward_deadline_reorder', or a list of column indices"
             ))),
         },
         ColumnOrderArgument::Explicit(order) => Ok(Some(order)),
@@ -103,9 +141,12 @@ fn parse_dem_and_config(
     bp_score_iterations: usize,
     column_order: ColumnOrderArgument,
     merge_indistinguishable: bool,
+    metric_mode: &str,
+    int_metric_scale: i32,
 ) -> PyResult<(SparseDem, RustFrontierConfig)> {
     let dem = SparseDem::from_dem_str(dem_str).map_err(|e| runtime_error(&e))?;
     let column_order = resolve_column_order(&dem, column_order)?;
+    let metric_mode = parse_metric_mode(metric_mode)?;
     Ok((
         dem,
         RustFrontierConfig {
@@ -115,6 +156,8 @@ fn parse_dem_and_config(
             column_order,
             merge_indistinguishable,
             bp_score_iterations,
+            metric_mode,
+            int_metric_scale,
         },
     ))
 }
@@ -438,8 +481,8 @@ impl PyFrontierDecoder {
     /// Construct a native Frontier decoder from a Stim-format DEM string.
     #[staticmethod]
     #[pyo3(
-        signature = (dem, *, k=64, delta=50.0, score_alpha=0.8, bp_score_iterations=0, column_order=ColumnOrderArgument::default(), merge_indistinguishable=false),
-        text_signature = "(dem, *, k=64, delta=50.0, score_alpha=0.8, bp_score_iterations=0, column_order='deadline_reorder', merge_indistinguishable=False)"
+        signature = (dem, *, k=64, delta=50.0, score_alpha=0.8, bp_score_iterations=0, column_order=ColumnOrderArgument::default(), merge_indistinguishable=false, metric_mode="logsumexp_float", int_metric_scale=1024),
+        text_signature = "(dem, *, k=64, delta=50.0, score_alpha=0.8, bp_score_iterations=0, column_order='deadline_reorder', merge_indistinguishable=False, metric_mode='logsumexp_float', int_metric_scale=1024)"
     )]
     fn from_dem(
         dem: &str,
@@ -449,6 +492,8 @@ impl PyFrontierDecoder {
         bp_score_iterations: usize,
         column_order: ColumnOrderArgument,
         merge_indistinguishable: bool,
+        metric_mode: &str,
+        int_metric_scale: i32,
     ) -> PyResult<Self> {
         let (dem, config) = parse_dem_and_config(
             dem,
@@ -458,10 +503,67 @@ impl PyFrontierDecoder {
             bp_score_iterations,
             column_order,
             merge_indistinguishable,
+            metric_mode,
+            int_metric_scale,
         )?;
         let num_detectors = dem.num_detectors;
         let num_observables = dem.num_observables;
         let inner = RustFrontierDecoder::from_sparse_dem(&dem, config)
+            .map_err(|error| runtime_error(&error))?;
+        Ok(Self {
+            inner,
+            num_detectors,
+            num_observables,
+        })
+    }
+
+    /// Construct a native Frontier decoder from a multi-outcome factor model.
+    #[staticmethod]
+    #[pyo3(
+        signature = (factors, num_detectors, num_observables, *, k=64, delta=50.0, score_alpha=0.8, bp_score_iterations=0, column_order=ColumnOrderArgument::default(), merge_indistinguishable=false, metric_mode="logsumexp_float", int_metric_scale=1024),
+        text_signature = "(factors, num_detectors, num_observables, *, k=64, delta=50.0, score_alpha=0.8, bp_score_iterations=0, column_order='deadline_reorder', merge_indistinguishable=False, metric_mode='logsumexp_float', int_metric_scale=1024)"
+    )]
+    fn from_factors(
+        factors: FactorModelArgument,
+        num_detectors: usize,
+        num_observables: usize,
+        k: usize,
+        delta: f64,
+        score_alpha: f64,
+        bp_score_iterations: usize,
+        column_order: ColumnOrderArgument,
+        merge_indistinguishable: bool,
+        metric_mode: &str,
+        int_metric_scale: i32,
+    ) -> PyResult<Self> {
+        let metric_mode = parse_metric_mode(metric_mode)?;
+        let factors = factors
+            .into_iter()
+            .map(|outcomes| Factor {
+                outcomes: outcomes
+                    .into_iter()
+                    .map(|(probability, detectors, observables)| Outcome {
+                        probability,
+                        detectors,
+                        observables,
+                    })
+                    .collect(),
+            })
+            .collect();
+        let model = FactorModel::new(factors, num_detectors, num_observables)
+            .map_err(|error| runtime_error(&error))?;
+        let column_order = resolve_factor_column_order(&model, column_order)?;
+        let config = RustFrontierConfig {
+            k,
+            delta,
+            score_alpha,
+            column_order,
+            merge_indistinguishable,
+            bp_score_iterations,
+            metric_mode,
+            int_metric_scale,
+        };
+        let inner = RustFrontierDecoder::from_factor_model(&model, config)
             .map_err(|error| runtime_error(&error))?;
         Ok(Self {
             inner,
@@ -534,8 +636,8 @@ impl PyFrontierCommitteeDecoder {
     /// Construct a native forward/backward committee from a Stim-format DEM.
     #[staticmethod]
     #[pyo3(
-        signature = (dem, *, k=64, delta=50.0, score_alpha=0.8, bp_score_iterations=0, column_order=ColumnOrderArgument::default(), merge_indistinguishable=false),
-        text_signature = "(dem, *, k=64, delta=50.0, score_alpha=0.8, bp_score_iterations=0, column_order='deadline_reorder', merge_indistinguishable=False)"
+        signature = (dem, *, k=64, delta=50.0, score_alpha=0.8, bp_score_iterations=0, column_order=ColumnOrderArgument::default(), merge_indistinguishable=false, metric_mode="logsumexp_float", int_metric_scale=1024),
+        text_signature = "(dem, *, k=64, delta=50.0, score_alpha=0.8, bp_score_iterations=0, column_order='deadline_reorder', merge_indistinguishable=False, metric_mode='logsumexp_float', int_metric_scale=1024)"
     )]
     fn from_dem(
         dem: &str,
@@ -545,6 +647,8 @@ impl PyFrontierCommitteeDecoder {
         bp_score_iterations: usize,
         column_order: ColumnOrderArgument,
         merge_indistinguishable: bool,
+        metric_mode: &str,
+        int_metric_scale: i32,
     ) -> PyResult<Self> {
         let (dem, config) = parse_dem_and_config(
             dem,
@@ -554,6 +658,8 @@ impl PyFrontierCommitteeDecoder {
             bp_score_iterations,
             column_order,
             merge_indistinguishable,
+            metric_mode,
+            int_metric_scale,
         )?;
         let num_detectors = dem.num_detectors;
         let num_observables = dem.num_observables;

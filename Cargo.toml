@@ -5,13 +5,14 @@ members = [
   "python/pecos-rslib-exp",
   "python/pecos-rslib-cuda",
   "python/pecos-rslib-llvm",
+  "python/selene-plugins/pecos-selene-general-noise",
   "python/selene-plugins/pecos-selene-mast",
   "python/selene-plugins/pecos-selene-stab-mps",
   "python/selene-plugins/pecos-selene-stab-vec",
   "python/selene-plugins/pecos-selene-stabilizer",
   "python/selene-plugins/pecos-selene-statevec",
   "julia/pecos-julia-ffi",
-  "go/pecos-go-ffi",
+  "crates/pecos-synth",
   "crates/pecos*",
   "crates/benchmarks",
   "exp/pecos*",
@@ -168,6 +169,7 @@ approx = "0.5"
 assert_cmd = "2"
 criterion = "0.8"
 paste = "1"
+rand_chacha = "0.9"
 random_tester = "0.1"
 proptest = "1"
 
@@ -190,6 +192,7 @@ sprs = "=0.11.3"
 # =============================================================================
 
 pecos = { version = "0.2.0-dev.0", path = "crates/pecos", default-features = false }
+pecos-bp = { version = "0.2.0-dev.0", path = "crates/pecos-bp" }
 pecos-build = { version = "0.2.0-dev.0", path = "crates/pecos-build", default-features = false }
 pecos-chromobius = { version = "0.2.0-dev.0", path = "crates/pecos-chromobius" }
 pecos-core = { version = "0.2.0-dev.0", path = "crates/pecos-core" }
@@ -295,6 +298,9 @@ clone_on_copy = "allow" # `cxx::bridge` derives `Clone` for its generated FFI st
 # statistical validation tests (e.g. the surface-code LER equivalence
 # gate) need tens of thousands of simulated shots and are unusably slow
 # unoptimized (>10 min vs ~2 min). Debug assertions remain enabled.
+# pecos-stab-tn is on the list for the same reason: its unit tests take
+# 159 s unoptimized and 6 s at opt-level 2 (measured 2026-09-04), and they
+# were the second-largest share of the PR gate's Rust test time.
 [profile.dev.package.pecos-core]
 opt-level = 2
 [profile.dev.package.pecos-random]
@@ -312,6 +318,17 @@ opt-level = 2
 [profile.dev.package.pecos-fusion-blossom]
 opt-level = 2
 [profile.dev.package.fusion-blossom]
+opt-level = 2
+# Belief-propagation kernels and their external oracle: the Relay-BP parity
+# tests run thousands of iterations over a 30k-edge Tanner graph (~30x
+# slower unoptimized: 82 s vs 2.6 s for one test).
+[profile.dev.package.pecos-bp]
+opt-level = 2
+[profile.dev.package.pecos-relay-bp]
+opt-level = 2
+[profile.dev.package.relay-bp]
+opt-level = 2
+[profile.dev.package.pecos-stab-tn]
 opt-level = 2
 
 # batsat's solver core is tested and shipped by upstream with release arithmetic;

@@ -872,6 +872,108 @@ impl GeneralNoiseModelBuilder {
     ///
     /// Returns a description of the first invalid combination.
     pub fn validate_configuration(&self) -> Result<(), &'static str> {
+        let finite_non_negative = |value: f64| value.is_finite() && value >= 0.0;
+        let probability = |value: f64| value.is_finite() && (0.0..=1.0).contains(&value);
+        let scale = self.scale.unwrap_or(1.0);
+        let idle_scale = self.idle_scale.unwrap_or(1.0);
+        let prep_scale = self.prep_scale.unwrap_or(1.0);
+        let meas_scale = self.meas_scale.unwrap_or(1.0);
+        let p1_scale = self.p1_scale.unwrap_or(1.0);
+        let p2_scale = self.p2_scale.unwrap_or(1.0);
+        let emission_scale = self.emission_scale.unwrap_or(1.0);
+        let prep_crosstalk_scale = self.p_prep_crosstalk_scale.unwrap_or(1.0);
+        let meas_crosstalk_scale = self.p_meas_crosstalk_scale.unwrap_or(1.0);
+        if ![
+            scale,
+            idle_scale,
+            prep_scale,
+            meas_scale,
+            p1_scale,
+            p2_scale,
+            emission_scale,
+            prep_crosstalk_scale,
+            meas_crosstalk_scale,
+        ]
+        .into_iter()
+        .all(finite_non_negative)
+        {
+            return Err("general-noise scale factors must be finite and non-negative");
+        }
+
+        let (p_prep, p_meas_0, p_meas_1, p1, p2) = self.resolved_base_probabilities();
+        if !probability(p_prep * prep_scale * scale) {
+            return Err("scaled preparation probability must be between zero and one");
+        }
+        if !probability(p_meas_0 * meas_scale * scale)
+            || !probability(p_meas_1 * meas_scale * scale)
+        {
+            return Err("scaled measurement probabilities must be between zero and one");
+        }
+        if !probability(p1 * p1_scale * scale) {
+            return Err("scaled one-qubit probability must be between zero and one");
+        }
+        let scaled_p2 = p2 * p2_scale * scale;
+        if !probability(scaled_p2) {
+            return Err("scaled two-qubit probability must be between zero and one");
+        }
+
+        let default = GeneralNoiseModel::default();
+        let prep_crosstalk = self.p_prep_crosstalk.unwrap_or(default.p_prep_crosstalk);
+        if !probability(prep_crosstalk * prep_crosstalk_scale * prep_scale * scale) {
+            return Err("scaled preparation-crosstalk probability must be between zero and one");
+        }
+        let meas_crosstalk_global = self
+            .p_meas_crosstalk_global
+            .unwrap_or(default.p_meas_crosstalk_global);
+        let meas_crosstalk_local = self
+            .p_meas_crosstalk_local
+            .unwrap_or(default.p_meas_crosstalk_local);
+        if !probability(meas_crosstalk_global * meas_crosstalk_scale * meas_scale * scale)
+            || !probability(meas_crosstalk_local * meas_crosstalk_scale * meas_scale * scale)
+        {
+            return Err("scaled measurement-crosstalk probabilities must be between zero and one");
+        }
+
+        let (a, b, c, d) = self
+            .p2_angle_params
+            .unwrap_or_else(|| default.p2_angle_params());
+        if ![b, a + b, d, c + d, (b + d) * 0.5]
+            .into_iter()
+            .map(|multiplier| scaled_p2 * multiplier)
+            .all(probability)
+        {
+            return Err("angle-dependent two-qubit probabilities must remain between zero and one");
+        }
+        let angle_power = self
+            .p2_angle_power
+            .unwrap_or_else(|| default.p2_angle_power());
+        if !angle_power.is_finite() || angle_power <= 0.0 {
+            return Err("two-qubit angle power must be finite and positive");
+        }
+
+        let linear_rate = self
+            .p_idle_linear_rate
+            .unwrap_or(default.p_idle_linear_rate)
+            * idle_scale
+            * scale;
+        let sine_rate = self
+            .p_idle_sin_squared
+            .as_ref()
+            .map_or(default.p_idle_sin_squared_rate, |(rate, _)| *rate)
+            * idle_scale
+            * scale;
+        let coherent_rate = self
+            .p_idle_coherent
+            .as_ref()
+            .map_or(default.p_idle_coherent_rate, |(rate, _)| *rate)
+            * idle_scale
+            * scale;
+        if ![linear_rate, sine_rate, coherent_rate]
+            .into_iter()
+            .all(finite_non_negative)
+        {
+            return Err("scaled idle rates must be finite and non-negative");
+        }
         Ok(())
     }
 
@@ -1120,7 +1222,9 @@ impl GeneralNoiseModelBuilder {
         model.p2_emission_ratio *= emission_scale * scale;
         model.p2_emission_ratio = model.p2_emission_ratio.min(1.0);
 
-        model.p_idle_linear_rate = model.p_idle_linear_rate * scale * idle_scale;
+        model.p_idle_linear_rate *= scale * idle_scale;
+        model.p_idle_sin_squared_rate *= scale * idle_scale;
+        model.p_idle_coherent_rate *= scale * idle_scale;
     }
 }
 
@@ -1414,5 +1518,47 @@ mod tests {
         // ...so surfacing the raw 0.25 would be a cross-stack mismatch: the
         // subset must refuse it.
         assert!(builder.pauli_with_angle_scaling().is_none());
+    }
+
+    #[test]
+    fn cross_field_validation_rejects_invalid_effective_probabilities() {
+        assert_eq!(
+            GeneralNoiseModelBuilder::new()
+                .with_p1(0.8)
+                .with_scale(2.0)
+                .validate_configuration(),
+            Err("scaled one-qubit probability must be between zero and one")
+        );
+        assert_eq!(
+            GeneralNoiseModelBuilder::new()
+                .with_p2(0.8)
+                .with_p2_angle_params(1.0, 1.0, 0.0, 1.0)
+                .validate_configuration(),
+            Err("angle-dependent two-qubit probabilities must remain between zero and one")
+        );
+        assert!(
+            GeneralNoiseModelBuilder::new()
+                .with_p1(0.4)
+                .with_scale(2.0)
+                .validate_configuration()
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn idle_scale_applies_to_every_idle_family() {
+        let linear = BTreeMap::from([("X".to_string(), 1.0)]);
+        let sine = BTreeMap::from([("Z".to_string(), 1.0)]);
+        let coherent = BTreeMap::from([("RZ".to_string(), 1.0)]);
+        let model = GeneralNoiseModelBuilder::new()
+            .with_p_idle_linear(0.2, &linear)
+            .with_p_idle_sin_squared(0.3, &sine)
+            .with_p_idle_coherent(0.4, &coherent)
+            .with_idle_scale(0.5)
+            .build();
+
+        assert_float_eq(model.p_idle_linear_rate, 0.1);
+        assert_float_eq(model.p_idle_sin_squared_rate, 0.15);
+        assert_float_eq(model.p_idle_coherent_rate, 0.2);
     }
 }

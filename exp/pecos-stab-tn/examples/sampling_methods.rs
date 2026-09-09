@@ -10,13 +10,13 @@
 // express or implied. See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Compare per-shot cloning with prefix-sharing perfect bitstring sampling.
+//! Compare a per-shot clone-and-MZ loop with prefix-sharing bitstring sampling.
 
 use std::collections::HashSet;
 use std::hint::black_box;
 use std::time::Instant;
 
-use pecos_core::{Angle64, QubitId};
+use pecos_core::{Angle64, QubitId, RngManageable};
 use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable};
 use pecos_stab_tn::stab_mps::StabMps;
 
@@ -67,9 +67,23 @@ fn distinct_internal_prefixes(shots: &[Vec<bool>]) -> usize {
     prefixes.len()
 }
 
+fn sample_with_fresh_clones(base: &StabMps, num_qubits: usize, num_shots: usize) -> Vec<Vec<bool>> {
+    (0..num_shots)
+        .map(|shot| {
+            let mut simulator = base.clone();
+            simulator.set_seed(0xF2E5_0000_u64.wrapping_add(shot as u64));
+            simulator
+                .mz(&(0..num_qubits).map(QubitId).collect::<Vec<_>>())
+                .into_iter()
+                .map(|result| result.outcome)
+                .collect()
+        })
+        .collect()
+}
+
 fn main() {
     println!(
-        "| n | T | shots | sample_bitstring | sample_bitstrings | speedup | distinct internal prefixes |"
+        "| n | T | shots | fresh clone + MZ loop | sample_bitstrings | speedup | distinct internal prefixes |"
     );
     println!("|---:|---:|---:|---:|---:|---:|---:|");
 
@@ -77,11 +91,10 @@ fn main() {
         let t_count = num_qubits / 2;
         let base = seeded_circuit(num_qubits, t_count, 0x5eed_u64 + num_qubits as u64);
         for num_shots in [100usize, 1_000, 10_000] {
-            let mut legacy = base.clone();
             let start = Instant::now();
-            let legacy_shots = legacy.sample_bitstring(num_shots);
-            let legacy_elapsed = start.elapsed();
-            black_box(&legacy_shots);
+            let per_shot = sample_with_fresh_clones(&base, num_qubits, num_shots);
+            let per_shot_elapsed = start.elapsed();
+            black_box(&per_shot);
 
             let mut prefix = base.clone();
             let start = Instant::now();
@@ -90,11 +103,11 @@ fn main() {
             let distinct_prefixes = distinct_internal_prefixes(&prefix_shots);
             black_box(&prefix_shots);
 
-            let legacy_ms = legacy_elapsed.as_secs_f64() * 1_000.0;
+            let per_shot_ms = per_shot_elapsed.as_secs_f64() * 1_000.0;
             let prefix_ms = prefix_elapsed.as_secs_f64() * 1_000.0;
-            let speedup = legacy_ms / prefix_ms;
+            let speedup = per_shot_ms / prefix_ms;
             println!(
-                "| {num_qubits} | {t_count} | {num_shots} | {legacy_ms:.3} ms | \
+                "| {num_qubits} | {t_count} | {num_shots} | {per_shot_ms:.3} ms | \
                  {prefix_ms:.3} ms | {speedup:.2}x | {distinct_prefixes} |"
             );
         }

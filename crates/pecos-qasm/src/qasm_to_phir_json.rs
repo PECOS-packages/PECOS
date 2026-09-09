@@ -303,12 +303,18 @@ fn qasm_gate_to_phir(name: &str) -> Result<String, String> {
         "cx" | "cnot" => "CX",
         "cy" => "CY",
         "cz" => "CZ",
+        "sxx" => "SXX",
+        "sxxdg" => "SXXdg",
+        "syy" => "SYY",
+        "syydg" => "SYYdg",
+        "szz" => "SZZ",
+        "szzdg" => "SZZdg",
         "swap" => "SWAP",
         "rx" => "RX",
         "ry" => "RY",
         "rz" => "RZ",
         "rzz" | "zzphase" => "RZZ",
-        "r1xy" | "u1q" => "R1XY",
+        "rxy1q" | "r1xy" | "u1q" => "R1XY",
         "u" | "u3" => "U",
         "reset" => "Init",
         other => return Err(format!("Unsupported QASM gate: {other}")),
@@ -337,7 +343,7 @@ fn gate_type_to_phir(gt: GateType) -> Result<String, String> {
         GateType::RX => "RX",
         GateType::RY => "RY",
         GateType::RZ => "RZ",
-        GateType::R1XY => "R1XY",
+        GateType::RXY1Q => "R1XY",
         GateType::U => "U",
         GateType::CX => "CX",
         GateType::CY => "CY",
@@ -508,6 +514,30 @@ mod tests {
     }
 
     #[test]
+    fn all_named_two_qubit_roots_convert_to_phir_json() {
+        let phir = convert(
+            r"
+            OPENQASM 2.0;
+            qreg q[2];
+            SXX q[0],q[1];
+            SXXDG q[0],q[1];
+            SYY q[0],q[1];
+            SYYDG q[0],q[1];
+            SZZ q[0],q[1];
+            SZZDG q[0],q[1];
+        ",
+        );
+        let roots: Vec<_> = get_ops(&phir)
+            .iter()
+            .filter_map(|op| op.get("qop").and_then(Value::as_str))
+            .collect();
+        assert_eq!(roots, ["SXX", "SXXdg", "SYY", "SYYdg", "SZZ", "SZZdg"]);
+        for op in get_ops(&phir).iter().filter(|op| op.get("qop").is_some()) {
+            assert_eq!(op["args"], json!([[["q", 0], ["q", 1]]]));
+        }
+    }
+
+    #[test]
     fn measurement() {
         let phir = convert(
             r#"
@@ -661,6 +691,39 @@ mod tests {
         let ops = get_ops(&phir);
         let rz = ops.iter().find(|o| o["qop"] == "RZ").unwrap();
         assert!(rz.get("angles").is_some());
+    }
+
+    #[test]
+    fn xy_plane_rotation_aliases_emit_phir_json_r1xy() {
+        let programs = [
+            r#"
+                OPENQASM 2.0;
+                include "pecos.inc";
+                qreg q[1];
+                rxy1q(pi/2, 0) q[0];
+            "#,
+            r#"
+                OPENQASM 2.0;
+                include "pecos.inc";
+                qreg q[1];
+                r1xy(pi/2, 0) q[0];
+            "#,
+            r#"
+                OPENQASM 2.0;
+                include "hqslib1.inc";
+                qreg q[1];
+                U1q(pi/2, 0) q[0];
+            "#,
+        ];
+
+        for qasm in programs {
+            let phir = convert(qasm);
+            let qop = get_ops(&phir)
+                .iter()
+                .find_map(|op| op.get("qop").and_then(Value::as_str))
+                .unwrap();
+            assert_eq!(qop, "R1XY");
+        }
     }
 
     #[test]

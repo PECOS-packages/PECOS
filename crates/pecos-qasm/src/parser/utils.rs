@@ -16,7 +16,7 @@ use pecos_core::prelude::{Gate, GateType, QubitId};
 
 /// Convert parsed parameters (radians) into angles and other params based on gate type.
 ///
-/// For rotation gates (RX, RY, RZ, RZZ, R1XY, U), parameters are angles in radians.
+/// For rotation gates (RX, RY, RZ, RZZ, RXY1Q, U), parameters are angles in radians.
 /// For other parameterized gates (like Idle), parameters are not angles.
 fn split_parameters(gate_type: GateType, parameters: &[f64]) -> (Vec<Angle64>, Vec<f64>) {
     let angle_count = gate_type.angle_arity();
@@ -130,13 +130,12 @@ fn expand_gate_operation(
                 Ok(qubits
                     .iter()
                     .map(|&qubit| {
-                        let gate = Gate::new(
+                        Operation::NativeGate(Gate::new(
                             gate_type,
                             angles.clone(),
                             params.clone(),
                             vec![QubitId(qubit)],
-                        );
-                        Operation::NativeGate(gate)
+                        ))
                     })
                     .collect())
             }
@@ -151,13 +150,12 @@ fn expand_gate_operation(
                 Ok((0..n)
                     .step_by(2)
                     .map(|i| {
-                        let gate = Gate::new(
+                        Operation::NativeGate(Gate::new(
                             gate_type,
                             angles.clone(),
                             params.clone(),
                             vec![QubitId(qubits[i]), QubitId(qubits[i + 1])],
-                        );
-                        Operation::NativeGate(gate)
+                        ))
                     })
                     .collect())
             }
@@ -334,6 +332,14 @@ fn expand_gate_call_with_stack(
     expansion_stack: &mut Vec<String>,
 ) -> Result<Vec<Operation>, PecosError> {
     let mut expanded = Vec::new();
+
+    if parameters.len() != gate_def.params.len() {
+        return Err(wrong_param_count(
+            &gate_def.name,
+            gate_def.params.len(),
+            parameters.len(),
+        ));
+    }
 
     // Create parameter mapping
     let mut param_map = BTreeMap::new();

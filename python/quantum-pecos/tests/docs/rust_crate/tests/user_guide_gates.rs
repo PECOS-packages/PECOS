@@ -481,7 +481,7 @@ fn test_user_guide_gates_rust_29() {
     let theta = Angle64::from_radians(PI / 4.0);
     let phi = Angle64::from_radians(PI / 8.0);
     let lam = Angle64::from_radians(PI / 6.0);
-    sim.r1xy(theta, phi, &[q]);
+    sim.rxy1q(theta, phi, &[q]);
 
 }
 

@@ -20,6 +20,7 @@ Simulate a distance-3 repetition code with syndrome extraction using [Guppy](htt
     from pecos import Guppy, sim, state_vector, depolarizing_noise
     from guppylang import guppy
     from guppylang.std.quantum import qubit, cx, measure
+    from guppylang.std.builtins import result
 
 
     @guppy
@@ -40,8 +41,8 @@ Simulate a distance-3 repetition code with syndrome extraction using [Guppy](htt
         cx(d2, s1)
 
         # Measure syndromes (first two measurements)
-        _ = measure(s0).read()
-        _ = measure(s1).read()
+        result("s0", measure(s0).read())
+        result("s1", measure(s1).read())
 
         # Measure data qubits (required by Guppy)
         _ = measure(d0).read(), measure(d1).read(), measure(d2).read()
@@ -53,7 +54,7 @@ Simulate a distance-3 repetition code with syndrome extraction using [Guppy](htt
 
     # Extract syndromes from first two measured qubits (s0, s1)
     d = results.to_dict()
-    syndrome = [[d["q0"][i], d["q1"][i]] for i in range(10)]
+    syndrome = [[d["s0"][i], d["s1"][i]] for i in range(10)]
     print(syndrome)
     # [[0, 0], [1, 0], [0, 0], [0, 0], [0, 0], [0, 1], [0, 1], [0, 0], [0, 0], [0, 0]]
     ```

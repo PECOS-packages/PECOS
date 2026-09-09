@@ -56,6 +56,10 @@ pub enum QuantumOp {
     T,
     /// T† gate
     Tdg,
+    /// Square-root-of-X gate
+    SX,
+    /// Adjoint square-root-of-X gate
+    SXdg,
 
     // Parameterized single-qubit rotations
     /// X-axis rotation
@@ -64,8 +68,9 @@ pub enum QuantumOp {
     RY(Angle64),
     /// Z-axis rotation
     RZ(Angle64),
-    /// R1XY rotation (theta, phi) - hardware-native single-qubit gate
-    R1XY(Angle64, Angle64),
+    /// RXY1Q rotation (theta, phi) - hardware-native single-qubit gate
+    #[serde(alias = "R1XY")]
+    RXY1Q(Angle64, Angle64),
     /// Arbitrary single-qubit rotation
     U3(Angle64, Angle64, Angle64), // theta, phi, lambda
 
@@ -80,6 +85,18 @@ pub enum QuantumOp {
     CH,
     /// SWAP gate
     SWAP,
+    /// Phase-exact square root of XX
+    SXX,
+    /// Adjoint phase-exact square root of XX
+    SXXdg,
+    /// Phase-exact square root of YY
+    SYY,
+    /// Adjoint phase-exact square root of YY
+    SYYdg,
+    /// Phase-exact square root of ZZ
+    SZZ,
+    /// Adjoint phase-exact square root of ZZ
+    SZZdg,
     /// Controlled phase
     CPhase(Angle64),
     /// ZZ rotation
@@ -520,16 +537,24 @@ impl QuantumOp {
             QuantumOp::Sdg => "sdg",
             QuantumOp::T => "t",
             QuantumOp::Tdg => "tdg",
+            QuantumOp::SX => "sx",
+            QuantumOp::SXdg => "sxdg",
             QuantumOp::RX(_) => "rx",
             QuantumOp::RY(_) => "ry",
             QuantumOp::RZ(_) => "rz",
-            QuantumOp::R1XY(_, _) => "r1xy",
+            QuantumOp::RXY1Q(_, _) => "rxy1q",
             QuantumOp::U3(_, _, _) => "u3",
             QuantumOp::CX => "cx",
             QuantumOp::CY => "cy",
             QuantumOp::CZ => "cz",
             QuantumOp::CH => "ch",
             QuantumOp::SWAP => "swap",
+            QuantumOp::SXX => "sxx",
+            QuantumOp::SXXdg => "sxxdg",
+            QuantumOp::SYY => "syy",
+            QuantumOp::SYYdg => "syydg",
+            QuantumOp::SZZ => "szz",
+            QuantumOp::SZZdg => "szzdg",
             QuantumOp::CPhase(_) => "cp",
             QuantumOp::RZZ(_) => "rzz",
             QuantumOp::MCX(_) => "mcx",
@@ -562,10 +587,12 @@ impl QuantumOp {
             | QuantumOp::Sdg
             | QuantumOp::T
             | QuantumOp::Tdg
+            | QuantumOp::SX
+            | QuantumOp::SXdg
             | QuantumOp::RX(_)
             | QuantumOp::RY(_)
             | QuantumOp::RZ(_)
-            | QuantumOp::R1XY(_, _)
+            | QuantumOp::RXY1Q(_, _)
             | QuantumOp::Measure
             | QuantumOp::MeasurePauli(_)
             | QuantumOp::Reset
@@ -578,6 +605,12 @@ impl QuantumOp {
             | QuantumOp::CZ
             | QuantumOp::CH
             | QuantumOp::SWAP
+            | QuantumOp::SXX
+            | QuantumOp::SXXdg
+            | QuantumOp::SYY
+            | QuantumOp::SYYdg
+            | QuantumOp::SZZ
+            | QuantumOp::SZZdg
             | QuantumOp::CPhase(_)
             | QuantumOp::RZZ(_) => Some(2),
             QuantumOp::Toffoli | QuantumOp::Fredkin => Some(3),

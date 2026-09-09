@@ -1,5 +1,5 @@
 OPENQASM 2.0;
-include "hqslib1.inc";
+include "qelib1.inc";
 reset q_test[6];
 ry(0.7853981633974483) q_test[6];
 //

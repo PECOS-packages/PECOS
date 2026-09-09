@@ -76,6 +76,8 @@ fn main() {
         column_order: None,
         merge_indistinguishable: false,
         bp_score_iterations,
+        metric_mode: pecos_frontier::MetricMode::default(),
+        int_metric_scale: 1024,
     };
     let mut decoder = FrontierDecoder::from_sparse_dem(&dem, config).expect("build decoder");
 

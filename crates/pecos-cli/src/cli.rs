@@ -32,19 +32,19 @@ use clap::{Subcommand, ValueEnum};
 pub enum RustCommands {
     /// Run cargo check with CUDA-aware feature handling
     Check {
-        /// Also check FFI crates (pecos-rslib, pecos-rslib-cuda, pecos-julia-ffi,
-        /// pecos-go-ffi). pecos-rslib-cuda transitively pulls in pecos-cuquantum,
-        /// whose Linux build script may download cuTensor over the network if it
-        /// isn't already cached in ~/.pecos/deps/; pecos-julia-ffi and pecos-go-ffi
-        /// also need Julia/Go installed.
+        /// Also check FFI crates (pecos-rslib, pecos-rslib-cuda,
+        /// pecos-julia-ffi). pecos-rslib-cuda transitively pulls in
+        /// pecos-cuquantum, whose Linux build script may download cuTensor over
+        /// the network if it isn't already cached in ~/.pecos/deps/;
+        /// pecos-julia-ffi also needs Julia installed.
         #[arg(long)]
         include_ffi: bool,
     },
 
     /// Run cargo clippy with CUDA-aware feature handling
     Clippy {
-        /// Also clippy FFI crates (pecos-rslib, pecos-rslib-cuda, pecos-julia-ffi,
-        /// pecos-go-ffi). Same external-toolchain caveats as `rust check
+        /// Also clippy FFI crates (pecos-rslib, pecos-rslib-cuda,
+        /// pecos-julia-ffi). Same external-toolchain caveats as `rust check
         /// --include-ffi`.
         #[arg(long)]
         include_ffi: bool,
@@ -60,8 +60,8 @@ pub enum RustCommands {
         #[arg(long, value_enum, default_value = "dev")]
         profile: BuildProfile,
 
-        /// Also test FFI crates (pecos-rslib, pecos-rslib-cuda, pecos-julia-ffi,
-        /// pecos-go-ffi). Same external-toolchain caveats as `rust check
+        /// Also test FFI crates (pecos-rslib, pecos-rslib-cuda,
+        /// pecos-julia-ffi). Same external-toolchain caveats as `rust check
         /// --include-ffi`.
         #[arg(long)]
         include_ffi: bool,

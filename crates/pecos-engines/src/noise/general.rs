@@ -560,10 +560,23 @@ impl GeneralNoiseModel {
                 );
             }
 
-            // Skip noise application for noiseless gates
+            // Skip noise application for noiseless gates.
             if self.is_noiseless_gate(&gate.gate_type) {
-                // Just add the gate as-is, without any noise
-                // TODO: Still apply leakage rules
+                // Declaring a gate noiseless suppresses its FAULTS, not the physics it
+                // performs. Preparation returns a leaked qubit to the computational
+                // subspace whether or not it is noisy, and consumers lower a
+                // preparation to a real reset on the simulator, so skipping this
+                // bookkeeping would leave the leakage record disagreeing with the
+                // state the simulator actually holds.
+                if matches!(gate.gate_type, GateType::PZ) {
+                    for &qubit in &gate.qubits {
+                        let qubit = usize::from(qubit);
+                        if self.is_leaked(qubit) {
+                            self.mark_as_unleaked(qubit);
+                            trace!("Qubit {qubit} unleaked due to noiseless preparation");
+                        }
+                    }
+                }
                 builder.add_gate_command(&gate);
                 trace!("Skipping noise for noiseless gate: {:?}", gate.gate_type);
                 continue;
@@ -834,7 +847,10 @@ impl GeneralNoiseModel {
         qubits: &[usize],
         builder: &mut ByteMessageBuilder,
     ) {
-        let prob = rate * duration;
+        // The linear family is an approximation whose raw rate-duration product
+        // can exceed one for long schedules. Saturation makes that boundary
+        // explicit and keeps debug and release builds semantically identical.
+        let prob = (rate * duration).clamp(0.0, 1.0);
         for qubit in qubits {
             if !self.is_leaked(*qubit) && self.rng.occurs(prob) {
                 let result = self.p_idle_linear_model.sample_gates(&mut self.rng, *qubit);
@@ -1405,6 +1421,11 @@ impl GeneralNoiseModel {
         self.leaked_qubits.clear();
         // Clear measured qubits
         self.measured_qubits.clear();
+        // Clear prepared qubits. This set is the crosstalk victim pool and is scoped
+        // to one program run; carrying it across resets would let a qubit prepared in
+        // an earlier shot be a crosstalk victim in a later shot that never prepared it,
+        // which makes shots depend on their ordering.
+        self.prepared_qubits.clear();
         // RNG state is intentionally not reset to maintain natural randomness
     }
 
@@ -3256,6 +3277,26 @@ mod tests {
             [GateType::X, GateType::Z, GateType::RY]
         );
         assert_eq!(gates[2].angles, [Angle64::from_radians(0.25)].into());
+    }
+
+    #[test]
+    fn linear_idle_probability_saturates_for_long_durations() {
+        let linear_model = BTreeMap::from([("X".to_string(), 1.0)]);
+        let mut model = GeneralNoiseModel::builder()
+            .with_seed(424)
+            .with_p_idle_linear(0.75, &linear_model)
+            .build();
+        let mut input_builder = ByteMessage::quantum_operations_builder();
+        input_builder.idle(2.0, &[0]);
+
+        let gates = model
+            .apply_noise_on_start(&input_builder.build())
+            .unwrap()
+            .quantum_ops()
+            .unwrap();
+        assert_eq!(gates.len(), 1);
+        assert_eq!(gates[0].gate_type, GateType::X);
+        assert_eq!(gates[0].qubits, [QubitId(0)].into());
     }
 
     #[test]

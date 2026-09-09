@@ -18,7 +18,7 @@
 
 use pecos_core::QubitId;
 use pecos_core::clifford::Clifford;
-use pecos_simulators::{CliffordGateable, SparseStab, StateVec, qid};
+use pecos_simulators::{CliffordGateable, SparseStab, StateVec, StateVecSoA32, qid};
 
 type GateTestEntry = (
     Clifford,
@@ -54,6 +54,16 @@ fn cross_check_1q(cliff: Clifford) {
                 "Z-basis mismatch for {cliff}: SparseStab={}, StateVec prob0={prob0}",
                 results[0].outcome
             );
+
+            let mut sv32 = StateVecSoA32::new(1);
+            apply_1q_clifford(&mut sv32, cliff);
+            let prob0 = sv32.get_amplitude(0).norm_sqr();
+            assert_eq!(
+                results[0].outcome,
+                prob0 <= 0.5,
+                "Z-basis mismatch for {cliff}: SparseStab={}, StateVecSoA32 prob0={prob0}",
+                results[0].outcome
+            );
         }
     }
 
@@ -72,6 +82,17 @@ fn cross_check_1q(cliff: Clifford) {
             assert_eq!(
                 results[0].outcome, expected_outcome,
                 "X-basis mismatch for {cliff}: SparseStab={}, StateVec prob0={prob0}",
+                results[0].outcome
+            );
+
+            let mut sv32 = StateVecSoA32::new(1);
+            apply_1q_clifford(&mut sv32, cliff);
+            sv32.h(&qid(0));
+            let prob0 = sv32.get_amplitude(0).norm_sqr();
+            assert_eq!(
+                results[0].outcome,
+                prob0 <= 0.5,
+                "X-basis mismatch for {cliff}: SparseStab={}, StateVecSoA32 prob0={prob0}",
                 results[0].outcome
             );
         }
@@ -93,6 +114,17 @@ fn cross_check_1q(cliff: Clifford) {
             assert_eq!(
                 results[0].outcome, expected_outcome,
                 "Y-basis mismatch for {cliff}: SparseStab={}, StateVec prob0={prob0}",
+                results[0].outcome
+            );
+
+            let mut sv32 = StateVecSoA32::new(1);
+            apply_1q_clifford(&mut sv32, cliff);
+            sv32.sx(&qid(0));
+            let prob0 = sv32.get_amplitude(0).norm_sqr();
+            assert_eq!(
+                results[0].outcome,
+                prob0 <= 0.5,
+                "Y-basis mismatch for {cliff}: SparseStab={}, StateVecSoA32 prob0={prob0}",
                 results[0].outcome
             );
         }
@@ -158,7 +190,7 @@ fn cross_check_2q(
     }
 }
 
-fn apply_1q_clifford(sim: &mut StateVec, cliff: Clifford) {
+fn apply_1q_clifford<S: CliffordGateable>(sim: &mut S, cliff: Clifford) {
     match cliff {
         Clifford::I => {}
         Clifford::X => {
@@ -1154,7 +1186,12 @@ fn batch_cx_matches_sequential() {
 
 #[test]
 fn batch_2q_gates_match_sequential() {
-    let batch_qubits = [(QubitId(0), QubitId(1)), (QubitId(2), QubitId(3))];
+    // An odd pair count prevents a per-pair global sign error from cancelling.
+    let batch_qubits = [
+        (QubitId(0), QubitId(1)),
+        (QubitId(2), QubitId(3)),
+        (QubitId(4), QubitId(5)),
+    ];
 
     // Test several 2q gates in batch mode
     let gates: Vec<BatchGateTestEntry> = vec![
@@ -1165,7 +1202,8 @@ fn batch_2q_gates_match_sequential() {
             }),
             Box::new(|s: &mut StateVec| {
                 s.cz(&[(QubitId(0), QubitId(1))])
-                    .cz(&[(QubitId(2), QubitId(3))]);
+                    .cz(&[(QubitId(2), QubitId(3))])
+                    .cz(&[(QubitId(4), QubitId(5))]);
             }),
         ),
         (
@@ -1175,7 +1213,8 @@ fn batch_2q_gates_match_sequential() {
             }),
             Box::new(|s: &mut StateVec| {
                 s.swap(&[(QubitId(0), QubitId(1))])
-                    .swap(&[(QubitId(2), QubitId(3))]);
+                    .swap(&[(QubitId(2), QubitId(3))])
+                    .swap(&[(QubitId(4), QubitId(5))]);
             }),
         ),
         (
@@ -1185,7 +1224,8 @@ fn batch_2q_gates_match_sequential() {
             }),
             Box::new(|s: &mut StateVec| {
                 s.sxx(&[(QubitId(0), QubitId(1))])
-                    .sxx(&[(QubitId(2), QubitId(3))]);
+                    .sxx(&[(QubitId(2), QubitId(3))])
+                    .sxx(&[(QubitId(4), QubitId(5))]);
             }),
         ),
         (
@@ -1195,7 +1235,8 @@ fn batch_2q_gates_match_sequential() {
             }),
             Box::new(|s: &mut StateVec| {
                 s.syy(&[(QubitId(0), QubitId(1))])
-                    .syy(&[(QubitId(2), QubitId(3))]);
+                    .syy(&[(QubitId(2), QubitId(3))])
+                    .syy(&[(QubitId(4), QubitId(5))]);
             }),
         ),
         (
@@ -1205,7 +1246,8 @@ fn batch_2q_gates_match_sequential() {
             }),
             Box::new(|s: &mut StateVec| {
                 s.szz(&[(QubitId(0), QubitId(1))])
-                    .szz(&[(QubitId(2), QubitId(3))]);
+                    .szz(&[(QubitId(2), QubitId(3))])
+                    .szz(&[(QubitId(4), QubitId(5))]);
             }),
         ),
         (
@@ -1215,7 +1257,8 @@ fn batch_2q_gates_match_sequential() {
             }),
             Box::new(|s: &mut StateVec| {
                 s.iswap(&[(QubitId(0), QubitId(1))])
-                    .iswap(&[(QubitId(2), QubitId(3))]);
+                    .iswap(&[(QubitId(2), QubitId(3))])
+                    .iswap(&[(QubitId(4), QubitId(5))]);
             }),
         ),
         (
@@ -1225,7 +1268,8 @@ fn batch_2q_gates_match_sequential() {
             }),
             Box::new(|s: &mut StateVec| {
                 s.iswapdg(&[(QubitId(0), QubitId(1))])
-                    .iswapdg(&[(QubitId(2), QubitId(3))]);
+                    .iswapdg(&[(QubitId(2), QubitId(3))])
+                    .iswapdg(&[(QubitId(4), QubitId(5))]);
             }),
         ),
         (
@@ -1235,20 +1279,21 @@ fn batch_2q_gates_match_sequential() {
             }),
             Box::new(|s: &mut StateVec| {
                 s.g(&[(QubitId(0), QubitId(1))])
-                    .g(&[(QubitId(2), QubitId(3))]);
+                    .g(&[(QubitId(2), QubitId(3))])
+                    .g(&[(QubitId(4), QubitId(5))]);
             }),
         ),
     ];
 
     for (name, batch_fn, seq_fn) in &gates {
-        let mut sv_batch = StateVec::new(4);
-        for q in 0..4 {
+        let mut sv_batch = StateVec::new(6);
+        for q in 0..6 {
             sv_batch.h(&qid(q));
         }
         batch_fn(&mut sv_batch, &batch_qubits);
 
-        let mut sv_seq = StateVec::new(4);
-        for q in 0..4 {
+        let mut sv_seq = StateVec::new(6);
+        for q in 0..6 {
             sv_seq.h(&qid(q));
         }
         seq_fn(&mut sv_seq);

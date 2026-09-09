@@ -72,7 +72,9 @@
 //! ```
 
 use super::{
-    DagPropagator, DetectorId, Direction, InfluenceRecorder, MeasurementId, Pauli, apply_gate,
+    DagPropagator, DetectorId, Direction, InfluenceRecorder, MeasurementId, Pauli,
+    PauliPropagationOutcome, UnsupportedGateError, UnsupportedGateLocation, apply_gate,
+    apply_gate_unchecked, is_supported_prep_gate,
 };
 use pecos_core::gate_type::GateType;
 use pecos_core::{PauliString, QuarterPhase, QubitId};
@@ -641,6 +643,12 @@ pub struct DagFaultInfluenceMap {
     /// into public namespaces; standard observables use compact `L<n>` IDs and
     /// tracked Paulis use their own compact PECOS-only IDs.
     pub dem_output_metadata: Vec<DemOutputMetadata>,
+
+    /// First circuit gate rejected by the Pauli propagation primitive.
+    ///
+    /// The analyzer remains permissive for its non-DEM callers, but every DEM
+    /// construction path checks and returns this structured error.
+    unsupported_gate: Option<UnsupportedGateError>,
 }
 
 impl DagFaultInfluenceMap {
@@ -675,7 +683,15 @@ impl DagFaultInfluenceMap {
             meas_ids: Vec::new(),
             dem_output_labels: Vec::new(),
             dem_output_metadata: Vec::new(),
+            unsupported_gate: None,
         }
+    }
+
+    /// Returns the first gate that the influence map could not faithfully
+    /// Pauli-propagate.
+    #[must_use]
+    pub fn unsupported_gate(&self) -> Option<&UnsupportedGateError> {
+        self.unsupported_gate.as_ref()
     }
 
     /// Classifies a fault at the given location index.
@@ -834,6 +850,9 @@ impl DagFaultInfluenceMap {
     /// Replace this map's backward-propagated non-detector outputs with
     /// another map's outputs and metadata.
     pub fn merge_dem_outputs_from(&mut self, other: &Self) {
+        if self.unsupported_gate.is_none() {
+            self.unsupported_gate.clone_from(&other.unsupported_gate);
+        }
         self.influences.dem_outputs_x = other.influences.dem_outputs_x.clone();
         self.influences.dem_outputs_y = other.influences.dem_outputs_y.clone();
         self.influences.dem_outputs_z = other.influences.dem_outputs_z.clone();
@@ -1890,10 +1909,7 @@ impl<'a> DagFaultAnalyzer<'a> {
                     let single_qubit: SmallVec<[usize; 2]> = smallvec::smallvec![q];
                     locations.push(node, single_qubit, before, gate.gate_type, idle_duration);
                 }
-                if matches!(
-                    gate.gate_type,
-                    GateType::PZ | GateType::PX | GateType::QAlloc
-                ) {
+                if is_supported_prep_gate(gate.gate_type) {
                     prepared_qubits.extend(qubits.iter().copied());
                 }
             }
@@ -1929,6 +1945,7 @@ impl<'a> DagFaultAnalyzer<'a> {
     pub fn build_influence_map(&self) -> DagFaultInfluenceMap {
         let num_locations = self.locations.len();
         let mut map = DagFaultInfluenceMap::with_capacity(num_locations);
+        map.unsupported_gate = self.first_unsupported_gate();
 
         // Copy locations
         map.locations = self.locations.to_dag_spacetime_locations();
@@ -1947,6 +1964,13 @@ impl<'a> DagFaultAnalyzer<'a> {
             map.detectors.push(DetectorId::single(measurement_id));
         }
 
+        // The propagation loop below uses the non-validating dispatcher. Do
+        // not enter it unless the circuit-level preflight established that
+        // every gate has a valid payload and supported Pauli action.
+        if map.unsupported_gate.is_some() {
+            return map;
+        }
+
         // Use the generic per-measurement path for correctness with physical
         // qubit reuse. The forest shortcut groups by measured qubit ID and is
         // only valid when that physical qubit represents one fixed measurement
@@ -1957,6 +1981,30 @@ impl<'a> DagFaultAnalyzer<'a> {
         map.influences = recorder.into_soa();
 
         map
+    }
+
+    /// Classifies every circuit gate through the propagation primitive and
+    /// returns the first unsupported gate, if any.
+    ///
+    /// This deliberately calls [`apply_gate`] instead of maintaining another
+    /// gate list. The scratch Pauli state is irrelevant to the classification.
+    pub(crate) fn first_unsupported_gate(&self) -> Option<UnsupportedGateError> {
+        let mut scratch = PauliProp::new();
+        for &node in self.propagator.topo_order() {
+            let Some(gate) = self.propagator.gate(node) else {
+                continue;
+            };
+            if apply_gate(&mut scratch, gate, Direction::Forward)
+                == PauliPropagationOutcome::Unsupported
+            {
+                return Some(UnsupportedGateError {
+                    gate_type: gate.gate_type,
+                    location: UnsupportedGateLocation::DagNode { node },
+                    qubits: gate.qubits.iter().map(pecos_core::QubitId::index).collect(),
+                });
+            }
+        }
+        None
     }
 
     /// Extracts all measurements from the circuit, ordered by [`MeasId`].
@@ -2096,10 +2144,7 @@ impl<'a> DagFaultAnalyzer<'a> {
 
                 // Handle prep gates specially - they kill the Pauli and stop propagation
                 // on their qubits. Errors before a prep don't affect measurements after it.
-                if matches!(
-                    gate.gate_type,
-                    GateType::PZ | GateType::PX | GateType::QAlloc
-                ) {
+                if is_supported_prep_gate(gate.gate_type) {
                     for q in &gate.qubits {
                         let idx = q.index();
                         if idx <= self.max_qubit() {
@@ -2119,7 +2164,7 @@ impl<'a> DagFaultAnalyzer<'a> {
                 }
 
                 // Apply gate backward
-                apply_gate(&mut prop, gate, Direction::Backward);
+                let _outcome = apply_gate_unchecked(&mut prop, gate, Direction::Backward);
 
                 // Check before=true locations
                 self.record_at_node_generic(node, &prop, detector_idx, recorder, true);
@@ -2240,10 +2285,7 @@ impl<'a> DagFaultAnalyzer<'a> {
 
                 self.record_at_node_generic(node, prop, request.detector_idx, recorder, false);
 
-                if matches!(
-                    gate.gate_type,
-                    GateType::PZ | GateType::PX | GateType::QAlloc
-                ) {
+                if is_supported_prep_gate(gate.gate_type) {
                     let pz_topo = self.propagator.topo_position(node);
                     for q in &gate.qubits {
                         let idx = q.index();
@@ -2261,7 +2303,7 @@ impl<'a> DagFaultAnalyzer<'a> {
                     return Some(pz_topo);
                 }
 
-                apply_gate(prop, gate, Direction::Backward);
+                let _outcome = apply_gate_unchecked(prop, gate, Direction::Backward);
                 self.record_at_node_generic(node, prop, request.detector_idx, recorder, true);
 
                 let node_topo_pos = self.propagator.topo_position(node);
@@ -2315,10 +2357,7 @@ impl<'a> DagFaultAnalyzer<'a> {
                 self.record_at_node_generic(node, prop, detector_idx, recorder, false);
                 visited_nodes.push(node);
 
-                if matches!(
-                    gate.gate_type,
-                    GateType::PZ | GateType::PX | GateType::QAlloc
-                ) {
+                if is_supported_prep_gate(gate.gate_type) {
                     for q in &gate.qubits {
                         let idx = q.index();
                         if idx <= self.max_qubit() {
@@ -2334,7 +2373,7 @@ impl<'a> DagFaultAnalyzer<'a> {
                     continue;
                 }
 
-                apply_gate(prop, gate, Direction::Backward);
+                let _outcome = apply_gate_unchecked(prop, gate, Direction::Backward);
                 self.record_at_node_generic(node, prop, detector_idx, recorder, true);
 
                 let node_topo = self.propagator.topo_position(node);
@@ -2382,10 +2421,7 @@ impl<'a> DagFaultAnalyzer<'a> {
             if let Some(gate) = self.propagator.gate(node) {
                 self.record_at_node_generic(node, prop, detector_idx, recorder, false);
 
-                if matches!(
-                    gate.gate_type,
-                    GateType::PZ | GateType::PX | GateType::QAlloc
-                ) {
+                if is_supported_prep_gate(gate.gate_type) {
                     for q in &gate.qubits {
                         let idx = q.index();
                         if idx <= self.max_qubit() {
@@ -2400,7 +2436,7 @@ impl<'a> DagFaultAnalyzer<'a> {
                     continue;
                 }
 
-                apply_gate(prop, gate, Direction::Backward);
+                let _outcome = apply_gate_unchecked(prop, gate, Direction::Backward);
                 self.record_at_node_generic(node, prop, detector_idx, recorder, true);
             }
         }

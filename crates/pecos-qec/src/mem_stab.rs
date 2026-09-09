@@ -70,6 +70,9 @@ pub enum MemStabError {
     /// Builder called without a circuit.
     #[error("MemStabSim requires a circuit; call .circuit(dag) before .build()")]
     MissingCircuit,
+    /// The measurement-noise model could not be built.
+    #[error(transparent)]
+    DemBuilder(#[from] crate::fault_tolerance::dem_builder::DemBuilderError),
 }
 
 /// Clifford + depolarizing-family noise simulator that samples raw measurement outcomes.
@@ -191,7 +194,7 @@ impl MemStabSimBuilder {
         }
 
         Ok(MemStabSim {
-            mnm: builder.build(),
+            mnm: builder.build()?,
         })
     }
 }

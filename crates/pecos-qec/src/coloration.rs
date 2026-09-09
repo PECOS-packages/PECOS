@@ -338,7 +338,9 @@ mod tests {
 
     fn sample_annotation_parities(circuit: &TickCircuit, num_qubits: usize) -> Vec<bool> {
         let mut simulator = DenseStab::new(num_qubits);
-        let measurements = CircuitExecutor::new(circuit).run(&mut simulator);
+        let measurements = CircuitExecutor::new(circuit)
+            .run(&mut simulator)
+            .expect("coloration circuit contains supported Clifford gates");
         circuit
             .annotations()
             .iter()

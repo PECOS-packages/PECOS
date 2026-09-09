@@ -15,8 +15,8 @@ pecos.tools.find\_cliffs
    
       m2cliff
       mnormal
-      r1xy2cliff
-      r1xy_matrix
+      rxy1q2cliff
+      rxy1q_matrix
       rz2cliff
       rz_matrix
    

@@ -604,6 +604,14 @@ pub enum ExecutionError {
     /// A rotation gate with a non-Clifford angle reached a Clifford-only
     /// backend with no rotation support and no registered decomposition.
     NonCliffordAngle { gate_id: GateId },
+    /// A gate command carries the wrong number of angle parameters.
+    AngleArity {
+        gate: GateType,
+        expected: usize,
+        got: usize,
+    },
+    /// The command has invalid qubit support or payload.
+    InvalidCommand(crate::command::GateCommandError),
     /// Maximum decomposition depth exceeded (possible infinite recursion).
     MaxDecompositionDepthExceeded,
 }
@@ -623,6 +631,15 @@ impl std::fmt::Display for ExecutionError {
                     gate_id.0
                 )
             }
+            Self::AngleArity {
+                gate,
+                expected,
+                got,
+            } => write!(
+                f,
+                "Gate {gate:?} expected {expected} angle parameters, got {got}"
+            ),
+            Self::InvalidCommand(error) => error.fmt(f),
             Self::MaxDecompositionDepthExceeded => {
                 write!(f, "Maximum decomposition depth exceeded")
             }
@@ -633,7 +650,7 @@ impl std::fmt::Display for ExecutionError {
 impl std::error::Error for ExecutionError {}
 
 /// Outcome of the Clifford-rotation execution attempt.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CliffordRotationAttempt {
     /// The gate executed via Clifford-angle decomposition.
     Executed,
@@ -656,6 +673,21 @@ fn upgrade_rotation_error(
         ) => ExecutionError::NonCliffordAngle { gate_id },
         (error, _) => error,
     }
+}
+
+pub(crate) fn validate_angle_arity(
+    gate: GateType,
+    angles: &[Angle64],
+) -> Result<(), ExecutionError> {
+    let expected = gate.angle_arity();
+    if angles.len() != expected {
+        return Err(ExecutionError::AngleArity {
+            gate,
+            expected,
+            got: angles.len(),
+        });
+    }
+    Ok(())
 }
 
 /// Stateless quantum simulation runner.
@@ -1219,6 +1251,8 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         sim: &mut S,
         command: &GateCommand,
     ) -> Result<(), ExecutionError> {
+        validate_angle_arity(command.gate_type, command.angles())?;
+        command.validate().map_err(ExecutionError::InvalidCommand)?;
         let qubits = command.qubits.as_slice();
 
         match command.gate_type {
@@ -1252,7 +1286,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
                     gate_id,
                     command.gate_type,
                     qubits,
-                    command.angles.as_slice(),
+                    command.angles(),
                 );
                 if skip {
                     // Still emit after-gate for channels that want to inject errors
@@ -1261,7 +1295,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
                         gate_id,
                         command.gate_type,
                         qubits,
-                        command.angles.as_slice(),
+                        command.angles(),
                     );
                     return Ok(());
                 }
@@ -1272,31 +1306,25 @@ impl<S: CliffordGateable> CircuitRunner<S> {
                 // explicit GateDefinitions decomposition wins at Clifford
                 // angles too (see execute_gate for the rationale).
                 let mut rotation_attempt = CliffordRotationAttempt::NotARotation;
-                let executed =
-                    self.try_execute_override(sim, gate_id, qubits, command.angles.as_slice())
+                let mut executed =
+                    self.try_execute_override(sim, gate_id, qubits, command.angles())
                         || Self::try_execute_clifford(sim, gate_id, qubits)
                         || self.rotation_executor.is_some_and(|executor| {
-                            executor(sim, gate_id, command.angles.as_slice(), qubits)
-                        })
-                        || (!self.definitions.has_decomposition(gate_id) && {
-                            rotation_attempt = Self::try_execute_clifford_rotation(
-                                sim,
-                                gate_id,
-                                qubits,
-                                command.angles.as_slice(),
-                            );
-                            rotation_attempt == CliffordRotationAttempt::Executed
+                            executor(sim, gate_id, command.angles(), qubits)
                         });
-
-                if !executed {
-                    self.execute_via_decomposition(
+                if !executed && !self.definitions.has_decomposition(gate_id) {
+                    rotation_attempt = Self::try_execute_clifford_rotation(
                         sim,
                         gate_id,
                         qubits,
-                        command.angles.as_slice(),
-                        0,
-                    )
-                    .map_err(|e| upgrade_rotation_error(e, rotation_attempt))?;
+                        command.angles(),
+                    )?;
+                    executed = rotation_attempt == CliffordRotationAttempt::Executed;
+                }
+
+                if !executed {
+                    self.execute_via_decomposition(sim, gate_id, qubits, command.angles(), 0)
+                        .map_err(|e| upgrade_rotation_error(e, rotation_attempt))?;
                 }
 
                 self.dispatch_after_gate_for_id(
@@ -1304,7 +1332,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
                     gate_id,
                     command.gate_type,
                     qubits,
-                    command.angles.as_slice(),
+                    command.angles(),
                 );
             }
         }
@@ -1462,6 +1490,9 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         angles: &[Angle64],
         depth: usize,
     ) -> Result<(), ExecutionError> {
+        if let Some(gate_type) = gate_id.try_to_gate_type() {
+            validate_angle_arity(gate_type, angles)?;
+        }
         // Emit before-gate noise event
         let skip = self.emit_before_gate(sim, gate_id, qubits, angles);
         if skip {
@@ -1475,16 +1506,15 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         // (registering a decomposition is an explicit user choice, like
         // GateOverrides, and must not be silently bypassed).
         let mut rotation_attempt = CliffordRotationAttempt::NotARotation;
-        let executed = self.try_execute_override(sim, gate_id, qubits, angles)
+        let mut executed = self.try_execute_override(sim, gate_id, qubits, angles)
             || Self::try_execute_clifford(sim, gate_id, qubits)
             || self
                 .rotation_executor
-                .is_some_and(|executor| executor(sim, gate_id, angles, qubits))
-            || (!self.definitions.has_decomposition(gate_id) && {
-                rotation_attempt =
-                    Self::try_execute_clifford_rotation(sim, gate_id, qubits, angles);
-                rotation_attempt == CliffordRotationAttempt::Executed
-            });
+                .is_some_and(|executor| executor(sim, gate_id, angles, qubits));
+        if !executed && !self.definitions.has_decomposition(gate_id) {
+            rotation_attempt = Self::try_execute_clifford_rotation(sim, gate_id, qubits, angles)?;
+            executed = rotation_attempt == CliffordRotationAttempt::Executed;
+        }
 
         if !executed {
             self.execute_via_decomposition(sim, gate_id, qubits, angles, depth)
@@ -1633,27 +1663,71 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         gate_id: GateId,
         qubits: &[QubitId],
         angles: &[Angle64],
-    ) -> CliffordRotationAttempt {
+    ) -> Result<CliffordRotationAttempt, ExecutionError> {
         use pecos_simulators::clifford_rotation::CliffordRotation;
         let Some(gate_type) = gate_id.try_to_gate_type() else {
-            return CliffordRotationAttempt::NotARotation;
+            return Ok(CliffordRotationAttempt::NotARotation);
         };
-        let [angle] = angles else {
-            return CliffordRotationAttempt::NotARotation;
+        let arity_error = || ExecutionError::AngleArity {
+            gate: gate_type,
+            expected: gate_type.angle_arity(),
+            got: angles.len(),
         };
         let result = match gate_type {
-            GateType::RZ => sim.try_rz(*angle, qubits).map(|_| ()),
-            GateType::RX => sim.try_rx(*angle, qubits).map(|_| ()),
-            GateType::RY => sim.try_ry(*angle, qubits).map(|_| ()),
-            GateType::RZZ => sim.try_rzz(*angle, &flat_to_pairs(qubits)).map(|_| ()),
-            GateType::RXX => sim.try_rxx(*angle, &flat_to_pairs(qubits)).map(|_| ()),
-            GateType::RYY => sim.try_ryy(*angle, &flat_to_pairs(qubits)).map(|_| ()),
-            _ => return CliffordRotationAttempt::NotARotation,
+            GateType::RZ => {
+                let [angle] = angles else {
+                    return Err(arity_error());
+                };
+                sim.try_rz(*angle, qubits).map(|_| ())
+            }
+            GateType::RX => {
+                let [angle] = angles else {
+                    return Err(arity_error());
+                };
+                sim.try_rx(*angle, qubits).map(|_| ())
+            }
+            GateType::RY => {
+                let [angle] = angles else {
+                    return Err(arity_error());
+                };
+                sim.try_ry(*angle, qubits).map(|_| ())
+            }
+            GateType::RXY1Q => {
+                let [theta, phi] = angles else {
+                    return Err(arity_error());
+                };
+                sim.try_rxy1q(*theta, *phi, qubits).map(|_| ())
+            }
+            GateType::U => {
+                let [theta, phi, lambda] = angles else {
+                    return Err(arity_error());
+                };
+                sim.try_u(*theta, *phi, *lambda, qubits).map(|_| ())
+            }
+            GateType::RZZ => {
+                let [angle] = angles else {
+                    return Err(arity_error());
+                };
+                sim.try_rzz(*angle, &flat_to_pairs(qubits)).map(|_| ())
+            }
+            GateType::RXX => {
+                let [angle] = angles else {
+                    return Err(arity_error());
+                };
+                sim.try_rxx(*angle, &flat_to_pairs(qubits)).map(|_| ())
+            }
+            GateType::RYY => {
+                let [angle] = angles else {
+                    return Err(arity_error());
+                };
+                sim.try_ryy(*angle, &flat_to_pairs(qubits)).map(|_| ())
+            }
+            _ => return Ok(CliffordRotationAttempt::NotARotation),
         };
-        match result {
+        Ok(match result {
             Ok(()) => CliffordRotationAttempt::Executed,
             Err(_) => CliffordRotationAttempt::NonCliffordAngle,
-        }
+        })
     }
 
     /// Execute a gate via decomposition from `GateDefinitions`.
@@ -1767,7 +1841,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         DispatchContext {
             gate_type: command.gate_type,
             qubits: command.qubits.as_slice(),
-            angles: command.angles.as_slice(),
+            angles: command.angles(),
             gate_id: Some(command.gate_type.to_gate_id()),
             outcomes: None,
             duration: None,
@@ -1886,7 +1960,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         let ctx = DispatchContext {
             gate_type: command.gate_type,
             qubits,
-            angles: command.angles.as_slice(),
+            angles: command.angles(),
             gate_id: Some(command.gate_type.to_gate_id()),
             outcomes: Some(outcomes),
             duration: None,
@@ -1930,7 +2004,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         let ctx = DispatchContext {
             gate_type: command.gate_type,
             qubits,
-            angles: command.angles.as_slice(),
+            angles: command.angles(),
             gate_id: None,
             outcomes: None,
             duration: Some(duration),
@@ -2252,9 +2326,13 @@ impl<S: CliffordGateable> CircuitRunner<S> {
     /// # Panics
     ///
     /// Panics if neither the Clifford simulator nor the configured rotation
-    /// executor can execute the injected gate. Configuration validation should
-    /// make this unreachable for declared noise mechanisms.
+    /// executor can execute the injected gate, or if the gate carries the wrong
+    /// number of angles. Configuration validation should make this unreachable
+    /// for declared noise mechanisms.
     fn execute_noise_gate(&self, sim: &mut S, gate: &GateCommand) {
+        if let Err(error) = validate_angle_arity(gate.gate_type, gate.angles()) {
+            panic!("CircuitRunner invariant violated: injected noise {error}");
+        }
         let qubits = gate.qubits.as_slice();
         let arity = gate.gate_type.quantum_arity();
         assert!(
@@ -2264,12 +2342,15 @@ impl<S: CliffordGateable> CircuitRunner<S> {
             gate.gate_type,
             qubits.len()
         );
+        if let Err(error) = gate.validate() {
+            panic!("CircuitRunner invariant violated: injected noise {error}");
+        }
         let gate_id = GateId::from(gate.gate_type);
         let executed = (gate.gate_type != GateType::Idle
             && Self::try_execute_clifford(sim, gate_id, qubits))
             || self
                 .rotation_executor
-                .is_some_and(|executor| executor(sim, gate_id, gate.angles.as_slice(), qubits));
+                .is_some_and(|executor| executor(sim, gate_id, gate.angles(), qubits));
 
         assert!(
             executed,
@@ -2354,79 +2435,48 @@ where
                 true
             }
             GateType::RX => {
-                if let Some(&angle) = angles.first() {
-                    sim.rx(angle, qubits);
-                    true
-                } else {
-                    false
-                }
-            }
-            GateType::RY => {
-                if let Some(&angle) = angles.first() {
-                    sim.ry(angle, qubits);
-                    true
-                } else {
-                    false
-                }
-            }
-            GateType::RZ => {
-                if let Some(&angle) = angles.first() {
-                    sim.rz(angle, qubits);
-                    true
-                } else {
-                    false
-                }
-            }
-            GateType::U => {
-                let angle = angles.first().copied().unwrap_or(Angle64::ZERO);
-                let angle2 = angles.get(1).copied().unwrap_or(Angle64::ZERO);
-                let angle3 = angles.get(2).copied().unwrap_or(Angle64::ZERO);
-                sim.u(angle, angle2, angle3, qubits);
+                let [angle] = angles else { return false };
+                sim.rx(*angle, qubits);
                 true
             }
-            GateType::R1XY => {
-                let angle = angles.first().copied().unwrap_or(Angle64::ZERO);
-                let angle2 = angles.get(1).copied().unwrap_or(Angle64::ZERO);
-                sim.r1xy(angle, angle2, qubits);
+            GateType::RY => {
+                let [angle] = angles else { return false };
+                sim.ry(*angle, qubits);
+                true
+            }
+            GateType::RZ => {
+                let [angle] = angles else { return false };
+                sim.rz(*angle, qubits);
+                true
+            }
+            GateType::U => {
+                let [theta, phi, lambda] = angles else {
+                    return false;
+                };
+                sim.u(*theta, *phi, *lambda, qubits);
+                true
+            }
+            GateType::RXY1Q => {
+                let [theta, phi] = angles else { return false };
+                sim.rxy1q(*theta, *phi, qubits);
                 true
             }
             GateType::RXX => {
-                if let Some(&angle) = angles.first() {
-                    let pairs = flat_to_pairs(qubits);
-                    sim.rxx(angle, &pairs);
-                    true
-                } else {
-                    false
-                }
+                let [angle] = angles else { return false };
+                let pairs = flat_to_pairs(qubits);
+                sim.rxx(*angle, &pairs);
+                true
             }
             GateType::RYY => {
-                if let Some(&angle) = angles.first() {
-                    let pairs = flat_to_pairs(qubits);
-                    sim.ryy(angle, &pairs);
-                    true
-                } else {
-                    false
-                }
+                let [angle] = angles else { return false };
+                let pairs = flat_to_pairs(qubits);
+                sim.ryy(*angle, &pairs);
+                true
             }
             GateType::RZZ => {
-                if let Some(&angle) = angles.first() {
-                    let pairs = flat_to_pairs(qubits);
-                    sim.rzz(angle, &pairs);
-                    true
-                } else {
-                    false
-                }
-            }
-            // CRZ decomposition: RZ(theta/2), CX, RZ(-theta/2), CX
-            GateType::CRZ if qubits.len() >= 2 => {
-                let control = qubits[0];
-                let target = qubits[1];
-                let angle = angles.first().copied().unwrap_or(Angle64::ZERO);
-                let half_angle = angle / 2u64;
-                sim.rz(half_angle, &[target]);
-                sim.cx(&[(control, target)]);
-                sim.rz(-half_angle, &[target]);
-                sim.cx(&[(control, target)]);
+                let [angle] = angles else { return false };
+                let pairs = flat_to_pairs(qubits);
+                sim.rzz(*angle, &pairs);
                 true
             }
             // CCX (Toffoli) decomposition
@@ -2624,35 +2674,6 @@ mod tests {
 
         let outcome = outcomes.get(QubitId(0)).unwrap();
         assert!(outcome.outcome, "RX(pi) on |0> should give |1>");
-    }
-
-    #[test]
-    fn test_crz_decomposition() {
-        use pecos_core::Angle64;
-
-        let commands = CommandBuilder::new()
-            .pz(&[0])
-            .pz(&[1])
-            .x(&[0])
-            .h(&[1])
-            .gate(GateCommand::with_angles(
-                GateType::CRZ,
-                smallvec::smallvec![QubitId(0), QubitId(1)],
-                smallvec::smallvec![Angle64::HALF_TURN],
-            ))
-            .h(&[1])
-            .mz(&[1])
-            .build();
-
-        let mut state = StateVec::with_seed(2, 42);
-        let mut runner = CircuitRunner::<StateVec>::rotations().with_seed(42);
-        let outcomes = runner.apply_circuit(&mut state, &commands).unwrap();
-
-        let outcome = outcomes.get(QubitId(1)).unwrap();
-        assert!(
-            outcome.outcome,
-            "CRZ(pi) with control=1 should flip target phase"
-        );
     }
 
     #[test]
@@ -2896,6 +2917,22 @@ mod tests {
         CircuitRunner::<SparseStab>::new().execute_noise_gate(
             &mut state,
             &GateCommand::new(GateType::CX, smallvec::smallvec![QubitId(0)]),
+        );
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "CircuitRunner invariant violated: injected noise Gate H expected 0 angle parameters, got 1"
+    )]
+    fn surplus_fixed_gate_angle_panics_on_noise_injection() {
+        let mut state = SparseStab::with_seed(1, 42);
+        CircuitRunner::<SparseStab>::new().execute_noise_gate(
+            &mut state,
+            &GateCommand::with_angles(
+                GateType::H,
+                smallvec::smallvec![QubitId(0)],
+                smallvec::smallvec![Angle64::QUARTER_TURN],
+            ),
         );
     }
 
@@ -3288,6 +3325,141 @@ mod tests {
     }
 
     #[test]
+    fn multi_angle_clifford_rotations_use_fallback() {
+        let commands = [
+            GateCommand::with_angles(
+                GateType::RXY1Q,
+                smallvec::smallvec![QubitId(0)],
+                smallvec::smallvec![Angle64::QUARTER_TURN, Angle64::ZERO],
+            ),
+            GateCommand::with_angles(
+                GateType::U,
+                smallvec::smallvec![QubitId(0)],
+                smallvec::smallvec![Angle64::QUARTER_TURN, Angle64::ZERO, Angle64::ZERO],
+            ),
+        ];
+
+        for command in commands {
+            let mut circuit = CommandQueue::new();
+            circuit.push(command);
+            let mut state = SparseStab::with_seed(2, 42);
+            let mut runner = CircuitRunner::<SparseStab>::new();
+            runner
+                .apply_circuit(&mut state, &circuit)
+                .expect("Clifford-angle fallback must execute");
+        }
+    }
+
+    #[test]
+    fn multi_angle_non_clifford_rotations_get_specific_error() {
+        let non_clifford = Angle64::from_radians(0.123);
+        let commands = [
+            GateCommand::with_angles(
+                GateType::RXY1Q,
+                smallvec::smallvec![QubitId(0)],
+                smallvec::smallvec![non_clifford, Angle64::ZERO],
+            ),
+            GateCommand::with_angles(
+                GateType::U,
+                smallvec::smallvec![QubitId(0)],
+                smallvec::smallvec![non_clifford, Angle64::ZERO, Angle64::ZERO],
+            ),
+        ];
+
+        for command in commands {
+            let mut circuit = CommandQueue::new();
+            circuit.push(command);
+            let mut state = SparseStab::with_seed(2, 42);
+            let mut runner = CircuitRunner::<SparseStab>::new();
+            let err = runner
+                .apply_circuit(&mut state, &circuit)
+                .expect_err("non-Clifford angle must error");
+            assert!(matches!(err, ExecutionError::NonCliffordAngle { .. }));
+        }
+    }
+
+    #[test]
+    fn recognized_rotations_with_wrong_angle_count_cannot_enter_queue() {
+        for gate_type in [
+            GateType::RZ,
+            GateType::RX,
+            GateType::RY,
+            GateType::RXX,
+            GateType::RYY,
+            GateType::RZZ,
+            GateType::RXY1Q,
+            GateType::U,
+        ] {
+            let qubits = if gate_type.is_two_qubit() {
+                smallvec::smallvec![QubitId(0), QubitId(1)]
+            } else {
+                smallvec::smallvec![QubitId(0)]
+            };
+            let mut circuit = CommandQueue::new();
+            let err = circuit
+                .try_push(GateCommand::with_angles(
+                    gate_type,
+                    qubits,
+                    smallvec::SmallVec::new(),
+                ))
+                .expect_err("wrong angle count must be rejected at queue insertion");
+            assert!(matches!(
+                err,
+                crate::command::GateCommandError::AngleArity(
+                    crate::command::GateCommandAngleArityError {
+                    gate_type: gate,
+                    expected,
+                    actual: 0
+                }) if gate == gate_type && expected == gate_type.angle_arity()
+            ));
+            assert!(circuit.is_empty());
+        }
+    }
+
+    #[test]
+    fn public_apply_gate_rejects_surplus_angles_on_fixed_gate() {
+        let mut state = SparseStab::with_seed(1, 42);
+        let error = CircuitRunner::<SparseStab>::new()
+            .apply_gate(
+                &mut state,
+                GateType::H,
+                &[QubitId(0)],
+                &[Angle64::QUARTER_TURN],
+            )
+            .expect_err("fixed gates must reject supplied angles on every execution path");
+
+        assert!(matches!(
+            error,
+            ExecutionError::AngleArity {
+                gate: GateType::H,
+                expected: 0,
+                got: 1
+            }
+        ));
+    }
+
+    #[test]
+    fn clifford_rotation_fallback_checks_arity_locally() {
+        let mut state = SparseStab::with_seed(1, 42);
+        let err = CircuitRunner::<SparseStab>::try_execute_clifford_rotation(
+            &mut state,
+            gates::RZ,
+            &[QubitId(0)],
+            &[],
+        )
+        .expect_err("fallback must reject malformed angles without indexing");
+
+        assert!(matches!(
+            err,
+            ExecutionError::AngleArity {
+                gate: GateType::RZ,
+                expected: 1,
+                got: 0
+            }
+        ));
+    }
+
+    #[test]
     fn user_registered_decomposition_wins_over_clifford_rotation_at_clifford_angle() {
         use crate::extensible::{DecompEntry, DecompOp, Decomposition, GateDefinitions};
         use std::sync::Arc;
@@ -3582,5 +3754,13 @@ mod tests {
                 );
             }
         }
+    }
+    #[test]
+    #[should_panic(expected = "only an Idle command can carry a duration payload")]
+    fn injected_noise_rejects_duration_on_fixed_gate() {
+        let mut gate = GateCommand::h(QubitId(0));
+        gate.payload = crate::command::GatePayload::Duration(pecos_core::TimeUnits::new(23));
+        CircuitRunner::<SparseStab>::new()
+            .execute_noise_gate(&mut SparseStab::with_seed(1, 42), &gate);
     }
 }

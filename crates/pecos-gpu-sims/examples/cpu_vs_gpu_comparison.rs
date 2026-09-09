@@ -137,7 +137,8 @@ fn main() {
         // CPU benchmark
         let num_loc = influence_map.locations.len();
         let probs = vec![p_error; num_loc];
-        let cpu_sampler = DemSampler::from_influence_map(&influence_map, &probs);
+        let cpu_sampler = DemSampler::from_influence_map(&influence_map, &probs)
+            .expect("comparison influence map must support Pauli propagation");
 
         let cpu_start = Instant::now();
         let _ = cpu_sampler.sample_statistics(num_shots as usize, seed);
@@ -221,7 +222,8 @@ fn main() {
 
         // CPU
         let probs2 = vec![p_error; influence_map.locations.len()];
-        let cpu_sampler = DemSampler::from_influence_map(&influence_map, &probs2);
+        let cpu_sampler = DemSampler::from_influence_map(&influence_map, &probs2)
+            .expect("comparison influence map must support Pauli propagation");
         let cpu_start = Instant::now();
         let _ = cpu_sampler.sample_statistics(num_shots as usize, seed);
         let cpu_time = cpu_start.elapsed();

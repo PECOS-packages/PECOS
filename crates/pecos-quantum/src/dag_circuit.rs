@@ -24,7 +24,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use pecos_core::gate_type::GateType;
-use pecos_core::{Angle64, Gate, MeasId, QubitId, TimeUnits};
+use pecos_core::{Angle64, ClassicalBitId, Gate, MeasId, QubitId, TimeUnits};
 use pecos_num::dag::{DAG, DagWouldCycleError};
 
 use crate::circuit::{Circuit, CircuitMut, GateHandle, GateView};
@@ -371,6 +371,38 @@ pub struct MeasRef {
     pub meas_id: MeasId,
 }
 
+/// Error when trying to add or update a gate in a DAG circuit.
+///
+/// This mirrors [`crate::TickGateError::InvalidGate`]: both circuit
+/// representations validate a complete temporary gate before storing it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DagGateError {
+    /// The gate payload itself is invalid for insertion or replacement.
+    InvalidGate {
+        /// Validation error from [`Gate::validate`] or a DAG identity rule.
+        message: String,
+        /// The node being updated, or `None` while inserting a new gate.
+        node: Option<usize>,
+    },
+}
+
+impl fmt::Display for DagGateError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidGate {
+                message,
+                node: Some(node),
+            } => write!(f, "Invalid gate at DAG node {node}: {message}"),
+            Self::InvalidGate {
+                message,
+                node: None,
+            } => write!(f, "Invalid gate: {message}"),
+        }
+    }
+}
+
+impl std::error::Error for DagGateError {}
+
 impl From<MeasRef> for usize {
     fn from(m: MeasRef) -> usize {
         m.node
@@ -391,15 +423,14 @@ impl From<MeasRef> for usize {
 ///   classical result (`MeasureLeaked` with a supplied id), so nothing that
 ///   reads records can use it;
 /// - an **inconsistent** id means the circuit's bookkeeping and its gates
-///   disagree -- only reachable through `gate_mut` desync -- and the only safe
-///   reaction is to stop.
+///   disagree, and the only safe reaction is to stop.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MeasResolveError {
     /// The id was never minted or supplied in this circuit.
     Unknown(MeasId),
     /// The id's measurement was removed via `remove_gate`. Tracked with a
-    /// tombstone, so this cannot be confused with a `gate_mut` edit that
-    /// merely overwrote the id -- that is [`Inconsistent`](Self::Inconsistent).
+    /// tombstone, so this cannot be confused with internal corruption -- that
+    /// is [`Inconsistent`](Self::Inconsistent).
     Removed(MeasId),
     /// The id names a measurement that consumes no measurement record.
     RecordLess {
@@ -413,10 +444,9 @@ pub enum MeasResolveError {
     /// batch), held despite its measurement having been removed, or reserved
     /// yet erased from every gate without a removal.
     ///
-    /// Insertion validation makes both states unrepresentable, so reaching this
-    /// means a [`gate_mut`](DagCircuit::gate_mut) edit desynced the circuit.
-    /// Nothing resolved through such a circuit can be trusted; the only safe
-    /// reaction is to stop.
+    /// DAG insertion and update validate identity bookkeeping. This defensive
+    /// check also detects internal corruption; public `Gate` fields alone do
+    /// not enforce validity.
     Inconsistent(MeasId),
 }
 
@@ -442,7 +472,7 @@ impl fmt::Display for MeasResolveError {
             Self::Inconsistent(id) => write!(
                 f,
                 "MeasId({})'s bookkeeping is inconsistent -- held but unreserved, or \
-                 held by more than one gate; a gate_mut edit has desynced this circuit",
+                 held by more than one gate",
                 id.index()
             ),
         }
@@ -561,6 +591,12 @@ pub struct DagCircuit {
     qubit_heads: BTreeMap<QubitId, usize>,
     /// Tracks the last added node for `.meta()` calls.
     last_node: Option<usize>,
+    /// Number of classical bits addressable by measurement targets and conditions.
+    num_cbits: usize,
+    /// Classical destination for each measurement node.
+    measurement_targets: BTreeMap<usize, ClassicalBitId>,
+    /// Classical condition attached to each conditional gate node.
+    conditions: BTreeMap<usize, (ClassicalBitId, bool)>,
     /// Maximum qubit index seen so far (updated incrementally on gate addition).
     max_qubit: usize,
     /// Unified Pauli annotations (detectors, observables, and tracked Paulis).
@@ -580,10 +616,31 @@ pub struct DagCircuit {
     /// Ids whose measurement was removed via [`remove_gate`](Self::remove_gate).
     ///
     /// A tombstone makes `Removed` mean what it says: without one, "reserved
-    /// but unheld" cannot distinguish a genuine removal from a `gate_mut` edit
-    /// that overwrote the id -- and a removed id forged onto a live gate would
-    /// resolve as if nothing happened.
+    /// but unheld" cannot distinguish a genuine removal from internal
+    /// corruption, and a removed id on a live gate would resolve as if nothing
+    /// happened.
     removed_meas_ids: BTreeSet<usize>,
+}
+
+fn supports_measurement_target(gate_type: GateType) -> bool {
+    matches!(
+        gate_type,
+        GateType::MX
+            | GateType::MZ
+            | GateType::MeasureFree
+            | GateType::MeasureLeaked
+            | GateType::MPZ
+    )
+}
+
+// A DAG has no custom-gate registry with which to validate angle payloads.
+// Apply this rule to insertion as well as transactional replacement.
+fn validate_dag_gate(gate: &Gate) -> Result<(), String> {
+    gate.validate()?;
+    if gate.gate_type == GateType::Custom && !gate.angles.is_empty() {
+        return Err("DAG Custom gates cannot carry angles without a gate registry".to_string());
+    }
+    Ok(())
 }
 
 impl DagCircuit {
@@ -596,6 +653,9 @@ impl DagCircuit {
             edge_qubits: BTreeMap::new(),
             qubit_heads: BTreeMap::new(),
             last_node: None,
+            num_cbits: 0,
+            measurement_targets: BTreeMap::new(),
+            conditions: BTreeMap::new(),
             max_qubit: 0,
             next_meas_id: 0,
             used_meas_ids: BTreeSet::new(),
@@ -620,6 +680,9 @@ impl DagCircuit {
             edge_qubits: BTreeMap::new(),
             qubit_heads: BTreeMap::new(),
             last_node: None,
+            num_cbits: 0,
+            measurement_targets: BTreeMap::new(),
+            conditions: BTreeMap::new(),
             max_qubit: 0,
             next_meas_id: 0,
             used_meas_ids: BTreeSet::new(),
@@ -648,7 +711,7 @@ impl DagCircuit {
     /// holds. Use [`try_add_gate`](Self::try_add_gate) for fallible insertion.
     pub fn add_gate(&mut self, gate: Gate) -> usize {
         self.try_add_gate(gate)
-            .unwrap_or_else(|err| panic!("Invalid gate: {err}"))
+            .unwrap_or_else(|err| panic!("{err}"))
     }
 
     /// Try to add a validated gate to the circuit.
@@ -658,9 +721,16 @@ impl DagCircuit {
     /// Returns an error if [`Gate::validate`] rejects the gate payload, or if
     /// the gate carries a [`MeasId`] that another measurement in this circuit
     /// already holds.
-    pub fn try_add_gate(&mut self, mut gate: Gate) -> Result<usize, String> {
-        gate.validate()?;
-        self.assign_measurement_ids(&mut gate)?;
+    pub fn try_add_gate(&mut self, mut gate: Gate) -> Result<usize, DagGateError> {
+        validate_dag_gate(&gate).map_err(|message| DagGateError::InvalidGate {
+            message,
+            node: None,
+        })?;
+        self.assign_measurement_ids(&mut gate)
+            .map_err(|message| DagGateError::InvalidGate {
+                message,
+                node: None,
+            })?;
         Ok(self.add_gate_unchecked(gate))
     }
 
@@ -676,10 +746,8 @@ impl DagCircuit {
 
     /// Resolve a [`MeasId`] to the measurement that holds it.
     ///
-    /// A deliberate O(gates) scan rather than a maintained index: an index
-    /// would silently desync under [`gate_mut`](Self::gate_mut) edits, and
-    /// consumers that resolve many ids build their own map from one pass over
-    /// the circuit.
+    /// A deliberate O(gates) scan rather than a maintained index. Consumers
+    /// that resolve many ids build their own map from one pass over the circuit.
     ///
     /// # Errors
     ///
@@ -691,10 +759,10 @@ impl DagCircuit {
     ///   at the point a reference enters a circuit, not here.
     /// - [`MeasResolveError::Removed`] -- the id's measurement was removed via
     ///   [`remove_gate`](Self::remove_gate), tracked with a tombstone. An id
-    ///   erased by a `gate_mut` edit is *not* this; it is `Inconsistent`.
+    ///   erased without a removal is *not* this; it is `Inconsistent`.
     /// - [`MeasResolveError::Inconsistent`] -- the id is held but unreserved,
-    ///   or held twice. Only reachable through `gate_mut` desync; stop trusting
-    ///   the circuit.
+    ///   or held twice. This indicates internal corruption; stop trusting the
+    ///   circuit.
     /// - [`MeasResolveError::RecordLess`] -- the id names a measurement that
     ///   consumes no measurement record (`MeasureLeaked` carrying a supplied
     ///   id). It is a real measurement, but nothing that reads records can
@@ -702,9 +770,8 @@ impl DagCircuit {
     ///
     /// # Panics
     ///
-    /// Panics if a gate holds more ids than qubits. [`Gate::validate`] makes
-    /// that unrepresentable through every insertion path, so reaching it means
-    /// a [`gate_mut`](Self::gate_mut) edit desynced the gate.
+    /// Panics if a gate holds more ids than qubits. DAG insertion and update
+    /// reject such payloads using [`Gate::validate`]; `Gate` itself has public fields.
     pub fn find_measurement(&self, id: MeasId) -> Result<MeasRef, MeasResolveError> {
         // Scan the whole circuit rather than stopping at the first hit, so a
         // duplicate holder is reported instead of silently winning.
@@ -725,8 +792,8 @@ impl DagCircuit {
             return if self.removed_meas_ids.contains(&id.index()) {
                 Err(MeasResolveError::Removed(id))
             } else if self.used_meas_ids.contains(&id.index()) {
-                // Reserved, never removed, yet no gate holds it: a gate_mut
-                // edit erased the id. Not a removal, so not `Removed`.
+                // Reserved, never removed, yet no gate holds it. Not a
+                // removal, so not `Removed`.
                 Err(MeasResolveError::Inconsistent(id))
             } else {
                 Err(MeasResolveError::Unknown(id))
@@ -734,10 +801,8 @@ impl DagCircuit {
         };
         if !self.used_meas_ids.contains(&id.index()) || self.removed_meas_ids.contains(&id.index())
         {
-            // Held but never reserved (forged in through gate_mut), or held
-            // despite its measurement having been removed (a removed id forged
-            // onto a live gate). Either way the holder cannot legitimately own
-            // this id.
+            // Held but never reserved, or held despite its measurement having
+            // been removed. Either way the holder cannot legitimately own it.
             return Err(MeasResolveError::Inconsistent(id));
         }
         let gate = self.gates[node].as_ref().expect("found above");
@@ -880,6 +945,8 @@ impl DagCircuit {
         }
 
         self.dag.remove_node(node);
+        self.measurement_targets.remove(&node);
+        self.conditions.remove(&node);
         if node < self.gates.len() {
             let removed = self.gates[node].take();
             if let Some(gate) = &removed {
@@ -899,14 +966,81 @@ impl DagCircuit {
         self.gates.get(node).and_then(|g| g.as_ref())
     }
 
-    /// Gets a mutable reference to the gate at the given node index.
+    /// Mutate a stored gate through a validated temporary value.
     ///
-    /// Editing `meas_ids` through this reference bypasses the uniqueness
-    /// bookkeeping in [`try_add_gate`](Self::try_add_gate), as editing `qubits`
-    /// bypasses [`max_qubit`](Self::max_qubit). Use it to change what a gate
-    /// does, not what it is identified by.
-    pub fn gate_mut(&mut self, node: usize) -> Option<&mut Gate> {
-        self.gates.get_mut(node).and_then(|g| g.as_mut())
+    /// This follows [`crate::Tick::update_gate_batch`]: the existing gate is
+    /// cloned, the update is applied to the clone, and the clone is validated
+    /// before replacement. A failed update therefore leaves the circuit
+    /// byte-for-byte unchanged.
+    ///
+    /// Qubit support and measurement IDs identify graph wiring and measurement
+    /// records, so they cannot be changed through this API. Qubits may be
+    /// reordered when a replacement changes their operand roles. A gate also
+    /// cannot change whether it consumes a measurement record; such a change
+    /// requires removing and inserting a gate so the circuit can allocate or
+    /// retire IDs.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DagGateError::InvalidGate`] if the node does not contain a
+    /// gate, the updated payload fails [`Gate::validate`], or the update would
+    /// change DAG-owned identity data.
+    pub fn update_gate(
+        &mut self,
+        node: usize,
+        update: impl FnOnce(&mut Gate),
+    ) -> Result<(), DagGateError> {
+        let Some(existing) = self.gate(node) else {
+            return Err(DagGateError::InvalidGate {
+                message: "node does not contain a gate".to_string(),
+                node: Some(node),
+            });
+        };
+        let original_qubits = existing.qubits.clone();
+        let original_meas_ids = existing.meas_ids.clone();
+        let consumed_measurement_record = existing.gate_type.consumes_measurement_record();
+        let mut replacement = existing.clone();
+        update(&mut replacement);
+        validate_dag_gate(&replacement).map_err(|message| DagGateError::InvalidGate {
+            message,
+            node: Some(node),
+        })?;
+        let same_qubit_support = replacement.qubits.len() == original_qubits.len()
+            && replacement
+                .qubits
+                .iter()
+                .all(|qubit| original_qubits.contains(qubit));
+        if !same_qubit_support {
+            return Err(DagGateError::InvalidGate {
+                message: "an in-place update cannot change gate qubit support".to_string(),
+                node: Some(node),
+            });
+        }
+        if replacement.meas_ids != original_meas_ids {
+            return Err(DagGateError::InvalidGate {
+                message: "an in-place update cannot change measurement IDs".to_string(),
+                node: Some(node),
+            });
+        }
+        if replacement.gate_type.consumes_measurement_record() != consumed_measurement_record {
+            return Err(DagGateError::InvalidGate {
+                message: "an in-place update cannot change measurement-record consumption"
+                    .to_string(),
+                node: Some(node),
+            });
+        }
+        if self.measurement_targets.contains_key(&node)
+            && !supports_measurement_target(replacement.gate_type)
+        {
+            return Err(DagGateError::InvalidGate {
+                message:
+                    "an in-place update cannot leave a measurement target on a non-measurement gate"
+                        .to_string(),
+                node: Some(node),
+            });
+        }
+        self.gates[node] = Some(replacement);
+        Ok(())
     }
 
     /// Returns the number of gates in the circuit.
@@ -1434,7 +1568,7 @@ impl DagCircuit {
     /// insertion.
     pub fn add_gate_auto_wire(&mut self, gate: Gate) -> usize {
         self.try_add_gate_auto_wire(gate)
-            .unwrap_or_else(|err| panic!("Invalid gate: {err}"))
+            .unwrap_or_else(|err| panic!("{err}"))
     }
 
     /// Adds a gate and wires it to the previous gate on each of its qubits,
@@ -1443,7 +1577,7 @@ impl DagCircuit {
     /// # Errors
     ///
     /// Returns an error if [`try_add_gate`](Self::try_add_gate) rejects the gate.
-    pub fn try_add_gate_auto_wire(&mut self, gate: Gate) -> Result<usize, String> {
+    pub fn try_add_gate_auto_wire(&mut self, gate: Gate) -> Result<usize, DagGateError> {
         let qubits = gate.qubits.clone();
         let node = self.try_add_gate(gate)?;
 
@@ -1516,6 +1650,49 @@ impl DagCircuit {
     #[must_use]
     pub fn last_added_node(&self) -> Option<usize> {
         self.last_node
+    }
+
+    /// Set the number of classical bits used by this circuit.
+    pub fn set_num_cbits(&mut self, num_cbits: usize) {
+        self.num_cbits = num_cbits;
+    }
+
+    /// Associate a measurement gate with its classical destination bit.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `node` does not identify a measurement gate in this circuit.
+    pub fn set_measurement_target(&mut self, node: usize, target: ClassicalBitId) {
+        let gate = self
+            .gate(node)
+            .unwrap_or_else(|| panic!("measurement target references missing gate {node}"));
+        assert!(
+            supports_measurement_target(gate.gate_type),
+            "measurement target requires a measurement gate, got {:?}",
+            gate.gate_type
+        );
+        self.num_cbits = self.num_cbits.max(target.index() + 1);
+        self.measurement_targets.insert(node, target);
+    }
+
+    /// Return all measurement-to-classical-bit mappings.
+    #[must_use]
+    pub fn measurement_targets(&self) -> &BTreeMap<usize, ClassicalBitId> {
+        &self.measurement_targets
+    }
+
+    /// Attach a classical-bit condition to a gate.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `node` does not identify a gate in this circuit.
+    pub fn set_condition(&mut self, node: usize, cbit: ClassicalBitId, value: bool) {
+        assert!(
+            self.gate(node).is_some(),
+            "condition references missing gate {node}"
+        );
+        self.num_cbits = self.num_cbits.max(cbit.index() + 1);
+        self.conditions.insert(node, (cbit, value));
     }
 
     // -------------------- Single-qubit Clifford gates --------------------
@@ -1691,8 +1868,8 @@ impl DagCircuit {
         self
     }
 
-    /// Apply R1XY (X-Y plane rotation) gate(s).
-    pub fn r1xy(
+    /// Apply RXY1Q (X-Y plane rotation) gate(s).
+    pub fn rxy1q(
         &mut self,
         theta: impl Into<Angle64>,
         phi: impl Into<Angle64>,
@@ -1702,7 +1879,7 @@ impl DagCircuit {
         let p = phi.into();
         for &q in qubits {
             self.add_gate_auto_wire(Gate::with_angles(
-                GateType::R1XY,
+                GateType::RXY1Q,
                 vec![t, p],
                 vec![q.into()],
             ));
@@ -1878,21 +2055,18 @@ impl DagCircuit {
         self
     }
 
-    /// Apply CRZ (controlled-RZ) gate(s).
-    ///
-    /// The angle can be an `Angle64` or an `f64` (interpreted as radians).
+    /// Lower CRZ (controlled-RZ) boundary spelling into native rotations.
     pub fn crz(
         &mut self,
-        theta: impl Into<Angle64>,
+        theta_radians: f64,
         pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
     ) -> &mut Self {
-        let angle = theta.into();
         for &(c, t) in pairs {
-            self.add_gate_auto_wire(Gate::with_angles(
-                GateType::CRZ,
-                vec![angle],
-                vec![c.into(), t.into()],
-            ));
+            for gate in
+                pecos_core::controlled_rotations::lower_crz(theta_radians, c.into(), t.into())
+            {
+                self.add_gate_auto_wire(gate);
+            }
         }
         self
     }
@@ -1970,8 +2144,7 @@ impl DagCircuit {
     /// Panics if the gate is rejected -- see the `try_` variant for fallible
     /// insertion.
     pub fn mz(&mut self, qubits: &[impl Into<QubitId> + Copy]) -> Vec<MeasRef> {
-        self.try_mz(qubits)
-            .unwrap_or_else(|err| panic!("Invalid gate: {err}"))
+        self.try_mz(qubits).unwrap_or_else(|err| panic!("{err}"))
     }
 
     /// Measure qubits in the Z basis, reporting rejection instead of panicking.
@@ -1979,11 +2152,18 @@ impl DagCircuit {
     /// # Errors
     ///
     /// Returns an error if the circuit has no measurement ids left to mint.
-    pub fn try_mz(&mut self, qubits: &[impl Into<QubitId> + Copy]) -> Result<Vec<MeasRef>, String> {
+    pub fn try_mz(
+        &mut self,
+        qubits: &[impl Into<QubitId> + Copy],
+    ) -> Result<Vec<MeasRef>, DagGateError> {
         // Each qubit becomes its own gate, so check the whole batch fits before
         // inserting any of it. Failing part way would leave the circuit holding
         // measurements the caller was told it did not get.
-        self.reserve_room_for_mints(qubits.len())?;
+        self.reserve_room_for_mints(qubits.len())
+            .map_err(|message| DagGateError::InvalidGate {
+                message,
+                node: None,
+            })?;
         qubits
             .iter()
             .map(|&q| {
@@ -2050,8 +2230,7 @@ impl DagCircuit {
     /// Panics if the gate is rejected -- see the `try_` variant for fallible
     /// insertion.
     pub fn mpz(&mut self, qubits: &[impl Into<QubitId> + Copy]) -> Vec<MeasRef> {
-        self.try_mpz(qubits)
-            .unwrap_or_else(|err| panic!("Invalid gate: {err}"))
+        self.try_mpz(qubits).unwrap_or_else(|err| panic!("{err}"))
     }
 
     /// Measure-and-prepare, reporting rejection instead of panicking.
@@ -2067,8 +2246,12 @@ impl DagCircuit {
     pub fn try_mpz(
         &mut self,
         qubits: &[impl Into<QubitId> + Copy],
-    ) -> Result<Vec<MeasRef>, String> {
-        self.reserve_room_for_mints(qubits.len())?;
+    ) -> Result<Vec<MeasRef>, DagGateError> {
+        self.reserve_room_for_mints(qubits.len())
+            .map_err(|message| DagGateError::InvalidGate {
+                message,
+                node: None,
+            })?;
         let qubit_ids: Vec<QubitId> = qubits.iter().map(|&q| q.into()).collect();
         let node = self.try_add_gate_auto_wire(Gate::mpz(&qubit_ids))?;
         Ok(self
@@ -2084,7 +2267,7 @@ impl DagCircuit {
     /// insertion.
     pub fn mz_free(&mut self, qubits: &[impl Into<QubitId> + Copy]) -> &mut Self {
         self.try_mz_free(qubits)
-            .unwrap_or_else(|err| panic!("Invalid gate: {err}"));
+            .unwrap_or_else(|err| panic!("{err}"));
         self
     }
 
@@ -2093,8 +2276,15 @@ impl DagCircuit {
     /// # Errors
     ///
     /// Returns an error if the circuit has no measurement ids left to mint.
-    pub fn try_mz_free(&mut self, qubits: &[impl Into<QubitId> + Copy]) -> Result<(), String> {
-        self.reserve_room_for_mints(qubits.len())?;
+    pub fn try_mz_free(
+        &mut self,
+        qubits: &[impl Into<QubitId> + Copy],
+    ) -> Result<(), DagGateError> {
+        self.reserve_room_for_mints(qubits.len())
+            .map_err(|message| DagGateError::InvalidGate {
+                message,
+                node: None,
+            })?;
         for &q in qubits {
             self.try_add_gate_auto_wire(Gate::mz_free(&[q]))?;
         }
@@ -2644,6 +2834,18 @@ impl Circuit for DagCircuit {
     fn gate_attrs(&self, gate: GateHandle) -> Option<&BTreeMap<String, Attribute>> {
         self.gate_attrs(gate)
     }
+
+    fn num_cbits(&self) -> usize {
+        self.num_cbits
+    }
+
+    fn measurement_target(&self, gate: GateHandle) -> Option<ClassicalBitId> {
+        self.measurement_targets.get(&gate).copied()
+    }
+
+    fn condition(&self, gate: GateHandle) -> Option<(ClassicalBitId, bool)> {
+        self.conditions.get(&gate).copied()
+    }
 }
 
 impl CircuitMut for DagCircuit {
@@ -2681,6 +2883,158 @@ impl CircuitMut for DagCircuit {
 mod tests {
     use super::*;
     use pecos_core::Angle64;
+    use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, StateVec};
+
+    fn dag_crz_state(theta: f64, basis: usize) -> Vec<(f64, f64)> {
+        let mut circuit = DagCircuit::new();
+        if basis & 1 != 0 {
+            circuit.x(&[0]);
+        }
+        if basis & 2 != 0 {
+            circuit.x(&[1]);
+        }
+        circuit.crz(theta, &[(1, 0)]);
+        let mut simulator = StateVec::new(2);
+        for node in circuit.topological_order() {
+            let gate = circuit.gate(node).expect("DAG node contains a gate");
+            match gate.gate_type {
+                GateType::X => simulator.x(&gate.qubits),
+                GateType::RZ => simulator.rz(gate.angles[0], &gate.qubits),
+                GateType::RZZ => simulator.rzz(gate.angles[0], &[(gate.qubits[0], gate.qubits[1])]),
+                other => panic!("unexpected DAG builder gate {other}"),
+            };
+        }
+        simulator
+            .state()
+            .iter()
+            .map(|amplitude| (amplitude.re, amplitude.im))
+            .collect()
+    }
+
+    #[test]
+    fn custom_angles_are_rejected_on_insertion_and_update() {
+        let custom = Gate::new(
+            GateType::Custom,
+            vec![Angle64::ZERO; 3],
+            vec![],
+            vec![QubitId(0)],
+        );
+        let mut dag = DagCircuit::new();
+        let error = dag
+            .try_add_gate(custom.clone())
+            .expect_err("no registry for custom arity");
+        assert!(error.to_string().contains("without a gate registry"));
+        assert!(dag.try_add_gate_auto_wire(custom).is_err());
+        let node = dag.add_gate_auto_wire(Gate::rz(Angle64::ZERO, &[0]));
+        let original = dag.gate(node).unwrap().clone();
+        let error = dag
+            .update_gate(node, |gate| {
+                gate.gate_type = GateType::Custom;
+                gate.angles = vec![Angle64::ZERO; 3].into();
+            })
+            .expect_err("type changes must obey the same registry rule");
+        assert!(error.to_string().contains("without a gate registry"));
+        assert_eq!(dag.gate(node), Some(&original));
+        dag.try_add_gate(Gate::custom(vec![QubitId(1)]))
+            .expect("unparameterized custom remains supported");
+    }
+
+    #[test]
+    fn measurement_resolution_defends_against_corrupt_gate_literals() {
+        let id = MeasId::from_raw(5);
+        let gate = Gate {
+            meas_ids: smallvec::smallvec![id],
+            ..Gate::mz(&[0])
+        };
+        // Internal fixtures intentionally bypass admission. Public Gate fields
+        // alone cannot bypass the DAG's private storage and bookkeeping.
+        let mut dag = DagCircuit::new();
+        dag.add_gate_unchecked(gate.clone());
+        assert_eq!(
+            dag.find_measurement(id),
+            Err(MeasResolveError::Inconsistent(id))
+        );
+
+        let mut dag = DagCircuit::new();
+        let node = dag.try_add_gate(gate.clone()).unwrap();
+        dag.add_gate_unchecked(Gate {
+            qubits: smallvec::smallvec![QubitId(1)],
+            ..gate.clone()
+        });
+        assert_eq!(
+            dag.find_measurement(id),
+            Err(MeasResolveError::Inconsistent(id))
+        );
+        dag.gates[node] = Some(Gate {
+            meas_ids: smallvec::smallvec![],
+            ..gate.clone()
+        });
+        dag.gates[node + 1] = None;
+        assert_eq!(
+            dag.find_measurement(id),
+            Err(MeasResolveError::Inconsistent(id))
+        );
+
+        let mut dag = DagCircuit::new();
+        let node = dag.try_add_gate(gate.clone()).unwrap();
+        dag.remove_gate(node);
+        dag.add_gate_unchecked(gate);
+        assert_eq!(
+            dag.find_measurement(id),
+            Err(MeasResolveError::Inconsistent(id))
+        );
+    }
+
+    #[test]
+    fn dag_crz_builder_preserves_full_matrix() {
+        for theta in [
+            -std::f64::consts::PI,
+            std::f64::consts::PI / 3.0,
+            std::f64::consts::PI,
+            std::f64::consts::TAU,
+            3.0 * std::f64::consts::PI,
+        ] {
+            let mut actual = vec![vec![(0.0, 0.0); 4]; 4];
+            for column in 0..4 {
+                for (row_values, amplitude) in actual.iter_mut().zip(dag_crz_state(theta, column)) {
+                    row_values[column] = amplitude;
+                }
+            }
+            let half = theta / 2.0;
+            let reference = [
+                (1.0, 0.0),
+                (1.0, 0.0),
+                (half.cos(), -half.sin()),
+                (half.cos(), half.sin()),
+            ];
+            let phase = actual[0][0];
+            let phase_norm = phase.0 * phase.0 + phase.1 * phase.1;
+            assert!((phase_norm - 1.0).abs() < 1e-12);
+            if theta.abs() <= std::f64::consts::PI {
+                assert!((phase.0 - 1.0).abs() < 1e-12 && phase.1.abs() < 1e-12);
+            } else {
+                assert!((phase.0.abs() - 1.0).abs() < 1e-12 && phase.1.abs() < 1e-12);
+            }
+            for (row, row_values) in actual.iter().enumerate() {
+                for (column, &value) in row_values.iter().enumerate() {
+                    let normalized = (
+                        (value.0 * phase.0 + value.1 * phase.1) / phase_norm,
+                        (value.1 * phase.0 - value.0 * phase.1) / phase_norm,
+                    );
+                    let expected = if row == column {
+                        reference[row]
+                    } else {
+                        (0.0, 0.0)
+                    };
+                    assert!(
+                        (normalized.0 - expected.0).abs() < 1e-12
+                            && (normalized.1 - expected.1).abs() < 1e-12,
+                        "theta={theta}, entry=({row}, {column}), actual={normalized:?}, expected={expected:?}, phase={phase:?}"
+                    );
+                }
+            }
+        }
+    }
 
     #[test]
     fn test_empty_circuit() {
@@ -3428,8 +3782,117 @@ mod tests {
             .try_add_gate(Gate::cx(&[(0, 0)]))
             .expect_err("DAG should reject invalid gate payloads");
 
-        assert!(err.contains("requires distinct qubits"));
+        assert!(err.to_string().contains("requires distinct qubits"));
         assert!(circuit.nodes().is_empty());
+    }
+
+    #[test]
+    fn update_gate_refuses_changed_qubit_support() {
+        let mut circuit = DagCircuit::new();
+        let node = circuit.add_gate_auto_wire(Gate::h(&[0]));
+
+        let error = circuit
+            .update_gate(node, |gate| gate.qubits[0] = QubitId(1))
+            .expect_err("an in-place update must preserve graph wire support");
+
+        assert!(
+            error
+                .to_string()
+                .contains("cannot change gate qubit support")
+        );
+        assert_eq!(circuit.gate(node), Some(&Gate::h(&[0])));
+        assert_eq!(circuit.qubit_timeline(QubitId(0)), vec![node]);
+        assert!(circuit.qubit_timeline(QubitId(1)).is_empty());
+    }
+
+    #[test]
+    fn update_gate_refuses_changed_measurement_record_consumption() {
+        let mut circuit = DagCircuit::new();
+        let node = circuit.add_gate_auto_wire(Gate::h(&[0]));
+
+        let error = circuit
+            .update_gate(node, |gate| gate.gate_type = GateType::MZ)
+            .expect_err("an in-place update must preserve measurement-record allocation");
+
+        assert!(
+            error
+                .to_string()
+                .contains("cannot change measurement-record consumption")
+        );
+        assert_eq!(circuit.gate(node), Some(&Gate::h(&[0])));
+        assert_eq!(circuit.num_measurement_ids(), 0);
+    }
+
+    #[test]
+    fn update_gate_refuses_stale_measurement_target() {
+        let mut circuit = DagCircuit::new();
+        let node = circuit.add_gate_auto_wire(Gate::measure_leaked(&[0]));
+        let target = ClassicalBitId::new(3);
+        circuit.set_measurement_target(node, target);
+
+        let error = circuit
+            .update_gate(node, |gate| gate.gate_type = GateType::H)
+            .expect_err("a measurement target must not survive on a non-measurement gate");
+
+        assert!(
+            error
+                .to_string()
+                .contains("cannot leave a measurement target on a non-measurement gate")
+        );
+        assert_eq!(
+            circuit.gate(node).map(|gate| gate.gate_type),
+            Some(GateType::MeasureLeaked)
+        );
+        assert_eq!(circuit.measurement_targets().get(&node), Some(&target));
+    }
+
+    #[test]
+    fn measurement_target_survives_compatible_mz_to_mx_update() {
+        let mut circuit = DagCircuit::new();
+        let node = circuit.mz(&[0])[0].node;
+        let target = ClassicalBitId::new(3);
+        circuit.set_measurement_target(node, target);
+
+        circuit
+            .update_gate(node, |gate| gate.gate_type = GateType::MX)
+            .expect("MZ and MX both produce one classical measurement record");
+
+        assert_eq!(
+            circuit.gate(node).map(|gate| gate.gate_type),
+            Some(GateType::MX)
+        );
+        assert_eq!(circuit.measurement_targets().get(&node), Some(&target));
+        assert_eq!(circuit.num_measurement_ids(), 1);
+    }
+
+    #[test]
+    fn panicking_update_gate_closure_leaves_gate_and_indices_unchanged() {
+        let mut circuit = DagCircuit::new();
+        circuit.h(&[0]);
+        let node = circuit.add_gate_auto_wire(Gate::cx(&[(0, 1)]));
+        circuit.z(&[1]);
+        let original_gate = circuit.gate(node).cloned();
+        let original_order = circuit.topological_order();
+        let original_edges = circuit.edge_qubits.clone();
+        let original_heads = circuit.qubit_heads.clone();
+        let original_last_node = circuit.last_node;
+        let original_max_qubit = circuit.max_qubit;
+
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = circuit.update_gate(node, |gate| {
+                gate.gate_type = GateType::CZ;
+                gate.qubits.reverse();
+                panic!("abort update");
+            });
+        }));
+
+        assert!(panic.is_err());
+        assert_eq!(circuit.gate(node).cloned(), original_gate);
+        assert_eq!(circuit.topological_order(), original_order);
+        assert_eq!(circuit.edge_qubits, original_edges);
+        assert_eq!(circuit.qubit_heads, original_heads);
+        assert_eq!(circuit.last_node, original_last_node);
+        assert_eq!(circuit.max_qubit, original_max_qubit);
     }
 
     #[test]
@@ -3526,86 +3989,98 @@ mod measurement_id_tests {
         assert_eq!(circuit.num_measurement_ids(), 0);
     }
 
-    /// A `gate_mut` edit can hold an id the circuit never reserved, or hold
-    /// one id twice. Both are `Inconsistent` -- the one variant whose only
-    /// safe reaction is to stop -- not a successful resolution.
+    /// An update cannot forge an unreserved id or make two measurements hold
+    /// one id. Both failed edits leave the original circuit unchanged.
     #[test]
-    fn find_measurement_reports_desynced_circuits_as_inconsistent() {
-        // Forged: a held id that was never reserved.
+    fn update_gate_refuses_forged_and_duplicate_measurement_ids() {
         let mut circuit = DagCircuit::new();
         circuit.pz(&[0]);
-        let node = circuit.mz(&[0])[0].node;
-        circuit.gate_mut(node).unwrap().meas_ids[0] = MeasId::from_raw(7);
+        let reference = circuit.mz(&[0])[0];
+        let err = circuit
+            .update_gate(reference.node, |gate| {
+                gate.meas_ids[0] = MeasId::from_raw(7);
+            })
+            .expect_err("measurement IDs cannot be changed in place");
+        assert!(err.to_string().contains("cannot change measurement IDs"));
         assert_eq!(
-            circuit.find_measurement(MeasId::from_raw(7)),
-            Err(MeasResolveError::Inconsistent(MeasId::from_raw(7))),
-            "a forged id must not resolve to a real measurement"
+            circuit.find_measurement(reference.meas_id),
+            Ok(reference),
+            "a refused edit must preserve the original measurement"
         );
 
-        // Duplicated: one id held by two gates.
         let mut circuit = DagCircuit::new();
         circuit.pz(&[0, 1]);
         let refs = circuit.mz(&[0, 1]);
         let stolen = refs[0].meas_id;
-        circuit.gate_mut(refs[1].node).unwrap().meas_ids[0] = stolen;
+        let err = circuit
+            .update_gate(refs[1].node, |gate| gate.meas_ids[0] = stolen)
+            .expect_err("measurement IDs cannot be duplicated in place");
+        assert!(err.to_string().contains("cannot change measurement IDs"));
         assert_eq!(
             circuit.find_measurement(stolen),
-            Err(MeasResolveError::Inconsistent(stolen)),
-            "a duplicated id must not silently resolve to whichever gate scans first"
+            Ok(refs[0]),
+            "a refused edit must not change which measurement owns the id"
         );
     }
 
-    /// A removed id forged onto a live gate must not resolve: `used_meas_ids`
-    /// proves only that an id was reserved *once*, so without tombstones this
-    /// laundered a stale annotation onto a different measurement.
+    /// A removed id cannot be reassigned to a live gate through mutation.
     #[test]
-    fn a_removed_id_reassigned_by_gate_mut_does_not_resolve() {
+    fn a_removed_id_cannot_be_reassigned_by_update_gate() {
         let mut circuit = DagCircuit::new();
         circuit.pz(&[0, 1]);
         let refs = circuit.mz(&[0, 1]);
         let dead = refs[0].meas_id;
         circuit.remove_gate(refs[0].node);
-        circuit.gate_mut(refs[1].node).unwrap().meas_ids[0] = dead;
+        let err = circuit
+            .update_gate(refs[1].node, |gate| gate.meas_ids[0] = dead)
+            .expect_err("measurement IDs cannot be reassigned in place");
+        assert!(err.to_string().contains("cannot change measurement IDs"));
 
         assert_eq!(
             circuit.find_measurement(dead),
-            Err(MeasResolveError::Inconsistent(dead)),
-            "a removed id on a live gate is laundering, not a resolution"
+            Err(MeasResolveError::Removed(dead)),
+            "the refused edit must preserve the removed-id tombstone"
         );
     }
 
-    /// An id erased from every gate without a removal is `Inconsistent`, not
-    /// `Removed` -- `Removed` now genuinely means `remove_gate` ran.
+    /// An update cannot erase a live gate's measurement id.
     #[test]
-    fn an_id_erased_without_removal_is_inconsistent_not_removed() {
+    fn a_measurement_id_cannot_be_erased_by_update_gate() {
         let mut circuit = DagCircuit::new();
         circuit.pz(&[0]);
         let held = circuit.mz(&[0]);
-        circuit.gate_mut(held[0].node).unwrap().meas_ids[0] = MeasId::from_raw(50);
+        let err = circuit
+            .update_gate(held[0].node, |gate| {
+                gate.meas_ids[0] = MeasId::from_raw(50);
+            })
+            .expect_err("measurement IDs cannot be erased in place");
+        assert!(err.to_string().contains("cannot change measurement IDs"));
 
         assert_eq!(
             circuit.find_measurement(held[0].meas_id),
-            Err(MeasResolveError::Inconsistent(held[0].meas_id)),
-            "the id vanished without remove_gate, so nothing about it can be trusted"
+            Ok(held[0]),
+            "the refused edit must leave the original id resolvable"
         );
     }
 
-    /// A duplicate *within one batched gate* is caught too, not only across
-    /// gates -- nothing previously pinned the per-position inner loop.
+    /// An update cannot create a duplicate within one batched gate.
     #[test]
-    fn a_duplicate_within_one_batch_is_inconsistent() {
+    fn update_gate_refuses_a_duplicate_within_one_batch() {
         let mut circuit = DagCircuit::new();
         circuit.pz(&[0, 1]);
         let mut batch = Gate::mz(&[0usize, 1]);
         batch.meas_ids = smallvec::smallvec![MeasId::from_raw(8), MeasId::from_raw(2)];
         let node = circuit.add_gate_auto_wire(batch);
         let dup = MeasId::from_raw(8);
-        circuit.gate_mut(node).unwrap().meas_ids[1] = dup;
+        let err = circuit
+            .update_gate(node, |gate| gate.meas_ids[1] = dup)
+            .expect_err("measurement IDs cannot be duplicated in place");
+        assert!(err.to_string().contains("cannot change measurement IDs"));
 
+        assert_eq!(circuit.find_measurement(dup).unwrap().qubit, QubitId(0));
         assert_eq!(
-            circuit.find_measurement(dup),
-            Err(MeasResolveError::Inconsistent(dup)),
-            "one gate holding an id twice must not resolve to either position"
+            circuit.find_measurement(MeasId::from_raw(2)).unwrap().qubit,
+            QubitId(1)
         );
     }
 
@@ -3757,7 +4232,7 @@ mod measurement_id_tests {
             .try_add_gate(duplicate)
             .expect_err("MeasId(1) is already held by the earlier batch");
         assert!(
-            err.contains("MeasId(1)") && err.contains("unique"),
+            err.to_string().contains("MeasId(1)") && err.to_string().contains("unique"),
             "the error must name the duplicated id: {err}"
         );
     }
@@ -3842,7 +4317,7 @@ mod measurement_id_tests {
             .try_add_gate(Gate::mz(&[1usize]))
             .expect_err("the counter sits at usize::MAX, so nothing can be minted");
         assert!(
-            err.contains("remain below usize::MAX"),
+            err.to_string().contains("remain below usize::MAX"),
             "the error must explain the exhaustion: {err}"
         );
     }
@@ -3977,7 +4452,7 @@ mod measurement_id_tests {
             .try_add_gate(saturated)
             .expect_err("usize::MAX leaves no room for a successor id");
         assert!(
-            err.contains("no room"),
+            err.to_string().contains("no room"),
             "the error must explain why the id is refused: {err}"
         );
     }

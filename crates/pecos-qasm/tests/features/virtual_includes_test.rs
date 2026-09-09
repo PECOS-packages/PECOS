@@ -1,5 +1,6 @@
+use pecos_core::prelude::GateType;
 use pecos_qasm::parser::{ParseConfig, QASMParser};
-use pecos_qasm::{Preprocessor, QASMEngine};
+use pecos_qasm::{Operation, Preprocessor, QASMEngine};
 
 #[test]
 fn test_virtual_include_single() {
@@ -34,8 +35,17 @@ fn test_virtual_include_single() {
 
     // Verify the gate was loaded
     assert!(program.gate_definitions.contains_key("my_h"));
-    // After expansion, my_h expands to u2, which expands to more operations
-    assert!(program.operations.len() > 1);
+    // my_h lowers through qelib1's u2 to one native U.
+    assert_eq!(program.operations.len(), 1);
+    assert!(
+        matches!(
+            &program.operations[0],
+            Operation::Gate { name, .. } if name == "U"
+        ) || matches!(
+            &program.operations[0],
+            Operation::NativeGate(gate) if gate.gate_type == GateType::U
+        )
+    );
 }
 
 #[test]

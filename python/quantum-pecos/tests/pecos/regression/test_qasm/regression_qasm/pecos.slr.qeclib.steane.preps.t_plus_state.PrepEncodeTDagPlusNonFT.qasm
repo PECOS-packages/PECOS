@@ -1,10 +1,10 @@
 OPENQASM 2.0;
-include "hqslib1.inc";
+include "qelib1.inc";
 // Initialize logical |T> = T|+>
 // =============================
 reset q_test[6];
 h q_test[6];
-rz(-pi/4) q_test[6];
+tdg q_test[6];
 //
 // Encoding circuit
 // ---------------

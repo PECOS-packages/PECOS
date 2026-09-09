@@ -75,16 +75,22 @@ fn gpu_circuit(sim: &mut GpuStateVec32, num_qubits: usize, num_layers: usize) {
 
 #[cfg(feature = "cuquantum")]
 mod cuquantum_matrices {
-    use std::f64::consts::FRAC_1_SQRT_2;
+    use pecos_core::gate_type::GateType;
 
-    pub const H: [[f64; 2]; 4] = [
-        [FRAC_1_SQRT_2, 0.0],
-        [FRAC_1_SQRT_2, 0.0],
-        [FRAC_1_SQRT_2, 0.0],
-        [-FRAC_1_SQRT_2, 0.0],
-    ];
+    const fn from_canonical(gate: GateType) -> [[f64; 2]; 4] {
+        let Some(matrix) = gate.canonical_1q_matrix() else {
+            panic!("gate has no canonical single-qubit matrix");
+        };
+        [
+            [matrix[0], matrix[1]],
+            [matrix[2], matrix[3]],
+            [matrix[4], matrix[5]],
+            [matrix[6], matrix[7]],
+        ]
+    }
 
-    pub const X: [[f64; 2]; 4] = [[0.0, 0.0], [1.0, 0.0], [1.0, 0.0], [0.0, 0.0]];
+    pub const H: [[f64; 2]; 4] = from_canonical(GateType::H);
+    pub const X: [[f64; 2]; 4] = from_canonical(GateType::X);
 
     pub const CX: [[f64; 2]; 16] = [
         [1.0, 0.0],

@@ -25,9 +25,9 @@ __all__ = [
     "dtype",
     "m2cliff",
     "mnormal",
-    "r1xy2cliff",
-    "r1xy_ang2str",
-    "r1xy_matrix",
+    "rxy1q2cliff",
+    "rxy1q_ang2str",
+    "rxy1q_matrix",
     "rz2cliff",
     "rz_ang2str",
     "rz_matrix",
@@ -74,7 +74,7 @@ cliff_str2matrix = {
     "F4dg": pc.array([[1.0 + 0.0j, 0.0 + 1.0j], [1.0 + 0.0j, 0.0 - 1.0j]], dtype=dtype),
 }
 
-r1xy_ang2str = {
+rxy1q_ang2str = {
     (3.141592653589793, 3.141592653589793): "X",
     (3.141592653589793, 1.5707963267948966): "Y",
     (3.141592653589793, 0): "X",
@@ -109,8 +109,8 @@ rz_ang2str = {
 }
 
 
-def r1xy_matrix(theta: float, phi: float) -> Array:
-    """Creates a Array matrix for a R1XY gate."""
+def rxy1q_matrix(theta: float, phi: float) -> Array:
+    """Creates a Array matrix for a RXY1Q gate."""
     c = pc.cos(theta * 0.5)
     s = pc.sin(theta * 0.5)
 
@@ -165,7 +165,7 @@ def _is_identity_angle(theta: float, *, atol: float) -> bool:
     )
 
 
-def r1xy2cliff(
+def rxy1q2cliff(
     theta: float,
     phi: float,
     *,
@@ -173,11 +173,11 @@ def r1xy2cliff(
     normalization_atol: float | None = None,
     use_conv_table: bool = True,
 ) -> str | bool:
-    """Identifies (ignoring global phases) a Clifford given the angles of a R1XY gate."""
+    """Identifies (ignoring global phases) a Clifford given the angles of a RXY1Q gate."""
     if use_conv_table:
         if _is_identity_angle(theta, atol=atol):
             return "I"
-        for cangs, csym in r1xy_ang2str.items():
+        for cangs, csym in rxy1q_ang2str.items():
             a, b = cangs
             if pc.isclose(a, theta, rtol=0.0, atol=atol) and pc.isclose(
                 b,
@@ -187,7 +187,7 @@ def r1xy2cliff(
             ):
                 return csym
 
-    m = r1xy_matrix(theta, phi)
+    m = rxy1q_matrix(theta, phi)
 
     return m2cliff(
         m,

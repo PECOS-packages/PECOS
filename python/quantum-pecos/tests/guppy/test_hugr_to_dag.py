@@ -13,12 +13,15 @@
 
 from __future__ import annotations
 
+import math
+
 import pytest
+from pecos.simulators import StateVec
 
 # Check if guppylang is available
 try:
     from guppylang import guppy
-    from guppylang.std.quantum import cx, cz, h, measure, qubit, s, t, x, y, z
+    from guppylang.std.quantum import crz, cx, cz, h, measure, pi, qubit, s, t, x, y, z
 
     HAS_GUPPYLANG = True
 except ImportError:
@@ -61,12 +64,132 @@ class TestBasicConversion:
 
         # Should have 3 nodes: QAlloc, H, MeasureFree
         assert len(dag.nodes()) == 3
-
-        # Check node attributes
         op_names = [dag.node_attrs(n).get("op_name") for n in dag.nodes()]
         assert "QAlloc" in op_names
         assert "H" in op_names
         assert "MeasureFree" in op_names
+
+    def test_crz_is_lowered_to_native_analysis_nodes(self) -> None:
+        """The external HUGR spelling does not survive in the PECOS DAG."""
+
+        @guppy
+        def controlled_rotation() -> tuple[bool, bool]:
+            q0 = qubit()
+            q1 = qubit()
+            crz(q0, q1, pi)
+            return measure(q0).read(), measure(q1).read()
+
+        dag = hugr_to_dag(controlled_rotation.compile().modules[0])
+        names = [dag.node_attrs(node).get("op_name") for node in dag.nodes()]
+        assert "CRz" not in names
+        assert "RZZ" in names
+        assert "Rz" in names
+
+    def test_crz_control_successor_depends_on_rzz_not_target_rz(self) -> None:
+        """Lowering preserves the independent control wire in the analysis DAG."""
+
+        @guppy
+        def control_successor() -> tuple[bool, bool]:
+            q0 = qubit()
+            q1 = qubit()
+            crz(q0, q1, pi / 3)
+            z(q0)
+            return measure(q0).read(), measure(q1).read()
+
+        dag = hugr_to_dag(control_successor.compile().modules[0])
+        nodes_by_name = {
+            dag.node_attrs(node).get("op_name"): node
+            for node in dag.nodes()
+            if dag.node_attrs(node).get("op_name") in {"RZZ", "Rz", "Z"}
+        }
+        rzz = nodes_by_name["RZZ"]
+        rz = nodes_by_name["Rz"]
+        control_z = nodes_by_name["Z"]
+
+        assert dag.find_edge(rzz, control_z) is not None
+        assert dag.find_edge(rz, control_z) is None
+
+    def test_crz_lowering_preserves_the_full_matrix(self) -> None:
+        """Execute the HUGR-source lowering under one shared global phase."""
+
+        @guppy
+        def negative_pi() -> tuple[bool, bool]:
+            q0 = qubit()
+            q1 = qubit()
+            crz(q0, q1, -pi)
+            return measure(q0).read(), measure(q1).read()
+
+        @guppy
+        def pi_over_three() -> tuple[bool, bool]:
+            q0 = qubit()
+            q1 = qubit()
+            crz(q0, q1, pi / 3)
+            return measure(q0).read(), measure(q1).read()
+
+        @guppy
+        def positive_pi() -> tuple[bool, bool]:
+            q0 = qubit()
+            q1 = qubit()
+            crz(q0, q1, pi)
+            return measure(q0).read(), measure(q1).read()
+
+        @guppy
+        def two_pi() -> tuple[bool, bool]:
+            q0 = qubit()
+            q1 = qubit()
+            crz(q0, q1, 2 * pi)
+            return measure(q0).read(), measure(q1).read()
+
+        @guppy
+        def three_pi() -> tuple[bool, bool]:
+            q0 = qubit()
+            q1 = qubit()
+            crz(q0, q1, 3 * pi)
+            return measure(q0).read(), measure(q1).read()
+
+        sources = (
+            (negative_pi, -math.pi),
+            (pi_over_three, math.pi / 3),
+            (positive_pi, math.pi),
+            (two_pi, 2 * math.pi),
+            (three_pi, 3 * math.pi),
+        )
+        for source, theta in sources:
+            dag = hugr_to_dag(source.compile().modules[0])
+            lowered = [gate for gate in dag_to_gate_sequence(dag) if gate["op_name"] in {"RZZ", "Rz"}]
+            assert [gate["op_name"] for gate in lowered] == ["RZZ", "Rz"]
+
+            actual = []
+            for basis in range(4):
+                sim = StateVec(2)
+                if basis & 2:
+                    sim.backend.run_1q_gate("X", 0, None)
+                if basis & 1:
+                    sim.backend.run_1q_gate("X", 1, None)
+                for gate in lowered:
+                    attrs = dag.node_attrs(gate["node_idx"])
+                    angle = theta * attrs["source_angle_multiplier"]
+                    if gate["op_name"] == "RZZ":
+                        sim.backend.run_2q_gate("RZZ", (0, 1), {"angle": angle})
+                    else:
+                        sim.backend.run_1q_gate("RZ", 1, {"angle": angle})
+                vector = [complex(value) for value in sim.backend.vector]
+                actual.append([vector[index] for index in (0, 2, 1, 3)])
+
+            expected = [[0j] * 4 for _ in range(4)]
+            expected[0][0] = 1
+            expected[1][1] = 1
+            expected[2][2] = complex(math.cos(theta / 2), -math.sin(theta / 2))
+            expected[3][3] = complex(math.cos(theta / 2), math.sin(theta / 2))
+            phase = actual[0][0] / expected[0][0]
+            assert abs(abs(phase) - 1) < 1e-12
+            if theta in {-math.pi, math.pi / 3, math.pi}:
+                assert abs(phase - 1) < 1e-12
+            else:
+                assert min(abs(phase - 1), abs(phase + 1)) < 1e-12
+            for column in range(4):
+                for row in range(4):
+                    assert abs(actual[column][row] / phase - expected[row][column]) < 1e-12
 
     def test_bell_state_circuit(self) -> None:
         """Test conversion of a Bell state circuit."""

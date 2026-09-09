@@ -12,17 +12,31 @@ on:
     branches: [master, development, dev]
     paths:
       - 'python/selene-plugins/**'
+      - 'crates/pecos-engines/**'
+      - 'crates/pecos-random/**'
+      - 'crates/pecos-quantum/**'
       - 'crates/pecos-simulators/**'
       - 'crates/pecos-core/**'
       - 'exp/pecos-stab-tn/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'pyproject.toml'
+      - 'uv.lock'
       - '.github/workflows/selene-plugins.yml'
   pull_request:
     branches: [master, development, dev]
     paths:
       - 'python/selene-plugins/**'
+      - 'crates/pecos-engines/**'
+      - 'crates/pecos-random/**'
+      - 'crates/pecos-quantum/**'
       - 'crates/pecos-simulators/**'
       - 'crates/pecos-core/**'
       - 'exp/pecos-stab-tn/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'pyproject.toml'
+      - 'uv.lock'
       - '.github/workflows/selene-plugins.yml'
   workflow_dispatch:
 
@@ -61,7 +75,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version-file: ".github/uv.toml"
           enable-cache: true
@@ -71,12 +85,22 @@ jobs:
         run: rustup show
 
       - name: Cache Rust
-        uses: Swatinem/rust-cache@258712b0b7b1ddf8bddc9fc3b0faca682b2736c3 # v2
+        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           cache-bin: false
           key: ${{ matrix.os }}
           prefix-key: v1-rust-no-bin
           save-if: ${{ github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev') }}
+
+      # `uv pip install` re-resolves from PyPI and does NOT read uv.lock, so the
+      # plugins' test extras drifted to whatever PyPI offered. Exporting the lock
+      # as a constraints file keeps this lane on the same versions as every other
+      # recipe. Reproducibility comes from uv.lock, not from tightening the
+      # sub-packages' requires-dist -- those ship to PyPI and must stay installable.
+      - name: Export locked versions as pip constraints
+        run: |
+          uv export --frozen --no-hashes --all-packages --no-emit-workspace \
+            -o "${{ runner.temp }}/uv-constraints.txt"
 
       - name: Build and install Selene plugins (Unix)
         if: runner.os != 'Windows'
@@ -101,7 +125,7 @@ jobs:
             DEST="python/selene-plugins/$PLUGIN/python/${LIB_NAME}/_dist/lib"
             mkdir -p "$DEST"
             cp "target/release/lib${LIB_NAME}.$EXT" "$DEST/"
-            uv pip install --system -e "${DIR}[test]"
+            uv pip install --system -c "${{ runner.temp }}/uv-constraints.txt" -e "${DIR}[test]"
           done
 
       - name: Build and install Selene plugins (Windows)
@@ -120,12 +144,17 @@ jobs:
           }
 
           foreach ($pluginDir in (Get-ChildItem -Directory python/selene-plugins/pecos-selene-*)) {
-            uv pip install --system -e "$($pluginDir.FullName)[test]"
+            uv pip install --system -c "$env:RUNNER_TEMP/uv-constraints.txt" -e "$($pluginDir.FullName)[test]"
           }
 
       - name: Run tests
         run: |
-          pytest python/selene-plugins/ -v --tb=short
+          pytest python/selene-plugins/ -m "not slow" -v --tb=short
+
+      - name: Run extended semantic tests
+        if: runner.os == 'Linux' && github.event_name != 'pull_request'
+        run: |
+          pytest python/selene-plugins/ -m slow -v --tb=short
 
   # Build wheels for distribution
   build-wheels:
@@ -136,6 +165,8 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, macos-15-intel, windows-2022]
         plugin:
+          - name: pecos-selene-general-noise
+            package: pecos_selene_general_noise
           - name: pecos-selene-stabilizer
             package: pecos_selene_stabilizer
           - name: pecos-selene-statevec
@@ -164,7 +195,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version-file: ".github/uv.toml"
           enable-cache: true
@@ -174,7 +205,7 @@ jobs:
         run: rustup show
 
       - name: Cache Rust
-        uses: Swatinem/rust-cache@258712b0b7b1ddf8bddc9fc3b0faca682b2736c3 # v2
+        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           cache-bin: false
           key: ${{ matrix.os }}-${{ matrix.plugin.name }}
@@ -215,8 +246,7 @@ jobs:
       - name: Build wheel
         run: |
           cd python/selene-plugins/${{ matrix.plugin.name }}
-          uv pip install --system build
-          python -m build --wheel --outdir dist
+          uv build --wheel --out-dir dist
 
       - name: Upload wheel
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

@@ -393,7 +393,8 @@ fn linear_memory_z_noise_uses_idle_duration_in_dem() {
         )
         .with_detectors_json(r#"[{"id": 0, "records": [-1]}]"#)
         .unwrap()
-        .build();
+        .build()
+        .unwrap();
 
     assert!(
         dem.num_contributions() > 0,
@@ -619,7 +620,8 @@ fn equal_idle_signatures_sum_exclusive_probabilities_before_dem_merging() {
         .with_noise_config(
             NoiseConfig::new(0.0, 0.0, 0.0, 0.0).set_idle_linear(axis_rate_family(0.25, 0.0, 0.75)),
         )
-        .build();
+        .build()
+        .unwrap();
     assert_eq!(measurement_model.mechanisms.len(), 1);
     let measurement_probability = *measurement_model
         .mechanisms
@@ -650,7 +652,8 @@ fn empty_idle_signature_is_dropped_before_conversion() {
         .with_noise_config(
             NoiseConfig::new(0.0, 0.0, 0.0, 0.0).set_idle_linear(axis_rate_family(0.25, 0.0, 0.75)),
         )
-        .build();
+        .build()
+        .unwrap();
     assert_eq!(measurement_model.mechanisms.len(), 1);
     assert_eq!(
         measurement_model
@@ -670,7 +673,8 @@ fn biased_xz_idle_channel_builds_with_quantified_boundary_residual() {
     let loc_idx = idle_location(&influence);
     let noise =
         NoiseConfig::new(0.0, 0.0, 0.0, 0.0).set_idle_linear(axis_rate_family(0.0075, 0.0, 0.0225));
-    let legacy_sampling_engine = SamplingEngine::from_influence_map(&influence, &[1.0], &noise);
+    let legacy_sampling_engine =
+        SamplingEngine::from_influence_map(&influence, &[1.0], &noise).unwrap();
     let mut sampler_influence = influence.clone();
     sampler_influence
         .detectors
@@ -929,7 +933,8 @@ fn dem_builder_scalar_p1_does_not_attach_to_idle() {
         .with_noise(0.01, 0.0, 0.0, 0.0)
         .with_detectors_json(r#"[{"id": 0, "records": [-1]}]"#)
         .unwrap()
-        .build();
+        .build()
+        .unwrap();
 
     assert_eq!(dem.num_contributions(), 0);
 }
@@ -944,7 +949,8 @@ fn dem_builder_explicit_idle_noise_is_noisy() {
         .with_noise_config(NoiseConfig::with_idle(0.01, 0.0, 0.0, 0.0, 0.002))
         .with_detectors_json(r#"[{"id": 0, "records": [-1]}]"#)
         .unwrap()
-        .build();
+        .build()
+        .unwrap();
 
     assert!(
         dem.num_contributions() > 0,

@@ -473,6 +473,7 @@ fn test_nine_qubit_quantum_circuit() {
     // Count the types of gates after expansion
     let mut h_count = 0;
     let mut cx_count = 0; // CZ expands to H-CX-H
+    let mut rxy_count = 0;
     let mut total_operations = 0;
 
     for op in &program.operations {
@@ -481,6 +482,8 @@ fn test_nine_qubit_quantum_circuit() {
             h_count += 1;
         } else if is_gate_type(op, "CX") {
             cx_count += 1;
+        } else if is_gate_type(op, "RXY1Q") {
+            rxy_count += 1;
         }
     }
 
@@ -500,11 +503,7 @@ fn test_nine_qubit_quantum_circuit() {
         "Should have more than 80 CX gates, got {cx_count}"
     );
 
-    // RX gates may also be expanded
-    assert!(
-        total_operations - h_count - cx_count > 100,
-        "Should have many other operations"
-    );
+    assert!(rxy_count > 100, "Should have many RXY1Q gates from RX");
 
     // Check that all operations are on valid qubits
     for op in &program.operations {
@@ -577,25 +576,19 @@ fn test_rx_half_pi_gates() {
 
     let program = QASMParser::parse_str(qasm).expect("Failed to parse RX gates");
 
-    // RX expands to H-RZ-H, so we look for the pattern
+    // RX lowers directly to RXY1Q(theta, 0).
     let mut total_ops = 0;
-    let mut h_count = 0;
-    let mut rz_count = 0;
+    let mut rxy_count = 0;
 
     for op in &program.operations {
         total_ops += 1;
-        if is_gate_type(op, "H") {
-            h_count += 1;
-        } else if is_gate_type(op, "RZ") {
-            rz_count += 1;
+        if is_gate_type(op, "RXY1Q") {
+            rxy_count += 1;
         }
     }
 
-    // Each RX expands to 3 gates (H-RZ-H)
-    // We have 5 RX gates, so expect 15 total operations
-    assert_eq!(total_ops, 15, "Should have 15 operations after expansion");
-    assert_eq!(h_count, 10, "Should have 10 H gates (2 per RX)");
-    assert_eq!(rz_count, 5, "Should have 5 RZ gates (1 per RX)");
+    assert_eq!(total_ops, 5, "Should have one native operation per RX");
+    assert_eq!(rxy_count, 5, "Should have 5 RXY1Q gates");
 }
 
 #[test]
@@ -627,15 +620,15 @@ fn test_circuit_patterns() {
     // After expansion, count the gate types
     let mut h_gates = 0;
     let mut cx_gates = 0;
-    let mut rz_gates = 0;
+    let mut rxy_gates = 0;
 
     for op in &program.operations {
         if is_gate_type(op, "H") {
             h_gates += 1;
         } else if is_gate_type(op, "CX") {
             cx_gates += 1;
-        } else if is_gate_type(op, "RZ") {
-            rz_gates += 1;
+        } else if is_gate_type(op, "RXY1Q") {
+            rxy_gates += 1;
         }
     }
 
@@ -645,8 +638,8 @@ fn test_circuit_patterns() {
     //   Pattern 1: rx q[0], rx q[1]
     //   Pattern 2: rx q[2], rx q[3]
     //   Pattern 3: rx q[1], rx q[2]
-    // Each RX expands to H-RZ-H = 12H + 6RZ
+    // Each RX lowers to one RXY1Q gate.
     assert_eq!(cx_gates, 4, "Should have 4 CX gates from CZ expansions");
-    assert_eq!(rz_gates, 6, "Should have 6 RZ gates from RX expansions");
-    assert_eq!(h_gates, 20, "Should have 20 H gates total");
+    assert_eq!(rxy_gates, 6, "Should have 6 RXY1Q gates from RX expansions");
+    assert_eq!(h_gates, 8, "Should have 8 H gates from CZ expansions");
 }

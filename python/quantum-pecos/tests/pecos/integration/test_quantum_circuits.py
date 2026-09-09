@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 
 from pecos.circuits import QuantumCircuit
 
@@ -339,15 +340,15 @@ def test_append_rotation_gate_with_angles_tuple() -> None:
     assert results[0][2]["angles"] == (0.5,)
 
 
-def test_append_r1xy_gate() -> None:
-    """Test R1XY gate with theta and phi angles."""
+def test_append_rxy1q_gate() -> None:
+    """Test RXY1Q gate with theta and phi angles."""
     qc = QuantumCircuit()
-    qc.append("R1XY", {0}, angles=(0.3, 0.7))
+    qc.append("RXY1Q", {0}, angles=(0.3, 0.7))
 
     results = list(qc.items())
     assert len(results) == 1
     symbol, _, params = results[0]
-    assert symbol == "R1XY"
+    assert symbol == "RXY1Q"
     assert params["angles"] == (0.3, 0.7)
 
 
@@ -865,6 +866,19 @@ def test_json_roundtrip_with_params() -> None:
     assert custom_params["count"] == 42
 
 
+def test_json_with_legacy_r1xy_loads_as_rxy1q() -> None:
+    qc = QuantumCircuit()
+    qc.append("RXY1Q", {0}, angles=(0.3, 0.7))
+    legacy_json = qc.to_json_str().replace('"RXY1Q"', '"R1XY"')
+
+    restored = QuantumCircuit.from_json_str(legacy_json)
+
+    symbol, locations, params = next(iter(restored.items()))
+    assert symbol == "RXY1Q"
+    assert locations == {0}
+    assert params["angles"] == (0.3, 0.7)
+
+
 def test_json_roundtrip_with_metadata() -> None:
     """Test JSON round-trip preserves circuit metadata."""
     qc = QuantumCircuit(label="test", num_qubits=5)
@@ -898,6 +912,17 @@ def test_json_str_is_valid_json() -> None:
     parsed = json.loads(json_str)
     assert parsed["prog_type"] == "PECOS.QuantumCircuit"
     assert "gates" in parsed
+
+
+def test_to_phir_dict_preserves_controlled_rotation_source_angle() -> None:
+    """PHIR angles retain the CRZ sheet and include their unit."""
+    qc = QuantumCircuit()
+    qc.append("CRZ", {(0, 1)}, angle=3 * math.pi)
+
+    phir = qc.to_phir_dict()
+
+    crz_op = next(op for op in phir["ops"] if op.get("qop") == "CRZ")
+    assert crz_op["angles"] == [[3 * math.pi], "rad"]
 
 
 # ---------------------------------------------------------------------------

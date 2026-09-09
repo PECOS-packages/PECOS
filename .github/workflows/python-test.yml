@@ -23,6 +23,8 @@ on:
       - 'python/**'
       - 'examples/**'
       - 'crates/**'
+      - 'exp/zlup/**'
+      - 'exp/zluppy/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'pyproject.toml'
@@ -40,6 +42,8 @@ on:
       - 'python/**'
       - 'examples/**'
       - 'crates/**'
+      - 'exp/zlup/**'
+      - 'exp/zluppy/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'pyproject.toml'
@@ -81,7 +85,7 @@ jobs:
         python-version: "3.12"
 
     - name: Install the latest version of uv
-      uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+      uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
       with:
         version-file: ".github/uv.toml"
         enable-cache: true
@@ -106,7 +110,7 @@ jobs:
         fi
 
     - name: Cache Rust
-      uses: Swatinem/rust-cache@258712b0b7b1ddf8bddc9fc3b0faca682b2736c3 # v2
+      uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
       with:
         cache-bin: false
         prefix-key: v1-rust-no-bin
@@ -171,7 +175,7 @@ jobs:
         python-version: "3.12"
 
     - name: Install the latest version of uv
-      uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+      uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
       with:
         version-file: ".github/uv.toml"
         enable-cache: true
@@ -194,14 +198,16 @@ jobs:
 
     - name: Cache Rust
       if: github.event_name != 'pull_request'
-      uses: Swatinem/rust-cache@258712b0b7b1ddf8bddc9fc3b0faca682b2736c3 # v2
+      uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
       with:
         cache-bin: false
         prefix-key: v1-rust-no-bin
         save-if: ${{ github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name) }}
-        workspaces: |
-          python/pecos-rslib
-          python/pecos-rslib-llvm
+        # The cache saved here is what pr-core-python (pr-core-gate.yml)
+        # restores on every PR. The default (root) workspace is the right one:
+        # the rslib crates are members of the root Cargo workspace and build
+        # into the top-level target/.
+        shared-key: python-core
 
     - name: Cache LLVM ${{ env.LLVM_VERSION }}
       if: github.event_name != 'pull_request'
@@ -228,7 +234,9 @@ jobs:
 
     - name: Validate Python lockfile (PR fast path)
       if: github.event_name == 'pull_request'
-      run: uv lock --check --project .
+      run: |
+        uv lock --check --project .
+        uv lock --check --project exp/zluppy
 
   python-compat-smoke-build:
     runs-on: ${{ matrix.os }}
@@ -302,7 +310,7 @@ jobs:
         persist-credentials: false
 
     - name: Install the latest version of uv
-      uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+      uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
       with:
         version-file: ".github/uv.toml"
         enable-cache: true
@@ -327,36 +335,41 @@ jobs:
         rustup default "${{ matrix.rust-toolchain || 'stable' }}"
         rustup show
 
-    # Self-expiring pin: rerun the rustc invocation that crashes on latest
-    # stable (issue #566) so the pin above cannot go stale silently. The
-    # crash is nondeterministic (observed on some runs of the same runner
-    # image and not others), so probe repeatedly and only suggest unpinning
-    # when a run sees zero crashes -- and unpin only once that holds across
-    # several PRs. Never fails the job.
+    # Self-expiring pin: probe whether latest stable still crashes (issue
+    # #566) so the pin above cannot go stale silently. A hand-replicated
+    # rustc invocation previously survived 20/20 canary probes while the
+    # first real unpinned build crashed immediately (PR #574), so the probe
+    # now lets CARGO construct the target-info invocation itself, under the
+    # same link-arg RUSTFLAGS maturin applies — the invocation that actually
+    # crashes. The crash is nondeterministic, so probe repeatedly and only
+    # suggest unpinning when a run sees zero crashes — and unpin only once
+    # that holds across several PRs AND a real unpinned build is verified on
+    # a draft PR first. Never fails the job.
     - name: Check whether the Rust toolchain pin is still needed
       if: runner.os != 'Windows' && matrix.rust-toolchain
       run: |
         rustup toolchain install stable --profile minimal
+        probe_dir="$(mktemp -d)"
+        cargo +stable init --lib --name pin_probe "$probe_dir" >/dev/null 2>&1
         crashes=0
         for _ in 1 2 3 4 5; do
-          rustc +stable - --crate-name ___ --print=file-names -C debuginfo=0 \
-            -C link-arg=-undefined -C link-arg=dynamic_lookup \
-            --crate-type bin --crate-type rlib --crate-type dylib \
-            --crate-type cdylib --crate-type staticlib --crate-type proc-macro \
-            --print=sysroot --print=split-debuginfo --print=crate-name \
-            --print=cfg -W warnings </dev/null >/dev/null 2>&1 || crashes=$((crashes + 1))
+          rm -rf "$probe_dir/target"
+          RUSTFLAGS="-C debuginfo=0 -C link-arg=-undefined -C link-arg=dynamic_lookup" \
+            cargo +stable check --manifest-path "$probe_dir/Cargo.toml" \
+            >/dev/null 2>&1 || crashes=$((crashes + 1))
         done
+        rm -rf "$probe_dir"
         if [ "$crashes" -eq 0 ]; then
-          echo "::warning title=Rust toolchain pin may be obsolete::rustc $(rustc +stable --version) survived 5/5 maturin target probes on this runner. The crash is nondeterministic, so remove the ${{ matrix.rust-toolchain }} pin only once this warning has appeared consistently across several PRs (issue #566)."
+          echo "::warning title=Rust toolchain pin may be obsolete::rustc $(rustc +stable --version) survived 5/5 cargo target probes on this runner. The crash is nondeterministic, so remove the ${{ matrix.rust-toolchain }} pin only after this warning persists across several PRs AND an unpinned build passes on a draft PR (issue #566)."
         else
-          echo "Latest stable ($(rustc +stable --version)) crashed $crashes/5 maturin target probes; the ${{ matrix.rust-toolchain }} pin remains required (issue #566)."
+          echo "Latest stable ($(rustc +stable --version)) crashed $crashes/5 cargo target probes; the ${{ matrix.rust-toolchain }} pin remains required (issue #566)."
         fi
 
     - name: Install just
       uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
 
     - name: Cache Rust
-      uses: Swatinem/rust-cache@258712b0b7b1ddf8bddc9fc3b0faca682b2736c3 # v2
+      uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
       with:
         cache-bin: false
         prefix-key: v1-rust-no-bin
@@ -383,7 +396,7 @@ jobs:
         key: ${{ steps.cache-llvm.outputs.cache-primary-key }}
 
     - name: Install Python build tooling
-      run: uv pip install --system build maturin
+      run: uv pip install --system maturin
 
     - name: Build pecos-rslib wheel
       run: |
@@ -401,7 +414,7 @@ jobs:
       run: |
         mkdir -p dist/quantum-pecos
         cd python/quantum-pecos
-        python -m build --wheel --outdir ../../dist/quantum-pecos
+        uv build --wheel --out-dir ../../dist/quantum-pecos
 
     - name: Upload Python compatibility smoke artifacts
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -469,9 +482,11 @@ jobs:
         persist-credentials: false
 
     - name: Install the latest version of uv
-      uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+      uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
       with:
         version-file: ".github/uv.toml"
+        enable-cache: true
+        save-cache: ${{ github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name) }}
 
     - name: Set up Rust (Windows)
       if: runner.os == 'Windows' && matrix.include-llvm
@@ -606,7 +621,7 @@ jobs:
         python-version: "3.14"
 
     - name: Install the latest version of uv
-      uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+      uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
       with:
         version-file: ".github/uv.toml"
         enable-cache: true
@@ -625,7 +640,7 @@ jobs:
       uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
 
     - name: Cache Rust
-      uses: Swatinem/rust-cache@258712b0b7b1ddf8bddc9fc3b0faca682b2736c3 # v2
+      uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
       with:
         cache-bin: false
         prefix-key: v1-rust-no-bin
@@ -664,6 +679,87 @@ jobs:
 
     - name: Run slow Python tests
       run: just pytest-slow
+
+  zluppy-postmerge:
+    if: (github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name)) || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      PECOS_BUILD_MWPF: "1"
+    steps:
+    - name: Harden the runner (egress audit)
+      uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+      with:
+        egress-policy: audit
+
+    - name: Free Disk Space (Ubuntu)
+      uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
+      with:
+        android: true
+        dotnet: true
+        haskell: true
+        large-packages: false
+        docker-images: true
+        tool-cache: false
+        swap-storage: true
+
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      with:
+        persist-credentials: false
+
+    - name: Set up Python
+      uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+      with:
+        python-version: "3.14"
+
+    - name: Install the latest version of uv
+      uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+      with:
+        version-file: ".github/uv.toml"
+        enable-cache: true
+        save-cache: ${{ github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name) }}
+
+    - name: Set up Rust
+      run: |
+        bash scripts/ci/ensure-rust.sh stable minimal
+        export PATH="$HOME/.cargo/bin:$PATH"
+        rustup show
+
+    - name: Verify cmake is available (MWPF decoder build)
+      run: cmake --version
+
+    - name: Install just
+      uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+
+    - name: Cache Rust
+      uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      with:
+        cache-bin: false
+        prefix-key: v1-rust-no-bin
+        save-if: ${{ github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name) }}
+        workspaces: |
+          python/pecos-rslib
+          python/pecos-rslib-llvm
+
+    - name: Cache LLVM ${{ env.LLVM_VERSION }}
+      id: cache-llvm-zluppy
+      uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+      with:
+        path: ~/.pecos/deps/llvm-21.1
+        key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v3
+
+    - name: Ensure LLVM ${{ env.LLVM_VERSION }}
+      run: just ci-env
+
+    - name: Save LLVM ${{ env.LLVM_VERSION }} cache
+      if: steps.cache-llvm-zluppy.outputs.cache-hit != 'true' && github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name)
+      uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+      with:
+        path: ~/.pecos/deps/llvm-21.1
+        key: ${{ steps.cache-llvm-zluppy.outputs.cache-primary-key }}
+
+    - name: Run zluppy Python tests
+      run: just pytest-zluppy
 
   windows-vanilla-cargo:
     name: Windows vanilla cargo (crates.io consumer contract)

@@ -16,7 +16,8 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-use pecos_core::{Angle64, QubitId};
+use pecos_core::gate_type::GateType;
+use pecos_core::{Angle64, Gate, QubitId};
 use pecos_cuquantum::{
     ArbitraryRotationGateable, CliffordGateable, CuDensityMat, CuStabilizer, CuStateVec,
     CuTensorNet, QuantumSimulator, is_cudensitymat_usable as cudensitymat_usable,
@@ -74,6 +75,32 @@ fn is_cudensitymat_usable() -> bool {
 #[pyclass(name = "CuStateVec", unsendable)]
 struct PyCuStateVec {
     inner: CuStateVec,
+}
+
+impl PyCuStateVec {
+    fn apply_lowered_controlled_rotation(&mut self, gates: impl IntoIterator<Item = Gate>) {
+        for gate in gates {
+            match gate.gate_type {
+                GateType::H => {
+                    self.inner.h(&gate.qubits);
+                }
+                GateType::SX => {
+                    self.inner.sx(&gate.qubits);
+                }
+                GateType::SXdg => {
+                    self.inner.sxdg(&gate.qubits);
+                }
+                GateType::RZ => {
+                    self.inner.rz(gate.angles[0], &gate.qubits);
+                }
+                GateType::RZZ => {
+                    self.inner
+                        .rzz(gate.angles[0], &[(gate.qubits[0], gate.qubits[1])]);
+                }
+                _ => unreachable!("controlled-rotation lowering emitted an unexpected gate"),
+            }
+        }
+    }
 }
 
 #[pymethods]
@@ -424,35 +451,35 @@ impl PyCuStateVec {
 
     /// Apply controlled-RX gate. Pairs of qubits = (control, target).
     fn crx(&mut self, angle: f64, qubits: Vec<usize>) {
-        let pairs: Vec<(QubitId, QubitId)> = qubits
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .map(|c| (QubitId(c[0]), QubitId(c[1])))
-            .collect();
-        self.inner.crx(Angle64::from_radians(angle), &pairs);
+        for pair in qubits.as_chunks::<2>().0 {
+            self.apply_lowered_controlled_rotation(pecos_core::controlled_rotations::lower_crx(
+                angle,
+                QubitId(pair[0]),
+                QubitId(pair[1]),
+            ));
+        }
     }
 
     /// Apply controlled-RY gate. Pairs of qubits = (control, target).
     fn cry(&mut self, angle: f64, qubits: Vec<usize>) {
-        let pairs: Vec<(QubitId, QubitId)> = qubits
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .map(|c| (QubitId(c[0]), QubitId(c[1])))
-            .collect();
-        self.inner.cry(Angle64::from_radians(angle), &pairs);
+        for pair in qubits.as_chunks::<2>().0 {
+            self.apply_lowered_controlled_rotation(pecos_core::controlled_rotations::lower_cry(
+                angle,
+                QubitId(pair[0]),
+                QubitId(pair[1]),
+            ));
+        }
     }
 
     /// Apply controlled-RZ gate. Pairs of qubits = (control, target).
     fn crz(&mut self, angle: f64, qubits: Vec<usize>) {
-        let pairs: Vec<(QubitId, QubitId)> = qubits
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .map(|c| (QubitId(c[0]), QubitId(c[1])))
-            .collect();
-        self.inner.crz(Angle64::from_radians(angle), &pairs);
+        for pair in qubits.as_chunks::<2>().0 {
+            self.apply_lowered_controlled_rotation(pecos_core::controlled_rotations::lower_crz(
+                angle,
+                QubitId(pair[0]),
+                QubitId(pair[1]),
+            ));
+        }
     }
 
     /// Apply U gate (general single-qubit rotation).
@@ -466,10 +493,10 @@ impl PyCuStateVec {
         );
     }
 
-    /// Apply R1XY gate (rotation in XY plane).
-    fn r1xy(&mut self, theta: f64, phi: f64, qubits: Vec<usize>) {
+    /// Apply RXY1Q gate (rotation in XY plane).
+    fn rxy1q(&mut self, theta: f64, phi: f64, qubits: Vec<usize>) {
         let qubits: Vec<QubitId> = qubits.into_iter().map(QubitId).collect();
-        self.inner.r1xy(
+        self.inner.rxy1q(
             Angle64::from_radians(theta),
             Angle64::from_radians(phi),
             &qubits,

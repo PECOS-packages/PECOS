@@ -77,6 +77,7 @@ fn build_surface_code_dem(distance: usize, rounds: usize) -> DetectorErrorModel 
         .with_observables_json("[]")
         .expect("observables json should parse")
         .build()
+        .expect("surface-code profiling circuit must support Pauli propagation")
 }
 
 fn main() {

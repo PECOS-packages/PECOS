@@ -2977,7 +2977,7 @@ class TestScratchCheck1FlagS5ProductionLockIn:
         }, raw
 
     def test_check1flag_h_branch_compiles_qasm_only(self) -> None:
-        """The CH (`ops="H"`) branch hits a non-Clifford R1XY at runtime
+        """The CH (`ops="H"`) branch hits a non-Clifford RXY1Q at runtime
         (Selene cannot execute it), so lock in compile + QASM parity
         only: it must still route through a BlockCall and lower cleanly
         (structural check -- not a Selene assertion).

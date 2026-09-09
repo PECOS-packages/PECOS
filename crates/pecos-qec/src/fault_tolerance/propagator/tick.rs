@@ -19,10 +19,36 @@
 //! with DAG circuits, which provides 5-50x speedup through sparse traversal.
 
 use super::types::{DetectorId, FaultInfluence, FaultInfluenceMap, MeasurementId, TrackedPauliId};
-use super::{Direction, SpacetimeLocation, apply_gate, extract_spacetime_locations};
+use super::{
+    Direction, PauliPropagationOutcome, SpacetimeLocation, UnsupportedGateError,
+    UnsupportedGateLocation, apply_gate, extract_spacetime_locations, is_supported_prep_gate,
+};
 use pecos_core::gate_type::GateType;
 use pecos_quantum::TickCircuit;
 use pecos_simulators::PauliProp;
+
+/// Classify every tick-circuit gate through [`apply_gate`] and return the first
+/// unsupported gate in the source circuit's own coordinates.
+pub(crate) fn first_unsupported_tick_gate(circuit: &TickCircuit) -> Option<UnsupportedGateError> {
+    let mut scratch = PauliProp::new();
+    for (tick_idx, tick) in circuit.iter_ticks() {
+        for gate in tick.iter_gate_batches() {
+            if apply_gate(&mut scratch, gate.as_gate(), Direction::Forward)
+                == PauliPropagationOutcome::Unsupported
+            {
+                return Some(UnsupportedGateError {
+                    gate_type: gate.gate_type,
+                    location: UnsupportedGateLocation::Tick {
+                        tick: tick_idx,
+                        gate_in_tick: gate.batch_index(),
+                    },
+                    qubits: gate.qubits.iter().map(pecos_core::QubitId::index).collect(),
+                });
+            }
+        }
+    }
+    None
+}
 
 // ============================================================================
 // Tick-based Fault Analyzer
@@ -466,10 +492,7 @@ impl<'a> TickFaultAnalyzer<'a> {
     fn apply_gate_backward(prop: &mut PauliProp, gate: &pecos_core::Gate) {
         let qubits = &gate.qubits;
 
-        if matches!(
-            gate.gate_type,
-            GateType::PX | GateType::PZ | GateType::QAlloc
-        ) {
+        if is_supported_prep_gate(gate.gate_type) {
             // Preparation resets the qubit - backward propagation stops here
             // Any Pauli on a prepared qubit doesn't propagate further back
             // Toggle off both X and Z if present
@@ -485,7 +508,7 @@ impl<'a> TickFaultAnalyzer<'a> {
             return;
         }
 
-        apply_gate(prop, gate, Direction::Backward);
+        let _outcome = apply_gate(prop, gate, Direction::Backward);
     }
 
     /// Builds reverse maps (detector -> faults, tracked Pauli -> faults).

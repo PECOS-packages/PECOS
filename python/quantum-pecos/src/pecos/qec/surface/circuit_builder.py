@@ -3222,7 +3222,7 @@ def tick_circuit_to_stim(
             msg = f"Unsupported traced Clifford RZZ angle: {angle!r}"
             raise ValueError(msg)
 
-        if gate_name == "R1XY":
+        if gate_name == "RXY1Q":
             if len(gate.angles) < 2:
                 return [], None
             theta = float(gate.angles[0])
@@ -3252,7 +3252,7 @@ def tick_circuit_to_stim(
                     return [("SQRT_X", qubits)], "single"
                 if _is_close_turn(phi, 3 * math.pi / 2):
                     return [("SQRT_Y", qubits)], "single"
-            msg = f"Unsupported traced Clifford R1XY angles: theta={theta!r}, phi={phi!r}"
+            msg = f"Unsupported traced Clifford RXY1Q angles: theta={theta!r}, phi={phi!r}"
             raise ValueError(msg)
 
         return [], None

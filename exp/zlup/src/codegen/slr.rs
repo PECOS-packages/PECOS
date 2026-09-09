@@ -27,12 +27,17 @@
 //! }
 //! ```
 
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 use thiserror::Error;
 
 use crate::ast::{
     BinaryOp, Binding, Block, CallExpr, ElseBranch, Expr, FnDecl, ForRange, ForStmt, IfStmt,
     IndexExpr, Program, Stmt, TopLevelDecl,
+};
+use crate::comptime::{
+    ComptimeEvaluator, angle_evaluator, angle_expression_name, define_comptime_binding,
+    resolve_angle_turns,
 };
 
 // =============================================================================
@@ -67,8 +72,8 @@ pub enum SlrError {
     #[error("unsupported expression in SLR codegen")]
     UnsupportedExpression,
 
-    #[error("invalid rotation angle")]
-    InvalidAngle,
+    #[error("rotation angle '{expression}' is not known at compile time: {reason}")]
+    RuntimeAngle { expression: String, reason: String },
 
     #[error("JSON serialization error: {0}")]
     JsonError(String),
@@ -942,6 +947,7 @@ fn gate_kind_arity(kind: &crate::ast::GateKind) -> usize {
         | GateKind::SXXdg
         | GateKind::SYYdg
         | GateKind::SZZdg
+        | GateKind::CRZ
         | GateKind::RZZ => 2,
         // Three-qubit gates
         GateKind::CCX => 3,
@@ -1256,6 +1262,8 @@ pub struct SlrCodegen {
     log_elision: LogElisionLevel,
     /// How to handle sim commands for non-simulator targets.
     sim_mode: SimMode,
+    /// Compile-time constants used to inline unit-bearing gate angles.
+    angle_evaluator: RefCell<ComptimeEvaluator>,
 }
 
 /// How simulator commands are handled during code generation.
@@ -1281,6 +1289,7 @@ impl SlrCodegen {
             current_module: None,
             log_elision: LogElisionLevel::NONE,
             sim_mode: SimMode::Emit,
+            angle_evaluator: RefCell::new(angle_evaluator()),
         }
     }
 
@@ -1336,6 +1345,13 @@ impl SlrCodegen {
     pub fn compile(&mut self, program: &Program) -> SlrResult<SlrProgram> {
         let mut slr_program = SlrProgram::new("main");
 
+        self.angle_evaluator = RefCell::new(angle_evaluator());
+        for decl in &program.declarations {
+            if let TopLevelDecl::Binding(binding) = decl {
+                define_comptime_binding(&mut self.angle_evaluator.borrow_mut(), binding);
+            }
+        }
+
         // First pass: collect allocators and registers
         for decl in &program.declarations {
             self.collect_decl(decl)?;
@@ -1377,7 +1393,16 @@ impl SlrCodegen {
             if let TopLevelDecl::Fn(fn_decl) = decl
                 && fn_decl.name == "main"
             {
-                let body = self.convert_block(&fn_decl.body)?;
+                self.angle_evaluator.borrow_mut().context.push_scope();
+                for param in &fn_decl.params {
+                    self.angle_evaluator
+                        .borrow_mut()
+                        .context
+                        .define(&param.name, crate::comptime::ComptimeValue::Undefined);
+                }
+                let body = self.convert_block(&fn_decl.body);
+                self.angle_evaluator.borrow_mut().context.pop_scope();
+                let body = body?;
                 slr_program.body = body;
             }
         }
@@ -1387,6 +1412,7 @@ impl SlrCodegen {
 
     /// Compile a function to SLR-AST.
     pub fn compile_function(&mut self, fn_decl: &FnDecl) -> SlrResult<SlrProgram> {
+        self.angle_evaluator = RefCell::new(angle_evaluator());
         // Collect from function body first
         self.collect_block(&fn_decl.body)?;
 
@@ -1415,7 +1441,16 @@ impl SlrCodegen {
         }
 
         // Convert body
-        slr_program.body = self.convert_block(&fn_decl.body)?;
+        self.angle_evaluator.borrow_mut().context.push_scope();
+        for param in &fn_decl.params {
+            self.angle_evaluator
+                .borrow_mut()
+                .context
+                .define(&param.name, crate::comptime::ComptimeValue::Undefined);
+        }
+        let body = self.convert_block(&fn_decl.body);
+        self.angle_evaluator.borrow_mut().context.pop_scope();
+        slr_program.body = body?;
 
         Ok(slr_program)
     }
@@ -1517,11 +1552,16 @@ impl SlrCodegen {
     // =========================================================================
 
     fn convert_block(&mut self, block: &Block) -> SlrResult<Vec<SlrStatement>> {
-        let mut stmts = Vec::new();
-        for stmt in &block.statements {
-            stmts.extend(self.convert_stmt(stmt)?);
-        }
-        Ok(stmts)
+        self.angle_evaluator.borrow_mut().context.push_scope();
+        let result = (|| {
+            let mut stmts = Vec::new();
+            for stmt in &block.statements {
+                stmts.extend(self.convert_stmt(stmt)?);
+            }
+            Ok(stmts)
+        })();
+        self.angle_evaluator.borrow_mut().context.pop_scope();
+        result
     }
 
     fn convert_stmt(&mut self, stmt: &Stmt) -> SlrResult<Vec<SlrStatement>> {
@@ -1541,11 +1581,18 @@ impl SlrCodegen {
             Stmt::Barrier(barrier_op) => self.convert_barrier_op(barrier_op).map(|s| vec![s]),
             // Handle declarations - check for measurement calls in values
             Stmt::Binding(binding) => {
-                if let Some(ref value) = binding.value {
+                let result = if let Some(ref value) = binding.value {
                     self.convert_decl_value(value)
                 } else {
                     Ok(vec![])
+                };
+                if !define_comptime_binding(&mut self.angle_evaluator.borrow_mut(), binding) {
+                    self.angle_evaluator
+                        .borrow_mut()
+                        .context
+                        .define(&binding.name, crate::comptime::ComptimeValue::Undefined);
                 }
+                result
             }
             _ => Ok(vec![]),
         }
@@ -1907,7 +1954,7 @@ impl SlrCodegen {
         }
     }
 
-    /// Convert a gate expression: h q[0], rx(0.123) q[0], h {q[0], q[1]}
+    /// Convert a gate expression: h q[0], rx(0.123 turns) q[0], h {q[0], q[1]}
     fn convert_gate_expr_with_attrs(
         &mut self,
         gate: &crate::ast::GateExpr,
@@ -1949,6 +1996,7 @@ impl SlrCodegen {
             GateKind::SXXdg => "SXXdg",
             GateKind::SYYdg => "SYYdg",
             GateKind::SZZdg => "SZZdg",
+            GateKind::CRZ => "CRZ",
             GateKind::RZZ => "RZZ",
             GateKind::CCX => "CCX",
             GateKind::F => "F",
@@ -1962,7 +2010,7 @@ impl SlrCodegen {
         let params: Vec<SlrExpression> = gate
             .params
             .iter()
-            .map(|p| self.convert_expression(p))
+            .map(|p| self.convert_angle_expression(p))
             .collect::<SlrResult<Vec<_>>>()?;
 
         // Convert target based on its type
@@ -1991,34 +2039,57 @@ impl SlrCodegen {
                                     .with_attrs(attrs.clone()),
                             ));
                         }
-                        // Tuple for two-qubit gates: (q[0], q[1])
-                        (2, Expr::Tuple(tuple)) if tuple.elements.len() == 2 => {
-                            let control = self.extract_slot_ref(&tuple.elements[0])?;
-                            let target = self.extract_slot_ref(&tuple.elements[1])?;
+                        // Tuple for multi-qubit gates: (q[0], q[1], ...)
+                        (expected, Expr::Tuple(tuple)) if tuple.elements.len() == expected => {
+                            let targets = tuple
+                                .elements
+                                .iter()
+                                .map(|element| self.extract_slot_ref(element))
+                                .collect::<SlrResult<Vec<_>>>()?;
                             statements.push(SlrStatement::Gate(
-                                SlrGateOp::new(gate_name, vec![control, target])
+                                SlrGateOp::new(gate_name, targets)
                                     .with_params(params.clone())
                                     .with_attrs(attrs.clone()),
                             ));
                         }
-                        // Wrong arity: single qubit for 2-qubit gate or vice versa
-                        (expected, _) => {
+                        // Wrong arity: single qubit for a multi-qubit gate
+                        (expected, Expr::Index(_)) => {
                             return Err(SlrError::WrongArgumentCount {
                                 gate: gate_name.to_string(),
                                 expected,
-                                got: if matches!(elem, Expr::Index(_)) { 1 } else { 2 },
+                                got: 1,
                             });
                         }
+                        // Wrong arity: tuple has the wrong number of qubits
+                        (expected, Expr::Tuple(tuple)) => {
+                            return Err(SlrError::WrongArgumentCount {
+                                gate: gate_name.to_string(),
+                                expected,
+                                got: tuple.elements.len(),
+                            });
+                        }
+                        (_, _) => return Err(SlrError::UnsupportedExpression),
                     }
                 }
                 Ok(statements)
             }
-            // Two-qubit gate with tuple: (q[0], q[1])
-            Expr::Tuple(tuple) if tuple.elements.len() == 2 => {
-                let control = self.extract_slot_ref(&tuple.elements[0])?;
-                let target = self.extract_slot_ref(&tuple.elements[1])?;
+            // Multi-qubit gate with tuple: (q[0], q[1], ...)
+            Expr::Tuple(tuple) => {
+                let expected = gate_kind_arity(&gate.kind);
+                if tuple.elements.len() != expected {
+                    return Err(SlrError::WrongArgumentCount {
+                        gate: gate_name.to_string(),
+                        expected,
+                        got: tuple.elements.len(),
+                    });
+                }
+                let targets = tuple
+                    .elements
+                    .iter()
+                    .map(|element| self.extract_slot_ref(element))
+                    .collect::<SlrResult<Vec<_>>>()?;
                 Ok(vec![SlrStatement::Gate(
-                    SlrGateOp::new(gate_name, vec![control, target])
+                    SlrGateOp::new(gate_name, targets)
                         .with_params(params)
                         .with_attrs(attrs),
                 )])
@@ -2037,22 +2108,33 @@ impl SlrCodegen {
                                     .with_attrs(attrs.clone()),
                             ));
                         }
-                        (2, Expr::Tuple(tuple)) if tuple.elements.len() == 2 => {
-                            let control = self.extract_slot_ref(&tuple.elements[0])?;
-                            let target = self.extract_slot_ref(&tuple.elements[1])?;
+                        (expected, Expr::Tuple(tuple)) if tuple.elements.len() == expected => {
+                            let targets = tuple
+                                .elements
+                                .iter()
+                                .map(|element| self.extract_slot_ref(element))
+                                .collect::<SlrResult<Vec<_>>>()?;
                             statements.push(SlrStatement::Gate(
-                                SlrGateOp::new(gate_name, vec![control, target])
+                                SlrGateOp::new(gate_name, targets)
                                     .with_params(params.clone())
                                     .with_attrs(attrs.clone()),
                             ));
                         }
-                        (expected, _) => {
+                        (expected, Expr::Index(_)) => {
                             return Err(SlrError::WrongArgumentCount {
                                 gate: gate_name.to_string(),
                                 expected,
-                                got: if matches!(elem, Expr::Index(_)) { 1 } else { 2 },
+                                got: 1,
                             });
                         }
+                        (expected, Expr::Tuple(tuple)) => {
+                            return Err(SlrError::WrongArgumentCount {
+                                gate: gate_name.to_string(),
+                                expected,
+                                got: tuple.elements.len(),
+                            });
+                        }
+                        (_, _) => return Err(SlrError::UnsupportedExpression),
                     }
                 }
                 Ok(statements)
@@ -2137,7 +2219,7 @@ impl SlrCodegen {
         }
     }
 
-    /// Convert a batch apply expression: h { q[0], q[1] } or rz(pi/4) { q[0], q[1] }
+    /// Convert a batch apply expression: h { q[0], q[1] } or rz((pi / 4) rad) { q[0], q[1] }
     fn convert_batch_apply_with_attrs(
         &mut self,
         batch: &crate::ast::BatchApplyExpr,
@@ -2150,7 +2232,7 @@ impl SlrCodegen {
                 if let Expr::Ident(ident) = &call.callee {
                     let mut params = Vec::new();
                     for arg in &call.args {
-                        params.push(self.convert_expression(arg)?);
+                        params.push(self.convert_angle_expression(arg)?);
                     }
                     (ident.name.clone(), params)
                 } else {
@@ -2228,7 +2310,7 @@ impl SlrCodegen {
         };
 
         // For parameterized gates: angle comes first, then qubits
-        // rz(1.57, q[0]) or rz(1.57, [q[0], q[1])
+        // rz(1.57 rad, q[0]) or rz(1.57 rad, [q[0], q[1])
         let (params, qubit_args) = if gate_info.parameterized {
             if call.args.is_empty() {
                 return Err(SlrError::WrongArgumentCount {
@@ -2237,7 +2319,7 @@ impl SlrCodegen {
                     got: 0,
                 });
             }
-            let param = self.convert_expression(&call.args[0])?;
+            let param = self.convert_angle_expression(&call.args[0])?;
             (vec![param], &call.args[1..])
         } else {
             (Vec::new(), &call.args[..])
@@ -2556,6 +2638,7 @@ impl SlrCodegen {
             GateKind::SXXdg => "SXXdg",
             GateKind::SYYdg => "SYYdg",
             GateKind::SZZdg => "SZZdg",
+            GateKind::CRZ => "CRZ",
             GateKind::RZZ => "RZZ",
             GateKind::CCX => "CCX",
             GateKind::F => "F",
@@ -2579,7 +2662,7 @@ impl SlrCodegen {
         let params: Vec<SlrExpression> = gate_op
             .params
             .iter()
-            .map(|expr| self.convert_expression(expr))
+            .map(|expr| self.convert_angle_expression(expr))
             .collect::<SlrResult<Vec<_>>>()?;
 
         Ok(SlrStatement::Gate(
@@ -2715,6 +2798,19 @@ impl SlrCodegen {
     }
 
     fn convert_for(&mut self, for_stmt: &ForStmt) -> SlrResult<SlrStatement> {
+        self.angle_evaluator.borrow_mut().context.push_scope();
+        if let Some(variable) = for_stmt.captures.first() {
+            self.angle_evaluator
+                .borrow_mut()
+                .context
+                .define(variable, crate::comptime::ComptimeValue::Undefined);
+        }
+        let result = self.convert_for_in_scope(for_stmt);
+        self.angle_evaluator.borrow_mut().context.pop_scope();
+        result
+    }
+
+    fn convert_for_in_scope(&mut self, for_stmt: &ForStmt) -> SlrResult<SlrStatement> {
         // For SLR, convert bounded for loops to repeat statements
         // For unbounded, use ForStmt
         if let Some(count) = self.try_extract_repeat_count(for_stmt) {
@@ -2805,31 +2901,8 @@ impl SlrCodegen {
                 Err(SlrError::UnsupportedExpression)
             }
             Expr::AngleLit(angle) => {
-                use crate::ast::AngleUnit;
-
-                // For radians, try to recognize common pi-based patterns for exact conversion
-                if let AngleUnit::Rad = angle.unit
-                    && let Some(exact_turns) = recognize_exact_radian_pattern(&angle.value)
-                {
-                    return Ok(SlrExpression::Literal(SlrLiteralExpr::angle(exact_turns)));
-                }
-
-                // Fall back to floating-point evaluation
-                use crate::comptime::ComptimeEvaluator;
-                let mut eval = ComptimeEvaluator::new();
-                let value = eval
-                    .eval_expr(&angle.value)
-                    .map_err(|_| SlrError::InvalidAngle)?;
-                let numeric = match value {
-                    crate::comptime::ComptimeValue::Float(f) => f,
-                    crate::comptime::ComptimeValue::Int(i) => i as f64,
-                    crate::comptime::ComptimeValue::Uint(u) => u as f64,
-                    _ => return Err(SlrError::InvalidAngle),
-                };
-                // Convert to turns (the native unit for angles)
-                let turns = angle.unit.to_turns(numeric);
-                // Output as angle literal with type information
-                Ok(SlrExpression::Literal(SlrLiteralExpr::angle(turns)))
+                let _ = angle;
+                self.convert_angle_expression(expr)
             }
             Expr::TypeAscription(asc) => {
                 // For type ascription, evaluate the expression
@@ -2855,6 +2928,20 @@ impl SlrCodegen {
                 Ok(SlrExpression::FString(SlrFStringExpr::new(parts)))
             }
             _ => Err(SlrError::UnsupportedExpression),
+        }
+    }
+
+    fn convert_angle_expression(&self, expr: &Expr) -> SlrResult<SlrExpression> {
+        let resolved = {
+            let mut evaluator = self.angle_evaluator.borrow_mut();
+            resolve_angle_turns(&mut evaluator, expr)
+        };
+        match resolved {
+            Ok(turns) => Ok(SlrExpression::Literal(SlrLiteralExpr::angle(turns))),
+            Err(error) => Err(SlrError::RuntimeAngle {
+                expression: angle_expression_name(expr),
+                reason: error.to_string(),
+            }),
         }
     }
 
@@ -3090,120 +3177,13 @@ impl Default for SlrCodegen {
 }
 
 // =============================================================================
-// Angle Precision Helpers
-// =============================================================================
-
-/// Recognize common pi-based radian expressions and return exact turn fractions.
-///
-/// This preserves precision by pattern-matching the AST before floating-point evaluation.
-/// For example:
-/// - `pi / 2` → 0.25 turns (exact)
-/// - `pi / 4` → 0.125 turns (exact)
-/// - `3 * pi / 4` → 0.375 turns (exact)
-fn recognize_exact_radian_pattern(expr: &Expr) -> Option<f64> {
-    // Pattern: pi (just pi = 1/2 turn)
-    if is_pi_reference(expr) {
-        return Some(0.5);
-    }
-
-    // Pattern: pi / N (pi divided by integer)
-    if let Expr::Binary(binary) = expr {
-        if binary.op == crate::ast::BinaryOp::Div
-            && is_pi_reference(&binary.left)
-            && let Some(n) = extract_integer_value(&binary.right)
-            && n > 0
-        {
-            // pi / n radians = 1 / (2*n) turns
-            return Some(1.0 / (2.0 * n as f64));
-        }
-
-        // Pattern: N * pi / M or (N * pi) / M
-        if binary.op == crate::ast::BinaryOp::Div
-            && let Some((num, denom)) = extract_pi_fraction(&binary.left, &binary.right)
-        {
-            // (num * pi) / denom radians = num / (2 * denom) turns
-            return Some(num as f64 / (2.0 * denom as f64));
-        }
-
-        // Pattern: pi * N / M (reordered)
-        if binary.op == crate::ast::BinaryOp::Mul {
-            // Check for pi * (N / M) - less common but possible
-            if is_pi_reference(&binary.left)
-                && let Expr::Binary(inner) = &binary.right
-                && inner.op == crate::ast::BinaryOp::Div
-                && let (Some(num), Some(denom)) = (
-                    extract_integer_value(&inner.left),
-                    extract_integer_value(&inner.right),
-                )
-                && denom > 0
-            {
-                return Some(num as f64 / (2.0 * denom as f64));
-            }
-        }
-    }
-
-    None
-}
-
-/// Check if an expression is a reference to pi (std.f64.pi, pi, PI, etc.)
-fn is_pi_reference(expr: &Expr) -> bool {
-    match expr {
-        Expr::Ident(ident) => {
-            matches!(ident.name.as_str(), "pi" | "PI")
-        }
-        Expr::Field(field) => {
-            // Check for std.f64.pi or similar
-            field.field == "pi" || field.field == "PI"
-        }
-        _ => false,
-    }
-}
-
-/// Extract an integer value from an expression (literal or simple expression)
-fn extract_integer_value(expr: &Expr) -> Option<i64> {
-    match expr {
-        Expr::IntLit(lit) => Some(lit.value as i64),
-        // Handle negative integers
-        Expr::Unary(unary) if unary.op == crate::ast::UnaryOp::Neg => {
-            extract_integer_value(&unary.operand).map(|v| -v)
-        }
-        _ => None,
-    }
-}
-
-/// Extract numerator and denominator from expressions like N * pi / M
-fn extract_pi_fraction(left: &Expr, right: &Expr) -> Option<(i64, i64)> {
-    // Check if left is N * pi
-    if let Expr::Binary(mul) = left
-        && mul.op == crate::ast::BinaryOp::Mul
-    {
-        // N * pi
-        if let Some(n) = extract_integer_value(&mul.left)
-            && is_pi_reference(&mul.right)
-            && let Some(m) = extract_integer_value(right)
-            && m > 0
-        {
-            return Some((n, m));
-        }
-        // pi * N
-        if is_pi_reference(&mul.left)
-            && let Some(n) = extract_integer_value(&mul.right)
-            && let Some(m) = extract_integer_value(right)
-            && m > 0
-        {
-            return Some((n, m));
-        }
-    }
-    None
-}
-
-// =============================================================================
 // Tests
 // =============================================================================
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ast::GateKind;
     use crate::parse;
 
     fn compile_to_slr(source: &str) -> SlrResult<SlrProgram> {
@@ -3217,6 +3197,27 @@ mod tests {
         let mut codegen = SlrCodegen::new();
         let slr = codegen.compile(&program).expect("compile failed");
         codegen.to_json(&slr).expect("json failed")
+    }
+
+    #[test]
+    fn test_gate_info_covers_every_lowered_gate_kind() {
+        for kind in GateKind::ALL {
+            if *kind == GateKind::PZ {
+                // PZ becomes an SLR Prepare statement before the gate-info lookup.
+                assert!(get_gate_info(kind.keyword()).is_none());
+                continue;
+            }
+
+            let info = get_gate_info(kind.keyword())
+                .unwrap_or_else(|| panic!("missing SLR gate info for {}", kind.keyword()));
+            assert_eq!(info.arity, kind.arity(), "gate: {}", kind.keyword());
+            assert_eq!(
+                info.parameterized,
+                kind.is_parameterized(),
+                "gate: {}",
+                kind.keyword()
+            );
+        }
     }
 
     #[test]
@@ -3278,11 +3279,29 @@ mod tests {
     }
 
     #[test]
+    fn test_three_qubit_gate() {
+        let source = r#"
+            pub fn main() -> unit {
+                q := qalloc(3);
+                ccx (q[0], q[1], q[2]);
+                return unit;
+            }
+        "#;
+
+        let slr = compile_to_slr(source).unwrap();
+        let SlrStatement::Gate(gate) = &slr.body[0] else {
+            panic!("Expected CCX gate operation");
+        };
+        assert_eq!(gate.gate, "CCX");
+        assert_eq!(gate.targets.len(), 3);
+    }
+
+    #[test]
     fn test_rotation_gate() {
         let source = r#"
             pub fn main() -> unit {
                 mut q := qalloc(1);
-                rz(1.57, q[0]);
+                rz(1.57 rad, q[0]);
             }
         "#;
 
@@ -3436,6 +3455,29 @@ mod tests {
 
         let result = compile_to_slr(source);
         assert!(matches!(result, Err(SlrError::WrongArgumentCount { .. })));
+    }
+
+    #[test]
+    fn test_batch_gate_rejects_non_qubit_elements_without_fake_arity() {
+        for source in [
+            r#"
+                pub fn main() -> unit {
+                    mut q := qalloc(1);
+                    h {q[0], 42};
+                }
+            "#,
+            r#"
+                pub fn main() -> unit {
+                    mut q := qalloc(1);
+                    h [q[0], 42];
+                }
+            "#,
+        ] {
+            assert!(matches!(
+                compile_to_slr(source),
+                Err(SlrError::UnsupportedExpression)
+            ));
+        }
     }
 
     #[test]
@@ -4027,5 +4069,50 @@ mod tests {
         assert_eq!(call["args"].as_array().unwrap().len(), 1);
         // The argument should be a literal value
         assert_eq!(call["args"][0]["value"], 42);
+    }
+
+    #[test]
+    fn test_local_comptime_angle_arithmetic_does_not_reborrow_evaluator() {
+        let slr = compile_to_slr(
+            r#"
+            pub fn main() -> unit {
+                q := qalloc(1);
+                theta := 0.5 turns;
+                rz(theta + 0.25 turns) q[0];
+                return unit;
+            }
+            "#,
+        )
+        .expect("local comptime angle arithmetic should lower");
+
+        let SlrStatement::Gate(gate) = &slr.body[0] else {
+            panic!("expected RZ gate");
+        };
+        let SlrExpression::Literal(angle) = &gate.params[0] else {
+            panic!("expected resolved angle literal");
+        };
+        assert!(matches!(angle.value, SlrLiteralValue::Angle(0.75)));
+    }
+
+    #[test]
+    fn test_runtime_angle_is_not_emitted_as_dangling_variable() {
+        for expression in ["theta", "theta * 2"] {
+            let source = format!(
+                r#"
+            pub fn main(theta: a64) -> unit {{
+                q := qalloc(1);
+                rz({expression}) q[0];
+                return unit;
+            }}
+            "#
+            );
+            let error = compile_to_slr(&source)
+                .expect_err("SLR has no declaration form for a runtime angle");
+
+            assert!(matches!(
+                error,
+                SlrError::RuntimeAngle { expression, .. } if expression.starts_with("theta")
+            ));
+        }
     }
 }

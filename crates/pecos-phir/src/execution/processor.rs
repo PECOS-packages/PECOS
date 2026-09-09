@@ -203,6 +203,8 @@ impl PhirProcessor {
             QuantumOp::Sdg => self.process_single_qubit_gate("Sdg", instruction, message_builder),
             QuantumOp::T => self.process_single_qubit_gate("T", instruction, message_builder),
             QuantumOp::Tdg => self.process_single_qubit_gate("Tdg", instruction, message_builder),
+            QuantumOp::SX => self.process_single_qubit_gate("SX", instruction, message_builder),
+            QuantumOp::SXdg => self.process_single_qubit_gate("SXdg", instruction, message_builder),
 
             // Parameterized single-qubit gates
             QuantumOp::RX(angle) => {
@@ -220,9 +222,9 @@ impl PhirProcessor {
                 message_builder.rz(*angle, &[qubit_id]);
                 Ok(true)
             }
-            QuantumOp::R1XY(theta, phi) => {
-                let qubit_id = self.extract_single_qubit(instruction, "R1XY")?;
-                message_builder.r1xy(*theta, *phi, &[qubit_id]);
+            QuantumOp::RXY1Q(theta, phi) => {
+                let qubit_id = self.extract_single_qubit(instruction, "RXY1Q")?;
+                message_builder.rxy1q(*theta, *phi, &[qubit_id]);
                 Ok(true)
             }
             QuantumOp::U3(theta, phi, lambda) => {
@@ -234,6 +236,12 @@ impl PhirProcessor {
             // Two-qubit gates
             QuantumOp::CX => self.process_two_qubit_gate("CX", instruction, message_builder),
             QuantumOp::CZ => self.process_two_qubit_gate("CZ", instruction, message_builder),
+            QuantumOp::SXX => self.process_two_qubit_gate("SXX", instruction, message_builder),
+            QuantumOp::SXXdg => self.process_two_qubit_gate("SXXdg", instruction, message_builder),
+            QuantumOp::SYY => self.process_two_qubit_gate("SYY", instruction, message_builder),
+            QuantumOp::SYYdg => self.process_two_qubit_gate("SYYdg", instruction, message_builder),
+            QuantumOp::SZZ => self.process_two_qubit_gate("SZZ", instruction, message_builder),
+            QuantumOp::SZZdg => self.process_two_qubit_gate("SZZdg", instruction, message_builder),
             QuantumOp::SWAP => {
                 let (q1, q2) = self.extract_two_qubits(instruction, "SWAP")?;
                 let gate = Gate::swap(&[(q1, q2)]);
@@ -247,8 +255,12 @@ impl PhirProcessor {
             }
             QuantumOp::CPhase(angle) => {
                 let (q1, q2) = self.extract_two_qubits(instruction, "CPhase")?;
-                let gate = Gate::crz(*angle, &[(q1, q2)]);
-                message_builder.add_gate_command(&gate);
+                let gates = pecos_core::controlled_rotations::lower_cphase(
+                    angle.to_radians_signed(),
+                    q1.into(),
+                    q2.into(),
+                );
+                message_builder.add_gate_commands(&gates);
                 Ok(true)
             }
 
@@ -368,6 +380,12 @@ impl PhirProcessor {
             "Tdg" => {
                 message_builder.tdg(&[qubit_id]);
             }
+            "SX" => {
+                message_builder.sx(&[qubit_id]);
+            }
+            "SXdg" => {
+                message_builder.sxdg(&[qubit_id]);
+            }
             _ => {
                 return Err(PhirError::internal(format!(
                     "Unknown single-qubit gate: {gate_name}"
@@ -393,6 +411,24 @@ impl PhirProcessor {
             }
             "CZ" => {
                 message_builder.cz(&[(q1, q2)]);
+            }
+            "SXX" => {
+                message_builder.sxx(&[(q1, q2)]);
+            }
+            "SXXdg" => {
+                message_builder.sxxdg(&[(q1, q2)]);
+            }
+            "SYY" => {
+                message_builder.syy(&[(q1, q2)]);
+            }
+            "SYYdg" => {
+                message_builder.syydg(&[(q1, q2)]);
+            }
+            "SZZ" => {
+                message_builder.szz(&[(q1, q2)]);
+            }
+            "SZZdg" => {
+                message_builder.szzdg(&[(q1, q2)]);
             }
             _ => {
                 return Err(PhirError::internal(format!(

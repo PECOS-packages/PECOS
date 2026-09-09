@@ -151,7 +151,18 @@ The `GateType` enum classifies quantum gates for circuit representation and simu
 `CX`, `CY`, `CZ`, `SWAP`, `SXX`, `SXXdg`, `SYY`, `SYYdg`, `SZZ`, `SZZdg`, `ISWAP`, `ISWAPdg`
 
 **Parameterized (non-Clifford):**
-`RX`, `RY`, `RZ`, `RXX`, `RYY`, `RZZ`, `CRZ`, `T`, `Tdg`, `U`, `R1XY`
+`RX`, `RY`, `RZ`, `RXX`, `RYY`, `RZZ`, `T`, `Tdg`, `U`, `RXY1Q`
+
+Controlled-rotation names such as `CRX`, `CRY`, and `CRZ` are boundary
+spellings, not `GateType` variants. At direct PECOS ingresses their source
+`f64` angle is halved before normalization and lowered into this native
+rotation family. Lowercase OpenQASM names instead expand through `qelib1.inc`;
+the include gate conformance tests assert `ry`, `crx`, `cry`, `crz`, and the
+controlled-phase macros against their textbook matrices. SLR QASM output
+declares that include for these exact boundary expansions.
+In SLR, these boundary spellings take radians as a real number and reject the
+typed `Angle` used by ordinary stored rotations because it is already reduced
+modulo 2pi.
 
 **Three-qubit:**
 `CCX` (Toffoli)
@@ -246,7 +257,7 @@ The gate and angle types form the foundation for the operator algebra:
 - `Angle64` is used by `UnitaryRep::Rotation` for rotation gate angles
 - `QuarterPhase` is carried by every `PauliString` for exact Pauli algebra
 - `GateType` is used by `UnitaryRep::Gate` for named gate nodes in expression trees
-- `GlobalPhase` is used by `UnitaryRep::Phase` for arbitrary global phases
+- `GlobalPhase` is used by `UnitaryRep::Phased` for arbitrary global phases
 - `GateRegistry` decomposes custom gates into sequences of base `GateType` operations during simulation
 
 For how these feed into the operator type system, see the [Quantum Operator Algebra guide](quantum-operator-algebra.md).

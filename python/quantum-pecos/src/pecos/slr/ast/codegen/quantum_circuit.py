@@ -106,6 +106,7 @@ TWO_QUBIT_GATES = {
     GateKind.CRY,
     GateKind.CRZ,
 }
+CONTROLLED_ROTATION_GATES = {GateKind.CRX, GateKind.CRY, GateKind.CRZ}
 
 
 @dataclass
@@ -365,17 +366,27 @@ class AstToQuantumCircuit:
         """
         from pecos.slr.angle import Angle  # noqa: PLC0415  (avoid import cycle)
 
-        # Typed-angle guard: a user/direct-AST parameterized gate's params
-        # must be typed `Angle` literals (matches Guppy + the typed-AST
-        # contract); reject bare floats so backends do not diverge.
+        # Stored rotations carry typed `Angle` literals. Controlled-rotation
+        # boundary spellings carry unreduced real radians literals.
         for p in node.params:
-            if not (isinstance(p, LiteralExpr) and isinstance(p.value, Angle)):
-                msg = (
-                    f"QuantumCircuit codegen: parameterized gate {gate_name!r} requires typed `Angle` "
-                    f"params (use `rad(...)` / `turns(...)` in SLR); got {p!r}."
+            if node.gate in CONTROLLED_ROTATION_GATES:
+                valid = (
+                    isinstance(p, LiteralExpr) and isinstance(p.value, int | float) and not isinstance(p.value, bool)
                 )
+            else:
+                valid = isinstance(p, LiteralExpr) and isinstance(p.value, Angle)
+            if not valid:
+                expected = (
+                    "an unreduced real radians literal"
+                    if node.gate in CONTROLLED_ROTATION_GATES
+                    else "typed `Angle` params (use `rad(...)` / `turns(...)` in SLR)"
+                )
+                msg = f"QuantumCircuit codegen: parameterized gate {gate_name!r} requires {expected}; got {p!r}."
                 raise NotImplementedError(msg)
-        angles = [p.value.value.to_radians_signed() for p in node.params]
+        angles = [
+            float(p.value) if node.gate in CONTROLLED_ROTATION_GATES else p.value.value.to_radians_signed()
+            for p in node.params
+        ]
 
         self._flush_tick()
         if node.gate in TWO_QUBIT_GATES:
@@ -387,7 +398,20 @@ class AstToQuantumCircuit:
             for i in range(0, len(node.targets) - 1, 2):
                 q0 = self.context.get_qubit(node.targets[i].allocator, node.targets[i].index)
                 q1 = self.context.get_qubit(node.targets[i + 1].allocator, node.targets[i + 1].index)
-                self.circuit.append(gate_name, {(q0, q1)}, angles=angles)
+                if node.gate in CONTROLLED_ROTATION_GATES:
+                    theta = angles[0]
+                    if node.gate is GateKind.CRX:
+                        self.circuit.append("H", {q1})
+                    elif node.gate is GateKind.CRY:
+                        self.circuit.append("SX", {q1})
+                    self.circuit.append("RZZ", {(q0, q1)}, angles=[-theta / 2])
+                    self.circuit.append("RZ", {q1}, angles=[theta / 2])
+                    if node.gate is GateKind.CRX:
+                        self.circuit.append("H", {q1})
+                    elif node.gate is GateKind.CRY:
+                        self.circuit.append("SXdg", {q1})
+                else:
+                    self.circuit.append(gate_name, {(q0, q1)}, angles=angles)
         else:
             for target in node.targets:
                 qubit = self.context.get_qubit(target.allocator, target.index)

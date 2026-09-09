@@ -71,67 +71,27 @@ fn test_gate_expansion_rx() {
 
     let program = QASMParser::parse_str(qasm).unwrap();
 
-    // The rx gate should be expanded to h; rz; h
-    assert_eq!(program.operations.len(), 3);
+    // The rx gate should lower directly to RXY1Q(pi/2, 0).
+    assert_eq!(program.operations.len(), 1);
 
-    // Check first operation is h
     match &program.operations[0] {
-        Operation::Gate { name, qubits, .. } => {
-            assert_eq!(name, "H");
-            assert_eq!(qubits, &[0]);
-        }
         Operation::NativeGate(gate) => {
-            assert_eq!(gate.gate_type, pecos_core::gate_type::GateType::H);
+            assert_eq!(gate.gate_type, GateType::RXY1Q);
             assert_eq!(gate.qubits.len(), 1);
             assert_eq!({ gate.qubits[0].0 }, 0);
-        }
-        _ => panic!("Expected h gate"),
-    }
-
-    // Check second operation is rz
-    match &program.operations[1] {
-        Operation::Gate {
-            name,
-            qubits,
-            parameters,
-            ..
-        } => {
-            assert_eq!(name, "RZ");
-            assert_eq!(qubits, &[0]);
-            assert_eq!(parameters.len(), 1);
-            assert!(
-                (parameters[0] - std::f64::consts::FRAC_PI_2).abs() < 1e-6,
-                "Expected parameter PI/2, got {}",
-                parameters[0]
-            );
-        }
-        Operation::NativeGate(gate) => {
-            assert_eq!(gate.gate_type, pecos_core::gate_type::GateType::RZ);
-            assert_eq!(gate.qubits.len(), 1);
-            assert_eq!({ gate.qubits[0].0 }, 0);
-            // Rotation gate angles are now stored in gate.angles as Angle64
-            assert_eq!(gate.angles.len(), 1);
+            assert_eq!(gate.angles.len(), 2);
             assert!(
                 (gate.angles[0].to_radians() - std::f64::consts::FRAC_PI_2).abs() < 1e-6,
-                "Expected angle PI/2, got {}",
+                "Expected theta PI/2, got {}",
                 gate.angles[0].to_radians()
             );
+            assert!(
+                gate.angles[1].to_radians().abs() < 1e-6,
+                "Expected phi 0, got {}",
+                gate.angles[1].to_radians()
+            );
         }
-        _ => panic!("Expected rz gate"),
-    }
-
-    // Check third operation is h
-    match &program.operations[2] {
-        Operation::Gate { name, qubits, .. } => {
-            assert_eq!(name, "H");
-            assert_eq!(qubits, &[0]);
-        }
-        Operation::NativeGate(gate) => {
-            assert_eq!(gate.gate_type, pecos_core::gate_type::GateType::H);
-            assert_eq!(gate.qubits.len(), 1);
-            assert_eq!({ gate.qubits[0].0 }, 0);
-        }
-        _ => panic!("Expected h gate"),
+        operation => panic!("Expected native RXY1Q gate, got {operation:?}"),
     }
 }
 

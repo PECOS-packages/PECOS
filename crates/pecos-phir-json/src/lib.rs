@@ -146,9 +146,103 @@ pub fn convert_phir_json_file_to_ron(path: &Path) -> Result<String, PecosError> 
 mod tests {
     use super::*;
     use pecos_engines::byte_message::ByteMessage;
+    use pecos_engines::quantum::StateVecEngine;
+    use pecos_engines::{ClassicalEngine, Engine};
+    use pecos_phir::PhirEngine;
     use std::fs::File;
     use std::io::Write;
     use tempfile::tempdir;
+
+    #[cfg(feature = "v0_1")]
+    fn cphase_state(theta: f64, basis: usize) -> Vec<(f64, f64)> {
+        let mut ops = vec![serde_json::json!({
+            "data": "qvar_define",
+            "data_type": "qubits",
+            "variable": "q",
+            "size": 2
+        })];
+        if basis & 1 != 0 {
+            ops.push(serde_json::json!({"qop": "X", "args": [["q", 0]]}));
+        }
+        if basis & 2 != 0 {
+            ops.push(serde_json::json!({"qop": "X", "args": [["q", 1]]}));
+        }
+        ops.push(serde_json::json!({
+            "qop": "CPhase",
+            "angles": [[theta], "rad"],
+            "args": [["q", 1], ["q", 0]]
+        }));
+        let json = serde_json::json!({
+            "format": "PHIR/JSON",
+            "version": "0.1.0",
+            "metadata": {},
+            "ops": ops
+        });
+        let module = phir_json_to_module(&json.to_string()).expect("convert PHIR JSON");
+        let mut phir = PhirEngine::new(module).expect("create PHIR engine");
+        let mut simulator = StateVecEngine::new(2);
+        while !phir.finished {
+            let commands = phir.generate_commands().expect("generate PHIR commands");
+            simulator.process(commands).expect("execute PHIR commands");
+        }
+        simulator
+            .simulator_mut()
+            .state()
+            .iter()
+            .map(|amplitude| (amplitude.re, amplitude.im))
+            .collect()
+    }
+
+    #[cfg(feature = "v0_1")]
+    #[test]
+    fn phir_json_cphase_preserves_full_matrix() {
+        for theta in [
+            -std::f64::consts::PI,
+            std::f64::consts::PI / 3.0,
+            std::f64::consts::PI,
+            std::f64::consts::TAU,
+            3.0 * std::f64::consts::PI,
+        ] {
+            let mut actual = vec![vec![(0.0, 0.0); 4]; 4];
+            for column in 0..4 {
+                for (row_values, amplitude) in actual.iter_mut().zip(cphase_state(theta, column)) {
+                    row_values[column] = amplitude;
+                }
+            }
+            let reference = [
+                (1.0, 0.0),
+                (1.0, 0.0),
+                (1.0, 0.0),
+                (theta.cos(), theta.sin()),
+            ];
+            let phase = actual[0][0];
+            let phase_norm = phase.0 * phase.0 + phase.1 * phase.1;
+            assert!((phase_norm - 1.0).abs() < 1e-12);
+            if theta.abs() <= std::f64::consts::PI {
+                assert!((phase.0 - 1.0).abs() < 1e-12 && phase.1.abs() < 1e-12);
+            } else {
+                assert!((phase.0.abs() - 1.0).abs() < 1e-12 && phase.1.abs() < 1e-12);
+            }
+            for (row, row_values) in actual.iter().enumerate() {
+                for (column, &value) in row_values.iter().enumerate() {
+                    let normalized = (
+                        (value.0 * phase.0 + value.1 * phase.1) / phase_norm,
+                        (value.1 * phase.0 - value.0 * phase.1) / phase_norm,
+                    );
+                    let expected = if row == column {
+                        reference[row]
+                    } else {
+                        (0.0, 0.0)
+                    };
+                    assert!(
+                        (normalized.0 - expected.0).abs() < 1e-12
+                            && (normalized.1 - expected.1).abs() < 1e-12,
+                        "theta={theta}, entry=({row}, {column}), actual={normalized:?}, expected={expected:?}, phase={phase:?}"
+                    );
+                }
+            }
+        }
+    }
 
     #[cfg(feature = "v0_1")]
     #[test]

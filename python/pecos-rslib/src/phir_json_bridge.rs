@@ -219,7 +219,7 @@ impl PhirJsonEngine {
                                         "RZ" if !op.params.is_empty() => {
                                             params_dict.set_item("theta", op.params[0])?;
                                         }
-                                        "R1XY" if op.params.len() >= 2 => {
+                                        "RXY1Q" if op.params.len() >= 2 => {
                                             params_dict
                                                 .set_item("angles", [op.params[0], op.params[1]])?;
                                         }
@@ -698,9 +698,9 @@ fn convert_to_py_commands(py: Python<'_>, commands: &Py<PyAny>) -> PyResult<Vec<
                 py_dict.set_item("gate_type", "RZ")?;
                 params_dict.set_item("theta", angles[0])?;
             }
-            "R1XY" => {
+            "RXY1Q" | "R1XY" => {
                 let angles: Vec<f64> = py_cmd.getattr("angles")?.extract()?;
-                py_dict.set_item("gate_type", "R1XY")?;
+                py_dict.set_item("gate_type", "RXY1Q")?;
                 params_dict.set_item("angles", angles)?;
             }
             "SZZ" => {
@@ -835,7 +835,7 @@ fn process_py_command(py_cmd: &Bound<PyAny>) -> Result<(String, Vec<usize>, Vec<
     // Extract parameters based on gate type
     let mut params = Vec::new();
 
-    if name == "RZ" || name == "R1XY" {
+    if matches!(name.as_str(), "RZ" | "RXY1Q" | "R1XY") {
         let angles = match py_cmd.getattr("angles") {
             Ok(a) => match a.extract::<Vec<f64>>() {
                 Ok(v) => v,
@@ -959,9 +959,9 @@ impl ClassicalEngine for PhirJsonEngine {
                             builder.rz(Angle64::from_radians(params[0]), &qubits);
                         }
                     }
-                    "R1XY" => {
+                    "RXY1Q" | "R1XY" => {
                         if params.len() >= 2 {
-                            builder.r1xy(
+                            builder.rxy1q(
                                 Angle64::from_radians(params[0]),
                                 Angle64::from_radians(params[1]),
                                 &qubits,

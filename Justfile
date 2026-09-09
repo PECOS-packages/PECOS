@@ -234,9 +234,6 @@ build profile="debug": _msvc-bootstrap (validate-profile "build" profile) setup-
     if command -v julia >/dev/null 2>&1; then
         just julia-build "$PROFILE"
     fi
-    if command -v go >/dev/null 2>&1; then
-        just go-build "$PROFILE"
-    fi
 
 # Build PECOS without dependency setup or sync (profile: dev/debug, release, native)
 [group('build')]
@@ -269,7 +266,9 @@ python-ci-build-docs profile="debug": _msvc-bootstrap (validate-profile "python-
     set -euo pipefail
     PROFILE="{{profile}}"
     PECOS_BUILD_MWPF=0 {{pecos}} python build --profile "$PROFILE" --no-cuda
-    uv run --frozen --package pecos-rslib-exp maturin develop --uv --locked --manifest-path python/pecos-rslib-exp/Cargo.toml
+    # --no-sync: a package-scoped `uv run` otherwise syncs pecos-rslib-exp into the
+    # environment first, i.e. builds the release wheel this very command replaces.
+    uv run --frozen --no-sync --package pecos-rslib-exp maturin develop --uv --locked --manifest-path python/pecos-rslib-exp/Cargo.toml
 
 # Build the extra experimental bindings exercised by the fast Python core test lane.
 [group('build')]
@@ -278,7 +277,9 @@ python-ci-build-test profile="debug": _msvc-bootstrap (validate-profile "python-
     set -euo pipefail
     PROFILE="{{profile}}"
     {{pecos}} python build --profile "$PROFILE" --no-cuda
-    uv run --frozen --package pecos-rslib-exp maturin develop --uv --locked --manifest-path python/pecos-rslib-exp/Cargo.toml
+    # --no-sync: a package-scoped `uv run` otherwise syncs pecos-rslib-exp into the
+    # environment first, i.e. builds the release wheel this very command replaces.
+    uv run --frozen --no-sync --package pecos-rslib-exp maturin develop --uv --locked --manifest-path python/pecos-rslib-exp/Cargo.toml
 
 # =============================================================================
 # Testing
@@ -295,7 +296,7 @@ pytest *args:
         uv run --frozen pytest -n auto python/pecos-rslib/tests -m "not performance"
         uv run --frozen --group numpy-compat pytest -n auto python/pecos-rslib/tests -m "numpy and not performance"
         uv run --frozen pytest -n auto python/quantum-pecos/tests -m "not optional_dependency and not slow"
-        uv run --frozen pytest -n auto python/selene-plugins
+        uv run --frozen pytest -n auto python/selene-plugins -m "not slow"
         uv run --frozen pytest -n auto python/pecos-rslib-exp/tests
     fi
 
@@ -312,6 +313,51 @@ pytest-ci-core:
     uv run --frozen pytest -n auto python/quantum-pecos/tests -m "not optional_dependency and not slow"
     uv run --frozen pytest -n auto python/pecos-rslib-exp/tests
 
+# One shard of `pytest-ci-core`, for the pr-core-python matrix. The four shards
+# partition the lane: `qec-surface-harvest` owns one file, `qec-surface` the
+# rest of that directory, `qec-guppy` the rest of qec/ plus guppy/, and `rest`
+# is everything else, ignoring exactly the paths the other shards own. Keep
+# the owned paths and the `--ignore` lists in step so the union stays equal to
+# `pytest-ci-core`; a shard whose path disappears fails (pytest exit 4/5).
+# Balance (CPU-seconds, 2026-09-02): harvest file ~1040, rest of qec/surface
+# ~700, qec-rest + guppy ~1100, rest ~950. The harvest file is split out
+# because its tests are compile-bound and barely parallelize: on CI the whole
+# surface directory took 15 min of a 4-worker run.
+[group('test')]
+pytest-ci-core-shard shard:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    QP=python/quantum-pecos/tests
+    CORE_MARKERS="not optional_dependency and not slow"
+    HARVEST="$QP/qec/surface/test_pauli_mask_harvest.py"
+    case "{{shard}}" in
+      qec-surface-harvest)
+        uv run --frozen pytest -n auto "$HARVEST" -m "$CORE_MARKERS"
+        ;;
+      qec-surface)
+        uv run --frozen pytest -n auto "$QP/qec/surface" --ignore="$HARVEST" -m "$CORE_MARKERS"
+        ;;
+      qec-guppy)
+        uv run --frozen pytest -n auto "$QP/qec" --ignore="$QP/qec/surface" "$QP/guppy" -m "$CORE_MARKERS"
+        ;;
+      rest)
+        uv run --frozen pytest -n auto python/pecos-rslib/tests -m "not performance"
+        uv run --frozen --group numpy-compat pytest -n auto python/pecos-rslib/tests -m "numpy and not performance"
+        uv run --frozen pytest -n auto "$QP" --ignore="$QP/qec" --ignore="$QP/guppy" -m "$CORE_MARKERS"
+        uv run --frozen pytest -n auto python/pecos-rslib-exp/tests
+        ;;
+      *)
+        echo "unknown pytest-ci-core shard: {{shard}} (expected qec-surface-harvest, qec-surface, qec-guppy, or rest)" >&2
+        exit 1
+        ;;
+    esac
+
+# Run the experimental zluppy package's independent Python test project.
+[group('test')]
+pytest-zluppy:
+    uv sync --project exp/zluppy --frozen
+    uv run --project exp/zluppy --frozen pytest exp/zluppy/tests
+
 # Build and import the core Python packages on a target platform/interpreter.
 [group('test')]
 python-ci-smoke profile="debug": (validate-profile "python-ci-smoke" profile) (python-ci-build profile)
@@ -325,7 +371,7 @@ rstest mode="release": _msvc-bootstrap (validate-test-mode "rstest" mode)
     MODE="{{mode}}"
     {{pecos}} rust test --profile "$MODE"
 
-# Run all tests (Rust + Python + Julia + Go if available; mode: dev/debug, release, native)
+# Run all tests (Rust + Python + Julia if available; mode: dev/debug, release, native)
 [group('test')]
 test mode="release": (validate-test-mode "test" mode) (rstest mode) pytest
     #!/usr/bin/env bash
@@ -336,12 +382,6 @@ test mode="release": (validate-test-mode "test" mode) (rstest mode) pytest
         just julia-test "$MODE"
     else
         echo "Julia not detected, skipping Julia tests"
-    fi
-    if command -v go >/dev/null 2>&1; then
-        echo "Go detected, running Go tests..."
-        just go-test "$MODE"
-    else
-        echo "Go not detected, skipping Go tests"
     fi
 
 # =============================================================================
@@ -376,11 +416,6 @@ lint mode="fix": _msvc-bootstrap (validate-lint-mode mode) ensure-local-build-en
             just julia-fmt-check
             just julia-lint
         fi
-        if command -v go >/dev/null 2>&1; then
-            echo "==> Checking Go formatting..."
-            just go-fmt-check
-            just go-lint
-        fi
     else
         echo "==> Fixing Rust formatting and clippy..."
         cargo fmt --all
@@ -391,14 +426,10 @@ lint mode="fix": _msvc-bootstrap (validate-lint-mode mode) ensure-local-build-en
             echo "==> Fixing Julia formatting..."
             just julia-fmt
         fi
-        if command -v go >/dev/null 2>&1; then
-            echo "==> Fixing Go formatting..."
-            just go-fmt
-        fi
     fi
 
 # Fast lint lane for Python PR CI. Keep this scoped to Rust + Python checks so
-# the Python critical path does not opportunistically pick up Julia/Go tools.
+# the Python critical path does not opportunistically pick up Julia tools.
 [group('lint')]
 python-ci-lint: _msvc-bootstrap ensure-local-build-env python-workspace-check
     #!/usr/bin/env bash
@@ -550,7 +581,7 @@ dev-preflight: _msvc-bootstrap
                 LINK_MODE=$("$LLVM_DIR/bin/llvm-config" --shared-mode 2>/dev/null || echo "unknown")
                 if [ "$LINK_MODE" != "shared" ]; then
                     echo "PECOS dev preflight failed: LLVM at $LLVM_DIR reports '$LINK_MODE' link mode."
-                    echo "Full workspace HUGR tests need shared LLVM 21.1 to avoid high-memory static links."
+                    echo "Full workspace LLVM tests need shared LLVM 21.1 to avoid high-memory static links."
                     print_llvm_hint
                     exit 1
                 fi
@@ -559,7 +590,7 @@ dev-preflight: _msvc-bootstrap
     esac
     echo "PECOS dev preflight passed."
 
-# Fast dev cycle: build + test only (lang: all, rust, python, julia, go)
+# Fast dev cycle: build + test only (lang: all, rust, python, julia)
 [group('dev')]
 dev lang="all": (validate-dev-lang lang) dev-preflight
     #!/usr/bin/env bash
@@ -581,12 +612,8 @@ dev lang="all": (validate-dev-lang lang) dev-preflight
             just julia-build
             just julia-test
             ;;
-        go)
-            just go-build
-            just go-test
-            ;;
         *)
-            echo "Unknown language: $DEV_LANG. Use: all, rust, python, julia, go"
+            echo "Unknown language: $DEV_LANG. Use: all, rust, python, julia"
             exit 1
             ;;
     esac
@@ -743,83 +770,6 @@ julia-lint: (julia-build "release")
     cd julia/PECOS.jl && julia --project=. test/aqua_tests.jl
 
 # =============================================================================
-# Go Bindings
-# =============================================================================
-
-# Build Go FFI library (profile: dev/debug, release, native; rustflags: optional)
-[group('go')]
-go-build profile="release" rustflags="": _msvc-bootstrap (validate-profile "go-build" profile)
-    #!/usr/bin/env bash
-    set -euo pipefail
-    PROFILE="{{profile}}"
-    RUSTFLAGS_ARG="{{rustflags}}"
-    case "$RUSTFLAGS_ARG" in
-        rustflags=*)
-            VALUE="${RUSTFLAGS_ARG#rustflags=}"
-            echo "Invalid rustflags argument: $RUSTFLAGS_ARG"
-            echo "Just recipe parameters are positional. Use: just go-build $PROFILE '$VALUE'"
-            exit 2
-            ;;
-    esac
-    if [ -n "$RUSTFLAGS_ARG" ]; then
-        export RUSTFLAGS="${RUSTFLAGS:-} $RUSTFLAGS_ARG"
-    fi
-    # See julia-build for why -C target-cpu=native is injected here.
-    if [ "$PROFILE" = "native" ]; then
-        export RUSTFLAGS="${RUSTFLAGS:-} -C target-cpu=native"
-    fi
-    case "$PROFILE" in
-        native)  cargo build --locked --profile native -p pecos-go-ffi ;;
-        release) cargo build --locked --release -p pecos-go-ffi ;;
-        dev|debug) cargo build --locked -p pecos-go-ffi ;;
-        *) echo "Unknown profile: $PROFILE"; exit 1 ;;
-    esac
-
-# Run Go tests (profile: dev/debug, release, native)
-[group('go')]
-go-test profile="release": (validate-profile "go-test" profile) (go-build profile)
-    #!/usr/bin/env bash
-    set -euo pipefail
-    PROFILE="{{profile}}"
-    case "$PROFILE" in
-        native) LIB_DIR="$(pwd)/target/native" ;;
-        release) LIB_DIR="$(pwd)/target/release" ;;
-        dev|debug) LIB_DIR="$(pwd)/target/debug" ;;
-    esac
-    export CGO_LDFLAGS="-L$LIB_DIR ${CGO_LDFLAGS:-}"
-    export LIBRARY_PATH="$LIB_DIR:${LIBRARY_PATH:-}"
-    export LD_LIBRARY_PATH="$LIB_DIR:${LD_LIBRARY_PATH:-}"
-    export DYLD_LIBRARY_PATH="$LIB_DIR:${DYLD_LIBRARY_PATH:-}"
-    cd go/pecos && go test -v
-
-# Format Go code
-[group('go')]
-go-fmt:
-    gofmt -w go/pecos
-
-# Check Go code formatting
-[group('go')]
-go-fmt-check:
-    @test -z "$(gofmt -l go/pecos)" || (gofmt -l go/pecos && exit 1)
-
-# Run Go linting with go vet (profile: dev/debug, release, native)
-[group('go')]
-go-lint profile="release": (validate-profile "go-lint" profile) (go-build profile)
-    #!/usr/bin/env bash
-    set -euo pipefail
-    PROFILE="{{profile}}"
-    case "$PROFILE" in
-        native) LIB_DIR="$(pwd)/target/native" ;;
-        release) LIB_DIR="$(pwd)/target/release" ;;
-        dev|debug) LIB_DIR="$(pwd)/target/debug" ;;
-    esac
-    export CGO_LDFLAGS="-L$LIB_DIR ${CGO_LDFLAGS:-}"
-    export LIBRARY_PATH="$LIB_DIR:${LIBRARY_PATH:-}"
-    export LD_LIBRARY_PATH="$LIB_DIR:${LD_LIBRARY_PATH:-}"
-    export DYLD_LIBRARY_PATH="$LIB_DIR:${DYLD_LIBRARY_PATH:-}"
-    cd go/pecos && go vet ./...
-
-# =============================================================================
 # Additional Testing
 # =============================================================================
 
@@ -934,7 +884,7 @@ validate-dev-lang lang:
     set -euo pipefail
     DEV_LANG="{{lang}}"
     case "$DEV_LANG" in
-        all|rust|python|julia|go) ;;
+        all|rust|python|julia) ;;
         lang=*)
             VALUE="${DEV_LANG#lang=}"
             echo "Invalid language argument: $DEV_LANG"
@@ -943,7 +893,7 @@ validate-dev-lang lang:
             ;;
         *)
             echo "Unknown language: $DEV_LANG"
-            echo "Supported languages: all, rust, python, julia, go"
+            echo "Supported languages: all, rust, python, julia"
             exit 2
             ;;
     esac
@@ -1054,6 +1004,12 @@ sync-deps:
     fi
     uv sync "${SYNC_ARGS[@]}"
 
+# The python-ci-sync* recipes install the pure-Python side of the workspace
+# only. The native packages are listed with `--package` so their dependencies
+# land in the environment, but are excluded from installation with
+# `--no-install-package`: otherwise uv builds release wheels of each one
+# (~20 min on a 4-core runner) that the following `pecos python build` /
+# `maturin develop` step immediately replaces with a debug build.
 [group('setup')]
 python-ci-sync:
     #!/usr/bin/env bash
@@ -1063,7 +1019,9 @@ python-ci-sync:
       --group test \
       --package pecos-rslib \
       --package pecos-rslib-llvm \
-      --package quantum-pecos
+      --package quantum-pecos \
+      --no-install-package pecos-rslib \
+      --no-install-package pecos-rslib-llvm
 
 [group('setup')]
 python-ci-sync-test:
@@ -1075,7 +1033,10 @@ python-ci-sync-test:
       --package pecos-rslib \
       --package pecos-rslib-exp \
       --package pecos-rslib-llvm \
-      --package quantum-pecos
+      --package quantum-pecos \
+      --no-install-package pecos-rslib \
+      --no-install-package pecos-rslib-exp \
+      --no-install-package pecos-rslib-llvm
 
 [group('setup')]
 python-ci-sync-docs:

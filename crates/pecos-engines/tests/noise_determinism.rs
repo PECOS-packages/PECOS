@@ -219,7 +219,7 @@ fn test_single_qubit_gate_determinism() {
         // Repeat pattern to increase chance of errors
         builder.h(&[0]);
         builder.rz(Angle64::from_radians(0.5), &[0]);
-        builder.r1xy(Angle64::from_radians(0.5), Angle64::from_radians(0.5), &[0]);
+        builder.rxy1q(Angle64::from_radians(0.5), Angle64::from_radians(0.5), &[0]);
         builder.h(&[1]);
         builder.rz(Angle64::from_radians(0.5), &[1]);
     }

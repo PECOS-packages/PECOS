@@ -29,7 +29,7 @@ pub fn resolve_sim_name(name: &str, angles: Option<&[f64]>) -> String {
     match name {
         "RZZ" => resolve_rzz(angles),
         "RZ" => resolve_rz(angles),
-        "R1XY" => resolve_r1xy(angles),
+        "R1XY" => resolve_rxy1q(angles),
         _ => name.to_string(),
     }
 }
@@ -62,17 +62,17 @@ fn resolve_rz(angles: Option<&[f64]>) -> String {
     "RZ".to_string()
 }
 
-fn resolve_r1xy(angles: Option<&[f64]>) -> String {
+fn resolve_rxy1q(angles: Option<&[f64]>) -> String {
     if let Some(angs) = angles
         && angs.len() == 2
     {
         let theta = Angle64::from_radians(angs[0]);
         let phi = Angle64::from_radians(angs[1]);
-        if let Some(name) = r1xy_angles_to_clifford(theta, phi) {
+        if let Some(name) = rxy1q_angles_to_clifford(theta, phi) {
             return name.to_string();
         }
     }
-    "R1XY".to_string()
+    "RXY1Q".to_string()
 }
 
 /// Look up RZ angle in the Clifford conversion table.
@@ -96,11 +96,11 @@ fn rz_angle_to_clifford(angle: Angle64) -> Option<&'static str> {
     None
 }
 
-/// Look up R1XY angles in the Clifford conversion table.
+/// Look up RXY1Q angles in the Clifford conversion table.
 ///
 /// With Angle64, -pi/2 and 3pi/2 are the same value, so no
 /// duplicate entries needed.
-fn r1xy_angles_to_clifford(theta: Angle64, phi: Angle64) -> Option<&'static str> {
+fn rxy1q_angles_to_clifford(theta: Angle64, phi: Angle64) -> Option<&'static str> {
     if theta == Angle64::ZERO {
         return Some("I");
     }
@@ -187,22 +187,22 @@ mod tests {
     }
 
     #[test]
-    fn test_r1xy_pi_0_is_x() {
+    fn test_rxy1q_pi_0_is_x() {
         assert_eq!(resolve_sim_name("R1XY", Some(&[PI, 0.0])), "X");
     }
 
     #[test]
-    fn test_r1xy_pi_pi2_is_y() {
+    fn test_rxy1q_pi_pi2_is_y() {
         assert_eq!(resolve_sim_name("R1XY", Some(&[PI, FRAC_PI_2])), "Y");
     }
 
     #[test]
-    fn test_r1xy_pi2_0_is_sx() {
+    fn test_rxy1q_pi2_0_is_sx() {
         assert_eq!(resolve_sim_name("R1XY", Some(&[FRAC_PI_2, 0.0])), "SX");
     }
 
     #[test]
-    fn test_r1xy_3pi2_pi2_is_sydg() {
+    fn test_rxy1q_3pi2_pi2_is_sydg() {
         // 3pi/2 == -pi/2 mod 2pi
         assert_eq!(
             resolve_sim_name("R1XY", Some(&[PI * 1.5, FRAC_PI_2])),
@@ -211,11 +211,16 @@ mod tests {
     }
 
     #[test]
-    fn test_r1xy_neg_pi2_pi2_is_sydg() {
+    fn test_rxy1q_neg_pi2_pi2_is_sydg() {
         assert_eq!(
             resolve_sim_name("R1XY", Some(&[-FRAC_PI_2, FRAC_PI_2])),
             "SYdg"
         );
+    }
+
+    #[test]
+    fn test_rxy1q_non_clifford_uses_canonical_simulator_name() {
+        assert_eq!(resolve_sim_name("R1XY", Some(&[0.123, 0.456])), "RXY1Q");
     }
 
     #[test]

@@ -23,51 +23,6 @@ from pecos.slr.qeclib.steane.steane_class import Steane
 # TODO: Remove reference to hqslib1.inc... better yet, don't have tests on qasm
 
 
-def telep(prep_basis: str, meas_basis: str) -> str:
-    """A simple example of creating a logical teleportation circuit.
-
-    Args:
-        prep_basis (str): A string indicating what Pauli basis to prepare the state in. Acceptable inputs include:
-            "+X"/"X", "-X", "+Y"/"Y", "-Y", "+Z"/"Z", and "-Z".
-        meas_basis (str): A string indicating what Pauli basis the measure out the logical qubit in. Acceptable inputs
-            include: "X", "Y", and "Z".
-
-    Returns:
-        A logical program written in extended OpenQASM 2.0
-    """
-    return Main(
-        m_bell := CReg("m_bell", size=2),
-        m_out := CReg("m_out", size=1),
-        # Input state:
-        sin := Steane("sin", default_rus_limit=2),
-        smid := Steane("smid"),
-        sout := Steane("sout"),
-        # Create Bell state
-        smid.pz(),  # prep logical qubit in |0>/|+Z> state with repeat-until-success initialization
-        sout.pz(),
-        Barrier(smid.d, sout.d),
-        smid.h(),
-        smid.cx(sout),  # CX with control on smid and target on sout
-        smid.qec(),
-        sout.qec(),
-        # prepare input state in some Pauli basis state
-        sin.p(prep_basis, rus_limit=3),
-        sin.qec(),
-        # entangle input with one of the logical qubits of the Bell pair
-        sin.cx(smid),
-        sin.h(),
-        # Bell measurement
-        sin.mz(m_bell[0]),
-        smid.mz(m_bell[1]),
-        # Corrections
-        If(m_bell[1] == 0).Then(sout.x()),
-        If(m_bell[0] == 0).Then(sout.z()),
-        # Final output stored in `m_out[0]`
-        sout.m(meas_basis, m_out[0]),
-        Return(m_bell, m_out),
-    )
-
-
 def test_bell() -> None:
     """Test that a simple Bell prep and measure circuit can be created."""
     prog = Main(
@@ -81,7 +36,7 @@ def test_bell() -> None:
 
     qasm = (
         "OPENQASM 2.0;\n"
-        'include "hqslib1.inc";\n'
+        'include "qelib1.inc";\n'
         "qreg q[2];\n"
         "creg m[2];\n"
         "h q[0];\n"
@@ -150,7 +105,7 @@ def test_if_bell() -> None:
 
     qasm = (
         "OPENQASM 2.0;\n"
-        'include "hqslib1.inc";\n'
+        'include "qelib1.inc";\n'
         "qreg q[2];\n"
         "creg m[2];\n"
         "creg c[4];\n"
@@ -183,7 +138,7 @@ def test_strange_program() -> None:
 
     qasm = (
         "OPENQASM 2.0;\n"
-        'include "hqslib1.inc";\n'
+        'include "qelib1.inc";\n'
         "qreg q[2];\n"
         "creg c[4];\n"
         "creg b[4];\n"
@@ -290,9 +245,3 @@ def test_minus_qir() -> None:
     )
     qir = SlrConverter(prog).qir()
     assert "sub" in qir
-
-
-@pytest.mark.optional_dependency
-def test_steane_qir() -> None:
-    """Test the teleportation program using the Steane code."""
-    # print(SlrConverter(telep("X", "X")).qir())

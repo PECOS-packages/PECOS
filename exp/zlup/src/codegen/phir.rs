@@ -35,12 +35,17 @@
 //! }
 //! ```
 
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 use thiserror::Error;
 
 use crate::ast::{
     BinaryOp, Binding, Block, CallExpr, ElseBranch, Expr, FnDecl, ForRange, GateKind, GateOp,
     IfStmt, IntLit, MeasureOp, PrepareOp, Program, Stmt, TickStmt, TopLevelDecl, UnaryOp,
+};
+use crate::comptime::angle_expression_name;
+use crate::comptime::{
+    ComptimeEvaluator, angle_evaluator, define_comptime_binding, resolve_angle_turns,
 };
 
 // =============================================================================
@@ -75,7 +80,10 @@ pub enum PhirJsonError {
     #[error("unsupported expression in PHIR codegen")]
     UnsupportedExpression,
 
-    #[error("invalid rotation angle")]
+    #[error("rotation angle '{expression}' is not known at compile time: {reason}")]
+    RuntimeAngle { expression: String, reason: String },
+
+    #[error("rotation gate is missing its angle")]
     InvalidAngle,
 
     #[error("JSON serialization error: {0}")]
@@ -259,6 +267,25 @@ impl PhirJsonQop {
         Self {
             qop: gate.into(),
             angles: None,
+            args: serde_json::Value::Array(args),
+            returns: None,
+        }
+    }
+
+    /// Create a two-qubit rotation operation.
+    pub fn two_qubit_rotation(
+        gate: impl Into<String>,
+        angle: f64,
+        unit: &str,
+        pairs: Vec<((String, usize), (String, usize))>,
+    ) -> Self {
+        let args: Vec<serde_json::Value> = pairs
+            .into_iter()
+            .map(|((n1, i1), (n2, i2))| serde_json::json!([[n1, i1], [n2, i2]]))
+            .collect();
+        Self {
+            qop: gate.into(),
+            angles: Some((vec![angle], unit.to_string())),
             args: serde_json::Value::Array(args),
             returns: None,
         }
@@ -593,6 +620,11 @@ fn get_gate_info(kind: GateKind) -> GateInfo {
             num_qubits: 2,
             num_angles: 0,
         },
+        GateKind::CRZ => GateInfo {
+            phir_name: "CRZ",
+            num_qubits: 2,
+            num_angles: 1,
+        },
         GateKind::RZZ => GateInfo {
             phir_name: "RZZ",
             num_qubits: 2,
@@ -647,6 +679,8 @@ pub struct PhirJsonCodegen {
     registers: BTreeMap<String, RegisterInfo>,
     /// Auto-generated register counter.
     register_counter: usize,
+    /// Compile-time constants used to resolve unit-bearing gate angles.
+    angle_evaluator: RefCell<ComptimeEvaluator>,
 }
 
 impl Default for PhirJsonCodegen {
@@ -662,11 +696,21 @@ impl PhirJsonCodegen {
             allocators: BTreeMap::new(),
             registers: BTreeMap::new(),
             register_counter: 0,
+            angle_evaluator: RefCell::new(angle_evaluator()),
         }
     }
 
     /// Compile a Zlup program to PHIR/JSON.
     pub fn compile(&mut self, program: &Program) -> PhirJsonResult<PhirJsonProgram> {
+        self.allocators.clear();
+        self.registers.clear();
+        self.register_counter = 0;
+        self.angle_evaluator = RefCell::new(angle_evaluator());
+        for decl in &program.declarations {
+            if let TopLevelDecl::Binding(binding) = decl {
+                define_comptime_binding(&mut self.angle_evaluator.borrow_mut(), binding);
+            }
+        }
         let mut phir = PhirJsonProgram::new().with_name("main");
 
         // First pass: collect allocators
@@ -696,7 +740,16 @@ impl PhirJsonCodegen {
             if let TopLevelDecl::Fn(fn_decl) = decl
                 && fn_decl.name == "main"
             {
-                let ops = self.convert_block(&fn_decl.body)?;
+                self.angle_evaluator.borrow_mut().context.push_scope();
+                for param in &fn_decl.params {
+                    self.angle_evaluator
+                        .borrow_mut()
+                        .context
+                        .define(&param.name, crate::comptime::ComptimeValue::Undefined);
+                }
+                let ops = self.convert_block(&fn_decl.body);
+                self.angle_evaluator.borrow_mut().context.pop_scope();
+                let ops = ops?;
                 phir.ops.extend(ops);
             }
         }
@@ -713,6 +766,7 @@ impl PhirJsonCodegen {
 
     /// Compile a function to PHIR/JSON.
     pub fn compile_function(&mut self, fn_decl: &FnDecl) -> PhirJsonResult<PhirJsonProgram> {
+        self.angle_evaluator = RefCell::new(angle_evaluator());
         // Collect from function body
         self.collect_block(&fn_decl.body)?;
 
@@ -735,7 +789,16 @@ impl PhirJsonCodegen {
         }
 
         // Convert body
-        let ops = self.convert_block(&fn_decl.body)?;
+        self.angle_evaluator.borrow_mut().context.push_scope();
+        for param in &fn_decl.params {
+            self.angle_evaluator
+                .borrow_mut()
+                .context
+                .define(&param.name, crate::comptime::ComptimeValue::Undefined);
+        }
+        let ops = self.convert_block(&fn_decl.body);
+        self.angle_evaluator.borrow_mut().context.pop_scope();
+        let ops = ops?;
         phir.ops.extend(ops);
 
         Ok(phir)
@@ -842,16 +905,30 @@ impl PhirJsonCodegen {
     // =========================================================================
 
     fn convert_block(&mut self, block: &Block) -> PhirJsonResult<Vec<PhirJsonOp>> {
-        let mut ops = Vec::new();
-        for stmt in &block.statements {
-            ops.extend(self.convert_stmt(stmt)?);
-        }
-        Ok(ops)
+        self.angle_evaluator.borrow_mut().context.push_scope();
+        let result = (|| {
+            let mut ops = Vec::new();
+            for stmt in &block.statements {
+                ops.extend(self.convert_stmt(stmt)?);
+            }
+            Ok(ops)
+        })();
+        self.angle_evaluator.borrow_mut().context.pop_scope();
+        result
     }
 
     fn convert_stmt(&mut self, stmt: &Stmt) -> PhirJsonResult<Vec<PhirJsonOp>> {
         match stmt {
-            Stmt::Binding(binding) => self.convert_binding(binding),
+            Stmt::Binding(binding) => {
+                let result = self.convert_binding(binding);
+                if !define_comptime_binding(&mut self.angle_evaluator.borrow_mut(), binding) {
+                    self.angle_evaluator
+                        .borrow_mut()
+                        .context
+                        .define(&binding.name, crate::comptime::ComptimeValue::Undefined);
+                }
+                result
+            }
             Stmt::Expr(expr_stmt) => self.convert_expr_stmt(&expr_stmt.expr),
             Stmt::If(if_stmt) => self.convert_if(if_stmt),
             Stmt::For(for_stmt) => self.convert_for(for_stmt),
@@ -952,6 +1029,37 @@ impl PhirJsonCodegen {
         &self,
         gate_expr: &crate::ast::GateExpr,
     ) -> PhirJsonResult<Vec<PhirJsonOp>> {
+        if gate_expr.kind == GateKind::CRZ {
+            let theta = self.eval_angle_turns(
+                gate_expr
+                    .params
+                    .first()
+                    .ok_or(PhirJsonError::InvalidAngle)?,
+            )? * std::f64::consts::TAU;
+            let qubits = self.extract_qubits_from_target(&gate_expr.target)?;
+            if qubits.len() != 2 {
+                return Err(PhirJsonError::WrongArgumentCount {
+                    gate: "CRZ".to_string(),
+                    expected: 2,
+                    got: qubits.len(),
+                });
+            }
+            let pair = (qubits[0].clone(), qubits[1].clone());
+            return Ok(vec![
+                PhirJsonOp::Qop(PhirJsonQop::two_qubit_rotation(
+                    "RZZ",
+                    -theta / 2.0,
+                    "rad",
+                    vec![pair],
+                )),
+                PhirJsonOp::Qop(PhirJsonQop::rotation(
+                    "RZ",
+                    theta / 2.0,
+                    "rad",
+                    vec![qubits[1].clone()],
+                )),
+            ]);
+        }
         let gate_info = get_gate_info(gate_expr.kind);
 
         // Handle prepare operations
@@ -976,11 +1084,12 @@ impl PhirJsonCodegen {
         if gate_info.num_qubits == 1 {
             if gate_info.num_angles > 0 {
                 // Rotation gate - get angle from params
-                let angle = gate_expr
-                    .params
-                    .first()
-                    .and_then(|p| self.eval_expr_to_float(p))
-                    .unwrap_or(0.0);
+                let angle = self.eval_angle_turns(
+                    gate_expr
+                        .params
+                        .first()
+                        .ok_or(PhirJsonError::InvalidAngle)?,
+                )?;
                 Ok(vec![PhirJsonOp::Qop(PhirJsonQop::rotation(
                     gate_info.phir_name,
                     angle * std::f64::consts::TAU,
@@ -1103,6 +1212,34 @@ impl PhirJsonCodegen {
     }
 
     fn convert_gate(&self, gate_op: &GateOp) -> PhirJsonResult<Vec<PhirJsonOp>> {
+        if gate_op.kind == GateKind::CRZ {
+            let theta = self
+                .eval_angle_turns(gate_op.params.first().ok_or(PhirJsonError::InvalidAngle)?)?
+                * std::f64::consts::TAU;
+            let qubits = self.convert_slot_refs(&gate_op.targets);
+            if qubits.len() != 2 {
+                return Err(PhirJsonError::WrongArgumentCount {
+                    gate: "CRZ".to_string(),
+                    expected: 2,
+                    got: qubits.len(),
+                });
+            }
+            let pair = (qubits[0].clone(), qubits[1].clone());
+            return Ok(vec![
+                PhirJsonOp::Qop(PhirJsonQop::two_qubit_rotation(
+                    "RZZ",
+                    -theta / 2.0,
+                    "rad",
+                    vec![pair],
+                )),
+                PhirJsonOp::Qop(PhirJsonQop::rotation(
+                    "RZ",
+                    theta / 2.0,
+                    "rad",
+                    vec![qubits[1].clone()],
+                )),
+            ]);
+        }
         let gate_info = get_gate_info(gate_op.kind);
 
         // Handle prepare operations
@@ -1128,11 +1265,8 @@ impl PhirJsonCodegen {
         if gate_info.num_qubits == 1 {
             if gate_info.num_angles > 0 {
                 // Rotation gate - get angle from params
-                let angle = gate_op
-                    .params
-                    .first()
-                    .and_then(|p| self.eval_expr_to_float(p))
-                    .unwrap_or(0.0);
+                let angle = self
+                    .eval_angle_turns(gate_op.params.first().ok_or(PhirJsonError::InvalidAngle)?)?;
                 Ok(vec![PhirJsonOp::Qop(PhirJsonQop::rotation(
                     gate_info.phir_name,
                     angle * std::f64::consts::TAU,
@@ -1221,6 +1355,22 @@ impl PhirJsonCodegen {
     }
 
     fn convert_for(&mut self, for_stmt: &crate::ast::ForStmt) -> PhirJsonResult<Vec<PhirJsonOp>> {
+        self.angle_evaluator.borrow_mut().context.push_scope();
+        if let Some(variable) = for_stmt.captures.first() {
+            self.angle_evaluator
+                .borrow_mut()
+                .context
+                .define(variable, crate::comptime::ComptimeValue::Undefined);
+        }
+        let result = self.convert_for_in_scope(for_stmt);
+        self.angle_evaluator.borrow_mut().context.pop_scope();
+        result
+    }
+
+    fn convert_for_in_scope(
+        &mut self,
+        for_stmt: &crate::ast::ForStmt,
+    ) -> PhirJsonResult<Vec<PhirJsonOp>> {
         let mut ops = Vec::new();
 
         if let ForRange::Range { start, end, .. } = &for_stmt.range
@@ -1321,17 +1471,13 @@ impl PhirJsonCodegen {
         }
     }
 
-    fn eval_expr_to_float(&self, expr: &Expr) -> Option<f64> {
-        match expr {
-            Expr::IntLit(IntLit { value, .. }) => Some(*value as f64),
-            Expr::FloatLit(fl) => Some(fl.value),
-            Expr::AngleLit(angle) => {
-                // Evaluate the angle value and convert to turns
-                let value = self.eval_expr_to_float(&angle.value)?;
-                Some(angle.unit.to_turns(value))
+    fn eval_angle_turns(&self, expr: &Expr) -> PhirJsonResult<f64> {
+        resolve_angle_turns(&mut self.angle_evaluator.borrow_mut(), expr).map_err(|error| {
+            PhirJsonError::RuntimeAngle {
+                expression: angle_expression_name(expr),
+                reason: error.to_string(),
             }
-            _ => None,
-        }
+        })
     }
 
     fn try_eval_const(&self, expr: &Expr) -> Option<i64> {

@@ -17,6 +17,7 @@ This module provides gate operation bindings for the sparse stabilizer simulator
 stabilizer gate implementations optimized for sparse representation of stabilizer tableaux.
 """
 
+from pecos.simulators.clifford_lowering import install_clifford_rotation_bindings
 from pecos.simulators.sparsestab import cmd_init as qinit
 from pecos.simulators.sparsestab import cmd_meas as qmeas
 from pecos.simulators.sparsestab import cmd_one_qubit as q1
@@ -102,3 +103,5 @@ gate_dict = {
     "Measure +Z": qmeas.meas_z,
     "force output": qmeas.force_output,
 }
+
+install_clifford_rotation_bindings(gate_dict)

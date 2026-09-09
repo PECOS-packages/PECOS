@@ -562,7 +562,9 @@ mod tests {
 
     fn sample_annotation_parities(circuit: &TickCircuit) -> (Vec<bool>, Vec<bool>) {
         let mut sim = SparseStab::new(144);
-        let measurements = CircuitExecutor::new(circuit).run(&mut sim);
+        let measurements = CircuitExecutor::new(circuit)
+            .run(&mut sim)
+            .expect("bivariate bicycle circuit contains supported Clifford gates");
         let parity = |ids: &[pecos_core::MeasId]| {
             ids.iter()
                 .fold(false, |value, id| value ^ measurements[id.index()].outcome)

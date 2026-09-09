@@ -42,30 +42,10 @@ use pecos_simulators::{BitmaskPauliProp, CliffordGateable};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 
-/// Error returned when `build_fault_table` encounters an unsupported gate.
-#[derive(Clone, Debug)]
-pub struct UnsupportedGateError {
-    pub gate_type: GateType,
-    pub tick: usize,
-    pub gate_in_tick: usize,
-    pub qubits: Vec<usize>,
-}
-
-impl fmt::Display for UnsupportedGateError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "Unsupported gate {:?} at tick {} gate {} on qubits {:?}. \
-             Supported: H, X, Y, Z, SZ, SZdg, SX, SXdg, SY, SYdg, F, Fdg, \
-             CX, CY, CZ, SXX, SXXdg, SYY, SYYdg, SZZ, SZZdg, SWAP, \
-             MZ/MeasureFree/MeasureLeaked, PZ, QAlloc, QFree, I, Idle, \
-             plus metadata (MeasCrosstalk*, TrackedPauliMeta).",
-            self.gate_type, self.tick, self.gate_in_tick, self.qubits
-        )
-    }
-}
-
-impl std::error::Error for UnsupportedGateError {}
+pub use super::propagator::UnsupportedGateError;
+use super::propagator::{
+    UnsupportedGateLocation, is_supported_noop_or_metadata_gate, is_supported_prep_gate,
+};
 
 /// Standard single-qubit Clifford gates supported by `CliffordGateable`.
 pub const STANDARD_1Q_CLIFFORD_GATES: &[GateType] = &[
@@ -116,24 +96,6 @@ fn is_supported_measurement_gate(gate_type: GateType) -> bool {
             | GateType::MeasureFree
             | GateType::MeasureLeaked
             | GateType::MPZ
-    )
-}
-
-#[inline]
-fn is_supported_prep_gate(gate_type: GateType) -> bool {
-    matches!(gate_type, GateType::PX | GateType::PZ | GateType::QAlloc)
-}
-
-#[inline]
-fn is_supported_noop_or_metadata_gate(gate_type: GateType) -> bool {
-    matches!(
-        gate_type,
-        GateType::QFree
-            | GateType::I
-            | GateType::Idle
-            | GateType::MeasCrosstalkGlobalPayload
-            | GateType::MeasCrosstalkLocalPayload
-            | GateType::TrackedPauliMeta
     )
 }
 
@@ -248,8 +210,10 @@ fn validate_tick_circuit(tc: &TickCircuit) -> Result<(), UnsupportedGateError> {
             }
             return Err(UnsupportedGateError {
                 gate_type: gate.gate_type,
-                tick: tick_idx,
-                gate_in_tick: gate.batch_index(),
+                location: UnsupportedGateLocation::Tick {
+                    tick: tick_idx,
+                    gate_in_tick: gate.batch_index(),
+                },
                 qubits: gate.qubits.iter().map(pecos_core::QubitId::index).collect(),
             });
         }
@@ -522,7 +486,7 @@ fn propagate_forward(
                 prop.swap(&pair);
             }
             // Preparation absorbs propagating errors on the reset qubit.
-            GateType::PX | GateType::PZ | GateType::QAlloc if !loc.qubits.is_empty() => {
+            gate_type if is_supported_prep_gate(gate_type) && !loc.qubits.is_empty() => {
                 prop.clear_qubit(loc.qubits[0]);
             }
             // The X component flips the measurement and then survives the
@@ -1228,7 +1192,7 @@ fn build_structural_fault_catalog(tc: &TickCircuit) -> Result<FaultCatalog, Unsu
                 });
             }
 
-            GateType::PX | GateType::PZ | GateType::QAlloc if !loc.qubits.is_empty() => {
+            gate_type if is_supported_prep_gate(gate_type) && !loc.qubits.is_empty() => {
                 let q = loc.qubits[0];
                 let prep_fault = if gate_type == GateType::PX {
                     PauliType::Z
@@ -1576,7 +1540,7 @@ pub fn symbolic_measurement_history(
             let qs: Vec<usize> = gate.qubits.iter().map(pecos_core::QubitId::index).collect();
 
             match gate.gate_type {
-                GateType::PX | GateType::PZ | GateType::QAlloc => {
+                gate_type if is_supported_prep_gate(gate_type) => {
                     for &q in &qs {
                         sim.pz(q);
                         if gate.gate_type == GateType::PX {
@@ -1687,18 +1651,15 @@ pub fn symbolic_measurement_history(
                         }
                     }
                 }
-                GateType::I
-                | GateType::Idle
-                | GateType::QFree
-                | GateType::MeasCrosstalkGlobalPayload
-                | GateType::MeasCrosstalkLocalPayload
-                | GateType::TrackedPauliMeta => {}
+                gate_type if is_supported_noop_or_metadata_gate(gate_type) => {}
                 other => {
                     return Err(MeasurementHistoryError::UnsupportedGate(
                         UnsupportedGateError {
                             gate_type: other,
-                            tick: tick_idx,
-                            gate_in_tick: gate_idx,
+                            location: UnsupportedGateLocation::Tick {
+                                tick: tick_idx,
+                                gate_in_tick: gate_idx,
+                            },
                             qubits: qs,
                         },
                     ));
@@ -2601,8 +2562,13 @@ mod tests {
         assert!(result.is_err(), "T should be rejected");
         let err = result.unwrap_err();
         assert_eq!(err.gate_type, GateType::T);
-        assert_eq!(err.tick, 1, "T is in tick 1");
-        assert_eq!(err.gate_in_tick, 0, "T is gate 0 within that tick");
+        assert_eq!(
+            err.location,
+            UnsupportedGateLocation::Tick {
+                tick: 1,
+                gate_in_tick: 0,
+            }
+        );
         assert_eq!(err.qubits, vec![0], "full original qubit list");
     }
 
@@ -2715,7 +2681,10 @@ mod tests {
         match result.unwrap_err() {
             MeasurementHistoryError::UnsupportedGate(err) => {
                 assert_eq!(err.gate_type, GateType::T);
-                assert_eq!(err.tick, 1);
+                assert!(matches!(
+                    err.location,
+                    UnsupportedGateLocation::Tick { tick: 1, .. }
+                ));
                 assert_eq!(err.qubits, vec![0]);
             }
             other @ MeasurementHistoryError::LeakedMeasurementNotRepresentable { .. } => {

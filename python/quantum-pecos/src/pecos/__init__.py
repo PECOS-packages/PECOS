@@ -86,6 +86,7 @@ from pecos_rslib import (
     kron,  # Kronecker product
     ln,  # Natural logarithm
     log,  # Logarithm with base
+    lower_clifford_rotation,  # Lower table-backed Clifford-angle rotations
     max,  # Maximum value
     mean,  # Mean/average
     min,  # Minimum value
@@ -311,7 +312,6 @@ stabilizer = pecos_rslib.stabilizer
 sparse_stab = pecos_rslib.sparse_stab
 stab_vec = pecos_rslib.stab_vec
 density_matrix = pecos_rslib.density_matrix
-hugr_engine = pecos_rslib.hugr_engine
 
 # Re-export noise model builder classes for direct instantiation
 GeneralNoiseModelBuilder = pecos_rslib.GeneralNoiseModelBuilder
@@ -419,7 +419,6 @@ __all__ = [
     "graph",
     "guppy",  # Deprecated alias for guppy_gen, resolved lazily via __getattr__
     "guppy_gen",
-    "hugr_engine",
     "i8",
     "i16",
     "i32",
@@ -432,6 +431,7 @@ __all__ = [
     "linspace",
     "ln",
     "log",
+    "lower_clifford_rotation",
     "math",
     "max",
     "mean",

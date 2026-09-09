@@ -126,9 +126,9 @@ def test_sq_gates() -> None:
     for _ in range(10):
         assert compare_gates(U, g.U, angles=pc.random.random(3), test_angles=pc.random.random(3))
 
-    # U1q / R1XY
+    # U1q / RXY1Q
     for _ in range(10):
-        assert compare_gates("R1XY", g.U1q, angles=pc.random.random(2), test_angles=pc.random.random(3))
+        assert compare_gates("RXY1Q", g.U1q, angles=pc.random.random(2), test_angles=pc.random.random(3))
 
     # Paulis
     for _ in range(10):

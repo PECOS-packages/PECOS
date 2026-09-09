@@ -34,6 +34,8 @@ fn exact_config() -> FrontierConfig {
         column_order: None,
         merge_indistinguishable: false,
         bp_score_iterations: 0,
+        metric_mode: pecos_frontier::MetricMode::default(),
+        int_metric_scale: 1024,
     }
 }
 

@@ -15,6 +15,28 @@ use crate::traits::OpTrait;
 /// HUGR dialect implementation
 pub struct HugrDialect;
 
+// This is the single source of truth for fixed named gates accepted by the
+// HUGR-to-QIS converter and registered by this dialect.
+const HUGR_NAMED_GATE_DEFS: &[(&str, &str, i32, i32)] = &[
+    ("h", "Hadamard gate", 1, 1),
+    ("x", "Pauli-X gate", 1, 1),
+    ("y", "Pauli-Y gate", 1, 1),
+    ("z", "Pauli-Z gate", 1, 1),
+    ("s", "S gate", 1, 1),
+    ("sdg", "S-dagger gate", 1, 1),
+    ("t", "T gate", 1, 1),
+    ("tdg", "T-dagger gate", 1, 1),
+    ("sx", "Square-root-of-X gate", 1, 1),
+    ("sxdg", "Adjoint square-root-of-X gate", 1, 1),
+    ("cx", "Controlled-X (CNOT) gate", 2, 2),
+];
+
+pub(crate) fn is_hugr_named_gate(name: &str) -> bool {
+    HUGR_NAMED_GATE_DEFS
+        .iter()
+        .any(|(registered, _, _, _)| *registered == name)
+}
+
 impl Dialect for HugrDialect {
     fn namespace(&self) -> &'static str {
         "hugr"
@@ -27,29 +49,19 @@ impl Dialect for HugrDialect {
     #[allow(clippy::too_many_lines)] // Dialect initialization is inherently a long list of operation registrations
     fn initialize(&self, registry: &mut DialectRegistry) -> Result<()> {
         // Register HUGR quantum operations
-        registry.register_operation(
-            self.namespace(),
-            OperationDef {
-                name: "h".to_string(),
-                description: "Hadamard gate".to_string(),
-                num_operands: 1,
-                num_results: 1,
-                num_regions: 0,
-                traits: vec![OpTrait::NoSideEffect],
-            },
-        )?;
-
-        registry.register_operation(
-            self.namespace(),
-            OperationDef {
-                name: "cx".to_string(),
-                description: "Controlled-X (CNOT) gate".to_string(),
-                num_operands: 2,
-                num_results: 2,
-                num_regions: 0,
-                traits: vec![OpTrait::NoSideEffect],
-            },
-        )?;
+        for &(name, description, num_operands, num_results) in HUGR_NAMED_GATE_DEFS {
+            registry.register_operation(
+                self.namespace(),
+                OperationDef {
+                    name: name.to_string(),
+                    description: description.to_string(),
+                    num_operands,
+                    num_results,
+                    num_regions: 0,
+                    traits: vec![OpTrait::NoSideEffect],
+                },
+            )?;
+        }
 
         registry.register_operation(
             self.namespace(),
@@ -169,13 +181,8 @@ impl Dialect for HugrDialect {
     fn verify_operation(&self, op: &CustomOp) -> Result<()> {
         // Verify HUGR-specific constraints
         match op.name() {
-            "h" | "rx" | "ry" | "rz" => {
-                // Single qubit gates should have correct operand/result counts
-                // This is handled by the operation definition
-                Ok(())
-            }
-            "cx" => {
-                // Two-qubit gate constraints
+            name if is_hugr_named_gate(name) || matches!(name, "rx" | "ry" | "rz") => {
+                // Gate operand/result counts are declared by the operation definition.
                 Ok(())
             }
             _ => Ok(()),
@@ -184,7 +191,9 @@ impl Dialect for HugrDialect {
 
     fn get_operation_traits(&self, op_name: &str) -> Vec<OpTrait> {
         match op_name {
-            "h" | "rx" | "ry" | "rz" | "cx" => vec![OpTrait::NoSideEffect],
+            name if is_hugr_named_gate(name) || matches!(name, "rx" | "ry" | "rz") => {
+                vec![OpTrait::NoSideEffect]
+            }
             "funcdefn" => vec![OpTrait::FunctionLike],
             "conditional" => vec![OpTrait::RegionBranch],
             _ => vec![],
@@ -199,4 +208,29 @@ impl Dialect for HugrDialect {
 pub fn register_dialect(registry: &mut DialectRegistry) -> Result<()> {
     let dialect = HugrDialect;
     registry.register_dialect(dialect)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn converter_named_gates_are_registered_and_validate() {
+        let mut registry = DialectRegistry::new();
+        register_dialect(&mut registry).unwrap();
+
+        for &(name, _, num_operands, num_results) in HUGR_NAMED_GATE_DEFS {
+            assert!(is_hugr_named_gate(name));
+            let definition = registry
+                .get_operation("hugr", name)
+                .unwrap_or_else(|| panic!("converter accepts unregistered hugr.{name}"));
+            assert_eq!(definition.num_operands, num_operands);
+            assert_eq!(definition.num_results, num_results);
+            assert_eq!(definition.traits, [OpTrait::NoSideEffect]);
+
+            let operation = CustomOp::new("hugr", name, vec![], BTreeMap::new());
+            registry.verify_custom_operation(&operation).unwrap();
+        }
+    }
 }

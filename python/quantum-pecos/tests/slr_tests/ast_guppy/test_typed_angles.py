@@ -49,6 +49,20 @@ def test_canonicalization_full_turn_is_identity() -> None:
     assert rad(2 * math.pi).value == rad(0.0).value
 
 
+def test_controlled_rotation_rejects_typed_angle() -> None:
+    q = QReg("q", 2)
+    with pytest.raises(TypeError, match=r"4pi-periodic.*reduced modulo 2pi"):
+        qb.CRZ(rad(math.pi), q[0], q[1])
+    assert qb.CRZ(math.pi, q[0], q[1]).params == (math.pi,)
+
+
+def test_ordinary_full_turn_serialization_has_no_parallel_source_value() -> None:
+    prog = Main(q := QReg("q", 1), qb.RZ(rad(math.tau), q[0]))
+    serialized = ast_to_json(slr_to_ast(prog))
+    assert "source_value" not in serialized
+    assert json_to_ast(serialized) == slr_to_ast(prog)
+
+
 def test_negative_angle_signed_round_trip() -> None:
     # Signed display keeps ordinary negatives readable.
     assert rad(-0.5).slr_repr() == "rad(-0.5)"
@@ -102,7 +116,7 @@ def test_construction_arity_guard() -> None:
     with pytest.raises(TypeError, match="needs at least 2 qubit"):
         qb.RZZ(rad(0.5), q[0])  # one short for a 2q gate
     with pytest.raises(TypeError, match="needs at least 2 qubit"):
-        qb.CRZ(rad(0.5), q[0])
+        qb.CRZ(0.5, q[0])
     # Valid forms still construct: whole-register broadcast + parallel.
     assert qb.RZZ(rad(0.5), q) is not None
     assert qb.RX(rad(0.5), q[0], q[1]) is not None

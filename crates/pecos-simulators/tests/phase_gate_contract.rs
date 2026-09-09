@@ -236,10 +236,7 @@ fn three_operand_phase_exceeds_the_direct_hardware_lowering_limit() {
             UnitaryRep::Compose(vec![phase.clone()]),
             UnitaryRep::Tensor(vec![phase.clone()]),
             UnitaryRep::Adjoint(Box::new(phase.clone())),
-            UnitaryRep::Phased {
-                phase: Angle64::QUARTER_TURN,
-                inner: Box::new(phase),
-            },
+            phase.with_phase(Angle64::QUARTER_TURN),
         ] {
             assert_eq!(rep.try_decompose(), Err(error));
         }
@@ -462,42 +459,93 @@ fn clifford_membership_follows_the_angle_table() {
     );
 }
 
-/// A zero-operand `Phase` inside a `Compose` must give the same matrix as the
-/// `Phased` wrapper, so the two spellings agree numerically even though they
-/// compare unequal structurally.
-///
-/// This also pins the scalar fast path in the dense `Compose` lowering: without
-/// it the scalar is materialised as a full matrix and multiplied, which reaches
-/// the same answer by a costlier route.
+/// The former wrapper scaled the inner matrix directly. Keep that independent
+/// reference after removing the variant, including the original exact comparison.
 #[test]
 fn composed_scalar_phase_matches_the_phased_wrapper() {
+    use pecos_core::unitary::{CX, H, I, T, X, Z};
+    use pecos_core::{GlobalPhase, PauliString};
+
+    let inners = [
+        UnitaryRep::Pauli(PauliString::identity()),
+        I(0),
+        X(0),
+        -X(0),
+        H(0),
+        T(0),
+        H(0) & Z(2),
+        CX(0, 2) * H(0),
+        UnitaryRep::Adjoint(Box::new(T(2))),
+        UnitaryRep::phase_gate(Angle64::QUARTER_TURN, smallvec![0usize]),
+    ];
     for gamma in [
         Angle64::ZERO,
         Angle64::QUARTER_TURN,
         Angle64::HALF_TURN,
         Angle64::HALF_TURN / 4,
+        Angle64::from_radians(-0.37),
     ] {
-        let inner = UnitaryRep::phase_gate(Angle64::QUARTER_TURN, smallvec![0usize]);
+        let (sin, cos) = gamma.sin_cos();
+        let scalar = Complex64::new(cos, sin);
+        for inner in &inners {
+            let composed = UnitaryRep::Compose(vec![
+                UnitaryRep::phase_gate(gamma, smallvec![]),
+                inner.clone(),
+            ]);
+            for size in [3, 4] {
+                // This is exactly the removed wrapper's dense implementation.
+                let expected = to_matrix_with_size(inner, size).into_inner() * scalar;
+                assert_eq!(to_matrix_with_size(&composed, size).inner(), &expected);
+                for adjoint in [
+                    composed.dg(),
+                    UnitaryRep::Adjoint(Box::new(composed.clone())),
+                ] {
+                    let actual = to_matrix_with_size(&adjoint, size);
+                    assert!((actual.inner() - expected.adjoint()).norm() < 1e-12);
+                }
+                let constructed = to_matrix_with_size(&inner.clone().with_phase(gamma), size);
+                assert!((constructed.inner() - &expected).norm() < 1e-12);
 
-        let wrapped = UnitaryRep::Phased {
-            phase: gamma,
-            inner: Box::new(inner.clone()),
-        };
-        let composed = UnitaryRep::Compose(vec![
-            UnitaryRep::Gate(
-                Unitary::Phase {
-                    gamma,
-                    num_qubits: 0,
-                },
-                smallvec![],
-            ),
-            inner,
-        ]);
-
-        assert_eq!(
-            to_matrix_with_size(&wrapped, 1),
-            to_matrix_with_size(&composed, 1),
-            "wrapper and composed scalar disagree at gamma={gamma:?}"
-        );
+                let outer = Angle64::from_radians(0.23);
+                let nested = composed.clone().with_phase(outer);
+                let (sin, cos) = outer.sin_cos();
+                let nested_expected = &expected * Complex64::new(cos, sin);
+                assert!(
+                    (to_matrix_with_size(&nested, size).inner() - &nested_expected).norm() < 1e-12
+                );
+                assert!(
+                    (to_matrix_with_size(&nested.dg(), size).inner() - nested_expected.adjoint())
+                        .norm()
+                        < 1e-12
+                );
+                assert_eq!(
+                    nested.phase(),
+                    GlobalPhase::from(outer)
+                        .multiply(&GlobalPhase::from(gamma))
+                        .multiply(&inner.phase())
+                );
+                assert_eq!(nested.is_clifford(), inner.is_clifford());
+                assert!(!nested.is_identity());
+                assert_eq!(nested.qubits(), inner.qubits());
+            }
+            // These are the removed wrapper's query rules.
+            assert_eq!(composed.is_clifford(), inner.is_clifford());
+            assert_eq!(
+                composed.is_identity(),
+                gamma == Angle64::ZERO && inner.is_identity()
+            );
+            assert_eq!(composed.qubits(), inner.qubits());
+            assert_eq!(
+                composed.dg().dg(),
+                UnitaryRep::Compose(vec![
+                    UnitaryRep::phase_gate(gamma, smallvec![]),
+                    inner.dg().dg(),
+                ])
+            );
+            assert_eq!(composed.try_decompose(), inner.try_decompose());
+            assert_eq!(composed.to_clifford_rep(3), inner.to_clifford_rep(3));
+            assert_eq!(composed.to_ascii(3), inner.to_ascii(3));
+            assert_eq!(composed.simplify().is_identity(), composed.is_identity());
+        }
     }
 }

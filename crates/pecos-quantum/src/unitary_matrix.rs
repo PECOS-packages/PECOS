@@ -1356,13 +1356,6 @@ fn to_matrix_with_size_impl(op: &UnitaryRep, num_qubits: usize) -> DMatrix<Compl
             let inner_matrix = to_matrix_with_size_impl(inner, num_qubits);
             inner_matrix.adjoint()
         }
-
-        UnitaryRep::Phased { phase, inner } => {
-            let inner_matrix = to_matrix_with_size_impl(inner, num_qubits);
-            let (sin_p, cos_p) = phase.sin_cos();
-            let phase_factor = Complex64::new(cos_p, sin_p); // e^{i*phase}
-            inner_matrix * phase_factor
-        }
     }
 }
 

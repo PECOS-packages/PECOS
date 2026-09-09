@@ -28,7 +28,12 @@ from __future__ import annotations
 import pytest
 import stim
 from pecos.qec.surface import LogicalCircuitBuilder, SurfacePatch
-from pecos.qec.surface.logical_circuit import _validate_boundary_cardinality
+from pecos.qec.surface.logical_circuit import (
+    _TWO_PATCH_IDENTITY,
+    _append_two_patch_gate_transform,
+    _canonical_two_patch_suffix,
+    _validate_boundary_cardinality,
+)
 from pecos.qec.surface.patch import PatchOrientation
 from pecos_rslib.qec import LogicalAlgorithmDecoder, LogicalCircuitDecoder
 
@@ -617,6 +622,138 @@ def test_repeated_logical_cx_provider_reuses_one_physical_family(monkeypatch):
     monkeypatch.setattr(LogicalCircuitBuilder, "_build_structured_dem", reject_full_compile)
     warm = build(
         [11, 6, 3],
+        labels=("warm_control", "warm_target"),
+        offsets=(23, 223),
+        coords=((-2.0, 13.0), (55.0, 21.0)),
+    )
+    warm.build_algorithm_descriptor(p1=0.001, p2=0.002, p_meas=0.003, p_prep=0.004)
+
+
+@pytest.mark.parametrize(
+    ("gate_names", "rounds", "initial_bases", "final_bases"),
+    [
+        (("h0", "h1", "cx"), (3, 4, 3, 5), ("Z", "X"), ("Z", "X")),
+        (("cx", "h0", "h1", "cx"), (2, 3, 2, 4, 3), ("Z", "Z"), ("X", "Z")),
+    ],
+)
+def test_mixed_h_cx_provider_matches_full_compile(gate_names, rounds, initial_bases, final_bases):
+    """Finite logical-state keys compose H and CX families exactly."""
+    builder = LogicalCircuitBuilder()
+    builder.add_patch(SurfacePatch.create(3), "control", qubit_offset=7, coord_offset=(-5.0, 2.0))
+    builder.add_patch(SurfacePatch.create(3), "target", qubit_offset=107, coord_offset=(40.0, -3.0))
+    labels = ["control", "target"]
+    builder.add_memory(labels, rounds[0], dict(zip(labels, initial_bases, strict=True)))
+    for gate_name, segment_rounds in zip(gate_names, rounds[1:], strict=True):
+        if gate_name == "h0":
+            builder.add_transversal_h("control")
+        elif gate_name == "h1":
+            builder.add_transversal_h("target")
+        else:
+            builder.add_transversal_cx("control", "target")
+        builder.add_memory(labels, segment_rounds, dict(zip(labels, final_bases, strict=True)))
+
+    oracle, _, _ = builder._build_structured_dem(  # noqa: SLF001
+        p1=0.002,
+        p2=0.003,
+        p_meas=0.004,
+        p_prep=0.005,
+    )
+    assert builder.build_dem(p1=0.002, p2=0.003, p_meas=0.004, p_prep=0.005) == oracle.to_string()
+    descriptor = builder.build_algorithm_descriptor(
+        p1=0.002,
+        p2=0.003,
+        p_meas=0.004,
+        p_prep=0.005,
+    )
+    assert descriptor["full_dem"] == oracle.to_string()
+    assert len(descriptor["segments"]) == len(rounds)
+    assert [gate[0]["type"] for gate in descriptor["boundary_gates"]] == [
+        "Hadamard" if gate_name.startswith("h") else "Cnot" for gate_name in gate_names
+    ]
+
+
+def test_mixed_h_cx_future_action_normalizes_to_a_bounded_valid_word():
+    """Every valid short schedule maps to the same canonical finite state."""
+    frontier = [((), (False, False), _TWO_PATCH_IDENTITY)]
+    for _ in range(6):
+        next_frontier = []
+        for word, swapped, transform in frontier:
+            canonical = _canonical_two_patch_suffix((False, False), transform, swapped)
+            replay_swapped = (False, False)
+            replay_transform = _TWO_PATCH_IDENTITY
+            for gate in canonical:
+                if gate == "cx":
+                    assert replay_swapped[0] == replay_swapped[1]
+                elif gate == "h0":
+                    replay_swapped = (not replay_swapped[0], replay_swapped[1])
+                else:
+                    replay_swapped = (replay_swapped[0], not replay_swapped[1])
+                replay_transform = _append_two_patch_gate_transform(replay_transform, gate)
+            assert replay_swapped == swapped
+            assert replay_transform == transform
+
+            for gate in ("h0", "h1", "cx"):
+                if gate == "cx" and swapped[0] != swapped[1]:
+                    continue
+                child_swapped = swapped
+                if gate == "h0":
+                    child_swapped = (not swapped[0], swapped[1])
+                elif gate == "h1":
+                    child_swapped = (swapped[0], not swapped[1])
+                child_transform = _append_two_patch_gate_transform(transform, gate)
+                next_frontier.append(((*word, gate), child_swapped, child_transform))
+        frontier = next_frontier
+
+
+def test_mixed_h_cx_provider_reuses_normalized_boundary_families(monkeypatch):
+    """Equivalent depths and placement reuse the finite mixed-state cache."""
+    from pecos.qec.surface.logical_circuit import _cached_surface_mixed_dem_templates
+
+    _cached_surface_mixed_dem_templates.cache_clear()
+
+    def build(rounds, *, labels, offsets, coords):
+        control, target = labels
+        builder = LogicalCircuitBuilder()
+        builder.add_patch(SurfacePatch.create(3), control, qubit_offset=offsets[0], coord_offset=coords[0])
+        builder.add_patch(SurfacePatch.create(3), target, qubit_offset=offsets[1], coord_offset=coords[1])
+        builder.add_memory([control, target], rounds[0], {control: "Z", target: "X"})
+        builder.add_transversal_h(control)
+        builder.add_memory([control, target], rounds[1], {control: "X", target: "Z"})
+        builder.add_transversal_h(target)
+        builder.add_memory([control, target], rounds[2], {control: "X", target: "X"})
+        builder.add_transversal_cx(control, target)
+        builder.add_memory([control, target], rounds[3], {control: "Z", target: "X"})
+        return builder
+
+    first = build(
+        (3, 4, 3, 5),
+        labels=("C", "T"),
+        offsets=(0, 50),
+        coords=((0.0, 0.0), (20.0, 0.0)),
+    )
+    first.build_dem(p1=0.001, p2=0.002, p_meas=0.003, p_prep=0.004)
+    after_first = _cached_surface_mixed_dem_templates.cache_info()
+    assert after_first.misses == 3
+    assert after_first.currsize == 3
+
+    second = build(
+        (7, 2, 9, 6),
+        labels=("left", "right"),
+        offsets=(13, 113),
+        coords=((-17.0, 8.0), (42.0, -3.0)),
+    )
+    second.build_dem(p1=0.001, p2=0.002, p_meas=0.003, p_prep=0.004)
+    after_second = _cached_surface_mixed_dem_templates.cache_info()
+    assert after_second.misses == after_first.misses
+    assert after_second.hits == after_first.hits + 3
+
+    def reject_full_compile(*_args, **_kwargs):
+        message = "a warm mixed H/CX template request compiled the full circuit"
+        raise AssertionError(message)
+
+    monkeypatch.setattr(LogicalCircuitBuilder, "_build_structured_dem", reject_full_compile)
+    warm = build(
+        (11, 6, 3, 8),
         labels=("warm_control", "warm_target"),
         offsets=(23, 223),
         coords=((-2.0, 13.0), (55.0, 21.0)),

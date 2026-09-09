@@ -158,11 +158,21 @@ parity of later CX gates is applied through the instance GF(2) routing map: the
 target output fans into control-plus-target for X measurement, while the control
 output fans into control-plus-target for Z measurement. Exact tests cover two
 and three CX boundaries and prove that depth, labels, offsets, and placement do
-not cause another physical compile. Mixed final bases expose too few logical
-columns in the current one-observable-per-patch schema for a sound transform and
-therefore retain the full-model fallback, as do patches whose shapes differ,
-reversed/noncanonical operation ordering, or a memory side shorter than two
-rounds.
+not cause another physical compile.
+
+Mixed two-patch H/CX schedules use a bounded boundary family selected by the
+physical X/Z assignment before the gate and the complete future logical action.
+The latter is normalized to a finite two-qubit real-Clifford state, then
+synthesized as a canonical H/CX word subject to the frontend's equal-orientation
+CX constraint. The canonical word may contain several logical gates, but its
+length is bounded by the finite state space rather than the algorithm depth;
+three SEC rounds between its gates isolate the selected physical slice. This
+also handles mixed final measurement bases that cannot be represented by the
+two-column fan-out shortcut used for repeated CX alone. Exact tests cover both
+H-before-CX and CX-before-H schedules, descriptor segmentation, independent
+placement, and warm-cache reuse. Patches whose shapes differ, reversed CX
+ordering, invalid physical orientation transitions, or a memory side shorter
+than two rounds retain the full-model fallback.
 
 The current standalone SZ/SZdg emitter is deliberately not cached. Its full DEM
 contains mechanisms whose detector span grows with the entire preceding memory
@@ -256,10 +266,10 @@ columns. Initialization, stationary bulk SEC, pre-terminal SEC, and terminal
 surface-memory families have exact composition coverage and a production
 single-patch memory provider. Transversal-H boundaries and their adjacent memory
 families, including repeated H sequences, also have exact composition coverage
-and a production provider, as do repeated same-basis transversal CX gates
-between matching patch shapes. It does not
+and a production provider, as do repeated transversal CX gates and mixed H/CX
+schedules between matching patch shapes. It does not
 yet implement the bounded mid-cycle SZ/SZdg circuit, general multi-patch or
-lattice-surgery families, mixed-basis repeated CX or mixed logical gates,
-decoder prior mutation, the anti-snake logical-subgraph window decoder, or
-adaptive syndrome-extraction templates. Full-circuit DEM construction remains
-the equivalence oracle and the conservative fallback outside supported families.
+lattice-surgery families, decoder prior mutation, the anti-snake
+logical-subgraph window decoder, or adaptive syndrome-extraction templates.
+Full-circuit DEM construction remains the equivalence oracle and the
+conservative fallback outside supported families.

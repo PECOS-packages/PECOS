@@ -88,6 +88,16 @@ pub struct Angle<T: Unsigned + Copy> {
     fraction: T, // Fixed-point fractional representation in [0, 2^n) turns
 }
 
+impl<T: Unsigned + Copy + ToPrimitive + Bounded> Angle<T> {
+    /// Fraction units per turn, matching the modulus of the wrapping arithmetic.
+    fn fraction_modulus() -> f64 {
+        T::max_value()
+            .to_f64()
+            .expect("Failed to convert max_value to f64")
+            + 1.0
+    }
+}
+
 impl<T> Angle<T>
 where
     T: Unsigned
@@ -119,14 +129,7 @@ where
     /// # Panics
     /// This function will panic if the conversion of `fraction` or `max_value` to `f64` fails.
     pub fn to_radians(&self) -> f64 {
-        let max_value = T::max_value()
-            .to_f64()
-            .expect("Failed to convert max_value to f64");
-        self.fraction
-            .to_f64()
-            .expect("Failed to convert fraction to f64")
-            / max_value
-            * std::f64::consts::TAU
+        self.to_turns() * std::f64::consts::TAU
     }
 
     /// Converts the angle to radians in `(-π, π]`.
@@ -192,13 +195,10 @@ where
     /// # Panics
     /// This function will panic if the conversion of `fraction` or `max_value` to `f64` fails.
     pub fn to_turns(&self) -> f64 {
-        let max_value = T::max_value()
-            .to_f64()
-            .expect("Failed to convert max_value to f64");
         self.fraction
             .to_f64()
             .expect("Failed to convert fraction to f64")
-            / max_value
+            / Self::fraction_modulus()
     }
 
     /// Converts the angle to signed turns in `(-0.5, 0.5]`.
@@ -240,16 +240,7 @@ where
     pub fn from_radians(radians: f64) -> Self {
         const TAU: f64 = std::f64::consts::TAU;
 
-        // Normalize the input to [0, 2π)
-        let fraction = ((radians.rem_euclid(TAU) / TAU)
-            * T::max_value()
-                .to_f64()
-                .expect("Conversion of max_value to f64 failed"))
-        .round();
-
-        Self {
-            fraction: T::from_f64(fraction).expect("Conversion of fraction to target type failed"),
-        }
+        Self::from_normalized_turns(radians.rem_euclid(TAU) / TAU)
     }
 
     /// Creates an angle from a value in turns.
@@ -259,14 +250,14 @@ where
     #[inline]
     #[must_use]
     pub fn from_turns(turns: f64) -> Self {
-        // Normalize the input to [0, 1) turns
-        let normalized_turns = turns.rem_euclid(1.0);
+        Self::from_normalized_turns(turns.rem_euclid(1.0))
+    }
 
-        let fraction = (normalized_turns
-            * T::max_value()
-                .to_f64()
-                .expect("Conversion of max_value to f64 failed"))
-        .round();
+    fn from_normalized_turns(turns: f64) -> Self {
+        let modulus = Self::fraction_modulus();
+        // Both rem_euclid and rounding can reach a full turn. Wrap after
+        // rounding so that it represents zero, just like integer arithmetic.
+        let fraction = (turns * modulus).round().rem_euclid(modulus);
 
         Self {
             fraction: T::from_f64(fraction).expect("Conversion of fraction to target type failed"),
@@ -405,7 +396,7 @@ where
         let max = T::max_value()
             .to_f64()
             .expect("Failed to convert max_value to f64");
-        let frac = (radians.abs() / std::f64::consts::TAU * max).round();
+        let frac = (radians.abs() / std::f64::consts::TAU * Self::fraction_modulus()).round();
         T::from_f64(frac.clamp(0.0, max)).expect("Failed to convert tolerance to fraction")
     }
 
@@ -428,7 +419,7 @@ where
         let max = T::max_value()
             .to_f64()
             .expect("Failed to convert max_value to f64");
-        let frac = (turns.abs() * max).round();
+        let frac = (turns.abs() * Self::fraction_modulus()).round();
         T::from_f64(frac.clamp(0.0, max)).expect("Failed to convert tolerance to fraction")
     }
 }
@@ -737,9 +728,7 @@ impl<T: Unsigned + ToPrimitive + Bounded + Copy> fmt::Display for Angle<T> {
             .fraction
             .to_f64()
             .expect("Failed to convert fraction to f64")
-            / T::max_value()
-                .to_f64()
-                .expect("Failed to convert max_value to f64");
+            / Self::fraction_modulus();
         write!(f, "{fraction:.6} turns")
     }
 }

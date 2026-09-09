@@ -461,3 +461,43 @@ fn clifford_membership_follows_the_angle_table() {
         "Phase(pi/2) on two qubits is not Clifford"
     );
 }
+
+/// A zero-operand `Phase` inside a `Compose` must give the same matrix as the
+/// `Phased` wrapper, so the two spellings agree numerically even though they
+/// compare unequal structurally.
+///
+/// This also pins the scalar fast path in the dense `Compose` lowering: without
+/// it the scalar is materialised as a full matrix and multiplied, which reaches
+/// the same answer by a costlier route.
+#[test]
+fn composed_scalar_phase_matches_the_phased_wrapper() {
+    for gamma in [
+        Angle64::ZERO,
+        Angle64::QUARTER_TURN,
+        Angle64::HALF_TURN,
+        Angle64::HALF_TURN / 4,
+    ] {
+        let inner = UnitaryRep::phase_gate(Angle64::QUARTER_TURN, smallvec![0usize]);
+
+        let wrapped = UnitaryRep::Phased {
+            phase: gamma,
+            inner: Box::new(inner.clone()),
+        };
+        let composed = UnitaryRep::Compose(vec![
+            UnitaryRep::Gate(
+                Unitary::Phase {
+                    gamma,
+                    num_qubits: 0,
+                },
+                smallvec![],
+            ),
+            inner,
+        ]);
+
+        assert_eq!(
+            to_matrix_with_size(&wrapped, 1),
+            to_matrix_with_size(&composed, 1),
+            "wrapper and composed scalar disagree at gamma={gamma:?}"
+        );
+    }
+}

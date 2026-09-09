@@ -1328,9 +1328,24 @@ fn to_matrix_with_size_impl(op: &UnitaryRep, num_qubits: usize) -> DMatrix<Compl
         }
 
         UnitaryRep::Compose(parts) => {
-            // Matrix multiplication in reverse order (last part applied first)
+            // Matrix multiplication in reverse order (last part applied first).
             let mut result = DMatrix::identity(dim, dim);
             for part in parts {
+                // A zero-operand Phase is the scalar exp(i gamma). Materialising it as
+                // a dim x dim matrix and multiplying costs O(dim^3) for what is an
+                // O(dim^2) scaling, so apply it directly.
+                if let UnitaryRep::Gate(
+                    Unitary::Phase {
+                        gamma,
+                        num_qubits: 0,
+                    },
+                    _,
+                ) = part
+                {
+                    let (sin_g, cos_g) = gamma.sin_cos();
+                    result *= Complex64::new(cos_g, sin_g);
+                    continue;
+                }
                 let part_matrix = to_matrix_with_size_impl(part, num_qubits);
                 result = part_matrix * result;
             }

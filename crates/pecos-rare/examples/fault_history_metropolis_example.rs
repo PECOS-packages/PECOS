@@ -7,6 +7,7 @@ use pecos_engines::quantum::StabilizerEngine;
 use pecos_engines::shot_results::Shot;
 use pecos_engines::{ClassicalControlEngine, ClassicalEngine, Engine};
 use pecos_random::PecosRng;
+use pecos_rare::flipper::FaultFlipper;
 use std::any::Any;
 
 // If I did everything right, this should be a d=5 surface code syndrome extraction circuit
@@ -324,23 +325,22 @@ fn main() -> Result<(), PecosError> {
         rng: PecosRng::seed_from_u64(0),
     };
 
-    // pick the optimal seed... 42.
-    fault_catalog.set_seed(42);
+    // Create a fault flipper object
+    let mut flipper = FaultFlipper::new_weighted(fault_catalog.clone());
+    //let mut flipper = FaultFlipper::new_basic(fault_catalog.clone());
+    flipper.set_seed(42);
 
     // Starting with `histories[0]` as our `current` state, generate 1,000,000 `proposal` states
     // and perform metropolis steps to determine if we should step from `current` to `proposal`.
     let mut current = histories[0].clone();
 
     for _i in 1..1_000 {
-        let (proposal, correction) = fault_catalog.random_flip_hastings_correction(&current);
-        let ratio: f64 =
-            correction * fault_catalog.fault_histories_probability_ratio(&proposal, &current);
+        let (proposal, ratio) = flipper.random_flip_and_ratio(&current);
         let result = stepper.step(current.clone(), proposal.clone(), ratio);
         current = result.state;
         if result.accepted {
             let probability = fault_catalog.fault_history_probability(&current);
             println!("Proposal ratio: {}", ratio);
-            println!("Hastings correction: {}", correction);
             println!("new state probability: {:e}", probability);
         }
     }

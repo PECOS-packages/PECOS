@@ -15,7 +15,6 @@ use crate::noise::depolarizing::{
     DepolarizingFaultCatalog, DepolarizingFaultOutcome, DepolarizingFaultSite,
     DepolarizingSampledFault,
 };
-use pecos_random::PecosRng;
 use std::collections::HashSet;
 
 /// FaultOutcome
@@ -273,7 +272,7 @@ impl FaultCatalog {
                 .peek()
                 .filter(|fault| fault.site_uid() == site.uid())
                 .map_or("NoFault", SampledFault::outcome_label);
-            
+
             let b_label = b_faults
                 .peek()
                 .filter(|fault| fault.site_uid() == site.uid())
@@ -356,115 +355,6 @@ impl FaultCatalog {
         );
     }
 
-    //////////////////////////////////////////
-    // All the random stuff after this
-    // should be moved to flipper.rs
-
-    /// Seed the proposal RNG used when perturbing histories.
-    pub fn set_seed(&mut self, seed: u64) {
-        match self {
-            Self::Depolarizing(catalog) => catalog.rng = Some(PecosRng::seed_from_u64(seed)),
-        }
-    }
-
-    /// Randomly change one site's outcome and return the proposed history.
-    pub fn random_flip(&mut self, history: &FaultHistory) -> FaultHistory {
-        let site_uid = self.random_site_uid();
-        self.random_flip_at_site(site_uid, history)
-    }
-
-    /// Propose one random flip and return its Metropolis-Hastings correction.
-    pub fn random_flip_hastings_correction(
-        &mut self,
-        history: &FaultHistory,
-    ) -> (FaultHistory, f64) {
-        let site_uid = self.random_site_uid();
-        let site = self.get_site(site_uid);
-        let label_at_site = |candidate: &FaultHistory| {
-            candidate
-                .iter()
-                .find(|fault| fault.site_uid() == site_uid)
-                .map_or("NoFault", |fault| fault.outcome_label())
-        };
-        let old_label = label_at_site(history);
-        let proposed = self.random_flip_at_site(site_uid, history);
-        let new_label = label_at_site(&proposed);
-        let old_probability = site
-            .outcome_label_probability(old_label)
-            .expect("Current outcome must belong to its fault site");
-        let new_probability = site
-            .outcome_label_probability(new_label)
-            .expect("Proposed outcome must belong to its fault site");
-
-        // The proposal selects alternatives in proportion to their model probabilities.
-        let correction = (old_probability / (1.0 - new_probability))
-            / (new_probability / (1.0 - old_probability));
-        (proposed, correction)
-    }
-
-    fn random_site_uid(&mut self) -> usize {
-        let (rng, sites) = match self {
-            Self::Depolarizing(catalog) => (&mut catalog.rng, &catalog.sites),
-        };
-        assert!(!sites.is_empty(), "Cannot flip a fault in an empty catalog");
-        let rng = rng
-            .as_mut()
-            .expect("Set the fault catalog seed before requesting a flip");
-        sites[(rng.next_u64() % sites.len() as u64) as usize].uid
-    }
-
-    pub fn random_flip_at_site(&mut self, site_uid: usize, history: &FaultHistory) -> FaultHistory {
-        self.check_valid_fault_history(history);
-        let random_value = match self {
-            Self::Depolarizing(catalog) => {
-                catalog
-                    .rng
-                    .as_mut()
-                    .expect("Fault catalog RNG is not set")
-                    .next_u64() as f64
-                    / u64::MAX as f64
-            }
-        };
-        let site = self.get_site(site_uid);
-        let current_label = history
-            .iter()
-            .find(|fault| fault.site_uid() == site_uid)
-            .map_or("NoFault", |fault| fault.outcome_label());
-        let outcomes = site
-            .outcomes()
-            .into_iter()
-            .filter(|outcome| outcome.label() != current_label)
-            .collect::<Vec<_>>();
-        let total = outcomes.iter().map(FaultOutcome::probability).sum::<f64>();
-        let mut cumulative = 0.0;
-        let selected = outcomes
-            .iter()
-            .find(|outcome| {
-                cumulative += outcome.probability();
-                random_value * total < cumulative
-            })
-            .or_else(|| outcomes.last())
-            .expect("Fault site has no alternative outcome");
-
-        // Conversion back to the child type remains local to this enum implementation.
-        let mut proposed = history.as_depolarizing().to_vec();
-        proposed.retain(|fault| fault.site_uid != site_uid);
-        if selected.label() != "NoFault" {
-            let outcome_index =
-                site.outcomes()
-                    .iter()
-                    .position(|outcome| outcome.label() == selected.label())
-                    .expect("Selected outcome came from this site") as u8;
-            proposed.push(DepolarizingSampledFault {
-                site_uid,
-                outcome_index,
-                outcome_label: selected.label(),
-            });
-            proposed.sort_by_key(|fault| fault.site_uid);
-        }
-        proposed.into()
-    }
-
     fn is_catalog_compatible(&self, other: &Self) -> bool {
         self.len() == other.len()
             && self.sites().zip(other.sites()).all(|(left, right)| {
@@ -487,6 +377,37 @@ pub enum FaultHistory {
 
 impl FaultHistory {
     #[must_use]
+    pub fn with_outcome(
+        &self,
+        site: &FaultSite,
+        outcome_label: &'static str,
+    ) -> Self {
+
+        let outcome_index = site
+            .outcomes()
+            .iter()
+            .position(|outcome| outcome.label() == outcome_label)
+            .expect("Selected outcome came from this site") as u8;
+        let site_uid = site.uid();
+
+        match (self, site) {
+            (Self::Depolarizing(history), FaultSite::Depolarizing(_)) => {
+                let mut proposed = history.clone();
+                proposed.retain(|fault| fault.site_uid != site_uid);
+                if outcome_label != "NoFault" {
+                    proposed.push(DepolarizingSampledFault {
+                        site_uid,
+                        outcome_index,
+                        outcome_label,
+                    });
+                    proposed.sort_by_key(|fault| fault.site_uid);
+                }
+                Self::Depolarizing(proposed)
+            }
+        }
+    }
+
+    #[must_use]
     pub fn len(&self) -> usize {
         match self {
             Self::Depolarizing(history) => history.len(),
@@ -506,7 +427,7 @@ impl FaultHistory {
     }
 
     /// Access the concrete representation only at the noise-model boundary.
-    pub(crate) fn as_depolarizing(&self) -> &[DepolarizingSampledFault] {
+    pub fn as_depolarizing(&self) -> &[DepolarizingSampledFault] {
         match self {
             Self::Depolarizing(history) => history,
         }
@@ -552,6 +473,5 @@ impl From<Vec<DepolarizingSampledFault>> for FaultHistory {
         Self::Depolarizing(value)
     }
 }
-
 
 // TODO: Add some tests for all of this.

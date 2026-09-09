@@ -3666,6 +3666,13 @@ impl PyDemSampler {
         Ok(Self { inner })
     }
 
+    /// Reconstruct the detector error model from the compiled sampling mechanisms.
+    fn to_detector_error_model(&self) -> PyDetectorErrorModel {
+        PyDetectorErrorModel {
+            inner: self.inner.to_detector_error_model(),
+        }
+    }
+
     /// Number of mechanisms in the sampler.
     #[getter]
     fn num_mechanisms(&self) -> usize {

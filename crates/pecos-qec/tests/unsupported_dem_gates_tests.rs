@@ -81,6 +81,7 @@ fn assert_rotation_rejected_by_every_dem_family(
     circuit.pz(&[0]);
     add_dag(&mut circuit);
     circuit.mz(&[0]);
+    // Non-Clifford rejection tests pin the preflight, not the symbolic replay error mapping.
     let dag_location = UnsupportedGateLocation::DagNode { node: 1 };
 
     assert!(matches!(
@@ -533,4 +534,219 @@ fn qalloc_circuit_builds_through_every_dem_entry_point() {
 #[test]
 fn qfree_circuit_builds_through_every_dem_entry_point() {
     assert_all_dem_entry_points_build(&qfree_dag());
+}
+
+#[test]
+fn leaked_measurement_replay_error_is_an_unsupported_gate() {
+    let mut circuit = DagCircuit::new();
+    circuit.pz(&[0]);
+    circuit.h(&[0]);
+    let node = circuit.add_gate_auto_wire(Gate::measure_leaked(&[0]));
+    circuit.mz(&[0]);
+    assert!(
+        DagFaultAnalyzer::new(&circuit)
+            .build_influence_map()
+            .unsupported_gate()
+            .is_none()
+    );
+    assert_sampler_error(
+        DemSampler::from_circuit(&circuit, &NoiseConfig::default()).unwrap_err(),
+        GateType::MeasureLeaked,
+        UnsupportedGateLocation::DagNode { node },
+    );
+}
+
+fn detector_records(
+    map: &pecos_qec::fault_tolerance::propagator::DagFaultInfluenceMap,
+) -> Vec<Vec<usize>> {
+    let mut records: Vec<Vec<usize>> = map
+        .detectors
+        .iter()
+        .map(|detector| {
+            let mut records: Vec<usize> = detector
+                .measurements
+                .iter()
+                .map(|measurement| {
+                    map.measurements
+                        .iter()
+                        .position(|&(node, qubit, basis)| {
+                            (node, qubit, basis)
+                                == (measurement.tick, measurement.qubit, measurement.basis)
+                        })
+                        .expect("detectors refer to measurements in their influence map")
+                })
+                .collect();
+            records.sort_unstable();
+            records
+        })
+        .collect();
+    records.sort_unstable();
+    records
+}
+
+fn clifford_rotation_replay_matches_named_gates(
+    rotation: &Gate,
+    named: Gate,
+    preparation: &[Gate],
+    readout: &[Gate],
+    distinguishes_identity: bool,
+    noise: &NoiseConfig,
+) {
+    const DETECTORS: &str = r#"[{"id":0,"records":[-2]},{"id":1,"records":[-1]}]"#;
+    let make_circuit = |gate: Option<Gate>| {
+        let mut circuit = DagCircuit::new();
+        circuit.pz(&[0, 1]);
+        for gate in preparation {
+            circuit.add_gate_auto_wire(gate.clone());
+        }
+        if let Some(gate) = gate {
+            circuit.add_gate_auto_wire(gate);
+        }
+        for gate in readout {
+            circuit.add_gate_auto_wire(gate.clone());
+        }
+        circuit.mz(&[0]);
+        circuit.mz(&[1]);
+        circuit.set_attr(
+            "detectors",
+            pecos_quantum::Attribute::String(DETECTORS.to_string()),
+        );
+        circuit
+    };
+    let raw = make_circuit(Some(rotation.clone()));
+    let lowered = make_circuit(Some(named));
+    let raw_map = InfluenceBuilder::new(&raw).with_z(&[0, 1]).build().unwrap();
+    let lowered_map = InfluenceBuilder::new(&lowered)
+        .with_z(&[0, 1])
+        .build()
+        .unwrap();
+    if distinguishes_identity {
+        let removed = make_circuit(None);
+        let removed_map = InfluenceBuilder::new(&removed).build().unwrap();
+        // Measurement ordinals keep this comparison independent of shifted DAG node IDs.
+        assert_ne!(
+            detector_records(&removed_map),
+            detector_records(&lowered_map),
+            "{rotation:?}"
+        );
+    }
+    // Paulis and identity preserve detector structure; those rows check acceptance and equality.
+    assert_eq!(raw_map.detectors, lowered_map.detectors, "{rotation:?}");
+    assert_eq!(raw_map.measurements, lowered_map.measurements);
+    assert_eq!(raw_map.dem_output_metadata, lowered_map.dem_output_metadata);
+    assert_eq!(raw_map.dem_output_labels, lowered_map.dem_output_labels);
+    let builder_dem = |map| {
+        let text = DemBuilder::new(map)
+            .with_noise_config(noise.clone())
+            .with_detectors_json(DETECTORS)
+            .unwrap()
+            .build()
+            .unwrap()
+            .to_string();
+        assert!(
+            text.split_whitespace().any(|token| token == "D0"),
+            "{rotation:?}: {text}"
+        );
+        text
+    };
+    let sampler_dem = |circuit| {
+        let dem = DemSampler::from_circuit(circuit, noise)
+            .unwrap()
+            .to_detector_error_model();
+        let text = dem.to_string();
+        assert!(
+            text.split_whitespace().any(|token| token == "D0"),
+            "{rotation:?}: {text}"
+        );
+        text
+    };
+    let raw_dems = (builder_dem(&raw_map), sampler_dem(&raw));
+    let lowered_dems = (builder_dem(&lowered_map), sampler_dem(&lowered));
+    assert_eq!(raw_dems, lowered_dems, "{rotation:?}");
+}
+
+#[test]
+fn clifford_rotation_replay_rz_quarter_turn() {
+    clifford_rotation_replay_matches_named_gates(
+        &Gate::rz(Angle64::QUARTER_TURN, &[0]),
+        Gate::sz(&[0]),
+        &[Gate::h(&[0])],
+        &[Gate::szdg(&[0]), Gate::h(&[0])],
+        true,
+        &NoiseConfig::new(0.01, 0.02, 0.01, 0.02),
+    );
+}
+
+#[test]
+fn clifford_rotation_replay_rz_half_turn() {
+    clifford_rotation_replay_matches_named_gates(
+        &Gate::rz(Angle64::HALF_TURN, &[0]),
+        Gate::z(&[0]),
+        &[],
+        &[],
+        false,
+        &NoiseConfig::new(0.01, 0.02, 0.01, 0.02),
+    );
+}
+
+#[test]
+fn clifford_rotation_replay_rxy1q_sx() {
+    clifford_rotation_replay_matches_named_gates(
+        &Gate::rxy1q(Angle64::QUARTER_TURN, Angle64::ZERO, &[0]),
+        Gate::sx(&[0]),
+        &[],
+        &[Gate::sxdg(&[0])],
+        true,
+        &NoiseConfig::new(0.01, 0.02, 0.01, 0.02),
+    );
+}
+
+#[test]
+fn clifford_rotation_replay_rxy1q_sydg() {
+    clifford_rotation_replay_matches_named_gates(
+        &Gate::rxy1q(Angle64::QUARTER_TURN, Angle64::THREE_QUARTERS_TURN, &[0]),
+        Gate::sydg(&[0]),
+        &[],
+        &[Gate::sy(&[0])],
+        true,
+        &NoiseConfig::new(0.01, 0.02, 0.01, 0.02),
+    );
+}
+
+#[test]
+fn clifford_rotation_replay_rxy1q_identity() {
+    // Gate noise is excluded because a zero rotation is a noise location while named identity is not.
+    clifford_rotation_replay_matches_named_gates(
+        &Gate::rxy1q(Angle64::ZERO, Angle64::from_radians(0.3), &[0]),
+        Gate::simple(GateType::I, vec![0.into()]),
+        &[],
+        &[],
+        false,
+        &NoiseConfig::new(0.0, 0.0, 0.01, 0.02),
+    );
+}
+
+#[test]
+fn clifford_rotation_replay_rzz_quarter_turn() {
+    clifford_rotation_replay_matches_named_gates(
+        &Gate::rzz(Angle64::QUARTER_TURN, &[(0, 1)]),
+        Gate::szz(&[(0, 1)]),
+        &[Gate::h(&[0, 1])],
+        &[Gate::szzdg(&[(0, 1)]), Gate::h(&[0, 1])],
+        true,
+        &NoiseConfig::new(0.01, 0.02, 0.01, 0.02),
+    );
+}
+
+#[test]
+fn clifford_rotation_replay_rzz_half_turn() {
+    // Gate noise is excluded because a two-qubit rotation and two named Paulis have different noise locations.
+    clifford_rotation_replay_matches_named_gates(
+        &Gate::rzz(Angle64::HALF_TURN, &[(0, 1)]),
+        Gate::z(&[0, 1]),
+        &[],
+        &[],
+        false,
+        &NoiseConfig::new(0.0, 0.0, 0.01, 0.02),
+    );
 }

@@ -453,6 +453,10 @@ impl DemSampler {
     ///
     /// Returns [`DetectorValidationError`] when detector metadata is invalid
     /// for the circuit's measurement record.
+    ///
+    /// # Panics
+    ///
+    /// Panics if symbolic replay reports a node that does not contain a gate.
     pub fn from_circuit(
         circuit: &pecos_quantum::DagCircuit,
         noise: &super::types::NoiseConfig,
@@ -460,8 +464,10 @@ impl DemSampler {
         // Build the DetectorErrorModel via DemBuilder (single code path for
         // DEM computation), then convert to sampler.
         use super::builder::DemBuilder;
-        use crate::fault_tolerance::influence_builder::InfluenceBuilder;
-        use crate::fault_tolerance::propagator::DagFaultAnalyzer;
+        use crate::fault_tolerance::influence_builder::{InfluenceBuildError, InfluenceBuilder};
+        use crate::fault_tolerance::propagator::{
+            DagFaultAnalyzer, UnsupportedGateError, UnsupportedGateLocation,
+        };
 
         let mut influence_map = DagFaultAnalyzer::new(circuit).build_influence_map();
         if let Some(error) = influence_map.unsupported_gate() {
@@ -473,8 +479,29 @@ impl DemSampler {
                 message: err.to_string(),
             })?
             .build()
-            .map_err(|err| DetectorValidationError::InvalidMetadata {
-                message: err.to_string(),
+            .map_err(|err| match err {
+                InfluenceBuildError::UnsupportedPauliPropagation(error) => {
+                    DetectorValidationError::UnsupportedGate(error)
+                }
+                InfluenceBuildError::UnsupportedGate { node, gate_type } => {
+                    DetectorValidationError::UnsupportedGate(UnsupportedGateError {
+                        gate_type,
+                        location: UnsupportedGateLocation::DagNode { node },
+                        qubits: circuit
+                            .gate(node)
+                            .expect("a rejected replay node holds a gate")
+                            .qubits
+                            .iter()
+                            .map(pecos_core::QubitId::index)
+                            .collect(),
+                    })
+                }
+                // Batched measurement rejection is not metadata validation.
+                InfluenceBuildError::BatchedMeasurementUnsupported { .. } => {
+                    DetectorValidationError::InvalidMetadata {
+                        message: err.to_string(),
+                    }
+                }
             })?;
         influence_map.merge_dem_outputs_from(&annotation_map);
 

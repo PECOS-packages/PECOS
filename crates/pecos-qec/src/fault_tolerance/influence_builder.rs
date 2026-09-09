@@ -187,11 +187,8 @@ impl std::error::Error for InfluenceBuildError {}
 /// Builds fault influence maps by combining symbolic stabilizer replay with
 /// backward Pauli propagation.
 ///
-/// Symbolic replay accepts the rotation gates `RX`, `RY`, `RZ`, `RXX`, `RYY`,
-/// `RZZ`, and `CRZ` only when their sole angle is exactly zero. It rejects
-/// every `RXY1Q`, including `RXY1Q(0, phi)`, even though core Clifford lowering
-/// recognizes that case as the identity. Other Clifford-equivalent rotations
-/// must be lowered to supported named gates before this builder is used.
+/// Symbolic replay lowers rotations exactly as Pauli propagation does, using
+/// the shared core Clifford-lowering policy.
 pub struct InfluenceBuilder<'a> {
     dag: &'a pecos_quantum::DagCircuit,
     /// Non-detector parity outputs to track for flipping.
@@ -383,10 +380,8 @@ impl<'a> InfluenceBuilder<'a> {
     /// 2. Detector extraction from deterministic measurements
     /// 3. Backward propagation from detectors and DEM outputs
     ///
-    /// Symbolic replay accepts `RX`, `RY`, `RZ`, `RXX`, `RYY`, `RZZ`, and
-    /// `CRZ` only with exactly one, exactly-zero angle. It rejects every
-    /// `RXY1Q`, including `RXY1Q(0, phi)`. Other Clifford-equivalent rotations
-    /// must be lowered to supported named gates before calling this method.
+    /// Symbolic replay lowers rotations exactly as Pauli propagation does,
+    /// using the shared core Clifford-lowering policy.
     ///
     /// # Errors
     ///
@@ -452,6 +447,32 @@ impl<'a> InfluenceBuilder<'a> {
                     continue;
                 }
 
+                if let Some(lowering) = pecos_core::try_lower_rotation_to_clifford(op) {
+                    let mut apply = |gate_type, targets: &[usize]| match apply_unitary_clifford(
+                        &mut sim, gate_type, targets,
+                    ) {
+                        Ok(Dispatch::Applied) => Ok(()),
+                        Ok(Dispatch::Unhandled) => Err(InfluenceBuildError::UnsupportedGate {
+                            node,
+                            gate_type: op.gate_type,
+                        }),
+                        Err(err) => panic!(
+                            "symbolic simulation got malformed gate {:?} at node {node}: {err:?}",
+                            op.gate_type
+                        ),
+                    };
+                    match lowering {
+                        pecos_core::CliffordLowering::Named(pecos_quantum::GateType::I) => {}
+                        pecos_core::CliffordLowering::Named(clifford) => apply(clifford, &qubits)?,
+                        pecos_core::CliffordLowering::PerQubit(pauli) => {
+                            for &qubit in &qubits {
+                                apply(pauli, &[qubit])?;
+                            }
+                        }
+                    }
+                    continue;
+                }
+
                 match op.gate_type {
                     pecos_quantum::GateType::MX
                     | pecos_quantum::GateType::MZ
@@ -498,17 +519,6 @@ impl<'a> InfluenceBuilder<'a> {
                     }
                     // No effect on stabilizer correlations.
                     gate_type if is_supported_noop_or_metadata_gate(gate_type) => {}
-                    gate_type
-                        if matches!(
-                            gate_type,
-                            pecos_quantum::GateType::RX
-                                | pecos_quantum::GateType::RY
-                                | pecos_quantum::GateType::RZ
-                                | pecos_quantum::GateType::RXX
-                                | pecos_quantum::GateType::RYY
-                                | pecos_quantum::GateType::RZZ
-                        ) && op.angles.len() == 1
-                            && op.angles[0].is_zero() => {}
                     // Anything else would be silently mis-analyzed: an ignored
                     // rotation manufactures detectors its backward propagation
                     // then contradicts.
@@ -1448,22 +1458,24 @@ mod tests {
         );
     }
 
-    /// An ignored rotation used to manufacture phantom detectors: forward
-    /// replay skipped `RZ` while backward propagation simplified it, so the two
-    /// halves of the analysis disagreed. Reviewer witness on #408.
+    /// The Pauli-propagation preflight rejects a non-Clifford rotation before
+    /// symbolic replay can analyze it or manufacture phantom detectors.
     #[test]
     fn an_unrepresentable_gate_is_refused_not_skipped() {
         use pecos_core::Angle64;
         let mut dag = DagCircuit::new();
         dag.pz(&[0]);
-        dag.rz(Angle64::QUARTER_TURN, &[0]);
+        dag.rz(Angle64::from_turn_ratio(1, 8), &[0]);
         dag.mz(&[0]);
 
         let err = InfluenceBuilder::new(&dag)
             .build()
             .map(|_| ())
-            .expect_err("RZ is not representable in the symbolic replay");
-        assert!(matches!(err, InfluenceBuildError::UnsupportedGate { .. }));
+            .expect_err("the Pauli-propagation preflight must reject non-Clifford RZ");
+        assert!(matches!(
+            err,
+            InfluenceBuildError::UnsupportedPauliPropagation(_)
+        ));
     }
 
     #[test]

@@ -152,8 +152,17 @@ Canonical stream IDs are partitioned by patch, then independently translated
 to the control and target placements at instantiation. The cache key includes
 both geometries, orientations, four boundary bases, and noise parameters, while
 excluding both memory depths, labels, qubit offsets, and patch coordinates.
-Patches whose shapes differ, reversed/noncanonical operation ordering, or a
-memory side shorter than two rounds retain the full structured fallback.
+Repeated CX gates with the same control/target ordering reuse that single
+physical family when both patches are finally measured in X or both in Z. The
+parity of later CX gates is applied through the instance GF(2) routing map: the
+target output fans into control-plus-target for X measurement, while the control
+output fans into control-plus-target for Z measurement. Exact tests cover two
+and three CX boundaries and prove that depth, labels, offsets, and placement do
+not cause another physical compile. Mixed final bases expose too few logical
+columns in the current one-observable-per-patch schema for a sound transform and
+therefore retain the full-model fallback, as do patches whose shapes differ,
+reversed/noncanonical operation ordering, or a memory side shorter than two
+rounds.
 
 The current standalone SZ/SZdg emitter is deliberately not cached. Its full DEM
 contains mechanisms whose detector span grows with the entire preceding memory
@@ -247,10 +256,10 @@ columns. Initialization, stationary bulk SEC, pre-terminal SEC, and terminal
 surface-memory families have exact composition coverage and a production
 single-patch memory provider. Transversal-H boundaries and their adjacent memory
 families, including repeated H sequences, also have exact composition coverage
-and a production provider,
-as does a two-patch transversal CX between matching patch shapes. It does not
+and a production provider, as do repeated same-basis transversal CX gates
+between matching patch shapes. It does not
 yet implement the bounded mid-cycle SZ/SZdg circuit, general multi-patch or
-lattice-surgery families, repeated CX or mixed logical gates, decoder prior
-mutation, the anti-snake logical-subgraph window decoder, or adaptive
-syndrome-extraction templates. Full-circuit DEM construction remains the
-equivalence oracle and the conservative fallback outside supported families.
+lattice-surgery families, mixed-basis repeated CX or mixed logical gates,
+decoder prior mutation, the anti-snake logical-subgraph window decoder, or
+adaptive syndrome-extraction templates. Full-circuit DEM construction remains
+the equivalence oracle and the conservative fallback outside supported families.

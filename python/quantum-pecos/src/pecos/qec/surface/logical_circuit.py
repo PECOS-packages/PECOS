@@ -865,15 +865,15 @@ class LogicalCircuitBuilder:
             )
             if cached_h is not None:
                 return cached_h
-        if len(self._operations) == 3:
-            if len(self._patches) == 2:
-                return self._build_structured_cx_dem_from_cached_templates(
-                    p1=p1,
-                    p2=p2,
-                    p_meas=p_meas,
-                    p_prep=p_prep,
-                )
-            return None
+        if len(self._patches) == 2 and len(self._operations) >= 3:
+            cached_cx = self._build_structured_cx_dem_from_cached_templates(
+                p1=p1,
+                p2=p2,
+                p_meas=p_meas,
+                p_prep=p_prep,
+            )
+            if cached_cx is not None:
+                return cached_cx
         if len(self._patches) != 1 or len(self._operations) != 1:
             return None
 
@@ -929,23 +929,24 @@ class LogicalCircuitBuilder:
         p_meas: float,
         p_prep: float,
     ) -> tuple[object, object] | None:
-        """Assemble an eligible two-patch memory-CX-memory DEM."""
-        before, gate, after = self._operations
-        if (
-            before.gate_type != LogicalGateType.MEMORY
-            or gate.gate_type != LogicalGateType.TRANSVERSAL_CX
-            or after.gate_type != LogicalGateType.MEMORY
-            or before.rounds < 2
-            or after.rounds < 2
-            or len(before.patches) != 2
-            or len(gate.patches) != 2
-            or len(after.patches) != 2
-        ):
+        """Assemble alternating memory/CX operations from bounded families."""
+        if len(self._patches) != 2 or len(self._operations) < 3 or len(self._operations) % 2 == 0:
             return None
 
-        control_label, target_label = gate.patches
+        memories = self._operations[::2]
+        gates = self._operations[1::2]
         patch_order = list(self._patches)
-        if before.patches != patch_order or gate.patches != patch_order or after.patches != patch_order:
+        control_label, target_label = patch_order
+        if any(
+            memory.gate_type != LogicalGateType.MEMORY or memory.rounds < 2 or memory.patches != patch_order
+            for memory in memories
+        ) or any(
+            gate.gate_type != LogicalGateType.TRANSVERSAL_CX
+            or gate.patches != patch_order
+            or gate.teleportation
+            or gate.injection_type is not None
+            for gate in gates
+        ):
             return None
 
         control_state = self._patches[control_label]
@@ -958,10 +959,12 @@ class LogicalCircuitBuilder:
             or control_geometry.rotated != target_geometry.rotated
         ):
             return None
-        initial_control_basis = before.per_patch_basis.get(control_label, before.basis).upper()
-        initial_target_basis = before.per_patch_basis.get(target_label, before.basis).upper()
-        final_control_basis = after.per_patch_basis.get(control_label, after.basis).upper()
-        final_target_basis = after.per_patch_basis.get(target_label, after.basis).upper()
+        initial_control_basis = memories[0].per_patch_basis.get(control_label, memories[0].basis).upper()
+        initial_target_basis = memories[0].per_patch_basis.get(target_label, memories[0].basis).upper()
+        final_control_basis = memories[-1].per_patch_basis.get(control_label, memories[-1].basis).upper()
+        final_target_basis = memories[-1].per_patch_basis.get(target_label, memories[-1].basis).upper()
+        if len(gates) > 1 and (final_control_basis != final_target_basis or final_control_basis not in {"X", "Z"}):
+            return None
         cached = _cached_surface_cx_dem_templates(
             control_geometry.dx,
             control_geometry.dz,
@@ -984,7 +987,52 @@ class LogicalCircuitBuilder:
 
         from pecos_rslib.qec import DemSliceRoundSchedule
 
-        instances, terminal_round = _boundary_template_instances(templates, before.rounds, after.rounds)
+        first_boundary_round = memories[0].rounds
+        placed = [(templates.initialization, 0, len(gates) - 1)]
+        placed.extend(
+            (templates.pre_gate_bulk, round_, len(gates) - 1) for round_ in range(1, first_boundary_round - 1)
+        )
+        boundary_round = first_boundary_round
+        for boundary_index in range(len(gates)):
+            later_gate_count = len(gates) - boundary_index - 1
+            placed.extend(
+                [
+                    (templates.pre_gate_boundary, boundary_round - 1, later_gate_count),
+                    (templates.gate_boundary, boundary_round, later_gate_count),
+                ],
+            )
+            next_boundary_round = boundary_round + memories[boundary_index + 1].rounds
+            if boundary_index + 1 < len(gates):
+                next_later_gate_count = later_gate_count - 1
+                placed.extend(
+                    (templates.pre_gate_bulk, round_, next_later_gate_count)
+                    for round_ in range(boundary_round + 1, next_boundary_round - 1)
+                )
+            else:
+                placed.extend(
+                    (templates.post_gate_bulk, round_, 0)
+                    for round_ in range(boundary_round + 1, next_boundary_round - 1)
+                )
+                placed.extend(
+                    [
+                        (templates.pre_terminal, next_boundary_round - 1, 0),
+                        (templates.terminal, next_boundary_round, 0),
+                    ],
+                )
+            boundary_round = next_boundary_round
+
+        instances = [(template, round_) for template, round_, _ in placed]
+        dem_output_routings = {}
+        for template, round_, later_gate_count in placed:
+            if not template.dem_outputs:
+                continue
+            if later_gate_count % 2 == 0:
+                routing = {output: [output] for output in template.dem_outputs}
+            elif final_control_basis == "X":
+                routing = {output: [0] if output == 0 else [0, 1] for output in template.dem_outputs}
+            else:
+                routing = {output: [0, 1] if output == 0 else [1] for output in template.dem_outputs}
+            dem_output_routings[round_] = routing
 
         control_x, control_y = control_state.coord_offset
         target_x, target_y = target_state.coord_offset
@@ -1005,10 +1053,11 @@ class LogicalCircuitBuilder:
             templates.output_model,
             instances,
             detector_coordinate_offsets=detector_coordinate_offsets,
+            dem_output_routings=dem_output_routings,
         )
         model = schedule.stitch(
             start_round=0,
-            commit_rounds=terminal_round + 1,
+            commit_rounds=boundary_round + 1,
             buffer_rounds=0,
             forward_boundary="hard",
         )
@@ -1125,8 +1174,9 @@ class LogicalCircuitBuilder:
 
         TickCircuit -> DagCircuit -> DagFaultAnalyzer -> DemBuilder.
         No Stim dependency. Eligible single-patch memories, repeated
-        transversal-H, and two-patch transversal-CX algorithms reuse bounded
-        physical-template compiles across requested memory lengths.
+        transversal-H, and same-basis repeated two-patch transversal-CX
+        algorithms reuse bounded physical-template compiles across requested
+        memory lengths.
 
         Args:
             p1: Single-qubit depolarizing error rate.

@@ -378,6 +378,7 @@ where
     }
 
     /// Convert a radians tolerance to the equivalent fraction-unit epsilon.
+    /// Finite tolerances saturate at the largest representable fraction magnitude.
     ///
     /// Useful when you want to precompute the epsilon once and reuse it
     /// across many comparisons, or when passing to the `approx` macros:
@@ -393,14 +394,11 @@ where
     /// Panics if the conversion between `f64` and `T` fails.
     #[must_use]
     pub fn epsilon_from_radians(radians: f64) -> T {
-        let max = T::max_value()
-            .to_f64()
-            .expect("Failed to convert max_value to f64");
-        let frac = (radians.abs() / std::f64::consts::TAU * Self::fraction_modulus()).round();
-        T::from_f64(frac.clamp(0.0, max)).expect("Failed to convert tolerance to fraction")
+        Self::epsilon_from_turns(radians.abs() / std::f64::consts::TAU)
     }
 
     /// Convert a turns tolerance to the equivalent fraction-unit epsilon.
+    /// Finite tolerances saturate at the largest representable fraction magnitude.
     ///
     /// Useful when you want to precompute the epsilon once and reuse it
     /// across many comparisons, or when passing to the `approx` macros:
@@ -420,6 +418,14 @@ where
             .to_f64()
             .expect("Failed to convert max_value to f64");
         let frac = (turns.abs() * Self::fraction_modulus()).round();
+        // MAX rounds up to the modulus in f64 for wide integers. Saturate
+        // directly in T instead of converting that unrepresentable bound.
+        // An infinite tolerance saturates for the same reason a full turn
+        // does: every angle is within it. NaN has no ordering, so it falls
+        // through and still fails the conversion.
+        if frac >= max {
+            return T::max_value();
+        }
         T::from_f64(frac.clamp(0.0, max)).expect("Failed to convert tolerance to fraction")
     }
 }

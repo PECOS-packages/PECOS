@@ -92,36 +92,45 @@ fn narrow_angles_round_trip_every_fraction() {
         assert_eq!(Angle8::from_turns(angle.to_turns()), angle);
         assert_eq!(Angle8::from_radians(angle.to_radians()), angle);
     }
+
+    macro_rules! check_last_interval {
+        ($angle:ty, $integer:ty, $modulus:expr) => {
+            for (offset, expected) in [
+                (0.75, <$angle>::new(<$integer>::MAX)),
+                (0.25, <$angle>::ZERO),
+                (0.125, <$angle>::ZERO),
+            ] {
+                let turns = 1.0 - offset / $modulus;
+                assert!(turns > <$angle>::new(<$integer>::MAX).to_turns());
+                assert!(turns < 1.0);
+                let from_turns = <$angle>::from_turns(turns);
+                let from_radians = <$angle>::from_radians(turns * TAU);
+                assert_eq!(from_turns.fraction(), expected.fraction());
+                assert_eq!(from_radians.fraction(), expected.fraction());
+                assert_eq!(<$angle>::from_turns(from_turns.to_turns()), expected);
+                assert_eq!(<$angle>::from_radians(from_radians.to_radians()), expected);
+            }
+        };
+    }
+    check_last_interval!(Angle8, u8, 256.0);
+    check_last_interval!(Angle16, u16, 65_536.0);
 }
 
 #[test]
 fn radians_round_trip_across_wrap_point() {
-    for input in [
-        -100.0,
-        -TAU,
-        -TAU.next_up(),
-        -TAU.next_down(),
-        -PI,
-        -0.7,
-        -1e-15,
-        -1e-16,
-        -1e-17,
-        -1e-18,
-        -f64::MIN_POSITIVE,
-        0.0,
-        f64::MIN_POSITIVE,
-        1e-18,
-        1e-17,
-        1e-16,
-        1e-15,
-        0.7,
-        FRAC_PI_2,
-        PI,
-        TAU.next_down(),
-        TAU,
-        TAU.next_up(),
-        100.0,
+    // Close to the wrap, a broad radians tolerance would also accept zero.
+    for (input, expected) in [
+        (-TAU.next_up(), -Angle64::new(2048)),
+        (-TAU, Angle64::ZERO),
+        (-TAU.next_down(), Angle64::new(2608)),
+        (0.0, Angle64::ZERO),
+        (TAU.next_down(), -Angle64::new(2048)),
+        (TAU, Angle64::ZERO),
+        (TAU.next_up(), Angle64::new(2608)),
     ] {
+        assert_eq!(Angle64::from_radians(input).fraction(), expected.fraction());
+    }
+    for input in [-100.0, -PI, -0.7, 0.7, FRAC_PI_2, PI, 100.0] {
         let actual = Angle64::from_radians(input).to_radians();
         let expected = input.rem_euclid(TAU);
         // Compare on the circle: a rounded full turn is zero.
@@ -131,6 +140,59 @@ fn radians_round_trip_across_wrap_point() {
             "input={input}, actual={actual}, expected={expected}"
         );
     }
+}
+
+#[test]
+fn tiny_positive_constructors_have_exact_fractions() {
+    for (input, radians_fraction, turns_fraction) in [
+        (1e-15, 2936, 18_447),
+        (1e-16, 294, 1845),
+        (1e-17, 29, 184),
+        (1e-18, 3, 18),
+        (f64::MIN_POSITIVE, 0, 0),
+    ] {
+        assert_eq!(Angle64::from_radians(input).fraction(), radians_fraction);
+        assert_eq!(Angle64::from_turns(input).fraction(), turns_fraction);
+    }
+}
+
+#[test]
+fn constructors_handle_subnormals_negative_zero_and_largest_finite_inputs() {
+    let smallest_subnormal = f64::from_bits(1);
+    let largest_subnormal = f64::MIN_POSITIVE.next_down();
+    assert!(smallest_subnormal.is_subnormal());
+    assert!(largest_subnormal.is_subnormal());
+    macro_rules! check {
+        ($angle:ty, $positive_max:expr, $negative_max:expr) => {
+            for input in [
+                smallest_subnormal,
+                -smallest_subnormal,
+                largest_subnormal,
+                -largest_subnormal,
+                -0.0,
+            ] {
+                assert_eq!(<$angle>::from_radians(input).fraction(), 0);
+                assert_eq!(<$angle>::from_turns(input).fraction(), 0);
+            }
+            assert_eq!(<$angle>::from_radians(f64::MAX).fraction(), $positive_max);
+            assert_eq!(<$angle>::from_radians(-f64::MAX).fraction(), $negative_max);
+            assert_eq!(<$angle>::from_turns(f64::MAX).fraction(), 0);
+            assert_eq!(<$angle>::from_turns(-f64::MAX).fraction(), 0);
+        };
+    }
+    check!(Angle8, 24, 232);
+    check!(Angle16, 6056, 59_480);
+    check!(Angle32, 396_914_332, 3_898_052_964);
+    check!(
+        Angle64,
+        1_704_734_075_010_201_088,
+        16_742_009_998_699_350_016
+    );
+    check!(
+        Angle128,
+        31_446_793_195_445_161_152_375_904_822_475_358_208,
+        308_835_573_725_493_292_866_265_736_870_002_425_856
+    );
 }
 
 #[test]
@@ -177,19 +239,87 @@ fn wide_angle_outputs_are_bit_identical_to_previous_scale() {
 fn tolerance_uses_fraction_units_but_clamps_full_turns() {
     assert_eq!(Angle8::epsilon_from_turns(0.75), 192);
     assert_eq!(Angle8::epsilon_from_radians(0.75 * TAU), 192);
-    for turns in [1.0, 2.0, -2.0] {
-        assert_eq!(Angle8::epsilon_from_turns(turns), u8::MAX);
-        assert_eq!(Angle8::epsilon_from_radians(turns * TAU), u8::MAX);
-        assert_eq!(Angle32::epsilon_from_turns(turns), u32::MAX);
+    macro_rules! check {
+        ($angle:ty, $integer:ty) => {
+            for turns in [1.0, 2.0, -1.0, -2.0] {
+                assert_eq!(<$angle>::epsilon_from_turns(turns), <$integer>::MAX);
+                assert_eq!(<$angle>::epsilon_from_radians(turns * TAU), <$integer>::MAX);
+            }
+            for input in [f64::MAX, -f64::MAX] {
+                assert_eq!(<$angle>::epsilon_from_turns(input), <$integer>::MAX);
+                assert_eq!(<$angle>::epsilon_from_radians(input), <$integer>::MAX);
+            }
+            for input in [0.0, -0.0, f64::from_bits(1), -f64::from_bits(1)] {
+                assert_eq!(<$angle>::epsilon_from_turns(input), 0);
+                assert_eq!(<$angle>::epsilon_from_radians(input), 0);
+            }
+            assert_eq!(
+                <$angle>::epsilon_from_turns(0.5),
+                <$angle>::HALF_TURN.fraction()
+            );
+            assert_eq!(
+                <$angle>::epsilon_from_radians(PI),
+                <$angle>::HALF_TURN.fraction()
+            );
+            assert!(<$angle>::ZERO.abs_diff_eq_turns(&<$angle>::HALF_TURN, 1.0));
+            assert!(<$angle>::ZERO.abs_diff_eq_radians(&<$angle>::HALF_TURN, TAU));
+        };
     }
+    check!(Angle8, u8);
+    check!(Angle16, u16);
+    check!(Angle32, u32);
+    check!(Angle64, u64);
+    check!(Angle128, u128);
 }
 
 #[test]
-fn nonfinite_conversions_still_panic() {
-    for input in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
-        assert!(std::panic::catch_unwind(|| Angle64::from_radians(input)).is_err());
-        assert!(std::panic::catch_unwind(|| Angle64::from_turns(input)).is_err());
+fn tolerance_preserves_values_just_below_saturation() {
+    macro_rules! check {
+        ($angle:ty, $expected:expr) => {
+            assert_eq!(<$angle>::epsilon_from_turns(1.0_f64.next_down()), $expected);
+            assert_eq!(<$angle>::epsilon_from_radians(TAU.next_down()), $expected);
+        };
     }
+    check!(Angle8, u8::MAX);
+    check!(Angle16, u16::MAX);
+    check!(Angle32, u32::MAX);
+    check!(Angle64, u64::MAX - 2047);
+    check!(Angle128, u128::MAX - ((1_u128 << 75) - 1));
+}
+
+#[test]
+fn nonfinite_conversions_panic_and_infinite_tolerances_saturate() {
+    macro_rules! check {
+        ($($angle:ty),+) => {$(
+            for input in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+                assert!(std::panic::catch_unwind(|| <$angle>::from_radians(input)).is_err());
+                assert!(std::panic::catch_unwind(|| <$angle>::from_turns(input)).is_err());
+            }
+            assert!(std::panic::catch_unwind(|| <$angle>::epsilon_from_radians(f64::NAN)).is_err());
+            assert!(std::panic::catch_unwind(|| <$angle>::epsilon_from_turns(f64::NAN)).is_err());
+        )+};
+    }
+    check!(Angle8, Angle16, Angle32, Angle64, Angle128);
+
+    // An infinite tolerance saturates at every width, for the same reason a
+    // full turn does: every angle lies within it. This was previously
+    // width-dependent, saturating only where `max_value` was exactly
+    // representable in f64 and panicking at `u64` and `u128`.
+    macro_rules! saturates {
+        ($($angle:ty => $integer:ty),+ $(,)?) => {$(
+            for input in [f64::INFINITY, f64::NEG_INFINITY] {
+                assert_eq!(<$angle>::epsilon_from_radians(input), <$integer>::MAX);
+                assert_eq!(<$angle>::epsilon_from_turns(input), <$integer>::MAX);
+            }
+        )+};
+    }
+    saturates!(
+        Angle8 => u8,
+        Angle16 => u16,
+        Angle32 => u32,
+        Angle64 => u64,
+        Angle128 => u128,
+    );
 }
 
 #[test]

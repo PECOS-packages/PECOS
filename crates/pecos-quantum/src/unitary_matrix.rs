@@ -1139,6 +1139,8 @@ pub trait ToMatrix {
     /// Converts to a dense [`UnitaryMatrix`] representation.
     ///
     /// The matrix size is 2^n where n is determined by the maximum qubit index + 1.
+    /// Rotation-family matrices use the stored angle's signed `(-pi, pi]`
+    /// representative, matching the simulator convention exactly.
     fn to_matrix(&self) -> UnitaryMatrix;
 }
 
@@ -1186,7 +1188,7 @@ impl ToMatrix for Clifford {
 }
 
 impl ToMatrix for Unitary {
-    /// Converts to a matrix on default qubits (0 for 1q, 0-1 for 2q, 0-1-2 for 3q).
+    /// Converts to a matrix on consecutive default qubits starting at zero.
     fn to_matrix(&self) -> UnitaryMatrix {
         let qubits: smallvec::SmallVec<[usize; 3]> = (0..self.num_qubits()).collect();
         let ur = UnitaryRep::Gate(*self, qubits);
@@ -1287,6 +1289,14 @@ fn to_matrix_with_size_impl(op: &UnitaryRep, num_qubits: usize) -> DMatrix<Compl
             u3_to_matrix(*theta, *phi, *lambda, qubits, num_qubits)
         }
 
+        UnitaryRep::Gate(
+            pecos_core::Unitary::Phase {
+                gamma,
+                num_qubits: operand_count,
+            },
+            qubits,
+        ) => phase_to_matrix(*gamma, *operand_count, qubits, num_qubits),
+
         UnitaryRep::Gate(pecos_core::Unitary::RXXRYYRZZ { alpha, beta, gamma }, qubits) => {
             rxxryyrzz_to_matrix(*alpha, *beta, *gamma, qubits, num_qubits)
         }
@@ -1318,9 +1328,24 @@ fn to_matrix_with_size_impl(op: &UnitaryRep, num_qubits: usize) -> DMatrix<Compl
         }
 
         UnitaryRep::Compose(parts) => {
-            // Matrix multiplication in reverse order (last part applied first)
+            // Matrix multiplication in reverse order (last part applied first).
             let mut result = DMatrix::identity(dim, dim);
             for part in parts {
+                // A zero-operand Phase is the scalar exp(i gamma). Materialising it as
+                // a dim x dim matrix and multiplying costs O(dim^3) for what is an
+                // O(dim^2) scaling, so apply it directly.
+                if let UnitaryRep::Gate(
+                    Unitary::Phase {
+                        gamma,
+                        num_qubits: 0,
+                    },
+                    _,
+                ) = part
+                {
+                    let (sin_g, cos_g) = gamma.sin_cos();
+                    result *= Complex64::new(cos_g, sin_g);
+                    continue;
+                }
                 let part_matrix = to_matrix_with_size_impl(part, num_qubits);
                 result = part_matrix * result;
             }
@@ -1330,13 +1355,6 @@ fn to_matrix_with_size_impl(op: &UnitaryRep, num_qubits: usize) -> DMatrix<Compl
         UnitaryRep::Adjoint(inner) => {
             let inner_matrix = to_matrix_with_size_impl(inner, num_qubits);
             inner_matrix.adjoint()
-        }
-
-        UnitaryRep::Phase { phase, inner } => {
-            let inner_matrix = to_matrix_with_size_impl(inner, num_qubits);
-            let (sin_p, cos_p) = phase.sin_cos();
-            let phase_factor = Complex64::new(cos_p, sin_p); // e^{i*phase}
-            inner_matrix * phase_factor
         }
     }
 }
@@ -1686,6 +1704,44 @@ fn u3_to_matrix(
     let u11 = Complex64::new(cos_t * (p + l).cos(), cos_t * (p + l).sin());
     let gate = DMatrix::from_row_slice(2, 2, &[u00, u01, u10, u11]);
     embed_single_qubit_gate(&gate, qubits[0], num_qubits)
+}
+
+/// Constructs the diagonal matrix that phases exactly the all-ones operand subspace.
+fn phase_to_matrix(
+    gamma: Angle64,
+    operand_count: usize,
+    qubits: &[usize],
+    num_qubits: usize,
+) -> DMatrix<Complex64> {
+    // `UnitaryRep::Gate` is public, so validate the pair even when the caller
+    // bypassed `phase_gate`. The operand count has no hardware arity limit.
+    assert_eq!(
+        qubits.len(),
+        operand_count,
+        "Phase descriptor declares {operand_count} operands but its gate has {}",
+        qubits.len()
+    );
+
+    let mut operands = std::collections::BTreeSet::new();
+    assert!(
+        qubits.iter().all(|q| operands.insert(*q)),
+        "Phase requires distinct qubits"
+    );
+    assert!(
+        qubits.iter().all(|&q| q < num_qubits),
+        "Phase operand is outside the matrix register"
+    );
+
+    let dim = 1usize << num_qubits;
+    let mut matrix = DMatrix::identity(dim, dim);
+    let (sin_gamma, cos_gamma) = gamma.sin_cos();
+    let phase = Complex64::new(cos_gamma, sin_gamma);
+    for basis in 0..dim {
+        if qubits.iter().all(|&qubit| basis & (1usize << qubit) != 0) {
+            matrix[(basis, basis)] = phase;
+        }
+    }
+    matrix
 }
 
 /// Constructs the matrix for RXXRYYRZZ(alpha, beta, gamma).

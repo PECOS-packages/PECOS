@@ -1036,10 +1036,16 @@ impl PyDagFaultAnalyzer {
     ///
     /// Returns:
     ///     `DagFaultInfluenceMap` with O(1) fault classification.
-    fn build_influence_map(&self) -> PyDagFaultInfluenceMap {
+    ///
+    /// Raises:
+    ///     ValueError: The circuit contains a gate Pauli propagation cannot represent.
+    fn build_influence_map(&self) -> PyResult<PyDagFaultInfluenceMap> {
         let analyzer = RustDagFaultAnalyzer::new(&self.dag);
         let inner = analyzer.build_influence_map();
-        PyDagFaultInfluenceMap { inner }
+        if let Some(error) = inner.unsupported_gate() {
+            return Err(pyo3::exceptions::PyValueError::new_err(error.to_string()));
+        }
+        Ok(PyDagFaultInfluenceMap { inner })
     }
 
     /// Maximum node index in the DAG.
@@ -4141,6 +4147,13 @@ impl PyDemSampler {
             .build()
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
         Ok(Self { inner })
+    }
+
+    /// Reconstruct the detector error model from the compiled sampling mechanisms.
+    fn to_detector_error_model(&self) -> PyDetectorErrorModel {
+        PyDetectorErrorModel {
+            inner: self.inner.to_detector_error_model(),
+        }
     }
 
     /// Number of mechanisms in the sampler.

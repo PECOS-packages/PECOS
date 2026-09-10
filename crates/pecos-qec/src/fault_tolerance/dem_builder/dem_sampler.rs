@@ -449,22 +449,42 @@ impl SamplingEngine {
     ///
     /// # Panics
     ///
-    /// Panics if a noise input or signature channel is invalid, or if a gate
-    /// event has no corresponding fault location.
+    /// Panics if a gate event has no corresponding fault location.
     ///
     /// # Errors
     ///
     /// Returns the structured unsupported-gate diagnostic retained by the
-    /// influence map.
+    /// influence map, or a configuration error for an invalid replacement mode
+    /// or an invalid noise or signature channel.
     pub fn from_influence_map(
         influence_map: &DagFaultInfluenceMap,
         per_location_probs: &[f64],
         noise: &super::NoiseConfig,
-    ) -> Result<Self, crate::fault_tolerance::propagator::UnsupportedGateError> {
+    ) -> Result<Self, super::DemBuilderError> {
         use pecos_core::gate_type::GateType;
 
         if let Some(error) = influence_map.unsupported_gate() {
-            return Err(error.clone());
+            return Err(super::DemBuilderError::UnsupportedGate(error.clone()));
+        }
+
+        if let Some(weights) = &noise.p2_weights {
+            weights
+                .validate_replacement_locations(
+                    &influence_map.locations,
+                    noise.p2_replacement_approximation,
+                )
+                .map_err(|error| super::DemBuilderError::ConfigurationError(error.to_string()))?;
+        }
+
+        if noise.p2_replacement_approximation == ReplacementBranchApproximation::ExactBranchReplay
+            && noise
+                .p2_weights
+                .as_ref()
+                .is_some_and(super::types::PauliWeights::has_replacement_entries)
+        {
+            return Err(super::DemBuilderError::ConfigurationError(
+                super::types::EXACT_BRANCH_REPLAY_REQUIRES_PROVIDER.to_string(),
+            ));
         }
 
         let mut aggregated: BTreeMap<DemMechanism, f64> = BTreeMap::new();
@@ -494,11 +514,9 @@ impl SamplingEngine {
                     .iter()
                     .find(|l| l.node == loc.node && l.before == loc.before)
                     .map_or(0.0, |l| l.idle_duration);
-                let families = noise
-                    .try_idle_channel_families(duration)
-                    .unwrap_or_else(|error| {
-                        panic!("invalid DEM idle-noise configuration: {error}")
-                    });
+                let families = noise.try_idle_channel_families(duration).map_err(|error| {
+                    super::DemBuilderError::ConfigurationError(error.to_string())
+                })?;
                 let mut effects: [Option<DemMechanism>; 4] = [None, None, None, None];
                 for event in &events {
                     let pauli = event
@@ -553,9 +571,9 @@ impl SamplingEngine {
                     }
                     let context = format!("location {loc_idx} exclusive family {family_index}");
                     let fit = fit_exclusive_signatures(exclusive, DemMechanism::xor, &context)
-                        .unwrap_or_else(|error| {
-                            panic!("invalid DEM idle-noise configuration: {error}")
-                        });
+                        .map_err(|error| {
+                            super::DemBuilderError::ConfigurationError(error.to_string())
+                        })?;
                     for (mechanism, probability) in fit.mechanisms {
                         aggregated
                             .entry(mechanism)
@@ -610,7 +628,7 @@ impl SamplingEngine {
                     .map(|event| {
                         let weight = if n_qubits == 2 {
                             weights.two_qubit_weight_for(
-                                loc.gate_type,
+                                loc.clifford,
                                 &event.pauli,
                                 noise.p2_replacement_approximation,
                             )
@@ -644,7 +662,7 @@ impl SamplingEngine {
                 loc.gate_type
             );
             validate_exclusive_probabilities(&event_weights, &context)
-                .unwrap_or_else(|error| panic!("invalid DEM noise configuration: {error}"));
+                .map_err(|error| super::DemBuilderError::ConfigurationError(error.to_string()))?;
             let channel_weight = event_weights.iter().sum();
             let mut exclusive = BTreeMap::new();
             for (event, &event_prob) in events.iter().zip(&event_weights) {
@@ -661,7 +679,7 @@ impl SamplingEngine {
                 }
             }
             let fit = fit_exclusive_signatures(exclusive, DemMechanism::xor, &context)
-                .unwrap_or_else(|error| panic!("invalid DEM noise configuration: {error}"));
+                .map_err(|error| super::DemBuilderError::ConfigurationError(error.to_string()))?;
             for (mechanism, probability) in fit.mechanisms {
                 aggregated
                     .entry(mechanism)
@@ -2191,12 +2209,19 @@ impl<'a> SamplingEngineBuilder<'a> {
     /// # Errors
     ///
     /// Returns the structured unsupported-gate diagnostic retained by the
-    /// influence map.
-    pub fn build(
-        self,
-    ) -> Result<SamplingEngine, crate::fault_tolerance::propagator::UnsupportedGateError> {
+    /// influence map, or a configuration error for an invalid replacement mode
+    /// or an invalid noise or signature channel.
+    pub fn build(self) -> Result<SamplingEngine, super::DemBuilderError> {
         if let Some(error) = self.influence_map.unsupported_gate() {
-            return Err(error.clone());
+            return Err(super::DemBuilderError::UnsupportedGate(error.clone()));
+        }
+        if let Some(weights) = &self.p2_weights {
+            weights
+                .validate_replacement_locations(
+                    &self.influence_map.locations,
+                    self.p2_replacement_approximation,
+                )
+                .map_err(|error| super::DemBuilderError::ConfigurationError(error.to_string()))?;
         }
         if self.p2_replacement_approximation == ReplacementBranchApproximation::ExactBranchReplay
             && self
@@ -2204,9 +2229,9 @@ impl<'a> SamplingEngineBuilder<'a> {
                 .as_ref()
                 .is_some_and(super::types::PauliWeights::has_replacement_entries)
         {
-            panic!(
-                "exact_branch_replay for p2 replacement branches requires a circuit-aware exact branch provider; use branch_impact or pauli_twirl_omitted_gate for the current Pauli-projected approximations"
-            );
+            return Err(super::DemBuilderError::ConfigurationError(
+                super::types::EXACT_BRANCH_REPLAY_REQUIRES_PROVIDER.to_string(),
+            ));
         }
         let num_detectors = self.detector_records.len();
         let influence_observable_ids = self.influence_map.observable_ids();
@@ -2322,7 +2347,7 @@ impl<'a> SamplingEngineBuilder<'a> {
                             &mechanism_context,
                             &mut aggregated,
                             &mut idle_noise_residuals,
-                        );
+                        )?;
                     }
                 }
                 GateType::Idle
@@ -2331,7 +2356,7 @@ impl<'a> SamplingEngineBuilder<'a> {
                     // explicitly configured.
                     if !loc.before =>
                 {
-                    let families = self.idle_families(loc);
+                    let families = self.idle_families(loc)?;
                     if !families.exclusive.is_empty() || !families.independent.is_empty() {
                         self.process_idle_fault_families(
                             loc_idx,
@@ -2339,7 +2364,7 @@ impl<'a> SamplingEngineBuilder<'a> {
                             &mechanism_context,
                             &mut aggregated,
                             &mut idle_noise_residuals,
-                        );
+                        )?;
                     }
                 }
                 _ => {}
@@ -2368,7 +2393,7 @@ impl<'a> SamplingEngineBuilder<'a> {
                         .chain(loc1.qubits.iter())
                         .copied()
                         .collect();
-                    let rates = self.rates_2q(gate_type, &pair_qubits);
+                    let rates = self.rates_2q(gate_type, loc0.clifford, &pair_qubits);
                     if rates.iter().any(|r| *r != 0.0) {
                         self.process_two_qubit_fault_rates(
                             pair[0],
@@ -2377,7 +2402,7 @@ impl<'a> SamplingEngineBuilder<'a> {
                             &mechanism_context,
                             &mut aggregated,
                             &mut idle_noise_residuals,
-                        );
+                        )?;
                     }
                 }
             }
@@ -2559,7 +2584,7 @@ impl<'a> SamplingEngineBuilder<'a> {
     fn idle_families(
         &self,
         loc: &crate::fault_tolerance::propagator::dag::DagSpacetimeLocation,
-    ) -> IdleChannelFamilies {
+    ) -> Result<IdleChannelFamilies, super::DemBuilderError> {
         if let Some(pg) = &self.per_gate {
             let explicit_rates = loc
                 .qubits
@@ -2572,23 +2597,23 @@ impl<'a> SamplingEngineBuilder<'a> {
                     py: rates[1],
                     pz: rates[2],
                 };
-                validate_idle_probabilities(probabilities, "per-gate").unwrap_or_else(|error| {
-                    panic!("invalid DEM idle-noise configuration: {error}")
-                });
-                return IdleChannelFamilies {
+                validate_idle_probabilities(probabilities, "per-gate").map_err(|error| {
+                    super::DemBuilderError::ConfigurationError(error.to_string())
+                })?;
+                return Ok(IdleChannelFamilies {
                     exclusive: smallvec::smallvec![probabilities],
                     independent: SmallVec::new(),
-                };
+                });
             }
             if pg.base.uses_dedicated_idle_noise() {
                 return pg
                     .base
                     .try_idle_channel_families(loc.idle_duration)
-                    .unwrap_or_else(|error| {
-                        panic!("invalid DEM idle-noise configuration: {error}")
+                    .map_err(|error| {
+                        super::DemBuilderError::ConfigurationError(error.to_string())
                     });
             }
-            return IdleChannelFamilies::default();
+            return Ok(IdleChannelFamilies::default());
         }
 
         if let Some(noise) = &self.idle_noise
@@ -2596,14 +2621,19 @@ impl<'a> SamplingEngineBuilder<'a> {
         {
             return noise
                 .try_idle_channel_families(loc.idle_duration)
-                .unwrap_or_else(|error| panic!("invalid DEM idle-noise configuration: {error}"));
+                .map_err(|error| super::DemBuilderError::ConfigurationError(error.to_string()));
         }
-        IdleChannelFamilies::default()
+        Ok(IdleChannelFamilies::default())
     }
 
     /// Resolve per-Pauli-pair rates for a 2Q gate (15 non-II pairs) on a
     /// specific ordered qubit pair.
-    fn rates_2q(&self, gate: GateType, qubits: &[pecos_core::QubitId]) -> [f64; 15] {
+    fn rates_2q(
+        &self,
+        gate: GateType,
+        clifford: pecos_core::CliffordLowering,
+        qubits: &[pecos_core::QubitId],
+    ) -> [f64; 15] {
         if let Some(pg) = &self.per_gate {
             if qubits.len() >= 2 {
                 let (qc, qt) = (qubits[0], qubits[1]);
@@ -2620,7 +2650,7 @@ impl<'a> SamplingEngineBuilder<'a> {
                     let p2 = flat % 4;
                     p2_total
                         * weights.two_qubit_weight_for(
-                            gate,
+                            clifford,
                             &pauli_pair_for_weight(p1, p2),
                             self.p2_replacement_approximation,
                         )
@@ -2638,11 +2668,11 @@ impl<'a> SamplingEngineBuilder<'a> {
         context: &FaultMechanismContext<'_>,
         aggregated: &mut BTreeMap<DemMechanism, f64>,
         residuals: &mut Vec<NoiseChannelResidual>,
-    ) {
+    ) -> Result<(), super::DemBuilderError> {
         let gate_type = self.influence_map.locations[loc_idx].gate_type;
         let fit_context = format!("one-qubit {gate_type} gate at location {loc_idx}");
         validate_exclusive_probabilities(&rates, &fit_context)
-            .unwrap_or_else(|error| panic!("invalid DEM noise configuration: {error}"));
+            .map_err(|error| super::DemBuilderError::ConfigurationError(error.to_string()))?;
         let channel_weight = rates.iter().sum();
         let mut exclusive = BTreeMap::new();
         for (pauli, &per_pauli_prob) in [Pauli::X, Pauli::Y, Pauli::Z].iter().zip(rates.iter()) {
@@ -2659,7 +2689,7 @@ impl<'a> SamplingEngineBuilder<'a> {
             *exclusive.entry(mechanism).or_insert(0.0) += per_pauli_prob;
         }
         let fit = fit_exclusive_signatures(exclusive, DemMechanism::xor, &fit_context)
-            .unwrap_or_else(|error| panic!("invalid DEM noise configuration: {error}"));
+            .map_err(|error| super::DemBuilderError::ConfigurationError(error.to_string()))?;
         for (mechanism, probability) in fit.mechanisms {
             aggregated
                 .entry(mechanism)
@@ -2676,6 +2706,7 @@ impl<'a> SamplingEngineBuilder<'a> {
                 channel_weight,
             });
         }
+        Ok(())
     }
 
     fn process_idle_fault_families(
@@ -2685,7 +2716,7 @@ impl<'a> SamplingEngineBuilder<'a> {
         context: &FaultMechanismContext<'_>,
         aggregated: &mut BTreeMap<DemMechanism, f64>,
         residuals: &mut Vec<NoiseChannelResidual>,
-    ) {
+    ) -> Result<(), super::DemBuilderError> {
         let x_mechanism = self.compute_mechanism(
             loc_idx,
             Pauli::X,
@@ -2736,7 +2767,7 @@ impl<'a> SamplingEngineBuilder<'a> {
             }
             let fit_context = format!("location {loc_idx} exclusive family {family_index}");
             let fit = fit_exclusive_signatures(exclusive, DemMechanism::xor, &fit_context)
-                .unwrap_or_else(|error| panic!("invalid DEM idle-noise configuration: {error}"));
+                .map_err(|error| super::DemBuilderError::ConfigurationError(error.to_string()))?;
             for (mechanism, probability) in fit.mechanisms {
                 add(mechanism, probability, aggregated);
             }
@@ -2760,6 +2791,7 @@ impl<'a> SamplingEngineBuilder<'a> {
                 add(mechanism, probability, aggregated);
             }
         }
+        Ok(())
     }
 
     /// Process a two-qubit gate fault with explicit per-Pauli-pair rates.
@@ -2772,11 +2804,11 @@ impl<'a> SamplingEngineBuilder<'a> {
         context: &FaultMechanismContext<'_>,
         aggregated: &mut BTreeMap<DemMechanism, f64>,
         residuals: &mut Vec<NoiseChannelResidual>,
-    ) {
+    ) -> Result<(), super::DemBuilderError> {
         let gate_type = self.influence_map.locations[loc1].gate_type;
         let fit_context = format!("two-qubit {gate_type} gate at locations {loc1} and {loc2}");
         validate_exclusive_probabilities(&rates, &fit_context)
-            .unwrap_or_else(|error| panic!("invalid DEM noise configuration: {error}"));
+            .map_err(|error| super::DemBuilderError::ConfigurationError(error.to_string()))?;
         let channel_weight = rates.iter().sum();
         let paulis = [Pauli::I, Pauli::X, Pauli::Y, Pauli::Z];
 
@@ -2831,7 +2863,7 @@ impl<'a> SamplingEngineBuilder<'a> {
             }
         }
         let fit = fit_exclusive_signatures(exclusive, DemMechanism::xor, &fit_context)
-            .unwrap_or_else(|error| panic!("invalid DEM noise configuration: {error}"));
+            .map_err(|error| super::DemBuilderError::ConfigurationError(error.to_string()))?;
         for (mechanism, probability) in fit.mechanisms {
             aggregated
                 .entry(mechanism)
@@ -2848,6 +2880,7 @@ impl<'a> SamplingEngineBuilder<'a> {
                 channel_weight,
             });
         }
+        Ok(())
     }
 
     /// Compute the mechanism (detector/standard observable effects) for a fault.

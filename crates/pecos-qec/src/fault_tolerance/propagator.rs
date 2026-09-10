@@ -181,16 +181,36 @@ impl std::fmt::Display for UnsupportedGateLocation {
 }
 
 /// Error identifying a gate whose action Pauli propagation cannot represent.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error("unsupported gate {gate_type:?} at {location} on qubits {qubits:?}")]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnsupportedGateError {
     /// Offending gate type.
     pub gate_type: GateType,
+    /// Angles of the scheduled gate.
+    pub angles: Vec<pecos_core::Angle64>,
     /// Circuit position of the gate.
     pub location: UnsupportedGateLocation,
     /// Qubits touched by the gate.
     pub qubits: Vec<usize>,
 }
+
+impl std::fmt::Display for UnsupportedGateError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "unsupported gate {:?}", self.gate_type)?;
+        if !self.angles.is_empty() {
+            f.write_str("(")?;
+            for (index, angle) in self.angles.iter().enumerate() {
+                if index > 0 {
+                    f.write_str(", ")?;
+                }
+                write!(f, "{angle}")?;
+            }
+            f.write_str(")")?;
+        }
+        write!(f, " at {} on qubits {:?}", self.location, self.qubits)
+    }
+}
+
+impl std::error::Error for UnsupportedGateError {}
 
 // ============================================================================
 // DAG-Based Sparse Propagation Infrastructure

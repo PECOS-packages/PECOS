@@ -229,12 +229,21 @@ def test_normalize_traced_tick_circuit_lowers_clifford_rzz():
     assert "SZZ" in gate_names
 
 
-def test_normalize_traced_tick_circuit_rejects_raw_rzz_after_lowering():
+def test_normalize_traced_tick_circuit_keeps_non_clifford_rejection_at_analysis():
+    from pecos_rslib.qec import DemSampler
+
     tc = TickCircuit()
     tc.tick().rzz(math.pi / 4, [(0, 1)])
+    normalize_traced_tick_circuit(tc, context="test non-Clifford RZZ normalization")
+    with pytest.raises(ValueError, match="RZZ"):
+        DemSampler.from_circuit(tc)
 
-    with pytest.raises(ValueError, match="still contains raw RZZ"):
-        normalize_traced_tick_circuit(tc, context="test non-Clifford RZZ normalization")
+
+def test_normalize_traced_tick_circuit_accepts_zero_rzz():
+    tc = TickCircuit()
+    tc.tick().rzz(0.0, [(0, 1)])
+    normalize_traced_tick_circuit(tc, context="test zero RZZ normalization")
+    assert _gate_names(tc) == ["RZZ"]
 
 
 def _gate_names(tc):

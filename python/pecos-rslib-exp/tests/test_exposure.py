@@ -180,7 +180,7 @@ def test_sim_neo_extract_commands_control_interference(symbol, operands, theta):
             [(symbol, [control, target], [theta])],
             [("H", [control])],
             [("MZ", [control, target])],
-        ]
+        ],
     )
     # Every controlled rotation at an odd full turn is Z on its control.
     # The final H turns the relative sign into a deterministic measurement.

@@ -22,10 +22,13 @@ use std::f64::consts::{PI, TAU};
 /// Keep both reduction and parity in f64: storing the remainder in `Angle64`
 /// would quantize it before the turn count is recovered.
 fn reduced_half_and_wrap_parity(theta_radians: f64) -> (f64, bool) {
-    let reduced = theta_radians.rem_euclid(TAU);
+    // Bound the source to one 4π period before deriving either component.
+    // The removed-turn count is then only 0, 1, or 2, even for huge inputs.
+    let bounded = theta_radians.rem_euclid(2.0 * TAU);
+    let reduced = bounded.rem_euclid(TAU);
     let signed = if reduced > PI { reduced - TAU } else { reduced };
     let h = signed / 2.0;
-    let wraps = ((theta_radians - signed) / TAU).round();
+    let wraps = ((bounded - signed) / TAU).round();
     // The rounded count has exact integer parity; compare exactly, without a tolerance.
     let needs_z = wraps.rem_euclid(2.0).total_cmp(&1.0).is_eq();
     (h, needs_z)
@@ -39,6 +42,20 @@ fn reduced_half_and_wrap_parity(theta_radians: f64) -> (f64, bool) {
 /// stored leg reaches the ambiguous ±π pair. Each removed 2π turn contributes
 /// a `Z` on the control; retaining its parity preserves the exact global phase
 /// and 4π periodicity without quantizing the source angle through [`Angle64`].
+/// The source is first reduced modulo 4π to keep the turn count bounded. This
+/// prevents loss of integer parity in an enormous quotient; it does not improve
+/// the accuracy of floating-point argument reduction.
+///
+/// # Numerical validation
+///
+/// An 80-digit reference comparison of 10,000 random f64 inputs per magnitude
+/// found no sheet errors through `|theta| <= 1e13`. The review measured about
+/// 1 error per 10,000 at `1e14`; an independent sweep (seed 670) found 6. Errors
+/// increase as floating-point input rounding and reduction lose angular detail.
+/// These are sampled results, not a uniform bound: an evenly spaced sweep
+/// already finds the wrong sheet at `theta = 156_700_000_000.0`. The regression
+/// tests pin high-precision samples through `1e13` and the bounded outputs of
+/// known counterexamples. No exact argument reduction is performed here.
 #[must_use]
 pub fn lower_crz(theta_radians: f64, control: QubitId, target: QubitId) -> SmallVec<[Gate; 3]> {
     let (half_theta, needs_z) = reduced_half_and_wrap_parity(theta_radians);
@@ -392,6 +409,62 @@ mod tests {
                 assert_eq!(needs_z, (theta / 2.0).cos() < 0.0, "theta={theta}");
             }
         }
+    }
+
+    #[test]
+    fn bounded_parity_matches_high_precision_samples_through_1e13() {
+        // Reference: ceil((exact_f64(theta) - pi) / (2*pi)) modulo 2,
+        // evaluated with 80-digit Decimal arithmetic. Factors are applied in f64
+        // before conversion to Decimal. These samples establish no uniform bound.
+        for (magnitude, expected) in [
+            (1e0, [false, false, false, false]),
+            (1e1, [false, true, true, false]),
+            (1e2, [false, false, false, false]),
+            (1e3, [false, true, true, true]),
+            (1e4, [true, true, false, false]),
+            (1e5, [true, true, true, true]),
+            (1e6, [false, true, false, true]),
+            (1e7, [false, true, false, true]),
+            (1e8, [true, true, true, false]),
+            (1e9, [false, true, true, true]),
+            (1e10, [true, true, true, true]),
+            (1e11, [true, false, false, true]),
+            (1e12, [false, false, true, false]),
+            (1e13, [true, false, true, true]),
+        ] {
+            for (factor, parity) in [0.125, 0.37, 0.75, 1.0].into_iter().zip(expected) {
+                for sign in [-1.0, 1.0] {
+                    let theta = sign * magnitude * factor;
+                    let (half, needs_z) = reduced_half_and_wrap_parity(theta);
+                    assert_eq!(needs_z, parity, "theta={theta}");
+                    assert!(half > -PI / 2.0 && half <= PI / 2.0);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn bounded_reduction_pins_large_inputs_and_a_sheet_counterexample() {
+        // Pin outputs of the bounded f64 implementation, not ideal real-angle
+        // answers. These two inputs have odd reference parity, but their reduced
+        // f64 angles still lose accuracy.
+        for (theta, rzz, rz) in [
+            (1e20, 15_664_121_865_801_654_272, 2_782_622_207_907_898_368),
+            (
+                18_014_398_509_482_004.0,
+                3_526_899_157_453_711_360,
+                14_919_844_916_255_840_256,
+            ),
+        ] {
+            let gates = lower_crz(theta, QubitId(0), QubitId(1));
+            assert_eq!(gates.len(), 3);
+            assert_eq!(gates[0], Gate::z(&[QubitId(0)]));
+            assert_eq!(gates[1].angles[0], Angle64::new(rzz));
+            assert_eq!(gates[2].angles[0], Angle64::new(rz));
+        }
+        // Even a value below 1e13 can lie close enough to a sheet boundary for
+        // f64 reduction to choose the wrong parity. Do not promise a uniform bound.
+        assert!(reduced_half_and_wrap_parity(156_700_000_000.0).1);
     }
 
     #[test]

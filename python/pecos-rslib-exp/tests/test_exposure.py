@@ -92,7 +92,9 @@ def test_sim_neo_rejects_rotation_with_wrong_angle_arity():
         exp.sim_neo(Circuit())
 
 
-def test_sim_neo_python_fallback_crz_preserves_full_matrix():
+def _boundary_circuit(ticks):
+    """Keep boundary rotations in Python so sim_neo must call extract_commands."""
+
     class GateType:
         def __init__(self, name):
             self.name = name
@@ -108,19 +110,14 @@ def test_sim_neo_python_fallback_crz_preserves_full_matrix():
 
     class Tick:
         def __init__(self, gates):
-            self.gates = gates
+            self.gates = [Gate(*gate) for gate in gates]
 
         def gate_batches(self):
             return self.gates
 
     class Circuit:
-        def __init__(self, basis, theta):
-            prep = []
-            if basis & 1:
-                prep.append(Gate("X", [0]))
-            if basis & 2:
-                prep.append(Gate("X", [1]))
-            self.ticks = [Tick(prep), Tick([Gate("CRZ", [1, 0], [theta])])]
+        def __init__(self):
+            self.ticks = [Tick(gates) for gates in ticks]
 
         def num_ticks(self):
             return len(self.ticks)
@@ -131,13 +128,19 @@ def test_sim_neo_python_fallback_crz_preserves_full_matrix():
         def annotations(self):
             return []
 
-    for theta in (-math.pi, math.pi / 3, math.pi, math.tau, 3 * math.pi):
+    return Circuit()
+
+
+def test_sim_neo_python_fallback_crz_preserves_full_matrix():
+    for theta in (-math.pi, math.pi / 3, math.pi, math.tau, -math.tau, 3 * math.pi, 3 * math.tau, -3 * math.tau):
         columns = []
         for basis in range(4):
-            native = exp.neo_fallback_native_gates(Circuit(basis, theta))
+            prep = [("X", [qubit]) for qubit in range(2) if basis & (1 << qubit)]
+            circuit = _boundary_circuit([prep, [("CRZ", [1, 0], [theta])]])
+            native = exp.neo_fallback_native_gates(circuit)
             simulator = StateVec(2)
             for _, name, qubits, angles in native:
-                if name in {"X", "RZ"}:
+                if name in {"X", "Z", "RZ"}:
                     params = {"angle": angles[0]} if name == "RZ" else None
                     for qubit in qubits:
                         simulator.backend.run_1q_gate(name, qubit, params)
@@ -160,15 +163,29 @@ def test_sim_neo_python_fallback_crz_preserves_full_matrix():
             [0, 0, complex(math.cos(half), -math.sin(half)), 0],
             [0, 0, 0, complex(math.cos(half), math.sin(half))],
         ]
-        phase = columns[0][0] / reference[0][0]
-        assert abs(abs(phase) - 1) < 1e-12
-        if theta in {-math.pi, math.pi / 3, math.pi}:
-            assert abs(phase - 1) < 1e-12
-        else:
-            assert min(abs(phase - 1), abs(phase + 1)) < 1e-12
         for column in range(4):
             for row in range(4):
-                assert abs(columns[column][row] / phase - reference[row][column]) < 1e-12
+                assert abs(columns[column][row] - reference[row][column]) < 1e-12
+
+
+@pytest.mark.parametrize("symbol", ["CRX", "CRY", "CRZ"])
+@pytest.mark.parametrize("operands", [(0, 1), (1, 0)])
+@pytest.mark.parametrize("theta", [math.tau, -math.tau, 3 * math.tau, -3 * math.tau])
+def test_sim_neo_extract_commands_control_interference(symbol, operands, theta):
+    control, target = operands
+    circuit = _boundary_circuit(
+        [
+            [("PZ", [0, 1])],
+            [("H", [control])],
+            [(symbol, [control, target], [theta])],
+            [("H", [control])],
+            [("MZ", [control, target])],
+        ]
+    )
+    # Every controlled rotation at an odd full turn is Z on its control.
+    # The final H turns the relative sign into a deterministic measurement.
+    result = exp.sim_neo(circuit).quantum(exp.statevec()).sampling(exp.monte_carlo(4)).seed(670).run()
+    assert [list(row) for row in result] == [[1, 0]] * 4
 
 
 def test_stab_mps_measurement_selection_precedence_and_reset_retention():

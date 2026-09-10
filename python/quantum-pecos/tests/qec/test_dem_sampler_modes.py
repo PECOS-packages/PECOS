@@ -262,3 +262,31 @@ class TestDemSamplerRepr:
         r = repr(sampler)
         assert "DemSampler" in r
         assert "DemSampler" in r
+
+
+def test_dag_fault_analyzer_rejects_unsupported_gate() -> None:
+    """Unsupported gates must produce a diagnostic instead of an empty map."""
+    dag = DagCircuit()
+    dag.pz([0])
+    dag.t([0])
+    dag.mz([0])
+    with pytest.raises(ValueError, match=r"unsupported gate T at DAG node 1 on qubits \[0\]"):
+        DagFaultAnalyzer(dag).build_influence_map()
+
+
+def test_sampler_configuration_error_is_value_error() -> None:
+    """A circuit without an exact branch provider reports a configuration error."""
+    dag = DagCircuit()
+    dag.pz([0, 1])
+    dag.szz([(0, 1)])
+    dag.mz([0, 1])
+    with pytest.raises(ValueError, match="requires a circuit-aware exact branch provider"):
+        DemSampler.from_circuit(
+            dag,
+            p1=0.0,
+            p2=0.01,
+            p_meas=0.0,
+            p_prep=0.0,
+            p2_weights={"~XX": 1.0},
+            p2_replacement_approximation="exact_branch_replay",
+        )

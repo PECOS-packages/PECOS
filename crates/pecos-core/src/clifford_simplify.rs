@@ -29,6 +29,21 @@ pub enum CliffordLowering {
     PerQubit(GateType),
 }
 
+/// Whether the shared lowering policy owns this rotation gate type.
+#[must_use]
+pub fn is_lowerable_rotation(gate_type: GateType) -> bool {
+    matches!(
+        gate_type,
+        GateType::RX
+            | GateType::RY
+            | GateType::RZ
+            | GateType::RXX
+            | GateType::RYY
+            | GateType::RZZ
+            | GateType::RXY1Q
+    )
+}
+
 /// Lower a rotation gate to named Cliffords under the shared policy.
 ///
 /// Axis rotations match exactly. `RXY1Q` snaps both angles within `1e-9`
@@ -39,19 +54,13 @@ pub enum CliffordLowering {
 #[must_use]
 pub fn try_lower_rotation_to_clifford(gate: &crate::Gate) -> Option<CliffordLowering> {
     match (gate.gate_type, gate.angles.as_slice()) {
-        (
-            GateType::RX
-            | GateType::RY
-            | GateType::RZ
-            | GateType::RXX
-            | GateType::RYY
-            | GateType::RZZ,
-            &[angle],
-        ) => try_simplify_rotation(gate.gate_type, angle)
-            .map(CliffordLowering::Named)
-            .or_else(|| {
-                half_turn_decomposition(gate.gate_type, angle).map(CliffordLowering::PerQubit)
-            }),
+        (gate_type, &[angle]) if is_lowerable_rotation(gate_type) => {
+            try_simplify_rotation(gate.gate_type, angle)
+                .map(CliffordLowering::Named)
+                .or_else(|| {
+                    half_turn_decomposition(gate.gate_type, angle).map(CliffordLowering::PerQubit)
+                })
+        }
         (GateType::RXY1Q, &[theta, phi]) => {
             try_simplify_rxy1q(theta, phi).map(CliffordLowering::Named)
         }

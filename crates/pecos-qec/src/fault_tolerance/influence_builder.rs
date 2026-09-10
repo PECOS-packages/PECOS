@@ -488,6 +488,7 @@ impl<'a> InfluenceBuilder<'a> {
                     // exactly as `symbolic_measurement_history` refuses it.
                     pecos_quantum::GateType::MeasureLeaked => {
                         return Err(InfluenceBuildError::UnsupportedGate(UnsupportedGateError {
+                            angles: op.angles.to_vec(),
                             location: UnsupportedGateLocation::DagNode { node },
                             gate_type: op.gate_type,
                             qubits,
@@ -510,6 +511,7 @@ impl<'a> InfluenceBuilder<'a> {
                     // then contradicts.
                     other => {
                         return Err(InfluenceBuildError::UnsupportedGate(UnsupportedGateError {
+                            angles: op.angles.to_vec(),
                             location: UnsupportedGateLocation::DagNode { node },
                             gate_type: other,
                             qubits,

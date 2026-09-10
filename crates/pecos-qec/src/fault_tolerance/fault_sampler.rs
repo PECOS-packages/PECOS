@@ -209,6 +209,7 @@ fn validate_tick_circuit(tc: &TickCircuit) -> Result<(), UnsupportedGateError> {
                 continue;
             }
             return Err(UnsupportedGateError {
+                angles: gate.angles.to_vec(),
                 gate_type: gate.gate_type,
                 location: UnsupportedGateLocation::Tick {
                     tick: tick_idx,
@@ -1542,6 +1543,7 @@ pub fn symbolic_measurement_history(
 
             let unsupported = || {
                 MeasurementHistoryError::UnsupportedGate(UnsupportedGateError {
+                    angles: gate.angles.to_vec(),
                     gate_type: gate.gate_type,
                     location: UnsupportedGateLocation::Tick {
                         tick: tick_idx,
@@ -1607,6 +1609,7 @@ pub fn symbolic_measurement_history(
                 other => {
                     return Err(MeasurementHistoryError::UnsupportedGate(
                         UnsupportedGateError {
+                            angles: gate.angles.to_vec(),
                             gate_type: other,
                             location: UnsupportedGateLocation::Tick {
                                 tick: tick_idx,
@@ -2625,6 +2628,7 @@ mod tests {
                 Gate::rzz(Angle64::QUARTER_TURN, &[(0, 1)]),
                 Gate::szz(&[(0, 1)]),
             ),
+            (Gate::rzz(Angle64::HALF_TURN, &[(0, 1)]), Gate::z(&[0, 1])),
         ] {
             let history = |gate| {
                 let mut tc = TickCircuit::new();

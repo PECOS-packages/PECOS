@@ -62,6 +62,8 @@ pub enum DetectorValidationError {
     /// Raw measurement mode requires all gates to be in the supported Clifford
     /// subset (`H`, `X`, `Y`, `Z`, `SZ`, `SZdg`, `CX`, `CZ`, `SWAP`, `MZ`, `PZ`, `I`).
     UnsupportedGateForDeterminismAnalysis { gate_type: String },
+    /// Noise or DEM builder configuration is invalid.
+    InvalidConfiguration { message: String },
     /// Circuit detector/observable metadata is malformed.
     InvalidMetadata { message: String },
     /// A detector or observable annotation references a node that cannot be
@@ -124,6 +126,7 @@ impl std::fmt::Display for DetectorValidationError {
                      H, X, Y, Z, SZ, SZdg, CX, CZ, SWAP, MZ, PZ/QAlloc, I/Idle."
                 )
             }
+            Self::InvalidConfiguration { message } => f.write_str(message),
             Self::InvalidMetadata { message } => {
                 write!(f, "Invalid detector/observable metadata: {message}")
             }
@@ -146,6 +149,18 @@ impl std::error::Error for DetectorValidationError {}
 impl From<crate::fault_tolerance::propagator::UnsupportedGateError> for DetectorValidationError {
     fn from(error: crate::fault_tolerance::propagator::UnsupportedGateError) -> Self {
         Self::UnsupportedGate(error)
+    }
+}
+
+impl From<super::DemBuilderError> for DetectorValidationError {
+    fn from(error: super::DemBuilderError) -> Self {
+        match error {
+            super::DemBuilderError::UnsupportedGate(error) => Self::UnsupportedGate(error),
+            super::DemBuilderError::ParseError(message) => Self::InvalidMetadata { message },
+            super::DemBuilderError::ConfigurationError(message) => {
+                Self::InvalidConfiguration { message }
+            }
+        }
     }
 }
 
@@ -466,9 +481,10 @@ impl DemSampler {
     ///
     /// # Errors
     ///
-    /// Returns [`DetectorValidationError`] when detector metadata is invalid
-    /// for the circuit's measurement record.
-    ///
+    /// Returns [`DetectorValidationError::UnsupportedGate`] for unsupported circuit
+    /// gates, [`DetectorValidationError::InvalidMetadata`] for malformed metadata
+    /// or unsupported measurement batches, and
+    /// [`DetectorValidationError::InvalidConfiguration`] for invalid DEM configuration.
     pub fn from_circuit(
         circuit: &pecos_quantum::DagCircuit,
         noise: &super::types::NoiseConfig,
@@ -557,11 +573,7 @@ impl DemSampler {
             builder
         };
 
-        let dem = builder
-            .try_build()
-            .map_err(|err| DetectorValidationError::InvalidMetadata {
-                message: err.to_string(),
-            })?;
+        let dem = builder.try_build()?;
         Ok(Self::from_detector_error_model(&dem))
     }
 

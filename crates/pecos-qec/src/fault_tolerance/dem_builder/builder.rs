@@ -947,7 +947,12 @@ impl<'a> DemBuilder<'a> {
 
     fn validate_replacement_branch_approximation(&self) -> Result<(), DemBuilderError> {
         if let Some(weights) = &self.noise.p2_weights {
-            weights.validate_replacement_locations(&self.influence_map.locations)?;
+            weights
+                .validate_replacement_locations(
+                    &self.influence_map.locations,
+                    self.noise.p2_replacement_approximation,
+                )
+                .map_err(|error| DemBuilderError::ConfigurationError(error.to_string()))?;
         }
         let has_replacement_branches = self
             .noise
@@ -1123,14 +1128,7 @@ impl<'a> DemBuilder<'a> {
             }
 
             if let Some(gate) = context.circuit.gate(node) {
-                let qubits: Vec<usize> =
-                    gate.qubits.iter().map(pecos_core::QubitId::index).collect();
-                Self::apply_symbolic_gate_for_crosstalk_hidden_mz(
-                    &mut sim,
-                    node,
-                    gate.gate_type,
-                    &qubits,
-                )?;
+                Self::apply_symbolic_gate_for_crosstalk_hidden_mz(&mut sim, node, gate)?;
             }
         }
 
@@ -1251,13 +1249,15 @@ impl<'a> DemBuilder<'a> {
     fn apply_symbolic_gate_for_crosstalk_hidden_mz(
         sim: &mut SymbolicSparseStab,
         node: usize,
-        gate_type: GateType,
-        qubits: &[usize],
+        gate: &pecos_core::Gate,
     ) -> Result<(), DemBuilderError> {
         use crate::fault_tolerance::symbolic_replay::{
-            ArityError, Dispatch, apply_unitary_clifford,
+            ArityError, Dispatch, apply_lowered_clifford, apply_unitary_clifford,
         };
 
+        let gate_type = gate.gate_type;
+        let targets: Vec<usize> = gate.qubits.iter().map(pecos_core::QubitId::index).collect();
+        let qubits = targets.as_slice();
         let arity_error = |err: ArityError| match err {
             ArityError::TooFew { required, actual } => {
                 DemBuilderError::ConfigurationError(format!(
@@ -1269,6 +1269,9 @@ impl<'a> DemBuilder<'a> {
             )),
         };
 
+        if let Some(lowering) = pecos_core::try_lower_rotation_to_clifford(gate) {
+            return apply_lowered_clifford(sim, lowering, qubits).map_err(arity_error);
+        }
         if apply_unitary_clifford(sim, gate_type, qubits).map_err(arity_error)? == Dispatch::Applied
         {
             return Ok(());
@@ -3843,15 +3846,6 @@ mod tests {
                 Some([(1, 0), (3, 0), (0, 1), (0, 3)])
             );
         }
-        for gate in [
-            GateType::CY,
-            GateType::SWAP,
-            GateType::SXX,
-            GateType::SYY,
-            GateType::I,
-        ] {
-            assert!(two_qubit_pre_generator_post_images(CliffordLowering::Named(gate)).is_none());
-        }
     }
 
     #[test]
@@ -4706,6 +4700,43 @@ mod tests {
             Attribute::String(r#"[{"id":0,"records":[-1]}]"#.to_string()),
         );
         circuit
+    }
+
+    #[test]
+    fn crosstalk_hidden_measurement_replay_lowers_rotations() {
+        use crate::fault_tolerance::dem_builder::MeasurementCrosstalkTransitionModel;
+        use pecos_core::{Angle64, Gate};
+        let dem = |gate| {
+            let mut circuit = pecos_quantum::DagCircuit::new();
+            circuit.pz(&[0, 1]);
+            circuit.h(&[0]);
+            circuit.add_gate_auto_wire(gate);
+            circuit.szzdg(&[(0, 1)]);
+            circuit.h(&[0]);
+            circuit.add_gate_auto_wire(Gate::meas_crosstalk_local_payload(&[0]));
+            circuit.mz(&[0]);
+            circuit.set_attr(
+                "detectors",
+                pecos_quantum::Attribute::String(r#"[{"id":0,"records":[-1]}]"#.to_string()),
+            );
+            let noise = NoiseConfig::new(0.0, 0.0, 0.0, 0.0)
+                .set_measurement_crosstalk_local_rate(0.25)
+                .set_measurement_crosstalk_transition_model(
+                    MeasurementCrosstalkTransitionModel::bit_flip(0.4, 0.0),
+                )
+                .set_measurement_crosstalk_dem_mode(
+                    MeasurementCrosstalkDemMode::ExactDeterministic,
+                );
+            let dem = DemBuilder::try_from_circuit_with_noise_config(&circuit, noise)
+                .unwrap()
+                .to_string();
+            assert!(dem.contains("error("));
+            dem
+        };
+        assert_eq!(
+            dem(Gate::rzz(Angle64::QUARTER_TURN, &[(0, 1)])),
+            dem(Gate::szz(&[(0, 1)]))
+        );
     }
 
     #[test]

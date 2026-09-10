@@ -1031,10 +1031,13 @@ impl PyDagFaultAnalyzer {
     ///
     /// Returns:
     ///     `DagFaultInfluenceMap` with O(1) fault classification.
-    fn build_influence_map(&self) -> PyDagFaultInfluenceMap {
+    fn build_influence_map(&self) -> PyResult<PyDagFaultInfluenceMap> {
         let analyzer = RustDagFaultAnalyzer::new(&self.dag);
         let inner = analyzer.build_influence_map();
-        PyDagFaultInfluenceMap { inner }
+        if let Some(error) = inner.unsupported_gate() {
+            return Err(pyo3::exceptions::PyValueError::new_err(error.to_string()));
+        }
+        Ok(PyDagFaultInfluenceMap { inner })
     }
 
     /// Maximum node index in the DAG.

@@ -117,6 +117,8 @@ pub struct FaultLocations {
     pub before: Vec<bool>,
     /// Gate type at each location.
     pub gate_types: Vec<GateType>,
+    /// Resolved Clifford action at each location.
+    pub cliffords: Vec<CliffordLowering>,
     /// Idle duration at each location. 0.0 for non-idle gates.
     pub idle_durations: Vec<f64>,
     /// Reverse index: node -> list of location IDs at that node.
@@ -138,6 +140,7 @@ impl FaultLocations {
             qubits: Vec::with_capacity(num_locations),
             before: Vec::with_capacity(num_locations),
             gate_types: Vec::with_capacity(num_locations),
+            cliffords: Vec::with_capacity(num_locations),
             idle_durations: Vec::with_capacity(num_locations),
             node_to_locations: vec![SmallVec::new(); max_node + 1],
         }
@@ -158,20 +161,25 @@ impl FaultLocations {
     }
 
     /// Adds a fault location and returns its ID.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the scheduled rotation cannot be lowered to a Clifford.
     pub fn push(
         &mut self,
         node: usize,
         qubits: SmallVec<[usize; 2]>,
         before: bool,
-        gate_type: GateType,
-        idle_duration: f64,
+        gate: &Gate,
     ) -> usize {
+        let clifford = resolve_clifford_action(node, gate);
         let loc_id = self.nodes.len();
         self.nodes.push(node);
         self.qubits.push(qubits);
         self.before.push(before);
-        self.gate_types.push(gate_type);
-        self.idle_durations.push(idle_duration);
+        self.gate_types.push(gate.gate_type);
+        self.cliffords.push(clifford);
+        self.idle_durations.push(gate.idle_duration());
 
         // Update reverse index
         if node < self.node_to_locations.len() {
@@ -206,27 +214,17 @@ impl FaultLocations {
         &self.qubits[loc_id]
     }
 
-    /// Converts to a Vec of `DagSpacetimeLocation` using the scheduled gates.
-    ///
-    /// # Panics
-    ///
-    /// Panics if a location has no corresponding gate or a rotation is not
-    /// Clifford. The propagator must belong to the validated source circuit.
+    /// Converts the stored location columns to spacetime locations.
     #[must_use]
-    pub fn to_dag_spacetime_locations(
-        &self,
-        propagator: &DagPropagator<'_>,
-    ) -> Vec<DagSpacetimeLocation> {
+    pub fn to_dag_spacetime_locations(&self) -> Vec<DagSpacetimeLocation> {
         (0..self.len())
-            .map(|i| {
-                DagSpacetimeLocation::new(
-                    self.nodes[i],
-                    self.qubits[i].iter().map(|&q| QubitId::from(q)).collect(),
-                    self.before[i],
-                    propagator
-                        .gate(self.nodes[i])
-                        .expect("a fault location must refer to a gate"),
-                )
+            .map(|i| DagSpacetimeLocation {
+                node: self.nodes[i],
+                qubits: self.qubits[i].iter().copied().map(QubitId::from).collect(),
+                before: self.before[i],
+                gate_type: self.gate_types[i],
+                clifford: self.cliffords[i],
+                idle_duration: self.idle_durations[i],
             })
             .collect()
     }
@@ -265,29 +263,33 @@ impl DagSpacetimeLocation {
     /// must reject unsupported gates in preflight before constructing locations.
     #[must_use]
     pub fn new(node: usize, qubits: Vec<QubitId>, before: bool, gate: &Gate) -> Self {
-        let lowering = pecos_core::try_lower_rotation_to_clifford(gate);
-        assert!(
-            !matches!(
-                gate.gate_type,
-                GateType::RX
-                    | GateType::RY
-                    | GateType::RZ
-                    | GateType::RXX
-                    | GateType::RYY
-                    | GateType::RZZ
-                    | GateType::RXY1Q
-            ) || lowering.is_some(),
-            "cannot construct fault location at node {node} for non-Clifford gate {gate:?}"
-        );
         Self {
             node,
             qubits,
             before,
             gate_type: gate.gate_type,
-            clifford: lowering.unwrap_or(CliffordLowering::Named(gate.gate_type)),
+            clifford: resolve_clifford_action(node, gate),
             idle_duration: gate.idle_duration(),
         }
     }
+}
+
+/// Resolve the Clifford action of a scheduled gate for a fault location.
+///
+/// A rotation resolves through the shared lowering policy; any other gate is
+/// its own action.
+///
+/// # Panics
+///
+/// Panics if a rotation cannot be lowered to a Clifford. Circuit callers must
+/// reject unsupported gates in preflight before constructing locations.
+fn resolve_clifford_action(node: usize, gate: &Gate) -> CliffordLowering {
+    let lowering = pecos_core::try_lower_rotation_to_clifford(gate);
+    assert!(
+        !pecos_core::is_lowerable_rotation(gate.gate_type) || lowering.is_some(),
+        "cannot construct fault location at node {node} for non-Clifford gate {gate:?}"
+    );
+    lowering.unwrap_or(CliffordLowering::Named(gate.gate_type))
 }
 
 impl PartialEq for DagSpacetimeLocation {
@@ -1961,13 +1963,7 @@ impl<'a> DagFaultAnalyzer<'a> {
                     };
                 for q in location_qubits {
                     let single_qubit: SmallVec<[usize; 2]> = smallvec::smallvec![q];
-                    locations.push(
-                        node,
-                        single_qubit,
-                        before,
-                        gate.gate_type,
-                        gate.idle_duration(),
-                    );
+                    locations.push(node, single_qubit, before, gate);
                 }
                 if is_supported_prep_gate(gate.gate_type) {
                     prepared_qubits.extend(qubits.iter().copied());
@@ -2008,7 +2004,7 @@ impl<'a> DagFaultAnalyzer<'a> {
         map.unsupported_gate.clone_from(&self.unsupported_gate);
 
         // Copy locations
-        map.locations = self.locations.to_dag_spacetime_locations(&self.propagator);
+        map.locations = self.locations.to_dag_spacetime_locations();
 
         // Extract measurements and create detectors
         let (measurements, meas_ids) = self.extract_measurements();
@@ -2064,6 +2060,7 @@ impl<'a> DagFaultAnalyzer<'a> {
                 == PauliPropagationOutcome::Unsupported
             {
                 return Some(UnsupportedGateError {
+                    angles: gate.angles.to_vec(),
                     gate_type: gate.gate_type,
                     location: UnsupportedGateLocation::DagNode { node },
                     qubits: gate.qubits.iter().map(pecos_core::QubitId::index).collect(),
@@ -2891,9 +2888,7 @@ mod tests {
         influences: InfluencesSoA,
     ) -> DagFaultInfluenceMap {
         let mut map = DagFaultInfluenceMap::with_capacity(analyzer.locations.len());
-        map.locations = analyzer
-            .locations
-            .to_dag_spacetime_locations(&analyzer.propagator);
+        map.locations = analyzer.locations.to_dag_spacetime_locations();
 
         let (measurements, meas_ids) = analyzer.extract_measurements();
         map.measurements.clone_from(&measurements);

@@ -29,6 +29,7 @@ use crate::fault_tolerance::propagator::{
     is_supported_noop_or_metadata_gate, is_supported_prep_gate,
 };
 use pecos_core::BitSet;
+use pecos_core::CliffordLowering;
 use pecos_core::gate_type::GateType;
 use pecos_simulators::{
     PauliProp, SymbolicMeasurementResult, SymbolicSparseStab,
@@ -523,7 +524,7 @@ impl<'a> DemBuilder<'a> {
                     weights.post_gate_two_qubit_weight_for(&pauli)
                 } else {
                     weights.two_qubit_weight_for(
-                        loc1.gate_type,
+                        loc1.clifford,
                         &pauli,
                         self.noise.p2_replacement_approximation,
                     )
@@ -945,6 +946,9 @@ impl<'a> DemBuilder<'a> {
     }
 
     fn validate_replacement_branch_approximation(&self) -> Result<(), DemBuilderError> {
+        if let Some(weights) = &self.noise.p2_weights {
+            weights.validate_replacement_locations(&self.influence_map.locations)?;
+        }
         let has_replacement_branches = self
             .noise
             .p2_weights
@@ -1669,7 +1673,7 @@ impl<'a> DemBuilder<'a> {
             return;
         };
         let loc1_meta = &self.influence_map.locations[loc1];
-        let branch_impacts = weights.replacement_branch_impacts(loc1_meta.gate_type);
+        let branch_impacts = weights.replacement_branch_impacts(loc1_meta.clifford);
         if branch_impacts.is_empty() {
             return;
         }
@@ -2263,7 +2267,7 @@ impl<'a> DemBuilder<'a> {
         let source_before_flags = [loc1_meta.before, loc2_meta.before];
 
         let source_frame_components = if direct_source_family.is_none() {
-            Self::two_qubit_clifford_source_frame_components(loc1_meta.gate_type, p1, p2, effects)
+            Self::two_qubit_clifford_source_frame_components(loc1_meta.clifford, p1, p2, effects)
         } else {
             None
         };
@@ -2327,12 +2331,12 @@ impl<'a> DemBuilder<'a> {
     /// post-gate effect table, so the XOR of returned components is exactly the
     /// original post-gate effect.
     fn two_qubit_clifford_source_frame_components(
-        gate_type: GateType,
+        clifford: CliffordLowering,
         post_p1: u8,
         post_p2: u8,
         effects: &[[FaultMechanism; 4]; 4],
     ) -> Option<SmallVec<[FaultMechanism; 4]>> {
-        let images = two_qubit_pre_generator_post_images(gate_type)?;
+        let images = two_qubit_pre_generator_post_images(clifford)?;
         let (pre_p1, pre_p2) = invert_two_qubit_clifford_post_pauli(images, (post_p1, post_p2))?;
 
         let mut components = SmallVec::new();
@@ -2655,27 +2659,33 @@ type TwoQubitGeneratorImages = [TwoQubitPauli; 4];
 /// Returns post-gate images of the pre-gate generators
 /// `[X1, Z1, X2, Z2]`, ignoring phase.
 #[inline]
-fn two_qubit_pre_generator_post_images(gate_type: GateType) -> Option<TwoQubitGeneratorImages> {
-    match gate_type {
-        GateType::CX => Some([
+fn two_qubit_pre_generator_post_images(
+    clifford: CliffordLowering,
+) -> Option<TwoQubitGeneratorImages> {
+    match clifford {
+        CliffordLowering::Named(GateType::CX) => Some([
             (1, 1), // X1 -> XX
             (3, 0), // Z1 -> ZI
             (0, 1), // X2 -> IX
             (3, 3), // Z2 -> ZZ
         ]),
-        GateType::CZ => Some([
+        CliffordLowering::Named(GateType::CZ) => Some([
             (1, 3), // X1 -> XZ
             (3, 0), // Z1 -> ZI
             (3, 1), // X2 -> ZX
             (0, 3), // Z2 -> IZ
         ]),
-        GateType::SZZ | GateType::SZZdg => Some([
-            (2, 3), // X1 -> YZ
-            (3, 0), // Z1 -> ZI
-            (3, 2), // X2 -> ZY
-            (0, 3), // Z2 -> IZ
-        ]),
-        _ => None,
+        CliffordLowering::Named(GateType::SZZ | GateType::SZZdg) => {
+            Some([
+                (2, 3), // X1 -> YZ
+                (3, 0), // Z1 -> ZI
+                (3, 2), // X2 -> ZY
+                (0, 3), // Z2 -> IZ
+            ])
+        }
+        // Pauli conjugation changes only phases, which these images ignore.
+        CliffordLowering::PerQubit(_) => Some([(1, 0), (3, 0), (0, 1), (0, 3)]),
+        CliffordLowering::Named(_) => None,
     }
 }
 
@@ -3826,6 +3836,25 @@ mod tests {
     use super::*;
 
     #[test]
+    fn per_qubit_source_frame_preserves_generators() {
+        for pauli in [GateType::X, GateType::Y, GateType::Z] {
+            assert_eq!(
+                two_qubit_pre_generator_post_images(CliffordLowering::PerQubit(pauli)),
+                Some([(1, 0), (3, 0), (0, 1), (0, 3)])
+            );
+        }
+        for gate in [
+            GateType::CY,
+            GateType::SWAP,
+            GateType::SXX,
+            GateType::SYY,
+            GateType::I,
+        ] {
+            assert!(two_qubit_pre_generator_post_images(CliffordLowering::Named(gate)).is_none());
+        }
+    }
+
+    #[test]
     fn z_error_before_mx_produces_a_detector_mechanism() {
         use pecos_num::graph::Attribute;
 
@@ -3851,6 +3880,37 @@ mod tests {
     }
 
     #[test]
+    fn rotated_location_uses_exact_source_frame_components() {
+        use pecos_core::{Angle64, Gate, QubitId};
+        let a = FaultMechanism::from_unsorted([0, 1], []);
+        let b = FaultMechanism::from_unsorted([2], []);
+        let c = FaultMechanism::from_unsorted([3, 4], []);
+        let mut effects: [[FaultMechanism; 4]; 4] = Default::default();
+        effects[2][3] = a.clone();
+        effects[3][0] = b.clone();
+        effects[0][3] = c.clone();
+        effects[1][0] = a.xor(&b).xor(&c);
+        for gate in [
+            Gate::rzz(Angle64::QUARTER_TURN, &[(0, 1)]),
+            Gate::szz(&[(0, 1)]),
+        ] {
+            let first = DagSpacetimeLocation::new(0, vec![QubitId(0)], false, &gate);
+            let second = DagSpacetimeLocation::new(0, vec![QubitId(1)], false, &gate);
+            let mut dem = DetectorErrorModel::new();
+            DemBuilder::add_two_qubit_pauli_contribution(
+                0, 1, 1, 0, 0.01, &effects, &first, &second, &mut dem, None,
+            );
+            let contributions = dem.contributions_for_effect(&[0, 1, 2, 3, 4], &[]);
+            assert_eq!(contributions.len(), 1);
+            let parts = contributions[0].source_component_effects().unwrap();
+            assert_eq!(parts.len(), 3);
+            for expected in [&a, &b, &c] {
+                assert!(parts.contains(expected));
+            }
+        }
+    }
+
+    #[test]
     fn test_szz_source_frame_components_pull_post_error_to_pre_generators() {
         fn dets(indices: &[u32]) -> FaultMechanism {
             FaultMechanism::from_unsorted(indices.iter().copied(), std::iter::empty())
@@ -3866,9 +3926,13 @@ mod tests {
         effects[0][3] = c.clone(); // SZZ maps pre Z2 to post IZ.
         effects[1][0] = a.xor(&b).xor(&c);
 
-        let parts =
-            DemBuilder::two_qubit_clifford_source_frame_components(GateType::SZZ, 1, 0, &effects)
-                .expect("post XI should pull back through SZZ to pre YZ");
+        let parts = DemBuilder::two_qubit_clifford_source_frame_components(
+            CliffordLowering::Named(GateType::SZZ),
+            1,
+            0,
+            &effects,
+        )
+        .expect("post XI should pull back through SZZ to pre YZ");
 
         assert_eq!(parts.len(), 3);
         assert!(parts.contains(&a));
@@ -3884,9 +3948,13 @@ mod tests {
         effects[3][0] = a.clone();
         effects[1][0] = c.clone();
 
-        let parts =
-            DemBuilder::two_qubit_clifford_source_frame_components(GateType::SZZ, 1, 0, &effects)
-                .expect("duplicate source components should cancel by XOR");
+        let parts = DemBuilder::two_qubit_clifford_source_frame_components(
+            CliffordLowering::Named(GateType::SZZ),
+            1,
+            0,
+            &effects,
+        )
+        .expect("duplicate source components should cancel by XOR");
 
         assert_eq!(parts.as_slice(), &[c]);
     }

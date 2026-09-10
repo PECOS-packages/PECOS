@@ -2639,37 +2639,32 @@ def test_prep_and_measurement_channels_stay_exact() -> None:
         assert build.dem.idle_noise_residuals == [], setter
 
 
-def test_raw_surface_trace_sampler_matches_lowered_dem() -> None:
+@pytest.mark.parametrize("p2_weights", [None, {"XX": 0.5, "~XX": 0.5}])
+def test_raw_surface_trace_sampler_matches_lowered_dem(p2_weights: dict[str, float] | None) -> None:
     """The sampler accepts runtime-lowered Clifford rotations directly and produces the model of their named forms."""
-    from pecos.tracing import trace_program_to_tick_circuit
     from pecos_rslib.qec import DemSampler
     from pecos_rslib.quantum import GateType
 
-    reference = _build_surface_tick_circuit_for_native_model(
+    raw_tc = _build_surface_tick_circuit_for_native_model(
         SurfacePatch.create(distance=3),
         num_rounds=2,
         basis="Z",
         ancilla_budget=2,
         circuit_source="traced_qis",
     )
-    raw_tc = trace_program_to_tick_circuit(
-        make_surface_code(distance=3, num_rounds=2, basis="Z", ancilla_budget=2),
-        get_num_qubits(3, ancilla_budget=2),
-        seed=0,
-    )
     assert any(
         gate.gate_type == GateType.RXY1Q
         for tick_index in range(raw_tc.num_ticks())
         for gate in raw_tc.get_tick(tick_index).gate_batches()
     )
-    _copy_surface_tick_circuit_metadata(reference, raw_tc)
     noise = {"p1": 0.005, "p2": 0.005, "p_meas": 0.005, "p_prep": 0.005}
-    raw_dem = DemSampler.from_circuit(raw_tc, **noise).to_detector_error_model().to_string()
+    raw_dem = DemSampler.from_circuit(raw_tc, p2_weights=p2_weights, **noise).to_detector_error_model().to_string()
+    assert "error(" in raw_dem
     raw_tc.lower_clifford_rotations()
     assert not any(
         gate.gate_type == GateType.RXY1Q
         for tick_index in range(raw_tc.num_ticks())
         for gate in raw_tc.get_tick(tick_index).gate_batches()
     )
-    lowered_dem = DemSampler.from_circuit(raw_tc, **noise).to_detector_error_model().to_string()
+    lowered_dem = DemSampler.from_circuit(raw_tc, p2_weights=p2_weights, **noise).to_detector_error_model().to_string()
     assert raw_dem == lowered_dem

@@ -281,18 +281,16 @@ impl CircuitPass for InsertIdleAfterTwoQubitGates {
     }
 }
 
-/// Apply an in-place simplification to a gate. Returns `true` if the gate was
-/// simplified (either renamed in place or needs decomposition handling).
-fn simplify_gate_in_place(gate: &mut Gate) -> bool {
-    // Identity removal is a separate, explicit pass because these gates can
-    // still be noise locations in a fault model.
-    match pecos_core::try_lower_rotation_to_clifford(gate) {
-        Some(pecos_core::CliffordLowering::Named(named)) if named != GateType::I => {
-            gate.gate_type = named;
-            gate.angles.clear();
-            true
-        }
-        _ => false,
+/// Rename a rotation in place when it lowers to a non-identity named Clifford.
+fn simplify_gate_in_place(gate: &mut Gate) {
+    if let Some(pecos_core::CliffordLowering::Named(named)) =
+        pecos_core::try_lower_rotation_to_clifford(gate)
+        // Identity removal is a separate, explicit pass because these gates can
+        // still be noise locations in a fault model.
+        && named != GateType::I
+    {
+        gate.gate_type = named;
+        gate.angles.clear();
     }
 }
 

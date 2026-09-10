@@ -37,7 +37,8 @@ use super::propagator::{
     DagFaultAnalyzer, DagPropagator, Direction, Pauli, apply_gate_unchecked,
     is_supported_noop_or_metadata_gate, is_supported_prep_gate,
 };
-use super::symbolic_replay::{Dispatch, apply_unitary_clifford};
+use super::propagator::{UnsupportedGateError, UnsupportedGateLocation};
+use super::symbolic_replay::{Dispatch, apply_lowered_clifford, apply_unitary_clifford};
 use pecos_core::QubitId;
 use pecos_simulators::{PauliProp, SymbolicSparseStab};
 use smallvec::SmallVec;
@@ -144,12 +145,7 @@ pub enum InfluenceBuildError {
     /// A gate the Pauli propagation primitive cannot faithfully represent.
     UnsupportedPauliPropagation(super::propagator::UnsupportedGateError),
     /// A gate the symbolic replay cannot represent.
-    UnsupportedGate {
-        /// The DAG node holding the gate.
-        node: usize,
-        /// The offending gate type.
-        gate_type: pecos_core::gate_type::GateType,
-    },
+    UnsupportedGate(UnsupportedGateError),
     /// A single node carrying more than one measurement.
     ///
     /// The measurement-info model maps a node to one measurement index, so a
@@ -167,12 +163,9 @@ pub enum InfluenceBuildError {
 impl std::fmt::Display for InfluenceBuildError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::UnsupportedPauliPropagation(error) => write!(f, "{error}"),
-            Self::UnsupportedGate { node, gate_type } => write!(
-                f,
-                "symbolic replay cannot represent {gate_type:?} at node {node}; lower it to \
-                 supported Cliffords first"
-            ),
+            Self::UnsupportedPauliPropagation(error) | Self::UnsupportedGate(error) => {
+                write!(f, "{error}")
+            }
             Self::BatchedMeasurementUnsupported { node, count } => write!(
                 f,
                 "node {node} carries {count} measurements in one gate; the influence map \
@@ -406,6 +399,14 @@ impl<'a> InfluenceBuilder<'a> {
 
     /// Run symbolic simulation to get measurement correlations.
     ///
+    /// Callers must preflight the circuit through `DagFaultAnalyzer`'s
+    /// supported-gate validation, which also runs `Gate::validate`. Branch
+    /// replay may remove validated gates or replace them with valid Paulis.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a gate violates the validated-payload invariant.
+    ///
     /// # Errors
     ///
     /// See [`build`](Self::build).
@@ -448,28 +449,12 @@ impl<'a> InfluenceBuilder<'a> {
                 }
 
                 if let Some(lowering) = pecos_core::try_lower_rotation_to_clifford(op) {
-                    let mut apply = |gate_type, targets: &[usize]| match apply_unitary_clifford(
-                        &mut sim, gate_type, targets,
-                    ) {
-                        Ok(Dispatch::Applied) => Ok(()),
-                        Ok(Dispatch::Unhandled) => Err(InfluenceBuildError::UnsupportedGate {
-                            node,
-                            gate_type: op.gate_type,
-                        }),
-                        Err(err) => panic!(
+                    apply_lowered_clifford(&mut sim, lowering, &qubits).unwrap_or_else(|err| {
+                        panic!(
                             "symbolic simulation got malformed gate {:?} at node {node}: {err:?}",
                             op.gate_type
-                        ),
-                    };
-                    match lowering {
-                        pecos_core::CliffordLowering::Named(pecos_quantum::GateType::I) => {}
-                        pecos_core::CliffordLowering::Named(clifford) => apply(clifford, &qubits)?,
-                        pecos_core::CliffordLowering::PerQubit(pauli) => {
-                            for &qubit in &qubits {
-                                apply(pauli, &[qubit])?;
-                            }
-                        }
-                    }
+                        )
+                    });
                     continue;
                 }
 
@@ -502,10 +487,11 @@ impl<'a> InfluenceBuilder<'a> {
                     // records and manufactures phantom detectors. Refused,
                     // exactly as `symbolic_measurement_history` refuses it.
                     pecos_quantum::GateType::MeasureLeaked => {
-                        return Err(InfluenceBuildError::UnsupportedGate {
-                            node,
+                        return Err(InfluenceBuildError::UnsupportedGate(UnsupportedGateError {
+                            location: UnsupportedGateLocation::DagNode { node },
                             gate_type: op.gate_type,
-                        });
+                            qubits,
+                        }));
                     }
                     // Resets project onto |0>. Skipping them treated a reused
                     // qubit as still carrying its pre-reset correlations.
@@ -523,10 +509,11 @@ impl<'a> InfluenceBuilder<'a> {
                     // rotation manufactures detectors its backward propagation
                     // then contradicts.
                     other => {
-                        return Err(InfluenceBuildError::UnsupportedGate {
-                            node,
+                        return Err(InfluenceBuildError::UnsupportedGate(UnsupportedGateError {
+                            location: UnsupportedGateLocation::DagNode { node },
                             gate_type: other,
-                        });
+                            qubits,
+                        }));
                     }
                 }
             }
@@ -706,13 +693,7 @@ impl<'a> InfluenceBuilder<'a> {
                         qubits.clone()
                     };
                 for q in location_qubits {
-                    locations.push(DagSpacetimeLocation {
-                        node,
-                        qubits: vec![q],
-                        before,
-                        gate_type: gate.gate_type,
-                        idle_duration: gate.idle_duration(),
-                    });
+                    locations.push(DagSpacetimeLocation::new(node, vec![q], before, gate));
                 }
                 if is_supported_prep_gate(gate.gate_type) {
                     prepared_qubits.extend(qubits.iter().copied());
@@ -1190,6 +1171,54 @@ mod tests {
     use crate::fault_tolerance::propagator::DemOutputKind;
     use pecos_quantum::DagCircuit;
 
+    fn half_turn_history_matches_named_and_differs_from_removed(two_qubit: bool) {
+        use pecos_core::Gate;
+        let qubits: &[usize] = if two_qubit { &[0, 1] } else { &[0] };
+        let history = |gates: &[Gate]| {
+            let mut dag = DagCircuit::new();
+            dag.pz(qubits);
+            dag.h(qubits);
+            for gate in gates {
+                dag.add_gate_auto_wire(gate.clone());
+            }
+            dag.h(qubits);
+            dag.mz(qubits);
+            InfluenceBuilder::new(&dag)
+                .run_symbolic_simulation()
+                .unwrap()
+                .history
+                .iter()
+                .map(|result| {
+                    assert!(result.is_deterministic);
+                    result.flip
+                })
+                .collect::<Vec<_>>()
+        };
+        let raw = if two_qubit {
+            Gate::rzz(pecos_core::Angle64::HALF_TURN, &[(0, 1)])
+        } else {
+            Gate::rz(pecos_core::Angle64::HALF_TURN, &[0])
+        };
+        let named: Vec<_> = qubits.iter().map(|&q| Gate::z(&[q])).collect();
+        let raw_history = history(&[raw]);
+        let named_history = history(&named);
+        let removed_history = history(&[]);
+        assert_eq!(raw_history, named_history);
+        assert_eq!(raw_history, vec![true; qubits.len()]);
+        assert_eq!(removed_history, vec![false; qubits.len()]);
+        assert_ne!(raw_history, removed_history);
+    }
+
+    #[test]
+    fn rz_half_turn_signed_history() {
+        half_turn_history_matches_named_and_differs_from_removed(false);
+    }
+
+    #[test]
+    fn rzz_half_turn_signed_history() {
+        half_turn_history_matches_named_and_differs_from_removed(true);
+    }
+
     #[test]
     fn test_simple_circuit() {
         // Simple circuit: prep, H, measure
@@ -1460,6 +1489,9 @@ mod tests {
 
     /// The Pauli-propagation preflight rejects a non-Clifford rotation before
     /// symbolic replay can analyze it or manufacture phantom detectors.
+    /// The four `distinguishes_identity: true` rows in
+    /// `unsupported_dem_gates_tests.rs` cover the forward/backward disagreement
+    /// regression class from <https://github.com/PECOS-packages/PECOS/issues/408>.
     #[test]
     fn an_unrepresentable_gate_is_refused_not_skipped() {
         use pecos_core::Angle64;
@@ -1526,7 +1558,7 @@ mod tests {
             .build()
             .map(|_| ())
             .expect_err("a leaked measurement has no record this replay can express");
-        assert!(matches!(err, InfluenceBuildError::UnsupportedGate { .. }));
+        assert!(matches!(err, InfluenceBuildError::UnsupportedGate(_)));
     }
 
     /// A mid-circuit reset must reach the simulator: skipping it treated a

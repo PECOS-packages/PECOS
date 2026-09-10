@@ -539,9 +539,9 @@ fn qfree_circuit_builds_through_every_dem_entry_point() {
 #[test]
 fn leaked_measurement_replay_error_is_an_unsupported_gate() {
     let mut circuit = DagCircuit::new();
-    circuit.pz(&[0]);
+    circuit.pz(&[0, 1]);
     circuit.h(&[0]);
-    let node = circuit.add_gate_auto_wire(Gate::measure_leaked(&[0]));
+    let node = circuit.add_gate_auto_wire(Gate::measure_leaked(&[1]));
     circuit.mz(&[0]);
     assert!(
         DagFaultAnalyzer::new(&circuit)
@@ -549,11 +549,14 @@ fn leaked_measurement_replay_error_is_an_unsupported_gate() {
             .unsupported_gate()
             .is_none()
     );
-    assert_sampler_error(
-        DemSampler::from_circuit(&circuit, &NoiseConfig::default()).unwrap_err(),
-        GateType::MeasureLeaked,
-        UnsupportedGateLocation::DagNode { node },
-    );
+    let error = DemSampler::from_circuit(&circuit, &NoiseConfig::default()).unwrap_err();
+    if let DetectorValidationError::UnsupportedGate(error) = &error {
+        assert_eq!(error.qubits, vec![1]);
+        assert_eq!(error.gate_type, GateType::MeasureLeaked);
+        assert_eq!(error.location, UnsupportedGateLocation::DagNode { node });
+    } else {
+        panic!("expected UnsupportedGate, got {error:?}");
+    }
 }
 
 fn detector_records(
@@ -622,7 +625,10 @@ fn clifford_rotation_replay_matches_named_gates(
         .unwrap();
     if distinguishes_identity {
         let removed = make_circuit(None);
-        let removed_map = InfluenceBuilder::new(&removed).build().unwrap();
+        let removed_map = InfluenceBuilder::new(&removed)
+            .with_z(&[0, 1])
+            .build()
+            .unwrap();
         // Measurement ordinals keep this comparison independent of shifted DAG node IDs.
         assert_ne!(
             detector_records(&removed_map),
@@ -636,18 +642,15 @@ fn clifford_rotation_replay_matches_named_gates(
     assert_eq!(raw_map.dem_output_metadata, lowered_map.dem_output_metadata);
     assert_eq!(raw_map.dem_output_labels, lowered_map.dem_output_labels);
     let builder_dem = |map| {
-        let text = DemBuilder::new(map)
+        let dem = DemBuilder::new(map)
             .with_noise_config(noise.clone())
             .with_detectors_json(DETECTORS)
             .unwrap()
             .build()
-            .unwrap()
-            .to_string();
-        assert!(
-            text.split_whitespace().any(|token| token == "D0"),
-            "{rotation:?}: {text}"
-        );
-        text
+            .unwrap();
+        let text = dem.to_string();
+        assert!(text.contains("error("), "{rotation:?}: {text}");
+        (text, dem.to_string_decomposed())
     };
     let sampler_dem = |circuit| {
         let dem = DemSampler::from_circuit(circuit, noise)
@@ -749,4 +752,160 @@ fn clifford_rotation_replay_rzz_half_turn() {
         false,
         &NoiseConfig::new(0.0, 0.0, 0.01, 0.02),
     );
+}
+
+#[test]
+fn batched_measurement_sampler_returns_invalid_metadata() {
+    let mut circuit = DagCircuit::new();
+    circuit.pz(&[0, 1]);
+    circuit.add_gate_auto_wire(Gate::mz(&[0, 1]));
+    let error = DemSampler::from_circuit(&circuit, &NoiseConfig::default()).unwrap_err();
+    assert!(
+        matches!(error, DetectorValidationError::InvalidMetadata { message }
+        if message.contains("2 measurements"))
+    );
+}
+
+fn replacement_noise() -> NoiseConfig {
+    use pecos_core::pauli::X;
+    use pecos_qec::fault_tolerance::dem_builder::PauliWeights;
+    let mut noise = NoiseConfig::new(0.0, 0.01, 0.0, 0.0);
+    noise.p2_weights = Some(PauliWeights::with_replacement(
+        [(X(0) & X(1), 0.5)],
+        [(X(0) & X(1), 0.5)],
+    ));
+    noise
+}
+
+fn replacement_circuit(gate: Gate) -> DagCircuit {
+    let mut circuit = DagCircuit::new();
+    circuit.pz(&[0, 1]);
+    circuit.h(&[0]);
+    circuit.add_gate_auto_wire(gate);
+    circuit.szzdg(&[(0, 1)]);
+    circuit.h(&[0]);
+    circuit.mz(&[0]);
+    circuit.mz(&[1]);
+    circuit.set_attr(
+        "detectors",
+        pecos_quantum::Attribute::String(
+            r#"[{"id":0,"records":[-2]},{"id":1,"records":[-1]}]"#.to_string(),
+        ),
+    );
+    circuit
+}
+
+#[test]
+fn replacement_branches_match_lowered_clifford_rotations() {
+    use pecos_core::pauli::X;
+    use pecos_qec::fault_tolerance::dem_builder::{PauliWeights, ReplacementBranchApproximation};
+    let dems = |gate, approximation| {
+        let mut noise = replacement_noise();
+        noise.p2_replacement_approximation = approximation;
+        let circuit = replacement_circuit(gate);
+        let map = DagFaultAnalyzer::new(&circuit).build_influence_map();
+        let dem = DemBuilder::new(&map)
+            .with_noise_config(noise.clone())
+            .with_detectors_json(r#"[{"id":0,"records":[-2]},{"id":1,"records":[-1]}]"#)
+            .unwrap()
+            .try_build()
+            .unwrap();
+        let mut direct_noise = noise.clone();
+        direct_noise.p2 *= 0.5;
+        direct_noise.p2_weights = Some(PauliWeights::new([(X(0) & X(1), 1.0)]));
+        let direct = DemBuilder::new(&map)
+            .with_noise_config(direct_noise)
+            .with_detectors_json(r#"[{"id":0,"records":[-2]},{"id":1,"records":[-1]}]"#)
+            .unwrap()
+            .try_build()
+            .unwrap()
+            .to_string();
+        assert!(
+            dem.to_string()
+                .lines()
+                .any(|line| line.starts_with("error(")
+                    && !direct.lines().any(|direct_line| direct_line == line)),
+            "replacement branches must contribute an error mechanism"
+        );
+        if approximation == ReplacementBranchApproximation::BranchImpact {
+            assert!([&[0, 1][..], &[1][..], &[0][..]].iter().any(|effect| {
+                dem.contributions_for_effect(effect, &[])
+                    .iter()
+                    .any(|c| c.replacement_branch)
+            }));
+        }
+        let sampler = DemSampler::from_circuit(&circuit, &noise)
+            .unwrap()
+            .to_detector_error_model()
+            .to_string();
+        assert!(sampler.contains("error("));
+        (dem.to_string(), sampler)
+    };
+    for (angle, named) in [
+        (Angle64::QUARTER_TURN, Gate::szz(&[(0, 1)])),
+        (Angle64::THREE_QUARTERS_TURN, Gate::szzdg(&[(0, 1)])),
+    ] {
+        for approximation in [
+            ReplacementBranchApproximation::default(),
+            ReplacementBranchApproximation::BranchImpact,
+        ] {
+            assert_eq!(
+                dems(Gate::rzz(angle, &[(0, 1)]), approximation),
+                dems(named.clone(), approximation)
+            );
+        }
+    }
+}
+
+#[test]
+fn replacement_entries_without_twirl_fail_loudly() {
+    let circuit = replacement_circuit(Gate::rzz(Angle64::ZERO, &[(0, 1)]));
+    let noise = replacement_noise();
+    let map = DagFaultAnalyzer::new(&circuit).build_influence_map();
+    let loc = map
+        .locations
+        .iter()
+        .find(|loc| loc.gate_type == GateType::RZZ)
+        .unwrap();
+    let check_message = |message: &str| {
+        assert!(message.contains(&format!("node {}", loc.node)), "{message}");
+        assert!(message.contains("RZZ"), "{message}");
+        assert!(message.contains("Named(I)"), "{message}");
+    };
+    match DemBuilder::new(&map)
+        .with_noise_config(noise.clone())
+        .try_build()
+        .unwrap_err()
+    {
+        DemBuilderError::ConfigurationError(message) => check_message(&message),
+        error => panic!("expected ConfigurationError, got {error:?}"),
+    }
+    match DemSampler::from_circuit(&circuit, &noise).unwrap_err() {
+        DetectorValidationError::InvalidMetadata { message } => check_message(&message),
+        error => panic!("expected configuration diagnostic, got {error:?}"),
+    }
+}
+
+#[test]
+#[should_panic(expected = "have no omitted-gate Pauli twirl")]
+fn sampling_engine_without_twirl_fails_loudly() {
+    let circuit = replacement_circuit(Gate::rzz(Angle64::ZERO, &[(0, 1)]));
+    let map = DagFaultAnalyzer::new(&circuit).build_influence_map();
+    SamplingEngine::from_influence_map(
+        &map,
+        &vec![0.01; map.locations.len()],
+        &replacement_noise(),
+    )
+    .unwrap();
+}
+
+#[test]
+#[should_panic(expected = "have no omitted-gate Pauli twirl")]
+fn sampler_builder_without_twirl_fails_loudly() {
+    let circuit = replacement_circuit(Gate::rzz(Angle64::ZERO, &[(0, 1)]));
+    let map = DagFaultAnalyzer::new(&circuit).build_influence_map();
+    DemSamplerBuilder::new(&map)
+        .with_noise_config(replacement_noise())
+        .build()
+        .unwrap();
 }

@@ -467,6 +467,12 @@ impl SamplingEngine {
             return Err(error.clone());
         }
 
+        if let Some(weights) = &noise.p2_weights {
+            weights
+                .validate_replacement_locations(&influence_map.locations)
+                .unwrap_or_else(|error| panic!("invalid DEM noise configuration: {error}"));
+        }
+
         let mut aggregated: BTreeMap<DemMechanism, f64> = BTreeMap::new();
         let mut idle_noise_residuals = Vec::new();
 
@@ -610,7 +616,7 @@ impl SamplingEngine {
                     .map(|event| {
                         let weight = if n_qubits == 2 {
                             weights.two_qubit_weight_for(
-                                loc.gate_type,
+                                loc.clifford,
                                 &event.pauli,
                                 noise.p2_replacement_approximation,
                             )
@@ -2198,6 +2204,11 @@ impl<'a> SamplingEngineBuilder<'a> {
         if let Some(error) = self.influence_map.unsupported_gate() {
             return Err(error.clone());
         }
+        if let Some(weights) = &self.p2_weights {
+            weights
+                .validate_replacement_locations(&self.influence_map.locations)
+                .unwrap_or_else(|error| panic!("invalid DEM noise configuration: {error}"));
+        }
         if self.p2_replacement_approximation == ReplacementBranchApproximation::ExactBranchReplay
             && self
                 .p2_weights
@@ -2368,7 +2379,7 @@ impl<'a> SamplingEngineBuilder<'a> {
                         .chain(loc1.qubits.iter())
                         .copied()
                         .collect();
-                    let rates = self.rates_2q(gate_type, &pair_qubits);
+                    let rates = self.rates_2q(gate_type, loc0.clifford, &pair_qubits);
                     if rates.iter().any(|r| *r != 0.0) {
                         self.process_two_qubit_fault_rates(
                             pair[0],
@@ -2603,7 +2614,12 @@ impl<'a> SamplingEngineBuilder<'a> {
 
     /// Resolve per-Pauli-pair rates for a 2Q gate (15 non-II pairs) on a
     /// specific ordered qubit pair.
-    fn rates_2q(&self, gate: GateType, qubits: &[pecos_core::QubitId]) -> [f64; 15] {
+    fn rates_2q(
+        &self,
+        gate: GateType,
+        clifford: pecos_core::CliffordLowering,
+        qubits: &[pecos_core::QubitId],
+    ) -> [f64; 15] {
         if let Some(pg) = &self.per_gate {
             if qubits.len() >= 2 {
                 let (qc, qt) = (qubits[0], qubits[1]);
@@ -2620,7 +2636,7 @@ impl<'a> SamplingEngineBuilder<'a> {
                     let p2 = flat % 4;
                     p2_total
                         * weights.two_qubit_weight_for(
-                            gate,
+                            clifford,
                             &pauli_pair_for_weight(p1, p2),
                             self.p2_replacement_approximation,
                         )

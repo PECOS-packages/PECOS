@@ -426,7 +426,7 @@ def _assert_three_pi_differs_by_control_z(pi_state: list[complex], three_pi_stat
 
 
 def test_quantum_circuit_angle_preserves_controlled_rotation_sheet() -> None:
-    """The Python StateVec route must halve CRZ's unreduced source angle."""
+    """The Python StateVec route must retain CRZ's source rotation sheet."""
     pi_state = _run_crz_angle_circuit(StateVec(2), pc.f64.pi)
     three_pi_state = _run_crz_angle_circuit(StateVec(2), 3 * pc.f64.pi)
 
@@ -439,6 +439,15 @@ def test_statevecrs_run_circuit_preserves_controlled_rotation_sheet() -> None:
     three_pi_state = _run_crz_angle_circuit(StateVecRs(2), 3 * pc.f64.pi)
 
     _assert_three_pi_differs_by_control_z(pi_state, three_pi_state)
+
+
+@pytest.mark.parametrize("simulator_type", [StateVec, StateVecRs])
+def test_crz_two_pi_is_z_on_superposed_control(simulator_type: type[StateVec | StateVecRs]) -> None:
+    """Compare raw amplitudes so the control Z and global sign are observable."""
+    actual = _run_crz_angle_circuit(simulator_type(2), pc.f64.tau)
+    amplitude = 2**-0.5
+    expected = [amplitude, 0, -amplitude, 0]
+    assert all(abs(value - wanted) < 1e-12 for value, wanted in zip(actual, expected, strict=True))
 
 
 @pytest.mark.parametrize(

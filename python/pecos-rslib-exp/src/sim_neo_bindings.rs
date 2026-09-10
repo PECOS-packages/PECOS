@@ -1633,18 +1633,17 @@ fn build_rust_tick_circuit_from_gates(
                         )));
                     }
                     for pair in pairs {
-                        let lowered: Vec<Gate> = match gate_name.as_str() {
+                        let lowered = match gate_name.as_str() {
                             "CRX" => {
                                 pecos_core::controlled_rotations::lower_crx(angle, pair[0], pair[1])
-                                    .into()
                             }
                             "CRY" => {
                                 pecos_core::controlled_rotations::lower_cry(angle, pair[0], pair[1])
-                                    .into()
                             }
                             "CRZ" => {
                                 pecos_core::controlled_rotations::lower_crz(angle, pair[0], pair[1])
-                                    .into()
+                                    .into_iter()
+                                    .collect()
                             }
                             _ => unreachable!(),
                         };
@@ -1973,6 +1972,7 @@ fn append_lowered_command(mut builder: CommandBuilder, gate: &Gate) -> PyResult<
 
     let qubits: Vec<usize> = gate.qubits.iter().map(pecos_core::QubitId::index).collect();
     builder = match gate.gate_type {
+        GateType::Z => builder.z(&qubits),
         GateType::H => builder.h(&qubits),
         GateType::SX => builder.sx(&qubits),
         GateType::SXdg => builder.sxdg(&qubits),
@@ -2158,25 +2158,24 @@ fn extract_commands(py_tc: &Bound<'_, PyAny>) -> PyResult<pecos_neo::command::Co
                         )));
                     }
                     for pair in pairs {
-                        let lowered: Vec<Gate> = match name.as_str() {
+                        let lowered = match name.as_str() {
                             "CRX" => pecos_core::controlled_rotations::lower_crx(
                                 angle,
                                 QubitId(pair[0]),
                                 QubitId(pair[1]),
-                            )
-                            .into(),
+                            ),
                             "CRY" => pecos_core::controlled_rotations::lower_cry(
                                 angle,
                                 QubitId(pair[0]),
                                 QubitId(pair[1]),
-                            )
-                            .into(),
+                            ),
                             "CRZ" => pecos_core::controlled_rotations::lower_crz(
                                 angle,
                                 QubitId(pair[0]),
                                 QubitId(pair[1]),
                             )
-                            .into(),
+                            .into_iter()
+                            .collect(),
                             _ => unreachable!(),
                         };
                         for lowered_gate in &lowered {

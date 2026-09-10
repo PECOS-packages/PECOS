@@ -15,39 +15,62 @@
 //! Exact lowering of controlled-rotation boundary spellings.
 
 use crate::{Angle64, Gate, PhaseGateError, QubitId};
+use smallvec::{SmallVec, smallvec};
+use std::f64::consts::{PI, TAU};
+
+/// Return half the principal value in `(-π, π]` and the parity of removed turns.
+/// Keep both reduction and parity in f64: storing the remainder in `Angle64`
+/// would quantize it before the turn count is recovered.
+fn reduced_half_and_wrap_parity(theta_radians: f64) -> (f64, bool) {
+    let reduced = theta_radians.rem_euclid(TAU);
+    let signed = if reduced > PI { reduced - TAU } else { reduced };
+    let h = signed / 2.0;
+    let wraps = ((theta_radians - signed) / TAU).round();
+    // The rounded count has exact integer parity; compare exactly, without a tolerance.
+    let needs_z = wraps.rem_euclid(2.0).total_cmp(&1.0).is_eq();
+    (h, needs_z)
+}
 
 /// Lower `CRZ(theta)` to native rotations.
 ///
 /// The identity is
 /// `CRZ(theta) = (I (x) RZ(theta/2)) . RZZ(-theta/2)`, with no global phase
-/// before angle reduction. The stored lowering is exact up to a global phase of
-/// ±1 that appears when a halved angle crosses the 2π reduction.
-/// `theta` is supplied in radians and is halved as an `f64` before either half
-/// is normalized into [`Angle64`]. This order is required because `CRZ` is
-/// 4π-periodic while a stored `Angle64` has already reduced its input modulo 2π.
+/// before angle reduction. Reduce `theta` to `(-π, π]` before halving so neither
+/// stored leg reaches the ambiguous ±π pair. Each removed 2π turn contributes
+/// a `Z` on the control; retaining its parity preserves the exact global phase
+/// and 4π periodicity without quantizing the source angle through [`Angle64`].
 #[must_use]
-pub fn lower_crz(theta_radians: f64, control: QubitId, target: QubitId) -> [Gate; 2] {
-    let half_theta = theta_radians / 2.0;
-    [
+pub fn lower_crz(theta_radians: f64, control: QubitId, target: QubitId) -> SmallVec<[Gate; 3]> {
+    let (half_theta, needs_z) = reduced_half_and_wrap_parity(theta_radians);
+    let mut gates = SmallVec::new();
+    if needs_z {
+        gates.push(Gate::z(&[control]));
+    }
+    gates.extend([
         Gate::rzz(Angle64::from_radians(-half_theta), &[(control, target)]),
         Gate::rz(Angle64::from_radians(half_theta), &[target]),
-    ]
+    ]);
+    gates
 }
 
 /// Lower `CRX(theta) = (I (x) H) . CRZ(theta) . (I (x) H)`.
 #[must_use]
-pub fn lower_crx(theta_radians: f64, control: QubitId, target: QubitId) -> [Gate; 4] {
-    let [rzz, rz] = lower_crz(theta_radians, control, target);
-    [Gate::h(&[target]), rzz, rz, Gate::h(&[target])]
+pub fn lower_crx(theta_radians: f64, control: QubitId, target: QubitId) -> SmallVec<[Gate; 5]> {
+    let mut gates = smallvec![Gate::h(&[target])];
+    gates.extend(lower_crz(theta_radians, control, target));
+    gates.push(Gate::h(&[target]));
+    gates
 }
 
 /// Lower `CRY(theta) = (I (x) SXdg) . CRZ(theta) . (I (x) SX)`.
 ///
 /// Circuit emission order is `SX`, the `CRZ` lowering, then `SXdg`.
 #[must_use]
-pub fn lower_cry(theta_radians: f64, control: QubitId, target: QubitId) -> [Gate; 4] {
-    let [rzz, rz] = lower_crz(theta_radians, control, target);
-    [Gate::sx(&[target]), rzz, rz, Gate::sxdg(&[target])]
+pub fn lower_cry(theta_radians: f64, control: QubitId, target: QubitId) -> SmallVec<[Gate; 5]> {
+    let mut gates = smallvec![Gate::sx(&[target])];
+    gates.extend(lower_crz(theta_radians, control, target));
+    gates.push(Gate::sxdg(&[target]));
+    gates
 }
 
 /// Lower controlled phase while retaining its relative phase.
@@ -144,6 +167,13 @@ mod tests {
     fn apply_gate(state: &mut [Complex64; 4], gate: &Gate) {
         let i = Complex64::new(0.0, 1.0);
         match gate.gate_type {
+            GateType::Z => {
+                for (basis, amplitude) in state.iter_mut().enumerate() {
+                    if basis & (1 << (1 - gate.qubits[0].index())) != 0 {
+                        *amplitude = -*amplitude;
+                    }
+                }
+            }
             GateType::H => {
                 let s = std::f64::consts::FRAC_1_SQRT_2;
                 apply_single(
@@ -217,7 +247,6 @@ mod tests {
     fn assert_matrix_eq_up_to_one_global_phase(
         actual: [[Complex64; 4]; 4],
         expected: [[Complex64; 4]; 4],
-        angle: f64,
     ) {
         let (phase_column, phase_row, reference) = (0..4)
             .flat_map(|column| (0..4).map(move |row| (column, row)))
@@ -226,26 +255,12 @@ mod tests {
             .expect("matrix has entries");
         let phase = actual[phase_column][phase_row] / reference;
         assert!((phase.norm() - 1.0).abs() < TOLERANCE);
-        let crosses_reduction = ![
-            -std::f64::consts::PI,
-            std::f64::consts::PI / 3.0,
-            std::f64::consts::PI,
-        ]
-        .iter()
-        .any(|expected| (angle - expected).abs() < f64::EPSILON);
-        if crosses_reduction {
-            assert!(
-                (phase - Complex64::new(1.0, 0.0)).norm() < TOLERANCE
-                    || (phase + Complex64::new(1.0, 0.0)).norm() < TOLERANCE
-            );
-        } else {
-            assert!((phase - Complex64::new(1.0, 0.0)).norm() < TOLERANCE);
-        }
+        assert!((phase - Complex64::new(1.0, 0.0)).norm() < TOLERANCE);
         for column in 0..4 {
             for row in 0..4 {
                 assert!(
-                    (actual[column][row] / phase - expected[column][row]).norm() < TOLERANCE,
-                    "angle {angle}, column {column}, row {row}: actual={}, expected={}",
+                    (actual[column][row] - expected[column][row]).norm() < TOLERANCE,
+                    "column {column}, row {row}: actual={}, expected={}",
                     actual[column][row],
                     expected[column][row]
                 );
@@ -288,22 +303,111 @@ mod tests {
             std::f64::consts::PI / 3.0,
             std::f64::consts::PI,
             std::f64::consts::TAU,
+            -std::f64::consts::TAU,
+            3.0 * std::f64::consts::TAU,
+            -3.0 * std::f64::consts::TAU,
             3.0 * std::f64::consts::PI,
         ] {
             assert_matrix_eq_up_to_one_global_phase(
                 matrix_from_lowering(&lower_crz(theta, QubitId(0), QubitId(1))),
                 controlled_reference('Z', theta),
-                theta,
             );
             assert_matrix_eq_up_to_one_global_phase(
                 matrix_from_lowering(&lower_crx(theta, QubitId(0), QubitId(1))),
                 controlled_reference('X', theta),
-                theta,
             );
             assert_matrix_eq_up_to_one_global_phase(
                 matrix_from_lowering(&lower_cry(theta, QubitId(0), QubitId(1))),
                 controlled_reference('Y', theta),
-                theta,
+            );
+        }
+    }
+
+    fn axis_lowering(axis: char, theta: f64) -> SmallVec<[Gate; 5]> {
+        match axis {
+            'X' => lower_crx(theta, QubitId(0), QubitId(1)),
+            'Y' => lower_cry(theta, QubitId(0), QubitId(1)),
+            'Z' => lower_crz(theta, QubitId(0), QubitId(1))
+                .into_iter()
+                .collect(),
+            _ => unreachable!(),
+        }
+    }
+
+    fn matrix_distance(left: [[Complex64; 4]; 4], right: [[Complex64; 4]; 4]) -> f64 {
+        left.iter()
+            .flatten()
+            .zip(right.iter().flatten())
+            .map(|(l, r)| (l - r).norm_sqr())
+            .sum::<f64>()
+            .sqrt()
+    }
+
+    #[test]
+    fn crz_two_pi_is_z_on_control() {
+        let expected = matrix_from_lowering(&[Gate::z(&[QubitId(0)])]);
+        assert_matrix_eq_up_to_one_global_phase(
+            matrix_from_lowering(&lower_crz(TAU, QubitId(0), QubitId(1))),
+            expected,
+        );
+    }
+
+    #[test]
+    fn controlled_rotations_are_continuous_at_odd_turns() {
+        for axis in ['X', 'Y', 'Z'] {
+            for theta in [TAU, -TAU, 3.0 * TAU, -3.0 * TAU] {
+                let at = matrix_from_lowering(&axis_lowering(axis, theta));
+                for offset in [-1e-7, 1e-7] {
+                    let near = matrix_from_lowering(&axis_lowering(axis, theta + offset));
+                    assert!(
+                        matrix_distance(at, near) < 1e-7,
+                        "axis={axis}, theta={theta}, offset={offset}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn controlled_rotations_preserve_four_pi_periodicity() {
+        for axis in ['X', 'Y', 'Z'] {
+            for theta in [-200.0, -66.0, -3.0 * TAU, -PI, 0.37, TAU, 3.0 * TAU, 200.0] {
+                assert_matrix_eq_up_to_one_global_phase(
+                    matrix_from_lowering(&axis_lowering(axis, theta)),
+                    matrix_from_lowering(&axis_lowering(axis, theta + 2.0 * TAU)),
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn reduced_half_parity_matches_trigonometric_sheet_over_wide_ranges() {
+        // Independent oracle: cos(theta/2) changes sign once per removed turn.
+        // Midpoint sampling avoids the ambiguous zero at odd multiples of pi.
+        for limit in [200.0, 10_000.0] {
+            for sample in 0..300_000 {
+                let theta = -limit + 2.0 * limit * (f64::from(sample) + 0.5) / 300_000.0;
+                let (half, needs_z) = reduced_half_and_wrap_parity(theta);
+                assert!(half > -PI / 2.0 && half <= PI / 2.0);
+                assert_eq!(needs_z, (theta / 2.0).cos() < 0.0, "theta={theta}");
+            }
+        }
+    }
+
+    #[test]
+    fn reduced_lowering_agrees_with_raw_half_away_from_odd_turns() {
+        for sample in 0..800 {
+            let theta = -200.0 + 400.0 * (f64::from(sample) + 0.5) / 800.0;
+            let old = [
+                Gate::rzz(
+                    Angle64::from_radians(-theta / 2.0),
+                    &[(QubitId(0), QubitId(1))],
+                ),
+                Gate::rz(Angle64::from_radians(theta / 2.0), &[QubitId(1)]),
+            ];
+            assert_matrix_eq_up_to_one_global_phase(
+                matrix_from_lowering(&lower_crz(theta, QubitId(0), QubitId(1))),
+                matrix_from_lowering(&old),
             );
         }
     }
@@ -325,7 +429,6 @@ mod tests {
             assert_matrix_eq_up_to_one_global_phase(
                 matrix_from_lowering(&lower_cphase(lambda, QubitId(0), QubitId(1))),
                 expected,
-                lambda,
             );
         }
     }

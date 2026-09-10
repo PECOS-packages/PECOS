@@ -467,17 +467,6 @@ impl SamplingEngine {
             return Err(super::DemBuilderError::UnsupportedGate(error.clone()));
         }
 
-        if noise.p2_replacement_approximation == ReplacementBranchApproximation::ExactBranchReplay
-            && noise
-                .p2_weights
-                .as_ref()
-                .is_some_and(super::types::PauliWeights::has_replacement_entries)
-        {
-            return Err(super::DemBuilderError::ConfigurationError(
-                "exact_branch_replay for p2 replacement branches requires a circuit-aware exact branch provider".to_string()
-            ));
-        }
-
         if let Some(weights) = &noise.p2_weights {
             weights
                 .validate_replacement_locations(
@@ -485,6 +474,17 @@ impl SamplingEngine {
                     noise.p2_replacement_approximation,
                 )
                 .map_err(|error| super::DemBuilderError::ConfigurationError(error.to_string()))?;
+        }
+
+        if noise.p2_replacement_approximation == ReplacementBranchApproximation::ExactBranchReplay
+            && noise
+                .p2_weights
+                .as_ref()
+                .is_some_and(super::types::PauliWeights::has_replacement_entries)
+        {
+            return Err(super::DemBuilderError::ConfigurationError(
+                super::types::EXACT_BRANCH_REPLAY_REQUIRES_PROVIDER.to_string(),
+            ));
         }
 
         let mut aggregated: BTreeMap<DemMechanism, f64> = BTreeMap::new();
@@ -2230,7 +2230,7 @@ impl<'a> SamplingEngineBuilder<'a> {
                 .is_some_and(super::types::PauliWeights::has_replacement_entries)
         {
             return Err(super::DemBuilderError::ConfigurationError(
-                "exact_branch_replay for p2 replacement branches requires a circuit-aware exact branch provider; use branch_impact or pauli_twirl_omitted_gate for the current Pauli-projected approximations".to_string()
+                super::types::EXACT_BRANCH_REPLAY_REQUIRES_PROVIDER.to_string(),
             ));
         }
         let num_detectors = self.detector_records.len();

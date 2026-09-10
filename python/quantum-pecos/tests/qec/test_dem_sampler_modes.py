@@ -280,7 +280,7 @@ def test_sampler_configuration_error_is_value_error() -> None:
     dag.pz([0, 1])
     dag.szz([(0, 1)])
     dag.mz([0, 1])
-    with pytest.raises(ValueError, match="requires a circuit-aware exact branch provider"):
+    with pytest.raises(ValueError, match="requires a circuit-aware exact branch provider") as exc_info:
         DemSampler.from_circuit(
             dag,
             p1=0.0,
@@ -290,3 +290,7 @@ def test_sampler_configuration_error_is_value_error() -> None:
             p2_weights={"~XX": 1.0},
             p2_replacement_approximation="exact_branch_replay",
         )
+
+    message = str(exc_info.value)
+    assert message.startswith("Invalid DEM configuration: ")
+    assert "Invalid detector/observable metadata" not in message

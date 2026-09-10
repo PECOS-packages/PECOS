@@ -1031,6 +1031,9 @@ impl PyDagFaultAnalyzer {
     ///
     /// Returns:
     ///     `DagFaultInfluenceMap` with O(1) fault classification.
+    ///
+    /// Raises:
+    ///     ValueError: The circuit contains a gate Pauli propagation cannot represent.
     fn build_influence_map(&self) -> PyResult<PyDagFaultInfluenceMap> {
         let analyzer = RustDagFaultAnalyzer::new(&self.dag);
         let inner = analyzer.build_influence_map();

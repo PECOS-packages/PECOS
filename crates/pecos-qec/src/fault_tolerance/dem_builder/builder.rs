@@ -981,8 +981,7 @@ impl<'a> DemBuilder<'a> {
                 return Ok(());
             }
             return Err(DemBuilderError::ConfigurationError(
-                "exact_branch_replay for p2 replacement branches requires a circuit-aware exact branch provider; use branch_impact or pauli_twirl_omitted_gate for the current Pauli-projected approximations"
-                    .to_string(),
+                super::types::EXACT_BRANCH_REPLAY_REQUIRES_PROVIDER.to_string(),
             ));
         }
         Ok(())
@@ -1315,8 +1314,17 @@ impl<'a> DemBuilder<'a> {
             }
             gate_type if is_supported_noop_or_metadata_gate(gate_type) => {}
             _ => {
+                let error = crate::fault_tolerance::propagator::UnsupportedGateError {
+                    gate_type,
+                    angles: gate.angles.to_vec(),
+                    location:
+                        crate::fault_tolerance::propagator::UnsupportedGateLocation::DagNode {
+                            node,
+                        },
+                    qubits: targets,
+                };
                 return Err(DemBuilderError::ConfigurationError(format!(
-                    "measurement crosstalk exact deterministic replay does not support gate {gate_type:?} before payload node {node}"
+                    "measurement crosstalk exact deterministic replay: {error} before payload node {node}"
                 )));
             }
         }
@@ -4706,15 +4714,16 @@ mod tests {
     fn crosstalk_hidden_measurement_replay_lowers_rotations() {
         use crate::fault_tolerance::dem_builder::MeasurementCrosstalkTransitionModel;
         use pecos_core::{Angle64, Gate};
-        let dem = |gate| {
+        let dem = |gates: &[Gate], inverse: &[Gate], victim| {
             let mut circuit = pecos_quantum::DagCircuit::new();
             circuit.pz(&[0, 1]);
-            circuit.h(&[0]);
-            circuit.add_gate_auto_wire(gate);
-            circuit.szzdg(&[(0, 1)]);
-            circuit.h(&[0]);
-            circuit.add_gate_auto_wire(Gate::meas_crosstalk_local_payload(&[0]));
-            circuit.mz(&[0]);
+            circuit.h(&[0, 1]);
+            for gate in gates.iter().chain(inverse) {
+                circuit.add_gate_auto_wire(gate.clone());
+            }
+            circuit.h(&[0, 1]);
+            circuit.add_gate_auto_wire(Gate::meas_crosstalk_local_payload(&[victim]));
+            circuit.mz(&[victim]);
             circuit.set_attr(
                 "detectors",
                 pecos_quantum::Attribute::String(r#"[{"id":0,"records":[-1]}]"#.to_string()),
@@ -4722,7 +4731,7 @@ mod tests {
             let noise = NoiseConfig::new(0.0, 0.0, 0.0, 0.0)
                 .set_measurement_crosstalk_local_rate(0.25)
                 .set_measurement_crosstalk_transition_model(
-                    MeasurementCrosstalkTransitionModel::bit_flip(0.4, 0.0),
+                    MeasurementCrosstalkTransitionModel::bit_flip(0.4, 0.2),
                 )
                 .set_measurement_crosstalk_dem_mode(
                     MeasurementCrosstalkDemMode::ExactDeterministic,
@@ -4733,10 +4742,36 @@ mod tests {
             assert!(dem.contains("error("));
             dem
         };
-        assert_eq!(
-            dem(Gate::rzz(Angle64::QUARTER_TURN, &[(0, 1)])),
-            dem(Gate::szz(&[(0, 1)]))
-        );
+        for victim in [0, 1] {
+            for (angle, named, inverse) in [
+                (
+                    Angle64::QUARTER_TURN,
+                    vec![Gate::szz(&[(0, 1)])],
+                    vec![Gate::szzdg(&[(0, 1)])],
+                ),
+                (
+                    Angle64::HALF_TURN,
+                    vec![Gate::z(&[0, 1])],
+                    vec![Gate::z(&[0, 1])],
+                ),
+                (Angle64::ZERO, vec![], vec![]),
+            ] {
+                assert_eq!(
+                    dem(&[Gate::rzz(angle, &[(0, 1)])], &inverse, victim),
+                    dem(&named, &inverse, victim),
+                    "angle {angle}, victim {victim}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn crosstalk_unsupported_rotation_diagnostic_preserves_angles() {
+        let mut sim = SymbolicSparseStab::new(1);
+        let gate = pecos_core::Gate::rz(pecos_core::Angle64::from_turns(0.125), &[0]);
+        let error = DemBuilder::apply_symbolic_gate_for_crosstalk_hidden_mz(&mut sim, 0, &gate)
+            .unwrap_err();
+        assert!(error.to_string().contains("RZ(0.125000 turns)"));
     }
 
     #[test]

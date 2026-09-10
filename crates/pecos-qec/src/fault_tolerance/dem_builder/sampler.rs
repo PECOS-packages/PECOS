@@ -126,7 +126,9 @@ impl std::fmt::Display for DetectorValidationError {
                      H, X, Y, Z, SZ, SZdg, CX, CZ, SWAP, MZ, PZ/QAlloc, I/Idle."
                 )
             }
-            Self::InvalidConfiguration { message } => f.write_str(message),
+            Self::InvalidConfiguration { message } => {
+                write!(f, "Invalid DEM configuration: {message}")
+            }
             Self::InvalidMetadata { message } => {
                 write!(f, "Invalid detector/observable metadata: {message}")
             }
@@ -650,7 +652,8 @@ impl DemSampler {
     /// # Errors
     ///
     /// Returns [`DetectorValidationError::UnsupportedGate`] if the influence
-    /// map came from a circuit Pauli propagation cannot faithfully represent.
+    /// map came from a circuit Pauli propagation cannot faithfully represent,
+    /// or [`DetectorValidationError::InvalidConfiguration`] for invalid DEM configuration.
     pub fn from_influence_map(
         influence_map: &DagFaultInfluenceMap,
         per_location_probs: &[f64],
@@ -1323,7 +1326,8 @@ impl<'a> DemSamplerBuilder<'a> {
     /// # Errors
     ///
     /// Returns an error if detector definitions reference non-deterministic
-    /// measurements or are not linearly independent over `Z_2`.
+    /// measurements or are not linearly independent over `Z_2`, or
+    /// [`DetectorValidationError::InvalidConfiguration`] for invalid DEM configuration.
     pub fn build(self) -> Result<DemSampler, DetectorValidationError> {
         // A supplied measurement order must cover every measurement, otherwise
         // detector/observable record offsets validated against the circuit's

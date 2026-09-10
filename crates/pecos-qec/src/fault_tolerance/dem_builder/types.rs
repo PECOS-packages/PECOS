@@ -2206,6 +2206,16 @@ pub enum ReplacementBranchApproximation {
     ExactBranchReplay,
 }
 
+impl ReplacementBranchApproximation {
+    /// Whether this mode consults the omitted gate's Pauli twirl.
+    #[must_use]
+    pub const fn consults_omitted_gate_twirl(self) -> bool {
+        !matches!(self, Self::IgnoreGateRemoval)
+    }
+}
+
+pub(crate) const EXACT_BRANCH_REPLAY_REQUIRES_PROVIDER: &str = "exact_branch_replay for p2 replacement branches requires a circuit-aware exact branch provider; use branch_impact or pauli_twirl_omitted_gate for the current Pauli-projected approximations";
+
 /// A replacement location whose resolved action has no omitted-gate twirl.
 #[derive(Debug, Clone, thiserror::Error)]
 #[error(
@@ -2355,7 +2365,7 @@ impl PauliWeights {
         };
         let direct = self.post_gate_two_qubit_weight_for(pauli);
 
-        if approximation == ReplacementBranchApproximation::IgnoreGateRemoval {
+        if !approximation.consults_omitted_gate_twirl() {
             return direct
                 + self
                     .replacement_entries
@@ -2452,12 +2462,7 @@ impl PauliWeights {
         locations: &[crate::fault_tolerance::propagator::DagSpacetimeLocation],
         approximation: ReplacementBranchApproximation,
     ) -> Result<(), MissingOmittedGateTwirl> {
-        if matches!(
-            approximation,
-            ReplacementBranchApproximation::PauliTwirlOmittedGate
-                | ReplacementBranchApproximation::BranchImpact
-        ) && self.has_replacement_entries()
-        {
+        if approximation.consults_omitted_gate_twirl() && self.has_replacement_entries() {
             for loc in locations {
                 if is_two_qubit_noise_gate(loc.gate_type)
                     && omitted_two_qubit_gate_pauli_twirl(loc.clifford).is_none()

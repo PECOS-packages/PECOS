@@ -900,6 +900,7 @@ fn replacement_entries_without_twirl_fail_loudly() {
     for approximation in [
         ReplacementBranchApproximation::PauliTwirlOmittedGate,
         ReplacementBranchApproximation::BranchImpact,
+        ReplacementBranchApproximation::ExactBranchReplay,
     ] {
         let mut noise = replacement_noise();
         noise.p2_replacement_approximation = approximation;
@@ -938,7 +939,7 @@ fn replacement_entries_without_twirl_fail_loudly() {
 }
 
 #[test]
-fn replacement_modes_without_twirl_do_not_require_it() {
+fn replacement_mode_without_twirl_does_not_require_it() {
     use pecos_qec::fault_tolerance::dem_builder::ReplacementBranchApproximation;
     let map = replacement_map_without_twirl();
     let mut noise = replacement_noise();
@@ -952,14 +953,6 @@ fn replacement_modes_without_twirl_do_not_require_it() {
         .with_noise_config(noise.clone())
         .build()
         .unwrap();
-    noise.p2_replacement_approximation = ReplacementBranchApproximation::ExactBranchReplay;
-    let error = DemBuilder::new(&map)
-        .with_noise_config(noise)
-        .try_build()
-        .unwrap_err();
-    assert!(
-        matches!(error, DemBuilderError::ConfigurationError(message) if message.contains("circuit-aware") && !message.contains("have no omitted-gate"))
-    );
 }
 
 #[test]
@@ -1092,4 +1085,51 @@ fn invalid_sampling_channel_probabilities_return_configuration_errors() {
             .build(),
         Err(DetectorValidationError::InvalidConfiguration { .. })
     ));
+}
+
+#[test]
+fn mem_builder_invalid_probabilities_return_configuration_error() {
+    let circuit = replacement_circuit(Gate::szz(&[(0, 1)]));
+    let map = DagFaultAnalyzer::new(&circuit).build_influence_map();
+    assert!(matches!(
+        MemBuilder::new(&map)
+            .with_noise_config(NoiseConfig::new(0.0, 4.0, 0.0, 0.0))
+            .build(),
+        Err(DemBuilderError::ConfigurationError(_))
+    ));
+}
+
+#[test]
+fn tick_dem_unsupported_rotation_diagnostic_preserves_angles() {
+    let mut circuit = TickCircuit::new();
+    circuit.tick().rz(Angle64::from_turns(0.125), &[0]);
+    let error = DemSampler::from_tick_circuit(&circuit, &NoiseConfig::default()).unwrap_err();
+    assert!(error.to_string().contains("RZ(0.125000 turns)"));
+}
+
+#[test]
+fn fault_catalog_unsupported_rotation_diagnostic_preserves_angles() {
+    use pecos_qec::fault_tolerance::fault_sampler::FaultCatalog;
+    let mut circuit = TickCircuit::new();
+    circuit.tick().rz(Angle64::from_turns(0.125), &[0]);
+    let error = FaultCatalog::from_circuit(&circuit).unwrap_err();
+    assert!(error.to_string().contains("RZ(0.125000 turns)"));
+}
+
+#[test]
+fn symbolic_history_arity_diagnostic_preserves_angles() {
+    use pecos_qec::fault_tolerance::fault_sampler::symbolic_measurement_history;
+    let mut circuit = TickCircuit::new();
+    circuit.tick().rz(Angle64::QUARTER_TURN, &[] as &[usize]);
+    let error = symbolic_measurement_history(&circuit).unwrap_err();
+    assert!(error.to_string().contains("RZ(0.250000 turns)"));
+}
+
+#[test]
+fn symbolic_history_unsupported_rotation_diagnostic_preserves_angles() {
+    use pecos_qec::fault_tolerance::fault_sampler::symbolic_measurement_history;
+    let mut circuit = TickCircuit::new();
+    circuit.tick().rz(Angle64::from_turns(0.125), &[0]);
+    let error = symbolic_measurement_history(&circuit).unwrap_err();
+    assert!(error.to_string().contains("RZ(0.125000 turns)"));
 }

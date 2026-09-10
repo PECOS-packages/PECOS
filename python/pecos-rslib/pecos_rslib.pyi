@@ -2450,7 +2450,13 @@ class qec:
 
     class DagFaultAnalyzer:
         def __init__(self, dag: DagCircuit) -> None: ...
-        def build_influence_map(self) -> qec.DagFaultInfluenceMap: ...
+        def build_influence_map(self) -> qec.DagFaultInfluenceMap:
+            """Build the complete fault influence map.
+
+            Raises:
+                ValueError: The circuit contains a gate Pauli propagation cannot represent.
+            """
+
         @property
         def max_node(self) -> int: ...
         @property

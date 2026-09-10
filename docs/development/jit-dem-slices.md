@@ -55,10 +55,11 @@ mappings remain errors. This is needed to reuse a physical slice before later
 logical Clifford gates: H swaps logical X/Z columns and CX fans some Pauli
 effects into two output columns.
 
-The cache deliberately accepts a caller-defined ordered key. A physical
-template compiler should include circuit identity, code geometry, detector
-schema, temporal horizon, and noise-support topology in that key. It should not
-include instance-only relabeling state.
+The frontend cache deliberately uses caller-defined ordered keys. A physical
+template provider should include circuit identity, code geometry, detector
+schema, temporal horizon, and noise-support topology in its key. It should not
+include instance-only relabeling state. The surface providers use bounded LRU
+caches; there is no second cache implementation in the Rust slicing layer.
 
 ## Existing DEM integration
 
@@ -86,7 +87,7 @@ or counted twice.
 `DemSliceTemplateCompiler` extracts selected owner rounds from a bounded,
 source-tracked physical model. It validates the annotated circuit's source
 ownership and detector-stream layout once, then emits absolute-round-independent
-`DemSlice` values suitable for `DemSliceCache`. The bounded model needs only
+`DemSlice` values suitable for a frontend cache. The bounded model needs only
 enough neighboring rounds to expose the operation's complete temporal horizon;
 it is not an algorithm-length model.
 
@@ -101,8 +102,11 @@ reconstruct a separately compiled five-round physical DEM exactly.
 At the Rust layer, callers compose cached `DemSliceInstance` values with
 `DemSliceRoundSchedule::from_instances`. Python exposes the same narrow path as
 opaque `DemSliceTemplate` values returned by `schedule.template(...)` and
-`DemSliceRoundSchedule.from_templates(...)`. The Python constructor currently
-uses identity detector/output mappings by default, accepts checked per-round
+`DemSliceRoundSchedule.from_templates(...)`. The Python constructor requires an
+independent declaration of the assembled circuit's standard-output and
+tracked-Pauli schema. It rejects a cached model with different declarations and
+requires every template output to be routed into that schema or explicitly
+projected. It uses identity detector/output mappings by default, accepts checked per-round
 GF(2) output routing tables, and supports checked global or per-stream spatial
 translations. Templates expose their referenced local output IDs so callers do
 not need to guess the routing domain. Per-stream translation lets independently
@@ -192,7 +196,9 @@ Stable detector-stream IDs are seeded from the earliest round with the maximum
 number of declarations. This uses stationary SEC record order instead of a
 partial initialization boundary, ensuring composed `D<n>` ordering matches the
 physical syndrome stream exactly. Surface-memory tests therefore compare the
-entire rendered model byte for byte, not only up to detector relabeling.
+entire rendered Python model byte for byte, not only up to detector relabeling.
+Lower-level Rust tests additionally pin structured mechanism and
+source-component equivalence without relying on serialization order.
 
 ## Native round schedule
 
@@ -202,6 +208,13 @@ from metadata PECOS already carries. Detector coordinates are interpreted as
 time coordinate supplies the emitted round. Physical DAG gates carry the
 integer `dem_slice_round` attribute, and every `DagFaultInfluenceMap` location
 inherits its owner from its gate node.
+
+Spatial coordinates are therefore part of the current automatic stream identity
+contract. Two detectors at the same `(x, y)` in one round are rejected with both
+detector IDs and the colliding coordinate. Surface patches placed without an
+explicit offset are laid out cumulatively by their actual widths, including
+heterogeneous geometries; callers that place patches manually must keep their
+detector coordinates distinct.
 
 The surface `LogicalCircuitBuilder` writes this attribute on every generated
 gate. Initialization is owned by round zero, syndrome-extraction operations by
@@ -215,6 +228,13 @@ output mappings, and tracked-Pauli mappings, then exposes the resulting slice
 instances to `DemStitcher`. This removes the hand-authored ownership and mapping
 tables from the equivalence path. Full-circuit source-tracked DEMs remain the
 independent equivalence oracle for bounded template composition.
+
+Template extraction retains each contribution's physical source-location IDs.
+Stitching remaps those IDs per template instance, so repeated use of one cached
+slice preserves source provenance without aliasing different rounds. This keeps
+source-graphlike analysis available on the stitched structured model. The IDs
+identify sources within the assembled model; they are not indices into the
+bounded template's original influence map.
 
 Python callers can exercise the same structured path through
 `DetectorErrorModel.stitched_round_window(...)`. It accepts the originating
@@ -235,7 +255,11 @@ convenience wrappers over the same provider.
 `LogicalCircuitBuilder.build_algorithm_descriptor(...)` uses this path for its
 per-segment models. Segment DEMs may contain look-ahead detectors needed to
 preserve a cross-boundary source, while segment metadata counts only the
-non-overlapping detector partition consumed by the streaming decoder. An
+non-overlapping detector partition consumed by the streaming decoder.
+`num_detectors` and its explicit alias `num_commit_detectors` report that
+partition; `num_window_detectors` reports the detector count actually present in
+the segment DEM, including halo. Every detector must carry `[x, y, round]`
+coordinates or descriptor construction fails. An
 omitted `buffer` derives the safe forward overlap. An explicit `buffer` also
 adds that many look-behind rounds and is rejected if it is smaller than the
 derived forward requirement.
@@ -257,6 +281,11 @@ A soft boundary is not permission to truncate a correlation that touches the
 commit region. If a contribution reaches from a commit detector through the
 entire buffer, stitching reports `BufferTooSmall`. Increasing the buffer or
 rejecting the physical model is required.
+
+Buffer sizing, relevance, and boundary checks inspect every source-decomposition
+component before XOR cancellation. A target that cancels out of the complete
+effect can therefore neither disappear at a window boundary nor evade the
+required look-ahead calculation.
 
 Projection never graphifies a mechanism. Hyperedges remain hyperedges, and
 independent contributions that become identical after projection are combined

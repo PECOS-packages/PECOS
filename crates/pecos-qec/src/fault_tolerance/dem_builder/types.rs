@@ -4934,6 +4934,10 @@ impl DetectorErrorModel {
         &self.contributions
     }
 
+    pub(crate) fn last_contribution_mut(&mut self) -> Option<&mut FaultContribution> {
+        self.contributions.last_mut()
+    }
+
     /// Returns every quantified categorical-channel approximation made during build.
     ///
     /// Each record identifies the channel kind, a representative concrete flip

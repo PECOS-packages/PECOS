@@ -6,6 +6,16 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+### Python breaking changes
+
+- `LogicalCircuitBuilder.build_algorithm_descriptor(buffer=0)` now rejects a
+  non-terminal segment when its source-tracked detector model requires forward
+  look-ahead. Omit `buffer` to derive the safe minimum automatically, or pass at
+  least the reported number of rounds. Segment dictionaries now distinguish the
+  backward-compatible commit count (`num_detectors`, also available as
+  `num_commit_detectors`) from the detector count in the halo-bearing segment DEM
+  (`num_window_detectors`).
+
 ### Rust breaking changes
 
 - `CliffordGateable::apply_global_phase` replaces the former

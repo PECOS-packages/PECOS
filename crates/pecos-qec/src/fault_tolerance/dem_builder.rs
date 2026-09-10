@@ -99,7 +99,7 @@ pub use sampler::{
     SamplerLabels,
 };
 pub use slice::{
-    DEM_SLICE_ROUND_ATTRIBUTE, DemBoundaryKind, DemDetectorPlacement, DemSlice, DemSliceCache,
+    DEM_SLICE_ROUND_ATTRIBUTE, DemBoundaryKind, DemDetectorPlacement, DemSlice,
     DemSliceContribution, DemSliceDetector, DemSliceInstance, DemSliceModelMap,
     DemSliceRoundSchedule, DemSliceStitchError, DemSliceTemplateCompiler, DemStitchDiagnostics,
     DemStitcher, DemTemporalHorizon, DemWindowSpec, RelativeDetectorTarget, SliceFaultMechanism,

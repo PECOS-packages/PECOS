@@ -2404,6 +2404,7 @@ class ObservableFlips:
 class qec:
     """Fault-tolerance and detector-error-model submodule."""
 
+    DEM_SLICE_ROUND_ATTRIBUTE: str
     PAULI_I: int
     PAULI_X: int
     PAULI_Y: int
@@ -2501,6 +2502,8 @@ class qec:
         def from_templates(
             output_model: qec.DetectorErrorModel,
             templates: Sequence[tuple[qec.DemSliceTemplate, int]],
+            expected_dem_outputs: Sequence[int],
+            expected_tracked_paulis: Sequence[int],
             coordinate_offset: tuple[float, float] | None = ...,
             detector_coordinate_offsets: Mapping[int, tuple[float, float]] | None = ...,
             dem_output_routings: Mapping[int, Mapping[int, Sequence[int]]] | None = ...,

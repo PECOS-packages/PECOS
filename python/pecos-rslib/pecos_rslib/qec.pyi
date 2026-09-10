@@ -18,6 +18,8 @@ from typing import Any, Mapping, Sequence
 
 from pecos_rslib import DagCircuit, ParityCheckMatrix, PauliString, StabilizerCodeSpec, TickCircuit
 
+DEM_SLICE_ROUND_ATTRIBUTE: str
+
 class BivariateBicycleCode:
     """A validated bivariate-bicycle CSS code."""
 
@@ -125,6 +127,8 @@ class DemSliceRoundSchedule:
     def from_templates(
         output_model: DetectorErrorModel,
         templates: Sequence[tuple[DemSliceTemplate, int]],
+        expected_dem_outputs: Sequence[int],
+        expected_tracked_paulis: Sequence[int],
         coordinate_offset: tuple[float, float] | None = ...,
         detector_coordinate_offsets: Mapping[int, tuple[float, float]] | None = ...,
         dem_output_routings: Mapping[int, Mapping[int, Sequence[int]]] | None = ...,

@@ -413,43 +413,59 @@ def test_cached_surface_templates_reconstruct_a_longer_memory_experiment():
         (bulk, 1),
         (init, 0),
     ]
-    composed = DemSliceRoundSchedule.from_templates(template_model, instances)
+    composed = DemSliceRoundSchedule.from_templates(template_model, instances, [0], [])
     with pytest.raises(ValueError, match="coordinate_offset values must be finite"):
         DemSliceRoundSchedule.from_templates(
             template_model,
             [(init, 0)],
+            [0],
+            [],
             coordinate_offset=(float("inf"), 0.0),
         )
     with pytest.raises(ValueError, match=r"detector_coordinate_offsets\[0\] values must be finite"):
         DemSliceRoundSchedule.from_templates(
             template_model,
             [(init, 0)],
+            [0],
+            [],
             detector_coordinate_offsets={0: (float("inf"), 0.0)},
         )
     with pytest.raises(ValueError, match="unknown detector stream 999"):
         DemSliceRoundSchedule.from_templates(
             template_model,
             [(init, 0)],
+            [0],
+            [],
             detector_coordinate_offsets={999: (0.0, 0.0)},
         )
     with pytest.raises(ValueError, match="unknown owner round 999"):
         DemSliceRoundSchedule.from_templates(
             template_model,
             [(init, 0)],
+            [0],
+            [],
             dem_output_routings={999: {0: [0]}},
         )
     with pytest.raises(ValueError, match="unknown local output 999"):
         DemSliceRoundSchedule.from_templates(
             template_model,
             [(init, 0)],
+            [0],
+            [],
             dem_output_routings={0: {999: [0]}},
         )
     with pytest.raises(ValueError, match="targets undeclared output 999"):
         DemSliceRoundSchedule.from_templates(
             template_model,
             [(init, 0)],
+            [0],
+            [],
             dem_output_routings={0: {0: [999]}},
         )
+    with pytest.raises(ValueError, match=r"assembled circuit expects \{\}"):
+        DemSliceRoundSchedule.from_templates(template_model, [(init, 0)], [], [])
+    with pytest.raises(ValueError, match="tracked Paulis"):
+        DemSliceRoundSchedule.from_templates(template_model, [(init, 0)], [0], [0])
     assert composed.rounds() == [0, 1, 2, 3, 4, 5]
     stitched = composed.stitch(
         start_round=0,
@@ -467,6 +483,8 @@ def test_cached_surface_templates_reconstruct_a_longer_memory_experiment():
     projected = DemSliceRoundSchedule.from_templates(
         template_model,
         instances,
+        [0],
+        [],
         dem_output_routings={round_: {0: [0, 0]} for _, round_ in instances},
     ).stitch(
         start_round=0,

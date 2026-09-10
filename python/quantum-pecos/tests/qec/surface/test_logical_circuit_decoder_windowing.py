@@ -140,6 +140,8 @@ def test_algorithm_segments_keep_structured_boundary_correlations():
 
     assert sum(segment["num_detectors"] for segment in desc["segments"]) == full_detector_count
     assert local_detector_counts[0] > desc["segments"][0]["num_detectors"]
+    assert all(segment["num_commit_detectors"] == segment["num_detectors"] for segment in desc["segments"])
+    assert [segment["num_window_detectors"] for segment in desc["segments"]] == local_detector_counts
 
     first_dem = desc["segments"][0]["dem"]
     detector_times = {}
@@ -327,6 +329,41 @@ def test_multi_patch_memory_provider_reuses_physical_family(monkeypatch):
     monkeypatch.setattr(LogicalCircuitBuilder, "_build_structured_dem", reject_full_compile)
     warm = build(5, ["warm_0", "warm_1"], [31, 231], [(3.0, -19.0), (71.0, 8.0)])
     warm.build_dem(p1=0.001, p2=0.002, p_meas=0.003, p_prep=0.004)
+
+
+def test_default_patch_placement_handles_heterogeneous_sizes_and_memory_order():
+    """Automatic coordinates cannot merge streams from differently sized patches."""
+    builder = LogicalCircuitBuilder()
+    builder.add_patch(SurfacePatch.create(5), "A", qubit_offset=0)
+    builder.add_patch(SurfacePatch.create(2), "B", qubit_offset=100)
+    builder.add_memory(["B", "A"], 3, "Z")
+
+    assert builder._patches["A"].coord_offset == (0.0, 0.0)  # noqa: SLF001
+    assert builder._patches["B"].coord_offset == (12.0, 0.0)  # noqa: SLF001
+    descriptor = builder.build_algorithm_descriptor(p1=0.001, p2=0.002, p_meas=0.003, p_prep=0.004)
+    assert descriptor["segments"][0]["num_detectors"] == 80
+
+
+def test_surface_template_provider_caches_are_bounded():
+    """Noise sweeps cannot retain every compiled physical fixture forever."""
+    from pecos.qec.surface.logical_circuit import (
+        _cached_surface_cx_dem_templates,
+        _cached_surface_h_dem_templates,
+        _cached_surface_memory_dem_templates,
+        _cached_surface_mixed_dem_templates,
+        _cached_surface_multi_memory_dem_templates,
+        _cached_surface_singleton_memory_dem_templates,
+    )
+
+    providers = (
+        _cached_surface_memory_dem_templates,
+        _cached_surface_singleton_memory_dem_templates,
+        _cached_surface_multi_memory_dem_templates,
+        _cached_surface_h_dem_templates,
+        _cached_surface_cx_dem_templates,
+        _cached_surface_mixed_dem_templates,
+    )
+    assert {provider.cache_info().maxsize for provider in providers} == {16}
 
 
 @pytest.mark.parametrize(
@@ -753,8 +790,8 @@ def test_repeated_logical_cx_provider_reuses_one_physical_family(monkeypatch):
 @pytest.mark.parametrize(
     ("gate_names", "rounds", "initial_bases", "final_bases"),
     [
-        (("h0", "h1", "cx"), (3, 4, 3, 5), ("Z", "X"), ("Z", "X")),
-        (("cx", "h0", "h1", "cx"), (2, 3, 2, 4, 3), ("Z", "Z"), ("X", "Z")),
+        (("h0", "h1", "cx"), (3, 4, 3, 5), ("Z", "X"), ("X", "X")),
+        (("cx", "h0", "h1", "cx"), (2, 3, 2, 4, 3), ("Z", "Z"), ("Z", "Z")),
     ],
 )
 def test_mixed_h_cx_provider_matches_full_compile(gate_names, rounds, initial_bases, final_bases):
@@ -826,6 +863,40 @@ def test_mixed_h_cx_future_action_normalizes_to_a_bounded_valid_word():
         frontier = next_frontier
 
 
+def test_mixed_h_cx_with_history_sensitive_outputs_uses_full_fallback(monkeypatch):
+    """Even CX parity must not erase the frontend's observable reliability state."""
+    import pecos.qec.surface.logical_circuit as logical_circuit
+
+    builder = LogicalCircuitBuilder()
+    builder.add_patch(SurfacePatch.create(1), "A", qubit_offset=0)
+    builder.add_patch(SurfacePatch.create(1), "B", qubit_offset=3)
+    both = ["A", "B"]
+    builder.add_memory(both, 2, {"A": "Z", "B": "Z"})
+    builder.add_transversal_h("A")
+    builder.add_memory(both, 2, {"A": "X", "B": "Z"})
+    builder.add_transversal_h("B")
+    builder.add_memory(both, 2, {"A": "X", "B": "X"})
+    builder.add_transversal_cx("A", "B")
+    builder.add_memory(both, 2, {"A": "X", "B": "Z"})
+    builder.add_transversal_cx("A", "B")
+    builder.add_memory(both, 2, {"A": "X", "B": "Z"})
+    oracle, _, _ = builder._build_structured_dem(  # noqa: SLF001
+        p1=0.001,
+        p2=0.002,
+        p_meas=0.003,
+        p_prep=0.004,
+    )
+
+    def reject_mixed_cache(*_args, **_kwargs):
+        message = "history-sensitive output schema reached the mixed template cache"
+        raise AssertionError(message)
+
+    monkeypatch.setattr(logical_circuit, "_cached_surface_mixed_dem_templates", reject_mixed_cache)
+    assert builder.build_dem(p1=0.001, p2=0.002, p_meas=0.003, p_prep=0.004) == oracle.to_string()
+    assert "L0" not in oracle.to_string()
+    assert "L1" not in oracle.to_string()
+
+
 def test_mixed_h_cx_provider_reuses_normalized_boundary_families(monkeypatch):
     """Equivalent depths and placement reuse the finite mixed-state cache."""
     from pecos.qec.surface.logical_circuit import _cached_surface_mixed_dem_templates
@@ -843,7 +914,7 @@ def test_mixed_h_cx_provider_reuses_normalized_boundary_families(monkeypatch):
         builder.add_transversal_h(target)
         builder.add_memory([control, target], rounds[2], {control: "X", target: "X"})
         builder.add_transversal_cx(control, target)
-        builder.add_memory([control, target], rounds[3], {control: "Z", target: "X"})
+        builder.add_memory([control, target], rounds[3], {control: "X", target: "X"})
         return builder
 
     first = build(

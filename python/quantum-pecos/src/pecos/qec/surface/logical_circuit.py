@@ -31,18 +31,17 @@ import json
 from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from functools import cache
+from functools import cache, lru_cache
 from typing import TYPE_CHECKING
+
+from pecos_rslib.qec import DEM_SLICE_ROUND_ATTRIBUTE
 
 if TYPE_CHECKING:
     from pecos.qec.surface.patch import Stabilizer, SurfacePatch
 
 PatchSnapshot = dict[str, tuple[bool, list[str], list[str], list[str], list[str]]]
 
-# Kept in sync with pecos_qec::DEM_SLICE_ROUND_ATTRIBUTE. The TickCircuit ->
-# DagCircuit conversion copies batch metadata to every split DAG gate, letting
-# the structured DEM frontend assign each physical fault location to a round.
-DEM_SLICE_ROUND_ATTRIBUTE = "dem_slice_round"
+_SURFACE_DEM_TEMPLATE_CACHE_SIZE = 16
 
 
 @dataclass(frozen=True)
@@ -78,7 +77,7 @@ class _CachedSurfaceMultiMemoryDemTemplates:
     coordinate_origins: tuple[tuple[float, float], ...]
 
 
-@cache
+@lru_cache(maxsize=_SURFACE_DEM_TEMPLATE_CACHE_SIZE)
 def _cached_surface_memory_dem_templates(
     dx: int,
     dz: int,
@@ -118,7 +117,7 @@ def _cached_surface_memory_dem_templates(
     )
 
 
-@cache
+@lru_cache(maxsize=_SURFACE_DEM_TEMPLATE_CACHE_SIZE)
 def _cached_surface_singleton_memory_dem_templates(
     dx: int,
     dz: int,
@@ -156,7 +155,7 @@ def _cached_surface_singleton_memory_dem_templates(
     )
 
 
-@cache
+@lru_cache(maxsize=_SURFACE_DEM_TEMPLATE_CACHE_SIZE)
 def _cached_surface_multi_memory_dem_templates(
     patch_specs: tuple[tuple[int, int, str, bool], ...],
     bases: tuple[str, ...],
@@ -243,7 +242,7 @@ class _CachedSurfaceBoundaryDemTemplates:
     terminal: object
 
 
-@cache
+@lru_cache(maxsize=_SURFACE_DEM_TEMPLATE_CACHE_SIZE)
 def _cached_surface_h_dem_templates(
     dx: int,
     dz: int,
@@ -316,6 +315,46 @@ class _CachedSurfaceCxDemTemplates:
     target_coordinate_origin: tuple[float, float]
 
 
+def _boundary_template_instances(
+    boundary_templates: list[_CachedSurfaceBoundaryDemTemplates],
+    memory_rounds: list[int],
+) -> tuple[list[tuple[object, int]], int]:
+    """Place boundary families between their adjacent memory segments."""
+    if not boundary_templates or len(memory_rounds) != len(boundary_templates) + 1:
+        msg = "boundary templates require exactly one more memory segment"
+        raise ValueError(msg)
+
+    first_boundary_round = memory_rounds[0]
+    instances = [(boundary_templates[0].initialization, 0)]
+    instances.extend((boundary_templates[0].pre_gate_bulk, round_) for round_ in range(1, first_boundary_round - 1))
+    boundary_round = first_boundary_round
+    for boundary_index, templates in enumerate(boundary_templates):
+        instances.extend(
+            [
+                (templates.pre_gate_boundary, boundary_round - 1),
+                (templates.gate_boundary, boundary_round),
+            ],
+        )
+        next_boundary_round = boundary_round + memory_rounds[boundary_index + 1]
+        if boundary_index + 1 < len(boundary_templates):
+            next_templates = boundary_templates[boundary_index + 1]
+            instances.extend(
+                (next_templates.pre_gate_bulk, round_) for round_ in range(boundary_round + 1, next_boundary_round - 1)
+            )
+        else:
+            instances.extend(
+                (templates.post_gate_bulk, round_) for round_ in range(boundary_round + 1, next_boundary_round - 1)
+            )
+            instances.extend(
+                [
+                    (templates.pre_terminal, next_boundary_round - 1),
+                    (templates.terminal, next_boundary_round),
+                ],
+            )
+        boundary_round = next_boundary_round
+    return instances, boundary_round
+
+
 _TWO_PATCH_IDENTITY = (1, 2, 4, 8)
 _TWO_PATCH_GATES = ("h0", "h1", "cx")
 
@@ -381,7 +420,7 @@ def _canonical_two_patch_suffix(
     raise ValueError(msg)
 
 
-@cache
+@lru_cache(maxsize=_SURFACE_DEM_TEMPLATE_CACHE_SIZE)
 def _cached_surface_cx_dem_templates(
     control_dx: int,
     control_dz: int,
@@ -462,7 +501,7 @@ def _cached_surface_cx_dem_templates(
     )
 
 
-@cache
+@lru_cache(maxsize=_SURFACE_DEM_TEMPLATE_CACHE_SIZE)
 def _cached_surface_mixed_dem_templates(
     control_dx: int,
     control_dz: int,
@@ -566,32 +605,6 @@ def _cached_surface_mixed_dem_templates(
         target_stream_count=target_stream_count,
         target_coordinate_origin=target_origin,
     )
-
-
-def _boundary_template_instances(
-    templates: _CachedSurfaceBoundaryDemTemplates,
-    before_rounds: int,
-    after_rounds: int,
-) -> tuple[list[tuple[object, int]], int]:
-    """Place one cached logical boundary between two memory segments."""
-    boundary_round = before_rounds
-    terminal_round = before_rounds + after_rounds
-    instances = [(templates.initialization, 0)]
-    instances.extend((templates.pre_gate_bulk, round_) for round_ in range(1, boundary_round - 1))
-    instances.extend(
-        [
-            (templates.pre_gate_boundary, boundary_round - 1),
-            (templates.gate_boundary, boundary_round),
-        ],
-    )
-    instances.extend((templates.post_gate_bulk, round_) for round_ in range(boundary_round + 1, terminal_round - 1))
-    instances.extend(
-        [
-            (templates.pre_terminal, terminal_round - 1),
-            (templates.terminal, terminal_round),
-        ],
-    )
-    return instances, terminal_round
 
 
 def _validate_boundary_cardinality(segments: list[object], boundary_gates: list[object]) -> None:
@@ -718,10 +731,14 @@ class LogicalCircuitBuilder:
             msg = f"Patch '{label}' already registered"
             raise ValueError(msg)
         if coord_offset is None:
-            # Auto-space: shift each patch by (d*2 + 2) * patch_index in x
-            patch_idx = len(self._patches)
-            spacing = patch.geometry.dz * 2 + 2
-            coord_offset = (patch_idx * spacing, 0.0)
+            # Place the new patch after the right edge of every existing patch.
+            # Multiplying this patch's width by its registration index can make
+            # a small patch overlap a previously registered larger patch.
+            next_x = max(
+                (state.coord_offset[0] + state.patch.geometry.dz * 2 + 2 for state in self._patches.values()),
+                default=0.0,
+            )
+            coord_offset = (next_x, 0.0)
         self._patches[label] = PatchState(
             patch=patch,
             label=label,
@@ -1245,6 +1262,8 @@ class LogicalCircuitBuilder:
         schedule = DemSliceRoundSchedule.from_templates(
             templates.output_model,
             instances,
+            expected_dem_outputs=[0],
+            expected_tracked_paulis=[],
             coordinate_offset=(float(coord_x), float(coord_y)),
         )
         model = schedule.stitch(
@@ -1328,6 +1347,8 @@ class LogicalCircuitBuilder:
         schedule = DemSliceRoundSchedule.from_templates(
             templates.output_model,
             instances,
+            expected_dem_outputs=list(range(len(patch_states))),
+            expected_tracked_paulis=[],
             detector_coordinate_offsets=detector_coordinate_offsets,
         )
         model = schedule.stitch(
@@ -1407,6 +1428,14 @@ class LogicalCircuitBuilder:
         initial_target_basis = memories[0].per_patch_basis.get(target_label, memories[0].basis).upper()
         final_control_basis = memories[-1].per_patch_basis.get(control_label, memories[-1].basis).upper()
         final_target_basis = memories[-1].per_patch_basis.get(target_label, memories[-1].basis).upper()
+        # The surface frontend treats an observable as unreliable when any CX
+        # partner is finally measured in the incompatible basis. That state is
+        # history-sensitive: two CX gates cancel in the sign-free Clifford
+        # transform below, but not in the frontend's observable declarations.
+        # Until reliability is part of the canonical state, retain the exact
+        # full-model fallback for every mixed-basis schedule containing CX.
+        if "cx" in gate_names and final_control_basis != final_target_basis:
+            return None
 
         boundary_templates = []
         cached_layout = None
@@ -1452,35 +1481,10 @@ class LogicalCircuitBuilder:
 
         from pecos_rslib.qec import DemSliceRoundSchedule
 
-        first_boundary_round = memories[0].rounds
-        instances = [(boundary_templates[0].initialization, 0)]
-        instances.extend((boundary_templates[0].pre_gate_bulk, round_) for round_ in range(1, first_boundary_round - 1))
-        boundary_round = first_boundary_round
-        for boundary_index, templates in enumerate(boundary_templates):
-            instances.extend(
-                [
-                    (templates.pre_gate_boundary, boundary_round - 1),
-                    (templates.gate_boundary, boundary_round),
-                ],
-            )
-            next_boundary_round = boundary_round + memories[boundary_index + 1].rounds
-            if boundary_index + 1 < len(boundary_templates):
-                next_templates = boundary_templates[boundary_index + 1]
-                instances.extend(
-                    (next_templates.pre_gate_bulk, round_)
-                    for round_ in range(boundary_round + 1, next_boundary_round - 1)
-                )
-            else:
-                instances.extend(
-                    (templates.post_gate_bulk, round_) for round_ in range(boundary_round + 1, next_boundary_round - 1)
-                )
-                instances.extend(
-                    [
-                        (templates.pre_terminal, next_boundary_round - 1),
-                        (templates.terminal, next_boundary_round),
-                    ],
-                )
-            boundary_round = next_boundary_round
+        instances, boundary_round = _boundary_template_instances(
+            boundary_templates,
+            [memory.rounds for memory in memories],
+        )
 
         if cached_layout is None:  # Defensive: the alternating form always has at least one gate.
             return None
@@ -1507,6 +1511,8 @@ class LogicalCircuitBuilder:
         schedule = DemSliceRoundSchedule.from_templates(
             boundary_templates[0].output_model,
             instances,
+            expected_dem_outputs=[0, 1],
+            expected_tracked_paulis=[],
             detector_coordinate_offsets=detector_coordinate_offsets,
             dem_output_routings=dem_output_routings,
         )
@@ -1649,6 +1655,17 @@ class LogicalCircuitBuilder:
         schedule = DemSliceRoundSchedule.from_templates(
             templates.output_model,
             instances,
+            expected_dem_outputs=[
+                output
+                for output, reliable in enumerate(
+                    (
+                        final_control_basis != "X" or final_target_basis == "X",
+                        final_target_basis != "Z" or final_control_basis == "Z",
+                    ),
+                )
+                if reliable
+            ],
+            expected_tracked_paulis=[],
             detector_coordinate_offsets=detector_coordinate_offsets,
             dem_output_routings=dem_output_routings,
         )
@@ -1706,35 +1723,10 @@ class LogicalCircuitBuilder:
 
         from pecos_rslib.qec import DemSliceRoundSchedule
 
-        first_boundary_round = memories[0].rounds
-        instances = [(boundary_templates[0].initialization, 0)]
-        instances.extend((boundary_templates[0].pre_gate_bulk, round_) for round_ in range(1, first_boundary_round - 1))
-        boundary_round = first_boundary_round
-        for boundary_index, templates in enumerate(boundary_templates):
-            instances.extend(
-                [
-                    (templates.pre_gate_boundary, boundary_round - 1),
-                    (templates.gate_boundary, boundary_round),
-                ],
-            )
-            next_boundary_round = boundary_round + memories[boundary_index + 1].rounds
-            if boundary_index + 1 < len(boundary_templates):
-                next_templates = boundary_templates[boundary_index + 1]
-                instances.extend(
-                    (next_templates.pre_gate_bulk, round_)
-                    for round_ in range(boundary_round + 1, next_boundary_round - 1)
-                )
-            else:
-                instances.extend(
-                    (templates.post_gate_bulk, round_) for round_ in range(boundary_round + 1, next_boundary_round - 1)
-                )
-                instances.extend(
-                    [
-                        (templates.pre_terminal, next_boundary_round - 1),
-                        (templates.terminal, next_boundary_round),
-                    ],
-                )
-            boundary_round = next_boundary_round
+        instances, boundary_round = _boundary_template_instances(
+            boundary_templates,
+            [memory.rounds for memory in memories],
+        )
 
         # The current surface frontend declares one final measured observable.
         # Route it explicitly through the checked GF(2) instance API. The
@@ -1748,6 +1740,8 @@ class LogicalCircuitBuilder:
         schedule = DemSliceRoundSchedule.from_templates(
             boundary_templates[0].output_model,
             instances,
+            expected_dem_outputs=[0],
+            expected_tracked_paulis=[],
             coordinate_offset=(float(coord_x), float(coord_y)),
             dem_output_routings=dem_output_routings,
         )
@@ -2008,7 +2002,16 @@ class LogicalCircuitBuilder:
         # outputs, hyperedges, and cross-round correlations intact.
         seg_dems = []
         segment_detector_counts = []
-        detector_rounds = [int(coords[2]) for _, coords in structured_dem.detector_coordinates() if coords is not None]
+        segment_window_detector_counts = []
+        detector_rounds = []
+        for detector_id, coords in structured_dem.detector_coordinates():
+            if coords is None or len(coords) < 3:
+                msg = (
+                    f"detector {detector_id} has no [x, y, round] coordinates; "
+                    "algorithm segmentation requires an explicit round for every detector"
+                )
+                raise ValueError(msg)
+            detector_rounds.append(int(coords[2]))
         explicit_buffer = 0 if buffer is None else buffer
         for segment_index, seg in enumerate(segments):
             start_round = max(0, int(seg["time_start"]) - explicit_buffer)
@@ -2037,6 +2040,7 @@ class LogicalCircuitBuilder:
                 forward_boundary=forward_boundary,
             )
             seg_dems.append(str(segment_dem))
+            segment_window_detector_counts.append(segment_dem.num_detectors)
             # Segment metadata partitions the incoming full-circuit syndrome;
             # it therefore counts only this segment's commit detectors, not the
             # look-behind/look-ahead detectors duplicated in its local DEM.
@@ -2061,6 +2065,8 @@ class LogicalCircuitBuilder:
                 {
                     "dem": seg_dems[i],
                     "num_detectors": segment_detector_counts[i],
+                    "num_commit_detectors": segment_detector_counts[i],
+                    "num_window_detectors": segment_window_detector_counts[i],
                     "stab_coords": segments[i]["stab_coords"],
                 }
                 for i in range(len(segments))

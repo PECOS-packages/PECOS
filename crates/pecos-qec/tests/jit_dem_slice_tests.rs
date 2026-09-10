@@ -10,7 +10,7 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-use pecos_qec::{
+use pecos_qec::fault_tolerance::dem_builder::{
     DemBoundaryKind, DemDetectorPlacement, DemSlice, DemSliceContribution, DemSliceDetector,
     DemSliceInstance, DemStitcher, DemTemporalHorizon, DemWindowSpec, RelativeDetectorTarget,
     SliceFaultMechanism, StitchedDetectorAddress,

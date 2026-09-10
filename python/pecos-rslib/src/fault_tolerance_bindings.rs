@@ -1751,6 +1751,37 @@ fn validate_template_output_routings(
     Ok(())
 }
 
+fn validate_template_output_schema(
+    kind: &str,
+    expected: &BTreeSet<u32>,
+    declared: &BTreeSet<u32>,
+    known_by_round: &BTreeMap<i64, BTreeSet<u32>>,
+    routings: Option<&PyTemplateOutputRoutings>,
+) -> PyResult<()> {
+    if expected != declared {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "output_model declares {kind} {declared:?}, but the assembled circuit expects {expected:?}"
+        )));
+    }
+
+    for (&round, local_outputs) in known_by_round {
+        for &local_output in local_outputs {
+            let routed = routings
+                .and_then(|by_round| by_round.get(&round))
+                .and_then(|by_output| by_output.get(&local_output));
+            let unexpected = routed.map_or(!expected.contains(&local_output), |targets| {
+                targets.iter().any(|target| !expected.contains(target))
+            });
+            if unexpected {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "template {kind} {local_output} at owner round {round} is not projected or routed into the expected output schema {expected:?}"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
 #[pymethods]
 impl PyDemSliceRoundSchedule {
     /// Assemble a schedule from cached templates at requested absolute rounds.
@@ -1763,12 +1794,17 @@ impl PyDemSliceRoundSchedule {
     /// local detector-stream ID, allowing independently placed code blocks.
     /// Output routings select a GF(2) target set by owner round and local output;
     /// repeated targets cancel, and an empty target set projects a column away.
+    /// The expected output lists are an independent declaration of the assembled
+    /// circuit schema. They must exactly match ``output_model`` and every
+    /// unprojected template output must route into them.
     #[staticmethod]
-    #[pyo3(signature = (output_model, templates, coordinate_offset=None, detector_coordinate_offsets=None, dem_output_routings=None, tracked_pauli_routings=None))]
+    #[pyo3(signature = (output_model, templates, expected_dem_outputs, expected_tracked_paulis, coordinate_offset=None, detector_coordinate_offsets=None, dem_output_routings=None, tracked_pauli_routings=None))]
     fn from_templates(
         py: Python<'_>,
         output_model: &PyDetectorErrorModel,
         templates: Vec<(Py<PyDemSliceTemplate>, i64)>,
+        expected_dem_outputs: Vec<u32>,
+        expected_tracked_paulis: Vec<u32>,
         coordinate_offset: Option<(f64, f64)>,
         detector_coordinate_offsets: Option<BTreeMap<u32, (f64, f64)>>,
         dem_output_routings: Option<PyTemplateOutputRoutings>,
@@ -1826,6 +1862,8 @@ impl PyDemSliceRoundSchedule {
             .iter_tracked_paulis()
             .map(|output| output.id)
             .collect();
+        let expected_dem_outputs = expected_dem_outputs.into_iter().collect();
+        let expected_tracked_paulis = expected_tracked_paulis.into_iter().collect();
         validate_template_output_routings(
             "dem_output_routings",
             dem_output_routings.as_ref(),
@@ -1837,6 +1875,20 @@ impl PyDemSliceRoundSchedule {
             tracked_pauli_routings.as_ref(),
             &known_tracked_paulis,
             &declared_tracked_paulis,
+        )?;
+        validate_template_output_schema(
+            "standard outputs",
+            &expected_dem_outputs,
+            &declared_dem_outputs,
+            &known_dem_outputs,
+            dem_output_routings.as_ref(),
+        )?;
+        validate_template_output_schema(
+            "tracked Paulis",
+            &expected_tracked_paulis,
+            &declared_tracked_paulis,
+            &known_tracked_paulis,
+            tracked_pauli_routings.as_ref(),
         )?;
         let instances = templates
             .into_iter()
@@ -1905,7 +1957,7 @@ impl PyDemSliceRoundSchedule {
         self.inner
             .instances()
             .iter()
-            .map(pecos_qec::DemSliceInstance::round)
+            .map(RustDemSliceInstance::round)
             .collect()
     }
 
@@ -7988,6 +8040,10 @@ fn coloration_memory_circuit(
 /// Register the QEC fault tolerance module.
 pub fn register_qec_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let qec = PyModule::new(m.py(), "qec")?;
+    qec.add(
+        "DEM_SLICE_ROUND_ATTRIBUTE",
+        pecos_qec::fault_tolerance::dem_builder::DEM_SLICE_ROUND_ATTRIBUTE,
+    )?;
 
     qec.add_class::<PyObservableFlips>()?;
     qec.add_class::<PyFaultLocation>()?;

@@ -1,0 +1,344 @@
+R 0
+R 1
+R 2
+R 3
+R 4
+R 5
+R 6
+R 7
+R 8
+R 9
+R 10
+R 11
+R 12
+R 13
+R 14
+R 15
+R 16
+R 17
+R 18
+R 19
+R 20
+R 21
+R 22
+R 23
+R 24
+TICK
+R 25
+R 26
+R 27
+R 28
+R 29
+R 30
+R 31
+R 32
+R 33
+R 34
+R 35
+R 36
+TICK
+H 25
+H 26
+H 27
+H 28
+H 29
+H 30
+H 31
+H 32
+H 33
+H 34
+H 35
+H 36
+TICK
+CX 27 2
+CX 28 4
+CX 29 6
+CX 30 8
+CX 31 12
+CX 32 14
+CX 33 16
+CX 34 18
+CX 35 22
+CX 36 24
+TICK
+CX 27 1
+CX 28 3
+CX 29 5
+CX 30 7
+CX 31 11
+CX 32 13
+CX 33 15
+CX 34 17
+CX 35 21
+CX 36 23
+TICK
+CX 25 1
+CX 26 3
+CX 27 7
+CX 28 9
+CX 29 11
+CX 30 13
+CX 31 17
+CX 32 19
+CX 33 21
+CX 34 23
+TICK
+CX 25 0
+CX 26 2
+CX 27 6
+CX 28 8
+CX 29 10
+CX 30 12
+CX 31 16
+CX 32 18
+CX 33 20
+CX 34 22
+TICK
+H 25
+H 26
+H 27
+H 28
+H 29
+H 30
+H 31
+H 32
+H 33
+H 34
+H 35
+H 36
+TICK
+M 25
+M 26
+M 27
+M 28
+M 29
+M 30
+M 31
+M 32
+M 33
+M 34
+M 35
+M 36
+TICK
+R 25
+R 26
+R 27
+R 28
+R 29
+R 30
+R 31
+R 32
+R 33
+R 34
+R 35
+R 36
+R 37
+R 38
+R 39
+R 40
+R 41
+R 42
+R 43
+R 44
+R 45
+R 46
+R 47
+R 48
+TICK
+H 25
+H 26
+H 27
+H 28
+H 29
+H 30
+H 31
+H 32
+H 33
+H 34
+H 35
+H 36
+TICK
+CX 15 37
+CX 5 38
+CX 27 2
+CX 11 39
+CX 28 4
+CX 1 40
+CX 29 6
+CX 17 41
+CX 30 8
+CX 7 42
+CX 31 12
+CX 13 43
+CX 32 14
+CX 3 44
+CX 33 16
+CX 19 45
+CX 34 18
+CX 9 46
+CX 35 22
+CX 36 24
+TICK
+CX 20 37
+CX 10 38
+CX 27 1
+CX 16 39
+CX 28 3
+CX 6 40
+CX 29 5
+CX 22 41
+CX 30 7
+CX 12 42
+CX 31 11
+CX 18 43
+CX 32 13
+CX 8 44
+CX 33 15
+CX 24 45
+CX 34 17
+CX 14 46
+CX 35 21
+CX 36 23
+TICK
+CX 25 1
+CX 26 3
+CX 27 7
+CX 10 39
+CX 28 9
+CX 0 40
+CX 29 11
+CX 16 41
+CX 30 13
+CX 6 42
+CX 31 17
+CX 12 43
+CX 32 19
+CX 2 44
+CX 33 21
+CX 18 45
+CX 34 23
+CX 8 46
+CX 14 47
+CX 4 48
+TICK
+CX 25 0
+CX 26 2
+CX 27 6
+CX 15 39
+CX 28 8
+CX 5 40
+CX 29 10
+CX 21 41
+CX 30 12
+CX 11 42
+CX 31 16
+CX 17 43
+CX 32 18
+CX 7 44
+CX 33 20
+CX 23 45
+CX 34 22
+CX 13 46
+CX 19 47
+CX 9 48
+TICK
+H 25
+H 26
+H 27
+H 28
+H 29
+H 30
+H 31
+H 32
+H 33
+H 34
+H 35
+H 36
+TICK
+M 25
+M 26
+M 27
+M 28
+M 29
+M 30
+M 31
+M 32
+M 33
+M 34
+M 35
+M 36
+M 37
+M 38
+M 39
+M 40
+M 41
+M 42
+M 43
+M 44
+M 45
+M 46
+M 47
+M 48
+TICK
+M 0
+M 1
+M 2
+M 3
+M 4
+M 5
+M 6
+M 7
+M 8
+M 9
+M 10
+M 11
+M 12
+M 13
+M 14
+M 15
+M 16
+M 17
+M 18
+M 19
+M 20
+M 21
+M 22
+M 23
+M 24
+DETECTOR(0, 0, 0) rec[-49] rec[-61]
+DETECTOR(1, 0, 0) rec[-48] rec[-60]
+DETECTOR(2, 0, 0) rec[-47] rec[-59]
+DETECTOR(3, 0, 0) rec[-46] rec[-58]
+DETECTOR(4, 0, 0) rec[-45] rec[-57]
+DETECTOR(5, 0, 0) rec[-44] rec[-56]
+DETECTOR(6, 0, 0) rec[-43] rec[-55]
+DETECTOR(7, 0, 0) rec[-42] rec[-54]
+DETECTOR(8, 0, 0) rec[-41] rec[-53]
+DETECTOR(9, 0, 0) rec[-40] rec[-52]
+DETECTOR(10, 0, 0) rec[-39] rec[-51]
+DETECTOR(11, 0, 0) rec[-38] rec[-50]
+DETECTOR(12, 1, 0) rec[-37]
+DETECTOR(13, 1, 0) rec[-36]
+DETECTOR(14, 1, 0) rec[-35]
+DETECTOR(15, 1, 0) rec[-34]
+DETECTOR(16, 1, 0) rec[-33]
+DETECTOR(17, 1, 0) rec[-32]
+DETECTOR(18, 1, 0) rec[-31]
+DETECTOR(19, 1, 0) rec[-30]
+DETECTOR(20, 1, 0) rec[-29]
+DETECTOR(21, 1, 0) rec[-28]
+DETECTOR(22, 1, 0) rec[-27]
+DETECTOR(23, 1, 0) rec[-26]
+DETECTOR(12, 1, 1) rec[-10] rec[-5] rec[-37]
+DETECTOR(13, 1, 1) rec[-20] rec[-15] rec[-36]
+DETECTOR(14, 1, 1) rec[-15] rec[-14] rec[-10] rec[-9] rec[-35]
+DETECTOR(15, 1, 1) rec[-25] rec[-24] rec[-20] rec[-19] rec[-34]
+DETECTOR(16, 1, 1) rec[-9] rec[-8] rec[-4] rec[-3] rec[-33]
+DETECTOR(17, 1, 1) rec[-19] rec[-18] rec[-14] rec[-13] rec[-32]
+DETECTOR(18, 1, 1) rec[-13] rec[-12] rec[-8] rec[-7] rec[-31]
+DETECTOR(19, 1, 1) rec[-23] rec[-22] rec[-18] rec[-17] rec[-30]
+DETECTOR(20, 1, 1) rec[-7] rec[-6] rec[-2] rec[-1] rec[-29]
+DETECTOR(21, 1, 1) rec[-17] rec[-16] rec[-12] rec[-11] rec[-28]
+DETECTOR(22, 1, 1) rec[-11] rec[-6] rec[-27]
+DETECTOR(23, 1, 1) rec[-21] rec[-16] rec[-26]
+OBSERVABLE_INCLUDE(0) rec[-25] rec[-24] rec[-23] rec[-22] rec[-21]

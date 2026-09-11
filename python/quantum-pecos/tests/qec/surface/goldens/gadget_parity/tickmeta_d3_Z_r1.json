@@ -1,0 +1,7 @@
+{
+ "detectors": "[{\"id\": 0, \"coords\": [0, 0, 0], \"records\": [-17, -21]}, {\"id\": 1, \"coords\": [1, 0, 0], \"records\": [-16, -20]}, {\"id\": 2, \"coords\": [2, 0, 0], \"records\": [-15, -19]}, {\"id\": 3, \"coords\": [3, 0, 0], \"records\": [-14, -18]}, {\"id\": 4, \"coords\": [4, 1, 0], \"records\": [-13]}, {\"id\": 5, \"coords\": [5, 1, 0], \"records\": [-12]}, {\"id\": 6, \"coords\": [6, 1, 0], \"records\": [-11]}, {\"id\": 7, \"coords\": [7, 1, 0], \"records\": [-10]}, {\"id\": 8, \"coords\": [4, 1, 1], \"records\": [-6, -3, -13]}, {\"id\": 9, \"coords\": [5, 1, 1], \"records\": [-9, -8, -6, -5, -12]}, {\"id\": 10, \"coords\": [6, 1, 1], \"records\": [-5, -4, -2, -1, -11]}, {\"id\": 11, \"coords\": [7, 1, 1], \"records\": [-7, -4, -10]}]",
+ "observables": "[{\"id\": 0, \"records\": [-9, -8, -7]}]",
+ "num_measurements": "21",
+ "num_detectors": "12",
+ "basis": "Z"
+}

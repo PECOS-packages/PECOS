@@ -3,7 +3,7 @@ repos:
     rev: v6.0.0
     hooks:
       - id: trailing-whitespace
-        exclude: ^python/quantum-pecos/docs/reference/_autosummary/
+        exclude: ^(python/quantum-pecos/docs/reference/_autosummary/|python/quantum-pecos/tests/qec/surface/goldens/)
       - id: end-of-file-fixer
         exclude: |
           (?x)^(
@@ -12,7 +12,8 @@ repos:
             crates/.*/LICENSE$|
             python/.*/LICENSE$|
             python/quantum-pecos/NOTICE$|
-            python/quantum-pecos/README\.md$
+            python/quantum-pecos/README\.md$|
+            python/quantum-pecos/tests/qec/surface/goldens/
           )
       - id: check-toml
       - id: check-yaml

@@ -1,0 +1,46 @@
+R 0
+R 1
+R 2
+TICK
+R 3
+R 4
+TICK
+H 3
+H 4
+TICK
+CX 3 1
+CX 4 2
+TICK
+CX 3 0
+CX 4 1
+TICK
+H 3
+H 4
+TICK
+M 3
+M 4
+TICK
+R 3
+R 4
+TICK
+H 3
+H 4
+TICK
+CX 3 1
+CX 4 2
+TICK
+CX 3 0
+CX 4 1
+TICK
+H 3
+H 4
+TICK
+M 3
+M 4
+TICK
+M 0
+M 1
+M 2
+DETECTOR(0, 0, 0) rec[-5] rec[-7]
+DETECTOR(1, 0, 0) rec[-4] rec[-6]
+OBSERVABLE_INCLUDE(0) rec[-3] rec[-2] rec[-1]

@@ -24,7 +24,7 @@ fn public_api_stitches_relabelled_cached_slices() {
             "idle",
             vec![DemSliceDetector::new(0)],
             vec![DemSliceContribution::direct(
-                SliceFaultMechanism::from_unsorted(
+                SliceFaultMechanism::from_unsorted_parity(
                     [
                         RelativeDetectorTarget::new(0, 0),
                         RelativeDetectorTarget::new(0, 1),

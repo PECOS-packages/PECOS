@@ -172,6 +172,28 @@ pub enum DirectSourceFamily {
 /// with the same effect are grouped at output time, with their source types
 /// determining how they are output (direct vs decomposed forms).
 #[derive(Debug, Clone)]
+pub(crate) enum FaultContributionKind<Mechanism> {
+    Direct(Mechanism),
+    YDecomposed {
+        x_effect: Mechanism,
+        z_effect: Mechanism,
+    },
+    SourceDecomposed(Vec<Mechanism>),
+}
+
+impl<Mechanism> FaultContributionKind<Mechanism> {
+    pub(crate) fn components(&self) -> SmallVec<[&Mechanism; 4]> {
+        match self {
+            Self::Direct(effect) => smallvec::smallvec![effect],
+            Self::YDecomposed {
+                x_effect, z_effect, ..
+            } => smallvec::smallvec![x_effect, z_effect],
+            Self::SourceDecomposed(components) => components.iter().collect(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct FaultContribution {
     /// The detector/DEM-output effect of this error.
     pub effect: FaultMechanism,
@@ -556,6 +578,18 @@ impl FaultContribution {
     pub fn source_component_effects(&self) -> Option<SmallVec<[FaultMechanism; 4]>> {
         self.source_component_effects.clone()
     }
+
+    pub(crate) fn component_kind(&self) -> FaultContributionKind<FaultMechanism> {
+        if let Some((x_effect, z_effect)) = self.decomposition_components() {
+            FaultContributionKind::YDecomposed { x_effect, z_effect }
+        } else if let Some(components) = self.source_component_effects() {
+            FaultContributionKind::SourceDecomposed(components.into_iter().collect())
+        } else if let Some((first, second)) = self.direct_component_effects() {
+            FaultContributionKind::SourceDecomposed(vec![first, second])
+        } else {
+            FaultContributionKind::Direct(self.effect.clone())
+        }
+    }
 }
 
 /// Aggregated source-tracked information for one unique effect.
@@ -685,10 +719,10 @@ struct RenderPolicies {
 /// `L<n>` targets. Mechanisms with the same effect are aggregated together.
 ///
 /// Detector and `L<n>` target indices are stored in sorted order for canonical representation.
-#[derive(Clone, Default)]
-pub struct FaultMechanism {
+#[derive(Clone)]
+pub struct FaultMechanism<Detector = u32> {
     /// Detector indices that flip together (sorted).
-    pub detectors: SmallVec<[u32; 4]>,
+    pub detectors: SmallVec<[Detector; 4]>,
     /// DEM `L<n>` target indices that flip together (sorted).
     ///
     /// New code should treat these as standard observable `L<n>` output channels.
@@ -700,7 +734,20 @@ pub struct FaultMechanism {
     pub tracked_paulis: SmallVec<[u32; 2]>,
 }
 
-impl FaultMechanism {
+impl<Detector> Default for FaultMechanism<Detector> {
+    fn default() -> Self {
+        Self {
+            detectors: SmallVec::new(),
+            dem_outputs: SmallVec::new(),
+            tracked_paulis: SmallVec::new(),
+        }
+    }
+}
+
+impl<Detector> FaultMechanism<Detector>
+where
+    Detector: Copy + Ord,
+{
     /// Creates a new empty fault mechanism.
     #[must_use]
     pub fn new() -> Self {
@@ -708,9 +755,12 @@ impl FaultMechanism {
     }
 
     /// Creates a mechanism from unsorted detector and DEM-output indices.
+    ///
+    /// This preserves repeated targets after sorting. Use [`Self::from_unsorted_parity`]
+    /// when the input is a sequence of XOR toggles whose duplicates must cancel.
     #[must_use]
     pub fn from_unsorted(
-        detectors: impl IntoIterator<Item = u32>,
+        detectors: impl IntoIterator<Item = Detector>,
         dem_outputs: impl IntoIterator<Item = u32>,
     ) -> Self {
         Self::from_unsorted_with_tracked_paulis(detectors, dem_outputs, std::iter::empty())
@@ -719,11 +769,11 @@ impl FaultMechanism {
     /// Creates a mechanism from unsorted detector, DEM-output, and tracked-Pauli indices.
     #[must_use]
     pub fn from_unsorted_with_tracked_paulis(
-        detectors: impl IntoIterator<Item = u32>,
+        detectors: impl IntoIterator<Item = Detector>,
         dem_outputs: impl IntoIterator<Item = u32>,
         tracked_paulis: impl IntoIterator<Item = u32>,
     ) -> Self {
-        let mut dets: SmallVec<[u32; 4]> = detectors.into_iter().collect();
+        let mut dets: SmallVec<[Detector; 4]> = detectors.into_iter().collect();
         let mut dem_outputs: SmallVec<[u32; 2]> = dem_outputs.into_iter().collect();
         let mut tracked_paulis: SmallVec<[u32; 2]> = tracked_paulis.into_iter().collect();
         dets.sort_unstable();
@@ -736,16 +786,42 @@ impl FaultMechanism {
         }
     }
 
+    /// Creates a canonical XOR mechanism where repeated targets cancel by parity.
+    #[must_use]
+    pub fn from_unsorted_parity(
+        detectors: impl IntoIterator<Item = Detector>,
+        dem_outputs: impl IntoIterator<Item = u32>,
+    ) -> Self {
+        Self::from_unsorted_with_tracked_paulis_parity(detectors, dem_outputs, std::iter::empty())
+    }
+
+    /// Creates a canonical XOR mechanism including tracked-Pauli targets.
+    #[must_use]
+    pub fn from_unsorted_with_tracked_paulis_parity(
+        detectors: impl IntoIterator<Item = Detector>,
+        dem_outputs: impl IntoIterator<Item = u32>,
+        tracked_paulis: impl IntoIterator<Item = u32>,
+    ) -> Self {
+        Self {
+            detectors: parity_sorted(detectors),
+            dem_outputs: parity_sorted(dem_outputs),
+            tracked_paulis: parity_sorted(tracked_paulis),
+        }
+    }
+
     /// Creates a mechanism from pre-sorted detector and DEM-output indices.
     #[must_use]
-    pub fn from_sorted(detectors: SmallVec<[u32; 4]>, dem_outputs: SmallVec<[u32; 2]>) -> Self {
+    pub fn from_sorted(
+        detectors: SmallVec<[Detector; 4]>,
+        dem_outputs: SmallVec<[u32; 2]>,
+    ) -> Self {
         Self::from_sorted_with_tracked_paulis(detectors, dem_outputs, SmallVec::new())
     }
 
     /// Creates a mechanism from pre-sorted detector, DEM-output, and tracked-Pauli indices.
     #[must_use]
     pub fn from_sorted_with_tracked_paulis(
-        detectors: SmallVec<[u32; 4]>,
+        detectors: SmallVec<[Detector; 4]>,
         dem_outputs: SmallVec<[u32; 2]>,
         tracked_paulis: SmallVec<[u32; 2]>,
     ) -> Self {
@@ -822,9 +898,9 @@ impl FaultMechanism {
     #[must_use]
     pub fn xor(&self, other: &Self) -> Self {
         Self {
-            detectors: symmetric_difference_4(&self.detectors, &other.detectors),
-            dem_outputs: symmetric_difference_2(&self.dem_outputs, &other.dem_outputs),
-            tracked_paulis: symmetric_difference_2(&self.tracked_paulis, &other.tracked_paulis),
+            detectors: symmetric_difference(&self.detectors, &other.detectors),
+            dem_outputs: symmetric_difference(&self.dem_outputs, &other.dem_outputs),
+            tracked_paulis: symmetric_difference(&self.tracked_paulis, &other.tracked_paulis),
         }
     }
 
@@ -850,8 +926,26 @@ impl FaultMechanism {
     }
 }
 
-/// Computes symmetric difference of two sorted slices (4-element variant).
-fn symmetric_difference_4(a: &SmallVec<[u32; 4]>, b: &SmallVec<[u32; 4]>) -> SmallVec<[u32; 4]> {
+fn parity_sorted<T, A>(values: impl IntoIterator<Item = T>) -> SmallVec<A>
+where
+    T: Copy + Ord,
+    A: smallvec::Array<Item = T>,
+{
+    let mut toggled = BTreeSet::new();
+    for value in values {
+        if !toggled.remove(&value) {
+            toggled.insert(value);
+        }
+    }
+    toggled.into_iter().collect()
+}
+
+/// Computes the symmetric difference of two sorted small vectors.
+fn symmetric_difference<A>(a: &SmallVec<A>, b: &SmallVec<A>) -> SmallVec<A>
+where
+    A: smallvec::Array,
+    A::Item: Copy + Ord,
+{
     let mut result = SmallVec::new();
     let mut i = 0;
     let mut j = 0;
@@ -879,36 +973,7 @@ fn symmetric_difference_4(a: &SmallVec<[u32; 4]>, b: &SmallVec<[u32; 4]>) -> Sma
     result
 }
 
-/// Computes symmetric difference of two sorted slices (2-element variant).
-fn symmetric_difference_2(a: &SmallVec<[u32; 2]>, b: &SmallVec<[u32; 2]>) -> SmallVec<[u32; 2]> {
-    let mut result = SmallVec::new();
-    let mut i = 0;
-    let mut j = 0;
-
-    while i < a.len() && j < b.len() {
-        match a[i].cmp(&b[j]) {
-            Ordering::Less => {
-                result.push(a[i]);
-                i += 1;
-            }
-            Ordering::Greater => {
-                result.push(b[j]);
-                j += 1;
-            }
-            Ordering::Equal => {
-                // Same element in both - XOR cancels
-                i += 1;
-                j += 1;
-            }
-        }
-    }
-
-    result.extend_from_slice(&a[i..]);
-    result.extend_from_slice(&b[j..]);
-    result
-}
-
-impl PartialEq for FaultMechanism {
+impl<Detector: PartialEq> PartialEq for FaultMechanism<Detector> {
     fn eq(&self, other: &Self) -> bool {
         self.detectors == other.detectors
             && self.dem_outputs == other.dem_outputs
@@ -916,9 +981,9 @@ impl PartialEq for FaultMechanism {
     }
 }
 
-impl Eq for FaultMechanism {}
+impl<Detector: Eq> Eq for FaultMechanism<Detector> {}
 
-impl Hash for FaultMechanism {
+impl<Detector: Hash> Hash for FaultMechanism<Detector> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.detectors.hash(state);
         self.dem_outputs.hash(state);
@@ -926,13 +991,13 @@ impl Hash for FaultMechanism {
     }
 }
 
-impl PartialOrd for FaultMechanism {
+impl<Detector: Ord> PartialOrd for FaultMechanism<Detector> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl Ord for FaultMechanism {
+impl<Detector: Ord> Ord for FaultMechanism<Detector> {
     fn cmp(&self, other: &Self) -> Ordering {
         self.detectors
             .cmp(&other.detectors)
@@ -941,7 +1006,7 @@ impl Ord for FaultMechanism {
     }
 }
 
-impl fmt::Debug for FaultMechanism {
+impl<Detector: fmt::Debug> fmt::Debug for FaultMechanism<Detector> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
@@ -1434,7 +1499,7 @@ impl GraphlikeDecompositionIndex {
         let mut best: Option<Vec<FaultMechanism>> = None;
 
         for (outputs, mut parts) in states {
-            let missing_outputs = symmetric_difference_2(&outputs, &hyperedge.dem_outputs);
+            let missing_outputs = symmetric_difference(&outputs, &hyperedge.dem_outputs);
             if !missing_outputs.is_empty() {
                 // Do not repair logical-frame parity by appending a pure `L<n>`
                 // component. Although this preserves the full XOR effect, it
@@ -1517,7 +1582,7 @@ impl GraphlikeDecompositionIndex {
 
             for candidate in candidates.iter() {
                 for (tail_outputs, tail_parts) in &tail_states {
-                    let outputs = symmetric_difference_2(&candidate.dem_outputs, tail_outputs);
+                    let outputs = symmetric_difference(&candidate.dem_outputs, tail_outputs);
                     let mut parts = Vec::with_capacity(candidate.parts.len() + tail_parts.len());
                     parts.extend(candidate.parts.iter().cloned());
                     parts.extend(tail_parts.iter().cloned());
@@ -1572,7 +1637,7 @@ impl GraphlikeDecompositionIndex {
                 if !self.candidate_allowed(&edge.mechanism, excluded_origin) {
                     continue;
                 }
-                let next_outputs = symmetric_difference_2(&outputs, &edge.mechanism.dem_outputs);
+                let next_outputs = symmetric_difference(&outputs, &edge.mechanism.dem_outputs);
                 let state = (edge.next, next_outputs.clone());
                 if !seen.insert(state) {
                     continue;
@@ -7464,6 +7529,27 @@ mod tests {
         assert_eq!(m1, m2);
         assert_eq!(m1.detectors.as_slice(), &[0, 1, 2]);
         assert_eq!(m1.dem_outputs.as_slice(), &[0, 1]);
+    }
+
+    #[test]
+    fn fault_mechanism_constructor_preserves_repeated_targets() {
+        let mechanism = FaultMechanism::from_unsorted([2, 1, 2], [3, 3]);
+
+        assert_eq!(mechanism.detectors.as_slice(), &[1, 2, 2]);
+        assert_eq!(mechanism.dem_outputs.as_slice(), &[3, 3]);
+    }
+
+    #[test]
+    fn generic_fault_mechanism_parity_constructor_cancels_repeated_targets() {
+        let mechanism = FaultMechanism::from_unsorted_with_tracked_paulis_parity(
+            [(4, 1), (2, -1), (4, 1)],
+            [7, 3, 7],
+            [5, 5, 6],
+        );
+
+        assert_eq!(mechanism.detectors.as_slice(), &[(2, -1)]);
+        assert_eq!(mechanism.dem_outputs.as_slice(), &[3]);
+        assert_eq!(mechanism.tracked_paulis.as_slice(), &[6]);
     }
 
     #[test]

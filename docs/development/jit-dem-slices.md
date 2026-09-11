@@ -75,6 +75,16 @@ multi-component sources used by native two-qubit Clifford and replacement
 branches. Component XOR is checked against the source contribution's complete
 effect.
 
+Slice effects reuse the ordinary generic `FaultMechanism` container with a
+`RelativeDetectorTarget` detector address. The slice adapter and full-model
+contribution now also share one direct/Y/source-component shape, leaving a
+single checked conversion boundary for absolute-to-relative detector mapping.
+`DemSliceDetector` remains distinct from `DetectorDef` intentionally: the
+former declares a two-dimensional reusable stream and whether it is emitted or
+only a temporal port, while the latter is an assembled three-dimensional
+detector tied to concrete measurement records. Combining those declarations
+would make either the reusable-template or final-model invariants optional.
+
 For a physical template containing halo operations, the internal adapter accepts
 the owned `DagFaultInfluenceMap` location IDs. A contribution is included only
 if all of its source locations are owned by the slice and omitted if none are.

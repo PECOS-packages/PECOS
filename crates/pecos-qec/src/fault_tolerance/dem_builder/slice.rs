@@ -24,7 +24,10 @@
 //! fault ownership. Compiling operation templates without first building a full-circuit DEM stays
 //! a separate frontend responsibility.
 
-use super::types::{DemOutput, DetectorDef, DetectorErrorModel, FaultContribution, FaultMechanism};
+use super::types::{
+    DemOutput, DetectorDef, DetectorErrorModel, FaultContribution, FaultContributionKind,
+    FaultMechanism,
+};
 use crate::fault_tolerance::propagator::DagFaultInfluenceMap;
 use pecos_quantum::{Attribute, DagCircuit};
 use smallvec::{Array, SmallVec};
@@ -56,68 +59,8 @@ impl RelativeDetectorTarget {
     }
 }
 
-/// A detector/observable effect expressed in slice-local identities.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct SliceFaultMechanism {
-    /// Relative detector targets toggled by the mechanism.
-    pub detectors: SmallVec<[RelativeDetectorTarget; 4]>,
-    /// Slice-local standard DEM output (`L<n>`) identities toggled by the mechanism.
-    pub dem_outputs: SmallVec<[u32; 2]>,
-    /// Slice-local PECOS tracked-Pauli (`TP<n>`) identities toggled by the mechanism.
-    pub tracked_paulis: SmallVec<[u32; 2]>,
-}
-
-impl SliceFaultMechanism {
-    /// Construct a canonical mechanism from possibly unsorted targets.
-    ///
-    /// Repeated targets cancel by parity, matching detector-error-model XOR semantics.
-    #[must_use]
-    pub fn from_unsorted(
-        detectors: impl IntoIterator<Item = RelativeDetectorTarget>,
-        dem_outputs: impl IntoIterator<Item = u32>,
-    ) -> Self {
-        Self::from_unsorted_with_tracked_paulis(detectors, dem_outputs, std::iter::empty())
-    }
-
-    /// Construct a canonical mechanism including PECOS tracked-Pauli targets.
-    #[must_use]
-    pub fn from_unsorted_with_tracked_paulis(
-        detectors: impl IntoIterator<Item = RelativeDetectorTarget>,
-        dem_outputs: impl IntoIterator<Item = u32>,
-        tracked_paulis: impl IntoIterator<Item = u32>,
-    ) -> Self {
-        Self {
-            detectors: parity_sorted(detectors),
-            dem_outputs: parity_sorted(dem_outputs),
-            tracked_paulis: parity_sorted(tracked_paulis),
-        }
-    }
-
-    /// Return the XOR of two local mechanisms.
-    #[must_use]
-    pub fn xor(&self, other: &Self) -> Self {
-        Self::from_unsorted_with_tracked_paulis(
-            self.detectors
-                .iter()
-                .copied()
-                .chain(other.detectors.iter().copied()),
-            self.dem_outputs
-                .iter()
-                .copied()
-                .chain(other.dem_outputs.iter().copied()),
-            self.tracked_paulis
-                .iter()
-                .copied()
-                .chain(other.tracked_paulis.iter().copied()),
-        )
-    }
-
-    /// Whether this mechanism has no detector, standard-output, or tracked-Pauli effect.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.detectors.is_empty() && self.dem_outputs.is_empty() && self.tracked_paulis.is_empty()
-    }
-}
+/// The ordinary DEM mechanism container parameterized by relative detector addresses.
+pub type SliceFaultMechanism = FaultMechanism<RelativeDetectorTarget>;
 
 fn parity_sorted<T, A>(values: impl IntoIterator<Item = T>) -> SmallVec<A>
 where
@@ -141,15 +84,7 @@ pub struct DemSliceContribution {
     source_locations: SmallVec<[u32; 2]>,
 }
 
-#[derive(Debug, Clone)]
-enum DemSliceContributionKind {
-    Direct(SliceFaultMechanism),
-    YDecomposed {
-        x_effect: SliceFaultMechanism,
-        z_effect: SliceFaultMechanism,
-    },
-    SourceDecomposed(Vec<SliceFaultMechanism>),
-}
+type DemSliceContributionKind = FaultContributionKind<SliceFaultMechanism>;
 
 impl DemSliceContribution {
     /// Create a direct contribution.
@@ -208,13 +143,7 @@ impl DemSliceContribution {
     }
 
     fn components(&self) -> SmallVec<[&SliceFaultMechanism; 4]> {
-        match &self.kind {
-            DemSliceContributionKind::Direct(effect) => smallvec::smallvec![effect],
-            DemSliceContributionKind::YDecomposed {
-                x_effect, z_effect, ..
-            } => smallvec::smallvec![x_effect, z_effect],
-            DemSliceContributionKind::SourceDecomposed(components) => components.iter().collect(),
-        }
+        self.kind.components()
     }
 
     fn combined_effect(&self) -> SliceFaultMechanism {
@@ -603,52 +532,44 @@ fn map_source_contribution(
     source_map: &DemSliceModelMap,
 ) -> Result<DemSliceContribution, DemSliceStitchError> {
     let complete = map_source_mechanism(slice, &contribution.effect, source_map)?;
-    if let Some((x_effect, z_effect)) = contribution.decomposition_components() {
-        let x_effect = map_source_mechanism(slice, &x_effect, source_map)?;
-        let z_effect = map_source_mechanism(slice, &z_effect, source_map)?;
-        if x_effect.xor(&z_effect) != complete {
-            return Err(DemSliceStitchError::SourceComponentEffectMismatch {
-                slice: slice.to_owned(),
-            });
-        }
-        return Ok(DemSliceContribution::y_decomposed(
-            x_effect,
-            z_effect,
-            contribution.probability,
-        )
-        .with_source_locations(contribution.location_indices.iter().copied()));
-    }
-
-    let source_components = contribution.source_component_effects().or_else(|| {
-        contribution
-            .direct_component_effects()
-            .map(|(first, second)| smallvec::smallvec![first, second])
-    });
-    if let Some(source_components) = source_components {
-        let components: Vec<_> = source_components
-            .iter()
-            .map(|component| map_source_mechanism(slice, component, source_map))
-            .collect::<Result<_, _>>()?;
-        let combined = components
-            .iter()
-            .fold(SliceFaultMechanism::default(), |effect, component| {
-                effect.xor(component)
-            });
-        if combined != complete {
-            return Err(DemSliceStitchError::SourceComponentEffectMismatch {
-                slice: slice.to_owned(),
-            });
-        }
-        Ok(
-            DemSliceContribution::source_decomposed(components, contribution.probability)
-                .with_source_locations(contribution.location_indices.iter().copied()),
-        )
-    } else {
-        Ok(
+    let mapped = match contribution.component_kind() {
+        FaultContributionKind::Direct(_) => {
             DemSliceContribution::direct(complete, contribution.probability)
-                .with_source_locations(contribution.location_indices.iter().copied()),
-        )
+        }
+        FaultContributionKind::YDecomposed { x_effect, z_effect } => {
+            let x_effect = map_source_mechanism(slice, &x_effect, source_map)?;
+            let z_effect = map_source_mechanism(slice, &z_effect, source_map)?;
+            ensure_component_effect(slice, [&x_effect, &z_effect], &complete)?;
+            DemSliceContribution::y_decomposed(x_effect, z_effect, contribution.probability)
+        }
+        FaultContributionKind::SourceDecomposed(source_components) => {
+            let components: Vec<_> = source_components
+                .iter()
+                .map(|component| map_source_mechanism(slice, component, source_map))
+                .collect::<Result<_, _>>()?;
+            ensure_component_effect(slice, &components, &complete)?;
+            DemSliceContribution::source_decomposed(components, contribution.probability)
+        }
+    };
+    Ok(mapped.with_source_locations(contribution.location_indices.iter().copied()))
+}
+
+fn ensure_component_effect<'a>(
+    slice: &str,
+    components: impl IntoIterator<Item = &'a SliceFaultMechanism>,
+    complete: &SliceFaultMechanism,
+) -> Result<(), DemSliceStitchError> {
+    let combined = components
+        .into_iter()
+        .fold(SliceFaultMechanism::default(), |effect, component| {
+            effect.xor(component)
+        });
+    if combined != *complete {
+        return Err(DemSliceStitchError::SourceComponentEffectMismatch {
+            slice: slice.to_owned(),
+        });
     }
+    Ok(())
 }
 
 fn map_source_mechanism(
@@ -694,11 +615,13 @@ fn map_source_mechanism(
                 })
         })
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(SliceFaultMechanism::from_unsorted_with_tracked_paulis(
-        detectors,
-        dem_outputs,
-        tracked_paulis,
-    ))
+    Ok(
+        SliceFaultMechanism::from_unsorted_with_tracked_paulis_parity(
+            detectors,
+            dem_outputs,
+            tracked_paulis,
+        ),
+    )
 }
 
 fn spatial_coords_equal(left: [f64; 2], right: [f64; 2]) -> bool {
@@ -1274,18 +1197,8 @@ fn source_output_ids(model: &DetectorErrorModel) -> DemSliceModelMap {
     }
     for contribution in model.contributions() {
         source_map = add_effect_output_ids(source_map, &contribution.effect);
-        if let Some((x_effect, z_effect)) = contribution.decomposition_components() {
-            source_map = add_effect_output_ids(source_map, &x_effect);
-            source_map = add_effect_output_ids(source_map, &z_effect);
-        }
-        if let Some(components) = contribution.source_component_effects() {
-            for component in components {
-                source_map = add_effect_output_ids(source_map, &component);
-            }
-        } else if let Some((first, second)) = contribution.direct_component_effects() {
-            for component in [&first, &second] {
-                source_map = add_effect_output_ids(source_map, component);
-            }
+        for component in contribution.component_kind().components() {
+            source_map = add_effect_output_ids(source_map, component);
         }
     }
     source_map
@@ -1360,37 +1273,14 @@ fn owned_temporal_horizon(
             &mut past_rounds,
             &mut future_rounds,
         )?;
-        if let Some((x_effect, z_effect)) = contribution.decomposition_components() {
-            for effect in [&x_effect, &z_effect] {
-                update_horizon_from_effect(
-                    slice,
-                    effect,
-                    source_map,
-                    &mut past_rounds,
-                    &mut future_rounds,
-                )?;
-            }
-        }
-        if let Some(components) = contribution.source_component_effects() {
-            for effect in &components {
-                update_horizon_from_effect(
-                    slice,
-                    effect,
-                    source_map,
-                    &mut past_rounds,
-                    &mut future_rounds,
-                )?;
-            }
-        } else if let Some((first, second)) = contribution.direct_component_effects() {
-            for effect in [&first, &second] {
-                update_horizon_from_effect(
-                    slice,
-                    effect,
-                    source_map,
-                    &mut past_rounds,
-                    &mut future_rounds,
-                )?;
-            }
+        for effect in contribution.component_kind().components() {
+            update_horizon_from_effect(
+                slice,
+                effect,
+                source_map,
+                &mut past_rounds,
+                &mut future_rounds,
+            )?;
         }
     }
     Ok(DemTemporalHorizon::new(past_rounds, future_rounds))
@@ -2289,7 +2179,7 @@ mod tests {
         detectors: impl IntoIterator<Item = RelativeDetectorTarget>,
     ) -> DemSliceContribution {
         DemSliceContribution::direct(
-            SliceFaultMechanism::from_unsorted(detectors, std::iter::empty()),
+            SliceFaultMechanism::from_unsorted_parity(detectors, std::iter::empty()),
             probability,
         )
     }
@@ -2358,7 +2248,7 @@ mod tests {
 
     #[test]
     fn hard_boundary_validates_source_components_before_xor_cancellation() {
-        let future_component = SliceFaultMechanism::from_unsorted(
+        let future_component = SliceFaultMechanism::from_unsorted_parity(
             [RelativeDetectorTarget::new(0, 1)],
             std::iter::empty(),
         );
@@ -2391,7 +2281,7 @@ mod tests {
                 "mapped",
                 vec![DemSliceDetector::new(0)],
                 vec![DemSliceContribution::direct(
-                    SliceFaultMechanism::from_unsorted([target(0, 0)], [0]),
+                    SliceFaultMechanism::from_unsorted_parity([target(0, 0)], [0]),
                     0.125,
                 )],
                 DemTemporalHorizon::new(0, 0),
@@ -2426,7 +2316,7 @@ mod tests {
                 "GF(2) routed",
                 vec![DemSliceDetector::new(0)],
                 vec![DemSliceContribution::direct(
-                    SliceFaultMechanism::from_unsorted_with_tracked_paulis(
+                    SliceFaultMechanism::from_unsorted_with_tracked_paulis_parity(
                         [target(0, 0)],
                         [0, 1],
                         [0, 1],
@@ -2485,7 +2375,7 @@ mod tests {
                 vec![DemSliceDetector::new(0)],
                 vec![
                     DemSliceContribution::direct(
-                        SliceFaultMechanism::from_unsorted([target(0, 0)], []),
+                        SliceFaultMechanism::from_unsorted_parity([target(0, 0)], []),
                         0.01,
                     )
                     .with_source_locations([7]),
@@ -2657,7 +2547,7 @@ mod tests {
 
     #[test]
     fn round_schedule_buffer_includes_detector_targets_cancelled_between_components() {
-        let future_component = SliceFaultMechanism::from_unsorted(
+        let future_component = SliceFaultMechanism::from_unsorted_parity(
             [RelativeDetectorTarget::new(0, 2)],
             std::iter::empty(),
         );

@@ -467,6 +467,10 @@ impl SamplingEngine {
             return Err(super::DemBuilderError::UnsupportedGate(error.clone()));
         }
 
+        noise
+            .validate_gate_rate_keys(&influence_map.locations)
+            .map_err(|error| super::DemBuilderError::ConfigurationError(error.to_string()))?;
+
         if let Some(weights) = &noise.p2_weights {
             weights
                 .validate_replacement_locations(
@@ -2215,6 +2219,17 @@ impl<'a> SamplingEngineBuilder<'a> {
         if let Some(error) = self.influence_map.unsupported_gate() {
             return Err(super::DemBuilderError::UnsupportedGate(error.clone()));
         }
+        super::types::validate_scalar_gate_rate_tables(
+            &self.p1_gate_rates,
+            &self.p2_gate_rates,
+            &self.influence_map.locations,
+        )
+        .and_then(|()| {
+            self.per_gate.as_ref().map_or(Ok(()), |noise| {
+                noise.validate_gate_rate_keys(&self.influence_map.locations)
+            })
+        })
+        .map_err(|error| super::DemBuilderError::ConfigurationError(error.to_string()))?;
         if let Some(weights) = &self.p2_weights {
             weights
                 .validate_replacement_locations(

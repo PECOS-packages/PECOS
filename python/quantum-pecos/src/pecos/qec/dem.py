@@ -10,6 +10,10 @@ module attaches a Python :meth:`from_guppy` classmethod to the Rust-backed
 ``pecos_rslib.qec.DetectorErrorModel`` and re-exports that class as the public
 ``pecos.qec.DetectorErrorModel``.
 
+``p1_gate_rates`` and ``p2_gate_rates`` keys name the gate as scheduled;
+runtime-traced circuits schedule rotations such as ``RZZ`` and ``RXY1Q``,
+so key by those or lower the circuit first.
+
 This wrapper is intentionally thin: it traces the Guppy program into a
 ``TickCircuit``, compiles Guppy inputs to a HUGR to reject unverified control
 flow and, when requested, recover the sound tag -> measurement binding via

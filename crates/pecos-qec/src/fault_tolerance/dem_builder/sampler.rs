@@ -1378,6 +1378,14 @@ impl<'a> DemSamplerBuilder<'a> {
     /// Mechanism table is in measurement coordinates. Non-deterministic
     /// measurements are identified and marked for coin-flip output.
     fn build_raw(self) -> Result<DemSampler, DetectorValidationError> {
+        if let Some(error) = self.influence_map.unsupported_gate() {
+            return Err(DetectorValidationError::UnsupportedGate(error.clone()));
+        }
+        if let Some(noise) = &self.per_gate {
+            noise
+                .validate_gate_rate_keys(&self.influence_map.locations)
+                .map_err(|error| super::DemBuilderError::ConfigurationError(error.to_string()))?;
+        }
         let num_measurements = self.influence_map.measurements.len();
 
         // Build per-location probabilities from gate-type noise

@@ -832,7 +832,7 @@ impl<'a> DemBuilder<'a> {
         self.validate_supported_gates()?;
         self.validate_measurement_count()?;
         self.validate_metadata_refs()?;
-        self.validate_replacement_branch_approximation()?;
+        self.validate_noise_configuration()?;
         self.validate_measurement_crosstalk_dem_mode()?;
         self.validate_idle_noise()?;
         self.build_inner()
@@ -868,7 +868,7 @@ impl<'a> DemBuilder<'a> {
     /// replacement-branch configuration, or failed signature conversion.
     pub fn build(&self) -> Result<DetectorErrorModel, DemBuilderError> {
         self.validate_supported_gates()?;
-        self.validate_replacement_branch_approximation()?;
+        self.validate_noise_configuration()?;
         self.validate_measurement_crosstalk_dem_mode()?;
         self.validate_idle_noise()?;
         self.build_inner()
@@ -944,7 +944,15 @@ impl<'a> DemBuilder<'a> {
         Ok(dem)
     }
 
-    fn validate_replacement_branch_approximation(&self) -> Result<(), DemBuilderError> {
+    fn validate_noise_configuration(&self) -> Result<(), DemBuilderError> {
+        self.noise
+            .validate_gate_rate_keys(&self.influence_map.locations)
+            .and_then(|()| {
+                self.per_gate.as_ref().map_or(Ok(()), |noise| {
+                    noise.validate_gate_rate_keys(&self.influence_map.locations)
+                })
+            })
+            .map_err(|error| DemBuilderError::ConfigurationError(error.to_string()))?;
         if let Some(weights) = &self.noise.p2_weights {
             weights
                 .validate_replacement_locations(

@@ -80,6 +80,9 @@ impl<'a> MemBuilder<'a> {
         if let Some(error) = self.influence_map.unsupported_gate() {
             return Err(DemBuilderError::UnsupportedGate(error.clone()));
         }
+        self.noise
+            .validate_gate_rate_keys(&self.influence_map.locations)
+            .map_err(|error| DemBuilderError::ConfigurationError(error.to_string()))?;
         let num_measurements = self.influence_map.measurements.len();
         let mut mem = MeasurementNoiseModel::new(num_measurements);
 

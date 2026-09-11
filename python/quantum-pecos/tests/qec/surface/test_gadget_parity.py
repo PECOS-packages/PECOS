@@ -255,7 +255,8 @@ def test_builder_forwards_resolved_round_order(monkeypatch: pytest.MonkeyPatch) 
 
 
 @pytest.mark.parametrize("basis", ["z", "x"])
-def test_gadget_basis_is_independent_of_name(basis: str) -> None:
+@pytest.mark.parametrize("name", ["custom_function", "custom_function_swapped"])
+def test_gadget_basis_is_independent_of_name(basis: str, name: str) -> None:
     patch = SurfacePatch.create(distance=3)
     allocation = default_allocation(patch)
     gadgets = memory_gadgets(patch, 1, basis, allocation=allocation)
@@ -263,7 +264,8 @@ def test_gadget_basis_is_independent_of_name(basis: str) -> None:
     logical = logical_pauli_gadget(patch, allocation, pauli=basis)
     assert logical.basis == basis.upper()
     for gadget in [*gadgets, logical]:
-        renamed = replace(gadget, name="custom_function")
+        renamed = replace(gadget, name=name)
+        assert renamed.x_z_swapped is gadget.x_z_swapped is False
         expected = render_gadget_function(gadget)
         expected[1] = expected[1].replace(gadget.name, renamed.name)
         assert render_gadget_function(renamed) == expected

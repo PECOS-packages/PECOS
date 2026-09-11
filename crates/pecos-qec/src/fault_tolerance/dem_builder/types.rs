@@ -269,12 +269,6 @@ impl<'a> DirectSourceComponents<'a> {
         }
     }
 
-    pub(crate) fn from_slice(components: &'a [FaultMechanism]) -> Self {
-        Self {
-            components: components.iter().collect(),
-        }
-    }
-
     fn as_slice(&self) -> &[&'a FaultMechanism] {
         &self.components
     }
@@ -7294,6 +7288,12 @@ mod tests {
     }
     use super::*;
 
+    fn source_components_from_slice(components: &[FaultMechanism]) -> DirectSourceComponents<'_> {
+        DirectSourceComponents {
+            components: components.iter().collect(),
+        }
+    }
+
     #[test]
     fn test_error_mechanism_xor() {
         let m1 = FaultMechanism::from_unsorted([0, 1, 2], [0]);
@@ -9066,7 +9066,7 @@ mod tests {
                 &[GateType::SZZ, GateType::SZZ],
                 &[false, false],
             ),
-            &DirectSourceComponents::from_slice(&components),
+            &source_components_from_slice(&components),
         );
 
         let source_graphlike = dem.to_string_source_graphlike_decomposed();
@@ -9342,7 +9342,7 @@ mod tests {
                 &[GateType::SZZ, GateType::SZZ, GateType::SZZ],
                 &[false, false, false],
             ),
-            &DirectSourceComponents::from_slice(&[repeated.clone(), repeated, survivor]),
+            &source_components_from_slice(&[repeated.clone(), repeated, survivor]),
         );
 
         let source_decomposed = dem.to_string_source_decomposed();

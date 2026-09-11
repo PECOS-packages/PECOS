@@ -3134,6 +3134,9 @@ def tick_circuit_to_stim(
             ``"SZ"``, and ``"SZdg"``. The surface SZZ reference path uses
             this to mirror the staged PECOS device model where Z/SZ/SZdg frame
             updates are virtual and p1-free.
+            Keys name the gate as scheduled; runtime-traced circuits schedule
+            rotations such as ``RZZ`` and ``RXY1Q``, so key by those or lower
+            the circuit first.
         p2: Two-qubit error rate
         p_meas: Measurement error rate
         p_prep: Initialization error rate
@@ -3672,6 +3675,9 @@ def generate_dem_from_tick_circuit_via_stim(
             depolarizing rates. Gate names are PECOS ``GateType`` names. The
             surface SZZ reference path uses this to mirror the staged PECOS
             device model where Z/SZ/SZdg frame updates are virtual and p1-free.
+            Keys name the gate as scheduled; runtime-traced circuits schedule
+            rotations such as ``RZZ`` and ``RXY1Q``, so key by those or lower
+            the circuit first.
         p2: Two-qubit depolarizing error rate
         p_meas: Measurement error rate
         p_prep: Initialization (prep) error rate

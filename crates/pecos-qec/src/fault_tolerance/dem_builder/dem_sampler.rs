@@ -467,6 +467,10 @@ impl SamplingEngine {
             return Err(super::DemBuilderError::UnsupportedGate(error.clone()));
         }
 
+        noise
+            .validate_gate_rate_keys(&influence_map.locations)
+            .map_err(|error| super::DemBuilderError::ConfigurationError(error.to_string()))?;
+
         if let Some(weights) = &noise.p2_weights {
             weights
                 .validate_replacement_locations(
@@ -2215,6 +2219,20 @@ impl<'a> SamplingEngineBuilder<'a> {
         if let Some(error) = self.influence_map.unsupported_gate() {
             return Err(super::DemBuilderError::UnsupportedGate(error.clone()));
         }
+        // Validate exactly what this path consumes: per-gate noise or scalar tables.
+        self.per_gate
+            .as_ref()
+            .map_or_else(
+                || {
+                    super::types::validate_scalar_gate_rate_tables(
+                        &self.p1_gate_rates,
+                        &self.p2_gate_rates,
+                        &self.influence_map.locations,
+                    )
+                },
+                |noise| noise.validate_gate_rate_keys(&self.influence_map.locations),
+            )
+            .map_err(|error| super::DemBuilderError::ConfigurationError(error.to_string()))?;
         if let Some(weights) = &self.p2_weights {
             weights
                 .validate_replacement_locations(
@@ -3067,6 +3085,34 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gate_rate_sampling_engine_builder_scalar_tables() {
+        use crate::fault_tolerance::propagator::DagFaultAnalyzer;
+        let mut circuit = pecos_quantum::DagCircuit::new();
+        circuit.pz(&[0, 1]);
+        circuit.add_gate_auto_wire(pecos_core::Gate::rzz(
+            pecos_core::Angle64::QUARTER_TURN,
+            &[(0, 1)],
+        ));
+        circuit.mz(&[0, 1]);
+        let map = DagFaultAnalyzer::new(&circuit).build_influence_map();
+        let mut noise = NoiseConfig::uniform(0.001);
+        noise.p2_gate_rates.insert(GateType::SZZ, 0.05);
+        let error = SamplingEngineBuilder::new(&map)
+            .with_noise_config(noise.clone())
+            .build()
+            .unwrap_err();
+        assert!(
+            matches!(error, super::super::DemBuilderError::ConfigurationError(message)
+            if message.contains("p2_gate_rates key SZZ") && message.contains("RZZ"))
+        );
+        SamplingEngineBuilder::new(&map)
+            .with_noise_config(noise)
+            .with_per_gate_noise(PerGateTypeNoise::default())
+            .build()
+            .unwrap();
+    }
 
     #[test]
     fn test_dem_mechanism_ordering() {

@@ -1211,16 +1211,47 @@ fn gate_rate_scheduled_rotation_key_applies() {
 
 #[test]
 fn gate_rate_key_matching_scheduled_and_clifford_gates_is_rejected() {
-    let mut circuit = replacement_circuit(Gate::rzz(Angle64::QUARTER_TURN, &[(0, 1)]));
+    let mut circuit = DagCircuit::new();
+    circuit.pz(&[0, 1]);
+    circuit.h(&[0]);
+    circuit.add_gate_auto_wire(Gate::rzz(Angle64::QUARTER_TURN, &[(0, 1)]));
     circuit.szz(&[(0, 1)]);
+    circuit.h(&[0]);
+    circuit.mz(&[0]);
+    circuit.mz(&[1]);
+    circuit.set_attr(
+        "detectors",
+        pecos_quantum::Attribute::String(
+            r#"[{"id":0,"records":[-2]},{"id":1,"records":[-1]}]"#.to_string(),
+        ),
+    );
     let mut noise = NoiseConfig::uniform(0.001);
     noise.p2_gate_rates.insert(GateType::SZZ, 0.05);
-    assert_gate_rate_configuration_error(
-        DemBuilder::try_from_circuit_with_noise_config(&circuit, noise).unwrap_err(),
-        "p2_gate_rates",
-        "SZZ",
-        "RZZ",
+    let error = DemBuilder::try_from_circuit_with_noise_config(&circuit, noise).unwrap_err();
+    let DemBuilderError::ConfigurationError(message) = &error else {
+        panic!("expected configuration error, got {error:?}");
+    };
+    assert_eq!(
+        message,
+        "p2_gate_rates key SZZ matches scheduled SZZ gates but also names the Clifford action of RZZ at node 3. Per-gate rates apply to the gate as scheduled: add a key for RZZ in p2_gate_rates, or lower the circuit with lower_clifford_rotations() before building."
     );
+    assert_gate_rate_configuration_error(error, "p2_gate_rates", "SZZ", "RZZ");
+}
+
+#[test]
+fn gate_rate_key_matching_no_scheduled_gate_message() {
+    let circuit = replacement_circuit(Gate::rzz(Angle64::QUARTER_TURN, &[(0, 1)]));
+    let mut noise = NoiseConfig::uniform(0.001);
+    noise.p2_gate_rates.insert(GateType::SZZ, 0.05);
+    let error = DemBuilder::try_from_circuit_with_noise_config(&circuit, noise).unwrap_err();
+    let DemBuilderError::ConfigurationError(message) = &error else {
+        panic!("expected configuration error, got {error:?}");
+    };
+    assert_eq!(
+        message,
+        "p2_gate_rates key SZZ matches no scheduled gate; node 3 schedules RZZ whose Clifford action is SZZ. Per-gate rates apply to the gate as scheduled: key the rate by RZZ in p2_gate_rates, or lower the circuit with lower_clifford_rotations() before building."
+    );
+    assert_gate_rate_configuration_error(error, "p2_gate_rates", "SZZ", "RZZ");
 }
 
 #[test]
@@ -1396,6 +1427,7 @@ fn gate_rate_zero_pauli_tables_are_ignored() {
         .unwrap();
     DemSamplerBuilder::new(&map)
         .with_per_gate_noise(noise)
+        .with_detectors(Vec::new(), Vec::new())
         .build()
         .unwrap();
 }
@@ -1429,7 +1461,7 @@ fn gate_rate_named_remedy_uses_scheduled_arity() {
 }
 
 #[test]
-fn gate_rate_shadowed_scalar_tables_are_not_validated() {
+fn gate_rate_per_gate_noise_supersedes_scalar_config_on_dem_builder() {
     use pecos_qec::fault_tolerance::dem_builder::PerGateTypeNoise;
     let circuit = replacement_circuit(Gate::rzz(Angle64::QUARTER_TURN, &[(0, 1)]));
     let map = DagFaultAnalyzer::new(&circuit).build_influence_map();
@@ -1449,15 +1481,25 @@ fn gate_rate_shadowed_scalar_tables_are_not_validated() {
 }
 
 #[test]
-fn gate_rate_raw_mode_does_not_validate_unused_per_gate_tables() {
+fn gate_rate_raw_mode_rejects_per_gate_noise() {
     use pecos_qec::fault_tolerance::dem_builder::PerGateTypeNoise;
     let circuit = replacement_circuit(Gate::rzz(Angle64::QUARTER_TURN, &[(0, 1)]));
     let map = DagFaultAnalyzer::new(&circuit).build_influence_map();
-    DemSamplerBuilder::new(&map)
-        .with_per_gate_noise(PerGateTypeNoise::default().with_2q_rates(GateType::SZZ, [0.001; 15]))
-        .raw_measurements()
-        .build()
-        .unwrap();
+    for noise in [
+        PerGateTypeNoise::default(),
+        PerGateTypeNoise::default().with_2q_rates(GateType::SZZ, [0.001; 15]),
+        PerGateTypeNoise::default().with_2q_rates(GateType::RZZ, [0.0; 15]),
+    ] {
+        let error = DemSamplerBuilder::new(&map)
+            .with_per_gate_noise(noise)
+            .raw_measurements()
+            .build()
+            .unwrap_err();
+        assert!(
+            matches!(error, DetectorValidationError::InvalidConfiguration { message }
+            if message.contains("raw-measurement mode applies scalar noise only"))
+        );
+    }
 }
 
 #[test]
@@ -1504,11 +1546,36 @@ fn gate_rate_absent_qubit_keys_are_allowed() {
 }
 
 #[test]
-fn gate_rate_mem_builder_does_not_validate_unused_tables() {
+fn gate_rate_mem_builder_rejects_nonzero_tables() {
+    let circuit = replacement_circuit(Gate::rzz(Angle64::QUARTER_TURN, &[(0, 1)]));
+    let map = DagFaultAnalyzer::new(&circuit).build_influence_map();
+    for (key, two_qubit) in [
+        (GateType::X, false),
+        (GateType::SZZ, true),
+        (GateType::CX, true),
+    ] {
+        let mut noise = NoiseConfig::uniform(0.001);
+        if two_qubit {
+            noise.p2_gate_rates.insert(key, 0.05);
+        } else {
+            noise.p1_gate_rates.insert(key, 0.05);
+        }
+        let error = MemBuilder::new(&map)
+            .with_noise_config(noise)
+            .build()
+            .unwrap_err();
+        assert!(matches!(error, DemBuilderError::ConfigurationError(message)
+            if message.contains("MemBuilder applies scalar rates only")));
+    }
+}
+
+#[test]
+fn gate_rate_mem_builder_allows_zero_tables() {
     let circuit = replacement_circuit(Gate::rzz(Angle64::QUARTER_TURN, &[(0, 1)]));
     let map = DagFaultAnalyzer::new(&circuit).build_influence_map();
     let mut noise = NoiseConfig::uniform(0.001);
-    noise.p2_gate_rates.insert(GateType::SZZ, 0.05);
+    noise.p1_gate_rates.insert(GateType::X, 0.0);
+    noise.p2_gate_rates.insert(GateType::SZZ, 0.0);
     MemBuilder::new(&map)
         .with_noise_config(noise)
         .build()

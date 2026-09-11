@@ -2682,9 +2682,9 @@ def test_raw_surface_trace_gate_rate_keys_name_scheduled_gates() -> None:
         circuit_source="traced_qis",
     )
     noise = {"p1": 0.005, "p2": 0.005, "p_meas": 0.005, "p_prep": 0.005}
-    with pytest.raises(ValueError, match=r"p2_gate_rates key SZZ.*RZZ.*lower_clifford_rotations"):
+    with pytest.raises(ValueError, match=r"p2_gate_rates key SZZ.*RZZ in p2_gate_rates.*lower_clifford_rotations"):
         DemSampler.from_circuit(raw_tc, p2_gate_rates={"SZZ": 0.05}, **noise)
-    with pytest.raises(ValueError, match=r"p2_gate_rates key SZZ.*RZZ.*lower_clifford_rotations"):
+    with pytest.raises(ValueError, match=r"p2_gate_rates key SZZ.*RZZ in p2_gate_rates.*lower_clifford_rotations"):
         DetectorErrorModel.from_circuit(raw_tc, p2_gate_rates={"SZZ": 0.05}, **noise)
     scalar = DemSampler.from_circuit(raw_tc, **noise).to_detector_error_model().to_string()
     keyed = DemSampler.from_circuit(raw_tc, p2_gate_rates={"RZZ": 0.05}, **noise).to_detector_error_model().to_string()

@@ -886,6 +886,7 @@ def test_mixed_h_cx_with_history_sensitive_outputs_uses_full_fallback(monkeypatc
         p_meas=0.003,
         p_prep=0.004,
     )
+    assert builder._assembled_dem_output_ids() == []  # noqa: SLF001
 
     def reject_mixed_cache(*_args, **_kwargs):
         message = "history-sensitive output schema reached the mixed template cache"
@@ -895,6 +896,17 @@ def test_mixed_h_cx_with_history_sensitive_outputs_uses_full_fallback(monkeypatc
     assert builder.build_dem(p1=0.001, p2=0.002, p_meas=0.003, p_prep=0.004) == oracle.to_string()
     assert "L0" not in oracle.to_string()
     assert "L1" not in oracle.to_string()
+
+
+def test_cached_provider_checks_the_assembled_circuit_output_schema(monkeypatch):
+    """A fixture cannot authorize its own observable declarations."""
+    builder = LogicalCircuitBuilder()
+    builder.add_patch(SurfacePatch.create(3), "data")
+    builder.add_memory("data", 2, "Z")
+
+    monkeypatch.setattr(builder, "_assembled_dem_output_ids", list)
+    with pytest.raises(ValueError, match=r"assembled circuit expects \{\}"):
+        builder.build_dem(p1=0.001, p2=0.002, p_meas=0.003, p_prep=0.004)
 
 
 def test_mixed_h_cx_provider_reuses_normalized_boundary_families(monkeypatch):

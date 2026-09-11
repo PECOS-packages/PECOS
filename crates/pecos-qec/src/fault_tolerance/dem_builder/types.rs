@@ -4879,6 +4879,12 @@ pub struct DetectorErrorModel {
     graphlike_decomposable_counts: BTreeMap<(u32, u32), u32>,
     /// Quantified approximations introduced by infeasible categorical signature channels.
     idle_noise_residuals: Vec<NoiseChannelResidual>,
+    /// Whether contribution location IDs index the physical influence map.
+    ///
+    /// A stitched model retains source-instance provenance in the same compact
+    /// field, but those synthetic IDs must never be interpreted as indices into
+    /// a physical circuit's influence map.
+    source_locations_index_influence_map: bool,
 }
 
 /// Structured DEM mechanism tuple: `(probability, detector_ids, observable_ids)`.
@@ -4898,6 +4904,7 @@ impl DetectorErrorModel {
             contributions: Vec::new(),
             graphlike_decomposable_counts: BTreeMap::new(),
             idle_noise_residuals: Vec::new(),
+            source_locations_index_influence_map: true,
         }
     }
 
@@ -4911,6 +4918,7 @@ impl DetectorErrorModel {
             contributions: Vec::new(),
             graphlike_decomposable_counts: BTreeMap::new(),
             idle_noise_residuals: Vec::new(),
+            source_locations_index_influence_map: true,
         }
     }
 
@@ -5007,8 +5015,12 @@ impl DetectorErrorModel {
         &self.contributions
     }
 
-    pub(crate) fn last_contribution_mut(&mut self) -> Option<&mut FaultContribution> {
-        self.contributions.last_mut()
+    pub(crate) const fn source_locations_index_influence_map(&self) -> bool {
+        self.source_locations_index_influence_map
+    }
+
+    pub(crate) fn mark_source_locations_as_stitched_provenance(&mut self) {
+        self.source_locations_index_influence_map = false;
     }
 
     /// Returns every quantified categorical-channel approximation made during build.
@@ -5664,6 +5676,21 @@ impl DetectorErrorModel {
             .push(FaultContribution::direct(effect, probability));
     }
 
+    /// Adds a direct contribution carrying stitched-model source identities.
+    pub(crate) fn add_direct_contribution_with_stitched_locations(
+        &mut self,
+        effect: FaultMechanism,
+        probability: f64,
+        location_indices: SmallVec<[u32; 2]>,
+    ) {
+        if effect.is_empty() || probability <= 0.0 {
+            return;
+        }
+        let mut contribution = FaultContribution::direct(effect, probability);
+        contribution.location_indices = location_indices;
+        self.contributions.push(contribution);
+    }
+
     /// Adds one correlated contribution with arbitrary source-frame components.
     ///
     /// The raw mechanism is the XOR of all components. Decomposed renderers may
@@ -5681,6 +5708,24 @@ impl DetectorErrorModel {
         if contribution.effect.is_empty() {
             return;
         }
+        self.contributions.push(contribution);
+    }
+
+    /// Adds a source-decomposed contribution carrying stitched source identities.
+    pub(crate) fn add_source_decomposed_contribution_with_stitched_locations(
+        &mut self,
+        components: impl IntoIterator<Item = FaultMechanism>,
+        probability: f64,
+        location_indices: SmallVec<[u32; 2]>,
+    ) {
+        if probability <= 0.0 {
+            return;
+        }
+        let mut contribution = FaultContribution::source_decomposed(components, probability);
+        if contribution.effect.is_empty() {
+            return;
+        }
+        contribution.location_indices = location_indices;
         self.contributions.push(contribution);
     }
 
@@ -5771,6 +5816,35 @@ impl DetectorErrorModel {
         ));
     }
 
+    /// Adds a Y-decomposed contribution carrying stitched source identities.
+    pub(crate) fn add_y_decomposed_contribution_with_stitched_locations(
+        &mut self,
+        x_effect: &FaultMechanism,
+        z_effect: &FaultMechanism,
+        probability: f64,
+        location_indices: SmallVec<[u32; 2]>,
+    ) {
+        if probability <= 0.0 {
+            return;
+        }
+        let combined = x_effect.xor(z_effect);
+        if combined.is_empty() {
+            return;
+        }
+        if x_effect.is_empty() || z_effect.is_empty() {
+            self.add_direct_contribution_with_stitched_locations(
+                combined,
+                probability,
+                location_indices,
+            );
+            return;
+        }
+        let mut contribution =
+            FaultContribution::y_decomposed(combined, x_effect, z_effect, probability);
+        contribution.location_indices = location_indices;
+        self.contributions.push(contribution);
+    }
+
     /// Adds a Y-decomposed error contribution with source metadata.
     pub(crate) fn add_y_decomposed_contribution_with_source(
         &mut self,
@@ -5854,6 +5928,7 @@ impl DetectorErrorModel {
     /// Merge contributions and graphlike counts from another DEM.
     /// Used for parallelized DEM construction.
     pub fn merge_contributions_from(&mut self, other: Self) {
+        self.source_locations_index_influence_map &= other.source_locations_index_influence_map;
         self.contributions.extend(other.contributions);
         for (key, count) in other.graphlike_decomposable_counts {
             *self.graphlike_decomposable_counts.entry(key).or_insert(0) += count;

@@ -470,6 +470,9 @@ impl DemSlice {
         owned_locations: &BTreeSet<u32>,
     ) -> Result<Self, DemSliceStitchError> {
         let name = name.into();
+        if !model.source_locations_index_influence_map() {
+            return Err(DemSliceStitchError::StitchedSourceLocationIdentity { slice: name });
+        }
         Self::from_detector_error_model_selected(
             name.clone(),
             model,
@@ -912,6 +915,11 @@ impl<'a> DemSliceTemplateCompiler<'a> {
         model: &'a DetectorErrorModel,
         location_rounds: Vec<i64>,
     ) -> Result<Self, DemSliceStitchError> {
+        if !model.source_locations_index_influence_map() {
+            return Err(DemSliceStitchError::StitchedSourceLocationIdentity {
+                slice: validation_name.to_owned(),
+            });
+        }
         validate_source_location_owners(validation_name, model, &location_rounds)?;
         let detector_layout = detector_round_layout(model)?;
         let mut rounds: BTreeSet<_> = location_rounds.iter().copied().collect();
@@ -1601,6 +1609,7 @@ impl DemStitcher {
         let mut address_to_id = BTreeMap::new();
         let mut detector_addresses = Vec::with_capacity(declarations.len());
         let mut model = DetectorErrorModel::with_capacity(declarations.len(), 0);
+        model.mark_source_locations_as_stitched_provenance();
         for (index, (address, coords)) in declarations.into_iter().enumerate() {
             let id = u32::try_from(index).map_err(|_| DemSliceStitchError::TooManyDetectors)?;
             address_to_id.insert(address, id);
@@ -1642,12 +1651,26 @@ impl DemStitcher {
                     &mut projection,
                     true,
                 )?;
-                let contributions_before = model.num_contributions();
+                let locations = contribution
+                    .source_locations()
+                    .iter()
+                    .map(|&local_location| {
+                        let next_location = u32::try_from(stitched_source_locations.len())
+                            .map_err(|_| DemSliceStitchError::TooManyFaultLocations)?;
+                        Ok(*stitched_source_locations
+                            .entry((instance_index, local_location))
+                            .or_insert(next_location))
+                    })
+                    .collect::<Result<SmallVec<[u32; 2]>, DemSliceStitchError>>()?;
                 match &contribution.kind {
                     DemSliceContributionKind::Direct(_) => {
                         referenced_outputs.extend(complete.dem_outputs.iter().copied());
                         referenced_tracked_paulis.extend(complete.tracked_paulis.iter().copied());
-                        model.add_direct_contribution(complete, contribution.probability);
+                        model.add_direct_contribution_with_stitched_locations(
+                            complete,
+                            contribution.probability,
+                            locations,
+                        );
                     }
                     DemSliceContributionKind::YDecomposed { x_effect, z_effect } => {
                         let x_effect = instantiate_effect(
@@ -1669,10 +1692,11 @@ impl DemStitcher {
                         referenced_outputs.extend(z_effect.dem_outputs.iter().copied());
                         referenced_tracked_paulis.extend(x_effect.tracked_paulis.iter().copied());
                         referenced_tracked_paulis.extend(z_effect.tracked_paulis.iter().copied());
-                        model.add_y_decomposed_contribution(
+                        model.add_y_decomposed_contribution_with_stitched_locations(
                             &x_effect,
                             &z_effect,
                             contribution.probability,
+                            locations,
                         );
                     }
                     DemSliceContributionKind::SourceDecomposed(components) => {
@@ -1701,28 +1725,11 @@ impl DemStitcher {
                             referenced_tracked_paulis
                                 .extend(component.tracked_paulis.iter().copied());
                         }
-                        model.add_source_decomposed_contribution(
+                        model.add_source_decomposed_contribution_with_stitched_locations(
                             components,
                             contribution.probability,
+                            locations,
                         );
-                    }
-                }
-                if model.num_contributions() > contributions_before
-                    && !contribution.source_locations().is_empty()
-                {
-                    let locations = contribution
-                        .source_locations()
-                        .iter()
-                        .map(|&local_location| {
-                            let next_location = u32::try_from(stitched_source_locations.len())
-                                .map_err(|_| DemSliceStitchError::TooManyFaultLocations)?;
-                            Ok(*stitched_source_locations
-                                .entry((instance_index, local_location))
-                                .or_insert(next_location))
-                        })
-                        .collect::<Result<SmallVec<[u32; 2]>, DemSliceStitchError>>()?;
-                    if let Some(stitched_contribution) = model.last_contribution_mut() {
-                        stitched_contribution.location_indices = locations;
                     }
                 }
 
@@ -1915,6 +1922,8 @@ pub enum DemSliceStitchError {
     SourceComponentEffectMismatch { slice: String },
     /// A contribution has no influence-map location indices from which to determine ownership.
     UnattributedSourceContribution { slice: String },
+    /// A stitched model's source IDs are provenance, not influence-map indices.
+    StitchedSourceLocationIdentity { slice: String },
     /// Only part of one correlated source was assigned to this slice.
     PartialSourceOwnership {
         slice: String,
@@ -2062,6 +2071,10 @@ impl fmt::Display for DemSliceStitchError {
             Self::UnattributedSourceContribution { slice } => write!(
                 f,
                 "source contribution in slice {slice:?} has no influence-map location identity"
+            ),
+            Self::StitchedSourceLocationIdentity { slice } => write!(
+                f,
+                "DEM {slice:?} was assembled from slices; its source location IDs are stitched provenance, not influence-map indices, so it cannot be sliced again against a physical influence map"
             ),
             Self::PartialSourceOwnership {
                 slice,
@@ -2523,6 +2536,18 @@ mod tests {
             .map(|contribution| contribution.location_indices.to_vec())
             .collect();
         assert_eq!(locations, vec![vec![0], vec![1], vec![2]]);
+
+        let error = DemSliceRoundSchedule::from_location_rounds(
+            "re-sliced stitched model",
+            &stitched.model,
+            &[0, 1, 2],
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            DemSliceStitchError::StitchedSourceLocationIdentity { .. }
+        ));
+        assert!(error.to_string().contains("stitched provenance"));
     }
 
     #[test]

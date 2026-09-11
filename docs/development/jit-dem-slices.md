@@ -106,7 +106,10 @@ opaque `DemSliceTemplate` values returned by `schedule.template(...)` and
 independent declaration of the assembled circuit's standard-output and
 tracked-Pauli schema. It rejects a cached model with different declarations and
 requires every template output to be routed into that schema or explicitly
-projected. It uses identity detector/output mappings by default, accepts checked per-round
+projected. The surface frontend obtains that declaration from the observable
+metadata emitted by the actual assembled circuit, including its full logical
+gate history, rather than restating measurement-reliability rules in each
+template provider. It uses identity detector/output mappings by default, accepts checked per-round
 GF(2) output routing tables, and supports checked global or per-stream spatial
 translations. Templates expose their referenced local output IDs so callers do
 not need to guess the routing domain. Per-stream translation lets independently
@@ -234,7 +237,9 @@ Stitching remaps those IDs per template instance, so repeated use of one cached
 slice preserves source provenance without aliasing different rounds. This keeps
 source-graphlike analysis available on the stitched structured model. The IDs
 identify sources within the assembled model; they are not indices into the
-bounded template's original influence map.
+bounded template's original influence map. The model records this identity-space
+change explicitly and rejects attempts to re-slice a stitched model against a
+physical influence map.
 
 Python callers can exercise the same structured path through
 `DetectorErrorModel.stitched_round_window(...)`. It accepts the originating

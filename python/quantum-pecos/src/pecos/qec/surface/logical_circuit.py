@@ -320,39 +320,52 @@ def _boundary_template_instances(
     memory_rounds: list[int],
 ) -> tuple[list[tuple[object, int]], int]:
     """Place boundary families between their adjacent memory segments."""
+    placements, boundary_round = _boundary_template_placements(boundary_templates, memory_rounds)
+    return [(template, round_) for template, round_, _ in placements], boundary_round
+
+
+def _boundary_template_placements(
+    boundary_templates: list[_CachedSurfaceBoundaryDemTemplates],
+    memory_rounds: list[int],
+) -> tuple[list[tuple[object, int, int]], int]:
+    """Place boundary families and retain the family index for output routing."""
     if not boundary_templates or len(memory_rounds) != len(boundary_templates) + 1:
         msg = "boundary templates require exactly one more memory segment"
         raise ValueError(msg)
 
     first_boundary_round = memory_rounds[0]
-    instances = [(boundary_templates[0].initialization, 0)]
-    instances.extend((boundary_templates[0].pre_gate_bulk, round_) for round_ in range(1, first_boundary_round - 1))
+    placements = [(boundary_templates[0].initialization, 0, 0)]
+    placements.extend(
+        (boundary_templates[0].pre_gate_bulk, round_, 0) for round_ in range(1, first_boundary_round - 1)
+    )
     boundary_round = first_boundary_round
     for boundary_index, templates in enumerate(boundary_templates):
-        instances.extend(
+        placements.extend(
             [
-                (templates.pre_gate_boundary, boundary_round - 1),
-                (templates.gate_boundary, boundary_round),
+                (templates.pre_gate_boundary, boundary_round - 1, boundary_index),
+                (templates.gate_boundary, boundary_round, boundary_index),
             ],
         )
         next_boundary_round = boundary_round + memory_rounds[boundary_index + 1]
         if boundary_index + 1 < len(boundary_templates):
             next_templates = boundary_templates[boundary_index + 1]
-            instances.extend(
-                (next_templates.pre_gate_bulk, round_) for round_ in range(boundary_round + 1, next_boundary_round - 1)
+            placements.extend(
+                (next_templates.pre_gate_bulk, round_, boundary_index + 1)
+                for round_ in range(boundary_round + 1, next_boundary_round - 1)
             )
         else:
-            instances.extend(
-                (templates.post_gate_bulk, round_) for round_ in range(boundary_round + 1, next_boundary_round - 1)
+            placements.extend(
+                (templates.post_gate_bulk, round_, boundary_index)
+                for round_ in range(boundary_round + 1, next_boundary_round - 1)
             )
-            instances.extend(
+            placements.extend(
                 [
-                    (templates.pre_terminal, next_boundary_round - 1),
-                    (templates.terminal, next_boundary_round),
+                    (templates.pre_terminal, next_boundary_round - 1, boundary_index),
+                    (templates.terminal, next_boundary_round, boundary_index),
                 ],
             )
         boundary_round = next_boundary_round
-    return instances, boundary_round
+    return placements, boundary_round
 
 
 _TWO_PATCH_IDENTITY = (1, 2, 4, 8)
@@ -1067,6 +1080,18 @@ class LogicalCircuitBuilder:
         self._restore(saved)
         return tc
 
+    def _assembled_dem_output_ids(self) -> list[int]:
+        """Return the observable schema declared by the actual assembled circuit.
+
+        Cached physical fixtures are deliberately not authoritative for this
+        schema.  In particular, final-measurement reliability depends on the
+        complete logical-gate history, which the circuit frontend records when
+        it emits its observable metadata.
+        """
+        circuit = self.to_tick_circuit()
+        observables = json.loads(circuit.get_meta("observables") or "[]")
+        return [int(observable["id"]) for observable in observables]
+
     def to_dag_circuit(self) -> object:
         """Generate a PECOS DagCircuit for fault analysis.
 
@@ -1262,7 +1287,7 @@ class LogicalCircuitBuilder:
         schedule = DemSliceRoundSchedule.from_templates(
             templates.output_model,
             instances,
-            expected_dem_outputs=[0],
+            expected_dem_outputs=self._assembled_dem_output_ids(),
             expected_tracked_paulis=[],
             coordinate_offset=(float(coord_x), float(coord_y)),
         )
@@ -1347,7 +1372,7 @@ class LogicalCircuitBuilder:
         schedule = DemSliceRoundSchedule.from_templates(
             templates.output_model,
             instances,
-            expected_dem_outputs=list(range(len(patch_states))),
+            expected_dem_outputs=self._assembled_dem_output_ids(),
             expected_tracked_paulis=[],
             detector_coordinate_offsets=detector_coordinate_offsets,
         )
@@ -1511,7 +1536,7 @@ class LogicalCircuitBuilder:
         schedule = DemSliceRoundSchedule.from_templates(
             boundary_templates[0].output_model,
             instances,
-            expected_dem_outputs=[0, 1],
+            expected_dem_outputs=self._assembled_dem_output_ids(),
             expected_tracked_paulis=[],
             detector_coordinate_offsets=detector_coordinate_offsets,
             dem_output_routings=dem_output_routings,
@@ -1590,45 +1615,17 @@ class LogicalCircuitBuilder:
 
         from pecos_rslib.qec import DemSliceRoundSchedule
 
-        first_boundary_round = memories[0].rounds
-        placed = [(templates.initialization, 0, len(gates) - 1)]
-        placed.extend(
-            (templates.pre_gate_bulk, round_, len(gates) - 1) for round_ in range(1, first_boundary_round - 1)
+        placed, boundary_round = _boundary_template_placements(
+            [templates] * len(gates),
+            [memory.rounds for memory in memories],
         )
-        boundary_round = first_boundary_round
-        for boundary_index in range(len(gates)):
-            later_gate_count = len(gates) - boundary_index - 1
-            placed.extend(
-                [
-                    (templates.pre_gate_boundary, boundary_round - 1, later_gate_count),
-                    (templates.gate_boundary, boundary_round, later_gate_count),
-                ],
-            )
-            next_boundary_round = boundary_round + memories[boundary_index + 1].rounds
-            if boundary_index + 1 < len(gates):
-                next_later_gate_count = later_gate_count - 1
-                placed.extend(
-                    (templates.pre_gate_bulk, round_, next_later_gate_count)
-                    for round_ in range(boundary_round + 1, next_boundary_round - 1)
-                )
-            else:
-                placed.extend(
-                    (templates.post_gate_bulk, round_, 0)
-                    for round_ in range(boundary_round + 1, next_boundary_round - 1)
-                )
-                placed.extend(
-                    [
-                        (templates.pre_terminal, next_boundary_round - 1, 0),
-                        (templates.terminal, next_boundary_round, 0),
-                    ],
-                )
-            boundary_round = next_boundary_round
 
         instances = [(template, round_) for template, round_, _ in placed]
         dem_output_routings = {}
-        for template, round_, later_gate_count in placed:
+        for template, round_, boundary_index in placed:
             if not template.dem_outputs:
                 continue
+            later_gate_count = len(gates) - boundary_index - 1
             if later_gate_count % 2 == 0:
                 routing = {output: [output] for output in template.dem_outputs}
             elif final_control_basis == "X":
@@ -1655,16 +1652,7 @@ class LogicalCircuitBuilder:
         schedule = DemSliceRoundSchedule.from_templates(
             templates.output_model,
             instances,
-            expected_dem_outputs=[
-                output
-                for output, reliable in enumerate(
-                    (
-                        final_control_basis != "X" or final_target_basis == "X",
-                        final_target_basis != "Z" or final_control_basis == "Z",
-                    ),
-                )
-                if reliable
-            ],
+            expected_dem_outputs=self._assembled_dem_output_ids(),
             expected_tracked_paulis=[],
             detector_coordinate_offsets=detector_coordinate_offsets,
             dem_output_routings=dem_output_routings,
@@ -1740,7 +1728,7 @@ class LogicalCircuitBuilder:
         schedule = DemSliceRoundSchedule.from_templates(
             boundary_templates[0].output_model,
             instances,
-            expected_dem_outputs=[0],
+            expected_dem_outputs=self._assembled_dem_output_ids(),
             expected_tracked_paulis=[],
             coordinate_offset=(float(coord_x), float(coord_y)),
             dem_output_routings=dem_output_routings,

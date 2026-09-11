@@ -12,8 +12,8 @@
 
 use pecos_qec::fault_tolerance::dem_builder::{
     DemBoundaryKind, DemDetectorPlacement, DemSlice, DemSliceContribution, DemSliceDetector,
-    DemSliceInstance, DemStitcher, DemTemporalHorizon, DemWindowSpec, RelativeDetectorTarget,
-    SliceFaultMechanism, StitchedDetectorAddress,
+    DemSliceInstance, DemSliceRoundSchedule, DemTemporalHorizon, DemWindowSpec, DetectorErrorModel,
+    RelativeDetectorTarget, SliceFaultMechanism, StitchedDetectorAddress,
 };
 use std::sync::Arc;
 
@@ -41,12 +41,13 @@ fn public_api_stitches_relabelled_cached_slices() {
         .map(|round| {
             DemSliceInstance::identity(Arc::clone(&slice), round)
                 .with_detector_placement(0, DemDetectorPlacement::new(23))
-                .with_dem_output(0, 5)
+                .with_dem_output_targets(0, [5])
         })
         .collect();
 
-    let stitched = DemStitcher::new(DemWindowSpec::new(4, 2, 1, DemBoundaryKind::Soft))
-        .stitch(&instances)
+    let schedule = DemSliceRoundSchedule::from_instances(&DetectorErrorModel::new(), instances);
+    let stitched = schedule
+        .stitch(DemWindowSpec::new(4, 2, 1, DemBoundaryKind::Soft))
         .unwrap();
 
     assert_eq!(

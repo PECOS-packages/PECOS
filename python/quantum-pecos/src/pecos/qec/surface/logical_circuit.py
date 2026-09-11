@@ -366,6 +366,31 @@ def _boundary_template_placements(
     return placements, boundary_round
 
 
+def _two_patch_detector_coordinate_offsets(
+    control_offset: tuple[float, float],
+    target_offset: tuple[float, float],
+    *,
+    control_stream_count: int,
+    target_stream_count: int,
+    target_coordinate_origin: tuple[float, float],
+) -> dict[int, tuple[float, float]]:
+    """Translate one canonical two-patch stream layout to its live placements."""
+    control_x, control_y = control_offset
+    target_x, target_y = target_offset
+    target_origin_x, target_origin_y = target_coordinate_origin
+    offsets = {stream: (float(control_x), float(control_y)) for stream in range(control_stream_count)}
+    offsets.update(
+        {
+            stream: (float(target_x) - target_origin_x, float(target_y) - target_origin_y)
+            for stream in range(
+                control_stream_count,
+                control_stream_count + target_stream_count,
+            )
+        },
+    )
+    return offsets
+
+
 _TWO_PATCH_IDENTITY = (1, 2, 4, 8)
 _TWO_PATCH_GATES = ("h0", "h1", "cx")
 
@@ -1511,20 +1536,12 @@ class LogicalCircuitBuilder:
 
         if cached_layout is None:  # Defensive: the alternating form always has at least one gate.
             return None
-        control_x, control_y = control_state.coord_offset
-        target_x, target_y = target_state.coord_offset
-        target_origin_x, target_origin_y = cached_layout.target_coordinate_origin
-        detector_coordinate_offsets = {
-            stream: (float(control_x), float(control_y)) for stream in range(cached_layout.control_stream_count)
-        }
-        detector_coordinate_offsets.update(
-            {
-                stream: (float(target_x) - target_origin_x, float(target_y) - target_origin_y)
-                for stream in range(
-                    cached_layout.control_stream_count,
-                    cached_layout.control_stream_count + cached_layout.target_stream_count,
-                )
-            },
+        detector_coordinate_offsets = _two_patch_detector_coordinate_offsets(
+            control_state.coord_offset,
+            target_state.coord_offset,
+            control_stream_count=cached_layout.control_stream_count,
+            target_stream_count=cached_layout.target_stream_count,
+            target_coordinate_origin=cached_layout.target_coordinate_origin,
         )
         dem_output_routings = {
             round_: {output: [output] for output in template.dem_outputs}
@@ -1632,20 +1649,12 @@ class LogicalCircuitBuilder:
                 routing = {output: [0, 1] if output == 0 else [1] for output in template.dem_outputs}
             dem_output_routings[round_] = routing
 
-        control_x, control_y = control_state.coord_offset
-        target_x, target_y = target_state.coord_offset
-        target_origin_x, target_origin_y = cached.target_coordinate_origin
-        detector_coordinate_offsets = {
-            stream: (float(control_x), float(control_y)) for stream in range(cached.control_stream_count)
-        }
-        detector_coordinate_offsets.update(
-            {
-                stream: (float(target_x) - target_origin_x, float(target_y) - target_origin_y)
-                for stream in range(
-                    cached.control_stream_count,
-                    cached.control_stream_count + cached.target_stream_count,
-                )
-            },
+        detector_coordinate_offsets = _two_patch_detector_coordinate_offsets(
+            control_state.coord_offset,
+            target_state.coord_offset,
+            control_stream_count=cached.control_stream_count,
+            target_stream_count=cached.target_stream_count,
+            target_coordinate_origin=cached.target_coordinate_origin,
         )
         schedule = DemSliceRoundSchedule.from_templates(
             templates.output_model,

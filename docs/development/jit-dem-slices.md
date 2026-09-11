@@ -10,9 +10,9 @@ This representation supports two separate phases:
 1. An offline compiler analyzes constant-depth physical templates such as
    initialization, idle syndrome extraction, measurement, and transversal
    Clifford operations.
-2. `DemStitcher` instantiates the cached templates for one decoding window,
-   resolves their temporal dependencies, and returns a structured
-   `DetectorErrorModel`.
+2. `DemSliceRoundSchedule` instantiates the cached templates for one decoding
+   window, resolves their temporal dependencies through the internal stitcher,
+   and returns a structured `DetectorErrorModel`.
 
 The split follows the DEM Stitch design in
 [Ikari et al.](https://arxiv.org/abs/2608.11719). PECOS keeps the more
@@ -63,11 +63,11 @@ caches; there is no second cache implementation in the Rust slicing layer.
 
 ## Existing DEM integration
 
-`DemSlice::from_detector_error_model` adapts PECOS's structured
-`DetectorErrorModel` directly. `DemSliceModelMap` explicitly maps every source
-detector declaration to a local detector identity and signed round offset, and
-maps standard `L<n>` and PECOS `TP<n>` outputs into their local identity spaces.
-Missing declarations or output mappings fail instead of being dropped.
+The schedule compiler adapts PECOS's structured `DetectorErrorModel` directly.
+Its internal model map explicitly maps every source detector declaration to a
+local detector identity and signed round offset, and maps standard `L<n>` and
+PECOS `TP<n>` outputs into their local identity spaces. Missing declarations or
+output mappings fail instead of being dropped.
 
 The adapter retains contributions individually. Y-specific decomposition and
 arbitrary source-frame component lists are both preserved, including
@@ -75,16 +75,15 @@ multi-component sources used by native two-qubit Clifford and replacement
 branches. Component XOR is checked against the source contribution's complete
 effect.
 
-For a physical template containing halo operations,
-`DemSlice::from_detector_error_model_for_locations` accepts the owned
-`DagFaultInfluenceMap` location IDs. A contribution is included only if all of
-its source locations are owned by the slice and omitted if none are. Partial or
-unattributed ownership fails loudly so one correlated source cannot be split
-or counted twice.
+For a physical template containing halo operations, the internal adapter accepts
+the owned `DagFaultInfluenceMap` location IDs. A contribution is included only
+if all of its source locations are owned by the slice and omitted if none are.
+Partial or unattributed ownership fails loudly so one correlated source cannot
+be split or counted twice.
 
 ## Bounded physical-template compiler
 
-`DemSliceTemplateCompiler` extracts selected owner rounds from a bounded,
+The internal template compiler extracts selected owner rounds from a bounded,
 source-tracked physical model. It validates the annotated circuit's source
 ownership and detector-stream layout once, then emits absolute-round-independent
 `DemSlice` values suitable for a frontend cache. The bounded model needs only
@@ -226,9 +225,9 @@ data measurements by the terminal boundary round. Missing or non-integral
 metadata fails instead of guessing. A multi-location correlated source whose
 locations disagree on the owner round is also rejected.
 
-The schedule derives relative detector maps, temporal horizons, standard
-output mappings, and tracked-Pauli mappings, then exposes the resulting slice
-instances to `DemStitcher`. This removes the hand-authored ownership and mapping
+The schedule derives relative detector maps, temporal horizons, standard output
+mappings, and tracked-Pauli mappings, then passes the resulting slice instances
+to its internal stitcher. This removes the hand-authored ownership and mapping
 tables from the equivalence path. Full-circuit source-tracked DEMs remain the
 independent equivalence oracle for bounded template composition.
 
@@ -313,3 +312,19 @@ or lattice-surgery families, decoder prior mutation, the anti-snake
 logical-subgraph window decoder, or adaptive syndrome-extraction templates.
 Full-circuit DEM construction remains the equivalence oracle and the
 conservative fallback outside supported families.
+
+## Follow-up work
+
+The remaining cross-cutting consolidation is tracked separately so it does not
+destabilize the checked slice/stitch path in this change:
+
+- [#748](https://github.com/PECOS-packages/PECOS/issues/748) migrates windowed
+  decoders from rendered-text filtering to structured slice stitching.
+- [#749](https://github.com/PECOS-packages/PECOS/issues/749) consolidates the
+  three H/CX Pauli-propagation implementations.
+- [#750](https://github.com/PECOS-packages/PECOS/issues/750) unifies the relative
+  slice mechanism/contribution/detector representations with the existing DEM
+  types.
+- [#751](https://github.com/PECOS-packages/PECOS/issues/751) makes logical-gate
+  boundary providers data-driven after the placement and coordinate helpers
+  shared here.

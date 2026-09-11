@@ -313,39 +313,39 @@ pub struct DemSlice {
 /// relative-round targets. Standard outputs and tracked Paulis are mapped into
 /// their corresponding slice-local identity spaces.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct DemSliceModelMap {
+struct DemSliceModelMap {
     /// Source detector to relative slice target.
-    pub detectors: BTreeMap<u32, RelativeDetectorTarget>,
+    detectors: BTreeMap<u32, RelativeDetectorTarget>,
     /// Source `L<n>` output to slice-local `L<n>` identity.
-    pub dem_outputs: BTreeMap<u32, u32>,
+    dem_outputs: BTreeMap<u32, u32>,
     /// Source `TP<n>` output to slice-local `TP<n>` identity.
-    pub tracked_paulis: BTreeMap<u32, u32>,
+    tracked_paulis: BTreeMap<u32, u32>,
 }
 
 impl DemSliceModelMap {
     /// Create an empty model map.
     #[must_use]
-    pub fn new() -> Self {
+    fn new() -> Self {
         Self::default()
     }
 
     /// Add or replace a source detector mapping.
     #[must_use]
-    pub fn with_detector(mut self, source_detector: u32, target: RelativeDetectorTarget) -> Self {
+    fn with_detector(mut self, source_detector: u32, target: RelativeDetectorTarget) -> Self {
         self.detectors.insert(source_detector, target);
         self
     }
 
     /// Add or replace a source standard-output mapping.
     #[must_use]
-    pub fn with_dem_output(mut self, source_output: u32, local_output: u32) -> Self {
+    fn with_dem_output(mut self, source_output: u32, local_output: u32) -> Self {
         self.dem_outputs.insert(source_output, local_output);
         self
     }
 
     /// Add or replace a source tracked-Pauli mapping.
     #[must_use]
-    pub fn with_tracked_pauli(mut self, source_output: u32, local_output: u32) -> Self {
+    fn with_tracked_pauli(mut self, source_output: u32, local_output: u32) -> Self {
         self.tracked_paulis.insert(source_output, local_output);
         self
     }
@@ -439,7 +439,8 @@ impl DemSlice {
     /// Returns an error for incomplete or inconsistent identity maps, source
     /// components whose XOR does not match their complete effect, or any normal
     /// slice validation failure.
-    pub fn from_detector_error_model(
+    #[cfg(test)]
+    fn from_detector_error_model(
         name: impl Into<String>,
         model: &DetectorErrorModel,
         source_map: &DemSliceModelMap,
@@ -461,8 +462,8 @@ impl DemSlice {
     /// # Errors
     ///
     /// Returns an error for unattributed or partially owned contributions in
-    /// addition to the errors from [`Self::from_detector_error_model`].
-    pub fn from_detector_error_model_for_locations(
+    /// addition to the ordinary structured-adapter errors.
+    fn from_detector_error_model_for_locations(
         name: impl Into<String>,
         model: &DetectorErrorModel,
         source_map: &DemSliceModelMap,
@@ -809,12 +810,6 @@ impl DemSliceInstance {
         self
     }
 
-    /// Replace a local standard DEM-output mapping.
-    #[must_use]
-    pub fn with_dem_output(self, local_output: u32, global_output: u32) -> Self {
-        self.with_dem_output_targets(local_output, [global_output])
-    }
-
     /// Replace a local standard DEM output with a GF(2) set of global outputs.
     ///
     /// Repeated targets cancel by parity. An empty target set deliberately
@@ -828,12 +823,6 @@ impl DemSliceInstance {
         self.dem_output_map
             .insert(local_output, parity_sorted(global_outputs));
         self
-    }
-
-    /// Replace a local PECOS tracked-Pauli mapping.
-    #[must_use]
-    pub fn with_tracked_pauli(self, local_output: u32, global_output: u32) -> Self {
-        self.with_tracked_pauli_targets(local_output, [global_output])
     }
 
     /// Replace a local tracked Pauli with a GF(2) set of global tracked Paulis.
@@ -873,7 +862,7 @@ impl DemSliceInstance {
 /// Frontends can cache those slices using their normal bounded cache policy and
 /// instantiate them without retaining the template circuit or absolute rounds.
 #[derive(Debug)]
-pub struct DemSliceTemplateCompiler<'a> {
+struct DemSliceTemplateCompiler<'a> {
     model: &'a DetectorErrorModel,
     location_rounds: Vec<i64>,
     detector_layout: BTreeMap<u32, (u32, i64)>,
@@ -888,26 +877,14 @@ impl<'a> DemSliceTemplateCompiler<'a> {
     ///
     /// Returns an error for missing/invalid gate ownership, detector layout,
     /// or source-location metadata.
-    pub fn from_annotated_circuit(
+    #[cfg(test)]
+    fn from_annotated_circuit(
         model: &'a DetectorErrorModel,
         influence_map: &DagFaultInfluenceMap,
         circuit: &DagCircuit,
     ) -> Result<Self, DemSliceStitchError> {
         let location_rounds = annotated_location_rounds(influence_map, circuit)?;
         Self::from_location_rounds_named("DEM slice template", model, location_rounds)
-    }
-
-    /// Prepare a compiler from one owner round per influence-map location.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error for incomplete source ownership or invalid detector
-    /// coordinates.
-    pub fn from_location_rounds(
-        model: &'a DetectorErrorModel,
-        location_rounds: &[i64],
-    ) -> Result<Self, DemSliceStitchError> {
-        Self::from_location_rounds_named("DEM slice template", model, location_rounds.to_vec())
     }
 
     fn from_location_rounds_named(
@@ -935,7 +912,7 @@ impl<'a> DemSliceTemplateCompiler<'a> {
 
     /// Owner rounds available in this bounded template.
     #[must_use]
-    pub fn rounds(&self) -> &[i64] {
+    fn rounds(&self) -> &[i64] {
         &self.rounds
     }
 
@@ -945,7 +922,7 @@ impl<'a> DemSliceTemplateCompiler<'a> {
     ///
     /// Returns an error if `owner_round` is absent, a relative address does not
     /// fit, or the selected physical sources fail normal slice validation.
-    pub fn compile_round(
+    fn compile_round(
         &self,
         name: impl Into<String>,
         owner_round: i64,
@@ -1528,7 +1505,7 @@ pub struct StitchedDem {
 
 /// Just-in-time assembler for reusable DEM slice instances.
 #[derive(Debug, Clone)]
-pub struct DemStitcher {
+struct DemStitcher {
     spec: DemWindowSpec,
     observables: Vec<DemOutput>,
     tracked_paulis: Vec<DemOutput>,
@@ -1537,7 +1514,7 @@ pub struct DemStitcher {
 impl DemStitcher {
     /// Create a stitcher for one commit-plus-buffer window.
     #[must_use]
-    pub const fn new(spec: DemWindowSpec) -> Self {
+    const fn new(spec: DemWindowSpec) -> Self {
         Self {
             spec,
             observables: Vec::new(),
@@ -1547,14 +1524,14 @@ impl DemStitcher {
 
     /// Supply algorithm-wide standard DEM-output definitions.
     #[must_use]
-    pub fn with_observables(mut self, observables: Vec<DemOutput>) -> Self {
+    fn with_observables(mut self, observables: Vec<DemOutput>) -> Self {
         self.observables = observables;
         self
     }
 
     /// Supply algorithm-wide PECOS tracked-Pauli definitions.
     #[must_use]
-    pub fn with_tracked_paulis(mut self, tracked_paulis: Vec<DemOutput>) -> Self {
+    fn with_tracked_paulis(mut self, tracked_paulis: Vec<DemOutput>) -> Self {
         self.tracked_paulis = tracked_paulis;
         self
     }
@@ -1571,10 +1548,7 @@ impl DemStitcher {
     /// Returns an error when mappings are incomplete, an in-window target has no detector
     /// declaration, a hard terminal boundary has an unresolved future target, or a contribution
     /// reaches from the commit region beyond the supplied buffer.
-    pub fn stitch(
-        &self,
-        instances: &[DemSliceInstance],
-    ) -> Result<StitchedDem, DemSliceStitchError> {
+    fn stitch(&self, instances: &[DemSliceInstance]) -> Result<StitchedDem, DemSliceStitchError> {
         let commit_end = self.spec.commit_end()?;
         let end_round = self.spec.end()?;
 
@@ -2426,7 +2400,7 @@ mod tests {
         );
         let instance = DemSliceInstance::identity(slice, 7)
             .with_detector_placement(0, DemDetectorPlacement::new(42).with_coords([5.0, 6.0]))
-            .with_dem_output(0, 3);
+            .with_dem_output_targets(0, [3]);
         let stitched = DemStitcher::new(DemWindowSpec::new(7, 1, 0, DemBoundaryKind::Hard))
             .stitch(&[instance])
             .unwrap();
@@ -2743,8 +2717,8 @@ mod tests {
             .unwrap(),
         );
         let instance = DemSliceInstance::identity(slice, 7)
-            .with_dem_output(0, 6)
-            .with_tracked_pauli(1, 8);
+            .with_dem_output_targets(0, [6])
+            .with_tracked_pauli_targets(1, [8]);
         let stitched = DemStitcher::new(DemWindowSpec::new(7, 1, 0, DemBoundaryKind::Hard))
             .stitch(&[instance])
             .unwrap();

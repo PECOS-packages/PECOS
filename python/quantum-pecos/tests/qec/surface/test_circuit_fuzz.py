@@ -19,75 +19,9 @@ import random
 import pytest
 from pecos.decoders import bp_osd, pecos_uf, pymatching
 from pecos.qec.surface import LogicalCircuitBuilder, SurfacePatch
+from pecos.testing import simulate_tick_circuit
 from pecos_rslib import SparseStab
 from pecos_rslib.quantum import TickCircuit
-
-# ---------------------------------------------------------------------------
-# TickCircuit simulation on SparseStab
-# ---------------------------------------------------------------------------
-
-
-def simulate_tick_circuit(tc: TickCircuit, seed: int = 0) -> tuple[list[int], int, dict[int, int]]:
-    """Simulate a TickCircuit on PECOS SparseStab.
-
-    Returns (flat_measurements, det_fired, observable_values).
-    """
-    max_q = 0
-    for i in range(tc.num_ticks()):
-        for g in tc.get_tick(i).gate_batches():
-            for q in g.qubits:
-                max_q = max(max_q, int(q))
-
-    sim = SparseStab(max_q + 1)
-    sim.set_seed(seed)
-    flat = []
-
-    for i in range(tc.num_ticks()):
-        for g in tc.get_tick(i).gate_batches():
-            name = g.gate_type.name
-            qs = [int(q) for q in g.qubits]
-            if name == "QAlloc":
-                pass
-            elif name == "PZ":
-                sim.run_gate("PZ", set(qs))
-            elif name == "MZ":
-                for q in qs:
-                    r = sim.run_gate("MZ", {q})
-                    flat.append(r.get(q, 0))
-            elif name in ("CX", "CZ"):
-                pairs = {(qs[j], qs[j + 1]) for j in range(0, len(qs), 2)}
-                sim.run_gate(name, pairs)
-            else:
-                sim.run_gate(name, set(qs))
-
-    num_meas = int(tc.get_meta("num_measurements"))
-
-    # Check detectors
-    det_fired = 0
-    det_json = tc.get_meta("detectors")
-    if det_json:
-        for det in json.loads(det_json):
-            val = 0
-            for rec in det["records"]:
-                idx = num_meas + rec
-                if 0 <= idx < len(flat):
-                    val ^= flat[idx]
-            if val != 0:
-                det_fired += 1
-
-    # Extract observables
-    obs_vals = {}
-    obs_json = tc.get_meta("observables")
-    if obs_json:
-        for obs in json.loads(obs_json):
-            val = 0
-            for rec in obs["records"]:
-                idx = num_meas + rec
-                if 0 <= idx < len(flat):
-                    val ^= flat[idx]
-            obs_vals[obs["id"]] = val
-
-    return flat, det_fired, obs_vals
 
 
 def physical_sim_1q(gates: list[str], init_basis: str, meas_basis: str) -> int:

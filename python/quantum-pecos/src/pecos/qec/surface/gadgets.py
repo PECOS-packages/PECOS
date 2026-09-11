@@ -1,7 +1,7 @@
 # Copyright 2026 The PECOS Developers
 # Licensed under the Apache License, Version 2.0
 
-"""Physical surface-memory gadgets, independent of their rendering."""
+"""Physical surface-code gadgets, independent of their rendering."""
 
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -20,6 +20,8 @@ class GadgetKind(Enum):
     SYNDROME_ROUND = auto()
     MEASURE_OUT = auto()
     LOGICAL_PAULI = auto()
+    TRANSVERSAL = auto()
+    TWO_PATCH = auto()
 
 
 @dataclass(frozen=True)
@@ -29,9 +31,10 @@ class Gadget:
     kind: GadgetKind
     name: str
     steps: tuple[SurfaceCircuitStep, ...]
-    allocation: QubitAllocation
+    allocations: tuple[QubitAllocation, ...]
     dimensions: tuple[int, int]
     basis: str | None
+    x_z_swapped: bool = False
 
 
 def default_allocation(patch: SurfacePatch) -> QubitAllocation:
@@ -44,14 +47,21 @@ def default_allocation(patch: SurfacePatch) -> QubitAllocation:
 
 
 def prep_gadget(patch: SurfacePatch, allocation: QubitAllocation, *, basis: str) -> Gadget:
-    """Prepare data in the requested memory basis."""
+    """Prepare a product Z, X, or Y eigenstate on all data qubits.
+
+    Y uses H then SZ. Subsequent syndrome projection determines the sign
+    of its encoded logical Y eigenstate; neither check family is initially
+    deterministic on this product state.
+    """
     name = f"prep_{basis.lower()}_basis"
     steps = [SurfaceCircuitStep(OpType.COMMENT, label=name)]
     steps.extend(SurfaceCircuitStep(OpType.ALLOC, [q], f"data[{i}]") for i, q in enumerate(allocation.data_qubits))
-    if basis.upper() == "X":
+    if basis.upper() in {"X", "Y"}:
         steps.extend(SurfaceCircuitStep(OpType.H, [q]) for q in allocation.data_qubits)
+    if basis.upper() == "Y":
+        steps.extend(SurfaceCircuitStep(OpType.SZ, [q]) for q in allocation.data_qubits)
     steps.append(SurfaceCircuitStep(OpType.TICK))
-    return Gadget(GadgetKind.PREP, name, tuple(steps), allocation, (patch.dx, patch.dz), basis.upper())
+    return Gadget(GadgetKind.PREP, name, tuple(steps), (allocation,), (patch.dx, patch.dz), basis.upper())
 
 
 def _ancilla_steps(
@@ -61,15 +71,16 @@ def _ancilla_steps(
     op: OpType,
 ) -> list[SurfaceCircuitStep]:
     stabilizers = patch.geometry.x_stabilizers if family == "X" else patch.geometry.z_stabilizers
+    stabilizers = sorted(stabilizers, key=lambda s: s.index)
     qubits = allocation.x_ancilla_qubits if family == "X" else allocation.z_ancilla_qubits
     prefix = "s" if op == OpType.MEASURE else "a"
     return [SurfaceCircuitStep(op, [qubits[s.index]], f"{prefix}{family.lower()}{s.index}") for s in stabilizers]
 
 
-def _hadamards(patch: SurfacePatch, allocation: QubitAllocation) -> list[SurfaceCircuitStep]:
+def _hadamards(patch: SurfacePatch, allocation: QubitAllocation, family: str = "X") -> list[SurfaceCircuitStep]:
     return [
-        SurfaceCircuitStep(OpType.COMMENT, label="Hadamard on X ancillas"),
-        *_ancilla_steps(patch, allocation, "X", OpType.H),
+        SurfaceCircuitStep(OpType.COMMENT, label=f"Hadamard on {family} ancillas"),
+        *_ancilla_steps(patch, allocation, family, OpType.H),
     ]
 
 
@@ -79,6 +90,7 @@ def _cx_steps(
     family: str | None = None,
     *,
     round_order: str | Sequence[int] | None = None,
+    x_z_swapped: bool = False,
 ) -> list[SurfaceCircuitStep]:
     steps = []
     for index, layer in enumerate(compute_cnot_schedule(patch, round_order=round_order)):
@@ -91,6 +103,8 @@ def _cx_steps(
                 if kind == "X"
                 else [allocation.data_qubits[data], allocation.z_ancilla_qubits[stab]]
             )
+            if x_z_swapped:
+                operands.reverse()
             steps.append(SurfaceCircuitStep(OpType.CX, operands, f"{kind}{stab}"))
         steps.append(SurfaceCircuitStep(OpType.TICK))
     return steps
@@ -102,27 +116,32 @@ def init_syndrome_gadget(
     *,
     basis: str,
     round_order: str | Sequence[int] | None = None,
+    x_z_swapped: bool = False,
 ) -> Gadget:
     """Establish the complementary stabilizer signs after data preparation."""
     family = "X" if basis.upper() == "Z" else "Z"
+    h_family = "Z" if x_z_swapped else "X"
+    if x_z_swapped:
+        family = "Z" if family == "X" else "X"
     steps = [SurfaceCircuitStep(OpType.COMMENT, label=f"init_{family.lower()}_syndrome")]
     steps.extend(_ancilla_steps(patch, allocation, family, OpType.ALLOC))
-    if family == "X":
-        steps.extend(_hadamards(patch, allocation))
+    if family == h_family:
+        steps.extend(_hadamards(patch, allocation, h_family))
     steps.append(SurfaceCircuitStep(OpType.TICK))
-    steps.extend(_cx_steps(patch, allocation, family, round_order=round_order))
-    if family == "X":
-        steps.extend(_hadamards(patch, allocation))
+    steps.extend(_cx_steps(patch, allocation, family, round_order=round_order, x_z_swapped=x_z_swapped))
+    if family == h_family:
+        steps.extend(_hadamards(patch, allocation, h_family))
     steps.append(SurfaceCircuitStep(OpType.COMMENT, label="Measure ancillas"))
     steps.extend(_ancilla_steps(patch, allocation, family, OpType.MEASURE))
     steps.append(SurfaceCircuitStep(OpType.TICK))
     return Gadget(
         GadgetKind.INIT_SYNDROME,
-        f"init_{basis.lower()}_basis",
+        f"init_{basis.lower()}_basis" + ("_swapped" if x_z_swapped else ""),
         tuple(steps),
-        allocation,
+        (allocation,),
         (patch.dx, patch.dz),
         basis.upper(),
+        x_z_swapped=x_z_swapped,
     )
 
 
@@ -132,37 +151,48 @@ def syndrome_round_gadget(
     *,
     round_index: int,
     round_order: str | Sequence[int] | None = None,
+    x_z_swapped: bool = False,
 ) -> Gadget:
-    """Extract one full syndrome in the four-round windmill schedule."""
+    """Extract a full windmill syndrome, reversing both CX families after H.
+
+    In the swapped orientation base Z ancillas carry current X checks,
+    receive the Hadamards, and are allocated and measured first. Labels
+    always refer to physical register slots by stabilizer index.
+    """
     steps = [SurfaceCircuitStep(OpType.COMMENT, label=f"syndrome_extraction round {round_index + 1}")]
-    steps.extend(_ancilla_steps(patch, allocation, "X", OpType.ALLOC))
-    steps.extend(_ancilla_steps(patch, allocation, "Z", OpType.ALLOC))
-    steps.extend(_hadamards(patch, allocation))
+    families = ("Z", "X") if x_z_swapped else ("X", "Z")
+    for family in families:
+        steps.extend(_ancilla_steps(patch, allocation, family, OpType.ALLOC))
+    steps.extend(_hadamards(patch, allocation, families[0]))
     steps.append(SurfaceCircuitStep(OpType.TICK))
-    steps.extend(_cx_steps(patch, allocation, round_order=round_order))
-    steps.extend(_hadamards(patch, allocation))
+    steps.extend(_cx_steps(patch, allocation, round_order=round_order, x_z_swapped=x_z_swapped))
+    steps.extend(_hadamards(patch, allocation, families[0]))
     steps.append(SurfaceCircuitStep(OpType.COMMENT, label="Measure ancillas"))
-    steps.extend(_ancilla_steps(patch, allocation, "X", OpType.MEASURE))
-    steps.extend(_ancilla_steps(patch, allocation, "Z", OpType.MEASURE))
+    for family in families:
+        steps.extend(_ancilla_steps(patch, allocation, family, OpType.MEASURE))
     steps.append(SurfaceCircuitStep(OpType.TICK))
     return Gadget(
         GadgetKind.SYNDROME_ROUND,
-        "syndrome_extraction",
+        "syndrome_extraction" + ("_swapped" if x_z_swapped else ""),
         tuple(steps),
-        allocation,
+        (allocation,),
         (patch.dx, patch.dz),
         None,
+        x_z_swapped=x_z_swapped,
     )
 
 
 def measure_out_gadget(patch: SurfacePatch, allocation: QubitAllocation, *, basis: str) -> Gadget:
     """Destructively measure all data in the memory basis."""
+    if basis.upper() == "Y":
+        msg = "Y readout is unsupported"
+        raise NotImplementedError(msg)
     name = f"measure_{basis.lower()}_basis"
     steps = [SurfaceCircuitStep(OpType.COMMENT, label=name)]
     if basis.upper() == "X":
         steps.extend(SurfaceCircuitStep(OpType.H, [q]) for q in allocation.data_qubits)
     steps.extend(SurfaceCircuitStep(OpType.MEASURE, [q], f"final[{i}]") for i, q in enumerate(allocation.data_qubits))
-    return Gadget(GadgetKind.MEASURE_OUT, name, tuple(steps), allocation, (patch.dx, patch.dz), basis.upper())
+    return Gadget(GadgetKind.MEASURE_OUT, name, tuple(steps), (allocation,), (patch.dx, patch.dz), basis.upper())
 
 
 def logical_pauli_gadget(patch: SurfacePatch, allocation: QubitAllocation, *, pauli: str) -> Gadget:
@@ -177,9 +207,67 @@ def logical_pauli_gadget(patch: SurfacePatch, allocation: QubitAllocation, *, pa
         GadgetKind.LOGICAL_PAULI,
         f"apply_logical_{pauli.lower()}",
         steps,
-        allocation,
+        (allocation,),
         (patch.dx, patch.dz),
         pauli.upper(),
+    )
+
+
+def same_static_geometry(first: SurfacePatch, second: SurfacePatch) -> bool:
+    """Whether corresponding data indices carry identical CSS and logical supports."""
+    a, b = first.geometry, second.geometry
+    return (
+        (a.dx, a.dz, a.rotated, a.orientation) == (b.dx, b.dz, b.rotated, b.orientation)
+        and {s.index: s.data_qubits for s in a.x_stabilizers} == {s.index: s.data_qubits for s in b.x_stabilizers}
+        and {s.index: s.data_qubits for s in a.z_stabilizers} == {s.index: s.data_qubits for s in b.z_stabilizers}
+        and a.logical_x == b.logical_x
+        and a.logical_z == b.logical_z
+    )
+
+
+def transversal_layer_gadget(patch: SurfacePatch, allocation: QubitAllocation, *, gate: str) -> Gadget:
+    """Apply H, SZ, or SZDG to every data qubit.
+
+    H exchanges X and Z checks, the textbook transversal CSS construction.
+    The physical SZ layers are not logical S gates on this surface code.
+    """
+    names = {"H": "transversal_h", "SZ": "physical_sz_layer", "SZDG": "physical_szdg_layer"}
+    if gate not in names:
+        msg = f"Unsupported transversal layer: {gate}"
+        raise ValueError(msg)
+    if gate == "H" and patch.dx != patch.dz:
+        msg = "Transversal H requires a square patch (dx=dz)"
+        raise ValueError(msg)
+    return Gadget(
+        GadgetKind.TRANSVERSAL,
+        names[gate],
+        tuple(SurfaceCircuitStep(OpType[gate], [q]) for q in allocation.data_qubits),
+        (allocation,),
+        (patch.dx, patch.dz),
+        gate,
+    )
+
+
+def transversal_cx_gadget(
+    ctrl_patch: SurfacePatch,
+    ctrl_allocation: QubitAllocation,
+    tgt_patch: SurfacePatch,
+    tgt_allocation: QubitAllocation,
+) -> Gadget:
+    """Apply control-to-target CX at each data index, the textbook CSS transversal CX."""
+    if not same_static_geometry(ctrl_patch, tgt_patch):
+        msg = "Transversal CX requires the same static geometry"
+        raise ValueError(msg)
+    return Gadget(
+        GadgetKind.TWO_PATCH,
+        "transversal_cx",
+        tuple(
+            SurfaceCircuitStep(OpType.CX, [ctrl, tgt])
+            for ctrl, tgt in zip(ctrl_allocation.data_qubits, tgt_allocation.data_qubits, strict=True)
+        ),
+        (ctrl_allocation, tgt_allocation),
+        (ctrl_patch.dx, ctrl_patch.dz),
+        "CX",
     )
 
 

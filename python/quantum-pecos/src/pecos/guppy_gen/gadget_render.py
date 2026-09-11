@@ -20,25 +20,32 @@ from pecos.qec.surface.patch import SurfacePatch
 
 def render_gadget_function(gadget: Gadget) -> list[str]:
     """Interpret one gadget's physical steps through its register allocation."""
+    if (
+        gadget.kind in {GadgetKind.TRANSVERSAL, GadgetKind.TWO_PATCH}
+        or gadget.x_z_swapped
+        or (gadget.kind == GadgetKind.PREP and gadget.basis == "Y")
+    ):
+        msg = f"Guppy rendering is deferred for {gadget.name}"
+        raise NotImplementedError(msg)
     dx, dz = gadget.dimensions
     surface = f"SurfaceCode_{dx}x{dz}"
     syndrome = f"Syndrome_{dx}x{dz}"
     kind = gadget.kind
-    data = gadget.allocation.data_qubits
+    data = gadget.allocations[0].data_qubits
     n = len(data)
     register = "data" if kind == GadgetKind.PREP else "surf.data"
     names = {q: f"{register}[{i}]" for i, q in enumerate(data)}
-    names.update({q: f"ax{i}" for i, q in enumerate(gadget.allocation.x_ancilla_qubits)})
-    names.update({q: f"az{i}" for i, q in enumerate(gadget.allocation.z_ancilla_qubits)})
+    names.update({q: f"ax{i}" for i, q in enumerate(gadget.allocations[0].x_ancilla_qubits)})
+    names.update({q: f"az{i}" for i, q in enumerate(gadget.allocations[0].z_ancilla_qubits)})
     x_labels = [
         s.label
         for s in gadget.steps
-        if s.op_type == OpType.MEASURE and s.qubits[0] in gadget.allocation.x_ancilla_qubits
+        if s.op_type == OpType.MEASURE and s.qubits[0] in gadget.allocations[0].x_ancilla_qubits
     ]
     z_labels = [
         s.label
         for s in gadget.steps
-        if s.op_type == OpType.MEASURE and s.qubits[0] in gadget.allocation.z_ancilla_qubits
+        if s.op_type == OpType.MEASURE and s.qubits[0] in gadget.allocations[0].z_ancilla_qubits
     ]
     basis = gadget.basis
     argument = f"surf: {surface}"

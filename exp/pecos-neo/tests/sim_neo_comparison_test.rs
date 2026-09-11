@@ -142,7 +142,8 @@ fn test_sim_neo_vs_sim_deterministic_x() {
         .sampling(monte_carlo(NUM_SHOTS))
         .seed(42)
         .build()
-        .run();
+        .run()
+        .expect("simulation should succeed");
     let neo_counts = extract_neo_outcomes(&neo_results, &[QubitId(0)]);
 
     // Both should produce all 1s
@@ -188,7 +189,8 @@ fn test_sim_neo_vs_sim_hadamard() {
         .sampling(monte_carlo(NUM_SHOTS))
         .seed(42)
         .build()
-        .run();
+        .run()
+        .expect("simulation should succeed");
     let neo_counts = extract_neo_outcomes(&neo_results, &[QubitId(0)]);
 
     // Both should be roughly 50/50
@@ -250,7 +252,8 @@ fn test_sim_neo_vs_sim_bell_state() {
         .sampling(monte_carlo(NUM_SHOTS))
         .seed(42)
         .build()
-        .run();
+        .run()
+        .expect("simulation should succeed");
     let neo_counts = extract_neo_outcomes(&neo_results, &[QubitId(0), QubitId(1)]);
 
     // Both should only have 00 and 11
@@ -313,7 +316,8 @@ fn test_sim_neo_vs_sim_depolarizing_noise() {
         .sampling(monte_carlo(NUM_SHOTS))
         .seed(42)
         .build()
-        .run();
+        .run()
+        .expect("simulation should succeed");
     let neo_counts = extract_neo_outcomes(&neo_results, &[QubitId(0)]);
 
     // Both should have mostly 1s with some errors
@@ -380,7 +384,8 @@ fn test_sim_neo_vs_sim_measurement_noise() {
         .sampling(monte_carlo(NUM_SHOTS))
         .seed(42)
         .build()
-        .run();
+        .run()
+        .expect("simulation should succeed");
     let neo_counts = extract_neo_outcomes(&neo_results, &[QubitId(0)]);
 
     // Error rate should be ~p_meas (measuring |0> but getting 1)
@@ -463,7 +468,7 @@ fn test_sim_neo_vs_sim_conditional_x_correction() {
         let seed = 42u64.wrapping_add(shot_idx as u64);
         let mut runner = ProgramRunner::new(SparseStab::with_seed(1, seed)).with_seed(seed);
 
-        let result = runner.run_shot(&mut program);
+        let result = runner.run_shot(&mut program).expect("shot should succeed");
 
         // The final measurement should always be 0 (after correction)
         // Get the last measurement outcome
@@ -556,7 +561,7 @@ fn test_sim_neo_vs_sim_conditional_with_noise() {
             .with_noise(neo_noise)
             .with_seed(seed);
 
-        let result = runner.run_shot(&mut program);
+        let result = runner.run_shot(&mut program).expect("shot should succeed");
 
         if !result.outcomes.get_bit(QubitId(0)).unwrap_or(true) {
             neo_zeros += 1;
@@ -687,7 +692,8 @@ fn test_sim_neo_ergonomic_builder_direct() {
         .sampling(monte_carlo(NUM_SHOTS))
         .seed(42)
         .build()
-        .run();
+        .run()
+        .expect("simulation should succeed");
     let neo_counts = extract_neo_outcomes(&neo_results, &[QubitId(0)]);
 
     // Both should have similar error rates
@@ -714,7 +720,8 @@ fn test_sim_neo_convenience_methods() {
         .sampling(monte_carlo(500))
         .seed(42)
         .build()
-        .run();
+        .run()
+        .expect("simulation should succeed");
 
     // Using explicit GeneralNoiseModelBuilder - must match what .depolarizing() does
     let results_explicit = sim_neo(circuit)
@@ -729,7 +736,8 @@ fn test_sim_neo_convenience_methods() {
         .sampling(monte_carlo(500))
         .seed(42)
         .build()
-        .run();
+        .run()
+        .expect("simulation should succeed");
 
     // Both should produce similar results
     let conv_errors: usize = results_convenience
@@ -764,12 +772,12 @@ fn test_sim_neo_reusable() {
         .build();
 
     // First run
-    let results1 = sim.run();
+    let results1 = sim.run().expect("simulation should succeed");
     assert_eq!(results1.len(), 100);
 
     // Reconfigure and run again
     sim.shots(200).seed(123);
-    let results2 = sim.run();
+    let results2 = sim.run().expect("simulation should succeed");
     assert_eq!(results2.len(), 200);
 
     // Results should be different (different seeds)
@@ -808,14 +816,16 @@ fn test_sim_neo_determinism() {
         .sampling(monte_carlo(100))
         .seed(42)
         .build()
-        .run();
+        .run()
+        .expect("simulation should succeed");
 
     let results2 = sim_neo(circuit)
         .auto()
         .sampling(monte_carlo(100))
         .seed(42)
         .build()
-        .run();
+        .run()
+        .expect("simulation should succeed");
 
     // Results should be identical
     for (o1, o2) in results1.outcomes.iter().zip(results2.outcomes.iter()) {
@@ -865,7 +875,8 @@ fn test_sim_neo_vs_sim_noiseless_exact() {
         .sampling(monte_carlo(NUM_SHOTS))
         .seed(42)
         .build()
-        .run();
+        .run()
+        .expect("simulation should succeed");
     let neo_counts = extract_neo_outcomes(&neo_results, &[QubitId(0), QubitId(1)]);
 
     // Both should produce 100% |11>
@@ -919,7 +930,8 @@ fn test_sim_neo_noise_level_scaling() {
             .sampling(monte_carlo(NUM_SHOTS))
             .seed(42)
             .build()
-            .run();
+            .run()
+            .expect("simulation should succeed");
         let neo_counts = extract_neo_outcomes(&neo_results, &[QubitId(0)]);
         let neo_err = *neo_counts.get("0").unwrap_or(&0) as f64 / NUM_SHOTS as f64;
 
@@ -1006,7 +1018,8 @@ fn test_sim_neo_vs_sim_zero_noise() {
         .sampling(monte_carlo(NUM_SHOTS))
         .seed(42)
         .build()
-        .run();
+        .run()
+        .expect("simulation should succeed");
     let neo_counts = extract_neo_outcomes(&neo_results, &[QubitId(0), QubitId(1)]);
 
     // Bell state should be 100% correlated (only |00> and |11>)
@@ -1056,7 +1069,8 @@ fn test_sim_neo_high_noise_chaos() {
         .sampling(monte_carlo(NUM_SHOTS))
         .seed(42)
         .build()
-        .run();
+        .run()
+        .expect("simulation should succeed");
     let neo_counts = extract_neo_outcomes(&neo_results, &[QubitId(0)]);
 
     // At high noise, we expect significant errors but not 50/50
@@ -1131,7 +1145,8 @@ fn test_sim_neo_vs_sim_two_qubit_noise() {
         .sampling(monte_carlo(NUM_SHOTS))
         .seed(42)
         .build()
-        .run();
+        .run()
+        .expect("simulation should succeed");
     let neo_counts = extract_neo_outcomes(&neo_results, &[QubitId(0), QubitId(1)]);
 
     // Expected: |11> with some errors from CX noise
@@ -1195,7 +1210,8 @@ fn test_sim_neo_vs_sim_preparation_noise() {
         .sampling(monte_carlo(NUM_SHOTS))
         .seed(42)
         .build()
-        .run();
+        .run()
+        .expect("simulation should succeed");
     let neo_counts = extract_neo_outcomes(&neo_results, &[QubitId(0)]);
 
     // Error rate should be ~p_prep (preparing |0> but getting |1>)
@@ -1278,7 +1294,8 @@ fn test_sim_neo_vs_sim_combined_noise() {
         .sampling(monte_carlo(NUM_SHOTS))
         .seed(42)
         .build()
-        .run();
+        .run()
+        .expect("simulation should succeed");
     let neo_counts = extract_neo_outcomes(&neo_results, &[QubitId(0), QubitId(1)]);
 
     // For Bell state, ideal is 50% |00> and 50% |11> (correlated)
@@ -1354,7 +1371,8 @@ fn test_sim_neo_vs_sim_ghz_state() {
         .sampling(monte_carlo(NUM_SHOTS))
         .seed(42)
         .build()
-        .run();
+        .run()
+        .expect("simulation should succeed");
     let neo_counts = extract_neo_outcomes(&neo_results, &[QubitId(0), QubitId(1), QubitId(2)]);
 
     // Both should only have 000 and 111

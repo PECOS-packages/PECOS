@@ -427,7 +427,7 @@ fn test_noisy_execution_statistics() {
             .with_noise(noise)
             .with_seed(seed as u64);
 
-        let result = runner.run_shot(&mut program);
+        let result = runner.run_shot(&mut program).expect("shot should succeed");
         if result.outcomes.get_bit(QubitId(0)) == Some(true) {
             ones_count += 1;
         }
@@ -476,9 +476,9 @@ impl CommandSource for UserGateProgram {
     fn next_commands(
         &mut self,
         _outcomes: Option<&MeasurementOutcomes>,
-    ) -> Option<pecos_neo::command::CommandQueue> {
+    ) -> Result<Option<pecos_neo::command::CommandQueue>, pecos_core::errors::PecosError> {
         if self.executed {
-            return None;
+            return Ok(None);
         }
         self.executed = true;
 
@@ -486,7 +486,7 @@ impl CommandSource for UserGateProgram {
         // Note: The CommandBuilder doesn't directly support custom GateIds,
         // so for now we use standard gates to verify the CommandSource pattern works.
         // The actual user gate integration would require CommandBuilder extension.
-        Some(
+        Ok(Some(
             CommandBuilder::new()
                 .pz(&[0])
                 .pz(&[1])
@@ -495,15 +495,16 @@ impl CommandSource for UserGateProgram {
                 .mz(&[0])
                 .mz(&[1])
                 .build(),
-        )
+        ))
     }
 
     fn is_complete(&self) -> bool {
         self.executed
     }
 
-    fn reset(&mut self) {
+    fn reset(&mut self) -> Result<(), pecos_core::errors::PecosError> {
         self.executed = false;
+        Ok(())
     }
 
     fn num_qubits(&self) -> usize {
@@ -530,7 +531,7 @@ fn test_command_source_with_user_gates() {
     let mut program = UserGateProgram::new(user_gate_id);
     let mut runner = ProgramRunner::new(SparseStab::with_seed(2, 42)).with_seed(42);
 
-    let result = runner.run_shot(&mut program);
+    let result = runner.run_shot(&mut program).expect("shot should succeed");
 
     // Verify execution completed
     assert_eq!(result.num_batches, 1);
@@ -567,7 +568,7 @@ fn test_conditional_program_with_feedback() {
         let mut runner =
             ProgramRunner::new(SparseStab::with_seed(1, seed as u64)).with_seed(seed as u64);
 
-        let result = runner.run_shot(&mut program);
+        let result = runner.run_shot(&mut program).expect("shot should succeed");
 
         // If there were 2 batches, we did the correction
         if result.num_batches == 2 {

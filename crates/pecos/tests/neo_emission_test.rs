@@ -114,7 +114,8 @@ fn neo_zero_count() -> u64 {
         .sampling(monte_carlo(SHOTS))
         .noise(noise)
         .seed(99) // independent of the engines seed; agreement must be physical
-        .run();
+        .run()
+        .expect("neo simulation should succeed");
     let shots = results.shots.expect("neo produced shots");
     rate_zero(&shots).0
 }
@@ -238,7 +239,8 @@ fn neo_2q_zero_count() -> u64 {
         .sampling(monte_carlo(SHOTS))
         .noise(noise)
         .seed(99)
-        .run();
+        .run()
+        .expect("neo simulation should succeed");
     let shots = results.shots.expect("neo produced shots");
     rate_zero(&shots).0
 }

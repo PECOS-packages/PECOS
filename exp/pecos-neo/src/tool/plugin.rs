@@ -35,6 +35,7 @@ use super::Tool;
 ///         tool.insert_resource_mut(42u32);
 ///         tool.add_system_mut(Stage::Execute, |res: &mut Resources| {
 ///             *res.get_mut::<u32>() += 1;
+///             Ok(())
 ///         });
 ///     }
 /// }

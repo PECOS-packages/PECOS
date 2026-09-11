@@ -3111,7 +3111,7 @@ impl<'a> TickHandle<'a> {
     ///
     /// # Panics
     ///
-    /// Panics if either native gate conflicts with an operation already present
+    /// Panics if any lowered gate conflicts with an operation already present
     /// in its destination tick. Use [`Self::try_crz`] for fallible insertion.
     pub fn crz(
         &mut self,
@@ -3128,8 +3128,8 @@ impl<'a> TickHandle<'a> {
     ///
     /// # Errors
     ///
-    /// Returns [`TickGateError`] if either native gate is invalid or conflicts
-    /// with an operation already present in its destination tick. Neither gate
+    /// Returns [`TickGateError`] if any lowered gate is invalid or conflicts
+    /// with an operation already present in its destination tick. No gate
     /// is inserted when preflight validation fails.
     pub fn try_crz(
         &mut self,
@@ -3140,53 +3140,52 @@ impl<'a> TickHandle<'a> {
             return Ok(self);
         }
 
-        let mut rzz_batch: Option<Gate> = None;
-        let mut rz_batch: Option<Gate> = None;
+        let mut batches: smallvec::SmallVec<[Gate; 3]> = smallvec::SmallVec::new();
         for &(control, target) in pairs {
-            let [rzz, rz] = pecos_core::controlled_rotations::lower_crz(
+            for (stage, gate) in pecos_core::controlled_rotations::lower_crz(
                 theta_radians,
                 control.into(),
                 target.into(),
-            );
-            if let Some(batch) = &mut rzz_batch {
-                batch.append_batch(rzz);
-            } else {
-                rzz_batch = Some(rzz);
+            )
+            .into_iter()
+            .enumerate()
+            {
+                if let Some(batch) = batches.get_mut(stage) {
+                    batch.append_batch(gate);
+                } else {
+                    batches.push(gate);
+                }
             }
-            if let Some(batch) = &mut rz_batch {
-                batch.append_batch(rz);
-            } else {
-                rz_batch = Some(rz);
+        }
+
+        // Preflight every destination before inserting any part of the lowering.
+        for (stage, gate) in batches.iter().enumerate() {
+            let tick_idx = self.tick_idx + stage;
+            let mut preview = self
+                .circuit
+                .ticks
+                .get(tick_idx)
+                .cloned()
+                .unwrap_or_default();
+            if let Err(mut err) = preview.try_add_gate(gate.clone()) {
+                err.set_tick_idx(tick_idx);
+                return Err(err);
             }
         }
-
-        let Some(rzz_batch) = rzz_batch else {
-            return Ok(self);
-        };
-        let Some(rz_batch) = rz_batch else {
-            return Ok(self);
-        };
-        let rz_tick = self.tick_idx + 1;
-
-        let mut rzz_preview = self.circuit.ticks[self.tick_idx].clone();
-        if let Err(mut err) = rzz_preview.try_add_gate(rzz_batch.clone()) {
-            err.set_tick_idx(self.tick_idx);
-            return Err(err);
-        }
-        let mut rz_preview = self.circuit.ticks.get(rz_tick).cloned().unwrap_or_default();
-        if let Err(mut err) = rz_preview.try_add_gate(rz_batch.clone()) {
-            err.set_tick_idx(rz_tick);
-            return Err(err);
-        }
-
-        self.try_add_gate(rzz_batch)?;
-        while rz_tick >= self.circuit.ticks.len() {
-            self.circuit.ticks.push(Tick::new());
-        }
-        self.circuit.next_tick = self.circuit.next_tick.max(rz_tick + 1);
-        if let Err(mut err) = self.circuit.ticks[rz_tick].try_add_gate(rz_batch) {
-            err.set_tick_idx(rz_tick);
-            return Err(err);
+        for (stage, gate) in batches.into_iter().enumerate() {
+            if stage == 0 {
+                self.try_add_gate(gate)?;
+                continue;
+            }
+            let tick_idx = self.tick_idx + stage;
+            while tick_idx >= self.circuit.ticks.len() {
+                self.circuit.ticks.push(Tick::new());
+            }
+            self.circuit.next_tick = self.circuit.next_tick.max(tick_idx + 1);
+            if let Err(mut err) = self.circuit.ticks[tick_idx].try_add_gate(gate) {
+                err.set_tick_idx(tick_idx);
+                return Err(err);
+            }
         }
         Ok(self)
     }
@@ -3906,22 +3905,65 @@ mod tests {
         let mut circuit = TickCircuit::new();
         circuit.tick().crz(std::f64::consts::TAU, &[(0, 1)]);
 
-        assert_eq!(circuit.num_ticks(), 2);
-        assert_eq!(circuit.gate_count(), 2);
-        assert_eq!(
-            circuit.get_tick(0).unwrap().gate_batches()[0].gate_type,
-            GateType::RZZ
-        );
-        assert_eq!(
-            circuit.get_tick(1).unwrap().gate_batches()[0].gate_type,
-            GateType::RZ
-        );
-        assert_eq!(
-            circuit.get_tick(1).unwrap().gate_batches()[0]
-                .qubits
-                .as_slice(),
-            &[QubitId(1)]
-        );
+        assert_eq!(circuit.num_ticks(), 3);
+        assert_eq!(circuit.gate_count(), 3);
+        for (stage, kind, qubits) in [
+            (0, GateType::Z, vec![QubitId(0)]),
+            (1, GateType::RZZ, vec![QubitId(0), QubitId(1)]),
+            (2, GateType::RZ, vec![QubitId(1)]),
+        ] {
+            let gate = &circuit.get_tick(stage).unwrap().gate_batches()[0];
+            assert_eq!(gate.gate_type, kind);
+            assert_eq!(gate.qubits.as_slice(), qubits);
+        }
+    }
+
+    #[test]
+    fn crz_just_above_negative_pi_fits_before_occupied_third_tick() {
+        let mut circuit = TickCircuit::new();
+        circuit.reserve_ticks(3);
+        circuit.tick_at(2).h(&[1]);
+        circuit
+            .tick_at(0)
+            .try_crz((-std::f64::consts::PI).next_up(), &[(0, 1)])
+            .unwrap();
+
+        assert_eq!(circuit.num_ticks(), 3);
+        assert_eq!(circuit.gate_count(), 3);
+        for (stage, kind, qubits) in [
+            (0, GateType::RZZ, vec![QubitId(0), QubitId(1)]),
+            (1, GateType::RZ, vec![QubitId(1)]),
+            (2, GateType::H, vec![QubitId(1)]),
+        ] {
+            let gates = circuit.get_tick(stage).unwrap().gate_batches();
+            assert_eq!(gates.len(), 1);
+            assert_eq!(gates[0].gate_type, kind);
+            assert_eq!(gates[0].qubits.as_slice(), qubits);
+        }
+    }
+
+    #[test]
+    fn corrected_crz_preflights_all_three_ticks() {
+        for conflict_tick in 0..3 {
+            let mut circuit = TickCircuit::new();
+            circuit.reserve_ticks(3);
+            let qubit = usize::from(conflict_tick == 2);
+            circuit.tick_at(conflict_tick).h(&[qubit]);
+            let before = circuit.clone();
+            assert!(
+                circuit
+                    .tick_at(0)
+                    .try_crz(std::f64::consts::TAU, &[(0, 1)])
+                    .is_err()
+            );
+            assert_eq!(circuit.num_ticks(), before.num_ticks());
+            for tick in 0..3 {
+                assert_eq!(
+                    circuit.get_tick(tick).unwrap().gate_batches(),
+                    before.get_tick(tick).unwrap().gate_batches()
+                );
+            }
+        }
     }
 
     #[test]

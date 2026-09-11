@@ -435,23 +435,25 @@ impl PyStateVec {
                     }
                     Err(err) => return Err(err),
                 };
-                let gates: Vec<Gate> = match symbol {
+                let gates = match symbol {
                     "CRX" => {
                         pecos_core::controlled_rotations::lower_crx(angle, pair[0].0, pair[0].1)
-                            .into()
                     }
                     "CRY" => {
                         pecos_core::controlled_rotations::lower_cry(angle, pair[0].0, pair[0].1)
-                            .into()
                     }
                     "CRZ" => {
                         pecos_core::controlled_rotations::lower_crz(angle, pair[0].0, pair[0].1)
-                            .into()
+                            .into_iter()
+                            .collect()
                     }
                     _ => unreachable!(),
                 };
                 for gate in gates {
                     match gate.gate_type {
+                        GateType::Z => {
+                            self.inner.z(&gate.qubits);
+                        }
                         GateType::H => {
                             self.inner.h(&gate.qubits);
                         }

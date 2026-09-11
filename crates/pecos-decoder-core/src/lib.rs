@@ -49,6 +49,7 @@ pub mod results;
 pub mod streaming;
 pub mod telemetry;
 pub mod two_pass_decoder;
+pub mod window;
 
 use ndarray::ArrayView1;
 

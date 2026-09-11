@@ -27,9 +27,8 @@
 
 use pecos_decoder_core::ObservableDecoder;
 use pecos_decoder_core::correlated_decoder::EdgeTrackingDecoder;
-use pecos_decoder_core::dem::DemMatchingGraph;
 use pecos_decoder_core::errors::DecoderError;
-use std::fmt::Write as _;
+use pecos_decoder_core::window::{DemBoundaryKind, StructuredDem};
 
 /// Configuration for the windowed decoder.
 #[derive(Debug, Clone, Copy, Default)]
@@ -76,12 +75,29 @@ impl WindowedDecoder {
     pub fn from_dem<F>(
         dem: &str,
         config: WindowedConfig,
+        decoder_factory: F,
+    ) -> Result<Self, DecoderError>
+    where
+        F: FnMut(&str) -> Result<Box<dyn ObservableDecoder>, DecoderError>,
+    {
+        let dem = StructuredDem::from_dem_str(dem)?;
+        Self::from_structured_dem(&dem, config, decoder_factory)
+    }
+
+    /// Create from an already parsed structured DEM with a decoder factory.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DecoderError` if the model is incompatible or the factory fails.
+    pub fn from_structured_dem<F>(
+        dem: &StructuredDem,
+        config: WindowedConfig,
         mut decoder_factory: F,
     ) -> Result<Self, DecoderError>
     where
         F: FnMut(&str) -> Result<Box<dyn ObservableDecoder>, DecoderError>,
     {
-        let (det_times, num_detectors, step_size, total_t) = parse_dem_params(dem, &config)?;
+        let (_det_times, _num_detectors, step_size, total_t) = window_parameters(dem, &config)?;
         let mut windows = Vec::new();
         let mut t_start = 0.0f64;
 
@@ -93,8 +109,7 @@ impl WindowedDecoder {
                 t_start + step_size as f64
             };
 
-            let (local_to_global, window_dem) =
-                extract_window_dem(dem, &det_times, num_detectors, t_start, t_end);
+            let (local_to_global, window_dem) = render_soft_window(dem, t_start, t_end)?;
 
             let num_local = local_to_global.len();
             if num_local > 0 && !window_dem.is_empty() {
@@ -166,15 +181,28 @@ impl<D: EdgeTrackingDecoder> OverlappingWindowedDecoder<D> {
     /// # Errors
     ///
     /// Returns `DecoderError` if the DEM is malformed or the factory fails.
-    pub fn from_dem<F>(
-        dem: &str,
+    pub fn from_dem<F>(dem: &str, config: WindowedConfig, factory: F) -> Result<Self, DecoderError>
+    where
+        F: FnMut(&str) -> Result<D, DecoderError>,
+    {
+        let dem = StructuredDem::from_dem_str(dem)?;
+        Self::from_structured_dem(&dem, config, factory)
+    }
+
+    /// Create from an already parsed structured DEM.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DecoderError` if the model is incompatible or the factory fails.
+    pub fn from_structured_dem<F>(
+        dem: &StructuredDem,
         config: WindowedConfig,
         mut factory: F,
     ) -> Result<Self, DecoderError>
     where
         F: FnMut(&str) -> Result<D, DecoderError>,
     {
-        let (det_times, num_detectors, step_size, total_t) = parse_dem_params(dem, &config)?;
+        let (det_times, _num_detectors, step_size, total_t) = window_parameters(dem, &config)?;
         let buffer_size = config.buffer_size;
         let mut windows = Vec::new();
         let mut t_start = 0.0f64;
@@ -193,8 +221,7 @@ impl<D: EdgeTrackingDecoder> OverlappingWindowedDecoder<D> {
                 t_core_end + buffer_size as f64
             };
 
-            let (local_to_global, window_dem) =
-                extract_window_dem(dem, &det_times, num_detectors, t_win_start, t_win_end);
+            let (local_to_global, window_dem) = render_soft_window(dem, t_win_start, t_win_end)?;
 
             let ext = config.core_extend as f64;
             let is_core: Vec<bool> = local_to_global
@@ -300,6 +327,25 @@ impl<D: EdgeTrackingDecoder> SandwichWindowedDecoder<D> {
     pub fn from_dem<F1, F2>(
         dem: &str,
         config: WindowedConfig,
+        phase1_factory: F1,
+        phase2_factory: F2,
+    ) -> Result<Self, DecoderError>
+    where
+        F1: FnMut(&str) -> Result<D, DecoderError>,
+        F2: FnMut(&str) -> Result<Box<dyn ObservableDecoder>, DecoderError>,
+    {
+        let dem = StructuredDem::from_dem_str(dem)?;
+        Self::from_structured_dem(&dem, config, phase1_factory, phase2_factory)
+    }
+
+    /// Create both sandwich phases from an already parsed structured DEM.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DecoderError` if the model is incompatible or either factory fails.
+    pub fn from_structured_dem<F1, F2>(
+        dem: &StructuredDem,
+        config: WindowedConfig,
         mut phase1_factory: F1,
         mut phase2_factory: F2,
     ) -> Result<Self, DecoderError>
@@ -307,7 +353,7 @@ impl<D: EdgeTrackingDecoder> SandwichWindowedDecoder<D> {
         F1: FnMut(&str) -> Result<D, DecoderError>,
         F2: FnMut(&str) -> Result<Box<dyn ObservableDecoder>, DecoderError>,
     {
-        let (det_times, num_detectors, step_size, total_t) = parse_dem_params(dem, &config)?;
+        let (det_times, num_detectors, step_size, total_t) = window_parameters(dem, &config)?;
         let buffer_size = config.buffer_size;
 
         let mut type1_windows = Vec::new();
@@ -327,8 +373,7 @@ impl<D: EdgeTrackingDecoder> SandwichWindowedDecoder<D> {
                 t_core_end + buffer_size as f64
             };
 
-            let (local_to_global, window_dem) =
-                extract_window_dem(dem, &det_times, num_detectors, t_win_start, t_win_end);
+            let (local_to_global, window_dem) = render_soft_window(dem, t_win_start, t_win_end)?;
 
             let ext = config.core_extend as f64;
             let is_core: Vec<bool> = local_to_global
@@ -353,7 +398,7 @@ impl<D: EdgeTrackingDecoder> SandwichWindowedDecoder<D> {
             t_start += step_size as f64;
         }
 
-        let residual_decoder = phase2_factory(dem)?;
+        let residual_decoder = phase2_factory(&dem.to_dem_string())?;
 
         Ok(Self {
             type1_windows,
@@ -521,31 +566,18 @@ impl<D: EdgeTrackingDecoder> ObservableDecoder for SandwichWindowedDecoder<D> {
 // Shared helpers
 // =============================================================================
 
-/// Parse DEM parameters for windowing.
-fn parse_dem_params(
-    dem: &str,
+/// Derive window parameters from an already parsed structured DEM.
+fn window_parameters(
+    dem: &StructuredDem,
     config: &WindowedConfig,
 ) -> Result<(Vec<f64>, usize, usize, f64), DecoderError> {
-    let graph = DemMatchingGraph::from_dem_str(dem)?;
     // Every edge-tracking window family and its residual/beam aggregation use
     // u64 observable masks internally. Reject a wider model before creating
     // any sub-decoder so no global observable bit can be truncated.
-    graph.ensure_observables_fit_u64()?;
-    let num_detectors = graph.num_detectors;
-
-    let mut det_times = vec![0.0f64; num_detectors];
-    let mut max_time = 0.0f64;
-    for (i, coord) in graph.detector_coords.iter().enumerate() {
-        if let Some(c) = coord {
-            let t = c.get(2).copied().unwrap_or(0.0);
-            if i < det_times.len() {
-                det_times[i] = t;
-            }
-            if t > max_time {
-                max_time = t;
-            }
-        }
-    }
+    dem.ensure_observables_fit_u64()?;
+    let num_detectors = dem.num_detectors;
+    let det_times = dem.detector_times();
+    let max_time = det_times.iter().copied().fold(0.0f64, f64::max);
 
     let num_rounds = (max_time + 1.0) as usize;
     let num_stab = num_detectors
@@ -562,107 +594,18 @@ fn parse_dem_params(
     Ok((det_times, num_detectors, step_size, total_t))
 }
 
-/// Extract a window sub-DEM by filtering the original DEM text.
+/// Extract a soft-boundary window from the shared structured DEM.
 ///
 /// Detectors in `[t_start, t_end)` are included and remapped to local IDs.
 /// Detectors outside the window are dropped from error mechanisms, creating
 /// implicit boundary edges.
-fn extract_window_dem(
-    dem: &str,
-    det_times: &[f64],
-    num_det: usize,
+fn render_soft_window(
+    dem: &StructuredDem,
     t_start: f64,
     t_end: f64,
-) -> (Vec<u32>, String) {
-    let mut in_window = vec![false; num_det];
-    let mut local_to_global: Vec<u32> = Vec::new();
-    let mut global_to_local: Vec<Option<u32>> = vec![None; num_det];
-
-    for (i, &t) in det_times.iter().enumerate() {
-        if t >= t_start && t < t_end {
-            in_window[i] = true;
-            global_to_local[i] = Some(local_to_global.len() as u32);
-            local_to_global.push(i as u32);
-        }
-    }
-
-    let mut out = String::new();
-
-    for line in dem.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
-
-        if trimmed.starts_with("error(") {
-            let Some(close) = trimmed.find(')') else {
-                continue;
-            };
-            let prob_str = &trimmed[6..close];
-            let rest = &trimmed[close + 1..];
-            let tokens: Vec<&str> = rest.split_whitespace().collect();
-
-            // Split by ^ into decomposed segments.
-            let mut segments: Vec<Vec<&str>> = vec![Vec::new()];
-            for tok in &tokens {
-                if *tok == "^" {
-                    segments.push(Vec::new());
-                } else {
-                    segments.last_mut().unwrap().push(tok);
-                }
-            }
-
-            let mut remapped_segments: Vec<String> = Vec::new();
-            for seg in &segments {
-                let mut seg_dets: Vec<String> = Vec::new();
-                let mut seg_obs: Vec<String> = Vec::new();
-                let mut seg_any_in = false;
-
-                for tok in seg {
-                    if let Some(d_str) = tok.strip_prefix('D') {
-                        if let Ok(d) = d_str.parse::<usize>()
-                            && d < num_det
-                            && in_window[d]
-                        {
-                            seg_any_in = true;
-                            if let Some(local) = global_to_local[d] {
-                                seg_dets.push(format!("D{local}"));
-                            }
-                        }
-                    } else if tok.starts_with('L') {
-                        seg_obs.push((*tok).to_string());
-                    }
-                }
-
-                if seg_any_in {
-                    let mut seg_str = seg_dets.join(" ");
-                    for obs in &seg_obs {
-                        seg_str.push(' ');
-                        seg_str.push_str(obs);
-                    }
-                    remapped_segments.push(seg_str);
-                }
-            }
-
-            if !remapped_segments.is_empty() {
-                let _ = write!(out, "error({prob_str}) ");
-                out.push_str(&remapped_segments.join(" ^ "));
-                out.push('\n');
-            }
-        } else if trimmed.starts_with("detector(")
-            && let Some(d_start) = trimmed.rfind('D')
-            && let Ok(d) = trimmed[d_start + 1..].trim().parse::<usize>()
-            && d < num_det
-            && in_window[d]
-            && let Some(local) = global_to_local[d]
-        {
-            let coords_end = trimmed.find(')').unwrap_or(trimmed.len());
-            out.push_str(&trimmed[..=coords_end]);
-            let _ = writeln!(out, " D{local}");
-        }
-    }
-
-    (local_to_global, out)
+) -> Result<(Vec<u32>, String), DecoderError> {
+    let window = dem.window_by_time(t_start, t_end, DemBoundaryKind::Soft)?;
+    Ok((window.local_to_global, window.model.to_dem_string()))
 }
 
 // =============================================================================
@@ -698,15 +641,28 @@ impl<D: EdgeTrackingDecoder> StreamingWindowedDecoder<D> {
     /// # Errors
     ///
     /// Returns `DecoderError` if the DEM is malformed or factory fails.
-    pub fn from_dem<F>(
-        dem: &str,
+    pub fn from_dem<F>(dem: &str, config: WindowedConfig, factory: F) -> Result<Self, DecoderError>
+    where
+        F: FnMut(&str) -> Result<D, DecoderError>,
+    {
+        let dem = StructuredDem::from_dem_str(dem)?;
+        Self::from_structured_dem(&dem, config, factory)
+    }
+
+    /// Create a streaming decoder from an already parsed structured DEM.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DecoderError` if the model is incompatible or the factory fails.
+    pub fn from_structured_dem<F>(
+        dem: &StructuredDem,
         config: WindowedConfig,
         mut factory: F,
     ) -> Result<Self, DecoderError>
     where
         F: FnMut(&str) -> Result<D, DecoderError>,
     {
-        let (det_times, num_detectors, step_size, total_t) = parse_dem_params(dem, &config)?;
+        let (det_times, _num_detectors, step_size, total_t) = window_parameters(dem, &config)?;
         let buffer_size = config.buffer_size;
 
         // Build windows (same as OverlappingWindowedDecoder).
@@ -728,8 +684,7 @@ impl<D: EdgeTrackingDecoder> StreamingWindowedDecoder<D> {
                 t_core_end + buffer_size as f64
             };
 
-            let (local_to_global, window_dem) =
-                extract_window_dem(dem, &det_times, num_detectors, t_win_start, t_win_end);
+            let (local_to_global, window_dem) = render_soft_window(dem, t_win_start, t_win_end)?;
 
             let ext = config.core_extend as f64;
             let is_core: Vec<bool> = local_to_global
@@ -949,6 +904,25 @@ impl<D: EdgeTrackingDecoder> BeamSearchWindowedDecoder<D> {
     pub fn from_dem<F1, F2>(
         dem: &str,
         config: BeamSearchConfig,
+        phase1_factory: F1,
+        phase2_factory: Option<F2>,
+    ) -> Result<Self, DecoderError>
+    where
+        F1: FnMut(&str) -> Result<D, DecoderError>,
+        F2: FnMut(&str) -> Result<Box<dyn ObservableDecoder>, DecoderError>,
+    {
+        let dem = StructuredDem::from_dem_str(dem)?;
+        Self::from_structured_dem(&dem, config, phase1_factory, phase2_factory)
+    }
+
+    /// Create a beam-search decoder from an already parsed structured DEM.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DecoderError` if the model is incompatible or a factory fails.
+    pub fn from_structured_dem<F1, F2>(
+        dem: &StructuredDem,
+        config: BeamSearchConfig,
         mut phase1_factory: F1,
         mut phase2_factory: Option<F2>,
     ) -> Result<Self, DecoderError>
@@ -956,7 +930,8 @@ impl<D: EdgeTrackingDecoder> BeamSearchWindowedDecoder<D> {
         F1: FnMut(&str) -> Result<D, DecoderError>,
         F2: FnMut(&str) -> Result<Box<dyn ObservableDecoder>, DecoderError>,
     {
-        let (det_times, num_detectors, step_size, total_t) = parse_dem_params(dem, &config.window)?;
+        let (det_times, num_detectors, step_size, total_t) =
+            window_parameters(dem, &config.window)?;
         let buffer_size = config.window.buffer_size;
         let k = config.beam_width;
 
@@ -977,8 +952,7 @@ impl<D: EdgeTrackingDecoder> BeamSearchWindowedDecoder<D> {
                 t_core_end + buffer_size as f64
             };
 
-            let (local_to_global, window_dem) =
-                extract_window_dem(dem, &det_times, num_detectors, t_win_start, t_win_end);
+            let (local_to_global, window_dem) = render_soft_window(dem, t_win_start, t_win_end)?;
 
             let ext = config.window.core_extend as f64;
             let is_core: Vec<bool> = local_to_global
@@ -1024,7 +998,7 @@ impl<D: EdgeTrackingDecoder> BeamSearchWindowedDecoder<D> {
         }
 
         let residual_decoder = if let Some(ref mut f2) = phase2_factory {
-            Some(f2(dem)?)
+            Some(f2(&dem.to_dem_string())?)
         } else {
             None
         };
@@ -1178,6 +1152,7 @@ impl<D: EdgeTrackingDecoder> ObservableDecoder for BeamSearchWindowedDecoder<D> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pecos_decoder_core::dem::DemMatchingGraph;
 
     const D3_DEM: &str =
         include_str!("../../../examples/surface_code_circuits/surface_code_d3_z_stim.dem");
@@ -1263,6 +1238,26 @@ mod tests {
         let dec = WindowedDecoder::from_dem(D3_DEM, WindowedConfig::default(), uf_factory);
         assert!(dec.is_ok());
         assert!(dec.unwrap().num_windows() > 0);
+    }
+
+    #[test]
+    fn structured_input_matches_the_text_compatibility_adapter() {
+        let model = StructuredDem::from_dem_str(D3_DEM).unwrap();
+        let config = WindowedConfig {
+            step_size: 3,
+            buffer_size: 2,
+            ..Default::default()
+        };
+
+        let text = WindowedDecoder::from_dem(D3_DEM, config, uf_factory).unwrap();
+        let structured = WindowedDecoder::from_structured_dem(&model, config, uf_factory).unwrap();
+        assert_eq!(structured.num_windows(), text.num_windows());
+
+        let text = OverlappingWindowedDecoder::from_dem(D3_DEM, config, uf_edge_factory).unwrap();
+        let structured =
+            OverlappingWindowedDecoder::from_structured_dem(&model, config, uf_edge_factory)
+                .unwrap();
+        assert_eq!(structured.num_windows(), text.num_windows());
     }
 
     #[test]

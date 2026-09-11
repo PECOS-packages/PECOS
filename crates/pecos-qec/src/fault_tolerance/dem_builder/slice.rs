@@ -29,6 +29,7 @@ use super::types::{
     FaultMechanism,
 };
 use crate::fault_tolerance::propagator::DagFaultInfluenceMap;
+pub use pecos_decoder_core::window::DemBoundaryKind;
 use pecos_quantum::{Attribute, DagCircuit};
 use smallvec::{Array, SmallVec};
 use std::collections::{BTreeMap, BTreeSet};
@@ -1307,15 +1308,6 @@ fn update_horizon_from_effect(
         }
     }
     Ok(())
-}
-
-/// Whether unresolved forward temporal ports are legal at the end of a window.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DemBoundaryKind {
-    /// Terminal boundary: every future target must be resolved inside the window.
-    Hard,
-    /// Sliding boundary: future targets may project to the decoder boundary.
-    Soft,
 }
 
 /// Half-open commit-plus-buffer window specification.

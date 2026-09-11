@@ -320,6 +320,24 @@ independent contributions that become identical after projection are combined
 by the existing XOR probability rule when the structured model is rendered or
 converted to mechanism columns.
 
+## Decoder window handoff
+
+The decoder-core crate owns the flattened `StructuredDem` input boundary used
+by streaming and windowed decoders. It retains independent-error grouping,
+decomposition components, hyperedges, standard observable columns, and detector
+coordinates. `DetectorErrorModel::to_structured_decoder_dem()` converts a PECOS
+model directly into this representation, so a stitched model does not need a
+render/parse round trip. PECOS tracked-Pauli outputs are rejected explicitly at
+this matching-decoder boundary because they are not standard DEM observables.
+
+All UF windowed decoder families accept `from_structured_dem`; their existing
+`from_dem` constructors are compatibility adapters that parse once. Time-window
+selection and detector relabeling are performed by `StructuredDem::window_by_time`
+with the same shared `DemBoundaryKind` used by slice stitching. Soft boundaries
+project outside detector targets into implicit boundary edges, while hard
+boundaries reject an independent error spanning selected and unselected
+detectors. Explicit window bounds provide both look-behind and look-ahead halos.
+
 ## Current scope
 
 This layer provides the stable slice, cache, structured-DEM adapter, automatic
@@ -337,18 +355,17 @@ logical-subgraph window decoder, or adaptive syndrome-extraction templates.
 Full-circuit DEM construction remains the equivalence oracle and the
 conservative fallback outside supported families.
 
-## Follow-up work
+## Follow-up consolidation
 
-The remaining cross-cutting consolidation is tracked separately so it does not
-destabilize the checked slice/stitch path in this change:
+The cross-cutting follow-up issues found during review are implemented by this
+PR as separate commits:
 
 - [#748](https://github.com/PECOS-packages/PECOS/issues/748) migrates windowed
-  decoders from rendered-text filtering to structured slice stitching.
-- [#749](https://github.com/PECOS-packages/PECOS/issues/749) consolidates the
-  three H/CX Pauli-propagation implementations.
+  decoders from rendered-text filtering to the checked structured DEM boundary.
+- [#749](https://github.com/PECOS-packages/PECOS/issues/749) consolidates H/CX
+  Pauli propagation behind decoder-core transforms shared with Python.
 - [#750](https://github.com/PECOS-packages/PECOS/issues/750) unifies the relative
   slice mechanism/contribution/detector representations with the existing DEM
   types.
 - [#751](https://github.com/PECOS-packages/PECOS/issues/751) makes logical-gate
-  boundary providers data-driven after the placement and coordinate helpers
-  shared here.
+  boundary providers data-driven through one typed assembly description.

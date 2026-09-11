@@ -5074,6 +5074,79 @@ impl DetectorErrorModel {
         &self.contributions
     }
 
+    /// Convert this PECOS model into the structured decoder input boundary.
+    ///
+    /// This preserves independent contributions and their direct, Y-decomposed,
+    /// or source-decomposed component shape. Tracked-Pauli outputs are rejected
+    /// because matching decoders only consume standard DEM observables.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DecoderError`](pecos_decoder_core::errors::DecoderError) when
+    /// tracked-Pauli targets are present or model dimensions are inconsistent.
+    pub fn to_structured_decoder_dem(
+        &self,
+    ) -> Result<pecos_decoder_core::window::StructuredDem, pecos_decoder_core::errors::DecoderError>
+    {
+        use pecos_decoder_core::errors::DecoderError;
+        use pecos_decoder_core::window::{
+            StructuredDem, StructuredDemComponent, StructuredDemError,
+        };
+
+        if !self.tracked_paulis.is_empty()
+            || self.contributions.iter().any(|contribution| {
+                let kind = contribution.component_kind();
+                kind.components()
+                    .iter()
+                    .any(|component| !component.tracked_paulis.is_empty())
+            })
+        {
+            return Err(DecoderError::InvalidConfiguration(
+                "structured matching-decoder DEMs do not support PECOS tracked-Pauli outputs"
+                    .into(),
+            ));
+        }
+
+        let num_detectors = self.num_detectors();
+        let mut detector_coords = vec![None; num_detectors];
+        for detector in &self.detectors {
+            let index = detector.id as usize;
+            let Some(slot) = detector_coords.get_mut(index) else {
+                return Err(DecoderError::InvalidConfiguration(format!(
+                    "detector D{} is outside the model's detector dimension {num_detectors}",
+                    detector.id
+                )));
+            };
+            *slot = detector.coords.map(|coords| coords.to_vec());
+        }
+
+        let errors = self
+            .contributions
+            .iter()
+            .map(|contribution| {
+                let kind = contribution.component_kind();
+                let components = kind
+                    .components()
+                    .into_iter()
+                    .map(|mechanism| StructuredDemComponent {
+                        detectors: mechanism.detectors.to_vec(),
+                        observables: mechanism.dem_outputs.to_vec(),
+                    })
+                    .collect();
+                StructuredDemError {
+                    probability: contribution.probability,
+                    components,
+                }
+            })
+            .collect();
+        StructuredDem::try_new(
+            errors,
+            detector_coords,
+            num_detectors,
+            self.num_observables(),
+        )
+    }
+
     pub(crate) const fn source_locations_index_influence_map(&self) -> bool {
         self.source_locations_index_influence_map
     }
@@ -8760,6 +8833,25 @@ mod tests {
         assert!((summary.direct_probability - 0.01).abs() < 1e-12);
         assert_eq!(summary.y_decomposed_count, 1);
         assert!((summary.y_decomposed_probability - 0.02).abs() < 1e-12);
+    }
+
+    #[test]
+    fn structured_decoder_handoff_preserves_components_coordinates_and_outputs() {
+        let mut dem = DetectorErrorModel::new();
+        dem.add_detector(DetectorDef::new(0).with_coords([1.0, 2.0, 3.0]));
+        dem.add_detector(DetectorDef::new(1).with_coords([4.0, 5.0, 6.0]));
+        dem.add_observable(DemOutput::new(0));
+        let x = FaultMechanism::from_unsorted([0], std::iter::empty());
+        let z = FaultMechanism::from_unsorted([1], [0]);
+        dem.add_y_decomposed_contribution(&x, &z, 0.125);
+
+        let structured = dem.to_structured_decoder_dem().unwrap();
+
+        assert_eq!(structured.num_detectors, 2);
+        assert_eq!(structured.num_observables, 1);
+        assert_eq!(structured.detector_coords[0], Some(vec![1.0, 2.0, 3.0]));
+        assert_eq!(structured.errors[0].components.len(), 2);
+        assert_eq!(structured.errors[0].components[1].observables, [0]);
     }
 
     #[test]

@@ -34,12 +34,13 @@
 //!     .insert_resource(0u32)
 //!     .add_system(Stage::Execute, |res: &mut Resources| {
 //!         *res.get_mut::<u32>() += 1;
+//!         Ok(())
 //!     });
 //!
-//! tool.run();
+//! tool.run().unwrap();
 //! assert_eq!(*tool.resource::<u32>(), 1);
 //!
-//! tool.run();
+//! tool.run().unwrap();
 //! assert_eq!(*tool.resource::<u32>(), 2);
 //! ```
 //!
@@ -69,6 +70,7 @@
 //!         tool.insert_resource_mut(self.initial);
 //!         tool.add_system_mut(Stage::Execute, |res: &mut Resources| {
 //!             *res.get_mut::<u32>() += 1;
+//!             Ok(())
 //!         });
 //!     }
 //! }
@@ -76,7 +78,7 @@
 //! let mut tool = Tool::new()
 //!     .add_plugin(&CounterPlugin { initial: 10 });
 //!
-//! tool.run();
+//! tool.run().expect("tool should run successfully");
 //! assert_eq!(*tool.resource::<u32>(), 11);
 //! ```
 

@@ -55,6 +55,7 @@
 //! components whose XOR equals the original mechanism. Components may still be
 //! hyperedges if the physical source component flips 3+ detectors.
 
+use pecos_core::CliffordLowering;
 use pecos_core::PauliString;
 use pecos_core::gate_type::GateType;
 use rand::RngExt;
@@ -265,12 +266,6 @@ impl<'a> DirectSourceComponents<'a> {
     pub(crate) fn new(first: &'a FaultMechanism, second: &'a FaultMechanism) -> Self {
         Self {
             components: smallvec::smallvec![first, second],
-        }
-    }
-
-    pub(crate) fn from_slice(components: &'a [FaultMechanism]) -> Self {
-        Self {
-            components: components.iter().collect(),
         }
     }
 
@@ -2205,6 +2200,27 @@ pub enum ReplacementBranchApproximation {
     ExactBranchReplay,
 }
 
+impl ReplacementBranchApproximation {
+    /// Whether this mode consults the omitted gate's Pauli twirl.
+    #[must_use]
+    pub const fn consults_omitted_gate_twirl(self) -> bool {
+        !matches!(self, Self::IgnoreGateRemoval)
+    }
+}
+
+pub(crate) const EXACT_BRANCH_REPLAY_REQUIRES_PROVIDER: &str = "exact_branch_replay for p2 replacement branches requires a circuit-aware exact branch provider; use branch_impact or pauli_twirl_omitted_gate for the current Pauli-projected approximations";
+
+/// A replacement location whose resolved action has no omitted-gate twirl.
+#[derive(Debug, Clone, thiserror::Error)]
+#[error(
+    "replacement entries at node {node} with scheduled gate {gate_type:?} and Clifford {clifford:?} have no omitted-gate Pauli twirl"
+)]
+pub(crate) struct MissingOmittedGateTwirl {
+    pub node: usize,
+    pub gate_type: GateType,
+    pub clifford: CliffordLowering,
+}
+
 /// A single Pauli-projected impact term produced by a replacement branch.
 ///
 /// This is intentionally an intermediate representation rather than a final
@@ -2328,11 +2344,13 @@ impl PauliWeights {
     /// the Pauli twirl of the omitted gate, so `~II` on `SZZ` contributes half
     /// `II` and half `ZZ`, while `~XX` on `SZZ` contributes half `XX` and half
     /// `YY`. The identity component is intentionally not returned by callers that
-    /// query only non-identity Pauli labels.
+    /// query only non-identity Pauli labels. Per-qubit Pauli actions and
+    /// `Named(I)` give exact channels: a half-turn `RZZ` contributes `ZZ`,
+    /// while a zero rotation contributes only `II` before convolution.
     #[must_use]
     pub fn two_qubit_weight_for(
         &self,
-        gate_type: GateType,
+        clifford: CliffordLowering,
         pauli: &pecos_core::PauliString,
         approximation: ReplacementBranchApproximation,
     ) -> f64 {
@@ -2341,7 +2359,7 @@ impl PauliWeights {
         };
         let direct = self.post_gate_two_qubit_weight_for(pauli);
 
-        if approximation == ReplacementBranchApproximation::IgnoreGateRemoval {
+        if !approximation.consults_omitted_gate_twirl() {
             return direct
                 + self
                     .replacement_entries
@@ -2354,7 +2372,7 @@ impl PauliWeights {
 
         direct
             + self
-                .replacement_branch_impacts(gate_type)
+                .replacement_branch_impacts(clifford)
                 .into_iter()
                 .filter(|impact| impact.pauli_label == query_label)
                 .map(|impact| impact.relative_probability)
@@ -2384,8 +2402,11 @@ impl PauliWeights {
     /// detector/logical effects. Identity effects are omitted because DEM
     /// builders only emit branches that flip detectors or logical observables.
     #[must_use]
-    pub fn replacement_branch_impacts(&self, gate_type: GateType) -> Vec<ReplacementBranchImpact> {
-        let Some(twirl) = omitted_two_qubit_gate_pauli_twirl(gate_type) else {
+    pub fn replacement_branch_impacts(
+        &self,
+        clifford: CliffordLowering,
+    ) -> Vec<ReplacementBranchImpact> {
+        let Some(twirl) = omitted_two_qubit_gate_pauli_twirl(clifford) else {
             return Vec::new();
         };
         let mut impacts = Vec::new();
@@ -2415,12 +2436,40 @@ impl PauliWeights {
     /// This is a convenience aggregation for callers that do not need source
     /// branch identity.
     #[must_use]
-    pub fn replacement_branch_impact_weights(&self, gate_type: GateType) -> BTreeMap<String, f64> {
+    pub fn replacement_branch_impact_weights(
+        &self,
+        clifford: CliffordLowering,
+    ) -> BTreeMap<String, f64> {
         let mut weights = BTreeMap::new();
-        for impact in self.replacement_branch_impacts(gate_type) {
+        for impact in self.replacement_branch_impacts(clifford) {
             *weights.entry(impact.pauli_label).or_insert(0.0) += impact.relative_probability;
         }
         weights
+    }
+
+    /// Validate replacement locations when the selected mode consults a twirl.
+    ///
+    /// Every two-qubit gate accepted by Pauli propagation has a twirl, including
+    /// per-qubit Paulis and the identity action of zero-angle rotations.
+    pub(crate) fn validate_replacement_locations(
+        &self,
+        locations: &[crate::fault_tolerance::propagator::DagSpacetimeLocation],
+        approximation: ReplacementBranchApproximation,
+    ) -> Result<(), MissingOmittedGateTwirl> {
+        if approximation.consults_omitted_gate_twirl() && self.has_replacement_entries() {
+            for loc in locations {
+                if is_two_qubit_noise_gate(loc.gate_type)
+                    && omitted_two_qubit_gate_pauli_twirl(loc.clifford).is_none()
+                {
+                    return Err(MissingOmittedGateTwirl {
+                        node: loc.node,
+                        gate_type: loc.gate_type,
+                        clifford: loc.clifford,
+                    });
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Get all entries as `(PauliString, weight)` pairs.
@@ -2458,22 +2507,40 @@ impl<const N: usize> From<[(pecos_core::PauliString, f64); N]> for PauliWeights 
 /// Pauli-twirl probabilities, so this helper returns the distribution in terms
 /// of two-qubit Pauli labels, including `"II"` when present.
 ///
+/// For `PerQubit(X/Y/Z)`, the omitted operation is exactly `XX/YY/ZZ`,
+/// respectively. For `Named(I)`, it is exactly `II`. Their twirls place unit
+/// weight on that single Pauli, with no approximation to the omitted channel.
+///
 /// This helper is intentionally parameter-free and device-agnostic. Callers
 /// remain responsible for deciding which fault branches are replacement
 /// branches, how leakage symbols are projected, and how branch probabilities are
 /// scaled.
 #[must_use]
 pub fn omitted_two_qubit_gate_pauli_twirl(
-    gate_type: GateType,
+    clifford: CliffordLowering,
 ) -> Option<BTreeMap<&'static str, f64>> {
-    let entries: &[(&str, f64)] = match gate_type {
-        GateType::CX => &[("II", 0.25), ("IX", 0.25), ("ZI", 0.25), ("ZX", 0.25)],
-        GateType::CY => &[("II", 0.25), ("IY", 0.25), ("ZI", 0.25), ("ZY", 0.25)],
-        GateType::CZ => &[("II", 0.25), ("IZ", 0.25), ("ZI", 0.25), ("ZZ", 0.25)],
-        GateType::SWAP => &[("II", 0.25), ("XX", 0.25), ("YY", 0.25), ("ZZ", 0.25)],
-        GateType::SXX | GateType::SXXdg => &[("II", 0.5), ("XX", 0.5)],
-        GateType::SYY | GateType::SYYdg => &[("II", 0.5), ("YY", 0.5)],
-        GateType::SZZ | GateType::SZZdg => &[("II", 0.5), ("ZZ", 0.5)],
+    let entries: &[(&str, f64)] = match clifford {
+        CliffordLowering::Named(GateType::I) => &[("II", 1.0)],
+        CliffordLowering::Named(GateType::CX) => {
+            &[("II", 0.25), ("IX", 0.25), ("ZI", 0.25), ("ZX", 0.25)]
+        }
+        CliffordLowering::Named(GateType::CY) => {
+            &[("II", 0.25), ("IY", 0.25), ("ZI", 0.25), ("ZY", 0.25)]
+        }
+        CliffordLowering::Named(GateType::CZ) => {
+            &[("II", 0.25), ("IZ", 0.25), ("ZI", 0.25), ("ZZ", 0.25)]
+        }
+        CliffordLowering::Named(GateType::SWAP) => {
+            &[("II", 0.25), ("XX", 0.25), ("YY", 0.25), ("ZZ", 0.25)]
+        }
+        CliffordLowering::Named(GateType::SXX | GateType::SXXdg) => &[("II", 0.5), ("XX", 0.5)],
+        CliffordLowering::Named(GateType::SYY | GateType::SYYdg) => &[("II", 0.5), ("YY", 0.5)],
+        CliffordLowering::Named(GateType::SZZ | GateType::SZZdg) => &[("II", 0.5), ("ZZ", 0.5)],
+        // Pauli orthogonality gives tr(P (p tensor p)) = 4 only for P = pp,
+        // so |tr(P U)|^2 / 16 places all weight on that Pauli.
+        CliffordLowering::PerQubit(GateType::X) => &[("XX", 1.0)],
+        CliffordLowering::PerQubit(GateType::Y) => &[("YY", 1.0)],
+        CliffordLowering::PerQubit(GateType::Z) => &[("ZZ", 1.0)],
         _ => return None,
     };
     Some(entries.iter().copied().collect())
@@ -7062,6 +7129,7 @@ fn trim_trailing_zeros(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::is_two_qubit_noise_gate;
+    use pecos_core::CliffordLowering;
     use pecos_core::gate_type::GateType;
 
     #[test]
@@ -7219,6 +7287,12 @@ mod tests {
         }
     }
     use super::*;
+
+    fn source_components_from_slice(components: &[FaultMechanism]) -> DirectSourceComponents<'_> {
+        DirectSourceComponents {
+            components: components.iter().collect(),
+        }
+    }
 
     #[test]
     fn test_error_mechanism_xor() {
@@ -8992,7 +9066,7 @@ mod tests {
                 &[GateType::SZZ, GateType::SZZ],
                 &[false, false],
             ),
-            &DirectSourceComponents::from_slice(&components),
+            &source_components_from_slice(&components),
         );
 
         let source_graphlike = dem.to_string_source_graphlike_decomposed();
@@ -9268,7 +9342,7 @@ mod tests {
                 &[GateType::SZZ, GateType::SZZ, GateType::SZZ],
                 &[false, false, false],
             ),
-            &DirectSourceComponents::from_slice(&[repeated.clone(), repeated, survivor]),
+            &source_components_from_slice(&[repeated.clone(), repeated, survivor]),
         );
 
         let source_decomposed = dem.to_string_source_decomposed();
@@ -9461,10 +9535,62 @@ mod tests {
     }
 
     #[test]
+    fn omitted_gate_twirl_matches_unitary_trace_oracle() {
+        use CliffordLowering::{Named, PerQubit};
+        use pecos_core::unitary_rep::{Unitary, UnitaryRep};
+        use pecos_quantum::unitary_matrix::ToMatrix;
+        let cases = [
+            Named(GateType::I),
+            Named(GateType::CX),
+            Named(GateType::CY),
+            Named(GateType::CZ),
+            Named(GateType::SWAP),
+            Named(GateType::SXX),
+            Named(GateType::SXXdg),
+            Named(GateType::SYY),
+            Named(GateType::SYYdg),
+            Named(GateType::SZZ),
+            Named(GateType::SZZdg),
+            PerQubit(GateType::X),
+            PerQubit(GateType::Y),
+            PerQubit(GateType::Z),
+        ];
+        let paulis = [GateType::I, GateType::X, GateType::Y, GateType::Z];
+        for clifford in cases {
+            let unitary = match clifford {
+                Named(GateType::I) => {
+                    Unitary::named(GateType::I).to_matrix()
+                        & Unitary::named(GateType::I).to_matrix()
+                }
+                Named(gate) => Unitary::named(gate).to_matrix(),
+                PerQubit(pauli) => {
+                    Unitary::named(pauli).to_matrix() & Unitary::named(pauli).to_matrix()
+                }
+            };
+            let twirl = omitted_two_qubit_gate_pauli_twirl(clifford).unwrap();
+            for p1 in paulis {
+                for p2 in paulis {
+                    let pauli =
+                        (UnitaryRep::gate(p1, vec![0]) & UnitaryRep::gate(p2, vec![1])).to_matrix();
+                    let expected = (&pauli * &unitary).trace().norm_sqr() / 16.0;
+                    let label = format!("{p1:?}{p2:?}");
+                    let actual = twirl.get(label.as_str()).copied().unwrap_or(0.0);
+                    assert!(
+                        (expected - actual).abs() < 1e-12,
+                        "{clifford:?} {label}: {expected} != {actual}"
+                    );
+                }
+            }
+            assert!((twirl.values().sum::<f64>() - 1.0).abs() < 1e-12);
+        }
+    }
+
+    #[test]
     fn test_omitted_two_qubit_gate_pauli_twirl_for_spp_gates() {
-        let szz = omitted_two_qubit_gate_pauli_twirl(GateType::SZZ).expect("SZZ is supported");
-        let szzdg =
-            omitted_two_qubit_gate_pauli_twirl(GateType::SZZdg).expect("SZZdg is supported");
+        let szz = omitted_two_qubit_gate_pauli_twirl(CliffordLowering::Named(GateType::SZZ))
+            .expect("SZZ is supported");
+        let szzdg = omitted_two_qubit_gate_pauli_twirl(CliffordLowering::Named(GateType::SZZdg))
+            .expect("SZZdg is supported");
 
         assert_eq!(szz, BTreeMap::from([("II", 0.5), ("ZZ", 0.5)]));
         assert_eq!(szzdg, szz);
@@ -9473,18 +9599,24 @@ mod tests {
     #[test]
     fn test_omitted_two_qubit_gate_pauli_twirl_for_entanglers() {
         assert_eq!(
-            omitted_two_qubit_gate_pauli_twirl(GateType::CX).expect("CX is supported"),
+            omitted_two_qubit_gate_pauli_twirl(CliffordLowering::Named(GateType::CX))
+                .expect("CX is supported"),
             BTreeMap::from([("II", 0.25), ("IX", 0.25), ("ZI", 0.25), ("ZX", 0.25)]),
         );
         assert_eq!(
-            omitted_two_qubit_gate_pauli_twirl(GateType::CZ).expect("CZ is supported"),
+            omitted_two_qubit_gate_pauli_twirl(CliffordLowering::Named(GateType::CZ))
+                .expect("CZ is supported"),
             BTreeMap::from([("II", 0.25), ("IZ", 0.25), ("ZI", 0.25), ("ZZ", 0.25)]),
         );
         assert_eq!(
-            omitted_two_qubit_gate_pauli_twirl(GateType::SWAP).expect("SWAP is supported"),
+            omitted_two_qubit_gate_pauli_twirl(CliffordLowering::Named(GateType::SWAP))
+                .expect("SWAP is supported"),
             BTreeMap::from([("II", 0.25), ("XX", 0.25), ("YY", 0.25), ("ZZ", 0.25)]),
         );
-        assert!(omitted_two_qubit_gate_pauli_twirl(GateType::RZZ).is_none());
+        assert_eq!(
+            omitted_two_qubit_gate_pauli_twirl(CliffordLowering::Named(GateType::I)),
+            Some(BTreeMap::from([("II", 1.0)]))
+        );
     }
 
     #[test]
@@ -9495,7 +9627,7 @@ mod tests {
 
         assert!(
             (weights.two_qubit_weight_for(
-                GateType::SZZ,
+                CliffordLowering::Named(GateType::SZZ),
                 &(X(0) & X(1)),
                 ReplacementBranchApproximation::PauliTwirlOmittedGate,
             ) - (0.25 + 0.75 * 0.5))
@@ -9504,7 +9636,7 @@ mod tests {
         );
         assert!(
             (weights.two_qubit_weight_for(
-                GateType::SZZ,
+                CliffordLowering::Named(GateType::SZZ),
                 &(Y(0) & Y(1)),
                 ReplacementBranchApproximation::PauliTwirlOmittedGate,
             ) - 0.75 * 0.5)
@@ -9513,7 +9645,7 @@ mod tests {
         );
         assert!(
             (weights.two_qubit_weight_for(
-                GateType::SZZ,
+                CliffordLowering::Named(GateType::SZZ),
                 &(Y(0) & Y(1)),
                 ReplacementBranchApproximation::BranchImpact,
             ) - 0.75 * 0.5)
@@ -9522,7 +9654,7 @@ mod tests {
         );
         assert!(
             (weights.two_qubit_weight_for(
-                GateType::SZZ,
+                CliffordLowering::Named(GateType::SZZ),
                 &(X(0) & X(1)),
                 ReplacementBranchApproximation::IgnoreGateRemoval,
             ) - 1.0)
@@ -9542,7 +9674,7 @@ mod tests {
         );
         assert!(
             (replacement_omits_only.two_qubit_weight_for(
-                GateType::SZZ,
+                CliffordLowering::Named(GateType::SZZ),
                 &(Z(0) & Z(1)),
                 ReplacementBranchApproximation::PauliTwirlOmittedGate,
             ) - 0.5)
@@ -9550,11 +9682,13 @@ mod tests {
                 < 1e-12
         );
         assert_eq!(
-            replacement_omits_only.replacement_branch_impact_weights(GateType::SZZ),
+            replacement_omits_only
+                .replacement_branch_impact_weights(CliffordLowering::Named(GateType::SZZ)),
             BTreeMap::from([("ZZ".to_string(), 0.5)])
         );
         assert_eq!(
-            replacement_omits_only.replacement_branch_impacts(GateType::SZZ),
+            replacement_omits_only
+                .replacement_branch_impacts(CliffordLowering::Named(GateType::SZZ)),
             vec![ReplacementBranchImpact {
                 replacement_pauli_label: "II".to_string(),
                 omitted_gate_twirl_label: "ZZ".to_string(),
@@ -9566,7 +9700,7 @@ mod tests {
         let cx_replacement_identity = PauliWeights::with_replacement([], [(Z(0) & X(1), 1.0)]);
         assert!(
             (cx_replacement_identity.two_qubit_weight_for(
-                GateType::CX,
+                CliffordLowering::Named(GateType::CX),
                 &(Z(0) & X(1)),
                 ReplacementBranchApproximation::PauliTwirlOmittedGate,
             ) - 0.25)
@@ -9575,7 +9709,7 @@ mod tests {
         );
         assert!(
             (cx_replacement_identity.two_qubit_weight_for(
-                GateType::CX,
+                CliffordLowering::Named(GateType::CX),
                 &Z(0),
                 ReplacementBranchApproximation::PauliTwirlOmittedGate,
             ) - 0.25)

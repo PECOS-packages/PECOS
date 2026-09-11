@@ -37,6 +37,7 @@ pub(crate) fn first_unsupported_tick_gate(circuit: &TickCircuit) -> Option<Unsup
                 == PauliPropagationOutcome::Unsupported
             {
                 return Some(UnsupportedGateError {
+                    angles: gate.angles.to_vec(),
                     gate_type: gate.gate_type,
                     location: UnsupportedGateLocation::Tick {
                         tick: tick_idx,

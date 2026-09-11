@@ -523,7 +523,7 @@ impl<'a> DemBuilder<'a> {
                     weights.post_gate_two_qubit_weight_for(&pauli)
                 } else {
                     weights.two_qubit_weight_for(
-                        loc1.gate_type,
+                        loc1.clifford,
                         &pauli,
                         self.noise.p2_replacement_approximation,
                     )
@@ -945,6 +945,14 @@ impl<'a> DemBuilder<'a> {
     }
 
     fn validate_replacement_branch_approximation(&self) -> Result<(), DemBuilderError> {
+        if let Some(weights) = &self.noise.p2_weights {
+            weights
+                .validate_replacement_locations(
+                    &self.influence_map.locations,
+                    self.noise.p2_replacement_approximation,
+                )
+                .map_err(|error| DemBuilderError::ConfigurationError(error.to_string()))?;
+        }
         let has_replacement_branches = self
             .noise
             .p2_weights
@@ -972,8 +980,7 @@ impl<'a> DemBuilder<'a> {
                 return Ok(());
             }
             return Err(DemBuilderError::ConfigurationError(
-                "exact_branch_replay for p2 replacement branches requires a circuit-aware exact branch provider; use branch_impact or pauli_twirl_omitted_gate for the current Pauli-projected approximations"
-                    .to_string(),
+                super::types::EXACT_BRANCH_REPLAY_REQUIRES_PROVIDER.to_string(),
             ));
         }
         Ok(())
@@ -1119,14 +1126,7 @@ impl<'a> DemBuilder<'a> {
             }
 
             if let Some(gate) = context.circuit.gate(node) {
-                let qubits: Vec<usize> =
-                    gate.qubits.iter().map(pecos_core::QubitId::index).collect();
-                Self::apply_symbolic_gate_for_crosstalk_hidden_mz(
-                    &mut sim,
-                    node,
-                    gate.gate_type,
-                    &qubits,
-                )?;
+                Self::apply_symbolic_gate_for_crosstalk_hidden_mz(&mut sim, node, gate)?;
             }
         }
 
@@ -1247,13 +1247,15 @@ impl<'a> DemBuilder<'a> {
     fn apply_symbolic_gate_for_crosstalk_hidden_mz(
         sim: &mut SymbolicSparseStab,
         node: usize,
-        gate_type: GateType,
-        qubits: &[usize],
+        gate: &pecos_core::Gate,
     ) -> Result<(), DemBuilderError> {
         use crate::fault_tolerance::symbolic_replay::{
-            ArityError, Dispatch, apply_unitary_clifford,
+            ArityError, Dispatch, apply_lowered_clifford, apply_unitary_clifford,
         };
 
+        let gate_type = gate.gate_type;
+        let targets: Vec<usize> = gate.qubits.iter().map(pecos_core::QubitId::index).collect();
+        let qubits = targets.as_slice();
         let arity_error = |err: ArityError| match err {
             ArityError::TooFew { required, actual } => {
                 DemBuilderError::ConfigurationError(format!(
@@ -1265,6 +1267,9 @@ impl<'a> DemBuilder<'a> {
             )),
         };
 
+        if let Some(lowering) = pecos_core::try_lower_rotation_to_clifford(gate) {
+            return apply_lowered_clifford(sim, lowering, qubits).map_err(arity_error);
+        }
         if apply_unitary_clifford(sim, gate_type, qubits).map_err(arity_error)? == Dispatch::Applied
         {
             return Ok(());
@@ -1308,8 +1313,17 @@ impl<'a> DemBuilder<'a> {
             }
             gate_type if is_supported_noop_or_metadata_gate(gate_type) => {}
             _ => {
+                let error = crate::fault_tolerance::propagator::UnsupportedGateError {
+                    gate_type,
+                    angles: gate.angles.to_vec(),
+                    location:
+                        crate::fault_tolerance::propagator::UnsupportedGateLocation::DagNode {
+                            node,
+                        },
+                    qubits: targets,
+                };
                 return Err(DemBuilderError::ConfigurationError(format!(
-                    "measurement crosstalk exact deterministic replay does not support gate {gate_type:?} before payload node {node}"
+                    "measurement crosstalk exact deterministic replay: {error} before payload node {node}"
                 )));
             }
         }
@@ -1669,7 +1683,7 @@ impl<'a> DemBuilder<'a> {
             return;
         };
         let loc1_meta = &self.influence_map.locations[loc1];
-        let branch_impacts = weights.replacement_branch_impacts(loc1_meta.gate_type);
+        let branch_impacts = weights.replacement_branch_impacts(loc1_meta.clifford);
         if branch_impacts.is_empty() {
             return;
         }
@@ -1693,7 +1707,7 @@ impl<'a> DemBuilder<'a> {
                 loc1_meta,
                 loc2_meta,
                 dem,
-                Some(DirectSourceFamily::TwoLocationReplacementBranchImpact),
+                DirectSourceFamily::TwoLocationReplacementBranchImpact,
             );
         }
     }
@@ -2237,7 +2251,7 @@ impl<'a> DemBuilder<'a> {
         loc1_meta: &DagSpacetimeLocation,
         loc2_meta: &DagSpacetimeLocation,
         dem: &mut DetectorErrorModel,
-        direct_source_family: Option<DirectSourceFamily>,
+        direct_source_family: DirectSourceFamily,
     ) {
         let effect = &effects[p1 as usize][p2 as usize];
         if effect.is_empty() {
@@ -2262,51 +2276,26 @@ impl<'a> DemBuilder<'a> {
         let source_gate_types = [loc1_meta.gate_type, loc2_meta.gate_type];
         let source_before_flags = [loc1_meta.before, loc2_meta.before];
 
-        let source_frame_components = if direct_source_family.is_none() {
-            Self::two_qubit_clifford_source_frame_components(loc1_meta.gate_type, p1, p2, effects)
-        } else {
-            None
-        };
-        if let Some(parts) = source_frame_components.as_ref() {
-            dem.add_direct_contribution_with_source_components(
-                effect.clone(),
-                prob,
-                SourceMetadata::new(
-                    &source_locations,
-                    &source_paulis,
-                    &source_gate_types,
-                    &source_before_flags,
-                ),
-                &DirectSourceComponents::from_slice(parts.as_slice()),
-            );
-            return;
-        }
-
         if let Some((a1, a2, b1, b2)) = get_y_decomposition(p1, p2) {
             let e_a = &effects[a1 as usize][a2 as usize];
             let e_b = &effects[b1 as usize][b2 as usize];
-            let mut source = SourceMetadata::new(
+            let source = SourceMetadata::new(
                 &source_locations,
                 &source_paulis,
                 &source_gate_types,
                 &source_before_flags,
-            );
-            if direct_source_family.is_some() {
-                source = source.with_replacement_branch();
-            }
+            )
+            .with_replacement_branch();
             dem.add_y_decomposed_contribution_with_source(e_a, e_b, prob, source);
         } else {
-            let mut source = SourceMetadata::new(
+            let source = SourceMetadata::new(
                 &source_locations,
                 &source_paulis,
                 &source_gate_types,
                 &source_before_flags,
-            );
-            if let Some(family) = direct_source_family {
-                source = source
-                    .with_direct_source_family(family)
-                    .with_replacement_branch();
-            }
+            )
+            .with_direct_source_family(direct_source_family)
+            .with_replacement_branch();
 
             dem.add_direct_contribution_with_source_components(
                 effect.clone(),
@@ -2315,47 +2304,6 @@ impl<'a> DemBuilder<'a> {
                 &DirectSourceComponents::new(e1, e2),
             );
         }
-    }
-
-    /// Builds exact source-frame components for ordinary post-gate Pauli noise
-    /// on supported two-qubit Clifford gates.
-    ///
-    /// A post-gate Pauli can be pulled back through the Clifford into a pre-gate
-    /// Pauli. Decomposing that pre-gate Pauli into X/Z generators often exposes
-    /// the graphlike source pieces that were hidden by the native gate frame.
-    /// Each generator is then pushed forward again and looked up in the existing
-    /// post-gate effect table, so the XOR of returned components is exactly the
-    /// original post-gate effect.
-    fn two_qubit_clifford_source_frame_components(
-        gate_type: GateType,
-        post_p1: u8,
-        post_p2: u8,
-        effects: &[[FaultMechanism; 4]; 4],
-    ) -> Option<SmallVec<[FaultMechanism; 4]>> {
-        let images = two_qubit_pre_generator_post_images(gate_type)?;
-        let (pre_p1, pre_p2) = invert_two_qubit_clifford_post_pauli(images, (post_p1, post_p2))?;
-
-        let mut components = SmallVec::new();
-        for image in two_qubit_pre_pauli_generator_images(images, pre_p1, pre_p2) {
-            toggle_source_component(
-                &mut components,
-                effects[image.0 as usize][image.1 as usize].clone(),
-            );
-        }
-
-        if components.is_empty() {
-            return None;
-        }
-
-        #[cfg(debug_assertions)]
-        {
-            let combined = components
-                .iter()
-                .fold(FaultMechanism::new(), |acc, part| acc.xor(part));
-            debug_assert_eq!(combined, effects[post_p1 as usize][post_p2 as usize]);
-        }
-
-        Some(components)
     }
 
     /// Builds mappings from measurement indices to detector/DEM-output IDs.
@@ -2648,133 +2596,6 @@ fn pauli_label_to_index(label: char) -> Option<u8> {
 // ============================================================================
 // Intra-Channel Decomposition
 // ============================================================================
-
-type TwoQubitPauli = (u8, u8);
-type TwoQubitGeneratorImages = [TwoQubitPauli; 4];
-
-/// Returns post-gate images of the pre-gate generators
-/// `[X1, Z1, X2, Z2]`, ignoring phase.
-#[inline]
-fn two_qubit_pre_generator_post_images(gate_type: GateType) -> Option<TwoQubitGeneratorImages> {
-    match gate_type {
-        GateType::CX => Some([
-            (1, 1), // X1 -> XX
-            (3, 0), // Z1 -> ZI
-            (0, 1), // X2 -> IX
-            (3, 3), // Z2 -> ZZ
-        ]),
-        GateType::CZ => Some([
-            (1, 3), // X1 -> XZ
-            (3, 0), // Z1 -> ZI
-            (3, 1), // X2 -> ZX
-            (0, 3), // Z2 -> IZ
-        ]),
-        GateType::SZZ | GateType::SZZdg => Some([
-            (2, 3), // X1 -> YZ
-            (3, 0), // Z1 -> ZI
-            (3, 2), // X2 -> ZY
-            (0, 3), // Z2 -> IZ
-        ]),
-        _ => None,
-    }
-}
-
-#[inline]
-fn invert_two_qubit_clifford_post_pauli(
-    images: TwoQubitGeneratorImages,
-    post: TwoQubitPauli,
-) -> Option<TwoQubitPauli> {
-    for pre_p1 in 0..4 {
-        for pre_p2 in 0..4 {
-            if forward_two_qubit_pauli(images, pre_p1, pre_p2) == post {
-                return Some((pre_p1, pre_p2));
-            }
-        }
-    }
-    None
-}
-
-fn two_qubit_pre_pauli_generator_images(
-    images: TwoQubitGeneratorImages,
-    pre_p1: u8,
-    pre_p2: u8,
-) -> SmallVec<[TwoQubitPauli; 4]> {
-    let mut out = SmallVec::new();
-    if pauli_has_x(pre_p1) {
-        out.push(images[0]);
-    }
-    if pauli_has_z(pre_p1) {
-        out.push(images[1]);
-    }
-    if pauli_has_x(pre_p2) {
-        out.push(images[2]);
-    }
-    if pauli_has_z(pre_p2) {
-        out.push(images[3]);
-    }
-    out
-}
-
-#[inline]
-fn forward_two_qubit_pauli(
-    images: TwoQubitGeneratorImages,
-    pre_p1: u8,
-    pre_p2: u8,
-) -> TwoQubitPauli {
-    two_qubit_pre_pauli_generator_images(images, pre_p1, pre_p2)
-        .into_iter()
-        .fold((0, 0), xor_two_qubit_pauli)
-}
-
-#[inline]
-fn xor_two_qubit_pauli(a: TwoQubitPauli, b: TwoQubitPauli) -> TwoQubitPauli {
-    (xor_pauli(a.0, b.0), xor_pauli(a.1, b.1))
-}
-
-#[inline]
-fn xor_pauli(a: u8, b: u8) -> u8 {
-    pauli_from_bits(
-        pauli_has_x(a) ^ pauli_has_x(b),
-        pauli_has_z(a) ^ pauli_has_z(b),
-    )
-}
-
-#[inline]
-fn pauli_has_x(pauli: u8) -> bool {
-    matches!(pauli, 1 | 2)
-}
-
-#[inline]
-fn pauli_has_z(pauli: u8) -> bool {
-    matches!(pauli, 2 | 3)
-}
-
-#[inline]
-fn pauli_from_bits(has_x: bool, has_z: bool) -> u8 {
-    match (has_x, has_z) {
-        (false, false) => 0,
-        (true, false) => 1,
-        (true, true) => 2,
-        (false, true) => 3,
-    }
-}
-
-fn toggle_source_component(
-    components: &mut SmallVec<[FaultMechanism; 4]>,
-    component: FaultMechanism,
-) {
-    if component.is_empty() {
-        return;
-    }
-    if let Some(index) = components
-        .iter()
-        .position(|existing| existing == &component)
-    {
-        components.remove(index);
-    } else {
-        components.push(component);
-    }
-}
 
 /// Returns the intra-channel decomposition for Y-containing Pauli cases.
 ///
@@ -3851,47 +3672,6 @@ mod tests {
     }
 
     #[test]
-    fn test_szz_source_frame_components_pull_post_error_to_pre_generators() {
-        fn dets(indices: &[u32]) -> FaultMechanism {
-            FaultMechanism::from_unsorted(indices.iter().copied(), std::iter::empty())
-        }
-
-        let a = dets(&[0, 1]);
-        let b = dets(&[2]);
-        let c = dets(&[3, 4]);
-
-        let mut effects: [[FaultMechanism; 4]; 4] = Default::default();
-        effects[2][3] = a.clone(); // SZZ maps pre X1 to post YZ.
-        effects[3][0] = b.clone(); // SZZ maps pre Z1 to post ZI.
-        effects[0][3] = c.clone(); // SZZ maps pre Z2 to post IZ.
-        effects[1][0] = a.xor(&b).xor(&c);
-
-        let parts =
-            DemBuilder::two_qubit_clifford_source_frame_components(GateType::SZZ, 1, 0, &effects)
-                .expect("post XI should pull back through SZZ to pre YZ");
-
-        assert_eq!(parts.len(), 3);
-        assert!(parts.contains(&a));
-        assert!(parts.contains(&b));
-        assert!(parts.contains(&c));
-        assert_eq!(
-            parts
-                .iter()
-                .fold(FaultMechanism::new(), |acc, part| acc.xor(part)),
-            effects[1][0]
-        );
-
-        effects[3][0] = a.clone();
-        effects[1][0] = c.clone();
-
-        let parts =
-            DemBuilder::two_qubit_clifford_source_frame_components(GateType::SZZ, 1, 0, &effects)
-                .expect("duplicate source components should cancel by XOR");
-
-        assert_eq!(parts.as_slice(), &[c]);
-    }
-
-    #[test]
     fn test_from_circuit_tracks_tracked_pauli() {
         use pecos_core::pauli::X;
         use pecos_quantum::DagCircuit;
@@ -4638,6 +4418,70 @@ mod tests {
             Attribute::String(r#"[{"id":0,"records":[-1]}]"#.to_string()),
         );
         circuit
+    }
+
+    #[test]
+    fn crosstalk_hidden_measurement_replay_lowers_rotations() {
+        use crate::fault_tolerance::dem_builder::MeasurementCrosstalkTransitionModel;
+        use pecos_core::{Angle64, Gate};
+        let dem = |gates: &[Gate], inverse: &[Gate], victim| {
+            let mut circuit = pecos_quantum::DagCircuit::new();
+            circuit.pz(&[0, 1]);
+            circuit.h(&[0, 1]);
+            for gate in gates.iter().chain(inverse) {
+                circuit.add_gate_auto_wire(gate.clone());
+            }
+            circuit.h(&[0, 1]);
+            circuit.add_gate_auto_wire(Gate::meas_crosstalk_local_payload(&[victim]));
+            circuit.mz(&[victim]);
+            circuit.set_attr(
+                "detectors",
+                pecos_quantum::Attribute::String(r#"[{"id":0,"records":[-1]}]"#.to_string()),
+            );
+            let noise = NoiseConfig::new(0.0, 0.0, 0.0, 0.0)
+                .set_measurement_crosstalk_local_rate(0.25)
+                .set_measurement_crosstalk_transition_model(
+                    MeasurementCrosstalkTransitionModel::bit_flip(0.4, 0.2),
+                )
+                .set_measurement_crosstalk_dem_mode(
+                    MeasurementCrosstalkDemMode::ExactDeterministic,
+                );
+            let dem = DemBuilder::try_from_circuit_with_noise_config(&circuit, noise)
+                .unwrap()
+                .to_string();
+            assert!(dem.contains("error("));
+            dem
+        };
+        for victim in [0, 1] {
+            for (angle, named, inverse) in [
+                (
+                    Angle64::QUARTER_TURN,
+                    vec![Gate::szz(&[(0, 1)])],
+                    vec![Gate::szzdg(&[(0, 1)])],
+                ),
+                (
+                    Angle64::HALF_TURN,
+                    vec![Gate::z(&[0, 1])],
+                    vec![Gate::z(&[0, 1])],
+                ),
+                (Angle64::ZERO, vec![], vec![]),
+            ] {
+                assert_eq!(
+                    dem(&[Gate::rzz(angle, &[(0, 1)])], &inverse, victim),
+                    dem(&named, &inverse, victim),
+                    "angle {angle}, victim {victim}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn crosstalk_unsupported_rotation_diagnostic_preserves_angles() {
+        let mut sim = SymbolicSparseStab::new(1);
+        let gate = pecos_core::Gate::rz(pecos_core::Angle64::from_turns(0.125), &[0]);
+        let error = DemBuilder::apply_symbolic_gate_for_crosstalk_hidden_mz(&mut sim, 0, &gate)
+            .unwrap_err();
+        assert!(error.to_string().contains("RZ(0.125000 turns)"));
     }
 
     #[test]

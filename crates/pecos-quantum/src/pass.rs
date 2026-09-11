@@ -281,39 +281,17 @@ impl CircuitPass for InsertIdleAfterTwoQubitGates {
     }
 }
 
-/// Apply an in-place simplification to a gate. Returns `true` if the gate was
-/// simplified (either renamed in place or needs decomposition handling).
-fn simplify_gate_in_place(gate: &mut Gate) -> bool {
-    // RXY1Q has two angles — handle separately
-    if gate.gate_type == GateType::RXY1Q && gate.angles.len() == 2 {
-        if let Some(named) = pecos_core::try_simplify_rxy1q(gate.angles[0], gate.angles[1]) {
-            if named == GateType::I {
-                return false;
-            }
-            gate.gate_type = named;
-            gate.angles.clear();
-            return true;
-        }
-        return false;
-    }
-
-    if gate.angles.len() != 1 {
-        return false;
-    }
-    // Identity removal is a separate, explicit pass because these gates can
-    // still be noise locations in a fault model.
-    if is_rotation(gate.gate_type) && gate.angles[0].is_zero() {
-        return false;
-    }
-    if let Some(named) = pecos_core::try_simplify_rotation(gate.gate_type, gate.angles[0]) {
-        if named == GateType::I {
-            return false;
-        }
+/// Rename a rotation in place when it lowers to a non-identity named Clifford.
+fn simplify_gate_in_place(gate: &mut Gate) {
+    if let Some(pecos_core::CliffordLowering::Named(named)) =
+        pecos_core::try_lower_rotation_to_clifford(gate)
+        // Identity removal is a separate, explicit pass because these gates can
+        // still be noise locations in a fault model.
+        && named != GateType::I
+    {
         gate.gate_type = named;
         gate.angles.clear();
-        return true;
     }
-    false
 }
 
 // === Helper functions for circuit transformation passes ===
@@ -533,9 +511,8 @@ impl CircuitPass for SimplifyRotations {
             let mut decompositions: Vec<(usize, GateType)> = Vec::new();
 
             for gate in tick.iter_gate_batches() {
-                if gate.angles.len() == 1
-                    && let Some(pauli) =
-                        pecos_core::half_turn_decomposition(gate.gate_type, gate.angles[0])
+                if let Some(pecos_core::CliffordLowering::PerQubit(pauli)) =
+                    pecos_core::try_lower_rotation_to_clifford(&gate)
                 {
                     decompositions.push((gate.batch_index(), pauli));
                 }
@@ -573,9 +550,8 @@ impl CircuitPass for SimplifyRotations {
             };
 
             // Check for two-qubit half-turn decomposition first.
-            if gate.angles.len() == 1
-                && let Some(pauli) =
-                    pecos_core::half_turn_decomposition(gate.gate_type, gate.angles[0])
+            if let Some(pecos_core::CliffordLowering::PerQubit(pauli)) =
+                pecos_core::try_lower_rotation_to_clifford(gate)
             {
                 let qubits = gate.qubits.clone();
 

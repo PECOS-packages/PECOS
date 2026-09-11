@@ -62,6 +62,8 @@ pub enum DetectorValidationError {
     /// Raw measurement mode requires all gates to be in the supported Clifford
     /// subset (`H`, `X`, `Y`, `Z`, `SZ`, `SZdg`, `CX`, `CZ`, `SWAP`, `MZ`, `PZ`, `I`).
     UnsupportedGateForDeterminismAnalysis { gate_type: String },
+    /// Noise or DEM builder configuration is invalid.
+    InvalidConfiguration { message: String },
     /// Circuit detector/observable metadata is malformed.
     InvalidMetadata { message: String },
     /// A detector or observable annotation references a node that cannot be
@@ -74,6 +76,21 @@ pub enum DetectorValidationError {
         /// The unresolvable measurement id.
         meas_id: pecos_core::MeasId,
     },
+}
+
+impl From<crate::fault_tolerance::influence_builder::InfluenceBuildError>
+    for DetectorValidationError
+{
+    fn from(error: crate::fault_tolerance::influence_builder::InfluenceBuildError) -> Self {
+        use crate::fault_tolerance::influence_builder::InfluenceBuildError;
+        match error {
+            InfluenceBuildError::UnsupportedPauliPropagation(error)
+            | InfluenceBuildError::UnsupportedGate(error) => Self::UnsupportedGate(error),
+            InfluenceBuildError::BatchedMeasurementUnsupported { .. } => Self::InvalidMetadata {
+                message: error.to_string(),
+            },
+        }
+    }
 }
 
 impl std::fmt::Display for DetectorValidationError {
@@ -109,6 +126,9 @@ impl std::fmt::Display for DetectorValidationError {
                      H, X, Y, Z, SZ, SZdg, CX, CZ, SWAP, MZ, PZ/QAlloc, I/Idle."
                 )
             }
+            Self::InvalidConfiguration { message } => {
+                write!(f, "Invalid DEM configuration: {message}")
+            }
             Self::InvalidMetadata { message } => {
                 write!(f, "Invalid detector/observable metadata: {message}")
             }
@@ -131,6 +151,18 @@ impl std::error::Error for DetectorValidationError {}
 impl From<crate::fault_tolerance::propagator::UnsupportedGateError> for DetectorValidationError {
     fn from(error: crate::fault_tolerance::propagator::UnsupportedGateError) -> Self {
         Self::UnsupportedGate(error)
+    }
+}
+
+impl From<super::DemBuilderError> for DetectorValidationError {
+    fn from(error: super::DemBuilderError) -> Self {
+        match error {
+            super::DemBuilderError::UnsupportedGate(error) => Self::UnsupportedGate(error),
+            super::DemBuilderError::ParseError(message) => Self::InvalidMetadata { message },
+            super::DemBuilderError::ConfigurationError(message) => {
+                Self::InvalidConfiguration { message }
+            }
+        }
     }
 }
 
@@ -451,8 +483,10 @@ impl DemSampler {
     ///
     /// # Errors
     ///
-    /// Returns [`DetectorValidationError`] when detector metadata is invalid
-    /// for the circuit's measurement record.
+    /// Returns [`DetectorValidationError::UnsupportedGate`] for unsupported circuit
+    /// gates, [`DetectorValidationError::InvalidMetadata`] for malformed metadata
+    /// or unsupported measurement batches, and
+    /// [`DetectorValidationError::InvalidConfiguration`] for invalid DEM configuration.
     pub fn from_circuit(
         circuit: &pecos_quantum::DagCircuit,
         noise: &super::types::NoiseConfig,
@@ -473,9 +507,7 @@ impl DemSampler {
                 message: err.to_string(),
             })?
             .build()
-            .map_err(|err| DetectorValidationError::InvalidMetadata {
-                message: err.to_string(),
-            })?;
+            .map_err(DetectorValidationError::from)?;
         influence_map.merge_dem_outputs_from(&annotation_map);
 
         // Extract metadata before building (avoids ownership issues with builder methods)
@@ -543,11 +575,7 @@ impl DemSampler {
             builder
         };
 
-        let dem = builder
-            .try_build()
-            .map_err(|err| DetectorValidationError::InvalidMetadata {
-                message: err.to_string(),
-            })?;
+        let dem = builder.try_build()?;
         Ok(Self::from_detector_error_model(&dem))
     }
 
@@ -624,7 +652,8 @@ impl DemSampler {
     /// # Errors
     ///
     /// Returns [`DetectorValidationError::UnsupportedGate`] if the influence
-    /// map came from a circuit Pauli propagation cannot faithfully represent.
+    /// map came from a circuit Pauli propagation cannot faithfully represent,
+    /// or [`DetectorValidationError::InvalidConfiguration`] for invalid DEM configuration.
     pub fn from_influence_map(
         influence_map: &DagFaultInfluenceMap,
         per_location_probs: &[f64],
@@ -1297,7 +1326,8 @@ impl<'a> DemSamplerBuilder<'a> {
     /// # Errors
     ///
     /// Returns an error if detector definitions reference non-deterministic
-    /// measurements or are not linearly independent over `Z_2`.
+    /// measurements or are not linearly independent over `Z_2`, or
+    /// [`DetectorValidationError::InvalidConfiguration`] for invalid DEM configuration.
     pub fn build(self) -> Result<DemSampler, DetectorValidationError> {
         // A supplied measurement order must cover every measurement, otherwise
         // detector/observable record offsets validated against the circuit's

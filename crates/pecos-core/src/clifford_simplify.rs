@@ -19,6 +19,55 @@ type A64 = Angle<u64>;
 /// Shared rewriting and propagation consumers use exact matching instead.
 const CLIFFORD_SNAP_EPSILON_TURNS: f64 = 1e-9;
 
+/// How a rotation gate lowers to named Cliffords.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum CliffordLowering {
+    /// The rotation is this named gate on the gate's own qubit list.
+    /// `Named(GateType::I)` is a zero rotation.
+    Named(GateType),
+    /// A two-qubit half-turn: this Pauli acts on every qubit independently.
+    PerQubit(GateType),
+}
+
+/// Whether the shared lowering policy owns this rotation gate type.
+#[must_use]
+pub fn is_lowerable_rotation(gate_type: GateType) -> bool {
+    matches!(
+        gate_type,
+        GateType::RX
+            | GateType::RY
+            | GateType::RZ
+            | GateType::RXX
+            | GateType::RYY
+            | GateType::RZZ
+            | GateType::RXY1Q
+    )
+}
+
+/// Lower a rotation gate to named Cliffords under the shared policy.
+///
+/// Axis rotations match exactly. `RXY1Q` snaps both angles within `1e-9`
+/// turns of the Clifford grid, as documented by [`try_simplify_rxy1q`].
+///
+/// Returns `None` when the gate is not a rotation, its angle arity is wrong,
+/// or the angle is not a Clifford angle.
+#[must_use]
+pub fn try_lower_rotation_to_clifford(gate: &crate::Gate) -> Option<CliffordLowering> {
+    match (gate.gate_type, gate.angles.as_slice()) {
+        (gate_type, &[angle]) if is_lowerable_rotation(gate_type) => {
+            try_simplify_rotation(gate.gate_type, angle)
+                .map(CliffordLowering::Named)
+                .or_else(|| {
+                    half_turn_decomposition(gate.gate_type, angle).map(CliffordLowering::PerQubit)
+                })
+        }
+        (GateType::RXY1Q, &[theta, phi]) => {
+            try_simplify_rxy1q(theta, phi).map(CliffordLowering::Named)
+        }
+        _ => None,
+    }
+}
+
 /// Try to simplify a single-angle rotation gate to a named Clifford gate.
 ///
 /// Supports `RZ`, `RX`, `RY`, `RZZ`, `RXX`, `RYY`.
@@ -135,19 +184,14 @@ fn snap_clifford_angle(angle: A64) -> A64 {
     .unwrap_or(angle)
 }
 
-/// Negate an angle.
-fn neg(a: A64) -> A64 {
-    -a
-}
-
 fn simplify_rz(angle: A64) -> Option<GateType> {
     if angle == A64::ZERO {
         Some(GateType::I)
-    } else if angle == A64::HALF_TURN || angle == neg(A64::HALF_TURN) {
+    } else if angle == A64::HALF_TURN {
         Some(GateType::Z)
     } else if angle == A64::QUARTER_TURN {
         Some(GateType::SZ)
-    } else if angle == A64::THREE_QUARTERS_TURN || angle == neg(A64::QUARTER_TURN) {
+    } else if angle == A64::THREE_QUARTERS_TURN {
         Some(GateType::SZdg)
     } else {
         None
@@ -157,11 +201,11 @@ fn simplify_rz(angle: A64) -> Option<GateType> {
 fn simplify_rx(angle: A64) -> Option<GateType> {
     if angle == A64::ZERO {
         Some(GateType::I)
-    } else if angle == A64::HALF_TURN || angle == neg(A64::HALF_TURN) {
+    } else if angle == A64::HALF_TURN {
         Some(GateType::X)
     } else if angle == A64::QUARTER_TURN {
         Some(GateType::SX)
-    } else if angle == A64::THREE_QUARTERS_TURN || angle == neg(A64::QUARTER_TURN) {
+    } else if angle == A64::THREE_QUARTERS_TURN {
         Some(GateType::SXdg)
     } else {
         None
@@ -171,11 +215,11 @@ fn simplify_rx(angle: A64) -> Option<GateType> {
 fn simplify_ry(angle: A64) -> Option<GateType> {
     if angle == A64::ZERO {
         Some(GateType::I)
-    } else if angle == A64::HALF_TURN || angle == neg(A64::HALF_TURN) {
+    } else if angle == A64::HALF_TURN {
         Some(GateType::Y)
     } else if angle == A64::QUARTER_TURN {
         Some(GateType::SY)
-    } else if angle == A64::THREE_QUARTERS_TURN || angle == neg(A64::QUARTER_TURN) {
+    } else if angle == A64::THREE_QUARTERS_TURN {
         Some(GateType::SYdg)
     } else {
         None
@@ -187,7 +231,7 @@ fn simplify_rzz(angle: A64) -> Option<GateType> {
         Some(GateType::I)
     } else if angle == A64::QUARTER_TURN {
         Some(GateType::SZZ)
-    } else if angle == A64::THREE_QUARTERS_TURN || angle == neg(A64::QUARTER_TURN) {
+    } else if angle == A64::THREE_QUARTERS_TURN {
         Some(GateType::SZZdg)
     } else {
         None
@@ -201,7 +245,7 @@ fn simplify_rxx(angle: A64) -> Option<GateType> {
         Some(GateType::I)
     } else if angle == A64::QUARTER_TURN {
         Some(GateType::SXX)
-    } else if angle == A64::THREE_QUARTERS_TURN || angle == neg(A64::QUARTER_TURN) {
+    } else if angle == A64::THREE_QUARTERS_TURN {
         Some(GateType::SXXdg)
     } else {
         None
@@ -213,7 +257,7 @@ fn simplify_ryy(angle: A64) -> Option<GateType> {
         Some(GateType::I)
     } else if angle == A64::QUARTER_TURN {
         Some(GateType::SYY)
-    } else if angle == A64::THREE_QUARTERS_TURN || angle == neg(A64::QUARTER_TURN) {
+    } else if angle == A64::THREE_QUARTERS_TURN {
         Some(GateType::SYYdg)
     } else {
         None
@@ -238,7 +282,7 @@ fn simplify_ryy(angle: A64) -> Option<GateType> {
 /// Clifford-only boundary that explicitly accepts numerical tolerance.
 #[must_use]
 pub fn half_turn_decomposition(gate: GateType, angle: A64) -> Option<GateType> {
-    if angle != A64::HALF_TURN && angle != neg(A64::HALF_TURN) {
+    if angle != A64::HALF_TURN {
         return None;
     }
     match gate {
@@ -272,6 +316,91 @@ pub fn is_rzz_z_tensor_z(angle: A64) -> bool {
 mod tests {
     use super::*;
     use crate::Angle64;
+
+    #[test]
+    fn shared_lowering_covers_clifford_tables() {
+        // RXY1Q pi and 3pi/2 rows are covered by the delegate's
+        // rxy1q_half_turn_* and rxy1q_three_quarter_turn_* tests.
+        use CliffordLowering::{Named, PerQubit};
+        use GateType::*;
+        for (rotation, quarter, half, three_quarters, two_qubit) in [
+            (RZ, SZ, Z, SZdg, false),
+            (RX, SX, X, SXdg, false),
+            (RY, SY, Y, SYdg, false),
+            (RZZ, SZZ, Z, SZZdg, true),
+            (RXX, SXX, X, SXXdg, true),
+            (RYY, SYY, Y, SYYdg, true),
+        ] {
+            for (angle, expected) in [
+                (Angle64::ZERO, Named(I)),
+                (Angle64::QUARTER_TURN, Named(quarter)),
+                (
+                    Angle64::HALF_TURN,
+                    if two_qubit {
+                        PerQubit(half)
+                    } else {
+                        Named(half)
+                    },
+                ),
+                (Angle64::THREE_QUARTERS_TURN, Named(three_quarters)),
+            ] {
+                let gate = match rotation {
+                    RZ => crate::Gate::rz(angle, &[0]),
+                    RX => crate::Gate::rx(angle, &[0]),
+                    RY => crate::Gate::ry(angle, &[0]),
+                    RZZ => crate::Gate::rzz(angle, &[(0, 1)]),
+                    RXX => crate::Gate::rxx(angle, &[(0, 1)]),
+                    RYY => crate::Gate::ryy(angle, &[(0, 1)]),
+                    _ => unreachable!("the table contains only axis rotations"),
+                };
+                gate.validate().unwrap();
+                assert_eq!(
+                    try_lower_rotation_to_clifford(&gate),
+                    Some(expected),
+                    "{rotation:?} {angle:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn shared_lowering_rejects_non_cliffords_and_wrong_payloads() {
+        use crate::Gate;
+        use CliffordLowering::Named;
+        assert_eq!(
+            try_lower_rotation_to_clifford(&Gate::rxy1q(
+                Angle64::ZERO,
+                Angle64::from_radians(0.3),
+                &[0]
+            )),
+            Some(Named(GateType::I))
+        );
+        assert_eq!(
+            try_lower_rotation_to_clifford(&Gate::rxy1q(
+                Angle64::QUARTER_TURN,
+                Angle64::ZERO,
+                &[0]
+            )),
+            Some(Named(GateType::SX))
+        );
+        for gate in [
+            Gate::rxy1q(Angle64::from_turns(0.1), Angle64::ZERO, &[0]),
+            Gate::rz(Angle64::from_turn_ratio(1, 8), &[0]),
+            Gate::h(&[0]),
+            Gate::t(&[0]),
+            Gate::mz(&[0]),
+        ] {
+            assert_eq!(try_lower_rotation_to_clifford(&gate), None);
+        }
+        for (gate_type, arities) in [(GateType::RZ, [0, 2]), (GateType::RXY1Q, [1, 3])] {
+            for arity in arities {
+                let mut gate = Gate::rz(Angle64::ZERO, &[0]);
+                gate.gate_type = gate_type;
+                gate.angles = vec![Angle64::ZERO; arity].into();
+                assert_eq!(try_lower_rotation_to_clifford(&gate), None);
+            }
+        }
+    }
 
     #[test]
     fn rz_simplifications() {

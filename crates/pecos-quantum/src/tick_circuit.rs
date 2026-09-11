@@ -3919,6 +3919,30 @@ mod tests {
     }
 
     #[test]
+    fn crz_just_above_negative_pi_fits_before_occupied_third_tick() {
+        let mut circuit = TickCircuit::new();
+        circuit.reserve_ticks(3);
+        circuit.tick_at(2).h(&[1]);
+        circuit
+            .tick_at(0)
+            .try_crz((-std::f64::consts::PI).next_up(), &[(0, 1)])
+            .unwrap();
+
+        assert_eq!(circuit.num_ticks(), 3);
+        assert_eq!(circuit.gate_count(), 3);
+        for (stage, kind, qubits) in [
+            (0, GateType::RZZ, vec![QubitId(0), QubitId(1)]),
+            (1, GateType::RZ, vec![QubitId(1)]),
+            (2, GateType::H, vec![QubitId(1)]),
+        ] {
+            let gates = circuit.get_tick(stage).unwrap().gate_batches();
+            assert_eq!(gates.len(), 1);
+            assert_eq!(gates[0].gate_type, kind);
+            assert_eq!(gates[0].qubits.as_slice(), qubits);
+        }
+    }
+
+    #[test]
     fn corrected_crz_preflights_all_three_ticks() {
         for conflict_tick in 0..3 {
             let mut circuit = TickCircuit::new();

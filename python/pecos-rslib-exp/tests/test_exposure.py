@@ -188,6 +188,25 @@ def test_sim_neo_extract_commands_control_interference(symbol, operands, theta):
     assert [list(row) for row in result] == [[1, 0]] * 4
 
 
+@pytest.mark.parametrize("symbol", ["CRX", "CRY", "CRZ"])
+@pytest.mark.parametrize("operands", [(0, 1), (1, 0)])
+@pytest.mark.parametrize("theta", [math.tau, -math.tau, 3 * math.tau, -3 * math.tau])
+def test_sim_neo_extract_commands_control_and_target_interference(symbol, operands, theta):
+    control, target = operands
+    circuit = _boundary_circuit(
+        [
+            [("PZ", [0, 1])],
+            [("H", [control, target])],
+            [(symbol, [control, target], [theta])],
+            [("H", [control, target])],
+            [("MZ", [control, target])],
+        ],
+    )
+    # Superpose the target too: an extra target Z must change its final bit.
+    result = exp.sim_neo(circuit).quantum(exp.statevec()).sampling(exp.monte_carlo(4)).seed(670).run()
+    assert [list(row) for row in result] == [[1, 0]] * 4
+
+
 def test_stab_mps_measurement_selection_precedence_and_reset_retention():
     assert exp.StabMps(1).measurement == "exact"
     assert exp.StabMps(1, measurement="pragmatic").measurement == "pragmatic"

@@ -22,12 +22,13 @@ use std::f64::consts::{PI, TAU};
 /// Keep both reduction and parity in f64: storing the remainder in `Angle64`
 /// would quantize it before the turn count is recovered.
 fn reduced_half_and_wrap_parity(theta_radians: f64) -> (f64, bool) {
-    // Bound the source to one 4π period before deriving either component.
-    // The removed-turn count is then only 0, 1, or 2, even for huge inputs.
-    let bounded = theta_radians.rem_euclid(2.0 * TAU);
-    let reduced = bounded.rem_euclid(TAU);
+    // Reduce directly to preserve the principal branch near -π and tiny angles.
+    let reduced = theta_radians.rem_euclid(TAU);
     let signed = if reduced > PI { reduced - TAU } else { reduced };
     let h = signed / 2.0;
+    // Use the 4π reduction only for parity. Subtracting an even number of 2π
+    // turns preserves parity while keeping the rounded count in 0, 1, or 2.
+    let bounded = theta_radians.rem_euclid(2.0 * TAU);
     let wraps = ((bounded - signed) / TAU).round();
     // The rounded count has exact integer parity; compare exactly, without a tolerance.
     let needs_z = wraps.rem_euclid(2.0).total_cmp(&1.0).is_eq();
@@ -42,9 +43,10 @@ fn reduced_half_and_wrap_parity(theta_radians: f64) -> (f64, bool) {
 /// stored leg reaches the ambiguous ±π pair. Each removed 2π turn contributes
 /// a `Z` on the control; retaining its parity preserves the exact global phase
 /// and 4π periodicity without quantizing the source angle through [`Angle64`].
-/// The source is first reduced modulo 4π to keep the turn count bounded. This
-/// prevents loss of integer parity in an enormous quotient; it does not improve
-/// the accuracy of floating-point argument reduction.
+/// A separate reduction modulo 4π keeps the turn count bounded without changing
+/// the directly reduced signed representative. This prevents loss of integer
+/// parity in an enormous quotient; it does not improve the accuracy of
+/// floating-point argument reduction.
 ///
 /// # Numerical validation
 ///
@@ -409,6 +411,67 @@ mod tests {
                 assert_eq!(needs_z, (theta / 2.0).cos() < 0.0, "theta={theta}");
             }
         }
+    }
+
+    #[test]
+    fn crz_just_above_negative_pi_keeps_two_gates() {
+        let theta = (-PI).next_up();
+        let (half, needs_z) = reduced_half_and_wrap_parity(theta);
+        assert_eq!(half.to_bits(), (theta / 2.0).to_bits());
+        assert!(!needs_z);
+        let gates = lower_crz(theta, QubitId(0), QubitId(1));
+        assert_eq!(gates.len(), 2);
+        assert_eq!(
+            gates.as_slice(),
+            &[
+                Gate::rzz(
+                    Angle64::from_radians(-theta / 2.0),
+                    &[(QubitId(0), QubitId(1))]
+                ),
+                Gate::rz(Angle64::from_radians(theta / 2.0), &[QubitId(1)]),
+            ]
+        );
+    }
+
+    /// The principal representative is half-open at `+π`, so `π` itself keeps the
+    /// positive branch and emits no correction. Choosing `-π` instead denotes the
+    /// same operator, because the extra control `Z` cancels the sign it introduces,
+    /// but it emits three gates where two suffice and so changes tick scheduling.
+    #[test]
+    fn crz_at_positive_pi_keeps_the_upper_branch_and_two_gates() {
+        let (half, needs_z) = reduced_half_and_wrap_parity(PI);
+        assert_eq!(half.to_bits(), (PI / 2.0).to_bits());
+        assert!(!needs_z);
+
+        let gates = lower_crz(PI, QubitId(0), QubitId(1));
+        assert_eq!(gates.len(), 2);
+        assert_eq!(
+            gates.as_slice(),
+            &[
+                Gate::rzz(
+                    Angle64::from_radians(-PI / 2.0),
+                    &[(QubitId(0), QubitId(1))]
+                ),
+                Gate::rz(Angle64::from_radians(PI / 2.0), &[QubitId(1)]),
+            ]
+        );
+
+        // `-π` is the other end of the same half-open interval: it reduces onto the
+        // upper branch and pays for it with the correction.
+        let (negated_half, negated_needs_z) = reduced_half_and_wrap_parity(-PI);
+        assert_eq!(negated_half.to_bits(), (PI / 2.0).to_bits());
+        assert!(negated_needs_z);
+        assert_eq!(lower_crz(-PI, QubitId(0), QubitId(1)).len(), 3);
+    }
+
+    #[test]
+    fn tiny_negative_crz_preserves_directly_reduced_half() {
+        let (half, needs_z) = reduced_half_and_wrap_parity(-1e-15);
+        assert_eq!(
+            (2.0 * half).to_bits(),
+            (-8.881_784_197_001_252e-16_f64).to_bits()
+        );
+        assert!(!needs_z);
     }
 
     #[test]

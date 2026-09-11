@@ -76,6 +76,21 @@ def test_py_tick_handle_crz_preserves_full_matrix() -> None:
                 assert abs(columns[column][row] - reference[row][column]) < 1e-12
 
 
+def test_py_tick_handle_crz_just_above_negative_pi_fits_before_h() -> None:
+    circuit = TickCircuit()
+    for _ in range(3):
+        circuit.tick()
+    circuit.tick_at(2).h([1])
+    circuit.tick_at(0).crz(math.nextafter(-math.pi, 0.0), [(0, 1)])
+
+    assert circuit.num_ticks() == 3
+    for index, (name, qubits) in enumerate([("RZZ", [0, 1]), ("RZ", [1]), ("H", [1])]):
+        gates = circuit.get_tick(index).gate_batches()
+        assert len(gates) == 1
+        assert gates[0].gate_type.name == name
+        assert list(gates[0].qubits) == qubits
+
+
 def test_py_tick_handle_crz_conflict_is_atomic() -> None:
     circuit = TickCircuit()
     circuit.tick()

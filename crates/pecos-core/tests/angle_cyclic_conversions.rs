@@ -325,11 +325,11 @@ fn nonfinite_conversions_panic_and_infinite_tolerances_saturate() {
 #[test]
 fn tiny_controlled_rotations_have_expected_angles() {
     // Reduction before halving leaves positive inputs unchanged. For negative
-    // inputs, adding 2*TAU rounds -1e-15 to -1.7763568394002505e-15 and smaller
+    // inputs, adding TAU rounds -1e-15 to -8.881784197001252e-16 and smaller
     // magnitudes to zero; the stored half therefore need not be symmetric.
     for (theta, rzz_angle, rz_angle) in [
         (1e-15, -Angle64::new(2048), Angle64::new(1468)),
-        (-1e-15, Angle64::new(2608), -Angle64::new(2048)),
+        (-1e-15, Angle64::new(1304), Angle64::ZERO),
         (1e-16, Angle64::ZERO, Angle64::new(147)),
         (-1e-16, Angle64::ZERO, Angle64::ZERO),
         (1e-17, Angle64::ZERO, Angle64::new(15)),

@@ -113,13 +113,12 @@ fn synthetic_idle_influence(
     z_signature: &[u32],
 ) -> DagFaultInfluenceMap {
     let mut influence = DagFaultInfluenceMap::with_capacity(1);
-    influence.locations.push(DagSpacetimeLocation {
-        node: 0,
-        qubits: vec![QubitId::from(0usize)],
-        before: false,
-        gate_type: GateType::Idle,
-        idle_duration: 1.0,
-    });
+    influence.locations.push(DagSpacetimeLocation::new(
+        0,
+        vec![QubitId::from(0usize)],
+        false,
+        &pecos_core::Gate::idle(1.0, vec![QubitId::from(0usize)]),
+    ));
     influence
         .influences
         .detectors_x

@@ -79,7 +79,7 @@ def _execute_tick_circuit(circuit: TickCircuit) -> list[complex]:
             name = gate.gate_type.name
             qubits = list(gate.qubits)
             angles = list(gate.angles)
-            if name in {"PZ", "X", "RZ"}:
+            if name in {"PZ", "X", "Z", "RZ"}:
                 params = {"angle": angles[0]} if name == "RZ" else None
                 for qubit in qubits:
                     simulator.backend.run_1q_gate(name, qubit, params)
@@ -97,7 +97,7 @@ def _execute_tick_circuit(circuit: TickCircuit) -> list[complex]:
 
 
 def test_qis_trace_crz_preserves_full_matrix() -> None:
-    for theta in (-math.pi, math.pi / 3, math.pi, math.tau, 3 * math.pi):
+    for theta in (-math.pi, math.pi / 3, math.pi, math.tau, -math.tau, 3 * math.pi, 3 * math.tau, -3 * math.tau):
         columns: list[list[complex]] = []
         for basis in range(4):
             operations = [
@@ -137,15 +137,9 @@ def test_qis_trace_crz_preserves_full_matrix() -> None:
             [0, 0, complex(math.cos(half), -math.sin(half)), 0],
             [0, 0, 0, complex(math.cos(half), math.sin(half))],
         ]
-        phase = columns[0][0] / reference[0][0]
-        assert abs(abs(phase) - 1) < 1e-12
-        if theta in {-math.pi, math.pi / 3, math.pi}:
-            assert abs(phase - 1) < 1e-12
-        else:
-            assert min(abs(phase - 1), abs(phase + 1)) < 1e-12
         for column in range(4):
             for row in range(4):
-                assert abs(columns[column][row] / phase - reference[row][column]) < 1e-12
+                assert abs(columns[column][row] - reference[row][column]) < 1e-12
 
 
 def test_tracing_apis_are_exported_at_top_level() -> None:

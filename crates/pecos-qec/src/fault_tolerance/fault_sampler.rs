@@ -209,6 +209,7 @@ fn validate_tick_circuit(tc: &TickCircuit) -> Result<(), UnsupportedGateError> {
                 continue;
             }
             return Err(UnsupportedGateError {
+                angles: gate.angles.to_vec(),
                 gate_type: gate.gate_type,
                 location: UnsupportedGateLocation::Tick {
                     tick: tick_idx,
@@ -1519,6 +1520,7 @@ impl From<UnsupportedGateError> for MeasurementHistoryError {
 pub fn symbolic_measurement_history(
     tc: &TickCircuit,
 ) -> Result<MeasurementHistory, MeasurementHistoryError> {
+    use super::symbolic_replay::{Dispatch, apply_lowered_clifford, apply_unitary_clifford};
     use pecos_simulators::SymbolicSparseStab;
 
     let num_qubits = tc
@@ -1539,6 +1541,27 @@ pub fn symbolic_measurement_history(
             let gate_idx = gate.batch_index();
             let qs: Vec<usize> = gate.qubits.iter().map(pecos_core::QubitId::index).collect();
 
+            let unsupported = || {
+                MeasurementHistoryError::UnsupportedGate(UnsupportedGateError {
+                    angles: gate.angles.to_vec(),
+                    gate_type: gate.gate_type,
+                    location: UnsupportedGateLocation::Tick {
+                        tick: tick_idx,
+                        gate_in_tick: gate_idx,
+                    },
+                    qubits: qs.clone(),
+                })
+            };
+            if let Some(lowering) = pecos_core::try_lower_rotation_to_clifford(gate.as_gate()) {
+                apply_lowered_clifford(&mut sim, lowering, &qs).map_err(|_| unsupported())?;
+                continue;
+            }
+            if apply_unitary_clifford(&mut sim, gate.gate_type, &qs).map_err(|_| unsupported())?
+                == Dispatch::Applied
+            {
+                continue;
+            }
+
             match gate.gate_type {
                 gate_type if is_supported_prep_gate(gate_type) => {
                     for &q in &qs {
@@ -1547,75 +1570,6 @@ pub fn symbolic_measurement_history(
                             sim.h(&[q]);
                         }
                     }
-                }
-                GateType::H => {
-                    sim.h(&qs);
-                }
-                GateType::X => {
-                    sim.x(&qs);
-                }
-                GateType::Y => {
-                    sim.y(&qs);
-                }
-                GateType::Z => {
-                    sim.z(&qs);
-                }
-                GateType::SZ => {
-                    sim.sz(&qs);
-                }
-                GateType::SZdg => {
-                    sim.szdg(&qs);
-                }
-                GateType::SX => {
-                    sim.sx(&qs);
-                }
-                GateType::SXdg => {
-                    sim.sxdg(&qs);
-                }
-                GateType::SY => {
-                    sim.sy(&qs);
-                }
-                GateType::SYdg => {
-                    sim.sydg(&qs);
-                }
-                GateType::F => {
-                    sim.sx(&qs);
-                    sim.sz(&qs);
-                }
-                GateType::Fdg => {
-                    sim.szdg(&qs);
-                    sim.sxdg(&qs);
-                }
-                GateType::CX => {
-                    let pairs = symbolic_pairs(&qs);
-                    sim.cx(&pairs);
-                }
-                GateType::CY => {
-                    sim.cy(&symbolic_pairs(&qs));
-                }
-                GateType::CZ => {
-                    sim.cz(&symbolic_pairs(&qs));
-                }
-                GateType::SXX => {
-                    sim.sxx(&symbolic_pairs(&qs));
-                }
-                GateType::SXXdg => {
-                    sim.sxxdg(&symbolic_pairs(&qs));
-                }
-                GateType::SYY => {
-                    sim.syy(&symbolic_pairs(&qs));
-                }
-                GateType::SYYdg => {
-                    sim.syydg(&symbolic_pairs(&qs));
-                }
-                GateType::SZZ => {
-                    sim.szz(&symbolic_pairs(&qs));
-                }
-                GateType::SZZdg => {
-                    sim.szzdg(&symbolic_pairs(&qs));
-                }
-                GateType::SWAP => {
-                    sim.swap(&symbolic_pairs(&qs));
                 }
                 // `MeasureLeaked` consumes no measurement record, so it has no
                 // place in a record-aligned history -- but it does collapse its
@@ -1655,6 +1609,7 @@ pub fn symbolic_measurement_history(
                 other => {
                     return Err(MeasurementHistoryError::UnsupportedGate(
                         UnsupportedGateError {
+                            angles: gate.angles.to_vec(),
                             gate_type: other,
                             location: UnsupportedGateLocation::Tick {
                                 tick: tick_idx,
@@ -1718,13 +1673,6 @@ fn remap_history_onto_records(
         );
     }
     Ok(remapped)
-}
-
-fn symbolic_pairs(qs: &[usize]) -> Vec<(usize, usize)> {
-    qs.chunks(2)
-        .filter(|c| c.len() == 2)
-        .map(|c| (c[0], c[1]))
-        .collect()
 }
 
 // ============================================================================
@@ -2665,6 +2613,49 @@ mod tests {
             2,
             "both the MeasureFree and the MZ consume a record"
         );
+    }
+
+    #[test]
+    fn symbolic_history_clifford_rotations_match_named() {
+        use pecos_core::{Angle64, Gate};
+        for (raw, named) in [
+            (Gate::rz(Angle64::QUARTER_TURN, &[0]), Gate::sz(&[0])),
+            (
+                Gate::rxy1q(Angle64::QUARTER_TURN, Angle64::ZERO, &[0]),
+                Gate::sx(&[0]),
+            ),
+            (
+                Gate::rzz(Angle64::QUARTER_TURN, &[(0, 1)]),
+                Gate::szz(&[(0, 1)]),
+            ),
+            (Gate::rzz(Angle64::HALF_TURN, &[(0, 1)]), Gate::z(&[0, 1])),
+        ] {
+            let history = |gate| {
+                let mut tc = TickCircuit::new();
+                tc.tick().pz(&[0, 1]);
+                tc.tick().h(&[0]);
+                tc.tick().try_add_gate(gate).unwrap();
+                tc.tick().h(&[0, 1]);
+                tc.tick().mz(&[0, 1]);
+                symbolic_measurement_history(&tc).unwrap().format_all()
+            };
+            assert_eq!(history(raw), history(named));
+        }
+    }
+
+    #[test]
+    fn symbolic_history_non_clifford_rotation_is_unsupported() {
+        let mut tc = TickCircuit::new();
+        tc.tick()
+            .rz(pecos_core::Angle64::from_turn_ratio(1, 8), &[0]);
+        let error = symbolic_measurement_history(&tc).unwrap_err();
+        assert!(matches!(
+            error,
+            MeasurementHistoryError::UnsupportedGate(UnsupportedGateError {
+                gate_type: GateType::RZ,
+                ..
+            })
+        ));
     }
 
     // ---- symbolic_measurement_history tests ----

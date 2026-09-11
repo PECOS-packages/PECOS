@@ -846,7 +846,7 @@ pub fn hugr_to_dag_circuit(hugr: &Hugr) -> Result<DagCircuit, HugrConvertError> 
                 qubits[0],
                 qubits[1],
             )
-            .into()
+            .into_vec()
         } else {
             let angles: Vec<Angle64> = op.params.iter().map(|&p| Angle64::from_turns(p)).collect();
             vec![
@@ -1505,7 +1505,7 @@ impl SimpleHugr {
                     qubits[0],
                     qubits[1],
                 )
-                .into()
+                .into_vec()
             } else {
                 let angles: Vec<Angle64> =
                     op.params.iter().map(|&p| Angle64::from_turns(p)).collect();
@@ -1607,22 +1607,23 @@ impl SimpleHugr {
         // Calculate depth
         let depth = Self::calculate_depth(&gates, &roots);
 
-        // Create gate attributes
-        let gate_attrs: Vec<BTreeMap<String, Attribute>> = quantum_ops
-            .iter()
-            .flat_map(|op| {
-                let mut attrs = BTreeMap::new();
-                attrs.insert(
+        // Use the emitted indices so every lowered gate retains its source attributes.
+        let mut gate_attrs = vec![BTreeMap::new(); gates.len()];
+        for (op, indices) in quantum_ops.iter().zip(&op_to_gate_indices) {
+            let attrs = BTreeMap::from([
+                (
                     "hugr_node".to_string(),
                     Attribute::Int(i64::try_from(op.node.index()).unwrap_or(i64::MAX)),
-                );
-                attrs.insert(
+                ),
+                (
                     "hugr_op".to_string(),
                     Attribute::String(op.hugr_op_name.clone()),
-                );
-                std::iter::repeat_n(attrs, if op.is_crz { 2 } else { 1 })
-            })
-            .collect();
+                ),
+            ]);
+            for &index in indices {
+                gate_attrs[index] = attrs.clone();
+            }
+        }
 
         // Circuit-level attributes
         let mut circuit_attrs = BTreeMap::new();
@@ -1854,7 +1855,7 @@ mod tests {
             .expect("finish HUGR")
     }
 
-    fn crz_hugr() -> Hugr {
+    fn crz_hugr(rotation_half_turns: f64) -> Hugr {
         let mut builder = DFGBuilder::new(Signature::new(vec![], vec![])).expect("create HUGR");
         let control = builder
             .add_dataflow_op(TketOp::QAlloc, vec![])
@@ -1869,7 +1870,7 @@ mod tests {
             .next()
             .expect("target output");
         let rotation = builder.add_load_value(
-            ConstRotation::new(1.0 / 3.0).expect("create finite rotation constant"),
+            ConstRotation::new(rotation_half_turns).expect("create finite rotation constant"),
         );
         let mut outputs = builder
             .add_dataflow_op(TketOp::CRz, vec![control, target, rotation])
@@ -2048,7 +2049,7 @@ mod tests {
 
     #[test]
     fn hugr_crz_lowering_preserves_source_attributes_and_target_wire() {
-        let dag = hugr_to_dag_circuit(&crz_hugr()).expect("convert HUGR");
+        let dag = hugr_to_dag_circuit(&crz_hugr(1.0 / 3.0)).expect("convert HUGR");
         let (rzz_node, rzz) = dag
             .iter_gates()
             .find(|(_, gate)| gate.gate_type == GateType::RZZ)
@@ -2084,7 +2085,7 @@ mod tests {
 
     #[test]
     fn simple_hugr_crz_control_successor_depends_on_rzz_not_target_rz() {
-        let simple = SimpleHugr::new_relaxed(crz_hugr()).expect("convert CRz HUGR");
+        let simple = SimpleHugr::new_relaxed(crz_hugr(1.0 / 3.0)).expect("convert CRz HUGR");
         let find_gate = |gate_type| {
             simple
                 .nodes()
@@ -2103,6 +2104,44 @@ mod tests {
         assert!(simple.predecessors(control_z).contains(&rzz));
         assert!(!simple.predecessors(control_z).contains(&rz));
         assert_eq!(simple.depth(), 4);
+    }
+
+    #[test]
+    fn corrected_crz_retains_attributes_and_wire_dependencies() {
+        let simple = SimpleHugr::new_relaxed(crz_hugr(2.0)).expect("convert CRz(2pi)");
+        let lowered: Vec<_> = simple
+            .nodes()
+            .into_iter()
+            .filter(|&idx| {
+                simple.gate_attrs(idx).unwrap().get("hugr_op")
+                    == Some(&Attribute::String("CRz".to_string()))
+            })
+            .collect();
+        assert_eq!(lowered.len(), 3);
+        let kinds: Vec<_> = lowered
+            .iter()
+            .map(|&idx| simple.gate(idx).unwrap().gate_type)
+            .collect();
+        assert_eq!(kinds, [GateType::Z, GateType::RZZ, GateType::RZ]);
+        assert!(simple.predecessors(lowered[1]).contains(&lowered[0]));
+        assert!(simple.predecessors(lowered[2]).contains(&lowered[1]));
+        let source_node = simple.gate_attrs(lowered[0]).unwrap().get("hugr_node");
+        for &idx in &lowered {
+            assert_eq!(
+                simple.gate_attrs(idx).unwrap().get("hugr_node"),
+                source_node
+            );
+        }
+        let successor = simple
+            .nodes()
+            .into_iter()
+            .find(|&idx| {
+                simple.gate_attrs(idx).unwrap().get("hugr_op")
+                    == Some(&Attribute::String("Z".to_string()))
+            })
+            .expect("control successor");
+        assert!(simple.predecessors(successor).contains(&lowered[1]));
+        assert!(!simple.predecessors(successor).contains(&lowered[2]));
     }
 
     #[test]

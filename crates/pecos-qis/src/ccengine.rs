@@ -747,7 +747,7 @@ impl QisEngine {
                             );
                             builder.add_gate_commands(&gates);
                             let metadata = std::mem::take(&mut pending_metadata);
-                            gate_metadata.extend([metadata.clone(), metadata]);
+                            gate_metadata.extend(std::iter::repeat_n(metadata, gates.len()));
                         }
                         QuantumOp::Reset(qubit) => {
                             builder.pz(&[self.mapped_qubit(*qubit, qop)?]);
@@ -899,7 +899,7 @@ impl QisEngine {
                             target.into(),
                         );
                         builder.add_gate_commands(&gates);
-                        gate_metadata.extend([metadata.clone(), metadata]);
+                        gate_metadata.extend(std::iter::repeat_n(metadata, gates.len()));
                     }
                     QuantumOp::Reset(qubit) => {
                         builder.pz(&[qubit]);
@@ -2167,11 +2167,46 @@ mod tests {
             ])
             .expect("lower QIS CRZ");
         let gates = lowered.commands.quantum_ops().unwrap();
-        assert_eq!(gates.len(), 2);
-        assert_eq!(gates[0].gate_type, pecos_core::gate_type::GateType::RZZ);
-        assert_eq!(gates[1].gate_type, pecos_core::gate_type::GateType::RZ);
-        assert_eq!(gates[1].qubits.as_slice(), [1.into()]);
-        assert_eq!(lowered.gate_metadata.len(), 2);
+        assert_eq!(gates.len(), 3);
+        assert_eq!(gates[0].gate_type, pecos_core::gate_type::GateType::Z);
+        assert_eq!(gates[0].qubits.as_slice(), [0.into()]);
+        assert_eq!(gates[1].gate_type, pecos_core::gate_type::GateType::RZZ);
+        assert_eq!(gates[2].gate_type, pecos_core::gate_type::GateType::RZ);
+        assert_eq!(gates[2].qubits.as_slice(), [1.into()]);
+        assert_eq!(lowered.gate_metadata.len(), 3);
+    }
+
+    #[test]
+    fn corrected_crz_copies_metadata_to_every_emitted_gate() {
+        let mut engine = QisEngine::with_runtime(Box::new(DummyRuntime::default()));
+        let metadata = TraceMetadata::from([("source_label".to_string(), "crz".to_string())]);
+        let ops = vec![
+            Operation::AllocateQubit { id: 0 },
+            Operation::AllocateQubit { id: 1 },
+            Operation::TraceMetadata {
+                metadata: metadata.clone(),
+                qubit: None,
+            },
+            QuantumOp::CRZ(std::f64::consts::TAU, 0, 1).into(),
+            QuantumOp::H(1).into(),
+        ];
+        let lowered = engine
+            .operations_to_lowered_commands(&ops)
+            .expect("lower annotated CRZ");
+        let gates = lowered.commands.quantum_ops().unwrap();
+        // Allocations emit two PZ commands before the three CRZ legs and H.
+        assert_eq!(gates.len(), 6);
+        assert_eq!(gates[2].gate_type, pecos_core::gate_type::GateType::Z);
+        assert!(
+            lowered.gate_metadata[..2]
+                .iter()
+                .all(TraceMetadata::is_empty)
+        );
+        assert_eq!(
+            &lowered.gate_metadata[2..5],
+            &[metadata.clone(), metadata.clone(), metadata]
+        );
+        assert!(lowered.gate_metadata[5].is_empty());
     }
 
     fn qis_crz_state(theta: f64, basis: usize) -> Vec<(f64, f64)> {
@@ -2231,11 +2266,7 @@ mod tests {
             let phase = actual[0][0];
             let phase_norm = phase.0 * phase.0 + phase.1 * phase.1;
             assert!((phase_norm - 1.0).abs() < 1e-12);
-            if theta.abs() <= std::f64::consts::PI {
-                assert!((phase.0 - 1.0).abs() < 1e-12 && phase.1.abs() < 1e-12);
-            } else {
-                assert!((phase.0.abs() - 1.0).abs() < 1e-12 && phase.1.abs() < 1e-12);
-            }
+            assert!((phase.0 - 1.0).abs() < 1e-12 && phase.1.abs() < 1e-12);
             for (row, row_values) in actual.iter().enumerate() {
                 for (column, &value) in row_values.iter().enumerate() {
                     let normalized = (

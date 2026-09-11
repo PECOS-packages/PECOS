@@ -1894,7 +1894,9 @@ impl PyDetectorErrorModel {
     ///
     /// `p1_gate_rates` and `p2_gate_rates` keys name the gate as scheduled;
     /// runtime-traced circuits schedule rotations such as `RZZ` and `RXY1Q`,
-    /// so key by those or lower the circuit first.
+    /// so key by those or lower the circuit first. Nonzero keys naming the
+    /// Clifford action of a different scheduled gate are rejected, even if
+    /// another scheduled gate matches the key.
     #[staticmethod]
     #[pyo3(signature = (circuit, p1=0.001, p2=0.01, p_meas=0.001, p_prep=0.001, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p_idle_quadratic_sine_rate=None, p_idle_x_quadratic_sine_rate=None, p_idle_y_quadratic_sine_rate=None, p_idle_z_quadratic_sine_rate=None, p1_weights=None, p2_weights=None, p2_replacement_approximation=None, p_meas_crosstalk_local=None, p_meas_crosstalk_global=None, p_meas_crosstalk_model=None, measurement_crosstalk_dem_mode=None, p2_gate_rates=None, p1_gate_rates=None))]
     #[allow(clippy::too_many_arguments)]
@@ -2397,7 +2399,9 @@ impl PyDemBuilder {
     ///
     /// `p1_gate_rates` and `p2_gate_rates` keys name the gate as scheduled;
     /// runtime-traced circuits schedule rotations such as `RZZ` and `RXY1Q`,
-    /// so key by those or lower the circuit first.
+    /// so key by those or lower the circuit first. Nonzero keys naming the
+    /// Clifford action of a different scheduled gate are rejected, even if
+    /// another scheduled gate matches the key.
     #[pyo3(signature = (p1, p2, p_meas, p_prep, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p_idle_quadratic_sine_rate=None, p_idle_x_quadratic_sine_rate=None, p_idle_y_quadratic_sine_rate=None, p_idle_z_quadratic_sine_rate=None, p1_weights=None, p2_weights=None, p2_replacement_approximation=None, p_meas_crosstalk_local=None, p_meas_crosstalk_global=None, p_meas_crosstalk_model=None, measurement_crosstalk_dem_mode=None, p2_gate_rates=None, p1_gate_rates=None))]
     #[allow(clippy::too_many_arguments)]
     fn with_noise(
@@ -3401,7 +3405,9 @@ impl PyDemSampler {
     ///
     /// `p1_gate_rates` and `p2_gate_rates` keys name the gate as scheduled;
     /// runtime-traced circuits schedule rotations such as `RZZ` and `RXY1Q`,
-    /// so key by those or lower the circuit first.
+    /// so key by those or lower the circuit first. Nonzero keys naming the
+    /// Clifford action of a different scheduled gate are rejected, even if
+    /// another scheduled gate matches the key.
     #[staticmethod]
     #[pyo3(signature = (circuit, p1=0.001, p2=0.01, p_meas=0.001, p_prep=0.001, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p_idle_quadratic_sine_rate=None, p_idle_x_quadratic_sine_rate=None, p_idle_y_quadratic_sine_rate=None, p_idle_z_quadratic_sine_rate=None, p1_weights=None, p2_weights=None, p2_replacement_approximation=None, p_meas_crosstalk_local=None, p_meas_crosstalk_global=None, p_meas_crosstalk_model=None, measurement_crosstalk_dem_mode=None, p2_gate_rates=None, p1_gate_rates=None))]
     #[allow(clippy::too_many_arguments)]
@@ -3582,7 +3588,9 @@ impl PyDemSampler {
     ///
     /// `p1_gate_rates` and `p2_gate_rates` keys name the gate as scheduled;
     /// runtime-traced circuits schedule rotations such as `RZZ` and `RXY1Q`,
-    /// so key by those or lower the circuit first.
+    /// so key by those or lower the circuit first. Nonzero keys naming the
+    /// Clifford action of a different scheduled gate are rejected, even if
+    /// another scheduled gate matches the key.
     #[staticmethod]
     #[pyo3(signature = (influence_map, detectors, observables, p1, p2, p_meas, p_prep, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p_idle_quadratic_sine_rate=None, p_idle_x_quadratic_sine_rate=None, p_idle_y_quadratic_sine_rate=None, p_idle_z_quadratic_sine_rate=None, p1_weights=None, p2_weights=None, p2_replacement_approximation=None, p_meas_crosstalk_local=None, p_meas_crosstalk_global=None, p_meas_crosstalk_model=None, measurement_crosstalk_dem_mode=None, p2_gate_rates=None, p1_gate_rates=None))]
     #[allow(clippy::too_many_arguments)]
@@ -4156,7 +4164,9 @@ impl PyDemSamplerBuilder {
     ///
     /// `p1_gate_rates` and `p2_gate_rates` keys name the gate as scheduled;
     /// runtime-traced circuits schedule rotations such as `RZZ` and `RXY1Q`,
-    /// so key by those or lower the circuit first.
+    /// so key by those or lower the circuit first. Nonzero keys naming the
+    /// Clifford action of a different scheduled gate are rejected, even if
+    /// another scheduled gate matches the key.
     #[pyo3(signature = (p1, p2, p_meas, p_prep, p_idle=None, t1=None, t2=None, idle_rz=None, p_idle_linear_rate=None, p_idle_quadratic_rate=None, p_idle_x_linear_rate=None, p_idle_y_linear_rate=None, p_idle_z_linear_rate=None, p_idle_x_quadratic_rate=None, p_idle_y_quadratic_rate=None, p_idle_z_quadratic_rate=None, p_idle_quadratic_sine_rate=None, p_idle_x_quadratic_sine_rate=None, p_idle_y_quadratic_sine_rate=None, p_idle_z_quadratic_sine_rate=None, p1_weights=None, p2_weights=None, p2_replacement_approximation=None, p_meas_crosstalk_local=None, p_meas_crosstalk_global=None, p_meas_crosstalk_model=None, measurement_crosstalk_dem_mode=None, p2_gate_rates=None, p1_gate_rates=None))]
     #[allow(clippy::too_many_arguments)]
     fn with_noise(

@@ -2224,7 +2224,7 @@ pub(crate) struct MissingOmittedGateTwirl {
 /// A rate key that names a Clifford action instead of a scheduled gate.
 #[derive(Debug, Clone, thiserror::Error)]
 #[error(
-    "{table} key {key:?} matches no scheduled gate; node {node} schedules {scheduled:?} whose Clifford action is {clifford:?}. Per-gate rates apply to the gate as scheduled; key the rate by {scheduled:?}, or lower the circuit with lower_clifford_rotations() before building."
+    "{table} key {key:?} names the Clifford action of a different scheduled gate; node {node} schedules {scheduled:?} whose Clifford action is {clifford:?}. Per-gate rates apply to the gate as scheduled; key the rate by {scheduled:?} in {remedy_table}, or lower the circuit with lower_clifford_rotations() before building."
 )]
 pub(crate) struct GateRateKeyMismatch {
     pub table: &'static str,
@@ -2232,6 +2232,64 @@ pub(crate) struct GateRateKeyMismatch {
     pub node: usize,
     pub scheduled: GateType,
     pub clifford: CliffordLowering,
+    pub remedy_table: &'static str,
+}
+
+/// The corresponding rate table for the scheduled gate's arity.
+fn scheduled_gate_rate_table(table: &'static str, scheduled: GateType) -> &'static str {
+    let tables = match table {
+        "p1_gate_rates" | "p2_gate_rates" => ("p1_gate_rates", "p2_gate_rates"),
+        "rates_1q" | "rates_2q" => ("rates_1q", "rates_2q"),
+        "rates_1q_per_qubit" | "rates_2q_per_qubits" => {
+            ("rates_1q_per_qubit", "rates_2q_per_qubits")
+        }
+        _ => unreachable!("gate-rate validation uses a known rate table"),
+    };
+    if is_two_qubit_noise_gate(scheduled) {
+        tables.1
+    } else {
+        assert!(
+            scheduled.is_single_qubit(),
+            "a mismatched Clifford rotation has one or two qubits"
+        );
+        tables.0
+    }
+}
+
+/// The qubit scope of a gate-rate key.
+enum GateRateQubits {
+    Any,
+    One(QubitId),
+    Pair(QubitId, QubitId),
+}
+
+impl GateRateQubits {
+    fn matches(
+        &self,
+        location: &crate::fault_tolerance::propagator::DagSpacetimeLocation,
+        locations: &[crate::fault_tolerance::propagator::DagSpacetimeLocation],
+    ) -> bool {
+        match self {
+            Self::Any => true,
+            Self::One(qubit) => location.qubits.contains(qubit),
+            Self::Pair(control, target) => {
+                if !location.qubits.contains(control) {
+                    return false;
+                }
+                // Builders pair successive fault locations at a node in gate order.
+                let mut qubits = locations
+                    .iter()
+                    .filter(|other| other.node == location.node && other.before == location.before)
+                    .flat_map(|other| &other.qubits);
+                while let (Some(qc), Some(qt)) = (qubits.next(), qubits.next()) {
+                    if (qc, qt) == (control, target) {
+                        return true;
+                    }
+                }
+                false
+            }
+        }
+    }
 }
 
 /// Validate the scalar per-gate rate tables shared by every builder that owns
@@ -2249,26 +2307,25 @@ pub(crate) fn validate_scalar_gate_rate_tables(
             table,
             rates
                 .iter()
-                .filter_map(|(&key, &rate)| (rate != 0.0).then_some(key)),
+                .filter_map(|(&key, &rate)| (rate != 0.0).then_some((key, GateRateQubits::Any))),
             locations,
         )?;
     }
     Ok(())
 }
 
-/// Validate active keys against scheduled gates before considering Clifford actions.
+/// Reject active keys that name the Clifford action of a different scheduled gate.
 fn validate_active_gate_rate_keys(
     table: &'static str,
-    keys: impl IntoIterator<Item = GateType>,
+    keys: impl IntoIterator<Item = (GateType, GateRateQubits)>,
     locations: &[crate::fault_tolerance::propagator::DagSpacetimeLocation],
 ) -> Result<(), GateRateKeyMismatch> {
-    for key in keys {
-        if locations.iter().any(|location| location.gate_type == key) {
-            continue;
-        }
+    for (key, qubits) in keys {
         if let Some(location) = locations.iter().find(|location| {
-            matches!(location.clifford,
-                CliffordLowering::Named(gate) | CliffordLowering::PerQubit(gate) if gate == key)
+            location.gate_type != key
+                && matches!(location.clifford,
+                    CliffordLowering::Named(gate) | CliffordLowering::PerQubit(gate) if gate == key)
+                && qubits.matches(location, locations)
         }) {
             return Err(GateRateKeyMismatch {
                 table,
@@ -2276,6 +2333,7 @@ fn validate_active_gate_rate_keys(
                 node: location.node,
                 scheduled: location.gate_type,
                 clifford: location.clifford,
+                remedy_table: scheduled_gate_rate_table(table, location.gate_type),
             });
         }
     }
@@ -2639,7 +2697,9 @@ pub struct NoiseConfig {
     /// `p1` while still using `p1_weights` to distribute probability across
     /// Pauli channels.
     /// Keys name the scheduled gate; traced rotations such as `RZZ` and `RXY1Q`
-    /// require rotation keys or lowering the circuit first.
+    /// require rotation keys or lowering the circuit first. Nonzero keys naming
+    /// the action of a different scheduled gate are rejected, even if another
+    /// scheduled gate matches the key.
     pub p1_gate_rates: BTreeMap<GateType, f64>,
     /// Two-qubit gate error rate.
     pub p2: f64,
@@ -2649,7 +2709,9 @@ pub struct NoiseConfig {
     /// `p2` while still using `p2_weights` to distribute probability across
     /// Pauli-pair channels.
     /// Keys name the scheduled gate; traced rotations such as `RZZ` and `RXY1Q`
-    /// require rotation keys or lowering the circuit first.
+    /// require rotation keys or lowering the circuit first. Nonzero keys naming
+    /// the action of a different scheduled gate are rejected, even if another
+    /// scheduled gate matches the key.
     pub p2_gate_rates: BTreeMap<GateType, f64>,
     /// Measurement error rate.
     pub p_meas: f64,
@@ -3342,7 +3404,7 @@ impl Default for NoiseConfig {
 }
 
 impl NoiseConfig {
-    /// Reject active rate keys that match only a location's Clifford action.
+    /// Reject active rate keys that name an action of a different scheduled gate.
     pub(crate) fn validate_gate_rate_keys(
         &self,
         locations: &[crate::fault_tolerance::propagator::DagSpacetimeLocation],
@@ -4232,7 +4294,9 @@ pub const PAULI_2Q_ORDER: [&str; 15] = [
 ///
 /// Keys in all gate-rate tables name the gate as scheduled; runtime-traced
 /// circuits schedule rotations such as `RZZ` and `RXY1Q`, so key by those
-/// or lower the circuit first.
+/// or lower the circuit first. Nonzero keys naming the action of a different
+/// scheduled gate in the key's qubit scope are rejected, even if another
+/// scheduled gate matches the key.
 #[derive(Debug, Clone, Default)]
 pub struct PerGateTypeNoise {
     pub rates_1q: HashMap<GateType, [f64; 3]>,
@@ -4259,24 +4323,33 @@ impl PerGateTypeNoise {
         self.base.validate_gate_rate_keys(locations)?;
         validate_active_gate_rate_keys(
             "rates_1q",
-            self.rates_1q
-                .iter()
-                .filter_map(|(&key, rates)| rates.iter().any(|&rate| rate != 0.0).then_some(key)),
+            self.rates_1q.iter().filter_map(|(&key, rates)| {
+                rates
+                    .iter()
+                    .any(|&rate| rate != 0.0)
+                    .then_some((key, GateRateQubits::Any))
+            }),
             locations,
         )?;
         validate_active_gate_rate_keys(
             "rates_2q",
-            self.rates_2q
-                .iter()
-                .filter_map(|(&key, rates)| rates.iter().any(|&rate| rate != 0.0).then_some(key)),
+            self.rates_2q.iter().filter_map(|(&key, rates)| {
+                rates
+                    .iter()
+                    .any(|&rate| rate != 0.0)
+                    .then_some((key, GateRateQubits::Any))
+            }),
             locations,
         )?;
         validate_active_gate_rate_keys(
             "rates_1q_per_qubit",
             self.rates_1q_per_qubit
                 .iter()
-                .filter_map(|(&(key, _), rates)| {
-                    rates.iter().any(|&rate| rate != 0.0).then_some(key)
+                .filter_map(|(&(key, qubit), rates)| {
+                    rates
+                        .iter()
+                        .any(|&rate| rate != 0.0)
+                        .then_some((key, GateRateQubits::One(qubit)))
                 }),
             locations,
         )?;
@@ -4284,8 +4357,11 @@ impl PerGateTypeNoise {
             "rates_2q_per_qubits",
             self.rates_2q_per_qubits
                 .iter()
-                .filter_map(|(&(key, _, _), rates)| {
-                    rates.iter().any(|&rate| rate != 0.0).then_some(key)
+                .filter_map(|(&(key, control, target), rates)| {
+                    rates
+                        .iter()
+                        .any(|&rate| rate != 0.0)
+                        .then_some((key, GateRateQubits::Pair(control, target)))
                 }),
             locations,
         )?;

@@ -1381,11 +1381,7 @@ impl<'a> DemSamplerBuilder<'a> {
         if let Some(error) = self.influence_map.unsupported_gate() {
             return Err(DetectorValidationError::UnsupportedGate(error.clone()));
         }
-        if let Some(noise) = &self.per_gate {
-            noise
-                .validate_gate_rate_keys(&self.influence_map.locations)
-                .map_err(|error| super::DemBuilderError::ConfigurationError(error.to_string()))?;
-        }
+        // Validate exactly what this path consumes: scalar noise through the sampling engine.
         let num_measurements = self.influence_map.measurements.len();
 
         // Build per-location probabilities from gate-type noise

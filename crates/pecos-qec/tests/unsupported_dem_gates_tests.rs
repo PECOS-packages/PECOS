@@ -1156,7 +1156,7 @@ fn assert_gate_rate_configuration_error(
 }
 
 #[test]
-fn gate_rate_key_mismatch_rejected_by_every_builder() {
+fn gate_rate_key_mismatch_rejected_by_consuming_builders() {
     let circuit = replacement_circuit(Gate::rzz(Angle64::QUARTER_TURN, &[(0, 1)]));
     let mut noise = NoiseConfig::uniform(0.001);
     noise.p2_gate_rates.insert(GateType::SZZ, 0.05);
@@ -1176,16 +1176,17 @@ fn gate_rate_key_mismatch_rejected_by_every_builder() {
     check(sampler_gate_rate_error(
         DemSamplerBuilder::new(&map)
             .with_noise_config(noise.clone())
+            .raw_measurements()
+            .build()
+            .unwrap_err(),
+    ));
+    check(sampler_gate_rate_error(
+        DemSamplerBuilder::new(&map)
+            .with_noise_config(noise.clone())
             .with_detectors(Vec::new(), Vec::new())
             .build()
             .unwrap_err(),
     ));
-    check(
-        MemBuilder::new(&map)
-            .with_noise_config(noise.clone())
-            .build()
-            .unwrap_err(),
-    );
     let error = DemSampler::from_circuit(&circuit, &noise).unwrap_err();
     let DetectorValidationError::InvalidConfiguration { message } = error else {
         panic!("expected invalid configuration, got {error:?}");
@@ -1209,12 +1210,17 @@ fn gate_rate_scheduled_rotation_key_applies() {
 }
 
 #[test]
-fn gate_rate_key_matching_scheduled_and_clifford_gates_is_allowed() {
+fn gate_rate_key_matching_scheduled_and_clifford_gates_is_rejected() {
     let mut circuit = replacement_circuit(Gate::rzz(Angle64::QUARTER_TURN, &[(0, 1)]));
     circuit.szz(&[(0, 1)]);
     let mut noise = NoiseConfig::uniform(0.001);
     noise.p2_gate_rates.insert(GateType::SZZ, 0.05);
-    DemBuilder::try_from_circuit_with_noise_config(&circuit, noise).unwrap();
+    assert_gate_rate_configuration_error(
+        DemBuilder::try_from_circuit_with_noise_config(&circuit, noise).unwrap_err(),
+        "p2_gate_rates",
+        "SZZ",
+        "RZZ",
+    );
 }
 
 #[test]
@@ -1277,22 +1283,18 @@ fn assert_per_gate_rate_mismatch(
         key,
         scheduled,
     );
-    for builder in [
-        DemSamplerBuilder::new(&map),
-        DemSamplerBuilder::new(&map).with_detectors(Vec::new(), Vec::new()),
-    ] {
-        assert_gate_rate_configuration_error(
-            sampler_gate_rate_error(
-                builder
-                    .with_per_gate_noise(noise.clone())
-                    .build()
-                    .unwrap_err(),
-            ),
-            table,
-            key,
-            scheduled,
-        );
-    }
+    let builder = DemSamplerBuilder::new(&map).with_detectors(Vec::new(), Vec::new());
+    assert_gate_rate_configuration_error(
+        sampler_gate_rate_error(
+            builder
+                .with_per_gate_noise(noise.clone())
+                .build()
+                .unwrap_err(),
+        ),
+        table,
+        key,
+        scheduled,
+    );
 }
 
 #[test]
@@ -1325,7 +1327,7 @@ fn gate_rate_rates_1q_per_qubit_mismatch() {
     assert_per_gate_rate_mismatch(
         &PerGateTypeNoise::default().with_1q_rates_for_qubit(
             GateType::SX,
-            pecos_core::QubitId(99),
+            pecos_core::QubitId(0),
             [0.01; 3],
         ),
         "rates_1q_per_qubit",
@@ -1341,8 +1343,8 @@ fn gate_rate_rates_2q_per_qubits_mismatch() {
     assert_per_gate_rate_mismatch(
         &PerGateTypeNoise::default().with_2q_rates_for_qubits(
             GateType::SZZ,
-            pecos_core::QubitId(98),
-            pecos_core::QubitId(99),
+            pecos_core::QubitId(0),
+            pecos_core::QubitId(1),
             [0.001; 15],
         ),
         "rates_2q_per_qubits",
@@ -1394,6 +1396,121 @@ fn gate_rate_zero_pauli_tables_are_ignored() {
         .unwrap();
     DemSamplerBuilder::new(&map)
         .with_per_gate_noise(noise)
+        .build()
+        .unwrap();
+}
+
+#[test]
+fn gate_rate_per_qubit_remedy_uses_scheduled_arity() {
+    let circuit = replacement_circuit(Gate::rzz(Angle64::HALF_TURN, &[(0, 1)]));
+    let mut noise = NoiseConfig::uniform(0.001);
+    noise.p1_gate_rates.insert(GateType::Z, 0.01);
+    let error = DemBuilder::try_from_circuit_with_noise_config(&circuit, noise).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("key the rate by RZZ in p2_gate_rates")
+    );
+    assert_gate_rate_configuration_error(error, "p1_gate_rates", "Z", "RZZ");
+}
+
+#[test]
+fn gate_rate_named_remedy_uses_scheduled_arity() {
+    let circuit = replacement_circuit(Gate::rxy1q(Angle64::QUARTER_TURN, Angle64::ZERO, &[0]));
+    let mut noise = NoiseConfig::uniform(0.001);
+    noise.p2_gate_rates.insert(GateType::SX, 0.01);
+    let error = DemBuilder::try_from_circuit_with_noise_config(&circuit, noise).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("key the rate by RXY1Q in p1_gate_rates")
+    );
+    assert_gate_rate_configuration_error(error, "p2_gate_rates", "SX", "RXY1Q");
+}
+
+#[test]
+fn gate_rate_shadowed_scalar_tables_are_not_validated() {
+    use pecos_qec::fault_tolerance::dem_builder::PerGateTypeNoise;
+    let circuit = replacement_circuit(Gate::rzz(Angle64::QUARTER_TURN, &[(0, 1)]));
+    let map = DagFaultAnalyzer::new(&circuit).build_influence_map();
+    let mut noise = NoiseConfig::uniform(0.001);
+    noise.p2_gate_rates.insert(GateType::SZZ, 0.05);
+    DemBuilder::new(&map)
+        .with_noise_config(noise.clone())
+        .with_per_gate_noise(PerGateTypeNoise::default())
+        .try_build()
+        .unwrap();
+    DemSamplerBuilder::new(&map)
+        .with_noise_config(noise)
+        .with_per_gate_noise(PerGateTypeNoise::default())
+        .with_detectors(Vec::new(), Vec::new())
+        .build()
+        .unwrap();
+}
+
+#[test]
+fn gate_rate_raw_mode_does_not_validate_unused_per_gate_tables() {
+    use pecos_qec::fault_tolerance::dem_builder::PerGateTypeNoise;
+    let circuit = replacement_circuit(Gate::rzz(Angle64::QUARTER_TURN, &[(0, 1)]));
+    let map = DagFaultAnalyzer::new(&circuit).build_influence_map();
+    DemSamplerBuilder::new(&map)
+        .with_per_gate_noise(PerGateTypeNoise::default().with_2q_rates(GateType::SZZ, [0.001; 15]))
+        .raw_measurements()
+        .build()
+        .unwrap();
+}
+
+#[test]
+fn gate_rate_absent_qubit_keys_are_allowed() {
+    use pecos_qec::fault_tolerance::dem_builder::PerGateTypeNoise;
+    let mut circuit = replacement_circuit(Gate::rzz(Angle64::QUARTER_TURN, &[(0, 1)]));
+    circuit.add_gate_auto_wire(Gate::rxy1q(Angle64::QUARTER_TURN, Angle64::ZERO, &[0]));
+    let map = DagFaultAnalyzer::new(&circuit).build_influence_map();
+    for noise in [
+        PerGateTypeNoise::default().with_1q_rates_for_qubit(
+            GateType::SX,
+            pecos_core::QubitId(99),
+            [0.01; 3],
+        ),
+        PerGateTypeNoise::default().with_2q_rates_for_qubits(
+            GateType::SZZ,
+            pecos_core::QubitId(98),
+            pecos_core::QubitId(99),
+            [0.001; 15],
+        ),
+        PerGateTypeNoise::default().with_2q_rates_for_qubits(
+            GateType::SZZ,
+            pecos_core::QubitId(0),
+            pecos_core::QubitId(99),
+            [0.001; 15],
+        ),
+        PerGateTypeNoise::default().with_2q_rates_for_qubits(
+            GateType::SZZ,
+            pecos_core::QubitId(1),
+            pecos_core::QubitId(0),
+            [0.001; 15],
+        ),
+    ] {
+        DemBuilder::new(&map)
+            .with_per_gate_noise(noise.clone())
+            .try_build()
+            .unwrap();
+        DemSamplerBuilder::new(&map)
+            .with_per_gate_noise(noise)
+            .with_detectors(Vec::new(), Vec::new())
+            .build()
+            .unwrap();
+    }
+}
+
+#[test]
+fn gate_rate_mem_builder_does_not_validate_unused_tables() {
+    let circuit = replacement_circuit(Gate::rzz(Angle64::QUARTER_TURN, &[(0, 1)]));
+    let map = DagFaultAnalyzer::new(&circuit).build_influence_map();
+    let mut noise = NoiseConfig::uniform(0.001);
+    noise.p2_gate_rates.insert(GateType::SZZ, 0.05);
+    MemBuilder::new(&map)
+        .with_noise_config(noise)
         .build()
         .unwrap();
 }

@@ -945,13 +945,16 @@ impl<'a> DemBuilder<'a> {
     }
 
     fn validate_noise_configuration(&self) -> Result<(), DemBuilderError> {
-        self.noise
-            .validate_gate_rate_keys(&self.influence_map.locations)
-            .and_then(|()| {
-                self.per_gate.as_ref().map_or(Ok(()), |noise| {
-                    noise.validate_gate_rate_keys(&self.influence_map.locations)
-                })
-            })
+        // Validate exactly what this path consumes: per-gate noise or scalar tables.
+        self.per_gate
+            .as_ref()
+            .map_or_else(
+                || {
+                    self.noise
+                        .validate_gate_rate_keys(&self.influence_map.locations)
+                },
+                |noise| noise.validate_gate_rate_keys(&self.influence_map.locations),
+            )
             .map_err(|error| DemBuilderError::ConfigurationError(error.to_string()))?;
         if let Some(weights) = &self.noise.p2_weights {
             weights

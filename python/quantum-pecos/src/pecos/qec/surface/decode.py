@@ -160,9 +160,9 @@ class NoiseParameters:
     Matches the Rust ``NoiseConfig`` type. All parameters are optional
     beyond the four base rates.
 
-    Per-gate rate keys name the gate as scheduled; runtime-traced circuits
-    schedule rotations such as ``RZZ`` and ``RXY1Q``, so key by those or
-    lower the circuit first.
+    Per-gate two-qubit overrides emit ``SZZ`` and ``SZZdg`` keys. The surface
+    path lowers Clifford rotations before building, so these keys name the
+    lowered scheduled gates.
 
     Attributes:
         p1: Single-qubit gate error rate.

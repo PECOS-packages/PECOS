@@ -26,7 +26,7 @@ def _execute(circuit: TickCircuit) -> list[complex]:
             name = gate.gate_type.name
             qubits = list(gate.qubits)
             angles = list(gate.angles)
-            if name in {"X", "RZ"}:
+            if name in {"X", "Z", "RZ"}:
                 params = {"angle": angles[0]} if name == "RZ" else None
                 for qubit in qubits:
                     simulator.backend.run_1q_gate(name, qubit, params)
@@ -44,7 +44,16 @@ def _execute(circuit: TickCircuit) -> list[complex]:
 
 
 def test_py_tick_handle_crz_preserves_full_matrix() -> None:
-    for theta in (-math.pi, math.pi / 3, math.pi, math.tau, 3 * math.pi):
+    for theta in (
+        -math.pi,
+        math.pi / 3,
+        math.pi,
+        math.tau,
+        -math.tau,
+        3 * math.pi,
+        3 * math.tau,
+        -3 * math.tau,
+    ):
         columns: list[list[complex]] = []
         for basis in range(4):
             circuit = TickCircuit()
@@ -62,15 +71,24 @@ def test_py_tick_handle_crz_preserves_full_matrix() -> None:
             [0, 0, complex(math.cos(half), -math.sin(half)), 0],
             [0, 0, 0, complex(math.cos(half), math.sin(half))],
         ]
-        phase = columns[0][0] / reference[0][0]
-        assert abs(abs(phase) - 1) < 1e-12
-        if theta in {-math.pi, math.pi / 3, math.pi}:
-            assert abs(phase - 1) < 1e-12
-        else:
-            assert min(abs(phase - 1), abs(phase + 1)) < 1e-12
         for column in range(4):
             for row in range(4):
-                assert abs(columns[column][row] / phase - reference[row][column]) < 1e-12
+                assert abs(columns[column][row] - reference[row][column]) < 1e-12
+
+
+def test_py_tick_handle_crz_just_above_negative_pi_fits_before_h() -> None:
+    circuit = TickCircuit()
+    for _ in range(3):
+        circuit.tick()
+    circuit.tick_at(2).h([1])
+    circuit.tick_at(0).crz(math.nextafter(-math.pi, 0.0), [(0, 1)])
+
+    assert circuit.num_ticks() == 3
+    for index, (name, qubits) in enumerate([("RZZ", [0, 1]), ("RZ", [1]), ("H", [1])]):
+        gates = circuit.get_tick(index).gate_batches()
+        assert len(gates) == 1
+        assert gates[0].gate_type.name == name
+        assert list(gates[0].qubits) == qubits
 
 
 def test_py_tick_handle_crz_conflict_is_atomic() -> None:
@@ -110,3 +128,17 @@ def test_py_tick_handle_crz_metadata_targets_rzz() -> None:
     assert rzz_tick.get_attr("tag") is None
     assert rz_tick.get_gate_attr(0, "tag") is None
     assert rz_tick.get_attr("tag") is None
+
+
+@pytest.mark.parametrize("theta", [-math.pi, math.tau, -math.tau, 3 * math.tau])
+def test_py_tick_handle_crz_odd_parity_metadata_targets_z(theta: float) -> None:
+    circuit = TickCircuit()
+    circuit.tick().crz(theta, [(0, 1)]).meta("tag", "lowered-crz")
+
+    assert circuit.num_ticks() == 3
+    for index, name in enumerate(["Z", "RZZ", "RZ"]):
+        tick = circuit.get_tick(index)
+        assert [gate.gate_type.name for gate in tick.gate_batches()] == [name]
+        assert tick.get_gate_attr(0, "tag") == ("lowered-crz" if index == 0 else None)
+        assert tick.get_attr("tag") is None
+    assert list(circuit.get_tick(0).gate_batches()[0].qubits) == [0]

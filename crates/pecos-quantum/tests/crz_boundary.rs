@@ -121,11 +121,7 @@ fn rust_hugr_crz_boundary_preserves_full_matrix() {
             (phase_norm - 1.0).abs() < 1e-12,
             "theta={theta}, phase={phase:?}"
         );
-        if theta.abs() <= std::f64::consts::PI {
-            assert!((phase.0 - 1.0).abs() < 1e-12 && phase.1.abs() < 1e-12);
-        } else {
-            assert!((phase.0.abs() - 1.0).abs() < 1e-12 && phase.1.abs() < 1e-12);
-        }
+        assert!((phase.0 - 1.0).abs() < 1e-12 && phase.1.abs() < 1e-12);
         for (row, row_values) in actual.iter().enumerate() {
             for (column, &value) in row_values.iter().enumerate() {
                 let normalized = (

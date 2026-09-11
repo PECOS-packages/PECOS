@@ -304,8 +304,8 @@ let runner = CircuitRunner::<ForeignSimulator>::new();
 
 The same applies to decoders -- the `Decoder` trait is shared between both stacks.
 
-pecos-neo also has plugin systems for gate decompositions, noise channels, and orchestration
-(Bevy-style `Tool` plugins). Foreign noise channels and classical control sources are
+pecos-neo supports gate decompositions and composable noise channels, with owned simulation
+state and seeded shot loops for orchestration. Foreign noise channels and classical control sources are
 possible future extensions but require exposing additional Rust-specific types over FFI.
 
 ## Crate Structure

@@ -324,21 +324,27 @@ fn nonfinite_conversions_panic_and_infinite_tolerances_saturate() {
 
 #[test]
 fn tiny_controlled_rotations_have_expected_angles() {
-    for (input, negative_half, positive_half) in [
+    // Reduction before halving leaves positive inputs unchanged. For negative
+    // inputs, adding TAU rounds -1e-15 to -8.881784197001252e-16 and smaller
+    // magnitudes to zero; the stored half therefore need not be symmetric.
+    for (theta, rzz_angle, rz_angle) in [
         (1e-15, -Angle64::new(2048), Angle64::new(1468)),
+        (-1e-15, Angle64::new(1304), Angle64::ZERO),
         (1e-16, Angle64::ZERO, Angle64::new(147)),
+        (-1e-16, Angle64::ZERO, Angle64::ZERO),
         (1e-17, Angle64::ZERO, Angle64::new(15)),
+        (-1e-17, Angle64::ZERO, Angle64::ZERO),
         (1e-18, Angle64::ZERO, Angle64::new(1)),
+        (-1e-18, Angle64::ZERO, Angle64::ZERO),
         (f64::MIN_POSITIVE, Angle64::ZERO, Angle64::ZERO),
+        (-f64::MIN_POSITIVE, Angle64::ZERO, Angle64::ZERO),
     ] {
-        for (theta, rzz_angle, rz_angle) in [
-            (input, negative_half, positive_half),
-            (-input, positive_half, negative_half),
-        ] {
-            let [rzz, rz] = lower_crz(theta, QubitId(0), QubitId(1));
-            assert_eq!(rzz.angles.as_slice(), &[rzz_angle], "theta={theta}");
-            assert_eq!(rz.angles.as_slice(), &[rz_angle], "theta={theta}");
-        }
+        let gates = lower_crz(theta, QubitId(0), QubitId(1));
+        let [rzz, rz] = gates.as_slice() else {
+            panic!("tiny angles must not need a control Z");
+        };
+        assert_eq!(rzz.angles.as_slice(), &[rzz_angle], "theta={theta}");
+        assert_eq!(rz.angles.as_slice(), &[rz_angle], "theta={theta}");
     }
 }
 

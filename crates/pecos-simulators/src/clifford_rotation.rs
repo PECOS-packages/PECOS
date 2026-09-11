@@ -569,12 +569,23 @@ mod tests {
 
     #[test]
     fn lower_crz_pi_matches_sz_then_szzdg_tableau() {
-        let [rzz, rz] = lower_crz(std::f64::consts::PI, QubitId(0), QubitId(1));
         let mut lowered = SparseStab::new(2);
-        lowered
-            .try_rzz(rzz.angles[0], &[(rzz.qubits[0], rzz.qubits[1])])
-            .unwrap();
-        lowered.try_rz(rz.angles[0], &rz.qubits).unwrap();
+        for gate in lower_crz(std::f64::consts::PI, QubitId(0), QubitId(1)) {
+            match gate.gate_type {
+                pecos_core::gate_type::GateType::Z => {
+                    lowered.z(&gate.qubits);
+                }
+                pecos_core::gate_type::GateType::RZZ => {
+                    lowered
+                        .try_rzz(gate.angles[0], &[(gate.qubits[0], gate.qubits[1])])
+                        .unwrap();
+                }
+                pecos_core::gate_type::GateType::RZ => {
+                    lowered.try_rz(gate.angles[0], &gate.qubits).unwrap();
+                }
+                other => panic!("unexpected lowered gate {other:?}"),
+            }
+        }
 
         let mut expected = SparseStab::new(2);
         expected.sz(&qid(1)).szzdg(&[(QubitId(0), QubitId(1))]);

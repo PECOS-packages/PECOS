@@ -2899,6 +2899,7 @@ mod tests {
             let gate = circuit.gate(node).expect("DAG node contains a gate");
             match gate.gate_type {
                 GateType::X => simulator.x(&gate.qubits),
+                GateType::Z => simulator.z(&gate.qubits),
                 GateType::RZ => simulator.rz(gate.angles[0], &gate.qubits),
                 GateType::RZZ => simulator.rzz(gate.angles[0], &[(gate.qubits[0], gate.qubits[1])]),
                 other => panic!("unexpected DAG builder gate {other}"),
@@ -3010,11 +3011,7 @@ mod tests {
             let phase = actual[0][0];
             let phase_norm = phase.0 * phase.0 + phase.1 * phase.1;
             assert!((phase_norm - 1.0).abs() < 1e-12);
-            if theta.abs() <= std::f64::consts::PI {
-                assert!((phase.0 - 1.0).abs() < 1e-12 && phase.1.abs() < 1e-12);
-            } else {
-                assert!((phase.0.abs() - 1.0).abs() < 1e-12 && phase.1.abs() < 1e-12);
-            }
+            assert!((phase.0 - 1.0).abs() < 1e-12 && phase.1.abs() < 1e-12);
             for (row, row_values) in actual.iter().enumerate() {
                 for (column, &value) in row_values.iter().enumerate() {
                     let normalized = (

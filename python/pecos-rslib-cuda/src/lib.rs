@@ -81,6 +81,9 @@ impl PyCuStateVec {
     fn apply_lowered_controlled_rotation(&mut self, gates: impl IntoIterator<Item = Gate>) {
         for gate in gates {
             match gate.gate_type {
+                GateType::Z => {
+                    self.inner.z(&gate.qubits);
+                }
                 GateType::H => {
                     self.inner.h(&gate.qubits);
                 }

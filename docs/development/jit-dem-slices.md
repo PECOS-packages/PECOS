@@ -199,10 +199,12 @@ than two rounds retain the full-model fallback.
 H, CX, and mixed H/CX assembly is registered through one typed boundary-provider
 description. A provider first checks its logical operation shape and every
 condition that requires the exact compiler, then selects its depth-independent
-fixture keys and cached templates. The description supplies detector placement
-and one of the checked GF(2) routing policies; the common assembler owns boundary
-placement, assembled-circuit output-schema validation, and hard-boundary
-stitching. To add another logical Clifford boundary family, the minimum work is
+cached templates. The description contains only values consumed by assembly:
+templates, memory depths, detector placement, and a GF(2) routing policy. The
+common assembler owns boundary placement, logical output-schema validation, and
+hard-boundary stitching. The schema is derived from logical operations and is
+pinned against physical circuit metadata, keeping a warm assembly independent
+of physical depth. To add another logical Clifford boundary family, the minimum work is
 therefore (1) an explicit eligibility/fallback check, (2) a bounded physical
 fixture compiler plus canonical cache key, and (3) a provider description. It
 does not require another schedule-construction or stitch path. In the three
@@ -323,15 +325,22 @@ converted to mechanism columns.
 ## Decoder window handoff
 
 The decoder-core crate owns the flattened `StructuredDem` input boundary used
-by streaming and windowed decoders. It retains independent-error grouping,
-decomposition components, hyperedges, standard observable columns, and detector
-coordinates. `DetectorErrorModel::to_structured_decoder_dem()` converts a PECOS
-model directly into this representation, so a stitched model does not need a
-render/parse round trip. PECOS tracked-Pauli outputs are rejected explicitly at
-this matching-decoder boundary because they are not standard DEM observables.
+by streaming and windowed decoders. The type can retain independent-error
+grouping, decomposition components, hyperedges, standard observable columns,
+and detector coordinates. `DetectorErrorModel::to_structured_decoder_dem()`
+uses the same equal-effect grouping and XOR probability combination as
+`to_mechanisms()` and the default rendered model; this avoids introducing a
+second factorization policy at the decoder boundary. PECOS tracked-Pauli outputs
+are rejected explicitly because they are not standard DEM observables.
 
 All UF windowed decoder families accept `from_structured_dem`; their existing
-`from_dem` constructors are compatibility adapters that parse once. Time-window
+`from_dem` constructors are compatibility adapters that parse once. Decoder
+specifications accept `DecodeModel::StructuredDem`, and the Python
+`DetectorErrorModel.build_decoder()` binding passes a stitched model through
+that path. Windowed and beam-search specs therefore avoid a top-level
+render/parse round trip; text-only leaf backends render only at their parser
+boundary. The windowed logical-subgraph decoder likewise accepts the structured
+model directly and partitions it through `SparseDem` without serialization. Time-window
 selection and detector relabeling are performed by `StructuredDem::window_by_time`
 with the same shared `DemBoundaryKind` used by slice stitching. Soft boundaries
 project outside detector targets into implicit boundary edges, while hard

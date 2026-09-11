@@ -65,7 +65,14 @@ pub struct StructuredDemWindow {
 }
 
 impl StructuredDem {
-    /// Parse a flattened Stim DEM without discarding decomposition components.
+    /// Parse PECOS's strict flattened Stim-DEM subset without discarding components.
+    ///
+    /// Accepted instructions are `error(p)` with `D<n>` / `L<n>` targets and
+    /// optional `^` components, `detector D<n>...` or `detector(coords) D<n>...`,
+    /// `logical_observable L<n>...`, blank lines, and whole-line `#` comments.
+    /// Probabilities must be finite and in `[0, 1]`; coordinates must be finite.
+    /// Inline comments, `TP<n>`, unknown instructions, `repeat`, and
+    /// `shift_detectors` are rejected instead of being silently ignored.
     ///
     /// # Errors
     ///

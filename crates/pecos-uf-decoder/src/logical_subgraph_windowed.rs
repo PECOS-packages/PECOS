@@ -37,9 +37,11 @@ use pecos_decoder_core::dem::DemMatchingGraph;
 use pecos_decoder_core::errors::DecoderError;
 use pecos_decoder_core::logical_subgraph::window_plan::LogicalSubgraphWindowPlan;
 use pecos_decoder_core::logical_subgraph::{
-    MaxTimeRadius, StabCoords, partition_dem_by_logical_windowed,
+    LogicalSubgraph, MaxTimeRadius, StabCoords, partition_dem_by_logical_windowed,
+    partition_structured_dem_by_logical_windowed,
 };
 use pecos_decoder_core::obs_mask::ObsMask;
+use pecos_decoder_core::window::StructuredDem;
 
 use crate::decoder::{UfDecoder, UfDecoderConfig};
 use crate::windowed::{OverlappingWindowedDecoder, WindowedConfig};
@@ -91,7 +93,32 @@ impl WindowedLogicalSubgraphDecoder {
         // subgraph-local indices) into each sub-DEM, giving the time-based
         // windowing real detector times. Empty-region observables are dropped.
         let full_coords = DemMatchingGraph::from_dem_str(dem)?.detector_coords;
-        let plan = LogicalSubgraphWindowPlan::new(&parts, &full_coords);
+        Self::from_partition(&parts, &full_coords, window_config)
+    }
+
+    /// Build directly from a validated structured DEM and stabilizer coordinates.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DecoderError` if detector coordinates cannot be assigned to an
+    /// observing region or a subgraph decoder fails to build.
+    pub fn from_structured_dem(
+        dem: &StructuredDem,
+        stab_coords: &StabCoords,
+        max_time_radius: MaxTimeRadius,
+        window_config: WindowedConfig,
+    ) -> Result<Self, DecoderError> {
+        let parts =
+            partition_structured_dem_by_logical_windowed(dem, stab_coords, max_time_radius)?;
+        Self::from_partition(&parts, &dem.detector_coords, window_config)
+    }
+
+    fn from_partition(
+        parts: &[LogicalSubgraph],
+        full_coords: &[Option<Vec<f64>>],
+        window_config: WindowedConfig,
+    ) -> Result<Self, DecoderError> {
+        let plan = LogicalSubgraphWindowPlan::new(parts, full_coords);
 
         let mut subgraphs = Vec::with_capacity(plan.num_observables());
         let mut max_local = 0usize;
@@ -161,5 +188,34 @@ impl ObservableDecoder for WindowedLogicalSubgraphDecoder {
             }
         }
         Ok(obs_mask)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pecos_decoder_core::logical_subgraph::QubitStabCoords;
+
+    #[test]
+    fn structured_constructor_matches_text_plan() {
+        let dem = "error(0.1) D0 L0\nerror(0.1) D0 D1\n\
+                   detector(1, 0, 0) D0\ndetector(1, 0, 1) D1\n\
+                   logical_observable L0\n";
+        let coords = vec![QubitStabCoords {
+            x_positions: vec![(1.0, 0.0)],
+            z_positions: vec![],
+        }];
+        let config = WindowedConfig {
+            step_size: 1,
+            buffer_size: 0,
+            ..WindowedConfig::default()
+        };
+        let structured = StructuredDem::from_dem_str(dem).unwrap();
+        let text = WindowedLogicalSubgraphDecoder::from_dem(dem, &coords, None, config).unwrap();
+        let direct =
+            WindowedLogicalSubgraphDecoder::from_structured_dem(&structured, &coords, None, config)
+                .unwrap();
+        assert_eq!(direct.num_subgraphs(), text.num_subgraphs());
+        assert_eq!(direct.num_windows(), text.num_windows());
     }
 }

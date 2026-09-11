@@ -16,16 +16,13 @@ use std::ops::BitXor;
 
 /// Apply a Hadamard to paired X/Z frame components.
 #[must_use]
-pub const fn conjugate_h<T: Copy>(x: T, z: T) -> (T, T) {
+pub const fn conjugate_h(x: bool, z: bool) -> (bool, bool) {
     (z, x)
 }
 
 /// Apply an S gate to paired X/Z frame components, ignoring Pauli sign.
 #[must_use]
-pub fn conjugate_s<T>(x: T, z: T) -> (T, T)
-where
-    T: Copy + BitXor<Output = T>,
-{
+pub const fn conjugate_s(x: bool, z: bool) -> (bool, bool) {
     (x, z ^ x)
 }
 

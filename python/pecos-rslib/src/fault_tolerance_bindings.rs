@@ -1652,7 +1652,31 @@ impl PyFaultDistanceUpperBoundResult {
 /// ```
 #[pyclass(subclass, name = "DetectorErrorModel", module = "pecos_rslib.qec")]
 pub struct PyDetectorErrorModel {
-    inner: RustDetectorErrorModel,
+    pub(crate) inner: RustDetectorErrorModel,
+}
+
+/// A decoder built directly from a structured PECOS detector error model.
+#[pyclass(name = "StructuredDemDecoder", module = "pecos_rslib.qec", unsendable)]
+pub struct PyStructuredDemDecoder {
+    inner: Box<dyn pecos_decoders::ObservableDecoder>,
+    num_observables: usize,
+}
+
+#[pymethods]
+impl PyStructuredDemDecoder {
+    /// Decode one detector-event syndrome.
+    fn decode_syndrome(&mut self, syndrome: Vec<u8>) -> PyResult<PyObservableFlips> {
+        self.inner
+            .decode_obs(&syndrome)
+            .map(|mask| PyObservableFlips::from_mask_value(mask, self.num_observables))
+            .map_err(decoder_build_error_to_py)
+    }
+
+    /// Number of detector bits expected by the decoder, when declared by the backend.
+    #[getter]
+    fn num_detectors(&self) -> Option<usize> {
+        self.inner.num_detectors()
+    }
 }
 
 /// One reusable, absolute-round-independent DEM slice compiled from a bounded template.
@@ -2414,6 +2438,35 @@ impl PyDetectorErrorModel {
             .iter()
             .map(|detector| (detector.id, detector.coords))
             .collect()
+    }
+
+    /// Build a decoder without rendering and reparsing this model at the API boundary.
+    ///
+    /// Windowed and beam-search specifications consume the structured model directly;
+    /// backends that only expose a text parser are rendered at their leaf boundary.
+    fn build_decoder(&self, decoder: &Bound<'_, PyAny>) -> PyResult<PyStructuredDemDecoder> {
+        let spec = if decoder.is_instance_of::<PyString>() {
+            pecos_decoders::DecoderSpec::parse(decoder.extract::<&str>()?)
+                .map_err(decoder_parse_error_to_py)?
+        } else if let Ok(spec) = decoder.extract::<PyRef<'_, PyDecoderSpec>>() {
+            spec.inner.clone()
+        } else {
+            return Err(pyo3::exceptions::PyTypeError::new_err(
+                "decoder must be a pecos.decoders.DecoderSpec or legacy decoder string",
+            ));
+        };
+        let model = self
+            .inner
+            .to_structured_decoder_dem()
+            .map_err(decoder_build_error_to_py)?;
+        let num_observables = model.num_observables;
+        let inner = spec
+            .build(&pecos_decoders::DecodeModel::StructuredDem(model))
+            .map_err(decoder_build_error_to_py)?;
+        Ok(PyStructuredDemDecoder {
+            inner,
+            num_observables,
+        })
     }
 
     /// Compile a reusable round schedule from this source-tracked model.
@@ -8057,11 +8110,6 @@ fn coloration_memory_circuit(
 /// Transform a sign-free two-patch Pauli mask through H0, H1, or CX.
 #[pyfunction]
 fn transform_two_patch_pauli(pauli: u8, gate: &str) -> PyResult<u8> {
-    if pauli > 0x0f {
-        return Err(pyo3::exceptions::PyValueError::new_err(format!(
-            "two-patch Pauli mask must fit in four bits, got {pauli}"
-        )));
-    }
     let gate = match gate {
         "h0" => RustTwoPatchClifford::HadamardFirst,
         "h1" => RustTwoPatchClifford::HadamardSecond,
@@ -8093,6 +8141,7 @@ pub fn register_qec_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     qec.add_class::<PyFaultDistanceUpperBoundConfig>()?;
     qec.add_class::<PyFaultDistanceUpperBoundResult>()?;
     qec.add_class::<PyDetectorErrorModel>()?;
+    qec.add_class::<PyStructuredDemDecoder>()?;
     qec.add_class::<PyDemSliceTemplate>()?;
     qec.add_class::<PyDemSliceRoundSchedule>()?;
     qec.add_class::<PyDemBuilder>()?;

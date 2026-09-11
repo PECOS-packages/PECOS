@@ -390,37 +390,17 @@ class _BoundaryOutputRouting(Enum):
 
 
 @dataclass(frozen=True)
-class _BoundaryProviderEligibility:
-    """Logical-shape constraints whose failure selects the exact compiler."""
-
-    patch_count: int
-    gate_names: tuple[str, ...]
-    minimum_memory_rounds: int
-    fallback_guards: tuple[str, ...]
-
-
-@dataclass(frozen=True)
-class _BoundaryTemplateSelection:
-    """One canonical fixture key paired with the templates it selected."""
-
-    canonical_fixture_key: tuple[object, ...]
-    templates: _CachedSurfaceBoundaryDemTemplates
-
-
-@dataclass(frozen=True)
 class _BoundaryDemProviderDescription:
     """Complete assembly description produced by a boundary-family provider.
 
     Gate-specific code is responsible for eligibility and bounded physical
     compilation. Once this value exists, template placement, detector
     relocation, output routing, schema validation, and stitching are shared.
-    Each template selection retains its canonical fixture key, making the
-    depth-independent cache boundary explicit in the assembly plan.
+    Eligibility remains the provider's responsibility; this value contains
+    only data consumed by the common assembler.
     """
 
-    family: str
-    eligibility: _BoundaryProviderEligibility
-    template_selections: tuple[_BoundaryTemplateSelection, ...]
+    boundary_templates: tuple[_CachedSurfaceBoundaryDemTemplates, ...]
     memory_rounds: tuple[int, ...]
     output_routing: _BoundaryOutputRouting
     coordinate_offset: tuple[float, float] | None = None
@@ -445,10 +425,7 @@ def _boundary_output_routings(
     if provider.output_routing is _BoundaryOutputRouting.IDENTITY:
         return _identity_boundary_output_routings(placements)
 
-    if provider.final_basis not in {"X", "Z"}:
-        msg = "repeated-CX output routing requires a final X or Z basis"
-        raise ValueError(msg)
-    gate_count = len(provider.eligibility.gate_names)
+    gate_count = len(provider.boundary_templates)
     routings = {}
     for template, round_, boundary_index in placements:
         if not template.dem_outputs:
@@ -456,10 +433,14 @@ def _boundary_output_routings(
         later_gate_count = gate_count - boundary_index - 1
         if later_gate_count % 2 == 0:
             routing = {output: [output] for output in template.dem_outputs}
-        elif provider.final_basis == "X":
-            routing = {output: [0] if output == 0 else [0, 1] for output in template.dem_outputs}
         else:
-            routing = {output: [0, 1] if output == 0 else [1] for output in template.dem_outputs}
+            if provider.final_basis not in {"X", "Z"}:
+                msg = "repeated-CX output routing requires a final X or Z basis"
+                raise ValueError(msg)
+            if provider.final_basis == "X":
+                routing = {output: [0] if output == 0 else [0, 1] for output in template.dem_outputs}
+            else:
+                routing = {output: [0, 1] if output == 0 else [1] for output in template.dem_outputs}
         routings[round_] = routing
     return routings
 
@@ -468,14 +449,9 @@ _TWO_PATCH_IDENTITY = (1, 2, 4, 8)
 _TWO_PATCH_GATES = ("h0", "h1", "cx")
 
 
-def _apply_two_patch_gate_to_pauli(pauli: int, gate: str) -> int:
-    """Apply the shared Rust real-Clifford transform to a two-patch Pauli mask."""
-    return transform_two_patch_pauli(pauli, gate)
-
-
 def _append_two_patch_gate_transform(transform: tuple[int, ...], gate: str) -> tuple[int, ...]:
     """Append ``gate`` to a chronological Pauli-frame transformation."""
-    return tuple(_apply_two_patch_gate_to_pauli(pauli, gate) for pauli in transform)
+    return tuple(transform_two_patch_pauli(pauli, gate) for pauli in transform)
 
 
 @cache
@@ -1163,16 +1139,43 @@ class LogicalCircuitBuilder:
         return tc
 
     def _assembled_dem_output_ids(self) -> list[int]:
-        """Return the observable schema declared by the actual assembled circuit.
+        """Derive the emitted observable schema from the logical operation list.
 
-        Cached physical fixtures are deliberately not authoritative for this
-        schema.  In particular, final-measurement reliability depends on the
-        complete logical-gate history, which the circuit frontend records when
-        it emits its observable metadata.
+        Observable IDs advance for every terminal patch measurement, including
+        unreliable observables that the physical emitter omits. A CX makes the
+        control-X and target-Z observables reliable only when their partners use
+        the same final basis. This mirrors ``_CircuitGenerator`` without emitting
+        an O(physical-depth) circuit on every warm template assembly.
         """
-        circuit = self.to_tick_circuit()
-        observables = json.loads(circuit.get_meta("observables") or "[]")
-        return [int(observable["id"]) for observable in observables]
+        last_memory_index: dict[str, int] = {}
+        final_basis: dict[str, str] = {}
+        x_entangled_with = {label: [] for label in self._patches}
+        z_entangled_with = {label: [] for label in self._patches}
+
+        for operation_index, operation in enumerate(self._operations):
+            if operation.gate_type == LogicalGateType.MEMORY:
+                for label in operation.patches:
+                    last_memory_index[label] = operation_index
+                    final_basis[label] = operation.per_patch_basis.get(label, operation.basis).upper()
+            elif operation.gate_type == LogicalGateType.TRANSVERSAL_CX:
+                control, target = operation.patches
+                x_entangled_with[control].append(target)
+                z_entangled_with[target].append(control)
+
+        output_ids = []
+        next_output = 0
+        for operation_index, operation in enumerate(self._operations):
+            if operation.gate_type != LogicalGateType.MEMORY:
+                continue
+            for label in operation.patches:
+                if last_memory_index.get(label) != operation_index:
+                    continue
+                basis = final_basis[label]
+                partners = x_entangled_with[label] if basis == "X" else z_entangled_with[label]
+                if all(final_basis.get(partner) == basis for partner in partners):
+                    output_ids.append(next_output)
+                next_output += 1
+        return output_ids
 
     def to_dag_circuit(self) -> object:
         """Generate a PECOS DagCircuit for fault analysis.
@@ -1470,30 +1473,8 @@ class LogicalCircuitBuilder:
         self,
         provider: _BoundaryDemProviderDescription,
     ) -> tuple[object, object]:
-        """Validate and assemble one data-driven logical-boundary provider."""
-        if not provider.template_selections:
-            msg = f"{provider.family} provider selected no boundary templates"
-            raise ValueError(msg)
-        if len(self._patches) != provider.eligibility.patch_count:
-            msg = f"{provider.family} provider no longer matches its patch-count eligibility"
-            raise ValueError(msg)
-        if len(provider.eligibility.gate_names) != len(provider.template_selections):
-            msg = f"{provider.family} provider gate list does not match its template families"
-            raise ValueError(msg)
-        if not provider.eligibility.fallback_guards:
-            msg = f"{provider.family} provider must declare its exact-compile fallback guards"
-            raise ValueError(msg)
-        if len(provider.memory_rounds) != len(provider.template_selections) + 1:
-            msg = f"{provider.family} provider requires one more memory segment than boundaries"
-            raise ValueError(msg)
-        if any(rounds < provider.eligibility.minimum_memory_rounds for rounds in provider.memory_rounds):
-            msg = f"{provider.family} provider received a memory segment outside its eligibility contract"
-            raise ValueError(msg)
-        if (provider.coordinate_offset is None) == (provider.detector_coordinate_offsets is None):
-            msg = f"{provider.family} provider must select exactly one detector-placement strategy"
-            raise ValueError(msg)
-
-        boundary_templates = [selection.templates for selection in provider.template_selections]
+        """Assemble a provider description already checked by its producer."""
+        boundary_templates = list(provider.boundary_templates)
         placements, boundary_round = _boundary_template_placements(
             boundary_templates,
             list(provider.memory_rounds),
@@ -1599,7 +1580,6 @@ class LogicalCircuitBuilder:
             return None
 
         boundary_templates = []
-        fixture_keys = []
         cached_layout = None
         for boundary_index, selected_gate in enumerate(gate_names):
             start_swapped = prefix_states[boundary_index]
@@ -1640,7 +1620,6 @@ class LogicalCircuitBuilder:
                 p_prep,
             )
             cached_layout = _cached_surface_mixed_dem_templates(*fixture_key)
-            fixture_keys.append(fixture_key)
             boundary_templates.append(cached_layout.templates)
 
         if cached_layout is None:  # Defensive: the alternating form always has at least one gate.
@@ -1653,22 +1632,7 @@ class LogicalCircuitBuilder:
             target_coordinate_origin=cached_layout.target_coordinate_origin,
         )
         provider = _BoundaryDemProviderDescription(
-            family="mixed-h-cx",
-            eligibility=_BoundaryProviderEligibility(
-                patch_count=2,
-                gate_names=tuple(gate_names),
-                minimum_memory_rounds=2,
-                fallback_guards=(
-                    "alternating-memory-and-boundary-operations",
-                    "matching-cx-patch-geometry",
-                    "compatible-cx-stabilizer-orientation",
-                    "history-sensitive-output-reliability",
-                ),
-            ),
-            template_selections=tuple(
-                _BoundaryTemplateSelection(key, templates)
-                for key, templates in zip(fixture_keys, boundary_templates, strict=True)
-            ),
+            boundary_templates=tuple(boundary_templates),
             memory_rounds=tuple(memory.rounds for memory in memories),
             output_routing=_BoundaryOutputRouting.IDENTITY,
             detector_coordinate_offsets=detector_coordinate_offsets,
@@ -1717,7 +1681,9 @@ class LogicalCircuitBuilder:
         initial_target_basis = memories[0].per_patch_basis.get(target_label, memories[0].basis).upper()
         final_control_basis = memories[-1].per_patch_basis.get(control_label, memories[-1].basis).upper()
         final_target_basis = memories[-1].per_patch_basis.get(target_label, memories[-1].basis).upper()
-        if len(gates) > 1 and (final_control_basis != final_target_basis or final_control_basis not in {"X", "Z"}):
+        if final_control_basis not in {"X", "Z"} or final_target_basis not in {"X", "Z"}:
+            return None
+        if len(gates) > 1 and final_control_basis != final_target_basis:
             return None
         fixture_key = (
             control_geometry.dx,
@@ -1748,18 +1714,7 @@ class LogicalCircuitBuilder:
             target_coordinate_origin=cached.target_coordinate_origin,
         )
         provider = _BoundaryDemProviderDescription(
-            family="transversal-cx",
-            eligibility=_BoundaryProviderEligibility(
-                patch_count=2,
-                gate_names=("cx",) * len(gates),
-                minimum_memory_rounds=2,
-                fallback_guards=(
-                    "alternating-memory-and-cx-operations",
-                    "matching-patch-geometry",
-                    "supported-repeated-cx-final-basis",
-                ),
-            ),
-            template_selections=tuple(_BoundaryTemplateSelection(fixture_key, templates) for _ in gates),
+            boundary_templates=(templates,) * len(gates),
             memory_rounds=tuple(memory.rounds for memory in memories),
             output_routing=_BoundaryOutputRouting.REPEATED_CX,
             detector_coordinate_offsets=detector_coordinate_offsets,
@@ -1819,17 +1774,7 @@ class LogicalCircuitBuilder:
             for key in fixture_keys
         )
         provider = _BoundaryDemProviderDescription(
-            family="transversal-h",
-            eligibility=_BoundaryProviderEligibility(
-                patch_count=1,
-                gate_names=("h",) * len(gates),
-                minimum_memory_rounds=2,
-                fallback_guards=("alternating-memory-and-h-operations",),
-            ),
-            template_selections=tuple(
-                _BoundaryTemplateSelection(key, templates)
-                for key, templates in zip(fixture_keys, boundary_templates, strict=True)
-            ),
+            boundary_templates=boundary_templates,
             memory_rounds=tuple(memory.rounds for memory in memories),
             output_routing=_BoundaryOutputRouting.IDENTITY,
             coordinate_offset=(float(coord_x), float(coord_y)),

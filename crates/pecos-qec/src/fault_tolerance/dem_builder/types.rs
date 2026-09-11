@@ -744,6 +744,72 @@ impl<Detector> Default for FaultMechanism<Detector> {
     }
 }
 
+impl FaultMechanism<u32> {
+    /// Creates a mechanism from unsorted detector and DEM-output indices.
+    ///
+    /// Repeated entries are preserved because full-model construction uses
+    /// concrete target lists rather than XOR-toggle streams.
+    #[must_use]
+    pub fn from_unsorted(
+        detectors: impl IntoIterator<Item = u32>,
+        dem_outputs: impl IntoIterator<Item = u32>,
+    ) -> Self {
+        Self::from_unsorted_with_tracked_paulis(detectors, dem_outputs, std::iter::empty())
+    }
+
+    /// Creates a full-model mechanism from unsorted targets.
+    #[must_use]
+    pub fn from_unsorted_with_tracked_paulis(
+        detectors: impl IntoIterator<Item = u32>,
+        dem_outputs: impl IntoIterator<Item = u32>,
+        tracked_paulis: impl IntoIterator<Item = u32>,
+    ) -> Self {
+        let mut detectors: SmallVec<[u32; 4]> = detectors.into_iter().collect();
+        let mut dem_outputs: SmallVec<[u32; 2]> = dem_outputs.into_iter().collect();
+        let mut tracked_paulis: SmallVec<[u32; 2]> = tracked_paulis.into_iter().collect();
+        detectors.sort_unstable();
+        dem_outputs.sort_unstable();
+        tracked_paulis.sort_unstable();
+        Self {
+            detectors,
+            dem_outputs,
+            tracked_paulis,
+        }
+    }
+
+    /// Creates a full-model mechanism from pre-sorted targets.
+    #[must_use]
+    pub fn from_sorted(detectors: SmallVec<[u32; 4]>, dem_outputs: SmallVec<[u32; 2]>) -> Self {
+        Self::from_sorted_with_tracked_paulis(detectors, dem_outputs, SmallVec::new())
+    }
+
+    /// Creates a full-model mechanism from pre-sorted targets, including tracked Paulis.
+    #[must_use]
+    pub fn from_sorted_with_tracked_paulis(
+        detectors: SmallVec<[u32; 4]>,
+        dem_outputs: SmallVec<[u32; 2]>,
+        tracked_paulis: SmallVec<[u32; 2]>,
+    ) -> Self {
+        debug_assert!(
+            detectors.windows(2).all(|w| w[0] <= w[1]),
+            "detectors must be sorted"
+        );
+        debug_assert!(
+            dem_outputs.windows(2).all(|w| w[0] <= w[1]),
+            "dem_outputs must be sorted"
+        );
+        debug_assert!(
+            tracked_paulis.windows(2).all(|w| w[0] <= w[1]),
+            "tracked_paulis must be sorted"
+        );
+        Self {
+            detectors,
+            dem_outputs,
+            tracked_paulis,
+        }
+    }
+}
+
 impl<Detector> FaultMechanism<Detector>
 where
     Detector: Copy + Ord,
@@ -752,38 +818,6 @@ where
     #[must_use]
     pub fn new() -> Self {
         Self::default()
-    }
-
-    /// Creates a mechanism from unsorted detector and DEM-output indices.
-    ///
-    /// This preserves repeated targets after sorting. Use [`Self::from_unsorted_parity`]
-    /// when the input is a sequence of XOR toggles whose duplicates must cancel.
-    #[must_use]
-    pub fn from_unsorted(
-        detectors: impl IntoIterator<Item = Detector>,
-        dem_outputs: impl IntoIterator<Item = u32>,
-    ) -> Self {
-        Self::from_unsorted_with_tracked_paulis(detectors, dem_outputs, std::iter::empty())
-    }
-
-    /// Creates a mechanism from unsorted detector, DEM-output, and tracked-Pauli indices.
-    #[must_use]
-    pub fn from_unsorted_with_tracked_paulis(
-        detectors: impl IntoIterator<Item = Detector>,
-        dem_outputs: impl IntoIterator<Item = u32>,
-        tracked_paulis: impl IntoIterator<Item = u32>,
-    ) -> Self {
-        let mut dets: SmallVec<[Detector; 4]> = detectors.into_iter().collect();
-        let mut dem_outputs: SmallVec<[u32; 2]> = dem_outputs.into_iter().collect();
-        let mut tracked_paulis: SmallVec<[u32; 2]> = tracked_paulis.into_iter().collect();
-        dets.sort_unstable();
-        dem_outputs.sort_unstable();
-        tracked_paulis.sort_unstable();
-        Self {
-            detectors: dets,
-            dem_outputs,
-            tracked_paulis,
-        }
     }
 
     /// Creates a canonical XOR mechanism where repeated targets cancel by parity.
@@ -806,41 +840,6 @@ where
             detectors: parity_sorted(detectors),
             dem_outputs: parity_sorted(dem_outputs),
             tracked_paulis: parity_sorted(tracked_paulis),
-        }
-    }
-
-    /// Creates a mechanism from pre-sorted detector and DEM-output indices.
-    #[must_use]
-    pub fn from_sorted(
-        detectors: SmallVec<[Detector; 4]>,
-        dem_outputs: SmallVec<[u32; 2]>,
-    ) -> Self {
-        Self::from_sorted_with_tracked_paulis(detectors, dem_outputs, SmallVec::new())
-    }
-
-    /// Creates a mechanism from pre-sorted detector, DEM-output, and tracked-Pauli indices.
-    #[must_use]
-    pub fn from_sorted_with_tracked_paulis(
-        detectors: SmallVec<[Detector; 4]>,
-        dem_outputs: SmallVec<[u32; 2]>,
-        tracked_paulis: SmallVec<[u32; 2]>,
-    ) -> Self {
-        debug_assert!(
-            detectors.windows(2).all(|w| w[0] <= w[1]),
-            "detectors must be sorted"
-        );
-        debug_assert!(
-            dem_outputs.windows(2).all(|w| w[0] <= w[1]),
-            "dem_outputs must be sorted"
-        );
-        debug_assert!(
-            tracked_paulis.windows(2).all(|w| w[0] <= w[1]),
-            "tracked_paulis must be sorted"
-        );
-        Self {
-            detectors,
-            dem_outputs,
-            tracked_paulis,
         }
     }
 
@@ -926,7 +925,7 @@ where
     }
 }
 
-fn parity_sorted<T, A>(values: impl IntoIterator<Item = T>) -> SmallVec<A>
+pub(super) fn parity_sorted<T, A>(values: impl IntoIterator<Item = T>) -> SmallVec<A>
 where
     T: Copy + Ord,
     A: smallvec::Array<Item = T>,
@@ -5076,9 +5075,10 @@ impl DetectorErrorModel {
 
     /// Convert this PECOS model into the structured decoder input boundary.
     ///
-    /// This preserves independent contributions and their direct, Y-decomposed,
-    /// or source-decomposed component shape. Tracked-Pauli outputs are rejected
-    /// because matching decoders only consume standard DEM observables.
+    /// This uses the same equal-effect grouping and XOR probability combination
+    /// as [`Self::to_mechanisms`] and the default [`Display`] representation.
+    /// Tracked-Pauli outputs are rejected because matching decoders only consume
+    /// standard DEM observables.
     ///
     /// # Errors
     ///
@@ -5120,23 +5120,15 @@ impl DetectorErrorModel {
             *slot = detector.coords.map(|coords| coords.to_vec());
         }
 
-        let errors = self
-            .contributions
+        let (mechanisms, _) = self.to_mechanisms();
+        let errors = mechanisms
             .iter()
-            .map(|contribution| {
-                let kind = contribution.component_kind();
-                let components = kind
-                    .components()
-                    .into_iter()
-                    .map(|mechanism| StructuredDemComponent {
-                        detectors: mechanism.detectors.to_vec(),
-                        observables: mechanism.dem_outputs.to_vec(),
-                    })
-                    .collect();
-                StructuredDemError {
-                    probability: contribution.probability,
-                    components,
-                }
+            .map(|(probability, detectors, observables)| StructuredDemError {
+                probability: *probability,
+                components: vec![StructuredDemComponent {
+                    detectors: detectors.clone(),
+                    observables: observables.clone(),
+                }],
             })
             .collect();
         StructuredDem::try_new(
@@ -8836,7 +8828,7 @@ mod tests {
     }
 
     #[test]
-    fn structured_decoder_handoff_preserves_components_coordinates_and_outputs() {
+    fn structured_decoder_handoff_matches_grouped_render_semantics() {
         let mut dem = DetectorErrorModel::new();
         dem.add_detector(DetectorDef::new(0).with_coords([1.0, 2.0, 3.0]));
         dem.add_detector(DetectorDef::new(1).with_coords([4.0, 5.0, 6.0]));
@@ -8850,8 +8842,14 @@ mod tests {
         assert_eq!(structured.num_detectors, 2);
         assert_eq!(structured.num_observables, 1);
         assert_eq!(structured.detector_coords[0], Some(vec![1.0, 2.0, 3.0]));
-        assert_eq!(structured.errors[0].components.len(), 2);
-        assert_eq!(structured.errors[0].components[1].observables, [0]);
+        assert_eq!(structured.errors[0].components.len(), 1);
+        assert_eq!(structured.errors[0].components[0].detectors, [0, 1]);
+        assert_eq!(structured.errors[0].components[0].observables, [0]);
+
+        dem.add_y_decomposed_contribution(&x, &z, 0.125);
+        let grouped = dem.to_structured_decoder_dem().unwrap();
+        assert_eq!(grouped.errors.len(), 1);
+        assert!((grouped.errors[0].probability - 0.21875).abs() < 1e-12);
     }
 
     #[test]

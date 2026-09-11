@@ -26,12 +26,12 @@
 
 use super::types::{
     DemOutput, DetectorDef, DetectorErrorModel, FaultContribution, FaultContributionKind,
-    FaultMechanism,
+    FaultMechanism, parity_sorted,
 };
 use crate::fault_tolerance::propagator::DagFaultInfluenceMap;
 pub use pecos_decoder_core::window::DemBoundaryKind;
 use pecos_quantum::{Attribute, DagCircuit};
-use smallvec::{Array, SmallVec};
+use smallvec::SmallVec;
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
@@ -60,22 +60,20 @@ impl RelativeDetectorTarget {
     }
 }
 
-/// The ordinary DEM mechanism container parameterized by relative detector addresses.
+/// A slice mechanism whose public constructors canonicalize XOR-toggle streams.
+///
+/// The sort-only `FaultMechanism<u32>` constructors are intentionally unavailable
+/// for this relative-target instantiation, preventing duplicate detector targets
+/// from violating `xor`'s canonical-input precondition.
+///
+/// ```compile_fail
+/// use pecos_qec::fault_tolerance::dem_builder::{
+///     RelativeDetectorTarget, SliceFaultMechanism,
+/// };
+/// let target = RelativeDetectorTarget::new(0, 1);
+/// let _ = SliceFaultMechanism::from_unsorted([target, target], []);
+/// ```
 pub type SliceFaultMechanism = FaultMechanism<RelativeDetectorTarget>;
-
-fn parity_sorted<T, A>(values: impl IntoIterator<Item = T>) -> SmallVec<A>
-where
-    T: Copy + Ord,
-    A: Array<Item = T>,
-{
-    let mut toggled = BTreeSet::new();
-    for value in values {
-        if !toggled.remove(&value) {
-            toggled.insert(value);
-        }
-    }
-    toggled.into_iter().collect()
-}
 
 /// One independent fault contribution owned by a DEM slice.
 #[derive(Debug, Clone)]
@@ -2174,6 +2172,14 @@ mod tests {
             SliceFaultMechanism::from_unsorted_parity(detectors, std::iter::empty()),
             probability,
         )
+    }
+
+    #[test]
+    fn slice_mechanism_constructor_cancels_repeated_xor_targets() {
+        let repeated = target(0, 1);
+        let mechanism =
+            SliceFaultMechanism::from_unsorted_parity([repeated, repeated], std::iter::empty());
+        assert!(mechanism.is_empty());
     }
 
     fn bulk_slice() -> Arc<DemSlice> {

@@ -25,6 +25,8 @@ See pecos-docs/design/windowed-logical-subgraph-proper-solution.md.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 import stim
 from pecos.qec.surface import LogicalCircuitBuilder, SurfacePatch
@@ -34,8 +36,6 @@ from pecos.qec.surface.logical_circuit import (
     _boundary_output_routings,
     _BoundaryDemProviderDescription,
     _BoundaryOutputRouting,
-    _BoundaryProviderEligibility,
-    _BoundaryTemplateSelection,
     _canonical_two_patch_suffix,
     _validate_boundary_cardinality,
 )
@@ -49,6 +49,22 @@ def _memory_descriptor(d: int, rounds: int) -> dict:
     b.add_patch(patch, "A")
     b.add_memory("A", rounds, "Z")
     return b.build_algorithm_descriptor(p1=0.001, p2=0.001, p_meas=0.001)
+
+
+def test_structured_dem_builds_windowed_decoder_without_top_level_text_handoff():
+    builder = LogicalCircuitBuilder()
+    builder.add_patch(SurfacePatch.create(1), "data")
+    builder.add_memory("data", 3, "Z")
+    model, _, _ = builder._build_structured_dem(  # noqa: SLF001
+        p1=0.001,
+        p2=0.001,
+        p_meas=0.001,
+        p_prep=0.0,
+    )
+
+    decoder = model.build_decoder("windowed:mode=overlap,step=2,buf=1")
+    assert decoder.num_detectors == model.num_detectors
+    assert len(decoder.decode_syndrome([0] * model.num_detectors)) == model.num_observables
 
 
 def _h_boundary_descriptor() -> dict:
@@ -667,6 +683,15 @@ def test_logical_cx_provider_reuses_bounded_templates_and_routes_patch_coordinat
             3,
             6,
         ),
+        (
+            3,
+            PatchOrientation.X_TOP_BOTTOM,
+            PatchOrientation.X_TOP_BOTTOM,
+            ("Y", "Y"),
+            ("Y", "Y"),
+            2,
+            2,
+        ),
     ],
 )
 def test_cached_logical_cx_provider_matches_full_compile_across_families(
@@ -880,9 +905,8 @@ def test_shared_two_patch_clifford_transform_matches_basis_images(gate, basis_im
     assert tuple(transform_two_patch_pauli(pauli, gate) for pauli in _TWO_PATCH_IDENTITY) == basis_images
 
 
-def test_shared_two_patch_clifford_transform_rejects_invalid_input():
-    with pytest.raises(ValueError, match="four bits"):
-        transform_two_patch_pauli(16, "cx")
+def test_shared_two_patch_clifford_transform_preserves_high_bits_and_rejects_unknown_gate():
+    assert transform_two_patch_pauli(16, "cx") == 16
     with pytest.raises(ValueError, match="unknown two-patch Clifford"):
         transform_two_patch_pauli(0, "cz")
 
@@ -903,12 +927,7 @@ def test_data_driven_boundary_provider_routes_repeated_cx(final_basis, boundary_
 
     template = Template()
     provider = _BoundaryDemProviderDescription(
-        family="test-cx",
-        eligibility=_BoundaryProviderEligibility(2, ("cx", "cx"), 2, ("test-guard",)),
-        template_selections=(
-            _BoundaryTemplateSelection(("fixture",), template),
-            _BoundaryTemplateSelection(("fixture",), template),
-        ),
+        boundary_templates=(template, template),
         memory_rounds=(2, 2, 2),
         output_routing=_BoundaryOutputRouting.REPEATED_CX,
         detector_coordinate_offsets={},
@@ -962,6 +981,44 @@ def test_cached_provider_checks_the_assembled_circuit_output_schema(monkeypatch)
     monkeypatch.setattr(builder, "_assembled_dem_output_ids", list)
     with pytest.raises(ValueError, match=r"assembled circuit expects \{\}"):
         builder.build_dem(p1=0.001, p2=0.002, p_meas=0.003, p_prep=0.004)
+
+
+def test_logical_output_schema_matches_emitted_circuit_metadata():
+    """The warm schema path stays pinned to the physical frontend's authority."""
+
+    def emitted_ids(builder):
+        circuit = builder.to_tick_circuit()
+        observables = json.loads(circuit.get_meta("observables") or "[]")
+        return [int(observable["id"]) for observable in observables]
+
+    schedules = []
+
+    memory = LogicalCircuitBuilder()
+    memory.add_patch(SurfacePatch.create(3), "data")
+    memory.add_memory("data", 3, "Z")
+    schedules.append(memory)
+
+    single_y_cx = LogicalCircuitBuilder()
+    single_y_cx.add_patch(SurfacePatch.create(3), "C")
+    single_y_cx.add_patch(SurfacePatch.create(3), "T", qubit_offset=100)
+    single_y_cx.add_memory(["C", "T"], 2, "Y")
+    single_y_cx.add_transversal_cx("C", "T")
+    single_y_cx.add_memory(["C", "T"], 2, "Y")
+    schedules.append(single_y_cx)
+
+    mixed_basis_cx = LogicalCircuitBuilder()
+    mixed_basis_cx.add_patch(SurfacePatch.create(3), "C")
+    mixed_basis_cx.add_patch(SurfacePatch.create(3), "T", qubit_offset=100)
+    mixed_basis_cx.add_memory(["C", "T"], 2, {"C": "Z", "T": "X"})
+    mixed_basis_cx.add_transversal_h("C")
+    mixed_basis_cx.add_memory(["C", "T"], 2, {"C": "X", "T": "X"})
+    mixed_basis_cx.add_transversal_h("C")
+    mixed_basis_cx.add_transversal_cx("C", "T")
+    mixed_basis_cx.add_memory(["C", "T"], 2, {"C": "X", "T": "Z"})
+    schedules.append(mixed_basis_cx)
+
+    for builder in schedules:
+        assert builder._assembled_dem_output_ids() == emitted_ids(builder)  # noqa: SLF001
 
 
 def test_mixed_h_cx_provider_reuses_normalized_boundary_families(monkeypatch):

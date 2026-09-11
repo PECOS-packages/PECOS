@@ -31,6 +31,11 @@ from pecos.qec.surface import LogicalCircuitBuilder, SurfacePatch
 from pecos.qec.surface.logical_circuit import (
     _TWO_PATCH_IDENTITY,
     _append_two_patch_gate_transform,
+    _boundary_output_routings,
+    _BoundaryDemProviderDescription,
+    _BoundaryOutputRouting,
+    _BoundaryProviderEligibility,
+    _BoundaryTemplateSelection,
     _canonical_two_patch_suffix,
     _validate_boundary_cardinality,
 )
@@ -880,6 +885,37 @@ def test_shared_two_patch_clifford_transform_rejects_invalid_input():
         transform_two_patch_pauli(16, "cx")
     with pytest.raises(ValueError, match="unknown two-patch Clifford"):
         transform_two_patch_pauli(0, "cz")
+
+
+@pytest.mark.parametrize(
+    ("final_basis", "boundary_index", "expected"),
+    [
+        ("X", 1, {0: [0], 1: [1]}),
+        ("X", 0, {0: [0], 1: [0, 1]}),
+        ("Z", 0, {0: [0, 1], 1: [1]}),
+    ],
+)
+def test_data_driven_boundary_provider_routes_repeated_cx(final_basis, boundary_index, expected):
+    """The common provider assembler owns the repeated-CX GF(2) policy."""
+
+    class Template:
+        dem_outputs = (0, 1)
+
+    template = Template()
+    provider = _BoundaryDemProviderDescription(
+        family="test-cx",
+        eligibility=_BoundaryProviderEligibility(2, ("cx", "cx"), 2, ("test-guard",)),
+        template_selections=(
+            _BoundaryTemplateSelection(("fixture",), template),
+            _BoundaryTemplateSelection(("fixture",), template),
+        ),
+        memory_rounds=(2, 2, 2),
+        output_routing=_BoundaryOutputRouting.REPEATED_CX,
+        detector_coordinate_offsets={},
+        final_basis=final_basis,
+    )
+
+    assert _boundary_output_routings(provider, [(template, 7, boundary_index)])[7] == expected
 
 
 def test_mixed_h_cx_with_history_sensitive_outputs_uses_full_fallback(monkeypatch):

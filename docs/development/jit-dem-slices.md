@@ -196,6 +196,20 @@ placement, and warm-cache reuse. Patches whose shapes differ, reversed CX
 ordering, invalid physical orientation transitions, or a memory side shorter
 than two rounds retain the full-model fallback.
 
+H, CX, and mixed H/CX assembly is registered through one typed boundary-provider
+description. A provider first checks its logical operation shape and every
+condition that requires the exact compiler, then selects its depth-independent
+fixture keys and cached templates. The description supplies detector placement
+and one of the checked GF(2) routing policies; the common assembler owns boundary
+placement, assembled-circuit output-schema validation, and hard-boundary
+stitching. To add another logical Clifford boundary family, the minimum work is
+therefore (1) an explicit eligibility/fallback check, (2) a bounded physical
+fixture compiler plus canonical cache key, and (3) a provider description. It
+does not require another schedule-construction or stitch path. In the three
+migrated providers this removes roughly 30 lines of orchestration from the
+marginal cost of each provider, while leaving their physical compilation and
+observable-reliability decisions visible in family-specific code.
+
 The current standalone SZ/SZdg emitter is deliberately not cached. Its full DEM
 contains mechanisms whose detector span grows with the entire preceding memory
 segment (observed spans 3, 5, and 9 for corresponding pre-gate depths), violating

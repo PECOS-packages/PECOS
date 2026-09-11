@@ -315,15 +315,6 @@ class _CachedSurfaceCxDemTemplates:
     target_coordinate_origin: tuple[float, float]
 
 
-def _boundary_template_instances(
-    boundary_templates: list[_CachedSurfaceBoundaryDemTemplates],
-    memory_rounds: list[int],
-) -> tuple[list[tuple[object, int]], int]:
-    """Place boundary families between their adjacent memory segments."""
-    placements, boundary_round = _boundary_template_placements(boundary_templates, memory_rounds)
-    return [(template, round_) for template, round_, _ in placements], boundary_round
-
-
 def _boundary_template_placements(
     boundary_templates: list[_CachedSurfaceBoundaryDemTemplates],
     memory_rounds: list[int],
@@ -389,6 +380,88 @@ def _two_patch_detector_coordinate_offsets(
         },
     )
     return offsets
+
+
+class _BoundaryOutputRouting(Enum):
+    """Finite GF(2) routing policies understood by the common assembler."""
+
+    IDENTITY = auto()
+    REPEATED_CX = auto()
+
+
+@dataclass(frozen=True)
+class _BoundaryProviderEligibility:
+    """Logical-shape constraints whose failure selects the exact compiler."""
+
+    patch_count: int
+    gate_names: tuple[str, ...]
+    minimum_memory_rounds: int
+    fallback_guards: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class _BoundaryTemplateSelection:
+    """One canonical fixture key paired with the templates it selected."""
+
+    canonical_fixture_key: tuple[object, ...]
+    templates: _CachedSurfaceBoundaryDemTemplates
+
+
+@dataclass(frozen=True)
+class _BoundaryDemProviderDescription:
+    """Complete assembly description produced by a boundary-family provider.
+
+    Gate-specific code is responsible for eligibility and bounded physical
+    compilation. Once this value exists, template placement, detector
+    relocation, output routing, schema validation, and stitching are shared.
+    Each template selection retains its canonical fixture key, making the
+    depth-independent cache boundary explicit in the assembly plan.
+    """
+
+    family: str
+    eligibility: _BoundaryProviderEligibility
+    template_selections: tuple[_BoundaryTemplateSelection, ...]
+    memory_rounds: tuple[int, ...]
+    output_routing: _BoundaryOutputRouting
+    coordinate_offset: tuple[float, float] | None = None
+    detector_coordinate_offsets: dict[int, tuple[float, float]] | None = None
+    final_basis: str | None = None
+
+
+def _identity_boundary_output_routings(
+    placements: list[tuple[object, int, int]],
+) -> dict[int, dict[int, list[int]]]:
+    return {
+        round_: {output: [output] for output in template.dem_outputs}
+        for template, round_, _ in placements
+        if template.dem_outputs
+    }
+
+
+def _boundary_output_routings(
+    provider: _BoundaryDemProviderDescription,
+    placements: list[tuple[object, int, int]],
+) -> dict[int, dict[int, list[int]]]:
+    if provider.output_routing is _BoundaryOutputRouting.IDENTITY:
+        return _identity_boundary_output_routings(placements)
+
+    if provider.final_basis not in {"X", "Z"}:
+        msg = "repeated-CX output routing requires a final X or Z basis"
+        raise ValueError(msg)
+    gate_count = len(provider.eligibility.gate_names)
+    routings = {}
+    for template, round_, boundary_index in placements:
+        if not template.dem_outputs:
+            continue
+        later_gate_count = gate_count - boundary_index - 1
+        if later_gate_count % 2 == 0:
+            routing = {output: [output] for output in template.dem_outputs}
+        elif provider.final_basis == "X":
+            routing = {output: [0] if output == 0 else [0, 1] for output in template.dem_outputs}
+        else:
+            routing = {output: [0, 1] if output == 0 else [1] for output in template.dem_outputs}
+        routings[round_] = routing
+    return routings
 
 
 _TWO_PATCH_IDENTITY = (1, 2, 4, 8)
@@ -1393,6 +1466,60 @@ class LogicalCircuitBuilder:
         )
         return model, schedule
 
+    def _assemble_boundary_dem_provider(
+        self,
+        provider: _BoundaryDemProviderDescription,
+    ) -> tuple[object, object]:
+        """Validate and assemble one data-driven logical-boundary provider."""
+        if not provider.template_selections:
+            msg = f"{provider.family} provider selected no boundary templates"
+            raise ValueError(msg)
+        if len(self._patches) != provider.eligibility.patch_count:
+            msg = f"{provider.family} provider no longer matches its patch-count eligibility"
+            raise ValueError(msg)
+        if len(provider.eligibility.gate_names) != len(provider.template_selections):
+            msg = f"{provider.family} provider gate list does not match its template families"
+            raise ValueError(msg)
+        if not provider.eligibility.fallback_guards:
+            msg = f"{provider.family} provider must declare its exact-compile fallback guards"
+            raise ValueError(msg)
+        if len(provider.memory_rounds) != len(provider.template_selections) + 1:
+            msg = f"{provider.family} provider requires one more memory segment than boundaries"
+            raise ValueError(msg)
+        if any(rounds < provider.eligibility.minimum_memory_rounds for rounds in provider.memory_rounds):
+            msg = f"{provider.family} provider received a memory segment outside its eligibility contract"
+            raise ValueError(msg)
+        if (provider.coordinate_offset is None) == (provider.detector_coordinate_offsets is None):
+            msg = f"{provider.family} provider must select exactly one detector-placement strategy"
+            raise ValueError(msg)
+
+        boundary_templates = [selection.templates for selection in provider.template_selections]
+        placements, boundary_round = _boundary_template_placements(
+            boundary_templates,
+            list(provider.memory_rounds),
+        )
+        instances = [(template, round_) for template, round_, _ in placements]
+        dem_output_routings = _boundary_output_routings(provider, placements)
+
+        from pecos_rslib.qec import DemSliceRoundSchedule
+
+        schedule = DemSliceRoundSchedule.from_templates(
+            boundary_templates[0].output_model,
+            instances,
+            expected_dem_outputs=self._assembled_dem_output_ids(),
+            expected_tracked_paulis=[],
+            coordinate_offset=provider.coordinate_offset,
+            detector_coordinate_offsets=provider.detector_coordinate_offsets,
+            dem_output_routings=dem_output_routings,
+        )
+        model = schedule.stitch(
+            start_round=0,
+            commit_rounds=boundary_round + 1,
+            buffer_rounds=0,
+            forward_boundary="hard",
+        )
+        return model, schedule
+
     def _build_structured_mixed_dem_from_cached_templates(
         self,
         *,
@@ -1472,6 +1599,7 @@ class LogicalCircuitBuilder:
             return None
 
         boundary_templates = []
+        fixture_keys = []
         cached_layout = None
         for boundary_index, selected_gate in enumerate(gate_names):
             start_swapped = prefix_states[boundary_index]
@@ -1490,7 +1618,7 @@ class LogicalCircuitBuilder:
                 elif future_gate == "h1":
                     future_swapped = (future_swapped[0], not future_swapped[1])
             future_word = _canonical_two_patch_suffix(after_selected, future_transform, future_swapped)
-            cached_layout = _cached_surface_mixed_dem_templates(
+            fixture_key = (
                 control_geometry.dx,
                 control_geometry.dz,
                 control_geometry.orientation.name,
@@ -1511,14 +1639,9 @@ class LogicalCircuitBuilder:
                 p_meas,
                 p_prep,
             )
+            cached_layout = _cached_surface_mixed_dem_templates(*fixture_key)
+            fixture_keys.append(fixture_key)
             boundary_templates.append(cached_layout.templates)
-
-        from pecos_rslib.qec import DemSliceRoundSchedule
-
-        instances, boundary_round = _boundary_template_instances(
-            boundary_templates,
-            [memory.rounds for memory in memories],
-        )
 
         if cached_layout is None:  # Defensive: the alternating form always has at least one gate.
             return None
@@ -1529,26 +1652,28 @@ class LogicalCircuitBuilder:
             target_stream_count=cached_layout.target_stream_count,
             target_coordinate_origin=cached_layout.target_coordinate_origin,
         )
-        dem_output_routings = {
-            round_: {output: [output] for output in template.dem_outputs}
-            for template, round_ in instances
-            if template.dem_outputs
-        }
-        schedule = DemSliceRoundSchedule.from_templates(
-            boundary_templates[0].output_model,
-            instances,
-            expected_dem_outputs=self._assembled_dem_output_ids(),
-            expected_tracked_paulis=[],
+        provider = _BoundaryDemProviderDescription(
+            family="mixed-h-cx",
+            eligibility=_BoundaryProviderEligibility(
+                patch_count=2,
+                gate_names=tuple(gate_names),
+                minimum_memory_rounds=2,
+                fallback_guards=(
+                    "alternating-memory-and-boundary-operations",
+                    "matching-cx-patch-geometry",
+                    "compatible-cx-stabilizer-orientation",
+                    "history-sensitive-output-reliability",
+                ),
+            ),
+            template_selections=tuple(
+                _BoundaryTemplateSelection(key, templates)
+                for key, templates in zip(fixture_keys, boundary_templates, strict=True)
+            ),
+            memory_rounds=tuple(memory.rounds for memory in memories),
+            output_routing=_BoundaryOutputRouting.IDENTITY,
             detector_coordinate_offsets=detector_coordinate_offsets,
-            dem_output_routings=dem_output_routings,
         )
-        model = schedule.stitch(
-            start_round=0,
-            commit_rounds=boundary_round + 1,
-            buffer_rounds=0,
-            forward_boundary="hard",
-        )
-        return model, schedule
+        return self._assemble_boundary_dem_provider(provider)
 
     def _build_structured_cx_dem_from_cached_templates(
         self,
@@ -1594,7 +1719,7 @@ class LogicalCircuitBuilder:
         final_target_basis = memories[-1].per_patch_basis.get(target_label, memories[-1].basis).upper()
         if len(gates) > 1 and (final_control_basis != final_target_basis or final_control_basis not in {"X", "Z"}):
             return None
-        cached = _cached_surface_cx_dem_templates(
+        fixture_key = (
             control_geometry.dx,
             control_geometry.dz,
             control_geometry.orientation.name,
@@ -1612,28 +1737,8 @@ class LogicalCircuitBuilder:
             p_meas,
             p_prep,
         )
+        cached = _cached_surface_cx_dem_templates(*fixture_key)
         templates = cached.templates
-
-        from pecos_rslib.qec import DemSliceRoundSchedule
-
-        placed, boundary_round = _boundary_template_placements(
-            [templates] * len(gates),
-            [memory.rounds for memory in memories],
-        )
-
-        instances = [(template, round_) for template, round_, _ in placed]
-        dem_output_routings = {}
-        for template, round_, boundary_index in placed:
-            if not template.dem_outputs:
-                continue
-            later_gate_count = len(gates) - boundary_index - 1
-            if later_gate_count % 2 == 0:
-                routing = {output: [output] for output in template.dem_outputs}
-            elif final_control_basis == "X":
-                routing = {output: [0] if output == 0 else [0, 1] for output in template.dem_outputs}
-            else:
-                routing = {output: [0, 1] if output == 0 else [1] for output in template.dem_outputs}
-            dem_output_routings[round_] = routing
 
         detector_coordinate_offsets = _two_patch_detector_coordinate_offsets(
             control_state.coord_offset,
@@ -1642,21 +1747,25 @@ class LogicalCircuitBuilder:
             target_stream_count=cached.target_stream_count,
             target_coordinate_origin=cached.target_coordinate_origin,
         )
-        schedule = DemSliceRoundSchedule.from_templates(
-            templates.output_model,
-            instances,
-            expected_dem_outputs=self._assembled_dem_output_ids(),
-            expected_tracked_paulis=[],
+        provider = _BoundaryDemProviderDescription(
+            family="transversal-cx",
+            eligibility=_BoundaryProviderEligibility(
+                patch_count=2,
+                gate_names=("cx",) * len(gates),
+                minimum_memory_rounds=2,
+                fallback_guards=(
+                    "alternating-memory-and-cx-operations",
+                    "matching-patch-geometry",
+                    "supported-repeated-cx-final-basis",
+                ),
+            ),
+            template_selections=tuple(_BoundaryTemplateSelection(fixture_key, templates) for _ in gates),
+            memory_rounds=tuple(memory.rounds for memory in memories),
+            output_routing=_BoundaryOutputRouting.REPEATED_CX,
             detector_coordinate_offsets=detector_coordinate_offsets,
-            dem_output_routings=dem_output_routings,
+            final_basis=final_control_basis,
         )
-        model = schedule.stitch(
-            start_round=0,
-            commit_rounds=boundary_round + 1,
-            buffer_rounds=0,
-            forward_boundary="hard",
-        )
-        return model, schedule
+        return self._assemble_boundary_dem_provider(provider)
 
     def _build_structured_h_dem_from_cached_templates(
         self,
@@ -1684,8 +1793,8 @@ class LogicalCircuitBuilder:
         initial_basis = memories[0].per_patch_basis.get(patch_label, memories[0].basis).upper()
         final_basis = memories[-1].per_patch_basis.get(patch_label, memories[-1].basis).upper()
         coord_x, coord_y = patch_state.coord_offset
-        boundary_templates = [
-            _cached_surface_h_dem_templates(
+        fixture_keys = [
+            (
                 geometry.dx,
                 geometry.dz,
                 geometry.orientation.name,
@@ -1696,43 +1805,36 @@ class LogicalCircuitBuilder:
                 p2,
                 p_meas,
                 p_prep,
-                pre_gate_swapped=bool(boundary_index % 2),
-                future_h_parity=bool((len(gates) - boundary_index - 1) % 2),
+                bool(boundary_index % 2),
+                bool((len(gates) - boundary_index - 1) % 2),
             )
             for boundary_index in range(len(gates))
         ]
-
-        from pecos_rslib.qec import DemSliceRoundSchedule
-
-        instances, boundary_round = _boundary_template_instances(
-            boundary_templates,
-            [memory.rounds for memory in memories],
+        boundary_templates = tuple(
+            _cached_surface_h_dem_templates(
+                *key[:-2],
+                pre_gate_swapped=key[-2],
+                future_h_parity=key[-1],
+            )
+            for key in fixture_keys
         )
-
-        # The current surface frontend declares one final measured observable.
-        # Route it explicitly through the checked GF(2) instance API. The
-        # effective final basis encoded by each boundary family accounts for
-        # the parity of later H swaps.
-        dem_output_routings = {
-            round_: {output: [output] for output in template.dem_outputs}
-            for template, round_ in instances
-            if template.dem_outputs
-        }
-        schedule = DemSliceRoundSchedule.from_templates(
-            boundary_templates[0].output_model,
-            instances,
-            expected_dem_outputs=self._assembled_dem_output_ids(),
-            expected_tracked_paulis=[],
+        provider = _BoundaryDemProviderDescription(
+            family="transversal-h",
+            eligibility=_BoundaryProviderEligibility(
+                patch_count=1,
+                gate_names=("h",) * len(gates),
+                minimum_memory_rounds=2,
+                fallback_guards=("alternating-memory-and-h-operations",),
+            ),
+            template_selections=tuple(
+                _BoundaryTemplateSelection(key, templates)
+                for key, templates in zip(fixture_keys, boundary_templates, strict=True)
+            ),
+            memory_rounds=tuple(memory.rounds for memory in memories),
+            output_routing=_BoundaryOutputRouting.IDENTITY,
             coordinate_offset=(float(coord_x), float(coord_y)),
-            dem_output_routings=dem_output_routings,
         )
-        model = schedule.stitch(
-            start_round=0,
-            commit_rounds=boundary_round + 1,
-            buffer_rounds=0,
-            forward_boundary="hard",
-        )
-        return model, schedule
+        return self._assemble_boundary_dem_provider(provider)
 
     def build_dem(
         self,

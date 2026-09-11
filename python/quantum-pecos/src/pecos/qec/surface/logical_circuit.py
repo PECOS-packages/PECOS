@@ -335,9 +335,7 @@ def _boundary_template_placements(
 
     first_boundary_round = memory_rounds[0]
     placements = [(boundary_templates[0].initialization, 0, 0)]
-    placements.extend(
-        (boundary_templates[0].pre_gate_bulk, round_, 0) for round_ in range(1, first_boundary_round - 1)
-    )
+    placements.extend((boundary_templates[0].pre_gate_bulk, round_, 0) for round_ in range(1, first_boundary_round - 1))
     boundary_round = first_boundary_round
     for boundary_index, templates in enumerate(boundary_templates):
         placements.extend(

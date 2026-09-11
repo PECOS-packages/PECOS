@@ -10,12 +10,10 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-//! This is a PROJECTIVE check: each gate is compared to its reference up to one
-//! shared global phase, because a boundary conversion is only required to be exact
-//! up to an unobservable global phase. It therefore does NOT pin phase exactness --
-//! `phase_exactness_test.rs` is the test that does. Every RELATIVE phase, including
-//! the control-side phase that distinguishes a controlled rotation from a controlled
-//! phase, is compared exactly.
+//! Controlled rotations (`crz`, `crx`, `cry`) are compared phase-exactly, including
+//! at the half-angle wrap boundary. Other gates are compared up to one shared
+//! global phase; every relative phase is still compared exactly. Additional exact
+//! amplitude checks live in `phase_exactness_test.rs`.
 
 use num_complex::Complex64;
 use pecos_engines::{ClassicalEngine, DenseStateVecEngine, Engine};
@@ -397,6 +395,14 @@ fn parameter_cases(definition: &GateDefinition) -> Vec<Vec<f64>> {
             cases.push(parameters);
         }
     }
+    if matches!(definition.name.as_str(), "crz" | "crx" | "cry") {
+        // Check both sides of each half-angle wrap as well as the boundary.
+        for boundary in [-TAU, TAU, 3.0 * TAU] {
+            for offset in [-1e-7, 0.0, 1e-7] {
+                cases.push(vec![boundary + offset]);
+            }
+        }
+    }
     cases
 }
 
@@ -522,7 +528,11 @@ fn assert_matrix_matches(
         .max_by(|left, right| left.2.total_cmp(&right.2))
         .expect("a unitary matrix is nonempty");
     let phase_ratio = actual[pivot_row][pivot_column] / expected[pivot_row][pivot_column];
-    let phase = phase_ratio / phase_ratio.norm();
+    let phase = if matches!(gate_name, "crz" | "crx" | "cry") {
+        complex(1.0, 0.0)
+    } else {
+        phase_ratio / phase_ratio.norm()
+    };
 
     for (row_index, (actual_row, expected_row)) in actual.iter().zip(expected).enumerate() {
         for (column_index, (&actual_entry, &expected_entry)) in

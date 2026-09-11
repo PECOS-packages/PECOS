@@ -35,7 +35,7 @@ from pecos.qec.surface.logical_circuit import (
     _validate_boundary_cardinality,
 )
 from pecos.qec.surface.patch import PatchOrientation
-from pecos_rslib.qec import LogicalAlgorithmDecoder, LogicalCircuitDecoder
+from pecos_rslib.qec import LogicalAlgorithmDecoder, LogicalCircuitDecoder, transform_two_patch_pauli
 
 
 def _memory_descriptor(d: int, rounds: int) -> dict:
@@ -861,6 +861,25 @@ def test_mixed_h_cx_future_action_normalizes_to_a_bounded_valid_word():
                 child_transform = _append_two_patch_gate_transform(transform, gate)
                 next_frontier.append(((*word, gate), child_swapped, child_transform))
         frontier = next_frontier
+
+
+@pytest.mark.parametrize(
+    ("gate", "basis_images"),
+    [
+        ("h0", (0b0010, 0b0001, 0b0100, 0b1000)),
+        ("h1", (0b0001, 0b0010, 0b1000, 0b0100)),
+        ("cx", (0b0101, 0b0010, 0b0100, 0b1010)),
+    ],
+)
+def test_shared_two_patch_clifford_transform_matches_basis_images(gate, basis_images):
+    assert tuple(transform_two_patch_pauli(pauli, gate) for pauli in _TWO_PATCH_IDENTITY) == basis_images
+
+
+def test_shared_two_patch_clifford_transform_rejects_invalid_input():
+    with pytest.raises(ValueError, match="four bits"):
+        transform_two_patch_pauli(16, "cx")
+    with pytest.raises(ValueError, match="unknown two-patch Clifford"):
+        transform_two_patch_pauli(0, "cz")
 
 
 def test_mixed_h_cx_with_history_sensitive_outputs_uses_full_fallback(monkeypatch):

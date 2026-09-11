@@ -59,6 +59,7 @@ def coloration_memory_circuit(
     rounds: int,
     basis: str,
 ) -> TickCircuit: ...
+def transform_two_patch_pauli(pauli: int, gate: str) -> int: ...
 
 class FaultDistanceResult:
     """A unit-weight mechanism distance and one witnessing index set."""

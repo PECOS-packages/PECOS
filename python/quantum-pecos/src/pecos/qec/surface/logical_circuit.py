@@ -34,7 +34,7 @@ from enum import Enum, auto
 from functools import cache, lru_cache
 from typing import TYPE_CHECKING
 
-from pecos_rslib.qec import DEM_SLICE_ROUND_ATTRIBUTE
+from pecos_rslib.qec import DEM_SLICE_ROUND_ATTRIBUTE, transform_two_patch_pauli
 
 if TYPE_CHECKING:
     from pecos.qec.surface.patch import Stabilizer, SurfacePatch
@@ -396,22 +396,8 @@ _TWO_PATCH_GATES = ("h0", "h1", "cx")
 
 
 def _apply_two_patch_gate_to_pauli(pauli: int, gate: str) -> int:
-    """Apply a real two-patch Clifford to an encoded ``x0,z0,x1,z1`` mask."""
-    x0 = pauli & 1
-    z0 = (pauli >> 1) & 1
-    x1 = (pauli >> 2) & 1
-    z1 = (pauli >> 3) & 1
-    if gate == "h0":
-        x0, z0 = z0, x0
-    elif gate == "h1":
-        x1, z1 = z1, x1
-    elif gate == "cx":
-        z0 ^= z1
-        x1 ^= x0
-    else:  # pragma: no cover - internal callers use the closed gate alphabet
-        msg = f"unknown two-patch Clifford gate {gate!r}"
-        raise ValueError(msg)
-    return x0 | (z0 << 1) | (x1 << 2) | (z1 << 3)
+    """Apply the shared Rust real-Clifford transform to a two-patch Pauli mask."""
+    return transform_two_patch_pauli(pauli, gate)
 
 
 def _append_two_patch_gate_transform(transform: tuple[int, ...], gate: str) -> tuple[int, ...]:

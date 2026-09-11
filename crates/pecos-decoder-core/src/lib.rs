@@ -25,6 +25,7 @@
 pub mod adaptive;
 pub mod advanced;
 pub mod bp_matching;
+pub mod clifford_frame;
 pub mod config;
 pub mod correlated_decoder;
 pub mod correlated_reweighting;

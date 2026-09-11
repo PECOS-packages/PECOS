@@ -54,6 +54,7 @@
 //! ```
 
 use crate::ObservableDecoder;
+use crate::clifford_frame::conjugate_cnot;
 use crate::errors::DecoderError;
 
 /// Accumulates Pauli frame corrections across QEC cycles.
@@ -150,12 +151,15 @@ pub fn propagate_cnot_frames(
 ) {
     let ctrl_frame = control.current_frame();
     let tgt_frame = target.current_frame();
+    let (_, control_z, target_x, _) = conjugate_cnot(
+        ctrl_frame & x_obs_mask,
+        ctrl_frame & z_obs_mask,
+        tgt_frame & x_obs_mask,
+        tgt_frame & z_obs_mask,
+    );
 
-    // X-type bits on control propagate to target: target ^= control & x_mask
-    *target.frame_mut() ^= ctrl_frame & x_obs_mask;
-
-    // Z-type bits on target propagate to control: control ^= target & z_mask
-    *control.frame_mut() ^= tgt_frame & z_obs_mask;
+    *control.frame_mut() = (ctrl_frame & !z_obs_mask) | control_z;
+    *target.frame_mut() = (tgt_frame & !x_obs_mask) | target_x;
 }
 
 #[cfg(test)]

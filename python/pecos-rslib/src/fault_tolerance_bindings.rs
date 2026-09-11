@@ -48,6 +48,10 @@ use crate::decoder_spec_bindings::PyDecoderSpec;
 use crate::pecos_array::{Array, ArrayData};
 use crate::stabilizer_code_spec_bindings::PyStabilizerCodeSpec;
 use pecos_core::gate_type::GateType;
+use pecos_decoder_core::clifford_frame::{
+    TwoPatchClifford as RustTwoPatchClifford,
+    transform_two_patch_pauli as rust_transform_two_patch_pauli,
+};
 use pecos_qec::fault_tolerance::dem_builder::{
     ComparisonMethod as RustComparisonMethod,
     ContributionEffectSummary as RustContributionEffectSummary,
@@ -8050,6 +8054,27 @@ fn coloration_memory_circuit(
     Ok(PyTickCircuit { inner })
 }
 
+/// Transform a sign-free two-patch Pauli mask through H0, H1, or CX.
+#[pyfunction]
+fn transform_two_patch_pauli(pauli: u8, gate: &str) -> PyResult<u8> {
+    if pauli > 0x0f {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "two-patch Pauli mask must fit in four bits, got {pauli}"
+        )));
+    }
+    let gate = match gate {
+        "h0" => RustTwoPatchClifford::HadamardFirst,
+        "h1" => RustTwoPatchClifford::HadamardSecond,
+        "cx" => RustTwoPatchClifford::Cnot,
+        _ => {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "unknown two-patch Clifford gate {gate:?}"
+            )));
+        }
+    };
+    Ok(rust_transform_two_patch_pauli(pauli, gate))
+}
+
 /// Register the QEC fault tolerance module.
 pub fn register_qec_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let qec = PyModule::new(m.py(), "qec")?;
@@ -8139,6 +8164,7 @@ pub fn register_qec_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     qec.add_function(wrap_pyfunction!(certified_classical_distance, &qec)?)?;
     qec.add_function(wrap_pyfunction!(bb_memory_circuit, &qec)?)?;
     qec.add_function(wrap_pyfunction!(coloration_memory_circuit, &qec)?)?;
+    qec.add_function(wrap_pyfunction!(transform_two_patch_pauli, &qec)?)?;
 
     // Add Pauli constants
     qec.add("PAULI_I", 0u8)?;

@@ -2410,6 +2410,9 @@ class qec:
     PAULI_Y: int
     PAULI_Z: int
 
+    @staticmethod
+    def transform_two_patch_pauli(pauli: int, gate: str) -> int: ...
+
     class FaultLocation:
         @property
         def node(self) -> int: ...

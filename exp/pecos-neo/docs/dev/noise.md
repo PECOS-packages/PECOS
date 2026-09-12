@@ -1,5 +1,7 @@
 # Noise System Usage Guide
 
+Composite decision-tree APIs require the `composite-noise` Cargo feature on `pecos-neo`.
+
 This guide covers practical usage of the pecos-neo noise modeling system.
 
 ## Overview
@@ -308,17 +310,6 @@ For low error rates with many qubits, the system uses geometric sampling to skip
 let channel = CompositeChannel::new("fast_depol", prob(0.001, depolarize()))
     .with_probability(0.001)  // Enables geometric sampling
     .with_filter(CompositeEventFilter::SingleQubitGate);
-```
-
-### Compiled Primitives
-
-Complex primitive trees can be compiled for better performance:
-
-```rust
-use pecos_neo::noise::composite::compiled::CompiledPrimitive;
-
-let primitive = seq(vec![...]);
-let compiled = CompiledPrimitive::compile(&primitive);
 ```
 
 ## Debugging Noise Models

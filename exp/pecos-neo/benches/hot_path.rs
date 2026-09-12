@@ -1227,87 +1227,6 @@ fn bench_batch_processor(c: &mut Criterion) {
     group.finish();
 }
 
-/// Compare trait object dispatch vs compiled enum dispatch for composite primitives
-fn bench_dispatch_comparison(c: &mut Criterion) {
-    use pecos_neo::noise::NoiseContext;
-    use pecos_neo::noise::composite::prelude::*;
-    use pecos_neo::noise::composite::{CompiledAction, CompiledCondition, CompiledPrimitive};
-
-    let mut group = c.benchmark_group("dispatch_comparison");
-
-    // Create equivalent noise trees: trait-object and compiled versions
-
-    // Simple probability + pauli
-    let trait_simple: Box<dyn Primitive> = Box::new(prob(0.01, pauli()));
-    let compiled_simple = CompiledPrimitive::prob(
-        0.01,
-        CompiledPrimitive::action(CompiledAction::Pauli(PauliWeights::uniform())),
-    );
-
-    // More complex tree with conditions
-    let trait_complex = seq![skip_if_leaked(), prob(0.01, when_leaked(seep(), pauli())),];
-    let compiled_complex = CompiledPrimitive::seq(vec![
-        CompiledPrimitive::skip_if(CompiledCondition::Leaked),
-        CompiledPrimitive::prob(
-            0.01,
-            CompiledPrimitive::when(
-                CompiledCondition::Leaked,
-                CompiledPrimitive::action(CompiledAction::Seep(PauliWeights::uniform())),
-                CompiledPrimitive::action(CompiledAction::Pauli(PauliWeights::uniform())),
-            ),
-        ),
-    ]);
-
-    // Benchmark simple tree
-    group.bench_function("trait_simple_pauli", |b| {
-        let mut ctx = NoiseContext::new();
-        let mut rng = PecosRng::seed_from_u64(42);
-        b.iter(|| black_box(trait_simple.apply(QubitId(0), &mut ctx, &mut rng)));
-    });
-
-    group.bench_function("compiled_simple_pauli", |b| {
-        let mut ctx = NoiseContext::new();
-        let mut rng = PecosRng::seed_from_u64(42);
-        b.iter(|| black_box(compiled_simple.apply(QubitId(0), &mut ctx, &mut rng)));
-    });
-
-    // Benchmark complex tree
-    group.bench_function("trait_complex_tree", |b| {
-        let mut ctx = NoiseContext::new();
-        let mut rng = PecosRng::seed_from_u64(42);
-        b.iter(|| black_box(trait_complex.apply(QubitId(0), &mut ctx, &mut rng)));
-    });
-
-    group.bench_function("compiled_complex_tree", |b| {
-        let mut ctx = NoiseContext::new();
-        let mut rng = PecosRng::seed_from_u64(42);
-        b.iter(|| black_box(compiled_complex.apply(QubitId(0), &mut ctx, &mut rng)));
-    });
-
-    // Benchmark many iterations to amortize setup
-    group.bench_function("trait_1000_iterations", |b| {
-        let mut ctx = NoiseContext::new();
-        let mut rng = PecosRng::seed_from_u64(42);
-        b.iter(|| {
-            for _ in 0..1000 {
-                black_box(trait_complex.apply(QubitId(0), &mut ctx, &mut rng));
-            }
-        });
-    });
-
-    group.bench_function("compiled_1000_iterations", |b| {
-        let mut ctx = NoiseContext::new();
-        let mut rng = PecosRng::seed_from_u64(42);
-        b.iter(|| {
-            for _ in 0..1000 {
-                black_box(compiled_complex.apply(QubitId(0), &mut ctx, &mut rng));
-            }
-        });
-    });
-
-    group.finish();
-}
-
 criterion_group!(
     benches,
     bench_noise_emission,
@@ -1322,7 +1241,6 @@ criterion_group!(
     bench_composite_vs_channel_noise,
     bench_batch_filtering,
     bench_batch_processor,
-    bench_dispatch_comparison,
 );
 
 criterion_main!(benches);

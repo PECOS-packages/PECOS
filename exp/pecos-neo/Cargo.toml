@@ -39,7 +39,7 @@ pecos-qasm.workspace = true
 criterion.workspace = true
 proptest = "1.4"
 # Enable our own features for doctests and integration tests
-pecos-neo = { path = ".", features = ["qasm"] }
+pecos-neo = { path = ".", features = ["qasm", "composite-noise"] }
 
 [[bench]]
 name = "hot_path"
@@ -47,6 +47,7 @@ harness = false
 
 [features]
 default = []
+composite-noise = []
 qasm = ["dep:pecos-qasm"]
 
 [lints]

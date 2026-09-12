@@ -13,9 +13,8 @@ from guppylang import guppy
 from guppylang.std.builtins import result
 from guppylang.std.quantum import ch, cx, discard, h, measure, qubit, x, y, z
 from pecos import Guppy, sim
-from pecos.compilation_pipeline import compile_guppy_to_hugr
+from pecos.compilation_pipeline import compile_guppy_to_hugr, compile_hugr_to_qis
 from pecos_rslib import Qis, state_vector
-from pecos_rslib_llvm import compile_hugr_to_qis
 from selene_sim import build
 from selene_sim.backends import IdealErrorModel as IdealNoiseModel
 from selene_sim.backends import Quest, SimpleRuntime
@@ -81,7 +80,7 @@ def run_with_selene_llvm(
     """
     hugr_package = guppy_func.compile()
     hugr_bytes = hugr_package.to_bytes()
-    qis_string = compile_hugr_to_qis(hugr_bytes, None)
+    qis_string = compile_hugr_to_qis(hugr_bytes)
     qis_program = Qis.from_string(qis_string)
     results = sim(qis_program).qubits(num_qubits).quantum(state_vector()).seed(seed).run(shots)
     return results.to_dict()

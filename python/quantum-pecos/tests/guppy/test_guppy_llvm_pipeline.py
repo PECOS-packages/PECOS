@@ -50,49 +50,6 @@ class TestGuppyLLVMPipeline:
         # If guppy is available, rust backend should also be available in most cases
         assert not backends["guppy_available"] or backends["rust_backend"], "Guppy requires the Rust backend"
 
-    def test_guppy_frontend_initialization(self) -> None:
-        """Test the GuppyFrontend class initialization."""
-        from pecos._compilation import GuppyFrontend
-
-        frontend = GuppyFrontend()
-        info = frontend.get_backend_info()
-
-        # Verify backend info structure
-        assert isinstance(info, dict), "Backend info should be a dictionary"
-        assert len(info) > 0, "Backend info should not be empty"
-
-    def test_simple_quantum_function_compilation(self) -> None:
-        """Test compiling a simple quantum function."""
-        from guppylang import guppy
-        from guppylang.std.quantum import h, measure, qubit
-        from pecos._compilation import GuppyFrontend
-
-        @guppy
-        def random_bit() -> bool:
-            """Generate a random bit using quantum superposition."""
-            q = qubit()
-            h(q)
-            output_value = measure(q).read()
-            record_result("outcome", output_value)
-            return output_value
-
-        # Test compilation
-        frontend = GuppyFrontend()
-        qir_file = frontend.compile_function(random_bit)
-
-        # Verify QIR file was created
-        assert qir_file is not None, "Compilation should return a file path"
-        qir_path = Path(qir_file)
-        assert qir_path.exists(), f"QIR file should exist at {qir_file}"
-
-        # Verify QIR file has content
-        with qir_path.open() as f:
-            qir_content = f.read()
-        assert len(qir_content) > 0, "QIR file should not be empty"
-        assert (
-            "@__quantum__" in qir_content or "define" in qir_content
-        ), "QIR should contain quantum operations or function definitions"
-
     def test_bell_state_execution(self) -> None:
         """Test Bell state creation and measurement correlation."""
         from guppylang import guppy

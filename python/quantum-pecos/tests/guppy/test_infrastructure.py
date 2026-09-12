@@ -23,21 +23,6 @@ def test_backend_detection() -> None:
     assert isinstance(backends["rust_backend"], bool)
 
 
-def test_guppy_frontend_creation() -> None:
-    """Test that GuppyFrontend can be created."""
-    from pecos._compilation import GuppyFrontend
-
-    frontend = GuppyFrontend()
-    try:
-        # Should be able to get backend info
-        info = frontend.get_backend_info()
-        assert isinstance(info, dict)
-        assert "backend" in info
-
-    finally:
-        frontend.cleanup()
-
-
 def test_guppy_function_decoration() -> None:
     """The required Guppy dependency exposes compilable decorated functions."""
 

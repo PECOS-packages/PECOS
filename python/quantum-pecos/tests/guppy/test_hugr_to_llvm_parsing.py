@@ -1,11 +1,11 @@
-"""Test HUGR 0.13 to LLVM parsing in pecos-selene-engine."""
+"""Test HUGR to LLVM lowering at the PECOS Python boundary."""
 
 
 def test_hugr_to_llvm_compilation() -> None:
-    """Test actual HUGR to LLVM compilation in Rust."""
+    """Test actual HUGR to LLVM compilation through Selene."""
     from guppylang import guppy
     from guppylang.std.quantum import cx, h, measure, qubit
-    from pecos_rslib_llvm import compile_hugr_to_qis
+    from pecos.compilation_pipeline import compile_hugr_to_qis
 
     @guppy
     def bell_state() -> tuple[bool, bool]:
@@ -18,7 +18,7 @@ def test_hugr_to_llvm_compilation() -> None:
     hugr = bell_state.compile()
     hugr_bytes = hugr.to_bytes()
 
-    # Compile HUGR to LLVM using pecos-selene-engine
+    # Compile HUGR to LLVM through the Python boundary
     llvm_ir = compile_hugr_to_qis(hugr_bytes)
 
     # Verify basic structure - check for Selene QIS patterns
@@ -34,7 +34,7 @@ def test_simple_hadamard_circuit() -> None:
     """Test simple Hadamard circuit compilation."""
     from guppylang import guppy
     from guppylang.std.quantum import h, measure, qubit
-    from pecos_rslib_llvm import compile_hugr_to_qis
+    from pecos.compilation_pipeline import compile_hugr_to_qis
 
     @guppy
     def hadamard_test() -> bool:
@@ -60,7 +60,7 @@ def test_trace_metadata_helper_uses_public_symbol() -> None:
     from guppylang import guppy
     from guppylang.std.builtins import owned
     from guppylang.std.quantum import h, measure, qubit
-    from pecos_rslib_llvm import compile_hugr_to_qis
+    from pecos.compilation_pipeline import compile_hugr_to_qis
 
     @guppy.declare
     def pecos_qis_trace_metadata_qubit_hugr(q: qubit @ owned, key: str, value: str) -> qubit: ...
@@ -83,7 +83,7 @@ def test_runtime_barrier_pair_helper_uses_public_symbol() -> None:
     from guppylang import guppy
     from guppylang.std.builtins import owned
     from guppylang.std.quantum import cx, h, measure, qubit
-    from pecos_rslib_llvm import compile_hugr_to_qis
+    from pecos.compilation_pipeline import compile_hugr_to_qis
 
     @guppy.declare
     def pecos_qis_runtime_barrier_qubits2_hugr(

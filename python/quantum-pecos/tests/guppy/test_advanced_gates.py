@@ -1,8 +1,8 @@
 """Test suite for advanced quantum gates (Toffoli, CRz, etc.)."""
 
-import pecos_rslib_llvm
 from guppylang import guppy
 from guppylang.std.quantum import crz, h, measure, pi, qubit, toffoli
+from pecos import compilation_pipeline
 
 
 class TestThreeQubitGates:
@@ -22,7 +22,7 @@ class TestThreeQubitGates:
             return measure(q0).read(), measure(q1).read(), measure(q2).read()
 
         hugr = test_toffoli.compile()
-        output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
+        output = compilation_pipeline.compile_hugr_to_qis(hugr.to_bytes())
 
         # Toffoli should decompose into multiple gates
         assert "___rxy" in output
@@ -49,7 +49,7 @@ class TestControlledRotations:
             return measure(q0).read(), measure(q1).read()
 
         hugr = test_crz.compile()
-        output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
+        output = compilation_pipeline.compile_hugr_to_qis(hugr.to_bytes())
 
         # CRz should use RZZ and RZ gates
         assert "___rzz" in output
@@ -69,7 +69,7 @@ class TestCompilerFeatures:
             return measure(q).read()
 
         hugr = simple.compile()
-        output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
+        output = compilation_pipeline.compile_hugr_to_qis(hugr.to_bytes())
 
         # Should compile successfully
         assert "qmain" in output
@@ -95,7 +95,7 @@ class TestCompilerFeatures:
             return measure(q0).read(), measure(q1).read(), measure(q2).read()
 
         hugr = complex_circuit.compile()
-        output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
+        output = compilation_pipeline.compile_hugr_to_qis(hugr.to_bytes())
 
         # Should have all operation types
         assert "___rxy" in output
@@ -117,7 +117,7 @@ class TestCompilerFeatures:
             return measure(q0).read(), measure(q1).read()
 
         hugr = only_cnot.compile()
-        output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
+        output = compilation_pipeline.compile_hugr_to_qis(hugr.to_bytes())
 
         # Should declare the operations we use
         assert "declare" in output

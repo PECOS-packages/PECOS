@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 from guppylang import GuppyModule, guppy
 from hugr.package import Package
-from pecos_rslib_llvm import compile_hugr_to_qis as rust_compile
+from pecos.compilation_pipeline import compile_hugr_to_qis as pecos_compile
 from selene_hugr_qis_compiler import compile_to_llvm_ir as selene_compile
 
 # Import quantum operations - try stdlib first, fall back to std
@@ -162,27 +162,27 @@ def test_compiler_comparison_simple() -> None:
         pytest.fail(f"Selene compilation failed: {e}")
 
     try:
-        rust_llvm = rust_compile(hugr_binary, None)
-        print(f"Rust compilation succeeded, produced {len(rust_llvm)} chars")
+        pecos_llvm = pecos_compile(hugr_binary)
+        print(f"PECOS boundary compilation succeeded, produced {len(pecos_llvm)} chars")
     except Exception as e:
-        pytest.fail(f"Rust compilation failed: {e}")
+        pytest.fail(f"PECOS boundary compilation failed: {e}")
 
     # Extract function calls from both LLVM outputs
     selene_functions = extract_function_calls_from_llvm(selene_llvm)
-    rust_functions = extract_function_calls_from_llvm(rust_llvm)
+    pecos_functions = extract_function_calls_from_llvm(pecos_llvm)
 
     print(f"Selene LLVM functions: {sorted(selene_functions)}")
-    print(f"Rust LLVM functions: {sorted(rust_functions)}")
+    print(f"PECOS LLVM functions: {sorted(pecos_functions)}")
 
     # Check if both compilers found the same functions
     # This will help us understand if they process modules differently
-    common_functions = selene_functions & rust_functions
-    selene_only = selene_functions - rust_functions
-    rust_only = rust_functions - selene_functions
+    common_functions = selene_functions & pecos_functions
+    selene_only = selene_functions - pecos_functions
+    pecos_only = pecos_functions - selene_functions
 
     print(f"Common functions: {sorted(common_functions)}")
     print(f"Selene-only functions: {sorted(selene_only)}")
-    print(f"Rust-only functions: {sorted(rust_only)}")
+    print(f"PECOS-only functions: {sorted(pecos_only)}")
 
     # Save debug output
     debug_dir = Path(tempfile.gettempdir()) / "compiler_comparison_debug"
@@ -196,16 +196,16 @@ def test_compiler_comparison_simple() -> None:
             (debug_dir / "hugr.json").write_text(hugr_str[json_start:])
 
     (debug_dir / "selene.ll").write_text(selene_llvm)
-    (debug_dir / "rust.ll").write_text(rust_llvm)
+    (debug_dir / "pecos.ll").write_text(pecos_llvm)
 
     print(f"Debug files saved to: {debug_dir}")
 
     # For now, just ensure both compilers produced valid output
     assert len(selene_llvm) > 0, "Selene should produce LLVM output"
-    assert len(rust_llvm) > 0, "Rust should produce LLVM output"
+    assert len(pecos_llvm) > 0, "PECOS should produce LLVM output"
 
     # Report the differences for analysis
-    if selene_only or rust_only:
+    if selene_only or pecos_only:
         print("WARNING: Compilers produced different function sets!")
         print("This suggests different compilation behavior.")
 

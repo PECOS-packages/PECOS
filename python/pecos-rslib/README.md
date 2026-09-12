@@ -2,6 +2,21 @@
 
 `pecos-rslib` provides Rust extensions for the Python version of PECOS.
 
+## Optional HUGR compiler
+
+Install `pecos-rslib[hugr]` to lower HUGR programs with Selene's compiler.
+The base wheel does not install the compiler or depend on `quantum-pecos`.
+`quantum-pecos` installs the compiler as a required dependency.
+
+```python
+from pecos_rslib.hugr_lowering import compile_hugr_to_qis
+
+# llvm_ir = compile_hugr_to_qis(hugr_bytes)
+```
+
+The pure-Python `hugr_lowering` module ships inside the mixed maturin package.
+It imports `selene_hugr_qis_compiler` only when compilation is requested.
+
 ## Qudit reference simulators
 
 The multilevel state-vector and density-matrix simulators are implemented in

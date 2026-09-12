@@ -74,6 +74,8 @@ const TRACE_METADATA_QUBIT_HUGR_SYMBOL: &str = "pecos_qis_trace_metadata_qubit_h
 const RUNTIME_BARRIER_QUBIT_HUGR_SYMBOL: &str = "pecos_qis_runtime_barrier_qubit_hugr";
 const RUNTIME_BARRIER_QUBITS2_HUGR_SYMBOL: &str = "pecos_qis_runtime_barrier_qubits2_hugr";
 
+/// Python boundary ABI table: `python/pecos-rslib/pecos_rslib/hugr_lowering.py`.
+/// Keep this Rust facade table consistent until its lowering path is retired.
 const PECOS_HELPER_ABIS: &[(&str, &str)] = &[
     (TRACE_METADATA_HUGR_SYMBOL, "void (ptr, ptr)"),
     (TRACE_METADATA_QUBIT_HUGR_SYMBOL, "i64 (i64, ptr, ptr)"),

@@ -27,6 +27,9 @@ classifiers = [
     "Programming Language :: Rust",
 ]
 
+[project.optional-dependencies]
+hugr = ["selene-hugr-qis-compiler~=0.4.2"]
+
 [build-system]
 requires = ["maturin>=1.13.1,<2.0"]
 build-backend = "maturin"

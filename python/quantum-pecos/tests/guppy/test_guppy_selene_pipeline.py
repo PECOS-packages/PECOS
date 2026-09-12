@@ -3,12 +3,12 @@
 import re
 
 import pecos as pc
-import pecos_rslib_llvm
 import pytest
 from guppylang import guppy
 from guppylang.std.builtins import comptime, result
 from guppylang.std.quantum import cx, h, measure, qubit, x
 from pecos.guppy_gen import variant_scoped
+from pecos_rslib import hugr_lowering
 
 
 @guppy
@@ -154,21 +154,21 @@ def test_three_qubit_parity(engine_factory) -> None:
 
 @pytest.mark.parametrize(("program", "num_measurements"), [(hadamard, 1), (bell_state, 2)], ids=["hadamard", "bell"])
 def test_hugr_to_qis_compilation(program, num_measurements: int) -> None:
-    output = pecos_rslib_llvm.compile_hugr_to_qis(program.compile().to_bytes())
+    output = hugr_lowering.compile_hugr_to_qis(program.compile().to_bytes())
     assert re.search(r"define\b[^\n]*@qmain\(", output)
     assert len(re.findall(r"\bcall\b[^\n]*@___lazy_measure\(", output)) == num_measurements
 
 
 def test_default_hugr_lowering_is_deferred(monkeypatch) -> None:
     """Builder configuration must not lower HUGR before build or execution."""
-    compile_hugr = pecos_rslib_llvm.compile_hugr_to_qis
+    compile_hugr = hugr_lowering.compile_hugr_to_qis
     calls = []
 
     def compile_recorded(*args):
         calls.append(args)
         return compile_hugr(*args)
 
-    monkeypatch.setattr(pecos_rslib_llvm, "compile_hugr_to_qis", compile_recorded)
+    monkeypatch.setattr(hugr_lowering, "compile_hugr_to_qis", compile_recorded)
     builder = pc.sim(pc.Guppy(bell_state)).qubits(2).seed(42).quantum(pc.state_vector())
     assert calls == []
     simulation = builder.build()
@@ -238,15 +238,15 @@ def test_hugr_classical_mutates_builder_when_return_discarded() -> None:
 
 
 def test_qis_engine_program_lowers_hugr_at_runtime(monkeypatch) -> None:
-    """The engine's program(Hugr) entry point uses the runtime LLVM package."""
-    compile_hugr = pecos_rslib_llvm.compile_hugr_to_qis
+    """The engine's program(Hugr) entry point uses the Python compiler boundary."""
+    compile_hugr = hugr_lowering.compile_hugr_to_qis
     calls = []
 
     def compile_recorded(*args):
         calls.append(args)
         return compile_hugr(*args)
 
-    monkeypatch.setattr(pecos_rslib_llvm, "compile_hugr_to_qis", compile_recorded)
+    monkeypatch.setattr(hugr_lowering, "compile_hugr_to_qis", compile_recorded)
     program = pc.Hugr(bell_state.compile().to_bytes())
     engine = pc.selene_engine()
     engine.program(program)
@@ -257,18 +257,18 @@ def test_qis_engine_program_lowers_hugr_at_runtime(monkeypatch) -> None:
 
 
 @pytest.mark.parametrize("entry_point", ["sim", "engine"])
-def test_hugr_lowering_requires_llvm_package(monkeypatch, entry_point) -> None:
+def test_hugr_lowering_requires_selene_compiler_package(monkeypatch, entry_point) -> None:
     """Both Python entry points explain the missing runtime lowering dependency."""
     import sys
 
     program = pc.Hugr(bell_state.compile().to_bytes())
     engine = pc.selene_engine()
-    monkeypatch.setitem(sys.modules, "pecos_rslib_llvm", None)
+    monkeypatch.setitem(sys.modules, "selene_hugr_qis_compiler", None)
     if entry_point == "sim":
         load_program = pc.sim(program).qubits(2).classical
         argument = engine
     else:
         load_program = engine.program
         argument = program
-    with pytest.raises(RuntimeError, match="requires the pecos-rslib-llvm package"):
+    with pytest.raises(ImportError, match="requires the selene-hugr-qis-compiler package"):
         load_program(argument)

@@ -4,7 +4,7 @@ Composable quantum simulation with event-driven noise modeling.
 
 ## Quick Start
 
-The `sim_neo` Tool API is the recommended entry point:
+The `sim_neo` simulation API is the recommended entry point:
 
 ```rust
 use pecos_neo::tool::{monte_carlo, sim_neo};
@@ -32,7 +32,7 @@ for outcome in &results.outcomes {
 
 - **Composable Noise**: Event-driven channels that combine freely -- depolarizing, measurement, idle, crosstalk, leakage, and custom channels
 - **Typed Commands**: `GateCommand` and `CommandQueue` with signal support for metadata alongside gates
-- **Plugin System**: ECS-inspired architecture for bundling simulation functionality
+- **Reusable Simulations**: Owned simulation state with seeded sequential and parallel shot loops
 - **Parallel Execution**: Monte Carlo across multiple workers with `.sampling(monte_carlo(shots).workers(n))`
 - **Advanced Sampling**: Importance sampling (with parallel workers) and subset simulation for rare event estimation; exhaustive path enumeration for measurement branches
 - **Extensible Gates**: `GateId`-based system with runtime overrides and decomposition

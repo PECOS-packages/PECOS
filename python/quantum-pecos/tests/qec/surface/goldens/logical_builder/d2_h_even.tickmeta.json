@@ -1,0 +1,8 @@
+{
+ "detectors": "[{\"id\": 0, \"coords\": [1.0, 1.0, 0.0], \"records\": [-14], \"meas_ids\": [2]}, {\"id\": 1, \"coords\": [1.0, 0.0, 1.0], \"records\": [-13, -16], \"meas_ids\": [3, 0]}, {\"id\": 2, \"coords\": [1.0, 2.0, 1.0], \"records\": [-12, -15], \"meas_ids\": [4, 1]}, {\"id\": 3, \"coords\": [1.0, 1.0, 1.0], \"records\": [-11, -14], \"meas_ids\": [5, 2]}, {\"id\": 4, \"coords\": [1.0, 1.0, 2.0], \"records\": [-10, -11], \"meas_ids\": [6, 5]}, {\"id\": 5, \"coords\": [1.0, 0.0, 2.0], \"records\": [-9, -13], \"meas_ids\": [7, 3]}, {\"id\": 6, \"coords\": [1.0, 2.0, 2.0], \"records\": [-8, -12], \"meas_ids\": [8, 4]}, {\"id\": 7, \"coords\": [1.0, 1.0, 3.0], \"records\": [-7, -10], \"meas_ids\": [9, 6]}, {\"id\": 8, \"coords\": [1.0, 0.0, 3.0], \"records\": [-6, -9], \"meas_ids\": [10, 7]}, {\"id\": 9, \"coords\": [1.0, 2.0, 3.0], \"records\": [-5, -8], \"meas_ids\": [11, 8]}, {\"id\": 10, \"coords\": [1.0, 1.0, 4.0], \"records\": [-4, -3, -2, -1, -7], \"meas_ids\": [12, 13, 14, 15, 9]}]",
+ "observables": "[{\"id\": 0, \"records\": [-4, -3], \"meas_ids\": [12, 13]}]",
+ "num_measurements": "16",
+ "num_detectors": null,
+ "basis": null,
+ "num_ticks": 36
+}

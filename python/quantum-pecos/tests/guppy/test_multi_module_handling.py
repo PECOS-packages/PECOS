@@ -266,25 +266,3 @@ def test_hugr_structure_analysis() -> None:
     except json.JSONDecodeError as e:
         print(f"Failed to parse HUGR JSON: {e}")
         print(f"First 1000 chars: {hugr_json[:1000]}")
-
-
-if __name__ == "__main__":
-    # Manual testing
-    if True:
-        print("Running manual multi-module tests...")
-
-        # Test 1: Single module baseline
-        print("\n=== Test 1: Single Module ===")
-        test_single_module_baseline()
-
-        # Test 2: Multi-function compilation
-        print("\n=== Test 2: Multi-Function Compilation ===")
-        test_multiple_functions_compilation()
-
-        # Test 3: Structure analysis
-        print("\n=== Test 3: Structure Analysis ===")
-        test_hugr_structure_analysis()
-
-        # Test 4: Compiler comparison
-        print("\n=== Test 4: Compiler Comparison ===")
-        test_compiler_comparison_simple()

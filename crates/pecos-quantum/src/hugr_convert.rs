@@ -1114,6 +1114,42 @@ pub fn dag_circuit_to_hugr(dag: &DagCircuit) -> Result<Hugr, HugrConvertError> {
             continue;
         };
 
+        if let Some(lambda) = gate.phase_angle() {
+            let half_turns = lambda.to_radians_signed() / std::f64::consts::PI;
+            for qubit in &gate.qubits {
+                let rotation = ConstRotation::new(half_turns).map_err(|e| {
+                    HugrConvertError::UnsupportedStructure(format!("Invalid rotation: {e}"))
+                })?;
+                let phase = ConstRotation::new(half_turns / 2.0).map_err(|e| {
+                    HugrConvertError::UnsupportedStructure(format!("Invalid phase: {e}"))
+                })?;
+                let rotation_wire = builder.add_load_value(rotation);
+                let wire = qubit_wires.get(qubit).copied().ok_or_else(|| {
+                    HugrConvertError::UnsupportedStructure(format!("Unknown qubit: {qubit:?}"))
+                })?;
+                let output = builder
+                    .add_dataflow_op(TketOp::Rz, [wire, rotation_wire])
+                    .map_err(|e| {
+                        HugrConvertError::UnsupportedStructure(format!(
+                            "Failed to add phase rotation: {e}"
+                        ))
+                    })?
+                    .out_wire(0);
+                let phase_wire = builder.add_load_value(phase);
+                builder
+                    .add_dataflow_op(
+                        tket::extension::global_phase::GlobalPhase.into_extension_op(),
+                        [phase_wire],
+                    )
+                    .map_err(|e| {
+                        HugrConvertError::UnsupportedStructure(format!(
+                            "Failed to add global phase: {e}"
+                        ))
+                    })?;
+                qubit_wires.insert(*qubit, output);
+            }
+            continue;
+        }
         let Some(tket_op) = gate_type_to_tket_op(gate.gate_type) else {
             return Err(HugrConvertError::UnknownOperation(format!(
                 "Unsupported gate type: {:?}",

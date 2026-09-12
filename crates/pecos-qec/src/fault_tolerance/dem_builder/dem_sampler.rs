@@ -2339,7 +2339,7 @@ impl<'a> SamplingEngineBuilder<'a> {
                     // Single-qubit gate errors: only "after" locations, depolarizing
                     if !loc.before =>
                 {
-                    let rates = self.rates_1q(loc.gate_type, &loc.qubits);
+                    let rates = self.rates_1q(loc.noise_gate_type, &loc.qubits);
                     if rates.iter().any(|r| *r != 0.0) {
                         self.process_depolarizing_fault_rates(
                             loc_idx,

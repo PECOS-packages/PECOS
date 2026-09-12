@@ -55,7 +55,7 @@ fn phase_to_angle(phase: Phase) -> Angle64 {
 /// Emit the best-matching PECOS gate for a `ZPhase` with the given phase.
 ///
 /// Recognizes common rational multiples of pi and emits the specific gate
-/// (S, Sdg, T, Tdg, Z) instead of a generic RZ.
+/// (S, Sdg, T, Tdg, Z) instead of a generic phase-shaped U.
 fn zphase_to_dag_gate(dag: &mut DagCircuit, phase: Phase, q: usize) {
     if phase == Phase::new((1, 2)) {
         dag.sz(&[q]);
@@ -68,7 +68,7 @@ fn zphase_to_dag_gate(dag: &mut DagCircuit, phase: Phase, q: usize) {
     } else if phase == Phase::one() {
         dag.z(&[q]);
     } else {
-        dag.rz(phase_to_angle(phase), &[q]);
+        dag.u(Angle64::ZERO, Angle64::ZERO, phase_to_angle(phase), &[q]);
     }
 }
 
@@ -120,6 +120,14 @@ pub fn dag_to_zx_circuit(dag: &DagCircuit) -> Result<ZxCircuit, ConvertError> {
         for chunk in qubits.chunks(arity) {
             let qs: Vec<usize> = chunk.iter().map(|q| usize::from(*q)).collect();
 
+            if let Some(lambda) = gate.phase_angle() {
+                zx_circ.push(ZxGate::new_with_phase(
+                    GType::ZPhase,
+                    qs,
+                    angle_to_phase(lambda),
+                ));
+                continue;
+            }
             match gate.gate_type {
                 // Single-qubit Clifford gates
                 GateType::H => {
@@ -455,8 +463,8 @@ mod tests {
     }
 
     #[test]
-    fn test_zphase_fallback_to_rz() {
-        // Non-special ZPhase values should fall through to RZ
+    fn test_zphase_generic_preserves_phase() {
+        // Generic ZPhase values retain the exact diagonal phase convention.
         let mut zx_circ = ZxCircuit::new(1);
         zx_circ.push(ZxGate::new_with_phase(
             GType::ZPhase,
@@ -467,7 +475,10 @@ mod tests {
         let dag = zx_circuit_to_dag(&zx_circ).expect("conversion");
         let gates: Vec<_> = dag.iter_gates_topo().collect();
         assert_eq!(gates.len(), 1);
-        assert_eq!(gates[0].1.gate_type, GateType::RZ);
+        assert_eq!(
+            gates[0].1.phase_angle(),
+            Some(phase_to_angle(Phase::new((1, 3))))
+        );
     }
 
     #[test]

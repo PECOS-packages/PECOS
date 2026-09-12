@@ -298,6 +298,9 @@ fn simplify_gate_in_place(gate: &mut Gate) {
 
 /// Returns `true` if the gate is a unitary identity operation.
 fn is_identity_gate(gate: &Gate) -> bool {
+    if let Some(lambda) = gate.phase_angle() {
+        return lambda.is_zero();
+    }
     match gate.gate_type {
         GateType::I => true,
         gt if is_rotation(gt) => gate.angles.len() == 1 && gate.angles[0].is_zero(),
@@ -316,6 +319,17 @@ fn is_rotation(gt: GateType) -> bool {
         gt,
         GateType::RX | GateType::RY | GateType::RZ | GateType::RXX | GateType::RYY | GateType::RZZ
     )
+}
+
+/// Index of the additive angle for same-family rotation merging.
+fn rotation_angle_index(gate: &Gate) -> Option<usize> {
+    if gate.phase_angle().is_some() {
+        Some(2)
+    } else if is_rotation(gate.gate_type) && gate.angles.len() == 1 {
+        Some(0)
+    } else {
+        None
+    }
 }
 
 /// Returns `true` if the gate type is its own inverse.
@@ -376,10 +390,9 @@ fn are_inverses(a: &Gate, b: &Gate) -> bool {
     }
     // Rotation angles summing to zero
     if a.gate_type == b.gate_type
-        && is_rotation(a.gate_type)
-        && a.angles.len() == 1
-        && b.angles.len() == 1
-        && (a.angles[0] + b.angles[0]).is_zero()
+        && let Some(index) = rotation_angle_index(a)
+        && rotation_angle_index(b) == Some(index)
+        && (a.angles[index] + b.angles[index]).is_zero()
     {
         return true;
     }
@@ -787,15 +800,17 @@ impl CircuitPass for MergeAdjacentRotations {
                 let gi = gate.batch_index();
                 let qubits: Vec<QubitId> = gate.qubits.iter().copied().collect();
 
-                if is_rotation(gate.gate_type)
-                    && gate.angles.len() == 1
+                if let Some(index) = rotation_angle_index(gate.as_gate())
                     && let Some((pred_ti, pred_gi)) = check_all_stacks_agree(&stacks, &qubits)
                 {
                     let pred_gate = &circuit.ticks()[pred_ti].gate_batches()[pred_gi];
-                    if pred_gate.gate_type == gate.gate_type && pred_gate.qubits == gate.qubits {
+                    if pred_gate.gate_type == gate.gate_type
+                        && pred_gate.qubits == gate.qubits
+                        && rotation_angle_index(pred_gate) == Some(index)
+                    {
                         *angle_adjustments
                             .entry((pred_ti, pred_gi))
-                            .or_insert(Angle64::ZERO) += gate.angles[0];
+                            .or_insert(Angle64::ZERO) += gate.angles[index];
                         to_remove.push((ti, gi));
                         // Don't push; predecessor stays on stack for chain merging.
                         continue;
@@ -813,7 +828,9 @@ impl CircuitPass for MergeAdjacentRotations {
         for (&(ti, gi), &delta) in &angle_adjustments {
             if let Some(tick) = circuit.get_tick_mut(ti) {
                 tick.update_gate_batch(gi, |gate| {
-                    gate.angles[0] += delta;
+                    let index =
+                        rotation_angle_index(gate).expect("merged gate has an additive angle");
+                    gate.angles[index] += delta;
                 })
                 .unwrap_or_else(|err| panic!("{err}"));
             }
@@ -832,9 +849,9 @@ impl CircuitPass for MergeAdjacentRotations {
         let topo = circuit.topological_order();
         for node in topo {
             while let Some(gate) = circuit.gate(node) {
-                if !is_rotation(gate.gate_type) || gate.angles.len() != 1 {
+                let Some(index) = rotation_angle_index(gate) else {
                     break;
-                }
+                };
                 let gate_type = gate.gate_type;
                 let qubits: Vec<QubitId> = gate.qubits.iter().copied().collect();
 
@@ -847,12 +864,12 @@ impl CircuitPass for MergeAdjacentRotations {
 
                 if succ_gate.gate_type != gate_type
                     || succ_gate.qubits[..] != qubits[..]
-                    || succ_gate.angles.len() != 1
+                    || rotation_angle_index(succ_gate) != Some(index)
                 {
                     break;
                 }
 
-                let succ_angle = succ_gate.angles[0];
+                let succ_angle = succ_gate.angles[index];
 
                 // Save succ-of-successor for rewiring.
                 let mut rewire = Vec::new();
@@ -863,7 +880,7 @@ impl CircuitPass for MergeAdjacentRotations {
 
                 // Merge angle and remove successor.
                 circuit
-                    .update_gate(node, |gate| gate.angles[0] += succ_angle)
+                    .update_gate(node, |gate| gate.angles[index] += succ_angle)
                     .expect("merging rotation angles must preserve a valid gate");
                 circuit.remove_gate(succ);
 
@@ -1055,19 +1072,20 @@ fn is_z_measure(gt: GateType) -> bool {
 /// a Z eigenstate only adds a global phase (no-op), and it does not change
 /// Z-measurement statistics.
 fn is_z_diagonal(gate: &Gate) -> bool {
-    matches!(
-        gate.gate_type,
-        GateType::Z
-            | GateType::SZ
-            | GateType::SZdg
-            | GateType::T
-            | GateType::Tdg
-            | GateType::RZ
-            | GateType::CZ
-            | GateType::SZZ
-            | GateType::SZZdg
-            | GateType::RZZ
-    )
+    gate.phase_angle().is_some()
+        || matches!(
+            gate.gate_type,
+            GateType::Z
+                | GateType::SZ
+                | GateType::SZdg
+                | GateType::T
+                | GateType::Tdg
+                | GateType::RZ
+                | GateType::CZ
+                | GateType::SZZ
+                | GateType::SZZdg
+                | GateType::RZZ
+        )
 }
 
 /// Remove Z-diagonal gates that are redundant due to adjacent Z-basis

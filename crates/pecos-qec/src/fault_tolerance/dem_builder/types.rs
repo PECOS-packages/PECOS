@@ -3429,6 +3429,8 @@ impl NoiseConfig {
     }
 
     /// Sets a total single-qubit error-rate override for one gate type.
+    /// Phase-shaped U operations use the RZ rate; their scheduled gate type
+    /// remains U in fault provenance.
     ///
     /// The override changes only the total rate. If `p1_weights` is configured,
     /// those weights still determine the relative Pauli distribution for this

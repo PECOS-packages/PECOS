@@ -423,18 +423,18 @@ impl<'a> DemBuilder<'a> {
         if let Some(pg) = &self.per_gate {
             if let Some(q) = loc.qubits.first() {
                 return [
-                    pg.rate_1q_on(loc.gate_type, *q, 0),
-                    pg.rate_1q_on(loc.gate_type, *q, 1),
-                    pg.rate_1q_on(loc.gate_type, *q, 2),
+                    pg.rate_1q_on(loc.noise_gate_type, *q, 0),
+                    pg.rate_1q_on(loc.noise_gate_type, *q, 1),
+                    pg.rate_1q_on(loc.noise_gate_type, *q, 2),
                 ];
             }
             return [
-                pg.rate_1q(loc.gate_type, 0),
-                pg.rate_1q(loc.gate_type, 1),
-                pg.rate_1q(loc.gate_type, 2),
+                pg.rate_1q(loc.noise_gate_type, 0),
+                pg.rate_1q(loc.noise_gate_type, 1),
+                pg.rate_1q(loc.noise_gate_type, 2),
             ];
         }
-        let p1_total = self.noise.p1_rate_for_gate(loc.gate_type);
+        let p1_total = self.noise.p1_rate_for_gate(loc.noise_gate_type);
         if let Some(weights) = &self.noise.p1_weights {
             use pecos_core::pauli::{X, Y, Z};
             return [

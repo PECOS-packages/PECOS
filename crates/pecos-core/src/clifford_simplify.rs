@@ -29,7 +29,8 @@ pub enum CliffordLowering {
     PerQubit(GateType),
 }
 
-/// Whether the shared lowering policy owns this rotation gate type.
+/// Whether a gate type is a candidate for the shared lowering policy.
+/// U is lowerable only in its phase-shaped form, on the exact Clifford grid.
 #[must_use]
 pub fn is_lowerable_rotation(gate_type: GateType) -> bool {
     matches!(
@@ -41,11 +42,13 @@ pub fn is_lowerable_rotation(gate_type: GateType) -> bool {
             | GateType::RYY
             | GateType::RZZ
             | GateType::RXY1Q
+            | GateType::U
     )
 }
 
 /// Lower a rotation gate to named Cliffords under the shared policy.
 ///
+/// Phase-shaped `U` gates match the exact named I, Z, SZ, or `SZdg` matrix.
 /// Axis rotations match exactly. `RXY1Q` snaps both angles within `1e-9`
 /// turns of the Clifford grid, as documented by [`try_simplify_rxy1q`].
 ///
@@ -53,6 +56,11 @@ pub fn is_lowerable_rotation(gate_type: GateType) -> bool {
 /// or the angle is not a Clifford angle.
 #[must_use]
 pub fn try_lower_rotation_to_clifford(gate: &crate::Gate) -> Option<CliffordLowering> {
+    // A phase gate has the same Clifford angle table as RZ, but these
+    // replacements are exact, including global phase: U(0,0,pi) = Z.
+    if let Some(lambda) = gate.phase_angle() {
+        return simplify_rz(lambda).map(CliffordLowering::Named);
+    }
     match (gate.gate_type, gate.angles.as_slice()) {
         (gate_type, &[angle]) if is_lowerable_rotation(gate_type) => {
             try_simplify_rotation(gate.gate_type, angle)

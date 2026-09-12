@@ -21,14 +21,17 @@ correctness oracles for these fixes. Each exception covers `.stim`, `.noisy.stim
 and `.tickmeta.json`.
 
 The three repetition shapes `dx3dz1_mem_Z`, `dx1dz3_mem_Z`, and `dx1dz3_mem_X`
-were re-captured after the second #753 review-fix round. Empty-register H and
+were first captured from the base revision during the #753 review-fix round and
+then captured again from the corrected adapter. Empty-register H and
 measurement calls no longer emit operations or artificial ticks; comment-only
 CX layers still emit one tick, except trailing empty groups at the end of the
 merged stream, which are omitted. A wholly empty syndrome stream, such as
 `create(1)` with rounds, contributes no syndrome ticks beyond preparation.
 Their tick counts changed from 18, 18, and 20
 on dev to 14, 18, and 20, respectively. Measurement records, detectors, and
-observables are unchanged. Each exception covers all three builder suffixes.
+observables are unchanged, so `dx1dz3_mem_Z` and `dx1dz3_mem_X` differ from
+the base revision only in `.stim` and `.noisy.stim`; their `.tickmeta.json` is
+byte-identical to it.
 All other captures, including balanced CX operations and distance-7 and
 dx=5/dz=3 Guppy source, retain the base revision's output.
 

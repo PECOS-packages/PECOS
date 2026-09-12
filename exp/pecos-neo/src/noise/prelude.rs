@@ -13,7 +13,8 @@
 //! Unified prelude for the noise system.
 //!
 //! Re-exports everything needed to build noise models: pre-built patterns,
-//! builder API, composite primitives, topology helpers, and validation.
+//! builder API, topology helpers, and validation. Composite primitives require
+//! the `composite-noise` Cargo feature.
 //!
 //! For a full guide with examples, see `docs/experimental/composable-noise.md`.
 
@@ -45,6 +46,7 @@ pub use super::TwoQubitPauliWeights;
 
 // --- Composite System (Composition) ---
 
+#[cfg(feature = "composite-noise")]
 pub use super::composite::prelude::*;
 
 // --- Core Traits and Types ---
@@ -61,10 +63,13 @@ pub use super::topology::{
 
 // --- Convenience Patterns (Pre-built Configurations) ---
 
+#[cfg(feature = "composite-noise")]
 pub use super::patterns::{
-    DeviceNoiseParams, chain_correlated, chain_measurement_crosstalk, dephasing_only,
-    depolarizing_only, depolarizing_with_measurement, grid_measurement_crosstalk, measurement_only,
+    DeviceNoiseParams, chain_measurement_crosstalk, dephasing_only, grid_measurement_crosstalk,
     realistic_device_noise, surface_code_noise, with_leakage,
+};
+pub use super::patterns::{
+    chain_correlated, depolarizing_only, depolarizing_with_measurement, measurement_only,
 };
 
 // --- Validation ---

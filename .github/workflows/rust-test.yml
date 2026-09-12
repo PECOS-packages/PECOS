@@ -168,6 +168,7 @@ jobs:
             echo "Testing $crate..."
             cd "crates/$crate" && cargo clippy --locked --all-targets -- -D warnings && cd ../..
           done
+          cargo clippy --locked -p pecos-neo --lib -- -D warnings
           echo "Testing pecos without default features..."
           cd crates/pecos && cargo clippy --locked --all-targets --no-default-features -- -D warnings && cd ../..
 

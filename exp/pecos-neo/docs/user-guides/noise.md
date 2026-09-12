@@ -1,5 +1,7 @@
 # Adding Noise
 
+Enable the `composite-noise` Cargo feature on `pecos-neo` to use composite noise primitives and patterns.
+
 ## Quickest Option
 
 One-liner on `sim_neo`:

@@ -18,7 +18,7 @@
 //!
 //! - **Typed Commands**: [`GateCommand`] and [`CommandQueue`] replacing `ByteMessage`
 //! - **Composable Noise**: Event-driven channels that can be freely combined
-//! - **Plugin System**: Bevy-inspired architecture for bundling functionality
+//! - **Reusable Simulations**: Owned state with seeded sequential and parallel shot loops
 //! - **Simple `CircuitRunner`**: Direct simulator execution via [`CircuitRunner`]
 //!
 //! ## Architecture
@@ -226,9 +226,9 @@ pub use extensible::{
     stabilizer_gates,
 };
 pub use noise::{
-    ComposableNoiseModel, ContextObserver, EventHandler, GeneralNoiseModelBuilder, NoiseChannel,
-    NoiseContext, NoiseEvent, NoiseModelConfig, NoisePlugin, NoiseResponse, PauliWeights,
-    TwoQubitPauliWeights,
+    ComposableNoiseModel, ContextObserver, EventHandler, EventKinds, GeneralNoiseModelBuilder,
+    NoiseChannel, NoiseContext, NoiseEvent, NoiseEventKind, NoiseModelConfig, NoisePlugin,
+    NoiseResponse, PauliWeights, TwoQubitPauliWeights,
     context::QubitState,
     correlated::{CorrelatedNoiseChannel, CorrelationStats},
     crosstalk::CrosstalkChannel,
@@ -308,9 +308,9 @@ pub mod prelude {
         stabilizer_gates,
     };
     pub use crate::noise::{
-        ComposableNoiseModel, ContextObserver, EventHandler, GeneralNoiseModelBuilder,
-        NoiseChannel, NoiseContext, NoiseEvent, NoiseModelConfig, NoisePlugin, NoiseResponse,
-        PauliWeights, TwoQubitPauliWeights,
+        ComposableNoiseModel, ContextObserver, EventHandler, EventKinds, GeneralNoiseModelBuilder,
+        NoiseChannel, NoiseContext, NoiseEvent, NoiseEventKind, NoiseModelConfig, NoisePlugin,
+        NoiseResponse, PauliWeights, TwoQubitPauliWeights,
         context::QubitState,
         correlated::{CorrelatedNoiseChannel, CorrelationStats},
         crosstalk::CrosstalkChannel,

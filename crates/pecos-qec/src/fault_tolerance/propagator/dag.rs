@@ -117,7 +117,7 @@ pub struct FaultLocations {
     pub before: Vec<bool>,
     /// Gate type at each location.
     pub gate_types: Vec<GateType>,
-    /// Gate types used for noise rates; phase-shaped U inherits RZ rates.
+    /// Inherited noise types; explicit scheduled-gate calibration takes precedence.
     pub noise_gate_types: Vec<GateType>,
     /// Resolved Clifford action at each location.
     pub cliffords: Vec<CliffordLowering>,
@@ -253,7 +253,7 @@ pub struct DagSpacetimeLocation {
     pub before: bool,
     /// The type of gate at this location.
     pub gate_type: GateType,
-    /// Gate type used for noise rates; phase-shaped U inherits RZ rates.
+    /// Inherited noise type; explicit scheduled-gate calibration takes precedence.
     pub noise_gate_type: GateType,
     /// The resolved Clifford action, independent of the scheduled gate type.
     pub clifford: CliffordLowering,

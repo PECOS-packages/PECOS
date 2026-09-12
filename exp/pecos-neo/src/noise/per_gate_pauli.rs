@@ -22,6 +22,11 @@
 //! 3. base p1/3 (or p2/15) uniform   // fallback
 //! ```
 //!
+//! Phase-shaped U operations inherit RZ calibration only when the scheduled U
+//! has no explicit per-qubit or per-type rates. Explicit U calibration takes
+//! precedence over an inherited RZ noiseless flag; an explicit U noiseless flag
+//! still suppresses its channel. General Euler U gates retain their own rates.
+//!
 //! Rates are absolute per-Pauli probabilities (NOT normalized weights):
 //! a `[f64; 3]` entry is `[P(X), P(Y), P(Z)]` and the gate's total error
 //! probability is the sum. Two-qubit arrays follow [`TWO_QUBIT_PAULIS`]
@@ -163,17 +168,19 @@ impl PerGatePauliChannel {
     }
 
     /// Resolve the 1q rates for a gate on a qubit via the layered lookup.
-    fn rates_1q_for(&self, gate: GateType, qubit: QubitId) -> [f64; 3] {
-        if let Some(rates) = self.rates_1q_per_qubit.get(&(gate, qubit)) {
-            return *rates;
-        }
-        if let Some(rates) = self.rates_1q.get(&gate) {
-            return *rates;
-        }
-        [self.base_p1 / 3.0; 3]
+    fn explicit_1q_rates(&self, gate: GateType, qubit: QubitId) -> Option<[f64; 3]> {
+        self.rates_1q_per_qubit
+            .get(&(gate, qubit))
+            .or_else(|| self.rates_1q.get(&gate))
+            .copied()
     }
 
-    /// Resolve the 2q rates for a gate on an ordered pair.
+    fn rates_1q_for(&self, scheduled: GateType, inherited: GateType, qubit: QubitId) -> [f64; 3] {
+        self.explicit_1q_rates(scheduled, qubit)
+            .or_else(|| self.explicit_1q_rates(inherited, qubit))
+            .unwrap_or([self.base_p1 / 3.0; 3])
+    }
+
     fn rates_2q_for(&self, gate: GateType, first: QubitId, second: QubitId) -> [f64; 15] {
         if let Some(rates) = self.rates_2q_per_qubits.get(&(gate, first, second)) {
             return *rates;
@@ -197,6 +204,7 @@ impl PerGatePauliChannel {
         &self,
         gate_type: GateType,
         qubits: &[QubitId],
+        inherited: GateType,
         ctx: &NoiseContext,
         rng: &mut PecosRng,
     ) -> NoiseResponse {
@@ -210,7 +218,13 @@ impl PerGatePauliChannel {
                 if ctx.is_leaked(qubit) {
                     continue;
                 }
-                let [px, py, pz] = self.rates_1q_for(gate_type, qubit);
+                // An explicit scheduled calibration overrides an inherited
+                // exemption. An explicit scheduled noiseless flag still wins.
+                if self.explicit_1q_rates(gate_type, qubit).is_none() && ctx.is_noiseless(inherited)
+                {
+                    continue;
+                }
+                let [px, py, pz] = self.rates_1q_for(gate_type, inherited, qubit);
                 let r = rng.random::<f64>();
                 let pauli = if r < px {
                     GateType::X
@@ -331,7 +345,15 @@ impl NoiseChannel for PerGatePauliChannel {
         match event {
             NoiseEvent::AfterGate {
                 gate_type, qubits, ..
-            } => self.apply_after_gate(*gate_type, qubits, ctx, rng),
+            } => self.apply_after_gate(
+                *gate_type,
+                qubits,
+                event
+                    .noise_gate_type()
+                    .expect("gate event has a noise type"),
+                ctx,
+                rng,
+            ),
             NoiseEvent::BeforeMeasurement { qubits } => {
                 self.apply_before_measurement(qubits, ctx, rng)
             }

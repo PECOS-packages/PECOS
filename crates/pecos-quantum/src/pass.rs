@@ -1354,6 +1354,43 @@ fn canonical_single_qubit_clifford_sequence(clifford: Clifford) -> Vec<GateType>
     })
 }
 
+/// Interpret the finite component alphabet of the canonical Clifford matrices
+/// in the exact ring. Matching these constants is exact, with no angle snapping.
+fn exact_clifford_component(value: f64) -> pecos_synth::DOmega {
+    use pecos_synth::DOmega;
+    let magnitude = match value.abs() {
+        0.0 => DOmega::new(0_i64.into(), 0),
+        1.0 => DOmega::new(1_i64.into(), 0),
+        0.5 => DOmega::new(1_i64.into(), 2),
+        std::f64::consts::FRAC_1_SQRT_2 => DOmega::new(1_i64.into(), 1),
+        _ => unreachable!("canonical Clifford matrix has an unexpected component: {value}"),
+    };
+    if value.is_sign_negative() {
+        -magnitude
+    } else {
+        magnitude
+    }
+}
+
+/// Multiply canonical physical gate matrices exactly in circuit order.
+fn single_qubit_clifford_sequence_matrix(sequence: &[GateType]) -> pecos_synth::Matrix {
+    use pecos_synth::{DOmega, Matrix, ZOmega};
+    let imaginary_unit = DOmega::from(ZOmega::i());
+    sequence.iter().fold(Matrix::identity(), |product, gate| {
+        let entries = gate
+            .canonical_1q_matrix()
+            .expect("single-qubit Clifford has a matrix");
+        let matrix = Matrix::new(std::array::from_fn(|row| {
+            std::array::from_fn(|col| {
+                let offset = 2 * (2 * row + col);
+                &exact_clifford_component(entries[offset])
+                    + &(&imaginary_unit * &exact_clifford_component(entries[offset + 1]))
+            })
+        }));
+        matrix * product
+    })
+}
+
 fn flush_single_qubit_clifford_chain(
     chain: &SingleQubitCliffordChain,
     replacements: &mut BTreeMap<(usize, usize), GateType>,
@@ -1370,6 +1407,14 @@ fn flush_single_qubit_clifford_chain(
         return;
     }
 
+    // Clifford composition is projective. PECOS has no gate-level carrier for
+    // the scalar, so only replace chains whose physical operators agree.
+    if single_qubit_clifford_sequence_matrix(&chain.gates)
+        != single_qubit_clifford_sequence_matrix(&canonical)
+    {
+        return;
+    }
+
     for (position, gate_type) in chain.positions.iter().zip(canonical.iter()) {
         replacements.insert(*position, *gate_type);
     }
@@ -1381,8 +1426,9 @@ fn flush_single_qubit_clifford_chain(
 /// Simplify adjacent single-qubit Clifford chains on each qubit.
 ///
 /// The pass follows each qubit's operation timeline, composes adjacent plain
-/// one-qubit Clifford gates exactly, and replaces the chain with a deterministic
-/// sequence over existing PECOS gate names. Gates carrying parameters,
+/// one-qubit Clifford actions, and proposes a deterministic sequence over existing
+/// PECOS gate names. It substitutes only when the physical matrices agree,
+/// including the global scalar; otherwise it retains the original chain. Gates carrying parameters,
 /// measurement IDs, channel payloads, or batch metadata are treated as barriers.
 pub struct SimplifySingleQubitCliffordChains;
 
@@ -3354,7 +3400,7 @@ mod tests {
     }
 
     #[test]
-    fn simplify_single_qubit_clifford_chains_reduces_batched_chains() {
+    fn simplify_single_qubit_clifford_chains_preserves_batched_scalars() {
         let mut original = TickCircuit::new();
         original.tick().sx(&[0, 1]);
         original.tick().sz(&[0, 1]);
@@ -3362,14 +3408,26 @@ mod tests {
         let mut simplified = original.clone();
         SimplifySingleQubitCliffordChains.apply_tick(&mut simplified);
 
-        assert_circuits_equiv(&original, &simplified);
         let gates: Vec<&Gate> = simplified
             .ticks()
             .iter()
             .flat_map(super::super::tick_circuit::Tick::gate_batches)
             .collect();
-        assert_eq!(gates.len(), 2);
-        assert!(gates.iter().all(|gate| gate.gate_type == GateType::F));
+        // SZ * SX = -i F, so replacing both chains by F would change
+        // this two-qubit operator by -1. Preserve each original chain.
+        assert_eq!(gates.len(), 4);
+        for qubit in [QubitId(0), QubitId(1)] {
+            let actual: Vec<_> = gates
+                .iter()
+                .filter(|gate| gate.qubits.as_slice() == [qubit])
+                .map(|gate| gate.gate_type)
+                .collect();
+            assert_eq!(actual, [GateType::SX, GateType::SZ]);
+            assert_eq!(
+                single_qubit_clifford_sequence_matrix(&actual),
+                single_qubit_clifford_sequence_matrix(&[GateType::SX, GateType::SZ])
+            );
+        }
     }
 
     #[test]

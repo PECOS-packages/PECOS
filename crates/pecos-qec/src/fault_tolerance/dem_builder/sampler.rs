@@ -1574,7 +1574,7 @@ pub(crate) fn compute_location_probs_from_noise(
                         0.0
                     }
                 }
-                _ => noise.p1_rate_for_gate(loc.noise_gate_type),
+                _ => noise.p1_rate_for_operation(loc.gate_type, loc.noise_gate_type),
             }
         })
         .collect()

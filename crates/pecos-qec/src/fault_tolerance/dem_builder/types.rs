@@ -3429,8 +3429,8 @@ impl NoiseConfig {
     }
 
     /// Sets a total single-qubit error-rate override for one gate type.
-    /// Phase-shaped U operations use the RZ rate; their scheduled gate type
-    /// remains U in fault provenance.
+    /// Phase-shaped U operations inherit the RZ rate unless an explicit U
+    /// override is configured. Their scheduled type remains U in provenance.
     ///
     /// The override changes only the total rate. If `p1_weights` is configured,
     /// those weights still determine the relative Pauli distribution for this
@@ -3448,6 +3448,61 @@ impl NoiseConfig {
             .get(&gate_type)
             .copied()
             .unwrap_or(self.p1)
+    }
+
+    /// Resolve a scheduled one-qubit operation's total rate. An explicit
+    /// scheduled-gate override takes precedence over its inherited noise type.
+    #[must_use]
+    pub fn p1_rate_for_operation(&self, scheduled: GateType, inherited: GateType) -> f64 {
+        self.p1_gate_rates
+            .get(&scheduled)
+            .copied()
+            .unwrap_or_else(|| self.p1_rate_for_gate(inherited))
+    }
+
+    pub(crate) fn rates_1q_for_operation(
+        &self,
+        scheduled: GateType,
+        inherited: GateType,
+    ) -> [f64; 3] {
+        resolve_1q_rates(
+            scheduled,
+            inherited,
+            self.p1,
+            &self.p1_gate_rates,
+            self.p1_weights.as_ref(),
+        )
+    }
+
+    pub(crate) fn rates_2q_for_operation(
+        &self,
+        gate_type: GateType,
+        clifford: CliffordLowering,
+    ) -> [f64; 15] {
+        if let Some(weights) = &self.p2_weights {
+            return std::array::from_fn(|idx| {
+                let flat = idx + 1;
+                let p1 = flat / 4;
+                let p2 = flat % 4;
+                let pauli = pauli_pair_for_weight(p1, p2);
+                let p2_total = self.p2_rate_for_gate(gate_type);
+                let weight = if self.p2_replacement_approximation
+                    == ReplacementBranchApproximation::BranchImpact
+                    || self.p2_replacement_approximation
+                        == ReplacementBranchApproximation::ExactBranchReplay
+                {
+                    weights.post_gate_two_qubit_weight_for(&pauli)
+                } else {
+                    weights.two_qubit_weight_for(
+                        clifford,
+                        &pauli,
+                        self.p2_replacement_approximation,
+                    )
+                };
+                p2_total * weight
+            });
+        }
+        [self.p2_rate_for_gate(gate_type) / 15.0; 15]
     }
 
     /// Sets custom per-Pauli weights for two-qubit gates.
@@ -4277,6 +4332,32 @@ impl PerGateTypeNoise {
         self.rates_2q_per_qubits
             .insert((g, q_control, q_target), rates);
         self
+    }
+
+    /// Resolve scheduled-gate calibration before an inherited noise type.
+    /// Per-qubit scheduled rates, scheduled gate rates, and scheduled total-rate
+    /// overrides all take precedence over inherited calibration.
+    pub(crate) fn rates_1q_for_operation(
+        &self,
+        scheduled: GateType,
+        inherited: GateType,
+        qubit: Option<QubitId>,
+    ) -> [f64; 3] {
+        let explicit = |gate| {
+            qubit
+                .and_then(|q| self.explicit_1q_rates_on(gate, q))
+                .or_else(|| self.explicit_1q_rates(gate))
+        };
+        if let Some(rates) = explicit(scheduled) {
+            return rates;
+        }
+        if self.base.p1_gate_rates.contains_key(&scheduled) {
+            return [self.base.p1_rate_for_gate(scheduled) / 3.0; 3];
+        }
+        if let Some(rates) = explicit(inherited) {
+            return rates;
+        }
+        std::array::from_fn(|i| self.rate_1q(inherited, i))
     }
 
     /// Lookup 1Q Pauli rate for a gate. Returns the base single-qubit gate
@@ -7126,6 +7207,46 @@ fn trim_trailing_zeros(s: &str) -> String {
     } else {
         s.to_string()
     }
+}
+
+/// Resolve one-qubit calibration without losing scheduled-gate precedence.
+pub(crate) fn resolve_1q_rates(
+    scheduled: GateType,
+    inherited: GateType,
+    base: f64,
+    gate_rates: &BTreeMap<GateType, f64>,
+    weights: Option<&PauliWeights>,
+) -> [f64; 3] {
+    let total = gate_rates
+        .get(&scheduled)
+        .or_else(|| gate_rates.get(&inherited))
+        .copied()
+        .unwrap_or(base);
+    if let Some(weights) = weights {
+        use pecos_core::pauli::{X, Y, Z};
+        return [X(0), Y(0), Z(0)].map(|pauli| total * weights.weight_for(&pauli));
+    }
+    [total / 3.0; 3]
+}
+
+fn pauli_pair_for_weight(p1: usize, p2: usize) -> pecos_core::PauliString {
+    let mut paulis = Vec::new();
+    let pauli_from_index = |idx| match idx {
+        0 => pecos_core::Pauli::I,
+        1 => pecos_core::Pauli::X,
+        2 => pecos_core::Pauli::Y,
+        3 => pecos_core::Pauli::Z,
+        _ => unreachable!("Pauli index must be 0-3"),
+    };
+    let pa1 = pauli_from_index(p1);
+    let pa2 = pauli_from_index(p2);
+    if pa1 != pecos_core::Pauli::I {
+        paulis.push((pa1, pecos_core::QubitId::from(0usize)));
+    }
+    if pa2 != pecos_core::Pauli::I {
+        paulis.push((pa2, pecos_core::QubitId::from(1usize)));
+    }
+    pecos_core::PauliString::with_phase_and_paulis(pecos_core::QuarterPhase::PlusOne, paulis)
 }
 
 #[cfg(test)]

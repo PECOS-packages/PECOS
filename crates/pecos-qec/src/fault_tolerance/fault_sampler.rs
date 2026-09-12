@@ -133,6 +133,8 @@ pub(crate) struct GateLoc {
     pub(crate) tick: usize,
     pub(crate) gate_index: usize,
     pub(crate) gate_type: GateType,
+    /// Propagation action, separate from scheduled-gate noise provenance.
+    pub(crate) clifford: pecos_core::CliffordLowering,
     pub(crate) qubits: Vec<usize>,
 }
 
@@ -181,7 +183,10 @@ pub(crate) enum PauliType {
 /// - `I`, `Idle`, `QFree`, `MeasCrosstalkGlobalPayload`,
 ///   `MeasCrosstalkLocalPayload`, `TrackedPauliMeta`
 ///
-/// Any gate not in the above lists returns [`UnsupportedGateError`].
+/// Rotations accepted by the shared Clifford lowering policy (including
+/// phase-shaped U on the Clifford grid) use their resolved action for propagation.
+/// Their scheduled one- or two-qubit type determines the fault channel and stays
+/// in the catalog's provenance. Other rotations return [`UnsupportedGateError`].
 ///
 /// # Errors
 ///
@@ -200,11 +205,13 @@ pub fn build_fault_table(
 fn validate_tick_circuit(tc: &TickCircuit) -> Result<(), UnsupportedGateError> {
     for (tick_idx, tick) in tc.iter_ticks() {
         for gate in tick.iter_gate_batches() {
-            if is_standard_1q_clifford_gate(gate.gate_type)
-                || is_standard_2q_clifford_gate(gate.gate_type)
-                || is_supported_measurement_gate(gate.gate_type)
-                || is_supported_prep_gate(gate.gate_type)
-                || is_supported_noop_or_metadata_gate(gate.gate_type)
+            if gate.as_gate().validate().is_ok()
+                && (is_standard_1q_clifford_gate(gate.gate_type)
+                    || is_standard_2q_clifford_gate(gate.gate_type)
+                    || is_supported_measurement_gate(gate.gate_type)
+                    || is_supported_prep_gate(gate.gate_type)
+                    || is_supported_noop_or_metadata_gate(gate.gate_type)
+                    || pecos_core::try_lower_rotation_to_clifford(gate.as_gate()).is_some())
             {
                 continue;
             }
@@ -250,6 +257,8 @@ pub(crate) fn flatten_tick_circuit(tc: &TickCircuit) -> (Vec<GateLoc>, HashMap<u
                 tick: tick_idx,
                 gate_index: gate.batch_index(),
                 gate_type: gate.gate_type(),
+                clifford: pecos_core::try_lower_rotation_to_clifford(&gate.to_gate())
+                    .unwrap_or(pecos_core::CliffordLowering::Named(gate.gate_type())),
                 qubits: qs,
             });
         }
@@ -418,7 +427,13 @@ fn propagate_forward(
     let mut affected = BTreeSet::new();
 
     for (loc_idx, loc) in gates.iter().enumerate().skip(start) {
-        match loc.gate_type {
+        // Bitmask propagation tracks Pauli support, so conjugation by a
+        // tensor product of Paulis leaves it unchanged (only signs differ).
+        let action = match loc.clifford {
+            pecos_core::CliffordLowering::Named(gate) => gate,
+            pecos_core::CliffordLowering::PerQubit(_) => GateType::I,
+        };
+        match action {
             GateType::H if !loc.qubits.is_empty() => {
                 prop.h(&[QubitId(loc.qubits[0])]);
             }
@@ -1050,7 +1065,12 @@ fn build_structural_fault_catalog(tc: &TickCircuit) -> Result<FaultCatalog, Unsu
         let qubits = &loc.qubits;
 
         match gate_type {
-            gate_type if is_standard_1q_clifford_gate(gate_type) && !loc.qubits.is_empty() => {
+            gate_type
+                if (is_standard_1q_clifford_gate(gate_type)
+                    || (pecos_core::is_lowerable_rotation(gate_type)
+                        && gate_type.quantum_arity() == 1))
+                    && !loc.qubits.is_empty() =>
+            {
                 let q = loc.qubits[0];
                 let num_alts = 3;
                 let conditional_probability = 1.0 / 3.0;
@@ -1092,7 +1112,12 @@ fn build_structural_fault_catalog(tc: &TickCircuit) -> Result<FaultCatalog, Unsu
                 });
             }
 
-            gate_type if is_standard_2q_clifford_gate(gate_type) && loc.qubits.len() >= 2 => {
+            gate_type
+                if (is_standard_2q_clifford_gate(gate_type)
+                    || (pecos_core::is_lowerable_rotation(gate_type)
+                        && gate_type.quantum_arity() == 2))
+                    && loc.qubits.len() >= 2 =>
+            {
                 let (q1, q2) = (loc.qubits[0], loc.qubits[1]);
                 let num_alts = 15;
                 let conditional_probability = 1.0 / 15.0;

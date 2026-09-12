@@ -2339,7 +2339,7 @@ impl<'a> SamplingEngineBuilder<'a> {
                     // Single-qubit gate errors: only "after" locations, depolarizing
                     if !loc.before =>
                 {
-                    let rates = self.rates_1q(loc.noise_gate_type, &loc.qubits);
+                    let rates = self.rates_1q(loc);
                     if rates.iter().any(|r| *r != 0.0) {
                         self.process_depolarizing_fault_rates(
                             loc_idx,
@@ -2551,33 +2551,24 @@ impl<'a> SamplingEngineBuilder<'a> {
     /// Resolve per-Pauli rates for a 1Q gate on a specific qubit. Uses
     /// `per_gate`'s per-qubit map if set, falling back to per-gate-type,
     /// then uniform `p1 / 3`.
-    fn rates_1q(&self, gate: GateType, qubits: &[pecos_core::QubitId]) -> [f64; 3] {
+    fn rates_1q(
+        &self,
+        loc: &crate::fault_tolerance::propagator::dag::DagSpacetimeLocation,
+    ) -> [f64; 3] {
         if let Some(pg) = &self.per_gate {
-            if let Some(q) = qubits.first() {
-                [
-                    pg.rate_1q_on(gate, *q, 0),
-                    pg.rate_1q_on(gate, *q, 1),
-                    pg.rate_1q_on(gate, *q, 2),
-                ]
-            } else {
-                [
-                    pg.rate_1q(gate, 0),
-                    pg.rate_1q(gate, 1),
-                    pg.rate_1q(gate, 2),
-                ]
-            }
-        } else {
-            let p1_total = self.p1_gate_rates.get(&gate).copied().unwrap_or(self.p1);
-            if let Some(weights) = &self.p1_weights {
-                use pecos_core::pauli::{X, Y, Z};
-                return [
-                    p1_total * weights.weight_for(&X(0)),
-                    p1_total * weights.weight_for(&Y(0)),
-                    p1_total * weights.weight_for(&Z(0)),
-                ];
-            }
-            [p1_total / 3.0; 3]
+            return pg.rates_1q_for_operation(
+                loc.gate_type,
+                loc.noise_gate_type,
+                loc.qubits.first().copied(),
+            );
         }
+        super::types::resolve_1q_rates(
+            loc.gate_type,
+            loc.noise_gate_type,
+            self.p1,
+            &self.p1_gate_rates,
+            self.p1_weights.as_ref(),
+        )
     }
 
     /// Resolve categorical and independent families for an explicit idle location.

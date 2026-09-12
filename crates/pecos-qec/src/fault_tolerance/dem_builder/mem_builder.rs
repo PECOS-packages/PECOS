@@ -129,29 +129,23 @@ impl<'a> MemBuilder<'a> {
                 | GateType::RZ
                 | GateType::U
                 | GateType::RXY1Q
-                    if self.noise.p1 != 0.0 && !loc.before =>
+                    if !loc.before =>
                 {
                     self.process_single_qubit_fault(loc_idx, &mut mem)?;
                 }
-                GateType::Idle if !loc.before => {
-                    if self.noise.uses_dedicated_idle_noise() {
-                        let duration = loc.idle_duration;
-                        let families =
-                            self.noise
-                                .try_idle_channel_families(duration)
-                                .map_err(|error| {
-                                    DemBuilderError::ConfigurationError(error.to_string())
-                                })?;
-                        self.process_idle_fault(loc_idx, families, &mut mem)?;
-                    } else if self.noise.p1 != 0.0 {
-                        self.process_single_qubit_fault(loc_idx, &mut mem)?;
-                    }
+                GateType::Idle if !loc.before && self.noise.uses_dedicated_idle_noise() => {
+                    let duration = loc.idle_duration;
+                    let families = self
+                        .noise
+                        .try_idle_channel_families(duration)
+                        .map_err(|error| DemBuilderError::ConfigurationError(error.to_string()))?;
+                    self.process_idle_fault(loc_idx, families, &mut mem)?;
                 }
                 _ => {}
             }
         }
 
-        if self.noise.p2 != 0.0 {
+        if self.noise.has_any_p2_noise() {
             for loc_indices in two_qubit_groups.values() {
                 for pair in loc_indices.chunks(2) {
                     if pair.len() == 2 {
@@ -209,8 +203,10 @@ impl<'a> MemBuilder<'a> {
         loc_idx: usize,
         mem: &mut MeasurementNoiseModel,
     ) -> Result<(), DemBuilderError> {
-        let prob = self.noise.p1 / 3.0;
-        let probabilities = [prob; 3];
+        let loc = &self.influence_map.locations[loc_idx];
+        let probabilities = self
+            .noise
+            .rates_1q_for_operation(loc.gate_type, loc.noise_gate_type);
         let context = format!("one-qubit gate at location {loc_idx}");
         validate_exclusive_probabilities(&probabilities, &context)
             .map_err(|error| DemBuilderError::ConfigurationError(error.to_string()))?;
@@ -302,8 +298,10 @@ impl<'a> MemBuilder<'a> {
         loc2: usize,
         mem: &mut MeasurementNoiseModel,
     ) -> Result<(), DemBuilderError> {
-        let prob = self.noise.p2 / 15.0;
-        let probabilities = [prob; 15];
+        let loc = &self.influence_map.locations[loc1];
+        let probabilities = self
+            .noise
+            .rates_2q_for_operation(loc.gate_type, loc.clifford);
         let context = format!("two-qubit gate at locations {loc1} and {loc2}");
         validate_exclusive_probabilities(&probabilities, &context)
             .map_err(|error| DemBuilderError::ConfigurationError(error.to_string()))?;
@@ -335,8 +333,9 @@ impl<'a> MemBuilder<'a> {
                     )
                 };
 
-                if !mechanism.is_empty() && prob != 0.0 {
-                    *exclusive.entry(mechanism).or_insert(0.0) += prob;
+                let index = usize::from(p1.as_u8()) * 4 + usize::from(p2.as_u8()) - 1;
+                if !mechanism.is_empty() && probabilities[index] != 0.0 {
+                    *exclusive.entry(mechanism).or_insert(0.0) += probabilities[index];
                 }
             }
         }

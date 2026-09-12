@@ -15,6 +15,7 @@ readme = "README.md"
 pecos-core.workspace = true
 pecos-num.workspace = true
 pecos-random.workspace = true
+pecos-synth.workspace = true
 nalgebra.workspace = true
 num-complex.workspace = true
 serde_json.workspace = true

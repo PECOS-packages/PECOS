@@ -298,24 +298,28 @@ def test_tick_circuit_pass_bindings_absorb_basis_and_peephole():
     assert _gate_names(optimized) == ["CZ"]
 
 
-def test_tick_circuit_pass_bindings_simplify_single_qubit_clifford_chains():
+@pytest.mark.parametrize(("second_gate", "expected"), [("sx", ["X"]), ("sz", ["SX", "SZ"])])
+def test_tick_circuit_pass_bindings_simplify_single_qubit_clifford_chains(second_gate, expected):
     tc = TickCircuit()
     tc.tick().sx([0])
-    tc.tick().sz([0])
+    getattr(tc.tick(), second_gate)([0])
 
     tc.simplify_single_qubit_clifford_chains()
 
-    assert _gate_names(tc) == ["F"]
+    # SX squared is exactly X; SZ * SX is -i F, so that chain must stay.
+    assert _gate_names(tc) == expected
 
 
-def test_normalize_traced_tick_circuit_simplifies_single_qubit_clifford_chains():
+@pytest.mark.parametrize(("second_gate", "expected"), [("sx", ["X"]), ("sz", ["SX", "SZ"])])
+def test_normalize_traced_tick_circuit_simplifies_single_qubit_clifford_chains(second_gate, expected):
     tc = TickCircuit()
     tc.tick().sx([0])
-    tc.tick().sz([0])
+    getattr(tc.tick(), second_gate)([0])
 
     normalize_traced_tick_circuit(tc, context="test one-qubit Clifford normalization")
 
-    assert _gate_names(tc) == ["F"]
+    # SX squared is exactly X; SZ * SX is -i F, so that chain must stay.
+    assert _gate_names(tc) == expected
 
 
 def test_normalize_traced_tick_circuit_can_skip_single_qubit_clifford_simplification():

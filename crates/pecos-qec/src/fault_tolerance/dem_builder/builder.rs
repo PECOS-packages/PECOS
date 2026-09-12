@@ -421,30 +421,14 @@ impl<'a> DemBuilder<'a> {
     /// Resolve `[rate_X, rate_Y, rate_Z]` for a 1Q gate location.
     fn rates_1q_for_loc(&self, loc: &DagSpacetimeLocation) -> [f64; 3] {
         if let Some(pg) = &self.per_gate {
-            if let Some(q) = loc.qubits.first() {
-                return [
-                    pg.rate_1q_on(loc.noise_gate_type, *q, 0),
-                    pg.rate_1q_on(loc.noise_gate_type, *q, 1),
-                    pg.rate_1q_on(loc.noise_gate_type, *q, 2),
-                ];
-            }
-            return [
-                pg.rate_1q(loc.noise_gate_type, 0),
-                pg.rate_1q(loc.noise_gate_type, 1),
-                pg.rate_1q(loc.noise_gate_type, 2),
-            ];
+            return pg.rates_1q_for_operation(
+                loc.gate_type,
+                loc.noise_gate_type,
+                loc.qubits.first().copied(),
+            );
         }
-        let p1_total = self.noise.p1_rate_for_gate(loc.noise_gate_type);
-        if let Some(weights) = &self.noise.p1_weights {
-            use pecos_core::pauli::{X, Y, Z};
-            return [
-                p1_total * weights.weight_for(&X(0)),
-                p1_total * weights.weight_for(&Y(0)),
-                p1_total * weights.weight_for(&Z(0)),
-            ];
-        }
-        let per = p1_total / 3.0;
-        [per, per, per]
+        self.noise
+            .rates_1q_for_operation(loc.gate_type, loc.noise_gate_type)
     }
 
     /// Resolve the categorical Pauli channel for an explicit idle location.
@@ -508,30 +492,8 @@ impl<'a> DemBuilder<'a> {
             }
             return std::array::from_fn(|i| pg.rate_2q(gate, i));
         }
-        if let Some(weights) = &self.noise.p2_weights {
-            return std::array::from_fn(|idx| {
-                let flat = idx + 1;
-                let p1 = flat / 4;
-                let p2 = flat % 4;
-                let pauli = pauli_pair_for_weight(p1, p2);
-                let p2_total = self.noise.p2_rate_for_gate(loc1.gate_type);
-                let weight = if self.noise.p2_replacement_approximation
-                    == ReplacementBranchApproximation::BranchImpact
-                    || self.noise.p2_replacement_approximation
-                        == ReplacementBranchApproximation::ExactBranchReplay
-                {
-                    weights.post_gate_two_qubit_weight_for(&pauli)
-                } else {
-                    weights.two_qubit_weight_for(
-                        loc1.clifford,
-                        &pauli,
-                        self.noise.p2_replacement_approximation,
-                    )
-                };
-                p2_total * weight
-            });
-        }
-        [self.noise.p2_rate_for_gate(loc1.gate_type) / 15.0; 15]
+        self.noise
+            .rates_2q_for_operation(loc1.gate_type, loc1.clifford)
     }
 
     /// Sets the number of measurements (used for record offset calculation).
@@ -2525,26 +2487,6 @@ fn xor_toggle_2(vec: &mut SmallVec<[u32; 2]>, value: u32) {
     } else {
         vec.push(value);
     }
-}
-
-fn pauli_pair_for_weight(p1: usize, p2: usize) -> pecos_core::PauliString {
-    let mut paulis = Vec::new();
-    let pauli_from_index = |idx| match idx {
-        0 => pecos_core::Pauli::I,
-        1 => pecos_core::Pauli::X,
-        2 => pecos_core::Pauli::Y,
-        3 => pecos_core::Pauli::Z,
-        _ => unreachable!("Pauli index must be 0-3"),
-    };
-    let pa1 = pauli_from_index(p1);
-    let pa2 = pauli_from_index(p2);
-    if pa1 != pecos_core::Pauli::I {
-        paulis.push((pa1, pecos_core::QubitId::from(0usize)));
-    }
-    if pa2 != pecos_core::Pauli::I {
-        paulis.push((pa2, pecos_core::QubitId::from(1usize)));
-    }
-    pecos_core::PauliString::with_phase_and_paulis(pecos_core::QuarterPhase::PlusOne, paulis)
 }
 
 fn two_qubit_label_to_pauli_indices(label: &str) -> Option<(u8, u8)> {

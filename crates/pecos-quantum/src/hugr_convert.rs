@@ -605,7 +605,7 @@ pub fn try_extract_rotation_angle(
 }
 
 /// Extract quantum operations from a HUGR.
-fn extract_quantum_ops(hugr: &Hugr) -> Vec<QuantumOp> {
+fn extract_quantum_ops(hugr: &Hugr) -> Result<Vec<QuantumOp>, HugrConvertError> {
     let mut operations = Vec::new();
 
     for node in hugr.nodes() {
@@ -618,6 +618,12 @@ fn extract_quantum_ops(hugr: &Hugr) -> Vec<QuantumOp> {
 
         // Check if it's from the tket.quantum extension
         let ext_id = ext_op.extension_id();
+        if ext_id.as_ref() as &str == "tket.global_phase" {
+            return Err(HugrConvertError::UnsupportedExtension(
+                "tket.global_phase: PECOS circuits cannot carry an arbitrary global scalar"
+                    .to_string(),
+            ));
+        }
         if ext_id.as_ref() as &str != "tket.quantum" {
             continue;
         }
@@ -669,13 +675,17 @@ fn extract_quantum_ops(hugr: &Hugr) -> Vec<QuantumOp> {
         });
     }
 
-    operations
+    Ok(operations)
 }
 
 /// Key for tracking qubit wire flow: (node, `output_port_index`)
 type WireKey = (Node, usize);
 
 /// Convert a HUGR quantum circuit to a `DagCircuit`.
+///
+/// Scalar-bearing (`tket.global_phase`) input is rejected: PECOS circuits
+/// cannot represent an arbitrary global scalar. Export retains these scalars,
+/// but such exports cannot currently be imported back into a PECOS circuit.
 ///
 /// # Arguments
 ///
@@ -716,7 +726,7 @@ type WireKey = (Node, usize);
 /// structure natively.
 #[allow(clippy::too_many_lines)]
 pub fn hugr_to_dag_circuit(hugr: &Hugr) -> Result<DagCircuit, HugrConvertError> {
-    let operations = extract_quantum_ops(hugr);
+    let operations = extract_quantum_ops(hugr)?;
 
     if operations.is_empty() {
         return Ok(DagCircuit::new());
@@ -1408,7 +1418,7 @@ impl SimpleHugr {
     #[allow(clippy::too_many_lines)]
     fn build_from_hugr(hugr: Hugr) -> Result<Self, HugrConvertError> {
         // Extract quantum operations
-        let quantum_ops = extract_quantum_ops(&hugr);
+        let quantum_ops = extract_quantum_ops(&hugr)?;
 
         if quantum_ops.is_empty() {
             return Ok(Self {

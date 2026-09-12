@@ -1,0 +1,83 @@
+R 0 1 2 3
+TICK
+R 4 5 6
+TICK
+H 4 5
+TICK
+CX 1 6 5 3
+TICK
+CX 3 6 5 2
+TICK
+CX 4 1 0 6
+TICK
+CX 4 0 2 6
+TICK
+H 4 5
+TICK
+M 4 5 6
+TICK
+R 4 5 6
+TICK
+H 4 5
+TICK
+CX 1 6 5 3
+TICK
+CX 3 6 5 2
+TICK
+CX 4 1 0 6
+TICK
+CX 4 0 2 6
+TICK
+H 4 5
+TICK
+M 4 5 6
+TICK
+H 0 1 2 3
+TICK
+R 6 4 5
+TICK
+H 6
+TICK
+CX 6 1 3 5
+TICK
+CX 6 3 2 5
+TICK
+CX 1 4 6 0
+TICK
+CX 0 4 6 2
+TICK
+H 6
+TICK
+M 6 4 5
+TICK
+R 6 4 5
+TICK
+H 6
+TICK
+CX 6 1 3 5
+TICK
+CX 6 3 2 5
+TICK
+CX 1 4 6 0
+TICK
+CX 0 4 6 2
+TICK
+H 6
+TICK
+M 6 4 5
+TICK
+H 0 1 2 3
+TICK
+M 0 1 2 3
+DETECTOR(1.0, 1.0, 0.0) rec[-14]
+DETECTOR(1.0, 0.0, 1.0) rec[-13] rec[-16]
+DETECTOR(1.0, 2.0, 1.0) rec[-12] rec[-15]
+DETECTOR(1.0, 1.0, 1.0) rec[-11] rec[-14]
+DETECTOR(1.0, 1.0, 2.0) rec[-10] rec[-11]
+DETECTOR(1.0, 0.0, 2.0) rec[-9] rec[-13]
+DETECTOR(1.0, 2.0, 2.0) rec[-8] rec[-12]
+DETECTOR(1.0, 1.0, 3.0) rec[-7] rec[-10]
+DETECTOR(1.0, 0.0, 3.0) rec[-6] rec[-9]
+DETECTOR(1.0, 2.0, 3.0) rec[-5] rec[-8]
+DETECTOR(1.0, 1.0, 4.0) rec[-4] rec[-3] rec[-2] rec[-1] rec[-7]
+OBSERVABLE_INCLUDE(0) rec[-4] rec[-3]

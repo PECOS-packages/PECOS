@@ -16,7 +16,13 @@ from pecos.guppy_gen.gadget_render import render_gadget_function
 from pecos.qec import DetectorErrorModel
 from pecos.qec.surface import LogicalCircuitBuilder, SurfacePatch, gadgets, logical_circuit
 from pecos.qec.surface.circuit_builder import OpType, SurfaceCircuitStep
-from pecos.qec.surface.logical_circuit import LogicalGateType, _CircuitGenerator
+from pecos.qec.surface.logical_circuit import (
+    LogicalGateType,
+    LogicalOp,
+    _CircuitGenerator,
+    _conjugate_stabilizer_term,
+    _propagate_stabilizer_terms,
+)
 from pecos.qec.surface.patch import PatchOrientation
 from pecos.testing import group_contains, simulate_tick_circuit, stabilizer_generators_after
 from pecos_rslib.quantum import TickCircuit
@@ -40,6 +46,12 @@ SHAPES = (
     "d5_mem_Z",
     "d5_h",
     "d5_cx_zz",
+    "d3_hh_adjacent",
+    "d3_cxcx",
+    "d3_cx_chain",
+    "d3_skip_segment",
+    "d3_late_partner_cx",
+    "d2_h_even",
 )
 
 
@@ -64,6 +76,16 @@ class GeneratorProbe(_CircuitGenerator):
     def allocation(self, label):
         return self._allocation(label)
 
+    def boundary_detector(self, key, measurement):
+        return self._emit_boundary_detector(*key, measurement)
+
+    def round_detectors(self, label, round_index):
+        return self._emit_round_detectors(label, round_index, is_first_segment=False)
+
+    @property
+    def round_measurements(self):
+        return self._stab_meas_by_round
+
     @property
     def detectors(self):
         return self._det_json
@@ -77,7 +99,11 @@ def make_builder(name: str) -> LogicalCircuitBuilder:
         labels = ["D", "Y"]
     elif shape.startswith("t_"):
         labels = ["D", "A"]
-    elif shape.startswith("cx_"):
+    elif shape == "cx_chain":
+        labels = ["A", "B", "C"]
+    elif shape in {"skip_segment", "late_partner_cx"}:
+        labels = ["A", "B"]
+    elif shape.startswith("cx_") or shape == "cxcx":
         labels = ["C", "T"]
     elif shape == "h_cx_h":
         labels = ["A", "B"]
@@ -96,6 +122,30 @@ def make_builder(name: str) -> LogicalCircuitBuilder:
         if shape == "hh":
             builder.add_transversal_h("A")
             builder.add_memory("A", 2, "Z")
+    elif shape in {"hh_adjacent", "h_even"}:
+        builder.add_memory("A", 2, "Z")
+        builder.add_transversal_h("A")
+        if shape == "hh_adjacent":
+            builder.add_transversal_h("A")
+        builder.add_memory("A", 2, "Z" if shape == "hh_adjacent" else "X")
+    elif shape == "cxcx":
+        builder.add_memory(labels, 2, "Z")
+        builder.add_transversal_cx("C", "T")
+        builder.add_transversal_cx("C", "T")
+        builder.add_memory(labels, 2, "Z")
+    elif shape == "cx_chain":
+        builder.add_memory(labels, 2, "X")
+        builder.add_transversal_cx("A", "B")
+        builder.add_transversal_cx("B", "C")
+        builder.add_memory(labels, 2, "X")
+    elif shape == "skip_segment":
+        for label in ["A", "B", "A", "B"]:
+            builder.add_memory(label, 2, "Z")
+    elif shape == "late_partner_cx":
+        builder.add_memory("B", 2, "Z")
+        builder.add_memory("A", 2, "Z")
+        builder.add_transversal_cx("A", "B")
+        builder.add_memory(labels, 2, "Z")
     elif shape.startswith("cx_"):
         basis = {"C": shape[-2].upper(), "T": shape[-1].upper()}
         builder.add_memory(labels, 2, basis)
@@ -280,8 +330,20 @@ def test_cx_stabilizer_oracle():
     assert group_contains(after, _pauli(2 * nq, ("Z", [*lz, *(nq + q for q in lz)])))
 
 
-@pytest.mark.parametrize(("shape", "num_observables"), [("d3_h_z_to_x", 1), ("d3_cx_zz", 2)])
-def test_fault_distance(shape, num_observables):
+@pytest.mark.parametrize(
+    ("shape", "num_observables", "distance"),
+    [
+        ("d3_h_z_to_x", 1, 3),
+        ("d3_cx_zz", 2, 3),
+        ("d3_hh_adjacent", 1, 3),
+        ("d3_cxcx", 2, 3),
+        ("d3_cx_chain", 3, 3),
+        ("d3_skip_segment", 2, 3),
+        ("d3_late_partner_cx", 2, 3),
+        ("d2_h_even", 1, 2),
+    ],
+)
+def test_fault_distance(shape, num_observables, distance):
     dem = DetectorErrorModel.from_circuit(
         make_builder(shape).to_tick_circuit(),
         p1=0.001,
@@ -289,15 +351,615 @@ def test_fault_distance(shape, num_observables):
         p_meas=0.001,
         p_prep=0.001,
     )
-    distances = dem.per_observable_fault_distances(3)
+    distances = dem.per_observable_fault_distances(distance)
     assert len(distances) == num_observables
-    assert all(distance is not None and distance.distance == 3 for distance in distances)
+    assert all(result is not None and result.distance == distance for result in distances)
+
+
+@pytest.mark.parametrize(("shape", "copies", "expected"), [("d3_skip_segment", 2, 64), ("d3_hh_adjacent", 1, 32)])
+def test_boundary_detector_counts(shape, copies, expected):
+    memory = make_builder("d3_mem_Z")
+    memory.operations[0].rounds = 4
+    memory_count = len(json.loads(memory.to_tick_circuit().get_meta("detectors")))
+    actual = len(json.loads(make_builder(shape).to_tick_circuit().get_meta("detectors")))
+    assert actual == copies * memory_count == expected
+
+
+def test_post_h_physical_detector_coordinates():
+    builder = make_builder("d3_h_z_to_x")
+    generator = GeneratorProbe(builder.patches, builder.operations)
+    generator.generate()
+    state = builder.patches["A"]
+    geometry = state.patch.geometry
+    measured_keys = {measurement: key for key, measurement in generator.stab_meas.items()}
+    post_h = [detector for detector in generator.detectors if detector["coords"][2] >= 2]
+    assert len(post_h) == 20
+    for detector in post_h:
+        records = detector["abs_records"]
+        # Round comparisons put the new syndrome first; readout puts it last.
+        measurement = records[0] if detector["coords"][2] < 4 else records[-1]
+        label, family, index, segment, _ = measured_keys[measurement]
+        assert (label, segment) == ("A", 1)
+        base_register = geometry.z_stabilizers if family == "X" else geometry.x_stabilizers
+        stabilizer = next(stab for stab in base_register if stab.index == index)
+        positions = [geometry.id_to_pos[q] for q in stabilizer.data_qubits]
+        expected = [
+            2 * sum(col for row, col in positions) / len(positions) + state.coord_offset[0],
+            2 * sum(row for row, col in positions) / len(positions) + state.coord_offset[1],
+        ]
+        assert detector["coords"][:2] == expected
+
+
+def test_even_distance_post_h_comparisons():
+    builder = make_builder("d2_h_even")
+    geometry = builder.patches["A"].patch.geometry
+    assert (len(geometry.x_stabilizers), len(geometry.z_stabilizers)) == (2, 1)
+    detectors = json.loads(builder.to_tick_circuit().get_meta("detectors"))
+    for time in (2, 3):
+        comparisons = [detector for detector in detectors if detector["coords"][2] == time]
+        assert len(comparisons) == 3
+        assert all(len(detector["meas_ids"]) == 2 for detector in comparisons)
+
+
+@pytest.mark.parametrize("family", ["X", "Z"])
+def test_propagation_hh(family):
+    operations = [
+        LogicalOp(LogicalGateType.MEMORY, ["A"], rounds=2),
+        LogicalOp(LogicalGateType.TRANSVERSAL_H, ["A"]),
+        LogicalOp(LogicalGateType.TRANSVERSAL_H, ["A"]),
+        LogicalOp(LogicalGateType.MEMORY, ["A"], rounds=2),
+    ]
+    assert _propagate_stabilizer_terms(operations, 1, ("A", family, 7, family)) == [("A", family, 7, 0)]
+
+
+@pytest.mark.parametrize("patch", ["C", "T"])
+@pytest.mark.parametrize("family", ["X", "Z"])
+def test_propagation_cxcx(patch, family):
+    operations = [
+        LogicalOp(LogicalGateType.MEMORY, ["C", "T"], rounds=2),
+        LogicalOp(LogicalGateType.TRANSVERSAL_CX, ["C", "T"]),
+        LogicalOp(LogicalGateType.TRANSVERSAL_CX, ["C", "T"]),
+        LogicalOp(LogicalGateType.MEMORY, ["C", "T"], rounds=2),
+    ]
+    assert _propagate_stabilizer_terms(operations, 1, (patch, family, 7, family)) == [(patch, family, 7, 0)]
+
+
+@pytest.mark.parametrize(
+    ("key", "expected"),
+    [
+        (("A", "X", 7, "X"), [("A", "X", 7, 0), ("B", "X", 7, 0)]),
+        (("C", "Z", 7, "Z"), [("C", "Z", 7, 0), ("B", "Z", 7, 0), ("A", "Z", 7, 0)]),
+    ],
+)
+def test_propagation_cx_chain(key, expected):
+    operations = [
+        LogicalOp(LogicalGateType.MEMORY, ["A", "B", "C"], rounds=2),
+        LogicalOp(LogicalGateType.TRANSVERSAL_CX, ["A", "B"]),
+        LogicalOp(LogicalGateType.TRANSVERSAL_CX, ["B", "C"]),
+        LogicalOp(LogicalGateType.MEMORY, ["A", "B", "C"], rounds=2),
+    ]
+    assert _propagate_stabilizer_terms(operations, 1, key) == expected
+
+
+@pytest.mark.parametrize("rounds", [0, 2])
+def test_propagation_skipped_segment(rounds):
+    operations = [
+        LogicalOp(LogicalGateType.MEMORY, ["A"], rounds=2),
+        LogicalOp(LogicalGateType.MEMORY, ["A"] if rounds == 0 else ["B"], rounds=rounds),
+        LogicalOp(LogicalGateType.MEMORY, ["A"], rounds=2),
+    ]
+    assert _propagate_stabilizer_terms(operations, 2, ("A", "X", 7, "X")) == [("A", "X", 7, 0)]
+
+
+def test_propagation_resolves_in_memory_order():
+    operations = [
+        LogicalOp(LogicalGateType.MEMORY, ["A"], rounds=2),
+        LogicalOp(LogicalGateType.MEMORY, ["B"], rounds=2),
+        LogicalOp(LogicalGateType.TRANSVERSAL_CX, ["A", "B"]),
+        LogicalOp(LogicalGateType.MEMORY, ["A", "B"], rounds=2),
+    ]
+    assert _propagate_stabilizer_terms(operations, 2, ("A", "X", 7, "X")) == [
+        ("B", "X", 7, 1),
+        ("A", "X", 7, 0),
+    ]
+
+
+@pytest.mark.parametrize("gate", [LogicalGateType.TRANSVERSAL_SZ, LogicalGateType.TRANSVERSAL_SZdg])
+@pytest.mark.parametrize("family", ["X", "Z"])
+@pytest.mark.parametrize("gate_patch", ["A", "B"])
+def test_propagation_physical_sz(gate, family, gate_patch):
+    operations = [
+        LogicalOp(LogicalGateType.MEMORY, ["A"], rounds=2),
+        LogicalOp(gate, [gate_patch]),
+        LogicalOp(LogicalGateType.MEMORY, ["A"], rounds=2),
+    ]
+    expected = None if family == "X" and gate_patch == "A" else [("A", family, 7, 0)]
+    assert _propagate_stabilizer_terms(operations, 1, ("A", family, 7, family)) == expected
+
+
+@pytest.mark.parametrize(
+    ("gate", "pauli", "mapped_pauli"),
+    [
+        (LogicalGateType.TRANSVERSAL_SZ, "X", "Y"),
+        (LogicalGateType.TRANSVERSAL_SZ, "Y", "X"),
+        (LogicalGateType.TRANSVERSAL_SZ, "Z", "Z"),
+        (LogicalGateType.TRANSVERSAL_SZdg, "X", "Y"),
+        (LogicalGateType.TRANSVERSAL_SZdg, "Y", "X"),
+        (LogicalGateType.TRANSVERSAL_SZdg, "Z", "Z"),
+        (LogicalGateType.TRANSVERSAL_H, "X", "Z"),
+        (LogicalGateType.TRANSVERSAL_H, "Y", "Y"),
+        (LogicalGateType.TRANSVERSAL_H, "Z", "X"),
+    ],
+)
+@pytest.mark.parametrize("base_family", ["X", "Z"])
+def test_check_clifford_images(gate, pauli, mapped_pauli, base_family):
+    op = LogicalOp(gate, ["A"])
+    assert _conjugate_stabilizer_term(op, ("A", base_family, 7, pauli)) == [
+        ("A", base_family, 7, mapped_pauli),
+    ]
+    assert _conjugate_stabilizer_term(op, ("B", base_family, 7, pauli)) == [("B", base_family, 7, pauli)]
+
+
+@pytest.mark.parametrize("patch", ["A", "B", "C"])
+@pytest.mark.parametrize("base_family", ["X", "Z"])
+def test_y_term_at_cx(patch, base_family):
+    op = LogicalOp(LogicalGateType.TRANSVERSAL_CX, ["A", "B"])
+    expected = [(patch, base_family, 7, "Y")]
+    if patch == "A":
+        expected.append(("B", base_family, 7, "X"))
+    elif patch == "B":
+        expected.append(("A", base_family, 7, "Z"))
+    assert _conjugate_stabilizer_term(op, (patch, base_family, 7, "Y")) == expected
+
+
+@pytest.mark.parametrize("base_family", ["X", "Z"])
+@pytest.mark.parametrize(("patch", "pauli", "partner"), [("A", "X", "B"), ("B", "Z", "A")])
+def test_cx_partner_retains_support(base_family, patch, pauli, partner):
+    op = LogicalOp(LogicalGateType.TRANSVERSAL_CX, ["A", "B"])
+    assert _conjugate_stabilizer_term(op, (patch, base_family, 7, pauli)) == [
+        (patch, base_family, 7, pauli),
+        (partner, base_family, 7, pauli),
+    ]
+
+
+@pytest.mark.parametrize("base_family", ["X", "Z"])
+@pytest.mark.parametrize("pauli", ["X", "Y", "Z"])
+@pytest.mark.parametrize("swapped", [False, True])
+def test_propagation_memory_matches_register_type(base_family, pauli, swapped):
+    operations = [LogicalOp(LogicalGateType.MEMORY, ["A", "B"], rounds=0)]
+    if swapped:
+        operations.append(LogicalOp(LogicalGateType.TRANSVERSAL_H, ["A"]))
+    operations.extend(
+        [
+            LogicalOp(LogicalGateType.MEMORY, ["A", "B"], rounds=2),
+            LogicalOp(LogicalGateType.TRANSVERSAL_H, ["B"]),
+            LogicalOp(LogicalGateType.MEMORY, ["A", "B"], rounds=2),
+        ],
+    )
+    measured_type = ("Z" if base_family == "X" else "X") if swapped else base_family
+    expected = [("A", pauli, 7, 1)] if pauli == measured_type else None
+    assert _propagate_stabilizer_terms(operations, 2, ("A", base_family, 7, pauli)) == expected
+
+
+@pytest.mark.parametrize("base_family", ["X", "Z"])
+def test_propagation_sz_h_sz_does_not_relabel_support(base_family):
+    operations = [
+        LogicalOp(LogicalGateType.MEMORY, ["A"], rounds=2, basis="X"),
+        LogicalOp(LogicalGateType.TRANSVERSAL_SZ, ["A"]),
+        LogicalOp(LogicalGateType.TRANSVERSAL_H, ["A"]),
+        LogicalOp(LogicalGateType.TRANSVERSAL_SZ, ["A"]),
+        LogicalOp(LogicalGateType.MEMORY, ["A"], rounds=2, basis="X"),
+    ]
+    pauli = "Z" if base_family == "X" else "X"
+    assert _propagate_stabilizer_terms(operations, 1, ("A", base_family, 7, pauli)) is None
+
+
+@pytest.mark.parametrize("family", ["X", "Z"])
+@pytest.mark.parametrize("inverse", [False, True])
+def test_propagation_sz_cancellation(family, inverse):
+    operations = [
+        LogicalOp(LogicalGateType.MEMORY, ["A"], rounds=2, basis="X"),
+        LogicalOp(LogicalGateType.TRANSVERSAL_SZ, ["A"]),
+        LogicalOp(LogicalGateType.TRANSVERSAL_SZdg if inverse else LogicalGateType.TRANSVERSAL_SZ, ["A"]),
+        LogicalOp(LogicalGateType.MEMORY, ["A"], rounds=2, basis="X"),
+    ]
+    assert _propagate_stabilizer_terms(operations, 1, ("A", family, 7, family)) == [("A", family, 7, 0)]
+
+
+@pytest.mark.parametrize("inverse", [False, True])
+def test_xor_cancellation_after_sz_pair(inverse):
+    operations = [
+        LogicalOp(LogicalGateType.MEMORY, ["A", "B"], rounds=2, basis="X"),
+        LogicalOp(LogicalGateType.TRANSVERSAL_CX, ["A", "B"]),
+        LogicalOp(LogicalGateType.TRANSVERSAL_SZ, ["B"]),
+        LogicalOp(LogicalGateType.TRANSVERSAL_SZdg if inverse else LogicalGateType.TRANSVERSAL_SZ, ["B"]),
+        LogicalOp(LogicalGateType.TRANSVERSAL_CX, ["A", "B"]),
+        LogicalOp(LogicalGateType.MEMORY, ["A", "B"], rounds=2, basis="X"),
+    ]
+    assert _propagate_stabilizer_terms(operations, 1, ("A", "X", 7, "X")) == [("A", "X", 7, 0)]
+
+
+@pytest.mark.parametrize("patch", ["A", "B"])
+@pytest.mark.parametrize("base_family", ["X", "Z"])
+def test_y_cxcx_cancellation_at_preparation(patch, base_family):
+    operations = [
+        LogicalOp(LogicalGateType.MEMORY, ["A", "B"], rounds=0, basis="Y"),
+        LogicalOp(LogicalGateType.TRANSVERSAL_CX, ["A", "B"]),
+        LogicalOp(LogicalGateType.TRANSVERSAL_CX, ["A", "B"]),
+        LogicalOp(LogicalGateType.MEMORY, ["A", "B"], rounds=2),
+    ]
+    assert _propagate_stabilizer_terms(operations, 1, (patch, base_family, 7, "Y")) == []
+
+
+def _y_cxcx_builder():
+    builder = BuilderProbe()
+    for label, offset in [("A", 0), ("B", 17)]:
+        builder.add_patch(SurfacePatch.create(3), label, qubit_offset=offset)
+    builder.add_memory(["A", "B"], 2, "Z")
+    builder.add_transversal_sz("A")
+    builder.add_transversal_cx("A", "B")
+    builder.add_transversal_cx("A", "B")
+    builder.add_transversal_szdg("A")
+    builder.add_memory(["A", "B"], 2, "Z")
+    return builder
+
+
+@pytest.mark.parametrize("seed", range(8))
+def test_y_cxcx_boundary_detectors(seed):
+    tc = _y_cxcx_builder().to_tick_circuit()
+    records = [detector["meas_ids"] for detector in json.loads(tc.get_meta("detectors"))]
+    assert len(records) == 64
+    assert all([32 + index, 16 + index] in records for index in range(4))
+    assert simulate_tick_circuit(tc, seed)[1] == 0
+
+
+def test_y_cxcx_fault_distance():
+    dem = DetectorErrorModel.from_circuit(
+        _y_cxcx_builder().to_tick_circuit(),
+        p1=0.001,
+        p2=0.001,
+        p_meas=0.001,
+        p_prep=0.001,
+    )
+    distances = dem.per_observable_fault_distances(3)
+    assert len(distances) == 2
+    assert all(result is not None and result.distance == 3 for result in distances)
+
+
+@pytest.mark.parametrize("seed", range(8))
+def test_zero_round_per_patch_preparation_detectors(seed):
+    builder = BuilderProbe()
+    for label, offset in [("A", 0), ("B", 17)]:
+        builder.add_patch(SurfacePatch.create(3), label, qubit_offset=offset)
+    builder.add_memory(["A", "B"], 0, {"A": "Z", "B": "X"})
+    builder.add_transversal_cx("A", "B")
+    builder.add_memory(["A", "B"], 2, "Z")
+    tc = builder.to_tick_circuit()
+    detectors = json.loads(tc.get_meta("detectors"))
+    assert len(detectors) == 32
+    first_round = [detector["meas_ids"] for detector in detectors if detector["coords"][2] == 0]
+    # A-Z occupies records 4..7 and B-X records 8..11; these are the only
+    # deterministic first-round families. B-Z (12..15) has no singletons.
+    assert first_round == [[index] for index in range(4, 12)]
+    assert simulate_tick_circuit(tc, seed)[1] == 0
+
+
+def _sz_builder(shape):
+    builder = BuilderProbe()
+    builder.add_patch(SurfacePatch.create(3), "A")
+    if shape in {"sz_szdg", "sz_sz", "sz_h_sz"}:
+        builder.add_memory("A", 2, "X")
+        builder.add_transversal_sz("A")
+        if shape == "sz_h_sz":
+            builder.add_transversal_h("A")
+        getattr(builder, "add_transversal_szdg" if shape == "sz_szdg" else "add_transversal_sz")("A")
+    else:
+        builder.add_memory("A", 0, "Y")
+        getattr(builder, "add_transversal_sz" if shape == "y_sz" else "add_transversal_szdg")("A")
+    builder.add_memory("A", 2, "X")
+    return builder
+
+
+@pytest.mark.parametrize(
+    ("shape", "count"),
+    [("y_sz", 16), ("y_szdg", 16), ("sz_szdg", 32), ("sz_sz", 32), ("sz_h_sz", 24)],
+)
+@pytest.mark.parametrize("seed", range(8))
+def test_sz_detectors(shape, count, seed):
+    tc = _sz_builder(shape).to_tick_circuit()
+    detectors = json.loads(tc.get_meta("detectors"))
+    assert len(detectors) == count
+    records = [detector["meas_ids"] for detector in detectors]
+    for index in range(4):
+        if shape in {"sz_szdg", "sz_sz"}:
+            assert [16 + index, 8 + index] in records
+            assert [20 + index, 12 + index] in records
+        elif shape == "sz_h_sz":
+            assert all(detector[0] not in range(16, 24) for detector in records)
+        else:
+            assert [index] in records
+    assert simulate_tick_circuit(tc, seed)[1] == 0
+
+
+def test_even_weight_y_sz_singletons_noiseless_1024_shots():
+    tc = _sz_builder("y_sz").to_tick_circuit()
+    records = [detector["meas_ids"] for detector in json.loads(tc.get_meta("detectors"))]
+    assert len(records) == 16
+    assert all([index] in records for index in range(4))
+    for seed in range(1024):
+        assert simulate_tick_circuit(tc, seed)[1] == 0, seed
+
+
+@pytest.mark.parametrize("family", ["X", "Z"])
+@pytest.mark.parametrize("output", ["to_tick_circuit", "to_dag_circuit", "to_stim"])
+def test_odd_weight_check_rejected_at_generation(family, output):
+    builder = make_builder("d3_mem_Z")
+    geometry = builder.patches["A"].patch.geometry
+    stabs = geometry.x_stabilizers if family == "X" else geometry.z_stabilizers
+    original = stabs[0]
+    stabs[0] = replace(original, data_qubits=original.data_qubits[:-1])
+    with pytest.raises(ValueError, match=rf"A.*{family}.*{original.index}.*odd weight"):
+        getattr(builder, output)()
+
+
+@pytest.mark.parametrize("shape", ["y_sz", "y_szdg", "sz_sz", "sz_szdg"])
+def test_sz_fault_distance(shape):
+    dem = DetectorErrorModel.from_circuit(
+        _sz_builder(shape).to_tick_circuit(),
+        p1=0.001,
+        p2=0.001,
+        p_meas=0.001,
+        p_prep=0.001,
+    )
+    distances = dem.per_observable_fault_distances(3)
+    assert len(distances) == 1
+    assert distances[0] is not None
+    assert distances[0].distance == 3
+
+
+@pytest.mark.parametrize(("rounds", "count"), [(0, 16), (2, 24)])
+@pytest.mark.parametrize("seed", range(8))
+def test_y_preparation_syndrome_barrier(rounds, count, seed):
+    builder = BuilderProbe()
+    builder.add_patch(SurfacePatch.create(3), "A")
+    builder.add_memory("A", rounds, "Y")
+    builder.add_transversal_szdg("A")
+    builder.add_memory("A", 2, "X")
+    tc = builder.to_tick_circuit()
+    records = [detector["meas_ids"] for detector in json.loads(tc.get_meta("detectors"))]
+    assert len(records) == count
+    for index in range(4):
+        current = 8 * rounds + index
+        if rounds == 0:
+            assert [current] in records
+        else:
+            assert all(detector[0] != current for detector in records)
+    assert simulate_tick_circuit(tc, seed)[1] == 0
+
+
+@pytest.mark.parametrize("patch", ["A", "B"])
+@pytest.mark.parametrize("rounds", [0, 2])
+def test_y_term_at_later_memory(patch, rounds):
+    operations = [
+        LogicalOp(LogicalGateType.MEMORY, ["A"], rounds=0, basis="Y"),
+        LogicalOp(LogicalGateType.MEMORY, [patch], rounds=rounds, basis="Y"),
+        LogicalOp(LogicalGateType.MEMORY, ["A"], rounds=2, basis="X"),
+    ]
+    expected = None if patch == "A" and rounds > 0 else []
+    assert _propagate_stabilizer_terms(operations, 2, ("A", "X", 7, "Y")) == expected
+
+
+@pytest.mark.parametrize("basis", ["X", "Y", "Z"])
+@pytest.mark.parametrize("family", ["X", "Y", "Z"])
+@pytest.mark.parametrize("rounds", [0, 2])
+def test_propagation_preparation_resolution(basis, family, rounds):
+    operations = [
+        LogicalOp(LogicalGateType.MEMORY, ["A"], rounds=rounds, per_patch_basis={"A": basis}),
+        LogicalOp(LogicalGateType.MEMORY, ["A"], rounds=2),
+    ]
+    expected = None
+    if rounds and family != "Y":
+        expected = [("A", family, 7, 0)]
+    elif not rounds and family == basis:
+        expected = []
+    assert _propagate_stabilizer_terms(operations, 1, ("A", "X" if family == "Y" else family, 7, family)) == expected
+
+
+@pytest.mark.parametrize("seed", range(8))
+def test_zero_round_preparation_breaks_cx_cancellation(seed):
+    builder = make_builder("d3_mem_Z")
+    builder.add_patch(SurfacePatch.create(3), "B", qubit_offset=17)
+    builder.add_transversal_cx("A", "B")
+    builder.add_memory("B", 0, "Y")
+    builder.add_transversal_cx("A", "B")
+    builder.add_memory(["A", "B"], 2, "Z")
+    # Exercise propagation below public validation: the first CX also violates
+    # the builder's requirement that B be prepared before a transversal gate.
+    with pytest.raises(ValueError, match=r"B.*preceding MEMORY"):
+        builder.to_tick_circuit()
+    generator = GeneratorProbe(builder.patches, builder.operations)
+    tc = generator.generate()
+    assert len(generator.detectors) == 40
+    assert [16, 8] not in [detector["abs_records"] for detector in generator.detectors]
+    assert simulate_tick_circuit(tc, seed)[1] == 0
+
+
+@pytest.mark.parametrize("seed", range(8))
+def test_zero_round_preparation_closes_partner_without_record(seed):
+    builder = BuilderProbe()
+    for label, offset in [("A", 0), ("B", 17)]:
+        builder.add_patch(SurfacePatch.create(3), label, qubit_offset=offset)
+    builder.add_memory("B", 0, "X")
+    builder.add_memory("A", 2, "Z")
+    builder.add_transversal_cx("A", "B")
+    builder.add_memory(["A", "B"], 2, {"A": "Z", "B": "X"})
+    tc = builder.to_tick_circuit()
+    detectors = json.loads(tc.get_meta("detectors"))
+    assert len(detectors) == 48
+    for index in range(4):
+        assert [16 + index, 8 + index] in [detector["meas_ids"] for detector in detectors]
+    assert simulate_tick_circuit(tc, seed)[1] == 0
+
+
+@pytest.mark.parametrize("method", ["add_transversal_sz", "add_transversal_szdg"])
+@pytest.mark.parametrize("seed", range(8))
+def test_physical_sz_across_skipped_segment(method, seed):
+    builder = make_builder("d3_mem_Z")
+    builder.add_patch(SurfacePatch.create(3), "B", qubit_offset=17)
+    getattr(builder, method)("A")
+    builder.add_memory("B", 2, "Z")
+    builder.add_memory("A", 2, "Z")
+    tc = builder.to_tick_circuit()
+    assert len(json.loads(tc.get_meta("detectors"))) == 44
+    assert simulate_tick_circuit(tc, seed)[1] == 0
+
+
+@pytest.mark.parametrize(
+    ("method", "labels"),
+    [
+        ("add_transversal_h", ["B"]),
+        ("add_transversal_sz", ["B"]),
+        ("add_transversal_szdg", ["B"]),
+        ("add_transversal_cx", ["A", "B"]),
+        ("add_transversal_cx", ["B", "A"]),
+    ],
+)
+@pytest.mark.parametrize("output", ["to_tick_circuit", "to_dag_circuit", "to_stim"])
+def test_transversal_before_preparation_rejected(method, labels, output):
+    builder = make_builder("d3_mem_Z")
+    builder.add_patch(SurfacePatch.create(3), "B", qubit_offset=17)
+    getattr(builder, method)(*labels)
+    builder.add_memory(["A", "B"], 2, "Z")
+    with pytest.raises(ValueError, match=r"B.*preceding MEMORY"):
+        getattr(builder, output)()
+    assert not builder.patches["B"].x_z_swapped
+
+
+@pytest.mark.parametrize(
+    ("method", "labels"),
+    [
+        ("add_transversal_h", ["B"]),
+        ("add_transversal_sz", ["B"]),
+        ("add_transversal_szdg", ["B"]),
+        ("add_transversal_cx", ["A", "B"]),
+        ("add_transversal_cx", ["B", "A"]),
+    ],
+)
+@pytest.mark.parametrize("output", ["to_tick_circuit", "to_dag_circuit", "to_stim", "build_algorithm_descriptor"])
+def test_gate_after_patch_final_memory_rejected(method, labels, output):
+    builder = BuilderProbe()
+    for label, offset in [("A", 0), ("B", 17)]:
+        builder.add_patch(SurfacePatch.create(3), label, qubit_offset=offset)
+    builder.add_memory(["A", "B"], 2, "Z")
+    getattr(builder, method)(*labels)
+    builder.add_memory("A", 2, "Z")
+    # Validation must precede the reset, not merely restore state after failing.
+    builder.patches["B"].x_z_swapped = True
+    gate = method.removeprefix("add_").upper()
+    with pytest.raises(ValueError, match=rf"(?i){gate}.*B.*after final data measurement"):
+        getattr(builder, output)()
+    assert builder.patches["B"].x_z_swapped
+
+
+@pytest.mark.parametrize("method", ["add_sz_via_teleportation", "add_t_via_injection"])
+def test_teleportation_validates_expanded_preparations(method):
+    builder = BuilderProbe()
+    for label, offset in [("A", 0), ("B", 17)]:
+        builder.add_patch(SurfacePatch.create(3), label, qubit_offset=offset)
+    getattr(builder, method)("A", "B", 0, 2)
+    builder.to_tick_circuit()
+    # A malformed expanded helper must be rejected just like a plain CX.
+    builder.operations.pop(0)
+    with pytest.raises(ValueError, match=r"A.*preceding MEMORY"):
+        builder.to_tick_circuit()
+
+
+@pytest.mark.parametrize("shape", ["d3_skip_segment", "d2_h_even", "d1_mem_Z"])
+def test_round_measurement_index(shape, monkeypatch):
+    builder = make_builder(shape)
+    generator = GeneratorProbe(builder.patches, builder.operations)
+    generator.generate()
+    grouped = {}
+    for key in generator.stab_meas:
+        label, _, _, segment, round_index = key
+        grouped.setdefault((label, segment, round_index), []).append(key)
+    assert generator.round_measurements == grouped
+    reads = []
+
+    class RecordingRoundIndex(dict):
+        def __getitem__(self, key):
+            reads.append(key)
+            return super().__getitem__(key)
+
+    class LookupOnlyMeasurements(dict):
+        def __iter__(self):
+            pytest.fail("Round enumeration must not scan all measurements")
+
+        def items(self):
+            pytest.fail("Round enumeration must not scan all measurements")
+
+        def keys(self):
+            pytest.fail("Round enumeration must not scan all measurements")
+
+        def values(self):
+            pytest.fail("Round enumeration must not scan all measurements")
+
+    generator.stab_meas = LookupOnlyMeasurements(generator.stab_meas)
+    monkeypatch.setattr(generator, "_stab_meas_by_round", RecordingRoundIndex(generator.round_measurements))
+    expected_reads = []
+    for (label, segment, round_index), keys in generator.round_measurements.items():
+        # Generation leaves each patch in its final orientation.
+        last_segment = max(seg for patch, seg, _ in grouped if patch == label)
+        if round_index == 0 or segment != last_segment:
+            continue
+        generator.segment_idx = segment
+        before = len(generator.detectors)
+        generator.round_detectors(label, round_index)
+        expected_reads.append((label, segment, round_index))
+        assert [detector["abs_records"][0] for detector in generator.detectors[before:]] == [
+            generator.stab_meas[key] for key in keys
+        ]
+    assert reads == expected_reads
+
+
+def test_propagation_unmeasured_partner():
+    operations = [
+        LogicalOp(LogicalGateType.MEMORY, ["A"], rounds=2),
+        LogicalOp(LogicalGateType.TRANSVERSAL_CX, ["A", "B"]),
+        LogicalOp(LogicalGateType.MEMORY, ["A", "B"], rounds=2),
+    ]
+    assert _propagate_stabilizer_terms(operations, 0, ("A", "X", 7, "X")) is None
+    assert _propagate_stabilizer_terms(operations, 1, ("A", "X", 7, "X")) is None
+    generator = GeneratorProbe(make_builder("d3_mem_Z").patches, operations)
+    generator.segment_idx = 1
+    generator.stab_meas["A", "X", 7, 0, 1] = 0
+    generator.boundary_detector(("A", "X", 7), 1)
+    assert generator.detectors == []
+
+
+@pytest.mark.parametrize("missing", ["family", "index", "partner"])
+def test_positive_memory_missing_measurement_raises(missing):
+    operations = [
+        LogicalOp(LogicalGateType.MEMORY, ["A", "B"], rounds=2),
+        LogicalOp(LogicalGateType.TRANSVERSAL_CX, ["A", "B"]),
+        LogicalOp(LogicalGateType.MEMORY, ["A", "B"], rounds=2),
+    ]
+    generator = GeneratorProbe(make_builder("d3_mem_Z").patches, operations)
+    generator.segment_idx = 1
+    if missing == "index":
+        generator.stab_meas["A", "X", 8, 0, 1] = 0
+    elif missing == "partner":
+        generator.stab_meas["A", "X", 7, 0, 1] = 0
+    label = "B" if missing == "partner" else "A"
+    with pytest.raises(ValueError, match=rf"{label}.*X.*7.*0"):
+        generator.boundary_detector(("A", "X", 7), 1)
 
 
 @pytest.mark.parametrize("method", ["add_transversal_sz", "add_transversal_szdg"])
 def test_physical_sz_layer_dependency(method, monkeypatch):
     builder = make_builder("d3_mem_Z")
     getattr(builder, method)("A")
+    builder.add_memory("A", 2, "Z")
     calls = []
     original = gadgets.transversal_layer_gadget
 
@@ -309,7 +971,8 @@ def test_physical_sz_layer_dependency(method, monkeypatch):
     tc = builder.to_tick_circuit()
     gate = "SZ" if method == "add_transversal_sz" else "SZDG"
     assert calls == [gate]
-    assert tc.get_tick(tc.num_ticks() - 1).gate_batches()[0].gate_type.name.upper() == gate
+    tick = _data_gate_tick(tc, "SZ" if gate == "SZ" else "SZdg", range(9))
+    assert tc.get_tick(tick).gate_batches()[0].gate_type.name.upper() == gate
 
 
 @pytest.mark.parametrize("variant", ["H", "SZ", "SZDG", "CX", "round_swapped", "init_Z_swapped", "init_X_swapped", "Y"])

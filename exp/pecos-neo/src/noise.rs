@@ -121,6 +121,9 @@ pub mod topology;
 pub mod two_qubit;
 pub mod validation;
 
+#[cfg(test)]
+mod event_kind_tests;
+
 pub use builder::NoiseModelBuilder;
 pub use category_channel::CategoryBasedChannel;
 pub use composer::ComposableNoiseModel;
@@ -146,6 +149,92 @@ use pecos_core::{Angle64, QubitId, Signal, TimeUnits};
 use pecos_random::PecosRng;
 use smallvec::SmallVec;
 use std::any::{Any, TypeId};
+
+macro_rules! declare_noise_event_kinds {
+    ($($variant:ident),+ $(,)?) => {
+        /// The payload-independent kind of a noise event.
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        pub enum NoiseEventKind {
+            $(
+                #[doc = concat!("The kind of [`NoiseEvent::", stringify!($variant), "`].")]
+                $variant,
+            )+
+        }
+
+        impl NoiseEventKind {
+            pub(crate) const COUNT: usize = [$(Self::$variant),+].len();
+            pub(crate) const ALL: [Self; Self::COUNT] = [$(Self::$variant),+];
+
+            pub(crate) const fn index(self) -> usize {
+                // Implicit discriminants follow the declaration (and ALL) order.
+                self as usize
+            }
+        }
+
+        // Keep the list exhaustive even if the enum generation is later changed.
+        const fn noise_event_kinds_are_exhaustive(kind: NoiseEventKind) {
+            match kind {
+                $(NoiseEventKind::$variant => {}),+
+            }
+        }
+
+        const _: () = noise_event_kinds_are_exhaustive(NoiseEventKind::ALL[0]);
+    };
+}
+
+declare_noise_event_kinds!(
+    BeforeGate,
+    AfterGate,
+    BeforeMeasurement,
+    AfterMeasurement,
+    AfterPreparation,
+    IdleTime,
+    AfterReset,
+    BeforeCircuit,
+    AfterCircuit,
+    BetweenLayers,
+    Signal,
+);
+
+/// Construction-time event subscriptions for a noise channel or handler.
+///
+/// A declaration may include extra kinds, but must include every kind the
+/// implementation can handle. The composer caches this set at insertion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EventKinds(u16);
+
+impl EventKinds {
+    /// Number of distinct noise event kinds.
+    pub const COUNT: usize = NoiseEventKind::COUNT;
+    /// Subscribe to every event kind (the conservative default).
+    pub const ALL: Self = Self((1 << Self::COUNT) - 1);
+    /// Subscribe to no event kinds.
+    pub const NONE: Self = Self(0);
+
+    /// Subscribe to a single event kind.
+    #[must_use]
+    pub const fn of(kind: NoiseEventKind) -> Self {
+        Self(1 << kind.index())
+    }
+
+    /// Include another kind.
+    #[must_use]
+    pub const fn with(self, kind: NoiseEventKind) -> Self {
+        self.union(Self::of(kind))
+    }
+
+    /// Check whether a kind is included.
+    #[must_use]
+    pub const fn contains(self, kind: NoiseEventKind) -> bool {
+        self.0 & Self::of(kind).0 != 0
+    }
+
+    /// Combine two declarations.
+    #[must_use]
+    pub const fn union(self, other: Self) -> Self {
+        Self(self.0 | other.0)
+    }
+}
 
 /// Events that can trigger noise in the simulation.
 ///
@@ -271,6 +360,24 @@ impl<'a> NoiseEvent<'a> {
         } else {
             gate_type
         })
+    }
+
+    /// Get the payload-independent event kind.
+    #[must_use]
+    pub const fn kind(&self) -> NoiseEventKind {
+        match self {
+            Self::BeforeGate { .. } => NoiseEventKind::BeforeGate,
+            Self::AfterGate { .. } => NoiseEventKind::AfterGate,
+            Self::BeforeMeasurement { .. } => NoiseEventKind::BeforeMeasurement,
+            Self::AfterMeasurement { .. } => NoiseEventKind::AfterMeasurement,
+            Self::AfterPreparation { .. } => NoiseEventKind::AfterPreparation,
+            Self::IdleTime { .. } => NoiseEventKind::IdleTime,
+            Self::AfterReset { .. } => NoiseEventKind::AfterReset,
+            Self::BeforeCircuit { .. } => NoiseEventKind::BeforeCircuit,
+            Self::AfterCircuit { .. } => NoiseEventKind::AfterCircuit,
+            Self::BetweenLayers { .. } => NoiseEventKind::BetweenLayers,
+            Self::Signal { .. } => NoiseEventKind::Signal,
+        }
     }
 
     /// Create a `BeforeGate` event with gate ID derived from gate type.
@@ -655,6 +762,15 @@ impl NoiseResponse {
 /// measurement errors, leakage). The composer combines multiple channels to form
 /// a complete noise model.
 pub trait NoiseChannel: Send + Sync {
+    /// Declare every kind on which `try_apply` can return a response.
+    ///
+    /// This must depend only on construction-time configuration and must not
+    /// change after insertion into a model. The model caches the declaration.
+    /// Extra kinds are safe; missing a supported kind silently drops noise.
+    fn event_kinds(&self) -> EventKinds {
+        EventKinds::ALL
+    }
+
     /// Check if this channel responds to a given event.
     ///
     /// This is an optimization to avoid calling `apply` for events the channel

@@ -214,6 +214,11 @@ impl SingleQubitChannel {
 }
 
 impl NoiseChannel for SingleQubitChannel {
+    fn event_kinds(&self) -> super::EventKinds {
+        super::EventKinds::of(super::NoiseEventKind::BeforeGate)
+            .with(super::NoiseEventKind::AfterGate)
+    }
+
     fn responds_to(&self, event: &NoiseEvent<'_>) -> bool {
         if self.error_probability <= 0.0 {
             return false;

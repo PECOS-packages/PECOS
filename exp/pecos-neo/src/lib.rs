@@ -226,9 +226,9 @@ pub use extensible::{
     stabilizer_gates,
 };
 pub use noise::{
-    ComposableNoiseModel, ContextObserver, EventHandler, GeneralNoiseModelBuilder, NoiseChannel,
-    NoiseContext, NoiseEvent, NoiseModelConfig, NoisePlugin, NoiseResponse, PauliWeights,
-    TwoQubitPauliWeights,
+    ComposableNoiseModel, ContextObserver, EventHandler, EventKinds, GeneralNoiseModelBuilder,
+    NoiseChannel, NoiseContext, NoiseEvent, NoiseEventKind, NoiseModelConfig, NoisePlugin,
+    NoiseResponse, PauliWeights, TwoQubitPauliWeights,
     context::QubitState,
     correlated::{CorrelatedNoiseChannel, CorrelationStats},
     crosstalk::CrosstalkChannel,
@@ -308,9 +308,9 @@ pub mod prelude {
         stabilizer_gates,
     };
     pub use crate::noise::{
-        ComposableNoiseModel, ContextObserver, EventHandler, GeneralNoiseModelBuilder,
-        NoiseChannel, NoiseContext, NoiseEvent, NoiseModelConfig, NoisePlugin, NoiseResponse,
-        PauliWeights, TwoQubitPauliWeights,
+        ComposableNoiseModel, ContextObserver, EventHandler, EventKinds, GeneralNoiseModelBuilder,
+        NoiseChannel, NoiseContext, NoiseEvent, NoiseEventKind, NoiseModelConfig, NoisePlugin,
+        NoiseResponse, PauliWeights, TwoQubitPauliWeights,
         context::QubitState,
         correlated::{CorrelatedNoiseChannel, CorrelationStats},
         crosstalk::CrosstalkChannel,

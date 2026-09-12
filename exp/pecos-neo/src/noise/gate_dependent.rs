@@ -131,6 +131,10 @@ impl GateDependentChannel {
 }
 
 impl NoiseChannel for GateDependentChannel {
+    fn event_kinds(&self) -> super::EventKinds {
+        super::EventKinds::of(super::NoiseEventKind::AfterGate)
+    }
+
     fn responds_to(&self, event: &NoiseEvent<'_>) -> bool {
         match event {
             NoiseEvent::AfterGate { gate_type, .. } => {

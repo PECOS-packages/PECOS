@@ -138,6 +138,16 @@ impl<C: NoiseChannel> ImportanceSamplingChannel<C> {
 }
 
 impl<C: NoiseChannel + Clone + 'static> NoiseChannel for ImportanceSamplingChannel<C> {
+    fn event_kinds(&self) -> crate::noise::EventKinds {
+        // This wrapper dispatches through the default `try_apply`, whose
+        // predicate is `inner.responds_to`, and `apply` draws the proposal
+        // sample before consulting the inner channel. The inner declaration
+        // only promises to cover the inner `try_apply`, so forwarding it could
+        // skip an event on which `inner.responds_to` is true and change the
+        // random stream. Stay conservative.
+        crate::noise::EventKinds::ALL
+    }
+
     fn responds_to(&self, event: &NoiseEvent<'_>) -> bool {
         self.inner.responds_to(event)
     }

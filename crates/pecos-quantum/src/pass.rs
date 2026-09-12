@@ -18,7 +18,8 @@
 //! simulation. Each pass implements [`CircuitPass`] and can modify both
 //! [`TickCircuit`] and [`DagCircuit`] in place.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::sync::OnceLock;
 
 use pecos_core::gate_type::GateType;
 use pecos_core::{Angle64, Clifford, Gate, GateQubits, QubitId};
@@ -1317,33 +1318,62 @@ fn single_qubit_clifford_sequence_score(sequence: &[GateType]) -> (usize, usize)
     (non_frame_count, sequence.len())
 }
 
-/// There are only 1 + 13 + 13² candidates, independent of chain length.
-fn single_qubit_clifford_candidates(clifford: Clifford) -> impl Iterator<Item = Vec<GateType>> {
-    std::iter::once(Vec::new())
-        .chain(
-            SINGLE_QUBIT_CLIFFORD_CANDIDATES
-                .into_iter()
-                .map(|gate| vec![gate]),
-        )
-        .chain(
-            SINGLE_QUBIT_CLIFFORD_CANDIDATES
-                .into_iter()
-                .flat_map(|first| {
-                    SINGLE_QUBIT_CLIFFORD_CANDIDATES
-                        .into_iter()
-                        .map(move |second| vec![first, second])
-                }),
-        )
-        .filter(move |sequence| single_qubit_clifford_sequence_product(sequence) == clifford)
+/// Nondominated (non-frame count, length) representatives for each exact
+/// operator, including its scalar. The former length-two enumeration had
+/// 1 + 12 + 12² = 157 words, covering only 85 of the 192 reachable operators.
+///
+/// Retaining the Pareto frontier preserves optimal choices for every position
+/// budget. A repeated exact state adds a positive length and nonnegative cost,
+/// so cyclic paths are dominated: traversal is finite, independent of chains.
+fn single_qubit_clifford_representatives()
+-> &'static HashMap<pecos_synth::Matrix, Vec<Vec<GateType>>> {
+    static TABLE: OnceLock<HashMap<pecos_synth::Matrix, Vec<Vec<GateType>>>> = OnceLock::new();
+    TABLE.get_or_init(|| {
+        let generators = SINGLE_QUBIT_CLIFFORD_CANDIDATES
+            .map(|gate| (gate, single_qubit_clifford_sequence_matrix(&[gate])));
+        let identity = pecos_synth::Matrix::identity();
+        let mut representatives = HashMap::from([(identity.clone(), vec![Vec::new()])]);
+        let mut queue = VecDeque::from([(identity, Vec::new())]);
+        while let Some((operator, sequence)) = queue.pop_front() {
+            if !representatives[&operator].contains(&sequence) {
+                continue; // A subsequently discovered representative dominates this one.
+            }
+            for (gate, matrix) in &generators {
+                let next_operator = matrix * &operator;
+                let mut next_sequence = sequence.clone();
+                next_sequence.push(*gate);
+                let (cost, length) = single_qubit_clifford_sequence_score(&next_sequence);
+                let frontier = representatives.entry(next_operator.clone()).or_default();
+                if frontier.iter().any(|known| {
+                    let (known_cost, known_length) = single_qubit_clifford_sequence_score(known);
+                    known_cost <= cost && known_length <= length
+                }) {
+                    continue;
+                }
+                frontier.retain(|known| {
+                    let (known_cost, known_length) = single_qubit_clifford_sequence_score(known);
+                    !(cost <= known_cost && length <= known_length)
+                });
+                frontier.push(next_sequence.clone());
+                queue.push_back((next_operator, next_sequence));
+            }
+        }
+        representatives
+    })
 }
 
 fn canonical_single_qubit_clifford_sequence(
     clifford: Clifford,
     operator: &pecos_synth::Matrix,
+    available_positions: usize,
 ) -> Option<Vec<GateType>> {
-    single_qubit_clifford_candidates(clifford)
-        .filter(|sequence| single_qubit_clifford_sequence_matrix(sequence) == *operator)
-        .min_by_key(|sequence| single_qubit_clifford_sequence_score(sequence))
+    let sequence = single_qubit_clifford_representatives()
+        .get(operator)?
+        .iter()
+        .filter(|sequence| sequence.len() <= available_positions)
+        .min_by_key(|sequence| single_qubit_clifford_sequence_score(sequence))?;
+    debug_assert_eq!(single_qubit_clifford_sequence_product(sequence), clifford);
+    Some(sequence.clone())
 }
 
 /// Interpret the finite component alphabet of the canonical Clifford matrices
@@ -1393,7 +1423,9 @@ fn flush_single_qubit_clifford_chain(
     }
 
     let operator = single_qubit_clifford_sequence_matrix(&chain.gates);
-    let Some(canonical) = canonical_single_qubit_clifford_sequence(chain.product, &operator) else {
+    let Some(canonical) =
+        canonical_single_qubit_clifford_sequence(chain.product, &operator, chain.positions.len())
+    else {
         return;
     };
     let original_score = single_qubit_clifford_sequence_score(&chain.gates);
@@ -3377,22 +3409,83 @@ mod tests {
     }
 
     #[test]
-    fn single_qubit_clifford_canonical_sequences_cover_all_1q() {
-        for &clifford in Clifford::all_1q() {
-            let candidate = single_qubit_clifford_candidates(clifford).next().unwrap();
-            let operator = single_qubit_clifford_sequence_matrix(&candidate);
-            let sequence = canonical_single_qubit_clifford_sequence(clifford, &operator).unwrap();
-            assert_eq!(single_qubit_clifford_sequence_matrix(&sequence), operator);
-            assert_eq!(
-                single_qubit_clifford_sequence_product(&sequence),
-                clifford,
-                "canonical sequence {sequence:?} does not implement {clifford}"
-            );
-            assert!(
-                sequence.len() <= 2,
-                "canonical sequence for {clifford} should use at most two gates"
-            );
+    fn single_qubit_clifford_representatives_cover_all_192_operators() {
+        let table = single_qubit_clifford_representatives();
+        assert_eq!(table.len(), 192);
+        let mut classes = HashSet::new();
+        for (operator, frontier) in table {
+            for sequence in frontier {
+                assert_eq!(single_qubit_clifford_sequence_matrix(sequence), *operator);
+                classes.insert(single_qubit_clifford_sequence_product(sequence));
+            }
+            for gate in SINGLE_QUBIT_CLIFFORD_CANDIDATES {
+                let next = &single_qubit_clifford_sequence_matrix(&[gate]) * operator;
+                assert!(
+                    table.contains_key(&next),
+                    "exact operator set must be closed"
+                );
+            }
         }
+        assert_eq!(classes.len(), 24);
+    }
+
+    #[test]
+    fn single_qubit_clifford_candidates_are_optimal_for_every_position_budget() {
+        // Independent bounded dynamic programming oracle: enumerate minimum
+        // costs at each exact length, without Pareto pruning. A useful path
+        // cannot repeat an exact state, so 191 positions cover every optimum.
+        let table = single_qubit_clifford_representatives();
+        let operators: Vec<_> = table.keys().collect();
+        let indices: HashMap<_, _> = operators
+            .iter()
+            .enumerate()
+            .map(|(index, &operator)| (operator, index))
+            .collect();
+        let transitions: Vec<Vec<_>> = operators
+            .iter()
+            .map(|&operator| {
+                SINGLE_QUBIT_CLIFFORD_CANDIDATES
+                    .iter()
+                    .map(|&gate| {
+                        let next = &single_qubit_clifford_sequence_matrix(&[gate]) * operator;
+                        (
+                            indices[&next],
+                            usize::from(!is_z_axis_frame_candidate(gate)),
+                        )
+                    })
+                    .collect()
+            })
+            .collect();
+        let mut costs = vec![usize::MAX; operators.len()];
+        costs[indices[&pecos_synth::Matrix::identity()]] = 0;
+        let mut best = vec![None; operators.len()];
+        for budget in 0..operators.len() {
+            for (index, &operator) in operators.iter().enumerate() {
+                if costs[index] != usize::MAX {
+                    let score = (costs[index], budget);
+                    best[index] = Some(best[index].map_or(score, |previous| score.min(previous)));
+                }
+                let class = single_qubit_clifford_sequence_product(&table[operator][0]);
+                let chosen = canonical_single_qubit_clifford_sequence(class, operator, budget);
+                assert_eq!(
+                    chosen.as_deref().map(single_qubit_clifford_sequence_score),
+                    best[index],
+                    "incorrect optimum for {operator:?} with {budget} positions"
+                );
+            }
+            let mut next_costs = vec![usize::MAX; operators.len()];
+            for (index, &cost) in costs.iter().enumerate() {
+                if cost != usize::MAX {
+                    for &(next, increment) in &transitions[index] {
+                        next_costs[next] = next_costs[next].min(cost + increment);
+                    }
+                }
+            }
+            costs = next_costs;
+        }
+        let count: usize = table.values().map(Vec::len).sum();
+        let max_length = table.values().flatten().map(Vec::len).max().unwrap();
+        eprintln!("{count} nondominated representatives; maximum length {max_length}");
     }
 
     #[test]

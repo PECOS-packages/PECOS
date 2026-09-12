@@ -28,8 +28,8 @@ use tket::TketOp;
 use tket::extension::rotation::ConstRotation;
 use tket::hugr::builder::{DFGBuilder, Dataflow, DataflowHugr};
 use tket::hugr::extension::prelude::qb_t;
-use tket::hugr::ops::{OpTrait, OpType, Value};
-use tket::hugr::types::Signature;
+use tket::hugr::ops::{OpTrait, OpType};
+use tket::hugr::types::{EdgeKind, Signature};
 use tket::hugr::{Hugr, HugrView, IncomingPort, Node, NodeIndex, PortIndex, Wire};
 
 use crate::circuit::{Circuit, GateHandle, GateView};
@@ -604,53 +604,48 @@ pub fn try_extract_rotation_angle(
     None
 }
 
-/// Evaluate constant dataflow using the extension's own folding semantics.
-/// Unknown inputs stay unknown; never infer a scalar from debug text or a
-/// partially evaluated function call. Cache wires, including cycles, once.
-fn constant_wire_value(
-    hugr: &Hugr,
-    wire: Wire,
-    values: &mut BTreeMap<Wire, Option<Value>>,
-) -> Option<Value> {
-    if let Some(value) = values.get(&wire) {
-        return value.clone();
+/// Intentionally accept only a directly loaded rotation constant. PECOS emits
+/// this form for U(0,0,0); computed or indirect inputs require a separate design.
+/// Inspect value and static-constant ports explicitly, never ordering edges.
+fn has_trivial_direct_global_phase(hugr: &Hugr, node: Node) -> bool {
+    let phase_port = IncomingPort::from(0);
+    let rotation_value = EdgeKind::Value(tket::extension::rotation::rotation_type());
+    if hugr.get_optype(node).port_kind(phase_port) != Some(rotation_value.clone()) {
+        return false;
     }
-    values.insert(wire, None);
-    let value = match hugr.get_optype(wire.node()) {
-        OpType::LoadConstant(_) => {
-            let (node, _) = hugr.single_linked_output(wire.node(), IncomingPort::from(0))?;
-            let OpType::Const(constant) = hugr.get_optype(node) else {
-                return None;
-            };
-            Some(constant.value().clone())
-        }
-        op => {
-            let extension = op.as_extension_op()?;
-            let inputs = (0..hugr.num_inputs(wire.node()))
-                .filter_map(|index| {
-                    let port = IncomingPort::from(index);
-                    let (node, output) = hugr.single_linked_output(wire.node(), port)?;
-                    Some((
-                        port,
-                        constant_wire_value(hugr, Wire::new(node, output), values)?,
-                    ))
-                })
-                .collect::<Vec<_>>();
-            extension
-                .constant_fold(&inputs)?
-                .into_iter()
-                .find_map(|(port, value)| (port == wire.source()).then_some(value))
-        }
+    let Some((load_node, output)) = hugr.single_linked_output(node, phase_port) else {
+        return false;
     };
-    values.insert(wire, value.clone());
-    value
+    let load = hugr.get_optype(load_node);
+    if !matches!(load, OpType::LoadConstant(_)) || load.port_kind(output) != Some(rotation_value) {
+        return false;
+    }
+    let Some((constant_node, constant_port)) = load
+        .static_input_port()
+        .and_then(|port| hugr.single_linked_output(load_node, port))
+    else {
+        return false;
+    };
+    let constant_op = hugr.get_optype(constant_node);
+    let OpType::Const(constant) = constant_op else {
+        return false;
+    };
+    if constant_op.static_output_port() != Some(constant_port) {
+        return false;
+    }
+    constant
+        .get_custom_value::<ConstRotation>()
+        .is_some_and(|rotation| {
+            let half_turns = rotation.half_turns();
+            // Check before division so a nonzero subnormal cannot underflow to zero.
+            half_turns.is_finite() && half_turns % 2.0 == 0.0
+        })
 }
 
 /// Extract quantum operations from a HUGR.
 fn extract_quantum_ops(hugr: &Hugr) -> Result<Vec<QuantumOp>, HugrConvertError> {
     let mut operations = Vec::new();
 
-    let mut constant_values = BTreeMap::new();
     for node in hugr.nodes() {
         let op = hugr.get_optype(node);
 
@@ -662,19 +657,7 @@ fn extract_quantum_ops(hugr: &Hugr) -> Result<Vec<QuantumOp>, HugrConvertError> 
         // Check if it's from the tket.quantum extension
         let ext_id = ext_op.extension_id();
         if ext_id.as_ref() as &str == "tket.global_phase" {
-            let half_turns = hugr
-                .single_linked_output(node, IncomingPort::from(0))
-                .and_then(|(source, port)| {
-                    constant_wire_value(hugr, Wire::new(source, port), &mut constant_values)
-                })
-                .and_then(|value| {
-                    value
-                        .get_custom_value::<ConstRotation>()
-                        .map(ConstRotation::half_turns)
-                });
-            // exp(i*pi*h) is exactly one for an even integer h. Checking the
-            // remainder before division also preserves nonzero subnormal h.
-            if half_turns.is_some_and(|h| h.is_finite() && h % 2.0 == 0.0) {
+            if has_trivial_direct_global_phase(hugr, node) {
                 continue;
             }
             return Err(HugrConvertError::UnsupportedExtension(
@@ -740,7 +723,8 @@ type WireKey = (Node, usize);
 
 /// Convert a HUGR quantum circuit to a `DagCircuit`.
 ///
-/// Non-trivial or unknown `tket.global_phase` scalars are rejected: PECOS circuits
+/// Only directly loaded, trivial `tket.global_phase` scalars are accepted.
+/// Computed, indirect, non-trivial or unknown scalars are rejected: PECOS circuits
 /// cannot represent an arbitrary global scalar. Export retains these scalars,
 /// but such exports cannot currently be imported back into a PECOS circuit.
 ///

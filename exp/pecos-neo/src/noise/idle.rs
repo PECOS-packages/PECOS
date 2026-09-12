@@ -421,6 +421,11 @@ impl IdleChannel {
 }
 
 impl NoiseChannel for IdleChannel {
+    fn event_kinds(&self) -> super::EventKinds {
+        super::EventKinds::of(super::NoiseEventKind::IdleTime)
+            .with(super::NoiseEventKind::AfterGate)
+    }
+
     fn responds_to(&self, event: &NoiseEvent<'_>) -> bool {
         if self.linear_rate <= 0.0 && self.quadratic_rate <= 0.0 && self.sin_squared_rate <= 0.0 {
             return false;

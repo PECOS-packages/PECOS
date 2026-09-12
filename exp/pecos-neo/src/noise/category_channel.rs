@@ -124,6 +124,10 @@ impl CategoryBasedChannel {
 }
 
 impl NoiseChannel for CategoryBasedChannel {
+    fn event_kinds(&self) -> super::EventKinds {
+        super::EventKinds::of(super::NoiseEventKind::AfterGate)
+    }
+
     fn responds_to(&self, event: &NoiseEvent<'_>) -> bool {
         // We respond to AfterGate events, but we need context to check category.
         // Return true here and do the check in apply().

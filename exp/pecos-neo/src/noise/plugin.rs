@@ -102,6 +102,14 @@ impl NoiseModelConfig {
 /// - Marking qubits as prepared/active
 /// - Marking qubits as measured/inactive
 pub trait EventHandler: Send + Sync {
+    /// Declare every kind this handler can handle.
+    ///
+    /// This must depend only on construction-time configuration and remain
+    /// unchanged after insertion: the model caches it. Extra kinds are safe.
+    fn event_kinds(&self) -> super::EventKinds {
+        super::EventKinds::ALL
+    }
+
     /// Check if this handler should process the event.
     fn handles(&self, event: &NoiseEvent<'_>) -> bool;
 

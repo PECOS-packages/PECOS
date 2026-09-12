@@ -179,9 +179,10 @@ def _propagate_stabilizer_terms(
     Terms form an insertion-ordered XOR set on fixed physical supports. A
     positive-round memory resolves only the type that its register measured.
     A preparation closes a matching Pauli with its known +1 sign, including
-    the current segment's own preparation. None means exactly that this Pauli
-    was not measured at that segment (physically random); reaching the start
-    without preparation raises ValueError naming the unresolved terms.
+    the current segment's own preparation. None means no detector: the Pauli
+    was not measured, or the preparation it reached is of another type, so the
+    model treats it as random. Reaching the start without preparation raises
+    ValueError naming the unresolved terms.
 
     Known limitations, each losing detectors rather than emitting a wrong one
     (every emitted detector is deterministic and per-observable fault distance
@@ -357,6 +358,10 @@ class LogicalCircuitBuilder:
         coord_offset: tuple[float, float] | None = None,
     ) -> None:
         """Register a surface code patch.
+
+        The geometry is validated (every check must have even weight) and
+        indexed here, once; a registered patch's geometry is frozen from this
+        point and later edits to it are not reflected in generated circuits.
 
         Args:
             patch: The surface code patch.
@@ -1187,7 +1192,7 @@ class _CircuitGenerator:
         self._stab_meas_by_round: dict[tuple[str, int, int], list[tuple[str, str, int, int, int]]] = {}
         self._last_round: dict[tuple[str, str, int], int] = {}
         self._boundary_terms: dict[tuple[str, str, int], list[tuple[str, str, int]] | None] = {}
-        self._propagation_context: _PropagationContext
+        self._propagation_context = _PropagationContext.from_operations(operations)
         self.data_meas: dict[tuple[str, int], int] = {}
         self._injection_ops = [op for op in operations if op.teleportation]
         self._injection_ancillas = {op.patches[1] for op in self._injection_ops}
@@ -1225,7 +1230,6 @@ class _CircuitGenerator:
 
     def generate(self) -> object:
         """Generate the TickCircuit with detector/observable metadata."""
-        self._propagation_context = _PropagationContext.from_operations(self.operations)
         # Per-patch last memory index: for each patch, the last MEMORY
         # operation that includes it. This ensures each patch gets its
         # final measurement emitted in the correct segment.

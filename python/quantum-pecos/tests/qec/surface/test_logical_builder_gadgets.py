@@ -120,7 +120,6 @@ class GeneratorProbe(_CircuitGenerator):
         return self._allocation(label)
 
     def boundary_detector(self, key, measurement):
-        self._propagation_context = _PropagationContext.from_operations(self.operations)
         return self._emit_boundary_detector(*key, measurement)
 
     def last_round_of_segment(self, *key):

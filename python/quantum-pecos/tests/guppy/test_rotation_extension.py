@@ -1,10 +1,10 @@
 """Test suite for rotation extension support."""
 
 import pecos as pc
-import pecos_rslib_llvm
 from guppylang import guppy
 from guppylang.std.builtins import result
 from guppylang.std.quantum import angle, h, measure, pi, qubit, rz
+from pecos import compilation_pipeline
 
 
 class TestRotationExtension:
@@ -20,7 +20,7 @@ class TestRotationExtension:
             return measure(q).read()
 
         hugr = test_global_phase.compile()
-        output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
+        output = compilation_pipeline.compile_hugr_to_qis(hugr.to_bytes())
 
         assert "qmain" in output
 
@@ -35,7 +35,7 @@ class TestRotationExtension:
             return measure(q).read()
 
         hugr = test_angle_ops.compile()
-        output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
+        output = compilation_pipeline.compile_hugr_to_qis(hugr.to_bytes())
 
         # Should compile successfully with angle arithmetic
         assert "___rz" in output
@@ -52,7 +52,7 @@ class TestRotationExtension:
             return measure(q).read()
 
         hugr = test_multi_angles.compile()
-        output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
+        output = compilation_pipeline.compile_hugr_to_qis(hugr.to_bytes())
 
         # Guppy 1's optimizer may fuse consecutive Z rotations.
         rz_calls = output.count("tail call void @___rz")
@@ -68,7 +68,7 @@ class TestRotationExtension:
             return measure(q).read()
 
         hugr = test_rotation_compat.compile()
-        pecos_out = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
+        pecos_out = compilation_pipeline.compile_hugr_to_qis(hugr.to_bytes())
 
         # Should compile successfully
         assert "___rz" in pecos_out
@@ -86,7 +86,7 @@ class TestRotationExtension:
             return measure(q).read()
 
         hugr = test_complex_angles.compile()
-        output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
+        output = compilation_pipeline.compile_hugr_to_qis(hugr.to_bytes())
 
         # Should handle complex angle expressions
         assert "___rz" in output

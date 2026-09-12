@@ -16,13 +16,6 @@ various formats (Guppy, HUGR) to executable formats (LLVM/QIS).
 These are implementation details and should not be imported directly by users.
 """
 
-from pecos._compilation.guppy import GuppyFrontend, compile_guppy_to_qir, guppy_to_hugr
-from pecos._compilation.hugr_llvm import HugrLlvmCompiler, compile_hugr_bytes_to_llvm
+from pecos._compilation.guppy import guppy_to_hugr
 
-__all__ = [
-    "GuppyFrontend",
-    "HugrLlvmCompiler",
-    "compile_guppy_to_qir",
-    "compile_hugr_bytes_to_llvm",
-    "guppy_to_hugr",
-]
+__all__ = ["guppy_to_hugr"]

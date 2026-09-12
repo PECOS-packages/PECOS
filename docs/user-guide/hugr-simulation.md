@@ -4,7 +4,13 @@ This guide walks you through running quantum circuit simulations using PECOS's H
 
 Python Guppy and HUGR programs are lowered to QIS and executed by the QIS engine
 with the Selene simple runtime and Helios interface. This requires the
-`pecos-rslib-llvm` package and a built Selene runtime. Every simulation must
+`selene-hugr-qis-compiler` package (installed with `quantum-pecos`) and a built Selene runtime.
+The bindings-owned boundary `pecos_rslib.hugr_lowering.compile_hugr_to_qis` lowers HUGR
+with Selene and normalizes PECOS runtime helper symbols. It is also re-exported as
+`pecos.compilation_pipeline.compile_hugr_to_qis`. Standalone bindings users can
+install `pecos-rslib[hugr]`; the base bindings wheel does not require the compiler
+or the high-level `quantum-pecos` package. No local LLVM installation
+is needed for Python HUGR lowering. Every simulation must
 specify `.qubits(N)`; this is the runtime allocation capacity, including when
 using a state-vector simulator.
 
@@ -80,8 +86,8 @@ Let's create a Bell state using Guppy. First, define a quantum function:
 
 === ":fontawesome-brands-rust: Rust"
 
-    HUGR execution uses Guppy and Selene through the Python boundary.
-    In Rust, the equivalent Bell circuit uses the QASM facade:
+    Python HUGR execution lowers through Selene's compiler package.
+    The Rust facade retains its HUGR compiler; this example uses the QASM facade:
 
     ```hidden-rust
     use pecos::prelude::*;
@@ -196,8 +202,8 @@ If you have HUGR files (compiled from Guppy or other tools), you can run them di
 
 === ":fontawesome-brands-rust: Rust"
 
-    HUGR execution uses Guppy and Selene through the Python boundary.
-    In Rust, the equivalent Bell circuit uses the QASM facade:
+    Python HUGR execution lowers through Selene's compiler package.
+    The Rust facade retains its HUGR compiler; this example uses the QASM facade:
 
     ```hidden-rust
     use pecos::prelude::*;

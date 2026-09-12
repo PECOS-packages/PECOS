@@ -145,7 +145,8 @@ class Hugr:
     """Wrapper for HUGR (Higher-order Unified Graph Representation) programs.
 
     Accepts HUGR data as bytes or a file path. Simulation lowers to QIS and
-    requires pecos-rslib-llvm, a built Selene runtime, and explicit .qubits(N).
+    requires the selene-hugr-qis-compiler package, a built Selene runtime, and
+    explicit .qubits(N).
 
     Example:
         >>> from pecos import sim, Hugr

@@ -27,12 +27,16 @@ classifiers = [
     "Programming Language :: Rust",
 ]
 
+[project.optional-dependencies]
+hugr = ["selene-hugr-qis-compiler~=0.4.2"]
+
 [build-system]
 requires = ["maturin>=1.13.1,<2.0"]
 build-backend = "maturin"
 
 [tool.maturin]
 module-name = "pecos_rslib"
+exclude = ["**/__pycache__/**", "**/*.pyc"]
 # extension-module is feature-gated in Cargo.toml so plain `cargo test` works;
 # maturin enables it here so the cdylib doesn't link libpython at build time.
 features = ["extension-module"]

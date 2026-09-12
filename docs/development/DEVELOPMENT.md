@@ -72,7 +72,12 @@ For developers who want to contribute or modify PECOS:
 
 6. **LLVM 21.1 Setup (Required for LLVM IR/QIS Support)**
 
-   PECOS requires LLVM version 21.1 for LLVM IR execution features.
+   PECOS Rust builds require LLVM version 21.1 for LLVM IR features.
+   Python HUGR-to-QIS lowering uses the `selene-hugr-qis-compiler` package through
+   `pecos_rslib.hugr_lowering.compile_hugr_to_qis` (re-exported by
+   `pecos.compilation_pipeline`), followed by PECOS helper-symbol
+   normalization. It does not require a local LLVM installation. The
+   `pecos-rslib-llvm` wheel remains available for QIR generation and its Rust compiler binding.
 
    **Quick setup:**
    ```sh

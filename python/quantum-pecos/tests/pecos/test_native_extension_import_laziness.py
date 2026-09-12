@@ -38,18 +38,21 @@ _LLVM_SCRIPT = textwrap.dedent(
     if loaded:
         raise AssertionError(f"import pecos loaded pecos_rslib_llvm eagerly: {loaded}")
 
-    # Prove the native binary itself is installed and importable, not just the
-    # pure-Python wrapper package.
-    import pecos_rslib_llvm.pecos_rslib_llvm  # noqa: F401
-
-    # Prove the lazy public symbols resolve to working objects.
+    # Resolving the public lowering API must also leave the LLVM wheel unloaded.
     from pecos.engines import compile_hugr_to_qis, get_compilation_backends
 
     if not callable(compile_hugr_to_qis):
         raise AssertionError("compile_hugr_to_qis did not resolve to a callable")
     backends = get_compilation_backends()
-    if "backends" not in backends:
-        raise AssertionError(f"unexpected get_compilation_backends() result: {backends!r}")
+    compiler = backends["backends"]["selene-hugr-qis-compiler"]
+    if not compiler["available"] or not compiler["version"]:
+        raise AssertionError(f"unexpected compiler metadata: {backends!r}")
+    from pecos.compilation_pipeline import compile_hugr_to_qis as boundary
+    if compile_hugr_to_qis is not boundary:
+        raise AssertionError("engines.compile_hugr_to_qis must alias the boundary")
+    loaded = sorted(name for name in sys.modules if "pecos_rslib_llvm" in name)
+    if loaded:
+        raise AssertionError(f"lowering API imported the LLVM wheel: {loaded}")
     """,
 )
 
@@ -93,3 +96,11 @@ def test_import_pecos_does_not_load_cuda_extension() -> None:
     if importlib.util.find_spec("pecos_rslib_cuda") is None:
         pytest.skip("pecos-rslib-cuda is not installed; the CUDA laziness guard cannot run")
     _run_fresh_interpreter(_CUDA_SCRIPT)
+
+
+def test_lowering_import_does_not_require_high_level_package_or_compiler() -> None:
+    _run_fresh_interpreter(
+        "import sys; sys.modules['pecos'] = None; sys.modules['selene_hugr_qis_compiler'] = None; "
+        "import pecos_rslib.hugr_lowering; "
+        "assert callable(pecos_rslib.hugr_lowering.compile_hugr_to_qis)",
+    )

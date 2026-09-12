@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""PECOS Rust HUGR Backend Example.
+"""PECOS HUGR Compilation Boundary Example.
 
 This example demonstrates HUGR compilation and QIS execution in PECOS.
 
 Features demonstrated:
 1. Compiling Guppy functions to HUGR
-2. Compiling HUGR to QIS (LLVM IR with quantum instructions)
+2. Compiling HUGR to QIS with Selene (LLVM IR with quantum instructions)
 3. Running quantum simulations with the sim() API
 """
 
 from guppylang import guppy
 from guppylang.std.quantum import cx, h, measure, qubit
 from pecos import Guppy, sim
-from pecos_rslib_llvm import compile_hugr_to_qis
+from pecos.compilation_pipeline import compile_hugr_to_qis
 
 
 def example_hugr_compilation() -> None:

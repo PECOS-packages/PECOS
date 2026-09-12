@@ -57,27 +57,18 @@ fn default_qis_engine() -> PyResult<pecos_qis::QisEngineBuilder> {
     Ok(builder)
 }
 
-/// Compile HUGR through the wheel's runtime LLVM package and load the QIS engine.
+/// Compile HUGR through the Python Selene compiler boundary and load the QIS engine.
 pub(crate) fn load_hugr_into_qis(
     py: Python<'_>,
     hugr_bytes: &[u8],
     qis_engine: pecos_qis::QisEngineBuilder,
 ) -> PyResult<(pecos_qis::QisEngineBuilder, String)> {
-    // HUGR -> QIS lowering lives in the pecos-rslib-llvm
-    // extension (this wheel does not LINK LLVM): call it
-    // through Python at runtime, failing loudly when it
-    // is not installed.
+    // Python owns lowering and PECOS helper normalization. Compiler errors
+    // propagate through PyO3 unchanged, including missing-package diagnostics.
     let ir: String = py
-        .import("pecos_rslib_llvm")
-        .map_err(|_| {
-            PyRuntimeError::new_err(
-                "running a HUGR program on the QIS/Selene engine requires \
-                                     the pecos-rslib-llvm package for HUGR -> QIS lowering \
-                                     (the base pecos-rslib wheel does not link LLVM)",
-            )
-        })?
+        .import("pecos_rslib.hugr_lowering")?
         .getattr("compile_hugr_to_qis")?
-        .call1((pyo3::types::PyBytes::new(py, hugr_bytes), py.None()))?
+        .call1((pyo3::types::PyBytes::new(py, hugr_bytes),))?
         .extract()?;
     let qis_engine = qis_engine
         .try_program(pecos_programs::Qis::from_string(&ir))
@@ -625,7 +616,7 @@ impl PySimBuilder {
     /// - `program.hugr` - The HUGR bytes (if available)
     ///
     /// (LLVM IR is no longer saved here: HUGR -> QIS compilation lives in
-    /// the pecos-rslib-llvm wheel; use its `compile_hugr_to_qis`.)
+    /// Selene's compiler package; use `pecos_rslib.hugr_lowering.compile_hugr_to_qis`.)
     fn keep_intermediate_files(&mut self, keep: bool) -> PyResult<Self> {
         match &mut self.inner {
             SimBuilderInner::QisControl(builder) => {

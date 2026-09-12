@@ -1,0 +1,688 @@
+"""Surface code protocols for dx=3, dz=3.
+
+Scoped scalar sidebands certify measurement provenance for each patch role.
+The surface DEM parser indexes scoped tags but never references them.
+The builder protocol has no init round. The certified-slot DEM route
+remains single-patch until the parser learns scopes.
+"""
+
+from __future__ import annotations
+
+from guppylang import guppy
+from guppylang.std.builtins import array, comptime, owned, output
+from guppylang.std.quantum import cx, h, qubit, s, x
+from guppylang.std.quantum import collect_measurements, measure, measure_array
+from pecos.guppy_gen.variant import variant_scoped
+
+
+@guppy.struct
+class SurfaceCode_3x3:
+    """Surface patch with 9 data qubits."""
+    data: array[qubit, 9]
+
+
+@guppy.struct
+class Syndrome_3x3:
+    """Results in current X and Z family order."""
+    synx: array[bool, 4]
+    synz: array[bool, 4]
+
+
+@guppy
+def prep_z_basis() -> SurfaceCode_3x3:
+    """Prepare logical |0_L> state."""
+    data = array(qubit() for _ in range(9))
+    return SurfaceCode_3x3(data)
+
+
+@guppy
+def prep_x_basis() -> SurfaceCode_3x3:
+    """Prepare logical |+_L> state."""
+    data = array(qubit() for _ in range(9))
+    for i in range(9):
+        h(data[i])
+    return SurfaceCode_3x3(data)
+
+
+@guppy
+def prep_y_basis() -> SurfaceCode_3x3:
+    """Prepare logical |+i_L> state."""
+    data = array(qubit() for _ in range(9))
+    for i in range(9):
+        h(data[i])
+    for i in range(9):
+        s(data[i])
+    return SurfaceCode_3x3(data)
+
+
+@guppy
+def measure_z_basis(surf: SurfaceCode_3x3 @ owned) -> array[bool, 9]:
+    """Destructively measure in Z basis."""
+    return collect_measurements(measure_array(surf.data))
+
+
+@guppy
+def measure_x_basis(surf: SurfaceCode_3x3 @ owned) -> array[bool, 9]:
+    """Destructively measure in X basis."""
+    for i in range(9):
+        h(surf.data[i])
+    return collect_measurements(measure_array(surf.data))
+
+
+@guppy
+def apply_logical_x(surf: SurfaceCode_3x3) -> None:
+    """Apply logical X (string along left edge)."""
+    x(surf.data[0])
+    x(surf.data[3])
+    x(surf.data[6])
+
+
+@guppy
+def transversal_h(surf: SurfaceCode_3x3) -> None:
+    """Apply physical transversal H."""
+    for i in range(9):
+        h(surf.data[i])
+
+
+@guppy
+def transversal_cx(ctrl: SurfaceCode_3x3, tgt: SurfaceCode_3x3) -> None:
+    """Apply physical transversal CX."""
+    for i in range(9):
+        cx(ctrl.data[i], tgt.data[i])
+
+
+@guppy
+def syndrome_extraction_a(surf: SurfaceCode_3x3) -> Syndrome_3x3:
+    """Extract full syndrome using 4-round parallel CNOT schedule."""
+    # Allocate ancilla qubits (one per stabilizer)
+    ax0 = qubit()
+    ax1 = qubit()
+    ax2 = qubit()
+    ax3 = qubit()
+    az0 = qubit()
+    az1 = qubit()
+    az2 = qubit()
+    az3 = qubit()
+
+    # Hadamard on X ancillas
+    h(ax0)
+    h(ax1)
+    h(ax2)
+    h(ax3)
+
+    # Round 1
+    cx(surf.data[3], az0)
+    cx(ax1, surf.data[2])
+    cx(surf.data[1], az1)
+    cx(ax2, surf.data[4])
+    cx(surf.data[5], az2)
+    cx(ax3, surf.data[8])
+
+    # Round 2
+    cx(surf.data[6], az0)
+    cx(ax1, surf.data[1])
+    cx(surf.data[4], az1)
+    cx(ax2, surf.data[3])
+    cx(surf.data[8], az2)
+    cx(ax3, surf.data[7])
+
+    # Round 3
+    cx(ax0, surf.data[1])
+    cx(ax1, surf.data[5])
+    cx(surf.data[0], az1)
+    cx(ax2, surf.data[7])
+    cx(surf.data[4], az2)
+    cx(surf.data[2], az3)
+
+    # Round 4
+    cx(ax0, surf.data[0])
+    cx(ax1, surf.data[4])
+    cx(surf.data[3], az1)
+    cx(ax2, surf.data[6])
+    cx(surf.data[7], az2)
+    cx(surf.data[5], az3)
+
+    # Hadamard on X ancillas
+    h(ax0)
+    h(ax1)
+    h(ax2)
+    h(ax3)
+
+    # Measure ancillas
+    sx0 = measure(ax0).read()
+    output("a:sx0:meas:0", sx0)
+    sx1 = measure(ax1).read()
+    output("a:sx1:meas:1", sx1)
+    sx2 = measure(ax2).read()
+    output("a:sx2:meas:2", sx2)
+    sx3 = measure(ax3).read()
+    output("a:sx3:meas:3", sx3)
+    sz0 = measure(az0).read()
+    output("a:sz0:meas:4", sz0)
+    sz1 = measure(az1).read()
+    output("a:sz1:meas:5", sz1)
+    sz2 = measure(az2).read()
+    output("a:sz2:meas:6", sz2)
+    sz3 = measure(az3).read()
+    output("a:sz3:meas:7", sz3)
+
+    synx = array(sx0, sx1, sx2, sx3)
+    synz = array(sz0, sz1, sz2, sz3)
+
+    return Syndrome_3x3(synx, synz)
+
+
+@guppy
+def syndrome_extraction_ctrl(surf: SurfaceCode_3x3) -> Syndrome_3x3:
+    """Extract full syndrome using 4-round parallel CNOT schedule."""
+    # Allocate ancilla qubits (one per stabilizer)
+    ax0 = qubit()
+    ax1 = qubit()
+    ax2 = qubit()
+    ax3 = qubit()
+    az0 = qubit()
+    az1 = qubit()
+    az2 = qubit()
+    az3 = qubit()
+
+    # Hadamard on X ancillas
+    h(ax0)
+    h(ax1)
+    h(ax2)
+    h(ax3)
+
+    # Round 1
+    cx(surf.data[3], az0)
+    cx(ax1, surf.data[2])
+    cx(surf.data[1], az1)
+    cx(ax2, surf.data[4])
+    cx(surf.data[5], az2)
+    cx(ax3, surf.data[8])
+
+    # Round 2
+    cx(surf.data[6], az0)
+    cx(ax1, surf.data[1])
+    cx(surf.data[4], az1)
+    cx(ax2, surf.data[3])
+    cx(surf.data[8], az2)
+    cx(ax3, surf.data[7])
+
+    # Round 3
+    cx(ax0, surf.data[1])
+    cx(ax1, surf.data[5])
+    cx(surf.data[0], az1)
+    cx(ax2, surf.data[7])
+    cx(surf.data[4], az2)
+    cx(surf.data[2], az3)
+
+    # Round 4
+    cx(ax0, surf.data[0])
+    cx(ax1, surf.data[4])
+    cx(surf.data[3], az1)
+    cx(ax2, surf.data[6])
+    cx(surf.data[7], az2)
+    cx(surf.data[5], az3)
+
+    # Hadamard on X ancillas
+    h(ax0)
+    h(ax1)
+    h(ax2)
+    h(ax3)
+
+    # Measure ancillas
+    sx0 = measure(ax0).read()
+    output("ctrl:sx0:meas:0", sx0)
+    sx1 = measure(ax1).read()
+    output("ctrl:sx1:meas:1", sx1)
+    sx2 = measure(ax2).read()
+    output("ctrl:sx2:meas:2", sx2)
+    sx3 = measure(ax3).read()
+    output("ctrl:sx3:meas:3", sx3)
+    sz0 = measure(az0).read()
+    output("ctrl:sz0:meas:4", sz0)
+    sz1 = measure(az1).read()
+    output("ctrl:sz1:meas:5", sz1)
+    sz2 = measure(az2).read()
+    output("ctrl:sz2:meas:6", sz2)
+    sz3 = measure(az3).read()
+    output("ctrl:sz3:meas:7", sz3)
+
+    synx = array(sx0, sx1, sx2, sx3)
+    synz = array(sz0, sz1, sz2, sz3)
+
+    return Syndrome_3x3(synx, synz)
+
+
+@guppy
+def syndrome_extraction_tgt(surf: SurfaceCode_3x3) -> Syndrome_3x3:
+    """Extract full syndrome using 4-round parallel CNOT schedule."""
+    # Allocate ancilla qubits (one per stabilizer)
+    ax0 = qubit()
+    ax1 = qubit()
+    ax2 = qubit()
+    ax3 = qubit()
+    az0 = qubit()
+    az1 = qubit()
+    az2 = qubit()
+    az3 = qubit()
+
+    # Hadamard on X ancillas
+    h(ax0)
+    h(ax1)
+    h(ax2)
+    h(ax3)
+
+    # Round 1
+    cx(surf.data[3], az0)
+    cx(ax1, surf.data[2])
+    cx(surf.data[1], az1)
+    cx(ax2, surf.data[4])
+    cx(surf.data[5], az2)
+    cx(ax3, surf.data[8])
+
+    # Round 2
+    cx(surf.data[6], az0)
+    cx(ax1, surf.data[1])
+    cx(surf.data[4], az1)
+    cx(ax2, surf.data[3])
+    cx(surf.data[8], az2)
+    cx(ax3, surf.data[7])
+
+    # Round 3
+    cx(ax0, surf.data[1])
+    cx(ax1, surf.data[5])
+    cx(surf.data[0], az1)
+    cx(ax2, surf.data[7])
+    cx(surf.data[4], az2)
+    cx(surf.data[2], az3)
+
+    # Round 4
+    cx(ax0, surf.data[0])
+    cx(ax1, surf.data[4])
+    cx(surf.data[3], az1)
+    cx(ax2, surf.data[6])
+    cx(surf.data[7], az2)
+    cx(surf.data[5], az3)
+
+    # Hadamard on X ancillas
+    h(ax0)
+    h(ax1)
+    h(ax2)
+    h(ax3)
+
+    # Measure ancillas
+    sx0 = measure(ax0).read()
+    output("tgt:sx0:meas:0", sx0)
+    sx1 = measure(ax1).read()
+    output("tgt:sx1:meas:1", sx1)
+    sx2 = measure(ax2).read()
+    output("tgt:sx2:meas:2", sx2)
+    sx3 = measure(ax3).read()
+    output("tgt:sx3:meas:3", sx3)
+    sz0 = measure(az0).read()
+    output("tgt:sz0:meas:4", sz0)
+    sz1 = measure(az1).read()
+    output("tgt:sz1:meas:5", sz1)
+    sz2 = measure(az2).read()
+    output("tgt:sz2:meas:6", sz2)
+    sz3 = measure(az3).read()
+    output("tgt:sz3:meas:7", sz3)
+
+    synx = array(sx0, sx1, sx2, sx3)
+    synz = array(sz0, sz1, sz2, sz3)
+
+    return Syndrome_3x3(synx, synz)
+
+
+@guppy
+def syndrome_extraction_data(surf: SurfaceCode_3x3) -> Syndrome_3x3:
+    """Extract full syndrome using 4-round parallel CNOT schedule."""
+    # Allocate ancilla qubits (one per stabilizer)
+    ax0 = qubit()
+    ax1 = qubit()
+    ax2 = qubit()
+    ax3 = qubit()
+    az0 = qubit()
+    az1 = qubit()
+    az2 = qubit()
+    az3 = qubit()
+
+    # Hadamard on X ancillas
+    h(ax0)
+    h(ax1)
+    h(ax2)
+    h(ax3)
+
+    # Round 1
+    cx(surf.data[3], az0)
+    cx(ax1, surf.data[2])
+    cx(surf.data[1], az1)
+    cx(ax2, surf.data[4])
+    cx(surf.data[5], az2)
+    cx(ax3, surf.data[8])
+
+    # Round 2
+    cx(surf.data[6], az0)
+    cx(ax1, surf.data[1])
+    cx(surf.data[4], az1)
+    cx(ax2, surf.data[3])
+    cx(surf.data[8], az2)
+    cx(ax3, surf.data[7])
+
+    # Round 3
+    cx(ax0, surf.data[1])
+    cx(ax1, surf.data[5])
+    cx(surf.data[0], az1)
+    cx(ax2, surf.data[7])
+    cx(surf.data[4], az2)
+    cx(surf.data[2], az3)
+
+    # Round 4
+    cx(ax0, surf.data[0])
+    cx(ax1, surf.data[4])
+    cx(surf.data[3], az1)
+    cx(ax2, surf.data[6])
+    cx(surf.data[7], az2)
+    cx(surf.data[5], az3)
+
+    # Hadamard on X ancillas
+    h(ax0)
+    h(ax1)
+    h(ax2)
+    h(ax3)
+
+    # Measure ancillas
+    sx0 = measure(ax0).read()
+    output("data:sx0:meas:0", sx0)
+    sx1 = measure(ax1).read()
+    output("data:sx1:meas:1", sx1)
+    sx2 = measure(ax2).read()
+    output("data:sx2:meas:2", sx2)
+    sx3 = measure(ax3).read()
+    output("data:sx3:meas:3", sx3)
+    sz0 = measure(az0).read()
+    output("data:sz0:meas:4", sz0)
+    sz1 = measure(az1).read()
+    output("data:sz1:meas:5", sz1)
+    sz2 = measure(az2).read()
+    output("data:sz2:meas:6", sz2)
+    sz3 = measure(az3).read()
+    output("data:sz3:meas:7", sz3)
+
+    synx = array(sx0, sx1, sx2, sx3)
+    synz = array(sz0, sz1, sz2, sz3)
+
+    return Syndrome_3x3(synx, synz)
+
+
+@guppy
+def syndrome_extraction_anc(surf: SurfaceCode_3x3) -> Syndrome_3x3:
+    """Extract full syndrome using 4-round parallel CNOT schedule."""
+    # Allocate ancilla qubits (one per stabilizer)
+    ax0 = qubit()
+    ax1 = qubit()
+    ax2 = qubit()
+    ax3 = qubit()
+    az0 = qubit()
+    az1 = qubit()
+    az2 = qubit()
+    az3 = qubit()
+
+    # Hadamard on X ancillas
+    h(ax0)
+    h(ax1)
+    h(ax2)
+    h(ax3)
+
+    # Round 1
+    cx(surf.data[3], az0)
+    cx(ax1, surf.data[2])
+    cx(surf.data[1], az1)
+    cx(ax2, surf.data[4])
+    cx(surf.data[5], az2)
+    cx(ax3, surf.data[8])
+
+    # Round 2
+    cx(surf.data[6], az0)
+    cx(ax1, surf.data[1])
+    cx(surf.data[4], az1)
+    cx(ax2, surf.data[3])
+    cx(surf.data[8], az2)
+    cx(ax3, surf.data[7])
+
+    # Round 3
+    cx(ax0, surf.data[1])
+    cx(ax1, surf.data[5])
+    cx(surf.data[0], az1)
+    cx(ax2, surf.data[7])
+    cx(surf.data[4], az2)
+    cx(surf.data[2], az3)
+
+    # Round 4
+    cx(ax0, surf.data[0])
+    cx(ax1, surf.data[4])
+    cx(surf.data[3], az1)
+    cx(ax2, surf.data[6])
+    cx(surf.data[7], az2)
+    cx(surf.data[5], az3)
+
+    # Hadamard on X ancillas
+    h(ax0)
+    h(ax1)
+    h(ax2)
+    h(ax3)
+
+    # Measure ancillas
+    sx0 = measure(ax0).read()
+    output("anc:sx0:meas:0", sx0)
+    sx1 = measure(ax1).read()
+    output("anc:sx1:meas:1", sx1)
+    sx2 = measure(ax2).read()
+    output("anc:sx2:meas:2", sx2)
+    sx3 = measure(ax3).read()
+    output("anc:sx3:meas:3", sx3)
+    sz0 = measure(az0).read()
+    output("anc:sz0:meas:4", sz0)
+    sz1 = measure(az1).read()
+    output("anc:sz1:meas:5", sz1)
+    sz2 = measure(az2).read()
+    output("anc:sz2:meas:6", sz2)
+    sz3 = measure(az3).read()
+    output("anc:sz3:meas:7", sz3)
+
+    synx = array(sx0, sx1, sx2, sx3)
+    synz = array(sz0, sz1, sz2, sz3)
+
+    return Syndrome_3x3(synx, synz)
+
+
+@guppy
+def syndrome_extraction_swapped_a(surf: SurfaceCode_3x3) -> Syndrome_3x3:
+    """Extract full syndrome using 4-round parallel CNOT schedule."""
+    # Allocate ancilla qubits (one per stabilizer)
+    az0 = qubit()
+    az1 = qubit()
+    az2 = qubit()
+    az3 = qubit()
+    ax0 = qubit()
+    ax1 = qubit()
+    ax2 = qubit()
+    ax3 = qubit()
+
+    # Hadamard on Z ancillas
+    h(az0)
+    h(az1)
+    h(az2)
+    h(az3)
+
+    # Round 1
+    cx(az0, surf.data[3])
+    cx(surf.data[2], ax1)
+    cx(az1, surf.data[1])
+    cx(surf.data[4], ax2)
+    cx(az2, surf.data[5])
+    cx(surf.data[8], ax3)
+
+    # Round 2
+    cx(az0, surf.data[6])
+    cx(surf.data[1], ax1)
+    cx(az1, surf.data[4])
+    cx(surf.data[3], ax2)
+    cx(az2, surf.data[8])
+    cx(surf.data[7], ax3)
+
+    # Round 3
+    cx(surf.data[1], ax0)
+    cx(surf.data[5], ax1)
+    cx(az1, surf.data[0])
+    cx(surf.data[7], ax2)
+    cx(az2, surf.data[4])
+    cx(az3, surf.data[2])
+
+    # Round 4
+    cx(surf.data[0], ax0)
+    cx(surf.data[4], ax1)
+    cx(az1, surf.data[3])
+    cx(surf.data[6], ax2)
+    cx(az2, surf.data[7])
+    cx(az3, surf.data[5])
+
+    # Hadamard on Z ancillas
+    h(az0)
+    h(az1)
+    h(az2)
+    h(az3)
+
+    # Measure ancillas
+    sz0 = measure(az0).read()
+    output("a:swapped:sz0:meas:0", sz0)
+    sz1 = measure(az1).read()
+    output("a:swapped:sz1:meas:1", sz1)
+    sz2 = measure(az2).read()
+    output("a:swapped:sz2:meas:2", sz2)
+    sz3 = measure(az3).read()
+    output("a:swapped:sz3:meas:3", sz3)
+    sx0 = measure(ax0).read()
+    output("a:swapped:sx0:meas:4", sx0)
+    sx1 = measure(ax1).read()
+    output("a:swapped:sx1:meas:5", sx1)
+    sx2 = measure(ax2).read()
+    output("a:swapped:sx2:meas:6", sx2)
+    sx3 = measure(ax3).read()
+    output("a:swapped:sx3:meas:7", sx3)
+
+    synx = array(sz0, sz1, sz2, sz3)
+    synz = array(sx0, sx1, sx2, sx3)
+
+    return Syndrome_3x3(synx, synz)
+
+
+def make_h_experiment(num_rounds: int, *, logical_x: bool = False):
+    """Prepare Z, extract full rounds, apply H, extract swapped rounds, read X."""
+    def h_experiment() -> None:
+        """Logical H experiment."""
+        a = prep_z_basis()
+        if comptime(logical_x):
+            apply_logical_x(a)
+        for _ in range(comptime(num_rounds)):
+            syn = syndrome_extraction_a(a)
+            output("synx_a", syn.synx)
+            output("synz_a", syn.synz)
+        transversal_h(a)
+        for _ in range(comptime(num_rounds)):
+            syn = syndrome_extraction_swapped_a(a)
+            output("synx_a", syn.synx)
+            output("synz_a", syn.synz)
+        final = measure_x_basis(a)
+        output("final_a", final)
+    return guppy(variant_scoped(h_experiment, num_rounds, logical_x))
+
+
+def make_transversal_cx(num_rounds: int, *, control_x: bool = False):
+    """Prepare control and target, extract rounds on each side of CX, read Z."""
+    def transversal_cx_experiment() -> None:
+        """Logical CX experiment."""
+        ctrl = prep_z_basis()
+        if comptime(control_x):
+            apply_logical_x(ctrl)
+        tgt = prep_z_basis()
+        for _ in range(comptime(num_rounds)):
+            syn = syndrome_extraction_ctrl(ctrl)
+            output("synx_ctrl", syn.synx)
+            output("synz_ctrl", syn.synz)
+            syn = syndrome_extraction_tgt(tgt)
+            output("synx_tgt", syn.synx)
+            output("synz_tgt", syn.synz)
+        transversal_cx(ctrl, tgt)
+        for _ in range(comptime(num_rounds)):
+            syn = syndrome_extraction_ctrl(ctrl)
+            output("synx_ctrl", syn.synx)
+            output("synz_ctrl", syn.synz)
+            syn = syndrome_extraction_tgt(tgt)
+            output("synx_tgt", syn.synx)
+            output("synz_tgt", syn.synz)
+        final = measure_z_basis(ctrl)
+        output("final_ctrl", final)
+        final = measure_z_basis(tgt)
+        output("final_tgt", final)
+    return guppy(variant_scoped(transversal_cx_experiment, num_rounds, control_x))
+
+
+def make_sz_teleportation(rounds_before: int, rounds_after: int, trailing_data_rounds: int):
+    """Y-ancilla teleportation followed by data-only memory and Z readout."""
+    def sz_teleportation() -> None:
+        """SZ teleportation experiment."""
+        data = prep_z_basis()
+        anc = prep_y_basis()
+        for _ in range(comptime(rounds_before)):
+            syn = syndrome_extraction_data(data)
+            output("synx_data", syn.synx)
+            output("synz_data", syn.synz)
+            syn = syndrome_extraction_anc(anc)
+            output("synx_anc", syn.synx)
+            output("synz_anc", syn.synz)
+        transversal_cx(data, anc)
+        for _ in range(comptime(rounds_after)):
+            syn = syndrome_extraction_data(data)
+            output("synx_data", syn.synx)
+            output("synz_data", syn.synz)
+            syn = syndrome_extraction_anc(anc)
+            output("synx_anc", syn.synx)
+            output("synz_anc", syn.synz)
+        final = measure_z_basis(anc)
+        output("final_anc", final)
+        for _ in range(comptime(trailing_data_rounds)):
+            syn = syndrome_extraction_data(data)
+            output("synx_data", syn.synx)
+            output("synz_data", syn.synz)
+        final = measure_z_basis(data)
+        output("final_data", final)
+    return guppy(variant_scoped(sz_teleportation, rounds_before, rounds_after, trailing_data_rounds))
+
+
+def make_t_injection(rounds_before: int, rounds_after: int):
+    """Clifford stand-in: ancilla prepared in |+>, no T, no conditional S."""
+    def t_injection() -> None:
+        """Clifford stand-in for T injection."""
+        data = prep_z_basis()
+        anc = prep_x_basis()
+        for _ in range(comptime(rounds_before)):
+            syn = syndrome_extraction_data(data)
+            output("synx_data", syn.synx)
+            output("synz_data", syn.synz)
+            syn = syndrome_extraction_anc(anc)
+            output("synx_anc", syn.synx)
+            output("synz_anc", syn.synz)
+        transversal_cx(data, anc)
+        for _ in range(comptime(rounds_after)):
+            syn = syndrome_extraction_data(data)
+            output("synx_data", syn.synx)
+            output("synz_data", syn.synz)
+            syn = syndrome_extraction_anc(anc)
+            output("synx_anc", syn.synx)
+            output("synz_anc", syn.synz)
+        final = measure_z_basis(data)
+        output("final_data", final)
+        final = measure_z_basis(anc)
+        output("final_anc", final)
+    return guppy(variant_scoped(t_injection, rounds_before, rounds_after))

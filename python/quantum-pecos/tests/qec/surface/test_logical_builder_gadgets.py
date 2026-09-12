@@ -15,7 +15,7 @@ import stim
 from pecos.guppy_gen.gadget_render import render_gadget_function
 from pecos.qec import DetectorErrorModel
 from pecos.qec.surface import LogicalCircuitBuilder, SurfacePatch, gadgets, logical_circuit
-from pecos.qec.surface.circuit_builder import OpType, SurfaceCircuitStep
+from pecos.qec.surface.circuit_builder import OpType, QubitAllocation, SurfaceCircuitStep
 from pecos.qec.surface.logical_circuit import (
     LogicalGateType,
     LogicalOp,
@@ -359,15 +359,25 @@ def test_physical_sz_layer_dependency(method, monkeypatch):
     assert tc.get_tick(tc.num_ticks() - 1).gate_batches()[0].gate_type.name.upper() == gate
 
 
-@pytest.mark.parametrize("variant", ["H", "SZ", "SZDG", "CX", "round_swapped", "init_Z_swapped", "init_X_swapped", "Y"])
+@pytest.mark.parametrize(
+    "variant",
+    ["H", "SZ", "SZDG", "CX", "X", "Z", "round_swapped", "init_Z_swapped", "init_X_swapped", "Y"],
+)
 @pytest.mark.parametrize("renamed", [False, True])
-def test_deferred_renderer(variant, renamed):
+def test_gate_renderer(variant, renamed):
     patch = SurfacePatch.create(3)
     allocation = gadgets.default_allocation(patch)
     if variant in {"H", "SZ", "SZDG"}:
         gadget = gadgets.transversal_layer_gadget(patch, allocation, gate=variant)
+    elif variant in {"X", "Z"}:
+        gadget = gadgets.logical_pauli_gadget(patch, allocation, pauli=variant)
     elif variant == "CX":
-        gadget = gadgets.transversal_cx_gadget(patch, allocation, patch, allocation)
+        target = QubitAllocation(
+            [q + 17 for q in allocation.data_qubits],
+            [q + 17 for q in allocation.x_ancilla_qubits],
+            [q + 17 for q in allocation.z_ancilla_qubits],
+        )
+        gadget = gadgets.transversal_cx_gadget(patch, allocation, patch, target)
     elif variant == "round_swapped":
         gadget = gadgets.syndrome_round_gadget(patch, allocation, round_index=0, x_z_swapped=True)
     elif variant.startswith("init_"):
@@ -377,8 +387,36 @@ def test_deferred_renderer(variant, renamed):
     if renamed:
         gadget = replace(gadget, name="custom_function")
     assert gadget.x_z_swapped == (variant in {"round_swapped", "init_Z_swapped", "init_X_swapped"})
-    with pytest.raises(NotImplementedError, match=gadget.name):
-        render_gadget_function(gadget)
+    lines = render_gadget_function(gadget)
+    assert lines[1].startswith(f"def {gadget.name}(")
+    # Expand constant loops to compare physical gate calls directly with gadget steps.
+    function = ast.parse("\n".join(lines)).body[0]
+    actual = []
+
+    def collect(nodes, index=None):
+        for node in nodes:
+            if isinstance(node, ast.For):
+                for i in range(ast.literal_eval(node.iter.args[0])):
+                    collect(node.body, i)
+            elif isinstance(node, ast.Expr) and isinstance(node.value, ast.Call):
+                call = node.value
+                if isinstance(call.func, ast.Name) and call.func.id in {"h", "s", "sdg", "cx", "x", "z"}:
+                    operands = [ast.unparse(arg).replace("[i]", f"[{index}]") for arg in call.args]
+                    actual.append((call.func.id, operands))
+
+    collect(function.body)
+    names = {}
+    for i, alloc in enumerate(gadget.allocations):
+        register = ("ctrl.data", "tgt.data")[i] if variant == "CX" else "data" if variant == "Y" else "surf.data"
+        prefix = f"{register.split('.')[0]}_" if variant == "CX" else ""
+        names.update({q: f"{register}[{j}]" for j, q in enumerate(alloc.data_qubits)})
+        names.update({q: f"{prefix}ax{j}" for j, q in enumerate(alloc.x_ancilla_qubits)})
+        names.update({q: f"{prefix}az{j}" for j, q in enumerate(alloc.z_ancilla_qubits)})
+    gates = {OpType.H: "h", OpType.SZ: "s", OpType.SZDG: "sdg", OpType.CX: "cx", OpType.X: "x", OpType.Z: "z"}
+    expected = [
+        (gates[step.op_type], [names[q] for q in step.qubits]) for step in gadget.steps if step.op_type in gates
+    ]
+    assert actual == expected
 
 
 def test_y_readout_unsupported():

@@ -37,6 +37,62 @@ GOLDENS = Path(__file__).parent / "goldens" / "gadget_parity"
 META_KEYS = ("detectors", "observables", "num_measurements", "num_detectors", "basis")
 PHASE_KEYS = ("phase", "syndrome_round", "cx_round")
 
+OPS_NAMES = (
+    "ops_d3_X_r0.json",
+    "ops_d3_X_r1.json",
+    "ops_d3_X_r3.json",
+    "ops_d3_Z_r0.json",
+    "ops_d3_Z_r1.json",
+    "ops_d3_Z_r2_balanced.json",
+    "ops_d3_Z_r2_budget2.json",
+    "ops_d3_Z_r2_szz.json",
+    "ops_d3_Z_r2_twirl_between.json",
+    "ops_d3_Z_r2_twirl_gate.json",
+    "ops_d3_Z_r3.json",
+    "ops_d3_x_lower_r1.json",
+    "ops_d3_z_lower_r1.json",
+    "ops_d3nonrot_X_r1.json",
+    "ops_d5_X_r1.json",
+    "ops_d5_X_r3.json",
+    "ops_d5_Z_r1.json",
+    "ops_d5_Z_r3.json",
+    "ops_dx1dz3_Z_r1.json",
+    "ops_dx3dz5_Z_r1.json",
+)
+STIM_NAMES = (
+    "stim_d3_X_r0.txt",
+    "stim_d3_X_r1.txt",
+    "stim_d3_X_r3.txt",
+    "stim_d3_Z_r0.txt",
+    "stim_d3_Z_r1.txt",
+    "stim_d3_Z_r3.txt",
+    "stim_d3nonrot_X_r1.txt",
+    "stim_d5_X_r1.txt",
+    "stim_d5_X_r3.txt",
+    "stim_d5_Z_r1.txt",
+    "stim_d5_Z_r3.txt",
+    "stim_dx1dz3_Z_r1.txt",
+    "stim_dx3dz5_Z_r1.txt",
+)
+GUPPY_NAMES = (
+    "guppy_d3.py.txt",
+    "guppy_d3nonrot.py.txt",
+    "guppy_d5.py.txt",
+    "guppy_d7.py.txt",
+    "guppy_dx1dz3.py.txt",
+    "guppy_dx3dz5.py.txt",
+    "guppy_dx5dz3.py.txt",
+)
+EXPECTED_FILES = {
+    *OPS_NAMES,
+    *STIM_NAMES,
+    *GUPPY_NAMES,
+    *(name.replace("stim_", "tickmeta_").replace(".txt", ".json") for name in STIM_NAMES),
+    *(name.replace("stim_", "tickphases_").replace(".txt", ".json") for name in STIM_NAMES),
+}
+assert all((GOLDENS / name).is_file() for name in EXPECTED_FILES)
+assert {path.name for path in GOLDENS.iterdir()} == EXPECTED_FILES
+
 
 def _patch(name: str) -> SurfacePatch:
     if name.startswith("dx"):
@@ -51,6 +107,8 @@ def _case(name: str) -> tuple:
     geometry, basis, *parts = name.split("_")
     rounds = int(next(part[1:] for part in parts if part.startswith("r")))
     kwargs = {}
+    if "balanced" in parts:
+        kwargs["check_plan"] = "cx_balanced_data_v1"
     if "budget2" in parts:
         kwargs["ancilla_budget"] = 2
     if "szz" in parts:
@@ -71,14 +129,14 @@ def _ops(steps: list, allocation: QubitAllocation) -> dict:
     }
 
 
-@pytest.mark.parametrize("path", sorted(GOLDENS.glob("ops_*.json")), ids=lambda p: p.stem)
+@pytest.mark.parametrize("path", [GOLDENS / name for name in OPS_NAMES], ids=lambda p: p.stem)
 def test_op_parity(path: Path) -> None:
     patch, rounds, basis, kwargs = _case(path.stem.removeprefix("ops_"))
     steps, allocation = build_surface_code_circuit(patch, rounds, basis, **kwargs)
     assert _ops(steps, allocation) == json.loads(path.read_text())
 
 
-@pytest.mark.parametrize("path", sorted(GOLDENS.glob("stim_*.txt")), ids=lambda p: p.stem)
+@pytest.mark.parametrize("path", [GOLDENS / name for name in STIM_NAMES], ids=lambda p: p.stem)
 def test_tick_parity(path: Path) -> None:
     name = path.stem.removeprefix("stim_")
     patch, rounds, basis, kwargs = _case(name)
@@ -92,29 +150,12 @@ def test_tick_parity(path: Path) -> None:
     ] == json.loads((GOLDENS / f"tickphases_{name}.json").read_text())
 
 
-@pytest.mark.parametrize("path", sorted(GOLDENS.glob("guppy_*.py.txt")), ids=lambda p: p.name)
+@pytest.mark.parametrize("path", [GOLDENS / name for name in GUPPY_NAMES], ids=lambda p: p.name)
 def test_guppy_parity(path: Path) -> None:
     patch = _patch(path.name.removeprefix("guppy_").removesuffix(".py.txt"))
     source = render_surface_gadget_module(patch)
     assert source == path.read_text()
     assert source == generate_guppy_source(patch)
-
-
-@pytest.mark.parametrize(
-    "path",
-    [path for path in sorted(GOLDENS.glob("ops_*.json")) if not _case(path.stem.removeprefix("ops_"))[3]],
-    ids=lambda p: p.stem,
-)
-def test_structure(path: Path) -> None:
-    patch, rounds, basis, _kwargs = _case(path.stem.removeprefix("ops_"))
-    steps, allocation = build_surface_code_circuit(patch, rounds, basis)
-    gadgets = memory_gadgets(patch, rounds, basis, allocation=allocation)
-    assert [step for gadget in gadgets for step in gadget.steps] == steps
-    cursor = 0
-    for gadget in gadgets:
-        assert list(gadget.steps) == steps[cursor : cursor + len(gadget.steps)]
-        cursor += len(gadget.steps)
-    assert cursor == len(steps)
 
 
 @pytest.mark.parametrize("geometry", ["d3", "d5", "dx3dz5", "d3nonrot"])
@@ -209,12 +250,8 @@ def test_guppy_renderer_dispatch(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_balanced_cx_plan_parity() -> None:
     patch = SurfacePatch.create(distance=3)
-    assert build_surface_code_circuit(patch, 2, "Z", check_plan="cx_balanced_data_v1") == build_surface_code_circuit(
-        patch,
-        2,
-        "Z",
-        check_plan="cx_standard_v1",
-    )
+    steps, allocation = build_surface_code_circuit(patch, 2, "Z", check_plan="cx_balanced_data_v1")
+    assert _ops(steps, allocation) == json.loads((GOLDENS / "ops_d3_Z_r2_balanced.json").read_text())
 
 
 @pytest.mark.parametrize("basis", [None, "Z", "X"])

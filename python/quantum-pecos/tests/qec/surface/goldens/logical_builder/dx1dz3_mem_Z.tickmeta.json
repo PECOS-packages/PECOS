@@ -1,0 +1,8 @@
+{
+ "detectors": "[{\"id\": 0, \"coords\": [1.0, 0.0, 1.0], \"records\": [-5, -7], \"meas_ids\": [2, 0]}, {\"id\": 1, \"coords\": [3.0, 0.0, 1.0], \"records\": [-4, -6], \"meas_ids\": [3, 1]}]",
+ "observables": "[{\"id\": 0, \"records\": [-3, -2, -1], \"meas_ids\": [4, 5, 6]}]",
+ "num_measurements": "7",
+ "num_detectors": null,
+ "basis": null,
+ "num_ticks": 18
+}

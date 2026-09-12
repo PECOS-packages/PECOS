@@ -20,8 +20,8 @@
 use super::DemBuilderError;
 use super::types::{
     IdleChannelFamilies, MeasurementMechanism, MeasurementNoiseChannelResidual,
-    MeasurementNoiseModel, NoiseChannelKind, NoiseConfig, fit_exclusive_signatures,
-    is_two_qubit_noise_gate, validate_exclusive_probabilities,
+    MeasurementNoiseModel, NoiseChannelKind, NoiseConfig, ReplacementBranchApproximation,
+    fit_exclusive_signatures, is_two_qubit_noise_gate, validate_exclusive_probabilities,
 };
 use crate::fault_tolerance::propagator::{DagFaultInfluenceMap, Pauli};
 use pecos_core::gate_type::GateType;
@@ -75,10 +75,29 @@ impl<'a> MemBuilder<'a> {
     ///
     /// Returns an error if the influence map contains a gate that Pauli
     /// propagation cannot faithfully represent, or a configuration error if a noise
-    /// input or signature channel is invalid.
+    /// input or signature channel is invalid. Configurations with replacement entries in
+    /// `BranchImpact` or `ExactBranchReplay` mode are rejected: this builder
+    /// does not represent their separate branch channels or circuit replay.
     pub fn build(&self) -> Result<MeasurementNoiseModel, DemBuilderError> {
         if let Some(error) = self.influence_map.unsupported_gate() {
             return Err(DemBuilderError::UnsupportedGate(error.clone()));
+        }
+        // These modes separate replacement branches from the ordinary Pauli
+        // rates. MEM has no corresponding branch channels or replay provider.
+        if matches!(
+            self.noise.p2_replacement_approximation,
+            ReplacementBranchApproximation::BranchImpact
+                | ReplacementBranchApproximation::ExactBranchReplay
+        ) && self
+            .noise
+            .p2_weights
+            .as_ref()
+            .is_some_and(super::types::PauliWeights::has_replacement_entries)
+        {
+            return Err(DemBuilderError::ConfigurationError(format!(
+                "MEM cannot represent {:?} replacement branches; separate branch channels or a circuit-aware replay provider are required",
+                self.noise.p2_replacement_approximation
+            )));
         }
         let num_measurements = self.influence_map.measurements.len();
         let mut mem = MeasurementNoiseModel::new(num_measurements);

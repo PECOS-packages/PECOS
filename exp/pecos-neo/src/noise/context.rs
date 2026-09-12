@@ -681,13 +681,24 @@ impl NoiseContext {
     /// In particular, phase-shaped U operations inherit the RZ exemption.
     #[must_use]
     pub fn is_noiseless_operation(&self, event: &super::NoiseEvent<'_>) -> bool {
+        self.is_noiseless_operation_with_calibration(event, false)
+    }
+
+    /// A scheduled calibration overrides an inherited exemption, while an
+    /// explicit scheduled noiseless declaration still takes precedence.
+    pub(crate) fn is_noiseless_operation_with_calibration(
+        &self,
+        event: &super::NoiseEvent<'_>,
+        has_scheduled_calibration: bool,
+    ) -> bool {
         match event {
             super::NoiseEvent::BeforeGate { gate_type, .. }
             | super::NoiseEvent::AfterGate { gate_type, .. } => {
                 self.is_noiseless(*gate_type)
-                    || event
-                        .noise_gate_type()
-                        .is_some_and(|gate| self.is_noiseless(gate))
+                    || (!has_scheduled_calibration
+                        && event
+                            .noise_gate_type()
+                            .is_some_and(|gate| self.is_noiseless(gate)))
             }
             _ => false,
         }

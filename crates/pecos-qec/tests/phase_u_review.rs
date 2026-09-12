@@ -216,3 +216,66 @@ fn measurement_noise_shares_two_qubit_rates_and_idle_policy() {
         .unwrap();
     assert_eq!(mem.num_mechanisms(), 0);
 }
+
+#[test]
+fn measurement_noise_rejects_unrepresented_replacement_branches() {
+    use pecos_core::pauli::X;
+    use pecos_qec::fault_tolerance::dem_builder::{PauliWeights, ReplacementBranchApproximation};
+    let mut dag = DagCircuit::new();
+    dag.pz(&[0, 1]);
+    dag.cx(&[(0, 1)]);
+    dag.mz(&[0, 1]);
+    let influence = DagFaultAnalyzer::new(&dag).build_influence_map();
+    let mut omitted_modes = Vec::new();
+    for mode in [
+        ReplacementBranchApproximation::BranchImpact,
+        ReplacementBranchApproximation::ExactBranchReplay,
+    ] {
+        let noise = NoiseConfig::new(0.0, 0.12, 0.0, 0.0)
+            .set_p2_weights(PauliWeights::with_replacement([], [(X(1), 1.0)]))
+            .set_p2_replacement_approximation(mode);
+        let dem = DemBuilder::new(&influence)
+            .with_noise_config(noise.clone())
+            .with_detectors_json(r#"[{"id":0,"records":[-2]},{"id":1,"records":[-1]}]"#)
+            .unwrap()
+            .build();
+        match mode {
+            ReplacementBranchApproximation::BranchImpact => {
+                assert!(dem.unwrap().to_string().contains("error(0.0582) D1"));
+            }
+            ReplacementBranchApproximation::ExactBranchReplay => assert!(
+                dem.unwrap_err()
+                    .to_string()
+                    .contains("requires a circuit-aware exact branch provider")
+            ),
+            _ => unreachable!(),
+        }
+        let result = MemBuilder::new(&influence)
+            .with_noise_config(noise.clone())
+            .build();
+        match result {
+            Ok(_) => omitted_modes.push(mode),
+            Err(error) => assert!(error.to_string().contains("replacement")),
+        }
+        // Replacement branches have their own rate path in the DEM, so a zero
+        // ordinary gate override is not proof that they can be omitted.
+        let quiet = noise.clone().set_p2_gate_rate(GateType::CX, 0.0);
+        assert!(
+            MemBuilder::new(&influence)
+                .with_noise_config(quiet)
+                .build()
+                .is_err()
+        );
+        let post_gate_only = noise.set_p2_weights(PauliWeights::from([(X(1), 1.0)]));
+        assert!(
+            MemBuilder::new(&influence)
+                .with_noise_config(post_gate_only)
+                .build()
+                .is_ok()
+        );
+    }
+    assert!(
+        omitted_modes.is_empty(),
+        "MEM silently omitted replacement modes: {omitted_modes:?}"
+    );
+}

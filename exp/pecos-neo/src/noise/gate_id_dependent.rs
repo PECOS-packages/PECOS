@@ -187,8 +187,10 @@ impl NoiseChannel for GateIdDependentChannel {
             return NoiseResponse::None;
         };
 
-        // Skip noiseless gates
-        if ctx.is_noiseless_operation(event) {
+        if ctx.is_noiseless_operation_with_calibration(
+            event,
+            gate_id.is_some_and(|id| self.gate_configs.contains_key(&id)),
+        ) {
             return NoiseResponse::None;
         }
 

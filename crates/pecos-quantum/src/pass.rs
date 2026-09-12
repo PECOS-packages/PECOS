@@ -1317,41 +1317,33 @@ fn single_qubit_clifford_sequence_score(sequence: &[GateType]) -> (usize, usize)
     (non_frame_count, sequence.len())
 }
 
-fn canonical_single_qubit_clifford_sequence(clifford: Clifford) -> Vec<GateType> {
-    if clifford == Clifford::I {
-        return Vec::new();
-    }
+/// There are only 1 + 13 + 13² candidates, independent of chain length.
+fn single_qubit_clifford_candidates(clifford: Clifford) -> impl Iterator<Item = Vec<GateType>> {
+    std::iter::once(Vec::new())
+        .chain(
+            SINGLE_QUBIT_CLIFFORD_CANDIDATES
+                .into_iter()
+                .map(|gate| vec![gate]),
+        )
+        .chain(
+            SINGLE_QUBIT_CLIFFORD_CANDIDATES
+                .into_iter()
+                .flat_map(|first| {
+                    SINGLE_QUBIT_CLIFFORD_CANDIDATES
+                        .into_iter()
+                        .map(move |second| vec![first, second])
+                }),
+        )
+        .filter(move |sequence| single_qubit_clifford_sequence_product(sequence) == clifford)
+}
 
-    let mut best_sequence: Option<Vec<GateType>> = None;
-    let mut best_score: Option<(usize, usize)> = None;
-
-    for &candidate in &SINGLE_QUBIT_CLIFFORD_CANDIDATES {
-        let sequence = vec![candidate];
-        if single_qubit_clifford_sequence_product(&sequence) == clifford {
-            let score = single_qubit_clifford_sequence_score(&sequence);
-            if best_score.is_none_or(|best| score < best) {
-                best_score = Some(score);
-                best_sequence = Some(sequence);
-            }
-        }
-    }
-
-    for &first in &SINGLE_QUBIT_CLIFFORD_CANDIDATES {
-        for &second in &SINGLE_QUBIT_CLIFFORD_CANDIDATES {
-            let sequence = vec![first, second];
-            if single_qubit_clifford_sequence_product(&sequence) == clifford {
-                let score = single_qubit_clifford_sequence_score(&sequence);
-                if best_score.is_none_or(|best| score < best) {
-                    best_score = Some(score);
-                    best_sequence = Some(sequence);
-                }
-            }
-        }
-    }
-
-    best_sequence.unwrap_or_else(|| {
-        panic!("no existing-gate decomposition found for one-qubit Clifford {clifford}")
-    })
+fn canonical_single_qubit_clifford_sequence(
+    clifford: Clifford,
+    operator: &pecos_synth::Matrix,
+) -> Option<Vec<GateType>> {
+    single_qubit_clifford_candidates(clifford)
+        .filter(|sequence| single_qubit_clifford_sequence_matrix(sequence) == *operator)
+        .min_by_key(|sequence| single_qubit_clifford_sequence_score(sequence))
 }
 
 /// Interpret the finite component alphabet of the canonical Clifford matrices
@@ -1400,7 +1392,10 @@ fn flush_single_qubit_clifford_chain(
         return;
     }
 
-    let canonical = canonical_single_qubit_clifford_sequence(chain.product);
+    let operator = single_qubit_clifford_sequence_matrix(&chain.gates);
+    let Some(canonical) = canonical_single_qubit_clifford_sequence(chain.product, &operator) else {
+        return;
+    };
     let original_score = single_qubit_clifford_sequence_score(&chain.gates);
     let canonical_score = single_qubit_clifford_sequence_score(&canonical);
     if canonical_score >= original_score || canonical.len() > chain.positions.len() {
@@ -1409,9 +1404,7 @@ fn flush_single_qubit_clifford_chain(
 
     // Clifford composition is projective. PECOS has no gate-level carrier for
     // the scalar, so only replace chains whose physical operators agree.
-    if single_qubit_clifford_sequence_matrix(&chain.gates)
-        != single_qubit_clifford_sequence_matrix(&canonical)
-    {
+    if operator != single_qubit_clifford_sequence_matrix(&canonical) {
         return;
     }
 
@@ -3386,7 +3379,10 @@ mod tests {
     #[test]
     fn single_qubit_clifford_canonical_sequences_cover_all_1q() {
         for &clifford in Clifford::all_1q() {
-            let sequence = canonical_single_qubit_clifford_sequence(clifford);
+            let candidate = single_qubit_clifford_candidates(clifford).next().unwrap();
+            let operator = single_qubit_clifford_sequence_matrix(&candidate);
+            let sequence = canonical_single_qubit_clifford_sequence(clifford, &operator).unwrap();
+            assert_eq!(single_qubit_clifford_sequence_matrix(&sequence), operator);
             assert_eq!(
                 single_qubit_clifford_sequence_product(&sequence),
                 clifford,

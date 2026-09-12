@@ -21,8 +21,8 @@ from pecos.qec.surface.logical_circuit import (
     LogicalOp,
     _CircuitGenerator,
     _conjugate_stabilizer_term,
-    _propagate_stabilizer_terms,
     _logical_readout_is_deterministic,
+    _propagate_stabilizer_terms,
 )
 from pecos.qec.surface.patch import PatchOrientation
 from pecos.testing import group_contains, simulate_tick_circuit, stabilizer_generators_after

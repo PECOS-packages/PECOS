@@ -18,7 +18,7 @@
 //!
 //! - **Typed Commands**: [`GateCommand`] and [`CommandQueue`] replacing `ByteMessage`
 //! - **Composable Noise**: Event-driven channels that can be freely combined
-//! - **Plugin System**: Bevy-inspired architecture for bundling functionality
+//! - **Reusable Simulations**: Owned state with seeded sequential and parallel shot loops
 //! - **Simple `CircuitRunner`**: Direct simulator execution via [`CircuitRunner`]
 //!
 //! ## Architecture

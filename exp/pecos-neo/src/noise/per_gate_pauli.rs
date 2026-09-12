@@ -307,6 +307,17 @@ impl PerGatePauliChannel {
 }
 
 impl NoiseChannel for PerGatePauliChannel {
+    fn event_kinds(&self) -> super::EventKinds {
+        let mut kinds = super::EventKinds::of(super::NoiseEventKind::AfterGate);
+        if self.p_meas > 0.0 || !self.measurement_rates.is_empty() {
+            kinds = kinds.with(super::NoiseEventKind::BeforeMeasurement);
+        }
+        if self.p_init > 0.0 || !self.init_rates.is_empty() {
+            kinds = kinds.with(super::NoiseEventKind::AfterPreparation);
+        }
+        kinds
+    }
+
     fn responds_to(&self, event: &NoiseEvent<'_>) -> bool {
         match event {
             NoiseEvent::AfterGate { gate_type, .. } => {

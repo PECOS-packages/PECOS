@@ -122,6 +122,10 @@ impl CorrelatedNoiseChannel {
 }
 
 impl NoiseChannel for CorrelatedNoiseChannel {
+    fn event_kinds(&self) -> super::EventKinds {
+        super::EventKinds::of(super::NoiseEventKind::AfterGate)
+    }
+
     fn responds_to(&self, event: &NoiseEvent<'_>) -> bool {
         if self.base_error_probability <= 0.0 {
             return false;

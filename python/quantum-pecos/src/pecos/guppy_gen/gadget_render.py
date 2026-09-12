@@ -49,7 +49,7 @@ def render_gadget_function(gadget: Gadget, *, tag_scope: str | None = None) -> l
         mapping.update({q: f"{prefix}ax{i}" for i, q in enumerate(allocation.x_ancilla_qubits)})
         mapping.update({q: f"{prefix}az{i}" for i, q in enumerate(allocation.z_ancilla_qubits)})
         qubits = [*allocation.data_qubits, *allocation.x_ancilla_qubits, *allocation.z_ancilla_qubits]
-        if len(mapping) != len(qubits) or names.keys() & mapping.keys() or set(names.values()) & set(mapping.values()):
+        if len(mapping) != len(qubits) or names.keys() & mapping.keys():
             msg = f"{gadget.name}: allocations must be disjoint"
             raise ValueError(msg)
         names.update(mapping)

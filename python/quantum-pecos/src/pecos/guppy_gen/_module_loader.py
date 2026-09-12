@@ -12,7 +12,7 @@ from pathlib import Path
 
 @cache
 def _get_temp_dir() -> Path:
-    """Share one temporary directory for generated surface and transversal modules."""
+    """Share one temporary directory for generated surface, protocol, and transversal modules."""
     return Path(tempfile.mkdtemp(prefix="pecos_guppy_"))
 
 

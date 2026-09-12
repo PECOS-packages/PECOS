@@ -408,9 +408,10 @@ def test_gate_renderer(variant, renamed):
     names = {}
     for i, alloc in enumerate(gadget.allocations):
         register = ("ctrl.data", "tgt.data")[i] if variant == "CX" else "data" if variant == "Y" else "surf.data"
+        prefix = f"{register.split('.')[0]}_" if variant == "CX" else ""
         names.update({q: f"{register}[{j}]" for j, q in enumerate(alloc.data_qubits)})
-        names.update({q: f"ax{j}" for j, q in enumerate(alloc.x_ancilla_qubits)})
-        names.update({q: f"az{j}" for j, q in enumerate(alloc.z_ancilla_qubits)})
+        names.update({q: f"{prefix}ax{j}" for j, q in enumerate(alloc.x_ancilla_qubits)})
+        names.update({q: f"{prefix}az{j}" for j, q in enumerate(alloc.z_ancilla_qubits)})
     gates = {OpType.H: "h", OpType.SZ: "s", OpType.SZDG: "sdg", OpType.CX: "cx", OpType.X: "x", OpType.Z: "z"}
     expected = [
         (gates[step.op_type], [names[q] for q in step.qubits]) for step in gadget.steps if step.op_type in gates

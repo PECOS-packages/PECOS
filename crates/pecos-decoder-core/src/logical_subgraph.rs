@@ -183,6 +183,22 @@ pub fn partition_dem_by_logical_windowed(
     subgraphs_from_membership(&sdem, &membership)
 }
 
+/// Partition an already validated structured DEM without rendering it.
+///
+/// # Errors
+///
+/// Returns an error if a used detector's coordinates do not match the supplied
+/// stabilizer positions.
+pub fn partition_structured_dem_by_logical_windowed(
+    dem: &crate::window::StructuredDem,
+    stab_coords: &StabCoords,
+    max_time_radius: MaxTimeRadius,
+) -> Result<Vec<LogicalSubgraph>, DecoderError> {
+    let sparse = SparseDem::from_structured_dem(dem);
+    let membership = coordinate_membership_from_dem(&sparse, stab_coords, max_time_radius)?;
+    subgraphs_from_membership(&sparse, &membership)
+}
+
 /// Per-observable detector membership: entry `k` is the sorted full-DEM detector
 /// ids in logical observable `k`'s observing region.
 ///

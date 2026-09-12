@@ -25,6 +25,7 @@
 pub mod adaptive;
 pub mod advanced;
 pub mod bp_matching;
+pub mod clifford_frame;
 pub mod config;
 pub mod correlated_decoder;
 pub mod correlated_reweighting;
@@ -48,6 +49,7 @@ pub mod results;
 pub mod streaming;
 pub mod telemetry;
 pub mod two_pass_decoder;
+pub mod window;
 
 use ndarray::ArrayView1;
 

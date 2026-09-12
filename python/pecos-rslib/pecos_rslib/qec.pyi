@@ -14,9 +14,11 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Mapping, Sequence
 
-from pecos_rslib import ParityCheckMatrix, PauliString, StabilizerCodeSpec, TickCircuit
+from pecos_rslib import DagCircuit, ParityCheckMatrix, PauliString, StabilizerCodeSpec, TickCircuit
+
+DEM_SLICE_ROUND_ATTRIBUTE: str
 
 class BivariateBicycleCode:
     """A validated bivariate-bicycle CSS code."""
@@ -57,6 +59,7 @@ def coloration_memory_circuit(
     rounds: int,
     basis: str,
 ) -> TickCircuit: ...
+def transform_two_patch_pauli(pauli: int, gate: str) -> int: ...
 
 class FaultDistanceResult:
     """A unit-weight mechanism distance and one witnessing index set."""
@@ -103,9 +106,71 @@ class FaultDistanceUpperBoundResult:
     def bound_kind(self) -> str: ...
     def __repr__(self) -> str: ...
 
+class DemSliceTemplate:
+    """Reusable absolute-round-independent DEM slice."""
+
+    @property
+    def name(self) -> str: ...
+    @property
+    def temporal_horizon(self) -> tuple[int, int]: ...
+    @property
+    def num_contributions(self) -> int: ...
+    @property
+    def dem_outputs(self) -> list[int]: ...
+    @property
+    def tracked_paulis(self) -> list[int]: ...
+    def __repr__(self) -> str: ...
+
+class DemSliceRoundSchedule:
+    """Reusable structured-DEM schedule compiled from annotated round metadata."""
+
+    @staticmethod
+    def from_templates(
+        output_model: DetectorErrorModel,
+        templates: Sequence[tuple[DemSliceTemplate, int]],
+        expected_dem_outputs: Sequence[int],
+        expected_tracked_paulis: Sequence[int],
+        coordinate_offset: tuple[float, float] | None = ...,
+        detector_coordinate_offsets: Mapping[int, tuple[float, float]] | None = ...,
+        dem_output_routings: Mapping[int, Mapping[int, Sequence[int]]] | None = ...,
+        tracked_pauli_routings: Mapping[int, Mapping[int, Sequence[int]]] | None = ...,
+    ) -> DemSliceRoundSchedule: ...
+    @property
+    def num_instances(self) -> int: ...
+    def template(self, owner_round: int) -> DemSliceTemplate: ...
+    def rounds(self) -> list[int]: ...
+    def required_buffer_rounds(self, start_round: int, commit_rounds: int) -> int: ...
+    def stitch(
+        self,
+        start_round: int,
+        commit_rounds: int,
+        buffer_rounds: int | None = ...,
+        forward_boundary: str = ...,
+    ) -> DetectorErrorModel: ...
+    def __repr__(self) -> str: ...
+
 class DetectorErrorModel:
     """Rust-backed detector error model."""
 
+    def detector_coordinates(self) -> list[tuple[int, list[float] | None]]: ...
+    def build_decoder(self, decoder: Any) -> StructuredDemDecoder: ...
+    def round_schedule(self, influence_map: Any, circuit: DagCircuit) -> DemSliceRoundSchedule: ...
+    def required_buffer_rounds(
+        self,
+        influence_map: Any,
+        circuit: DagCircuit,
+        start_round: int,
+        commit_rounds: int,
+    ) -> int: ...
+    def stitched_round_window(
+        self,
+        influence_map: Any,
+        circuit: DagCircuit,
+        start_round: int,
+        commit_rounds: int,
+        buffer_rounds: int | None = ...,
+        forward_boundary: str = ...,
+    ) -> DetectorErrorModel: ...
     def graphlike_fault_distance(self) -> FaultDistanceResult | None: ...
     def connected_cluster_fault_distance(self, max_weight: int) -> FaultDistanceResult | None: ...
     def per_observable_fault_distances(self, max_weight: int) -> list[FaultDistanceResult | None]: ...
@@ -114,6 +179,13 @@ class DetectorErrorModel:
         self, config: FaultDistanceUpperBoundConfig
     ) -> FaultDistanceUpperBoundResult | None: ...
     def __getattr__(self, name: str) -> Any: ...
+
+class StructuredDemDecoder:
+    """Decoder built directly from a structured PECOS DEM."""
+
+    @property
+    def num_detectors(self) -> int | None: ...
+    def decode_syndrome(self, syndrome: list[int]) -> Any: ...
 
 class CircuitFaultLocation:
     """A Pauli-fault location in a tick circuit."""

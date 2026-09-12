@@ -24,6 +24,7 @@
 //!   with buffer overlap at gate boundaries.
 
 use crate::ObservableDecoder;
+use crate::clifford_frame::{conjugate_cnot, conjugate_h, conjugate_s};
 use crate::decode_budget::DecodeStrategy;
 use crate::errors::DecoderError;
 use crate::obs_mask::ObsMask;
@@ -360,10 +361,12 @@ impl LogicalAlgorithmDecoder {
                 x_obs_bit,
                 z_obs_bit,
             } => {
-                let x_set = frame.get(*x_obs_bit as usize);
-                let z_set = frame.get(*z_obs_bit as usize);
-                frame.set(*x_obs_bit as usize, z_set);
-                frame.set(*z_obs_bit as usize, x_set);
+                let (x_set, z_set) = conjugate_h(
+                    frame.get(*x_obs_bit as usize),
+                    frame.get(*z_obs_bit as usize),
+                );
+                frame.set(*x_obs_bit as usize, x_set);
+                frame.set(*z_obs_bit as usize, z_set);
             }
             BoundaryGate::Cnot {
                 ctrl_x_bit,
@@ -371,20 +374,27 @@ impl LogicalAlgorithmDecoder {
                 tgt_x_bit,
                 tgt_z_bit,
             } => {
-                if frame.get(*ctrl_x_bit as usize) {
-                    frame.flip(*tgt_x_bit as usize);
-                }
-                if frame.get(*tgt_z_bit as usize) {
-                    frame.flip(*ctrl_z_bit as usize);
-                }
+                let (control_x, control_z, target_x, target_z) = conjugate_cnot(
+                    frame.get(*ctrl_x_bit as usize),
+                    frame.get(*ctrl_z_bit as usize),
+                    frame.get(*tgt_x_bit as usize),
+                    frame.get(*tgt_z_bit as usize),
+                );
+                frame.set(*ctrl_x_bit as usize, control_x);
+                frame.set(*ctrl_z_bit as usize, control_z);
+                frame.set(*tgt_x_bit as usize, target_x);
+                frame.set(*tgt_z_bit as usize, target_z);
             }
             BoundaryGate::SGate {
                 x_obs_bit,
                 z_obs_bit,
             } => {
-                if frame.get(*x_obs_bit as usize) {
-                    frame.flip(*z_obs_bit as usize);
-                }
+                let (x_set, z_set) = conjugate_s(
+                    frame.get(*x_obs_bit as usize),
+                    frame.get(*z_obs_bit as usize),
+                );
+                frame.set(*x_obs_bit as usize, x_set);
+                frame.set(*z_obs_bit as usize, z_set);
             }
             BoundaryGate::TGateInjection {
                 z_obs_bit,

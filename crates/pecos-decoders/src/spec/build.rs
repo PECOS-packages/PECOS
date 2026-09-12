@@ -5,6 +5,7 @@ use super::config::{
     TesseractConfig, WindowedConfig,
 };
 use super::{DecodeModel, DecoderSpec};
+use pecos_decoder_core::window::StructuredDem;
 use pecos_decoder_core::{DecoderError, ObservableDecoder};
 
 #[cfg(feature = "ldpc")]
@@ -64,6 +65,30 @@ fn count_skipped_hyperedges(dem: &str) -> Result<usize, DecoderError> {
     Ok(pecos_decoder_core::DemMatchingGraph::from_dem_str(dem)?.skipped_hyperedges)
 }
 
+fn ensure_graphlike_structured_model(
+    spec: &DecoderSpec,
+    dem: &StructuredDem,
+) -> Result<(), DecoderError> {
+    if !spec.requires_graphlike_model() {
+        return Ok(());
+    }
+    let skipped = dem
+        .errors
+        .iter()
+        .flat_map(|error| &error.components)
+        .filter(|component| component.detectors.len() > 2)
+        .count();
+    if skipped == 0 {
+        return Ok(());
+    }
+    Err(DecoderError::InvalidConfiguration(format!(
+        "{} needs a graphlike model, but this DEM has {skipped} mechanism(s) touching \
+         three or more detectors. Decoding it here would silently ignore them. \
+         {GRAPHLIKE_REMEDY}",
+        family_name(spec),
+    )))
+}
+
 /// Guard for the hard-coded phase-1 `UfDecoder` inside windowed/beam-search
 /// builds. Those closures do not go through [`build`], so the top-level guard
 /// never sees them, and the top-level model is the wrong thing to check
@@ -106,6 +131,13 @@ pub(super) fn build(
                 ..
             }),
             DecodeModel::SingleDem(_),
+        )
+        | (
+            DecoderSpec::BeliefMatching(BeliefMatchingConfig {
+                mode: BeliefMatchingMode::Hybrid,
+                ..
+            }),
+            DecodeModel::StructuredDem(_),
         ) => Err(DecoderError::InvalidConfiguration(
             "belief_matching_hybrid requires DecodeModel::HybridDem".to_string(),
         )),
@@ -113,16 +145,22 @@ pub(super) fn build(
             ensure_graphlike_model(spec, dem)?;
             build_single(spec, dem)
         }
+        (_, DecodeModel::StructuredDem(dem)) => {
+            ensure_graphlike_structured_model(spec, dem)?;
+            build_structured_single(spec, dem)
+        }
         (_, DecodeModel::HybridDem { .. }) => Err(DecoderError::InvalidConfiguration(format!(
-            "{} requires DecodeModel::SingleDem",
+            "{} requires DecodeModel::SingleDem or DecodeModel::StructuredDem",
             family_name(spec)
         ))),
     }?;
-    let dimension_dem = match model {
-        DecodeModel::SingleDem(dem) => dem,
-        DecodeModel::HybridDem { decomposed, .. } => decomposed,
+    let num_detectors = match model {
+        DecodeModel::SingleDem(dem) => pecos_decoder_core::dem::utils::parse_dem_metadata(dem)?.0,
+        DecodeModel::StructuredDem(dem) => dem.num_detectors,
+        DecodeModel::HybridDem { decomposed, .. } => {
+            pecos_decoder_core::dem::utils::parse_dem_metadata(decomposed)?.0
+        }
     };
-    let (num_detectors, _) = pecos_decoder_core::dem::utils::parse_dem_metadata(dimension_dem)?;
     Ok(Box::new(ModelDimensionDecoder {
         inner: decoder,
         num_detectors,
@@ -187,6 +225,17 @@ fn build_single(spec: &DecoderSpec, dem: &str) -> Result<Box<dyn ObservableDecod
         DecoderSpec::Perturbed(config) => build_perturbed(dem, config),
         DecoderSpec::BeamSearch(config) => build_beamsearch(dem, config),
         DecoderSpec::Ensemble(config) => build_ensemble(dem, config),
+    }
+}
+
+fn build_structured_single(
+    spec: &DecoderSpec,
+    dem: &StructuredDem,
+) -> Result<Box<dyn ObservableDecoder>, DecoderError> {
+    match spec {
+        DecoderSpec::Windowed(config) => build_windowed_structured(dem, config),
+        DecoderSpec::BeamSearch(config) => build_beamsearch_structured(dem, config),
+        _ => build_single(spec, &dem.to_dem_string()),
     }
 }
 
@@ -1174,6 +1223,15 @@ fn build_windowed(
     dem: &str,
     config: &WindowedConfig,
 ) -> Result<Box<dyn ObservableDecoder>, DecoderError> {
+    let dem = StructuredDem::from_dem_str(dem)?;
+    build_windowed_structured(&dem, config)
+}
+
+#[cfg(feature = "uf")]
+fn build_windowed_structured(
+    dem: &StructuredDem,
+    config: &WindowedConfig,
+) -> Result<Box<dyn ObservableDecoder>, DecoderError> {
     let resolved = resolve_windowed_config(config);
     let window = WindowedEngineConfig {
         step_size: config.step_size,
@@ -1185,28 +1243,26 @@ fn build_windowed(
     match resolved.mode {
         ResolvedWindowedMode::Sandwich => {
             let phase2 = (*config.sandwich_phase2).clone();
-            let decoder = crate::SandwichWindowedDecoder::from_dem(
+            let decoder = crate::SandwichWindowedDecoder::from_structured_dem(
                 dem,
                 window,
                 |sub_dem| {
                     ensure_graphlike_submodel("windowed", sub_dem)?;
                     crate::UfDecoder::from_dem(sub_dem, crate::UfDecoderConfig::windowed())
                 },
-                |sub_dem| phase2.build(&DecodeModel::SingleDem(sub_dem.to_string())),
+                |model| phase2.build(&DecodeModel::StructuredDem(model.clone())),
             )?;
             Ok(Box::new(decoder))
         }
-        ResolvedWindowedMode::Overlap => Ok(Box::new(crate::OverlappingWindowedDecoder::from_dem(
-            dem,
-            window,
-            |sub_dem| {
+        ResolvedWindowedMode::Overlap => Ok(Box::new(
+            crate::OverlappingWindowedDecoder::from_structured_dem(dem, window, |sub_dem| {
                 ensure_graphlike_submodel("windowed", sub_dem)?;
                 crate::UfDecoder::from_dem(sub_dem, crate::UfDecoderConfig::windowed())
-            },
-        )?)),
+            })?,
+        )),
         ResolvedWindowedMode::NonOverlapping => {
             let inner = config.inner.clone();
-            Ok(Box::new(crate::WindowedDecoder::from_dem(
+            Ok(Box::new(crate::WindowedDecoder::from_structured_dem(
                 dem,
                 window,
                 |sub_dem| inner.build(&DecodeModel::SingleDem(sub_dem.to_string())),
@@ -1218,6 +1274,14 @@ fn build_windowed(
 #[cfg(not(feature = "uf"))]
 fn build_windowed(
     _dem: &str,
+    _config: &WindowedConfig,
+) -> Result<Box<dyn ObservableDecoder>, DecoderError> {
+    unavailable("windowed", "uf")
+}
+
+#[cfg(not(feature = "uf"))]
+fn build_windowed_structured(
+    _dem: &StructuredDem,
     _config: &WindowedConfig,
 ) -> Result<Box<dyn ObservableDecoder>, DecoderError> {
     unavailable("windowed", "uf")
@@ -1276,6 +1340,15 @@ fn build_beamsearch(
     dem: &str,
     config: &BeamSearchConfig,
 ) -> Result<Box<dyn ObservableDecoder>, DecoderError> {
+    let dem = StructuredDem::from_dem_str(dem)?;
+    build_beamsearch_structured(&dem, config)
+}
+
+#[cfg(feature = "uf")]
+fn build_beamsearch_structured(
+    dem: &StructuredDem,
+    config: &BeamSearchConfig,
+) -> Result<Box<dyn ObservableDecoder>, DecoderError> {
     let resolved = resolve_beamsearch_config(config);
     let engine_config = BeamSearchEngineConfig {
         beam_width: config.beam_width,
@@ -1290,14 +1363,14 @@ fn build_beamsearch(
         },
     };
     let phase2 = config.phase2.clone();
-    let decoder = crate::BeamSearchWindowedDecoder::from_dem(
+    let decoder = crate::BeamSearchWindowedDecoder::from_structured_dem(
         dem,
         engine_config,
         |sub_dem| {
             ensure_graphlike_submodel("beamsearch", sub_dem)?;
             crate::UfDecoder::from_dem(sub_dem, crate::UfDecoderConfig::windowed())
         },
-        Some(|sub_dem: &str| phase2.build(&DecodeModel::SingleDem(sub_dem.to_string()))),
+        Some(|model: &StructuredDem| phase2.build(&DecodeModel::StructuredDem(model.clone()))),
     )?;
     Ok(Box::new(decoder))
 }
@@ -1305,6 +1378,14 @@ fn build_beamsearch(
 #[cfg(not(feature = "uf"))]
 fn build_beamsearch(
     _dem: &str,
+    _config: &BeamSearchConfig,
+) -> Result<Box<dyn ObservableDecoder>, DecoderError> {
+    unavailable("beamsearch", "uf")
+}
+
+#[cfg(not(feature = "uf"))]
+fn build_beamsearch_structured(
+    _dem: &StructuredDem,
     _config: &BeamSearchConfig,
 ) -> Result<Box<dyn ObservableDecoder>, DecoderError> {
     unavailable("beamsearch", "uf")
@@ -1334,6 +1415,18 @@ mod tests {
     use super::*;
 
     const HYPEREDGE_DEM: &str = "error(0.1) D0 D1 D2 L0\nerror(0.05) D0\n";
+
+    #[cfg(feature = "uf")]
+    #[test]
+    fn windowed_spec_builds_from_structured_model() {
+        let model = StructuredDem::from_dem_str(
+            "error(0.1) D0 D1 L0\ndetector(0, 0, 0) D0\ndetector(0, 0, 1) D1\nlogical_observable L0\n",
+        )
+        .unwrap();
+        let spec = DecoderSpec::parse("windowed:mode=overlap,step=1,buf=0").unwrap();
+        let decoder = spec.build(&DecodeModel::StructuredDem(model)).unwrap();
+        assert_eq!(decoder.num_detectors(), Some(2));
+    }
 
     #[test]
     fn graphlike_decoders_reject_a_hyperedge_model_instead_of_dropping_it() {

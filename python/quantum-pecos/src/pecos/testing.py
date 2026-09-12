@@ -18,7 +18,9 @@ Like numpy.testing, this module provides assertion functions for
 comparing arrays with appropriate tolerance handling.
 
 Noiseless TickCircuit replay and signed stabilizer-group helpers support
-physical circuit oracles across the QEC tests.
+physical circuit oracles across the QEC tests. Measurement partition helpers
+``measurement_partition_from_builder``, ``measurement_partition_from_trace``,
+and ``assert_same_measurement_partition`` compare semantic measurement groups.
 
 Example:
     >>> import pecos as pc
@@ -38,13 +40,11 @@ import json
 import re
 from collections import defaultdict
 from typing import TYPE_CHECKING
-from unittest.mock import patch
 
 from pecos_rslib import SparseStab
 
 import pecos as pc
 from pecos._traced_circuit import measurement_ids_in_execution_order
-from pecos.qec.surface.logical_circuit import _CircuitGenerator
 from pecos.tracing import _trace_program_to_tick_circuit_with_result_traces
 
 if TYPE_CHECKING:
@@ -458,31 +458,16 @@ def measurement_partition_from_trace(
 def measurement_partition_from_builder(
     builder: LogicalCircuitBuilder,
 ) -> dict[tuple[str, str, int], tuple[int, ...]]:
-    """Read semantic records from the generator used by ``builder.to_tick_circuit``.
+    """Group the builder's measurement ordinals by patch, family, and per-patch round.
 
-    Capture the actual generator's public ``stab_meas`` and ``data_meas`` maps
-    after generation, preserving the builder's own snapshot/reset/restore path
-    (logical_circuit.py:450). Segment/round pairs are ranked separately for each
-    patch so that a patch absent from a segment does not acquire phantom rounds.
-    This helper temporarily wraps the generator's ``generate`` method; calls
-    to circuit generation must be serialized within the process during the probe.
+    Reads the ``measurement_keys`` metadata that ``to_tick_circuit`` publishes.
+    Segment/round pairs are ranked separately for each patch so a patch absent
+    from a segment acquires no phantom rounds.
     """
-    generated = []
-    generate = _CircuitGenerator.generate
-
-    def capture(generator: _CircuitGenerator) -> object:
-        circuit = generate(generator)
-        generated.append(generator)
-        return circuit
-
-    with patch.object(_CircuitGenerator, "generate", capture):
-        builder.to_tick_circuit()
-    if len(generated) != 1:
-        msg = f"Expected one builder generator, got {len(generated)}"
-        raise ValueError(msg)
-    generator = generated[0]
+    tc = builder.to_tick_circuit()
+    keys = json.loads(tc.get_meta("measurement_keys"))
     rounds: dict[str, set[tuple[int, int]]] = defaultdict(set)
-    for label, _family, _index, segment, round_index in generator.stab_meas:
+    for label, _family, _index, segment, round_index, _ordinal in keys["stabilizer"]:
         rounds[label].add((segment, round_index))
     global_rounds = {
         (label, segment, round_index): ordinal
@@ -490,12 +475,12 @@ def measurement_partition_from_builder(
         for ordinal, (segment, round_index) in enumerate(sorted(patch_rounds))
     }
     groups: dict[tuple[str, str, int], list[int]] = defaultdict(list)
-    for (label, family, _index, segment, round_index), ordinal in generator.stab_meas.items():
+    for label, family, _index, segment, round_index, ordinal in keys["stabilizer"]:
         groups[label, family, global_rounds[label, segment, round_index]].append(ordinal)
-    for (label, _qubit), ordinal in generator.data_meas.items():
+    for label, _qubit, ordinal in keys["data"]:
         groups[label, "final", 0].append(ordinal)
     partition = {key: tuple(sorted(ordinals)) for key, ordinals in groups.items()}
-    _validate_measurement_partition(partition, generator.meas_count)
+    _validate_measurement_partition(partition, int(tc.get_meta("num_measurements")))
     return partition
 
 

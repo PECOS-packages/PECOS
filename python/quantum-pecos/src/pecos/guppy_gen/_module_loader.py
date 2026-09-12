@@ -5,7 +5,15 @@
 
 import importlib.util
 import sys
+import tempfile
+from functools import cache
 from pathlib import Path
+
+
+@cache
+def _get_temp_dir() -> Path:
+    """Share one temporary directory for generated surface and transversal modules."""
+    return Path(tempfile.mkdtemp(prefix="pecos_guppy_"))
 
 
 def load_guppy_source(source: str, temp_file: Path, module_name: str) -> dict:
@@ -17,5 +25,9 @@ def load_guppy_source(source: str, temp_file: Path, module_name: str) -> dict:
         raise RuntimeError(msg)
     module = importlib.util.module_from_spec(spec)
     sys.modules[module_name] = module
-    spec.loader.exec_module(module)
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        sys.modules.pop(module_name, None)
+        raise
     return vars(module)

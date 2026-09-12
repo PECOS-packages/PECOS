@@ -18,14 +18,14 @@ from pecos.qec.surface.gadgets import (
 from pecos.qec.surface.patch import SurfacePatch
 
 
-def render_gadget_function(gadget: Gadget, *, sidebands: bool = True, tag_scope: str | None = None) -> list[str]:
+def render_gadget_function(gadget: Gadget, *, tag_scope: str | None = None) -> list[str]:
     """Interpret one gadget's physical steps through its register allocation."""
     if tag_scope is not None and not tag_scope.isidentifier():
         msg = f"Invalid gadget tag scope: {tag_scope!r}"
         raise ValueError(msg)
     function_name = gadget.name if tag_scope is None else f"{gadget.name}_{tag_scope}"
     tag_prefix = "" if tag_scope is None else f"{tag_scope}:"
-    if tag_scope is not None and gadget.x_z_swapped:
+    if gadget.x_z_swapped:
         tag_prefix += "swapped:"
     dx, dz = gadget.dimensions
     surface = f"SurfaceCode_{dx}x{dz}"
@@ -45,9 +45,11 @@ def render_gadget_function(gadget: Gadget, *, sidebands: bool = True, tag_scope:
     for register, allocation in zip(registers, gadget.allocations, strict=True):
         data_registers.append(allocation.data_qubits)
         mapping = {q: f"{register}[{i}]" for i, q in enumerate(allocation.data_qubits)}
-        mapping.update({q: f"ax{i}" for i, q in enumerate(allocation.x_ancilla_qubits)})
-        mapping.update({q: f"az{i}" for i, q in enumerate(allocation.z_ancilla_qubits)})
-        if names.keys() & mapping.keys():
+        prefix = f"{register.split('.')[0]}_" if len(registers) > 1 else ""
+        mapping.update({q: f"{prefix}ax{i}" for i, q in enumerate(allocation.x_ancilla_qubits)})
+        mapping.update({q: f"{prefix}az{i}" for i, q in enumerate(allocation.z_ancilla_qubits)})
+        qubits = [*allocation.data_qubits, *allocation.x_ancilla_qubits, *allocation.z_ancilla_qubits]
+        if len(mapping) != len(qubits) or names.keys() & mapping.keys() or set(names.values()) & set(mapping.values()):
             msg = f"{gadget.name}: allocations must be disjoint"
             raise ValueError(msg)
         names.update(mapping)
@@ -160,8 +162,7 @@ def render_gadget_function(gadget: Gadget, *, sidebands: bool = True, tag_scope:
             label = step.label
             lines.append(f"    {label} = measure({names[step.qubits[0]]}).read()")
             tag = "init:meas" if kind == GadgetKind.INIT_SYNDROME else "meas"
-            if sidebands:
-                lines.append(f'    output("{tag_prefix}{label}:{tag}:{ordinal}", {label})')
+            lines.append(f'    output("{tag_prefix}{label}:{tag}:{ordinal}", {label})')
             ordinal += 1
         else:
             msg = f"Unsupported gadget operation: {op.name}"

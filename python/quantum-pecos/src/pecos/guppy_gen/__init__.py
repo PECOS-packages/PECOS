@@ -11,6 +11,9 @@ Submodules:
     surface: Surface code generation
     color: Color code generation
     transversal: Transversal operations (CNOT for CSS codes)
+    gadget_render: Physical surface gadget rendering
+    protocol_render: Scoped surface protocol rendering and loading
+    variant: Variant-scoped program factories
 
 Example:
     >>> from pecos.guppy_gen import make_surface_code, get_num_qubits
@@ -26,6 +29,7 @@ from pecos.guppy_gen.color import (
     get_num_qubits_color,
     make_color_code,
 )
+from pecos.guppy_gen.protocol_render import load_surface_protocol_module, render_surface_protocol_module
 from pecos.guppy_gen.surface import (
     generate_guppy_source,
     generate_memory_experiment,
@@ -56,6 +60,8 @@ __all__ = [
     "get_num_qubits",
     "get_surface_code_module",
     "make_surface_code",
+    "render_surface_protocol_module",
+    "load_surface_protocol_module",
     # Color code
     "generate_color_code_module",
     "generate_color_code_source",

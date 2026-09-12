@@ -359,13 +359,18 @@ def test_physical_sz_layer_dependency(method, monkeypatch):
     assert tc.get_tick(tc.num_ticks() - 1).gate_batches()[0].gate_type.name.upper() == gate
 
 
-@pytest.mark.parametrize("variant", ["H", "SZ", "SZDG", "CX", "round_swapped", "init_Z_swapped", "init_X_swapped", "Y"])
+@pytest.mark.parametrize(
+    "variant",
+    ["H", "SZ", "SZDG", "CX", "X", "Z", "round_swapped", "init_Z_swapped", "init_X_swapped", "Y"],
+)
 @pytest.mark.parametrize("renamed", [False, True])
 def test_gate_renderer(variant, renamed):
     patch = SurfacePatch.create(3)
     allocation = gadgets.default_allocation(patch)
     if variant in {"H", "SZ", "SZDG"}:
         gadget = gadgets.transversal_layer_gadget(patch, allocation, gate=variant)
+    elif variant in {"X", "Z"}:
+        gadget = gadgets.logical_pauli_gadget(patch, allocation, pauli=variant)
     elif variant == "CX":
         target = QubitAllocation(
             [q + 17 for q in allocation.data_qubits],
@@ -395,7 +400,7 @@ def test_gate_renderer(variant, renamed):
                     collect(node.body, i)
             elif isinstance(node, ast.Expr) and isinstance(node.value, ast.Call):
                 call = node.value
-                if isinstance(call.func, ast.Name) and call.func.id in {"h", "s", "sdg", "cx"}:
+                if isinstance(call.func, ast.Name) and call.func.id in {"h", "s", "sdg", "cx", "x", "z"}:
                     operands = [ast.unparse(arg).replace("[i]", f"[{index}]") for arg in call.args]
                     actual.append((call.func.id, operands))
 
@@ -406,7 +411,7 @@ def test_gate_renderer(variant, renamed):
         names.update({q: f"{register}[{j}]" for j, q in enumerate(alloc.data_qubits)})
         names.update({q: f"ax{j}" for j, q in enumerate(alloc.x_ancilla_qubits)})
         names.update({q: f"az{j}" for j, q in enumerate(alloc.z_ancilla_qubits)})
-    gates = {OpType.H: "h", OpType.SZ: "s", OpType.SZDG: "sdg", OpType.CX: "cx"}
+    gates = {OpType.H: "h", OpType.SZ: "s", OpType.SZDG: "sdg", OpType.CX: "cx", OpType.X: "x", OpType.Z: "z"}
     expected = [
         (gates[step.op_type], [names[q] for q in step.qubits]) for step in gadget.steps if step.op_type in gates
     ]

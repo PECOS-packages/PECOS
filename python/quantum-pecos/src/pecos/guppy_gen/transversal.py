@@ -11,13 +11,10 @@ data qubits i. This preserves the CSS structure: X errors on control propagate
 to X errors on target, Z errors on target propagate to Z errors on control.
 """
 
-import importlib.util
-import sys
-import tempfile
-from dataclasses import dataclass
 from enum import Enum
-from pathlib import Path
-from typing import ClassVar, Protocol, runtime_checkable
+from typing import ClassVar
+
+from pecos.guppy_gen._module_loader import _get_temp_dir, load_guppy_source
 
 
 class CSSCodeType(Enum):
@@ -27,60 +24,14 @@ class CSSCodeType(Enum):
     COLOR = "color"
 
 
-@runtime_checkable
-class CSSCodeSpec(Protocol):
-    """Protocol for CSS code specifications."""
-
-    @property
-    def num_data(self) -> int:
-        """Number of data qubits."""
-        ...
-
-    @property
-    def num_x_stabilizers(self) -> int:
-        """Number of X stabilizers."""
-        ...
-
-    @property
-    def num_z_stabilizers(self) -> int:
-        """Number of Z stabilizers."""
-        ...
-
-    def get_logical_x(self) -> tuple[int, ...]:
-        """Qubits for logical X operator."""
-        ...
-
-    def get_logical_z(self) -> tuple[int, ...]:
-        """Qubits for logical Z operator."""
-        ...
-
-
-@dataclass
-class TransversalConfig:
-    """Configuration for transversal CNOT generation."""
-
-    code_type: CSSCodeType
-    distance: int
-    num_rounds: int = 1
-    ctrl_logical_x: bool = False  # Apply logical X to control before CNOT
-
-
 # Module state container (avoids global statement)
 class _ModuleState:
     """Container for module-level mutable state."""
 
-    temp_dir: ClassVar[Path | None] = None
     css_transversal_cache: ClassVar[dict[str, dict]] = {}
 
 
 _state = _ModuleState()
-
-
-def _get_temp_dir() -> Path:
-    """Get or create temporary directory for generated code."""
-    if _state.temp_dir is None:
-        _state.temp_dir = Path(tempfile.mkdtemp(prefix="pecos_guppy_css_trans_"))
-    return _state.temp_dir
 
 
 def _get_color_code_info(d: int) -> dict:
@@ -436,23 +387,11 @@ def _load_css_transversal_module(code_type: CSSCodeType, d: int, *, num_rounds: 
         msg = f"Unsupported code type: {code_type}"
         raise ValueError(msg)
 
-    # Write to temp file
-    temp_dir = _get_temp_dir()
-    temp_file = temp_dir / f"css_trans_{cache_key}.py"
-    temp_file.write_text(source)
-
-    # Load module
-    module_name = f"pecos._generated.css_trans_{cache_key}"
-    spec = importlib.util.spec_from_file_location(module_name, temp_file)
-    if spec is None or spec.loader is None:
-        msg = f"Failed to create module spec for {temp_file}"
-        raise RuntimeError(msg)
-
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = module
-    spec.loader.exec_module(module)
-
-    _state.css_transversal_cache[cache_key] = vars(module)
+    _state.css_transversal_cache[cache_key] = load_guppy_source(
+        source,
+        _get_temp_dir() / f"css_trans_{cache_key}.py",
+        f"pecos._generated.css_trans_{cache_key}",
+    )
     return _state.css_transversal_cache[cache_key]
 
 
@@ -465,6 +404,9 @@ def make_css_transversal_cnot(
     num_rounds: int = 1,
 ) -> object:
     """Create a transversal CNOT experiment for any CSS code.
+
+    For surface codes, ``num_rounds`` full rounds run before AND after CX.
+    There are no init-syndrome outputs; peak qubit use is 3 * distance**2 - 1.
 
     Args:
         code_type: Type of CSS code ("surface" or "color")
@@ -504,6 +446,9 @@ def make_css_transversal_cnot_with_x(
     """Create a transversal CNOT experiment with logical X on control.
 
     This tests |1_L>|0_L> -> |1_L>|1_L>.
+
+    For surface codes, ``num_rounds`` full rounds run before AND after CX.
+    There are no init-syndrome outputs; peak qubit use is 3 * distance**2 - 1.
 
     Args:
         code_type: Type of CSS code ("surface" or "color")
@@ -546,7 +491,10 @@ def get_transversal_num_qubits(code_type: CSSCodeType | str, distance: int) -> i
         code_type = CSSCodeType(code_type)
 
     if code_type == CSSCodeType.SURFACE:
-        return 3 * distance * distance - 1
+        from pecos.qec.surface import SurfacePatch
+
+        geom = SurfacePatch.create(distance=distance).geometry
+        return 2 * geom.num_data + len(geom.x_stabilizers) + len(geom.z_stabilizers)
     if code_type == CSSCodeType.COLOR:
         from pecos.qec.color import ColorCode488
 
@@ -584,10 +532,18 @@ def make_color_transversal_cnot_with_x_d3(num_rounds: int = 1) -> object:
 
 
 def make_surface_transversal_cnot(distance: int, num_rounds: int = 1) -> object:
-    """Create transversal CNOT for surface codes."""
+    """Create transversal CNOT for surface codes.
+
+    For surface codes, ``num_rounds`` full rounds run before AND after CX.
+    There are no init-syndrome outputs; peak qubit use is 3 * distance**2 - 1.
+    """
     return make_css_transversal_cnot(CSSCodeType.SURFACE, distance, num_rounds)
 
 
 def make_surface_transversal_cnot_with_x(distance: int, num_rounds: int = 1) -> object:
-    """Create transversal CNOT with X for surface codes."""
+    """Create transversal CNOT with X for surface codes.
+
+    For surface codes, ``num_rounds`` full rounds run before AND after CX.
+    There are no init-syndrome outputs; peak qubit use is 3 * distance**2 - 1.
+    """
     return make_css_transversal_cnot_with_x(CSSCodeType.SURFACE, distance, num_rounds)

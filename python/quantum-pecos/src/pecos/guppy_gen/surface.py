@@ -13,12 +13,10 @@ schedule (N/Z windmill pattern) with dedicated per-stabilizer ancillas.
 
 import hashlib
 import json
-import tempfile
 from collections.abc import Callable
-from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar
 
-from pecos.guppy_gen._module_loader import load_guppy_source
+from pecos.guppy_gen._module_loader import _get_temp_dir, load_guppy_source
 from pecos.qec.surface.schedule import compute_cnot_schedule
 
 if TYPE_CHECKING:
@@ -30,7 +28,6 @@ if TYPE_CHECKING:
 class _ModuleState:
     """Container for module-level mutable state."""
 
-    temp_dir: ClassVar[Path | None] = None
     module_cache: ClassVar[dict[str, object]] = {}
     # Keyed by full patch identity + effective budget (dx, dz, orientation,
     # rotated, effective_budget) so distinct patch geometries -- e.g. rotated
@@ -88,13 +85,6 @@ def _resolve_surface_check_plan(
         interaction_basis=interaction_basis,
         check_plan=check_plan,
     )
-
-
-def _get_temp_dir() -> Path:
-    """Get or create temporary directory for generated code."""
-    if _state.temp_dir is None:
-        _state.temp_dir = Path(tempfile.mkdtemp(prefix="pecos_guppy_"))
-    return _state.temp_dir
 
 
 def _render_inline_pcg32() -> list[str]:

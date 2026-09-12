@@ -5,9 +5,8 @@
 
 import hashlib
 
-from pecos.guppy_gen._module_loader import load_guppy_source
+from pecos.guppy_gen._module_loader import _get_temp_dir, load_guppy_source
 from pecos.guppy_gen.gadget_render import render_gadget_function
-from pecos.guppy_gen.surface import _get_temp_dir
 from pecos.qec.surface import SurfacePatch, gadgets
 from pecos.qec.surface.circuit_builder import QubitAllocation
 
@@ -35,8 +34,8 @@ def _readout(patch: str, basis: str = "z") -> list[str]:
 def render_surface_protocol_module(patch: SurfacePatch) -> str:
     """Render odd square rotated surface experiments with scoped measurement provenance."""
     geom = patch.geometry
-    if patch.dx != patch.dz or patch.dx % 2 == 0 or not geom.rotated:
-        msg = "Surface protocols require an odd square rotated patch (dx == dz, odd, rotated=True)"
+    if patch.dx < 3 or patch.dx != patch.dz or patch.dx % 2 == 0 or not geom.rotated:
+        msg = "Surface protocols require distance >= 3, odd dimensions, a square patch (dx == dz), and rotated=True"
         raise ValueError(msg)
     dx, dz = patch.dx, patch.dz
     allocation = gadgets.default_allocation(patch)
@@ -50,8 +49,8 @@ def render_surface_protocol_module(patch: SurfacePatch) -> str:
         f'"""Surface code protocols for dx={dx}, dz={dz}.',
         "",
         "Scoped scalar sidebands certify measurement provenance for each patch role.",
-        "The surface DEM parser only recognises tags starting with sx/sz, so these",
-        "scoped tags are deliberately not recognised. The certified-slot DEM route",
+        "The surface DEM parser indexes scoped tags but never references them.",
+        "The builder protocol has no init round. The certified-slot DEM route",
         "remains single-patch until the parser learns scopes.",
         '"""',
         "",
@@ -59,7 +58,7 @@ def render_surface_protocol_module(patch: SurfacePatch) -> str:
         "",
         "from guppylang import guppy",
         "from guppylang.std.builtins import array, comptime, owned, output",
-        "from guppylang.std.quantum import cx, h, qubit, s, sdg, x, z",
+        "from guppylang.std.quantum import cx, h, qubit, s, x",
         "from guppylang.std.quantum import collect_measurements, measure, measure_array",
         "from pecos.guppy_gen.variant import variant_scoped",
         "",
@@ -79,32 +78,20 @@ def render_surface_protocol_module(patch: SurfacePatch) -> str:
         "",
     ]
     functions = [gadgets.prep_gadget(patch, allocation, basis=basis) for basis in ("Z", "X", "Y")]
-    functions.extend(
-        gadgets.syndrome_round_gadget(patch, allocation, round_index=0, x_z_swapped=swapped)
-        for swapped in (False, True)
-    )
-    functions.extend(
-        gadgets.init_syndrome_gadget(patch, allocation, basis=basis, x_z_swapped=swapped)
-        for swapped in (False, True)
-        for basis in ("Z", "X")
-    )
     functions.extend(gadgets.measure_out_gadget(patch, allocation, basis=basis) for basis in ("Z", "X"))
-    functions.extend(gadgets.logical_pauli_gadget(patch, allocation, pauli=pauli) for pauli in ("X", "Z"))
-    functions.extend(gadgets.transversal_layer_gadget(patch, allocation, gate=gate) for gate in ("H", "SZ", "SZDG"))
+    functions.append(gadgets.logical_pauli_gadget(patch, allocation, pauli="X"))
+    functions.append(gadgets.transversal_layer_gadget(patch, allocation, gate="H"))
     functions.append(gadgets.transversal_cx_gadget(patch, allocation, patch, target))
     for gadget in functions:
-        scopes = (
-            ("a", "ctrl", "tgt", "data", "anc")
-            if gadget.kind
-            in {
-                gadgets.GadgetKind.SYNDROME_ROUND,
-                gadgets.GadgetKind.INIT_SYNDROME,
-            }
-            else (None,)
-        )
-        for scope in scopes:
-            lines.extend(render_gadget_function(gadget, sidebands=True, tag_scope=scope))
-            lines.extend(["", ""])
+        lines.extend(render_gadget_function(gadget))
+        lines.extend(["", ""])
+    for scope in ("a", "ctrl", "tgt", "data", "anc"):
+        gadget = gadgets.syndrome_round_gadget(patch, allocation, round_index=0)
+        lines.extend(render_gadget_function(gadget, tag_scope=scope))
+        lines.extend(["", ""])
+    swapped = gadgets.syndrome_round_gadget(patch, allocation, round_index=0, x_z_swapped=True)
+    lines.extend(render_gadget_function(swapped, tag_scope="a"))
+    lines.extend(["", ""])
     lines.extend(
         [
             "def make_h_experiment(num_rounds: int, *, logical_x: bool = False):",

@@ -37,7 +37,7 @@ base revision in `BASE_REVISION`. It uses the PECOS implementation installed in
 the invoking environment; it does not switch revisions, build dependencies, or
 change git state. Use an environment running the base revision for baseline
 captures, or the corrected implementation with `--post-fix-only` for the seven
-exceptions. Run from the repository root:
+exceptions and the protocol drift guard. Run from the repository root:
 
 ```bash
 export UV_CACHE_DIR=/tmp/pecos-uv-cache-753
@@ -48,3 +48,10 @@ Existing files are never overwritten unless `--force` is supplied. Capture into
 a separate output directory for review; do not regenerate protected goldens to
 make parity tests pass. Serialization preserves the original whitespace, nested
 metadata strings, nulls, empty operations, and absence of final newlines.
+
+`gadget_parity/protocol_d3.py.txt` was captured from the PR #762 review fixes,
+not the base revision. It is a drift guard for the scoped protocol module's
+rendered source, including the exact factory bodies and the functions they use.
+It is listed in the parity suite's `EXPECTED_FILES` inventory and produced by
+`capture.py` (also with `--post-fix-only`). All pre-existing golden artifacts
+remain unchanged.

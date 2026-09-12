@@ -6,10 +6,12 @@
 import ast
 import doctest
 import re
+import sys
 from pathlib import Path
 
 import pecos
 import pytest
+from pecos.guppy_gen._module_loader import _get_temp_dir, load_guppy_source
 from pecos.guppy_gen.gadget_render import render_gadget_function, render_surface_gadget_module
 from pecos.guppy_gen.protocol_render import load_surface_protocol_module, render_surface_protocol_module
 from pecos.guppy_gen.transversal import (
@@ -79,9 +81,24 @@ def test_factory_compile(module, recipe):
 
 def test_all_gadget_functions_compile(module, patch):
     source = ast.parse(render_surface_protocol_module(patch))
-    for node in source.body:
-        if isinstance(node, ast.FunctionDef) and not node.name.startswith("make_"):
-            assert module[node.name].compile_function() is not None
+    expected = {
+        "prep_z_basis",
+        "prep_x_basis",
+        "prep_y_basis",
+        "measure_z_basis",
+        "measure_x_basis",
+        "transversal_h",
+        "transversal_cx",
+        "apply_logical_x",
+        "syndrome_extraction_swapped_a",
+        *(f"syndrome_extraction_{scope}" for scope in ("a", "ctrl", "tgt", "data", "anc")),
+    }
+    rendered = {
+        node.name for node in source.body if isinstance(node, ast.FunctionDef) and not node.name.startswith("make_")
+    }
+    assert rendered == expected
+    for name in expected:
+        assert module[name].compile_function() is not None
 
 
 @pytest.mark.parametrize(
@@ -173,8 +190,13 @@ def test_measurement_partition(module, patch, recipe):
     )
 
 
-def test_peak_allocation(module):
-    chunks = capture_qis_operation_trace(module["make_transversal_cx"](2), get_transversal_num_qubits("surface", 3))
+@pytest.mark.parametrize("distance", [3, 5])
+def test_peak_allocation(distance):
+    module = load_surface_protocol_module(SurfacePatch.create(distance=distance))
+    chunks = capture_qis_operation_trace(
+        module["make_transversal_cx"](2),
+        get_transversal_num_qubits("surface", distance),
+    )
     live = set()
     peak = 0
     # _qis_trace_replay.py replays lowered PZ allocations and MZ readouts.
@@ -190,8 +212,8 @@ def test_peak_allocation(module):
                 assert qubits <= live
                 live.difference_update(qubits)
     assert not live
-    assert peak == get_transversal_num_qubits("surface", 3) == 26
-    assert get_transversal_num_qubits(CSSCodeType.SURFACE, 5) == 74
+    assert peak == get_transversal_num_qubits("surface", distance)
+    assert peak == get_transversal_num_qubits(CSSCodeType.SURFACE, distance)
     assert get_transversal_num_qubits("color", 3) == 18
     assert get_transversal_num_qubits(CSSCodeType.COLOR, 5) == 38
 
@@ -259,6 +281,7 @@ def test_cx_outcome(module, patch, control_x):
 
 @pytest.mark.parametrize("recipe", ["sz", "t"])
 def test_teleportation_outcome(module, patch, recipe):
+    """Check measurement grouping and Z preservation only."""
     name, args = RECIPES[recipe]
     results = _results(module[name](*args), 26)
     _assert_parity(results["final_data"], patch.geometry.logical_z.data_qubits, 0)
@@ -290,12 +313,8 @@ def test_sidebands_and_memory_parity(patch):
                 sidebands.append(tag)
         else:
             assert not calls
-    assert len(sidebands) == 160
+    assert len(sidebands) == 48
     assert not re.search(r'output\("s[xz][0-9]+:', source)
-    allocation = gadgets.default_allocation(patch)
-    for swapped in (False, True):
-        gadget = gadgets.syndrome_round_gadget(patch, allocation, round_index=0, x_z_swapped=swapped)
-        assert not any("output(" in line for line in render_gadget_function(gadget, sidebands=False, tag_scope="a"))
     memory = render_surface_gadget_module(patch)
     golden = Path(__file__).parents[1] / "qec/surface/goldens/gadget_parity/guppy_d3.py.txt"
     assert memory == golden.read_text()
@@ -319,9 +338,12 @@ def test_public_api(factory):
     assert factory().compile() is not None
 
 
-@pytest.mark.parametrize(("dx", "dz", "rotated"), [(3, 5, True), (4, 4, True), (3, 3, False)])
-def test_invalid_patch(dx, dz, rotated):
-    with pytest.raises(ValueError, match="odd square"):
+@pytest.mark.parametrize(
+    ("dx", "dz", "rotated", "clause"),
+    [(1, 1, True, "distance >= 3"), (3, 5, True, "square"), (4, 4, True, "odd"), (3, 3, False, "rotated=True")],
+)
+def test_invalid_patch(dx, dz, rotated, clause):
+    with pytest.raises(ValueError, match=clause):
         render_surface_protocol_module(SurfacePatch.create(dx=dx, dz=dz, rotated=rotated))
 
 
@@ -440,7 +462,11 @@ def test_scoped_gadget_preserves_labels(patch, basis, swapped):
     )
     plain = render_gadget_function(gadget)
     scoped = render_gadget_function(gadget, tag_scope="ctrl")
-    prefix = "ctrl:swapped:" if swapped else "ctrl:"
+    prefix = "ctrl:"
+    orientation = "swapped:" if swapped else ""
+    label = next(step.label for step in gadget.steps if step.op_type.name == "MEASURE")
+    assert any(f'output("{orientation}{label}:' in line for line in plain)
+    assert any(f'output("ctrl:{orientation}{label}:' in line for line in scoped)
     expected = [
         line.replace(f"def {gadget.name}(", f"def {gadget.name}_ctrl(").replace('output("', f'output("{prefix}')
         for line in plain
@@ -486,3 +512,104 @@ def test_partition_rounds_across_orientation_change(monkeypatch):
         ("D", "Z", 3): (14, 15),
         ("D", "final", 0): (16, 17),
     }
+
+
+def _factory_structure(source, factory):
+    """Retain every body statement, including loops, conditionals and output calls."""
+    outer = next(node for node in ast.parse(source).body if isinstance(node, ast.FunctionDef) and node.name == factory)
+    inner = next(node for node in outer.body if isinstance(node, ast.FunctionDef))
+    return [ast.unparse(node) for node in inner.body[1:]]
+
+
+def _expected_rounds(count, *scopes, swapped=False):
+    orientation = "swapped_" if swapped else ""
+    body = "\n".join(
+        f"    syn = syndrome_extraction_{orientation}{scope}({scope})\n"
+        f"    output('synx_{scope}', syn.synx)\n"
+        f"    output('synz_{scope}', syn.synz)"
+        for scope in scopes
+    )
+    return f"for _ in range(comptime({count})):\n{body}"
+
+
+def _expected_readout(scope, basis="z"):
+    return [f"final = measure_{basis}_basis({scope})", f"output('final_{scope}', final)"]
+
+
+@pytest.mark.parametrize(
+    ("factory", "expected"),
+    [
+        (
+            "make_h_experiment",
+            [
+                "a = prep_z_basis()",
+                "if comptime(logical_x):\n    apply_logical_x(a)",
+                _expected_rounds("num_rounds", "a"),
+                "transversal_h(a)",
+                _expected_rounds("num_rounds", "a", swapped=True),
+                *_expected_readout("a", "x"),
+            ],
+        ),
+        (
+            "make_transversal_cx",
+            [
+                "ctrl = prep_z_basis()",
+                "if comptime(control_x):\n    apply_logical_x(ctrl)",
+                "tgt = prep_z_basis()",
+                _expected_rounds("num_rounds", "ctrl", "tgt"),
+                "transversal_cx(ctrl, tgt)",
+                _expected_rounds("num_rounds", "ctrl", "tgt"),
+                *_expected_readout("ctrl"),
+                *_expected_readout("tgt"),
+            ],
+        ),
+        (
+            "make_sz_teleportation",
+            [
+                "data = prep_z_basis()",
+                "anc = prep_y_basis()",
+                _expected_rounds("rounds_before", "data", "anc"),
+                "transversal_cx(data, anc)",
+                _expected_rounds("rounds_after", "data", "anc"),
+                *_expected_readout("anc"),
+                _expected_rounds("trailing_data_rounds", "data"),
+                *_expected_readout("data"),
+            ],
+        ),
+        (
+            "make_t_injection",
+            [
+                "data = prep_z_basis()",
+                "anc = prep_x_basis()",
+                _expected_rounds("rounds_before", "data", "anc"),
+                "transversal_cx(data, anc)",
+                _expected_rounds("rounds_after", "data", "anc"),
+                *_expected_readout("data"),
+                *_expected_readout("anc"),
+            ],
+        ),
+    ],
+)
+def test_factory_ordered_body(patch, factory, expected):
+    """Pin the exact preparation, rounds, gate, rounds and readout sequence."""
+    assert _factory_structure(render_surface_protocol_module(patch), factory) == expected
+
+
+def test_loader_removes_failed_module(tmp_path):
+    name = "pecos._generated.failed_protocol_test"
+    with pytest.raises(RuntimeError, match="broken module"):
+        load_guppy_source("partially_built = True\nraise RuntimeError('broken module')\n", tmp_path / "broken.py", name)
+    assert name not in sys.modules
+    loaded = load_guppy_source("complete = True\n", tmp_path / "fixed.py", name)
+    try:
+        assert loaded["complete"] is True
+    finally:
+        sys.modules.pop(name)
+
+
+def test_shared_module_directory():
+    from pecos.guppy_gen.protocol_render import _get_temp_dir as protocol_dir
+    from pecos.guppy_gen.surface import _get_temp_dir as surface_dir
+    from pecos.guppy_gen.transversal import _get_temp_dir as transversal_dir
+
+    assert surface_dir() == transversal_dir() == protocol_dir() == _get_temp_dir()

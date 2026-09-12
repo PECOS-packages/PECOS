@@ -46,13 +46,22 @@ def default_allocation(patch: SurfacePatch) -> QubitAllocation:
     return QubitAllocation(list(range(n)), list(range(n, n + nx)), list(range(n + nx, n + nx + nz)))
 
 
+def _normalize_basis(basis: str, allowed: tuple[str, ...]) -> str:
+    basis = basis.upper()
+    if basis not in allowed:
+        msg = f"Unsupported basis {basis!r}; expected {', '.join(allowed)}"
+        raise ValueError(msg)
+    return basis
+
+
 def prep_gadget(patch: SurfacePatch, allocation: QubitAllocation, *, basis: str) -> Gadget:
     """Prepare a product Z, X, or Y eigenstate on all data qubits.
 
     Y uses H then SZ. Subsequent syndrome projection determines the sign
-    of its encoded logical Y eigenstate; neither check family is initially
-    deterministic on this product state.
+    of its encoded logical Y eigenstate for odd dx and dz only; neither
+    check family is initially deterministic on this product state.
     """
+    basis = _normalize_basis(basis, ("X", "Y", "Z"))
     name = f"prep_{basis.lower()}_basis"
     steps = [SurfaceCircuitStep(OpType.COMMENT, label=name)]
     steps.extend(SurfaceCircuitStep(OpType.ALLOC, [q], f"data[{i}]") for i, q in enumerate(allocation.data_qubits))
@@ -73,6 +82,9 @@ def _ancilla_steps(
     stabilizers = patch.geometry.x_stabilizers if family == "X" else patch.geometry.z_stabilizers
     stabilizers = sorted(stabilizers, key=lambda s: s.index)
     qubits = allocation.x_ancilla_qubits if family == "X" else allocation.z_ancilla_qubits
+    if {s.index for s in stabilizers} != set(range(len(qubits))):
+        msg = f"{family} stabilizer indices must cover the ancilla register positions"
+        raise ValueError(msg)
     prefix = "s" if op == OpType.MEASURE else "a"
     return [SurfaceCircuitStep(op, [qubits[s.index]], f"{prefix}{family.lower()}{s.index}") for s in stabilizers]
 
@@ -119,6 +131,7 @@ def init_syndrome_gadget(
     x_z_swapped: bool = False,
 ) -> Gadget:
     """Establish the complementary stabilizer signs after data preparation."""
+    basis = _normalize_basis(basis, ("X", "Z"))
     family = "X" if basis.upper() == "Z" else "Z"
     h_family = "Z" if x_z_swapped else "X"
     if x_z_swapped:
@@ -187,6 +200,7 @@ def measure_out_gadget(patch: SurfacePatch, allocation: QubitAllocation, *, basi
     if basis.upper() == "Y":
         msg = "Y readout is unsupported"
         raise NotImplementedError(msg)
+    basis = _normalize_basis(basis, ("X", "Z"))
     name = f"measure_{basis.lower()}_basis"
     steps = [SurfaceCircuitStep(OpType.COMMENT, label=name)]
     if basis.upper() == "X":
@@ -197,12 +211,12 @@ def measure_out_gadget(patch: SurfacePatch, allocation: QubitAllocation, *, basi
 
 def logical_pauli_gadget(patch: SurfacePatch, allocation: QubitAllocation, *, pauli: str) -> Gadget:
     """Apply the geometry's logical Pauli string."""
+    pauli = _normalize_basis(pauli, ("X", "Z"))
     logical = patch.geometry.logical_x if pauli.upper() == "X" else patch.geometry.logical_z
-    steps = (
-        tuple(SurfaceCircuitStep(OpType[pauli.upper()], [allocation.data_qubits[q]]) for q in logical.data_qubits)
-        if logical
-        else ()
-    )
+    if logical is None:
+        msg = f"Patch has no logical {pauli} operator"
+        raise ValueError(msg)
+    steps = tuple(SurfaceCircuitStep(OpType[pauli], [allocation.data_qubits[q]]) for q in logical.data_qubits)
     return Gadget(
         GadgetKind.LOGICAL_PAULI,
         f"apply_logical_{pauli.lower()}",

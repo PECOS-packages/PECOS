@@ -1349,7 +1349,7 @@ impl UnitaryRep {
     /// Returns the adjoint (Hermitian conjugate) of this expression.
     #[must_use]
     pub fn dg(&self) -> Self {
-        match self {
+        let adjoint = match self {
             // Pauli adjoint: Paulis are Hermitian, but phase conjugates
             Self::Pauli(ps) => {
                 let conj_phase = ps.phase().conjugate();
@@ -1448,6 +1448,15 @@ impl UnitaryRep {
             Self::Compose(parts) => Self::Compose(parts.iter().rev().map(UnitaryRep::dg).collect()),
             // Double adjoint: unwrap
             Self::Adjoint(inner) => (**inner).clone(),
+        };
+        // Only rotation slots have period 4pi. At pi, stored negation is pi
+        // again, so each such slot contributes a scalar -1 to the adjoint.
+        if let Self::Gate(unitary, _) = self
+            && rotation_adjoint_needs_phase(unitary)
+        {
+            adjoint.with_phase(Angle64::HALF_TURN)
+        } else {
+            adjoint
         }
     }
 
@@ -1719,7 +1728,7 @@ impl UnitaryRep {
     /// - `Tensor([Pauli(a), Pauli(b), ...])` → merges into a single `PauliString`
     /// - `Compose` → multiplies convertible parts in application order, including scalar phases
     /// - Named Pauli gates (`X`, `Y`, `Z`) → corresponding single-qubit `PauliString`
-    /// - Half-turn rotations (`RX(π)`, `RY(π)`, `RZ(π)`) → corresponding `PauliString`
+    /// - Half-turn Pauli rotations → corresponding `PauliString` with phase `-i`
     ///
     /// Returns `None` if the operator cannot be represented as a `PauliString`.
     ///
@@ -1774,19 +1783,18 @@ impl UnitaryRep {
                     return Some(PauliString::identity());
                 }
 
-                // Only half-turn rotations are Pauli operators
-                let half = Angle64::HALF_TURN;
-                let neg_half = negate_angle(half);
-                if angle != half && angle != neg_half {
+                if angle != Angle64::HALF_TURN {
                     return None;
                 }
-                let qubit = qubits.first().copied()?;
-                match rotation_type {
-                    RotationType::RX => Some(PauliString::x(qubit)),
-                    RotationType::RY => Some(PauliString::y(qubit)),
-                    RotationType::RZ => Some(PauliString::z(qubit)),
-                    _ => None,
-                }
+                let pauli = match rotation_type {
+                    RotationType::RX | RotationType::RXX => Pauli::X,
+                    RotationType::RY | RotationType::RYY => Pauli::Y,
+                    RotationType::RZ | RotationType::RZZ => Pauli::Z,
+                };
+                Some(PauliString::with_phase_and_paulis(
+                    QuarterPhase::MinusI,
+                    qubits.into_iter().map(|q| (pauli, QubitId(q))).collect(),
+                ))
             }
 
             Self::Adjoint(inner) => {
@@ -1833,7 +1841,7 @@ impl UnitaryRep {
     ///
     /// Returns true for:
     /// - `Pauli` variants (any `PauliString`)
-    /// - Zero- and half-turn single-qubit rotations
+    /// - Zero- and half-turn Pauli rotations
     /// - Named Pauli gates: `I`, `X`, `Y`, `Z`
     /// - One-qubit `Phase(0)` and `Phase(π)`
     /// - Zero-operand quarter-turn phases and compositions of convertible Paulis
@@ -1847,20 +1855,8 @@ impl UnitaryRep {
             Self::Gate(unitary @ Unitary::Phase { num_qubits, .. }, qubits) => {
                 validate_phase_operands(*num_qubits, qubits).is_ok() && unitary.is_pauli()
             }
-            Self::Gate(
-                Unitary::Rotation {
-                    rotation_type,
-                    angle,
-                },
-                _,
-            ) => {
-                let half = Angle64::HALF_TURN;
-                let neg_half = negate_angle(half);
-                (*angle == Angle64::ZERO || *angle == half || *angle == neg_half)
-                    && matches!(
-                        rotation_type,
-                        RotationType::RX | RotationType::RY | RotationType::RZ
-                    )
+            Self::Gate(Unitary::Rotation { angle, .. }, _) => {
+                matches!(*angle, Angle64::ZERO | Angle64::HALF_TURN)
             }
             Self::Gate(Unitary::Named(NamedGate(gate_type)), _) => {
                 matches!(
@@ -1876,10 +1872,8 @@ impl UnitaryRep {
     ///
     /// Converts:
     /// - `Pauli` → returns as-is
-    /// - Zero-angle single-qubit rotations → `I`
-    /// - `RX(π)` → `X`
-    /// - `RY(π)` → `Y`
-    /// - `RZ(π)` → `Z`
+    /// - Zero-angle Pauli rotations → `I`
+    /// - Half-turn Pauli rotations → `-i` times the corresponding Pauli string
     /// - Named gates `I`, `X`, `Y`, `Z` → corresponding `Pauli` variant
     /// - One-qubit `Phase(0)` → `I`, `Phase(π)` → `Z`
     /// - Zero-operand quarter-turn phases and compositions of convertible Paulis
@@ -1894,32 +1888,12 @@ impl UnitaryRep {
             Self::Pauli(_) => Some(self),
             Self::Gate(
                 Unitary::Rotation {
+                    angle: Angle64::ZERO,
                     rotation_type,
-                    angle,
                 },
-                qubits,
-            ) => {
-                let half = Angle64::HALF_TURN;
-                let neg_half = negate_angle(half);
-                if angle == Angle64::ZERO
-                    && matches!(
-                        rotation_type,
-                        RotationType::RX | RotationType::RY | RotationType::RZ
-                    )
-                {
-                    return Some(I(*qubits.first()?));
-                }
-                if angle != half && angle != neg_half {
-                    return None;
-                }
-                let qubit = *qubits.first()?;
-                match rotation_type {
-                    RotationType::RX => Some(X(qubit)),
-                    RotationType::RY => Some(Y(qubit)),
-                    RotationType::RZ => Some(Z(qubit)),
-                    _ => None,
-                }
-            }
+                ref qubits,
+            ) if rotation_type.num_qubits() == 1 => Some(I(*qubits.first()?)),
+            Self::Gate(Unitary::Rotation { .. }, _) => self.try_to_pauli_string().map(Self::Pauli),
             Self::Gate(Unitary::Named(NamedGate(gate_type)), qubits) => {
                 let qubit = *qubits.first()?;
                 match gate_type {
@@ -3044,41 +3018,40 @@ fn flatten_compose(parts: Vec<UnitaryRep>) -> Vec<UnitaryRep> {
 
 /// Merge adjacent rotations or phase-fixed named roots on the same qubits.
 fn merge_adjacent_rotations(parts: Vec<UnitaryRep>) -> Vec<UnitaryRep> {
-    if parts.len() < 2 {
-        return parts;
-    }
-
-    let mut result = Vec::with_capacity(parts.len());
-    let mut idx = 0;
-
-    while idx < parts.len() {
-        let current = &parts[idx];
-
-        // Check if next element can be merged with current
-        if idx + 1 < parts.len()
-            && let Some(merged) = try_merge_rotations(current, &parts[idx + 1])
-        {
-            // Skip the merged element
-            if merged.is_identity() {
-                // Both cancelled out, skip both
-                idx += 2;
-                continue;
+    let mut pending: Vec<_> = parts.into_iter().rev().collect();
+    let mut result = Vec::new();
+    let mut phase = Angle64::ZERO;
+    while let Some(part) = pending.pop() {
+        match part {
+            UnitaryRep::Compose(parts) => pending.extend(parts.into_iter().rev()),
+            UnitaryRep::Gate(
+                Unitary::Phase {
+                    gamma,
+                    num_qubits: 0,
+                },
+                ref qubits,
+            ) if qubits.is_empty() => {
+                // Scalars commute with every gate. Keep them outside the rotation
+                // chain so a wrap does not prevent further adjacent fusion.
+                phase += gamma;
             }
-            result.push(merged);
-            idx += 2;
-            continue;
+            part if part.is_identity() => {}
+            part => {
+                if let Some(previous) = result.last()
+                    && let Some(merged) = try_merge_rotations(previous, &part)
+                {
+                    result.pop();
+                    pending.push(merged);
+                } else {
+                    result.push(part);
+                }
+            }
         }
-
-        result.push(parts[idx].clone());
-        idx += 1;
     }
-
-    // Recurse if we made any merges (might enable more merges)
-    if result.len() < parts.len() {
-        merge_adjacent_rotations(result)
-    } else {
-        result
+    if phase != Angle64::ZERO {
+        result.insert(0, UnitaryRep::phase_gate(phase, smallvec::smallvec![]));
     }
+    result
 }
 
 /// Try to merge two rotations if they are compatible.
@@ -3104,13 +3077,18 @@ fn try_merge_rotations(a: &UnitaryRep, b: &UnitaryRep) -> Option<UnitaryRep> {
             // Can only merge if same rotation type and same qubits
             if rt_a == rt_b && qubits_a == qubits_b {
                 let combined_angle = *angle_a + *angle_b;
-                Some(UnitaryRep::Gate(
+                let rotation = UnitaryRep::Gate(
                     Unitary::Rotation {
                         rotation_type: *rt_a,
                         angle: combined_angle,
                     },
                     qubits_a.clone(),
-                ))
+                );
+                Some(if rotation_sum_wraps(*angle_a, *angle_b) {
+                    rotation.with_phase(Angle64::HALF_TURN)
+                } else {
+                    rotation
+                })
             } else {
                 None
             }
@@ -3430,6 +3408,49 @@ impl GateTypeExt for GateType {
                     | GateType::SWAP
                     | GateType::CCX
             )
+    }
+}
+
+/// Whether adding two signed rotation representatives crosses the principal boundary.
+///
+/// `Angle64` stores angles modulo 2pi, but Pauli rotations have period 4pi.
+/// A wrapped sum therefore needs an additional scalar -1. This is shared with
+/// the stabilizer-vector simulator's pending RZ fusion.
+#[must_use]
+pub fn rotation_sum_wraps(a: Angle64, b: Angle64) -> bool {
+    const HALF: i128 = 1_i128 << 63;
+    const FULL: i128 = 1_i128 << 64;
+
+    let signed_fraction = |angle: Angle64| {
+        let fraction = i128::from(angle.fraction());
+        if fraction > HALF {
+            fraction - FULL
+        } else {
+            fraction
+        }
+    };
+    signed_fraction(a) + signed_fraction(b) != signed_fraction(a + b)
+}
+
+fn rotation_adjoint_needs_phase(unitary: &Unitary) -> bool {
+    let is_half = |angle: Angle64| angle == Angle64::HALF_TURN;
+    match unitary {
+        Unitary::Rotation { angle, .. } => is_half(*angle),
+        Unitary::RXY1Q { theta, .. } | Unitary::U3 { theta, .. } => is_half(*theta),
+        Unitary::RXXRYYRZZ { alpha, beta, gamma } => {
+            is_half(*alpha) ^ is_half(*beta) ^ is_half(*gamma)
+        }
+        Unitary::U2q {
+            before,
+            interaction,
+            after,
+        } => before
+            .iter()
+            .chain(after.iter())
+            .map(|u3| u3[0])
+            .chain(interaction.iter().copied())
+            .fold(false, |parity, angle| parity ^ is_half(angle)),
+        Unitary::Named(_) | Unitary::Phase { .. } => false,
     }
 }
 
@@ -5278,7 +5299,7 @@ mod tests {
     #[test]
     #[allow(clippy::similar_names)]
     fn test_try_to_pauli_rotation() {
-        // RX(π) = X
+        // RX(π) = -i X
         let rx_pi = RX(Angle64::HALF_TURN, 0);
         let converted = rx_pi.try_to_pauli().expect("Should convert");
         if let UnitaryRep::Pauli(ps) = converted {
@@ -5287,7 +5308,7 @@ mod tests {
             panic!("Expected Pauli variant");
         }
 
-        // RY(π) = Y
+        // RY(π) = -i Y
         let ry_pi = RY(Angle64::HALF_TURN, 1);
         let converted = ry_pi.try_to_pauli().expect("Should convert");
         if let UnitaryRep::Pauli(ps) = converted {
@@ -5296,7 +5317,7 @@ mod tests {
             panic!("Expected Pauli variant");
         }
 
-        // RZ(π) = Z
+        // RZ(π) = -i Z
         let rz_pi = RZ(Angle64::HALF_TURN, 2);
         let converted = rz_pi.try_to_pauli().expect("Should convert");
         if let UnitaryRep::Pauli(ps) = converted {

@@ -2095,6 +2095,8 @@ class TickCircuitRenderer(CircuitRenderer):
 
     When qubit conflicts occur within a tick (same qubit used twice),
     a new tick is automatically created to maintain valid parallel structure.
+    Unlike logical_circuit._CircuitGenerator._emit_steps, this silent same-type
+    split is retained until the non-rotated schedule is fixed.
 
     Detector annotations (similar to Stim's DETECTOR and OBSERVABLE_INCLUDE)
     are stored as circuit metadata and preserved when converting to DagCircuit.

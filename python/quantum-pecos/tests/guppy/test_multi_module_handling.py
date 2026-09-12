@@ -130,8 +130,8 @@ def test_multiple_functions_compilation() -> None:
     ), "Single HUGR should contain single_qubit_test"
 
 
-def test_compiler_comparison_simple() -> None:
-    """Test how Selene vs PECOS handle HUGR compilation."""
+def test_normalizer_keeps_selene_functions() -> None:
+    """The helper-symbol pass keeps every function the Selene compiler emits."""
 
     # Create a simple function to test both compilers
     @guppy

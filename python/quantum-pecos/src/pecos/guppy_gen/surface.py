@@ -12,14 +12,13 @@ schedule (N/Z windmill pattern) with dedicated per-stabilizer ancillas.
 """
 
 import hashlib
-import importlib.util
 import json
-import sys
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar
 
+from pecos.guppy_gen._module_loader import load_guppy_source
 from pecos.qec.surface.schedule import compute_cnot_schedule
 
 if TYPE_CHECKING:
@@ -2428,23 +2427,11 @@ def _load_guppy_module(
         trace_metadata=trace_metadata,
     )
 
-    # Write to temp file (required for Guppy introspection).
-    temp_dir = _get_temp_dir()
-    temp_file = temp_dir / f"patch_{cache_key}.py"
-    temp_file.write_text(source)
-
-    # Load module
-    module_name = f"pecos._generated.patch_{cache_key}"
-    spec = importlib.util.spec_from_file_location(module_name, temp_file)
-    if spec is None or spec.loader is None:
-        msg = f"Failed to create module spec for {temp_file}"
-        raise RuntimeError(msg)
-
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = module
-    spec.loader.exec_module(module)
-
-    _state.module_cache[cache_key] = vars(module)
+    _state.module_cache[cache_key] = load_guppy_source(
+        source,
+        _get_temp_dir() / f"patch_{cache_key}.py",
+        f"pecos._generated.patch_{cache_key}",
+    )
     return _state.module_cache[cache_key]
 
 

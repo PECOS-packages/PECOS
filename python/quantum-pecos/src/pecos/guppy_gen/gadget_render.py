@@ -18,41 +18,53 @@ from pecos.qec.surface.gadgets import (
 from pecos.qec.surface.patch import SurfacePatch
 
 
-def render_gadget_function(gadget: Gadget) -> list[str]:
+def render_gadget_function(gadget: Gadget, *, sidebands: bool = True, tag_scope: str | None = None) -> list[str]:
     """Interpret one gadget's physical steps through its register allocation."""
-    if (
-        gadget.kind in {GadgetKind.TRANSVERSAL, GadgetKind.TWO_PATCH}
-        or gadget.x_z_swapped
-        or (gadget.kind == GadgetKind.PREP and gadget.basis == "Y")
-    ):
-        msg = f"Guppy rendering is deferred for {gadget.name}"
-        raise NotImplementedError(msg)
+    if tag_scope is not None and not tag_scope.isidentifier():
+        msg = f"Invalid gadget tag scope: {tag_scope!r}"
+        raise ValueError(msg)
+    function_name = gadget.name if tag_scope is None else f"{gadget.name}_{tag_scope}"
+    tag_prefix = "" if tag_scope is None else f"{tag_scope}:"
+    if tag_scope is not None and gadget.x_z_swapped:
+        tag_prefix += "swapped:"
     dx, dz = gadget.dimensions
     surface = f"SurfaceCode_{dx}x{dz}"
     syndrome = f"Syndrome_{dx}x{dz}"
     kind = gadget.kind
-    data = gadget.allocations[0].data_qubits
+    registers = (
+        ("ctrl.data", "tgt.data")
+        if kind == GadgetKind.TWO_PATCH
+        else ("data" if kind == GadgetKind.PREP else "surf.data",)
+    )
+    if len(gadget.allocations) != len(registers):
+        msg = f"{gadget.name}: expected {len(registers)} allocations"
+        raise ValueError(msg)
+    names = {}
+    data_registers = []
+    base_x, base_z = set(), set()
+    for register, allocation in zip(registers, gadget.allocations, strict=True):
+        data_registers.append(allocation.data_qubits)
+        mapping = {q: f"{register}[{i}]" for i, q in enumerate(allocation.data_qubits)}
+        mapping.update({q: f"ax{i}" for i, q in enumerate(allocation.x_ancilla_qubits)})
+        mapping.update({q: f"az{i}" for i, q in enumerate(allocation.z_ancilla_qubits)})
+        if names.keys() & mapping.keys():
+            msg = f"{gadget.name}: allocations must be disjoint"
+            raise ValueError(msg)
+        names.update(mapping)
+        base_x.update(allocation.x_ancilla_qubits)
+        base_z.update(allocation.z_ancilla_qubits)
+    data = data_registers[0]
+    register = registers[0]
     n = len(data)
-    register = "data" if kind == GadgetKind.PREP else "surf.data"
-    names = {q: f"{register}[{i}]" for i, q in enumerate(data)}
-    names.update({q: f"ax{i}" for i, q in enumerate(gadget.allocations[0].x_ancilla_qubits)})
-    names.update({q: f"az{i}" for i, q in enumerate(gadget.allocations[0].z_ancilla_qubits)})
-    x_labels = [
-        s.label
-        for s in gadget.steps
-        if s.op_type == OpType.MEASURE and s.qubits[0] in gadget.allocations[0].x_ancilla_qubits
-    ]
-    z_labels = [
-        s.label
-        for s in gadget.steps
-        if s.op_type == OpType.MEASURE and s.qubits[0] in gadget.allocations[0].z_ancilla_qubits
-    ]
+    current_x, current_z = (base_z, base_x) if gadget.x_z_swapped else (base_x, base_z)
+    x_labels = [s.label for s in gadget.steps if s.op_type == OpType.MEASURE and s.qubits[0] in current_x]
+    z_labels = [s.label for s in gadget.steps if s.op_type == OpType.MEASURE and s.qubits[0] in current_z]
     basis = gadget.basis
     argument = f"surf: {surface}"
     if kind == GadgetKind.PREP:
         argument = ""
         result = surface
-        state = "+" if basis == "X" else "0"
+        state = {"X": "+", "Y": "+i", "Z": "0"}[basis]
         doc = f"Prepare logical |{state}_L> state."
     elif kind == GadgetKind.INIT_SYNDROME:
         family = "Z" if basis == "X" else "X"
@@ -66,11 +78,16 @@ def render_gadget_function(gadget: Gadget) -> list[str]:
         argument += " @ owned"
         result = f"array[bool, {n}]"
         doc = f"Destructively measure in {basis} basis."
+    elif kind in {GadgetKind.TRANSVERSAL, GadgetKind.TWO_PATCH}:
+        result = "None"
+        doc = f"Apply physical transversal {basis}."
+        if kind == GadgetKind.TWO_PATCH:
+            argument = f"ctrl: {surface}, tgt: {surface}"
     else:
         result = "None"
         edge = "left" if basis == "X" else "top"
         doc = f"Apply logical {basis} (string along {edge} edge)."
-    lines = ["@guppy", f"def {gadget.name}({argument}) -> {result}:", f'    """{doc}"""']
+    lines = ["@guppy", f"def {function_name}({argument}) -> {result}:", f'    """{doc}"""']
     if kind == GadgetKind.SYNDROME_ROUND:
         lines.append("    # Allocate ancilla qubits (one per stabilizer)")
     index = 0
@@ -88,14 +105,25 @@ def render_gadget_function(gadget: Gadget) -> list[str]:
                 }
                 if kind != GadgetKind.INIT_SYNDROME or has_body:
                     lines.extend(["", f"    # Round {comment.removeprefix('CX round ')}"])
-            elif comment == "Hadamard on X ancillas":
+            elif comment in {"Hadamard on X ancillas", "Hadamard on Z ancillas"}:
                 lines.extend(["", f"    # {comment}"])
             elif comment == "Measure ancillas":
                 comment = "Measure init ancillas" if kind == GadgetKind.INIT_SYNDROME else comment
                 lines.extend(["", f"    # {comment}"])
         elif op == OpType.TICK:
             pass
-        elif step.qubits[0] in data and op in {OpType.ALLOC, OpType.H, OpType.MEASURE}:
+        elif kind == GadgetKind.TWO_PATCH and op == OpType.CX:
+            end = index
+            while end < len(gadget.steps) and gadget.steps[end].op_type == OpType.CX:
+                end += 1
+            pairs = [list(pair) for pair in zip(*data_registers, strict=True)]
+            if [s.qubits for s in gadget.steps[index:end]] == pairs:
+                lines.extend([f"    for i in range({n}):", "        cx(ctrl.data[i], tgt.data[i])"])
+            else:
+                lines.extend(f"    cx({', '.join(names[q] for q in s.qubits)})" for s in gadget.steps[index:end])
+            index = end
+            continue
+        elif step.qubits[0] in data and op in {OpType.ALLOC, OpType.H, OpType.SZ, OpType.SZDG, OpType.MEASURE}:
             end = index
             while end < len(gadget.steps) and gadget.steps[end].op_type == op and gadget.steps[end].qubits[0] in data:
                 end += 1
@@ -114,22 +142,26 @@ def render_gadget_function(gadget: Gadget) -> list[str]:
                     msg = f"{gadget.name}: physical operations cannot follow destructive data measurement"
                     raise ValueError(msg)
                 lines.append("    return collect_measurements(measure_array(surf.data))")
-            elif complete:
-                lines.extend([f"    for i in range({len(run)}):", f"        h({register}[i])"])
             else:
-                lines.extend(f"    h({names[s.qubits[0]]})" for s in run)
+                gate = {OpType.H: "h", OpType.SZ: "s", OpType.SZDG: "sdg"}[op]
+                if complete:
+                    lines.extend([f"    for i in range({len(run)}):", f"        {gate}({register}[i])"])
+                else:
+                    lines.extend(f"    {gate}({names[s.qubits[0]]})" for s in run)
             index = end
             continue
         elif op == OpType.ALLOC:
             lines.append(f"    {names[step.qubits[0]]} = qubit()")
-        elif op in {OpType.H, OpType.X, OpType.Z, OpType.CX}:
+        elif op in {OpType.H, OpType.X, OpType.Z, OpType.CX, OpType.SZ, OpType.SZDG}:
             operands = ", ".join(names[q] for q in step.qubits)
-            lines.append(f"    {op.name.lower()}({operands})")
+            gate = {OpType.SZ: "s", OpType.SZDG: "sdg"}.get(op, op.name.lower())
+            lines.append(f"    {gate}({operands})")
         elif op == OpType.MEASURE:
             label = step.label
             lines.append(f"    {label} = measure({names[step.qubits[0]]}).read()")
             tag = "init:meas" if kind == GadgetKind.INIT_SYNDROME else "meas"
-            lines.append(f'    output("{label}:{tag}:{ordinal}", {label})')
+            if sidebands:
+                lines.append(f'    output("{tag_prefix}{label}:{tag}:{ordinal}", {label})')
             ordinal += 1
         else:
             msg = f"Unsupported gadget operation: {op.name}"

@@ -35,16 +35,23 @@ Example:
 from __future__ import annotations
 
 import json
+import re
+from collections import defaultdict
 from typing import TYPE_CHECKING
+from unittest.mock import patch
 
 from pecos_rslib import SparseStab
 
 import pecos as pc
+from pecos._traced_circuit import measurement_ids_in_execution_order
+from pecos.qec.surface.logical_circuit import _CircuitGenerator
+from pecos.tracing import _trace_program_to_tick_circuit_with_result_traces
 
 if TYPE_CHECKING:
     from pecos_rslib.quantum import TickCircuit
 
     from pecos import Array
+    from pecos.qec.surface import LogicalCircuitBuilder
 
 
 def assert_allclose(
@@ -226,7 +233,10 @@ __all__ = [
     "assert_allclose",
     "assert_array_equal",
     "assert_array_less",
+    "assert_same_measurement_partition",
     "group_contains",
+    "measurement_partition_from_builder",
+    "measurement_partition_from_trace",
     "simulate_tick_circuit",
     "stabilizer_generators_after",
 ]
@@ -351,3 +361,150 @@ def group_contains(generators: tuple[str, ...], pauli: str) -> bool:
             return False
         row = multiply(row, pivots[pivot])
     return row == (0, 0, 0)
+
+
+def _validate_measurement_partition(
+    partition: dict[tuple[str, str, int], tuple[int, ...]],
+    total: int,
+) -> None:
+    """Require exactly one semantic group for every measurement ordinal."""
+    ordinals = [ordinal for group in partition.values() for ordinal in group]
+    if sorted(ordinals) != list(range(total)):
+        msg = f"Measurement partition must cover each of {total} ordinals exactly once; got {sorted(ordinals)}"
+        raise ValueError(msg)
+
+
+def measurement_partition_from_trace(
+    program: object,
+    num_qubits: int,
+    tag_patches: dict[str, str],
+) -> dict[tuple[str, str, int], tuple[int, ...]]:
+    """Bind scoped scalar sidebands and final arrays to measurement ordinals.
+
+    ``pecos.tracing._trace_program_to_tick_circuit_with_result_traces`` returns
+    the circuit and named-result records from one traced execution. Each scoped
+    scalar must certify exactly one result ID; final arrays require one per value.
+    Aggregate syndrome values have no authoritative provenance and are ignored.
+    A repeated physical label starts the next round for its scope, independent
+    of family order. The swapped marker maps physical labels to current families.
+    ``measurement_ids_in_execution_order`` reads the circuit's ``Gate.meas_ids``
+    to translate IDs to zero-based circuit measurement ordinals.
+    """
+    circuit, records = _trace_program_to_tick_circuit_with_result_traces(program, num_qubits)
+    measurement_ids = measurement_ids_in_execution_order(circuit)
+    if len(set(measurement_ids)) != len(measurement_ids):
+        msg = "Trace must supply one unique result ID per measurement"
+        raise ValueError(msg)
+    ordinal_by_id = {result_id: ordinal for ordinal, result_id in enumerate(measurement_ids)}
+    groups: dict[tuple[str, str, int], list[int]] = defaultdict(list)
+    rounds: dict[str, int] = defaultdict(int)
+    seen_labels: dict[str, set[tuple[str, int]]] = defaultdict(set)
+    for record in records:
+        name = record.get("name")
+        if not isinstance(name, str):
+            msg = f"Invalid measurement tag: {name!r}"
+            raise TypeError(msg)
+        scalar = re.fullmatch(r"([^:]+):(?:(swapped):)?s([xz])([0-9]+):(init:)?meas:[0-9]+", name)
+        if scalar:
+            scope, swapped, physical_family, physical_index, init = scalar.groups()
+            if init:
+                msg = (
+                    f"Init sidebands are not partitioned: {name!r}. An init block and the following full round "
+                    "may share no repeated label, so the repeated-label rule cannot separate them."
+                )
+                raise ValueError(msg)
+            physical_label = physical_family, int(physical_index)
+            if physical_label in seen_labels[scope]:
+                rounds[scope] += 1
+                seen_labels[scope].clear()
+            seen_labels[scope].add(physical_label)
+            family = physical_family.upper()
+            if swapped:
+                family = "Z" if family == "X" else "X"
+        else:
+            prefix, separator, scope = name.partition("_")
+            if separator and prefix in {"synx", "synz"} and scope in tag_patches:
+                continue
+            if not separator or prefix != "final":
+                msg = f"Unsupported measurement tag: {name!r}"
+                raise ValueError(msg)
+            family = "final"
+        if scope not in tag_patches:
+            msg = f"Unknown patch scope in measurement tag: {name!r}"
+            raise ValueError(msg)
+        label = tag_patches[scope]
+        round_index = rounds[scope] if scalar else 0
+        key = label, family, round_index
+        values, result_ids = record.get("values"), record.get("result_ids")
+        if not isinstance(values, list) or not isinstance(result_ids, list) or len(values) != len(result_ids):
+            msg = f"Measurement partition {key!r}: tag {name!r} has values={values!r}, result_ids={result_ids!r}"
+            raise ValueError(msg)
+        if (
+            (scalar and len(result_ids) != 1)
+            or not values
+            or any(type(result_id) is not int or result_id not in ordinal_by_id for result_id in result_ids)
+        ):
+            msg = f"Measurement partition {key!r}: invalid measurement result IDs for {name!r}: {result_ids!r}"
+            raise ValueError(msg)
+        if family == "final" and key in groups:
+            msg = f"Measurement partition contains repeated final readout for {label!r}"
+            raise ValueError(msg)
+        groups[key].extend(ordinal_by_id[result_id] for result_id in result_ids)
+    partition = {key: tuple(sorted(ordinals)) for key, ordinals in groups.items()}
+    _validate_measurement_partition(partition, len(measurement_ids))
+    return partition
+
+
+def measurement_partition_from_builder(
+    builder: LogicalCircuitBuilder,
+) -> dict[tuple[str, str, int], tuple[int, ...]]:
+    """Read semantic records from the generator used by ``builder.to_tick_circuit``.
+
+    Capture the actual generator's public ``stab_meas`` and ``data_meas`` maps
+    after generation, preserving the builder's own snapshot/reset/restore path
+    (logical_circuit.py:450). Segment/round pairs are ranked separately for each
+    patch so that a patch absent from a segment does not acquire phantom rounds.
+    This helper temporarily wraps the generator's ``generate`` method; calls
+    to circuit generation must be serialized within the process during the probe.
+    """
+    generated = []
+    generate = _CircuitGenerator.generate
+
+    def capture(generator: _CircuitGenerator) -> object:
+        circuit = generate(generator)
+        generated.append(generator)
+        return circuit
+
+    with patch.object(_CircuitGenerator, "generate", capture):
+        builder.to_tick_circuit()
+    if len(generated) != 1:
+        msg = f"Expected one builder generator, got {len(generated)}"
+        raise ValueError(msg)
+    generator = generated[0]
+    rounds: dict[str, set[tuple[int, int]]] = defaultdict(set)
+    for label, _family, _index, segment, round_index in generator.stab_meas:
+        rounds[label].add((segment, round_index))
+    global_rounds = {
+        (label, segment, round_index): ordinal
+        for label, patch_rounds in rounds.items()
+        for ordinal, (segment, round_index) in enumerate(sorted(patch_rounds))
+    }
+    groups: dict[tuple[str, str, int], list[int]] = defaultdict(list)
+    for (label, family, _index, segment, round_index), ordinal in generator.stab_meas.items():
+        groups[label, family, global_rounds[label, segment, round_index]].append(ordinal)
+    for (label, _qubit), ordinal in generator.data_meas.items():
+        groups[label, "final", 0].append(ordinal)
+    partition = {key: tuple(sorted(ordinals)) for key, ordinals in groups.items()}
+    _validate_measurement_partition(partition, generator.meas_count)
+    return partition
+
+
+def assert_same_measurement_partition(
+    a: dict[tuple[str, str, int], tuple[int, ...]],
+    b: dict[tuple[str, str, int], tuple[int, ...]],
+) -> None:
+    """Report the first differing semantic key and both ordinal tuples."""
+    for key in sorted(a.keys() | b.keys()):
+        if a.get(key) != b.get(key):
+            msg = f"Measurement partition differs at {key!r}: {a.get(key)!r} != {b.get(key)!r}"
+            raise AssertionError(msg)

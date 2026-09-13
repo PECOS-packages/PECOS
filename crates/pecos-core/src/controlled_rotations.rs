@@ -103,7 +103,11 @@ pub fn lower_cry(theta_radians: f64, control: QubitId, target: QubitId) -> Small
 /// for every input.
 #[must_use]
 pub fn lower_cphase(lambda_radians: f64, control: QubitId, target: QubitId) -> [Gate; 3] {
-    let half_lambda = Angle64::from_radians(lambda_radians).to_radians_signed() / 2.0;
+    lower_cphase_angle(Angle64::from_radians(lambda_radians), control, target)
+}
+
+fn lower_cphase_angle(lambda: Angle64, control: QubitId, target: QubitId) -> [Gate; 3] {
+    let half_lambda = lambda.to_radians_signed() / 2.0;
     let half_angle = Angle64::from_radians(half_lambda);
     [
         Gate::rzz(Angle64::from_radians(-half_lambda), &[(control, target)]),
@@ -114,26 +118,34 @@ pub fn lower_cphase(lambda_radians: f64, control: QubitId, target: QubitId) -> [
 
 /// Lower a phase on zero, one, or two all-one operands to hardware gates.
 ///
-/// A zero-operand phase is a scalar, so this returns no gates; the caller must
-/// retain that scalar if global phase is observable in its representation. A
+/// A zero-operand phase is a scalar and is rejected unless its normalized angle
+/// is zero: a `Gate` list has no global-phase carrier. Once a carrier exists,
+/// nontrivial scalars should be emitted instead. A
 /// one-operand phase becomes exactly `U(0, 0, gamma)`. A two-operand phase uses
 /// [`lower_cphase`] so its phase-carrying `U` leg is preserved.
 ///
 /// # Errors
 /// Returns an error if the phase exceeds the two-operand direct hardware lowering
-/// limit (the operator itself is valid), or an operand is repeated.
+/// limit (the operator itself is valid), an operand is repeated, or a nontrivial
+/// zero-operand phase cannot be represented.
 pub fn lower_phase(gamma_radians: f64, qubits: &[QubitId]) -> Result<Vec<Gate>, PhaseGateError> {
+    lower_phase_angle(Angle64::from_radians(gamma_radians), qubits)
+}
+
+/// Keep stored angles exact when checking whether a scalar is the identity.
+pub(crate) fn lower_phase_angle(
+    gamma: Angle64,
+    qubits: &[QubitId],
+) -> Result<Vec<Gate>, PhaseGateError> {
     Ok(match qubits {
+        [] if gamma != Angle64::ZERO => {
+            return Err(PhaseGateError::UnrepresentableGlobalPhase { phase: gamma });
+        }
         [] => Vec::new(),
-        &[qubit] => vec![Gate::u(
-            Angle64::ZERO,
-            Angle64::ZERO,
-            Angle64::from_radians(gamma_radians),
-            &[qubit],
-        )],
+        &[qubit] => vec![Gate::u(Angle64::ZERO, Angle64::ZERO, gamma, &[qubit])],
         &[control, target] => {
             crate::unitary_rep::validate_phase_qubits(&[control.index(), target.index()])?;
-            lower_cphase(gamma_radians, control, target).to_vec()
+            lower_cphase_angle(gamma, control, target).to_vec()
         }
         _ => {
             return Err(PhaseGateError::TooManyQubits {
@@ -570,7 +582,17 @@ mod tests {
     }
 
     #[test]
-    fn zero_qubit_phase_lowering_emits_no_hardware_gates() {
-        assert!(lower_phase(0.37, &[]).unwrap().is_empty());
+    fn zero_qubit_phase_lowering_rejects_nontrivial_scalars() {
+        for radians in [0.37, -0.37, PI, -PI, PI / 2.0] {
+            assert_eq!(
+                lower_phase(radians, &[]),
+                Err(PhaseGateError::UnrepresentableGlobalPhase {
+                    phase: Angle64::from_radians(radians),
+                })
+            );
+        }
+        for radians in [0.0, -0.0, TAU, -TAU] {
+            assert_eq!(lower_phase(radians, &[]), Ok(vec![]));
+        }
     }
 }

@@ -16,7 +16,7 @@
 //! subspace where every qubit in `S` is `|1>`, and leaves every other amplitude alone.
 //!
 //! - `S = {}`   -> a global phase: the zero-qubit identity with `with_phase(gamma)` applied;
-//!   the hardware lowering emits no gates for it (hardware cannot see a scalar)
+//!   hardware lowering rejects nontrivial scalars because a gate list has no phase carrier
 //! - `S = {q}`  -> `diag(1, e^{i gamma})`, which is exactly `U(0, 0, gamma)`
 //! - `S = {c,t}` -> `diag(1, 1, 1, e^{i gamma})`
 //! - `|S| > 2`  -> the same mathematical rule; direct hardware lowering is unavailable
@@ -29,13 +29,13 @@
 //! 1. The matrix comes from the rule, directly. A phase is 2pi-periodic, so unlike a rotation it
 //!    has no half-angle and no representative problem: negative angles need no special case.
 //! 2. The hardware lowering (`lower_phase`) produces the SAME matrix, entrywise, not up to a
-//!    global phase, for the supported hardware arities (zero, one, and two).
+//!    global phase, for one and two operands; zero operands require the identity scalar.
 //! 3. `control()` adds any fresh operand exactly; duplicate controls and malformed pairs fail.
 
 use num_complex::Complex64;
 use pecos_core::controlled_rotations::lower_phase;
 use pecos_core::gate_type::GateType;
-use pecos_core::{Angle64, QubitId, Unitary, UnitaryRep};
+use pecos_core::{Angle64, PhaseGateError, QubitId, Unitary, UnitaryRep};
 use pecos_quantum::unitary_matrix::{ToMatrix, to_matrix_with_size};
 use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, StateVecSoA};
 use smallvec::smallvec;
@@ -236,10 +236,16 @@ fn three_operand_phase_exceeds_the_direct_hardware_lowering_limit() {
             UnitaryRep::Compose(vec![phase.clone()]),
             UnitaryRep::Tensor(vec![phase.clone()]),
             UnitaryRep::Adjoint(Box::new(phase.clone())),
-            phase.with_phase(Angle64::QUARTER_TURN),
         ] {
             assert_eq!(rep.try_decompose(), Err(error));
         }
+        // The explicit scalar is visited before the unsupported inner phase.
+        assert_eq!(
+            phase.with_phase(Angle64::QUARTER_TURN).try_decompose(),
+            Err(PhaseGateError::UnrepresentableGlobalPhase {
+                phase: Angle64::QUARTER_TURN,
+            })
+        );
     }
 }
 
@@ -319,10 +325,13 @@ fn lowering_matches_the_rule_exactly_in_the_dense_path() {
                 &columns(&rule, 2),
             );
         }
-        assert!(
-            lower_phase(g, &[]).unwrap().is_empty(),
-            "a bare global phase lowers to no gates"
-        );
+        let phase = Angle64::from_radians(g);
+        let expected = if phase == Angle64::ZERO {
+            Ok(vec![])
+        } else {
+            Err(PhaseGateError::UnrepresentableGlobalPhase { phase })
+        };
+        assert_eq!(lower_phase(g, &[]), expected);
     }
 }
 
@@ -542,7 +551,14 @@ fn composed_scalar_phase_matches_the_phased_wrapper() {
                     inner.dg().dg(),
                 ])
             );
-            assert_eq!(composed.try_decompose(), inner.try_decompose());
+            if gamma == Angle64::ZERO {
+                assert_eq!(composed.try_decompose(), inner.try_decompose());
+            } else {
+                assert_eq!(
+                    composed.try_decompose(),
+                    Err(PhaseGateError::UnrepresentableGlobalPhase { phase: gamma })
+                );
+            }
             assert_eq!(composed.to_clifford_rep(3), inner.to_clifford_rep(3));
             assert_eq!(composed.to_ascii(3), inner.to_ascii(3));
             assert_eq!(composed.simplify().is_identity(), composed.is_identity());

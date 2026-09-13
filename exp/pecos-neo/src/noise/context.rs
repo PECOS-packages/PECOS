@@ -677,6 +677,33 @@ impl NoiseContext {
         self.noiseless_gates.contains(&gate_type)
     }
 
+    /// Check the scheduled and inherited noise types of a gate event.
+    /// In particular, phase-shaped U operations inherit the RZ exemption.
+    #[must_use]
+    pub fn is_noiseless_operation(&self, event: &super::NoiseEvent<'_>) -> bool {
+        self.is_noiseless_operation_with_calibration(event, false)
+    }
+
+    /// A scheduled calibration overrides an inherited exemption, while an
+    /// explicit scheduled noiseless declaration still takes precedence.
+    pub(crate) fn is_noiseless_operation_with_calibration(
+        &self,
+        event: &super::NoiseEvent<'_>,
+        has_scheduled_calibration: bool,
+    ) -> bool {
+        match event {
+            super::NoiseEvent::BeforeGate { gate_type, .. }
+            | super::NoiseEvent::AfterGate { gate_type, .. } => {
+                self.is_noiseless(*gate_type)
+                    || (!has_scheduled_calibration
+                        && event
+                            .noise_gate_type()
+                            .is_some_and(|gate| self.is_noiseless(gate)))
+            }
+            _ => false,
+        }
+    }
+
     /// Clear all noiseless gates.
     pub fn clear_noiseless_gates(&mut self) {
         self.noiseless_gates.clear();

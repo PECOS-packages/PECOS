@@ -29,7 +29,7 @@ use tket::extension::rotation::ConstRotation;
 use tket::hugr::builder::{DFGBuilder, Dataflow, DataflowHugr};
 use tket::hugr::extension::prelude::qb_t;
 use tket::hugr::ops::{OpTrait, OpType};
-use tket::hugr::types::Signature;
+use tket::hugr::types::{EdgeKind, Signature};
 use tket::hugr::{Hugr, HugrView, IncomingPort, Node, NodeIndex, PortIndex, Wire};
 
 use crate::circuit::{Circuit, GateHandle, GateView};
@@ -604,8 +604,46 @@ pub fn try_extract_rotation_angle(
     None
 }
 
+/// Intentionally accept only a directly loaded rotation constant. PECOS emits
+/// this form for U(0,0,0); computed or indirect inputs require a separate design.
+/// Inspect value and static-constant ports explicitly, never ordering edges.
+fn has_trivial_direct_global_phase(hugr: &Hugr, node: Node) -> bool {
+    let phase_port = IncomingPort::from(0);
+    let rotation_value = EdgeKind::Value(tket::extension::rotation::rotation_type());
+    if hugr.get_optype(node).port_kind(phase_port) != Some(rotation_value.clone()) {
+        return false;
+    }
+    let Some((load_node, output)) = hugr.single_linked_output(node, phase_port) else {
+        return false;
+    };
+    let load = hugr.get_optype(load_node);
+    if !matches!(load, OpType::LoadConstant(_)) || load.port_kind(output) != Some(rotation_value) {
+        return false;
+    }
+    let Some((constant_node, constant_port)) = load
+        .static_input_port()
+        .and_then(|port| hugr.single_linked_output(load_node, port))
+    else {
+        return false;
+    };
+    let constant_op = hugr.get_optype(constant_node);
+    let OpType::Const(constant) = constant_op else {
+        return false;
+    };
+    if constant_op.static_output_port() != Some(constant_port) {
+        return false;
+    }
+    constant
+        .get_custom_value::<ConstRotation>()
+        .is_some_and(|rotation| {
+            let half_turns = rotation.half_turns();
+            // Check before division so a nonzero subnormal cannot underflow to zero.
+            half_turns.is_finite() && half_turns % 2.0 == 0.0
+        })
+}
+
 /// Extract quantum operations from a HUGR.
-fn extract_quantum_ops(hugr: &Hugr) -> Vec<QuantumOp> {
+fn extract_quantum_ops(hugr: &Hugr) -> Result<Vec<QuantumOp>, HugrConvertError> {
     let mut operations = Vec::new();
 
     for node in hugr.nodes() {
@@ -618,6 +656,14 @@ fn extract_quantum_ops(hugr: &Hugr) -> Vec<QuantumOp> {
 
         // Check if it's from the tket.quantum extension
         let ext_id = ext_op.extension_id();
+        if ext_id.as_ref() as &str == "tket.global_phase" {
+            if has_trivial_direct_global_phase(hugr, node) {
+                continue;
+            }
+            return Err(HugrConvertError::UnsupportedExtension(
+                "tket.global_phase: scalar is non-trivial or not provably constant; PECOS circuits cannot carry it".to_string(),
+            ));
+        }
         if ext_id.as_ref() as &str != "tket.quantum" {
             continue;
         }
@@ -669,13 +715,18 @@ fn extract_quantum_ops(hugr: &Hugr) -> Vec<QuantumOp> {
         });
     }
 
-    operations
+    Ok(operations)
 }
 
 /// Key for tracking qubit wire flow: (node, `output_port_index`)
 type WireKey = (Node, usize);
 
 /// Convert a HUGR quantum circuit to a `DagCircuit`.
+///
+/// Only directly loaded, trivial `tket.global_phase` scalars are accepted.
+/// Computed, indirect, non-trivial or unknown scalars are rejected: PECOS circuits
+/// cannot represent an arbitrary global scalar. Export retains these scalars,
+/// but such exports cannot currently be imported back into a PECOS circuit.
 ///
 /// # Arguments
 ///
@@ -716,7 +767,7 @@ type WireKey = (Node, usize);
 /// structure natively.
 #[allow(clippy::too_many_lines)]
 pub fn hugr_to_dag_circuit(hugr: &Hugr) -> Result<DagCircuit, HugrConvertError> {
-    let operations = extract_quantum_ops(hugr);
+    let operations = extract_quantum_ops(hugr)?;
 
     if operations.is_empty() {
         return Ok(DagCircuit::new());
@@ -1114,6 +1165,42 @@ pub fn dag_circuit_to_hugr(dag: &DagCircuit) -> Result<Hugr, HugrConvertError> {
             continue;
         };
 
+        if let Some(lambda) = gate.phase_angle() {
+            let half_turns = lambda.to_radians_signed() / std::f64::consts::PI;
+            for qubit in &gate.qubits {
+                let rotation = ConstRotation::new(half_turns).map_err(|e| {
+                    HugrConvertError::UnsupportedStructure(format!("Invalid rotation: {e}"))
+                })?;
+                let phase = ConstRotation::new(half_turns / 2.0).map_err(|e| {
+                    HugrConvertError::UnsupportedStructure(format!("Invalid phase: {e}"))
+                })?;
+                let rotation_wire = builder.add_load_value(rotation);
+                let wire = qubit_wires.get(qubit).copied().ok_or_else(|| {
+                    HugrConvertError::UnsupportedStructure(format!("Unknown qubit: {qubit:?}"))
+                })?;
+                let output = builder
+                    .add_dataflow_op(TketOp::Rz, [wire, rotation_wire])
+                    .map_err(|e| {
+                        HugrConvertError::UnsupportedStructure(format!(
+                            "Failed to add phase rotation: {e}"
+                        ))
+                    })?
+                    .out_wire(0);
+                let phase_wire = builder.add_load_value(phase);
+                builder
+                    .add_dataflow_op(
+                        tket::extension::global_phase::GlobalPhase.into_extension_op(),
+                        [phase_wire],
+                    )
+                    .map_err(|e| {
+                        HugrConvertError::UnsupportedStructure(format!(
+                            "Failed to add global phase: {e}"
+                        ))
+                    })?;
+                qubit_wires.insert(*qubit, output);
+            }
+            continue;
+        }
         let Some(tket_op) = gate_type_to_tket_op(gate.gate_type) else {
             return Err(HugrConvertError::UnknownOperation(format!(
                 "Unsupported gate type: {:?}",
@@ -1372,7 +1459,7 @@ impl SimpleHugr {
     #[allow(clippy::too_many_lines)]
     fn build_from_hugr(hugr: Hugr) -> Result<Self, HugrConvertError> {
         // Extract quantum operations
-        let quantum_ops = extract_quantum_ops(&hugr);
+        let quantum_ops = extract_quantum_ops(&hugr)?;
 
         if quantum_ops.is_empty() {
             return Ok(Self {

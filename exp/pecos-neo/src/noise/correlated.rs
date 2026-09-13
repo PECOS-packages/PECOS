@@ -152,15 +152,12 @@ impl NoiseChannel for CorrelatedNoiseChannel {
         ctx: &mut NoiseContext,
         rng: &mut PecosRng,
     ) -> NoiseResponse {
-        let NoiseEvent::AfterGate {
-            gate_type, qubits, ..
-        } = event
-        else {
+        let NoiseEvent::AfterGate { qubits, .. } = event else {
             return NoiseResponse::None;
         };
 
         // Skip noiseless gates
-        if ctx.is_noiseless(*gate_type) {
+        if ctx.is_noiseless_operation(event) {
             return NoiseResponse::None;
         }
 

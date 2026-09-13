@@ -18,7 +18,8 @@
 //! simulation. Each pass implements [`CircuitPass`] and can modify both
 //! [`TickCircuit`] and [`DagCircuit`] in place.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::sync::OnceLock;
 
 use pecos_core::gate_type::GateType;
 use pecos_core::{Angle64, Clifford, Gate, GateQubits, QubitId};
@@ -298,6 +299,9 @@ fn simplify_gate_in_place(gate: &mut Gate) {
 
 /// Returns `true` if the gate is a unitary identity operation.
 fn is_identity_gate(gate: &Gate) -> bool {
+    if let Some(lambda) = gate.phase_angle() {
+        return lambda.is_zero();
+    }
     match gate.gate_type {
         GateType::I => true,
         gt if is_rotation(gt) => gate.angles.len() == 1 && gate.angles[0].is_zero(),
@@ -316,6 +320,17 @@ fn is_rotation(gt: GateType) -> bool {
         gt,
         GateType::RX | GateType::RY | GateType::RZ | GateType::RXX | GateType::RYY | GateType::RZZ
     )
+}
+
+/// Index of the additive angle for same-family rotation merging.
+fn rotation_angle_index(gate: &Gate) -> Option<usize> {
+    if gate.phase_angle().is_some() {
+        Some(2)
+    } else if is_rotation(gate.gate_type) && gate.angles.len() == 1 {
+        Some(0)
+    } else {
+        None
+    }
 }
 
 /// Returns `true` if the gate type is its own inverse.
@@ -376,10 +391,9 @@ fn are_inverses(a: &Gate, b: &Gate) -> bool {
     }
     // Rotation angles summing to zero
     if a.gate_type == b.gate_type
-        && is_rotation(a.gate_type)
-        && a.angles.len() == 1
-        && b.angles.len() == 1
-        && (a.angles[0] + b.angles[0]).is_zero()
+        && let Some(index) = rotation_angle_index(a)
+        && rotation_angle_index(b) == Some(index)
+        && (a.angles[index] + b.angles[index]).is_zero()
     {
         return true;
     }
@@ -787,15 +801,17 @@ impl CircuitPass for MergeAdjacentRotations {
                 let gi = gate.batch_index();
                 let qubits: Vec<QubitId> = gate.qubits.iter().copied().collect();
 
-                if is_rotation(gate.gate_type)
-                    && gate.angles.len() == 1
+                if let Some(index) = rotation_angle_index(gate.as_gate())
                     && let Some((pred_ti, pred_gi)) = check_all_stacks_agree(&stacks, &qubits)
                 {
                     let pred_gate = &circuit.ticks()[pred_ti].gate_batches()[pred_gi];
-                    if pred_gate.gate_type == gate.gate_type && pred_gate.qubits == gate.qubits {
+                    if pred_gate.gate_type == gate.gate_type
+                        && pred_gate.qubits == gate.qubits
+                        && rotation_angle_index(pred_gate) == Some(index)
+                    {
                         *angle_adjustments
                             .entry((pred_ti, pred_gi))
-                            .or_insert(Angle64::ZERO) += gate.angles[0];
+                            .or_insert(Angle64::ZERO) += gate.angles[index];
                         to_remove.push((ti, gi));
                         // Don't push; predecessor stays on stack for chain merging.
                         continue;
@@ -813,7 +829,9 @@ impl CircuitPass for MergeAdjacentRotations {
         for (&(ti, gi), &delta) in &angle_adjustments {
             if let Some(tick) = circuit.get_tick_mut(ti) {
                 tick.update_gate_batch(gi, |gate| {
-                    gate.angles[0] += delta;
+                    let index =
+                        rotation_angle_index(gate).expect("merged gate has an additive angle");
+                    gate.angles[index] += delta;
                 })
                 .unwrap_or_else(|err| panic!("{err}"));
             }
@@ -832,9 +850,9 @@ impl CircuitPass for MergeAdjacentRotations {
         let topo = circuit.topological_order();
         for node in topo {
             while let Some(gate) = circuit.gate(node) {
-                if !is_rotation(gate.gate_type) || gate.angles.len() != 1 {
+                let Some(index) = rotation_angle_index(gate) else {
                     break;
-                }
+                };
                 let gate_type = gate.gate_type;
                 let qubits: Vec<QubitId> = gate.qubits.iter().copied().collect();
 
@@ -847,12 +865,12 @@ impl CircuitPass for MergeAdjacentRotations {
 
                 if succ_gate.gate_type != gate_type
                     || succ_gate.qubits[..] != qubits[..]
-                    || succ_gate.angles.len() != 1
+                    || rotation_angle_index(succ_gate) != Some(index)
                 {
                     break;
                 }
 
-                let succ_angle = succ_gate.angles[0];
+                let succ_angle = succ_gate.angles[index];
 
                 // Save succ-of-successor for rewiring.
                 let mut rewire = Vec::new();
@@ -863,7 +881,7 @@ impl CircuitPass for MergeAdjacentRotations {
 
                 // Merge angle and remove successor.
                 circuit
-                    .update_gate(node, |gate| gate.angles[0] += succ_angle)
+                    .update_gate(node, |gate| gate.angles[index] += succ_angle)
                     .expect("merging rotation angles must preserve a valid gate");
                 circuit.remove_gate(succ);
 
@@ -1055,19 +1073,20 @@ fn is_z_measure(gt: GateType) -> bool {
 /// a Z eigenstate only adds a global phase (no-op), and it does not change
 /// Z-measurement statistics.
 fn is_z_diagonal(gate: &Gate) -> bool {
-    matches!(
-        gate.gate_type,
-        GateType::Z
-            | GateType::SZ
-            | GateType::SZdg
-            | GateType::T
-            | GateType::Tdg
-            | GateType::RZ
-            | GateType::CZ
-            | GateType::SZZ
-            | GateType::SZZdg
-            | GateType::RZZ
-    )
+    gate.phase_angle().is_some()
+        || matches!(
+            gate.gate_type,
+            GateType::Z
+                | GateType::SZ
+                | GateType::SZdg
+                | GateType::T
+                | GateType::Tdg
+                | GateType::RZ
+                | GateType::CZ
+                | GateType::SZZ
+                | GateType::SZZdg
+                | GateType::RZZ
+        )
 }
 
 /// Remove Z-diagonal gates that are redundant due to adjacent Z-basis
@@ -1299,40 +1318,98 @@ fn single_qubit_clifford_sequence_score(sequence: &[GateType]) -> (usize, usize)
     (non_frame_count, sequence.len())
 }
 
-fn canonical_single_qubit_clifford_sequence(clifford: Clifford) -> Vec<GateType> {
-    if clifford == Clifford::I {
-        return Vec::new();
-    }
-
-    let mut best_sequence: Option<Vec<GateType>> = None;
-    let mut best_score: Option<(usize, usize)> = None;
-
-    for &candidate in &SINGLE_QUBIT_CLIFFORD_CANDIDATES {
-        let sequence = vec![candidate];
-        if single_qubit_clifford_sequence_product(&sequence) == clifford {
-            let score = single_qubit_clifford_sequence_score(&sequence);
-            if best_score.is_none_or(|best| score < best) {
-                best_score = Some(score);
-                best_sequence = Some(sequence);
+/// Nondominated (non-frame count, length) representatives for each exact
+/// operator, including its scalar. The former length-two enumeration had
+/// 1 + 12 + 12² = 157 words, covering only 85 of the 192 reachable operators.
+///
+/// Retaining the Pareto frontier preserves optimal choices for every position
+/// budget. A repeated exact state adds a positive length and nonnegative cost,
+/// so cyclic paths are dominated: traversal is finite, independent of chains.
+fn single_qubit_clifford_representatives()
+-> &'static HashMap<pecos_synth::Matrix, Vec<Vec<GateType>>> {
+    static TABLE: OnceLock<HashMap<pecos_synth::Matrix, Vec<Vec<GateType>>>> = OnceLock::new();
+    TABLE.get_or_init(|| {
+        let generators = SINGLE_QUBIT_CLIFFORD_CANDIDATES
+            .map(|gate| (gate, single_qubit_clifford_sequence_matrix(&[gate])));
+        let identity = pecos_synth::Matrix::identity();
+        let mut representatives = HashMap::from([(identity.clone(), vec![Vec::new()])]);
+        let mut queue = VecDeque::from([(identity, Vec::new())]);
+        while let Some((operator, sequence)) = queue.pop_front() {
+            if !representatives[&operator].contains(&sequence) {
+                continue; // A subsequently discovered representative dominates this one.
             }
-        }
-    }
-
-    for &first in &SINGLE_QUBIT_CLIFFORD_CANDIDATES {
-        for &second in &SINGLE_QUBIT_CLIFFORD_CANDIDATES {
-            let sequence = vec![first, second];
-            if single_qubit_clifford_sequence_product(&sequence) == clifford {
-                let score = single_qubit_clifford_sequence_score(&sequence);
-                if best_score.is_none_or(|best| score < best) {
-                    best_score = Some(score);
-                    best_sequence = Some(sequence);
+            for (gate, matrix) in &generators {
+                let next_operator = matrix * &operator;
+                let mut next_sequence = sequence.clone();
+                next_sequence.push(*gate);
+                let (cost, length) = single_qubit_clifford_sequence_score(&next_sequence);
+                let frontier = representatives.entry(next_operator.clone()).or_default();
+                if frontier.iter().any(|known| {
+                    let (known_cost, known_length) = single_qubit_clifford_sequence_score(known);
+                    known_cost <= cost && known_length <= length
+                }) {
+                    continue;
                 }
+                frontier.retain(|known| {
+                    let (known_cost, known_length) = single_qubit_clifford_sequence_score(known);
+                    !(cost <= known_cost && length <= known_length)
+                });
+                frontier.push(next_sequence.clone());
+                queue.push_back((next_operator, next_sequence));
             }
         }
-    }
+        representatives
+    })
+}
 
-    best_sequence.unwrap_or_else(|| {
-        panic!("no existing-gate decomposition found for one-qubit Clifford {clifford}")
+fn canonical_single_qubit_clifford_sequence(
+    clifford: Clifford,
+    operator: &pecos_synth::Matrix,
+    available_positions: usize,
+) -> Option<Vec<GateType>> {
+    let sequence = single_qubit_clifford_representatives()
+        .get(operator)?
+        .iter()
+        .filter(|sequence| sequence.len() <= available_positions)
+        .min_by_key(|sequence| single_qubit_clifford_sequence_score(sequence))?;
+    debug_assert_eq!(single_qubit_clifford_sequence_product(sequence), clifford);
+    Some(sequence.clone())
+}
+
+/// Interpret the finite component alphabet of the canonical Clifford matrices
+/// in the exact ring. Matching these constants is exact, with no angle snapping.
+fn exact_clifford_component(value: f64) -> pecos_synth::DOmega {
+    use pecos_synth::DOmega;
+    let magnitude = match value.abs() {
+        0.0 => DOmega::new(0_i64.into(), 0),
+        1.0 => DOmega::new(1_i64.into(), 0),
+        0.5 => DOmega::new(1_i64.into(), 2),
+        std::f64::consts::FRAC_1_SQRT_2 => DOmega::new(1_i64.into(), 1),
+        _ => unreachable!("canonical Clifford matrix has an unexpected component: {value}"),
+    };
+    if value.is_sign_negative() {
+        -magnitude
+    } else {
+        magnitude
+    }
+}
+
+/// Multiply canonical physical gate matrices exactly in circuit order.
+fn single_qubit_clifford_sequence_matrix(sequence: &[GateType]) -> pecos_synth::Matrix {
+    use pecos_synth::{DOmega, Matrix, ZOmega};
+    let imaginary_unit = DOmega::from(ZOmega::i());
+    sequence.iter().fold(Matrix::identity(), |product, gate| {
+        let entries = gate
+            .canonical_1q_matrix()
+            .expect("single-qubit Clifford has a matrix");
+        let matrix = Matrix::new(std::array::from_fn(|row| {
+            std::array::from_fn(|col| {
+                let offset = 2 * (2 * row + col);
+                &exact_clifford_component(entries[offset])
+                    + &(&imaginary_unit * &exact_clifford_component(entries[offset + 1]))
+            })
+        }));
+        matrix * product
     })
 }
 
@@ -1345,10 +1422,21 @@ fn flush_single_qubit_clifford_chain(
         return;
     }
 
-    let canonical = canonical_single_qubit_clifford_sequence(chain.product);
+    let operator = single_qubit_clifford_sequence_matrix(&chain.gates);
+    let Some(canonical) =
+        canonical_single_qubit_clifford_sequence(chain.product, &operator, chain.positions.len())
+    else {
+        return;
+    };
     let original_score = single_qubit_clifford_sequence_score(&chain.gates);
     let canonical_score = single_qubit_clifford_sequence_score(&canonical);
     if canonical_score >= original_score || canonical.len() > chain.positions.len() {
+        return;
+    }
+
+    // Clifford composition is projective. PECOS has no gate-level carrier for
+    // the scalar, so only replace chains whose physical operators agree.
+    if operator != single_qubit_clifford_sequence_matrix(&canonical) {
         return;
     }
 
@@ -1363,8 +1451,9 @@ fn flush_single_qubit_clifford_chain(
 /// Simplify adjacent single-qubit Clifford chains on each qubit.
 ///
 /// The pass follows each qubit's operation timeline, composes adjacent plain
-/// one-qubit Clifford gates exactly, and replaces the chain with a deterministic
-/// sequence over existing PECOS gate names. Gates carrying parameters,
+/// one-qubit Clifford actions, and proposes a deterministic sequence over existing
+/// PECOS gate names. It substitutes only when the physical matrices agree,
+/// including the global scalar; otherwise it retains the original chain. Gates carrying parameters,
 /// measurement IDs, channel payloads, or batch metadata are treated as barriers.
 pub struct SimplifySingleQubitCliffordChains;
 
@@ -3320,23 +3409,87 @@ mod tests {
     }
 
     #[test]
-    fn single_qubit_clifford_canonical_sequences_cover_all_1q() {
-        for &clifford in Clifford::all_1q() {
-            let sequence = canonical_single_qubit_clifford_sequence(clifford);
-            assert_eq!(
-                single_qubit_clifford_sequence_product(&sequence),
-                clifford,
-                "canonical sequence {sequence:?} does not implement {clifford}"
-            );
-            assert!(
-                sequence.len() <= 2,
-                "canonical sequence for {clifford} should use at most two gates"
-            );
+    fn single_qubit_clifford_representatives_cover_all_192_operators() {
+        let table = single_qubit_clifford_representatives();
+        assert_eq!(table.len(), 192);
+        let mut classes = HashSet::new();
+        for (operator, frontier) in table {
+            for sequence in frontier {
+                assert_eq!(single_qubit_clifford_sequence_matrix(sequence), *operator);
+                classes.insert(single_qubit_clifford_sequence_product(sequence));
+            }
+            for gate in SINGLE_QUBIT_CLIFFORD_CANDIDATES {
+                let next = &single_qubit_clifford_sequence_matrix(&[gate]) * operator;
+                assert!(
+                    table.contains_key(&next),
+                    "exact operator set must be closed"
+                );
+            }
         }
+        assert_eq!(classes.len(), 24);
     }
 
     #[test]
-    fn simplify_single_qubit_clifford_chains_reduces_batched_chains() {
+    fn single_qubit_clifford_candidates_are_optimal_for_every_position_budget() {
+        // Independent bounded dynamic programming oracle: enumerate minimum
+        // costs at each exact length, without Pareto pruning. A useful path
+        // cannot repeat an exact state, so 191 positions cover every optimum.
+        let table = single_qubit_clifford_representatives();
+        let operators: Vec<_> = table.keys().collect();
+        let indices: HashMap<_, _> = operators
+            .iter()
+            .enumerate()
+            .map(|(index, &operator)| (operator, index))
+            .collect();
+        let transitions: Vec<Vec<_>> = operators
+            .iter()
+            .map(|&operator| {
+                SINGLE_QUBIT_CLIFFORD_CANDIDATES
+                    .iter()
+                    .map(|&gate| {
+                        let next = &single_qubit_clifford_sequence_matrix(&[gate]) * operator;
+                        (
+                            indices[&next],
+                            usize::from(!is_z_axis_frame_candidate(gate)),
+                        )
+                    })
+                    .collect()
+            })
+            .collect();
+        let mut costs = vec![usize::MAX; operators.len()];
+        costs[indices[&pecos_synth::Matrix::identity()]] = 0;
+        let mut best = vec![None; operators.len()];
+        for budget in 0..operators.len() {
+            for (index, &operator) in operators.iter().enumerate() {
+                if costs[index] != usize::MAX {
+                    let score = (costs[index], budget);
+                    best[index] = Some(best[index].map_or(score, |previous| score.min(previous)));
+                }
+                let class = single_qubit_clifford_sequence_product(&table[operator][0]);
+                let chosen = canonical_single_qubit_clifford_sequence(class, operator, budget);
+                assert_eq!(
+                    chosen.as_deref().map(single_qubit_clifford_sequence_score),
+                    best[index],
+                    "incorrect optimum for {operator:?} with {budget} positions"
+                );
+            }
+            let mut next_costs = vec![usize::MAX; operators.len()];
+            for (index, &cost) in costs.iter().enumerate() {
+                if cost != usize::MAX {
+                    for &(next, increment) in &transitions[index] {
+                        next_costs[next] = next_costs[next].min(cost + increment);
+                    }
+                }
+            }
+            costs = next_costs;
+        }
+        let count: usize = table.values().map(Vec::len).sum();
+        let max_length = table.values().flatten().map(Vec::len).max().unwrap();
+        eprintln!("{count} nondominated representatives; maximum length {max_length}");
+    }
+
+    #[test]
+    fn simplify_single_qubit_clifford_chains_preserves_batched_scalars() {
         let mut original = TickCircuit::new();
         original.tick().sx(&[0, 1]);
         original.tick().sz(&[0, 1]);
@@ -3344,14 +3497,26 @@ mod tests {
         let mut simplified = original.clone();
         SimplifySingleQubitCliffordChains.apply_tick(&mut simplified);
 
-        assert_circuits_equiv(&original, &simplified);
         let gates: Vec<&Gate> = simplified
             .ticks()
             .iter()
             .flat_map(super::super::tick_circuit::Tick::gate_batches)
             .collect();
-        assert_eq!(gates.len(), 2);
-        assert!(gates.iter().all(|gate| gate.gate_type == GateType::F));
+        // SZ * SX = -i F, so replacing both chains by F would change
+        // this two-qubit operator by -1. Preserve each original chain.
+        assert_eq!(gates.len(), 4);
+        for qubit in [QubitId(0), QubitId(1)] {
+            let actual: Vec<_> = gates
+                .iter()
+                .filter(|gate| gate.qubits.as_slice() == [qubit])
+                .map(|gate| gate.gate_type)
+                .collect();
+            assert_eq!(actual, [GateType::SX, GateType::SZ]);
+            assert_eq!(
+                single_qubit_clifford_sequence_matrix(&actual),
+                single_qubit_clifford_sequence_matrix(&[GateType::SX, GateType::SZ])
+            );
+        }
     }
 
     #[test]

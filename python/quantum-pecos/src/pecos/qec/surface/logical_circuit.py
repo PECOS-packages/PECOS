@@ -1134,6 +1134,17 @@ class _CircuitGenerator:
         self.tc.set_meta("detectors", json.dumps(det_out))
         self.tc.set_meta("observables", json.dumps(obs_out))
         self.tc.set_meta("num_measurements", str(total))
+        # Semantic provenance of every measurement ordinal, for cross-form
+        # comparison against Guppy sidebands without reaching into the generator.
+        self.tc.set_meta(
+            "measurement_keys",
+            json.dumps(
+                {
+                    "stabilizer": [[*key, ordinal] for key, ordinal in self.stab_meas.items()],
+                    "data": [[label, qubit, ordinal] for (label, qubit), ordinal in self.data_meas.items()],
+                },
+            ),
+        )
         self.tc.set_meta(
             "injection_readouts",
             json.dumps(

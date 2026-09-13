@@ -434,11 +434,9 @@ impl NoiseChannel for TwoQubitChannel {
         rng: &mut PecosRng,
     ) -> NoiseResponse {
         match event {
-            NoiseEvent::BeforeGate {
-                gate_type, qubits, ..
-            } => {
+            NoiseEvent::BeforeGate { qubits, .. } => {
                 // Skip noise for noiseless gates (but still check leakage)
-                if ctx.is_noiseless(*gate_type) {
+                if ctx.is_noiseless_operation(event) {
                     return NoiseResponse::None;
                 }
                 Self::handle_before_gate(qubits, ctx)
@@ -450,7 +448,7 @@ impl NoiseChannel for TwoQubitChannel {
                 ..
             } => {
                 // Skip noise for noiseless gates
-                if ctx.is_noiseless(*gate_type) {
+                if ctx.is_noiseless_operation(event) {
                     return NoiseResponse::None;
                 }
                 self.handle_after_gate(*gate_type, qubits, angles, ctx, rng)
@@ -479,7 +477,7 @@ impl NoiseChannel for TwoQubitChannel {
                 if !gate_type.is_two_qubit() || !gate_type.is_unitary_gate() {
                     return None;
                 }
-                if ctx.is_noiseless(*gate_type) {
+                if ctx.is_noiseless_operation(event) {
                     return Some(NoiseResponse::None);
                 }
                 Some(Self::handle_before_gate(qubits, ctx))
@@ -493,7 +491,7 @@ impl NoiseChannel for TwoQubitChannel {
                 if !gate_type.is_two_qubit() || !gate_type.is_unitary_gate() {
                     return None;
                 }
-                if ctx.is_noiseless(*gate_type) {
+                if ctx.is_noiseless_operation(event) {
                     return Some(NoiseResponse::None);
                 }
                 Some(self.handle_after_gate(*gate_type, qubits, angles, ctx, rng))

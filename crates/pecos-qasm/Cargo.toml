@@ -48,6 +48,8 @@ pecos-wasm = { workspace = true, optional = true }
 wat = { workspace = true, optional = true }
 
 [dev-dependencies]
+pecos-phir-json.workspace = true
+
 # Testing
 tempfile.workspace = true
 # Required for doctests

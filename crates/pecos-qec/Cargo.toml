@@ -44,5 +44,9 @@ required-features = ["neo"]
 name = "surface_d3_fault_catalog_lookup"
 path = "../../examples/surface/d3_fault_catalog_lookup.rs"
 
+[dev-dependencies]
+pecos-phir.workspace = true
+pecos-engines.workspace = true
+
 [lints]
 workspace = true

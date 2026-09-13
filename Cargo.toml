@@ -236,6 +236,7 @@ pecos-results = { version = "0.2.0-dev.0", path = "crates/pecos-results" }
 pecos-rslib = { version = "0.2.0-dev.0", path = "python/pecos-rslib" }
 pecos-rslib-llvm = { version = "0.2.0-dev.0", path = "python/pecos-rslib-llvm" }
 pecos-simulators = { version = "0.2.0-dev.0", path = "crates/pecos-simulators" }
+pecos-synth = { version = "0.2.0-dev.0", path = "crates/pecos-synth" }
 pecos-tesseract = { version = "0.2.0-dev.0", path = "crates/pecos-tesseract" }
 pecos-uf-decoder = { version = "0.2.0-dev.0", path = "crates/pecos-uf-decoder" }
 pecos-wasm = { version = "0.2.0-dev.0", path = "crates/pecos-wasm" }

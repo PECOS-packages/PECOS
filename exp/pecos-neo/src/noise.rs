@@ -341,6 +341,27 @@ pub enum NoiseEvent<'a> {
 }
 
 impl<'a> NoiseEvent<'a> {
+    /// Inherited noise classification of a gate operation. The scheduled type
+    /// and custom gate ID remain intact for explicit calibration and provenance.
+    #[must_use]
+    pub fn noise_gate_type(&self) -> Option<GateType> {
+        let (gate_type, angles) = match self {
+            Self::BeforeGate {
+                gate_type, angles, ..
+            }
+            | Self::AfterGate {
+                gate_type, angles, ..
+            } => (*gate_type, *angles),
+            _ => return None,
+        };
+        let gate = pecos_core::Gate::new(gate_type.into(), angles.to_vec(), Vec::new(), Vec::new());
+        Some(if gate.phase_angle().is_some() {
+            GateType::RZ
+        } else {
+            gate_type
+        })
+    }
+
     /// Get the payload-independent event kind.
     #[must_use]
     pub const fn kind(&self) -> NoiseEventKind {

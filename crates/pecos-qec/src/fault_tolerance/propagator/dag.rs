@@ -117,6 +117,8 @@ pub struct FaultLocations {
     pub before: Vec<bool>,
     /// Gate type at each location.
     pub gate_types: Vec<GateType>,
+    /// Inherited noise types; explicit scheduled-gate calibration takes precedence.
+    pub noise_gate_types: Vec<GateType>,
     /// Resolved Clifford action at each location.
     pub cliffords: Vec<CliffordLowering>,
     /// Idle duration at each location. 0.0 for non-idle gates.
@@ -140,6 +142,7 @@ impl FaultLocations {
             qubits: Vec::with_capacity(num_locations),
             before: Vec::with_capacity(num_locations),
             gate_types: Vec::with_capacity(num_locations),
+            noise_gate_types: Vec::with_capacity(num_locations),
             cliffords: Vec::with_capacity(num_locations),
             idle_durations: Vec::with_capacity(num_locations),
             node_to_locations: vec![SmallVec::new(); max_node + 1],
@@ -178,6 +181,7 @@ impl FaultLocations {
         self.qubits.push(qubits);
         self.before.push(before);
         self.gate_types.push(gate.gate_type);
+        self.noise_gate_types.push(noise_gate_type(gate));
         self.cliffords.push(clifford);
         self.idle_durations.push(gate.idle_duration());
 
@@ -223,6 +227,7 @@ impl FaultLocations {
                 qubits: self.qubits[i].iter().copied().map(QubitId::from).collect(),
                 before: self.before[i],
                 gate_type: self.gate_types[i],
+                noise_gate_type: self.noise_gate_types[i],
                 clifford: self.cliffords[i],
                 idle_duration: self.idle_durations[i],
             })
@@ -248,6 +253,8 @@ pub struct DagSpacetimeLocation {
     pub before: bool,
     /// The type of gate at this location.
     pub gate_type: GateType,
+    /// Inherited noise type; explicit scheduled-gate calibration takes precedence.
+    pub noise_gate_type: GateType,
     /// The resolved Clifford action, independent of the scheduled gate type.
     pub clifford: CliffordLowering,
     /// Duration for idle gates. 0.0 for non-idle gates.
@@ -268,9 +275,18 @@ impl DagSpacetimeLocation {
             qubits,
             before,
             gate_type: gate.gate_type,
+            noise_gate_type: noise_gate_type(gate),
             clifford: resolve_clifford_action(node, gate),
             idle_duration: gate.idle_duration(),
         }
+    }
+}
+
+fn noise_gate_type(gate: &Gate) -> GateType {
+    if gate.phase_angle().is_some() {
+        GateType::RZ
+    } else {
+        gate.gate_type
     }
 }
 
@@ -298,6 +314,7 @@ impl PartialEq for DagSpacetimeLocation {
             && self.qubits == other.qubits
             && self.before == other.before
             && self.gate_type == other.gate_type
+            && self.noise_gate_type == other.noise_gate_type
             && self.clifford == other.clifford
             && self.idle_duration.to_bits() == other.idle_duration.to_bits()
     }
@@ -318,6 +335,7 @@ impl Ord for DagSpacetimeLocation {
             .then_with(|| self.qubits.cmp(&other.qubits))
             .then_with(|| self.before.cmp(&other.before))
             .then_with(|| self.gate_type.cmp(&other.gate_type))
+            .then_with(|| self.noise_gate_type.cmp(&other.noise_gate_type))
             .then_with(|| self.clifford.cmp(&other.clifford))
             .then_with(|| self.idle_duration.total_cmp(&other.idle_duration))
     }
@@ -329,6 +347,7 @@ impl Hash for DagSpacetimeLocation {
         self.qubits.hash(state);
         self.before.hash(state);
         self.gate_type.hash(state);
+        self.noise_gate_type.hash(state);
         self.clifford.hash(state);
         self.idle_duration.to_bits().hash(state);
     }

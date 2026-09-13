@@ -1,4 +1,4 @@
-# Copyright 2025 The PECOS Developers
+# Copyright 2026 The PECOS Developers
 #
 # Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
 # the License.You may obtain a copy of the License at
@@ -17,6 +17,9 @@ but using pure PECOS arrays and functions.
 Like numpy.testing, this module provides assertion functions for
 comparing arrays with appropriate tolerance handling.
 
+Noiseless TickCircuit replay and signed stabilizer-group helpers support
+physical circuit oracles across the QEC tests.
+
 Example:
     >>> import pecos as pc
     >>> from pecos.testing import assert_allclose, assert_array_equal
@@ -31,11 +34,16 @@ Example:
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING
+
+from pecos_rslib import SparseStab
 
 import pecos as pc
 
 if TYPE_CHECKING:
+    from pecos_rslib.quantum import TickCircuit
+
     from pecos import Array
 
 
@@ -218,4 +226,128 @@ __all__ = [
     "assert_allclose",
     "assert_array_equal",
     "assert_array_less",
+    "group_contains",
+    "simulate_tick_circuit",
+    "stabilizer_generators_after",
 ]
+
+
+def _replay_tick_circuit(tc: TickCircuit, num_ticks: int, seed: int) -> tuple[SparseStab, list[int]]:
+    """Replay supported Clifford operations, rejecting unknown operations and angles."""
+    if not 0 <= num_ticks <= tc.num_ticks():
+        msg = "Replay tick count is outside the circuit"
+        raise ValueError(msg)
+    max_q = max(
+        (int(q) for i in range(tc.num_ticks()) for g in tc.get_tick(i).gate_batches() for q in g.qubits),
+        default=0,
+    )
+    sim = SparseStab(max_q + 1)
+    sim.set_seed(seed)
+    flat = []
+    for i in range(num_ticks):
+        for gate in tc.get_tick(i).gate_batches():
+            name = gate.gate_type.name
+            qubits = [int(q) for q in gate.qubits]
+            if gate.angles:
+                msg = f"Unsupported replay operation: {name} with angles"
+                raise NotImplementedError(msg)
+            if name in {"QAlloc", "PZ"}:
+                sim.run_gate("PZ", set(qubits))
+            elif name == "MZ":
+                flat.extend(sim.run_gate("MZ", {q}).get(q, 0) for q in qubits)
+            elif gate.is_two_qubit():
+                # Gate arity accessor: python/pecos-rslib/src/dag_circuit_bindings.rs.
+                sim.run_gate(name, set(zip(qubits[::2], qubits[1::2], strict=True)))
+            elif gate.is_single_qubit():
+                # SparseStab.run_gate raises for unsupported symbols.
+                sim.run_gate(name, set(qubits))
+            else:
+                msg = f"Unsupported replay operation: {name}"
+                raise NotImplementedError(msg)
+    return sim, flat
+
+
+def simulate_tick_circuit(tc: TickCircuit, seed: int = 0) -> tuple[list[int], int, dict[int, int]]:
+    """Replay noiselessly; return measurements, fired detector count, and observables."""
+    _, flat = _replay_tick_circuit(tc, tc.num_ticks(), seed)
+    num_meas = int(tc.get_meta("num_measurements"))
+    if len(flat) != num_meas:
+        msg = "Replay measurement count disagrees with circuit metadata"
+        raise ValueError(msg)
+
+    def parity(records: list[int]) -> int:
+        value = 0
+        for rec in records:
+            index = num_meas + rec
+            if not 0 <= index < len(flat):
+                msg = f"Invalid measurement record: {rec}"
+                raise ValueError(msg)
+            value ^= flat[index]
+        return value
+
+    detectors = json.loads(tc.get_meta("detectors") or "[]")
+    observables = json.loads(tc.get_meta("observables") or "[]")
+    return (
+        flat,
+        sum(parity(det["records"]) for det in detectors),
+        {obs["id"]: parity(obs["records"]) for obs in observables},
+    )
+
+
+def stabilizer_generators_after(tc: TickCircuit, num_ticks: int, *, seed: int = 0) -> tuple[str, ...]:
+    """Return signed Hermitian Pauli generators after a noiseless circuit prefix.
+
+    SparseStab.stab_tableau (sparse_stab_bindings.rs) includes the raw phase
+    and prints XZ as Y. Physical Y = iXZ, so subtract one power of i per Y
+    from that raw phase. Returned strings use '+'/'-' followed by I/X/Y/Z.
+    """
+    sim, _ = _replay_tick_circuit(tc, num_ticks, seed)
+    generators = []
+    for row in sim.stab_tableau().splitlines():
+        phase = 2 if row[0] == "-" else 0
+        body = row[1:]
+        if body.startswith("i"):
+            phase += 1
+            body = body[1:]
+        phase = (phase - body.count("Y")) % 4
+        if phase not in {0, 2}:
+            msg = f"Non-Hermitian stabilizer row: {row}"
+            raise ValueError(msg)
+        generators.append(("+" if phase == 0 else "-") + body)
+    return tuple(generators)
+
+
+def group_contains(generators: tuple[str, ...], pauli: str) -> bool:
+    """Test signed Pauli membership by binary elimination, retaining product phases."""
+    n = len(pauli) - 1
+
+    def encode(signed: str) -> tuple[int, int, int]:
+        if len(signed) != n + 1 or signed[0] not in "+-" or set(signed[1:]) - set("IXYZ"):
+            msg = f"Invalid signed Pauli: {signed}"
+            raise ValueError(msg)
+        body = signed[1:]
+        x = sum(1 << i for i, p in enumerate(body) if p in "XY")
+        z = sum(1 << i for i, p in enumerate(body) if p in "ZY")
+        return x, z, ((2 if signed[0] == "-" else 0) + body.count("Y")) % 4
+
+    def multiply(a: tuple[int, int, int], b: tuple[int, int, int]) -> tuple[int, int, int]:
+        x, z, phase = a
+        bx, bz, bp = b
+        return x ^ bx, z ^ bz, (phase + bp + 2 * (z & bx).bit_count()) % 4
+
+    pivots = {}
+    for generator in generators:
+        row = encode(generator)
+        while vector := row[0] | (row[1] << n):
+            pivot = vector.bit_length() - 1
+            if pivot not in pivots:
+                pivots[pivot] = row
+                break
+            row = multiply(row, pivots[pivot])
+    row = encode(pauli)
+    while vector := row[0] | (row[1] << n):
+        pivot = vector.bit_length() - 1
+        if pivot not in pivots:
+            return False
+        row = multiply(row, pivots[pivot])
+    return row == (0, 0, 0)

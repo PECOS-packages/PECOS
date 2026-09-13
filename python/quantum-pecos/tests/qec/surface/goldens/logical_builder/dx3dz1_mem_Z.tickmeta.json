@@ -1,0 +1,8 @@
+{
+ "detectors": "[{\"id\": 0, \"coords\": [0.0, 3.0, 0.0], \"records\": [-7], \"meas_ids\": [0]}, {\"id\": 1, \"coords\": [0.0, 1.0, 0.0], \"records\": [-6], \"meas_ids\": [1]}, {\"id\": 2, \"coords\": [0.0, 3.0, 1.0], \"records\": [-5, -7], \"meas_ids\": [2, 0]}, {\"id\": 3, \"coords\": [0.0, 1.0, 1.0], \"records\": [-4, -6], \"meas_ids\": [3, 1]}, {\"id\": 4, \"coords\": [0.0, 3.0, 2.0], \"records\": [-2, -1, -5], \"meas_ids\": [5, 6, 2]}, {\"id\": 5, \"coords\": [0.0, 1.0, 2.0], \"records\": [-3, -2, -4], \"meas_ids\": [4, 5, 3]}]",
+ "observables": "[{\"id\": 0, \"records\": [-3], \"meas_ids\": [4]}]",
+ "num_measurements": "7",
+ "num_detectors": null,
+ "basis": null,
+ "num_ticks": 14
+}

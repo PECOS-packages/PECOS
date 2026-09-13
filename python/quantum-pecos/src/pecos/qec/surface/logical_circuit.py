@@ -79,7 +79,7 @@ class PatchState:
     qubit_offset: int = 0
     coord_offset: tuple[float, float] = (0.0, 0.0)
     x_z_swapped: bool = False
-    stabilizers_by_index: dict[str, dict[int, Stabilizer]] = field(default_factory=dict, init=False)
+    stabilizers_by_index: dict[str, dict[int, Stabilizer]] = field(default_factory=dict)
 
     @property
     def current_x_stabilizers(self) -> list[Stabilizer]:
@@ -113,6 +113,138 @@ class LogicalOp:
     injection_type: str | None = None
 
 
+def _conjugate_pauli(op: LogicalOp, patch: str, pauli: str) -> list[tuple[str, str]]:
+    """Return the sign-free Pauli image under a transversal Clifford layer."""
+    if patch not in op.patches:
+        return [(patch, pauli)]
+    if op.gate_type == LogicalGateType.TRANSVERSAL_H:
+        return [(patch, {"X": "Z", "Y": "Y", "Z": "X"}[pauli])]
+    if op.gate_type in (LogicalGateType.TRANSVERSAL_SZ, LogicalGateType.TRANSVERSAL_SZdg):
+        return [(patch, {"X": "Y", "Y": "X", "Z": "Z"}[pauli])]
+    terms = [(patch, pauli)]
+    if op.gate_type == LogicalGateType.TRANSVERSAL_CX:
+        ctrl, tgt = op.patches
+        if patch == ctrl and pauli in {"X", "Y"}:
+            terms.append((tgt, "X"))
+        elif patch == tgt and pauli in {"Z", "Y"}:
+            terms.append((ctrl, "Z"))
+    return terms
+
+
+def _conjugate_stabilizer_term(
+    op: LogicalOp,
+    term: tuple[str, str, str],
+) -> list[tuple[str, str, str]]:
+    """Conjugate an even-weight check while retaining its physical register support."""
+    patch, base_family, pauli = term
+    return [(label, base_family, kind) for label, kind in _conjugate_pauli(op, patch, pauli)]
+
+
+@dataclass(frozen=True)
+class _PropagationContext:
+    """Forward memory and orientation information shared by all check walks."""
+
+    operations: tuple[LogicalOp, ...]
+    memory_indices: tuple[int, ...]
+    orientations: tuple[dict[str, bool], ...]
+    preparations: dict[str, tuple[int, str]]
+
+    @classmethod
+    def from_operations(cls, operations: list[LogicalOp]) -> _PropagationContext:
+        """Index preparations and physical register orientations once per build."""
+        memory_indices = []
+        orientations = []
+        swapped: dict[str, bool] = {}
+        preparations: dict[str, tuple[int, str]] = {}
+        for operation_index, op in enumerate(operations):
+            if op.gate_type == LogicalGateType.TRANSVERSAL_H:
+                for label in op.patches:
+                    swapped[label] = not swapped.get(label, False)
+            elif op.gate_type == LogicalGateType.MEMORY:
+                segment = len(memory_indices)
+                memory_indices.append(operation_index)
+                orientations.append({label: swapped.get(label, False) for label in op.patches})
+                for label in op.patches:
+                    preparations.setdefault(label, (segment, op.per_patch_basis.get(label, op.basis)))
+        return cls(tuple(operations), tuple(memory_indices), tuple(orientations), preparations)
+
+
+def _propagate_stabilizer_terms(
+    context: _PropagationContext,
+    segment_idx: int,
+    term: tuple[str, str, str],
+) -> list[tuple[str, str, int]] | None:
+    """Resolve a (patch, base family, Pauli) to ordered (patch, family, segment) records.
+
+    Terms form an insertion-ordered XOR set on fixed physical supports. A
+    positive-round memory resolves only the type that its register measured.
+    A preparation closes a matching Pauli with its known +1 sign, including
+    the current segment's own preparation. None means no detector: the Pauli
+    was not measured, or the preparation it reached is of another type, so the
+    model treats it as random. Reaching the start without preparation raises
+    ValueError naming the unresolved terms.
+
+    Known limitations, each losing detectors rather than emitting a wrong one
+    (every emitted detector is deterministic and per-observable fault distance
+    is unchanged in the probed shapes):
+
+    - d=2 ``M(2,Z); H; SZ; M(2,X)``: Y is determined by measured X/Z products
+      beyond this single-support model.
+    - A term that dead-ends at a partner's preparation of a different type is
+      treated as random even when the partner's same-round measurement would
+      close it: ``M(A,2,Z); M(B,0,Z); CX(A,B); M([A,B],2,Z)`` misses four
+      weight-3 detectors X_A(seg1,r0) X_B(seg1,r0) X_A(seg0,last).
+    - A term is never resolved at a measurement later than the gate that
+      created it: ``M(A,0,X); M(B,2,Z); CX(A,B); M(A,2,Z); M([A,B],2,Z)``
+      misses Z_B(seg3,r0) Z_A(seg2,r0) Z_B(seg1,last).
+    - Products of two current checks through CX;S;CX:
+      ``M([A,B],2,Z); CX(A,B); SZ(B); CX(A,B); M([A,B],2,Z)`` misses the
+      weight-4 X_A X_B products.
+    """
+    preparations = context.preparations
+    patch, _, pauli = term
+    if patch in preparations and preparations[patch][0] == segment_idx:
+        return [] if pauli == preparations[patch][1] else None
+    open_terms = dict.fromkeys([term])
+    resolved = []
+    previous_segment = segment_idx
+    for operation_index in range(context.memory_indices[segment_idx] - 1, -1, -1):
+        op = context.operations[operation_index]
+        if op.gate_type == LogicalGateType.MEMORY:
+            previous_segment -= 1
+            for term in tuple(open_terms):
+                patch, base_family, pauli = term
+                if patch in op.patches:
+                    if op.rounds > 0:
+                        measured_type = base_family
+                        if context.orientations[previous_segment][patch]:
+                            measured_type = "Z" if base_family == "X" else "X"
+                        if pauli != measured_type:
+                            return None
+                        resolved.append((patch, pauli, previous_segment))
+                        del open_terms[term]
+                    elif preparations[patch][0] == previous_segment:
+                        if pauli != preparations[patch][1]:
+                            return None
+                        del open_terms[term]
+            if not open_terms:
+                break
+            continue
+
+        transformed: dict[tuple[str, str, str], None] = {}
+        for term in open_terms:
+            for mapped_term in _conjugate_stabilizer_term(op, term):
+                if mapped_term in transformed:
+                    del transformed[mapped_term]
+                else:
+                    transformed[mapped_term] = None
+        open_terms = transformed
+    if open_terms:
+        msg = f"Stabilizer terms without preparation: {list(open_terms)}"
+        raise ValueError(msg)
+    return resolved
+
+
 def _logical_readout_is_deterministic(
     operations: list[LogicalOp],
     segment_idx: int,
@@ -130,7 +262,11 @@ def _logical_readout_is_deterministic(
     This deliberately conservative rule suppresses B and C for
     M([A,B,C],2,Z); CX(A,B); CX(B,C); M([B,C],2,Z), even though the simulator's
     non-destructive MZ makes them deterministic, because A is gated after its
-    final readout, an invalid program rejected on the follow-up branch.
+    final readout, an invalid program rejected by ``to_tick_circuit``.
+    Terms without preparation raise ValueError naming the terms. False means
+    the readout is not supported as deterministic; unlike the check walk,
+    which returns None exactly for an unmeasured (physically random) Pauli,
+    this also includes the unsupported logical X image under physical S.
     """
     if logical_type not in {"X", "Z"}:
         msg = f"Unsupported logical readout type {logical_type!r}; expected X or Z"
@@ -167,22 +303,15 @@ def _logical_readout_is_deterministic(
 
         images = {}
         for label, kind in terms:
-            image = [(label, kind)]
-            if op.gate_type == LogicalGateType.TRANSVERSAL_H and label in op.patches:
-                image = [(label, "Z" if kind == "X" else "X")]
-            elif op.gate_type == LogicalGateType.TRANSVERSAL_CX:
-                ctrl, tgt = op.patches
-                if label == ctrl and kind == "X":
-                    image.append((tgt, "X"))
-                elif label == tgt and kind == "Z":
-                    image.append((ctrl, "Z"))
-            elif (
+            if (
                 op.gate_type in {LogicalGateType.TRANSVERSAL_SZ, LogicalGateType.TRANSVERSAL_SZdg}
                 and label in op.patches
                 and kind == "X"
             ):
+                # Physical S has no supported logical X image, although even-weight
+                # checks can retain its Y image without a check-level sign.
                 return False
-            for term in image:
+            for term in _conjugate_pauli(op, label, kind):
                 term_patch = term[0]
                 if term_patch in op.patches and term_patch in last_memory and last_memory[term_patch] < index:
                     return False
@@ -230,6 +359,10 @@ class LogicalCircuitBuilder:
     ) -> None:
         """Register a surface code patch.
 
+        The geometry is validated (every check must have even weight) and
+        indexed here, once; a registered patch's geometry is frozen from this
+        point and later edits to it are not reflected in generated circuits.
+
         Args:
             patch: The surface code patch.
             label: Unique label for this patch.
@@ -243,6 +376,18 @@ class LogicalCircuitBuilder:
         if label in self._patches:
             msg = f"Patch '{label}' already registered"
             raise ValueError(msg)
+        # S maps Y to -X, S-dagger maps X to -Y, H maps Y to -Y, each a -1
+        # per qubit, so over even weight the check-level sign is (-1)^w = +1,
+        # which is what lets the term model drop signs; odd weight would need signed terms.
+        geometry = patch.geometry
+        for family, stabs in (("X", geometry.x_stabilizers), ("Z", geometry.z_stabilizers)):
+            for stab in stabs:
+                if len(stab.data_qubits) % 2:
+                    msg = (
+                        f"Check on patch {label!r}, family {family}, index {stab.index} has odd weight; "
+                        "detector propagation requires even weight"
+                    )
+                    raise ValueError(msg)
         if coord_offset is None:
             # Auto-space: shift each patch by (d*2 + 2) * patch_index in x
             patch_idx = len(self._patches)
@@ -253,6 +398,10 @@ class LogicalCircuitBuilder:
             label=label,
             qubit_offset=qubit_offset,
             coord_offset=coord_offset,
+            stabilizers_by_index={
+                "X": {stab.index: stab for stab in geometry.x_stabilizers},
+                "Z": {stab.index: stab for stab in geometry.z_stabilizers},
+            },
         )
 
     def add_memory(
@@ -533,6 +682,36 @@ class LogicalCircuitBuilder:
         Returns:
             TickCircuit with gates, detectors, and observables as metadata.
         """
+        # Validate the expanded protocol: teleportation helpers insert their
+        # own preparation memories before their transversal operations.
+        last_memory = {
+            label: index
+            for index, op in enumerate(self._operations)
+            if op.gate_type == LogicalGateType.MEMORY
+            for label in op.patches
+        }
+        prepared: set[str] = set()
+        for index, op in enumerate(self._operations):
+            if op.gate_type == LogicalGateType.MEMORY:
+                prepared.update(op.patches)
+            else:
+                gate_name = {
+                    LogicalGateType.TRANSVERSAL_H: "Hadamard",
+                    LogicalGateType.TRANSVERSAL_CX: "Cnot",
+                    LogicalGateType.TRANSVERSAL_SZ: "SGate",
+                    LogicalGateType.TRANSVERSAL_SZdg: "SdgGate",
+                }[op.gate_type]
+                for label in op.patches:
+                    if label not in prepared:
+                        msg = f"{gate_name} on patch {label!r} precedes that patch's first MEMORY preparation"
+                        raise ValueError(msg)
+                    if last_memory[label] < index:
+                        msg = (
+                            f"{op.gate_type.name} ({gate_name}) on patch {label!r} "
+                            "executes after final data measurement; "
+                            "representing this requires terminal-segment support, tracked in issue #595"
+                        )
+                        raise ValueError(msg)
         saved = self._snapshot_and_reset()
         gen = _CircuitGenerator(
             patches=self._patches,
@@ -769,14 +948,6 @@ class LogicalCircuitBuilder:
 
         for i, op in enumerate(self._operations):
             if op.gate_type == LogicalGateType.MEMORY:
-                if not segments and pending_gates:
-                    gate_kinds = ", ".join(dict.fromkeys(gate["type"] for gate in pending_gates))
-                    msg = (
-                        f"leading logical gates before any syndrome round have no representable "
-                        f"boundary (no preceding segment): {gate_kinds}"
-                    )
-                    raise ValueError(msg)
-
                 # If there are pending gates, they form the boundary
                 # between the previous segment and this one.
                 if segments and pending_gates:
@@ -872,15 +1043,6 @@ class LogicalCircuitBuilder:
 
         if not segments:
             msg = "algorithm descriptor must contain at least one segment"
-            raise ValueError(msg)
-
-        if pending_gates:
-            gate_kinds = ", ".join(dict.fromkeys(gate["type"] for gate in pending_gates))
-            msg = (
-                f"trailing logical gates would be dropped ({gate_kinds}): logical gates after "
-                "a patch's final MEMORY would execute after final data measurement; representing "
-                "them requires terminal-segment support, tracked in issue #595"
-            )
             raise ValueError(msg)
 
         _validate_boundary_cardinality(segments, boundary_gates)
@@ -1021,20 +1183,16 @@ class _CircuitGenerator:
 
         self.patches = patches
         self.operations = operations
-        # Snapshot live geometry once per generation, including edits made
-        # after registration or between repeated builder renderings.
-        for ps in patches.values():
-            ps.stabilizers_by_index = {
-                "X": {s.index: s for s in ps.patch.geometry.x_stabilizers},
-                "Z": {s.index: s for s in ps.patch.geometry.z_stabilizers},
-            }
-
         self.tc = TickCircuit()
         self._current_tick = None
         self._allocated: set[int] = set()
         self.meas_count = 0
 
         self.stab_meas: dict[tuple[str, str, int, int, int], int] = {}
+        self._stab_meas_by_round: dict[tuple[str, int, int], list[tuple[str, str, int, int, int]]] = {}
+        self._last_round: dict[tuple[str, str, int], int] = {}
+        self._boundary_terms: dict[tuple[str, str, int], list[tuple[str, str, int]] | None] = {}
+        self._propagation_context = _PropagationContext.from_operations(operations)
         self.data_meas: dict[tuple[str, int], int] = {}
         self._injection_ops = [op for op in operations if op.teleportation]
         self._injection_ancillas = {op.patches[1] for op in self._injection_ops}
@@ -1149,14 +1307,10 @@ class _CircuitGenerator:
                 ],
             ),
         )
+        if {key for keys in self._stab_meas_by_round.values() for key in keys} != set(self.stab_meas):
+            msg = "Round measurement index does not cover the recorded stabilizer measurements"
+            raise AssertionError(msg)
         return self.tc
-
-    def _first_memory_basis(self, patch_label: str | None = None) -> str:
-        """Basis of this patch's first memory segment (preparation)."""
-        for op in self.operations:
-            if op.gate_type == LogicalGateType.MEMORY and (patch_label is None or patch_label in op.patches):
-                return op.per_patch_basis.get(patch_label, op.basis)
-        return "Z"
 
     def _last_memory_basis(self, patch_label: str | None = None) -> str:
         """Basis of this patch's last memory segment (readout)."""
@@ -1318,11 +1472,12 @@ class _CircuitGenerator:
                     raise ValueError(msg)
                 if self.patches[label].x_z_swapped:
                     family = "Z" if family == "X" else "X"
-                self.stab_meas[label, family, register.index(qubit), self.segment_idx, rnd] = index
-            if hasattr(self, "_last_round_cache"):
-                del self._last_round_cache
+                key = (label, family, register.index(qubit), self.segment_idx, rnd)
+                self.stab_meas[key] = index
+                self._last_round[label, family, self.segment_idx] = rnd
+                self._stab_meas_by_round.setdefault((label, self.segment_idx, rnd), []).append(key)
             for label in op.patches:
-                self._emit_round_detectors(label, rnd, is_first_segment=label in first_patches)
+                self._emit_round_detectors(label, rnd)
             self.round_time += 1.0
 
         # Read every final patch before constructing cross-patch observables.
@@ -1337,62 +1492,39 @@ class _CircuitGenerator:
         self,
         patch_label: str,
         round_idx: int,
-        *,
-        is_first_segment: bool,
     ) -> None:
         """Emit detectors for one syndrome round.
 
-        Handles three cases:
-        1. First round of first segment: only basis-matching stabs are deterministic
-        2. First round after a gate boundary: cross-type comparison needed
-        3. Normal round: compare same-type measurements in consecutive rounds
+        Round 0 of a segment propagates each check backwards to zero, one, or
+        more earlier records across patches (the patch's own preparation closes
+        a matching-type check into a singleton) or emits no detector; later
+        rounds compare same-type measurements in consecutive rounds.
         """
-        ps = self.patches[patch_label]
-        geom = ps.patch.geometry
         seg = self.segment_idx
+        # A distance-one patch has no ancillas and records no syndrome keys.
+        if self.patches[patch_label].patch.geometry.num_ancilla == 0:
+            return
 
-        for stab_type in ["X", "Z"]:
-            stabs = geom.x_stabilizers if stab_type == "X" else geom.z_stabilizers
-            for s in stabs:
-                curr_key = (patch_label, stab_type, s.index, seg, round_idx)
-                curr_idx = self.stab_meas.get(curr_key)
-                if curr_idx is None:
-                    continue
+        # Recorded keys carry the current family and the physical register index,
+        # including unequal family sizes after H on even-distance patches.
+        for curr_key in self._stab_meas_by_round[patch_label, seg, round_idx]:
+            _, stab_type, stab_index, _, _ = curr_key
+            curr_idx = self.stab_meas[curr_key]
 
-                if round_idx == 0 and is_first_segment:
-                    # First round of this patch's first segment:
-                    # Only stabilizers matching the prep basis are deterministic.
-                    # Find the prep basis from the first memory operation.
-                    init_basis = self._first_memory_basis(patch_label)
-                    det_type = init_basis
-                    # Account for X/Z swap
-                    effective_type = stab_type
-                    if ps.x_z_swapped:
-                        effective_type = "Z" if stab_type == "X" else "X"
-                    if effective_type == det_type:
-                        self._add_detector(
-                            patch_label,
-                            stab_type,
-                            s.index,
-                            [curr_idx],
-                        )
+            if round_idx == 0:
+                self._emit_boundary_detector(patch_label, stab_type, stab_index, curr_idx)
 
-                elif round_idx == 0 and seg > 0:
-                    # First round after a gate boundary.
-                    # Need to find the matching measurement from the previous segment.
-                    self._emit_boundary_detector(patch_label, stab_type, s.index, curr_idx)
-
-                elif round_idx > 0:
-                    # Normal: compare with previous round in same segment
-                    prev_key = (patch_label, stab_type, s.index, seg, round_idx - 1)
-                    prev_idx = self.stab_meas.get(prev_key)
-                    if prev_idx is not None:
-                        self._add_detector(
-                            patch_label,
-                            stab_type,
-                            s.index,
-                            [curr_idx, prev_idx],
-                        )
+            elif round_idx > 0:
+                # Normal: compare with previous round in same segment
+                prev_key = (patch_label, stab_type, stab_index, seg, round_idx - 1)
+                prev_idx = self.stab_meas.get(prev_key)
+                if prev_idx is not None:
+                    self._add_detector(
+                        patch_label,
+                        stab_type,
+                        stab_index,
+                        [curr_idx, prev_idx],
+                    )
 
     def _emit_boundary_detector(
         self,
@@ -1401,146 +1533,36 @@ class _CircuitGenerator:
         stab_index: int,
         curr_meas_idx: int,
     ) -> None:
-        """Emit a detector at a gate boundary.
-
-        After transversal H: an X-check in the new segment corresponds to what
-        was a Z-check in the previous segment (and vice versa). The detector
-        compares the current measurement with the last measurement of the
-        *conjugated* type from the previous segment.
-        """
-        self.patches[patch_label]
-        prev_seg = self.segment_idx - 1
-
-        # Find the gate that affects this specific patch at this boundary
-        gate_op = self._find_gate_before_segment(self.segment_idx, patch_label)
-
-        if (
-            gate_op is not None
-            and gate_op.gate_type == LogicalGateType.TRANSVERSAL_H
-            and patch_label in gate_op.patches
-        ):
-            # After H on THIS patch: X-stabs were Z-stabs, Z-stabs were X-stabs
-            conjugated_type = "Z" if stab_type == "X" else "X"
-            # Find the last round of the previous segment
-            prev_last_round = self._last_round_of_segment(patch_label, conjugated_type, prev_seg)
-            if prev_last_round is not None:
-                prev_key = (patch_label, conjugated_type, stab_index, prev_seg, prev_last_round)
-                prev_idx = self.stab_meas.get(prev_key)
-                if prev_idx is not None:
-                    self._add_detector(
-                        patch_label,
-                        stab_type,
-                        stab_index,
-                        [curr_meas_idx, prev_idx],
-                    )
-            # If no previous measurement found, this stabilizer wasn't measured before
-            # (e.g., it's the non-deterministic type). No detector.
-
-        elif (
-            gate_op is not None
-            and gate_op.gate_type == LogicalGateType.TRANSVERSAL_CX
-            and patch_label in gate_op.patches
-        ):
-            # After CX(control, target):
-            #   Control X-stabs: propagated to target → 3-body detector
-            #     post_ctrl_X XOR pre_ctrl_X XOR pre_tgt_X
-            #   Target Z-stabs: propagated back to control → 3-body detector
-            #     post_tgt_Z XOR pre_tgt_Z XOR pre_ctrl_Z
-            #   Control Z-stabs: unchanged → normal 2-body detector
-            #   Target X-stabs: unchanged → normal 2-body detector
-            ctrl_label = gate_op.patches[0]
-            tgt_label = gate_op.patches[1]
-            is_control = patch_label == ctrl_label
-
-            prev_last_round = self._last_round_of_segment(patch_label, stab_type, prev_seg)
-            if prev_last_round is None:
-                return  # No previous measurement
-
-            prev_key = (patch_label, stab_type, stab_index, prev_seg, prev_last_round)
-            prev_idx = self.stab_meas.get(prev_key)
-            if prev_idx is None:
-                return
-
-            needs_cross_patch = (is_control and stab_type == "X") or (not is_control and stab_type == "Z")
-
-            if needs_cross_patch:
-                # 3-body detector: also include the other patch's measurement
-                other_label = tgt_label if is_control else ctrl_label
-                other_last_round = self._last_round_of_segment(other_label, stab_type, prev_seg)
-                if other_last_round is not None:
-                    other_key = (other_label, stab_type, stab_index, prev_seg, other_last_round)
-                    other_idx = self.stab_meas.get(other_key)
-                    if other_idx is not None:
-                        self._add_detector(
-                            patch_label,
-                            stab_type,
-                            stab_index,
-                            [curr_meas_idx, prev_idx, other_idx],
-                        )
-                        return
-                # Fall through to 2-body if cross-patch measurement not found
-            self._add_detector(
-                patch_label,
-                stab_type,
-                stab_index,
-                [curr_meas_idx, prev_idx],
+        """Compare the current check with its backwards-propagated measurements."""
+        base_family = stab_type
+        if self.patches[patch_label].x_z_swapped:
+            base_family = "Z" if stab_type == "X" else "X"
+        cache_key = (patch_label, base_family, self.segment_idx)
+        if cache_key not in self._boundary_terms:
+            self._boundary_terms[cache_key] = _propagate_stabilizer_terms(
+                self._propagation_context,
+                self.segment_idx,
+                (patch_label, base_family, stab_type),
             )
-
-        else:
-            # No gate boundary — normal comparison with previous segment
-            prev_last_round = self._last_round_of_segment(patch_label, stab_type, prev_seg)
-            if prev_last_round is not None:
-                prev_key = (patch_label, stab_type, stab_index, prev_seg, prev_last_round)
-                prev_idx = self.stab_meas.get(prev_key)
-                if prev_idx is not None:
-                    self._add_detector(
-                        patch_label,
-                        stab_type,
-                        stab_index,
-                        [curr_meas_idx, prev_idx],
-                    )
-
-    def _find_gate_before_segment(
-        self,
-        segment_idx: int,
-        patch_label: str | None = None,
-    ) -> LogicalOp | None:
-        """Find the gate operation that precedes a memory segment.
-
-        If patch_label is given, returns the gate that affects that specific
-        patch (checking gate_op.patches). This handles the case where multiple
-        gates are stacked between segments (e.g., H on A then H on B).
-        """
-        mem_count = 0
-        for i, op in enumerate(self.operations):
-            if op.gate_type == LogicalGateType.MEMORY:
-                if mem_count == segment_idx:
-                    # Look backwards for gates
-                    for j in range(i - 1, -1, -1):
-                        if self.operations[j].gate_type == LogicalGateType.MEMORY:
-                            break
-                        if patch_label is None:
-                            return self.operations[j]
-                        if patch_label in self.operations[j].patches:
-                            return self.operations[j]
-                    return None
-                mem_count += 1
-        return None
+        earlier_keys = self._boundary_terms[cache_key]
+        if earlier_keys is None:
+            return
+        records = [curr_meas_idx]
+        for label, family, segment in earlier_keys:
+            last_round = self._last_round_of_segment(label, family, segment)
+            if last_round is None:
+                msg = f"no {family} measurement recorded for patch {label} at segment {segment}"
+                raise ValueError(msg)
+            key = (label, family, stab_index, segment, last_round)
+            if key not in self.stab_meas:
+                msg = f"index {stab_index} not recorded for patch {label}, family {family}, segment {segment}"
+                raise ValueError(msg)
+            records.append(self.stab_meas[key])
+        self._add_detector(patch_label, stab_type, stab_index, records)
 
     def _last_round_of_segment(self, patch_label: str, stab_type: str, seg_idx: int) -> int | None:
-        """Find the last round index for a stabilizer type in a segment.
-
-        Uses a cached index built on first call, then O(1) lookups.
-        """
-        if not hasattr(self, "_last_round_cache"):
-            # Build cache from stab_meas keys: (patch, type, seg) → max_round
-            cache: dict[tuple[str, str, int], int] = {}
-            for patch, stype, _sidx, seg, rnd in self.stab_meas:
-                key = (patch, stype, seg)
-                if key not in cache or rnd > cache[key]:
-                    cache[key] = rnd
-            self._last_round_cache = cache
-        return self._last_round_cache.get((patch_label, stab_type, seg_idx))
+        """Look up the last recorded round for a stabilizer family in O(1)."""
+        return self._last_round.get((patch_label, stab_type, seg_idx))
 
     def _ancilla_spatial_coords(
         self,
@@ -1556,9 +1578,10 @@ class _CircuitGenerator:
         ps = self.patches[patch_label]
         geom = ps.patch.geometry
         cx, cy = ps.coord_offset
-        s = ps.stabilizers_by_index[stab_type].get(stab_index)
+        base_family = ("Z" if stab_type == "X" else "X") if ps.x_z_swapped else stab_type
+        s = ps.stabilizers_by_index[base_family].get(stab_index)
         if s is None:
-            msg = f"Patch '{patch_label}' has no {stab_type} stabilizer with index {stab_index}"
+            msg = f"Patch '{patch_label}' has no {base_family} stabilizer with index {stab_index}"
             raise ValueError(msg)
         positions = [geom.id_to_pos[q] for q in s.data_qubits]
         avg_row = sum(r for r, c in positions) / len(positions)

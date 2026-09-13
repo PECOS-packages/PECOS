@@ -30,12 +30,17 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from enum import Enum, auto
+from itertools import zip_longest
 from typing import TYPE_CHECKING
 
+from pecos.qec.surface import gadgets
+from pecos.qec.surface.circuit_builder import OpType, QubitAllocation
+
 if TYPE_CHECKING:
+    from pecos.qec.surface.circuit_builder import SurfaceCircuitStep
     from pecos.qec.surface.patch import Stabilizer, SurfacePatch
 
-PatchSnapshot = dict[str, tuple[bool, list[str], list[str], list[str], list[str]]]
+PatchSnapshot = dict[str, bool]
 
 
 def _validate_boundary_cardinality(segments: list[object], boundary_gates: list[object]) -> None:
@@ -74,16 +79,7 @@ class PatchState:
     qubit_offset: int = 0
     coord_offset: tuple[float, float] = (0.0, 0.0)
     x_z_swapped: bool = False
-    # Teleportation corrections: ancilla Z measurements to XOR into this
-    # patch's observable (from CX teleportation gates).
-    z_obs_includes: list[str] = field(default_factory=list)
-    x_obs_includes: list[str] = field(default_factory=list)
-    # After CX, some observables become non-reliable depending on the
-    # measurement basis. Track which bases are "entangled" and with whom.
-    # x_entangled_with: this patch's X observable is entangled with these
-    # patches (measuring X on this patch alone is non-deterministic).
-    x_entangled_with: list[str] = field(default_factory=list)
-    z_entangled_with: list[str] = field(default_factory=list)
+    stabilizers_by_index: dict[str, dict[int, Stabilizer]] = field(default_factory=dict, init=False)
 
     @property
     def current_x_stabilizers(self) -> list[Stabilizer]:
@@ -109,12 +105,97 @@ class LogicalOp:
     rounds: int = 0
     basis: str = "Z"
     per_patch_basis: dict[str, str] = field(default_factory=dict)
-    # For teleportation CX: the target's Z measurement should be included
-    # in the control's observable for the Pauli frame correction.
+    # Teleportation consumes the target as a correction readout, separate
+    # from deterministic observables on the data.
     teleportation: bool = False
     # Type of magic state injection: "T" for T-gate, "SZ" for SZ, or None.
     # Used by build_algorithm_descriptor() to emit the correct boundary gate.
     injection_type: str | None = None
+
+
+def _logical_readout_is_deterministic(
+    operations: list[LogicalOp],
+    segment_idx: int,
+    patch: str,
+    logical_type: str,
+) -> bool:
+    """Propagate a final logical readout backwards to product preparations.
+
+    ``logical_type`` is X or Z in the readout's current orientation (its
+    measurement basis). Each crossed H swaps the type during the walk; callers
+    must not also swap the initial type. Physical S/S-dagger preserves Z but
+    has no supported logical X image, including the unmodelled distance-1 case.
+    A dict provides insertion-ordered XOR terms, so repeated CX images cancel.
+    Terms involving a patch consumed before a crossed gate are unreliable.
+    This deliberately conservative rule suppresses B and C for
+    M([A,B,C],2,Z); CX(A,B); CX(B,C); M([B,C],2,Z), even though the simulator's
+    non-destructive MZ makes them deterministic, because A is gated after its
+    final readout, an invalid program rejected on the follow-up branch.
+    """
+    if logical_type not in {"X", "Z"}:
+        msg = f"Unsupported logical readout type {logical_type!r}; expected X or Z"
+        raise ValueError(msg)
+    memory_indices = []
+    first_memory = {}
+    last_memory = {}
+    for index, op in enumerate(operations):
+        if op.gate_type == LogicalGateType.MEMORY:
+            memory_indices.append(index)
+            for label in op.patches:
+                first_memory.setdefault(label, index)
+                last_memory[label] = index
+    if not 0 <= segment_idx < len(memory_indices):
+        msg = f"No memory segment {segment_idx} for patch '{patch}'"
+        raise ValueError(msg)
+    start = memory_indices[segment_idx]
+    if patch not in operations[start].patches:
+        msg = f"Patch '{patch}' is not in memory segment {segment_idx}"
+        raise ValueError(msg)
+
+    terms = {(patch, logical_type): None}
+    for index in range(start, -1, -1):
+        op = operations[index]
+        if op.gate_type == LogicalGateType.MEMORY:
+            for label, kind in tuple(terms):
+                if first_memory.get(label) == index:
+                    if op.per_patch_basis.get(label, op.basis) != kind:
+                        return False
+                    del terms[label, kind]
+            if not terms:
+                return True
+            continue
+
+        images = {}
+        for label, kind in terms:
+            image = [(label, kind)]
+            if op.gate_type == LogicalGateType.TRANSVERSAL_H and label in op.patches:
+                image = [(label, "Z" if kind == "X" else "X")]
+            elif op.gate_type == LogicalGateType.TRANSVERSAL_CX:
+                ctrl, tgt = op.patches
+                if label == ctrl and kind == "X":
+                    image.append((tgt, "X"))
+                elif label == tgt and kind == "Z":
+                    image.append((ctrl, "Z"))
+            elif (
+                op.gate_type in {LogicalGateType.TRANSVERSAL_SZ, LogicalGateType.TRANSVERSAL_SZdg}
+                and label in op.patches
+                and kind == "X"
+            ):
+                return False
+            for term in image:
+                term_patch = term[0]
+                if term_patch in op.patches and term_patch in last_memory and last_memory[term_patch] < index:
+                    return False
+                if term in images:
+                    del images[term]
+                else:
+                    images[term] = None
+        terms = images
+        if not terms:
+            return True
+
+    msg = f"Logical readout for patch '{patch}' has terms without preparation: {list(terms)}"
+    raise ValueError(msg)
 
 
 class LogicalCircuitBuilder:
@@ -138,6 +219,7 @@ class LogicalCircuitBuilder:
         """Initialize an empty logical circuit builder."""
         self._patches: dict[str, PatchState] = {}
         self._operations: list[LogicalOp] = []
+        self._consumed_injection_ancillas: set[str] = set()
 
     def add_patch(
         self,
@@ -196,9 +278,7 @@ class LogicalCircuitBuilder:
         if isinstance(patch_labels, str):
             patch_labels = [patch_labels]
         for label in patch_labels:
-            if label not in self._patches:
-                msg = f"Unknown patch '{label}'"
-                raise ValueError(msg)
+            self._require_available_patch(label)
 
         if isinstance(basis, str):
             default_basis = basis.upper()
@@ -206,6 +286,11 @@ class LogicalCircuitBuilder:
         else:
             default_basis = "Z"
             per_patch = {k: v.upper() for k, v in basis.items()}
+
+        for value in (default_basis, *per_patch.values()):
+            if value not in {"X", "Y", "Z"}:
+                msg = f"Unsupported memory basis {value!r}; expected X, Y, or Z"
+                raise ValueError(msg)
 
         self._operations.append(
             LogicalOp(
@@ -216,6 +301,14 @@ class LogicalCircuitBuilder:
                 per_patch_basis=per_patch,
             ),
         )
+
+    def _require_available_patch(self, label: str) -> None:
+        if label not in self._patches:
+            msg = f"Unknown patch '{label}'"
+            raise ValueError(msg)
+        if label in self._consumed_injection_ancillas:
+            msg = f"Injection ancilla '{label}' has been consumed"
+            raise ValueError(msg)
 
     def _require_square(self, patch_label: str, gate_name: str) -> None:
         """Check that a patch is square (dx=dz), required for transversal gates."""
@@ -237,9 +330,7 @@ class LogicalCircuitBuilder:
         Args:
             patch_label: Label of the patch.
         """
-        if patch_label not in self._patches:
-            msg = f"Unknown patch '{patch_label}'"
-            raise ValueError(msg)
+        self._require_available_patch(patch_label)
         self._require_square(patch_label, "Transversal H")
         self._operations.append(
             LogicalOp(
@@ -249,28 +340,13 @@ class LogicalCircuitBuilder:
         )
 
     def add_transversal_sz(self, patch_label: str) -> None:
-        """Add a fold-transversal SZ gate on a patch.
+        """Apply physical SZ = diag(1, i) to every data qubit of a square patch.
 
-        Implements the fold-transversal S gate using the Bravyi et al.
-        half-cycle trick (arXiv:2412.01391). The fold operation is
-        inserted at mid-cycle of a syndrome extraction round:
-        - On-diagonal data qubits (r + c = d-1): SZ gate
-        - On-diagonal X-ancilla qubits: SZdg gate
-        - Off-diagonal: CZ between each qubit and its mirror
-
-        After this gate:
-        - Z-stabilizers are unchanged
-        - X-stabilizers pick up Z-stabilizer partners:
-          X_stab -> X_stab * Z_stab_mirror
-
-        The patch must be square (dx=dz).
-
-        Args:
-            patch_label: Label of the patch.
+        This layer is not a logical S gate on this code. The future
+        fold-transversal construction follows Chen, Chen, Lu, Pan
+        (arXiv:2412.01391) and requires additional operations.
         """
-        if patch_label not in self._patches:
-            msg = f"Unknown patch '{patch_label}'"
-            raise ValueError(msg)
+        self._require_available_patch(patch_label)
         self._require_square(patch_label, "Transversal SZ")
         self._operations.append(
             LogicalOp(
@@ -280,14 +356,13 @@ class LogicalCircuitBuilder:
         )
 
     def add_transversal_szdg(self, patch_label: str) -> None:
-        """Add SZdg (S-dagger) on all data qubits of a patch.
+        """Apply physical SZdg to every data qubit of a square patch.
 
-        Inverse of add_transversal_sz. Used for mirroring circuits
-        that contain SZ gates.
+        This inverse physical layer is not a logical S-dagger on this code.
+        The future fold-transversal construction follows Chen, Chen, Lu, Pan
+        (arXiv:2412.01391) and requires additional operations.
         """
-        if patch_label not in self._patches:
-            msg = f"Unknown patch '{patch_label}'"
-            raise ValueError(msg)
+        self._require_available_patch(patch_label)
         self._require_square(patch_label, "Transversal SZdg")
         self._operations.append(
             LogicalOp(
@@ -313,7 +388,9 @@ class LogicalCircuitBuilder:
         5. Ancilla measured in Z-basis (final round)
 
         After CX, data has S|psi> (up to Z correction from ancilla outcome).
-        The Z correction is a Pauli frame update tracked by the decoder.
+        The ancilla must have odd dx and dz for encoded logical-Y content.
+        ``injection_readouts`` is emitted for a future consumer; no decoder
+        applies the correction today.
 
         Note: The |+Y> injection is non-fault-tolerant (distance-1).
         For fault-tolerant SZ, use magic state distillation on the
@@ -325,6 +402,11 @@ class LogicalCircuitBuilder:
             rounds_before: Syndrome rounds before CX.
             rounds_after: Syndrome rounds after CX.
         """
+        self._require_fresh_injection_ancilla(data_label, ancilla_label)
+        ancilla = self._patches[ancilla_label].patch
+        if ancilla.dx % 2 == 0 or ancilla.dz % 2 == 0:
+            msg = f"Injection ancilla '{ancilla_label}' requires odd dx and dz for encoded logical-Y content"
+            raise ValueError(msg)
         # Step 1: Init both patches — data continues in Z, ancilla in |+Y>.
         # Per-patch basis lets us do this in a single parallel segment.
         self.add_memory(
@@ -333,18 +415,20 @@ class LogicalCircuitBuilder:
             basis={data_label: "Z", ancilla_label: "Y"},
         )
         # Step 2: CX(data=control, ancilla=target) — teleports S onto data.
-        # Marked as teleportation so observable propagation includes the
-        # ancilla's Z measurement as a Pauli frame correction.
+        # Marked as teleportation so the ancilla readout is kept separately
+        # for its conditional Z correction, which preserves data Z_L.
         self._operations.append(
             LogicalOp(
                 gate_type=LogicalGateType.TRANSVERSAL_CX,
                 patches=[data_label, ancilla_label],
                 teleportation=True,
+                injection_type="SZ",
             ),
         )
         # Step 3: Post-CX extraction. Ancilla measured in Z-basis at final round.
         # If ancilla measures logical -1, apply Z correction (Pauli frame update).
         self.add_memory([data_label, ancilla_label], rounds=rounds_after, basis="Z")
+        self._consumed_injection_ancillas.add(ancilla_label)
 
     def add_t_via_injection(
         self,
@@ -353,45 +437,27 @@ class LogicalCircuitBuilder:
         rounds_before: int = 3,
         rounds_after: int = 3,
     ) -> None:
-        """Apply logical T gate via magic state injection.
+        """Emit a Clifford stand-in for T injection using a fresh |+> ancilla.
 
-        Complete protocol:
-        1. Prepare ancilla in |T> = T|+> (non-fault-tolerant injection)
-        2. Syndrome rounds to project ancilla into code space
-        3. Transversal CX(data=control, ancilla=target)
-        4. Syndrome rounds
-        5. Ancilla measured in Z-basis (final round)
-
-        After CX, data has T|psi> (up to S correction from ancilla outcome).
-        The S correction is a conditional feed-forward operation — this is
-        a DECISION POINT where the decoder must provide the Pauli frame.
-
-        The corrected measurement outcome determines:
-          corrected = raw_measurement XOR frame[z_obs_bit]
-          if corrected == 1: apply S gate on data
-
-        Note: The |T> injection is non-fault-tolerant (distance-1).
-        For fault-tolerant T, use magic state distillation on the
-        injected state before consumption.
+        H on every ancilla data qubit precedes syndrome projection, transversal
+        CX, and Z readout. No T gate or conditional S correction is emitted.
+        The feed-forward decision point is descriptor-only; real T injection
+        needs a later gadget with its own layout. ``injection_readouts`` is
+        emitted for a future consumer; no decoder applies the correction today.
 
         Args:
-            data_label: Label of the data patch (receives the T gate).
-            ancilla_label: Label of the ancilla patch (consumed).
+            data_label: Label of the data patch.
+            ancilla_label: Label of a patch not yet used in memory.
             rounds_before: Syndrome rounds before CX.
             rounds_after: Syndrome rounds after CX.
         """
-        # Step 1: Init both patches — data continues in Z, ancilla gets |+>.
-        # The real protocol prepares |T> = T|+> on the ancilla, but T is
-        # non-Clifford and invisible to the fault analyzer. We prepare
-        # |+> as a Clifford stand-in: same error structure (H gate noise
-        # via p1, prep noise via p_prep), just missing the non-Clifford
-        # phase which doesn't affect error correlations in the DEM.
+        self._require_fresh_injection_ancilla(data_label, ancilla_label)
         self.add_memory(
             [data_label, ancilla_label],
             rounds=rounds_before,
             basis={data_label: "Z", ancilla_label: "X"},
         )
-        # Step 2: CX(data=control, ancilla=target) — teleports T onto data.
+        # Step 2: CX(data=control, ancilla=target) in the Clifford stand-in.
         self._operations.append(
             LogicalOp(
                 gate_type=LogicalGateType.TRANSVERSAL_CX,
@@ -408,6 +474,7 @@ class LogicalCircuitBuilder:
             rounds=rounds_after,
             basis="Z",
         )
+        self._consumed_injection_ancillas.add(ancilla_label)
 
     def add_transversal_cx(self, control_label: str, target_label: str) -> None:
         """Add a transversal CNOT between two patches.
@@ -423,21 +490,7 @@ class LogicalCircuitBuilder:
             control_label: Label of the control patch.
             target_label: Label of the target patch.
         """
-        if control_label not in self._patches:
-            msg = f"Unknown patch '{control_label}'"
-            raise ValueError(msg)
-        if target_label not in self._patches:
-            msg = f"Unknown patch '{target_label}'"
-            raise ValueError(msg)
-        ctrl = self._patches[control_label]
-        tgt = self._patches[target_label]
-        if ctrl.patch.geometry.num_data != tgt.patch.geometry.num_data:
-            msg = (
-                f"Patches must have same geometry for transversal CX. "
-                f"'{control_label}' has {ctrl.patch.geometry.num_data} data qubits, "
-                f"'{target_label}' has {tgt.patch.geometry.num_data} data qubits."
-            )
-            raise ValueError(msg)
+        self._require_cx_geometry(control_label, target_label)
         self._operations.append(
             LogicalOp(
                 gate_type=LogicalGateType.TRANSVERSAL_CX,
@@ -445,35 +498,30 @@ class LogicalCircuitBuilder:
             ),
         )
 
+    def _require_cx_geometry(self, control_label: str, target_label: str) -> None:
+        for label in (control_label, target_label):
+            self._require_available_patch(label)
+        if not gadgets.same_static_geometry(self._patches[control_label].patch, self._patches[target_label].patch):
+            msg = "Transversal CX requires the same static geometry"
+            raise ValueError(msg)
+
+    def _require_fresh_injection_ancilla(self, data_label: str, ancilla_label: str) -> None:
+        self._require_cx_geometry(data_label, ancilla_label)
+        if any(op.gate_type == LogicalGateType.MEMORY and ancilla_label in op.patches for op in self._operations):
+            msg = f"Injection ancilla '{ancilla_label}' must be fresh (already appears in memory)"
+            raise ValueError(msg)
+
     def _snapshot_and_reset(self) -> PatchSnapshot:
         """Snapshot patch states and reset for generation."""
-        saved = {
-            label: (
-                ps.x_z_swapped,
-                list(ps.z_obs_includes),
-                list(ps.x_obs_includes),
-                list(ps.x_entangled_with),
-                list(ps.z_entangled_with),
-            )
-            for label, ps in self._patches.items()
-        }
+        saved = {label: ps.x_z_swapped for label, ps in self._patches.items()}
         for ps in self._patches.values():
             ps.x_z_swapped = False
-            ps.z_obs_includes = []
-            ps.x_obs_includes = []
-            ps.x_entangled_with = []
-            ps.z_entangled_with = []
         return saved
 
     def _restore(self, saved: PatchSnapshot) -> None:
         """Restore patch states from snapshot."""
-        for label, (swapped, z_obs, x_obs, x_ent, z_ent) in saved.items():
-            ps = self._patches[label]
-            ps.x_z_swapped = swapped
-            ps.z_obs_includes = z_obs
-            ps.x_obs_includes = x_obs
-            ps.x_entangled_with = x_ent
-            ps.z_entangled_with = z_ent
+        for label, swapped in saved.items():
+            self._patches[label].x_z_swapped = swapped
 
     def to_tick_circuit(self) -> object:
         """Generate a PECOS TickCircuit with detector and observable annotations.
@@ -490,9 +538,10 @@ class LogicalCircuitBuilder:
             patches=self._patches,
             operations=self._operations,
         )
-        tc = gen.generate()
-        self._restore(saved)
-        return tc
+        try:
+            return gen.generate()
+        finally:
+            self._restore(saved)
 
     def to_dag_circuit(self) -> object:
         """Generate a PECOS DagCircuit for fault analysis.
@@ -658,6 +707,10 @@ class LogicalCircuitBuilder:
 
         return sampler, decoder, dem_str
 
+    def _z_frame_slot(self, label: str) -> int:
+        """Z slot in the descriptor's per-patch (X, Z) frame layout."""
+        return list(self._patches).index(label) * 2 + 1
+
     def build_algorithm_descriptor(
         self,
         *,
@@ -677,7 +730,10 @@ class LogicalCircuitBuilder:
             Dict with keys: segments, boundary_gates, num_observables,
             num_frame_slots, full_dem. ``num_observables`` is the full DEM's
             declared observable count; ``num_frame_slots`` is two per patch
-            (X then Z).
+            (X then Z). ``injection_readouts`` carries raw ancilla parity
+            records separately from deterministic observables and frame slots.
+            It is emitted for a future consumer; no decoder applies the
+            correction today. T decision-point execution remains unsupported.
         """
         # Build the full DEM
         full_dem = self.build_dem(p1=p1, p2=p2, p_meas=p_meas, p_prep=p_prep)
@@ -775,7 +831,7 @@ class LogicalCircuitBuilder:
                     {
                         "type": "Hadamard",
                         "x_obs_bit": idx * 2,
-                        "z_obs_bit": idx * 2 + 1,
+                        "z_obs_bit": self._z_frame_slot(label),
                     },
                 )
                 x_z_swapped[label] = not x_z_swapped[label]
@@ -788,8 +844,8 @@ class LogicalCircuitBuilder:
                     pending_gates.append(
                         {
                             "type": "TGateInjection",
-                            "z_obs_bit": ctrl_idx * 2 + 1,
-                            "ancilla_z_bit": tgt_idx * 2 + 1,
+                            "z_obs_bit": self._z_frame_slot(ctrl_label),
+                            "ancilla_z_bit": self._z_frame_slot(tgt_label),
                         },
                     )
                 else:
@@ -797,9 +853,9 @@ class LogicalCircuitBuilder:
                         {
                             "type": "Cnot",
                             "ctrl_x_bit": ctrl_idx * 2,
-                            "ctrl_z_bit": ctrl_idx * 2 + 1,
+                            "ctrl_z_bit": self._z_frame_slot(ctrl_label),
                             "tgt_x_bit": tgt_idx * 2,
-                            "tgt_z_bit": tgt_idx * 2 + 1,
+                            "tgt_z_bit": self._z_frame_slot(tgt_label),
                         },
                     )
 
@@ -810,7 +866,7 @@ class LogicalCircuitBuilder:
                     {
                         "type": "SGate",
                         "x_obs_bit": idx * 2,
-                        "z_obs_bit": idx * 2 + 1,
+                        "z_obs_bit": self._z_frame_slot(label),
                     },
                 )
 
@@ -885,6 +941,10 @@ class LogicalCircuitBuilder:
         from pecos_rslib.qec import ParsedDem
 
         num_observables = ParsedDem.from_string(full_dem).num_observables
+        injection_readouts = json.loads(self.to_tick_circuit().get_meta("injection_readouts"))
+        for readout in injection_readouts:
+            readout["data_z_frame_slot"] = self._z_frame_slot(readout["data_patch"])
+            readout["ancilla_z_frame_slot"] = self._z_frame_slot(readout["ancilla_patch"])
 
         return {
             "segments": [
@@ -898,6 +958,7 @@ class LogicalCircuitBuilder:
             "boundary_gates": boundary_gates,
             "num_observables": num_observables,
             "num_frame_slots": num_patches * 2,
+            "injection_readouts": injection_readouts,
             "full_dem": full_dem,
             "distance": distance,
         }
@@ -960,6 +1021,13 @@ class _CircuitGenerator:
 
         self.patches = patches
         self.operations = operations
+        # Snapshot live geometry once per generation, including edits made
+        # after registration or between repeated builder renderings.
+        for ps in patches.values():
+            ps.stabilizers_by_index = {
+                "X": {s.index: s for s in ps.patch.geometry.x_stabilizers},
+                "Z": {s.index: s for s in ps.patch.geometry.z_stabilizers},
+            }
 
         self.tc = TickCircuit()
         self._current_tick = None
@@ -968,7 +1036,11 @@ class _CircuitGenerator:
 
         self.stab_meas: dict[tuple[str, str, int, int, int], int] = {}
         self.data_meas: dict[tuple[str, int], int] = {}
+        self._injection_ops = [op for op in operations if op.teleportation]
+        self._injection_ancillas = {op.patches[1] for op in self._injection_ops}
+        self._injection_readouts: dict[str, dict] = {}
 
+        self._prepared: set[str] = set()
         self.segment_idx = 0
         self.next_observable_idx = 0
         self.round_time = 0.0
@@ -1000,7 +1072,6 @@ class _CircuitGenerator:
 
     def generate(self) -> object:
         """Generate the TickCircuit with detector/observable metadata."""
-        is_first = True
         # Per-patch last memory index: for each patch, the last MEMORY
         # operation that includes it. This ensures each patch gets its
         # final measurement emitted in the correct segment.
@@ -1016,11 +1087,9 @@ class _CircuitGenerator:
                 last_patches = {label for label in op.patches if last_mem_for_patch.get(label) == op_idx}
                 self._emit_memory_segment(
                     op,
-                    is_first=is_first,
                     is_last=bool(last_patches),
                     last_patches=last_patches,
                 )
-                is_first = False
                 self.segment_idx += 1
 
             elif op.gate_type == LogicalGateType.TRANSVERSAL_H:
@@ -1057,30 +1126,44 @@ class _CircuitGenerator:
             for o in self._obs_json
         ]
 
+        for label in self._injection_ancillas:
+            if label not in self._injection_readouts:
+                msg = f"Injection ancilla '{label}' has no logical operator for its readout"
+                raise ValueError(msg)
+
         self.tc.set_meta("detectors", json.dumps(det_out))
         self.tc.set_meta("observables", json.dumps(obs_out))
         self.tc.set_meta("num_measurements", str(total))
+        self.tc.set_meta(
+            "injection_readouts",
+            json.dumps(
+                [
+                    {
+                        "data_patch": op.patches[0],
+                        "ancilla_patch": op.patches[1],
+                        "injection_type": op.injection_type,
+                        **self._injection_readouts[op.patches[1]],
+                        "records": [idx - total for idx in self._injection_readouts[op.patches[1]]["meas_ids"]],
+                    }
+                    for op in self._injection_ops
+                ],
+            ),
+        )
         return self.tc
 
     def _first_memory_basis(self, patch_label: str | None = None) -> str:
-        """Basis of the first memory segment (prep basis)."""
+        """Basis of this patch's first memory segment (preparation)."""
         for op in self.operations:
-            if op.gate_type == LogicalGateType.MEMORY:
-                if patch_label and patch_label in op.per_patch_basis:
-                    return op.per_patch_basis[patch_label]
-                return op.basis
+            if op.gate_type == LogicalGateType.MEMORY and (patch_label is None or patch_label in op.patches):
+                return op.per_patch_basis.get(patch_label, op.basis)
         return "Z"
 
     def _last_memory_basis(self, patch_label: str | None = None) -> str:
-        """Basis of the last memory segment (measurement basis)."""
-        last = "Z"
-        for op in self.operations:
-            if op.gate_type == LogicalGateType.MEMORY:
-                if patch_label and patch_label in op.per_patch_basis:
-                    last = op.per_patch_basis[patch_label]
-                else:
-                    last = op.basis
-        return last
+        """Basis of this patch's last memory segment (readout)."""
+        for op in reversed(self.operations):
+            if op.gate_type == LogicalGateType.MEMORY and (patch_label is None or patch_label in op.patches):
+                return op.per_patch_basis.get(patch_label, op.basis)
+        return "Z"
 
     def _emit_meas(self, qubits: list[int]) -> list[int]:
         self._tick().mz(qubits)
@@ -1088,170 +1171,167 @@ class _CircuitGenerator:
         self.meas_count += len(qubits)
         return indices
 
-    def _emit_final_meas(self, qubits: list[int]) -> list[int]:
-        self._tick().mz(qubits)
-        indices = list(range(self.meas_count, self.meas_count + len(qubits)))
-        self.meas_count += len(qubits)
-        return indices
-
-    def _rec(self, abs_idx: int) -> int:
-        return abs_idx - self.meas_count
-
-    def _data_qubits(self, patch_label: str) -> list[int]:
+    def _allocation(self, patch_label: str) -> QubitAllocation:
         ps = self.patches[patch_label]
-        return [ps.qubit_offset + i for i in range(ps.patch.geometry.num_data)]
+        allocation = gadgets.default_allocation(ps.patch)
+        return QubitAllocation(
+            [q + ps.qubit_offset for q in allocation.data_qubits],
+            [q + ps.qubit_offset for q in allocation.x_ancilla_qubits],
+            [q + ps.qubit_offset for q in allocation.z_ancilla_qubits],
+        )
+
+    def _emit_steps(self, step_lists: list[tuple[SurfaceCircuitStep, ...]]) -> dict[tuple[int, int], int]:
+        """Split different-type conflicts within TICK groups, then zip with padding.
+
+        Each TICK-delimited group, including a comment-only group, produces
+        at least one tick; trailing empty groups at the end of the merged
+        stream are omitted. Physical steps must contain at least one qubit.
+
+        Patch and step order determine measurement indices. Ancillas retain
+        allocation across rounds, unlike TickCircuitRenderer's freeing readout.
+        Repeated same-type operations on a qubit in one group are invalid
+        parallel layers and must not be silently serialized.
+        TickCircuitRenderer retains its silent same-type split until the
+        non-rotated schedule is fixed.
+        """
+        streams = []
+        for position, steps in enumerate(step_lists):
+            groups = []
+            subticks = []
+            current = []
+            used = set()
+            group_used = set()
+            layer_label = "unnamed"
+            for step in steps:
+                if step.op_type == OpType.COMMENT:
+                    layer_label = step.label
+                    continue
+                if step.op_type == OpType.TICK:
+                    if current:
+                        subticks.append(current)
+                    groups.append(subticks or [[]])
+                    subticks, current, used = [], [], set()
+                    group_used = set()
+                    continue
+                layer = f"Gadget layer {position}:{len(groups)} ({layer_label})"
+                if not step.qubits:
+                    msg = f"{layer}: {step.op_type.name} requires at least one qubit"
+                    raise ValueError(msg)
+                if step.op_type == OpType.MEASURE and len(step.qubits) != 1:
+                    msg = f"{layer}: MEASURE requires exactly one qubit per labeled step"
+                    raise ValueError(msg)
+                for qubit in step.qubits:
+                    key = (step.op_type, qubit)
+                    if key in group_used:
+                        msg = f"{layer}: repeated {step.op_type.name} on qubit {qubit} in a parallel layer"
+                        raise ValueError(msg)
+                    group_used.add(key)
+                if used.intersection(step.qubits):
+                    subticks.append(current)
+                    current, used = [], set()
+                current.append(step)
+                used.update(step.qubits)
+            if current:
+                subticks.append(current)
+            if subticks:
+                groups.append(subticks)
+            streams.append(groups)
+
+        measurements = {}
+        merged_groups = list(zip_longest(*streams, fillvalue=()))
+        while merged_groups and not any(step for group in merged_groups[-1] for subtick in group for step in subtick):
+            merged_groups.pop()
+        for groups in merged_groups:
+            for subticks in zip_longest(*groups, fillvalue=()):
+                merged = [(position, step) for position, steps in enumerate(subticks) for step in steps]
+                t = self._new_tick()
+                batches = {}
+                for position, step in merged:
+                    batches.setdefault(step.op_type, []).append((position, step))
+                for op_type, batch in batches.items():
+                    qubits = [q for _, step in batch for q in step.qubits]
+                    if op_type == OpType.ALLOC:
+                        # Preserve patch order when fresh allocations and resets
+                        # share a tick. TickCircuit coalesces adjacent gate calls.
+                        for _, step in batch:
+                            self._emit_qalloc_or_reset(step.qubits)
+                    elif op_type == OpType.CX:
+                        t.cx([tuple(step.qubits) for _, step in batch])
+                    elif op_type in {OpType.H, OpType.SZ, OpType.SZDG, OpType.X, OpType.Z}:
+                        getattr(t, op_type.name.lower())(qubits)
+                    elif op_type == OpType.MEASURE:
+                        indices = iter(self._emit_meas(qubits))
+                        for position, step in batch:
+                            measurements[position, step.qubits[0]] = next(indices)
+                    else:
+                        msg = f"Unsupported gadget operation: {op_type.name}"
+                        raise NotImplementedError(msg)
+                self._end_tick()
+        return measurements
 
     def _emit_memory_segment(
         self,
         op: LogicalOp,
         *,
-        is_first: bool,
         is_last: bool,
         last_patches: set[str] | None = None,
     ) -> None:
-        """Emit syndrome extraction rounds for one or more patches."""
-        from pecos.qec.surface.schedule import compute_cnot_schedule
-
-        num_rounds = op.rounds
-
-        # Precompute per-patch data
-        patch_info = []
-        for patch_label in op.patches:
-            ps = self.patches[patch_label]
-            patch = ps.patch
-            geom = patch.geometry
-            offset = ps.qubit_offset
-            num_x = len(geom.x_stabilizers)
-            num_z = len(geom.z_stabilizers)
-            anc_base = offset + geom.num_data
-
-            if ps.x_z_swapped:
-                x_anc_qs = [anc_base + num_x + i for i in range(num_z)]
-                z_anc_qs = [anc_base + i for i in range(num_x)]
-                current_x_stabs = geom.z_stabilizers
-                current_z_stabs = geom.x_stabilizers
-            else:
-                x_anc_qs = [anc_base + i for i in range(num_x)]
-                z_anc_qs = [anc_base + num_x + i for i in range(num_z)]
-                current_x_stabs = geom.x_stabilizers
-                current_z_stabs = geom.z_stabilizers
-
-            patch_info.append(
-                {
-                    "label": patch_label,
-                    "ps": ps,
-                    "geom": geom,
-                    "offset": offset,
-                    "num_x": num_x,
-                    "anc_base": anc_base,
-                    "data_qs": [offset + i for i in range(geom.num_data)],
-                    "x_anc_qs": x_anc_qs,
-                    "z_anc_qs": z_anc_qs,
-                    "current_x_stabs": current_x_stabs,
-                    "current_z_stabs": current_z_stabs,
-                    "schedule": compute_cnot_schedule(patch),
-                },
+        """Compose preparation and orientation-aware rounds for each patch."""
+        first_patches = set(op.patches) - self._prepared
+        allocations = {label: self._allocation(label) for label in op.patches}
+        self._emit_steps(
+            [
+                (
+                    gadgets.prep_gadget(
+                        self.patches[label].patch,
+                        allocations[label],
+                        basis=op.per_patch_basis.get(label, op.basis),
+                    ).steps
+                    if label in first_patches
+                    else ()
+                )
+                for label in op.patches
+            ],
+        )
+        self._prepared.update(first_patches)
+        for rnd in range(op.rounds):
+            measurements = self._emit_steps(
+                [
+                    gadgets.syndrome_round_gadget(
+                        self.patches[label].patch,
+                        allocations[label],
+                        round_index=rnd,
+                        x_z_swapped=self.patches[label].x_z_swapped,
+                    ).steps
+                    for label in op.patches
+                ],
             )
-
-        # Initialization — per-patch basis
-        if is_first:
-            t = self._new_tick()
-            for pi in patch_info:
-                self._emit_qalloc_or_reset(pi["data_qs"])
-            self._end_tick()
-
-            need_h = []
-            need_hs = []
-            for pi in patch_info:
-                pb = op.per_patch_basis.get(pi["label"], op.basis)
-                if pb == "X":
-                    need_h.extend(pi["data_qs"])
-                elif pb == "Y":
-                    need_hs.extend(pi["data_qs"])
-
-            if need_h or need_hs:
-                t = self._new_tick()
-                if need_h:
-                    t.h(need_h)
-                if need_hs:
-                    t.h(need_hs)
-                self._end_tick()
-            if need_hs:
-                t = self._new_tick()
-                t.sz(need_hs)
-                self._end_tick()
-
-        # Syndrome extraction rounds
-        for rnd in range(num_rounds):
-            # Reset ancillas
-            t = self._new_tick()
-            for pi in patch_info:
-                self._emit_qalloc_or_reset(pi["x_anc_qs"] + pi["z_anc_qs"])
-            self._end_tick()
-
-            # H on X-type ancillas
-            all_x_anc = [q for pi in patch_info for q in pi["x_anc_qs"]]
-            t = self._new_tick()
-            t.h(all_x_anc)
-            self._end_tick()
-
-            # CX rounds
-            num_cx_rounds = max(len(pi["schedule"]) for pi in patch_info)
-            for cx_round_idx in range(num_cx_rounds):
-                all_pairs = []
-                for pi in patch_info:
-                    if cx_round_idx >= len(pi["schedule"]):
-                        continue
-                    for phys_type, stab_idx, data_idx in pi["schedule"][cx_round_idx]:
-                        data_q = pi["offset"] + data_idx
-                        if phys_type == "X":
-                            anc_q = pi["anc_base"] + stab_idx
-                        else:
-                            anc_q = pi["anc_base"] + pi["num_x"] + stab_idx
-                        currently_x = (phys_type == "X") != pi["ps"].x_z_swapped
-                        if currently_x:
-                            all_pairs.append((anc_q, data_q))
-                        else:
-                            all_pairs.append((data_q, anc_q))
-                t = self._new_tick()
-                if all_pairs:
-                    t.cx(all_pairs)
-                self._end_tick()
-
-            # H on X-type ancillas
-            t = self._new_tick()
-            t.h(all_x_anc)
-            self._end_tick()
-
-            # Measure ancillas
-            t = self._new_tick()
-            for pi in patch_info:
-                x_meas = self._emit_meas(pi["x_anc_qs"])
-                z_meas = self._emit_meas(pi["z_anc_qs"])
-                for i, s in enumerate(pi["current_x_stabs"]):
-                    self.stab_meas[(pi["label"], "X", s.index, self.segment_idx, rnd)] = x_meas[i]
-                for i, s in enumerate(pi["current_z_stabs"]):
-                    self.stab_meas[(pi["label"], "Z", s.index, self.segment_idx, rnd)] = z_meas[i]
-            # Invalidate _last_round_cache since stab_meas changed
+            for (position, qubit), index in measurements.items():
+                label = op.patches[position]
+                allocation = allocations[label]
+                if qubit in allocation.x_ancilla_qubits:
+                    family, register = "X", allocation.x_ancilla_qubits
+                elif qubit in allocation.z_ancilla_qubits:
+                    family, register = "Z", allocation.z_ancilla_qubits
+                else:
+                    msg = f"Measured qubit {qubit} is not an ancilla of patch '{label}'"
+                    raise ValueError(msg)
+                if self.patches[label].x_z_swapped:
+                    family = "Z" if family == "X" else "X"
+                self.stab_meas[label, family, register.index(qubit), self.segment_idx, rnd] = index
             if hasattr(self, "_last_round_cache"):
                 del self._last_round_cache
-            self._end_tick()
-
-            # Detectors
-            for pi in patch_info:
-                self._emit_round_detectors(pi["label"], rnd, is_first_segment=is_first)
-
+            for label in op.patches:
+                self._emit_round_detectors(label, rnd, is_first_segment=label in first_patches)
             self.round_time += 1.0
 
-        # Final measurement: two phases so cross-patch observable
-        # references work (all data measurements must exist before
-        # any observable is emitted).
+        # Read every final patch before constructing cross-patch observables.
         if is_last and last_patches:
-            final_patches = [pi for pi in patch_info if pi["label"] in last_patches]
-            for pi in final_patches:
-                self._emit_final_data_measurements(pi["label"])
-            for pi in final_patches:
-                self._emit_final_detectors_and_observables(pi["label"])
+            final_patches = [label for label in op.patches if label in last_patches]
+            for label in final_patches:
+                self._emit_final_data_measurements(label)
+            for label in final_patches:
+                self._emit_final_detectors_and_observables(label)
 
     def _emit_round_detectors(
         self,
@@ -1279,12 +1359,12 @@ class _CircuitGenerator:
                 if curr_idx is None:
                     continue
 
-                if round_idx == 0 and is_first_segment and seg == 0:
-                    # First round of very first segment:
+                if round_idx == 0 and is_first_segment:
+                    # First round of this patch's first segment:
                     # Only stabilizers matching the prep basis are deterministic.
                     # Find the prep basis from the first memory operation.
                     init_basis = self._first_memory_basis(patch_label)
-                    det_type = "Z" if init_basis == "Z" else "X"
+                    det_type = init_basis
                     # Account for X/Z swap
                     effective_type = stab_type
                     if ps.x_z_swapped:
@@ -1476,8 +1556,10 @@ class _CircuitGenerator:
         ps = self.patches[patch_label]
         geom = ps.patch.geometry
         cx, cy = ps.coord_offset
-        stabs = geom.x_stabilizers if stab_type == "X" else geom.z_stabilizers
-        s = stabs[stab_index]
+        s = ps.stabilizers_by_index[stab_type].get(stab_index)
+        if s is None:
+            msg = f"Patch '{patch_label}' has no {stab_type} stabilizer with index {stab_index}"
+            raise ValueError(msg)
         positions = [geom.id_to_pos[q] for q in s.data_qubits]
         avg_row = sum(r for r, c in positions) / len(positions)
         avg_col = sum(c for r, c in positions) / len(positions)
@@ -1500,22 +1582,24 @@ class _CircuitGenerator:
             },
         )
 
+    def _emit_transversal_layer(self, op: LogicalOp, gate: str) -> None:
+        label = op.patches[0]
+        self._emit_steps(
+            [
+                gadgets.transversal_layer_gadget(self.patches[label].patch, self._allocation(label), gate=gate).steps,
+            ],
+        )
+
     def _emit_transversal_h(self, op: LogicalOp) -> None:
+        self._emit_transversal_layer(op, "H")
         ps = self.patches[op.patches[0]]
-        t = self._new_tick()
-        t.h(self._data_qubits(op.patches[0]))
-        self._end_tick()
         ps.x_z_swapped = not ps.x_z_swapped
 
     def _emit_transversal_sz(self, op: LogicalOp) -> None:
-        t = self._new_tick()
-        t.sz(self._data_qubits(op.patches[0]))
-        self._end_tick()
+        self._emit_transversal_layer(op, "SZ")
 
     def _emit_transversal_szdg(self, op: LogicalOp) -> None:
-        t = self._new_tick()
-        t.szdg(self._data_qubits(op.patches[0]))
-        self._end_tick()
+        self._emit_transversal_layer(op, "SZDG")
 
     def _emit_transversal_cx(self, op: LogicalOp) -> None:
         ctrl_label, tgt_label = op.patches[0], op.patches[1]
@@ -1530,35 +1614,30 @@ class _CircuitGenerator:
             )
             raise ValueError(msg)
 
-        pairs = list(zip(self._data_qubits(ctrl_label), self._data_qubits(tgt_label), strict=False))
-        t = self._new_tick()
-        t.cx(pairs)
-        self._end_tick()
-
-        if op.teleportation:
-            ctrl_ps.z_obs_includes.append(tgt_label)
-
-        # Track entanglement: CX spreads X on control to target,
-        # and Z on target to control.
-        ctrl_ps.x_entangled_with.append(tgt_label)
-        tgt_ps.z_entangled_with.append(ctrl_label)
+        self._emit_steps(
+            [
+                gadgets.transversal_cx_gadget(
+                    ctrl_ps.patch,
+                    self._allocation(ctrl_label),
+                    tgt_ps.patch,
+                    self._allocation(tgt_label),
+                ).steps,
+            ],
+        )
 
     def _emit_final_data_measurements(self, patch_label: str) -> None:
         ps = self.patches[patch_label]
-        geom = ps.patch.geometry
-        data_qs = self._data_qubits(patch_label)
-        meas_basis = self._last_memory_basis(patch_label)
-
-        if meas_basis == "X":
-            t = self._new_tick()
-            t.h(data_qs)
-            self._end_tick()
-
-        t = self._new_tick()
-        meas_indices = self._emit_final_meas(data_qs)
-        self._end_tick()
-        for i, q in enumerate(range(geom.num_data)):
-            self.data_meas[(patch_label, q)] = meas_indices[i]
+        measured = self._emit_steps(
+            [
+                gadgets.measure_out_gadget(
+                    ps.patch,
+                    self._allocation(patch_label),
+                    basis=self._last_memory_basis(patch_label),
+                ).steps,
+            ],
+        )
+        for q in range(ps.patch.geometry.num_data):
+            self.data_meas[patch_label, q] = measured[0, ps.qubit_offset + q]
 
     def _emit_final_detectors_and_observables(self, patch_label: str) -> None:
         ps = self.patches[patch_label]
@@ -1576,6 +1655,11 @@ class _CircuitGenerator:
             logical_op = geom.logical_z if meas_basis == "X" else geom.logical_x
         else:
             logical_op = geom.logical_x if meas_basis == "X" else geom.logical_z
+
+        if logical_op is None:
+            role = "Injection ancilla" if patch_label in self._injection_ancillas else "Patch"
+            msg = f"{role} '{patch_label}' has no logical operator for {meas_basis} readout"
+            raise ValueError(msg)
 
         seg = self.segment_idx
         last_rnd = self._last_round_of_segment(patch_label, lookup_type, seg)
@@ -1596,44 +1680,23 @@ class _CircuitGenerator:
                         },
                     )
 
-        if logical_op is not None:
-            # Check if this observable is reliable given entanglement.
-            # After CX(ctrl, tgt): ctrl's X is entangled with tgt,
-            # tgt's Z is entangled with ctrl.
-            # An observable is reliable if:
-            # - Not entangled, OR
-            # - The entangled partner is measured in the same basis
-            entangled_with = ps.x_entangled_with if meas_basis == "X" else ps.z_entangled_with
-            is_reliable = True
-            for other_label in entangled_with:
-                other_basis = self._last_memory_basis(other_label)
-                if other_basis != meas_basis:
-                    is_reliable = False
-                    break
-
-            if not is_reliable:
-                # Skip non-reliable observables — they're physically
-                # non-deterministic and would cause Stim DEM errors.
-                # The decoder handles these through the 3-body detectors.
-                self.next_observable_idx += 1
-                return
-
-            obs_idx = self.next_observable_idx
+        obs_indices = [self.data_meas[(patch_label, q)] for q in logical_op.data_qubits]
+        if patch_label in self._injection_ancillas:
+            # A consumed ancilla's random logical readout controls a
+            # correction; it is not a deterministic DEM observable.
+            self._injection_readouts[patch_label] = {"basis": meas_basis, "meas_ids": obs_indices}
+            return
+        if not _logical_readout_is_deterministic(self.operations, self.segment_idx, patch_label, meas_basis):
+            # Skip non-reliable observables — they're physically
+            # non-deterministic and would cause Stim DEM errors.
             self.next_observable_idx += 1
-            obs_indices = [self.data_meas[(patch_label, q)] for q in logical_op.data_qubits]
+            return
 
-            # Teleportation corrections
-            for other_label in ps.z_obs_includes:
-                other_logical = self.patches[other_label].patch.geometry.logical_z
-                if other_logical is not None:
-                    for q in other_logical.data_qubits:
-                        key = (other_label, q)
-                        if key in self.data_meas:
-                            obs_indices.append(self.data_meas[key])
-
-            self._obs_json.append(
-                {
-                    "id": obs_idx,
-                    "abs_records": list(obs_indices),
-                },
-            )
+        obs_idx = self.next_observable_idx
+        self.next_observable_idx += 1
+        self._obs_json.append(
+            {
+                "id": obs_idx,
+                "abs_records": list(obs_indices),
+            },
+        )

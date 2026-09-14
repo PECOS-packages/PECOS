@@ -75,11 +75,6 @@ jobs:
       - name: Harden apt against mirror flakiness
         run: ./scripts/ci/harden-apt.sh
 
-      - name: Free disk space
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
-          sudo apt-get clean
-
       - name: Set up Rust
         run: |
           bash scripts/ci/ensure-rust.sh stable minimal
@@ -227,12 +222,6 @@ jobs:
       - name: Harden apt against mirror flakiness
         if: matrix.os == 'ubuntu-latest'
         run: ./scripts/ci/harden-apt.sh
-
-      - name: Free disk space (Linux)
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
-          sudo apt-get clean
 
       - name: Set up Rust (Windows)
         if: runner.os == 'Windows' && (github.event_name != 'pull_request' || matrix.os == 'ubuntu-latest')

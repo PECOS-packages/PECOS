@@ -138,7 +138,7 @@ def build_t_injection_circuit(distance, _seed, patch, rounds_per_layer):
 
     # Memory → T injection → Memory
     rounds = max(rounds_per_layer, distance)
-    b.add_memory(["D", "A"], rounds=rounds, basis="Z")
+    b.add_memory("D", rounds=rounds, basis="Z")
     b.add_t_via_injection("D", "A", rounds_before=rounds, rounds_after=rounds)
     return b
 

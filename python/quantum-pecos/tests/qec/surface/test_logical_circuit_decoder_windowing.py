@@ -92,7 +92,7 @@ def test_algorithm_descriptor_rejects_leading_logical_gates():
 
     with pytest.raises(
         ValueError,
-        match=r"leading logical gates before any syndrome round.*no representable boundary.*Hadamard",
+        match=r"Hadamard on patch 'A' precedes that patch's first MEMORY preparation",
     ) as exc_info:
         builder.build_algorithm_descriptor(p1=0.001, p2=0.001, p_meas=0.001)
 

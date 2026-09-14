@@ -970,7 +970,9 @@ impl PySimNeoBuilder {
         }
 
         let mut sim = builder.build();
-        let results = sim.run();
+        let results = sim
+            .run()
+            .map_err(|error| pyo3::exceptions::PyRuntimeError::new_err(error.to_string()))?;
 
         let mut all_shots = Vec::with_capacity(shots);
         for shot_outcomes in &results.outcomes {
@@ -1015,7 +1017,8 @@ impl PySimNeoBuilder {
             .quantum(pecos_neo::tool::sparse_stab())
             .sampling(pecos_neo::tool::path_enumeration(max_measurements))
             .build()
-            .run();
+            .run()
+            .map_err(|error| pyo3::exceptions::PyRuntimeError::new_err(error.to_string()))?;
 
         let rows: Vec<Vec<u8>> = results
             .outcomes

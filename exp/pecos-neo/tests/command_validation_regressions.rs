@@ -12,7 +12,7 @@ use pecos_simulators::SparseStab;
 #[test]
 fn fallible_shot_boundaries_report_raw_queue_errors() {
     use pecos_neo::adapter::QuantumEngineProgramRunner;
-    use pecos_neo::program::{ProgramRunner, StaticProgram};
+    use pecos_neo::program::{DynProgramRunner, ProgramRunner, StaticProgram};
     use pecos_neo::sampling::ImportanceSamplingRunner;
 
     for command in [
@@ -27,13 +27,13 @@ fn fallible_shot_boundaries_report_raw_queue_errors() {
         let mut program = StaticProgram::new(queue.clone(), 1);
         assert!(
             ProgramRunner::new(SparseStab::with_seed(1, 42))
-                .try_run_shot(&mut program)
+                .run_shot(&mut program)
                 .is_err()
         );
         let mut engine = QuantumEngineProgramRunner::new(Box::new(
             pecos_engines::quantum::SparseStabEngine::with_seed(1, 42),
         ));
-        assert!(engine.try_run_shot(&mut program).is_err());
+        assert!(engine.run_shot(&mut program).is_err());
     }
 
     let duration = (1_u64 << 53) + 1;
@@ -46,7 +46,7 @@ fn fallible_shot_boundaries_report_raw_queue_errors() {
     ));
     assert!(
         engine
-            .try_run_shot(&mut program)
+            .run_shot(&mut program)
             .expect_err("lossless core conversion required")
             .to_string()
             .contains("cannot be represented exactly")

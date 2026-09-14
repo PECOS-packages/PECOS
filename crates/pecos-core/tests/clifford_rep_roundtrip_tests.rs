@@ -503,8 +503,11 @@ fn dg_involution_rotation() {
                 },
                 smallvec::smallvec![0],
             );
+            // A half-turn adjoint carries a scalar -1; the two scalar leaves
+            // cancel during simplification. Matrix equality is covered by the
+            // rotation_phase_algebra tests in pecos-quantum.
             assert_eq!(
-                ur.dg().dg(),
+                ur.dg().dg().simplify(),
                 ur,
                 "dg(dg({rot:?}({angle:?}))) should equal original"
             );

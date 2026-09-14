@@ -68,6 +68,10 @@ impl PreparationChannel {
 }
 
 impl NoiseChannel for PreparationChannel {
+    fn event_kinds(&self) -> super::EventKinds {
+        super::EventKinds::of(super::NoiseEventKind::AfterPreparation)
+    }
+
     fn responds_to(&self, event: &NoiseEvent<'_>) -> bool {
         if self.error_probability <= 0.0 {
             return false;

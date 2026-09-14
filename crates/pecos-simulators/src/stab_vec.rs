@@ -796,20 +796,9 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug + Clone> StabVecGeneric<S, R> {
     /// scalar -1 lost when a signed sum wraps is tracked in `global_phase`
     /// (e.g. 8T = RZ(2pi) = -I).
     fn apply_rz(&mut self, theta: Angle64, q: usize) {
-        const HALF: i128 = 1_i128 << 63;
-        const FULL: i128 = 1_i128 << 64;
-
-        let signed_fraction = |angle: Angle64| {
-            let fraction = i128::from(angle.fraction());
-            if fraction > HALF {
-                fraction - FULL
-            } else {
-                fraction
-            }
-        };
         let previous = self.pending_rz[q];
         let combined = previous + theta;
-        if signed_fraction(previous) + signed_fraction(theta) != signed_fraction(combined) {
+        if pecos_core::unitary_rep::rotation_sum_wraps(previous, theta) {
             // Replacing a signed sum that crossed the principal-value boundary
             // by its stored representative changes RZ by a scalar -1.
             self.global_phase += Angle64::HALF_TURN;

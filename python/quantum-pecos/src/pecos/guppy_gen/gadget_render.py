@@ -76,6 +76,10 @@ def render_gadget_function(gadget: Gadget, *, tag_scope: str | None = None) -> l
     elif kind == GadgetKind.SYNDROME_ROUND:
         result = syndrome
         doc = "Extract full syndrome using 4-round parallel CNOT schedule."
+        if gadget.name.startswith("syndrome_extraction_fold_sdg"):
+            doc = "Extract full syndrome with the fold-transversal logical S-dagger between CX layers 2 and 3."
+        elif gadget.name.startswith("syndrome_extraction_fold_s"):
+            doc = "Extract full syndrome with the fold-transversal logical S between CX layers 2 and 3."
     elif kind == GadgetKind.MEASURE_OUT:
         argument += " @ owned"
         result = f"array[bool, {n}]"
@@ -154,7 +158,7 @@ def render_gadget_function(gadget: Gadget, *, tag_scope: str | None = None) -> l
             continue
         elif op == OpType.ALLOC:
             lines.append(f"    {names[step.qubits[0]]} = qubit()")
-        elif op in {OpType.H, OpType.X, OpType.Z, OpType.CX, OpType.SZ, OpType.SZDG}:
+        elif op in {OpType.H, OpType.X, OpType.Z, OpType.CX, OpType.CZ, OpType.SZ, OpType.SZDG}:
             operands = ", ".join(names[q] for q in step.qubits)
             gate = {OpType.SZ: "s", OpType.SZDG: "sdg"}.get(op, op.name.lower())
             lines.append(f"    {gate}({operands})")

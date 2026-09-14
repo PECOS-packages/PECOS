@@ -23,8 +23,9 @@ rectangle = SurfacePatch.create(dx=3, dz=5, rotated=True)
 assert (rectangle.dx, rectangle.dz) == (3, 5)
 ```
 
-Rotated square and rectangular patches are supported throughout the
-single-patch routes. The non-rotated layout renders standalone with a
+Rotated square and rectangular patches are supported by the memory and
+preparation routes. Fold-transversal S requires an odd square rotated patch.
+The non-rotated layout renders standalone with a
 serialised CX layer and is rejected by the builder. All tick counts on this
 page are for the rotated layout.
 Transversal H requires a square patch. CX requires identical static geometry,
@@ -86,6 +87,7 @@ otherwise. `round_order=None` uses the default schedule.
 | `prep_gadget(..., basis=)` | `PREP` | Product preparation in Z, X, or Y; projection follows separately | None |
 | `init_syndrome_gadget(..., basis=, round_order=None, x_z_swapped=False)` | `INIT_SYNDROME` | Project the complementary family after Z or X preparation | `<label>:init:meas:<ordinal>` |
 | `syndrome_round_gadget(..., round_index=, round_order=None, x_z_swapped=False)` | `SYNDROME_ROUND` | Measure both check families | `<label>:meas:<ordinal>` |
+| `fold_s_round_gadget(..., round_index=, x_z_swapped=False, dagger=False)` | `SYNDROME_ROUND` | Logical S or S-dagger within the default round | `<label>:meas:<ordinal>` |
 | `measure_out_gadget(..., basis=)` | `MEASURE_OUT` | Destructive Z or X data measurement | None; returns an array |
 | `logical_pauli_gadget(..., pauli=)` | `LOGICAL_PAULI` | Apply the geometry's logical X or Z string | None |
 | `transversal_layer_gadget(..., gate=)` | `TRANSVERSAL` | H exchanges X/Z orientation; SZ and SZDG are physical S layers | None |
@@ -345,6 +347,73 @@ def syndrome_extraction_swapped(surf: SurfaceCode_3x3) -> Syndrome_3x3:
     synx = array(sz0, sz1, sz2, sz3)
     synz = array(sx0, sx1, sx2, sx3)
 
+    return Syndrome_3x3(synx, synz)
+```
+
+### Fold-transversal S
+
+`fold_s_round_gadget` inserts one disjoint gate layer after CX layer 2 of the
+default syndrome round. Cartesian transpose `(x, y) -> (y, x)` pairs data and
+bulk ancillas for CZ; diagonal data receive S and diagonal bulk ancillas receive
+S-dagger. Exterior ancillas are untouched. Only odd square rotated patches are
+supported. Set `dagger=True` to reverse every fixed-point phase, or
+`x_z_swapped=True` for the current orientation after transversal H.
+
+The exact round flow is `X_L -> +Y_L * product(current Z checks)` and
+`Z_L -> Z_L`, where `+Y_L = i X_L Z_L`. This uses SparseStab's `Y = iXZ`
+convention and PECOS `SZ = diag(1, i)`. For an X-prepared patch, the output
+logical Y sign is the parity of this round's Z outcomes: even gives +Y and odd
+gives -Y. The dagger variant reverses that sign. Under circuit noise the
+X-sector fault distance is reduced to 2 at distance 3 and 4 at distance 5;
+the Z sector retains distance d. These finite-distance results are from the
+PECOS circuit analysis. For the fold construction see Chen, Chen, Lu and Pan,
+[arXiv:2412.01391](https://arxiv.org/abs/2412.01391); for the half-cycle
+description see McEwen, Bacon and Gidney,
+[arXiv:2302.02192](https://arxiv.org/abs/2302.02192).
+
+The fold has `d(d-1)/2` data CZ pairs and `(d-1)(d-2)/2` bulk-ancilla CZ
+pairs, totaling `(d-1)^2`, plus d data and d-1 ancilla fixed points. At
+distance 3 the complete round takes **9 ticks and 8 measurements**, one tick
+more than the default round. Builder and detector support arrive in the next
+slice; render this gadget with `add_detectors=False`.
+
+```python
+gadget = gadgets.fold_s_round_gadget(patch, allocation, round_index=0)
+tc = render_tick(gadget)
+assert tc.num_ticks() == 9
+assert tc.num_measurements() == 8
+assert {gate.gate_type.name for gate in tc.get_tick(4).gate_batches()} == {"CZ", "SZ", "SZdg"}
+assert tc.get_meta("detectors") is None
+```
+
+Render the Guppy function independently; the memory module does not include
+it. When assembling a Guppy module, also import `cz`, `s`, and `sdg` from
+`guppylang.std.quantum`. No fold protocol factory is provided yet.
+
+```python
+gadget = gadgets.fold_s_round_gadget(patch, allocation, round_index=0)
+lines = render_gadget_function(gadget)
+assert "    cz(az1, az2)" in lines
+assert "    sdg(ax1)" in lines
+assert "    s(surf.data[2])" in lines
+assert "syndrome_extraction_fold_s" not in render_surface_gadget_module(patch)
+```
+
+```text
+@guppy
+def syndrome_extraction_fold_s(surf: SurfaceCode_3x3) -> Syndrome_3x3:
+    """Extract full syndrome with the fold-transversal logical S between CX layers 2 and 3."""
+    ...
+    s(surf.data[6])
+    cz(surf.data[3], surf.data[7])
+    cz(surf.data[0], surf.data[8])
+    sdg(ax2)
+    cz(az1, az2)
+    s(surf.data[4])
+    cz(surf.data[1], surf.data[5])
+    sdg(ax1)
+    s(surf.data[2])
+    ...
     return Syndrome_3x3(synx, synz)
 ```
 
@@ -693,8 +762,8 @@ assert callable(program.compile)
     `build_algorithm_descriptor()`; those records do not apply a correction.
     The Guppy factories emit measurement outputs only.
     Chen, Chen, Lu and Pan ([arXiv:2412.01391](https://arxiv.org/abs/2412.01391))
-    describe a mid-cycle fold-transversal logical S, which these gadgets do not
-    implement.
+    describe a mid-cycle fold-transversal logical S, available separately as
+    the [fold round gadget](#fold-transversal-s), outside these protocol factories.
 
 ### Cross-form measurement check
 
@@ -894,6 +963,7 @@ for before_preparation in (True, False):
 | `default_allocation` | `pecos.qec.surface.gadgets` | Data and dedicated ancilla registers |
 | `prep_gadget`, `init_syndrome_gadget` | `pecos.qec.surface.gadgets` | Product preparation and complementary projection |
 | `syndrome_round_gadget`, `measure_out_gadget` | `pecos.qec.surface.gadgets` | Check extraction and destructive data readout |
+| `fold_s_round_gadget` | `pecos.qec.surface.gadgets` | Fold-transversal logical S or S-dagger inside a default round |
 | `logical_pauli_gadget`, `transversal_layer_gadget` | `pecos.qec.surface.gadgets` | Logical strings and physical layers |
 | `transversal_cx_gadget`, `memory_gadgets` | `pecos.qec.surface.gadgets` | Two-patch CX and memory composition |
 | `TickCircuitRenderer`, `QubitAllocation`, `SurfaceCircuitStep` | `pecos.qec.surface.circuit_builder` | Render physical operations with register mapping |

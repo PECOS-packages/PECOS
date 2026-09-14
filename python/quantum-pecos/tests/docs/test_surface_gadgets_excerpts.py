@@ -55,6 +55,7 @@ def rendered_sources() -> dict[tuple[str, str], list[str]]:
         **{f"Preparation in {basis}": gadgets.prep_gadget(patch, allocation, basis=basis) for basis in "ZXY"},
         "Initial syndrome projection": gadgets.init_syndrome_gadget(patch, allocation, basis="Z"),
         "Syndrome round": gadgets.syndrome_round_gadget(patch, allocation, round_index=0, x_z_swapped=True),
+        "Fold-transversal S": gadgets.fold_s_round_gadget(patch, allocation, round_index=0),
         "Measure-out": gadgets.measure_out_gadget(patch, allocation, basis="X"),
         "Logical Pauli": gadgets.logical_pauli_gadget(patch, allocation, pauli="X"),
         "Transversal H": gadgets.transversal_layer_gadget(patch, allocation, gate="H"),

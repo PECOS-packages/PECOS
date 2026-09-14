@@ -6,6 +6,7 @@
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum, auto
+from typing import Literal
 
 from pecos.qec.surface.circuit_builder import OpType, QubitAllocation, SurfaceCircuitStep
 from pecos.qec.surface.layouts.rotated_lattice import rotated_id_to_position
@@ -38,7 +39,7 @@ class Gadget:
     dimensions: tuple[int, int]
     basis: str | None
     x_z_swapped: bool = False
-    fold: str | None = None
+    fold: Literal["S", "SDG"] | None = None
 
 
 def default_allocation(patch: SurfacePatch) -> QubitAllocation:
@@ -149,6 +150,9 @@ def init_syndrome_gadget(
     """Establish the complementary stabilizer signs after data preparation."""
     basis = _normalize_basis(basis, ("X", "Z"))
     family = "X" if basis.upper() == "Z" else "Z"
+    if x_z_swapped and patch.dx != patch.dz:
+        msg = "x_z_swapped requires a square patch (dx == dz)"
+        raise ValueError(msg)
     h_family = "Z" if x_z_swapped else "X"
     if x_z_swapped:
         family = "Z" if family == "X" else "X"
@@ -204,8 +208,13 @@ def _syndrome_round(
     round_index: int,
     x_z_swapped: bool,
     name: str = "syndrome_extraction",
-    fold: str | None = None,
+    fold: Literal["S", "SDG"] | None = None,
 ) -> Gadget:
+    if x_z_swapped and patch.dx != patch.dz:
+        # Transversal H needs a square patch, so a swapped rectangle has no producer and no
+        # Guppy syndrome struct of its own.
+        msg = "x_z_swapped requires a square patch (dx == dz)"
+        raise ValueError(msg)
     steps = [SurfaceCircuitStep(OpType.COMMENT, label=f"syndrome_extraction round {round_index + 1}")]
     families = ("Z", "X") if x_z_swapped else ("X", "Z")
     for family in families:
@@ -255,7 +264,7 @@ def fold_s_round_gadget(
     point phases reverse, giving -Y_L and the opposite frame sign.
 
     X records are not bare X checks: on input, bottom-row bulk X ancillas
-    measure their X check times the mirrored left-boundary Z check; other
+    measure their X check times the left-boundary Z check at (0, x_j); other
     X records measure bare checks. On output, an X record together with
     the Z record at (y_j + 2, x_j) certifies X check j. If that partner is
     absent the X record alone certifies the check. Coordinates here use
@@ -271,7 +280,7 @@ def fold_s_round_gadget(
 
     Raises:
         ValueError: For non-rotated, rectangular, distance-1, or malformed patches,
-            or a schedule without four CX layers.
+            or a CX schedule that does not have four layers.
     """
     if not patch.rotated:
         msg = "fold_s_round_gadget requires a rotated patch"

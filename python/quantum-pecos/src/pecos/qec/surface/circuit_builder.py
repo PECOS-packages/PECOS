@@ -1771,7 +1771,9 @@ class StimRenderer(CircuitRenderer):
     ) -> str:
         """Render to Stim circuit string."""
         if self.add_detectors and any(op.op_type == OpType.CZ for op in ops):
-            msg = "StimRenderer: detectors for fold rounds come from the logical builder route"
+            msg = (
+                "StimRenderer: detector annotation is unsupported for step lists with CZ (the fold-transversal S layer)"
+            )
             raise ValueError(msg)
         geom = patch.geometry
         num_x_anc = len(geom.x_stabilizers)
@@ -2162,7 +2164,7 @@ class TickCircuitRenderer(CircuitRenderer):
         - Gate-level: 'label', 'role'
         """
         if self.add_detectors and any(op.op_type == OpType.CZ for op in ops):
-            msg = "TickCircuitRenderer: detectors for fold rounds come from the logical builder route"
+            msg = "TickCircuitRenderer: detector annotation is unsupported for step lists with CZ (fold-transversal S)"
             raise ValueError(msg)
         import json
 

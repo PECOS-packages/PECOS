@@ -370,9 +370,9 @@ logical Y sign is the parity of this round's Z outcomes: even gives +Y and odd
 gives -Y. The dagger variant reverses that sign.
 
 X records also carry Z-check information. On input, a bottom-row bulk X
-ancilla measures its X check times the mirrored left-boundary Z check; other
+ancilla measures its X check times the left-boundary Z check at `(0, x_j)`; other
 X records measure bare checks. On output, X record j together with the Z
-record at `(y_j + 2, x_j)` certifies X check j. Without that partner, the X
+record at `(y_j + 2, x_j)` certifies X check j (coordinates are `(x, y)`). Without that partner, the X
 record alone certifies the check. These coordinates use the current frame,
 transposed after transversal H.
 

@@ -125,6 +125,10 @@ value = re.sub(r"\s+", " ", value).strip()
 wrapped = re.match(r"^\$\{\{(.*)\}\}$", value)
 expr = wrapped.group(1).strip() if wrapped else value
 
+# A literal `false` never saves, which is the restore-only posture.
+if expr == "false":
+    sys.exit(0)
+
 
 def has_unary_not(text):
     in_q = False
@@ -620,8 +624,15 @@ done < <(rg -n 'uses:\s+Swatinem/rust-cache@' .github/workflows || true)
 
 while IFS=: read -r file line _; do
     setup_uv_block="$(sed -n "${line},$((line + 16))p" "$file")"
-    if printf '%s\n' "$setup_uv_block" | rg -q 'enable-cache:\s*true' &&
-        ! cache_guard_ok "$file" "$line" "save-cache"; then
+    if printf '%s\n' "$setup_uv_block" | rg -q 'enable-cache:\s*false'; then
+        continue
+    fi
+    # setup-uv defaults enable-cache to auto (on for hosted runners) and
+    # save-cache to true, so an unstated setting saves a PR-scoped cache on
+    # every pull request and churns the repository's 10 GB cache pool.
+    if ! printf '%s\n' "$setup_uv_block" | rg -q 'enable-cache:\s*true'; then
+        cache_policy_failures+=("$file:$line setup-uv must set enable-cache explicitly (true with a gated save-cache, or false)")
+    elif ! cache_guard_ok "$file" "$line" "save-cache"; then
         cache_policy_failures+=("$file:$line setup-uv save-cache must be restricted to trusted branch pushes")
     fi
 done < <(rg -n 'uses:\s+astral-sh/setup-uv@' .github/workflows || true)

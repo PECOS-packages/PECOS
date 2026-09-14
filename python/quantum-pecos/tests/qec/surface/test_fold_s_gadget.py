@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 import stim
-from pecos.guppy_gen.gadget_render import render_gadget_function, render_surface_gadget_module
+from pecos.guppy_gen.gadget_render import render_gadget_function
 from pecos.qec.surface import SurfacePatch, gadgets
 from pecos.qec.surface.circuit_builder import (
     DagCircuitRenderer,
@@ -20,6 +20,8 @@ from pecos.qec.surface.circuit_builder import (
     StimRenderer,
     SurfaceCircuitStep,
     TickCircuitRenderer,
+    _analyze_szz_forward_flow,
+    _lower_szz_forward_flow_ops,
     tick_circuit_to_stim,
 )
 from pecos.quantum import TickCircuit
@@ -70,7 +72,12 @@ def _rank(group: tuple[str, ...]) -> int:
     return len(basis)
 
 
-def _coordinates(patch: SurfacePatch, allocation: QubitAllocation) -> dict[int, tuple[int, int]]:
+def _coordinates(
+    patch: SurfacePatch,
+    allocation: QubitAllocation,
+    *,
+    exterior: bool = False,
+) -> dict[int, tuple[int, int]]:
     """Independent coordinate formula; locate bulk sites by support bounds."""
     d = patch.dx
     data = {i: (2 * (i % d) + 1, 2 * (d - i // d) - 1) for i in range(d * d)}
@@ -80,9 +87,15 @@ def _coordinates(patch: SurfacePatch, allocation: QubitAllocation) -> dict[int, 
         (patch.geometry.z_stabilizers, allocation.z_ancilla_qubits),
     ):
         for check in checks:
-            if len(check.data_qubits) == 4:
+            if len(check.data_qubits) == 4 or exterior:
                 xs, ys = zip(*(data[q] for q in check.data_qubits), strict=True)
-                coords[ancillas[check.index]] = ((min(xs) + max(xs)) // 2, (min(ys) + max(ys)) // 2)
+                x, y = (min(xs) + max(xs)) // 2, (min(ys) + max(ys)) // 2
+                if len(check.data_qubits) == 2:
+                    if min(xs) == max(xs):
+                        x += -1 if x == 1 else 1
+                    else:
+                        y += -1 if y == 1 else 1
+                coords[ancillas[check.index]] = (x, y)
     return coords
 
 
@@ -99,13 +112,16 @@ def _groups(gadget: gadgets.Gadget) -> list[list[SurfaceCircuitStep]]:
 def _half_cycle(patch: SurfacePatch, round_gadget: gadgets.Gadget) -> tuple[TickCircuit, int]:
     allocation = round_gadget.allocations[0]
     parts = gadgets.memory_gadgets(patch, 2, "Z", allocation=allocation)
+    if round_gadget.x_z_swapped:
+        parts[1] = gadgets.init_syndrome_gadget(patch, allocation, basis="Z", x_z_swapped=True)
+        parts[2] = gadgets.syndrome_round_gadget(patch, allocation, round_index=0, x_z_swapped=True)
     parts[-2] = round_gadget
     tc = _replayable(_render(patch, allocation, parts))
     cx_ticks = [
         i for i in range(tc.num_ticks()) if any(g.gate_type.name == "CX" for g in tc.get_tick(i).gate_batches())
     ]
     # Complementary initialization and round 0 each contribute four CX layers.
-    return tc, cx_ticks[9] + 1
+    return tc, cx_ticks[4 + 4 + 1] + 1
 
 
 @pytest.mark.parametrize("d", [3, 5])
@@ -144,13 +160,14 @@ def test_half_cycle_symmetry(d: int) -> None:
     assert _rank(zs) == _rank(mirrored) + 1 == (d * d + (d - 1) ** 2 + 1) // 2
 
 
-@pytest.mark.parametrize("d", [3, 5])
+@pytest.mark.parametrize("d", [2, 3, 4, 5])
 @pytest.mark.parametrize("dagger", [False, True])
-def test_fold_preserves_signed_group(d: int, *, dagger: bool) -> None:
+@pytest.mark.parametrize("swapped", [False, True])
+def test_fold_preserves_signed_group(d: int, *, dagger: bool, swapped: bool) -> None:
     """Both alternating assignments preserve Z memory; one ancilla flip does not."""
     patch = SurfacePatch.create(distance=d)
     allocation = gadgets.default_allocation(patch)
-    gadget = gadgets.fold_s_round_gadget(patch, allocation, round_index=1, dagger=dagger)
+    gadget = gadgets.fold_s_round_gadget(patch, allocation, round_index=1, dagger=dagger, x_z_swapped=swapped)
     tc, half = _half_cycle(patch, gadget)
     for seed in range(4):
         before = stabilizer_generators_after(tc, half, seed=seed)
@@ -169,7 +186,7 @@ def test_fold_preserves_signed_group(d: int, *, dagger: bool) -> None:
     assert not all(group_contains(before, row) for row in after)
 
 
-@pytest.mark.parametrize("d", [3, 5])
+@pytest.mark.parametrize("d", [2, 3, 4, 5])
 @pytest.mark.parametrize("swapped", [False, True])
 @pytest.mark.parametrize("dagger", [False, True])
 def test_round_flow(d: int, *, swapped: bool, dagger: bool) -> None:
@@ -188,17 +205,47 @@ def test_round_flow(d: int, *, swapped: bool, dagger: bool) -> None:
     if dagger:
         yl = -yl
     z_checks = geom.x_stabilizers if swapped else geom.z_stabilizers
+    x_checks = geom.z_stabilizers if swapped else geom.x_stabilizers
     product = stim.PauliString(allocation.total)
     for check in z_checks:
         product *= stim.PauliString(_pauli(allocation.total, "Z", list(check.data_qubits)))
     assert circuit.has_flow(stim.Flow(input=xl, output=yl * product))
     assert not circuit.has_flow(stim.Flow(input=xl, output=-yl * product))
     assert circuit.has_flow(stim.Flow(input=zl, output=zl))
-    z_records = list(range(len(z_checks), 2 * len(z_checks)))
+    z_records = list(range(len(x_checks), len(x_checks) + len(z_checks)))
     assert circuit.has_flow(stim.Flow(input=xl, output=yl, measurements=z_records))
     for check, record in zip(z_checks, z_records, strict=True):
         operator = stim.PauliString(_pauli(allocation.total, "Z", list(check.data_qubits)))
         assert circuit.has_flow(stim.Flow(output=operator, measurements=[record]))
+
+    coords = _coordinates(patch, allocation, exterior=True)
+    if swapped:
+        coords = {q: (y, x) for q, (x, y) in coords.items()}
+    x_ancillas, z_ancillas = (
+        (allocation.z_ancilla_qubits, allocation.x_ancilla_qubits)
+        if swapped
+        else (allocation.x_ancilla_qubits, allocation.z_ancilla_qubits)
+    )
+    z_by_position = {coords[z_ancillas[check.index]]: check for check in z_checks}
+    for check in x_checks:
+        x, y = coords[x_ancillas[check.index]]
+        operator = stim.PauliString(_pauli(allocation.total, "X", list(check.data_qubits)))
+        # Only the bottom bulk row reaches the left boundary on the input side.
+        input_partner = z_by_position[0, x] if y == 2 and check.weight == 4 else None
+        input_operator = operator.copy()
+        if input_partner is not None:
+            input_operator *= stim.PauliString(_pauli(allocation.total, "Z", list(input_partner.data_qubits)))
+        assert circuit.has_flow(stim.Flow(input=input_operator, measurements=[check.index]))
+        assert not circuit.has_flow(stim.Flow(input=-input_operator, measurements=[check.index]))
+        assert circuit.has_flow(stim.Flow(input=operator, measurements=[check.index])) == (input_partner is None)
+
+        output_partner = z_by_position.get((y + 2, x))
+        records = [check.index]
+        if output_partner is not None:
+            records.append(len(x_checks) + output_partner.index)
+        assert circuit.has_flow(stim.Flow(output=operator, measurements=records))
+        assert not circuit.has_flow(stim.Flow(output=-operator, measurements=records))
+        assert circuit.has_flow(stim.Flow(output=operator, measurements=[check.index])) == (output_partner is None)
 
     # Prepare current +X through actual H and swapped rounds, then certify the Y frame.
     parts = gadgets.memory_gadgets(patch, 1, "Z" if swapped else "X")[:-1]
@@ -213,7 +260,7 @@ def test_round_flow(d: int, *, swapped: bool, dagger: bool) -> None:
     )
 
 
-@pytest.mark.parametrize("d", [3, 5])
+@pytest.mark.parametrize("d", [2, 3, 4, 5])
 @pytest.mark.parametrize("swapped", [False, True])
 @pytest.mark.parametrize("remap", [False, True])
 def test_fold_structure(d: int, *, swapped: bool, remap: bool) -> None:
@@ -258,47 +305,47 @@ def test_fold_structure(d: int, *, swapped: bool, remap: bool) -> None:
     assert tc.num_ticks() == 9
     assert tc.num_measurements() == d * d - 1
     assert {g.gate_type.name for g in tc.get_tick(4).gate_batches()} == {"CZ", "SZ", "SZdg"}
+    assert tc.get_tick_meta(4, "phase") == "fold_s"
+    assert tc.get_tick_meta(4, "cx_round") is None
+    assert folded.fold == "S"
     assert folded.kind == gadgets.GadgetKind.SYNDROME_ROUND
     assert folded.name == "syndrome_extraction_fold_s" + ("_swapped" if swapped else "")
 
 
 @pytest.mark.parametrize("renderer_name", ["tick", "stim", "dag", "guppy"])
-def test_renderers(renderer_name: str, tmp_path: Path) -> None:
+@pytest.mark.parametrize("dagger", [False, True])
+def test_renderers(renderer_name: str, tmp_path: Path, *, dagger: bool) -> None:
     """Pin native CZ and fixed-point phases, including a compiled Guppy function."""
     patch = SurfacePatch.create(distance=3)
     allocation = gadgets.default_allocation(patch)
-    gadget = gadgets.fold_s_round_gadget(patch, allocation, round_index=0)
+    gadget = gadgets.fold_s_round_gadget(patch, allocation, round_index=0, dagger=dagger)
+    name = "syndrome_extraction_fold_sdg" if dagger else "syndrome_extraction_fold_s"
+    variant = "S-dagger" if dagger else "S"
+    assert gadget.name == name
+    assert gadget.fold == ("SDG" if dagger else "S")
     steps = list(gadget.steps)
     expected_pairs = [(0, 8), (1, 5), (3, 7), (14, 15)]
     if renderer_name == "guppy":
         lines = render_gadget_function(gadget)
+        assert f"def {name}(surf: SurfaceCode_3x3) -> Syndrome_3x3:" in lines
+        doc = f'    """Extract full syndrome with the fold-transversal logical {variant} between CX layers 2 and 3."""'
+        assert doc in lines
+        assert doc in render_gadget_function(replace(gadget, name="renamed_round"))
+        assert f"    # fold-transversal {variant} layer" in lines
         assert sorted(line.strip() for line in lines if line.strip().startswith("cz(")) == [
             "cz(az1, az2)",
             "cz(surf.data[0], surf.data[8])",
             "cz(surf.data[1], surf.data[5])",
             "cz(surf.data[3], surf.data[7])",
         ]
-        assert sorted(line.strip() for line in lines if line.strip().startswith(("s(", "sdg("))) == [
-            "s(surf.data[2])",
-            "s(surf.data[4])",
-            "s(surf.data[6])",
-            "sdg(ax1)",
-            "sdg(ax2)",
-        ]
-        memory = GuppyRenderer().render(steps, allocation, patch, 1, "Z")
-        assert memory == render_surface_gadget_module(patch)
-        assert "fold_s" not in memory
-        source = memory + "\nfrom guppylang.std.quantum import cz, s, sdg\n\n" + "\n".join(lines) + "\n"
-        path = tmp_path / "fold_module.py"
-        path.write_text(source)
-        spec = importlib.util.spec_from_file_location("fold_module", path)
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[spec.name] = module
-        try:
-            spec.loader.exec_module(module)
-            assert module.syndrome_extraction_fold_s.compile_function() is not None
-        finally:
-            sys.modules.pop(spec.name, None)
+        data_gate, ancilla_gate = ("sdg", "s") if dagger else ("s", "sdg")
+        assert sorted(line.strip() for line in lines if line.strip().startswith(("s(", "sdg("))) == sorted(
+            [
+                *(f"{data_gate}(surf.data[{q}])" for q in (2, 4, 6)),
+                *(f"{ancilla_gate}(ax{q})" for q in (1, 2)),
+            ],
+        )
+        _compile_gadget(patch, gadget, tmp_path)
         return
     if renderer_name == "stim":
         circuit = stim.Circuit(StimRenderer(add_detectors=False).render(steps, allocation, patch, 1, "Z"))
@@ -306,7 +353,10 @@ def test_renderers(renderer_name: str, tmp_path: Path) -> None:
         dag = DagCircuitRenderer().render(steps, allocation, patch, 1, "Z")
         circuit = stim.Circuit(tick_circuit_to_stim(dag.to_tick_circuit()))
     else:
-        circuit = stim.Circuit(tick_circuit_to_stim(_render(patch, allocation, [gadget])))
+        tc = _render(patch, allocation, [gadget])
+        assert tc.get_tick_meta(4, "phase") == ("fold_sdg" if dagger else "fold_s")
+        assert tc.get_tick_meta(4, "cx_round") is None
+        circuit = stim.Circuit(tick_circuit_to_stim(tc))
     pairs = []
     phases: dict[str, list[int]] = {"S": [], "S_DAG": []}
     for instruction in circuit:
@@ -316,14 +366,54 @@ def test_renderers(renderer_name: str, tmp_path: Path) -> None:
         elif instruction.name in phases:
             phases[instruction.name].extend(targets)
     assert sorted(pairs) == expected_pairs
-    assert sorted(phases["S"]) == [2, 4, 6]
-    assert sorted(phases["S_DAG"]) == [10, 11]
+    assert sorted(phases["S"]) == ([10, 11] if dagger else [2, 4, 6])
+    assert sorted(phases["S_DAG"]) == ([2, 4, 6] if dagger else [10, 11])
 
 
-def test_dag_rejects_unknown_operation() -> None:
+def _compile_gadget(patch: SurfacePatch, gadget: gadgets.Gadget, tmp_path: Path) -> None:
+    memory = GuppyRenderer().render(list(gadget.steps), gadget.allocations[0], patch, 1, "Z")
+    assert "fold_s" not in memory
+    source = (
+        memory + "\nfrom guppylang.std.quantum import cz, s, sdg\n\n" + "\n".join(render_gadget_function(gadget)) + "\n"
+    )
+    path = tmp_path / "fold_module.py"
+    path.write_text(source)
+    spec = importlib.util.spec_from_file_location("fold_module", path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    try:
+        spec.loader.exec_module(module)
+        assert getattr(module, gadget.name).compile_function() is not None
+    finally:
+        sys.modules.pop(spec.name, None)
+
+
+@pytest.mark.parametrize("d", [2, 4])
+@pytest.mark.parametrize("swapped", [False, True])
+@pytest.mark.parametrize("variant", [None, "S", "SDG"])
+def test_even_guppy_syndrome(d: int, variant: str | None, tmp_path: Path, *, swapped: bool) -> None:
+    """Unequal X/Z register sizes follow the orientation for plain and fold rounds."""
+    patch = SurfacePatch.create(distance=d)
+    allocation = gadgets.default_allocation(patch)
+    if variant is None:
+        gadget = gadgets.syndrome_round_gadget(patch, allocation, round_index=0, x_z_swapped=swapped)
+    else:
+        gadget = gadgets.fold_s_round_gadget(
+            patch,
+            allocation,
+            round_index=0,
+            x_z_swapped=swapped,
+            dagger=variant == "SDG",
+        )
+    syndrome = f"Syndrome_{d}x{d}" + ("_swapped" if swapped else "")
+    assert f"    return {syndrome}(synx, synz)" in render_gadget_function(gadget)
+    _compile_gadget(patch, gadget, tmp_path)
+
+
+def test_dag_rejects_unsupported_operation() -> None:
     """Unsupported IR steps must never silently disappear from a DAG."""
     patch = SurfacePatch.create(distance=3)
-    with pytest.raises(ValueError, match="Unsupported DagCircuit operation"):
+    with pytest.raises(ValueError, match=r"^Unsupported DagCircuit operation: F$"):
         DagCircuitRenderer().render(
             [SurfaceCircuitStep(OpType.F, [0])],
             gadgets.default_allocation(patch),
@@ -335,10 +425,78 @@ def test_dag_rejects_unknown_operation() -> None:
 
 @pytest.mark.parametrize(
     ("dimensions", "message"),
-    [({"dx": 3, "dz": 5}, "square"), ({"distance": 4}, "odd distance"), ({"distance": 3, "rotated": False}, "rotated")],
+    [
+        ({"dx": 3, "dz": 5}, "square"),
+        ({"distance": 1}, "distance at least 2"),
+        ({"distance": 3, "rotated": False}, "rotated"),
+    ],
 )
 def test_rejections(dimensions: dict[str, int | bool], message: str) -> None:
     """Reject geometries outside the verified fold construction by name."""
     patch = SurfacePatch.create(**dimensions)
     with pytest.raises(ValueError, match=f"fold_s_round_gadget requires.*{message}"):
         gadgets.fold_s_round_gadget(patch, gadgets.default_allocation(patch), round_index=0)
+
+
+@pytest.mark.parametrize("renderer", [TickCircuitRenderer, StimRenderer])
+@pytest.mark.parametrize("basis", ["X", "Z"])
+def test_fold_detector_annotation_rejected(renderer: type, basis: str) -> None:
+    """Memory-template detectors are invalid even when Z memory masks the error."""
+    patch = SurfacePatch.create(distance=3)
+    allocation = gadgets.default_allocation(patch)
+    parts = gadgets.memory_gadgets(patch, 2, basis)
+    parts[-2] = gadgets.fold_s_round_gadget(patch, allocation, round_index=1)
+    steps = [step for part in parts for step in part.steps]
+    message = f"{renderer.__name__}: detectors for fold rounds come from the logical builder route"
+    with pytest.raises(ValueError, match=message):
+        renderer(add_detectors=True).render(steps, allocation, patch, 2, basis)
+    assert renderer(add_detectors=False).render(steps, allocation, patch, 2, basis) is not None
+
+
+def test_szz_forward_flow_rejects_cz() -> None:
+    """A native CZ cannot be counted as an SZZ interaction by the pulse analysis."""
+    with pytest.raises(ValueError, match="SZZ forward-flow analysis only supports SZZ/SZZdg two-qubit gates"):
+        _analyze_szz_forward_flow([SurfaceCircuitStep(OpType.CZ, [0, 1])])
+
+
+def test_szz_lowering_rejects_cz() -> None:
+    """SZZ lowering must not silently pass native CZ through its pulse model."""
+    with pytest.raises(ValueError, match="SZZ forward-flow lowering only supports SZZ/SZZdg two-qubit gates"):
+        _lower_szz_forward_flow_ops([SurfaceCircuitStep(OpType.CZ, [0, 1])])
+
+
+@pytest.mark.parametrize("malformation", ["fractional_x", "fractional_y", "duplicate_centre", "missing_partner"])
+def test_fold_geometry_bounds(malformation: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Malformed coordinates fail at the fold boundary with a named error."""
+    patch = SurfacePatch.create(distance=3)
+    allocation = gadgets.default_allocation(patch)
+    checks = patch.geometry.x_stabilizers
+    bulk = [check for check in checks if check.weight == 4]
+    if malformation in {"fractional_x", "fractional_y"}:
+        support = (0, 1, 3, 5) if malformation == "fractional_x" else (0, 1, 3, 7)
+        checks[bulk[0].index] = replace(bulk[0], data_qubits=support)
+        message = "bulk-centre coordinate sums divisible by 4"
+    elif malformation == "duplicate_centre":
+        checks[bulk[0].index] = replace(bulk[0], data_qubits=bulk[1].data_qubits)
+        message = "distinct data and bulk-ancilla sites"
+    else:
+        original = gadgets.rotated_id_to_position
+
+        def missing_partner(qubit: int, distance: int) -> tuple[int, int]:
+            x, y = original(qubit, distance)
+            return (x + 16, y) if qubit == 0 else (x, y)
+
+        monkeypatch.setattr(gadgets, "rotated_id_to_position", missing_partner)
+        message = "missing transpose partner"
+    with pytest.raises(ValueError, match=f"fold_s_round_gadget.*{message}"):
+        gadgets.fold_s_round_gadget(patch, allocation, round_index=0)
+
+
+@pytest.mark.parametrize("layer_count", [3, 5])
+def test_fold_requires_four_cx_layers(layer_count: int, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The fold's insertion point is defined only for the four-layer default round."""
+    patch = SurfacePatch.create(distance=3)
+    allocation = gadgets.default_allocation(patch)
+    monkeypatch.setattr(gadgets, "compute_cnot_schedule", lambda *_args, **_kwargs: [[] for _ in range(layer_count)])
+    with pytest.raises(ValueError, match="fold_s_round_gadget requires four CX layers in the default schedule"):
+        gadgets.fold_s_round_gadget(patch, allocation, round_index=0)

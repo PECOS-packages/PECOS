@@ -1770,6 +1770,9 @@ class StimRenderer(CircuitRenderer):
         basis: str,
     ) -> str:
         """Render to Stim circuit string."""
+        if self.add_detectors and any(op.op_type == OpType.CZ for op in ops):
+            msg = "StimRenderer: detectors for fold rounds come from the logical builder route"
+            raise ValueError(msg)
         geom = patch.geometry
         num_x_anc = len(geom.x_stabilizers)
 
@@ -2088,7 +2091,7 @@ class DagCircuitRenderer(CircuitRenderer):
                 raise NotImplementedError(msg)
 
             else:
-                msg = f"Unsupported DagCircuit operation: {op.op_type}"
+                msg = f"Unsupported DagCircuit operation: {op.op_type.name}"
                 raise ValueError(msg)
 
         return circuit
@@ -2158,6 +2161,9 @@ class TickCircuitRenderer(CircuitRenderer):
         - Tick-level: 'phase', 'syndrome_round', 'cx_round'
         - Gate-level: 'label', 'role'
         """
+        if self.add_detectors and any(op.op_type == OpType.CZ for op in ops):
+            msg = "TickCircuitRenderer: detectors for fold rounds come from the logical builder route"
+            raise ValueError(msg)
         import json
 
         from pecos_rslib.quantum import TickCircuit
@@ -2360,6 +2366,9 @@ class TickCircuitRenderer(CircuitRenderer):
                 elif "CX round" in op.label:
                     current_cx_round = int(op.label.split()[-1])
                     current_phase = f"cx_round_{current_cx_round}"
+                elif op.label in {"fold-transversal S layer", "fold-transversal S-dagger layer"}:
+                    current_phase = "fold_sdg" if "S-dagger" in op.label else "fold_s"
+                    current_cx_round = 0
                 elif "SZZ round" in op.label:
                     current_cx_round = int(op.label.split()[-1])
                     current_phase = f"szz_round_{current_cx_round}"

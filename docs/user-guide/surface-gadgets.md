@@ -23,8 +23,9 @@ rectangle = SurfacePatch.create(dx=3, dz=5, rotated=True)
 assert (rectangle.dx, rectangle.dz) == (3, 5)
 ```
 
-Rotated square and rectangular patches are supported by the memory and
-preparation routes. Fold-transversal S requires an odd square rotated patch.
+Rotated square and rectangular patches are supported throughout the
+single-patch routes. Fold-transversal S requires a square rotated patch
+with distance at least 2.
 The non-rotated layout renders standalone with a
 serialised CX layer and is rejected by the builder. All tick counts on this
 page are for the rotated layout.
@@ -77,7 +78,7 @@ else:
 ## The gadget library
 
 `Gadget` is a frozen dataclass with `kind`, `name`, `steps`, `allocations`,
-`dimensions`, `basis`, and `x_z_swapped`. Its steps are `SurfaceCircuitStep`
+`dimensions`, `basis`, `x_z_swapped`, and `fold` (`"S"`, `"SDG"`, or `None`). Its steps are `SurfaceCircuitStep`
 operations.
 All single-patch functions below take `patch, allocation` first unless shown
 otherwise. `round_order=None` uses the default schedule.
@@ -102,6 +103,8 @@ later rounds. The orientation belongs to the builder's patch state, not to
 that scope. Labels identify physical register slots, while returned syndrome
 arrays follow the current X/Z families. Ordinals start at zero within each
 function invocation.
+On square patches where the two families have unequal sizes, swapped rounds return
+`Syndrome_<dx>x<dz>_swapped`; the memory module supplies both orientation types.
 
 ### Memory composition
 
@@ -354,28 +357,37 @@ def syndrome_extraction_swapped(surf: SurfaceCode_3x3) -> Syndrome_3x3:
 
 `fold_s_round_gadget` inserts one disjoint gate layer after CX layer 2 of the
 default syndrome round. Cartesian transpose `(x, y) -> (y, x)` pairs data and
-bulk ancillas for CZ; diagonal data receive S and diagonal bulk ancillas receive
-S-dagger. Exterior ancillas are untouched. Only odd square rotated patches are
-supported. Set `dagger=True` to reverse every fixed-point phase, or
+bulk ancillas for CZ. Along the diagonal, data coordinates are odd and bulk
+ancilla coordinates are even, so S on data and S-dagger on ancillas alternate.
+Exterior ancillas are untouched. Square rotated patches with distance at least 2
+are supported, including even distances. Set `dagger=True` to reverse every fixed-point phase, or
 `x_z_swapped=True` for the current orientation after transversal H.
 
 The exact round flow is `X_L -> +Y_L * product(current Z checks)` and
 `Z_L -> Z_L`, where `+Y_L = i X_L Z_L`. This uses SparseStab's `Y = iXZ`
 convention and PECOS `SZ = diag(1, i)`. For an X-prepared patch, the output
 logical Y sign is the parity of this round's Z outcomes: even gives +Y and odd
-gives -Y. The dagger variant reverses that sign. Under circuit noise the
-X-sector fault distance is reduced to 2 at distance 3 and 4 at distance 5;
-the Z sector retains distance d. These finite-distance results are from the
-PECOS circuit analysis. For the fold construction see Chen, Chen, Lu and Pan,
-[arXiv:2412.01391](https://arxiv.org/abs/2412.01391); for the half-cycle
-description see McEwen, Bacon and Gidney,
+gives -Y. The dagger variant reverses that sign.
+
+X records also carry Z-check information. On input, a bottom-row bulk X
+ancilla measures its X check times the mirrored left-boundary Z check; other
+X records measure bare checks. On output, X record j together with the Z
+record at `(y_j + 2, x_j)` certifies X check j. Without that partner, the X
+record alone certifies the check. These coordinates use the current frame,
+transposed after transversal H.
+
+Under circuit noise the X-sector fault distance is reduced because a Y fault
+before the fold becomes a Z pair on a mirror pair. In their benchmark with
+separated S rounds, Chen, Chen, Lu and Pan observe two to three times the
+memory's logical error rate; see [arXiv:2412.01391](https://arxiv.org/abs/2412.01391).
+For the half-cycle description see McEwen, Bacon and Gidney,
 [arXiv:2302.02192](https://arxiv.org/abs/2302.02192).
 
 The fold has `d(d-1)/2` data CZ pairs and `(d-1)(d-2)/2` bulk-ancilla CZ
 pairs, totaling `(d-1)^2`, plus d data and d-1 ancilla fixed points. At
-distance 3 the complete round takes **9 ticks and 8 measurements**, one tick
-more than the default round. Builder and detector support arrive in the next
-slice; render this gadget with `add_detectors=False`.
+distance 3 the complete round takes nine ticks and makes eight measurements,
+one tick more than the default round. The Tick and Stim renderers refuse
+detector annotation for this gadget. `LogicalCircuitBuilder` does not accept it.
 
 ```python
 gadget = gadgets.fold_s_round_gadget(patch, allocation, round_index=0)
@@ -384,11 +396,24 @@ assert tc.num_ticks() == 9
 assert tc.num_measurements() == 8
 assert {gate.gate_type.name for gate in tc.get_tick(4).gate_batches()} == {"CZ", "SZ", "SZdg"}
 assert tc.get_meta("detectors") is None
+
+from pecos.qec.surface.circuit_builder import OpType
+
+d = patch.dx
+fold_ops = [step for step in gadget.steps if step.op_type in {OpType.CZ, OpType.SZ, OpType.SZDG}]
+data = set(allocation.data_qubits)
+cz_pairs = [step.qubits for step in fold_ops if step.op_type == OpType.CZ]
+fixed_points = [step.qubits[0] for step in fold_ops if step.op_type != OpType.CZ]
+assert sum(a in data for a, b in cz_pairs) == d * (d - 1) // 2
+assert sum(a not in data for a, b in cz_pairs) == (d - 1) * (d - 2) // 2
+assert len(cz_pairs) == (d - 1) ** 2
+assert sum(q in data for q in fixed_points) == d
+assert sum(q not in data for q in fixed_points) == d - 1
 ```
 
 Render the Guppy function independently; the memory module does not include
 it. When assembling a Guppy module, also import `cz`, `s`, and `sdg` from
-`guppylang.std.quantum`. No fold protocol factory is provided yet.
+`guppylang.std.quantum`. No fold protocol factory is provided.
 
 ```python
 gadget = gadgets.fold_s_round_gadget(patch, allocation, round_index=0)
@@ -396,6 +421,7 @@ lines = render_gadget_function(gadget)
 assert "    cz(az1, az2)" in lines
 assert "    sdg(ax1)" in lines
 assert "    s(surf.data[2])" in lines
+assert "    # fold-transversal S layer" in lines
 assert "syndrome_extraction_fold_s" not in render_surface_gadget_module(patch)
 ```
 
@@ -404,6 +430,7 @@ assert "syndrome_extraction_fold_s" not in render_surface_gadget_module(patch)
 def syndrome_extraction_fold_s(surf: SurfaceCode_3x3) -> Syndrome_3x3:
     """Extract full syndrome with the fold-transversal logical S between CX layers 2 and 3."""
     ...
+    # fold-transversal S layer
     s(surf.data[6])
     cz(surf.data[3], surf.data[7])
     cz(surf.data[0], surf.data[8])

@@ -59,6 +59,8 @@ def render_gadget_function(gadget: Gadget, *, tag_scope: str | None = None) -> l
     register = registers[0]
     n = len(data)
     current_x, current_z = (base_z, base_x) if gadget.x_z_swapped else (base_x, base_z)
+    if gadget.x_z_swapped and dx == dz and len(base_x) != len(base_z):
+        syndrome += "_swapped"
     x_labels = [s.label for s in gadget.steps if s.op_type == OpType.MEASURE and s.qubits[0] in current_x]
     z_labels = [s.label for s in gadget.steps if s.op_type == OpType.MEASURE and s.qubits[0] in current_z]
     basis = gadget.basis
@@ -76,9 +78,9 @@ def render_gadget_function(gadget: Gadget, *, tag_scope: str | None = None) -> l
     elif kind == GadgetKind.SYNDROME_ROUND:
         result = syndrome
         doc = "Extract full syndrome using 4-round parallel CNOT schedule."
-        if gadget.name.startswith("syndrome_extraction_fold_sdg"):
+        if gadget.fold == "SDG":
             doc = "Extract full syndrome with the fold-transversal logical S-dagger between CX layers 2 and 3."
-        elif gadget.name.startswith("syndrome_extraction_fold_s"):
+        elif gadget.fold == "S":
             doc = "Extract full syndrome with the fold-transversal logical S between CX layers 2 and 3."
     elif kind == GadgetKind.MEASURE_OUT:
         argument += " @ owned"
@@ -111,7 +113,12 @@ def render_gadget_function(gadget: Gadget, *, tag_scope: str | None = None) -> l
                 }
                 if kind != GadgetKind.INIT_SYNDROME or has_body:
                     lines.extend(["", f"    # Round {comment.removeprefix('CX round ')}"])
-            elif comment in {"Hadamard on X ancillas", "Hadamard on Z ancillas"}:
+            elif comment in {
+                "Hadamard on X ancillas",
+                "Hadamard on Z ancillas",
+                "fold-transversal S layer",
+                "fold-transversal S-dagger layer",
+            }:
                 lines.extend(["", f"    # {comment}"])
             elif comment == "Measure ancillas":
                 comment = "Measure init ancillas" if kind == GadgetKind.INIT_SYNDROME else comment
@@ -236,9 +243,22 @@ def render_surface_gadget_module(patch: SurfacePatch) -> str:
         f"    synz: array[bool, {nz}]",
         "",
         "",
-        "# === State Preparation ===",
-        "",
     ]
+    if dx == dz and nx != nz:
+        # Swapping an even-distance patch exchanges unequal syndrome register sizes.
+        lines.extend(
+            [
+                "@guppy.struct",
+                f"class Syndrome_{dx}x{dz}_swapped:",
+                f'    """Syndrome for the swapped dx={dx}, dz={dz} patch."""',
+                "",
+                f"    synx: array[bool, {nz}]",
+                f"    synz: array[bool, {nx}]",
+                "",
+                "",
+            ],
+        )
+    lines.extend(["# === State Preparation ===", ""])
     for basis in ("Z", "X"):
         lines.extend(render_gadget_function(prep_gadget(patch, allocation, basis=basis)))
         lines.extend(["", ""])

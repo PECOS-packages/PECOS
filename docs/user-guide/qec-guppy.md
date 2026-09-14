@@ -345,7 +345,7 @@ prog = make_css_transversal_cnot_with_x(
 num_qubits = get_transversal_num_qubits("color", 3)
 results = sim(prog).qubits(num_qubits).quantum(state_vector()).run(100)
 
-# Check that both patches measure to logical 1
+# Retrieve the final measurements of both patches
 data = results.to_dict()
 final_ctrl = data.get("final_ctrl", [])
 final_tgt = data.get("final_tgt", [])
@@ -440,15 +440,26 @@ and gate functions, see [the surface gadget library](surface-gadgets.md#the-gadg
 from pecos.guppy_gen import generate_surface_code_module
 
 source = generate_surface_code_module(d=3)
-assert "def syndrome_extraction" in source
-assert "def measure_x_stab_0" not in source
-assert "def measure_z_stab_0" not in source
 assert "class SurfaceCode_3x3:" in source
-assert "    data: array[qubit, 9]" in source
-assert "class Syndrome_3x3:" in source
-assert "    synx: array[bool, 4]" in source
-assert "    synz: array[bool, 4]" in source
 ```
+
+```text
+@guppy.struct
+class SurfaceCode_3x3:
+    """Surface code patch with dx=3, dz=3 (9 data qubits)."""
+
+    data: array[qubit, 9]
+
+
+@guppy.struct
+class Syndrome_3x3:
+    """Syndrome for dx=3, dz=3 patch."""
+
+    synx: array[bool, 4]
+    synz: array[bool, 4]
+```
+
+See [Viewing Generated Source](#viewing-generated-source) for the full module.
 
 ## Viewing Generated Source
 

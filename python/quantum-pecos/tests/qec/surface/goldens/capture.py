@@ -11,6 +11,7 @@ import argparse
 import json
 from pathlib import Path
 
+from pecos.guppy_gen.protocol_render import render_surface_protocol_module
 from pecos.guppy_gen.surface import generate_guppy_source
 from pecos.qec.surface import LogicalCircuitBuilder, SurfacePatch, TwirlConfig
 from pecos.qec.surface.circuit_builder import (
@@ -218,7 +219,7 @@ def golden_outputs(builder: LogicalCircuitBuilder) -> dict[str, str]:
 
 def capture_outputs() -> dict[str, str]:
     """Evaluate the explicit recipes for both golden directories."""
-    outputs = {}
+    outputs = {"gadget_parity/protocol_d3.py.txt": render_surface_protocol_module(SurfacePatch.create(distance=3))}
     for name in OPS_NAMES:
         patch, rounds, basis, kwargs = _case(name.removeprefix("ops_").removesuffix(".json"))
         steps, allocation = build_surface_code_circuit(patch, rounds, basis, **kwargs)
@@ -253,7 +254,7 @@ def main() -> None:
     parser.add_argument(
         "--post-fix-only",
         action="store_true",
-        help="Capture only the injection and repetition post-change shapes",
+        help="Capture only the protocol, injection and repetition post-change outputs",
     )
     args = parser.parse_args()
     outputs = capture_outputs()
@@ -261,7 +262,8 @@ def main() -> None:
         outputs = {
             name: contents
             for name, contents in outputs.items()
-            if any(name.startswith(f"logical_builder/{shape}.") for shape in POST_FIX_SHAPES)
+            if name == "gadget_parity/protocol_d3.py.txt"
+            or any(name.startswith(f"logical_builder/{shape}.") for shape in POST_FIX_SHAPES)
         }
     if not args.force:
         existing = [name for name in outputs if (args.output_dir / name).exists()]

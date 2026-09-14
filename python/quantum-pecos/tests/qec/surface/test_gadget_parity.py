@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 from pecos.guppy_gen.gadget_render import render_gadget_function, render_surface_gadget_module
+from pecos.guppy_gen.protocol_render import render_surface_protocol_module
 from pecos.guppy_gen.surface import generate_guppy_source
 from pecos.qec.surface import SurfacePatch, TwirlConfig
 from pecos.qec.surface.circuit_builder import (
@@ -30,6 +31,7 @@ from pecos.qec.surface.gadgets import (
     measure_out_gadget,
     memory_gadgets,
     syndrome_round_gadget,
+    transversal_cx_gadget,
 )
 from pecos.qec.surface.schedule import compute_cnot_schedule
 
@@ -84,6 +86,7 @@ GUPPY_NAMES = (
     "guppy_dx5dz3.py.txt",
 )
 EXPECTED_FILES = {
+    "protocol_d3.py.txt",
     *OPS_NAMES,
     *STIM_NAMES,
     *GUPPY_NAMES,
@@ -351,3 +354,91 @@ def test_measurement_membership_uses_allocation(basis: str | None) -> None:
         assert "    synz = array(sz0, sz1, sz2, sz3)" in lines
     else:
         assert f"    return {results}" in lines
+
+
+def test_protocol_source_parity() -> None:
+    """The post-fix protocol capture guards rendered source against drift."""
+    assert (
+        render_surface_protocol_module(SurfacePatch.create(distance=3)) == (GOLDENS / "protocol_d3.py.txt").read_text()
+    )
+
+
+def test_two_register_ancilla_names() -> None:
+    patch = SurfacePatch.create(distance=3)
+    ctrl = default_allocation(patch)
+    tgt = QubitAllocation(
+        [q + 100 for q in ctrl.data_qubits],
+        [q + 100 for q in ctrl.x_ancilla_qubits],
+        [q + 100 for q in ctrl.z_ancilla_qubits],
+    )
+    gadget = transversal_cx_gadget(patch, ctrl, patch, tgt)
+    steps = []
+    for scope, allocation in (("ctrl", ctrl), ("tgt", tgt)):
+        for family, ancillas in (("x", allocation.x_ancilla_qubits), ("z", allocation.z_ancilla_qubits)):
+            for i, ancilla in enumerate(ancillas):
+                steps.extend(
+                    [
+                        SurfaceCircuitStep(OpType.ALLOC, [ancilla]),
+                        SurfaceCircuitStep(OpType.H, [ancilla]),
+                        SurfaceCircuitStep(OpType.CX, [ancilla, allocation.data_qubits[i]]),
+                        SurfaceCircuitStep(OpType.MEASURE, [ancilla], f"{scope}_s{family}{i}"),
+                    ],
+                )
+    lines = render_gadget_function(replace(gadget, steps=tuple(steps)))
+    allocated = [line.strip().split(" = ")[0] for line in lines if " = qubit()" in line]
+    assert allocated == [
+        f"{scope}_a{family}{i}" for scope in ("ctrl", "tgt") for family in ("x", "z") for i in range(4)
+    ]
+    assert len(set(allocated)) == len(allocated)
+    for scope in ("ctrl", "tgt"):
+        for family in ("x", "z"):
+            for i in range(4):
+                name = f"{scope}_a{family}{i}"
+                assert f"    h({name})" in lines
+                assert f"    cx({name}, {scope}.data[{i}])" in lines
+                assert f"    {scope}_s{family}{i} = measure({name}).read()" in lines
+
+
+def test_unsupported_gadget_operation() -> None:
+    patch = SurfacePatch.create(distance=3)
+    allocation = default_allocation(patch)
+    gadget = logical_pauli_gadget(patch, allocation, pauli="X")
+    gadget = replace(gadget, steps=(SurfaceCircuitStep(OpType.F, [allocation.data_qubits[0]]),))
+    with pytest.raises(ValueError, match="Unsupported gadget operation: F"):
+        render_gadget_function(gadget)
+
+
+def test_data_allocation_requires_prep() -> None:
+    patch = SurfacePatch.create(distance=3)
+    allocation = default_allocation(patch)
+    gadget = logical_pauli_gadget(patch, allocation, pauli="X")
+    gadget = replace(gadget, steps=tuple(SurfaceCircuitStep(OpType.ALLOC, [q]) for q in allocation.data_qubits))
+    with pytest.raises(ValueError, match="Data allocation requires a preparation gadget"):
+        render_gadget_function(gadget)
+
+
+@pytest.mark.parametrize("operation", [OpType.ALLOC, OpType.MEASURE])
+@pytest.mark.parametrize("qubits", [[0], list(reversed(range(9)))])
+def test_incomplete_data_run(operation, qubits) -> None:
+    patch = SurfacePatch.create(distance=3)
+    gadget = measure_out_gadget(patch, default_allocation(patch), basis="Z")
+    gadget = replace(gadget, steps=tuple(SurfaceCircuitStep(operation, [q]) for q in qubits))
+    with pytest.raises(ValueError, match=f"{operation.name} must cover all data in register order"):
+        render_gadget_function(gadget)
+
+
+@pytest.mark.parametrize("within_register", [False, True])
+def test_non_disjoint_allocations(within_register) -> None:
+    patch = SurfacePatch.create(distance=3)
+    allocation = default_allocation(patch)
+    gadget = syndrome_round_gadget(patch, allocation, round_index=0)
+    if within_register:
+        bad = replace(allocation, x_ancilla_qubits=[allocation.data_qubits[0], *allocation.x_ancilla_qubits[1:]])
+        gadget = replace(gadget, allocations=(bad,))
+    else:
+        # Construct a valid two-patch gadget first, then inject overlapping IDs.
+        target = QubitAllocation([q + 100 for q in allocation.data_qubits], [], [])
+        gadget = transversal_cx_gadget(patch, allocation, patch, target)
+        gadget = replace(gadget, allocations=(allocation, allocation))
+    with pytest.raises(ValueError, match="allocations must be disjoint"):
+        render_gadget_function(gadget)

@@ -3,14 +3,8 @@ name: PECOS CodeQL config
 # Rust extraction runs against the whole checkout in build-mode "none". Skip
 # directories whose only Rust content is standalone helper crates that are not
 # workspace members: the extractor finds their Cargo.toml, tries to load each
-# as its own workspace, and either fails or extracts code nobody ships.
+# as its own workspace, and extracts code nobody ships.
 paths-ignore:
-  # Stale copies of crates/pecos-chromobius and crates/pecos-tesseract left
-  # behind by #216/#235. They inherit workspace fields without being members,
-  # so nothing can build them; the extractor logs "failed to load workspace".
-  # Their only mention is the standalone-manifest allowlist in
-  # scripts/check_rust_workspace.py.
-  - crates/pecos-pymatching/tests/pymatching/crates
   # Doc-test crate that only exercises documentation examples.
   - python/quantum-pecos/tests/docs/rust_crate
   # Native benchmark driver.

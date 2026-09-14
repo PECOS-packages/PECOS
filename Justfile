@@ -363,13 +363,26 @@ pytest-zluppy:
 python-ci-smoke profile="debug": (validate-profile "python-ci-smoke" profile) (python-ci-build profile)
     uv run --frozen python -c "from importlib.metadata import version; import pecos, pecos_rslib, pecos_rslib_llvm; print({'pecos': pecos.__version__, 'pecos_rslib': pecos_rslib.__version__, 'pecos_rslib_llvm': version('pecos-rslib-llvm')})"
 
-# Run Rust tests (CUDA-aware; mode: dev/debug, release, native)
+# Run Rust tests (CUDA-aware; mode: dev/debug, release, native; runner: cargo
+# or nextest -- nextest runs the workspace test binaries in parallel and needs
+# cargo-nextest on PATH, see scripts/ci/ensure-nextest.sh)
 [group('test')]
-rstest mode="release": _msvc-bootstrap (validate-test-mode "rstest" mode)
+rstest mode="release" runner="cargo": _msvc-bootstrap (validate-test-mode "rstest" mode)
     #!/usr/bin/env bash
     set -euo pipefail
     MODE="{{mode}}"
-    {{pecos}} rust test --profile "$MODE"
+    case "{{runner}}" in
+        cargo)
+            {{pecos}} rust test --profile "$MODE"
+            ;;
+        nextest)
+            {{pecos}} rust test --profile "$MODE" --nextest
+            ;;
+        *)
+            echo "Invalid runner: {{runner}} (expected cargo or nextest)" >&2
+            exit 2
+            ;;
+    esac
 
 # Run all tests (Rust + Python + Julia if available; mode: dev/debug, release, native)
 [group('test')]

@@ -10,7 +10,7 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-//! Simulation builder and handle for the Tool architecture.
+//! Simulation builder and reusable shot execution.
 //!
 //! This module provides:
 //! - [`sim_neo()`] - Universal entry point accepting any program type
@@ -111,7 +111,7 @@ use crate::noise::ComposableNoiseModel;
 use crate::outcome::{MeasurementOutcomes, RegisterMap};
 use crate::program::{CommandSource, DynProgramRunner, ProgramRunner, StaticProgram};
 use crate::runner::{EventHandlers, GateOverrides};
-use crate::sampling::importance_runner::ImportanceSamplingRunner;
+use crate::sampling::importance_runner::{ImportanceSampledShot, ImportanceSamplingRunner};
 use crate::sampling::path::{PathEnumerator, PathExplorer};
 use crate::sampling::subset::{
     SubsetConfig, SubsetResult, SubsetSimulation, supports as subset_sampler_supports,
@@ -127,15 +127,12 @@ use rayon::prelude::*;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use super::resource::Resources;
-use super::{Plugin, Stage, Tool};
-
 // --- Quantum Backend Builders (builder-of-builders pattern) ---
 
 /// Configuration for a quantum backend, stored as data in the builder.
 ///
 /// This enum represents the choice of quantum simulator. The actual simulator
-/// is constructed at build time, following the builder-of-builders pattern.
+/// is constructed lazily when the simulation runs.
 ///
 /// There is no default: select a backend explicitly via
 /// [`SimNeoBuilder::quantum()`](SimNeoBuilder::quantum), or call
@@ -724,7 +721,7 @@ impl SimNeoInput for pecos_programs::Program {
     }
 }
 
-// --- Resources ---
+// --- Configuration and results ---
 
 /// The circuit to execute.
 #[derive(Clone)]
@@ -1216,7 +1213,7 @@ pub enum Sampling {
     ///
     /// Each worker runs a batch of shots independently with deterministic seeding.
     /// Supports both noiseless and noisy circuits (noise model is cloned per worker).
-    /// With 1 worker, runs via the Tool's schedule directly.
+    /// With 1 worker, runs a sequential shot loop.
     ///
     /// Use the [`monte_carlo()`] builder function to create this variant.
     MonteCarlo {
@@ -1543,15 +1540,6 @@ impl SimulationResults {
     }
 }
 
-/// Wrapper for noise model resource.
-pub struct NoiseResource(pub ComposableNoiseModel);
-
-/// Wrapper for gate definitions resource.
-struct GateDefinitionsResource(GateDefinitions);
-
-/// Wrapper for max decomposition depth resource.
-struct MaxDecompDepthResource(usize);
-
 /// Type-erased storage for gate overrides.
 ///
 /// Gate overrides are generic over the simulator type `S`, but the builder
@@ -1584,12 +1572,6 @@ impl From<GateOverrides<StateVec>> for StoredOverrides {
         Self::StateVec(overrides)
     }
 }
-
-/// Wrapper for gate overrides resource.
-struct GateOverridesResource(StoredOverrides);
-
-/// Wrapper for event handlers resource.
-struct EventHandlersResource(EventHandlers);
 
 // --- Classical Engine Support ---
 
@@ -1727,12 +1709,6 @@ pub enum TypedProgram {
     Unsupported(String),
 }
 
-/// Resource to hold the program source.
-pub struct ProgramSourceResource(pub ProgramSource);
-
-/// Temporary storage for current shot outcomes.
-struct CurrentOutcomes(MeasurementOutcomes);
-
 fn infer_num_qubits_from_circuit(circuit: &CommandQueue) -> usize {
     circuit
         .iter()
@@ -1761,7 +1737,7 @@ fn validate_sampler_circuit(
 /// Builder for configuring simulation tools (builder-of-builders pattern).
 ///
 /// This builder collects configuration data and sub-builders, then assembles
-/// everything into a [`Tool`] at build time.
+/// the inputs for lazy initialization at build time.
 ///
 /// Created via [`sim_neo()`] or [`sim_neo_builder()`], this builder provides
 /// a fluent API for configuring quantum circuit simulations.
@@ -1918,7 +1894,7 @@ impl SimNeoBuilder {
     ///
     /// The builder is stored as data and configured with source at `.build()` time.
     /// This follows "everything is data" - we collect configuration, then wire
-    /// it all together when building the Tool.
+    /// it all together when building the simulation.
     ///
     /// ```no_run
     /// use pecos_neo::tool::{monte_carlo, sim_neo};
@@ -1929,7 +1905,7 @@ impl SimNeoBuilder {
     /// let results = sim_neo(qasm_code).auto()
     ///     .classical(qasm_engine())  // stores builder as data
     ///     .sampling(monte_carlo(1000))
-    ///     .build()  // configures builder, builds engine, creates Tool
+    ///     .build()  // configures the engine builder and creates the simulation
     ///     .run().expect("simulation should succeed");
     /// ```
     ///
@@ -2433,7 +2409,7 @@ impl SimNeoBuilder {
     /// - Program source is wired with engine factory (if applicable)
     /// - Sampling strategy is resolved and validated
     /// - Noise model is built
-    /// - Tool is constructed with all plugins and systems
+    /// - Simulation stores its inputs for lazy initialization
     ///
     /// # Panics
     ///
@@ -2530,7 +2506,7 @@ impl SimNeoBuilder {
             ),
         };
 
-        // The shot count drives the Tool's run loop via the SimConfig resource.
+        // The shot count drives the simulation loop via SimConfig.
         let mut config = self.config;
         config.shots = sampling.shots();
 
@@ -2547,8 +2523,7 @@ impl SimNeoBuilder {
         });
 
         // Configuration/backend mismatches are knowable now; fail at build
-        // instead of at startup. The startup-time checks remain as defensive
-        // duplicates for direct Tool users.
+        // instead of at startup. Runner construction retains defensive checks.
         if let Some(overrides) = &self.overrides {
             validate_overrides_backend(overrides, &quantum_backend);
         }
@@ -2631,8 +2606,8 @@ impl SimNeoBuilder {
         };
 
         // Importance sampling requires a static circuit; this is knowable
-        // now, so fail at build time. Parallel IS runs outside the Tool
-        // schedule and needs the circuit captured.
+        // now, so fail at build time. Parallel IS uses dedicated runners
+        // and needs the circuit captured.
         let is_parallel_spec = match &sampling {
             Sampling::ImportanceSampling { config: is_config } => {
                 let ProgramSource::Static(circuit) = &source else {
@@ -2663,7 +2638,7 @@ impl SimNeoBuilder {
             _ => None,
         };
 
-        // Path enumeration runs outside the Tool schedule; validate its
+        // Path enumeration uses its own runner; validate its
         // requirements here and capture what the run needs.
         let path_spec = match &sampling {
             Sampling::PathEnumeration { config: pe_config } => {
@@ -2708,7 +2683,7 @@ impl SimNeoBuilder {
             _ => None,
         };
 
-        // Subset simulation runs outside the Tool schedule, driving
+        // Subset simulation uses its own runner, driving
         // CircuitRunner directly; validate its requirements here and capture
         // what the run needs.
         let subset_spec = match &sampling {
@@ -2755,55 +2730,25 @@ impl SimNeoBuilder {
             _ => None,
         };
 
-        let mut tool = Tool::new()
-            .insert_resource(ProgramSourceResource(source))
-            .insert_resource(config)
-            .insert_resource(QuantumBackendResource(quantum_backend));
-
-        match &sampling {
-            Sampling::ImportanceSampling { config: is_config } => {
-                tool = tool.add_plugin(&ImportanceSamplingSimPlugin {
-                    is_config: is_config.clone(),
-                    explicit_num_qubits: self.explicit_num_qubits,
-                });
-            }
-            Sampling::MonteCarlo { .. } => {
-                tool = tool.add_plugin(&UnifiedSimulationPlugin {
-                    explicit_num_qubits: self.explicit_num_qubits,
-                });
-            }
-            // Subset simulation and path enumeration do not use the Tool
-            // schedule; no plugin.
-            Sampling::SubsetSimulation { .. } | Sampling::PathEnumeration { .. } => {}
-        }
-
-        // Add noise if configured
-        if let Some(noise) = self.noise {
-            tool = tool.insert_resource(NoiseResource(noise));
-        }
-
-        // Add gate definitions if configured
-        if let Some(definitions) = self.definitions {
-            tool = tool.insert_resource(GateDefinitionsResource(definitions));
-        }
-
-        // Add max decomposition depth if configured
-        if let Some(depth) = self.max_decomp_depth {
-            tool = tool.insert_resource(MaxDecompDepthResource(depth));
-        }
-
-        // Add gate overrides if configured
-        if let Some(overrides) = self.overrides.clone() {
-            tool = tool.insert_resource(GateOverridesResource(overrides));
-        }
-
-        // Add event handlers if configured
-        if let Some(handlers) = self.event_handlers {
-            tool = tool.insert_resource(EventHandlersResource(handlers));
-        }
-
+        let importance_config = match &sampling {
+            Sampling::ImportanceSampling { config } => Some(config.clone()),
+            _ => None,
+        };
         Simulation {
-            tool,
+            config,
+            inputs: Some(StartupInputs {
+                source,
+                quantum_backend,
+                noise: self.noise,
+                definitions: self.definitions,
+                max_decomp_depth: self.max_decomp_depth,
+                overrides: self.overrides,
+                event_handlers: self.event_handlers,
+                explicit_num_qubits: self.explicit_num_qubits,
+                importance_config,
+            }),
+            state: None,
+            results: SimulationResults::new(),
             sampling,
             parallel_plan,
             subset_spec,
@@ -2838,44 +2783,7 @@ impl SimNeoBuilder {
     }
 }
 
-// --- Unified Simulation Plugin ---
-
-/// Plugin that handles both static circuits and classical engines.
-struct UnifiedSimulationPlugin {
-    explicit_num_qubits: Option<usize>,
-}
-
-/// Resource to store explicit qubit count.
-struct ExplicitNumQubits(Option<usize>);
-
-/// Resource to store quantum backend choice.
-struct QuantumBackendResource(QuantumBackend);
-
-impl Plugin for UnifiedSimulationPlugin {
-    fn build(&self, tool: &mut Tool) {
-        // Insert default resources if not present
-        if !tool.contains_resource::<SimConfig>() {
-            tool.insert_resource_mut(SimConfig::default());
-        }
-        if !tool.contains_resource::<SimulationResults>() {
-            tool.insert_resource_mut(SimulationResults::new());
-        }
-
-        // Store explicit num_qubits for startup
-        tool.insert_resource_mut(ExplicitNumQubits(self.explicit_num_qubits));
-
-        // QuantumBackendResource is inserted directly by SimNeoBuilder::build()
-
-        // Add simulation systems
-        tool.add_system_mut(Stage::Startup, unified_simulation_startup);
-        tool.add_system_mut(Stage::PreShot, |resources: &mut Resources| {
-            unified_simulation_pre_shot(resources);
-            Ok(())
-        });
-        tool.add_system_mut(Stage::Execute, unified_simulation_execute);
-        tool.add_system_mut(Stage::PostShot, unified_simulation_post_shot);
-    }
-}
+// --- Shot execution ---
 
 /// Quantum runner that dispatches to different simulator backends.
 ///
@@ -2921,15 +2829,12 @@ impl QuantumRunner {
 /// Unified shot state that works with both static circuits and dynamic programs.
 pub struct UnifiedShotState {
     /// Quantum runner for execution (dispatches to appropriate backend).
-    pub quantum_runner: QuantumRunner,
+    pub quantum_runner: Box<QuantumRunner>,
     /// The command source (static or from classical engine).
     pub command_source: Box<dyn CommandSource + Send + Sync>,
     /// Current shot index.
     pub shot_index: usize,
 }
-
-/// Global shot index assigned to the first shot of a parallel worker.
-struct ParallelShotStart(usize);
 
 /// Validate that stored gate overrides match the resolved backend.
 ///
@@ -3019,50 +2924,50 @@ fn reject_parallel_adapted_engine_config(
 
 fn apply_standard_runner_config<S>(
     mut runner: ProgramRunner<S>,
-    noise: Option<NoiseResource>,
+    noise: Option<ComposableNoiseModel>,
     seed: Option<u64>,
-    max_depth: Option<MaxDecompDepthResource>,
+    max_depth: Option<usize>,
 ) -> ProgramRunner<S>
 where
     S: CliffordGateable,
 {
     if let Some(n) = noise {
-        runner = runner.with_noise(n.0);
+        runner = runner.with_noise(n);
     }
     if let Some(seed) = seed {
         runner = runner.with_seed(seed);
     }
     if let Some(d) = max_depth {
-        runner = runner.with_max_decomp_depth(d.0);
+        runner = runner.with_max_decomp_depth(d);
     }
     runner
 }
 
 fn apply_event_handlers<S>(
     mut runner: ProgramRunner<S>,
-    event_handlers: Option<EventHandlersResource>,
+    event_handlers: Option<EventHandlers>,
 ) -> ProgramRunner<S>
 where
     S: CliffordGateable,
 {
     if let Some(eh) = event_handlers {
-        runner = runner.with_event_handlers(eh.0);
+        runner = runner.with_event_handlers(eh);
     }
     runner
 }
 
 fn clifford_runner<S>(
     simulator: S,
-    definitions: Option<GateDefinitionsResource>,
-    noise: Option<NoiseResource>,
+    definitions: Option<GateDefinitions>,
+    noise: Option<ComposableNoiseModel>,
     seed: Option<u64>,
-    max_depth: Option<MaxDecompDepthResource>,
+    max_depth: Option<usize>,
 ) -> ProgramRunner<S>
 where
     S: CliffordGateable,
 {
     let runner = if let Some(defs) = definitions {
-        ProgramRunner::with_definitions(simulator, defs.0)
+        ProgramRunner::with_definitions(simulator, defs)
     } else {
         ProgramRunner::new(simulator)
     };
@@ -3071,387 +2976,294 @@ where
 
 fn rotation_runner<S>(
     simulator: S,
-    definitions: Option<GateDefinitionsResource>,
-    noise: Option<NoiseResource>,
+    definitions: Option<GateDefinitions>,
+    noise: Option<ComposableNoiseModel>,
     seed: Option<u64>,
-    max_depth: Option<MaxDecompDepthResource>,
+    max_depth: Option<usize>,
 ) -> ProgramRunner<S>
 where
     S: CliffordGateable + ArbitraryRotationGateable,
 {
     let runner = if let Some(defs) = definitions {
-        ProgramRunner::rotations_with_definitions(simulator, defs.0)
+        ProgramRunner::rotations_with_definitions(simulator, defs)
     } else {
         ProgramRunner::rotations(simulator)
     };
     apply_standard_runner_config(runner, noise, seed, max_depth)
 }
 
-/// Startup system for unified simulation.
-fn unified_simulation_startup(resources: &mut Resources) -> Result<(), PecosError> {
-    let config = resources.get::<SimConfig>().clone();
-    let explicit_qubits = resources.get::<ExplicitNumQubits>().0;
-
-    // Check if we already have a UnifiedShotState (from a previous run)
-    // If so, just reset it instead of rebuilding
-    if resources.contains::<UnifiedShotState>() {
-        let shot_index = resources
-            .try_get::<ParallelShotStart>()
-            .map_or(0, |start| start.0);
-        let state = resources.get_mut::<UnifiedShotState>();
-        state.shot_index = shot_index;
-        state.command_source.reset()?;
-
-        // Clear previous results
-        resources.get_mut::<SimulationResults>().clear();
-        return Ok(());
-    }
-
-    // Prepare the command source without consuming the stored input. A failing
-    // startup must leave the simulation reusable for another run attempt.
-    let (prepared_command_source, num_qubits): (
-        Option<Box<dyn CommandSource + Send + Sync>>,
-        usize,
-    ) = match &resources.get::<ProgramSourceResource>().0 {
-        ProgramSource::Static(circuit) => {
-            // Determine num_qubits from circuit
-            let inferred_qubits = circuit
-                .iter()
-                .flat_map(|cmd| cmd.qubits.iter())
-                .map(|q| q.0)
-                .max()
-                .map_or(1, |max| max + 1);
-
-            let num_qubits = explicit_qubits.unwrap_or(inferred_qubits);
-            let program = StaticProgram::new(circuit.clone(), num_qubits);
-            (Some(Box::new(program)), num_qubits)
-        }
-        ProgramSource::Dynamic(source) => {
-            let num_qubits = explicit_qubits.unwrap_or_else(|| source.num_qubits());
-            (None, num_qubits)
-        }
-        ProgramSource::RawSource(_) => {
-            // This should never happen - build() resolves RawSource with engine factory
-            unreachable!(
-                "RawSource should be resolved to Classical by SimNeoBuilder::build(). \
-                     This is a bug in the simulation builder."
-            );
-        }
-        ProgramSource::Typed(_) => {
-            // This should never happen - build() catches Typed without .auto()
-            unreachable!(
-                "Typed program should be resolved by .auto() or caught by build(). \
-                     This is a bug in the simulation builder."
-            );
-        }
-        ProgramSource::Classical(engine_builder) => {
-            // Build the engine adapter
-            let adapter = engine_builder.clone().build_adapter().map_err(|error| {
-                PecosError::with_context(error, "Failed to build classical engine")
-            })?;
-
-            let num_qubits = explicit_qubits.unwrap_or_else(|| adapter.num_qubits());
-            (Some(adapter), num_qubits)
-        }
-    };
-
-    // Clone runner configuration so a fallible backend build cannot consume
-    // the inputs needed by a retry.
-    let noise = resources
-        .try_get::<NoiseResource>()
-        .map(|noise| NoiseResource(noise.0.clone()));
-    let definitions = resources
-        .try_get::<GateDefinitionsResource>()
-        .map(|definitions| GateDefinitionsResource(definitions.0.clone()));
-    let max_depth = resources
-        .try_get::<MaxDecompDepthResource>()
-        .map(|depth| MaxDecompDepthResource(depth.0));
-    let overrides = resources
-        .try_get::<GateOverridesResource>()
-        .map(|overrides| GateOverridesResource(overrides.0.clone()));
-    let event_handlers = resources
-        .try_get::<EventHandlersResource>()
-        .map(|handlers| EventHandlersResource(handlers.0.clone()));
-    let backend = &resources.get::<QuantumBackendResource>().0;
-    let quantum_runner = match backend {
-        QuantumBackend::SparseStab => {
-            let mut runner = clifford_runner(
-                SparseStab::new(num_qubits),
-                definitions,
-                noise,
-                config.seed,
-                max_depth,
-            );
-            if let Some(o) = overrides {
-                match o.0 {
-                    StoredOverrides::SparseStab(ov) => {
-                        runner = runner.with_overrides(ov);
-                    }
-                    StoredOverrides::Stabilizer(_) => {
-                        panic!(
-                            "Stabilizer gate overrides used with SparseStab backend. \
-                             Use GateOverrides::<SparseStab> instead."
-                        );
-                    }
-                    StoredOverrides::StateVec(_) => {
-                        panic!(
-                            "StateVec gate overrides used with SparseStab backend. \
-                             Use GateOverrides::<SparseStab> instead."
-                        );
-                    }
-                }
-            }
-            runner = apply_event_handlers(runner, event_handlers);
-            QuantumRunner::SparseStab(runner)
-        }
-        QuantumBackend::Stabilizer => {
-            let mut runner = clifford_runner(
-                Stabilizer::new(num_qubits),
-                definitions,
-                noise,
-                config.seed,
-                max_depth,
-            );
-            if let Some(o) = overrides {
-                match o.0 {
-                    StoredOverrides::Stabilizer(ov) => {
-                        runner = runner.with_overrides(ov);
-                    }
-                    StoredOverrides::SparseStab(_) => {
-                        panic!(
-                            "SparseStab gate overrides used with Stabilizer backend. \
-                             Use GateOverrides::<Stabilizer> instead."
-                        );
-                    }
-                    StoredOverrides::StateVec(_) => {
-                        panic!(
-                            "StateVec gate overrides used with Stabilizer backend. \
-                             Use GateOverrides::<Stabilizer> instead."
-                        );
-                    }
-                }
-            }
-            runner = apply_event_handlers(runner, event_handlers);
-            QuantumRunner::Stabilizer(runner)
-        }
-        QuantumBackend::StateVec => {
-            let mut runner = rotation_runner(
-                StateVec::new(num_qubits),
-                definitions,
-                noise,
-                config.seed,
-                max_depth,
-            );
-            if let Some(o) = overrides {
-                match o.0 {
-                    StoredOverrides::StateVec(ov) => {
-                        runner = runner.with_overrides(ov);
-                    }
-                    StoredOverrides::Stabilizer(_) => {
-                        panic!(
-                            "Stabilizer gate overrides used with StateVec backend. \
-                             Use GateOverrides::<StateVec> instead."
-                        );
-                    }
-                    StoredOverrides::SparseStab(_) => {
-                        panic!(
-                            "SparseStab gate overrides used with StateVec backend. \
-                             Use GateOverrides::<StateVec> instead."
-                        );
-                    }
-                }
-            }
-            runner = apply_event_handlers(runner, event_handlers);
-            QuantumRunner::StateVec(runner)
-        }
-        QuantumBackend::AdaptedQuantumEngine(factory) => {
-            reject_dynamic_runner_config(
-                "QuantumEngineBuilder backend",
-                definitions.as_ref().map(|d| &d.0),
-                max_depth.as_ref().map(|d| &d.0),
-                overrides.as_ref().map(|o| &o.0),
-                event_handlers.as_ref().map(|h| &h.0),
-            );
-            assert!(
-                noise.is_none(),
-                "QuantumEngineBuilder backends do not support sim_neo noise modeling. \
-                 Use a noise-modeling runner/backend instead."
-            );
-            let runner = factory
-                .create_runner(num_qubits, config.seed)
-                .map_err(|error| {
-                    PecosError::with_context(error, "Failed to build quantum engine backend")
-                })?;
-            QuantumRunner::Custom(runner)
-        }
-        QuantumBackend::Custom(factory) => {
-            reject_dynamic_runner_config(
-                factory.diagnostic_label(),
-                definitions.as_ref().map(|d| &d.0),
-                max_depth.as_ref().map(|d| &d.0),
-                overrides.as_ref().map(|o| &o.0),
-                event_handlers.as_ref().map(|h| &h.0),
-            );
-            // Custom backends create their own runner; gate definitions
-            // should be captured in the factory closure if needed.
-            let runner = factory.create_runner(num_qubits, noise.map(|n| n.0), config.seed);
-            QuantumRunner::Custom(runner)
-        }
-    };
-
-    // Initialization has succeeded. Only now consume the startup inputs.
-    let source_resource = resources.remove::<ProgramSourceResource>();
-    let command_source = prepared_command_source.unwrap_or_else(|| match source_resource.0 {
-        ProgramSource::Dynamic(source) => source,
-        _ => unreachable!("only dynamic sources are deferred until startup succeeds"),
-    });
-    resources.remove::<QuantumBackendResource>();
-    resources.try_remove::<NoiseResource>();
-    resources.try_remove::<GateDefinitionsResource>();
-    resources.try_remove::<MaxDecompDepthResource>();
-    resources.try_remove::<GateOverridesResource>();
-    resources.try_remove::<EventHandlersResource>();
-
-    // Store unified shot state
-    resources.insert(UnifiedShotState {
-        quantum_runner,
-        command_source,
-        shot_index: 0,
-    });
-
-    // Clear previous results
-    resources.get_mut::<SimulationResults>().clear();
-    Ok(())
-}
-
-/// Pre-shot system for unified simulation.
-fn unified_simulation_pre_shot(resources: &mut Resources) {
-    let config = resources.get::<SimConfig>().clone();
-    let state = resources.get_mut::<UnifiedShotState>();
-
-    // Derive per-shot seed if configured
-    if let Some(base_seed) = config.seed {
-        let shot_seed = derive_seed(base_seed, &format!("shot_{}", state.shot_index));
-        state.quantum_runner.set_full_seed(shot_seed);
-    }
-}
-
-/// Execute system for unified simulation.
-fn unified_simulation_execute(resources: &mut Resources) -> Result<(), PecosError> {
-    let state = resources.get_mut::<UnifiedShotState>();
-
-    // Run the program (handles both static and dynamic programs)
-    let result = state.quantum_runner.run_shot(&mut *state.command_source)?;
-
-    // Store outcomes temporarily for post-shot processing
-    resources.insert(CurrentOutcomes(result.outcomes));
-    Ok(())
-}
-
-/// Post-shot system for unified simulation.
-fn unified_simulation_post_shot(resources: &mut Resources) -> Result<(), PecosError> {
-    // Move outcomes to results
-    let outcomes = resources.remove::<CurrentOutcomes>();
-    resources
-        .get_mut::<SimulationResults>()
-        .outcomes
-        .push(outcomes.0);
-
-    // Collect rich register results when the source produces them
-    // (classical engines: QASM cregs, PHIR variables).
-    let shot = resources
-        .get::<UnifiedShotState>()
-        .command_source
-        .shot_results()?;
-    if let Some(shot) = shot {
-        resources
-            .get_mut::<SimulationResults>()
-            .shots
-            .get_or_insert_with(pecos_results::ShotVec::new)
-            .shots
-            .push(shot);
-    }
-
-    // `shots[i]` is consumed as the register view of `outcomes[i]`, so the
-    // two must stay index-aligned: a source must produce a shot record for
-    // every shot or for none. Anything in between (a source that returns
-    // Some on some shots and None on others) silently misaligns them.
-    let results = resources.get::<SimulationResults>();
-    debug_assert!(
-        results
-            .shots
+impl UnifiedShotState {
+    /// Build lazily, preserving all inputs if a source or backend fails.
+    fn startup(inputs: &mut Option<StartupInputs>, config: &SimConfig) -> Result<Self, PecosError> {
+        let stored = inputs
             .as_ref()
-            .is_none_or(|shots| shots.shots.len() == results.outcomes.len()),
-        "shot records and outcomes are misaligned ({} shot records vs {} outcomes); \
+            .expect("startup inputs exist until initialization succeeds");
+        let explicit_qubits = stored.explicit_num_qubits;
+
+        // Prepare the command source without consuming the stored input. A failing
+        // startup must leave the simulation reusable for another run attempt.
+        let (prepared_command_source, num_qubits): (
+            Option<Box<dyn CommandSource + Send + Sync>>,
+            usize,
+        ) = match &stored.source {
+            ProgramSource::Static(circuit) => {
+                // Determine num_qubits from circuit
+                let inferred_qubits = circuit
+                    .iter()
+                    .flat_map(|cmd| cmd.qubits.iter())
+                    .map(|q| q.0)
+                    .max()
+                    .map_or(1, |max| max + 1);
+
+                let num_qubits = explicit_qubits.unwrap_or(inferred_qubits);
+                let program = StaticProgram::new(circuit.clone(), num_qubits);
+                (Some(Box::new(program)), num_qubits)
+            }
+            ProgramSource::Dynamic(source) => {
+                let num_qubits = explicit_qubits.unwrap_or_else(|| source.num_qubits());
+                (None, num_qubits)
+            }
+            ProgramSource::RawSource(_) => {
+                // This should never happen - build() resolves RawSource with engine factory
+                unreachable!(
+                    "RawSource should be resolved to Classical by SimNeoBuilder::build(). \
+                     This is a bug in the simulation builder."
+                );
+            }
+            ProgramSource::Typed(_) => {
+                // This should never happen - build() catches Typed without .auto()
+                unreachable!(
+                    "Typed program should be resolved by .auto() or caught by build(). \
+                     This is a bug in the simulation builder."
+                );
+            }
+            ProgramSource::Classical(engine_builder) => {
+                // Build the engine adapter
+                let adapter = engine_builder.clone().build_adapter().map_err(|error| {
+                    PecosError::with_context(error, "Failed to build classical engine")
+                })?;
+
+                let num_qubits = explicit_qubits.unwrap_or_else(|| adapter.num_qubits());
+                (Some(adapter), num_qubits)
+            }
+        };
+
+        // Clone runner configuration so a fallible backend build cannot consume
+        // the inputs needed by a retry.
+        let noise = stored.noise.clone();
+        let definitions = stored.definitions.clone();
+        let max_depth = stored.max_decomp_depth;
+        let overrides = stored.overrides.clone();
+        let event_handlers = stored.event_handlers.clone();
+        let backend = &stored.quantum_backend;
+        let quantum_runner = match backend {
+            QuantumBackend::SparseStab => {
+                let mut runner = clifford_runner(
+                    SparseStab::new(num_qubits),
+                    definitions,
+                    noise,
+                    config.seed,
+                    max_depth,
+                );
+                if let Some(o) = overrides {
+                    match o {
+                        StoredOverrides::SparseStab(ov) => {
+                            runner = runner.with_overrides(ov);
+                        }
+                        StoredOverrides::Stabilizer(_) => {
+                            panic!(
+                                "Stabilizer gate overrides used with SparseStab backend. \
+                             Use GateOverrides::<SparseStab> instead."
+                            );
+                        }
+                        StoredOverrides::StateVec(_) => {
+                            panic!(
+                                "StateVec gate overrides used with SparseStab backend. \
+                             Use GateOverrides::<SparseStab> instead."
+                            );
+                        }
+                    }
+                }
+                runner = apply_event_handlers(runner, event_handlers);
+                QuantumRunner::SparseStab(runner)
+            }
+            QuantumBackend::Stabilizer => {
+                let mut runner = clifford_runner(
+                    Stabilizer::new(num_qubits),
+                    definitions,
+                    noise,
+                    config.seed,
+                    max_depth,
+                );
+                if let Some(o) = overrides {
+                    match o {
+                        StoredOverrides::Stabilizer(ov) => {
+                            runner = runner.with_overrides(ov);
+                        }
+                        StoredOverrides::SparseStab(_) => {
+                            panic!(
+                                "SparseStab gate overrides used with Stabilizer backend. \
+                             Use GateOverrides::<Stabilizer> instead."
+                            );
+                        }
+                        StoredOverrides::StateVec(_) => {
+                            panic!(
+                                "StateVec gate overrides used with Stabilizer backend. \
+                             Use GateOverrides::<Stabilizer> instead."
+                            );
+                        }
+                    }
+                }
+                runner = apply_event_handlers(runner, event_handlers);
+                QuantumRunner::Stabilizer(runner)
+            }
+            QuantumBackend::StateVec => {
+                let mut runner = rotation_runner(
+                    StateVec::new(num_qubits),
+                    definitions,
+                    noise,
+                    config.seed,
+                    max_depth,
+                );
+                if let Some(o) = overrides {
+                    match o {
+                        StoredOverrides::StateVec(ov) => {
+                            runner = runner.with_overrides(ov);
+                        }
+                        StoredOverrides::Stabilizer(_) => {
+                            panic!(
+                                "Stabilizer gate overrides used with StateVec backend. \
+                             Use GateOverrides::<StateVec> instead."
+                            );
+                        }
+                        StoredOverrides::SparseStab(_) => {
+                            panic!(
+                                "SparseStab gate overrides used with StateVec backend. \
+                             Use GateOverrides::<StateVec> instead."
+                            );
+                        }
+                    }
+                }
+                runner = apply_event_handlers(runner, event_handlers);
+                QuantumRunner::StateVec(runner)
+            }
+            QuantumBackend::AdaptedQuantumEngine(factory) => {
+                reject_dynamic_runner_config(
+                    "QuantumEngineBuilder backend",
+                    definitions.as_ref(),
+                    max_depth.as_ref(),
+                    overrides.as_ref(),
+                    event_handlers.as_ref(),
+                );
+                assert!(
+                    noise.is_none(),
+                    "QuantumEngineBuilder backends do not support sim_neo noise modeling. \
+                 Use a noise-modeling runner/backend instead."
+                );
+                let runner = factory
+                    .create_runner(num_qubits, config.seed)
+                    .map_err(|error| {
+                        PecosError::with_context(error, "Failed to build quantum engine backend")
+                    })?;
+                QuantumRunner::Custom(runner)
+            }
+            QuantumBackend::Custom(factory) => {
+                reject_dynamic_runner_config(
+                    factory.diagnostic_label(),
+                    definitions.as_ref(),
+                    max_depth.as_ref(),
+                    overrides.as_ref(),
+                    event_handlers.as_ref(),
+                );
+                // Custom backends create their own runner; gate definitions
+                // should be captured in the factory closure if needed.
+                let runner = factory.create_runner(num_qubits, noise, config.seed);
+                QuantumRunner::Custom(runner)
+            }
+        };
+
+        // Initialization has succeeded. Only now consume the startup inputs.
+        let stored = inputs
+            .take()
+            .expect("startup inputs exist until initialization succeeds");
+        let command_source = prepared_command_source.unwrap_or_else(|| match stored.source {
+            ProgramSource::Dynamic(source) => source,
+            _ => unreachable!("only dynamic sources are deferred until startup succeeds"),
+        });
+        Ok(Self {
+            quantum_runner: Box::new(quantum_runner),
+            command_source,
+            shot_index: 0,
+        })
+    }
+
+    fn reset(&mut self, shot_index: usize) -> Result<(), PecosError> {
+        self.shot_index = shot_index;
+        self.command_source.reset()
+    }
+
+    fn pre_shot(&mut self, config: &SimConfig) {
+        // Derive per-shot seed if configured
+        if let Some(base_seed) = config.seed {
+            let shot_seed = derive_seed(base_seed, &format!("shot_{}", self.shot_index));
+            self.quantum_runner.set_full_seed(shot_seed);
+        }
+    }
+
+    fn execute(&mut self) -> Result<MeasurementOutcomes, PecosError> {
+        let result = self.quantum_runner.run_shot(&mut *self.command_source)?;
+        Ok(result.outcomes)
+    }
+
+    fn post_shot(
+        &mut self,
+        outcomes: MeasurementOutcomes,
+        results: &mut SimulationResults,
+    ) -> Result<(), PecosError> {
+        results.outcomes.push(outcomes);
+
+        // Collect rich register results when the source produces them
+        // (classical engines: QASM cregs, PHIR variables).
+        let shot = self.command_source.shot_results()?;
+        if let Some(shot) = shot {
+            results
+                .shots
+                .get_or_insert_with(pecos_results::ShotVec::new)
+                .shots
+                .push(shot);
+        }
+
+        // `shots[i]` is consumed as the register view of `outcomes[i]`, so the
+        // two must stay index-aligned: a source must produce a shot record for
+        // every shot or for none. Anything in between (a source that returns
+        // Some on some shots and None on others) silently misaligns them.
+        debug_assert!(
+            results
+                .shots
+                .as_ref()
+                .is_none_or(|shots| shots.shots.len() == results.outcomes.len()),
+            "shot records and outcomes are misaligned ({} shot records vs {} outcomes); \
          a CommandSource must return shot_results() for every shot or for none",
-        results.shots.as_ref().map_or(0, |s| s.shots.len()),
-        results.outcomes.len(),
-    );
+            results.shots.as_ref().map_or(0, |s| s.shots.len()),
+            results.outcomes.len(),
+        );
 
-    // Increment shot counter
-    resources.get_mut::<UnifiedShotState>().shot_index += 1;
-    Ok(())
-}
-
-// --- Importance Sampling Simulation Plugin ---
-
-/// Plugin for importance-sampling simulation.
-///
-/// Replaces [`UnifiedSimulationPlugin`] when importance sampling is selected.
-/// Uses [`ImportanceSamplingRunner`] for biased noise with weight tracking.
-struct ImportanceSamplingSimPlugin {
-    is_config: ImportanceSamplingBuilder,
-    explicit_num_qubits: Option<usize>,
-}
-
-impl Plugin for ImportanceSamplingSimPlugin {
-    fn build(&self, tool: &mut Tool) {
-        if !tool.contains_resource::<SimConfig>() {
-            tool.insert_resource_mut(SimConfig::default());
-        }
-        if !tool.contains_resource::<SimulationResults>() {
-            tool.insert_resource_mut(SimulationResults::new());
-        }
-
-        tool.insert_resource_mut(ExplicitNumQubits(self.explicit_num_qubits));
-        tool.insert_resource_mut(ISConfigResource(self.is_config.clone()));
-
-        tool.add_system_mut(Stage::Startup, |resources: &mut Resources| {
-            is_sim_startup(resources);
-            Ok(())
-        });
-        tool.add_system_mut(Stage::PreShot, |resources: &mut Resources| {
-            is_sim_pre_shot(resources);
-            Ok(())
-        });
-        tool.add_system_mut(Stage::Execute, |resources: &mut Resources| {
-            is_sim_execute(resources);
-            Ok(())
-        });
-        tool.add_system_mut(Stage::PostShot, |resources: &mut Resources| {
-            is_sim_post_shot(resources);
-            Ok(())
-        });
+        // Increment shot counter
+        self.shot_index += 1;
+        Ok(())
     }
 }
 
-/// Resource holding IS configuration, consumed at startup.
-struct ISConfigResource(ImportanceSamplingBuilder);
+// --- Importance sampling shot execution ---
 
 /// State for importance sampling simulation shots.
 struct ISShotState {
     /// The importance sampling runner.
-    runner: ImportanceSamplingRunner<SparseStab>,
+    runner: Box<ImportanceSamplingRunner<SparseStab>>,
     /// The circuit to execute.
     circuit: CommandQueue,
     /// Current shot index.
     shot_index: usize,
-}
-
-/// Temporary result from IS execution, passed from Execute to `PostShot`.
-struct ISCurrentResult {
-    outcomes: MeasurementOutcomes,
-    weight: crate::sampling::weight::SampleWeight,
 }
 
 /// Build an importance sampling runner from builder config.
@@ -3481,108 +3293,129 @@ fn seed_importance_runner(
         .set_seed(derive_seed(shot_seed, "simulator"));
 }
 
-/// Startup system for importance sampling simulation.
-fn is_sim_startup(resources: &mut Resources) {
-    let explicit_qubits = resources.get::<ExplicitNumQubits>().0;
-
-    // Re-run: reset state instead of rebuilding
-    if resources.contains::<ISShotState>() {
-        resources.get_mut::<ISShotState>().shot_index = 0;
-        let results = resources.get_mut::<SimulationResults>();
-        results.clear();
-        results.weights = Some(Vec::new());
-        return;
-    }
-
-    // These inputs may only stay consumed while this startup function is infallible.
-    // First run - consume resources and build the runner
-    let source_resource = resources.remove::<ProgramSourceResource>();
-    let is_config = resources.remove::<ISConfigResource>().0;
-
-    let circuit = match source_resource.0 {
-        ProgramSource::Static(circuit) => circuit,
-        ProgramSource::Dynamic(_)
-        | ProgramSource::RawSource(_)
-        | ProgramSource::Typed(_)
-        | ProgramSource::Classical(_) => {
-            panic!(
-                "Importance sampling requires a static circuit. \
-                 Classical engines are not supported."
-            )
+impl ISShotState {
+    fn startup(inputs: &mut Option<StartupInputs>) -> Self {
+        let stored = inputs
+            .as_ref()
+            .expect("startup inputs exist until initialization succeeds");
+        let ProgramSource::Static(circuit) = &stored.source else {
+            unreachable!("importance sampling requires a static circuit, validated at build time");
+        };
+        let num_qubits = stored
+            .explicit_num_qubits
+            .unwrap_or_else(|| infer_num_qubits_from_circuit(circuit));
+        let is_config = stored
+            .importance_config
+            .as_ref()
+            .expect("importance sampling configuration captured at build time");
+        let mut runner = build_importance_runner(is_config, num_qubits);
+        // IS initialization is infallible after build-time validation. Move
+        // the configured noise into the runner without cloning its channels.
+        let stored = inputs
+            .take()
+            .expect("startup inputs exist until initialization succeeds");
+        if let Some(noise) = stored.noise {
+            runner = runner.with_noise(noise);
         }
-    };
-
-    let num_qubits = explicit_qubits.unwrap_or_else(|| {
-        circuit
-            .iter()
-            .flat_map(|cmd| cmd.qubits.iter())
-            .map(|q| q.0)
-            .max()
-            .map_or(1, |max| max + 1)
-    });
-
-    // Consume QuantumBackendResource (IS always uses SparseStab internally)
-    let _ = resources.remove::<QuantumBackendResource>();
-
-    let noise = resources
-        .try_remove::<NoiseResource>()
-        .map(|resource| resource.0);
-
-    let mut runner = build_importance_runner(&is_config, num_qubits);
-    if let Some(noise) = noise {
-        runner = runner.with_noise(noise);
+        let ProgramSource::Static(circuit) = stored.source else {
+            unreachable!("importance sampling source validated at build time");
+        };
+        Self {
+            runner: Box::new(runner),
+            circuit,
+            shot_index: 0,
+        }
     }
 
-    resources.insert(ISShotState {
-        runner,
-        circuit,
-        shot_index: 0,
-    });
+    fn reset(&mut self) {
+        self.shot_index = 0;
+    }
 
-    // Initialize results with weight tracking
-    let results = resources.get_mut::<SimulationResults>();
-    results.clear();
-    results.weights = Some(Vec::new());
-}
+    fn pre_shot(&mut self, config: &SimConfig) {
+        // Unseeded runs retain the runner's entropy-seeded RNG.
+        if let Some(base_seed) = config.seed {
+            seed_importance_runner(&mut self.runner, base_seed, self.shot_index);
+        }
+    }
 
-/// Pre-shot system for importance sampling: derive and set per-shot seeds.
-///
-/// Only reseeds when a base seed was configured, mirroring the unified
-/// Monte Carlo path ([`unified_simulation_pre_shot`]): an unseeded run
-/// keeps the runner's entropy-seeded RNG rather than silently forcing a
-/// deterministic stream.
-fn is_sim_pre_shot(resources: &mut Resources) {
-    let config = resources.get::<SimConfig>().clone();
-    let state = resources.get_mut::<ISShotState>();
+    fn execute(&mut self) -> ImportanceSampledShot {
+        self.runner.run_shot_fresh(&self.circuit)
+    }
 
-    if let Some(base_seed) = config.seed {
-        let shot_index = state.shot_index;
-        seed_importance_runner(&mut state.runner, base_seed, shot_index);
+    fn post_shot(&mut self, result: ImportanceSampledShot, results: &mut SimulationResults) {
+        results.outcomes.push(result.outcomes);
+        if let Some(ref mut weights) = results.weights {
+            weights.push(result.weight);
+        }
+        self.shot_index += 1;
     }
 }
 
-/// Execute system for importance sampling: run one shot with biased noise.
-fn is_sim_execute(resources: &mut Resources) {
-    let state = resources.get_mut::<ISShotState>();
-    let result = state.runner.run_shot_fresh(&state.circuit);
-
-    resources.insert(ISCurrentResult {
-        outcomes: result.outcomes,
-        weight: result.weight,
-    });
+/// Inputs retained until lazy initialization succeeds.
+struct StartupInputs {
+    source: ProgramSource,
+    quantum_backend: QuantumBackend,
+    noise: Option<ComposableNoiseModel>,
+    definitions: Option<GateDefinitions>,
+    max_decomp_depth: Option<usize>,
+    overrides: Option<StoredOverrides>,
+    event_handlers: Option<EventHandlers>,
+    explicit_num_qubits: Option<usize>,
+    importance_config: Option<ImportanceSamplingBuilder>,
 }
 
-/// Post-shot system for importance sampling: collect outcomes and weights.
-fn is_sim_post_shot(resources: &mut Resources) {
-    let result = resources.remove::<ISCurrentResult>();
-    let results = resources.get_mut::<SimulationResults>();
+enum ShotState {
+    Unified(UnifiedShotState),
+    Importance(ISShotState),
+}
 
-    results.outcomes.push(result.outcomes);
-    if let Some(ref mut weights) = results.weights {
-        weights.push(result.weight);
+impl ShotState {
+    fn startup(inputs: &mut Option<StartupInputs>, config: &SimConfig) -> Result<Self, PecosError> {
+        if inputs
+            .as_ref()
+            .expect("startup inputs exist until initialization succeeds")
+            .importance_config
+            .is_some()
+        {
+            Ok(Self::Importance(ISShotState::startup(inputs)))
+        } else {
+            Ok(Self::Unified(UnifiedShotState::startup(inputs, config)?))
+        }
     }
 
-    resources.get_mut::<ISShotState>().shot_index += 1;
+    fn reset(&mut self, shot_index: usize) -> Result<(), PecosError> {
+        match self {
+            Self::Unified(state) => state.reset(shot_index)?,
+            Self::Importance(state) => state.reset(),
+        }
+        Ok(())
+    }
+
+    fn run_shots(
+        &mut self,
+        config: &SimConfig,
+        results: &mut SimulationResults,
+    ) -> Result<(), PecosError> {
+        results.clear();
+        if matches!(self, Self::Importance(_)) {
+            results.weights = Some(Vec::new());
+        }
+        for _ in 0..config.shots {
+            match self {
+                Self::Unified(state) => {
+                    state.pre_shot(config);
+                    let outcomes = state.execute()?;
+                    state.post_shot(outcomes, results)?;
+                }
+                Self::Importance(state) => {
+                    state.pre_shot(config);
+                    let result = state.execute();
+                    state.post_shot(result, results);
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 // --- Simulation Handle ---
@@ -3608,7 +3441,10 @@ fn is_sim_post_shot(resources: &mut Resources) {
 /// let results2 = sim.run().expect("simulation should succeed");
 /// ```
 pub struct Simulation {
-    tool: Tool,
+    config: SimConfig,
+    inputs: Option<StartupInputs>,
+    state: Option<ShotState>,
+    results: SimulationResults,
     /// Sampling strategy (stored as data).
     sampling: Sampling,
     /// Data-oriented plan for parallel execution (if applicable).
@@ -3701,10 +3537,10 @@ impl ParallelQuantumRunnerFactory for NativeQuantumRunnerFactory {
         num_qubits: usize,
         seed: Option<u64>,
     ) -> Result<QuantumRunner, PecosError> {
-        let noise = self.noise.clone().map(NoiseResource);
-        let definitions = self.definitions.clone().map(GateDefinitionsResource);
-        let max_depth = self.max_decomp_depth.map(MaxDecompDepthResource);
-        let event_handlers = self.event_handlers.clone().map(EventHandlersResource);
+        let noise = self.noise.clone();
+        let definitions = self.definitions.clone();
+        let max_depth = self.max_decomp_depth;
+        let event_handlers = self.event_handlers.clone();
 
         Ok(match self.backend {
             NativeParallelBackend::SparseStab => {
@@ -3798,7 +3634,7 @@ impl ParallelQuantumRunnerFactory for NativeQuantumRunnerFactory {
 ///
 /// The user's factory is invoked once per worker with a clone of the noise
 /// model; per-shot seeding from global shot indices happens in the shared
-/// schedule, exactly as for built-in backends.
+/// shot loop, exactly as for built-in backends.
 struct CustomRunnerFactory {
     factory: Arc<dyn SimulatorFactory>,
     noise: Option<ComposableNoiseModel>,
@@ -3931,13 +3767,13 @@ impl Simulation {
     /// simulation without rebuilding. The sampling strategy (and its worker
     /// count) is fixed at build time.
     pub fn shots(&mut self, shots: usize) -> &mut Self {
-        self.tool.resource_mut::<SimConfig>().shots = shots;
+        self.config.shots = shots;
         self
     }
 
     /// Set the seed for the next run.
     pub fn seed(&mut self, seed: u64) -> &mut Self {
-        self.tool.resource_mut::<SimConfig>().seed = Some(seed);
+        self.config.seed = Some(seed);
         self
     }
 
@@ -3947,9 +3783,9 @@ impl Simulation {
     /// after reconfiguring with [`shots()`](Self::shots) or [`seed()`](Self::seed).
     ///
     /// Execution strategy depends on the sampling strategy:
-    /// - `MonteCarlo { workers: 1, .. }`: Runs shots via the Tool
+    /// - `MonteCarlo { workers: 1, .. }`: Runs the sequential shot loop
     /// - `MonteCarlo { workers: n, .. }`: Parallelizes shots across n workers
-    /// - `ImportanceSampling`: Runs via the Tool with `ImportanceSamplingSimPlugin`
+    /// - `ImportanceSampling`: Runs boosted shots with weight tracking
     /// - `SubsetSimulation`: Runs the level-adaptive subset algorithm
     ///   directly; the estimate lands in [`SimulationResults::subset`]
     ///
@@ -3961,11 +3797,11 @@ impl Simulation {
     ///
     /// # Errors
     ///
-    /// Returns an error if a source, simulator, startup system, or scheduled
-    /// system fails. Parallel Monte Carlo returns the lowest-indexed worker's
-    /// error when multiple workers fail.
+    /// Returns an error if a source, simulator, or initialization fails.
+    /// Parallel Monte Carlo returns the lowest-indexed worker's error when
+    /// multiple workers fail.
     pub fn run(&mut self) -> Result<SimulationResults, PecosError> {
-        let config = self.tool.resource::<SimConfig>().clone();
+        let config = self.config.clone();
 
         // Dispatch based on sampling strategy
         match &self.sampling {
@@ -3974,7 +3810,7 @@ impl Simulation {
                     .parallel_plan
                     .as_ref()
                     .expect("parallel plan validated at build time for workers > 1");
-                self.run_parallel(&config, plan, *workers)
+                Self::run_parallel(&config, plan, *workers)
             }
             Sampling::ImportanceSampling { config: is_config } if is_config.workers > 1 => {
                 let spec = self
@@ -4052,14 +3888,16 @@ impl Simulation {
                 })
             }
             _ => {
-                // Both MonteCarlo{workers:1} and ImportanceSampling run via the Tool.
-                // IS uses ImportanceSamplingSimPlugin instead of UnifiedSimulationPlugin.
-                self.tool.reset();
-                self.tool.run_shots(config.shots)?;
-
-                // Take results and re-insert empty for next run
-                let results = self.tool.take_resource::<SimulationResults>();
-                self.tool.insert_resource_mut(SimulationResults::new());
+                if let Some(state) = &mut self.state {
+                    state.reset(0)?;
+                } else {
+                    self.state = Some(ShotState::startup(&mut self.inputs, &config)?);
+                }
+                self.state
+                    .as_mut()
+                    .expect("shot state initialized above")
+                    .run_shots(&config, &mut self.results)?;
+                let results = std::mem::take(&mut self.results);
                 Ok(results)
             }
         }
@@ -4069,7 +3907,7 @@ impl Simulation {
     ///
     /// Each worker builds its own boosted runner and processes a contiguous
     /// range of global shot indices. Seeds derive from (base seed, global
-    /// shot index) alone — the same scheme as the sequential IS systems —
+    /// shot index) alone — the same scheme as the sequential IS loop —
     /// so outcomes and weights are identical for any worker count.
     fn run_parallel_importance(
         config: &SimConfig,
@@ -4135,13 +3973,12 @@ impl Simulation {
         }
     }
 
-    /// Run shots in parallel using rayon (static circuits with built-in backends).
+    /// Run shots in parallel using rayon and per-worker source and runner factories.
     ///
-    /// Each worker gets its own `Resources` and runs the shared schedule,
-    /// so user-registered plugins/hooks fire correctly per worker.
+    /// Each worker owns its shot state and runs the shared shot loop,
+    /// including configured event handlers.
     /// Per-shot seeding is preserved via global shot indices.
     fn run_parallel(
-        &self,
         config: &SimConfig,
         plan: &ParallelExecutionPlan,
         num_workers: usize,
@@ -4164,7 +4001,7 @@ impl Simulation {
             None => plan.command_source_factory.create_source()?.num_qubits(),
         };
 
-        // Run in parallel, each worker with its own Resources
+        // Run in parallel, each worker with its own shot state
         let all_results: Vec<Result<SimulationResults, PecosError>> = (0..num_workers)
             .into_par_iter()
             .map(|worker_id| {
@@ -4178,27 +4015,19 @@ impl Simulation {
                     .quantum_runner_factory
                     .create_runner(num_qubits, config.seed)?;
 
-                // Build per-worker Resources with the same configuration
-                let mut resources = Resources::new();
-                resources.insert(SimConfig {
+                let worker_config = SimConfig {
                     shots: worker_shots,
                     seed: config.seed,
-                });
-                resources.insert(ExplicitNumQubits(None));
-                resources.insert(ParallelShotStart(start_indices[worker_id]));
-                resources.insert(SimulationResults::new());
-                resources.insert(UnifiedShotState {
-                    quantum_runner,
+                };
+                let mut state = ShotState::Unified(UnifiedShotState {
+                    quantum_runner: Box::new(quantum_runner),
                     command_source,
                     shot_index: 0,
                 });
-
-                // Run the shared fallible schedule. The worker start resource
-                // preserves global shot indices for deterministic seeding.
-                self.tool.run_shots_on(&mut resources, worker_shots)?;
-
-                // Extract results
-                Ok(resources.remove::<SimulationResults>())
+                state.reset(start_indices[worker_id])?;
+                let mut results = SimulationResults::new();
+                state.run_shots(&worker_config, &mut results)?;
+                Ok(results)
             })
             .collect();
 
@@ -4242,19 +4071,7 @@ impl Simulation {
     /// Get a reference to the current configuration.
     #[must_use]
     pub fn config(&self) -> &SimConfig {
-        self.tool.resource::<SimConfig>()
-    }
-
-    /// Get access to the underlying tool (for advanced use).
-    #[must_use]
-    pub fn tool(&self) -> &Tool {
-        &self.tool
-    }
-
-    /// Get mutable access to the underlying tool (for advanced use).
-    #[must_use]
-    pub fn tool_mut(&mut self) -> &mut Tool {
-        &mut self.tool
+        &self.config
     }
 }
 
@@ -4263,7 +4080,7 @@ impl Simulation {
 /// Create a simulation builder for any program type.
 ///
 /// This is the primary entry point for creating quantum simulations using
-/// the Tool/ECS architecture. It accepts any type that implements [`SimNeoInput`]:
+/// owned simulation state. It accepts any type that implements [`SimNeoInput`]:
 ///
 /// - **Static circuits**: `CommandQueue`, `TickCircuit`, `DagCircuit`
 /// - **Classical engines**: Any `ClassicalControlEngineBuilder` (QASM, PHIR, QIS)

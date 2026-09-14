@@ -19,6 +19,7 @@
 use super::Primitive;
 use super::batch::GeometricSampler;
 use super::response::CompositeResponse;
+use crate::noise::{EventKinds, NoiseEventKind};
 use crate::noise::{NoiseChannel, NoiseContext, NoiseEvent, NoiseGateRequirement, NoiseResponse};
 use pecos_core::QubitId;
 use pecos_random::PecosRng;
@@ -54,6 +55,22 @@ pub enum CompositeEventFilter {
 }
 
 impl CompositeEventFilter {
+    /// The event kind tested by this filter; arity remains a dynamic check.
+    const fn kind(self) -> NoiseEventKind {
+        match self {
+            Self::SingleQubitGate | Self::TwoQubitGate | Self::AnyGate => NoiseEventKind::AfterGate,
+            Self::Preparation => NoiseEventKind::AfterPreparation,
+            Self::BeforeMeasurement => NoiseEventKind::BeforeMeasurement,
+            Self::AfterMeasurement => NoiseEventKind::AfterMeasurement,
+            Self::IdleTime => NoiseEventKind::IdleTime,
+            Self::BeforeGate => NoiseEventKind::BeforeGate,
+            Self::AfterReset => NoiseEventKind::AfterReset,
+            Self::BeforeCircuit => NoiseEventKind::BeforeCircuit,
+            Self::AfterCircuit => NoiseEventKind::AfterCircuit,
+            Self::BetweenLayers => NoiseEventKind::BetweenLayers,
+        }
+    }
+
     /// Check if this filter matches the given event.
     #[allow(clippy::match_same_arms)] // Arms intentionally separate for clarity
     #[must_use]
@@ -382,6 +399,12 @@ impl<P: Primitive> CompositeChannel<P> {
 }
 
 impl<P: Primitive + Clone + 'static> NoiseChannel for CompositeChannel<P> {
+    fn event_kinds(&self) -> EventKinds {
+        self.filters
+            .iter()
+            .fold(EventKinds::NONE, |kinds, filter| kinds.with(filter.kind()))
+    }
+
     fn responds_to(&self, event: &NoiseEvent<'_>) -> bool {
         self.filters.iter().any(|f| f.matches(event))
     }
@@ -855,6 +878,12 @@ impl<P: Primitive> BatchCompositeChannel<P> {
 }
 
 impl<P: Primitive + Clone + 'static> NoiseChannel for BatchCompositeChannel<P> {
+    fn event_kinds(&self) -> EventKinds {
+        self.filters
+            .iter()
+            .fold(EventKinds::NONE, |kinds, filter| kinds.with(filter.kind()))
+    }
+
     fn responds_to(&self, event: &NoiseEvent<'_>) -> bool {
         self.filters.iter().any(|f| f.matches(event))
     }
@@ -1127,6 +1156,12 @@ impl<P: Primitive> CompositeCrosstalkChannel<P> {
 }
 
 impl<P: Primitive + Clone + 'static> NoiseChannel for CompositeCrosstalkChannel<P> {
+    fn event_kinds(&self) -> EventKinds {
+        self.events
+            .iter()
+            .fold(EventKinds::NONE, |kinds, filter| kinds.with(filter.kind()))
+    }
+
     fn responds_to(&self, event: &NoiseEvent<'_>) -> bool {
         self.events.iter().any(|f| f.matches(event))
     }
@@ -1202,6 +1237,50 @@ impl CompositeChannelBuilder {
 #[cfg(test)]
 #[allow(clippy::float_cmp, clippy::cast_precision_loss)]
 mod tests {
+    #[test]
+    fn each_composite_filter_has_a_positive_kind_witness() {
+        use crate::noise::event_kind_tests::assert_channel_kinds;
+        use CompositeEventFilter::{
+            AfterCircuit, AfterMeasurement, AfterReset, AnyGate, BeforeCircuit, BeforeGate,
+            BeforeMeasurement, BetweenLayers, IdleTime, Preparation, SingleQubitGate, TwoQubitGate,
+        };
+        for (filter, kind) in [
+            (SingleQubitGate, NoiseEventKind::AfterGate),
+            (TwoQubitGate, NoiseEventKind::AfterGate),
+            (AnyGate, NoiseEventKind::AfterGate),
+            (Preparation, NoiseEventKind::AfterPreparation),
+            (BeforeMeasurement, NoiseEventKind::BeforeMeasurement),
+            (AfterMeasurement, NoiseEventKind::AfterMeasurement),
+            (IdleTime, NoiseEventKind::IdleTime),
+            (BeforeGate, NoiseEventKind::BeforeGate),
+            (AfterReset, NoiseEventKind::AfterReset),
+            (BeforeCircuit, NoiseEventKind::BeforeCircuit),
+            (AfterCircuit, NoiseEventKind::AfterCircuit),
+            (BetweenLayers, NoiseEventKind::BetweenLayers),
+        ] {
+            let kinds = EventKinds::of(kind);
+            assert_channel_kinds(
+                &CompositeChannel::new("composite", pauli()).with_filter(filter),
+                kinds,
+            );
+            assert_channel_kinds(
+                &BatchCompositeChannel::new("batch", 0.2, pauli()).with_filter(filter),
+                kinds,
+            );
+            let mut crosstalk = CompositeCrosstalkChannel::new("crosstalk", pauli());
+            crosstalk.events.push(filter);
+            assert_channel_kinds(&crosstalk, kinds);
+        }
+
+        // Arity filters inspect qubit count, not the gate type.
+        let two_targets = NoiseEvent::after_gate(GateType::H, &[QubitId(0), QubitId(1)], &[]);
+        let one_target = NoiseEvent::after_gate(GateType::CX, &[QubitId(0)], &[]);
+        assert!(TwoQubitGate.matches(&two_targets));
+        assert!(!SingleQubitGate.matches(&two_targets));
+        assert!(SingleQubitGate.matches(&one_target));
+        assert!(!TwoQubitGate.matches(&one_target));
+    }
+
     use super::*;
     use crate::command::GateType;
     use crate::noise::composite::prelude::*;

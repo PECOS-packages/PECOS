@@ -931,6 +931,7 @@ pub struct DemSliceRoundSchedule {
     instances: Vec<DemSliceInstance>,
     observables: Vec<DemOutput>,
     tracked_paulis: Vec<DemOutput>,
+    detector_order_routings: BTreeMap<i64, BTreeMap<u32, u32>>,
 }
 
 impl DemSliceRoundSchedule {
@@ -949,7 +950,23 @@ impl DemSliceRoundSchedule {
             instances,
             observables: output_model.observables.clone(),
             tracked_paulis: output_model.tracked_paulis.clone(),
+            detector_order_routings: BTreeMap::new(),
         }
+    }
+
+    /// Override detector-ID ordering within selected absolute rounds.
+    ///
+    /// Stable stream identities remain unchanged for relative targeting. The
+    /// supplied value only controls the order in which declarations at a round
+    /// receive dense detector IDs, which lets a frontend preserve its syndrome
+    /// bit order when physical family emission changes across a logical gate.
+    #[must_use]
+    pub fn with_detector_order_routings(
+        mut self,
+        routings: BTreeMap<i64, BTreeMap<u32, u32>>,
+    ) -> Self {
+        self.detector_order_routings = routings;
+        self
     }
 
     /// Derive a round schedule from fault-location gate attributes.
@@ -1011,6 +1028,7 @@ impl DemSliceRoundSchedule {
             instances,
             observables: model.observables.clone(),
             tracked_paulis: model.tracked_paulis.clone(),
+            detector_order_routings: BTreeMap::new(),
         })
     }
 
@@ -1088,6 +1106,7 @@ impl DemSliceRoundSchedule {
         DemStitcher::new(spec)
             .with_observables(self.observables.clone())
             .with_tracked_paulis(self.tracked_paulis.clone())
+            .with_detector_order_routings(self.detector_order_routings.clone())
             .stitch(&self.instances)
     }
 }
@@ -1389,6 +1408,7 @@ struct DemStitcher {
     spec: DemWindowSpec,
     observables: Vec<DemOutput>,
     tracked_paulis: Vec<DemOutput>,
+    detector_order_routings: BTreeMap<i64, BTreeMap<u32, u32>>,
 }
 
 impl DemStitcher {
@@ -1399,6 +1419,7 @@ impl DemStitcher {
             spec,
             observables: Vec::new(),
             tracked_paulis: Vec::new(),
+            detector_order_routings: BTreeMap::new(),
         }
     }
 
@@ -1413,6 +1434,12 @@ impl DemStitcher {
     #[must_use]
     fn with_tracked_paulis(mut self, tracked_paulis: Vec<DemOutput>) -> Self {
         self.tracked_paulis = tracked_paulis;
+        self
+    }
+
+    #[must_use]
+    fn with_detector_order_routings(mut self, routings: BTreeMap<i64, BTreeMap<u32, u32>>) -> Self {
+        self.detector_order_routings = routings;
         self
     }
 
@@ -1464,6 +1491,16 @@ impl DemStitcher {
         let mut detector_addresses = Vec::with_capacity(declarations.len());
         let mut model = DetectorErrorModel::with_capacity(declarations.len(), 0);
         model.mark_source_locations_as_stitched_provenance();
+        let mut declarations: Vec<_> = declarations.into_iter().collect();
+        declarations.sort_by_key(|(address, _)| {
+            let order = self
+                .detector_order_routings
+                .get(&address.round)
+                .and_then(|round| round.get(&address.stream_id))
+                .copied()
+                .unwrap_or(address.stream_id);
+            (address.round, order, address.stream_id)
+        });
         for (index, (address, coords)) in declarations.into_iter().enumerate() {
             let id = u32::try_from(index).map_err(|_| DemSliceStitchError::TooManyDetectors)?;
             address_to_id.insert(address, id);
@@ -2531,6 +2568,7 @@ mod tests {
             ],
             observables: vec![],
             tracked_paulis: vec![],
+            detector_order_routings: BTreeMap::new(),
         };
 
         // Both the round-zero owner and the pre-window source reach round two.
@@ -2540,6 +2578,41 @@ mod tests {
         assert_eq!(
             schedule.required_buffer_rounds(0, 0).unwrap_err(),
             DemSliceStitchError::EmptyCommitRegion
+        );
+    }
+
+    #[test]
+    fn round_schedule_can_order_dense_ids_without_relabeling_streams() {
+        let slice = Arc::new(
+            DemSlice::new(
+                "ordered",
+                vec![DemSliceDetector::new(0), DemSliceDetector::new(1)],
+                vec![],
+                DemTemporalHorizon::new(0, 0),
+            )
+            .unwrap(),
+        );
+        let schedule = DemSliceRoundSchedule::from_instances(
+            &DetectorErrorModel::new(),
+            vec![DemSliceInstance::identity(slice, 0)],
+        )
+        .with_detector_order_routings(BTreeMap::from([(0, BTreeMap::from([(0, 1), (1, 0)]))]));
+
+        let stitched = schedule
+            .stitch(DemWindowSpec::new(0, 1, 0, DemBoundaryKind::Hard))
+            .unwrap();
+        assert_eq!(
+            stitched.detector_addresses,
+            vec![
+                StitchedDetectorAddress {
+                    round: 0,
+                    stream_id: 1,
+                },
+                StitchedDetectorAddress {
+                    round: 0,
+                    stream_id: 0,
+                },
+            ]
         );
     }
 
@@ -2565,6 +2638,7 @@ mod tests {
             instances: vec![DemSliceInstance::identity(slice, 0)],
             observables: vec![],
             tracked_paulis: vec![],
+            detector_order_routings: BTreeMap::new(),
         };
 
         assert_eq!(schedule.required_buffer_rounds(0, 1).unwrap(), 2);

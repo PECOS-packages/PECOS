@@ -26,6 +26,7 @@ See pecos-docs/design/windowed-logical-subgraph-proper-solution.md.
 from __future__ import annotations
 
 import json
+import random
 
 import pytest
 import stim
@@ -119,7 +120,7 @@ def test_algorithm_descriptor_rejects_leading_logical_gates():
 
     with pytest.raises(
         ValueError,
-        match=r"leading logical gates before any syndrome round.*no representable boundary.*Hadamard",
+        match=r"Hadamard on patch 'A' precedes that patch's first MEMORY preparation",
     ) as exc_info:
         builder.build_algorithm_descriptor(p1=0.001, p2=0.001, p_meas=0.001)
 
@@ -667,7 +668,7 @@ def test_logical_cx_provider_reuses_bounded_templates_and_routes_patch_coordinat
         ),
         (
             3,
-            PatchOrientation.X_TOP_BOTTOM,
+            PatchOrientation.Z_TOP_BOTTOM,
             PatchOrientation.Z_TOP_BOTTOM,
             ("X", "Z"),
             ("Z", "X"),
@@ -688,7 +689,7 @@ def test_logical_cx_provider_reuses_bounded_templates_and_routes_patch_coordinat
             PatchOrientation.X_TOP_BOTTOM,
             PatchOrientation.X_TOP_BOTTOM,
             ("Y", "Y"),
-            ("Y", "Y"),
+            ("Z", "Z"),
             2,
             2,
         ),
@@ -960,7 +961,7 @@ def test_mixed_h_cx_with_history_sensitive_outputs_uses_full_fallback(monkeypatc
         p_meas=0.003,
         p_prep=0.004,
     )
-    assert builder._assembled_dem_output_ids() == []  # noqa: SLF001
+    assert builder._assembled_dem_output_ids() == [0]  # noqa: SLF001
 
     def reject_mixed_cache(*_args, **_kwargs):
         message = "history-sensitive output schema reached the mixed template cache"
@@ -968,7 +969,7 @@ def test_mixed_h_cx_with_history_sensitive_outputs_uses_full_fallback(monkeypatc
 
     monkeypatch.setattr(logical_circuit, "_cached_surface_mixed_dem_templates", reject_mixed_cache)
     assert builder.build_dem(p1=0.001, p2=0.002, p_meas=0.003, p_prep=0.004) == oracle.to_string()
-    assert "L0" not in oracle.to_string()
+    assert "L0" in oracle.to_string()
     assert "L1" not in oracle.to_string()
 
 
@@ -998,13 +999,14 @@ def test_logical_output_schema_matches_emitted_circuit_metadata():
     memory.add_memory("data", 3, "Z")
     schedules.append(memory)
 
-    single_y_cx = LogicalCircuitBuilder()
-    single_y_cx.add_patch(SurfacePatch.create(3), "C")
-    single_y_cx.add_patch(SurfacePatch.create(3), "T", qubit_offset=100)
-    single_y_cx.add_memory(["C", "T"], 2, "Y")
-    single_y_cx.add_transversal_cx("C", "T")
-    single_y_cx.add_memory(["C", "T"], 2, "Y")
-    schedules.append(single_y_cx)
+    split_readout_cx = LogicalCircuitBuilder()
+    split_readout_cx.add_patch(SurfacePatch.create(3), "C")
+    split_readout_cx.add_patch(SurfacePatch.create(3), "T", qubit_offset=100)
+    split_readout_cx.add_memory(["C", "T"], 2, "Z")
+    split_readout_cx.add_transversal_cx("C", "T")
+    split_readout_cx.add_memory("C", 2, "X")
+    split_readout_cx.add_memory("T", 2, "Z")
+    schedules.append(split_readout_cx)
 
     mixed_basis_cx = LogicalCircuitBuilder()
     mixed_basis_cx.add_patch(SurfacePatch.create(3), "C")
@@ -1019,6 +1021,90 @@ def test_logical_output_schema_matches_emitted_circuit_metadata():
 
     for builder in schedules:
         assert builder._assembled_dem_output_ids() == emitted_ids(builder)  # noqa: SLF001
+
+
+def test_logical_output_schema_matches_emitted_circuit_metadata_fuzz():
+    """Random logical schedules cannot make the warm schema diverge from emission."""
+    rng = random.Random(0x5C4E_A664)
+    labels = ["p0", "p1", "p2"]
+    patch = SurfacePatch.create(1)
+    accepted = 0
+    exercised: set[str] = set()
+    saw_partial_memory = False
+    saw_y_basis = False
+
+    for _ in range(1370):
+        builder = LogicalCircuitBuilder()
+        for index, label in enumerate(labels):
+            builder.add_patch(patch, label, qubit_offset=4 * index)
+
+        initial_basis = {label: rng.choice("XYZ") for label in labels}
+        builder.add_memory(labels, rng.randrange(2), initial_basis)
+        needs_terminal = {label for label, basis in initial_basis.items() if basis == "Y"}
+        orientations = dict.fromkeys(labels, False)
+        exercised.add("memory")
+        saw_y_basis |= "Y" in initial_basis.values()
+
+        for _ in range(rng.randint(1, 8)):
+            operation = rng.choice(("memory", "h", "cx", "sz"))
+            if operation == "memory":
+                selected = rng.sample(labels, rng.randint(1, len(labels)))
+                bases = {label: rng.choice("XYZ") for label in selected}
+                builder.add_memory(selected, rng.randrange(2), bases)
+                saw_partial_memory |= len(selected) < len(labels)
+                saw_y_basis |= "Y" in bases.values()
+                for label, basis in bases.items():
+                    if basis == "Y":
+                        needs_terminal.add(label)
+                    else:
+                        needs_terminal.discard(label)
+            elif operation == "h":
+                label = rng.choice(labels)
+                builder.add_transversal_h(label)
+                orientations[label] = not orientations[label]
+                needs_terminal.add(label)
+            elif operation == "cx":
+                compatible = [
+                    (control, target)
+                    for control in labels
+                    for target in labels
+                    if control != target and orientations[control] == orientations[target]
+                ]
+                if not compatible:
+                    continue
+                control, target = rng.choice(compatible)
+                builder.add_transversal_cx(control, target)
+                needs_terminal.update((control, target))
+            else:
+                label = rng.choice(labels)
+                if rng.choice((False, True)):
+                    builder.add_transversal_sz(label)
+                else:
+                    builder.add_transversal_szdg(label)
+                needs_terminal.add(label)
+            exercised.add(operation)
+
+        if needs_terminal:
+            terminal_labels = sorted(needs_terminal)
+            terminal_bases = {label: rng.choice("XZ") for label in terminal_labels}
+            builder.add_memory(terminal_labels, rng.randrange(2), terminal_bases)
+            saw_partial_memory |= len(terminal_labels) < len(labels)
+
+        try:
+            circuit = builder.to_tick_circuit()
+        except ValueError:
+            # The generator deliberately rejects unsupported logical programs;
+            # the schema contract applies to every schedule it accepts.
+            continue
+        observables = json.loads(circuit.get_meta("observables") or "[]")
+        emitted_ids = [int(observable["id"]) for observable in observables]
+        assert builder._assembled_dem_output_ids() == emitted_ids  # noqa: SLF001
+        accepted += 1
+
+    assert accepted >= 1000
+    assert exercised == {"memory", "h", "cx", "sz"}
+    assert saw_partial_memory
+    assert saw_y_basis
 
 
 def test_mixed_h_cx_provider_reuses_normalized_boundary_families(monkeypatch):
@@ -1122,9 +1208,8 @@ def test_unsupported_logical_gate_and_shallow_boundaries_retain_full_fallback():
     mismatched_cx_builder.add_patch(SurfacePatch.create(dx=1, dz=4), "C", qubit_offset=0)
     mismatched_cx_builder.add_patch(SurfacePatch.create(dx=2, dz=2), "T", qubit_offset=50)
     mismatched_cx_builder.add_memory(["C", "T"], 3, "Z")
-    mismatched_cx_builder.add_transversal_cx("C", "T")
-    mismatched_cx_builder.add_memory(["C", "T"], 3, "Z")
-    mismatched_cx_builder.build_dem()
+    with pytest.raises(ValueError, match="same static geometry"):
+        mismatched_cx_builder.add_transversal_cx("C", "T")
     assert _cached_surface_h_dem_templates.cache_info().currsize == 0
     assert _cached_surface_cx_dem_templates.cache_info().currsize == 0
 

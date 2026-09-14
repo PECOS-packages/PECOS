@@ -4259,6 +4259,7 @@ dependencies = [
  "rayon",
  "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]
@@ -4549,7 +4550,9 @@ dependencies = [
  "pecos-core",
  "pecos-engines",
  "pecos-phir",
+ "pecos-phir-json",
  "pecos-programs",
+ "pecos-qec",
  "pecos-quantum",
  "pecos-random",
  "pecos-simulators",
@@ -4570,9 +4573,11 @@ dependencies = [
  "ndarray 0.17.2",
  "pecos-core",
  "pecos-decoder-core",
+ "pecos-engines",
  "pecos-ldpc-decoders",
  "pecos-neo",
  "pecos-num",
+ "pecos-phir",
  "pecos-quantum",
  "pecos-random",
  "pecos-simulators",
@@ -4644,6 +4649,7 @@ dependencies = [
  "pecos-num",
  "pecos-random",
  "pecos-simulators",
+ "pecos-synth",
  "serde_json",
  "smallvec",
  "tket",

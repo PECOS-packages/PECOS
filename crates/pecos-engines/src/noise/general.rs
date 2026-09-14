@@ -561,7 +561,7 @@ impl GeneralNoiseModel {
             }
 
             // Skip noise application for noiseless gates.
-            if self.is_noiseless_gate(&gate.gate_type) {
+            if self.is_noiseless_operation(&gate) {
                 // Declaring a gate noiseless suppresses its FAULTS, not the physics it
                 // performs. Preparation returns a leaked qubit to the computational
                 // subspace whether or not it is noisy, and consumers lower a
@@ -1488,6 +1488,14 @@ impl GeneralNoiseModel {
     #[must_use]
     pub fn is_noiseless_gate(&self, gate_type: &GateType) -> bool {
         self.noiseless_gates.contains(gate_type)
+    }
+
+    /// Whether this scheduled operation is noiseless. Phase-shaped U gates
+    /// inherit the RZ exemption in addition to explicit U exemptions.
+    #[must_use]
+    pub fn is_noiseless_operation(&self, gate: &Gate) -> bool {
+        self.is_noiseless_gate(&gate.gate_type)
+            || (gate.phase_angle().is_some() && self.is_noiseless_gate(&GateType::RZ))
     }
 
     /// Accessor for the p1 Pauli distribution

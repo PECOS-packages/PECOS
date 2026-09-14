@@ -124,7 +124,7 @@ def _half_cycle(patch: SurfacePatch, round_gadget: gadgets.Gadget) -> tuple[Tick
     return tc, cx_ticks[4 + 4 + 1] + 1
 
 
-@pytest.mark.parametrize("d", [3, 5])
+@pytest.mark.parametrize("d", [2, 3, 4, 5])
 def test_half_cycle_symmetry(d: int) -> None:
     """Transpose is two-way on the code subgroup, excluding the logical generator.
 
@@ -410,6 +410,14 @@ def test_even_guppy_syndrome(d: int, variant: str | None, tmp_path: Path, *, swa
     _compile_gadget(patch, gadget, tmp_path)
 
 
+def test_rectangular_swapped_round_rejected() -> None:
+    """A swapped rectangle has no producer (transversal H needs a square) and no Guppy struct."""
+    patch = SurfacePatch.create(dx=3, dz=5, rotated=True)
+    allocation = gadgets.default_allocation(patch)
+    with pytest.raises(ValueError, match="x_z_swapped requires a square patch"):
+        gadgets.syndrome_round_gadget(patch, allocation, round_index=0, x_z_swapped=True)
+
+
 def test_dag_rejects_unsupported_operation() -> None:
     """Unsupported IR steps must never silently disappear from a DAG."""
     patch = SurfacePatch.create(distance=3)
@@ -447,7 +455,7 @@ def test_fold_detector_annotation_rejected(renderer: type, basis: str) -> None:
     parts = gadgets.memory_gadgets(patch, 2, basis)
     parts[-2] = gadgets.fold_s_round_gadget(patch, allocation, round_index=1)
     steps = [step for part in parts for step in part.steps]
-    message = f"{renderer.__name__}: detectors for fold rounds come from the logical builder route"
+    message = f"{renderer.__name__}: detector annotation is unsupported for step lists with CZ"
     with pytest.raises(ValueError, match=message):
         renderer(add_detectors=True).render(steps, allocation, patch, 2, basis)
     assert renderer(add_detectors=False).render(steps, allocation, patch, 2, basis) is not None

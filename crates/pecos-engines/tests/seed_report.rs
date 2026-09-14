@@ -3,7 +3,7 @@ use pecos_engines::ByteMessage;
 use pecos_engines::monte_carlo::engine::{
     ExternalClassicalEngine, MonteCarloEngine, SeedReport, WorkerSeedRecord,
 };
-use pecos_engines::shot_results::ShotVec;
+use pecos_engines::shot_results::{Data, ShotVec};
 
 // Measuring |+> produces seed-sensitive outcomes; depolarizing noise also
 // exercises propagation of worker seeds into the noise model.
@@ -20,6 +20,38 @@ fn make_test_monte_carlo_engine(seed: u64) -> MonteCarloEngine {
     engine.set_seed(seed);
     engine.default_workers = 2;
     engine
+}
+
+#[test]
+fn depolarizing_constructor_applies_requested_noise_probability() {
+    // Preparing and measuring |0> produces ones only when noise is applied.
+    let circuit = ByteMessage::quantum_operations_builder()
+        .pz(&[0])
+        .mz(&[0])
+        .build();
+
+    for (probability, expect_ones) in [(0.0, false), (0.5, true)] {
+        let controller = ExternalClassicalEngine::new_with_circuit(circuit.clone());
+        let mut engine =
+            MonteCarloEngine::new_with_depolarizing_noise(Box::new(controller), probability);
+        engine.set_seed(42);
+        let results = engine.run_with_workers(128, 1).unwrap();
+        assert_eq!(results.len(), 128);
+
+        let mut ones = 0;
+        for shot in results.shots {
+            match shot.data.get("result") {
+                Some(Data::U32(0)) => {}
+                Some(Data::U32(1)) => ones += 1,
+                result => panic!("expected a measured bit, got {result:?}"),
+            }
+        }
+        assert_eq!(
+            ones > 0,
+            expect_ones,
+            "p={probability}: measured {ones} ones"
+        );
+    }
 }
 
 fn example_report() -> SeedReport {

@@ -319,7 +319,7 @@ impl MonteCarloEngine {
         assert!(num_shots > 0, "num_shots cannot be zero");
         assert!(num_workers > 0, "num_workers cannot be zero");
 
-        debug!("Running Monte Carlo simulation");
+        debug!("Executing {num_shots} shots across {num_workers} workers");
 
         // Determine shots per worker and generate deterministic seeds
         let shots_per_worker = distribute_shots(num_shots, num_workers);
@@ -375,7 +375,10 @@ impl MonteCarloEngine {
     ) -> Result<ShotVec, PecosError> {
         seed_report.validate()?;
 
-        debug!("Replaying Monte Carlo simulation");
+        debug!(
+            "Executing {} shots across {} workers",
+            seed_report.num_shots, seed_report.num_workers
+        );
 
         // Shared results collection. Grow as shots complete instead of allocating
         // from report metadata.
@@ -997,6 +1000,10 @@ impl ClassicalEngine for ExternalClassicalEngine {
     fn compile(&self) -> Result<(), PecosError> {
         // The fixed ByteMessage circuit needs no compilation.
         Ok(())
+    }
+
+    fn reset(&mut self) -> Result<(), PecosError> {
+        Engine::reset(self)
     }
 
     fn as_any(&self) -> &dyn Any {

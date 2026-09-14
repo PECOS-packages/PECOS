@@ -45,3 +45,33 @@ fn valid_empty_circuits_still_complete_successfully() {
         }
     }
 }
+
+#[test]
+fn hybrid_reset_clears_all_measurement_fields_and_retains_circuit() {
+    let circuit = ByteMessage::quantum_operations_builder()
+        .pz(&[0, 1])
+        .x(&[0, 1])
+        .mz(&[0, 1])
+        .build();
+    let controller = ExternalClassicalEngine::new_with_circuit(circuit);
+    let mut hybrid =
+        MonteCarloEngine::new_with_defaults(Box::new(controller)).hybrid_engine_template;
+
+    let measured = hybrid.run_shot().unwrap();
+    assert_eq!(measured.data.len(), 2);
+    for name in ["result", "result_1"] {
+        assert_eq!(measured.data.get(name), Some(&Data::U32(1)));
+    }
+
+    hybrid.reset().unwrap();
+
+    // Inspect before another shot can overwrite stale measurement values.
+    let cleared = hybrid.classical_engine.get_results().unwrap();
+    assert_eq!(cleared.data.len(), 2);
+    for name in ["result", "result_1"] {
+        assert_eq!(cleared.data.get(name), Some(&Data::U32(0)));
+    }
+
+    // Reset also retains the configured circuit for the next shot.
+    assert_eq!(hybrid.run_shot().unwrap(), measured);
+}

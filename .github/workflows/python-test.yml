@@ -375,12 +375,13 @@ jobs:
       with:
         cache-bin: false
         prefix-key: v1-rust-no-bin
-        save-if: ${{ github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name) }}
+        # Windows and macOS: this job is the only python-core writer. Linux:
+        # restore-only, because python-core builds a superset (mwpf feature,
+        # experimental bindings) and the first save to a key is final.
+        save-if: ${{ runner.os != 'Linux' && github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name) }}
         # The rslib crates are members of the root Cargo workspace and build
         # into the top-level target/, so cache the root workspace (the default)
         # and share the python-core key: same crates, same profile, same env.
-        # This job keeps its save: it is the only python-core writer on the
-        # Windows and macOS legs (python-core is Linux-only).
         shared-key: python-core
 
     - name: Cache LLVM ${{ env.LLVM_VERSION }}
@@ -743,12 +744,11 @@ jobs:
       with:
         cache-bin: false
         prefix-key: v1-rust-no-bin
-        # Restore-only: python-core (above) saves this key on dev pushes.
-        save-if: false
-        # The rslib crates are members of the root Cargo workspace and build
-        # into the top-level target/, so cache the root workspace (the default)
-        # and share the python-core key: same crates, same profile, same env.
-        shared-key: python-core
+        save-if: ${{ github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name) }}
+        # zluppy is built by uv sync through PEP 517, which is a release build,
+        # so it cannot share the debug python-core cache. Own key; the crate is
+        # a root-workspace member and builds into the top-level target/, so the
+        # default (root) workspace is the right one.
 
     - name: Cache LLVM ${{ env.LLVM_VERSION }}
       id: cache-llvm-zluppy

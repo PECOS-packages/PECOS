@@ -56,6 +56,13 @@ collect_files() {
 # or an explicit github.ref_name == '<branch>' disjunction over exactly the
 # trusted set). Extra conjuncts (e.g. cache-hit checks) are permitted because an
 # "&&" chain anchored to a trusted-push predicate can only further restrict it.
+# Print the owning step's `<key>` scalar (trailing comment stripped); exit 2
+# when the step has no such input. Same step-boundary logic as cache_guard_ok,
+# so a neighbouring step's input can never be mistaken for this step's.
+step_input_value() {
+    CACHE_GUARD_MODE=value cache_guard_ok "$1" "$2" "$3"
+}
+
 cache_guard_ok() {
     CACHE_GUARD_FILE="$1" CACHE_GUARD_LINE="$2" CACHE_GUARD_KEY="$3" python3 - <<'PY'
 import os
@@ -106,7 +113,8 @@ for i in range(step_start, step_end):
         found = (i, m)
         break
 if found is None:
-    sys.exit(1)
+    # 2 = the step has no such input at all (distinct from a bad value).
+    sys.exit(2)
 
 ki, m = found
 key_indent = len(m.group(1)) + (len(m.group(2)) if m.group(2) else 0)
@@ -119,6 +127,11 @@ for i in range(ki + 1, step_end):
     value += " " + lines[i].strip()
 
 value = re.sub(r"\s+", " ", value).strip()
+# Drop a trailing YAML comment so `true # enable-cache: false` reads as true.
+value = re.sub(r"\s+#.*$", "", value)
+if os.environ.get("CACHE_GUARD_MODE") == "value":
+    print(value)
+    sys.exit(0)
 # `if:` conditions may omit the ${{ }} wrapper; action `with:` inputs include
 # it. Accept either, but a bare scalar (e.g. true) simply won't satisfy the
 # trusted-push predicate checks below.
@@ -622,18 +635,24 @@ while IFS=: read -r file line _; do
     fi
 done < <(rg -n 'uses:\s+Swatinem/rust-cache@' .github/workflows || true)
 
+# setup-uv defaults enable-cache to auto (on for hosted runners) and
+# save-cache to true, so an unstated setting saves a PR-scoped cache on every
+# pull request and churns the repository's 10 GB cache pool.
 while IFS=: read -r file line _; do
-    setup_uv_block="$(sed -n "${line},$((line + 16))p" "$file")"
-    if printf '%s\n' "$setup_uv_block" | rg -q 'enable-cache:\s*false'; then
-        continue
-    fi
-    # setup-uv defaults enable-cache to auto (on for hosted runners) and
-    # save-cache to true, so an unstated setting saves a PR-scoped cache on
-    # every pull request and churns the repository's 10 GB cache pool.
-    if ! printf '%s\n' "$setup_uv_block" | rg -q 'enable-cache:\s*true'; then
+    if enable_cache="$(step_input_value "$file" "$line" "enable-cache")"; then
+        case "$enable_cache" in
+            false) ;;
+            true)
+                if ! cache_guard_ok "$file" "$line" "save-cache"; then
+                    cache_policy_failures+=("$file:$line setup-uv save-cache must be restricted to trusted branch pushes")
+                fi
+                ;;
+            *)
+                cache_policy_failures+=("$file:$line setup-uv enable-cache must be a bare true or false (got: $enable_cache)")
+                ;;
+        esac
+    else
         cache_policy_failures+=("$file:$line setup-uv must set enable-cache explicitly (true with a gated save-cache, or false)")
-    elif ! cache_guard_ok "$file" "$line" "save-cache"; then
-        cache_policy_failures+=("$file:$line setup-uv save-cache must be restricted to trusted branch pushes")
     fi
 done < <(rg -n 'uses:\s+astral-sh/setup-uv@' .github/workflows || true)
 

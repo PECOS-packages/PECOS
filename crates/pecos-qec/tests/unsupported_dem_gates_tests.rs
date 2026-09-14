@@ -1570,25 +1570,6 @@ fn gate_rate_mem_builder_honors_nonzero_tables() {
         .values()
         .sum();
 
-    for (key, two_qubit) in [
-        (GateType::X, false),
-        (GateType::SZZ, true),
-        (GateType::CX, true),
-    ] {
-        let mut noise = NoiseConfig::uniform(0.001);
-        if two_qubit {
-            noise.p2_gate_rates.insert(key, 0.05);
-        } else {
-            noise.p1_gate_rates.insert(key, 0.05);
-        }
-        MemBuilder::new(&map)
-            .with_noise_config(noise)
-            .build()
-            .unwrap_or_else(|error| {
-                panic!("a nonzero {key:?} rate table must build, got {error:?}")
-            });
-    }
-
     // The circuit's own two-qubit gate: raising its rate must move the total.
     let mut noise = NoiseConfig::uniform(0.001);
     noise.p2_gate_rates.insert(GateType::RZZ, 0.05);
@@ -1602,6 +1583,40 @@ fn gate_rate_mem_builder_honors_nonzero_tables() {
     assert!(
         raised > baseline,
         "raising the scheduled RZZ rate must raise the measurement-flip total: {raised} !> {baseline}"
+    );
+}
+
+/// A key naming another scheduled gate's Clifford action must be rejected by
+/// `MemBuilder` exactly as `DemBuilder` rejects it. MEM consumes these tables,
+/// so accepting the mis-keyed entry would drop the rate without a word -- the
+/// silent loss this branch exists to prevent.
+#[test]
+fn gate_rate_mem_builder_rejects_clifford_action_keys_like_dem() {
+    let circuit = replacement_circuit(Gate::rzz(Angle64::QUARTER_TURN, &[(0, 1)]));
+    let map = DagFaultAnalyzer::new(&circuit).build_influence_map();
+
+    // SZZ is the Clifford action of the scheduled RZZ, not a scheduled gate.
+    let mut noise = NoiseConfig::uniform(0.001);
+    noise.p2_gate_rates.insert(GateType::SZZ, 0.05);
+
+    let mem_error = MemBuilder::new(&map)
+        .with_noise_config(noise.clone())
+        .build()
+        .expect_err("MemBuilder must reject a Clifford-action rate key");
+    assert!(
+        matches!(&mem_error, DemBuilderError::ConfigurationError(message)
+            if message.contains("matches no scheduled gate")),
+        "unexpected MemBuilder error: {mem_error:?}"
+    );
+
+    let dem_error = DemBuilder::new(&map)
+        .with_noise_config(noise)
+        .build()
+        .expect_err("DemBuilder must reject the same key");
+    assert!(
+        matches!(&dem_error, DemBuilderError::ConfigurationError(message)
+            if message.contains("matches no scheduled gate")),
+        "unexpected DemBuilder error: {dem_error:?}"
     );
 }
 

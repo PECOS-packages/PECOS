@@ -80,11 +80,20 @@ impl<'a> MemBuilder<'a> {
     /// builder does not represent their separate branch channels or circuit replay.
     ///
     /// Per-gate rate tables are honoured, not rejected: the fault paths resolve
-    /// them through `rates_1q_for_operation` and `rates_2q_for_operation`.
+    /// them through `rates_1q_for_operation` and `rates_2q_for_operation`. Keys
+    /// are validated the same way `DemBuilder` validates them, so a key naming
+    /// another scheduled gate's Clifford action is rejected here too instead of
+    /// being silently ignored.
     pub fn build(&self) -> Result<MeasurementNoiseModel, DemBuilderError> {
         if let Some(error) = self.influence_map.unsupported_gate() {
             return Err(DemBuilderError::UnsupportedGate(error.clone()));
         }
+        // MEM consumes these tables, so it must reject the same mis-keyed
+        // entries DemBuilder rejects; otherwise the two builders disagree and
+        // MEM drops the rate without a word.
+        self.noise
+            .validate_gate_rate_keys(&self.influence_map.locations)
+            .map_err(|error| DemBuilderError::ConfigurationError(error.to_string()))?;
         // These modes separate replacement branches from the ordinary Pauli
         // rates. MEM has no corresponding branch channels or replay provider.
         if matches!(

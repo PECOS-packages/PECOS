@@ -279,6 +279,7 @@ assert '    output("sx0:init:meas:0", sx0)' in lines
 ...
 @guppy
 def init_z_basis(surf: SurfaceCode_3x3) -> array[bool, 4]:
+    ...
     cx(ax1, surf.data[2])
     cx(ax2, surf.data[4])
     cx(ax3, surf.data[8])
@@ -291,6 +292,7 @@ def init_z_basis(surf: SurfaceCode_3x3) -> array[bool, 4]:
     output("sx2:init:meas:2", sx2)
     sx3 = measure(ax3).read()
     output("sx3:init:meas:3", sx3)
+
     return array(sx0, sx1, sx2, sx3)
 ```
 
@@ -329,6 +331,7 @@ assert "    synx = array(sz0, sz1, sz2, sz3)" in lines
 ...
 @guppy
 def syndrome_extraction_swapped(surf: SurfaceCode_3x3) -> Syndrome_3x3:
+    ...
     cx(az0, surf.data[3])
     cx(surf.data[2], ax1)
     cx(az1, surf.data[1])
@@ -338,8 +341,10 @@ def syndrome_extraction_swapped(surf: SurfaceCode_3x3) -> Syndrome_3x3:
     ...
     sx3 = measure(ax3).read()
     output("swapped:sx3:meas:7", sx3)
+
     synx = array(sz0, sz1, sz2, sz3)
     synz = array(sx0, sx1, sx2, sx3)
+
     return Syndrome_3x3(synx, synz)
 ```
 
@@ -532,7 +537,7 @@ def transversal_cx(ctrl: SurfaceCode_3x3, tgt: SurfaceCode_3x3) -> None:
 ## Protocols in Guppy
 
 `render_surface_protocol_module(patch)` returns source;
-`load_surface_protocol_module(patch)` returns a dictionary of functions and
+`load_surface_protocol_module(patch)` returns the loaded module's namespace and
 caches per patch geometry. Scoped tags support measurement-provenance checks.
 These four factories use full syndrome rounds without a separate initial
 projection. Each example places the factory next to the corresponding builder
@@ -640,7 +645,8 @@ the data in |0_L>, an S eigenstate, so this experiment cannot distinguish S
 from identity. The builder records the readout the correction depends on
 (the ancilla's final logical-Z bits, in `injection_readouts` in the circuit
 metadata and in `build_algorithm_descriptor()`) and nothing applies the
-correction: with parity 1 a logical Z on the data patch would be required.
+correction: with parity 1 (for the +Y resource sign) a logical Z on the data
+patch would be required.
 Neither the resource sign nor this correction is processed by any decoder.
 
 ```python
@@ -736,7 +742,7 @@ for recipe in ("h", "cx", "sz", "t"):
     assert_same_measurement_partition(actual, expected)
 ```
 
-The Guppy protocol factories on this page cannot be traced into a DEM today:
+The Guppy protocol factories on this page cannot be traced into a DEM:
 they contain `comptime` loops and carry no trusted measurement-layout
 certificate. Their scoped tags serve `measurement_partition_from_trace` only,
 not DEM construction. `make_surface_code` memory programs have a generator
@@ -774,8 +780,8 @@ for factory, arguments in (
 
 ## Validating a gadget
 
-These gadgets were validated with four complementary checks: a literature citation for the physical
-construction, a stabilizer oracle for its state action, measurement-partition
+Four complementary checks validate a gadget: a literature citation for the
+physical construction, a stabilizer oracle for its state action, measurement-partition
 agreement, and a DEM fault-distance test. The following counts the operations
 of the default distance-3 extraction round; it does not validate the schedule.
 
@@ -837,9 +843,11 @@ assert distances[0] is not None and distances[0].distance == 3
 
 ## What the detector layer guarantees
 
-For valid `LogicalCircuitBuilder` programs, every emitted detector has been
-deterministic in every shape probed; the model's known limitations lose
-detectors rather than emit non-deterministic ones. Boundary detectors come from backward
+For valid `LogicalCircuitBuilder` programs, every emitted detector is
+deterministic: a stabilizer term that cannot be resolved to an earlier
+same-type measurement or a preparation yields no detector, so the model's
+known limitations lose detectors rather than emit non-deterministic ones.
+Boundary detectors come from backward
 propagation of stabilizer terms through gates, earlier measurements, and
 preparation. Standalone `TickCircuitRenderer` annotations follow the memory
 template and inherit no such guarantee.
@@ -847,7 +855,8 @@ template and inherit no such guarantee.
 Propagation resolves each check against earlier measurements of the same type
 on the same physical register, never against products of other checks or
 jointly against a partner's same-round measurement. Some deterministic
-parities are therefore not emitted. The propagation code's docstring lists the concrete shapes.
+parities are therefore not emitted. The propagation walk in
+`pecos.qec.surface.logical_circuit` documents the concrete shapes.
 
 Generation rejects a gate before a patch's first preparation or after its
 final readout. Registration rejects odd-weight checks because the propagation

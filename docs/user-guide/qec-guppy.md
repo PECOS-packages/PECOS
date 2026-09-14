@@ -441,6 +441,7 @@ from pecos.guppy_gen import generate_surface_code_module
 
 source = generate_surface_code_module(d=3)
 assert "class SurfaceCode_3x3:" in source
+assert "def syndrome_extraction" in source
 ```
 
 ```text

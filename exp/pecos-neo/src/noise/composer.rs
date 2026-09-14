@@ -22,7 +22,9 @@
 use super::context::NoiseContext;
 use super::idle::IdleChannel;
 use super::plugin::{ContextObserver, EventHandler, NoiseModelConfig, NoisePlugin};
-use super::{NoiseChannel, NoiseEvent, NoiseGateRequirement, NoiseResponse};
+use super::{
+    EventKinds, NoiseChannel, NoiseEvent, NoiseEventKind, NoiseGateRequirement, NoiseResponse,
+};
 use crate::command::GateType;
 use pecos_core::{QubitId, TimeScale};
 use pecos_random::PecosRng;
@@ -60,6 +62,10 @@ pub struct ComposableNoiseModel {
     /// Noise channels that produce noise responses.
     channels: Vec<Box<dyn NoiseChannel>>,
 
+    /// Indices into the source vectors, preserving their dispatch order.
+    channel_buckets: [Vec<usize>; EventKinds::COUNT],
+    handler_buckets: [Vec<usize>; EventKinds::COUNT],
+
     /// Runner capabilities required by configured gate-injection mechanisms.
     gate_requirements: Vec<NoiseGateRequirement>,
 
@@ -78,25 +84,32 @@ pub struct ComposableNoiseModel {
 
 impl std::fmt::Debug for ComposableNoiseModel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Buckets are derived indices, not part of the model's diagnostic view.
+        let Self {
+            event_handlers,
+            channels,
+            gate_requirements,
+            observers,
+            context,
+            time_scale,
+            channel_buckets: _,
+            handler_buckets: _,
+        } = self;
         f.debug_struct("ComposableNoiseModel")
-            .field("time_scale", &self.time_scale)
-            .field("gate_requirements", &self.gate_requirements)
-            .field("event_handler_count", &self.event_handlers.len())
+            .field("time_scale", &time_scale)
+            .field("gate_requirements", &gate_requirements)
+            .field("event_handler_count", &event_handlers.len())
             .field(
                 "event_handler_names",
-                &self
-                    .event_handlers
-                    .iter()
-                    .map(|h| h.name())
-                    .collect::<Vec<_>>(),
+                &event_handlers.iter().map(|h| h.name()).collect::<Vec<_>>(),
             )
-            .field("channel_count", &self.channels.len())
+            .field("channel_count", &channels.len())
             .field(
                 "channel_names",
-                &self.channels.iter().map(|c| c.name()).collect::<Vec<_>>(),
+                &channels.iter().map(|c| c.name()).collect::<Vec<_>>(),
             )
-            .field("observer_count", &self.observers.len())
-            .field("context", &self.context)
+            .field("observer_count", &observers.len())
+            .field("context", &context)
             .finish()
     }
 }
@@ -114,6 +127,8 @@ impl ComposableNoiseModel {
         Self {
             event_handlers: Vec::new(),
             channels: Vec::new(),
+            channel_buckets: std::array::from_fn(|_| Vec::new()),
+            handler_buckets: std::array::from_fn(|_| Vec::new()),
             gate_requirements: Vec::new(),
             observers: Vec::new(),
             context: NoiseContext::new(),
@@ -198,12 +213,15 @@ impl ComposableNoiseModel {
                 .iter()
                 .flat_map(|channel| channel.gate_requirements()),
         );
-        self.channels.extend(config.channels);
+        for channel in config.channels {
+            self.push_channel(channel);
+        }
         self.observers.extend(config.observers);
 
         // Keep handlers sorted by priority (high to low) for efficient iteration
         self.event_handlers
             .sort_by_key(|h| std::cmp::Reverse(h.priority()));
+        self.rebuild_handler_buckets();
 
         self
     }
@@ -214,7 +232,7 @@ impl ComposableNoiseModel {
     #[must_use]
     pub fn add_channel(mut self, channel: impl NoiseChannel + 'static) -> Self {
         self.gate_requirements.extend(channel.gate_requirements());
-        self.channels.push(Box::new(channel));
+        self.push_channel(Box::new(channel));
         self
     }
 
@@ -233,7 +251,7 @@ impl ComposableNoiseModel {
                     ..requirement
                 }
             }));
-        self.channels.push(Box::new(channel));
+        self.push_channel(Box::new(channel));
         self
     }
 
@@ -244,7 +262,7 @@ impl ComposableNoiseModel {
     #[must_use]
     pub fn add_boxed_channel(mut self, channel: Box<dyn NoiseChannel>) -> Self {
         self.gate_requirements.extend(channel.gate_requirements());
-        self.channels.push(channel);
+        self.push_channel(channel);
         self
     }
 
@@ -295,8 +313,31 @@ impl ComposableNoiseModel {
     /// For plugin-based configuration, use `add_plugin()` instead.
     #[must_use]
     pub fn add_event_handler(mut self, handler: impl EventHandler + 'static) -> Self {
+        index_kinds(
+            &mut self.handler_buckets,
+            self.event_handlers.len(),
+            handler.event_kinds(),
+        );
         self.event_handlers.push(Box::new(handler));
         self
+    }
+
+    fn push_channel(&mut self, channel: Box<dyn NoiseChannel>) {
+        index_kinds(
+            &mut self.channel_buckets,
+            self.channels.len(),
+            channel.event_kinds(),
+        );
+        self.channels.push(channel);
+    }
+
+    fn rebuild_handler_buckets(&mut self) {
+        for bucket in &mut self.handler_buckets {
+            bucket.clear();
+        }
+        for (index, handler) in self.event_handlers.iter().enumerate() {
+            index_kinds(&mut self.handler_buckets, index, handler.event_kinds());
+        }
     }
 
     /// Add a context observer directly to the model.
@@ -424,7 +465,8 @@ impl ComposableNoiseModel {
 
         // 2. Collect responses from noise channels using try_apply for efficiency
         let mut combined = NoiseResponse::None;
-        for channel in &self.channels {
+        for &index in &self.channel_buckets[event.kind().index()] {
+            let channel = &self.channels[index];
             // try_apply combines responds_to + apply in one call
             // filter out NoiseResponse::None to avoid unnecessary combine calls
             if let Some(response) = channel
@@ -454,12 +496,11 @@ impl ComposableNoiseModel {
         // Collect indices of handlers that respond to this event.
         // This allows us to release the borrow on self.event_handlers
         // before mutably borrowing self.context.
-        let handler_indices: smallvec::SmallVec<[usize; 4]> = self
-            .event_handlers
+        let bucket = &self.handler_buckets[event.kind().index()];
+        let handler_indices: smallvec::SmallVec<[usize; 4]> = bucket
             .iter()
-            .enumerate()
-            .filter(|(_, h)| h.handles(event))
-            .map(|(i, _)| i)
+            .copied()
+            .filter(|&i| self.event_handlers[i].handles(event))
             .collect();
 
         for i in handler_indices {
@@ -551,6 +592,14 @@ impl ComposableNoiseModel {
     }
 }
 
+fn index_kinds(buckets: &mut [Vec<usize>; EventKinds::COUNT], index: usize, kinds: EventKinds) {
+    for kind in NoiseEventKind::ALL {
+        if kinds.contains(kind) {
+            buckets[kind.index()].push(index);
+        }
+    }
+}
+
 fn supports_clifford_noise_gate(gate_type: GateType) -> bool {
     matches!(
         gate_type,
@@ -606,6 +655,8 @@ impl Clone for ComposableNoiseModel {
         Self {
             event_handlers: self.event_handlers.iter().map(|h| h.clone_box()).collect(),
             channels: self.channels.iter().map(|c| c.clone_box()).collect(),
+            channel_buckets: self.channel_buckets.clone(),
+            handler_buckets: self.handler_buckets.clone(),
             gate_requirements: self.gate_requirements.clone(),
             observers: self.observers.iter().map(|o| o.clone_box()).collect(),
             context: self.context.clone(),
@@ -643,6 +694,592 @@ impl From<super::GeneralNoiseModelBuilder> for ComposableNoiseModel {
 
 #[cfg(test)]
 mod tests {
+    use crate::noise::event_kind_tests::{representative, witnesses};
+    use std::sync::{Arc, Mutex};
+
+    type DispatchLog = Arc<Mutex<Vec<(&'static str, &'static str, NoiseEventKind)>>>;
+
+    #[derive(Clone)]
+    struct Recorder {
+        label: &'static str,
+        priority: i32,
+        selected: bool,
+        log: DispatchLog,
+    }
+
+    impl NoiseChannel for Recorder {
+        fn responds_to(&self, _event: &NoiseEvent<'_>) -> bool {
+            // Deliberately differs from try_apply to pin optimized dispatch.
+            false
+        }
+
+        fn apply(
+            &self,
+            _event: &NoiseEvent<'_>,
+            _ctx: &mut NoiseContext,
+            _rng: &mut PecosRng,
+        ) -> NoiseResponse {
+            panic!("the composer must call try_apply");
+        }
+
+        fn try_apply(
+            &self,
+            event: &NoiseEvent<'_>,
+            _ctx: &mut NoiseContext,
+            _rng: &mut PecosRng,
+        ) -> Option<NoiseResponse> {
+            self.log
+                .lock()
+                .unwrap()
+                .push(("try_apply", self.label, event.kind()));
+            Some(NoiseResponse::None)
+        }
+
+        fn name(&self) -> &'static str {
+            self.label
+        }
+        fn clone_box(&self) -> Box<dyn NoiseChannel> {
+            Box::new(self.clone())
+        }
+    }
+
+    impl EventHandler for Recorder {
+        fn handles(&self, event: &NoiseEvent<'_>) -> bool {
+            self.log
+                .lock()
+                .unwrap()
+                .push(("handles", self.label, event.kind()));
+            self.selected
+        }
+
+        fn handle(&self, event: &NoiseEvent<'_>, _ctx: &mut NoiseContext) {
+            self.log
+                .lock()
+                .unwrap()
+                .push(("handle", self.label, event.kind()));
+        }
+
+        fn name(&self) -> &'static str {
+            self.label
+        }
+        fn priority(&self) -> i32 {
+            self.priority
+        }
+        fn clone_box(&self) -> Box<dyn EventHandler> {
+            Box::new(self.clone())
+        }
+    }
+
+    struct RecordingPlugin {
+        handlers: Vec<Recorder>,
+        channels: Vec<Recorder>,
+    }
+
+    #[derive(Clone)]
+    struct KindRecorder {
+        inner: Recorder,
+        kinds: EventKinds,
+    }
+
+    impl NoiseChannel for KindRecorder {
+        fn event_kinds(&self) -> EventKinds {
+            self.kinds
+        }
+        fn responds_to(&self, event: &NoiseEvent<'_>) -> bool {
+            self.kinds.contains(event.kind())
+        }
+        fn apply(
+            &self,
+            _event: &NoiseEvent<'_>,
+            _ctx: &mut NoiseContext,
+            _rng: &mut PecosRng,
+        ) -> NoiseResponse {
+            NoiseResponse::None
+        }
+        fn try_apply(
+            &self,
+            event: &NoiseEvent<'_>,
+            ctx: &mut NoiseContext,
+            rng: &mut PecosRng,
+        ) -> Option<NoiseResponse> {
+            let response = self.inner.try_apply(event, ctx, rng);
+            if self.responds_to(event) {
+                response
+            } else {
+                None
+            }
+        }
+        fn name(&self) -> &'static str {
+            self.inner.label
+        }
+        fn clone_box(&self) -> Box<dyn NoiseChannel> {
+            Box::new(self.clone())
+        }
+    }
+
+    impl EventHandler for KindRecorder {
+        fn event_kinds(&self) -> EventKinds {
+            self.kinds
+        }
+        fn handles(&self, event: &NoiseEvent<'_>) -> bool {
+            self.inner.handles(event) && self.kinds.contains(event.kind())
+        }
+        fn handle(&self, event: &NoiseEvent<'_>, ctx: &mut NoiseContext) {
+            self.inner.handle(event, ctx);
+        }
+        fn clone_box(&self) -> Box<dyn EventHandler> {
+            Box::new(self.clone())
+        }
+    }
+
+    #[test]
+    fn excluded_kinds_do_not_visit_channels_or_handlers() {
+        let log: DispatchLog = Arc::default();
+        let recorder = |label, kinds| KindRecorder {
+            inner: Recorder {
+                label,
+                priority: 0,
+                selected: true,
+                log: log.clone(),
+            },
+            kinds,
+        };
+        let prep = recorder("prep", EventKinds::of(NoiseEventKind::AfterPreparation));
+        let never = recorder("never", EventKinds::NONE);
+        let mut model = ComposableNoiseModel::new()
+            .add_channel(never.clone())
+            .add_channel(prep.clone())
+            .add_event_handler(never)
+            .add_event_handler(prep);
+        let mut rng = PecosRng::seed_from_u64(42);
+        for kind in NoiseEventKind::ALL {
+            log.lock().unwrap().clear();
+            model.emit(&representative(kind), &mut rng);
+            if kind == NoiseEventKind::AfterPreparation {
+                assert_eq!(
+                    *log.lock().unwrap(),
+                    [
+                        ("handles", "prep", kind),
+                        ("handle", "prep", kind),
+                        ("try_apply", "prep", kind),
+                    ]
+                );
+            } else {
+                assert!(log.lock().unwrap().is_empty());
+            }
+        }
+    }
+
+    impl NoisePlugin for RecordingPlugin {
+        fn build(&self, config: &mut NoiseModelConfig) {
+            for handler in &self.handlers {
+                config.add_event_handler(handler.clone());
+            }
+            for channel in &self.channels {
+                config.add_channel(channel.clone());
+            }
+        }
+    }
+
+    #[test]
+    fn default_declarations_dispatch_every_kind_at_every_insertion_point() {
+        let log: DispatchLog = Arc::default();
+        let recorder = |label| Recorder {
+            label,
+            priority: 0,
+            selected: true,
+            log: log.clone(),
+        };
+        let mut model = ComposableNoiseModel::new()
+            .add_channel(recorder("direct"))
+            .add_channel_configured_by(recorder("configured"), "test", "test")
+            .add_boxed_channel(Box::new(recorder("boxed")))
+            .add_plugin(&RecordingPlugin {
+                handlers: vec![recorder("plugin_handler")],
+                channels: vec![recorder("plugin_channel")],
+            })
+            .add_event_handler(recorder("direct_handler"));
+        assert_eq!(
+            model.channel_names(),
+            ["direct", "configured", "boxed", "plugin_channel"]
+        );
+        let mut rng = PecosRng::seed_from_u64(42);
+        for kind in NoiseEventKind::ALL {
+            log.lock().unwrap().clear();
+            model.emit(&representative(kind), &mut rng);
+            assert_eq!(
+                *log.lock().unwrap(),
+                [
+                    ("handles", "plugin_handler", kind),
+                    ("handles", "direct_handler", kind),
+                    ("handle", "plugin_handler", kind),
+                    ("handle", "direct_handler", kind),
+                    ("try_apply", "direct", kind),
+                    ("try_apply", "configured", kind),
+                    ("try_apply", "boxed", kind),
+                    ("try_apply", "plugin_channel", kind),
+                ]
+            );
+        }
+    }
+
+    #[test]
+    fn handler_buckets_preserve_stable_sort_append_and_two_phase_dispatch() {
+        let log: DispatchLog = Arc::default();
+        let recorder = |label, priority, selected| Recorder {
+            label,
+            priority,
+            selected,
+            log: log.clone(),
+        };
+        let mut model = ComposableNoiseModel::new()
+            .add_event_handler(recorder("direct_first", 10, true))
+            .add_plugin(&RecordingPlugin {
+                handlers: vec![
+                    recorder("low", 1, false),
+                    recorder("high_a", 20, true),
+                    recorder("high_b", 20, true),
+                ],
+                channels: vec![],
+            })
+            .add_event_handler(recorder("direct_last", 100, true));
+        let kind = NoiseEventKind::AfterGate;
+        let event = representative(kind);
+        let mut rng = PecosRng::seed_from_u64(42);
+        model.emit(&event, &mut rng);
+        assert_eq!(
+            *log.lock().unwrap(),
+            [
+                ("handles", "high_a", kind),
+                ("handles", "high_b", kind),
+                ("handles", "direct_first", kind),
+                ("handles", "low", kind),
+                ("handles", "direct_last", kind),
+                ("handle", "high_a", kind),
+                ("handle", "high_b", kind),
+                ("handle", "direct_first", kind),
+                ("handle", "direct_last", kind),
+            ]
+        );
+
+        // Another plugin sorts the entire vector, including previous direct appends.
+        model = model.add_plugin(&RecordingPlugin {
+            handlers: vec![recorder("high_c", 20, true)],
+            channels: vec![],
+        });
+        log.lock().unwrap().clear();
+        model.emit(&event, &mut rng);
+        assert_eq!(
+            *log.lock().unwrap(),
+            [
+                ("handles", "direct_last", kind),
+                ("handles", "high_a", kind),
+                ("handles", "high_b", kind),
+                ("handles", "high_c", kind),
+                ("handles", "direct_first", kind),
+                ("handles", "low", kind),
+                ("handle", "direct_last", kind),
+                ("handle", "high_a", kind),
+                ("handle", "high_b", kind),
+                ("handle", "high_c", kind),
+                ("handle", "direct_first", kind),
+            ]
+        );
+    }
+
+    // ALL adapters recreate flat-vector dispatch without changing any predicate,
+    // optimized try_apply, gate requirements, priority or response.
+    struct AllChannel(Box<dyn NoiseChannel>);
+    impl NoiseChannel for AllChannel {
+        fn responds_to(&self, event: &NoiseEvent<'_>) -> bool {
+            self.0.responds_to(event)
+        }
+        fn apply(
+            &self,
+            event: &NoiseEvent<'_>,
+            ctx: &mut NoiseContext,
+            rng: &mut PecosRng,
+        ) -> NoiseResponse {
+            self.0.apply(event, ctx, rng)
+        }
+        fn try_apply(
+            &self,
+            event: &NoiseEvent<'_>,
+            ctx: &mut NoiseContext,
+            rng: &mut PecosRng,
+        ) -> Option<NoiseResponse> {
+            self.0.try_apply(event, ctx, rng)
+        }
+        fn name(&self) -> &'static str {
+            self.0.name()
+        }
+        fn priority(&self) -> i32 {
+            self.0.priority()
+        }
+        fn gate_requirements(&self) -> smallvec::SmallVec<[NoiseGateRequirement; 2]> {
+            self.0.gate_requirements()
+        }
+        fn clone_box(&self) -> Box<dyn NoiseChannel> {
+            Box::new(Self(self.0.clone_box()))
+        }
+    }
+
+    struct AllHandler(Box<dyn EventHandler>);
+    impl EventHandler for AllHandler {
+        fn handles(&self, event: &NoiseEvent<'_>) -> bool {
+            self.0.handles(event)
+        }
+        fn handle(&self, event: &NoiseEvent<'_>, ctx: &mut NoiseContext) {
+            self.0.handle(event, ctx);
+        }
+        fn name(&self) -> &'static str {
+            self.0.name()
+        }
+        fn priority(&self) -> i32 {
+            self.0.priority()
+        }
+        fn clone_box(&self) -> Box<dyn EventHandler> {
+            Box::new(Self(self.0.clone_box()))
+        }
+    }
+
+    fn assert_same_response(actual: &NoiseResponse, expected: &NoiseResponse) {
+        use NoiseResponse::{
+            FlipOutcomes, ForceOutcomes, InjectGates, LeakedMeasurement, MarkLeaked, MarkUnleaked,
+            Multiple, None, SkipGate,
+        };
+        match (actual, expected) {
+            (None, None) | (SkipGate, SkipGate) => {}
+            (InjectGates(a), InjectGates(b)) => assert_eq!(a, b),
+            (FlipOutcomes(a), FlipOutcomes(b))
+            | (MarkLeaked(a), MarkLeaked(b))
+            | (MarkUnleaked(a), MarkUnleaked(b))
+            | (LeakedMeasurement(a), LeakedMeasurement(b)) => assert_eq!(a, b),
+            (ForceOutcomes(a), ForceOutcomes(b)) => assert_eq!(a, b),
+            (Multiple(a), Multiple(b)) => {
+                assert_eq!(a.len(), b.len());
+                for (a, b) in a.iter().zip(b) {
+                    assert_same_response(a, b);
+                }
+            }
+            _ => panic!("response variants differ: {actual:?} vs {expected:?}"),
+        }
+    }
+
+    #[derive(Clone)]
+    struct OptimizedEmptyChannel;
+
+    impl NoiseChannel for OptimizedEmptyChannel {
+        fn event_kinds(&self) -> EventKinds {
+            EventKinds::NONE
+        }
+
+        fn responds_to(&self, _event: &NoiseEvent<'_>) -> bool {
+            true
+        }
+
+        fn apply(
+            &self,
+            _event: &NoiseEvent<'_>,
+            _ctx: &mut NoiseContext,
+            _rng: &mut PecosRng,
+        ) -> NoiseResponse {
+            NoiseResponse::None
+        }
+
+        fn try_apply(
+            &self,
+            _event: &NoiseEvent<'_>,
+            _ctx: &mut NoiseContext,
+            _rng: &mut PecosRng,
+        ) -> Option<NoiseResponse> {
+            None
+        }
+
+        fn name(&self) -> &'static str {
+            "OptimizedEmptyChannel"
+        }
+
+        fn clone_box(&self) -> Box<dyn NoiseChannel> {
+            Box::new(self.clone())
+        }
+    }
+
+    #[derive(Clone)]
+    struct RandomProbeChannel;
+
+    impl NoiseChannel for RandomProbeChannel {
+        fn responds_to(&self, _event: &NoiseEvent<'_>) -> bool {
+            true
+        }
+
+        fn apply(
+            &self,
+            _event: &NoiseEvent<'_>,
+            _ctx: &mut NoiseContext,
+            rng: &mut PecosRng,
+        ) -> NoiseResponse {
+            if rng.next_u64() > u64::MAX / 2 {
+                NoiseResponse::SkipGate
+            } else {
+                NoiseResponse::None
+            }
+        }
+
+        fn name(&self) -> &'static str {
+            "RandomProbeChannel"
+        }
+
+        fn clone_box(&self) -> Box<dyn NoiseChannel> {
+            Box::new(self.clone())
+        }
+    }
+
+    #[test]
+    fn importance_wrapper_preserves_rng_when_inner_optimized_dispatch_is_empty() {
+        use crate::sampling::importance::{ImportanceConfig, ImportanceSamplingChannel};
+
+        // The inner declaration covers its optimized try_apply, not responds_to.
+        // The wrapper uses responds_to and consumes a proposal draw regardless
+        // of whether the inner channel produces a response.
+        let wrapper = ImportanceSamplingChannel::new(
+            OptimizedEmptyChannel,
+            ImportanceConfig::with_boost(0.02, 10.0),
+        );
+        let mut bucketed = ComposableNoiseModel::new()
+            .add_channel(wrapper.clone())
+            .add_channel(RandomProbeChannel);
+        let mut flat = ComposableNoiseModel::new()
+            .add_channel(AllChannel(Box::new(wrapper)))
+            .add_channel(AllChannel(Box::new(RandomProbeChannel)));
+        let mut rng = PecosRng::seed_from_u64(42);
+        let mut flat_rng = PecosRng::seed_from_u64(42);
+        let mut events = vec![NoiseEvent::BeforeCircuit { num_qubits: 1 }];
+        events.extend(witnesses());
+
+        for (index, event) in events.iter().enumerate() {
+            let expected = flat.emit(event, &mut flat_rng);
+            if index == 0 {
+                // Seed 42 pins the reproducer: omitting the proposal draw makes
+                // the probe emit SkipGate instead of None on the first event.
+                assert_same_response(&expected, &NoiseResponse::None);
+            }
+            assert_same_response(&bucketed.emit(event, &mut rng), &expected);
+        }
+        assert_eq!(rng.next_u64(), flat_rng.next_u64());
+    }
+
+    fn equivalence_model(idle_family: usize) -> ComposableNoiseModel {
+        use crate::noise::composite::channel::{
+            BatchCompositeChannel, CompositeChannel, CompositeCrosstalkChannel,
+            CompositeEventFilter,
+        };
+        use crate::noise::composite::prelude::pauli;
+        use crate::noise::*;
+        use crate::sampling::importance::{ImportanceConfig, ImportanceSamplingChannel};
+        let axes = std::collections::BTreeMap::from([("Z".into(), 1.0)]);
+        let builder = GeneralNoiseModelBuilder::new()
+            .with_p1(0.2)
+            .with_p2(0.3)
+            .with_p1_emission_ratio(0.2)
+            .with_p2_emission_ratio(0.2)
+            .with_p1_seepage(0.2)
+            .with_p2_seepage(0.2)
+            .with_p_prep(0.2)
+            .with_p_prep_leak_ratio(0.2)
+            .with_p_meas(0.2, 0.3)
+            .with_p_meas_state_flip(0.2)
+            .with_p_prep_crosstalk(0.2)
+            .with_p_meas_crosstalk(0.3, 0.2)
+            .with_p_idle_linear(0.1, &axes)
+            .with_idle_after_2q(1.0);
+        let builder = match idle_family {
+            0 => builder.with_p_idle_sin_squared(0.2, &axes),
+            1 => builder.with_p_idle_quadratic(0.2),
+            2 => builder
+                .with_p_idle_quadratic(0.2)
+                .with_p_idle_coherent(true),
+            _ => unreachable!("test defines three idle configurations"),
+        };
+        builder
+            .build()
+            .add_channel(CategoryBasedChannel::new().with_default(0.2))
+            .add_channel(GateDependentChannel::new().with_gate_error(GateType::H, 0.2))
+            .add_channel(GateIdDependentChannel::new().with_gate_type_error(GateType::CX, 0.2))
+            .add_channel(CorrelatedNoiseChannel::new(0.2, 0.5))
+            .add_channel(
+                PerGatePauliChannel::new()
+                    .with_base(0.2, 0.2)
+                    .with_meas_init(0.2, 0.2),
+            )
+            .add_channel(ImportanceSamplingChannel::new(
+                SingleQubitChannel::depolarizing(0.2),
+                ImportanceConfig::with_boost(0.02, 10.0),
+            ))
+            .add_channel(
+                CompositeChannel::new("composite", pauli())
+                    .with_filter(CompositeEventFilter::BeforeGate)
+                    .with_filter(CompositeEventFilter::AfterReset)
+                    .with_filter(CompositeEventFilter::BetweenLayers),
+            )
+            .add_channel(
+                BatchCompositeChannel::new("batch", 0.2, pauli())
+                    .with_filter(CompositeEventFilter::AnyGate),
+            )
+            .add_channel(
+                CompositeCrosstalkChannel::new("crosstalk", pauli())
+                    .responds_to_gates()
+                    .responds_to_measurement()
+                    .responds_to_preparation(),
+            )
+    }
+
+    #[test]
+    fn bucketed_and_all_kind_dispatch_and_clone_emit_identically() {
+        for idle_family in 0..3 {
+            let mut bucketed = equivalence_model(idle_family);
+            let mut flat = equivalence_model(idle_family);
+            flat.channels = flat
+                .channels
+                .into_iter()
+                .map(|channel| Box::new(AllChannel(channel)) as Box<dyn NoiseChannel>)
+                .collect();
+            flat.event_handlers = flat
+                .event_handlers
+                .into_iter()
+                .map(|handler| Box::new(AllHandler(handler)) as Box<dyn EventHandler>)
+                .collect();
+            flat.channel_buckets = std::array::from_fn(|_| Vec::new());
+            for (index, channel) in flat.channels.iter().enumerate() {
+                index_kinds(&mut flat.channel_buckets, index, channel.event_kinds());
+            }
+            flat.rebuild_handler_buckets();
+            assert_eq!(bucketed.channel_names(), flat.channel_names());
+            assert_eq!(bucketed.gate_requirements, flat.gate_requirements);
+            assert_eq!(bucketed.describe(), flat.describe());
+            let mut cloned = bucketed.clone();
+            assert_eq!(bucketed.channel_buckets, cloned.channel_buckets);
+            assert_eq!(bucketed.handler_buckets, cloned.handler_buckets);
+            let mut rng = PecosRng::seed_from_u64(12345);
+            let mut flat_rng = PecosRng::seed_from_u64(12345);
+            let mut clone_rng = PecosRng::seed_from_u64(12345);
+            let mut events = vec![NoiseEvent::AfterPreparation {
+                qubits: &[QubitId(0), QubitId(1), QubitId(2), QubitId(3)],
+            }];
+            events.extend(witnesses());
+            for _ in 0..4 {
+                for event in &events {
+                    let response = bucketed.emit(event, &mut rng);
+                    assert_same_response(&response, &flat.emit(event, &mut flat_rng));
+                    assert_same_response(&response, &cloned.emit(event, &mut clone_rng));
+                }
+            }
+            let next = rng.random::<u64>();
+            assert_eq!(next, flat_rng.random::<u64>());
+            assert_eq!(next, clone_rng.random::<u64>());
+        }
+    }
+
     use super::*;
     use crate::command::{GateCommand, GateType};
     use crate::noise::plugins::CorePlugin;

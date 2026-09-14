@@ -1527,6 +1527,14 @@ impl OperationProcessor {
 
         // Process based on gate type
         match qop {
+            "U" => {
+                let angles = angles.filter(|angles| angles.len() == 3).ok_or_else(|| {
+                    PecosError::ValidationInvalidGateParameters(
+                        "U gate requires exactly three angles (theta, phi, lambda)".to_string(),
+                    )
+                })?;
+                Ok((qop.to_string(), qubit_args, angles.clone()))
+            }
             // Single-qubit rotation gates
             "RZ" => {
                 let theta = angles
@@ -1612,7 +1620,9 @@ impl OperationProcessor {
             }
 
             // Single-qubit Clifford gates, Initialization, and Measurement
-            "H" | "X" | "Y" | "Z" | "Measure" | "Init" => Ok((qop.to_string(), qubit_args, vec![])),
+            "H" | "X" | "Y" | "Z" | "SX" | "SXdg" | "Measure" | "Init" => {
+                Ok((qop.to_string(), qubit_args, vec![]))
+            }
 
             _ => Err(PecosError::Processing(format!(
                 "Unsupported quantum gate operation: Gate type '{qop}' is not implemented"
@@ -1646,6 +1656,25 @@ impl OperationProcessor {
                 .collect::<Vec<_>>())
         };
         match gate_type {
+            "U" => {
+                let [theta, phi, lambda] = angle_args else {
+                    return Err(PecosError::ValidationInvalidGateParameters(
+                        "U gate requires exactly three angles (theta, phi, lambda)".to_string(),
+                    ));
+                };
+                builder.u(
+                    Angle64::from_radians(*theta),
+                    Angle64::from_radians(*phi),
+                    Angle64::from_radians(*lambda),
+                    qubit_args,
+                );
+            }
+            "SX" => {
+                builder.sx(qubit_args);
+            }
+            "SXdg" => {
+                builder.sxdg(qubit_args);
+            }
             "RZ" => {
                 builder.rz(Angle64::from_radians(angle_args[0]), &[qubit_args[0]]);
             }

@@ -209,6 +209,8 @@ fn apply_gate_classifies_supported_transparent_and_unsupported_gates() {
         Gate::rz(Angle64::HALF_TURN, &[0]),
         // RXY1Q(pi/2, 0) lowers to the named SX and must propagate.
         Gate::rxy1q(Angle64::QUARTER_TURN, Angle64::ZERO, &[0]),
+        Gate::u(Angle64::ZERO, Angle64::ZERO, Angle64::ZERO, &[0]),
+        Gate::u(Angle64::ZERO, Angle64::ZERO, Angle64::HALF_TURN, &[0]),
     ] {
         assert_eq!(
             apply_gate(&mut prop, &gate, Direction::Forward),
@@ -242,7 +244,13 @@ fn apply_gate_classifies_supported_transparent_and_unsupported_gates() {
         Gate::rz(Angle64::from_turns(0.125), &[0]),
         Gate::rz(Angle64::from_turns(-0.125), &[0]),
         Gate::rz(Angle64::from_turns(0.1), &[0]),
-        Gate::u(Angle64::ZERO, Angle64::ZERO, Angle64::ZERO, &[0]),
+        Gate::u(Angle64::HALF_TURN, Angle64::ZERO, Angle64::ZERO, &[0]),
+        Gate::u(
+            Angle64::ZERO,
+            Angle64::ZERO,
+            Angle64::from_turns(0.125),
+            &[0],
+        ),
     ] {
         assert_eq!(
             apply_gate(&mut prop, &gate, Direction::Forward),

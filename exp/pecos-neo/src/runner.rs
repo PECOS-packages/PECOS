@@ -612,6 +612,12 @@ pub enum ExecutionError {
     },
     /// The command has invalid qubit support or payload.
     InvalidCommand(crate::command::GateCommandError),
+    /// A gate command carries an invalid number of target qubits.
+    QubitArity {
+        gate: GateType,
+        arity: usize,
+        got: usize,
+    },
     /// Maximum decomposition depth exceeded (possible infinite recursion).
     MaxDecompositionDepthExceeded,
 }
@@ -640,6 +646,11 @@ impl std::fmt::Display for ExecutionError {
                 "Gate {gate:?} expected {expected} angle parameters, got {got}"
             ),
             Self::InvalidCommand(error) => error.fmt(f),
+            Self::QubitArity { gate, arity, got } => write!(
+                f,
+                "Gate {gate:?} received {got} targets, which is not a nonzero multiple of its \
+                 qubit arity {arity}"
+            ),
             Self::MaxDecompositionDepthExceeded => {
                 write!(f, "Maximum decomposition depth exceeded")
             }
@@ -648,6 +659,12 @@ impl std::fmt::Display for ExecutionError {
 }
 
 impl std::error::Error for ExecutionError {}
+
+impl From<ExecutionError> for pecos_core::errors::PecosError {
+    fn from(error: ExecutionError) -> Self {
+        Self::Processing(error.to_string())
+    }
+}
 
 /// Outcome of the Clifford-rotation execution attempt.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1231,18 +1248,22 @@ impl<S: CliffordGateable> CircuitRunner<S> {
     /// and returns the response. Useful for idle noise between manually-applied
     /// gates, testing noise models, or custom execution loops.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if an undeclared noise mechanism injects a gate the runner cannot
+    /// Returns an error if the emitted response injects a gate the runner cannot
     /// execute. Declared requirements are rejected by [`Self::with_noise`].
-    pub fn apply_noise(&mut self, state: &mut S, event: &NoiseEvent<'_>) -> NoiseResponse {
+    pub fn apply_noise(
+        &mut self,
+        state: &mut S,
+        event: &NoiseEvent<'_>,
+    ) -> Result<NoiseResponse, ExecutionError> {
         let Some(ref mut noise) = self.noise else {
-            return NoiseResponse::None;
+            return Ok(NoiseResponse::None);
         };
 
         let response = noise.emit(event, &mut self.rng);
-        self.apply_noise_response(state, response.clone());
-        response
+        self.apply_noise_response(state, response.clone())?;
+        Ok(response)
     }
 
     /// Execute a single command from a `CommandQueue`.
@@ -1259,22 +1280,22 @@ impl<S: CliffordGateable> CircuitRunner<S> {
             // Preparation
             GateType::PZ | GateType::QAlloc => {
                 sim.pz(qubits);
-                self.dispatch_after_preparation(sim, command);
+                self.dispatch_after_preparation(sim, command)?;
             }
 
             // Measurement
             GateType::MZ | GateType::MeasureLeaked | GateType::MeasureFree => {
-                self.dispatch_before_measurement(sim, command);
+                self.dispatch_before_measurement(sim, command)?;
                 let results = sim.mz(qubits);
                 let outcomes: SmallVec<[bool; 4]> = results.iter().map(|r| r.outcome).collect();
                 self.record_measurements(command.gate_type, qubits, &results);
-                self.dispatch_after_measurement(sim, command, outcomes.as_slice());
+                self.dispatch_after_measurement(sim, command, outcomes.as_slice())?;
             }
 
             // Idle
             GateType::Idle => {
                 if let Some(duration) = command.get_idle_duration() {
-                    self.dispatch_idle(sim, command, duration);
+                    self.dispatch_idle(sim, command, duration)?;
                 }
             }
 
@@ -1287,7 +1308,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
                     command.gate_type,
                     qubits,
                     command.angles(),
-                );
+                )?;
                 if skip {
                     // Still emit after-gate for channels that want to inject errors
                     self.dispatch_after_gate_for_id(
@@ -1296,7 +1317,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
                         command.gate_type,
                         qubits,
                         command.angles(),
-                    );
+                    )?;
                     return Ok(());
                 }
 
@@ -1333,7 +1354,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
                     command.gate_type,
                     qubits,
                     command.angles(),
-                );
+                )?;
             }
         }
 
@@ -1363,12 +1384,12 @@ impl<S: CliffordGateable> CircuitRunner<S> {
 
         for (gate_idx, command) in commands.iter().enumerate() {
             #[allow(clippy::cast_possible_truncation)] // gate index fits in u32
-            self.dispatch_signals_at(sim, gate_idx as u32, store, &mut cursors);
+            self.dispatch_signals_at(sim, gate_idx as u32, store, &mut cursors)?;
             self.execute_queue_command(sim, command)?;
         }
         // Dispatch trailing signals (positioned after the last gate)
         #[allow(clippy::cast_possible_truncation)] // gate count fits in u32
-        self.dispatch_signals_at(sim, commands.len() as u32, store, &mut cursors);
+        self.dispatch_signals_at(sim, commands.len() as u32, store, &mut cursors)?;
         Ok(())
     }
 
@@ -1494,7 +1515,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
             validate_angle_arity(gate_type, angles)?;
         }
         // Emit before-gate noise event
-        let skip = self.emit_before_gate(sim, gate_id, qubits, angles);
+        let skip = self.emit_before_gate(sim, gate_id, qubits, angles)?;
         if skip {
             return Ok(());
         }
@@ -1522,7 +1543,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         }
 
         // Emit after-gate noise event
-        self.emit_after_gate(sim, gate_id, qubits, angles);
+        self.emit_after_gate(sim, gate_id, qubits, angles)?;
 
         Ok(())
     }
@@ -1858,7 +1879,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         gate_type: GateType,
         qubits: &[QubitId],
         angles: &[Angle64],
-    ) -> bool {
+    ) -> Result<bool, ExecutionError> {
         // Fast path: no handlers registered, go directly to noise model
         if self.gate_handlers.before_gate.is_empty() {
             return self.emit_before_gate_noise_for_id(sim, gate_id, gate_type, qubits, angles);
@@ -1883,8 +1904,8 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         // 3. Combine
         let combined = user_response.combine(noise_response);
         let should_skip = combined.should_skip_gate();
-        self.apply_noise_response(sim, combined);
-        should_skip
+        self.apply_noise_response(sim, combined)?;
+        Ok(should_skip)
     }
 
     /// Dispatch after-gate event for a gate identified by `GateId`.
@@ -1895,11 +1916,10 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         gate_type: GateType,
         qubits: &[QubitId],
         angles: &[Angle64],
-    ) {
+    ) -> Result<(), ExecutionError> {
         // Fast path
         if self.gate_handlers.after_gate.is_empty() {
-            self.emit_after_gate_noise_for_id(sim, gate_id, gate_type, qubits, angles);
-            return;
+            return self.emit_after_gate_noise_for_id(sim, gate_id, gate_type, qubits, angles);
         }
 
         // 1. Noise model AfterGate
@@ -1920,17 +1940,20 @@ impl<S: CliffordGateable> CircuitRunner<S> {
 
         // 3. Combine and apply
         let combined = noise_response.combine(user_response);
-        self.apply_noise_response(sim, combined);
+        self.apply_noise_response(sim, combined)
     }
 
     /// Dispatch before-measurement event.
-    fn dispatch_before_measurement(&mut self, sim: &mut S, command: &GateCommand) {
+    fn dispatch_before_measurement(
+        &mut self,
+        sim: &mut S,
+        command: &GateCommand,
+    ) -> Result<(), ExecutionError> {
         let qubits = command.qubits.as_slice();
 
         // Fast path
         if self.gate_handlers.before_measurement.is_empty() {
-            self.emit_before_measurement_noise(sim, qubits);
-            return;
+            return self.emit_before_measurement_noise(sim, qubits);
         }
 
         let ctx = self.gate_context(command);
@@ -1938,7 +1961,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
             GateEventHandlers::dispatch(&self.gate_handlers.before_measurement, &ctx);
         let noise_response = self.emit_before_measurement_noise_raw(qubits);
         let combined = user_response.combine(noise_response);
-        self.apply_noise_response(sim, combined);
+        self.apply_noise_response(sim, combined)
     }
 
     /// Dispatch after-measurement event.
@@ -1947,13 +1970,12 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         sim: &mut S,
         command: &GateCommand,
         outcomes: &[bool],
-    ) {
+    ) -> Result<(), ExecutionError> {
         let qubits = command.qubits.as_slice();
 
         // Fast path
         if self.gate_handlers.after_measurement.is_empty() {
-            self.emit_after_measurement_noise(sim, qubits, outcomes);
-            return;
+            return self.emit_after_measurement_noise(sim, qubits, outcomes);
         }
 
         let noise_response = self.emit_after_measurement_noise_raw(qubits, outcomes);
@@ -1969,17 +1991,20 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         let user_response =
             GateEventHandlers::dispatch(&self.gate_handlers.after_measurement, &ctx);
         let combined = noise_response.combine(user_response);
-        self.apply_noise_response(sim, combined);
+        self.apply_noise_response(sim, combined)
     }
 
     /// Dispatch after-preparation event.
-    fn dispatch_after_preparation(&mut self, sim: &mut S, command: &GateCommand) {
+    fn dispatch_after_preparation(
+        &mut self,
+        sim: &mut S,
+        command: &GateCommand,
+    ) -> Result<(), ExecutionError> {
         let qubits = command.qubits.as_slice();
 
         // Fast path
         if self.gate_handlers.after_preparation.is_empty() {
-            self.emit_after_preparation_noise(sim, qubits);
-            return;
+            return self.emit_after_preparation_noise(sim, qubits);
         }
 
         let noise_response = self.emit_after_preparation_noise_raw(qubits);
@@ -1987,17 +2012,21 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         let user_response =
             GateEventHandlers::dispatch(&self.gate_handlers.after_preparation, &ctx);
         let combined = noise_response.combine(user_response);
-        self.apply_noise_response(sim, combined);
+        self.apply_noise_response(sim, combined)
     }
 
     /// Dispatch idle event.
-    fn dispatch_idle(&mut self, sim: &mut S, command: &GateCommand, duration: TimeUnits) {
+    fn dispatch_idle(
+        &mut self,
+        sim: &mut S,
+        command: &GateCommand,
+        duration: TimeUnits,
+    ) -> Result<(), ExecutionError> {
         let qubits = command.qubits.as_slice();
 
         // Fast path
         if self.gate_handlers.idle.is_empty() {
-            self.emit_idle_noise(sim, qubits, duration);
-            return;
+            return self.emit_idle_noise(sim, qubits, duration);
         }
 
         let noise_response = self.emit_idle_noise_raw(qubits, duration);
@@ -2012,7 +2041,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         };
         let user_response = GateEventHandlers::dispatch(&self.gate_handlers.idle, &ctx);
         let combined = noise_response.combine(user_response);
-        self.apply_noise_response(sim, combined);
+        self.apply_noise_response(sim, combined)
     }
 
     // --- Noise emission (AdaptedSequence path) ---
@@ -2024,9 +2053,9 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         gate_id: GateId,
         qubits: &[QubitId],
         angles: &[Angle64],
-    ) -> bool {
+    ) -> Result<bool, ExecutionError> {
         let Some(ref mut noise) = self.noise else {
-            return false;
+            return Ok(false);
         };
 
         let gate_type = gate_id.try_to_gate_type().unwrap_or(GateType::I);
@@ -2039,8 +2068,8 @@ impl<S: CliffordGateable> CircuitRunner<S> {
 
         let response = noise.emit(&event, &mut self.rng);
         let should_skip = response.should_skip_gate();
-        self.apply_noise_response(sim, response);
-        should_skip
+        self.apply_noise_response(sim, response)?;
+        Ok(should_skip)
     }
 
     /// Emit after-gate to noise model (`AdaptedSequence` path).
@@ -2050,9 +2079,9 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         gate_id: GateId,
         qubits: &[QubitId],
         angles: &[Angle64],
-    ) {
+    ) -> Result<(), ExecutionError> {
         let Some(ref mut noise) = self.noise else {
-            return;
+            return Ok(());
         };
 
         let gate_type = gate_id.try_to_gate_type().unwrap_or(GateType::I);
@@ -2064,7 +2093,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         };
 
         let response = noise.emit(&event, &mut self.rng);
-        self.apply_noise_response(sim, response);
+        self.apply_noise_response(sim, response)
     }
 
     // --- Noise emission (CommandQueue path) ---
@@ -2077,11 +2106,11 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         gate_type: GateType,
         qubits: &[QubitId],
         angles: &[Angle64],
-    ) -> bool {
+    ) -> Result<bool, ExecutionError> {
         let response = self.emit_before_gate_noise_raw_for_id(gate_id, gate_type, qubits, angles);
         let should_skip = response.should_skip_gate();
-        self.apply_noise_response(sim, response);
-        should_skip
+        self.apply_noise_response(sim, response)?;
+        Ok(should_skip)
     }
 
     fn emit_before_gate_noise_raw_for_id(
@@ -2110,9 +2139,9 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         gate_type: GateType,
         qubits: &[QubitId],
         angles: &[Angle64],
-    ) {
+    ) -> Result<(), ExecutionError> {
         let response = self.emit_after_gate_noise_raw_for_id(gate_id, gate_type, qubits, angles);
-        self.apply_noise_response(sim, response);
+        self.apply_noise_response(sim, response)
     }
 
     fn emit_after_gate_noise_raw_for_id(
@@ -2134,9 +2163,13 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         NoiseResponse::None
     }
 
-    fn emit_before_measurement_noise(&mut self, sim: &mut S, qubits: &[QubitId]) {
+    fn emit_before_measurement_noise(
+        &mut self,
+        sim: &mut S,
+        qubits: &[QubitId],
+    ) -> Result<(), ExecutionError> {
         let response = self.emit_before_measurement_noise_raw(qubits);
-        self.apply_noise_response(sim, response);
+        self.apply_noise_response(sim, response)
     }
 
     fn emit_before_measurement_noise_raw(&mut self, qubits: &[QubitId]) -> NoiseResponse {
@@ -2147,9 +2180,14 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         NoiseResponse::None
     }
 
-    fn emit_after_measurement_noise(&mut self, sim: &mut S, qubits: &[QubitId], outcomes: &[bool]) {
+    fn emit_after_measurement_noise(
+        &mut self,
+        sim: &mut S,
+        qubits: &[QubitId],
+        outcomes: &[bool],
+    ) -> Result<(), ExecutionError> {
         let response = self.emit_after_measurement_noise_raw(qubits, outcomes);
-        self.apply_noise_response(sim, response);
+        self.apply_noise_response(sim, response)
     }
 
     fn emit_after_measurement_noise_raw(
@@ -2164,9 +2202,13 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         NoiseResponse::None
     }
 
-    fn emit_after_preparation_noise(&mut self, sim: &mut S, qubits: &[QubitId]) {
+    fn emit_after_preparation_noise(
+        &mut self,
+        sim: &mut S,
+        qubits: &[QubitId],
+    ) -> Result<(), ExecutionError> {
         let response = self.emit_after_preparation_noise_raw(qubits);
-        self.apply_noise_response(sim, response);
+        self.apply_noise_response(sim, response)
     }
 
     fn emit_after_preparation_noise_raw(&mut self, qubits: &[QubitId]) -> NoiseResponse {
@@ -2177,9 +2219,14 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         NoiseResponse::None
     }
 
-    fn emit_idle_noise(&mut self, sim: &mut S, qubits: &[QubitId], duration: TimeUnits) {
+    fn emit_idle_noise(
+        &mut self,
+        sim: &mut S,
+        qubits: &[QubitId],
+        duration: TimeUnits,
+    ) -> Result<(), ExecutionError> {
         let response = self.emit_idle_noise_raw(qubits, duration);
-        self.apply_noise_response(sim, response);
+        self.apply_noise_response(sim, response)
     }
 
     fn emit_idle_noise_raw(&mut self, qubits: &[QubitId], duration: TimeUnits) -> NoiseResponse {
@@ -2199,7 +2246,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
         pos: u32,
         store: &SignalStore,
         cursors: &mut [SignalCursor],
-    ) {
+    ) -> Result<(), ExecutionError> {
         let has_response_handlers = self.signal_handlers.has_response_handlers();
 
         for cursor in cursors.iter_mut() {
@@ -2226,25 +2273,32 @@ impl<S: CliffordGateable> CircuitRunner<S> {
                         .signal_handlers
                         .call_response(cursor.type_id, data, &ctx);
                     if !response.is_none() {
-                        self.apply_noise_response(sim, response);
+                        self.apply_noise_response(sim, response)?;
                     }
                 }
 
                 // 3. Emit to noise model
-                self.emit_signal_to_noise(sim, cursor.type_id, data);
+                self.emit_signal_to_noise(sim, cursor.type_id, data)?;
 
                 cursor.entry_idx += 1;
             }
         }
+        Ok(())
     }
 
     /// Emit a signal event to the noise model.
-    fn emit_signal_to_noise(&mut self, sim: &mut S, type_id: TypeId, data: &dyn Any) {
+    fn emit_signal_to_noise(
+        &mut self,
+        sim: &mut S,
+        type_id: TypeId,
+        data: &dyn Any,
+    ) -> Result<(), ExecutionError> {
         if let Some(ref mut noise) = self.noise {
             let event = NoiseEvent::Signal { type_id, data };
             let response = noise.emit(&event, &mut self.rng);
-            self.apply_noise_response(sim, response);
+            self.apply_noise_response(sim, response)?;
         }
+        Ok(())
     }
 
     // --- Measurement recording and noise response ---
@@ -2282,7 +2336,11 @@ impl<S: CliffordGateable> CircuitRunner<S> {
     }
 
     /// Apply a noise response (inject gates, flip outcomes, etc.).
-    fn apply_noise_response(&mut self, sim: &mut S, response: NoiseResponse) {
+    fn apply_noise_response(
+        &mut self,
+        sim: &mut S,
+        response: NoiseResponse,
+    ) -> Result<(), ExecutionError> {
         match response {
             NoiseResponse::None
             | NoiseResponse::SkipGate
@@ -2291,7 +2349,7 @@ impl<S: CliffordGateable> CircuitRunner<S> {
 
             NoiseResponse::InjectGates(gates) => {
                 for gate in gates.iter() {
-                    self.execute_noise_gate(sim, gate);
+                    self.execute_noise_gate(sim, gate)?;
                 }
             }
 
@@ -2315,49 +2373,51 @@ impl<S: CliffordGateable> CircuitRunner<S> {
 
             NoiseResponse::Multiple(responses) => {
                 for r in responses {
-                    self.apply_noise_response(sim, r);
+                    self.apply_noise_response(sim, r)?;
                 }
             }
         }
+        Ok(())
     }
 
     /// Execute a noise gate (injected error).
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if neither the Clifford simulator nor the configured rotation
-    /// executor can execute the injected gate, or if the gate carries the wrong
-    /// number of angles. Configuration validation should make this unreachable
-    /// for declared noise mechanisms.
-    fn execute_noise_gate(&self, sim: &mut S, gate: &GateCommand) {
-        if let Err(error) = validate_angle_arity(gate.gate_type, gate.angles()) {
-            panic!("CircuitRunner invariant violated: injected noise {error}");
-        }
+    /// Returns an error if the gate has invalid arity or neither the Clifford
+    /// simulator nor the configured rotation executor can execute it.
+    fn execute_noise_gate(&self, sim: &mut S, gate: &GateCommand) -> Result<(), ExecutionError> {
         let qubits = gate.qubits.as_slice();
+        validate_angle_arity(gate.gate_type, gate.angles())?;
         let arity = gate.gate_type.quantum_arity();
-        assert!(
-            !qubits.is_empty() && qubits.len().is_multiple_of(arity),
-            "CircuitRunner invariant violated: injected noise gate {:?} has {} target(s), which \
-             is not a nonzero multiple of its arity {arity}",
-            gate.gate_type,
-            qubits.len()
-        );
-        if let Err(error) = gate.validate() {
-            panic!("CircuitRunner invariant violated: injected noise {error}");
+        if qubits.is_empty() || !qubits.len().is_multiple_of(arity) {
+            return Err(ExecutionError::QubitArity {
+                gate: gate.gate_type,
+                arity,
+                got: qubits.len(),
+            });
         }
+        gate.validate().map_err(ExecutionError::InvalidCommand)?;
         let gate_id = GateId::from(gate.gate_type);
-        let executed = (gate.gate_type != GateType::Idle
+        let mut rotation_attempt = CliffordRotationAttempt::NotARotation;
+        let mut executed = (gate.gate_type != GateType::Idle
             && Self::try_execute_clifford(sim, gate_id, qubits))
             || self
                 .rotation_executor
                 .is_some_and(|executor| executor(sim, gate_id, gate.angles(), qubits));
-
-        assert!(
-            executed,
-            "CircuitRunner invariant violated: injected noise gate {:?} could not be executed; \
-             configuration validation should have rejected the emitting noise mechanism",
-            gate.gate_type
-        );
+        if !executed {
+            rotation_attempt =
+                Self::try_execute_clifford_rotation(sim, gate_id, qubits, gate.angles())?;
+            executed = rotation_attempt == CliffordRotationAttempt::Executed;
+        }
+        if executed {
+            Ok(())
+        } else {
+            Err(upgrade_rotation_error(
+                ExecutionError::NoDecomposition { gate_id },
+                rotation_attempt,
+            ))
+        }
     }
 }
 
@@ -2895,45 +2955,67 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "CircuitRunner invariant violated: injected noise gate PZ")]
-    fn unsupported_noise_gate_panics_in_circuit_runner() {
+    fn unsupported_noise_gate_errors_in_circuit_runner() {
         let mut state = SparseStab::with_seed(1, 42);
-        CircuitRunner::<SparseStab>::new()
-            .execute_noise_gate(&mut state, &GateCommand::pz(QubitId(0)));
+        let error = CircuitRunner::<SparseStab>::new()
+            .execute_noise_gate(&mut state, &GateCommand::pz(QubitId(0)))
+            .expect_err("PZ cannot be executed as an injected noise gate");
+        assert!(matches!(error, ExecutionError::NoDecomposition { .. }));
     }
 
     #[test]
-    #[should_panic(expected = "CircuitRunner invariant violated: injected noise gate PZ")]
-    fn unsupported_noise_gate_panics_with_rotation_executor() {
+    fn unsupported_noise_gate_errors_with_rotation_executor() {
         let mut state = StateVec::with_seed(1, 42);
-        CircuitRunner::<StateVec>::rotations()
-            .execute_noise_gate(&mut state, &GateCommand::pz(QubitId(0)));
+        let error = CircuitRunner::<StateVec>::rotations()
+            .execute_noise_gate(&mut state, &GateCommand::pz(QubitId(0)))
+            .expect_err("PZ cannot be executed as an injected noise gate");
+        assert!(matches!(error, ExecutionError::NoDecomposition { .. }));
     }
 
     #[test]
-    #[should_panic(expected = "CircuitRunner invariant violated: injected noise gate CX has 1")]
-    fn malformed_multi_qubit_noise_gate_panics_in_circuit_runner() {
+    fn malformed_multi_qubit_noise_gate_errors_in_circuit_runner() {
         let mut state = SparseStab::with_seed(1, 42);
-        CircuitRunner::<SparseStab>::new().execute_noise_gate(
-            &mut state,
-            &GateCommand::new(GateType::CX, smallvec::smallvec![QubitId(0)]),
+        let error = CircuitRunner::<SparseStab>::new()
+            .execute_noise_gate(
+                &mut state,
+                &GateCommand::new(GateType::CX, smallvec::smallvec![QubitId(0)]),
+            )
+            .expect_err("CX requires pairs of target qubits");
+        assert!(matches!(
+            error,
+            ExecutionError::QubitArity {
+                gate: GateType::CX,
+                arity: 2,
+                got: 1,
+            }
+        ));
+        assert_eq!(
+            error.to_string(),
+            "Gate CX received 1 targets, which is not a nonzero multiple of its qubit arity 2"
         );
     }
 
     #[test]
-    #[should_panic(
-        expected = "CircuitRunner invariant violated: injected noise Gate H expected 0 angle parameters, got 1"
-    )]
-    fn surplus_fixed_gate_angle_panics_on_noise_injection() {
+    fn surplus_fixed_gate_angle_errors_on_noise_injection() {
         let mut state = SparseStab::with_seed(1, 42);
-        CircuitRunner::<SparseStab>::new().execute_noise_gate(
-            &mut state,
-            &GateCommand::with_angles(
-                GateType::H,
-                smallvec::smallvec![QubitId(0)],
-                smallvec::smallvec![Angle64::QUARTER_TURN],
-            ),
-        );
+        let error = CircuitRunner::<SparseStab>::new()
+            .execute_noise_gate(
+                &mut state,
+                &GateCommand::with_angles(
+                    GateType::H,
+                    smallvec::smallvec![QubitId(0)],
+                    smallvec::smallvec![Angle64::QUARTER_TURN],
+                ),
+            )
+            .expect_err("injected fixed gates must reject surplus angles");
+        assert!(matches!(
+            error,
+            ExecutionError::AngleArity {
+                gate: GateType::H,
+                expected: 0,
+                got: 1,
+            }
+        ));
     }
 
     #[test]
@@ -3756,11 +3838,16 @@ mod tests {
         }
     }
     #[test]
-    #[should_panic(expected = "only an Idle command can carry a duration payload")]
     fn injected_noise_rejects_duration_on_fixed_gate() {
         let mut gate = GateCommand::h(QubitId(0));
         gate.payload = crate::command::GatePayload::Duration(pecos_core::TimeUnits::new(23));
-        CircuitRunner::<SparseStab>::new()
-            .execute_noise_gate(&mut SparseStab::with_seed(1, 42), &gate);
+        let error = CircuitRunner::<SparseStab>::new()
+            .execute_noise_gate(&mut SparseStab::with_seed(1, 42), &gate)
+            .expect_err("fixed gates must reject duration payloads");
+        assert!(matches!(error, ExecutionError::InvalidCommand(_)));
+        assert_eq!(
+            error.to_string(),
+            "only an Idle command can carry a duration payload"
+        );
     }
 }

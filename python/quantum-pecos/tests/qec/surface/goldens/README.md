@@ -58,3 +58,19 @@ rendered source, including the exact factory bodies and the functions they use.
 It is listed in the parity suite's `EXPECTED_FILES` inventory and produced by
 `capture.py` (also with `--post-fix-only`). All pre-existing golden artifacts
 remain unchanged.
+
+
+## Slice 4b fold captures
+
+`d3_fold_s_mid`, `d3_fold_s_first`, `d3_fold_s_last`, `d3_fold_pair_x`, and
+`d3_h_fold` are post-fix captures of the fold-aware builder, after independent
+noiseless parity-space checks. Each has `.stim`, `.noisy.stim`, and
+`.tickmeta.json` files. These are drift guards, not independent physics oracles.
+
+`gadget_parity/protocol_fold_d3.py.txt` captures the expanded protocol module.
+The older `protocol_d3.py.txt` remains byte-identical: the parity test checks
+that every legacy top-level source block still occurs verbatim in the expanded
+module, then compares the complete new source with the fold capture.
+`capture.py` now emits the expanded protocol under the new name; it does not
+regenerate the historical protocol file. Use `--fold-only` to capture just
+these sixteen new files. No pre-existing golden is overwritten.

@@ -59,6 +59,7 @@ def render_surface_protocol_module(patch: SurfacePatch) -> str:
         "from guppylang import guppy",
         "from guppylang.std.builtins import array, comptime, owned, output",
         "from guppylang.std.quantum import cx, h, qubit, s, x",
+        "from guppylang.std.quantum import cz, sdg",
         "from guppylang.std.quantum import collect_measurements, measure, measure_array",
         "from pecos.guppy_gen.variant import variant_scoped",
         "",
@@ -88,6 +89,10 @@ def render_surface_protocol_module(patch: SurfacePatch) -> str:
     for scope in ("a", "ctrl", "tgt", "data", "anc"):
         gadget = gadgets.syndrome_round_gadget(patch, allocation, round_index=0)
         lines.extend(render_gadget_function(gadget, tag_scope=scope))
+        lines.extend(["", ""])
+    for dagger in (False, True):
+        fold = gadgets.fold_s_round_gadget(patch, allocation, round_index=0, dagger=dagger)
+        lines.extend(render_gadget_function(fold, tag_scope="a"))
         lines.extend(["", ""])
     swapped = gadgets.syndrome_round_gadget(patch, allocation, round_index=0, x_z_swapped=True)
     lines.extend(render_gadget_function(swapped, tag_scope="a"))
@@ -151,6 +156,29 @@ def render_surface_protocol_module(patch: SurfacePatch) -> str:
             *_readout("data"),
             *_readout("anc"),
             "    return guppy(variant_scoped(t_injection, rounds_before, rounds_after))",
+            "",
+        ],
+    )
+    lines.extend(
+        [
+            "",
+            "def make_logical_s_experiment(rounds_before: int, rounds_after: int, *, dagger: bool = False):",
+            '    """Z memory with one fold-transversal logical S or S-dagger round."""',
+            "    if rounds_before < 0 or rounds_after < 0:",
+            '        raise ValueError("Logical S experiment requires nonnegative round counts")',
+            "    def logical_s_experiment() -> None:",
+            '        """Fold-transversal logical phase experiment."""',
+            "        a = prep_z_basis()",
+            *_rounds("rounds_before", ("a",)),
+            "        if comptime(dagger):",
+            "            syn = syndrome_extraction_fold_sdg_a(a)",
+            "        else:",
+            "            syn = syndrome_extraction_fold_s_a(a)",
+            '        output("synx_a", syn.synx)',
+            '        output("synz_a", syn.synz)',
+            *_rounds("rounds_after", ("a",)),
+            *_readout("a"),
+            "    return guppy(variant_scoped(logical_s_experiment, rounds_before, rounds_after, dagger))",
             "",
         ],
     )

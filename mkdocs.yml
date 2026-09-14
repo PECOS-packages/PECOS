@@ -75,6 +75,7 @@ nav:
   - Fault Catalog Tutorial: user-guide/fault-catalog.md
   - QEC Geometry: user-guide/qec-geometry.md
   - QEC with Guppy: user-guide/qec-guppy.md
+  - Surface Code Gadgets: user-guide/surface-gadgets.md
   - Detector Error Models from Guppy: user-guide/dem-from-guppy.md
   - Inferring DEM Annotations from Guppy Outputs: user-guide/inferred-guppy-dem.md
   - Decoders: user-guide/decoders.md

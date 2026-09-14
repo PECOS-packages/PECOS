@@ -16,6 +16,7 @@
 //! `DagFaultAnalyzer` + `MemBuilder` + `MeasurementNoiseModel` pipeline given equal
 //! inputs and seeds.
 
+use pecos_core::gate_type::GateType;
 use pecos_qec::fault_tolerance::dem_builder::{MemBuilder, NoiseConfig};
 use pecos_qec::fault_tolerance::propagator::DagFaultAnalyzer;
 use pecos_qec::mem_stab::{MemStabError, MemStabSim};
@@ -74,7 +75,7 @@ fn parity_with_raw_pipeline() {
     let analyzer = DagFaultAnalyzer::new(&dag);
     let influence_map = analyzer.build_influence_map();
     let mnm = MemBuilder::new(&influence_map)
-        .with_noise(noise.p1, noise.p2, noise.p_meas, noise.p_prep)
+        .with_noise_config(noise.clone())
         .build()
         .unwrap();
     let mut rng2 = SmallRng::seed_from_u64(seed);
@@ -140,4 +141,51 @@ fn nonzero_noise_yields_some_flips() {
         .map(|row| row.iter().filter(|&&b| b).count())
         .sum();
     assert!(total_flips > 0);
+}
+
+/// A per-gate rate table set on the builder must reach the model.
+///
+/// `build` used to unpack the caller's `NoiseConfig` into the four scalars and
+/// rebuild a fresh one, which dropped every rate table without reporting it:
+/// the simulator silently ignored the calibration it was handed. Asserting only
+/// that `build` succeeds would not catch that, so this pins the effect and the
+/// parity this file exists to guarantee.
+#[test]
+fn builder_forwards_per_gate_rate_tables() {
+    let total = |noise: NoiseConfig| -> f64 {
+        MemStabSim::builder()
+            .circuit(repetition_code_circuit())
+            .noise(noise)
+            .build()
+            .expect("a valid configuration must build")
+            .mnm()
+            .mechanisms
+            .values()
+            .sum()
+    };
+
+    let mut with_table = NoiseConfig::uniform(0.001);
+    with_table.p2_gate_rates.insert(GateType::CX, 0.05);
+
+    let baseline = total(NoiseConfig::uniform(0.001));
+    let raised = total(with_table.clone());
+    assert!(
+        raised > baseline,
+        "a nonzero CX rate table must reach the model: {raised} !> {baseline}"
+    );
+
+    // Parity: the same configuration through the direct pipeline must agree.
+    let circuit = repetition_code_circuit();
+    let map = DagFaultAnalyzer::new(&circuit).build_influence_map();
+    let direct: f64 = MemBuilder::new(&map)
+        .with_noise_config(with_table)
+        .build()
+        .expect("the direct pipeline must build")
+        .mechanisms
+        .values()
+        .sum();
+    assert!(
+        (raised - direct).abs() < 1e-15,
+        "MemStabSim must match the direct pipeline: {raised} != {direct}"
+    );
 }

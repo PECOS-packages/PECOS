@@ -15,6 +15,7 @@
 //! Parity: `DemStabSim` must produce identical shot batches to the raw
 //! `DagFaultAnalyzer` + `DemSamplerBuilder` pipeline given equal inputs and seeds.
 
+use pecos_core::gate_type::GateType;
 use pecos_qec::dem_stab::{DemStabError, DemStabSim};
 use pecos_qec::fault_tolerance::dem_builder::{
     DemOutput, DemSamplerBuilder, DetectorDef, NoiseConfig,
@@ -94,7 +95,7 @@ fn parity_with_raw_pipeline() {
     let det_records: Vec<Vec<i32>> = detectors().iter().map(|d| d.records.to_vec()).collect();
     let obs_records: Vec<Vec<i32>> = observables().iter().map(|o| o.records.to_vec()).collect();
     let sampler = DemSamplerBuilder::new(&influence_map)
-        .with_noise(noise.p1, noise.p2, noise.p_meas, noise.p_prep)
+        .with_noise_config(noise.clone())
         .with_detector_records(det_records)
         .with_observable_records(obs_records)
         .build()
@@ -152,5 +153,35 @@ fn nonzero_noise_yields_some_flips() {
     assert!(
         total_det_flips > 0,
         "expected some detector flips at p=0.1 over 1000 shots"
+    );
+}
+
+/// A per-gate rate table set on the builder must reach the sampler.
+///
+/// The scalar `with_noise` setter explicitly clears `p1_gate_rates` and
+/// `p2_gate_rates`, so unpacking the caller's `NoiseConfig` into it discarded
+/// every per-gate rate without reporting it. Sibling of the `MemStabSim` case.
+#[test]
+fn builder_forwards_per_gate_rate_tables() {
+    let effects = |noise: NoiseConfig| -> String {
+        DemStabSim::builder()
+            .circuit(repetition_code_circuit())
+            .noise(noise)
+            .detectors(detectors())
+            .observables(observables())
+            .build()
+            .expect("a valid configuration must build")
+            .detector_error_model()
+            .all_contribution_effects()
+    };
+
+    let mut with_table = NoiseConfig::uniform(0.001);
+    with_table.p2_gate_rates.insert(GateType::CX, 0.05);
+
+    let baseline = effects(NoiseConfig::uniform(0.001));
+    let raised = effects(with_table);
+    assert_ne!(
+        baseline, raised,
+        "a nonzero CX rate table must change the detector error model"
     );
 }

@@ -75,27 +75,15 @@ impl<'a> MemBuilder<'a> {
     ///
     /// Returns an error if the influence map contains a gate that Pauli
     /// propagation cannot faithfully represent, or a configuration error if a noise
-    /// input or signature channel is invalid. Nonzero gate-rate tables are rejected
-    /// because this builder applies scalar rates only. Configurations with
-    /// replacement entries in `BranchImpact` or `ExactBranchReplay` mode are also
-    /// rejected: this builder does not represent their separate branch channels or
-    /// circuit replay.
+    /// input or signature channel is invalid. Configurations with replacement
+    /// entries in `BranchImpact` or `ExactBranchReplay` mode are rejected: this
+    /// builder does not represent their separate branch channels or circuit replay.
+    ///
+    /// Per-gate rate tables are honoured, not rejected: the fault paths resolve
+    /// them through `rates_1q_for_operation` and `rates_2q_for_operation`.
     pub fn build(&self) -> Result<MeasurementNoiseModel, DemBuilderError> {
         if let Some(error) = self.influence_map.unsupported_gate() {
             return Err(DemBuilderError::UnsupportedGate(error.clone()));
-        }
-        // build reads p_prep/p_meas directly; process_single_qubit_fault and
-        // process_two_qubit_fault read p1 / 3 and p2 / 15 without gate-rate lookups.
-        if self
-            .noise
-            .p1_gate_rates
-            .values()
-            .chain(self.noise.p2_gate_rates.values())
-            .any(|&rate| rate != 0.0)
-        {
-            return Err(DemBuilderError::ConfigurationError(
-                "MemBuilder applies scalar rates only; nonzero p1_gate_rates or p2_gate_rates are not supported".to_string(),
-            ));
         }
         // These modes separate replacement branches from the ordinary Pauli
         // rates. MEM has no corresponding branch channels or replay provider.

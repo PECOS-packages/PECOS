@@ -1553,10 +1553,23 @@ fn gate_rate_absent_qubit_keys_are_allowed() {
     }
 }
 
+/// MEM resolves per-gate rates through `rates_1q_for_operation` and
+/// `rates_2q_for_operation`, so a nonzero table must build and must change the
+/// result. Asserting only that `build` succeeds would pass even if the rates
+/// were parsed and then dropped, so this also pins the effect.
 #[test]
-fn gate_rate_mem_builder_rejects_nonzero_tables() {
+fn gate_rate_mem_builder_honors_nonzero_tables() {
     let circuit = replacement_circuit(Gate::rzz(Angle64::QUARTER_TURN, &[(0, 1)]));
     let map = DagFaultAnalyzer::new(&circuit).build_influence_map();
+
+    let baseline: f64 = MemBuilder::new(&map)
+        .with_noise_config(NoiseConfig::uniform(0.001))
+        .build()
+        .expect("a uniform config must build")
+        .mechanisms
+        .values()
+        .sum();
+
     for (key, two_qubit) in [
         (GateType::X, false),
         (GateType::SZZ, true),
@@ -1568,13 +1581,28 @@ fn gate_rate_mem_builder_rejects_nonzero_tables() {
         } else {
             noise.p1_gate_rates.insert(key, 0.05);
         }
-        let error = MemBuilder::new(&map)
+        MemBuilder::new(&map)
             .with_noise_config(noise)
             .build()
-            .unwrap_err();
-        assert!(matches!(error, DemBuilderError::ConfigurationError(message)
-            if message.contains("MemBuilder applies scalar rates only")));
+            .unwrap_or_else(|error| {
+                panic!("a nonzero {key:?} rate table must build, got {error:?}")
+            });
     }
+
+    // The circuit's own two-qubit gate: raising its rate must move the total.
+    let mut noise = NoiseConfig::uniform(0.001);
+    noise.p2_gate_rates.insert(GateType::RZZ, 0.05);
+    let raised: f64 = MemBuilder::new(&map)
+        .with_noise_config(noise)
+        .build()
+        .expect("a nonzero RZZ rate table must build")
+        .mechanisms
+        .values()
+        .sum();
+    assert!(
+        raised > baseline,
+        "raising the scheduled RZZ rate must raise the measurement-flip total: {raised} !> {baseline}"
+    );
 }
 
 #[test]

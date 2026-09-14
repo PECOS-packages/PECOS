@@ -319,8 +319,6 @@ impl MonteCarloEngine {
         assert!(num_shots > 0, "num_shots cannot be zero");
         assert!(num_workers > 0, "num_workers cannot be zero");
 
-        debug!("Executing {num_shots} shots across {num_workers} workers");
-
         // Determine shots per worker and generate deterministic seeds
         let shots_per_worker = distribute_shots(num_shots, num_workers);
         let base_seed = self.rng.next_u64();

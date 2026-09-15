@@ -24,6 +24,20 @@ use pecos_quantum::DagCircuit;
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
 
+/// A circuit with a scheduled one-qubit gate, so `p1_gate_rates` has a consumer.
+/// The repetition-code fixture has only preparations and measurements, whose
+/// rates come from `p_prep` / `p_meas` rather than the one-qubit table.
+fn single_qubit_gate_circuit() -> DagCircuit {
+    let mut dag = DagCircuit::new();
+    dag.pz(&[0]);
+    dag.pz(&[1]);
+    dag.h(&[0]);
+    dag.cx(&[(0, 1)]);
+    dag.mz(&[0]);
+    dag.mz(&[1]);
+    dag
+}
+
 fn repetition_code_circuit() -> DagCircuit {
     let mut dag = DagCircuit::new();
     dag.pz(&[3]);
@@ -187,5 +201,33 @@ fn builder_forwards_per_gate_rate_tables() {
     assert!(
         (raised - direct).abs() < 1e-15,
         "MemStabSim must match the direct pipeline: {raised} != {direct}"
+    );
+}
+
+/// The fix forwards both rate tables, so both must be pinned. The sibling test
+/// exercises `p2_gate_rates`; a regression that dropped only `p1_gate_rates`
+/// would pass it.
+#[test]
+fn builder_forwards_single_qubit_rate_tables() {
+    let total = |noise: NoiseConfig| -> f64 {
+        MemStabSim::builder()
+            .circuit(single_qubit_gate_circuit())
+            .noise(noise)
+            .build()
+            .expect("a valid configuration must build")
+            .mnm()
+            .mechanisms
+            .values()
+            .sum()
+    };
+
+    let mut with_table = NoiseConfig::uniform(0.001);
+    with_table.p1_gate_rates.insert(GateType::H, 0.05);
+
+    let baseline = total(NoiseConfig::uniform(0.001));
+    let raised = total(with_table);
+    assert!(
+        raised > baseline,
+        "a nonzero H rate table must reach the model: {raised} !> {baseline}"
     );
 }

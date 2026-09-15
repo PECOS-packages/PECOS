@@ -39,6 +39,18 @@ fn repetition_code_circuit() -> DagCircuit {
     dag
 }
 
+/// A circuit with a scheduled one-qubit gate, so `p1_gate_rates` has a consumer.
+fn single_qubit_gate_circuit() -> DagCircuit {
+    let mut dag = DagCircuit::new();
+    dag.pz(&[0]);
+    dag.pz(&[1]);
+    dag.h(&[0]);
+    dag.cx(&[(0, 1)]);
+    dag.mz(&[0]);
+    dag.mz(&[1]);
+    dag
+}
+
 fn detectors() -> Vec<DetectorDef> {
     vec![
         DetectorDef::new(0).with_records([-2]),
@@ -183,5 +195,33 @@ fn builder_forwards_per_gate_rate_tables() {
     assert_ne!(
         baseline, raised,
         "a nonzero CX rate table must change the detector error model"
+    );
+}
+
+/// The fix forwards both rate tables, so both must be pinned. The sibling test
+/// exercises `p2_gate_rates`; a regression that dropped only `p1_gate_rates`
+/// would pass it.
+#[test]
+fn builder_forwards_single_qubit_rate_tables() {
+    let effects = |noise: NoiseConfig| -> String {
+        DemStabSim::builder()
+            .circuit(single_qubit_gate_circuit())
+            .noise(noise)
+            .detectors(detectors())
+            .observables(observables())
+            .build()
+            .expect("a valid configuration must build")
+            .detector_error_model()
+            .all_contribution_effects()
+    };
+
+    let mut with_table = NoiseConfig::uniform(0.001);
+    with_table.p1_gate_rates.insert(GateType::H, 0.05);
+
+    let baseline = effects(NoiseConfig::uniform(0.001));
+    let raised = effects(with_table);
+    assert_ne!(
+        baseline, raised,
+        "a nonzero H rate table must change the detector error model"
     );
 }

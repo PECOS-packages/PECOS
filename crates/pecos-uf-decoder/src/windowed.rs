@@ -20,13 +20,29 @@ use std::ops::Range;
 
 pub use crate::beam_windowed::{BeamSearchConfig, BeamSearchWindowedDecoder, BeamWindowConfig};
 
-/// Window engine parameters. The buffer is explicit; `buffer = d` is recommended.
+/// Explicit window engine parameters: positive step and forward buffer.
 #[derive(Clone, Copy, Debug)]
 pub struct WindowedConfig {
-    /// Number of commit rounds. Zero estimates the code distance from the model.
+    /// Number of commit rounds, at least 1; a latency and throughput choice.
     pub step: usize,
     /// Forward context in rounds, at least [`min_buffer_rounds`].
     pub buffer: usize,
+}
+
+impl WindowedConfig {
+    /// Validate the commit step, including for models with no windows.
+    ///
+    /// # Errors
+    /// Returns an error if the step is zero or exceeds `u32::MAX`.
+    pub(crate) fn validate_step(&self) -> Result<u32, DecoderError> {
+        if self.step == 0 {
+            return Err(DecoderError::InvalidConfiguration(
+                "step must be at least 1".into(),
+            ));
+        }
+        u32::try_from(self.step)
+            .map_err(|_| DecoderError::InvalidConfiguration("step exceeds u32::MAX".into()))
+    }
 }
 
 struct Window<D> {
@@ -87,6 +103,7 @@ impl<D: EdgeDecoder> StreamingWindowedDecoder<D> {
     where
         F: FnMut(&CommitWindow) -> Result<D, DecoderError>,
     {
+        let step = config.validate_step()?;
         dem.ensure_observables_fit_u64()?;
         let times = dem.commit_detector_times()?;
         let columns = dem.commit_columns()?;
@@ -98,14 +115,6 @@ impl<D: EdgeDecoder> StreamingWindowedDecoder<D> {
             )));
         }
         let total = times.iter().copied().max().map_or(0, |t| t + 1);
-        let step = if config.step == 0 {
-            let stabilizers = dem.num_detectors.checked_div(total as usize).unwrap_or(0);
-            ((stabilizers as f64).sqrt().ceil() as usize).max(3)
-        } else {
-            config.step
-        };
-        let step = u32::try_from(step)
-            .map_err(|_| DecoderError::InvalidConfiguration("step exceeds u32::MAX".into()))?;
         let buffer = u32::try_from(config.buffer)
             .map_err(|_| DecoderError::InvalidConfiguration("buffer exceeds u32::MAX".into()))?;
         let mut windows = Vec::new();
@@ -371,5 +380,34 @@ impl<D: EdgeDecoder> StreamingDecoder for StreamingWindowedDecoder<D> {
         self.next_decode = 0;
         self.accumulated = 0;
         self.diagnostics = WindowDiagnostics::default();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::UfDecoder;
+
+    #[test]
+    fn zero_step_is_rejected_before_building_any_windows() {
+        for text in ["", "error(0.1) D0\ndetector(0,0,0) D0\n"] {
+            let dem = StructuredDem::from_dem_str(text).unwrap();
+            let config = WindowedConfig { step: 0, buffer: 1 };
+            let factory = |_: &CommitWindow| -> Result<UfDecoder, DecoderError> {
+                panic!("invalid step must be rejected before calling the factory")
+            };
+            for result in [
+                StreamingWindowedDecoder::from_dem(text, config, factory),
+                StreamingWindowedDecoder::from_structured_dem(&dem, config, factory),
+            ] {
+                assert!(
+                    result
+                        .err()
+                        .unwrap()
+                        .to_string()
+                        .contains("step must be at least 1")
+                );
+            }
+        }
     }
 }

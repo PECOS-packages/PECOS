@@ -258,7 +258,12 @@ impl StructuredDem {
                     for other in mem.iter().filter(|m| !m.projected) {
                         if columns[rep].observables != columns[other.column].observables {
                             return Err(invalid(format!(
-                                "non-projected columns {rep} and {} disagree on observables",
+                                "non-projected columns {rep} and {} disagree on observables; \
+                                 a matching edge carries one observable label, so the two mechanisms \
+                                 cannot both be represented. This usually comes from a graphlike \
+                                 decomposition that placed observables inconsistently; terminal \
+                                 graphlike decomposition is a known source (issue #780). Source \
+                                 graphlike decomposition avoids it.",
                                 other.column
                             )));
                         }
@@ -413,6 +418,20 @@ mod tests {
                 .unwrap();
         let error = dem.commit_window(0..1, 0..1).unwrap_err().to_string();
         assert!(error.contains("columns 1 and 0"), "{error}");
+        assert!(
+            error.contains("a matching edge carries one observable label"),
+            "{error}"
+        );
+        assert!(error.contains("cannot both be represented"), "{error}");
+        assert!(
+            error.contains("terminal graphlike decomposition"),
+            "{error}"
+        );
+        assert!(error.contains("issue #780"), "{error}");
+        assert!(
+            error.contains("Source graphlike decomposition avoids it"),
+            "{error}"
+        );
     }
 
     #[test]

@@ -110,6 +110,7 @@ impl WindowedLogicalSubgraphDecoder {
         full_coords: &[Option<Vec<f64>>],
         window_config: WindowedConfig,
     ) -> Result<Self, DecoderError> {
+        window_config.validate_step()?;
         let plan = LogicalSubgraphWindowPlan::new(parts, full_coords);
 
         let mut subgraphs = Vec::with_capacity(plan.num_observables());
@@ -187,6 +188,22 @@ impl ObservableDecoder for WindowedLogicalSubgraphDecoder {
 mod tests {
     use super::*;
     use pecos_decoder_core::logical_subgraph::QubitStabCoords;
+
+    #[test]
+    fn empty_subgraphs_still_reject_zero_step() {
+        let result = WindowedLogicalSubgraphDecoder::from_partition(
+            &[],
+            &[],
+            WindowedConfig { step: 0, buffer: 1 },
+        );
+        assert!(
+            result
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("step must be at least 1")
+        );
+    }
 
     #[test]
     fn structured_constructor_matches_text_plan() {

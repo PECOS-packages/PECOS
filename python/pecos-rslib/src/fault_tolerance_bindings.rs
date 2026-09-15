@@ -5850,8 +5850,8 @@ impl PyLogicalSubgraphDecoder {
 /// Args:
 ///     dem: DEM string.
 ///     `stab_coords`: Stabilizer coordinates per logical qubit.
-///     step: Core window size in time steps.
-///     buffer: Forward matching context, at least the maximum column span.
+///     step: Required core window size in time steps, at least 1.
+///     buffer: Required forward matching context, at least the maximum column span.
 ///         Recommend the code distance.
 #[pyclass(name = "WindowedLogicalSubgraphDecoder", module = "pecos_rslib.qec")]
 pub struct PyWindowedLogicalSubgraphDecoder {
@@ -5861,7 +5861,7 @@ pub struct PyWindowedLogicalSubgraphDecoder {
 #[pymethods]
 impl PyWindowedLogicalSubgraphDecoder {
     #[new]
-    #[pyo3(signature = (dem, stab_coords, step=8, buffer=4))]
+    #[pyo3(signature = (dem, stab_coords, step, buffer))]
     fn new(
         dem: &str,
         stab_coords: Vec<pyo3::Bound<'_, pyo3::types::PyDict>>,
@@ -6397,7 +6397,11 @@ impl PyLogicalCircuitDecoder {
                     .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?
                     .detector_coords;
                 let plan = full_osd.window_plan(&full_coords);
-                let step = decode_budget.code_distance.max(1);
+                // Use the known code distance as a throughput-oriented commit step.
+                let step =
+                    std::num::NonZeroUsize::new(decode_budget.code_distance).ok_or_else(|| {
+                        pyo3::exceptions::PyValueError::new_err("step must be at least 1")
+                    })?;
                 can_window = plan.effective_windowing(step) == EffectiveWindowing::RealWindowed;
 
                 // `strict` rejects only when genuine windowing was POSSIBLE (the

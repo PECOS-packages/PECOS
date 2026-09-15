@@ -1392,6 +1392,28 @@ mod tests {
 
     #[cfg(feature = "uf")]
     #[test]
+    fn manually_constructed_windowed_spec_rejects_zero_step() {
+        let spec = DecoderSpec::Windowed(WindowedConfig {
+            step_size: 0,
+            buffer_size: 1,
+            inner: Box::new(DecoderSpec::PecosUf(PecosUfPreset::Fast)),
+        });
+        for model in [
+            DecodeModel::SingleDem(String::new()),
+            DecodeModel::StructuredDem(StructuredDem::from_dem_str("").unwrap()),
+        ] {
+            assert!(
+                spec.build(&model)
+                    .err()
+                    .unwrap()
+                    .to_string()
+                    .contains("step must be at least 1")
+            );
+        }
+    }
+
+    #[cfg(feature = "uf")]
+    #[test]
     fn windowed_spec_builds_from_structured_model() {
         let model = StructuredDem::from_dem_str(
             "error(0.1) D0 D1 L0\nerror(0.01) D0\ndetector(0, 0, 0) D0\ndetector(0, 0, 1) D1\nlogical_observable L0\n",
@@ -1487,7 +1509,7 @@ mod tests {
         let error = spec.build(&DecodeModel::SingleDem(dem)).err().unwrap();
         assert!(error.to_string().contains("error 0 component 0"));
         assert!(error.to_string().contains("graphlike"));
-        let unsupported = DecoderSpec::parse("windowed:buf=1,inner=bp_osd").unwrap();
+        let unsupported = DecoderSpec::parse("windowed:step=1,buf=1,inner=bp_osd").unwrap();
         let error = unsupported
             .build(&DecodeModel::SingleDem(DEM.to_string()))
             .err()

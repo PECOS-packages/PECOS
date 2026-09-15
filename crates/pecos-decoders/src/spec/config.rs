@@ -223,9 +223,10 @@ pub struct BeliefMatchingConfig {
     pub embedded_full_dem: Option<String>,
 }
 
-/// Whole-component window construction options. Inner and buffer are required.
+/// Whole-component window construction options. Inner, buffer, and step are required.
 #[derive(Clone, Debug, PartialEq)]
 pub struct WindowedConfig {
+    /// Required commit step in rounds, at least 1.
     pub step_size: usize,
     pub buffer_size: usize,
     pub inner: Box<DecoderSpec>,

@@ -2916,8 +2916,8 @@ class qec:
             self,
             dem: str,
             stab_coords: Sequence[Mapping[str, Any]],
-            step: int = ...,
-            buffer: int = ...,
+            step: int,
+            buffer: int,
         ) -> None: ...
         def decode(self, syndrome: Sequence[int]) -> int: ...
         def decode_count(self, batch: qec.SampleBatch) -> int: ...
@@ -3126,8 +3126,19 @@ class decoders:
         *,
         inner: decoders.DecoderSpec,
         buffer: int,
-        step: int = ...,
-    ) -> decoders.DecoderSpec: ...
+        step: int,
+    ) -> decoders.DecoderSpec:
+        """Whole-component streaming decoder; inner, buffer, and step are required.
+
+        Step must be at least 1. The buffer relates to code distance: a buffer of
+        at least d is a sufficient worst-case condition for preserving fault distance
+        (Bombin et al., https://arxiv.org/abs/2303.04846); smaller buffers are often
+        enough in practice. Step is a latency and throughput choice: step=d with
+        buffer=d favors throughput; step=1 with a small window favors latency.
+        Real-time decoding requires one window to take less than step rounds of
+        syndrome extraction (Skoric et al., https://arxiv.org/abs/2209.08552).
+        """
+
     @staticmethod
     def mwpf(
         *,

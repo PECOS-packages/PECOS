@@ -204,7 +204,7 @@ def test_numeric_domain_errors_are_value_errors(
 def test_nested_specs_require_decoder_spec_values() -> None:
     """PyO3 extraction reports wrong nested-object types as TypeError."""
     with pytest.raises(TypeError):
-        windowed(inner="pecos_uf", buffer=1)
+        windowed(inner="pecos_uf", buffer=1, step=1)
     with pytest.raises(TypeError):
         ensemble(pymatching(correlated=True), "relay_bp")
 
@@ -312,7 +312,7 @@ def test_execution_traits(spec: DecoderSpec, history_dependent: bool, wall_clock
 
 def test_nested_composite_propagates_wall_clock_dependency() -> None:
     """Nested composite factories preserve transitive execution traits."""
-    spec = windowed(inner=perturbed(inner=mwpf(timeout=1.0)), buffer=1)
+    spec = windowed(inner=perturbed(inner=mwpf(timeout=1.0)), buffer=1, step=1)
 
     assert spec.history_dependent is False
     assert spec.wall_clock_dependent is True
@@ -369,16 +369,36 @@ def test_stopping_criterion_rejects_bool() -> None:
 def test_11_windowed_rejects_removed_keywords(keyword: str) -> None:
     """Removed options fail at the Python call boundary."""
     with pytest.raises(TypeError, match="unexpected keyword"):
-        windowed(inner=pecos_uf(), buffer=1, **{keyword: 1})
+        windowed(inner=pecos_uf(), buffer=1, step=1, **{keyword: 1})
 
 
-def test_11_windowed_requires_inner_and_buffer() -> None:
-    """Neither the estimator nor its forward context has a default."""
+def test_11_windowed_requires_inner_buffer_and_step() -> None:
+    """The inner decoder, forward context, and commit step have no defaults."""
     with pytest.raises(TypeError, match="inner"):
-        windowed(buffer=1)
+        windowed(buffer=1, step=1)
     with pytest.raises(TypeError, match="buffer"):
-        windowed(inner=pecos_uf())
+        windowed(inner=pecos_uf(), step=1)
+    with pytest.raises(TypeError, match="step"):
+        windowed(inner=pecos_uf(), buffer=1)
+    with pytest.raises(ValueError, match="step.*positive integers"):
+        windowed(inner=pecos_uf(), buffer=1, step=0)
+    with pytest.raises(ValueError, match="windowed requires step"):
+        DecoderSpec.parse("windowed:buffer=1,inner=pecos_uf")
+    with pytest.raises(ValueError, match="step must be at least 1"):
+        DecoderSpec.parse("windowed:step=0,buffer=1,inner=pecos_uf")
     assert beamsearch(phase2=pecos_uf(), commit_weight_max=2.5).family == "beamsearch"
+
+
+def test_windowed_logical_subgraph_requires_positive_step() -> None:
+    """The standalone wrapper rejects omitted and zero steps, even for empty models."""
+    from pecos_rslib.qec import WindowedLogicalSubgraphDecoder
+
+    with pytest.raises(TypeError, match="step"):
+        WindowedLogicalSubgraphDecoder("", [], buffer=1)
+    with pytest.raises(TypeError, match="buffer"):
+        WindowedLogicalSubgraphDecoder("", [], step=1)
+    with pytest.raises(RuntimeError, match="step must be at least 1"):
+        WindowedLogicalSubgraphDecoder("", [], step=0, buffer=1)
 
 
 @pytest.mark.parametrize("probability", [0.005, 0.001])

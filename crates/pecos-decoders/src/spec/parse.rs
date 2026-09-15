@@ -43,7 +43,7 @@ pub(super) fn parse(type_string: &str) -> Result<DecoderSpec, DecoderError> {
         "belief_matching" => Ok(belief_matching(BeliefMatchingMode::Standard)),
         "belief_matching_correlated" => Ok(belief_matching(BeliefMatchingMode::Correlated)),
         "belief_matching_mgbp" => Ok(belief_matching(BeliefMatchingMode::MatchingGraphBp)),
-        "windowed" => invalid("windowed requires inner and buffer"),
+        "windowed" => invalid("windowed requires inner, buffer, and step"),
         "mwpf" => Ok(DecoderSpec::Mwpf(MwpfConfig::default())),
         "perturbed" => Ok(DecoderSpec::Perturbed(PerturbedConfig::default())),
         "beamsearch" => Ok(DecoderSpec::BeamSearch(BeamSearchConfig::default())),
@@ -126,11 +126,11 @@ fn parse_perturbed_fb(params: &str) -> Result<DecoderSpec, DecoderError> {
 
 fn parse_windowed(params: &str) -> Result<DecoderSpec, DecoderError> {
     let (own_params, inner) = split_inner("windowed", params)?;
-    let mut step_size = 0;
+    let mut step_size = None;
     let mut buffer_size = None;
     for (key, value) in params_iter("windowed", own_params)? {
         match key {
-            "step" => step_size = parse_number("windowed", key, value)?,
+            "step" => step_size = Some(parse_number("windowed", key, value)?),
             "buf" | "buffer" => buffer_size = Some(parse_number("windowed", key, value)?),
             _ => return unknown_key("windowed", key),
         }
@@ -141,6 +141,12 @@ fn parse_windowed(params: &str) -> Result<DecoderSpec, DecoderError> {
     let Some(buffer_size) = buffer_size else {
         return invalid("windowed requires buffer");
     };
+    let Some(step_size) = step_size else {
+        return invalid("windowed requires step");
+    };
+    if step_size == 0 {
+        return invalid("step must be at least 1");
+    }
     Ok(DecoderSpec::Windowed(WindowedConfig {
         step_size,
         buffer_size,
@@ -438,7 +444,7 @@ mod tests {
             "belief_matching",
             "belief_matching_correlated",
             "belief_matching_mgbp",
-            "windowed:buffer=1,inner=pecos_uf",
+            "windowed:step=1,buffer=1,inner=pecos_uf",
             "mwpf",
             "perturbed",
             "beamsearch",
@@ -576,7 +582,19 @@ mod tests {
                 "{text}"
             );
         }
-        assert!(parse("windowed:buffer=0,inner=pymatching_uncorrelated").is_ok());
+        assert!(
+            parse("windowed:buffer=1,inner=pecos_uf")
+                .unwrap_err()
+                .to_string()
+                .contains("windowed requires step")
+        );
+        assert!(
+            parse("windowed:step=0,buffer=1,inner=pecos_uf")
+                .unwrap_err()
+                .to_string()
+                .contains("step must be at least 1")
+        );
+        assert!(parse("windowed:step=1,buffer=0,inner=pymatching_uncorrelated").is_ok());
         assert!(parse("beamsearch:step=3,buf=2,wmax=2.5,K=2,sigma=0.3,seed=7").is_ok());
     }
 }

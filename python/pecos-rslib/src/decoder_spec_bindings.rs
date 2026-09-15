@@ -476,12 +476,21 @@ fn belief_matching(mode: &str) -> PyResult<PyDecoderSpec> {
     ))
 }
 
+/// Whole-component streaming decoder; inner, buffer, and step are required.
+///
+/// Step must be at least 1. The buffer relates to code distance: a buffer of
+/// at least d is a sufficient worst-case condition for preserving fault distance
+/// (Bombin et al., https://arxiv.org/abs/2303.04846); smaller buffers are often
+/// enough in practice. Step is a latency and throughput choice: step=d with
+/// buffer=d favors throughput; step=1 with a small window favors latency.
+/// Real-time decoding requires one window to take less than step rounds of
+/// syndrome extraction (Skoric et al., https://arxiv.org/abs/2209.08552).
 #[pyfunction]
-#[pyo3(signature = (*, inner, buffer, step=0))]
+#[pyo3(signature = (*, inner, buffer, step))]
 fn windowed(inner: PyRef<'_, PyDecoderSpec>, buffer: i64, step: i64) -> PyResult<PyDecoderSpec> {
     Ok(PyDecoderSpec::new(pecos_decoders::DecoderSpec::Windowed(
         WindowedConfig {
-            step_size: usize_value("step", step, true)?,
+            step_size: usize_value("step", step, false)?,
             buffer_size: usize_value("buffer", buffer, true)?,
             inner: Box::new(inner.inner.clone()),
         },
@@ -864,13 +873,11 @@ fn relay_bp_repr(config: &RelayBpConfig) -> String {
 }
 
 fn windowed_repr(config: &WindowedConfig) -> String {
-    let mut args = vec![
+    let args = vec![
         format!("inner={}", spec_repr(&config.inner)),
         format!("buffer={}", config.buffer_size),
+        format!("step={}", config.step_size),
     ];
-    if config.step_size != 0 {
-        args.push(format!("step={}", config.step_size));
-    }
     finish_repr("windowed", args)
 }
 

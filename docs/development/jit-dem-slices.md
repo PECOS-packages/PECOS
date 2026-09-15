@@ -372,16 +372,24 @@ last window. Carry toggles the full global incidence of the resolved columns,
 including projected endpoints. Logical-subgraph decoding keeps a separate
 residual in each subgraph's local detector space.
 
-The spec requires explicit `inner` and `buffer`, for example
+The spec requires explicit `inner`, `buffer`, and `step`, for example
 `windowed:step=5,buffer=5,inner=pymatching` (correlated) or
 `windowed:step=5,buffer=5,inner=pymatching_uncorrelated`. Python uses
 `decoders.windowed(inner=decoders.pymatching(correlated=True), step=5, buffer=5)`.
 Plain `pecos_uf` is also supported. Its other spec presets select BP or two-pass
 wrappers and are outside this phase's inner-decoder contract.
-`min_buffer_rounds(&dem)` reports the largest forward column span; use
-`buffer = d` for the recommended statistical accuracy setting. `step=0` retains
-the existing distance estimate. A final short core is merged into the preceding
-window and constructed once.
+`min_buffer_rounds(&dem)` reports the largest forward column span and sets the
+construction minimum for `buffer`. A zero `step` is a construction error.
+A final short core is merged into the preceding window and constructed once.
+
+The buffer is what relates to code distance: a buffer of at least `d` is a
+sufficient worst-case condition for preserving fault distance
+([Bombin et al., arXiv:2303.04846](https://arxiv.org/abs/2303.04846)); smaller
+buffers are often enough in practice. The step is a latency and throughput
+choice: `step = d` with `buffer = d` favors throughput, while `step = 1` with a
+small window favors latency. To keep up in real time, decoding one window must
+take less than `step` rounds of syndrome extraction
+([Skoric et al., arXiv:2209.08552](https://arxiv.org/abs/2209.08552)).
 
 Finite windows need not agree exactly with monolithic decoding. Correlation
 evidence does not cross windows, and deterministic edge representatives are

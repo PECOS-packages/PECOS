@@ -160,6 +160,10 @@ class NoiseParameters:
     Matches the Rust ``NoiseConfig`` type. All parameters are optional
     beyond the four base rates.
 
+    Per-gate two-qubit overrides emit ``SZZ`` and ``SZZdg`` keys. The surface
+    path lowers Clifford rotations before building, so these keys name the
+    lowered scheduled gates.
+
     Attributes:
         p1: Single-qubit gate error rate.
         p1_weights: Optional relative probabilities over single-qubit Pauli

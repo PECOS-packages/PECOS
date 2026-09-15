@@ -1073,6 +1073,8 @@ impl<'a> DemSamplerBuilder<'a> {
     }
 
     /// Set per-gate-type and optional per-qubit Pauli rates.
+    ///
+    /// Supported in detector-event mode; raw-measurement mode rejects this configuration.
     #[must_use]
     pub fn with_per_gate_noise(mut self, config: PerGateTypeNoise) -> Self {
         self.noise = config.base.clone();
@@ -1098,7 +1100,8 @@ impl<'a> DemSamplerBuilder<'a> {
     /// Request raw measurement output (default).
     ///
     /// Each deterministic measurement is its own output channel. Non-deterministic
-    /// measurements get independent coin flips.
+    /// measurements get independent coin flips. Building this mode rejects
+    /// per-gate noise because it applies scalar noise only.
     #[must_use]
     pub fn raw_measurements(mut self) -> Self {
         self.output_mode = OutputMode::RawMeasurements;
@@ -1378,6 +1381,14 @@ impl<'a> DemSamplerBuilder<'a> {
     /// Mechanism table is in measurement coordinates. Non-deterministic
     /// measurements are identified and marked for coin-flip output.
     fn build_raw(self) -> Result<DemSampler, DetectorValidationError> {
+        if let Some(error) = self.influence_map.unsupported_gate() {
+            return Err(DetectorValidationError::UnsupportedGate(error.clone()));
+        }
+        if self.per_gate.is_some() {
+            return Err(DetectorValidationError::InvalidConfiguration {
+                message: "raw-measurement mode applies scalar noise only; per-gate noise is not supported".to_string(),
+            });
+        }
         let num_measurements = self.influence_map.measurements.len();
 
         // Build per-location probabilities from gate-type noise

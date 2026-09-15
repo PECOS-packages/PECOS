@@ -1,0 +1,217 @@
+"""Surface code patch (dx=1, dz=3) implementation in Guppy.
+
+Auto-generated from SurfacePatch geometry.
+
+Data qubits: 3
+X stabilizers: 2
+Z stabilizers: 0
+Ancilla qubits: 2 (one per stabilizer)
+Interaction basis: cx
+Check plan: cx_standard_v1
+"""
+
+from __future__ import annotations
+
+from guppylang import guppy
+from guppylang.std.builtins import array, owned, output
+from guppylang.std.quantum import cx, discard, h, qubit, x, z
+from guppylang.std.quantum import collect_measurements, measure, measure_array
+
+
+@guppy.struct
+class SurfaceCode_1x3:
+    """Surface code patch with dx=1, dz=3 (3 data qubits)."""
+
+    data: array[qubit, 3]
+
+
+@guppy.struct
+class Syndrome_1x3:
+    """Syndrome for dx=1, dz=3 patch."""
+
+    synx: array[bool, 2]
+    synz: array[bool, 0]
+
+
+# === State Preparation ===
+
+@guppy
+def prep_z_basis() -> SurfaceCode_1x3:
+    """Prepare logical |0_L> state."""
+    data = array(qubit() for _ in range(3))
+    return SurfaceCode_1x3(data)
+
+
+@guppy
+def prep_x_basis() -> SurfaceCode_1x3:
+    """Prepare logical |+_L> state."""
+    data = array(qubit() for _ in range(3))
+    for i in range(3):
+        h(data[i])
+    return SurfaceCode_1x3(data)
+
+
+# === Syndrome Extraction ===
+
+@guppy
+def syndrome_extraction(surf: SurfaceCode_1x3) -> Syndrome_1x3:
+    """Extract full syndrome using 4-round parallel CNOT schedule."""
+    # Allocate ancilla qubits (one per stabilizer)
+    ax0 = qubit()
+    ax1 = qubit()
+
+    # Hadamard on X ancillas
+    h(ax0)
+    h(ax1)
+
+    # Round 1
+
+    # Round 2
+
+    # Round 3
+    cx(ax0, surf.data[1])
+    cx(ax1, surf.data[2])
+
+    # Round 4
+    cx(ax0, surf.data[0])
+    cx(ax1, surf.data[1])
+
+    # Hadamard on X ancillas
+    h(ax0)
+    h(ax1)
+
+    # Measure ancillas
+    sx0 = measure(ax0).read()
+    output("sx0:meas:0", sx0)
+    sx1 = measure(ax1).read()
+    output("sx1:meas:1", sx1)
+
+    synx = array(sx0, sx1)
+    synz = array()
+
+    return Syndrome_1x3(synx, synz)
+
+
+
+
+@guppy
+def init_z_basis(surf: SurfaceCode_1x3) -> array[bool, 2]:
+    """Establish initial X stabilizer signs after Z-basis data prep."""
+    ax0 = qubit()
+    ax1 = qubit()
+
+    # Hadamard on X ancillas
+    h(ax0)
+    h(ax1)
+
+    # Round 3
+    cx(ax0, surf.data[1])
+    cx(ax1, surf.data[2])
+
+    # Round 4
+    cx(ax0, surf.data[0])
+    cx(ax1, surf.data[1])
+
+    # Hadamard on X ancillas
+    h(ax0)
+    h(ax1)
+
+    # Measure init ancillas
+    sx0 = measure(ax0).read()
+    output("sx0:init:meas:0", sx0)
+    sx1 = measure(ax1).read()
+    output("sx1:init:meas:1", sx1)
+
+    return array(sx0, sx1)
+
+
+@guppy
+def init_x_basis(surf: SurfaceCode_1x3) -> array[bool, 0]:
+    """Establish initial Z stabilizer signs after X-basis data prep."""
+
+    # Measure init ancillas
+
+    return array()
+# === Measurement ===
+
+@guppy
+def measure_z_basis(surf: SurfaceCode_1x3 @ owned) -> array[bool, 3]:
+    """Destructively measure in Z basis."""
+    return collect_measurements(measure_array(surf.data))
+
+
+@guppy
+def measure_x_basis(surf: SurfaceCode_1x3 @ owned) -> array[bool, 3]:
+    """Destructively measure in X basis."""
+    for i in range(3):
+        h(surf.data[i])
+    return collect_measurements(measure_array(surf.data))
+
+
+# === Logical Operators ===
+
+@guppy
+def apply_logical_x(surf: SurfaceCode_1x3) -> None:
+    """Apply logical X (string along left edge)."""
+    x(surf.data[0])
+
+
+@guppy
+def apply_logical_z(surf: SurfaceCode_1x3) -> None:
+    """Apply logical Z (string along top edge)."""
+    z(surf.data[0])
+    z(surf.data[1])
+    z(surf.data[2])
+
+
+# === Memory Experiments ===
+
+def make_memory_z(num_rounds: int):
+    """Create Z-basis memory experiment."""
+    from guppylang.std.builtins import comptime
+
+    @guppy
+    def memory_z() -> None:
+        """Z-basis memory experiment for dx=1, dz=3."""
+        surf = prep_z_basis()
+        init_syn = init_z_basis(surf)
+        output("init_synx", init_syn)
+
+        for _t in range(comptime(num_rounds)):
+            syn = syndrome_extraction(surf)
+            output("synx", syn.synx)
+            output("synz", syn.synz)
+
+        final = measure_z_basis(surf)
+        output("final", final)
+        output("final:meas:0", final[0])
+        output("final:meas:1", final[1])
+        output("final:meas:2", final[2])
+
+    return memory_z
+
+
+def make_memory_x(num_rounds: int):
+    """Create X-basis memory experiment."""
+    from guppylang.std.builtins import comptime
+
+    @guppy
+    def memory_x() -> None:
+        """X-basis memory experiment for dx=1, dz=3."""
+        surf = prep_x_basis()
+        init_syn = init_x_basis(surf)
+        output("init_synz", init_syn)
+
+        for _t in range(comptime(num_rounds)):
+            syn = syndrome_extraction(surf)
+            output("synx", syn.synx)
+            output("synz", syn.synz)
+
+        final = measure_x_basis(surf)
+        output("final", final)
+        output("final:meas:0", final[0])
+        output("final:meas:1", final[1])
+        output("final:meas:2", final[2])
+
+    return memory_x
+

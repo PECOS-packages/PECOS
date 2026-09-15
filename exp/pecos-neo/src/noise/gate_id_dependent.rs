@@ -162,6 +162,10 @@ impl GateIdDependentChannel {
 }
 
 impl NoiseChannel for GateIdDependentChannel {
+    fn event_kinds(&self) -> super::EventKinds {
+        super::EventKinds::of(super::NoiseEventKind::AfterGate)
+    }
+
     fn responds_to(&self, event: &NoiseEvent<'_>) -> bool {
         match event {
             NoiseEvent::AfterGate { gate_id, .. } => {
@@ -181,17 +185,16 @@ impl NoiseChannel for GateIdDependentChannel {
         rng: &mut PecosRng,
     ) -> NoiseResponse {
         let NoiseEvent::AfterGate {
-            gate_type,
-            qubits,
-            gate_id,
-            ..
+            qubits, gate_id, ..
         } = event
         else {
             return NoiseResponse::None;
         };
 
-        // Skip noiseless gates
-        if ctx.is_noiseless(*gate_type) {
+        if ctx.is_noiseless_operation_with_calibration(
+            event,
+            gate_id.is_some_and(|id| self.gate_configs.contains_key(&id)),
+        ) {
             return NoiseResponse::None;
         }
 

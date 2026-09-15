@@ -317,6 +317,46 @@ def test_logical_circuit_marks_dag_gates_with_dem_slice_rounds():
     assert sorted(set(owners)) == [0, 1, 2]
 
 
+def test_transversal_gadget_gates_keep_the_boundary_round_owner():
+    """Gadget-based H/CX layers stay in the boundary round that precedes SEC."""
+    from pecos.qec.surface import LogicalCircuitBuilder
+
+    patch = SurfacePatch.create(distance=3)
+    offset = patch.geometry.num_qubits
+    lcb = LogicalCircuitBuilder()
+    lcb.add_patch(patch, "A")
+    lcb.add_patch(patch, "B", qubit_offset=offset)
+    lcb.add_memory(["A", "B"], rounds=2, basis="Z")
+    lcb.add_transversal_h("A")
+    lcb.add_transversal_h("B")
+    lcb.add_transversal_cx("A", "B")
+    lcb.add_memory(["A", "B"], rounds=2, basis="X")
+    dag = lcb.to_dag_circuit()
+
+    data_a = set(range(patch.geometry.num_data))
+    data_b = {offset + qubit for qubit in range(patch.geometry.num_data)}
+    data_h = [
+        node
+        for node in dag.nodes()
+        if dag.gate(node).gate_type.name == "H" and dag.gate(node).qubits[0] in data_a | data_b
+    ]
+    transversal_cx = [
+        node
+        for node in dag.nodes()
+        if dag.gate(node).gate_type.name == "CX"
+        and dag.gate(node).qubits[0] in data_a
+        and dag.gate(node).qubits[1] in data_b
+    ]
+
+    h_owners = [dag.get_gate_attr(node, "dem_slice_round") for node in data_h]
+    # One H per data qubit is the transversal layer at boundary round 2;
+    # the other is the X-basis terminal readout at round 4.
+    assert h_owners.count(2) == 2 * patch.geometry.num_data
+    assert set(h_owners) == {2, 4}
+    assert len(transversal_cx) == patch.geometry.num_data
+    assert {dag.get_gate_attr(node, "dem_slice_round") for node in transversal_cx} == {2}
+
+
 def test_surface_dem_round_schedule_reconstructs_the_terminal_model():
     """The Python surface path reaches the structured Rust slice frontend."""
     from pecos.qec.surface import LogicalCircuitBuilder
@@ -461,6 +501,22 @@ def test_cached_surface_slices_reconstruct_a_longer_memory_experiment():
             [0],
             [],
             dem_output_routings={0: {0: [999]}},
+        )
+    with pytest.raises(ValueError, match="detector_order_routings contains unknown owner round 999"):
+        DemSliceRoundSchedule.from_cached_slices(
+            slice_model,
+            [(init, 0)],
+            [0],
+            [],
+            detector_order_routings={999: {0: 0}},
+        )
+    with pytest.raises(ValueError, match="must be a permutation"):
+        DemSliceRoundSchedule.from_cached_slices(
+            slice_model,
+            [(init, 0)],
+            [0],
+            [],
+            detector_order_routings={0: {0: 0}},
         )
     with pytest.raises(ValueError, match=r"assembled circuit expects \{\}"):
         DemSliceRoundSchedule.from_cached_slices(slice_model, [(init, 0)], [], [])

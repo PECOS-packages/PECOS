@@ -12,7 +12,7 @@ This guide covers PECOS's Guppy QEC code generation module (`pecos.guppy_gen`), 
 
 ## Overview
 
-The `pecos.guppy_gen` module provides **direct Guppy code generation** for QEC circuits, bypassing intermediate representations for faster compilation:
+The module generates Guppy source from QEC geometry and circuit definitions.
 
 ```python
 from pecos.guppy_gen import (
@@ -41,14 +41,21 @@ from pecos.guppy_gen import make_surface_code, get_num_qubits
 # Create a distance-3 Z-basis memory experiment with 3 rounds
 prog = make_surface_code(distance=3, num_rounds=3, basis="Z")
 
-# Get qubit count (d^2 data + 2 ancilla)
-num_qubits = get_num_qubits(3)  # 11 qubits
+# Default: 9 data qubits + 8 dedicated ancillas
+num_qubits = get_num_qubits(3)
+assert num_qubits == 17
+assert get_num_qubits(3, ancilla_budget=2) == 11
 
 # Run simulation
 results = sim(prog).qubits(num_qubits).quantum(state_vector()).seed(42).run(100)
 
 print(results.to_dict())
 ```
+
+The default rotated surface allocation uses `2d^2 - 1` qubits: 17 at distance 3
+(9 data and 8 ancillas). For a distance-3 program with a peak requirement of
+11 qubits, set `ancilla_budget=2`; pass the same budget to `get_num_qubits`
+when computing that requirement.
 
 ### X-Basis vs Z-Basis
 
@@ -307,9 +314,21 @@ num_qubits = get_transversal_num_qubits("color", 3)
 results = sim(prog).qubits(num_qubits).quantum(state_vector()).seed(42).run(100)
 ```
 
+For `code_type="surface"`, `get_transversal_num_qubits` returns the bound
+`3d^2 - 1`: 26 qubits at distance 3 and 74 at distance 5. This bound is reached
+when at least one syndrome round runs. The surface program runs `num_rounds` full
+syndrome rounds before and after CX, with no separate init-syndrome round.
+
+```python
+from pecos.guppy_gen import get_transversal_num_qubits
+
+assert get_transversal_num_qubits("surface", 3) == 26
+assert get_transversal_num_qubits("surface", 5) == 74
+```
+
 ### Transversal CNOT with Logical X
 
-Test the logical CNOT by preparing `|1_L>|0_L>` and verifying it becomes `|1_L>|1_L>`:
+Prepare the control-flipped CNOT experiment and retrieve both patches' final measurements.
 
 <!--mark.slow-->
 ```python
@@ -326,7 +345,7 @@ prog = make_css_transversal_cnot_with_x(
 num_qubits = get_transversal_num_qubits("color", 3)
 results = sim(prog).qubits(num_qubits).quantum(state_vector()).run(100)
 
-# Check that both patches measure to logical 1
+# Retrieve the final measurements of both patches
 data = results.to_dict()
 final_ctrl = data.get("final_ctrl", [])
 final_tgt = data.get("final_tgt", [])
@@ -407,23 +426,25 @@ compiled = rep_code_experiment.compile()
 
 Key patterns:
 - `@guppy.struct` defines data types (qubits are linear — they must be consumed)
-- `@guppy` functions can call each other freely
+- `@guppy` functions can call other Guppy functions, subject to their type and ownership requirements.
 - Ancilla qubits are allocated with `qubit()` and consumed by `measure()`
 - Use `measure_array()` to measure all qubits in an array at once
 
 ## Generated Code Structure
 
-```hidden-python
-from guppylang import guppy
-from guppylang.std.builtins import array
-from guppylang.std.quantum import qubit, cx, h, measure
-```
-
-The `pecos.guppy_gen` module generates Guppy source code with these components:
-
-### Struct Definitions
+The surface generator emits stabilizer operations inline in
+`syndrome_extraction`. For reusable preparation, projection, syndrome, readout,
+and gate functions, see [the surface gadget library](surface-gadgets.md#the-gadget-library).
 
 ```python
+from pecos.guppy_gen import generate_surface_code_module
+
+source = generate_surface_code_module(d=3)
+assert "class SurfaceCode_3x3:" in source
+assert "def syndrome_extraction" in source
+```
+
+```text
 @guppy.struct
 class SurfaceCode_3x3:
     """Surface code patch with dx=3, dz=3 (9 data qubits)."""
@@ -439,42 +460,7 @@ class Syndrome_3x3:
     synz: array[bool, 4]
 ```
 
-### Stabilizer Measurements
-
-```python
-@guppy
-def measure_x_stab_0(ax: qubit, data: array[qubit, 9]) -> bool:
-    """Measure X stabilizer 0 (boundary): [0, 1]."""
-    h(ax)
-    cx(ax, data[0])
-    cx(ax, data[1])
-    h(ax)
-    return measure(ax).read()
-
-
-@guppy
-def measure_z_stab_0(az: qubit, data: array[qubit, 9]) -> bool:
-    """Measure Z stabilizer 0 (boundary): [0, 3]."""
-    cx(data[0], az)
-    cx(data[3], az)
-    return measure(az).read()
-```
-
-### Syndrome Extraction
-
-The generated module includes a `syndrome_extraction` function that applies all stabilizer measurements in a parallelized CNOT schedule and returns the syndrome:
-
-```python
-from pecos.guppy_gen import generate_surface_code_module
-
-source = generate_surface_code_module(d=3)
-
-# The generated module contains the full syndrome extraction circuit
-assert "def syndrome_extraction" in source
-assert "Syndrome_3x3" in source
-```
-
-To see the full generated code, see [Viewing Generated Source](#viewing-generated-source) below.
+See [Viewing Generated Source](#viewing-generated-source) for the full module.
 
 ## Viewing Generated Source
 
@@ -543,9 +529,11 @@ results = (
 )
 ```
 
-## Complete Example: Threshold Estimation
+## Complete Example: Uncorrected Logical-Parity Errors
 
-Here's a complete example estimating the logical error rate:
+This example measures the uncorrected final logical-parity error fraction at
+one distance and one noise strength. It performs no decoding and does not
+estimate a threshold.
 
 ```python
 from pecos import sim, state_vector, depolarizing_noise
@@ -553,8 +541,8 @@ from pecos.guppy_gen import make_surface_code, get_num_qubits
 from pecos.qec import logical_z_from_data
 
 
-def estimate_logical_error_rate(distance: int, p: float, shots: int = 100) -> float:
-    """Estimate logical error rate for a surface code."""
+def estimate_uncorrected_parity_error_fraction(distance: int, p: float, shots: int = 100) -> float:
+    """Measure the final logical-parity error fraction without decoding."""
     prog = make_surface_code(distance=distance, num_rounds=distance, basis="Z")
     num_qubits = get_num_qubits(distance)
 
@@ -580,9 +568,9 @@ def estimate_logical_error_rate(distance: int, p: float, shots: int = 100) -> fl
     return errors / shots
 
 
-# Compare different distances (use more shots/distances for production)
-error_rate = estimate_logical_error_rate(3, p=0.001)
-print(f"d=3: logical error rate = {error_rate:.4f}")
+# Sample one distance and one noise strength
+error_rate = estimate_uncorrected_parity_error_fraction(3, p=0.001)
+print(f"d=3: uncorrected parity error fraction = {error_rate:.4f}")
 ```
 
 ## API Reference
@@ -592,7 +580,7 @@ print(f"d=3: logical error rate = {error_rate:.4f}")
 | Function | Description |
 |----------|-------------|
 | `make_surface_code(distance, num_rounds, basis)` | Create memory experiment |
-| `get_num_qubits(d)` | Get total qubit count (d^2 + 2) |
+| `get_num_qubits(d)` | Default total: 2d^2 - 1; d^2 + 2 with `ancilla_budget=2` |
 | `generate_surface_code_module(d)` | Get generated source code |
 | `get_surface_code_module(d)` | Get loaded module dict |
 
@@ -647,6 +635,8 @@ qasm = SlrConverter(prog).qasm()
 See the [SLR and QECLib Developer Guide](../development/slr-qeclib.md) for details.
 
 ## Next Steps
+
+- **[Surface Code Gadgets](surface-gadgets.md)** - Obtain gadgets and protocols in `TickCircuit` and Guppy
 
 - **[QEC Geometry](qec-geometry.md)** - Understand the underlying geometry
 - **[Detector Error Models from Guppy](dem-from-guppy.md)** - Build a DEM by tracing generated programs

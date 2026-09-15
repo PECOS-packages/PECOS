@@ -216,6 +216,12 @@ impl CrosstalkChannel {
 }
 
 impl NoiseChannel for CrosstalkChannel {
+    fn event_kinds(&self) -> super::EventKinds {
+        super::EventKinds::of(super::NoiseEventKind::AfterPreparation)
+            .with(super::NoiseEventKind::AfterMeasurement)
+            .with(super::NoiseEventKind::AfterGate)
+    }
+
     fn responds_to(&self, event: &NoiseEvent<'_>) -> bool {
         // Only respond if we have non-zero crosstalk rates
         if self.local_rate <= 0.0 && self.global_rate <= 0.0 {

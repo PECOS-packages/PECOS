@@ -10,97 +10,34 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-//! Bevy-inspired Tool architecture for quantum simulation and validation.
+//! Reusable quantum simulations with owned state and seeded shot loops.
 //!
-//! This module provides a flexible, plugin-based system for building various quantum tools.
-//! See `design.md` for the full architecture documentation.
-//!
-//! # Overview
-//!
-//! The architecture consists of:
-//!
-//! - [`Tool`] - Generic Bevy-like foundation with plugins, systems, and resources
-//! - [`Plugin`] - Trait for bundling functionality
-//! - [`Stage`] - Execution stages (Startup, `PreShot`, Execute, `PostShot`, Finish)
-//! - [`Resources`] - Typed singleton storage
-//!
-//! # Example
+//! Configure a program, backend, noise model and sampling strategy with
+//! [`sim_neo`], then build a [`Simulation`] to run and reuse.
+//! Monte Carlo supports static circuits and classical engines; importance
+//! sampling, path enumeration and subset simulation operate on static circuits.
+//! Runtime failures are returned to the caller.
 //!
 //! ```
-//! use pecos_neo::tool::{Tool, Stage, Resources};
+//! use pecos_neo::prelude::*;
+//! use pecos_neo::tool::{monte_carlo, sim_neo, sparse_stab};
 //!
-//! // Create a simple counter tool
-//! let mut tool = Tool::new()
-//!     .insert_resource(0u32)
-//!     .add_system(Stage::Execute, |res: &mut Resources| {
-//!         *res.get_mut::<u32>() += 1;
-//!         Ok(())
-//!     });
-//!
-//! tool.run().unwrap();
-//! assert_eq!(*tool.resource::<u32>(), 1);
-//!
-//! tool.run().unwrap();
-//! assert_eq!(*tool.resource::<u32>(), 2);
-//! ```
-//!
-//! # Stages
-//!
-//! Tools execute systems in stages:
-//!
-//! - **Startup**: Runs once at the beginning (initialize simulators, compile circuits)
-//! - `PreShot`: Before each shot (reset state, derive seeds)
-//! - **Execute**: Run the main logic (circuit execution with noise)
-//! - `PostShot`: After each shot (collect outcomes, update weights)
-//! - **Finish**: Runs once at the end (aggregate results, compute statistics)
-//!
-//! # Plugins
-//!
-//! Plugins bundle related resources and systems:
-//!
-//! ```
-//! use pecos_neo::tool::{Tool, Plugin, Stage, Resources};
-//!
-//! struct CounterPlugin {
-//!     initial: u32,
-//! }
-//!
-//! impl Plugin for CounterPlugin {
-//!     fn build(&self, tool: &mut Tool) {
-//!         tool.insert_resource_mut(self.initial);
-//!         tool.add_system_mut(Stage::Execute, |res: &mut Resources| {
-//!             *res.get_mut::<u32>() += 1;
-//!             Ok(())
-//!         });
-//!     }
-//! }
-//!
-//! let mut tool = Tool::new()
-//!     .add_plugin(&CounterPlugin { initial: 10 });
-//!
-//! tool.run().expect("tool should run successfully");
-//! assert_eq!(*tool.resource::<u32>(), 11);
+//! let circuit = CommandBuilder::new().pz(&[0]).h(&[0]).mz(&[0]).build();
+//! let mut sim = sim_neo(circuit)
+//!     .quantum(sparse_stab())
+//!     .sampling(monte_carlo(100))
+//!     .seed(42)
+//!     .build();
+//! let results = sim.run().expect("simulation should succeed");
+//! assert_eq!(results.len(), 100);
 //! ```
 
-mod core;
-mod importance;
-mod plugin;
-mod resource;
 mod simulation;
-mod system;
 
-// Re-export core types
-pub use self::core::Tool;
 pub use crate::sampling::subset::{LevelStats, SubsetResult};
-pub use importance::{
-    CurrentShotWeight, ImportanceSamplingConfig, ImportanceSamplingPlugin,
-    ImportanceSamplingResults,
-};
 pub use pecos_results::{Data, Shot, ShotMap, ShotVec};
-pub use plugin::{Plugin, PluginGroup};
-pub use resource::{Resource, Resources};
 pub use simulation::{
-    Circuit, CustomBackendBuilder, ImportanceSamplingBuilder, MonteCarloBuilder, NoiseResource,
+    Circuit, CustomBackendBuilder, ImportanceSamplingBuilder, MonteCarloBuilder,
     PathEnumerationBuilder, QuantumBackend, Sampling, SimConfig, SimNeoBuilder, SimNeoInput,
     Simulation, SimulationResults, SimulatorFactory, SparseStabBuilder, StabilizerBuilder,
     StateVecBuilder, StoredOverrides, SubsetFailureFn, SubsetScoreFn, SubsetSimulationBuilder,
@@ -109,19 +46,3 @@ pub use simulation::{
     stabilizer, state_vector, subset_simulation,
 };
 pub use simulation::{PendingEngineBuilder, TypedProgram};
-pub use system::{IntoSystem, Schedule, System};
-
-/// Execution stages for quantum tool workflows.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Stage {
-    /// Once at beginning (init simulators, compile circuits)
-    Startup,
-    /// Before each shot (reset state, derive seed)
-    PreShot,
-    /// Run the circuit with noise
-    Execute,
-    /// After each shot (collect outcomes, update weights)
-    PostShot,
-    /// Once at end (aggregate results, compute statistics)
-    Finish,
-}

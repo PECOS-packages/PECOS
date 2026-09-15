@@ -134,6 +134,7 @@ class DemSliceRoundSchedule:
         detector_coordinate_offsets: Mapping[int, tuple[float, float]] | None = ...,
         dem_output_routings: Mapping[int, Mapping[int, Sequence[int]]] | None = ...,
         tracked_pauli_routings: Mapping[int, Mapping[int, Sequence[int]]] | None = ...,
+        detector_order_routings: Mapping[int, Mapping[int, int]] | None = ...,
     ) -> DemSliceRoundSchedule: ...
     @property
     def num_instances(self) -> int: ...

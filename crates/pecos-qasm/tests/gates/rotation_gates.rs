@@ -55,10 +55,10 @@ fn test_controlled_rotation_gates() {
                 .filter(|op| is_gate_with_name(op, "CX"))
                 .count();
 
-            let rz_count = program
+            let u_count = program
                 .operations
                 .iter()
-                .filter(|op| is_gate_with_name(op, "RZ"))
+                .filter(|op| is_gate_with_name(op, "U"))
                 .count();
 
             let h_count = program
@@ -67,7 +67,7 @@ fn test_controlled_rotation_gates() {
                 .filter(|op| is_gate_with_name(op, "H"))
                 .count();
 
-            println!("Gate counts - CX: {cx_count}, RZ: {rz_count}, H: {h_count}");
+            println!("Gate counts - CX: {cx_count}, U: {u_count}, H: {h_count}");
 
             // Verify the operations expanded correctly
             // Each controlled rotation requires 2 CX gates (3 gates total * 2 = 6)
@@ -76,8 +76,8 @@ fn test_controlled_rotation_gates() {
                 "Expected 6 CX gates from 3 controlled rotations"
             );
 
-            // crz and crx each contribute two RZ gates.
-            assert_eq!(rz_count, 4, "Expected 4 RZ gates from crz and crx");
+            // Each controlled rotation contributes two phase gates lowered to U.
+            assert_eq!(u_count, 6, "Expected 6 U gates from crz, crx, and cry");
 
             // crx conjugates crz by H on the target.
             assert_eq!(h_count, 2, "Expected 2 H gates from crx");
@@ -107,7 +107,8 @@ fn test_crz_expansion() {
                 program.operations.len()
             );
 
-            // crz(theta) expands to: rz(theta/2) b; cx a,b; rz(-theta/2) b; cx a,b;
+            // crz(theta) expands to: p(theta/2) b; cx a,b; p(-theta/2) b; cx a,b;
+            // Each p(lambda) is native U(0, 0, lambda).
             assert_eq!(
                 program.operations.len(),
                 4,
@@ -121,24 +122,27 @@ fn test_crz_expansion() {
                     parameters,
                     qubits,
                 } => {
-                    assert_eq!(name, "RZ");
+                    assert_eq!(name, "U");
+                    assert_eq!(parameters.len(), 3);
+                    assert_eq!(&parameters[..2], &[0.0, 0.0]);
                     assert_eq!(qubits, &[1]); // Target qubit
                     assert!(
-                        (parameters[0] - std::f64::consts::PI / 4.0).abs() < 1e-10,
-                        "First RZ should have angle pi/4"
+                        (parameters[2] - std::f64::consts::PI / 4.0).abs() < 1e-10,
+                        "First U lambda should have angle pi/4"
                     );
                 }
-                Operation::NativeGate(gate) if matches!(gate.gate_type, GateType::RZ) => {
+                Operation::NativeGate(gate) if matches!(gate.gate_type, GateType::U) => {
                     assert_eq!(gate.qubits.len(), 1);
                     assert_eq!(gate.qubits[0].0, 1); // Target qubit
                     // For native gates, the angle is in the angles field as Angle64
-                    assert_eq!(gate.angles.len(), 1);
+                    assert_eq!(gate.angles.len(), 3);
+                    assert_eq!(&gate.angles[..2], &[pecos_core::Angle64::ZERO; 2]);
                     assert!(
-                        (gate.angles[0].to_radians() - std::f64::consts::PI / 4.0).abs() < 1e-10,
-                        "First RZ should have angle pi/4"
+                        (gate.angles[2].to_radians() - std::f64::consts::PI / 4.0).abs() < 1e-10,
+                        "First U lambda should have angle pi/4"
                     );
                 }
-                _ => panic!("Expected RZ gate at position 0"),
+                _ => panic!("Expected U gate at position 0"),
             }
 
             match &program.operations[1] {
@@ -160,27 +164,30 @@ fn test_crz_expansion() {
                     parameters,
                     qubits,
                 } => {
-                    assert_eq!(name, "RZ");
+                    assert_eq!(name, "U");
+                    assert_eq!(parameters.len(), 3);
+                    assert_eq!(&parameters[..2], &[0.0, 0.0]);
                     assert_eq!(qubits, &[1]); // Target qubit
                     assert!(
-                        (parameters[0] + std::f64::consts::PI / 4.0).abs() < 1e-10,
-                        "Second RZ should have angle -pi/4"
+                        (parameters[2] + std::f64::consts::PI / 4.0).abs() < 1e-10,
+                        "Second U lambda should have angle -pi/4"
                     );
                 }
-                Operation::NativeGate(gate) if matches!(gate.gate_type, GateType::RZ) => {
+                Operation::NativeGate(gate) if matches!(gate.gate_type, GateType::U) => {
                     assert_eq!(gate.qubits.len(), 1);
                     assert_eq!(gate.qubits[0].0, 1); // Target qubit
                     // For native gates, the angle is in the angles field as Angle64
                     // Note: Angle64 normalizes to [0, 2π), so -π/4 becomes 7π/4
-                    assert_eq!(gate.angles.len(), 1);
-                    let angle = gate.angles[0].to_radians();
+                    assert_eq!(gate.angles.len(), 3);
+                    assert_eq!(&gate.angles[..2], &[pecos_core::Angle64::ZERO; 2]);
+                    let angle = gate.angles[2].to_radians();
                     let expected = 7.0 * std::f64::consts::PI / 4.0; // -pi/4 normalized to 7pi/4
                     assert!(
                         (angle - expected).abs() < 1e-10,
-                        "Second RZ should have angle 7pi/4 (normalized from -pi/4), got {angle}"
+                        "Second U lambda should have angle 7pi/4 (normalized from -pi/4), got {angle}"
                     );
                 }
-                _ => panic!("Expected RZ gate at position 2"),
+                _ => panic!("Expected U gate at position 2"),
             }
 
             match &program.operations[3] {
@@ -245,8 +252,8 @@ fn test_crx_expansion() {
                 "CRX should contain H gates from H-RZ-H conjugation"
             );
             assert!(
-                gate_types.iter().any(|name| name.to_uppercase() == "RZ"),
-                "CRX should contain RZ gates from crz"
+                gate_types.iter().any(|name| name.to_uppercase() == "U"),
+                "CRX should contain U phase gates from crz"
             );
             assert!(
                 gate_types
@@ -280,11 +287,11 @@ fn test_cry_expansion() {
                 program.operations.len()
             );
 
-            // cry contains two native RXY1Q rotations and two CX gates.
+            // cry conjugates the four-gate crz expansion by native SX and SXDG.
             assert_eq!(
                 program.operations.len(),
-                4,
-                "CRY should expand to 4 operations"
+                6,
+                "CRY should expand to 6 operations"
             );
 
             // Count gate types
@@ -293,18 +300,20 @@ fn test_cry_expansion() {
                 .iter()
                 .filter(|op| is_gate_with_name(op, "CX"))
                 .count();
-            let rxy_count = program
+            let u_count = program
                 .operations
                 .iter()
-                .filter(|op| is_gate_with_name(op, "RXY1Q"))
+                .filter(|op| is_gate_with_name(op, "U"))
                 .count();
 
-            println!("CRY gate counts - CX: {cx_count}, RXY1Q: {rxy_count}");
+            println!("CRY gate counts - CX: {cx_count}, U: {u_count}");
 
-            // Should have 2 CX gates from the original cry structure
+            // The inner crz contributes two CX gates and two U phase gates.
             assert_eq!(cx_count, 2, "CRY should have 2 CX gates");
 
-            assert_eq!(rxy_count, 2, "CRY should have 2 RXY1Q gates from ry");
+            assert_eq!(u_count, 2, "CRY should have 2 U phase gates from crz");
+            assert!(is_gate_with_name(&program.operations[0], "SX"));
+            assert!(is_gate_with_name(&program.operations[5], "SXDG"));
         }
         Err(e) => {
             panic!("Failed to parse cry gate: {e}");

@@ -123,15 +123,19 @@ opaque `CachedDemSlice` values returned by `schedule.cached_slice(...)` and
 independent declaration of the assembled circuit's standard-output and
 tracked-Pauli schema. It rejects a cached model with different declarations and
 requires every cached slice output to be routed into that schema or explicitly
-projected. The surface frontend obtains that declaration from the observable
-metadata emitted by the actual assembled circuit, including its full logical
-gate history, rather than restating measurement-reliability rules in each
-cached slice provider. It uses identity detector/output mappings by default, accepts checked per-round
-GF(2) output routing tables, and supports checked global or per-stream spatial
-translations. Cached slices expose their referenced local output IDs so callers do
-not need to guess the routing domain. Per-stream translation lets independently
-placed code blocks reuse one physical fixture; general detector-stream identity
-routing remains in the Rust instance API.
+projected. The surface frontend derives that declaration by calling the same
+logical-readout determinism walk as the physical emitter, including its full
+logical gate history, rather than restating reliability rules in each cached
+slice provider. It uses identity detector/output mappings by default, accepts
+checked per-round GF(2) output routing tables, checked per-round detector-order
+permutations, and checked global or per-stream spatial translations. Detector
+ordering is deliberately separate from detector-stream identity: a logical H
+can change the frontend's dense X-before-Z syndrome order without changing the
+spatial stream followed by a relative slice target. Cached slices expose their
+referenced local output IDs so callers do not need to guess the routing domain.
+Per-stream translation lets independently placed code blocks reuse one physical
+fixture; general detector-stream identity routing remains in the Rust instance
+API.
 
 The production `LogicalCircuitBuilder` uses a bounded three-round compile for
 eligible single-patch memory operations of two or more rounds. A separate
@@ -210,9 +214,12 @@ condition that requires the exact compiler, then selects its depth-independent
 cached slices. The description contains only values consumed by assembly:
 cached slices, memory depths, detector placement, and a GF(2) routing policy. The
 common assembler owns boundary placement, logical output-schema validation, and
-hard-boundary composition. The schema is derived from logical operations and is
-pinned against physical circuit metadata, keeping a warm assembly independent
-of physical depth. To add another logical Clifford boundary family, the minimum work is
+hard-boundary composition. The schema calls the same logical-readout determinism
+walk as the physical emitter and a deterministic 1,370-schedule fuzz pins it
+against emitted metadata across memory, H, CX, physical S/S-dagger, mixed bases,
+and partial memories. The warm assembly therefore remains independent of
+physical depth without maintaining a second reliability rule. To add another
+logical Clifford boundary family, the minimum work is
 therefore (1) an explicit eligibility/fallback check, (2) a bounded physical
 fixture compiler plus canonical cache key, and (3) a provider description. It
 does not require another schedule-construction or compose path. In the three
@@ -230,8 +237,9 @@ key.
 
 Stable detector-stream IDs are seeded from the earliest round with the maximum
 number of declarations. This uses stationary SEC record order instead of a
-partial initialization boundary, ensuring composed `D<n>` ordering matches the
-physical syndrome stream exactly. Surface-memory tests therefore compare the
+partial initialization boundary. Frontends whose dense family order changes
+later can supply an absolute-round ordering permutation while retaining those
+stable identities for temporal targets. Surface-memory tests therefore compare the
 entire rendered Python model byte for byte, not only up to detector relabeling.
 Lower-level Rust tests additionally pin structured mechanism and
 source-component equivalence without relying on serialization order.

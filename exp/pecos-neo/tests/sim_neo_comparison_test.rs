@@ -12,9 +12,9 @@
 
 // statistical tests use count as f64
 #![allow(clippy::cast_precision_loss)]
-//! Comparison tests between `sim_neo()` (Tool architecture) and `sim()` (pecos-engines).
+//! Comparison tests between `sim_neo()` and `sim()` (pecos-engines).
 //!
-//! These tests verify that the new Tool architecture produces equivalent results
+//! These tests verify that the neo simulation loop produces equivalent results
 //! to the established pecos-engines simulation system.
 
 use pecos_core::QubitId;
@@ -134,7 +134,7 @@ fn test_sim_neo_vs_sim_deterministic_x() {
         .unwrap();
     let engines_counts = extract_engines_outcomes(&engines_results, "c", 1);
 
-    // Run with sim_neo().auto() (Tool architecture)
+    // Run with sim_neo().auto()
     let circuit = CommandBuilder::new().pz(&[0]).x(&[0]).mz(&[0]).build();
 
     let neo_results = sim_neo(circuit)

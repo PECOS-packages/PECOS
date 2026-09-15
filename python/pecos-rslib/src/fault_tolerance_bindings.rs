@@ -1751,6 +1751,31 @@ fn parse_dem_boundary_kind(forward_boundary: &str) -> PyResult<RustDemBoundaryKi
 }
 
 type PySliceOutputRoutings = BTreeMap<i64, BTreeMap<u32, Vec<u32>>>;
+type PyDetectorOrderRoutings = BTreeMap<i64, BTreeMap<u32, u32>>;
+
+fn validate_detector_order_routings(
+    routings: Option<&PyDetectorOrderRoutings>,
+    known_by_round: &BTreeMap<i64, BTreeSet<u32>>,
+) -> PyResult<()> {
+    let Some(routings) = routings else {
+        return Ok(());
+    };
+    for (&round, routing) in routings {
+        let Some(known) = known_by_round.get(&round) else {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "detector_order_routings contains unknown owner round {round}"
+            )));
+        };
+        let sources: BTreeSet<_> = routing.keys().copied().collect();
+        let targets: BTreeSet<_> = routing.values().copied().collect();
+        if &sources != known || &targets != known {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "detector_order_routings[{round}] must be a permutation of detector streams {known:?}"
+            )));
+        }
+    }
+    Ok(())
+}
 
 fn validate_slice_output_routings(
     argument: &str,
@@ -1826,13 +1851,16 @@ impl PyDemSliceRoundSchedule {
     /// every available cached slice-local detector coordinate at instantiation.
     /// ``detector_coordinate_offsets`` adds a further translation selected by
     /// local detector-stream ID, allowing independently placed code blocks.
+    /// ``detector_order_routings`` optionally supplies a full stream-order
+    /// permutation for selected absolute rounds. It changes dense detector-ID
+    /// order without changing stable stream identity or relative targeting.
     /// Output routings select a GF(2) target set by owner round and local output;
     /// repeated targets cancel, and an empty target set projects a column away.
     /// The expected output lists are an independent declaration of the assembled
     /// circuit schema. They must exactly match ``output_model`` and every
     /// unprojected cached slice output must route into them.
     #[staticmethod]
-    #[pyo3(signature = (output_model, cached_slices, expected_dem_outputs, expected_tracked_paulis, coordinate_offset=None, detector_coordinate_offsets=None, dem_output_routings=None, tracked_pauli_routings=None))]
+    #[pyo3(signature = (output_model, cached_slices, expected_dem_outputs, expected_tracked_paulis, coordinate_offset=None, detector_coordinate_offsets=None, dem_output_routings=None, tracked_pauli_routings=None, detector_order_routings=None))]
     fn from_cached_slices(
         py: Python<'_>,
         output_model: &PyDetectorErrorModel,
@@ -1843,6 +1871,7 @@ impl PyDemSliceRoundSchedule {
         detector_coordinate_offsets: Option<BTreeMap<u32, (f64, f64)>>,
         dem_output_routings: Option<PySliceOutputRoutings>,
         tracked_pauli_routings: Option<PySliceOutputRoutings>,
+        detector_order_routings: Option<PyDetectorOrderRoutings>,
     ) -> PyResult<Self> {
         if let Some((x, y)) = coordinate_offset
             && (!x.is_finite() || !y.is_finite())
@@ -1875,8 +1904,16 @@ impl PyDemSliceRoundSchedule {
         }
         let mut known_dem_outputs = BTreeMap::<i64, BTreeSet<u32>>::new();
         let mut known_tracked_paulis = BTreeMap::<i64, BTreeSet<u32>>::new();
+        let mut known_detectors = BTreeMap::<i64, BTreeSet<u32>>::new();
         for (cached_slice, round) in &cached_slices {
             let cached_slice = cached_slice.borrow(py);
+            known_detectors.entry(*round).or_default().extend(
+                cached_slice
+                    .inner
+                    .detectors()
+                    .iter()
+                    .map(|detector| detector.id),
+            );
             known_dem_outputs
                 .entry(*round)
                 .or_default()
@@ -1898,6 +1935,7 @@ impl PyDemSliceRoundSchedule {
             .collect();
         let expected_dem_outputs = expected_dem_outputs.into_iter().collect();
         let expected_tracked_paulis = expected_tracked_paulis.into_iter().collect();
+        validate_detector_order_routings(detector_order_routings.as_ref(), &known_detectors)?;
         validate_slice_output_routings(
             "dem_output_routings",
             dem_output_routings.as_ref(),
@@ -1976,7 +2014,8 @@ impl PyDemSliceRoundSchedule {
             })
             .collect::<PyResult<Vec<_>>>()?;
         Ok(Self {
-            inner: RustDemSliceRoundSchedule::from_instances(&output_model.inner, instances),
+            inner: RustDemSliceRoundSchedule::from_instances(&output_model.inner, instances)
+                .with_detector_order_routings(detector_order_routings.unwrap_or_default()),
         })
     }
 

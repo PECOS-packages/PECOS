@@ -110,6 +110,12 @@ fn apply_expanded_operation(sim: &mut StateVecSoA32, operation: &Operation) {
         Operation::Gate { name, qubits, .. } if name == "H" => {
             sim.h(&[QubitId(qubits[0])]);
         }
+        Operation::Gate { name, qubits, .. } if name == "SX" => {
+            sim.sx(&[QubitId(qubits[0])]);
+        }
+        Operation::Gate { name, qubits, .. } if name == "SXDG" => {
+            sim.sxdg(&[QubitId(qubits[0])]);
+        }
         Operation::Gate {
             name,
             parameters,
@@ -143,6 +149,12 @@ fn apply_expanded_operation(sim: &mut StateVecSoA32, operation: &Operation) {
         }
         Operation::NativeGate(gate) if gate.gate_type == GateType::H => {
             sim.h(&gate.qubits);
+        }
+        Operation::NativeGate(gate) if gate.gate_type == GateType::SX => {
+            sim.sx(&gate.qubits);
+        }
+        Operation::NativeGate(gate) if gate.gate_type == GateType::SXdg => {
+            sim.sxdg(&gate.qubits);
         }
         Operation::NativeGate(gate) if gate.gate_type == GateType::RX => {
             sim.rx(gate.angles[0], &gate.qubits);
@@ -246,6 +258,67 @@ fn controlled_phase_family_remains_exact() {
     assert_controlled_phase("hqslib1.inc", "cp");
     assert_controlled_phase("qelib1.inc", "cu1");
     assert_controlled_phase("qelib1.inc", "cphase");
+}
+
+// At odd multiples of 2*pi, each controlled rotation is exactly Z on the
+// control, independently of the target axis. Compare amplitudes directly so a
+// global -1 cannot be hidden. Exercise each shipped include body by name.
+fn assert_controlled_rotation_wrap_phase_exact(spelling: &str) {
+    for theta in ["2*pi", "-2*pi", "6*pi"] {
+        let qasm = format!(
+            "OPENQASM 2.0;\ninclude \"qelib1.inc\";\nqreg q[2];\n{spelling}({theta}) q[0],q[1];"
+        );
+        let program = QASMParser::parse_str(&qasm).expect("controlled rotation must parse");
+
+        for basis in 0..4 {
+            for superposed_control in [false, true] {
+                let mut sim = StateVecSoA32::new(2);
+                for qubit in 0..2 {
+                    if basis & (1 << qubit) != 0 {
+                        sim.x(&[QubitId(qubit)]);
+                    }
+                }
+                if superposed_control {
+                    sim.h(&[QubitId(0)]);
+                }
+                let expected: [Complex64; 4] = std::array::from_fn(|index| {
+                    let amplitude = complex64(sim.get_amplitude(index));
+                    if index & 1 == 0 {
+                        amplitude
+                    } else {
+                        -amplitude
+                    }
+                });
+
+                for operation in &program.operations {
+                    apply_expanded_operation(&mut sim, operation);
+                }
+                for (index, expected) in expected.iter().enumerate() {
+                    let actual = complex64(sim.get_amplitude(index));
+                    assert!(
+                        (actual - expected).norm() < TOLERANCE,
+                        "{spelling}({theta}), input {basis}, superposed control={superposed_control}, \
+                         amplitude {index}: actual={actual}, expected={expected}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn qelib1_crz_wrap_phase_exact() {
+    assert_controlled_rotation_wrap_phase_exact("crz");
+}
+
+#[test]
+fn qelib1_crx_wrap_phase_exact() {
+    assert_controlled_rotation_wrap_phase_exact("crx");
+}
+
+#[test]
+fn qelib1_cry_wrap_phase_exact() {
+    assert_controlled_rotation_wrap_phase_exact("cry");
 }
 
 #[test]

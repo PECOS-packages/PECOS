@@ -361,12 +361,16 @@ jobs:
       run: uv pip install --system maturin
 
     - name: Build pecos-rslib wheel
+      env:
+        RUSTUP_TOOLCHAIN: stable
       run: |
         mkdir -p dist/pecos-rslib
         maturin build --locked --manifest-path python/pecos-rslib/Cargo.toml --out dist/pecos-rslib
 
     - name: Build pecos-rslib-llvm wheel
       if: matrix.build-llvm
+      env:
+        RUSTUP_TOOLCHAIN: stable
       run: |
         mkdir -p dist/pecos-rslib-llvm
         maturin build --locked --manifest-path python/pecos-rslib-llvm/Cargo.toml --out dist/pecos-rslib-llvm
@@ -530,11 +534,11 @@ jobs:
         if [ "${{ matrix.include-pecos }}" = "true" ]; then
           python scripts/ci/check_module_versions.py pecos pecos_rslib pecos_rslib_llvm
         else
-          # On macOS with include-llvm: true, validate the installed LLVM wheel package
-          # via metadata; importing the extension is currently not runtime-stable there.
+          # Exercise the LLVM extension itself: package metadata cannot detect
+          # loading the wrong LLVM library or a broken runtime search path.
           if [ "$(uname)" = "Darwin" ] && [ "${{ matrix.include-llvm }}" = "true" ]; then
-            python scripts/ci/check_module_versions.py pecos_rslib
-            python -c 'from importlib.metadata import version; print({"pecos_rslib_llvm": version("pecos-rslib-llvm")})'
+            python scripts/ci/check_module_versions.py pecos_rslib pecos_rslib_llvm
+            python -c 'from pecos_rslib_llvm import ir, binding; module = ir.Module("ci_smoke"); parsed = binding.parse_assembly(str(module)); assert parsed.as_bitcode()[:2] == b"BC"'
           else
             python scripts/ci/check_module_versions.py pecos_rslib
           fi

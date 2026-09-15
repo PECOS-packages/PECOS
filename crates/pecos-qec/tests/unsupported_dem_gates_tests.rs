@@ -1620,6 +1620,45 @@ fn gate_rate_mem_builder_rejects_clifford_action_keys_like_dem() {
     );
 }
 
+/// Records a behaviour change: sharing `DemBuilder`'s validator means `MemBuilder`
+/// inherits its strictness, including the case where both the Clifford action and
+/// its scheduled gate carry explicit rates.
+///
+/// This rejection is deliberate on the DEM side -- see `a3900b038`, "Reject a
+/// gate-rate key naming another scheduled gate's Clifford action even when it
+/// also matches" -- but MEM previously accepted this configuration and resolved
+/// each rate by its scheduled gate type. The strictness is arguably too broad
+/// when no ambiguity remains, which is tracked in #773. If #773 narrows the rule,
+/// this test changes with it: it pins current behaviour, not a desired contract.
+#[test]
+fn gate_rate_mem_builder_inherits_dem_strictness_for_mixed_scheduled_gates() {
+    let mut circuit = DagCircuit::new();
+    circuit.pz(&[0, 1]);
+    circuit.h(&[0]);
+    circuit.add_gate_auto_wire(Gate::rzz(Angle64::QUARTER_TURN, &[(0, 1)]));
+    circuit.szz(&[(0, 1)]);
+    circuit.h(&[0]);
+    circuit.mz(&[0]);
+    circuit.mz(&[1]);
+    let map = DagFaultAnalyzer::new(&circuit).build_influence_map();
+
+    // Both gates are scheduled and both carry an explicit rate, so nothing is
+    // ambiguous -- yet the shared validator still rejects.
+    let noise = NoiseConfig::new(0.0, 0.0, 0.0, 0.0)
+        .set_p2_gate_rate(GateType::RZZ, 0.01)
+        .set_p2_gate_rate(GateType::SZZ, 0.02);
+
+    let error = MemBuilder::new(&map)
+        .with_noise_config(noise)
+        .build()
+        .expect_err("MemBuilder inherits DemBuilder's mixed-gate rejection");
+    assert!(
+        matches!(&error, DemBuilderError::ConfigurationError(message)
+            if message.contains("also names the Clifford action")),
+        "unexpected error: {error:?}"
+    );
+}
+
 #[test]
 fn gate_rate_mem_builder_allows_zero_tables() {
     let circuit = replacement_circuit(Gate::rzz(Angle64::QUARTER_TURN, &[(0, 1)]));

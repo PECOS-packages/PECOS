@@ -88,18 +88,6 @@ jobs:
           esac
           printf 'run=%s\n' "$run" >> "$GITHUB_OUTPUT"
 
-      - name: Free Disk Space (Ubuntu)
-        if: steps.detect.outputs.run == 'true'
-        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
-        with:
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: false
-          docker-images: true
-          tool-cache: false
-          swap-storage: true
-
       - name: Set up Python
         if: steps.detect.outputs.run == 'true'
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
@@ -194,18 +182,6 @@ jobs:
               ;;
           esac
           printf 'run=%s\n' "$run" >> "$GITHUB_OUTPUT"
-
-      - name: Free Disk Space (Ubuntu)
-        if: steps.detect.outputs.run == 'true'
-        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
-        with:
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: false
-          docker-images: true
-          tool-cache: false
-          swap-storage: true
 
       - name: Set up Python
         if: steps.detect.outputs.run == 'true'

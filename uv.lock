@@ -2363,6 +2363,11 @@ name = "pecos-rslib"
 version = "0.11.0.dev0"
 source = { editable = "python/pecos-rslib" }
 
+[package.optional-dependencies]
+hugr = [
+    { name = "selene-hugr-qis-compiler" },
+]
+
 [package.dev-dependencies]
 dev = [
     { name = "patchelf", marker = "sys_platform != 'win32' or (extra == 'extra-13-quantum-pecos-cuda12' and extra == 'extra-13-quantum-pecos-cuda13') or (extra == 'extra-15-pecos-workspace-cuda12' and extra == 'extra-15-pecos-workspace-cuda13') or (extra == 'group-15-pecos-workspace-cuda12' and extra == 'group-15-pecos-workspace-cuda13')" },
@@ -2376,6 +2381,8 @@ test = [
 ]
 
 [package.metadata]
+requires-dist = [{ name = "selene-hugr-qis-compiler", marker = "extra == 'hugr'", specifier = "~=0.4.2" }]
+provides-extras = ["hugr"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "patchelf", marker = "sys_platform != 'win32'" }]
@@ -3385,6 +3392,7 @@ dependencies = [
     { name = "pecos-rslib" },
     { name = "pecos-rslib-llvm" },
     { name = "phir" },
+    { name = "selene-hugr-qis-compiler" },
     { name = "selene-sim" },
     { name = "tket" },
 ]
@@ -3431,6 +3439,7 @@ requires-dist = [
     { name = "pytket-cutensornet", marker = "python_full_version >= '3.11' and extra == 'cuda13'", specifier = ">=0.12.0" },
     { name = "quantum-pecos", extras = ["stim"], marker = "extra == 'all'", editable = "python/quantum-pecos" },
     { name = "quantum-pecos", extras = ["visualization"], marker = "extra == 'all'", editable = "python/quantum-pecos" },
+    { name = "selene-hugr-qis-compiler", specifier = "~=0.4.2" },
     { name = "selene-sim", specifier = "~=0.3.0" },
     { name = "stim", marker = "extra == 'stim'", specifier = ">=1.15.0" },
     { name = "tket", specifier = "~=0.15.0" },

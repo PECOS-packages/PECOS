@@ -5,13 +5,16 @@ similar to the PECOS compiler behavior we observed.
 """
 
 import json
+import re
 import tempfile
 from pathlib import Path
 
 import pytest
 from guppylang import GuppyModule, guppy
+from guppylang.std.builtins import owned
 from hugr.package import Package
-from pecos_rslib_llvm import compile_hugr_to_qis as rust_compile
+from pecos.compilation_pipeline import compile_hugr_to_qis as pecos_compile
+from pecos_rslib.hugr_lowering import PECOS_HELPER_ABIS
 from selene_hugr_qis_compiler import compile_to_llvm_ir as selene_compile
 
 # Import quantum operations - try stdlib first, fall back to std
@@ -41,30 +44,18 @@ def count_modules_in_hugr(pkg: Package) -> tuple[int, list[str]]:
     return len(pkg.modules), function_names
 
 
-def extract_function_calls_from_llvm(llvm_ir: str) -> set[str]:
-    """Extract function calls from LLVM IR.
-
-    This helps us identify which quantum functions are actually being called
-    in the compiled LLVM IR, which indicates which modules were processed.
-    """
-    import re
-
-    # Look for various patterns that indicate function calls
-    patterns = [
-        r"call.*@(\w+)\(",  # Direct function calls
-        r"define.*@(\w+)\(",  # Function definitions
-        r"___(\w+)(?:\.|%|\()",  # QIS function names
-    ]
-
-    function_calls = set()
-    for raw_line in llvm_ir.split("\n"):
-        line = raw_line.strip()
-        if "call" in line or "define" in line or "___" in line:
-            for pattern in patterns:
-                matches = re.findall(pattern, line)
-                function_calls.update(matches)
-
-    return function_calls
+def llvm_function_names(llvm_ir: str, kind: str) -> set[str]:
+    """Read function names from Selene's canonical LLVM assembly output."""
+    pattern = rf'^{kind}\b[^@\n]*@("(?:[^"\\]|\\.)*"|[a-zA-Z0-9_.$-]+)\s*\('
+    names = set(re.findall(pattern, llvm_ir, re.MULTILINE))
+    return {
+        (
+            re.sub(r"\\([0-9a-fA-F]{2})", lambda match: chr(int(match[1], 16)), name[1:-1])
+            if name.startswith('"')
+            else name
+        )
+        for name in names
+    }
 
 
 def test_single_module_baseline() -> None:
@@ -130,84 +121,45 @@ def test_multiple_functions_compilation() -> None:
     ), "Single HUGR should contain single_qubit_test"
 
 
-def test_compiler_comparison_simple() -> None:
-    """Test how Selene vs PECOS handle HUGR compilation."""
+def test_normalizer_keeps_selene_functions() -> None:
+    """Preserve all definitions and declarations except renamed helper symbols."""
 
-    # Create a simple function to test both compilers
+    @guppy.declare
+    def pecos_qis_runtime_barrier_qubit_hugr(q: qubit @ owned) -> qubit: ...
+
     @guppy
     def test_function() -> tuple[bool, bool]:
-        """Test function that creates a Bell state."""
         q0 = qubit()
         q1 = qubit()
+        q0 = pecos_qis_runtime_barrier_qubit_hugr(q0)
         h(q0)
         cx(q0, q1)
         m0 = measure(q0).read()
         m1 = measure(q1).read()
         return m0, m1
 
-    # Compile to HUGR
-    hugr = test_function.compile()
-    hugr_binary = hugr.to_bytes()  # Binary format for Selene
-    hugr_str = hugr.to_str() if hasattr(hugr, "to_str") else str(hugr)
+    data = test_function.compile().to_bytes()
+    raw = selene_compile(data)
+    normalized = pecos_compile(data)
+    raw_definitions = llvm_function_names(raw, "define")
+    assert raw_definitions
+    assert llvm_function_names(normalized, "define") == raw_definitions
 
-    # Analyze HUGR structure
-    module_count, function_names = count_modules_in_hugr(hugr)
-    print(f"HUGR Analysis - Modules: {module_count}, Functions: {function_names}")
-
-    # Compile with both compilers
-    try:
-        selene_llvm = selene_compile(hugr_binary)
-        print(f"Selene compilation succeeded, produced {len(selene_llvm)} chars")
-    except Exception as e:
-        pytest.fail(f"Selene compilation failed: {e}")
-
-    try:
-        rust_llvm = rust_compile(hugr_binary, None)
-        print(f"Rust compilation succeeded, produced {len(rust_llvm)} chars")
-    except Exception as e:
-        pytest.fail(f"Rust compilation failed: {e}")
-
-    # Extract function calls from both LLVM outputs
-    selene_functions = extract_function_calls_from_llvm(selene_llvm)
-    rust_functions = extract_function_calls_from_llvm(rust_llvm)
-
-    print(f"Selene LLVM functions: {sorted(selene_functions)}")
-    print(f"Rust LLVM functions: {sorted(rust_functions)}")
-
-    # Check if both compilers found the same functions
-    # This will help us understand if they process modules differently
-    common_functions = selene_functions & rust_functions
-    selene_only = selene_functions - rust_functions
-    rust_only = rust_functions - selene_functions
-
-    print(f"Common functions: {sorted(common_functions)}")
-    print(f"Selene-only functions: {sorted(selene_only)}")
-    print(f"Rust-only functions: {sorted(rust_only)}")
-
-    # Save debug output
-    debug_dir = Path(tempfile.gettempdir()) / "compiler_comparison_debug"
-    debug_dir.mkdir(exist_ok=True)
-
-    (debug_dir / "hugr.txt").write_text(hugr_str)
-
-    if hugr_str.startswith("HUGRi"):
-        json_start = hugr_str.find('{"modules"')
-        if json_start != -1:
-            (debug_dir / "hugr.json").write_text(hugr_str[json_start:])
-
-    (debug_dir / "selene.ll").write_text(selene_llvm)
-    (debug_dir / "rust.ll").write_text(rust_llvm)
-
-    print(f"Debug files saved to: {debug_dir}")
-
-    # For now, just ensure both compilers produced valid output
-    assert len(selene_llvm) > 0, "Selene should produce LLVM output"
-    assert len(rust_llvm) > 0, "Rust should produce LLVM output"
-
-    # Report the differences for analysis
-    if selene_only or rust_only:
-        print("WARNING: Compilers produced different function sets!")
-        print("This suggests different compilation behavior.")
+    raw_declarations = llvm_function_names(raw, "declare")
+    declarations = llvm_function_names(normalized, "declare")
+    expected = set()
+    for name in raw_declarations:
+        if name in declarations:
+            expected.add(name)
+            continue
+        components = name.split(".")
+        if components[-1].isascii() and components[-1].isdigit():
+            components.pop()
+        assert components[0] == "__hugr__"
+        assert components[-1] in PECOS_HELPER_ABIS
+        expected.add(components[-1])
+    assert declarations == expected
+    assert "pecos_qis_runtime_barrier_qubit_hugr" in declarations
 
 
 def test_hugr_structure_analysis() -> None:
@@ -266,25 +218,3 @@ def test_hugr_structure_analysis() -> None:
     except json.JSONDecodeError as e:
         print(f"Failed to parse HUGR JSON: {e}")
         print(f"First 1000 chars: {hugr_json[:1000]}")
-
-
-if __name__ == "__main__":
-    # Manual testing
-    if True:
-        print("Running manual multi-module tests...")
-
-        # Test 1: Single module baseline
-        print("\n=== Test 1: Single Module ===")
-        test_single_module_baseline()
-
-        # Test 2: Multi-function compilation
-        print("\n=== Test 2: Multi-Function Compilation ===")
-        test_multiple_functions_compilation()
-
-        # Test 3: Structure analysis
-        print("\n=== Test 3: Structure Analysis ===")
-        test_hugr_structure_analysis()
-
-        # Test 4: Compiler comparison
-        print("\n=== Test 4: Compiler Comparison ===")
-        test_compiler_comparison_simple()

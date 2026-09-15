@@ -30,6 +30,8 @@ from typing import (
     overload,
 )
 
+from pecos_rslib import hugr_lowering as hugr_lowering
+
 # =============================================================================
 # Type Variables
 # =============================================================================
@@ -2168,13 +2170,6 @@ def qis_helios_interface(**kwargs: object) -> QisInterfaceBuilder:
 
 def qis_selene_helios_interface(**kwargs: object) -> QisInterfaceBuilder:
     """Create a QIS Selene-Helios interface builder."""
-    ...
-
-# =============================================================================
-# HUGR Compilation
-# =============================================================================
-def get_compilation_backends() -> dict[str, object]:
-    """Get information about available compilation backends."""
     ...
 
 # =============================================================================

@@ -952,6 +952,18 @@ def build_surface_code_circuit(
         twirl.validate_runtime_supported()
     twirl_site_schedule = None if twirl is None else twirl.site_schedule
 
+    if (
+        resolved_plan.interaction_basis == "cx"
+        and effective_ancilla_budget == total_ancilla
+        and twirl is None
+        and clifford_frame_policy is None
+    ):
+        from pecos.qec.surface.gadgets import default_allocation, memory_gadgets
+
+        allocation = default_allocation(patch)
+        gadgets = memory_gadgets(patch, num_rounds, basis, allocation=allocation, round_order=cnot_round_order)
+        return [step for gadget in gadgets for step in gadget.steps], allocation
+
     # Qubit allocation layout. Under ancilla reuse, stabilizers map onto a
     # shared ancilla pool and different stabilizers can intentionally share the
     # same physical qubit id at different times.
@@ -1954,10 +1966,10 @@ class StimRenderer(CircuitRenderer):
 
 
 class GuppyRenderer(CircuitRenderer):
-    """Render circuit operations to Guppy source code.
+    """Generate a reusable Guppy module for the patch, independent of the input op list.
 
-    This renderer produces the same modular Guppy code structure as
-    pecos.guppy_gen.surface.generate_guppy_source(), ensuring consistency.
+    Default CX functions are rendered from physical gadgets. The module provides
+    both bases and factories accepting the desired number of rounds.
     """
 
     def render(
@@ -1980,9 +1992,13 @@ class GuppyRenderer(CircuitRenderer):
         - Logical operator functions
         - Memory experiment factories (make_memory_z, make_memory_x)
         """
+        from pecos.guppy_gen.gadget_render import render_surface_gadget_module
         from pecos.guppy_gen.surface import generate_guppy_source
 
-        # Use the canonical Guppy generator to ensure identical output
+        resolved_plan = resolve_surface_check_plan(interaction_basis=interaction_basis)
+        if resolved_plan.interaction_basis == "cx":
+            return render_surface_gadget_module(patch)
+        # Other interaction configurations migrate to gadgets in a later slice.
         return generate_guppy_source(patch, interaction_basis=interaction_basis)
 
 
@@ -2079,6 +2095,8 @@ class TickCircuitRenderer(CircuitRenderer):
 
     When qubit conflicts occur within a tick (same qubit used twice),
     a new tick is automatically created to maintain valid parallel structure.
+    Unlike logical_circuit._CircuitGenerator._emit_steps, this silent same-type
+    split is retained until the non-rotated schedule is fixed.
 
     Detector annotations (similar to Stim's DETECTOR and OBSERVABLE_INCLUDE)
     are stored as circuit metadata and preserved when converting to DagCircuit.
@@ -2237,7 +2255,7 @@ class TickCircuitRenderer(CircuitRenderer):
                 metadata["touch_label"] = get_stabilizer_touch_label(
                     stabilizer_by_label[stab_label],
                     patch,
-                    data_qubit,
+                    allocation.data_qubits.index(data_qubit),
                 )
             if current_cx_round > 0:
                 metadata["cx_round_0based"] = current_cx_round - 1
@@ -2522,8 +2540,8 @@ class TickCircuitRenderer(CircuitRenderer):
                 elif op.label.startswith("final"):
                     if "final[0]" in op.label:
                         final_meas_start = meas_count
-                    # Track all final measurement refs by data qubit
-                    final_meas_refs_by_qubit[q] = meas_refs
+                    # Geometry and typed annotation supports use register indices.
+                    final_meas_refs_by_qubit[allocation.data_qubits.index(q)] = meas_refs
                 meas_count += 1
 
             elif op.op_type == OpType.TICK:
@@ -3134,6 +3152,9 @@ def tick_circuit_to_stim(
             ``"SZ"``, and ``"SZdg"``. The surface SZZ reference path uses
             this to mirror the staged PECOS device model where Z/SZ/SZdg frame
             updates are virtual and p1-free.
+            Keys name the gate as scheduled; runtime-traced circuits schedule
+            rotations such as ``RZZ`` and ``RXY1Q``, so key by those or lower
+            the circuit first.
         p2: Two-qubit error rate
         p_meas: Measurement error rate
         p_prep: Initialization error rate
@@ -3672,6 +3693,9 @@ def generate_dem_from_tick_circuit_via_stim(
             depolarizing rates. Gate names are PECOS ``GateType`` names. The
             surface SZZ reference path uses this to mirror the staged PECOS
             device model where Z/SZ/SZdg frame updates are virtual and p1-free.
+            Keys name the gate as scheduled; runtime-traced circuits schedule
+            rotations such as ``RZZ`` and ``RXY1Q``, so key by those or lower
+            the circuit first.
         p2: Two-qubit depolarizing error rate
         p_meas: Measurement error rate
         p_prep: Initialization (prep) error rate

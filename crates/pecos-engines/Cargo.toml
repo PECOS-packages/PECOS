@@ -31,5 +31,8 @@ pecos-results.workspace = true
 pecos-simulators.workspace = true
 pecos-random.workspace = true
 
+[dev-dependencies]
+tempfile.workspace = true
+
 [lints]
 workspace = true

@@ -215,6 +215,8 @@ impl NamedGate {
 /// Invalid phase operands or an unsupported direct hardware lowering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PhaseGateError {
+    /// A gate list has no carrier for a nontrivial global phase.
+    UnrepresentableGlobalPhase { phase: Angle64 },
     /// Direct hardware lowering supports at most two phase operands.
     TooManyQubits { num_qubits: usize },
     /// Operands must be distinct.
@@ -226,6 +228,11 @@ pub enum PhaseGateError {
 impl std::fmt::Display for PhaseGateError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::UnrepresentableGlobalPhase { phase } => write!(
+                f,
+                "Cannot decompose global phase {:?}: a Gate list has no global-phase carrier; retain the UnitaryRep to preserve the operator",
+                crate::GlobalPhase::from(*phase)
+            ),
             Self::TooManyQubits { num_qubits } => {
                 write!(
                     f,
@@ -2260,27 +2267,37 @@ impl UnitaryRep {
     /// ```
     ///
     /// # Panics
-    /// Panics on invalid phase operands or phases exceeding the two-operand hardware
-    /// lowering limit. Use [`Self::try_decompose`] for caller data.
+    /// Panics on invalid phase operands, phases exceeding the two-operand hardware
+    /// lowering limit, or a global phase that a `Gate` list cannot represent.
+    /// Use [`Self::try_decompose`] for caller data.
     #[must_use]
     pub fn decompose(&self) -> Vec<crate::Gate> {
         self.try_decompose()
             .unwrap_or_else(|error| panic!("{error}"))
     }
 
-    /// Decomposes into hardware gates, checking phase operands.
+    /// Decomposes into hardware gates, checking phase operands and representability.
     ///
-    /// Bare global phases are omitted, as in [`Self::decompose`].
+    /// Rejects nontrivial global phases carried by Paulis or zero-operand phases
+    /// because a `Gate` list has no global-phase carrier: omitting them would
+    /// change the operator. Identity phases are accepted.
+    /// Once such a carrier exists, these phases should be emitted instead.
     ///
     /// # Errors
     /// Rejects phase descriptors whose operand lists have invalid arity or duplicates,
-    /// or exceed the two-operand direct hardware lowering limit, including those
-    /// nested inside composed, tensor, adjoint, or phased expressions.
+    /// or exceed the two-operand direct hardware lowering limit. Also rejects
+    /// unrepresentable global phases, including errors nested inside composed,
+    /// tensor, adjoint, or phased expressions.
     pub fn try_decompose(&self) -> Result<Vec<crate::Gate>, PhaseGateError> {
         use crate::{Gate, Pauli};
 
         Ok(match self {
             Self::Pauli(ps) => {
+                if ps.phase() != QuarterPhase::PlusOne {
+                    return Err(PhaseGateError::UnrepresentableGlobalPhase {
+                        phase: crate::GlobalPhase::from(ps.phase()).to_angle(),
+                    });
+                }
                 // Convert PauliString to individual gates
                 let mut gates = Vec::new();
                 for (pauli, qubit) in ps.iter_pairs() {
@@ -2292,8 +2309,6 @@ impl UnitaryRep {
                     };
                     gates.push(gate);
                 }
-                // Handle global phase if not +1
-                // (Phase is tracked separately in PauliString but not representable in Gate)
                 gates
             }
 
@@ -2345,7 +2360,7 @@ impl UnitaryRep {
                 validate_phase_operands(*num_qubits, qubits)?;
                 let qubit_ids: crate::GateQubits =
                     qubits.iter().map(|&q| crate::QubitId(q)).collect();
-                crate::controlled_rotations::lower_phase(gamma.to_radians_signed(), &qubit_ids)?
+                crate::controlled_rotations::lower_phase_angle(*gamma, &qubit_ids)?
             }
 
             Self::Gate(Unitary::RXXRYYRZZ { alpha, beta, gamma }, qubits) => {
@@ -4364,7 +4379,12 @@ mod tests {
                 UnitaryRep::Gate(Unitary::Phase { gamma, num_qubits }, qubits)
             );
             assert_eq!(rep.dg().dg(), rep);
-            if num_qubits <= 2 {
+            if num_qubits == 0 {
+                assert_eq!(
+                    rep.try_decompose(),
+                    Err(PhaseGateError::UnrepresentableGlobalPhase { phase: gamma })
+                );
+            } else if num_qubits <= 2 {
                 assert_eq!(rep.try_decompose().unwrap(), rep.decompose());
             } else {
                 assert_eq!(
@@ -4413,13 +4433,20 @@ mod tests {
                     UnitaryRep::Compose(vec![H(0), invalid.clone()]),
                     UnitaryRep::Tensor(vec![H(0), invalid.clone()]),
                     UnitaryRep::Adjoint(Box::new(invalid.clone())),
-                    UnitaryRep::Compose(vec![
-                        UnitaryRep::phase_gate(gamma, smallvec::smallvec![]),
-                        invalid.clone(),
-                    ]),
                 ] {
                     assert_eq!(nested.try_decompose(), Err(error));
                 }
+                // Decomposition reports the first error in application order.
+                let phased = UnitaryRep::Compose(vec![
+                    UnitaryRep::phase_gate(gamma, smallvec::smallvec![]),
+                    invalid,
+                ]);
+                let first_error = if gamma == Angle64::ZERO {
+                    error
+                } else {
+                    PhaseGateError::UnrepresentableGlobalPhase { phase: gamma }
+                };
+                assert_eq!(phased.try_decompose(), Err(first_error));
             }
         }
     }
@@ -5990,6 +6017,141 @@ mod tests {
     }
 
     // --- decompose tests ---
+
+    #[test]
+    fn try_decompose_rejects_phased_paulis() {
+        for phase in [
+            QuarterPhase::MinusOne,
+            QuarterPhase::PlusI,
+            QuarterPhase::MinusI,
+        ] {
+            for paulis in [
+                vec![Pauli::Z],
+                vec![Pauli::I],
+                vec![Pauli::X, Pauli::Y, Pauli::Z],
+            ] {
+                let rep = UnitaryRep::Pauli(PauliString::from_paulis_with_phase(phase, &paulis));
+                let error = PhaseGateError::UnrepresentableGlobalPhase {
+                    phase: GlobalPhase::from(phase).to_angle(),
+                };
+                assert_eq!(rep.try_decompose(), Err(error));
+                let message = error.to_string();
+                assert!(message.contains(&format!("{phase:?}")));
+                assert!(message.contains("Gate list has no global-phase carrier"));
+                assert!(message.contains("retain the UnitaryRep"));
+            }
+        }
+    }
+
+    #[test]
+    fn try_decompose_plus_one_paulis_preserve_gate_lists() {
+        use crate::Gate;
+
+        for (paulis, expected) in [
+            (vec![Pauli::Z], vec![Gate::z(&[0])]),
+            (vec![Pauli::I], vec![]),
+            (
+                vec![Pauli::X, Pauli::I, Pauli::Y, Pauli::Z],
+                vec![Gate::x(&[0]), Gate::y(&[2]), Gate::z(&[3])],
+            ),
+        ] {
+            let rep = UnitaryRep::Pauli(PauliString::from_paulis_with_phase(
+                QuarterPhase::PlusOne,
+                &paulis,
+            ));
+            assert_eq!(rep.try_decompose(), Ok(expected.clone()));
+            assert_eq!(rep.decompose(), expected);
+        }
+        assert_eq!(
+            (X(0) & Y(1) & Z(2)).try_decompose(),
+            Ok(vec![Gate::x(&[0]), Gate::y(&[1]), Gate::z(&[2])])
+        );
+        assert_eq!((X(0) * X(0)).try_decompose(), Ok(vec![]));
+        for rep in [
+            UnitaryRep::Compose(vec![Z(1), X(0)]),
+            UnitaryRep::Tensor(vec![Z(1), X(0)]),
+        ] {
+            assert_eq!(rep.try_decompose(), Ok(vec![Gate::z(&[1]), Gate::x(&[0])]));
+        }
+        assert_eq!(
+            UnitaryRep::Adjoint(Box::new(Z(0))).try_decompose(),
+            Ok(vec![Gate::z(&[0])])
+        );
+    }
+
+    #[test]
+    fn try_decompose_scalar_phases_preserve_exact_angles() {
+        for gamma in [
+            Angle64::QUARTER_TURN,
+            Angle64::HALF_TURN,
+            Angle64::from_radians(0.37),
+            Angle64::new(1),
+            Angle64::new(u64::MAX),
+        ] {
+            let rep = UnitaryRep::phase_gate(gamma, smallvec::smallvec![]);
+            assert_eq!(
+                rep.try_decompose(),
+                Err(PhaseGateError::UnrepresentableGlobalPhase { phase: gamma })
+            );
+        }
+        let identity = UnitaryRep::phase_gate(Angle64::ZERO, smallvec::smallvec![]);
+        assert_eq!(identity.try_decompose(), Ok(vec![]));
+        assert_eq!(identity.decompose(), vec![]);
+        // Relative phases have a carrier: U, or the controlled-phase lowering.
+        for gamma in [
+            Angle64::ZERO,
+            Angle64::HALF_TURN,
+            Angle64::QUARTER_TURN,
+            Angle64::new(u64::MAX),
+        ] {
+            assert_eq!(
+                UnitaryRep::phase_gate(gamma, smallvec::smallvec![7]).try_decompose(),
+                Ok(vec![crate::Gate::u(
+                    Angle64::ZERO,
+                    Angle64::ZERO,
+                    gamma,
+                    &[7]
+                )])
+            );
+        }
+        let gamma = Angle64::QUARTER_TURN;
+        let half = gamma / 2;
+        assert_eq!(
+            UnitaryRep::phase_gate(gamma, smallvec::smallvec![7, 2]).try_decompose(),
+            Ok(vec![
+                crate::Gate::rzz(Angle64::ZERO - half, &[(7, 2)]),
+                crate::Gate::u(Angle64::ZERO, Angle64::ZERO, half, &[7]),
+                crate::Gate::rz(half, &[2])
+            ])
+        );
+    }
+
+    #[test]
+    fn unrepresentable_phases_propagate_and_decompose_panics() {
+        for invalid in [
+            -Z(0),
+            UnitaryRep::Pauli(PauliString::from_paulis_with_phase(
+                QuarterPhase::MinusOne,
+                &[Pauli::I],
+            )),
+            Z(0).with_phase(Angle64::QUARTER_TURN),
+            Z(0).with_phase(Angle64::ZERO - Angle64::QUARTER_TURN),
+            UnitaryRep::phase_gate(Angle64::HALF_TURN, smallvec::smallvec![]),
+            H(0).with_phase(Angle64::QUARTER_TURN),
+        ] {
+            let error = invalid.try_decompose().unwrap_err();
+            for rep in [
+                invalid.clone(),
+                UnitaryRep::Compose(vec![H(1), invalid.clone()]),
+                UnitaryRep::Tensor(vec![H(1), invalid.clone()]),
+                UnitaryRep::Adjoint(Box::new(invalid)),
+            ] {
+                assert_eq!(rep.try_decompose(), Err(error));
+                let panic = std::panic::catch_unwind(|| rep.decompose()).unwrap_err();
+                assert_eq!(panic.downcast_ref::<String>(), Some(&error.to_string()));
+            }
+        }
+    }
 
     #[test]
     fn test_decompose_single_pauli() {

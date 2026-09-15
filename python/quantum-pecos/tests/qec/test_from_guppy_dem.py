@@ -2668,3 +2668,27 @@ def test_raw_surface_trace_sampler_matches_lowered_dem(p2_weights: dict[str, flo
     )
     lowered_dem = DemSampler.from_circuit(raw_tc, p2_weights=p2_weights, **noise).to_detector_error_model().to_string()
     assert raw_dem == lowered_dem
+
+
+def test_raw_surface_trace_gate_rate_keys_name_scheduled_gates() -> None:
+    """Per-gate rates reject action names until the traced rotations are lowered."""
+    from pecos_rslib.qec import DemSampler
+
+    raw_tc = _build_surface_tick_circuit_for_native_model(
+        SurfacePatch.create(distance=3),
+        num_rounds=2,
+        basis="Z",
+        ancilla_budget=2,
+        circuit_source="traced_qis",
+    )
+    noise = {"p1": 0.005, "p2": 0.005, "p_meas": 0.005, "p_prep": 0.005}
+    with pytest.raises(ValueError, match=r"p2_gate_rates key SZZ.*RZZ in p2_gate_rates.*lower_clifford_rotations"):
+        DemSampler.from_circuit(raw_tc, p2_gate_rates={"SZZ": 0.05}, **noise)
+    with pytest.raises(ValueError, match=r"p2_gate_rates key SZZ.*RZZ in p2_gate_rates.*lower_clifford_rotations"):
+        DetectorErrorModel.from_circuit(raw_tc, p2_gate_rates={"SZZ": 0.05}, **noise)
+    scalar = DemSampler.from_circuit(raw_tc, **noise).to_detector_error_model().to_string()
+    keyed = DemSampler.from_circuit(raw_tc, p2_gate_rates={"RZZ": 0.05}, **noise).to_detector_error_model().to_string()
+    assert "error(" in keyed
+    assert scalar != keyed
+    raw_tc.lower_clifford_rotations()
+    DemSampler.from_circuit(raw_tc, p2_gate_rates={"SZZ": 0.05}, **noise)

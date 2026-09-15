@@ -467,6 +467,10 @@ impl SamplingEngine {
             return Err(super::DemBuilderError::UnsupportedGate(error.clone()));
         }
 
+        noise
+            .validate_gate_rate_keys(&influence_map.locations)
+            .map_err(|error| super::DemBuilderError::ConfigurationError(error.to_string()))?;
+
         if let Some(weights) = &noise.p2_weights {
             weights
                 .validate_replacement_locations(
@@ -2215,6 +2219,20 @@ impl<'a> SamplingEngineBuilder<'a> {
         if let Some(error) = self.influence_map.unsupported_gate() {
             return Err(super::DemBuilderError::UnsupportedGate(error.clone()));
         }
+        // Validate exactly what this path consumes: per-gate noise or scalar tables.
+        self.per_gate
+            .as_ref()
+            .map_or_else(
+                || {
+                    super::types::validate_scalar_gate_rate_tables(
+                        &self.p1_gate_rates,
+                        &self.p2_gate_rates,
+                        &self.influence_map.locations,
+                    )
+                },
+                |noise| noise.validate_gate_rate_keys(&self.influence_map.locations),
+            )
+            .map_err(|error| super::DemBuilderError::ConfigurationError(error.to_string()))?;
         if let Some(weights) = &self.p2_weights {
             weights
                 .validate_replacement_locations(
@@ -2339,7 +2357,7 @@ impl<'a> SamplingEngineBuilder<'a> {
                     // Single-qubit gate errors: only "after" locations, depolarizing
                     if !loc.before =>
                 {
-                    let rates = self.rates_1q(loc.gate_type, &loc.qubits);
+                    let rates = self.rates_1q(loc);
                     if rates.iter().any(|r| *r != 0.0) {
                         self.process_depolarizing_fault_rates(
                             loc_idx,
@@ -2551,33 +2569,24 @@ impl<'a> SamplingEngineBuilder<'a> {
     /// Resolve per-Pauli rates for a 1Q gate on a specific qubit. Uses
     /// `per_gate`'s per-qubit map if set, falling back to per-gate-type,
     /// then uniform `p1 / 3`.
-    fn rates_1q(&self, gate: GateType, qubits: &[pecos_core::QubitId]) -> [f64; 3] {
+    fn rates_1q(
+        &self,
+        loc: &crate::fault_tolerance::propagator::dag::DagSpacetimeLocation,
+    ) -> [f64; 3] {
         if let Some(pg) = &self.per_gate {
-            if let Some(q) = qubits.first() {
-                [
-                    pg.rate_1q_on(gate, *q, 0),
-                    pg.rate_1q_on(gate, *q, 1),
-                    pg.rate_1q_on(gate, *q, 2),
-                ]
-            } else {
-                [
-                    pg.rate_1q(gate, 0),
-                    pg.rate_1q(gate, 1),
-                    pg.rate_1q(gate, 2),
-                ]
-            }
-        } else {
-            let p1_total = self.p1_gate_rates.get(&gate).copied().unwrap_or(self.p1);
-            if let Some(weights) = &self.p1_weights {
-                use pecos_core::pauli::{X, Y, Z};
-                return [
-                    p1_total * weights.weight_for(&X(0)),
-                    p1_total * weights.weight_for(&Y(0)),
-                    p1_total * weights.weight_for(&Z(0)),
-                ];
-            }
-            [p1_total / 3.0; 3]
+            return pg.rates_1q_for_operation(
+                loc.gate_type,
+                loc.noise_gate_type,
+                loc.qubits.first().copied(),
+            );
         }
+        super::types::resolve_1q_rates(
+            loc.gate_type,
+            loc.noise_gate_type,
+            self.p1,
+            &self.p1_gate_rates,
+            self.p1_weights.as_ref(),
+        )
     }
 
     /// Resolve categorical and independent families for an explicit idle location.
@@ -3067,6 +3076,34 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gate_rate_sampling_engine_builder_scalar_tables() {
+        use crate::fault_tolerance::propagator::DagFaultAnalyzer;
+        let mut circuit = pecos_quantum::DagCircuit::new();
+        circuit.pz(&[0, 1]);
+        circuit.add_gate_auto_wire(pecos_core::Gate::rzz(
+            pecos_core::Angle64::QUARTER_TURN,
+            &[(0, 1)],
+        ));
+        circuit.mz(&[0, 1]);
+        let map = DagFaultAnalyzer::new(&circuit).build_influence_map();
+        let mut noise = NoiseConfig::uniform(0.001);
+        noise.p2_gate_rates.insert(GateType::SZZ, 0.05);
+        let error = SamplingEngineBuilder::new(&map)
+            .with_noise_config(noise.clone())
+            .build()
+            .unwrap_err();
+        assert!(
+            matches!(error, super::super::DemBuilderError::ConfigurationError(message)
+            if message.contains("p2_gate_rates key SZZ") && message.contains("RZZ"))
+        );
+        SamplingEngineBuilder::new(&map)
+            .with_noise_config(noise)
+            .with_per_gate_noise(PerGateTypeNoise::default())
+            .build()
+            .unwrap();
+    }
 
     #[test]
     fn test_dem_mechanism_ordering() {

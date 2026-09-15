@@ -2221,6 +2221,154 @@ pub(crate) struct MissingOmittedGateTwirl {
     pub clifford: CliffordLowering,
 }
 
+/// A rate key that names the action of a differently scheduled gate, whether
+/// or not it also matches scheduled gates in its qubit scope.
+#[derive(Debug, Clone)]
+pub(crate) struct GateRateKeyMismatch {
+    pub table: &'static str,
+    pub key: GateType,
+    pub node: usize,
+    pub scheduled: GateType,
+    pub remedy_table: &'static str,
+    pub matches_scheduled: bool,
+}
+
+impl fmt::Display for GateRateKeyMismatch {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.matches_scheduled {
+            write!(
+                f,
+                "{} key {:?} matches scheduled {:?} gates but also names the Clifford action of {:?} at node {}. ",
+                self.table, self.key, self.key, self.scheduled, self.node,
+            )?;
+        } else {
+            write!(
+                f,
+                "{} key {:?} matches no scheduled gate; node {} schedules {:?} whose Clifford action is {:?}. ",
+                self.table, self.key, self.node, self.scheduled, self.key,
+            )?;
+        }
+        let remedy = if self.matches_scheduled {
+            "add a key for"
+        } else {
+            "key the rate by"
+        };
+        write!(
+            f,
+            "Per-gate rates apply to the gate as scheduled: {remedy} {:?} in {}, or lower the circuit with lower_clifford_rotations() before building.",
+            self.scheduled, self.remedy_table,
+        )
+    }
+}
+
+impl std::error::Error for GateRateKeyMismatch {}
+
+/// The rate representation shared by the one- and two-qubit tables.
+#[derive(Clone, Copy)]
+enum GateRateTableFamily {
+    Scalar,
+    Pauli,
+    PerQubit,
+}
+
+/// The corresponding rate table for the scheduled gate's arity.
+fn scheduled_gate_rate_table(family: GateRateTableFamily, scheduled: GateType) -> &'static str {
+    match (family, scheduled.is_two_qubit()) {
+        (GateRateTableFamily::Scalar, false) => "p1_gate_rates",
+        (GateRateTableFamily::Scalar, true) => "p2_gate_rates",
+        (GateRateTableFamily::Pauli, false) => "rates_1q",
+        (GateRateTableFamily::Pauli, true) => "rates_2q",
+        (GateRateTableFamily::PerQubit, false) => "rates_1q_per_qubit",
+        (GateRateTableFamily::PerQubit, true) => "rates_2q_per_qubits",
+    }
+}
+
+/// The qubit scope of a gate-rate key.
+enum GateRateQubits {
+    Any,
+    One(QubitId),
+    Pair(QubitId, QubitId),
+}
+
+impl GateRateQubits {
+    fn matches(
+        &self,
+        location: &crate::fault_tolerance::propagator::DagSpacetimeLocation,
+        locations: &[crate::fault_tolerance::propagator::DagSpacetimeLocation],
+    ) -> bool {
+        match self {
+            Self::Any => true,
+            Self::One(qubit) => location.qubits.contains(qubit),
+            Self::Pair(control, target) => {
+                if !location.qubits.contains(control) {
+                    return false;
+                }
+                // Builders pair successive fault locations at a node in gate order.
+                let mut qubits = locations
+                    .iter()
+                    .filter(|other| other.node == location.node && other.before == location.before)
+                    .flat_map(|other| &other.qubits);
+                while let (Some(qc), Some(qt)) = (qubits.next(), qubits.next()) {
+                    if (qc, qt) == (control, target) {
+                        return true;
+                    }
+                }
+                false
+            }
+        }
+    }
+}
+
+/// Validate the scalar per-gate rate tables shared by every builder that owns
+/// them directly instead of through a [`NoiseConfig`].
+pub(crate) fn validate_scalar_gate_rate_tables(
+    p1_gate_rates: &BTreeMap<GateType, f64>,
+    p2_gate_rates: &BTreeMap<GateType, f64>,
+    locations: &[crate::fault_tolerance::propagator::DagSpacetimeLocation],
+) -> Result<(), GateRateKeyMismatch> {
+    for (table, rates) in [
+        ("p1_gate_rates", p1_gate_rates),
+        ("p2_gate_rates", p2_gate_rates),
+    ] {
+        validate_active_gate_rate_keys(
+            table,
+            rates.iter().filter_map(|(&key, &rate)| {
+                (rate != 0.0).then_some((key, GateRateQubits::Any, GateRateTableFamily::Scalar))
+            }),
+            locations,
+        )?;
+    }
+    Ok(())
+}
+
+/// Reject active keys that name the Clifford action of a different scheduled gate.
+fn validate_active_gate_rate_keys(
+    table: &'static str,
+    keys: impl IntoIterator<Item = (GateType, GateRateQubits, GateRateTableFamily)>,
+    locations: &[crate::fault_tolerance::propagator::DagSpacetimeLocation],
+) -> Result<(), GateRateKeyMismatch> {
+    for (key, qubits, family) in keys {
+        if let Some(location) = locations.iter().find(|location| {
+            location.gate_type != key
+                && matches!(location.clifford,
+                    CliffordLowering::Named(gate) | CliffordLowering::PerQubit(gate) if gate == key)
+                && qubits.matches(location, locations)
+        }) {
+            return Err(GateRateKeyMismatch {
+                table,
+                key,
+                node: location.node,
+                scheduled: location.gate_type,
+                remedy_table: scheduled_gate_rate_table(family, location.gate_type),
+                matches_scheduled: locations
+                    .iter()
+                    .any(|other| other.gate_type == key && qubits.matches(other, locations)),
+            });
+        }
+    }
+    Ok(())
+}
+
 /// A single Pauli-projected impact term produced by a replacement branch.
 ///
 /// This is intentionally an intermediate representation rather than a final
@@ -2577,6 +2725,10 @@ pub struct NoiseConfig {
     /// When a single-qubit gate type appears here, this total rate replaces
     /// `p1` while still using `p1_weights` to distribute probability across
     /// Pauli channels.
+    /// Keys name the scheduled gate; traced rotations such as `RZZ` and `RXY1Q`
+    /// require rotation keys or lowering the circuit first. Nonzero keys naming
+    /// the action of a different scheduled gate are rejected, even if another
+    /// scheduled gate matches the key.
     pub p1_gate_rates: BTreeMap<GateType, f64>,
     /// Two-qubit gate error rate.
     pub p2: f64,
@@ -2585,6 +2737,10 @@ pub struct NoiseConfig {
     /// When a two-qubit gate type appears here, this total rate replaces
     /// `p2` while still using `p2_weights` to distribute probability across
     /// Pauli-pair channels.
+    /// Keys name the scheduled gate; traced rotations such as `RZZ` and `RXY1Q`
+    /// require rotation keys or lowering the circuit first. Nonzero keys naming
+    /// the action of a different scheduled gate are rejected, even if another
+    /// scheduled gate matches the key.
     pub p2_gate_rates: BTreeMap<GateType, f64>,
     /// Measurement error rate.
     pub p_meas: f64,
@@ -3277,6 +3433,14 @@ impl Default for NoiseConfig {
 }
 
 impl NoiseConfig {
+    /// Reject active rate keys that name an action of a different scheduled gate.
+    pub(crate) fn validate_gate_rate_keys(
+        &self,
+        locations: &[crate::fault_tolerance::propagator::DagSpacetimeLocation],
+    ) -> Result<(), GateRateKeyMismatch> {
+        validate_scalar_gate_rate_tables(&self.p1_gate_rates, &self.p2_gate_rates, locations)
+    }
+
     /// Creates a new noise configuration (idle defaults to `None`).
     #[must_use]
     pub fn new(p1: f64, p2: f64, p_meas: f64, p_prep: f64) -> Self {
@@ -3429,6 +3593,8 @@ impl NoiseConfig {
     }
 
     /// Sets a total single-qubit error-rate override for one gate type.
+    /// Phase-shaped U operations inherit the RZ rate unless an explicit U
+    /// override is configured. Their scheduled type remains U in provenance.
     ///
     /// The override changes only the total rate. If `p1_weights` is configured,
     /// those weights still determine the relative Pauli distribution for this
@@ -3446,6 +3612,61 @@ impl NoiseConfig {
             .get(&gate_type)
             .copied()
             .unwrap_or(self.p1)
+    }
+
+    /// Resolve a scheduled one-qubit operation's total rate. An explicit
+    /// scheduled-gate override takes precedence over its inherited noise type.
+    #[must_use]
+    pub fn p1_rate_for_operation(&self, scheduled: GateType, inherited: GateType) -> f64 {
+        self.p1_gate_rates
+            .get(&scheduled)
+            .copied()
+            .unwrap_or_else(|| self.p1_rate_for_gate(inherited))
+    }
+
+    pub(crate) fn rates_1q_for_operation(
+        &self,
+        scheduled: GateType,
+        inherited: GateType,
+    ) -> [f64; 3] {
+        resolve_1q_rates(
+            scheduled,
+            inherited,
+            self.p1,
+            &self.p1_gate_rates,
+            self.p1_weights.as_ref(),
+        )
+    }
+
+    pub(crate) fn rates_2q_for_operation(
+        &self,
+        gate_type: GateType,
+        clifford: CliffordLowering,
+    ) -> [f64; 15] {
+        if let Some(weights) = &self.p2_weights {
+            return std::array::from_fn(|idx| {
+                let flat = idx + 1;
+                let p1 = flat / 4;
+                let p2 = flat % 4;
+                let pauli = pauli_pair_for_weight(p1, p2);
+                let p2_total = self.p2_rate_for_gate(gate_type);
+                let weight = if self.p2_replacement_approximation
+                    == ReplacementBranchApproximation::BranchImpact
+                    || self.p2_replacement_approximation
+                        == ReplacementBranchApproximation::ExactBranchReplay
+                {
+                    weights.post_gate_two_qubit_weight_for(&pauli)
+                } else {
+                    weights.two_qubit_weight_for(
+                        clifford,
+                        &pauli,
+                        self.p2_replacement_approximation,
+                    )
+                };
+                p2_total * weight
+            });
+        }
+        [self.p2_rate_for_gate(gate_type) / 15.0; 15]
     }
 
     /// Sets custom per-Pauli weights for two-qubit gates.
@@ -4156,6 +4377,12 @@ pub const PAULI_2Q_ORDER: [&str; 15] = [
 ///      [`Self::with_2q_rates_for_qubits`] for heterogeneous devices, or
 ///      [`Self::with_1q_rates`] / [`Self::with_2q_rates`] for homogeneous
 ///      models.
+///
+/// Keys in all gate-rate tables name the gate as scheduled; runtime-traced
+/// circuits schedule rotations such as `RZZ` and `RXY1Q`, so key by those
+/// or lower the circuit first. Nonzero keys naming the action of a different
+/// scheduled gate in the key's qubit scope are rejected, even if another
+/// scheduled gate matches the key.
 #[derive(Debug, Clone, Default)]
 pub struct PerGateTypeNoise {
     pub rates_1q: HashMap<GateType, [f64; 3]>,
@@ -4174,6 +4401,63 @@ pub struct PerGateTypeNoise {
 }
 
 impl PerGateTypeNoise {
+    /// Validate every gate-keyed rate table, including the base configuration.
+    pub(crate) fn validate_gate_rate_keys(
+        &self,
+        locations: &[crate::fault_tolerance::propagator::DagSpacetimeLocation],
+    ) -> Result<(), GateRateKeyMismatch> {
+        self.base.validate_gate_rate_keys(locations)?;
+        validate_active_gate_rate_keys(
+            "rates_1q",
+            self.rates_1q.iter().filter_map(|(&key, rates)| {
+                rates.iter().any(|&rate| rate != 0.0).then_some((
+                    key,
+                    GateRateQubits::Any,
+                    GateRateTableFamily::Pauli,
+                ))
+            }),
+            locations,
+        )?;
+        validate_active_gate_rate_keys(
+            "rates_2q",
+            self.rates_2q.iter().filter_map(|(&key, rates)| {
+                rates.iter().any(|&rate| rate != 0.0).then_some((
+                    key,
+                    GateRateQubits::Any,
+                    GateRateTableFamily::Pauli,
+                ))
+            }),
+            locations,
+        )?;
+        validate_active_gate_rate_keys(
+            "rates_1q_per_qubit",
+            self.rates_1q_per_qubit
+                .iter()
+                .filter_map(|(&(key, qubit), rates)| {
+                    rates.iter().any(|&rate| rate != 0.0).then_some((
+                        key,
+                        GateRateQubits::One(qubit),
+                        GateRateTableFamily::PerQubit,
+                    ))
+                }),
+            locations,
+        )?;
+        validate_active_gate_rate_keys(
+            "rates_2q_per_qubits",
+            self.rates_2q_per_qubits
+                .iter()
+                .filter_map(|(&(key, control, target), rates)| {
+                    rates.iter().any(|&rate| rate != 0.0).then_some((
+                        key,
+                        GateRateQubits::Pair(control, target),
+                        GateRateTableFamily::PerQubit,
+                    ))
+                }),
+            locations,
+        )?;
+        Ok(())
+    }
+
     /// Construct with empty gate maps; unspecified gates use `base`.
     #[must_use]
     pub fn from_base_noise(base: NoiseConfig) -> Self {
@@ -4275,6 +4559,32 @@ impl PerGateTypeNoise {
         self.rates_2q_per_qubits
             .insert((g, q_control, q_target), rates);
         self
+    }
+
+    /// Resolve scheduled-gate calibration before an inherited noise type.
+    /// Per-qubit scheduled rates, scheduled gate rates, and scheduled total-rate
+    /// overrides all take precedence over inherited calibration.
+    pub(crate) fn rates_1q_for_operation(
+        &self,
+        scheduled: GateType,
+        inherited: GateType,
+        qubit: Option<QubitId>,
+    ) -> [f64; 3] {
+        let explicit = |gate| {
+            qubit
+                .and_then(|q| self.explicit_1q_rates_on(gate, q))
+                .or_else(|| self.explicit_1q_rates(gate))
+        };
+        if let Some(rates) = explicit(scheduled) {
+            return rates;
+        }
+        if self.base.p1_gate_rates.contains_key(&scheduled) {
+            return [self.base.p1_rate_for_gate(scheduled) / 3.0; 3];
+        }
+        if let Some(rates) = explicit(inherited) {
+            return rates;
+        }
+        std::array::from_fn(|i| self.rate_1q(inherited, i))
     }
 
     /// Lookup 1Q Pauli rate for a gate. Returns the base single-qubit gate
@@ -7124,6 +7434,46 @@ fn trim_trailing_zeros(s: &str) -> String {
     } else {
         s.to_string()
     }
+}
+
+/// Resolve one-qubit calibration without losing scheduled-gate precedence.
+pub(crate) fn resolve_1q_rates(
+    scheduled: GateType,
+    inherited: GateType,
+    base: f64,
+    gate_rates: &BTreeMap<GateType, f64>,
+    weights: Option<&PauliWeights>,
+) -> [f64; 3] {
+    let total = gate_rates
+        .get(&scheduled)
+        .or_else(|| gate_rates.get(&inherited))
+        .copied()
+        .unwrap_or(base);
+    if let Some(weights) = weights {
+        use pecos_core::pauli::{X, Y, Z};
+        return [X(0), Y(0), Z(0)].map(|pauli| total * weights.weight_for(&pauli));
+    }
+    [total / 3.0; 3]
+}
+
+fn pauli_pair_for_weight(p1: usize, p2: usize) -> pecos_core::PauliString {
+    let mut paulis = Vec::new();
+    let pauli_from_index = |idx| match idx {
+        0 => pecos_core::Pauli::I,
+        1 => pecos_core::Pauli::X,
+        2 => pecos_core::Pauli::Y,
+        3 => pecos_core::Pauli::Z,
+        _ => unreachable!("Pauli index must be 0-3"),
+    };
+    let pa1 = pauli_from_index(p1);
+    let pa2 = pauli_from_index(p2);
+    if pa1 != pecos_core::Pauli::I {
+        paulis.push((pa1, pecos_core::QubitId::from(0usize)));
+    }
+    if pa2 != pecos_core::Pauli::I {
+        paulis.push((pa2, pecos_core::QubitId::from(1usize)));
+    }
+    pecos_core::PauliString::with_phase_and_paulis(pecos_core::QuarterPhase::PlusOne, paulis)
 }
 
 #[cfg(test)]

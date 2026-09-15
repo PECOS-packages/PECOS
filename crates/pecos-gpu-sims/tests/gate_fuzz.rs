@@ -514,7 +514,7 @@ fn angle_edge_cases() {
                 let gs = g.state();
                 let d = max_diff(&gs, &cpu_s);
                 assert!(
-                    d < 1e-4,
+                    d < TOL_F64,
                     "angle {theta} gate {gate} ({gi},{ai}): f64 diff={d:.3e}"
                 );
             }

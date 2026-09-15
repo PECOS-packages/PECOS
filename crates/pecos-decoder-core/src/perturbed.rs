@@ -47,6 +47,9 @@ impl Default for PerturbedConfig {
 }
 
 /// Perturb error probabilities in a DEM string by multiplicative log-normal noise.
+///
+/// Only the probability inside `error(...)` changes; the targets after the closing
+/// parenthesis are copied verbatim.
 pub fn perturb_dem(dem: &str, sigma: f64, rng: &mut dyn FnMut() -> f64) -> String {
     use std::fmt::Write;
     let mut out = String::with_capacity(dem.len());
@@ -62,7 +65,7 @@ pub fn perturb_dem(dem: &str, sigma: f64, rng: &mut dyn FnMut() -> f64) -> Strin
             let factor = (sigma * z).exp();
             let p_new = (p * factor).clamp(1e-15, 0.499);
             let _ = write!(out, "error({p_new})");
-            out.push_str(&rest[close..]);
+            out.push_str(&rest[close + 1..]);
             out.push('\n');
             continue;
         }
@@ -81,7 +84,8 @@ pub fn perturb_dem(dem: &str, sigma: f64, rng: &mut dyn FnMut() -> f64) -> Strin
 ///
 /// # Errors
 ///
-/// Returns `DecoderError` if the factory fails on the unperturbed DEM.
+/// Returns `DecoderError` if the factory fails on the unperturbed DEM or on any
+/// perturbed member DEM.
 pub fn build_perturbed_ensemble<F>(
     dem: &str,
     config: &PerturbedConfig,
@@ -101,9 +105,7 @@ where
 
     for _ in 1..config.k {
         let perturbed = perturb_dem(dem, config.sigma, &mut next_f64);
-        if let Ok(dec) = factory(&perturbed) {
-            members.push(dec);
-        }
+        members.push(factory(&perturbed)?);
     }
 
     Ok(EnsembleDecoder::new(members))
@@ -116,7 +118,8 @@ where
 ///
 /// # Errors
 ///
-/// Returns `DecoderError` if the factory fails on the unperturbed DEM.
+/// Returns `DecoderError` if the factory fails on the unperturbed DEM or on any
+/// perturbed member DEM.
 pub fn build_parallel_perturbed_ensemble<F>(
     dem: &str,
     config: &PerturbedConfig,
@@ -133,9 +136,7 @@ where
 
     for _ in 1..config.k {
         let perturbed = perturb_dem(dem, config.sigma, &mut next_f64);
-        if let Ok(dec) = factory(&perturbed) {
-            members.push(dec);
-        }
+        members.push(factory(&perturbed)?);
     }
 
     Ok(crate::ensemble::ParallelEnsembleDecoder::new(members))
@@ -146,6 +147,38 @@ mod tests {
     use super::*;
 
     const SIMPLE_DEM: &str = "error(0.1) D0 D1 L0\nerror(0.05) D1\n";
+
+    struct Zero;
+
+    impl crate::ObservableDecoder for Zero {
+        fn decode_obs(
+            &mut self,
+            _: &[u8],
+        ) -> Result<crate::obs_mask::ObsMask, crate::errors::DecoderError> {
+            Ok(crate::obs_mask::ObsMask::new())
+        }
+    }
+
+    /// Accept a DEM only if every `error(...)` line keeps `SIMPLE_DEM`'s targets verbatim,
+    /// the way a strict parser such as `PyMatching`'s requires.
+    fn check_targets(dem: &str) -> Result<(), DecoderError> {
+        let targets = |text: &str| -> Vec<String> {
+            text.lines()
+                .filter_map(|line| {
+                    line.trim()
+                        .split_once(')')
+                        .map(|(_, rest)| rest.to_string())
+                })
+                .collect()
+        };
+        if targets(dem) == targets(SIMPLE_DEM) {
+            Ok(())
+        } else {
+            Err(DecoderError::InvalidConfiguration(format!(
+                "member DEM changed its targets: {dem:?}"
+            )))
+        }
+    }
 
     #[test]
     fn test_perturb_dem_preserves_structure() {
@@ -164,6 +197,21 @@ mod tests {
         assert!(perturbed.contains("L0"));
         // Probabilities should be different from original.
         assert!(!perturbed.contains("error(0.1)"));
+    }
+
+    #[test]
+    fn test_perturb_dem_copies_targets_verbatim() {
+        let mut i = 0u64;
+        let mut rng = || -> f64 {
+            i += 1;
+            0.5 + (i as f64) * 0.01
+        };
+        let perturbed = perturb_dem(SIMPLE_DEM, 0.5, &mut rng);
+        assert!(
+            !perturbed.contains("))"),
+            "stray parenthesis in {perturbed:?}"
+        );
+        check_targets(&perturbed).unwrap();
     }
 
     #[test]
@@ -194,20 +242,46 @@ mod tests {
             sigma: 0.5,
             seed: 42,
         };
-        let ensemble = build_perturbed_ensemble(SIMPLE_DEM, &config, |_dem| {
-            // Trivial decoder that always returns 0.
-            struct Zero;
-            impl crate::ObservableDecoder for Zero {
-                fn decode_obs(
-                    &mut self,
-                    _: &[u8],
-                ) -> Result<crate::obs_mask::ObsMask, crate::errors::DecoderError> {
-                    Ok(crate::obs_mask::ObsMask::new())
-                }
-            }
-            Ok(Box::new(Zero))
-        });
+        let ensemble = build_perturbed_ensemble(SIMPLE_DEM, &config, |_dem| Ok(Box::new(Zero)));
         assert!(ensemble.is_ok());
         assert_eq!(ensemble.unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_build_perturbed_ensemble_builds_every_member() {
+        let config = PerturbedConfig {
+            k: 5,
+            sigma: 0.5,
+            seed: 42,
+        };
+        let ensemble = build_perturbed_ensemble(SIMPLE_DEM, &config, |dem| {
+            check_targets(dem)?;
+            Ok(Box::new(Zero))
+        })
+        .unwrap();
+        assert_eq!(ensemble.len(), 5);
+        let parallel = build_parallel_perturbed_ensemble(SIMPLE_DEM, &config, |dem| {
+            check_targets(dem)?;
+            Ok(Box::new(Zero))
+        })
+        .unwrap();
+        assert_eq!(parallel.len(), 5);
+    }
+
+    #[test]
+    fn test_member_factory_failure_is_an_error() {
+        let config = PerturbedConfig {
+            k: 3,
+            sigma: 0.5,
+            seed: 42,
+        };
+        let reject_perturbed = |dem: &str| -> Result<Box<dyn ObservableDecoder>, DecoderError> {
+            if dem == SIMPLE_DEM {
+                Ok(Box::new(Zero))
+            } else {
+                Err(DecoderError::InvalidConfiguration("member rejected".into()))
+            }
+        };
+        assert!(build_perturbed_ensemble(SIMPLE_DEM, &config, reject_perturbed).is_err());
     }
 }

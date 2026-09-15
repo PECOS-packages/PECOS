@@ -121,6 +121,9 @@ class LogicalOp:
         if (self.gate_type is LogicalGateType.FOLD_S) != (self.fold is not None):
             msg = "Fold identity must match FOLD_S"
             raise AssertionError(msg)
+        if self.fold is not None and self.fold not in {"S", "SDG"}:
+            msg = "Fold variant must be S or SDG"
+            raise AssertionError(msg)
         if self.fold is not None and self.rounds != 1:
             msg = "Fold segments require exactly one round"
             raise AssertionError(msg)
@@ -508,9 +511,14 @@ class LogicalCircuitBuilder:
         Tesseract route for fold circuits.
 
         Observables are defined relative to the noiseless reference, as in
-        Stim. A fold pair whose product is Z_L flips the X observable's raw
-        parity: S/S gives one, while S/S-dagger gives zero. The metadata has
-        no sign field; raw-parity consumers must account for that reference.
+        Stim. Raw parity encodes the sign with which the program's net logical
+        Clifford maps the readout Pauli back onto the prepared eigenstate:
+        positive gives zero, negative gives one. With folds it can be one
+        noiselessly, including S/S before X readout, S/S/H before Z readout,
+        and S-dagger pairs through a CX. The metadata has no sign field;
+        raw-parity consumers pecos.testing.simulate_tick_circuit and
+        pecos.qec.surface.extract_detection_events_and_observables must
+        account for that reference.
         """
         self._require_available_patch(label)
         self._require_square(label, "Fold-transversal S")

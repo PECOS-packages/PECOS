@@ -24,6 +24,12 @@ from pecos.qec.surface.circuit_builder import (
 
 BASE_REVISION = "8568727d5"
 POST_FIX_SHAPES = (
+    "d2_h_even",
+    "d3_cx_chain",
+    "d3_cxcx",
+    "d3_hh_adjacent",
+    "d3_late_partner_cx",
+    "d3_skip_segment",
     "d3_mem_Z_zero_final",
     "d3_h_zero_final",
     "d3_fold_s_mid",
@@ -131,6 +137,12 @@ def _ops(steps: list, allocation: QubitAllocation) -> dict:
 
 
 SHAPES = (
+    "d2_h_even",
+    "d3_cx_chain",
+    "d3_cxcx",
+    "d3_hh_adjacent",
+    "d3_late_partner_cx",
+    "d3_skip_segment",
     "d3_mem_Z_zero_final",
     "d3_h_zero_final",
     "d3_fold_s_mid",
@@ -175,7 +187,11 @@ def make_builder(name: str) -> LogicalCircuitBuilder:
         labels = ["D", "Y"]
     elif shape.startswith("t_"):
         labels = ["D", "A"]
-    elif shape.startswith("cx_"):
+    elif shape == "cx_chain":
+        labels = ["A", "B", "C"]
+    elif shape in {"skip_segment", "late_partner_cx"}:
+        labels = ["A", "B"]
+    elif shape.startswith("cx_") or shape == "cxcx":
         labels = ["C", "T"]
     elif shape == "h_cx_h":
         labels = ["A", "B"]
@@ -215,6 +231,30 @@ def make_builder(name: str) -> LogicalCircuitBuilder:
         if shape == "hh":
             builder.add_transversal_h("A")
             builder.add_memory("A", 2, "Z")
+    elif shape in {"hh_adjacent", "h_even"}:
+        builder.add_memory("A", 2, "Z")
+        builder.add_transversal_h("A")
+        if shape == "hh_adjacent":
+            builder.add_transversal_h("A")
+        builder.add_memory("A", 2, "Z" if shape == "hh_adjacent" else "X")
+    elif shape == "cxcx":
+        builder.add_memory(labels, 2, "Z")
+        builder.add_transversal_cx("C", "T")
+        builder.add_transversal_cx("C", "T")
+        builder.add_memory(labels, 2, "Z")
+    elif shape == "cx_chain":
+        builder.add_memory(labels, 2, "X")
+        builder.add_transversal_cx("A", "B")
+        builder.add_transversal_cx("B", "C")
+        builder.add_memory(labels, 2, "X")
+    elif shape == "skip_segment":
+        for label in ["A", "B", "A", "B"]:
+            builder.add_memory(label, 2, "Z")
+    elif shape == "late_partner_cx":
+        builder.add_memory("B", 2, "Z")
+        builder.add_memory("A", 2, "Z")
+        builder.add_transversal_cx("A", "B")
+        builder.add_memory(labels, 2, "Z")
     elif shape.startswith("cx_"):
         basis = {"C": shape[-2].upper(), "T": shape[-1].upper()}
         builder.add_memory(labels, 2, basis)
@@ -291,7 +331,7 @@ def main() -> None:
     parser.add_argument(
         "--post-fix-only",
         action="store_true",
-        help="Capture only the protocol, injection and repetition post-change outputs",
+        help="Capture only the protocol and post-fix builder outputs",
     )
     args = parser.parse_args()
     outputs = capture_outputs()

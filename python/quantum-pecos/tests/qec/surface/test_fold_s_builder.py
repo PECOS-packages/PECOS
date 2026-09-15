@@ -9,7 +9,7 @@ from dataclasses import replace
 import pytest
 import stim
 from pecos.qec import DetectorErrorModel
-from pecos.qec.surface import LogicalCircuitBuilder, SurfacePatch
+from pecos.qec.surface import LogicalCircuitBuilder, SurfacePatch, extract_detection_events_and_observables
 from pecos.qec.surface.circuit_builder import tick_circuit_to_stim
 from pecos.qec.surface.logical_circuit import (
     LogicalGateType,
@@ -38,6 +38,16 @@ def fold_builder(shape: str, distance: int = 3) -> LogicalCircuitBuilder:
         if shape == "h_zero_final":
             builder.add_transversal_h("A")
         builder.add_memory("A", 0, "X" if shape == "h_zero_final" else "Z")
+    elif shape == "sign_cx":
+        builder.add_patch(patch, "B", qubit_offset=patch.geometry.num_qubits)
+        builder.add_memory("A", 1, "X")
+        builder.add_memory("B", 1, "Z")
+        builder.add_logical_sdg("A")
+        builder.add_transversal_cx("A", "B")
+        builder.add_logical_sdg("B")
+        builder.add_transversal_cx("A", "B")
+        builder.add_logical_sdg("B")
+        builder.add_memory(["A", "B"], 1, "X")
     elif shape.startswith("cx_"):
         builder.add_patch(patch, "B", qubit_offset=patch.geometry.num_qubits)
         builder.add_memory(["A", "B"], 2, "Z")
@@ -57,8 +67,10 @@ def fold_builder(shape: str, distance: int = 3) -> LogicalCircuitBuilder:
         builder.add_logical_s("A")
         if shape == "pair_separated":
             builder.add_memory("A", 2, "X")
-        builder.add_logical_s("A", dagger=shape != "pair_s_s")
-        builder.add_memory("A", 1, "X")
+        builder.add_logical_s("A", dagger=shape not in {"pair_s_s", "pair_s_s_h"})
+        if shape == "pair_s_s_h":
+            builder.add_transversal_h("A")
+        builder.add_memory("A", 1, "Z" if shape == "pair_s_s_h" else "X")
     else:
         before, after = {"first": (0, 2), "mid": (1, 1), "last": (2, 0), "single_x": (1, 1)}[shape]
         basis = "X" if shape == "single_x" else "Z"
@@ -315,11 +327,14 @@ def test_fold_matching_skips_hyperedges():
         _, decoder = builder.build_decoder(inner_decoder="pymatching")
         skipped.append(sum(hyperedges for _, hyperedges in decoder.subgraph_diagnostics()))
     assert skipped[0] == 0
-    assert skipped[1] > 0
+    assert skipped[1] == 12
 
 
-@pytest.mark.parametrize(("shape", "raw_parity"), [("pair_s_s", 1), ("pair_adjacent", 0)])
-def test_fold_pair_reference_parity(shape, raw_parity):
+@pytest.mark.parametrize(
+    ("shape", "raw_parity"),
+    [("pair_s_s", 1), ("pair_adjacent", 0), ("pair_s_s_h", 1), ("sign_cx", 1)],
+)
+def test_fold_reference_parity(shape, raw_parity):
     """Raw parity retains the logical sign; Stim reports flips from its reference."""
     tc = fold_builder(shape).to_tick_circuit()
     circuit = stim.Circuit(tick_circuit_to_stim(tc))
@@ -327,6 +342,16 @@ def test_fold_pair_reference_parity(shape, raw_parity):
         _, fired, observables = simulate_tick_circuit(tc, seed)
         assert fired == 0
         assert observables == {0: raw_parity}
+        samples = circuit.compile_sampler(seed=seed).sample(256)
+        events, raw_observables = extract_detection_events_and_observables(tc, samples)
+        assert events == [[] for _ in range(256)]
+        assert raw_observables == [[0] if raw_parity else [] for _ in range(256)]
         detectors, flips = circuit.compile_detector_sampler(seed=seed).sample(256, separate_observables=True)
         assert not detectors.any()
         assert not flips.any()
+
+
+@pytest.mark.parametrize("fold", ["", "T", "Sdg"])
+def test_fold_op_variant_assertion(fold):
+    with pytest.raises(AssertionError, match="Fold variant must be S or SDG"):
+        LogicalOp(LogicalGateType.FOLD_S, ["A"], rounds=1, fold=fold)

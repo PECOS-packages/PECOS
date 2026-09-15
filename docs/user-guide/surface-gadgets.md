@@ -424,8 +424,21 @@ pair has fault distance 2 at d=3, while Z memory retains distance 3.
 A zero-round final memory reads data immediately after the previous segment.
 Its final checks therefore compare with that segment's last syndrome round,
 including across H. This also fills a detector gap in programs without folds:
-`M(2,Z); M(0,Z)` and `M(2,Z); H; M(0,X)` each have 16 detectors at d=3,
-compared with 12 before PR #777.
+`M(2,Z); M(0,Z)` and `M(2,Z); H; M(0,X)` each have 16 detectors at d=3.
+
+```python
+import json
+from pecos.qec.surface import LogicalCircuitBuilder, SurfacePatch
+
+for with_h in (False, True):
+    memory = LogicalCircuitBuilder()
+    memory.add_patch(SurfacePatch.create(distance=3), "A")
+    memory.add_memory("A", 2, "Z")
+    if with_h:
+        memory.add_transversal_h("A")
+    memory.add_memory("A", 0, "X" if with_h else "Z")
+    assert len(json.loads(memory.to_tick_circuit().get_meta("detectors"))) == 16
+```
 
 Fold rounds create hyperedges that `build_decoder`'s matching route
 (`LogicalSubgraphDecoder`) skips. Use a hypergraph decoder such as the
@@ -457,11 +470,16 @@ Use `add_logical_s("D", dagger=True)` or `add_logical_sdg("D")` for
 S-dagger. Both variants emit `SGate` in the algorithm descriptor because it
 tracks sign-free Pauli frames: both propagate an X frame bit into X and Z.
 
-Observables are defined relative to the noiseless reference, as in Stim. A
-fold pair whose product is Z_L flips the X observable's raw parity: S then S
-has noiseless raw parity 1; S then S-dagger has raw parity 0. Both have zero
-observable flips under Stim's reference-relative sampling. Observable metadata
-has no sign field, so raw-parity consumers must account for this reference.
+Observables are defined relative to the noiseless reference, as in Stim.
+Raw parity encodes the sign with which the program's net logical Clifford maps
+the readout Pauli back onto the prepared eigenstate: positive gives 0, negative
+gives 1. With folds it can be 1 noiselessly: S,S before an X readout, S,S,H
+before a Z readout, or S-dagger pairs through a CX. Stim's reference-relative
+sampling reports zero observable flips for these noiseless programs.
+Observable metadata has no sign field, so both raw-parity consumers,
+`pecos.testing.simulate_tick_circuit` and
+`pecos.qec.surface.extract_detection_events_and_observables`, must account for
+this reference. S then S-dagger before X readout has raw parity 0.
 
 ```python
 import stim

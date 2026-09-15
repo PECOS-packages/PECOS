@@ -976,7 +976,8 @@ impl DemSliceRoundSchedule {
     /// different owners are rejected by the ordinary slice ownership checks.
     /// Detector coordinates must be finite `[x, y, round]` triples with an
     /// exactly integral round coordinate. Equal `(x, y)` pairs form one stable
-    /// detector stream.
+    /// detector stream. Within each round, composed dense detector IDs keep the
+    /// order of `model`'s detectors.
     ///
     /// # Errors
     ///
@@ -998,6 +999,11 @@ impl DemSliceRoundSchedule {
     /// This lower-level constructor is useful for frontends that keep operation
     /// scheduling metadata outside the physical [`DagCircuit`]. Location indices
     /// use the same identity space as [`FaultContribution::location_indices`].
+    ///
+    /// Within each round, composed dense detector IDs follow ascending source
+    /// detector ID. Composition orders rounds first, so composing every round
+    /// reproduces `model`'s order exactly when its detector IDs already ascend
+    /// with the round coordinate.
     ///
     /// # Errors
     ///
@@ -1024,11 +1030,22 @@ impl DemSliceRoundSchedule {
             })
             .collect::<Result<_, DemSliceComposeError>>()?;
 
+        // Stream IDs are seeded from one anchor round. A round that declares its
+        // streams in another order, as a frontend does after a transversal H,
+        // keeps the model's order through an explicit routing.
+        let mut detector_order_routings = BTreeMap::<i64, BTreeMap<u32, u32>>::new();
+        for &(stream, round) in compiler.detector_layout.values() {
+            let round_order = detector_order_routings.entry(round).or_default();
+            let order = u32::try_from(round_order.len())
+                .map_err(|_| DemSliceComposeError::TooManyDetectors)?;
+            round_order.insert(stream, order);
+        }
+
         Ok(Self {
             instances,
             observables: model.observables.clone(),
             tracked_paulis: model.tracked_paulis.clone(),
-            detector_order_routings: BTreeMap::new(),
+            detector_order_routings,
         })
     }
 
@@ -2610,6 +2627,77 @@ mod tests {
                 },
                 ComposedDetectorAddress {
                     round: 0,
+                    stream_id: 0,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn location_round_schedule_keeps_the_model_detector_order_within_each_round() {
+        // Round 0 seeds the stream IDs. Round 1 declares the same two streams in
+        // the opposite order, as a frontend does after a transversal H.
+        use crate::fault_tolerance::dem_builder::FaultMechanism;
+
+        let mut model = DetectorErrorModel::new();
+        for (id, coords) in [
+            (0, [0.0, 0.0, 0.0]),
+            (1, [1.0, 0.0, 0.0]),
+            (2, [1.0, 0.0, 1.0]),
+            (3, [0.0, 0.0, 1.0]),
+        ] {
+            model.add_detector(DetectorDef::new(id).with_coords(coords));
+        }
+        // One round-one source touching only the first detector that round, so
+        // a reordered declaration would renumber its target.
+        model.add_direct_contribution_with_composed_locations(
+            FaultMechanism::from_unsorted([2], []),
+            0.01,
+            [0].into_iter().collect(),
+        );
+
+        let schedule = DemSliceRoundSchedule::from_location_rounds("reordered round", &model, &[1])
+            .expect("a model with one owned source defines a round schedule");
+        let composed = schedule
+            .compose(DemWindowSpec::new(0, 2, 0, DemBoundaryKind::Hard))
+            .expect("the detector-only slices compose");
+
+        let composed_coords: Vec<_> = composed
+            .model
+            .detectors
+            .iter()
+            .map(|detector| detector.coords)
+            .collect();
+        let model_coords: Vec<_> = model
+            .detectors
+            .iter()
+            .map(|detector| detector.coords)
+            .collect();
+        assert_eq!(composed_coords, model_coords);
+        let targets: Vec<_> = composed
+            .model
+            .contributions()
+            .iter()
+            .map(|contribution| contribution.effect.detectors.to_vec())
+            .collect();
+        assert_eq!(targets, vec![vec![2]]);
+        assert_eq!(
+            composed.detector_addresses,
+            vec![
+                ComposedDetectorAddress {
+                    round: 0,
+                    stream_id: 0,
+                },
+                ComposedDetectorAddress {
+                    round: 0,
+                    stream_id: 1,
+                },
+                ComposedDetectorAddress {
+                    round: 1,
+                    stream_id: 1,
+                },
+                ComposedDetectorAddress {
+                    round: 1,
                     stream_id: 0,
                 },
             ]

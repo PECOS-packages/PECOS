@@ -179,6 +179,54 @@ def test_algorithm_segments_keep_structured_boundary_correlations():
     )
 
 
+def _detector_coordinates_in_id_order(dem_text: str) -> list[tuple[float, ...]]:
+    coordinates = {}
+    for line in dem_text.splitlines():
+        if line.startswith("detector("):
+            coords, detector = line.split(") D")
+            coordinates[int(detector)] = tuple(float(value) for value in coords.removeprefix("detector(").split(","))
+    return [coordinates[index] for index in sorted(coordinates)]
+
+
+@pytest.mark.parametrize("force_full_model", [False, True])
+@pytest.mark.parametrize("h_count", [1, 2, 3])
+def test_algorithm_segments_number_detectors_in_the_full_dem_order(monkeypatch, h_count, force_full_model):
+    """Segment DEMs keep the full DEM's detector order on the cached and the full-model path.
+
+    After an odd number of transversal H gates the frontend emits the patch's X
+    family before its Z family. The full-model path must keep that order rather
+    than renumber the later rounds in the first memory's order.
+    """
+    builder = LogicalCircuitBuilder()
+    builder.add_patch(SurfacePatch.create(3), "A")
+    builder.add_memory("A", 2, "Z")
+    for _ in range(h_count):
+        builder.add_transversal_h("A")
+    builder.add_memory("A", 2, "Z" if h_count % 2 == 0 else "X")
+    if force_full_model:
+        monkeypatch.setattr(builder, "_build_structured_dem_from_cached_slices", lambda **_: None)
+    elif h_count == 1:
+        # Only the alternating memory/H shape is assembled from cached slices;
+        # consecutive H gates always take the full-model path. Warm the bounded
+        # physical fixtures first, then pin that the descriptor itself compiles
+        # no full model.
+        builder.build_algorithm_descriptor(p1=0.001, p2=0.001, p_meas=0.001)
+
+        def reject_full_compile(*_args, **_kwargs):
+            msg = "the cached slice path must not compile the full model"
+            raise AssertionError(msg)
+
+        monkeypatch.setattr(LogicalCircuitBuilder, "_build_structured_dem", reject_full_compile)
+    desc = builder.build_algorithm_descriptor(p1=0.001, p2=0.001, p_meas=0.001)
+
+    full_order = _detector_coordinates_in_id_order(desc["full_dem"])
+    for segment in desc["segments"]:
+        segment_order = _detector_coordinates_in_id_order(segment["dem"])
+        assert len(segment_order) == segment["num_window_detectors"]
+        rounds = {coords[-1] for coords in segment_order}
+        assert segment_order == [coords for coords in full_order if coords[-1] in rounds]
+
+
 def test_memory_provider_reuses_bounded_slices_and_preserves_detector_order(monkeypatch):
     """The public memory path caches a bounded compile, not an algorithm DEM."""
     from pecos.qec.surface.logical_circuit import _cached_surface_memory_dem_slices

@@ -2518,7 +2518,8 @@ impl PyDetectorErrorModel {
     ///
     /// The influence map and DAG circuit must be the same pair used to build
     /// the model. Every referenced gate must carry an integer
-    /// ``dem_slice_round`` attribute.
+    /// ``dem_slice_round`` attribute. Composed windows number detectors in this
+    /// model's order within each round.
     fn round_schedule(
         &self,
         influence_map: &PyDagFaultInfluenceMap,

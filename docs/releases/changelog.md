@@ -30,6 +30,8 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   backward-compatible commit count (`num_detectors`, also available as
   `num_commit_detectors`) from the detector count in the halo-bearing segment DEM
   (`num_window_detectors`).
+- `WindowedLogicalSubgraphDecoder(dem, stab_coords, step, buffer)` now requires
+  `step` and `buffer`; they previously defaulted to 8 and 4.
 
 ### Rust breaking changes
 

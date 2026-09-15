@@ -1848,12 +1848,10 @@ class LogicalCircuitBuilder:
         initial_target_basis = memories[0].per_patch_basis.get(target_label, memories[0].basis).upper()
         final_control_basis = memories[-1].per_patch_basis.get(control_label, memories[-1].basis).upper()
         final_target_basis = memories[-1].per_patch_basis.get(target_label, memories[-1].basis).upper()
-        # The surface frontend treats an observable as unreliable when any CX
-        # partner is finally measured in the incompatible basis. That state is
-        # history-sensitive: two CX gates cancel in the sign-free Clifford
-        # transform below, but not in the frontend's observable declarations.
-        # Until reliability is part of the canonical state, retain the exact
-        # full-model fallback for every mixed-basis schedule containing CX.
+        # Schedules with a CX whose patches end in different bases stay on the
+        # exact full-model fallback. The output schema follows the emitter's
+        # readout walk, but this provider's boundary slices have not been checked
+        # against the full compile for mixed final bases.
         if "cx" in gate_names and final_control_basis != final_target_basis:
             return None
 

@@ -114,10 +114,12 @@ jobs:
       with:
         cache-bin: false
         prefix-key: v1-rust-no-bin
-        save-if: ${{ github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name) }}
-        workspaces: |
-          python/pecos-rslib
-          python/pecos-rslib-llvm
+        # Restore-only: python-core (above) saves this key on dev pushes.
+        save-if: false
+        # The rslib crates are members of the root Cargo workspace and build
+        # into the top-level target/, so cache the root workspace (the default)
+        # and share the python-core key: same crates, same profile, same env.
+        shared-key: python-core
 
     - name: Cache LLVM ${{ env.LLVM_VERSION }}
       id: cache-llvm
@@ -153,17 +155,6 @@ jobs:
       uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
       with:
         egress-policy: audit
-
-    - name: Free Disk Space (Ubuntu)
-      uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
-      with:
-        android: true
-        dotnet: true
-        haskell: true
-        large-packages: false
-        docker-images: true
-        tool-cache: false
-        swap-storage: true
 
     - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       with:
@@ -280,18 +271,6 @@ jobs:
       with:
         egress-policy: audit
 
-    - name: Free Disk Space (Ubuntu)
-      if: runner.os == 'Linux'
-      uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
-      with:
-        android: true
-        dotnet: true
-        haskell: true
-        large-packages: false
-        docker-images: true
-        tool-cache: false
-        swap-storage: true
-
     - name: Free Disk Space (Windows)
       if: runner.os == 'Windows'
       shell: pwsh
@@ -373,10 +352,14 @@ jobs:
       with:
         cache-bin: false
         prefix-key: v1-rust-no-bin
-        save-if: ${{ github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name) }}
-        workspaces: |
-          python/pecos-rslib
-          python/pecos-rslib-llvm
+        # Windows and macOS: this job is the only python-core writer. Linux:
+        # restore-only, because python-core builds a superset (mwpf feature,
+        # experimental bindings) and the first save to a key is final.
+        save-if: ${{ runner.os != 'Linux' && github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name) }}
+        # The rslib crates are members of the root Cargo workspace and build
+        # into the top-level target/, so cache the root workspace (the default)
+        # and share the python-core key: same crates, same profile, same env.
+        shared-key: python-core
 
     - name: Cache LLVM ${{ env.LLVM_VERSION }}
       id: cache-llvm
@@ -600,17 +583,6 @@ jobs:
       with:
         egress-policy: audit
 
-    - name: Free Disk Space (Ubuntu)
-      uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
-      with:
-        android: true
-        dotnet: true
-        haskell: true
-        large-packages: false
-        docker-images: true
-        tool-cache: false
-        swap-storage: true
-
     - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       with:
         persist-credentials: false
@@ -644,10 +616,12 @@ jobs:
       with:
         cache-bin: false
         prefix-key: v1-rust-no-bin
-        save-if: ${{ github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name) }}
-        workspaces: |
-          python/pecos-rslib
-          python/pecos-rslib-llvm
+        # Restore-only: python-core (above) saves this key on dev pushes.
+        save-if: false
+        # The rslib crates are members of the root Cargo workspace and build
+        # into the top-level target/, so cache the root workspace (the default)
+        # and share the python-core key: same crates, same profile, same env.
+        shared-key: python-core
 
     - name: Cache LLVM ${{ env.LLVM_VERSION }}
       id: cache-llvm
@@ -692,17 +666,6 @@ jobs:
       with:
         egress-policy: audit
 
-    - name: Free Disk Space (Ubuntu)
-      uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
-      with:
-        android: true
-        dotnet: true
-        haskell: true
-        large-packages: false
-        docker-images: true
-        tool-cache: false
-        swap-storage: true
-
     - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       with:
         persist-credentials: false
@@ -737,9 +700,10 @@ jobs:
         cache-bin: false
         prefix-key: v1-rust-no-bin
         save-if: ${{ github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name) }}
-        workspaces: |
-          python/pecos-rslib
-          python/pecos-rslib-llvm
+        # zluppy is built by uv sync through PEP 517, which is a release build,
+        # so it cannot share the debug python-core cache. Own key; the crate is
+        # a root-workspace member and builds into the top-level target/, so the
+        # default (root) workspace is the right one.
 
     - name: Cache LLVM ${{ env.LLVM_VERSION }}
       id: cache-llvm-zluppy

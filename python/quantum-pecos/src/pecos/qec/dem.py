@@ -10,6 +10,14 @@ module attaches a Python :meth:`from_guppy` classmethod to the Rust-backed
 ``pecos_rslib.qec.DetectorErrorModel`` and re-exports that class as the public
 ``pecos.qec.DetectorErrorModel``.
 
+``GuppyDemBuilder.build`` and ``DetectorErrorModel.from_guppy`` lower Clifford
+rotations first, so gate-rate keys name the lowered gates, such as ``SZZ``;
+an ``RZZ`` key matches nothing after lowering. ``DetectorErrorModel.from_circuit``
+and ``DemSampler.from_circuit`` do not lower raw traces, so key by the scheduled
+rotations, such as ``RZZ`` and ``RXY1Q``, or lower the circuit first. A nonzero
+key naming the Clifford action of a different scheduled gate is rejected,
+even when the key also matches another scheduled gate.
+
 This wrapper is intentionally thin: it traces the Guppy program into a
 ``TickCircuit``, compiles Guppy inputs to a HUGR to reject unverified control
 flow and, when requested, recover the sound tag -> measurement binding via

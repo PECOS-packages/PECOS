@@ -1553,6 +1553,9 @@ impl QisHeliosInterface {
         //   object compiled against a different QIS/runtime ABI in the fixed,
         //   cross-worktree cache directory is never reused
         let mut hasher = Sha256::new();
+        // Also invalidate programs when the link policy changes inside a Python
+        // extension: rebuilding it need not change the Python executable mtime.
+        hasher.update(b"pecos-qis-link-policy-v2-macos-two-level");
         hasher.update(&self.program);
         // Explicit ABI inputs (stable format tag, crate version, target triple)
         // in addition to the build fingerprint, so the key does not rely on the
@@ -1996,11 +1999,22 @@ entry:
                 .arg("-o")
                 .arg(&so_path_for_clang)
                 .arg(&program_temp_path);
+            #[cfg(target_os = "macos")]
+            {
+                // Bind QIS imports to the selected runtime using Mach-O's
+                // two-level namespace. In particular, libSystem also exports
+                // `panic`, with a different ABI: dynamic_lookup alone lets ld
+                // bind Guppy's panic(i32, ptr) to that process-aborting function.
+                // Use the same pinned library as dlopen and the program cache.
+                let qis_ffi_path =
+                    Self::pinned_qis_ffi_lib_path().map_err(InterfaceError::LoadError)?;
+                clang_cmd.arg(qis_ffi_path);
+            }
             // NOTE: We intentionally do NOT link helios_lib_path here.
             // The helios library statically defines ___read_future_bool which would
             // shadow our dynamic version from libpecos_qis_ffi.so.
-            // Instead, we let all ___* symbols resolve at runtime from libpecos_qis_ffi.so
-            // which is loaded with RTLD_GLOBAL before program.so.
+            // On macOS the explicit dylib dependency above selects the provider;
+            // on other Unix platforms imports resolve from the RTLD_GLOBAL FFI.
             // This enables dynamic circuits because our ___read_future_bool has the
             // callback mechanism to pause and get measurement results from the simulator.
             debug!(
@@ -2948,6 +2962,36 @@ mod tests {
                 // Free the test's context during normal execution, before TLS teardown.
                 drop(interface.execution_context.take());
             }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn generated_program_panic_binds_to_selected_ffi() {
+        let _env_lock = ENV_MUTEX.lock().expect("environment lock");
+        let ffi = QisHeliosInterface::get_qis_ffi_lib_singleton().expect("FFI library");
+        let mut interface = QisHeliosInterface::new();
+        interface.program = br"
+            declare void @panic(i32, ptr)
+            define ptr @runtime_panic_address() { ret ptr @panic }
+            define i64 @qmain(i64 %arg) { ret i64 0 }
+        "
+        .to_vec();
+        interface.format = ProgramFormat::LlvmIrText;
+        let path = interface.create_shared_library().expect("link program");
+        let (_handle, program) =
+            QisHeliosInterface::load_library(&path, "load probe", false).expect("load program");
+        unsafe {
+            let address: Symbol<unsafe extern "C" fn() -> *const ()> = program
+                .get(b"runtime_panic_address\0")
+                .expect("address probe");
+            let expected: Symbol<unsafe extern "C" fn(i32, *const std::ffi::c_char)> =
+                ffi.get(b"panic\0").expect("PECOS panic");
+            assert_eq!(
+                address(),
+                *expected as *const (),
+                "panic must bind to PECOS, not libSystem"
+            );
         }
     }
 

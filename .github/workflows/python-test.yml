@@ -258,7 +258,8 @@ jobs:
             artifact-name: python-compat-smoke-macos
             build-llvm: true
             build-quantum-pecos: false
-            job-timeout: 20
+            # Include QIS executor tests so macOS runtime failures block PRs.
+            job-timeout: 30
 
     steps:
     - name: Harden the runner (egress audit)
@@ -367,6 +368,10 @@ jobs:
       run: |
         mkdir -p dist/pecos-rslib-llvm
         maturin build --locked --manifest-path python/pecos-rslib-llvm/Cargo.toml --out dist/pecos-rslib-llvm
+
+    - name: Test macOS QIS executor and runtime symbol binding
+      if: runner.os == 'macOS'
+      run: cargo +stable test --locked -p pecos-qis --lib executor::tests
 
     - name: Build quantum-pecos wheel
       if: matrix.build-quantum-pecos

@@ -253,16 +253,12 @@ jobs:
             build-llvm: false
             build-quantum-pecos: false
             job-timeout: 30
-          # rustc 1.98.0 on aarch64-apple-darwin segfaults in LLVM target
-          # initialization under maturin's target probe; pinned to 1.97.1
-          # until fixed upstream. Unpin tracked in issue #566.
           - os: macOS-latest
             python-version: "3.12"
             artifact-name: python-compat-smoke-macos
             build-llvm: true
             build-quantum-pecos: false
             job-timeout: 20
-            rust-toolchain: "1.97.1"
 
     steps:
     - name: Harden the runner (egress audit)
@@ -309,12 +305,9 @@ jobs:
     - name: Set up Rust (Unix)
       if: runner.os != 'Windows'
       run: |
-        bash scripts/ci/ensure-rust.sh "${{ matrix.rust-toolchain || 'stable' }}" minimal
-        if [ "${{ runner.os }}" = "macOS" ]; then
-          bash scripts/ci/ensure-rust.sh stable minimal
-        fi
+        bash scripts/ci/ensure-rust.sh stable minimal
         export PATH="$HOME/.cargo/bin:$PATH"
-        rustup default "${{ matrix.rust-toolchain || 'stable' }}"
+        rustup default stable
         rustup show
 
     - name: Install just
@@ -352,7 +345,7 @@ jobs:
         key: ${{ steps.cache-llvm.outputs.cache-primary-key }}
 
     # Keep this after ci-env: its GITHUB_ENV exports take effect in this step.
-    # Exercise latest stable even while the wheel build is pinned (#566).
+    # Exercise latest stable with the actual build environment (#566).
     - name: Check stable Rust in the PECOS build environment
       if: runner.os == 'macOS'
       run: bash scripts/ci/check-rust-build-env.sh

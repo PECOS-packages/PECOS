@@ -32,7 +32,7 @@ import json
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from itertools import zip_longest
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from pecos.qec.surface import gadgets
 from pecos.qec.surface.circuit_builder import OpType, QubitAllocation
@@ -113,7 +113,17 @@ class LogicalOp:
     # Type of magic state injection: "T" for T-gate, "SZ" for SZ, or None.
     # Used by build_algorithm_descriptor() to emit the correct boundary gate.
     injection_type: str | None = None
-    fold: str | None = None
+    # Phase variant of a one-round fold segment; absent on every other operation.
+    fold: Literal["S", "SDG"] | None = None
+
+    def __post_init__(self) -> None:
+        """Keep fold identity and its one-round record contract consistent."""
+        if (self.gate_type is LogicalGateType.FOLD_S) != (self.fold is not None):
+            msg = "Fold identity must match FOLD_S"
+            raise AssertionError(msg)
+        if self.fold is not None and self.rounds != 1:
+            msg = "Fold segments require exactly one round"
+            raise AssertionError(msg)
 
     @property
     def is_segment(self) -> bool:
@@ -253,31 +263,29 @@ def _propagate_stabilizer_terms(
     return resolved
 
 
-def _logical_readout_is_deterministic(
+def _logical_readout_flow(
     operations: list[LogicalOp],
     segment_idx: int,
     patch: str,
     logical_type: str,
-    *,
-    crossed_folds: list[tuple[str, int]] | None = None,
-) -> bool:
+) -> tuple[bool, tuple[tuple[str, int], ...]]:
     """Propagate a final logical readout backwards to product preparations.
 
     ``logical_type`` is X or Z in the readout's current orientation (its
     measurement basis). Each crossed H swaps the type during the walk; callers
     must not also swap the initial type. Fold S/S-dagger exchanges X and Y;
-    crossed_folds receives each (patch, segment) crossed as X or Y so the
-    caller can include that round's Z records in the logical parity. Y cannot
+    the returned folds tuple contains each (patch, segment) crossed as X or Y
+    so the caller can include that round's Z records in the logical parity. Y cannot
     close at product preparation because its logical sign depends on syndrome.
     Physical S/S-dagger preserves Z but has no supported logical X or Y image,
     including the unmodelled distance-1 case.
-    A dict provides insertion-ordered XOR terms, so repeated CX images cancel.
+    A bit accumulator combines Pauli products per patch, including X times Z as Y.
     Terms involving a patch consumed before a crossed gate are unreliable.
     This deliberately conservative rule suppresses B and C for
     M([A,B,C],2,Z); CX(A,B); CX(B,C); M([B,C],2,Z), even though the simulator's
     non-destructive MZ makes them deterministic, because A is gated after its
     final readout, an invalid program rejected by ``to_tick_circuit``.
-    Terms without preparation raise ValueError naming the terms. False means
+    Terms without preparation raise ValueError naming the terms. A false result means
     the readout is not supported as deterministic; unlike the check walk,
     which returns None exactly for an unmeasured (physically random) Pauli,
     this also includes the unsupported logical X/Y image under physical S.
@@ -306,6 +314,7 @@ def _logical_readout_is_deterministic(
         msg = f"Patch '{patch}' is not in memory segment {segment_idx}"
         raise ValueError(msg)
 
+    crossed_folds: list[tuple[str, int]] = []
     terms = {(patch, logical_type): None}
     for index in range(start, -1, -1):
         op = operations[index]
@@ -313,13 +322,13 @@ def _logical_readout_is_deterministic(
             for label, kind in tuple(terms):
                 if first_memory.get(label) == index:
                     if kind == "Y" or op.per_patch_basis.get(label, op.basis) != kind:
-                        return False
+                        return False, ()
                     del terms[label, kind]
             if not terms:
-                return True
+                return True, tuple(crossed_folds)
             continue
 
-        images = {}
+        bits: dict[str, int] = {}
         for label, kind in terms:
             if (
                 op.gate_type in {LogicalGateType.TRANSVERSAL_SZ, LogicalGateType.TRANSVERSAL_SZdg}
@@ -328,28 +337,20 @@ def _logical_readout_is_deterministic(
             ):
                 # Physical S is not logical S: its X/Y image leaves the code.
                 # A fold has a supported Y_L image with measured Z-check parity.
-                return False
+                return False, ()
             if op.fold and label in op.patches and kind in {"X", "Y"}:
-                if crossed_folds is not None:
-                    crossed_folds.append((label, fold_segments[index]))
+                crossed_folds.append((label, fold_segments[index]))
                 mapped = [(label, {"X": "Y", "Y": "X"}[kind])]
             else:
                 mapped = _conjugate_pauli(op, label, kind)
-            for term in mapped:
-                term_patch = term[0]
+            for term_patch, term_kind in mapped:
                 if term_patch in op.patches and term_patch in last_memory and last_memory[term_patch] < index:
-                    return False
-                if term in images:
-                    del images[term]
-                else:
-                    images[term] = None
-        # Products on the same logical patch must combine: X times Z is Y.
-        bits: dict[str, int] = {}
-        for label, kind in images:
-            bits[label] = bits.get(label, 0) ^ {"X": 1, "Y": 3, "Z": 2}[kind]
+                    return False, ()
+                # Products on the same logical patch must combine: X times Z is Y.
+                bits[term_patch] = bits.get(term_patch, 0) ^ {"X": 1, "Y": 3, "Z": 2}[term_kind]
         terms = {(label, {1: "X", 2: "Z", 3: "Y"}[value]): None for label, value in bits.items() if value}
         if not terms:
-            return True
+            return True, tuple(crossed_folds)
 
     msg = f"Logical readout for patch '{patch}' has terms without preparation: {list(terms)}"
     raise ValueError(msg)
@@ -501,6 +502,15 @@ class LogicalCircuitBuilder:
         preparation memory, and a following memory specifying final readout.
         That final memory may have zero rounds. Unlike a physical S layer,
         this preserves the code and applies logical S in the current frame.
+
+        Fold rounds create hyperedges that build_decoder's matching route
+        (LogicalSubgraphDecoder) skips. Use a hypergraph decoder such as the
+        Tesseract route for fold circuits.
+
+        Observables are defined relative to the noiseless reference, as in
+        Stim. A fold pair whose product is Z_L flips the X observable's raw
+        parity: S/S gives one, while S/S-dagger gives zero. The metadata has
+        no sign field; raw-parity consumers must account for that reference.
         """
         self._require_available_patch(label)
         self._require_square(label, "Fold-transversal S")
@@ -968,9 +978,6 @@ class LogicalCircuitBuilder:
             It is emitted for a future consumer; no decoder applies the
             correction today. T decision-point execution remains unsupported.
         """
-        if any(op.fold == "SDG" for op in self._operations):
-            msg = "Fold S-dagger descriptor unsupported: Rust BoundaryGate has no S-dagger variant"
-            raise ValueError(msg)
         # Build the full DEM
         full_dem = self.build_dem(p1=p1, p2=p2, p_meas=p_meas, p_prep=p_prep)
         sc = self.stab_coords()
@@ -1005,6 +1012,8 @@ class LogicalCircuitBuilder:
 
         for i, op in enumerate(self._operations):
             if op.fold:
+                # The descriptor tracks sign-free Pauli frames: S and S-dagger
+                # both propagate an X frame bit into X and Z.
                 label = op.patches[0]
                 pending_gates.append(
                     {
@@ -1528,18 +1537,26 @@ class _CircuitGenerator:
             for label in op.patches:
                 self._fold_maps[label, self.segment_idx] = self._fold_check_maps(label)
         for rnd in range(op.rounds):
-            measurements = self._emit_steps(
-                [
-                    (gadgets.fold_s_round_gadget if op.fold else gadgets.syndrome_round_gadget)(
-                        self.patches[label].patch,
+            rounds = []
+            for label in op.patches:
+                ps = self.patches[label]
+                if op.fold:
+                    gadget = gadgets.fold_s_round_gadget(
+                        ps.patch,
                         allocations[label],
                         round_index=rnd,
-                        x_z_swapped=self.patches[label].x_z_swapped,
-                        **({"dagger": op.fold == "SDG"} if op.fold else {}),
-                    ).steps
-                    for label in op.patches
-                ],
-            )
+                        x_z_swapped=ps.x_z_swapped,
+                        dagger=op.fold == "SDG",
+                    )
+                else:
+                    gadget = gadgets.syndrome_round_gadget(
+                        ps.patch,
+                        allocations[label],
+                        round_index=rnd,
+                        x_z_swapped=ps.x_z_swapped,
+                    )
+                rounds.append(gadget.steps)
+            measurements = self._emit_steps(rounds)
             for (position, qubit), index in measurements.items():
                 label = op.patches[position]
                 allocation = allocations[label]
@@ -1592,7 +1609,7 @@ class _CircuitGenerator:
             curr_idx = self.stab_meas[curr_key]
 
             if round_idx == 0:
-                self._emit_boundary_detector(patch_label, stab_type, stab_index, curr_idx)
+                self._emit_boundary_detector(patch_label, stab_type, stab_index, [curr_idx])
 
             elif round_idx > 0:
                 # Normal: compare with previous round in same segment
@@ -1611,7 +1628,7 @@ class _CircuitGenerator:
         patch_label: str,
         stab_type: str,
         stab_index: int,
-        curr_meas_idx: int | list[int],
+        curr_meas_indices: list[int],
     ) -> None:
         """Compare the current check with its backwards-propagated measurements."""
         base_family = stab_type
@@ -1627,7 +1644,7 @@ class _CircuitGenerator:
         earlier_keys = self._boundary_terms[cache_key]
         if earlier_keys is None:
             return
-        records = [curr_meas_idx] if isinstance(curr_meas_idx, int) else list(curr_meas_idx)
+        records = list(curr_meas_indices)
         records.extend(self._fold_partner_records(patch_label, stab_type, stab_index, self.segment_idx, before=True))
         for label, family, segment in earlier_keys:
             last_round = self._last_round_of_segment(label, family, segment)
@@ -1643,28 +1660,47 @@ class _CircuitGenerator:
         self._add_detector(patch_label, stab_type, stab_index, records)
 
     def _fold_check_maps(self, label: str) -> tuple[dict[int, int], dict[int, int]]:
-        """Locate the input/output Z partners in the fold's current Cartesian frame."""
+        """Locate partners using the contract in gadgets.fold_s_round_gadget.
+
+        The before map is restricted to y == 2 because only that bottom row
+        carries the input-side X-record correction in the gadget's contract.
+        """
         ps = self.patches[label]
         positions = {q: gadgets.rotated_id_to_position(q, ps.patch.dx) for q in range(ps.patch.geometry.num_data)}
 
         def centre(check: Stabilizer) -> tuple[int, int]:
+            if check.weight not in {2, 4}:
+                msg = "Fold check weights must be 2 or 4"
+                raise AssertionError(msg)
             xs, ys = zip(*(positions[q] for q in check.data_qubits), strict=True)
             x, y = (min(xs) + max(xs)) // 2, (min(ys) + max(ys)) // 2
             if check.weight == 2:
                 if min(xs) == max(xs):
+                    if x not in {1, 2 * ps.patch.dx - 1}:
+                        msg = "Fold boundary X axis must start at a patch edge"
+                        raise AssertionError(msg)
                     x += -1 if x == 1 else 1
                 else:
+                    if y not in {1, 2 * ps.patch.dx - 1}:
+                        msg = "Fold boundary Y axis must start at a patch edge"
+                        raise AssertionError(msg)
                     y += -1 if y == 1 else 1
             return (y, x) if ps.x_z_swapped else (x, y)
 
+        x_by_position = {centre(check): check.index for check in ps.current_x_stabilizers}
         z_by_position = {centre(check): check.index for check in ps.current_z_stabilizers}
+        if len(x_by_position) != len(ps.current_x_stabilizers):
+            msg = "Fold X check centres must be unique"
+            raise AssertionError(msg)
+        if len(z_by_position) != len(ps.current_z_stabilizers):
+            msg = "Fold Z check centres must be unique"
+            raise AssertionError(msg)
         before, after = {}, {}
-        for check in ps.current_x_stabilizers:
-            x, y = centre(check)
-            if y == 2 and check.weight == 4 and (0, x) in z_by_position:
-                before[check.index] = z_by_position[0, x]
+        for (x, y), index in x_by_position.items():
+            if y == 2 and (0, x) in z_by_position:
+                before[index] = z_by_position[0, x]
             if (y + 2, x) in z_by_position:
-                after[check.index] = z_by_position[y + 2, x]
+                after[index] = z_by_position[y + 2, x]
         return before, after
 
     def _fold_partner_records(
@@ -1818,7 +1854,6 @@ class _CircuitGenerator:
                 syn_idx = self.stab_meas.get(syn_key)
                 if syn_idx is not None:
                     all_idx = [*data_rec, syn_idx]
-                    all_idx.extend(self._fold_partner_records(patch_label, lookup_type, s.index, seg, before=False))
                     anc_x, anc_y = self._ancilla_spatial_coords(patch_label, lookup_type, s.index)
                     self._det_json.append(
                         {
@@ -1829,6 +1864,8 @@ class _CircuitGenerator:
                     )
 
         else:
+            # A zero-round final segment reads data right after the previous
+            # segment's last round, so its checks compare against that round.
             for s in final_stabs:
                 self._emit_boundary_detector(
                     patch_label,
@@ -1843,14 +1880,13 @@ class _CircuitGenerator:
             # correction; it is not a deterministic DEM observable.
             self._injection_readouts[patch_label] = {"basis": meas_basis, "meas_ids": obs_indices}
             return
-        crossed_folds: list[tuple[str, int]] = []
-        if not _logical_readout_is_deterministic(
+        deterministic, crossed_folds = _logical_readout_flow(
             self.operations,
             self.segment_idx,
             patch_label,
             meas_basis,
-            crossed_folds=crossed_folds,
-        ):
+        )
+        if not deterministic:
             # Skip non-reliable observables — they're physically
             # non-deterministic and would cause Stim DEM errors.
             self.next_observable_idx += 1
@@ -1860,14 +1896,6 @@ class _CircuitGenerator:
             obs_indices.extend(
                 self.stab_meas[key] for key in self._stab_meas_by_round[label, segment, 0] if key[1] == "Z"
             )
-        # Fold contributions multiply as parities, so duplicate records cancel.
-        parity: dict[int, None] = {}
-        for record in obs_indices:
-            if record in parity:
-                del parity[record]
-            else:
-                parity[record] = None
-        obs_indices = list(parity)
         obs_idx = self.next_observable_idx
         self.next_observable_idx += 1
         self._obs_json.append(

@@ -4,13 +4,28 @@
 """Fold builder parity-space oracles and the known X-sector distance reduction."""
 
 import json
+from dataclasses import replace
 
 import pytest
 import stim
 from pecos.qec import DetectorErrorModel
 from pecos.qec.surface import LogicalCircuitBuilder, SurfacePatch
 from pecos.qec.surface.circuit_builder import tick_circuit_to_stim
-from pecos.testing import deterministic_parity_space
+from pecos.qec.surface.logical_circuit import (
+    LogicalGateType,
+    LogicalOp,
+    PatchState,
+    _CircuitGenerator,
+    _logical_readout_flow,
+)
+from pecos.testing import deterministic_parity_basis, simulate_tick_circuit
+
+
+class FoldMapProbe(_CircuitGenerator):
+    """Expose geometry validation without emitting an invalid physical gadget."""
+
+    def fold_maps(self, label):
+        return self._fold_check_maps(label)
 
 
 def fold_builder(shape: str, distance: int = 3) -> LogicalCircuitBuilder:
@@ -18,7 +33,12 @@ def fold_builder(shape: str, distance: int = 3) -> LogicalCircuitBuilder:
     patch = SurfacePatch.create(distance=distance)
     builder = LogicalCircuitBuilder()
     builder.add_patch(patch, "A")
-    if shape.startswith("cx_"):
+    if shape in {"mem_Z_zero_final", "h_zero_final"}:
+        builder.add_memory("A", 2, "Z")
+        if shape == "h_zero_final":
+            builder.add_transversal_h("A")
+        builder.add_memory("A", 0, "X" if shape == "h_zero_final" else "Z")
+    elif shape.startswith("cx_"):
         builder.add_patch(patch, "B", qubit_offset=patch.geometry.num_qubits)
         builder.add_memory(["A", "B"], 2, "Z")
         if shape == "cx_before":
@@ -37,7 +57,7 @@ def fold_builder(shape: str, distance: int = 3) -> LogicalCircuitBuilder:
         builder.add_logical_s("A")
         if shape == "pair_separated":
             builder.add_memory("A", 2, "X")
-        builder.add_logical_sdg("A")
+        builder.add_logical_s("A", dagger=shape != "pair_s_s")
         builder.add_memory("A", 1, "X")
     else:
         before, after = {"first": (0, 2), "mid": (1, 1), "last": (2, 0), "single_x": (1, 1)}[shape]
@@ -71,6 +91,8 @@ def _mask(records: list[int]) -> int:
 RANK_SHAPES = [
     (shape, 3)
     for shape in (
+        "mem_Z_zero_final",
+        "h_zero_final",
         "first",
         "mid",
         "last",
@@ -90,7 +112,7 @@ def test_fold_parity_space(shape, distance):
     tc = fold_builder(shape, distance).to_tick_circuit()
     circuit = stim.Circuit(tick_circuit_to_stim(tc))
     shots = circuit.compile_sampler(seed=0).sample(2048)
-    space = deterministic_parity_space(shots)
+    space = deterministic_parity_basis(shots)
     emitted = [
         _mask(entry["meas_ids"]) for key in ("detectors", "observables") for entry in json.loads(tc.get_meta(key))
     ]
@@ -98,7 +120,6 @@ def test_fold_parity_space(shape, distance):
     assert _rank([*space, *emitted]) == len(space), f"{shape}: emitted parity outside deterministic space"
     assert rank == len(space), f"{shape}: dimension={len(space)}, emitted rank={rank}"
     assert len(space) == circuit.count_determined_measurements()
-    print(f"RANK {shape} d={distance}: dimension={len(space)}, emitted_rank={rank}")
     for seed in range(8):
         dets, obs = circuit.compile_detector_sampler(seed=seed).sample(256, separate_observables=True)
         assert not dets.any()
@@ -132,7 +153,7 @@ def test_fold_observables(shape, count):
         ("mid", 3, 3),
         ("pair_adjacent", 3, 2),
         pytest.param("mid", 5, 5, marks=pytest.mark.slow),
-        pytest.param("pair_adjacent", 5, 4, marks=pytest.mark.slow),
+        ("pair_adjacent", 5, 4),
     ],
 )
 def test_fold_fault_distance(shape, distance, expected):
@@ -156,13 +177,15 @@ def test_fold_descriptor():
         assert stim.DetectorErrorModel(segment["dem"]).num_detectors == segment["num_detectors"]
 
 
-def test_fold_dagger_descriptor_rejected():
-    builder = fold_builder("pair_adjacent")
-    assert builder.to_tick_circuit().num_measurements() == 41
-    assert builder.build_dem()
-    message = "Fold S-dagger descriptor unsupported: Rust BoundaryGate has no S-dagger variant"
-    with pytest.raises(ValueError, match=message):
-        builder.build_algorithm_descriptor()
+def test_fold_dagger_descriptor_matches_s():
+    """Sign-free Pauli frame updates and DEMs agree for S/S and S/S-dagger."""
+    dagger = fold_builder("pair_adjacent")
+    phase = fold_builder("pair_s_s")
+    assert dagger.to_tick_circuit().num_measurements() == 41
+    dem = stim.DetectorErrorModel(dagger.build_dem())
+    assert dem.num_detectors == 32
+    assert dem.num_observables == 1
+    assert dagger.build_algorithm_descriptor() == phase.build_algorithm_descriptor()
 
 
 @pytest.mark.parametrize(
@@ -198,8 +221,112 @@ def test_fold_lifetime_rejections(before_preparation):
 
 def test_parity_space_known_samples():
     # The first bit is fixed at one; the other two are correlated random bits.
-    assert deterministic_parity_space([[1, 0, 0], [1, 1, 1]]) == (1, 6)
-    assert deterministic_parity_space([[], []]) == ()
+    assert deterministic_parity_basis([[1, 0, 0], [1, 1, 1]] * 2) == (1, 6)
+    assert deterministic_parity_basis([[], []]) == ()
     for shots in ([], [[0], [0, 1]], [[2]]):
-        with pytest.raises(ValueError, match="deterministic_parity_space requires"):
-            deterministic_parity_space(shots)
+        with pytest.raises(ValueError, match="deterministic_parity_basis requires"):
+            deterministic_parity_basis(shots)
+
+
+@pytest.mark.parametrize("physical_s", [False, True])
+def test_fold_readout_y_guards(physical_s):
+    """A Y term cannot cross physical S or close at product Y preparation."""
+    builder = LogicalCircuitBuilder()
+    builder.add_patch(SurfacePatch.create(3), "A")
+    builder.add_memory("A", 1, "X" if physical_s else "Y")
+    if physical_s:
+        builder.add_transversal_sz("A")
+    builder.add_logical_s("A")
+    builder.add_memory("A", 1, "X")
+    tc = builder.to_tick_circuit()
+    assert json.loads(tc.get_meta("observables")) == []
+    for seed in range(8):
+        _, fired, observables = simulate_tick_circuit(tc, seed)
+        assert fired == 0
+        assert observables == {}
+
+
+@pytest.mark.parametrize(("gate", "fold"), [(LogicalGateType.FOLD_S, None), (LogicalGateType.MEMORY, "S")])
+def test_fold_op_identity_assertion(gate, fold):
+    with pytest.raises(AssertionError, match="Fold identity must match FOLD_S"):
+        LogicalOp(gate, ["A"], rounds=1, fold=fold)
+
+
+@pytest.mark.parametrize("rounds", [0, 2])
+def test_fold_op_round_assertion(rounds):
+    with pytest.raises(AssertionError, match="Fold segments require exactly one round"):
+        LogicalOp(LogicalGateType.FOLD_S, ["A"], rounds=rounds, fold="S")
+
+
+def test_logical_readout_combines_x_z_on_same_patch():
+    """The middle CX maps X_A Y_B to Y_A Z_B; the earlier fold maps Y_A to X_A."""
+    operations = [
+        LogicalOp(LogicalGateType.MEMORY, ["A", "B"], rounds=1, per_patch_basis={"A": "X", "B": "Z"}),
+        LogicalOp(LogicalGateType.FOLD_S, ["A"], rounds=1, fold="S"),
+        LogicalOp(LogicalGateType.TRANSVERSAL_CX, ["A", "B"]),
+        LogicalOp(LogicalGateType.FOLD_S, ["B"], rounds=1, fold="S"),
+        LogicalOp(LogicalGateType.TRANSVERSAL_CX, ["A", "B"]),
+        LogicalOp(LogicalGateType.MEMORY, ["A", "B"], rounds=1, basis="X"),
+    ]
+    assert _logical_readout_flow(operations, 3, "A", "X") == (True, (("B", 2), ("A", 1)))
+
+
+@pytest.mark.parametrize("family", ["X", "Z"])
+@pytest.mark.parametrize("malformation", ["duplicate", "weight", "interior_axis"])
+def test_fold_check_map_bounds(family, malformation):
+    patch = SurfacePatch.create(3)
+    checks = patch.geometry.x_stabilizers if family == "X" else patch.geometry.z_stabilizers
+    if malformation == "duplicate":
+        checks[1] = replace(checks[1], data_qubits=checks[0].data_qubits)
+        message = f"Fold {family} check centres must be unique"
+    elif malformation == "weight":
+        checks[0] = replace(checks[0], data_qubits=(0,))
+        message = "Fold check weights must be 2 or 4"
+    else:
+        checks[0] = replace(checks[0], data_qubits=(1, 4) if family == "X" else (3, 4))
+        axis = "X" if family == "X" else "Y"
+        message = f"Fold boundary {axis} axis must start at a patch edge"
+    generator = FoldMapProbe({"A": PatchState(patch, "A")}, [])
+    with pytest.raises(AssertionError, match=message):
+        generator.fold_maps("A")
+
+
+@pytest.mark.parametrize("shots", [[[0, 0]], [[0, 0], [1, 1]], [[0]]])
+def test_parity_basis_requires_enough_shots(shots):
+    with pytest.raises(ValueError, match=r"deterministic_parity_basis requires at least width \+ 1 shots"):
+        deterministic_parity_basis(iter(shots))
+
+
+def test_fold_matching_skips_hyperedges():
+    """Pin the documented matching-route limitation without changing the decoder."""
+    builders = []
+    for fold in (False, True):
+        builder = LogicalCircuitBuilder()
+        builder.add_patch(SurfacePatch.create(3), "A")
+        builder.add_memory("A", 1, "Z")
+        if fold:
+            builder.add_logical_s("A")
+        else:
+            builder.add_memory("A", 1, "Z")
+        builder.add_memory("A", 1, "Z")
+        builders.append(builder)
+    skipped = []
+    for builder in builders:
+        _, decoder = builder.build_decoder(inner_decoder="pymatching")
+        skipped.append(sum(hyperedges for _, hyperedges in decoder.subgraph_diagnostics()))
+    assert skipped[0] == 0
+    assert skipped[1] > 0
+
+
+@pytest.mark.parametrize(("shape", "raw_parity"), [("pair_s_s", 1), ("pair_adjacent", 0)])
+def test_fold_pair_reference_parity(shape, raw_parity):
+    """Raw parity retains the logical sign; Stim reports flips from its reference."""
+    tc = fold_builder(shape).to_tick_circuit()
+    circuit = stim.Circuit(tick_circuit_to_stim(tc))
+    for seed in range(8):
+        _, fired, observables = simulate_tick_circuit(tc, seed)
+        assert fired == 0
+        assert observables == {0: raw_parity}
+        detectors, flips = circuit.compile_detector_sampler(seed=seed).sample(256, separate_observables=True)
+        assert not detectors.any()
+        assert not flips.any()

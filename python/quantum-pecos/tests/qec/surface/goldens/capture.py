@@ -4,7 +4,7 @@
 """Capture both surface golden suites using the PECOS version in the environment.
 
 Run from the repository root; see README.md for provenance and revision choice.
-Fold shapes and protocol_fold_d3 are post-fix captures for slice 4b.
+Fold shapes are post-fix captures for PR #777.
 No git operations are performed. Existing files require explicit --force.
 """
 
@@ -24,6 +24,8 @@ from pecos.qec.surface.circuit_builder import (
 
 BASE_REVISION = "8568727d5"
 POST_FIX_SHAPES = (
+    "d3_mem_Z_zero_final",
+    "d3_h_zero_final",
     "d3_fold_s_mid",
     "d3_fold_s_first",
     "d3_fold_s_last",
@@ -129,6 +131,8 @@ def _ops(steps: list, allocation: QubitAllocation) -> dict:
 
 
 SHAPES = (
+    "d3_mem_Z_zero_final",
+    "d3_h_zero_final",
     "d3_fold_s_mid",
     "d3_fold_s_first",
     "d3_fold_s_last",
@@ -180,7 +184,12 @@ def make_builder(name: str) -> LogicalCircuitBuilder:
     builder = LogicalCircuitBuilder()
     for i, label in enumerate(labels):
         builder.add_patch(patch, label, qubit_offset=i * (patch.geometry.num_data + patch.geometry.num_ancilla))
-    if shape.startswith("mem_"):
+    if shape in {"mem_Z_zero_final", "h_zero_final"}:
+        builder.add_memory("A", 2, "Z")
+        if shape == "h_zero_final":
+            builder.add_transversal_h("A")
+        builder.add_memory("A", 0, "X" if shape == "h_zero_final" else "Z")
+    elif shape.startswith("mem_"):
         builder.add_memory("A", 3 if name.startswith("d5") else 2, shape[-1])
     elif shape in {"fold_s_mid", "fold_s_first", "fold_s_last", "fold_pair_x", "h_fold"}:
         if shape == "h_fold":
@@ -246,7 +255,7 @@ def golden_outputs(builder: LogicalCircuitBuilder) -> dict[str, str]:
 
 def capture_outputs() -> dict[str, str]:
     """Evaluate the explicit recipes for both golden directories."""
-    outputs = {"gadget_parity/protocol_fold_d3.py.txt": render_surface_protocol_module(SurfacePatch.create(distance=3))}
+    outputs = {"gadget_parity/protocol_d3.py.txt": render_surface_protocol_module(SurfacePatch.create(distance=3))}
     for name in OPS_NAMES:
         patch, rounds, basis, kwargs = _case(name.removeprefix("ops_").removesuffix(".json"))
         steps, allocation = build_surface_code_circuit(patch, rounds, basis, **kwargs)
@@ -277,7 +286,7 @@ def main() -> None:
     """Write captures only after checking all selected output paths."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", type=Path, default=Path(__file__).parent)
-    parser.add_argument("--fold-only", action="store_true", help="Capture only slice 4b fold drift guards")
+    parser.add_argument("--fold-only", action="store_true", help="Capture only PR #777 fold drift guards")
     parser.add_argument("--force", action="store_true", help="Allow replacement of existing golden files")
     parser.add_argument(
         "--post-fix-only",
@@ -287,12 +296,16 @@ def main() -> None:
     args = parser.parse_args()
     outputs = capture_outputs()
     if args.fold_only:
-        outputs = {name: contents for name, contents in outputs.items() if "fold" in name}
+        outputs = {
+            name: contents
+            for name, contents in outputs.items()
+            if "fold" in name or name == "gadget_parity/protocol_d3.py.txt"
+        }
     if args.post_fix_only:
         outputs = {
             name: contents
             for name, contents in outputs.items()
-            if name == "gadget_parity/protocol_fold_d3.py.txt"
+            if name == "gadget_parity/protocol_d3.py.txt"
             or any(name.startswith(f"logical_builder/{shape}.") for shape in POST_FIX_SHAPES)
         }
     if not args.force:

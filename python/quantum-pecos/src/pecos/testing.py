@@ -497,7 +497,7 @@ def assert_same_measurement_partition(
             raise AssertionError(msg)
 
 
-def deterministic_parity_space(shots: Iterable[Sequence[int]]) -> tuple[int, ...]:
+def deterministic_parity_basis(shots: Iterable[Sequence[int]]) -> tuple[int, ...]:
     """Return a GF(2) basis of measurement parities constant across sampled shots.
 
     Each input row is a sequence of binary measurement outcomes. Each returned
@@ -506,23 +506,27 @@ def deterministic_parity_space(shots: Iterable[Sequence[int]]) -> tuple[int, ...
     a sampling oracle, so callers must use enough independent noiseless shots
     to span the random outcomes (2048 or more for small Clifford circuits).
     It does not infer the parity's constant value or prove sampling completeness.
+    At least width + 1 shots are required to allow full rank of shot differences.
+    A circuit with no measurements returns an empty basis.
     """
     rows = iter(shots)
     first = next(rows, None)
     if first is None:
-        msg = "deterministic_parity_space requires at least one shot"
+        msg = "deterministic_parity_basis requires at least one shot"
         raise ValueError(msg)
     width = len(first)
 
     def mask(row: Sequence[int]) -> int:
         if len(row) != width or any(value not in (0, 1) for value in row):
-            msg = "deterministic_parity_space requires equal-width binary shots"
+            msg = "deterministic_parity_basis requires equal-width binary shots"
             raise ValueError(msg)
         return sum(int(value) << index for index, value in enumerate(row))
 
     origin = mask(first)
     pivots: dict[int, int] = {}
+    shot_count = 1
     for row in rows:
+        shot_count += 1
         value = mask(row) ^ origin
         while value:
             pivot = value.bit_length() - 1
@@ -530,6 +534,9 @@ def deterministic_parity_space(shots: Iterable[Sequence[int]]) -> tuple[int, ...
                 pivots[pivot] = value
                 break
             value ^= pivots[pivot]
+    if shot_count < width + 1:
+        msg = f"deterministic_parity_basis requires at least width + 1 shots ({width + 1}); got {shot_count}"
+        raise ValueError(msg)
     basis = []
     for free in range(width):
         if free in pivots:

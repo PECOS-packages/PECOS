@@ -32,15 +32,15 @@ on dev to 14, 18, and 20, respectively. Measurement records, detectors, and
 observables are unchanged, so `dx1dz3_mem_Z` and `dx1dz3_mem_X` differ from
 the base revision only in `.stim` and `.noisy.stim`; their `.tickmeta.json` is
 byte-identical to it.
-All other captures, including balanced CX operations and distance-7 and
+Except for the PR #777 captures below, all other captures, including balanced CX operations and distance-7 and
 dx=5/dz=3 Guppy source, retain the base revision's output.
 
 `capture.py` contains the explicit recipes for both directories and records the
 base revision in `BASE_REVISION`. It uses the PECOS implementation installed in
 the invoking environment; it does not switch revisions, build dependencies, or
 change git state. Use an environment running the base revision for baseline
-captures, or the corrected implementation with `--post-fix-only` for the seven
-exceptions and the protocol drift guard. Run from the repository root:
+captures, or the corrected implementation with `--post-fix-only` for the fourteen
+POST_FIX_SHAPES and the protocol drift guard. Run from the repository root:
 
 ```bash
 export UV_CACHE_DIR=/tmp/pecos-uv-cache-753
@@ -52,25 +52,30 @@ a separate output directory for review; do not regenerate protected goldens to
 make parity tests pass. Serialization preserves the original whitespace, nested
 metadata strings, nulls, empty operations, and absence of final newlines.
 
-`gadget_parity/protocol_d3.py.txt` was captured from the PR #762 review fixes,
-not the base revision. It is a drift guard for the scoped protocol module's
-rendered source, including the exact factory bodies and the functions they use.
-It is listed in the parity suite's `EXPECTED_FILES` inventory and produced by
-`capture.py` (also with `--post-fix-only`). All pre-existing golden artifacts
-remain unchanged.
-
-
-## Slice 4b fold captures
+## PR #777 captures
 
 `d3_fold_s_mid`, `d3_fold_s_first`, `d3_fold_s_last`, `d3_fold_pair_x`, and
 `d3_h_fold` are post-fix captures of the fold-aware builder, after independent
 noiseless parity-space checks. Each has `.stim`, `.noisy.stim`, and
 `.tickmeta.json` files. These are drift guards, not independent physics oracles.
 
-`gadget_parity/protocol_fold_d3.py.txt` captures the expanded protocol module.
-The older `protocol_d3.py.txt` remains byte-identical: the parity test checks
-that every legacy top-level source block still occurs verbatim in the expanded
-module, then compares the complete new source with the fold capture.
-`capture.py` now emits the expanded protocol under the new name; it does not
-regenerate the historical protocol file. Use `--fold-only` to capture just
-these sixteen new files. No pre-existing golden is overwritten.
+`d3_mem_Z_zero_final` (`M(2,Z); M(0,Z)`) and `d3_h_zero_final`
+(`M(2,Z); H; M(0,X)`) announce and pin a non-fold detector improvement in PR
+#777. A zero-round final segment compares its data checks with the preceding
+segment's last round. Both shapes have 16 detectors instead of the base
+branch's 12; each retains one observable. These six new artifacts were captured
+after the fix and certified by the deterministic-parity-basis oracle.
+There are fourteen entries in `POST_FIX_SHAPES`: three repetition shapes,
+four injection shapes, five fold shapes, and these two zero-final shapes.
+
+`gadget_parity/protocol_d3.py.txt` originated in PR #762 and is explicitly
+re-captured during the PR #777 review fixes. The merged quantum import and
+expanded factory docstring change the generated source, so the historical
+source cannot remain the active exact-match guard. It now captures the entire
+current protocol module, including the fold factories. `capture.py` produces
+this file, also with `--post-fix-only` and `--fold-only`.
+
+`protocol_d3.py.txt` is the only protocol-module drift guard. No other
+pre-existing golden artifact is re-captured. `--fold-only` selects the fifteen
+fold builder artifacts plus the current protocol guard; `--post-fix-only`
+also includes the other nine post-fix builder shapes.

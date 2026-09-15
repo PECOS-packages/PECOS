@@ -3,7 +3,6 @@
 
 """Independent captured-oracle parity for physical surface gadgets."""
 
-import ast
 import importlib.util
 import json
 import sys
@@ -88,7 +87,6 @@ GUPPY_NAMES = (
 )
 EXPECTED_FILES = {
     "protocol_d3.py.txt",
-    "protocol_fold_d3.py.txt",
     *OPS_NAMES,
     *STIM_NAMES,
     *GUPPY_NAMES,
@@ -361,13 +359,7 @@ def test_measurement_membership_uses_allocation(basis: str | None) -> None:
 def test_protocol_source_parity() -> None:
     """The post-fix protocol capture guards rendered source against drift."""
     source = render_surface_protocol_module(SurfacePatch.create(distance=3))
-    assert source == (GOLDENS / "protocol_fold_d3.py.txt").read_text()
-    # The expanded module retains every legacy definition byte for byte.
-    legacy = (GOLDENS / "protocol_d3.py.txt").read_text()
-    for node in ast.parse(legacy).body:
-        start = min([node.lineno, *(d.lineno for d in getattr(node, "decorator_list", []))])
-        block = "\n".join(legacy.splitlines()[start - 1 : node.end_lineno])
-        assert block in source
+    assert source == (GOLDENS / "protocol_d3.py.txt").read_text()
 
 
 def test_two_register_ancilla_names() -> None:

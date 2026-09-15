@@ -106,7 +106,7 @@ class FaultDistanceUpperBoundResult:
     def bound_kind(self) -> str: ...
     def __repr__(self) -> str: ...
 
-class DemSliceTemplate:
+class CachedDemSlice:
     """Reusable absolute-round-independent DEM slice."""
 
     @property
@@ -125,9 +125,9 @@ class DemSliceRoundSchedule:
     """Reusable structured-DEM schedule compiled from annotated round metadata."""
 
     @staticmethod
-    def from_templates(
+    def from_cached_slices(
         output_model: DetectorErrorModel,
-        templates: Sequence[tuple[DemSliceTemplate, int]],
+        cached_slices: Sequence[tuple[CachedDemSlice, int]],
         expected_dem_outputs: Sequence[int],
         expected_tracked_paulis: Sequence[int],
         coordinate_offset: tuple[float, float] | None = ...,
@@ -137,10 +137,10 @@ class DemSliceRoundSchedule:
     ) -> DemSliceRoundSchedule: ...
     @property
     def num_instances(self) -> int: ...
-    def template(self, owner_round: int) -> DemSliceTemplate: ...
+    def cached_slice(self, owner_round: int) -> CachedDemSlice: ...
     def rounds(self) -> list[int]: ...
     def required_buffer_rounds(self, start_round: int, commit_rounds: int) -> int: ...
-    def stitch(
+    def compose(
         self,
         start_round: int,
         commit_rounds: int,
@@ -162,7 +162,7 @@ class DetectorErrorModel:
         start_round: int,
         commit_rounds: int,
     ) -> int: ...
-    def stitched_round_window(
+    def composed_round_window(
         self,
         influence_map: Any,
         circuit: DagCircuit,

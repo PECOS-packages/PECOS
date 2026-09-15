@@ -344,18 +344,18 @@ def test_surface_dem_round_schedule_reconstructs_the_terminal_model():
     assert schedule.required_buffer_rounds(0, 3) == 0
     assert reference.required_buffer_rounds(influence_map, dag, 0, 2) == 1
     with pytest.raises(ValueError, match="increase the buffer"):
-        schedule.stitch(
+        schedule.compose(
             start_round=0,
             commit_rounds=2,
             buffer_rounds=0,
         )
 
-    stitched = schedule.stitch(
+    composed = schedule.compose(
         start_round=0,
         commit_rounds=3,
         forward_boundary="hard",
     )
-    one_shot = reference.stitched_round_window(
+    one_shot = reference.composed_round_window(
         influence_map,
         dag,
         start_round=0,
@@ -365,11 +365,11 @@ def test_surface_dem_round_schedule_reconstructs_the_terminal_model():
 
     # Dense local D<n> numbering is intentionally schedule-derived. Compare
     # physical detector coordinates and independent sources across that relabeling.
-    assert _coordinate_normalized_sources(stitched) == _coordinate_normalized_sources(reference)
-    assert _coordinate_normalized_sources(stitched) == _coordinate_normalized_sources(one_shot)
+    assert _coordinate_normalized_sources(composed) == _coordinate_normalized_sources(reference)
+    assert _coordinate_normalized_sources(composed) == _coordinate_normalized_sources(one_shot)
 
 
-def test_cached_surface_templates_reconstruct_a_longer_memory_experiment():
+def test_cached_surface_slices_reconstruct_a_longer_memory_experiment():
     """A bounded compile supplies reusable bulk and distinct boundary slices."""
     from pecos.qec.surface import LogicalCircuitBuilder
     from pecos_rslib.qec import DagFaultAnalyzer, DemSliceRoundSchedule, DetectorErrorModel
@@ -392,16 +392,16 @@ def test_cached_surface_templates_reconstruct_a_longer_memory_experiment():
 
     # Compile only the bounded halo needed to distinguish initialization,
     # stationary bulk SEC, and the terminal measurement boundary.
-    template_model, template_influence, template_dag = build_model(3)
-    bounded = template_model.round_schedule(template_influence, template_dag)
-    init = bounded.template(0)
-    bulk = bounded.template(1)
-    pre_terminal = bounded.template(2)
-    terminal = bounded.template(3)
+    slice_model, slice_influence, fixture_dag = build_model(3)
+    bounded = slice_model.round_schedule(slice_influence, fixture_dag)
+    init = bounded.cached_slice(0)
+    bulk = bounded.cached_slice(1)
+    pre_terminal = bounded.cached_slice(2)
+    terminal = bounded.cached_slice(3)
     assert init.name.endswith("round@0")
     assert bulk.temporal_horizon == (0, 1)
-    assert all(template.dem_outputs == [0] for template in (init, bulk, pre_terminal, terminal))
-    assert all(not template.tracked_paulis for template in (init, bulk, pre_terminal, terminal))
+    assert all(cached_slice.dem_outputs == [0] for cached_slice in (init, bulk, pre_terminal, terminal))
+    assert all(not cached_slice.tracked_paulis for cached_slice in (init, bulk, pre_terminal, terminal))
 
     # Reuse one bulk Arc at four distinct absolute rounds. Deliberately supply
     # the instances out of order to exercise deterministic schedule ordering.
@@ -413,61 +413,61 @@ def test_cached_surface_templates_reconstruct_a_longer_memory_experiment():
         (bulk, 1),
         (init, 0),
     ]
-    composed = DemSliceRoundSchedule.from_templates(template_model, instances, [0], [])
+    schedule = DemSliceRoundSchedule.from_cached_slices(slice_model, instances, [0], [])
     with pytest.raises(ValueError, match="coordinate_offset values must be finite"):
-        DemSliceRoundSchedule.from_templates(
-            template_model,
+        DemSliceRoundSchedule.from_cached_slices(
+            slice_model,
             [(init, 0)],
             [0],
             [],
             coordinate_offset=(float("inf"), 0.0),
         )
     with pytest.raises(ValueError, match=r"detector_coordinate_offsets\[0\] values must be finite"):
-        DemSliceRoundSchedule.from_templates(
-            template_model,
+        DemSliceRoundSchedule.from_cached_slices(
+            slice_model,
             [(init, 0)],
             [0],
             [],
             detector_coordinate_offsets={0: (float("inf"), 0.0)},
         )
     with pytest.raises(ValueError, match="unknown detector stream 999"):
-        DemSliceRoundSchedule.from_templates(
-            template_model,
+        DemSliceRoundSchedule.from_cached_slices(
+            slice_model,
             [(init, 0)],
             [0],
             [],
             detector_coordinate_offsets={999: (0.0, 0.0)},
         )
     with pytest.raises(ValueError, match="unknown owner round 999"):
-        DemSliceRoundSchedule.from_templates(
-            template_model,
+        DemSliceRoundSchedule.from_cached_slices(
+            slice_model,
             [(init, 0)],
             [0],
             [],
             dem_output_routings={999: {0: [0]}},
         )
     with pytest.raises(ValueError, match="unknown local output 999"):
-        DemSliceRoundSchedule.from_templates(
-            template_model,
+        DemSliceRoundSchedule.from_cached_slices(
+            slice_model,
             [(init, 0)],
             [0],
             [],
             dem_output_routings={0: {999: [0]}},
         )
     with pytest.raises(ValueError, match="targets undeclared output 999"):
-        DemSliceRoundSchedule.from_templates(
-            template_model,
+        DemSliceRoundSchedule.from_cached_slices(
+            slice_model,
             [(init, 0)],
             [0],
             [],
             dem_output_routings={0: {0: [999]}},
         )
     with pytest.raises(ValueError, match=r"assembled circuit expects \{\}"):
-        DemSliceRoundSchedule.from_templates(template_model, [(init, 0)], [], [])
+        DemSliceRoundSchedule.from_cached_slices(slice_model, [(init, 0)], [], [])
     with pytest.raises(ValueError, match="tracked Paulis"):
-        DemSliceRoundSchedule.from_templates(template_model, [(init, 0)], [0], [0])
-    assert composed.rounds() == [0, 1, 2, 3, 4, 5]
-    stitched = composed.stitch(
+        DemSliceRoundSchedule.from_cached_slices(slice_model, [(init, 0)], [0], [0])
+    assert schedule.rounds() == [0, 1, 2, 3, 4, 5]
+    composed = schedule.compose(
         start_round=0,
         commit_rounds=6,
         buffer_rounds=0,
@@ -475,18 +475,18 @@ def test_cached_surface_templates_reconstruct_a_longer_memory_experiment():
     )
 
     reference, _, _ = build_model(5)
-    assert stitched.to_string() == reference.to_string()
-    assert _coordinate_normalized_sources(stitched) == _coordinate_normalized_sources(reference)
+    assert composed.to_string() == reference.to_string()
+    assert _coordinate_normalized_sources(composed) == _coordinate_normalized_sources(reference)
 
     # Two copies of the same destination cancel. This deliberately projects
     # every local logical column while retaining the declared output schema.
-    projected = DemSliceRoundSchedule.from_templates(
-        template_model,
+    projected = DemSliceRoundSchedule.from_cached_slices(
+        slice_model,
         instances,
         [0],
         [],
         dem_output_routings={round_: {0: [0, 0]} for _, round_ in instances},
-    ).stitch(
+    ).compose(
         start_round=0,
         commit_rounds=6,
         buffer_rounds=0,

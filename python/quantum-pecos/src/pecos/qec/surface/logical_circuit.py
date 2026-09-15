@@ -41,12 +41,12 @@ if TYPE_CHECKING:
 
 PatchSnapshot = dict[str, tuple[bool, list[str], list[str], list[str], list[str]]]
 
-_SURFACE_DEM_TEMPLATE_CACHE_SIZE = 16
+_SURFACE_DEM_SLICE_CACHE_SIZE = 16
 
 
 @dataclass(frozen=True)
-class _CachedSurfaceMemoryDemTemplates:
-    """Noise-weighted bounded templates for one physical memory family."""
+class _CachedSurfaceMemoryDemSlices:
+    """Noise-weighted bounded cached slices for one physical memory family."""
 
     output_model: object
     initialization: object
@@ -56,8 +56,8 @@ class _CachedSurfaceMemoryDemTemplates:
 
 
 @dataclass(frozen=True)
-class _CachedSurfaceSingletonMemoryDemTemplates:
-    """Noise-weighted templates for a one-SEC-round memory experiment."""
+class _CachedSurfaceSingletonMemoryDemSlices:
+    """Noise-weighted cached slices for a one-SEC-round memory experiment."""
 
     output_model: object
     initialization: object
@@ -65,8 +65,8 @@ class _CachedSurfaceSingletonMemoryDemTemplates:
 
 
 @dataclass(frozen=True)
-class _CachedSurfaceMultiMemoryDemTemplates:
-    """Canonical bounded templates for simultaneous independent patches."""
+class _CachedSurfaceMultiMemoryDemSlices:
+    """Canonical bounded cached slices for simultaneous independent patches."""
 
     output_model: object
     initialization: object
@@ -77,8 +77,8 @@ class _CachedSurfaceMultiMemoryDemTemplates:
     coordinate_origins: tuple[tuple[float, float], ...]
 
 
-@lru_cache(maxsize=_SURFACE_DEM_TEMPLATE_CACHE_SIZE)
-def _cached_surface_memory_dem_templates(
+@lru_cache(maxsize=_SURFACE_DEM_SLICE_CACHE_SIZE)
+def _cached_surface_memory_dem_slices(
     dx: int,
     dz: int,
     orientation_name: str,
@@ -88,8 +88,8 @@ def _cached_surface_memory_dem_templates(
     p2: float,
     p_meas: float,
     p_prep: float,
-) -> _CachedSurfaceMemoryDemTemplates:
-    """Compile the constant-depth surface-memory template on a cache miss."""
+) -> _CachedSurfaceMemoryDemSlices:
+    """Compile the constant-depth surface-memory physical fixture on a cache miss."""
     from pecos.qec.surface.patch import PatchOrientation, SurfacePatch
 
     patch = SurfacePatch.create(
@@ -99,8 +99,8 @@ def _cached_surface_memory_dem_templates(
         rotated=rotated,
     )
     builder = LogicalCircuitBuilder()
-    builder.add_patch(patch, "template", coord_offset=(0.0, 0.0))
-    builder.add_memory("template", rounds=3, basis=basis)
+    builder.add_patch(patch, "fixture", coord_offset=(0.0, 0.0))
+    builder.add_memory("fixture", rounds=3, basis=basis)
     model, influence_map, dag_circuit = builder._build_structured_dem(  # noqa: SLF001
         p1=p1,
         p2=p2,
@@ -108,17 +108,17 @@ def _cached_surface_memory_dem_templates(
         p_prep=p_prep,
     )
     schedule = model.round_schedule(influence_map, dag_circuit)
-    return _CachedSurfaceMemoryDemTemplates(
+    return _CachedSurfaceMemoryDemSlices(
         output_model=model,
-        initialization=schedule.template(0),
-        bulk=schedule.template(1),
-        pre_terminal=schedule.template(2),
-        terminal=schedule.template(3),
+        initialization=schedule.cached_slice(0),
+        bulk=schedule.cached_slice(1),
+        pre_terminal=schedule.cached_slice(2),
+        terminal=schedule.cached_slice(3),
     )
 
 
-@lru_cache(maxsize=_SURFACE_DEM_TEMPLATE_CACHE_SIZE)
-def _cached_surface_singleton_memory_dem_templates(
+@lru_cache(maxsize=_SURFACE_DEM_SLICE_CACHE_SIZE)
+def _cached_surface_singleton_memory_dem_slices(
     dx: int,
     dz: int,
     orientation_name: str,
@@ -128,7 +128,7 @@ def _cached_surface_singleton_memory_dem_templates(
     p2: float,
     p_meas: float,
     p_prep: float,
-) -> _CachedSurfaceSingletonMemoryDemTemplates:
+) -> _CachedSurfaceSingletonMemoryDemSlices:
     """Compile the constant-depth one-round surface-memory family."""
     from pecos.qec.surface.patch import PatchOrientation, SurfacePatch
 
@@ -139,8 +139,8 @@ def _cached_surface_singleton_memory_dem_templates(
         rotated=rotated,
     )
     builder = LogicalCircuitBuilder()
-    builder.add_patch(patch, "template", coord_offset=(0.0, 0.0))
-    builder.add_memory("template", rounds=1, basis=basis)
+    builder.add_patch(patch, "fixture", coord_offset=(0.0, 0.0))
+    builder.add_memory("fixture", rounds=1, basis=basis)
     model, influence_map, dag_circuit = builder._build_structured_dem(  # noqa: SLF001
         p1=p1,
         p2=p2,
@@ -148,15 +148,15 @@ def _cached_surface_singleton_memory_dem_templates(
         p_prep=p_prep,
     )
     schedule = model.round_schedule(influence_map, dag_circuit)
-    return _CachedSurfaceSingletonMemoryDemTemplates(
+    return _CachedSurfaceSingletonMemoryDemSlices(
         output_model=model,
-        initialization=schedule.template(0),
-        terminal=schedule.template(1),
+        initialization=schedule.cached_slice(0),
+        terminal=schedule.cached_slice(1),
     )
 
 
-@lru_cache(maxsize=_SURFACE_DEM_TEMPLATE_CACHE_SIZE)
-def _cached_surface_multi_memory_dem_templates(
+@lru_cache(maxsize=_SURFACE_DEM_SLICE_CACHE_SIZE)
+def _cached_surface_multi_memory_dem_slices(
     patch_specs: tuple[tuple[int, int, str, bool], ...],
     bases: tuple[str, ...],
     singleton: bool,
@@ -164,7 +164,7 @@ def _cached_surface_multi_memory_dem_templates(
     p2: float,
     p_meas: float,
     p_prep: float,
-) -> _CachedSurfaceMultiMemoryDemTemplates:
+) -> _CachedSurfaceMultiMemoryDemSlices:
     """Compile one canonical simultaneous-memory family.
 
     Patch labels, qubit offsets, and placements remain instance data. The
@@ -188,7 +188,7 @@ def _cached_surface_multi_memory_dem_templates(
             orientation=PatchOrientation[orientation_name],
             rotated=rotated,
         )
-        label = f"template_{patch_index}"
+        label = f"fixture_{patch_index}"
         labels.append(label)
         coordinate_origins.append((coordinate_x, 0.0))
         builder.add_patch(
@@ -217,20 +217,20 @@ def _cached_surface_multi_memory_dem_templates(
         p_prep=p_prep,
     )
     schedule = model.round_schedule(influence_map, dag_circuit)
-    return _CachedSurfaceMultiMemoryDemTemplates(
+    return _CachedSurfaceMultiMemoryDemSlices(
         output_model=model,
-        initialization=schedule.template(0),
-        bulk=None if singleton else schedule.template(1),
-        pre_terminal=None if singleton else schedule.template(2),
-        terminal=schedule.template(1 if singleton else 3),
+        initialization=schedule.cached_slice(0),
+        bulk=None if singleton else schedule.cached_slice(1),
+        pre_terminal=None if singleton else schedule.cached_slice(2),
+        terminal=schedule.cached_slice(1 if singleton else 3),
         stream_counts=tuple(stream_counts),
         coordinate_origins=tuple(coordinate_origins),
     )
 
 
 @dataclass(frozen=True)
-class _CachedSurfaceBoundaryDemTemplates:
-    """Noise-weighted templates around one bounded logical-gate boundary."""
+class _CachedSurfaceBoundaryDemSlices:
+    """Noise-weighted cached slices around one bounded logical-gate boundary."""
 
     output_model: object
     initialization: object
@@ -242,8 +242,8 @@ class _CachedSurfaceBoundaryDemTemplates:
     terminal: object
 
 
-@lru_cache(maxsize=_SURFACE_DEM_TEMPLATE_CACHE_SIZE)
-def _cached_surface_h_dem_templates(
+@lru_cache(maxsize=_SURFACE_DEM_SLICE_CACHE_SIZE)
+def _cached_surface_h_dem_slices(
     dx: int,
     dz: int,
     orientation_name: str,
@@ -257,7 +257,7 @@ def _cached_surface_h_dem_templates(
     *,
     pre_gate_swapped: bool = False,
     future_h_parity: bool = False,
-) -> _CachedSurfaceBoundaryDemTemplates:
+) -> _CachedSurfaceBoundaryDemSlices:
     """Compile one physical/logical-frame H-boundary family on a cache miss.
 
     An optional earlier H establishes the physical X/Z assignment entering the
@@ -274,17 +274,17 @@ def _cached_surface_h_dem_templates(
         rotated=rotated,
     )
     builder = LogicalCircuitBuilder()
-    builder.add_patch(patch, "template", coord_offset=(0.0, 0.0))
-    builder.add_memory("template", rounds=3, basis=initial_basis)
+    builder.add_patch(patch, "fixture", coord_offset=(0.0, 0.0))
+    builder.add_memory("fixture", rounds=3, basis=initial_basis)
     if pre_gate_swapped:
-        builder.add_transversal_h("template")
-        builder.add_memory("template", rounds=3, basis=initial_basis)
+        builder.add_transversal_h("fixture")
+        builder.add_memory("fixture", rounds=3, basis=initial_basis)
     selected_boundary_round = 3 + 3 * int(pre_gate_swapped)
-    builder.add_transversal_h("template")
-    builder.add_memory("template", rounds=3, basis=final_basis)
+    builder.add_transversal_h("fixture")
+    builder.add_memory("fixture", rounds=3, basis=final_basis)
     if future_h_parity:
-        builder.add_transversal_h("template")
-        builder.add_memory("template", rounds=3, basis=final_basis)
+        builder.add_transversal_h("fixture")
+        builder.add_memory("fixture", rounds=3, basis=final_basis)
     model, influence_map, dag_circuit = builder._build_structured_dem(  # noqa: SLF001
         p1=p1,
         p2=p2,
@@ -293,64 +293,64 @@ def _cached_surface_h_dem_templates(
     )
     schedule = model.round_schedule(influence_map, dag_circuit)
     terminal_round = 6 + 3 * int(pre_gate_swapped) + 3 * int(future_h_parity)
-    return _CachedSurfaceBoundaryDemTemplates(
+    return _CachedSurfaceBoundaryDemSlices(
         output_model=model,
-        initialization=schedule.template(0),
-        pre_gate_bulk=schedule.template(selected_boundary_round - 2),
-        pre_gate_boundary=schedule.template(selected_boundary_round - 1),
-        gate_boundary=schedule.template(selected_boundary_round),
-        post_gate_bulk=schedule.template(selected_boundary_round + 1),
-        pre_terminal=schedule.template(terminal_round - 1),
-        terminal=schedule.template(terminal_round),
+        initialization=schedule.cached_slice(0),
+        pre_gate_bulk=schedule.cached_slice(selected_boundary_round - 2),
+        pre_gate_boundary=schedule.cached_slice(selected_boundary_round - 1),
+        gate_boundary=schedule.cached_slice(selected_boundary_round),
+        post_gate_bulk=schedule.cached_slice(selected_boundary_round + 1),
+        pre_terminal=schedule.cached_slice(terminal_round - 1),
+        terminal=schedule.cached_slice(terminal_round),
     )
 
 
 @dataclass(frozen=True)
-class _CachedSurfaceCxDemTemplates:
-    """Bounded transversal-CX templates and their canonical stream layout."""
+class _CachedSurfaceCxDemSlices:
+    """Bounded transversal-CX cached slices and their canonical stream layout."""
 
-    templates: _CachedSurfaceBoundaryDemTemplates
+    cached_slices: _CachedSurfaceBoundaryDemSlices
     control_stream_count: int
     target_stream_count: int
     target_coordinate_origin: tuple[float, float]
 
 
-def _boundary_template_placements(
-    boundary_templates: list[_CachedSurfaceBoundaryDemTemplates],
+def _boundary_slice_placements(
+    boundary_slices: list[_CachedSurfaceBoundaryDemSlices],
     memory_rounds: list[int],
 ) -> tuple[list[tuple[object, int, int]], int]:
     """Place boundary families and retain the family index for output routing."""
-    if not boundary_templates or len(memory_rounds) != len(boundary_templates) + 1:
-        msg = "boundary templates require exactly one more memory segment"
+    if not boundary_slices or len(memory_rounds) != len(boundary_slices) + 1:
+        msg = "boundary cached slices require exactly one more memory segment"
         raise ValueError(msg)
 
     first_boundary_round = memory_rounds[0]
-    placements = [(boundary_templates[0].initialization, 0, 0)]
-    placements.extend((boundary_templates[0].pre_gate_bulk, round_, 0) for round_ in range(1, first_boundary_round - 1))
+    placements = [(boundary_slices[0].initialization, 0, 0)]
+    placements.extend((boundary_slices[0].pre_gate_bulk, round_, 0) for round_ in range(1, first_boundary_round - 1))
     boundary_round = first_boundary_round
-    for boundary_index, templates in enumerate(boundary_templates):
+    for boundary_index, cached_slices in enumerate(boundary_slices):
         placements.extend(
             [
-                (templates.pre_gate_boundary, boundary_round - 1, boundary_index),
-                (templates.gate_boundary, boundary_round, boundary_index),
+                (cached_slices.pre_gate_boundary, boundary_round - 1, boundary_index),
+                (cached_slices.gate_boundary, boundary_round, boundary_index),
             ],
         )
         next_boundary_round = boundary_round + memory_rounds[boundary_index + 1]
-        if boundary_index + 1 < len(boundary_templates):
-            next_templates = boundary_templates[boundary_index + 1]
+        if boundary_index + 1 < len(boundary_slices):
+            next_slices = boundary_slices[boundary_index + 1]
             placements.extend(
-                (next_templates.pre_gate_bulk, round_, boundary_index + 1)
+                (next_slices.pre_gate_bulk, round_, boundary_index + 1)
                 for round_ in range(boundary_round + 1, next_boundary_round - 1)
             )
         else:
             placements.extend(
-                (templates.post_gate_bulk, round_, boundary_index)
+                (cached_slices.post_gate_bulk, round_, boundary_index)
                 for round_ in range(boundary_round + 1, next_boundary_round - 1)
             )
             placements.extend(
                 [
-                    (templates.pre_terminal, next_boundary_round - 1, boundary_index),
-                    (templates.terminal, next_boundary_round, boundary_index),
+                    (cached_slices.pre_terminal, next_boundary_round - 1, boundary_index),
+                    (cached_slices.terminal, next_boundary_round, boundary_index),
                 ],
             )
         boundary_round = next_boundary_round
@@ -394,13 +394,13 @@ class _BoundaryDemProviderDescription:
     """Complete assembly description produced by a boundary-family provider.
 
     Gate-specific code is responsible for eligibility and bounded physical
-    compilation. Once this value exists, template placement, detector
-    relocation, output routing, schema validation, and stitching are shared.
+    compilation. Once this value exists, cached slice placement, detector
+    relocation, output routing, schema validation, and composition are shared.
     Eligibility remains the provider's responsibility; this value contains
     only data consumed by the common assembler.
     """
 
-    boundary_templates: tuple[_CachedSurfaceBoundaryDemTemplates, ...]
+    boundary_slices: tuple[_CachedSurfaceBoundaryDemSlices, ...]
     memory_rounds: tuple[int, ...]
     output_routing: _BoundaryOutputRouting
     coordinate_offset: tuple[float, float] | None = None
@@ -412,9 +412,9 @@ def _identity_boundary_output_routings(
     placements: list[tuple[object, int, int]],
 ) -> dict[int, dict[int, list[int]]]:
     return {
-        round_: {output: [output] for output in template.dem_outputs}
-        for template, round_, _ in placements
-        if template.dem_outputs
+        round_: {output: [output] for output in cached_slice.dem_outputs}
+        for cached_slice, round_, _ in placements
+        if cached_slice.dem_outputs
     }
 
 
@@ -425,22 +425,22 @@ def _boundary_output_routings(
     if provider.output_routing is _BoundaryOutputRouting.IDENTITY:
         return _identity_boundary_output_routings(placements)
 
-    gate_count = len(provider.boundary_templates)
+    gate_count = len(provider.boundary_slices)
     routings = {}
-    for template, round_, boundary_index in placements:
-        if not template.dem_outputs:
+    for cached_slice, round_, boundary_index in placements:
+        if not cached_slice.dem_outputs:
             continue
         later_gate_count = gate_count - boundary_index - 1
         if later_gate_count % 2 == 0:
-            routing = {output: [output] for output in template.dem_outputs}
+            routing = {output: [output] for output in cached_slice.dem_outputs}
         else:
             if provider.final_basis not in {"X", "Z"}:
                 msg = "repeated-CX output routing requires a final X or Z basis"
                 raise ValueError(msg)
             if provider.final_basis == "X":
-                routing = {output: [0] if output == 0 else [0, 1] for output in template.dem_outputs}
+                routing = {output: [0] if output == 0 else [0, 1] for output in cached_slice.dem_outputs}
             else:
-                routing = {output: [0, 1] if output == 0 else [1] for output in template.dem_outputs}
+                routing = {output: [0, 1] if output == 0 else [1] for output in cached_slice.dem_outputs}
         routings[round_] = routing
     return routings
 
@@ -465,7 +465,7 @@ def _canonical_two_patch_suffix(
     The search state includes physical X/Z orientation because the surface
     frontend permits CX only when both patches have the same orientation.
     There are finitely many two-qubit real-Clifford transformations, so this
-    normalization keeps template identity independent of algorithm depth.
+    normalization keeps cached slice identity independent of algorithm depth.
     """
     start = (_TWO_PATCH_IDENTITY, start_swapped)
     target = (target_transform, target_swapped)
@@ -491,8 +491,8 @@ def _canonical_two_patch_suffix(
     raise ValueError(msg)
 
 
-@lru_cache(maxsize=_SURFACE_DEM_TEMPLATE_CACHE_SIZE)
-def _cached_surface_cx_dem_templates(
+@lru_cache(maxsize=_SURFACE_DEM_SLICE_CACHE_SIZE)
+def _cached_surface_cx_dem_slices(
     control_dx: int,
     control_dz: int,
     control_orientation_name: str,
@@ -509,8 +509,8 @@ def _cached_surface_cx_dem_templates(
     p2: float,
     p_meas: float,
     p_prep: float,
-) -> _CachedSurfaceCxDemTemplates:
-    """Compile a bounded two-patch memory-CX-memory template."""
+) -> _CachedSurfaceCxDemSlices:
+    """Compile a bounded two-patch memory-CX-memory physical fixture."""
     from pecos.qec.surface.patch import PatchOrientation, SurfacePatch
 
     control = SurfacePatch.create(
@@ -552,28 +552,28 @@ def _cached_surface_cx_dem_templates(
         p_prep=p_prep,
     )
     schedule = model.round_schedule(influence_map, dag_circuit)
-    templates = _CachedSurfaceBoundaryDemTemplates(
+    cached_slices = _CachedSurfaceBoundaryDemSlices(
         output_model=model,
-        initialization=schedule.template(0),
-        pre_gate_bulk=schedule.template(1),
-        pre_gate_boundary=schedule.template(2),
-        gate_boundary=schedule.template(3),
-        post_gate_bulk=schedule.template(4),
-        pre_terminal=schedule.template(5),
-        terminal=schedule.template(6),
+        initialization=schedule.cached_slice(0),
+        pre_gate_bulk=schedule.cached_slice(1),
+        pre_gate_boundary=schedule.cached_slice(2),
+        gate_boundary=schedule.cached_slice(3),
+        post_gate_bulk=schedule.cached_slice(4),
+        pre_terminal=schedule.cached_slice(5),
+        terminal=schedule.cached_slice(6),
     )
     control_stream_count = len(control.geometry.x_stabilizers) + len(control.geometry.z_stabilizers)
     target_stream_count = len(target.geometry.x_stabilizers) + len(target.geometry.z_stabilizers)
-    return _CachedSurfaceCxDemTemplates(
-        templates=templates,
+    return _CachedSurfaceCxDemSlices(
+        cached_slices=cached_slices,
         control_stream_count=control_stream_count,
         target_stream_count=target_stream_count,
         target_coordinate_origin=target_origin,
     )
 
 
-@lru_cache(maxsize=_SURFACE_DEM_TEMPLATE_CACHE_SIZE)
-def _cached_surface_mixed_dem_templates(
+@lru_cache(maxsize=_SURFACE_DEM_SLICE_CACHE_SIZE)
+def _cached_surface_mixed_dem_slices(
     control_dx: int,
     control_dz: int,
     control_orientation_name: str,
@@ -593,7 +593,7 @@ def _cached_surface_mixed_dem_templates(
     p2: float,
     p_meas: float,
     p_prep: float,
-) -> _CachedSurfaceCxDemTemplates:
+) -> _CachedSurfaceCxDemSlices:
     """Compile one normalized boundary from a mixed two-patch H/CX schedule."""
     from pecos.qec.surface.patch import PatchOrientation, SurfacePatch
 
@@ -658,20 +658,20 @@ def _cached_surface_mixed_dem_templates(
     )
     schedule = model.round_schedule(influence_map, dag_circuit)
     terminal_round = selected_boundary_round + 3 * (1 + len(future_word))
-    templates = _CachedSurfaceBoundaryDemTemplates(
+    cached_slices = _CachedSurfaceBoundaryDemSlices(
         output_model=model,
-        initialization=schedule.template(0),
-        pre_gate_bulk=schedule.template(selected_boundary_round - 2),
-        pre_gate_boundary=schedule.template(selected_boundary_round - 1),
-        gate_boundary=schedule.template(selected_boundary_round),
-        post_gate_bulk=schedule.template(selected_boundary_round + 1),
-        pre_terminal=schedule.template(terminal_round - 1),
-        terminal=schedule.template(terminal_round),
+        initialization=schedule.cached_slice(0),
+        pre_gate_bulk=schedule.cached_slice(selected_boundary_round - 2),
+        pre_gate_boundary=schedule.cached_slice(selected_boundary_round - 1),
+        gate_boundary=schedule.cached_slice(selected_boundary_round),
+        post_gate_bulk=schedule.cached_slice(selected_boundary_round + 1),
+        pre_terminal=schedule.cached_slice(terminal_round - 1),
+        terminal=schedule.cached_slice(terminal_round),
     )
     control_stream_count = len(control.geometry.x_stabilizers) + len(control.geometry.z_stabilizers)
     target_stream_count = len(target.geometry.x_stabilizers) + len(target.geometry.z_stabilizers)
-    return _CachedSurfaceCxDemTemplates(
-        templates=templates,
+    return _CachedSurfaceCxDemSlices(
+        cached_slices=cached_slices,
         control_stream_count=control_stream_count,
         target_stream_count=target_stream_count,
         target_coordinate_origin=target_origin,
@@ -1145,7 +1145,7 @@ class LogicalCircuitBuilder:
         unreliable observables that the physical emitter omits. A CX makes the
         control-X and target-Z observables reliable only when their partners use
         the same final basis. This mirrors ``_CircuitGenerator`` without emitting
-        an O(physical-depth) circuit on every warm template assembly.
+        an O(physical-depth) circuit on every warm cached slice assembly.
         """
         last_memory_index: dict[str, int] = {}
         final_basis: dict[str, str] = {}
@@ -1279,7 +1279,7 @@ class LogicalCircuitBuilder:
 
         return dem_builder.build(), influence_map, dc
 
-    def _build_structured_dem_from_cached_templates(
+    def _build_structured_dem_from_cached_slices(
         self,
         *,
         p1: float,
@@ -1287,8 +1287,8 @@ class LogicalCircuitBuilder:
         p_meas: float,
         p_prep: float,
     ) -> tuple[object, object] | None:
-        """Assemble an eligible surface DEM from bounded template caches."""
-        cached_multi_memory = self._build_structured_multi_memory_dem_from_cached_templates(
+        """Assemble an eligible surface DEM from bounded slice caches."""
+        cached_multi_memory = self._build_structured_multi_memory_dem_from_cached_slices(
             p1=p1,
             p2=p2,
             p_meas=p_meas,
@@ -1297,7 +1297,7 @@ class LogicalCircuitBuilder:
         if cached_multi_memory is not None:
             return cached_multi_memory
         if len(self._patches) == 1 and len(self._operations) >= 3:
-            cached_h = self._build_structured_h_dem_from_cached_templates(
+            cached_h = self._build_structured_h_dem_from_cached_slices(
                 p1=p1,
                 p2=p2,
                 p_meas=p_meas,
@@ -1306,7 +1306,7 @@ class LogicalCircuitBuilder:
             if cached_h is not None:
                 return cached_h
         if len(self._patches) == 2 and len(self._operations) >= 3:
-            cached_mixed = self._build_structured_mixed_dem_from_cached_templates(
+            cached_mixed = self._build_structured_mixed_dem_from_cached_slices(
                 p1=p1,
                 p2=p2,
                 p_meas=p_meas,
@@ -1314,7 +1314,7 @@ class LogicalCircuitBuilder:
             )
             if cached_mixed is not None:
                 return cached_mixed
-            cached_cx = self._build_structured_cx_dem_from_cached_templates(
+            cached_cx = self._build_structured_cx_dem_from_cached_slices(
                 p1=p1,
                 p2=p2,
                 p_meas=p_meas,
@@ -1337,7 +1337,7 @@ class LogicalCircuitBuilder:
         from pecos_rslib.qec import DemSliceRoundSchedule
 
         if operation.rounds == 1:
-            templates = _cached_surface_singleton_memory_dem_templates(
+            cached_slices = _cached_surface_singleton_memory_dem_slices(
                 geometry.dx,
                 geometry.dz,
                 geometry.orientation.name,
@@ -1348,9 +1348,9 @@ class LogicalCircuitBuilder:
                 p_meas,
                 p_prep,
             )
-            instances = [(templates.initialization, 0), (templates.terminal, 1)]
+            instances = [(cached_slices.initialization, 0), (cached_slices.terminal, 1)]
         else:
-            templates = _cached_surface_memory_dem_templates(
+            cached_slices = _cached_surface_memory_dem_slices(
                 geometry.dx,
                 geometry.dz,
                 geometry.orientation.name,
@@ -1361,22 +1361,22 @@ class LogicalCircuitBuilder:
                 p_meas,
                 p_prep,
             )
-            instances = [(templates.initialization, 0)]
-            instances.extend((templates.bulk, round_) for round_ in range(1, operation.rounds - 1))
+            instances = [(cached_slices.initialization, 0)]
+            instances.extend((cached_slices.bulk, round_) for round_ in range(1, operation.rounds - 1))
             instances.extend(
                 [
-                    (templates.pre_terminal, operation.rounds - 1),
-                    (templates.terminal, operation.rounds),
+                    (cached_slices.pre_terminal, operation.rounds - 1),
+                    (cached_slices.terminal, operation.rounds),
                 ],
             )
-        schedule = DemSliceRoundSchedule.from_templates(
-            templates.output_model,
+        schedule = DemSliceRoundSchedule.from_cached_slices(
+            cached_slices.output_model,
             instances,
             expected_dem_outputs=self._assembled_dem_output_ids(),
             expected_tracked_paulis=[],
             coordinate_offset=(float(coord_x), float(coord_y)),
         )
-        model = schedule.stitch(
+        model = schedule.compose(
             start_round=0,
             commit_rounds=operation.rounds + 1,
             buffer_rounds=0,
@@ -1384,7 +1384,7 @@ class LogicalCircuitBuilder:
         )
         return model, schedule
 
-    def _build_structured_multi_memory_dem_from_cached_templates(
+    def _build_structured_multi_memory_dem_from_cached_slices(
         self,
         *,
         p1: float,
@@ -1412,7 +1412,7 @@ class LogicalCircuitBuilder:
         )
         bases = tuple(operation.per_patch_basis.get(label, operation.basis).upper() for label in patch_order)
         singleton = operation.rounds == 1
-        templates = _cached_surface_multi_memory_dem_templates(
+        cached_slices = _cached_surface_multi_memory_dem_slices(
             patch_specs,
             bases,
             singleton,
@@ -1422,18 +1422,18 @@ class LogicalCircuitBuilder:
             p_prep,
         )
 
-        instances = [(templates.initialization, 0)]
+        instances = [(cached_slices.initialization, 0)]
         if singleton:
-            instances.append((templates.terminal, 1))
+            instances.append((cached_slices.terminal, 1))
         else:
-            if templates.bulk is None or templates.pre_terminal is None:  # pragma: no cover - cache invariant
-                msg = "multi-memory cache omitted a required non-singleton template"
+            if cached_slices.bulk is None or cached_slices.pre_terminal is None:  # pragma: no cover - cache invariant
+                msg = "multi-memory cache omitted a required non-singleton cached slice"
                 raise ValueError(msg)
-            instances.extend((templates.bulk, round_) for round_ in range(1, operation.rounds - 1))
+            instances.extend((cached_slices.bulk, round_) for round_ in range(1, operation.rounds - 1))
             instances.extend(
                 [
-                    (templates.pre_terminal, operation.rounds - 1),
-                    (templates.terminal, operation.rounds),
+                    (cached_slices.pre_terminal, operation.rounds - 1),
+                    (cached_slices.terminal, operation.rounds),
                 ],
             )
 
@@ -1441,8 +1441,8 @@ class LogicalCircuitBuilder:
         stream_start = 0
         for state, stream_count, (origin_x, origin_y) in zip(
             patch_states,
-            templates.stream_counts,
-            templates.coordinate_origins,
+            cached_slices.stream_counts,
+            cached_slices.coordinate_origins,
             strict=True,
         ):
             patch_x, patch_y = state.coord_offset
@@ -1454,14 +1454,14 @@ class LogicalCircuitBuilder:
 
         from pecos_rslib.qec import DemSliceRoundSchedule
 
-        schedule = DemSliceRoundSchedule.from_templates(
-            templates.output_model,
+        schedule = DemSliceRoundSchedule.from_cached_slices(
+            cached_slices.output_model,
             instances,
             expected_dem_outputs=self._assembled_dem_output_ids(),
             expected_tracked_paulis=[],
             detector_coordinate_offsets=detector_coordinate_offsets,
         )
-        model = schedule.stitch(
+        model = schedule.compose(
             start_round=0,
             commit_rounds=operation.rounds + 1,
             buffer_rounds=0,
@@ -1474,18 +1474,18 @@ class LogicalCircuitBuilder:
         provider: _BoundaryDemProviderDescription,
     ) -> tuple[object, object]:
         """Assemble a provider description already checked by its producer."""
-        boundary_templates = list(provider.boundary_templates)
-        placements, boundary_round = _boundary_template_placements(
-            boundary_templates,
+        boundary_slices = list(provider.boundary_slices)
+        placements, boundary_round = _boundary_slice_placements(
+            boundary_slices,
             list(provider.memory_rounds),
         )
-        instances = [(template, round_) for template, round_, _ in placements]
+        instances = [(cached_slice, round_) for cached_slice, round_, _ in placements]
         dem_output_routings = _boundary_output_routings(provider, placements)
 
         from pecos_rslib.qec import DemSliceRoundSchedule
 
-        schedule = DemSliceRoundSchedule.from_templates(
-            boundary_templates[0].output_model,
+        schedule = DemSliceRoundSchedule.from_cached_slices(
+            boundary_slices[0].output_model,
             instances,
             expected_dem_outputs=self._assembled_dem_output_ids(),
             expected_tracked_paulis=[],
@@ -1493,7 +1493,7 @@ class LogicalCircuitBuilder:
             detector_coordinate_offsets=provider.detector_coordinate_offsets,
             dem_output_routings=dem_output_routings,
         )
-        model = schedule.stitch(
+        model = schedule.compose(
             start_round=0,
             commit_rounds=boundary_round + 1,
             buffer_rounds=0,
@@ -1501,7 +1501,7 @@ class LogicalCircuitBuilder:
         )
         return model, schedule
 
-    def _build_structured_mixed_dem_from_cached_templates(
+    def _build_structured_mixed_dem_from_cached_slices(
         self,
         *,
         p1: float,
@@ -1579,7 +1579,7 @@ class LogicalCircuitBuilder:
         if "cx" in gate_names and final_control_basis != final_target_basis:
             return None
 
-        boundary_templates = []
+        boundary_slices = []
         cached_layout = None
         for boundary_index, selected_gate in enumerate(gate_names):
             start_swapped = prefix_states[boundary_index]
@@ -1619,8 +1619,8 @@ class LogicalCircuitBuilder:
                 p_meas,
                 p_prep,
             )
-            cached_layout = _cached_surface_mixed_dem_templates(*fixture_key)
-            boundary_templates.append(cached_layout.templates)
+            cached_layout = _cached_surface_mixed_dem_slices(*fixture_key)
+            boundary_slices.append(cached_layout.cached_slices)
 
         if cached_layout is None:  # Defensive: the alternating form always has at least one gate.
             return None
@@ -1632,14 +1632,14 @@ class LogicalCircuitBuilder:
             target_coordinate_origin=cached_layout.target_coordinate_origin,
         )
         provider = _BoundaryDemProviderDescription(
-            boundary_templates=tuple(boundary_templates),
+            boundary_slices=tuple(boundary_slices),
             memory_rounds=tuple(memory.rounds for memory in memories),
             output_routing=_BoundaryOutputRouting.IDENTITY,
             detector_coordinate_offsets=detector_coordinate_offsets,
         )
         return self._assemble_boundary_dem_provider(provider)
 
-    def _build_structured_cx_dem_from_cached_templates(
+    def _build_structured_cx_dem_from_cached_slices(
         self,
         *,
         p1: float,
@@ -1703,8 +1703,8 @@ class LogicalCircuitBuilder:
             p_meas,
             p_prep,
         )
-        cached = _cached_surface_cx_dem_templates(*fixture_key)
-        templates = cached.templates
+        cached = _cached_surface_cx_dem_slices(*fixture_key)
+        cached_slices = cached.cached_slices
 
         detector_coordinate_offsets = _two_patch_detector_coordinate_offsets(
             control_state.coord_offset,
@@ -1714,7 +1714,7 @@ class LogicalCircuitBuilder:
             target_coordinate_origin=cached.target_coordinate_origin,
         )
         provider = _BoundaryDemProviderDescription(
-            boundary_templates=(templates,) * len(gates),
+            boundary_slices=(cached_slices,) * len(gates),
             memory_rounds=tuple(memory.rounds for memory in memories),
             output_routing=_BoundaryOutputRouting.REPEATED_CX,
             detector_coordinate_offsets=detector_coordinate_offsets,
@@ -1722,7 +1722,7 @@ class LogicalCircuitBuilder:
         )
         return self._assemble_boundary_dem_provider(provider)
 
-    def _build_structured_h_dem_from_cached_templates(
+    def _build_structured_h_dem_from_cached_slices(
         self,
         *,
         p1: float,
@@ -1765,8 +1765,8 @@ class LogicalCircuitBuilder:
             )
             for boundary_index in range(len(gates))
         ]
-        boundary_templates = tuple(
-            _cached_surface_h_dem_templates(
+        boundary_slices = tuple(
+            _cached_surface_h_dem_slices(
                 *key[:-2],
                 pre_gate_swapped=key[-2],
                 future_h_parity=key[-1],
@@ -1774,7 +1774,7 @@ class LogicalCircuitBuilder:
             for key in fixture_keys
         )
         provider = _BoundaryDemProviderDescription(
-            boundary_templates=boundary_templates,
+            boundary_slices=boundary_slices,
             memory_rounds=tuple(memory.rounds for memory in memories),
             output_routing=_BoundaryOutputRouting.IDENTITY,
             coordinate_offset=(float(coord_x), float(coord_y)),
@@ -1794,7 +1794,7 @@ class LogicalCircuitBuilder:
         TickCircuit -> DagCircuit -> DagFaultAnalyzer -> DemBuilder.
         No Stim dependency. Eligible single-patch memories, repeated
         transversal-H, repeated two-patch transversal-CX, and mixed two-patch
-        H/CX algorithms reuse bounded physical-template compiles across
+        H/CX algorithms reuse bounded physical fixture compiles across
         requested memory lengths.
 
         Args:
@@ -1806,7 +1806,7 @@ class LogicalCircuitBuilder:
         Returns:
             DEM string in Stim-compatible format.
         """
-        cached = self._build_structured_dem_from_cached_templates(
+        cached = self._build_structured_dem_from_cached_slices(
             p1=p1,
             p2=p2,
             p_meas=p_meas,
@@ -1835,7 +1835,7 @@ class LogicalCircuitBuilder:
         """
         from pecos_rslib.qec import LogicalSubgraphDecoder
 
-        cached = self._build_structured_dem_from_cached_templates(
+        cached = self._build_structured_dem_from_cached_slices(
             p1=p1,
             p2=p2,
             p_meas=p_meas,
@@ -1872,7 +1872,7 @@ class LogicalCircuitBuilder:
         look-ahead; a value below the model's required look-ahead is rejected.
         Eligible single-patch memories, repeated H, repeated CX, and mixed
         two-patch H/CX algorithms are assembled directly from bounded
-        physical-template caches; other circuits retain full-model fallback.
+        physical fixture caches; other circuits retain full-model fallback.
 
         Returns:
             Dict with keys: segments, boundary_gates, num_observables,
@@ -1885,11 +1885,11 @@ class LogicalCircuitBuilder:
             raise ValueError(msg)
 
         # Eligible memory, repeated-H, repeated-CX, and mixed two-patch H/CX
-        # algorithms are assembled entirely from bounded physical-template
+        # algorithms are assembled entirely from bounded physical fixture
         # caches. Other algorithms retain the full structured path as an
         # equivalence oracle and fallback until their logical-operation families
         # are available.
-        cached = self._build_structured_dem_from_cached_templates(
+        cached = self._build_structured_dem_from_cached_slices(
             p1=p1,
             p2=p2,
             p_meas=p_meas,
@@ -2061,7 +2061,7 @@ class LogicalCircuitBuilder:
                     )
                     raise ValueError(msg)
 
-            segment_dem = round_schedule.stitch(
+            segment_dem = round_schedule.compose(
                 start_round=start_round,
                 commit_rounds=commit_rounds,
                 buffer_rounds=forward_buffer,

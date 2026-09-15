@@ -1679,15 +1679,15 @@ impl PyStructuredDemDecoder {
     }
 }
 
-/// One reusable, absolute-round-independent DEM slice compiled from a bounded template.
-#[pyclass(name = "DemSliceTemplate", module = "pecos_rslib.qec")]
-pub struct PyDemSliceTemplate {
+/// One reusable, absolute-round-independent DEM slice compiled from a bounded physical fixture.
+#[pyclass(name = "CachedDemSlice", module = "pecos_rslib.qec")]
+pub struct PyCachedDemSlice {
     inner: Arc<RustDemSlice>,
 }
 
 #[pymethods]
-impl PyDemSliceTemplate {
-    /// Human-readable template name.
+impl PyCachedDemSlice {
+    /// Human-readable cached slice name.
     #[getter]
     fn name(&self) -> String {
         self.inner.name().to_owned()
@@ -1700,7 +1700,7 @@ impl PyDemSliceTemplate {
         (horizon.past_rounds, horizon.future_rounds)
     }
 
-    /// Number of independent physical-source contributions in the template.
+    /// Number of independent physical-source contributions in the cached slice.
     #[getter]
     fn num_contributions(&self) -> usize {
         self.inner.contributions().len()
@@ -1721,7 +1721,7 @@ impl PyDemSliceTemplate {
     fn __repr__(&self) -> String {
         let (past, future) = self.temporal_horizon();
         format!(
-            "DemSliceTemplate(name={:?}, num_contributions={}, temporal_horizon=({}, {}))",
+            "CachedDemSlice(name={:?}, num_contributions={}, temporal_horizon=({}, {}))",
             self.inner.name(),
             self.inner.contributions().len(),
             past,
@@ -1732,7 +1732,7 @@ impl PyDemSliceTemplate {
 
 /// A reusable round schedule compiled from one source-tracked DEM and annotated circuit.
 ///
-/// Compile this once and call ``stitch`` for each decoding window. The schedule
+/// Compile this once and call ``compose`` for each decoding window. The schedule
 /// owns its relative DEM slices, so subsequent window assembly does not repeat
 /// detector-stream discovery or source-ownership partitioning.
 #[pyclass(name = "DemSliceRoundSchedule", module = "pecos_rslib.qec")]
@@ -1750,11 +1750,11 @@ fn parse_dem_boundary_kind(forward_boundary: &str) -> PyResult<RustDemBoundaryKi
     }
 }
 
-type PyTemplateOutputRoutings = BTreeMap<i64, BTreeMap<u32, Vec<u32>>>;
+type PySliceOutputRoutings = BTreeMap<i64, BTreeMap<u32, Vec<u32>>>;
 
-fn validate_template_output_routings(
+fn validate_slice_output_routings(
     argument: &str,
-    routings: Option<&PyTemplateOutputRoutings>,
+    routings: Option<&PySliceOutputRoutings>,
     known_by_round: &BTreeMap<i64, BTreeSet<u32>>,
     declared_outputs: &BTreeSet<u32>,
 ) -> PyResult<()> {
@@ -1785,12 +1785,12 @@ fn validate_template_output_routings(
     Ok(())
 }
 
-fn validate_template_output_schema(
+fn validate_slice_output_schema(
     kind: &str,
     expected: &BTreeSet<u32>,
     declared: &BTreeSet<u32>,
     known_by_round: &BTreeMap<i64, BTreeSet<u32>>,
-    routings: Option<&PyTemplateOutputRoutings>,
+    routings: Option<&PySliceOutputRoutings>,
 ) -> PyResult<()> {
     if expected != declared {
         return Err(pyo3::exceptions::PyValueError::new_err(format!(
@@ -1808,7 +1808,7 @@ fn validate_template_output_schema(
             });
             if unexpected {
                 return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                    "template {kind} {local_output} at owner round {round} is not projected or routed into the expected output schema {expected:?}"
+                    "cached slice {kind} {local_output} at owner round {round} is not projected or routed into the expected output schema {expected:?}"
                 )));
             }
         }
@@ -1818,31 +1818,31 @@ fn validate_template_output_schema(
 
 #[pymethods]
 impl PyDemSliceRoundSchedule {
-    /// Assemble a schedule from cached templates at requested absolute rounds.
+    /// Assemble a schedule from cached slices at requested absolute rounds.
     ///
     /// Identity stream and output mappings are used. ``output_model`` supplies
     /// only standard-output and tracked-Pauli declarations; its detector and
     /// contribution contents are ignored. ``coordinate_offset`` translates
-    /// every available template-local detector coordinate at instantiation.
+    /// every available cached slice-local detector coordinate at instantiation.
     /// ``detector_coordinate_offsets`` adds a further translation selected by
     /// local detector-stream ID, allowing independently placed code blocks.
     /// Output routings select a GF(2) target set by owner round and local output;
     /// repeated targets cancel, and an empty target set projects a column away.
     /// The expected output lists are an independent declaration of the assembled
     /// circuit schema. They must exactly match ``output_model`` and every
-    /// unprojected template output must route into them.
+    /// unprojected cached slice output must route into them.
     #[staticmethod]
-    #[pyo3(signature = (output_model, templates, expected_dem_outputs, expected_tracked_paulis, coordinate_offset=None, detector_coordinate_offsets=None, dem_output_routings=None, tracked_pauli_routings=None))]
-    fn from_templates(
+    #[pyo3(signature = (output_model, cached_slices, expected_dem_outputs, expected_tracked_paulis, coordinate_offset=None, detector_coordinate_offsets=None, dem_output_routings=None, tracked_pauli_routings=None))]
+    fn from_cached_slices(
         py: Python<'_>,
         output_model: &PyDetectorErrorModel,
-        templates: Vec<(Py<PyDemSliceTemplate>, i64)>,
+        cached_slices: Vec<(Py<PyCachedDemSlice>, i64)>,
         expected_dem_outputs: Vec<u32>,
         expected_tracked_paulis: Vec<u32>,
         coordinate_offset: Option<(f64, f64)>,
         detector_coordinate_offsets: Option<BTreeMap<u32, (f64, f64)>>,
-        dem_output_routings: Option<PyTemplateOutputRoutings>,
-        tracked_pauli_routings: Option<PyTemplateOutputRoutings>,
+        dem_output_routings: Option<PySliceOutputRoutings>,
+        tracked_pauli_routings: Option<PySliceOutputRoutings>,
     ) -> PyResult<Self> {
         if let Some((x, y)) = coordinate_offset
             && (!x.is_finite() || !y.is_finite())
@@ -1858,8 +1858,8 @@ impl PyDemSliceRoundSchedule {
                         "detector_coordinate_offsets[{detector}] values must be finite"
                     )));
                 }
-                let known = templates.iter().any(|(template, _)| {
-                    template
+                let known = cached_slices.iter().any(|(cached_slice, _)| {
+                    cached_slice
                         .borrow(py)
                         .inner
                         .detectors()
@@ -1875,16 +1875,16 @@ impl PyDemSliceRoundSchedule {
         }
         let mut known_dem_outputs = BTreeMap::<i64, BTreeSet<u32>>::new();
         let mut known_tracked_paulis = BTreeMap::<i64, BTreeSet<u32>>::new();
-        for (template, round) in &templates {
-            let template = template.borrow(py);
+        for (cached_slice, round) in &cached_slices {
+            let cached_slice = cached_slice.borrow(py);
             known_dem_outputs
                 .entry(*round)
                 .or_default()
-                .extend(template.inner.local_dem_outputs());
+                .extend(cached_slice.inner.local_dem_outputs());
             known_tracked_paulis
                 .entry(*round)
                 .or_default()
-                .extend(template.inner.local_tracked_paulis());
+                .extend(cached_slice.inner.local_tracked_paulis());
         }
         let declared_dem_outputs = output_model
             .inner
@@ -1898,41 +1898,41 @@ impl PyDemSliceRoundSchedule {
             .collect();
         let expected_dem_outputs = expected_dem_outputs.into_iter().collect();
         let expected_tracked_paulis = expected_tracked_paulis.into_iter().collect();
-        validate_template_output_routings(
+        validate_slice_output_routings(
             "dem_output_routings",
             dem_output_routings.as_ref(),
             &known_dem_outputs,
             &declared_dem_outputs,
         )?;
-        validate_template_output_routings(
+        validate_slice_output_routings(
             "tracked_pauli_routings",
             tracked_pauli_routings.as_ref(),
             &known_tracked_paulis,
             &declared_tracked_paulis,
         )?;
-        validate_template_output_schema(
+        validate_slice_output_schema(
             "standard outputs",
             &expected_dem_outputs,
             &declared_dem_outputs,
             &known_dem_outputs,
             dem_output_routings.as_ref(),
         )?;
-        validate_template_output_schema(
+        validate_slice_output_schema(
             "tracked Paulis",
             &expected_tracked_paulis,
             &declared_tracked_paulis,
             &known_tracked_paulis,
             tracked_pauli_routings.as_ref(),
         )?;
-        let instances = templates
+        let instances = cached_slices
             .into_iter()
-            .map(|(template, round)| -> PyResult<_> {
-                let template = template.borrow(py);
+            .map(|(cached_slice, round)| -> PyResult<_> {
+                let cached_slice = cached_slice.borrow(py);
                 let mut instance =
-                    RustDemSliceInstance::identity(Arc::clone(&template.inner), round);
+                    RustDemSliceInstance::identity(Arc::clone(&cached_slice.inner), round);
                 if coordinate_offset.is_some() || detector_coordinate_offsets.is_some() {
                     let (global_x, global_y) = coordinate_offset.unwrap_or((0.0, 0.0));
-                    for detector in template.inner.detectors() {
+                    for detector in cached_slice.inner.detectors() {
                         if let Some([x, y]) = detector.coords {
                             let (local_x, local_y) = detector_coordinate_offsets
                                 .as_ref()
@@ -1996,7 +1996,7 @@ impl PyDemSliceRoundSchedule {
     }
 
     /// Extract one compiled owner-round slice for caching and later reuse.
-    fn template(&self, owner_round: i64) -> PyResult<PyDemSliceTemplate> {
+    fn cached_slice(&self, owner_round: i64) -> PyResult<PyCachedDemSlice> {
         let instance = self
             .inner
             .instances()
@@ -2004,10 +2004,10 @@ impl PyDemSliceRoundSchedule {
             .find(|instance| instance.round() == owner_round)
             .ok_or_else(|| {
                 pyo3::exceptions::PyValueError::new_err(format!(
-                    "DEM round schedule has no template at owner round {owner_round}"
+                    "DEM round schedule has no cached slice at owner round {owner_round}"
                 ))
             })?;
-        Ok(PyDemSliceTemplate {
+        Ok(PyCachedDemSlice {
             inner: Arc::clone(instance.slice()),
         })
     }
@@ -2025,7 +2025,7 @@ impl PyDemSliceRoundSchedule {
     /// schedule. An explicit undersized buffer fails instead of truncating a
     /// commit-region correlation.
     #[pyo3(signature = (start_round, commit_rounds, buffer_rounds=None, forward_boundary="soft"))]
-    fn stitch(
+    fn compose(
         &self,
         start_round: i64,
         commit_rounds: u32,
@@ -2040,9 +2040,9 @@ impl PyDemSliceRoundSchedule {
                 .required_buffer_rounds(start_round, commit_rounds)
                 .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?,
         };
-        let stitched = self
+        let composed = self
             .inner
-            .stitch(RustDemWindowSpec::new(
+            .compose(RustDemWindowSpec::new(
                 start_round,
                 commit_rounds,
                 buffer_rounds,
@@ -2050,7 +2050,7 @@ impl PyDemSliceRoundSchedule {
             ))
             .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
         Ok(PyDetectorErrorModel {
-            inner: stitched.model,
+            inner: composed.model,
         })
     }
 
@@ -2531,7 +2531,7 @@ impl PyDetectorErrorModel {
     /// Raises:
     ///     ValueError: If metadata, ownership, mapping, or boundary validation fails.
     #[pyo3(signature = (influence_map, circuit, start_round, commit_rounds, buffer_rounds=None, forward_boundary="soft"))]
-    fn stitched_round_window(
+    fn composed_round_window(
         &self,
         influence_map: &PyDagFaultInfluenceMap,
         circuit: &PyDagCircuit,
@@ -2540,7 +2540,7 @@ impl PyDetectorErrorModel {
         buffer_rounds: Option<u32>,
         forward_boundary: &str,
     ) -> PyResult<Self> {
-        self.round_schedule(influence_map, circuit)?.stitch(
+        self.round_schedule(influence_map, circuit)?.compose(
             start_round,
             commit_rounds,
             buffer_rounds,
@@ -8142,7 +8142,7 @@ pub fn register_qec_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     qec.add_class::<PyFaultDistanceUpperBoundResult>()?;
     qec.add_class::<PyDetectorErrorModel>()?;
     qec.add_class::<PyStructuredDemDecoder>()?;
-    qec.add_class::<PyDemSliceTemplate>()?;
+    qec.add_class::<PyCachedDemSlice>()?;
     qec.add_class::<PyDemSliceRoundSchedule>()?;
     qec.add_class::<PyDemBuilder>()?;
     qec.add_class::<PySampleBatch>()?;

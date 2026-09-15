@@ -4939,7 +4939,7 @@ pub struct DetectorErrorModel {
     idle_noise_residuals: Vec<NoiseChannelResidual>,
     /// Whether contribution location IDs index the physical influence map.
     ///
-    /// A stitched model retains source-instance provenance in the same compact
+    /// A composed model retains source-instance provenance in the same compact
     /// field, but those synthetic IDs must never be interpreted as indices into
     /// a physical circuit's influence map.
     source_locations_index_influence_map: bool,
@@ -5143,7 +5143,7 @@ impl DetectorErrorModel {
         self.source_locations_index_influence_map
     }
 
-    pub(crate) fn mark_source_locations_as_stitched_provenance(&mut self) {
+    pub(crate) fn mark_source_locations_as_composed_provenance(&mut self) {
         self.source_locations_index_influence_map = false;
     }
 
@@ -5800,8 +5800,8 @@ impl DetectorErrorModel {
             .push(FaultContribution::direct(effect, probability));
     }
 
-    /// Adds a direct contribution carrying stitched-model source identities.
-    pub(crate) fn add_direct_contribution_with_stitched_locations(
+    /// Adds a direct contribution carrying composed-model source identities.
+    pub(crate) fn add_direct_contribution_with_composed_locations(
         &mut self,
         effect: FaultMechanism,
         probability: f64,
@@ -5835,8 +5835,8 @@ impl DetectorErrorModel {
         self.contributions.push(contribution);
     }
 
-    /// Adds a source-decomposed contribution carrying stitched source identities.
-    pub(crate) fn add_source_decomposed_contribution_with_stitched_locations(
+    /// Adds a source-decomposed contribution carrying composed source identities.
+    pub(crate) fn add_source_decomposed_contribution_with_composed_locations(
         &mut self,
         components: impl IntoIterator<Item = FaultMechanism>,
         probability: f64,
@@ -5940,8 +5940,8 @@ impl DetectorErrorModel {
         ));
     }
 
-    /// Adds a Y-decomposed contribution carrying stitched source identities.
-    pub(crate) fn add_y_decomposed_contribution_with_stitched_locations(
+    /// Adds a Y-decomposed contribution carrying composed source identities.
+    pub(crate) fn add_y_decomposed_contribution_with_composed_locations(
         &mut self,
         x_effect: &FaultMechanism,
         z_effect: &FaultMechanism,
@@ -5956,7 +5956,7 @@ impl DetectorErrorModel {
             return;
         }
         if x_effect.is_empty() || z_effect.is_empty() {
-            self.add_direct_contribution_with_stitched_locations(
+            self.add_direct_contribution_with_composed_locations(
                 combined,
                 probability,
                 location_indices,

@@ -2493,7 +2493,7 @@ class qec:
         def mask_firings(self, pauli_masks: Any) -> list[list[bool]]: ...
         def compute_mask_xor(self, pauli_masks: Any) -> tuple[list[list[bool]], list[list[bool]]]: ...
 
-    class DemSliceTemplate:
+    class CachedDemSlice:
         @property
         def name(self) -> str: ...
         @property
@@ -2508,9 +2508,9 @@ class qec:
 
     class DemSliceRoundSchedule:
         @staticmethod
-        def from_templates(
+        def from_cached_slices(
             output_model: qec.DetectorErrorModel,
-            templates: Sequence[tuple[qec.DemSliceTemplate, int]],
+            cached_slices: Sequence[tuple[qec.CachedDemSlice, int]],
             expected_dem_outputs: Sequence[int],
             expected_tracked_paulis: Sequence[int],
             coordinate_offset: tuple[float, float] | None = ...,
@@ -2520,10 +2520,10 @@ class qec:
         ) -> qec.DemSliceRoundSchedule: ...
         @property
         def num_instances(self) -> int: ...
-        def template(self, owner_round: int) -> qec.DemSliceTemplate: ...
+        def cached_slice(self, owner_round: int) -> qec.CachedDemSlice: ...
         def rounds(self) -> list[int]: ...
         def required_buffer_rounds(self, start_round: int, commit_rounds: int) -> int: ...
-        def stitch(
+        def compose(
             self,
             start_round: int,
             commit_rounds: int,
@@ -2568,7 +2568,7 @@ class qec:
             start_round: int,
             commit_rounds: int,
         ) -> int: ...
-        def stitched_round_window(
+        def composed_round_window(
             self,
             influence_map: qec.DagFaultInfluenceMap,
             circuit: DagCircuit,

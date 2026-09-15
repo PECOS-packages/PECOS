@@ -16,12 +16,12 @@
 //! are relative to the slice's round, so a contribution can expose dependencies on earlier or
 //! later slices without depending on absolute detector numbers. At assembly time, a
 //! [`DemSliceInstance`] maps the slice-local detector and observable identities into the current
-//! logical schedule, and [`DemStitcher`] produces the structured [`DetectorErrorModel`] for one
+//! logical schedule, and [`DemComposer`] produces the structured [`DetectorErrorModel`] for one
 //! commit-plus-buffer decoding window.
 //!
 //! [`DemSliceRoundSchedule`] is the bridge from an already source-tracked PECOS circuit model:
 //! detector coordinates define stable streams and rounds, while annotated physical gates define
-//! fault ownership. Compiling operation templates without first building a full-circuit DEM stays
+//! fault ownership. Compiling operation cached slices without first building a full-circuit DEM stays
 //! a separate frontend responsibility.
 
 use super::types::{
@@ -166,11 +166,11 @@ impl DemSliceContribution {
 pub struct DemSliceDetector {
     /// Slice-local detector identity used by relative targets.
     pub id: u32,
-    /// Optional template-local spatial coordinates. Time is supplied by the instance.
+    /// Optional cached slice-local spatial coordinates. Time is supplied by the instance.
     pub coords: Option<[f64; 2]>,
     /// Whether an instance emits this detector at its owning round.
     ///
-    /// A non-emitting entry is a temporal port identity only. Contributions may target it in an
+    /// A non-emitting entry is a port identity only. Contributions may target it in an
     /// adjacent round, where another slice instance is responsible for the declaration.
     pub emitted: bool,
 }
@@ -186,7 +186,7 @@ impl DemSliceDetector {
         }
     }
 
-    /// Create a temporal port identity that is not emitted by this slice.
+    /// Create a port identity that is not emitted by this slice.
     #[must_use]
     pub const fn port(id: u32) -> Self {
         Self {
@@ -196,7 +196,7 @@ impl DemSliceDetector {
         }
     }
 
-    /// Attach template-local spatial coordinates.
+    /// Attach cached slice-local spatial coordinates.
     #[must_use]
     pub const fn with_coords(mut self, coords: [f64; 2]) -> Self {
         self.coords = Some(coords);
@@ -291,12 +291,12 @@ impl DemSlice {
         detectors: Vec<DemSliceDetector>,
         contributions: Vec<DemSliceContribution>,
         horizon: DemTemporalHorizon,
-    ) -> Result<Self, DemSliceStitchError> {
+    ) -> Result<Self, DemSliceComposeError> {
         let name = name.into();
         let mut declared = BTreeSet::new();
         for detector in &detectors {
             if !declared.insert(detector.id) {
-                return Err(DemSliceStitchError::DuplicateLocalDetector {
+                return Err(DemSliceComposeError::DuplicateLocalDetector {
                     slice: name,
                     detector: detector.id,
                 });
@@ -308,7 +308,7 @@ impl DemSlice {
         for contribution in &contributions {
             let probability = contribution.probability();
             if !probability.is_finite() || !(0.0..=1.0).contains(&probability) {
-                return Err(DemSliceStitchError::InvalidProbability {
+                return Err(DemSliceComposeError::InvalidProbability {
                     slice: name,
                     probability,
                 });
@@ -316,7 +316,7 @@ impl DemSlice {
             for effect in contribution.components() {
                 for target in &effect.detectors {
                     if !declared.contains(&target.detector) {
-                        return Err(DemSliceStitchError::UndeclaredLocalDetector {
+                        return Err(DemSliceComposeError::UndeclaredLocalDetector {
                             slice: name,
                             detector: target.detector,
                         });
@@ -326,7 +326,7 @@ impl DemSlice {
                     let within_future = target.round_offset <= 0
                         || target.round_offset.unsigned_abs() <= horizon.future_rounds;
                     if !within_past || !within_future {
-                        return Err(DemSliceStitchError::TemporalHorizonExceeded {
+                        return Err(DemSliceComposeError::TemporalHorizonExceeded {
                             slice: name,
                             detector: target.detector,
                             round_offset: target.round_offset,
@@ -373,7 +373,7 @@ impl DemSlice {
         model: &DetectorErrorModel,
         source_map: &DemSliceModelMap,
         horizon: DemTemporalHorizon,
-    ) -> Result<Self, DemSliceStitchError> {
+    ) -> Result<Self, DemSliceComposeError> {
         Self::from_detector_error_model_selected(name.into(), model, source_map, horizon, |_| {
             Ok(true)
         })
@@ -397,10 +397,10 @@ impl DemSlice {
         source_map: &DemSliceModelMap,
         horizon: DemTemporalHorizon,
         owned_locations: &BTreeSet<u32>,
-    ) -> Result<Self, DemSliceStitchError> {
+    ) -> Result<Self, DemSliceComposeError> {
         let name = name.into();
         if !model.source_locations_index_influence_map() {
-            return Err(DemSliceStitchError::StitchedSourceLocationIdentity { slice: name });
+            return Err(DemSliceComposeError::ComposedSourceLocationIdentity { slice: name });
         }
         Self::from_detector_error_model_selected(
             name.clone(),
@@ -416,8 +416,8 @@ impl DemSlice {
         model: &DetectorErrorModel,
         source_map: &DemSliceModelMap,
         horizon: DemTemporalHorizon,
-        include: impl Fn(&FaultContribution) -> Result<bool, DemSliceStitchError>,
-    ) -> Result<Self, DemSliceStitchError> {
+        include: impl Fn(&FaultContribution) -> Result<bool, DemSliceComposeError>,
+    ) -> Result<Self, DemSliceComposeError> {
         let source_detectors: BTreeMap<_, _> = model
             .detectors
             .iter()
@@ -426,7 +426,7 @@ impl DemSlice {
 
         for source_detector in source_detectors.keys() {
             if !source_map.detectors.contains_key(source_detector) {
-                return Err(DemSliceStitchError::MissingSourceDetectorMapping {
+                return Err(DemSliceComposeError::MissingSourceDetectorMapping {
                     slice: name,
                     source_detector: *source_detector,
                 });
@@ -436,7 +436,7 @@ impl DemSlice {
         let mut local_detectors: BTreeMap<u32, (bool, Option<[f64; 2]>)> = BTreeMap::new();
         for (&source_detector, target) in &source_map.detectors {
             let declaration = source_detectors.get(&source_detector).ok_or_else(|| {
-                DemSliceStitchError::UnknownSourceDetector {
+                DemSliceComposeError::UnknownSourceDetector {
                     slice: name.clone(),
                     source_detector,
                 }
@@ -450,7 +450,7 @@ impl DemSlice {
                 std::collections::btree_map::Entry::Occupied(mut entry) => {
                     let (already_emitted, existing_coords) = entry.get_mut();
                     if emitted && *already_emitted {
-                        return Err(DemSliceStitchError::DuplicateEmittedSourceDetector {
+                        return Err(DemSliceComposeError::DuplicateEmittedSourceDetector {
                             slice: name,
                             local_detector: target.detector,
                         });
@@ -458,7 +458,7 @@ impl DemSlice {
                     if let (Some(existing), Some(incoming)) = (*existing_coords, coords)
                         && !spatial_coords_equal(existing, incoming)
                     {
-                        return Err(DemSliceStitchError::ConflictingLocalDetectorCoordinates {
+                        return Err(DemSliceComposeError::ConflictingLocalDetectorCoordinates {
                             slice: name,
                             local_detector: target.detector,
                         });
@@ -490,7 +490,7 @@ impl DemSlice {
         Self::new(name, detectors, contributions, horizon)
     }
 
-    /// Human-readable template name, used in diagnostics and cache inspection.
+    /// Human-readable cached slice name, used in diagnostics and cache inspection.
     #[must_use]
     pub fn name(&self) -> &str {
         &self.name
@@ -529,7 +529,7 @@ fn map_source_contribution(
     slice: &str,
     contribution: &FaultContribution,
     source_map: &DemSliceModelMap,
-) -> Result<DemSliceContribution, DemSliceStitchError> {
+) -> Result<DemSliceContribution, DemSliceComposeError> {
     let complete = map_source_mechanism(slice, &contribution.effect, source_map)?;
     let mapped = match contribution.component_kind() {
         FaultContributionKind::Direct(_) => {
@@ -557,14 +557,14 @@ fn ensure_component_effect<'a>(
     slice: &str,
     components: impl IntoIterator<Item = &'a SliceFaultMechanism>,
     complete: &SliceFaultMechanism,
-) -> Result<(), DemSliceStitchError> {
+) -> Result<(), DemSliceComposeError> {
     let combined = components
         .into_iter()
         .fold(SliceFaultMechanism::default(), |effect, component| {
             effect.xor(component)
         });
     if combined != *complete {
-        return Err(DemSliceStitchError::SourceComponentEffectMismatch {
+        return Err(DemSliceComposeError::SourceComponentEffectMismatch {
             slice: slice.to_owned(),
         });
     }
@@ -575,13 +575,13 @@ fn map_source_mechanism(
     slice: &str,
     source: &FaultMechanism,
     source_map: &DemSliceModelMap,
-) -> Result<SliceFaultMechanism, DemSliceStitchError> {
+) -> Result<SliceFaultMechanism, DemSliceComposeError> {
     let detectors = source
         .detectors
         .iter()
         .map(|detector| {
             source_map.detectors.get(detector).copied().ok_or_else(|| {
-                DemSliceStitchError::MissingSourceDetectorMapping {
+                DemSliceComposeError::MissingSourceDetectorMapping {
                     slice: slice.to_owned(),
                     source_detector: *detector,
                 }
@@ -593,7 +593,7 @@ fn map_source_mechanism(
         .iter()
         .map(|output| {
             source_map.dem_outputs.get(output).copied().ok_or_else(|| {
-                DemSliceStitchError::MissingSourceDemOutputMapping {
+                DemSliceComposeError::MissingSourceDemOutputMapping {
                     slice: slice.to_owned(),
                     source_output: *output,
                 }
@@ -608,7 +608,7 @@ fn map_source_mechanism(
                 .tracked_paulis
                 .get(output)
                 .copied()
-                .ok_or_else(|| DemSliceStitchError::MissingSourceTrackedPauliMapping {
+                .ok_or_else(|| DemSliceComposeError::MissingSourceTrackedPauliMapping {
                     slice: slice.to_owned(),
                     source_output: *output,
                 })
@@ -633,9 +633,9 @@ fn source_is_owned(
     slice: &str,
     contribution: &FaultContribution,
     owned_locations: &BTreeSet<u32>,
-) -> Result<bool, DemSliceStitchError> {
+) -> Result<bool, DemSliceComposeError> {
     if contribution.location_indices.is_empty() {
-        return Err(DemSliceStitchError::UnattributedSourceContribution {
+        return Err(DemSliceComposeError::UnattributedSourceContribution {
             slice: slice.to_owned(),
         });
     }
@@ -649,7 +649,7 @@ fn source_is_owned(
     } else if owned == contribution.location_indices.len() {
         Ok(true)
     } else {
-        Err(DemSliceStitchError::PartialSourceOwnership {
+        Err(DemSliceComposeError::PartialSourceOwnership {
             slice: slice.to_owned(),
             location_indices: contribution.location_indices.to_vec(),
         })
@@ -661,12 +661,12 @@ fn source_is_owned(
 pub struct DemDetectorPlacement {
     /// Stable stream identity, such as a code-block/check pair.
     pub stream_id: u32,
-    /// Optional absolute spatial coordinates. When absent, template coordinates are retained.
+    /// Optional absolute spatial coordinates. When absent, cached slice coordinates are retained.
     pub coords: Option<[f64; 2]>,
 }
 
 impl DemDetectorPlacement {
-    /// Create a placement that retains the template's spatial coordinates.
+    /// Create a placement that retains the cached slice's spatial coordinates.
     #[must_use]
     pub const fn new(stream_id: u32) -> Self {
         Self {
@@ -775,16 +775,16 @@ impl DemSliceInstance {
     }
 }
 
-/// Offline compiler for one-round slices from a bounded physical template model.
+/// Offline compiler for one-round slices from a bounded physical fixture model.
 ///
 /// The input model may cover a small initialization, bulk, gate, or terminal
 /// circuit with enough temporal halo to expose every bounded correlation. The
 /// compiler validates source ownership and detector streams once, then extracts
 /// selected owner rounds as reusable, absolute-index-free [`DemSlice`] values.
 /// Frontends can cache those slices using their normal bounded cache policy and
-/// instantiate them without retaining the template circuit or absolute rounds.
+/// instantiate them without retaining the physical fixture circuit or absolute rounds.
 #[derive(Debug)]
-struct DemSliceTemplateCompiler<'a> {
+struct DemSliceCompiler<'a> {
     model: &'a DetectorErrorModel,
     location_rounds: Vec<i64>,
     detector_layout: BTreeMap<u32, (u32, i64)>,
@@ -792,7 +792,7 @@ struct DemSliceTemplateCompiler<'a> {
     rounds: Vec<i64>,
 }
 
-impl<'a> DemSliceTemplateCompiler<'a> {
+impl<'a> DemSliceCompiler<'a> {
     /// Prepare a compiler from an annotated bounded physical circuit.
     ///
     /// # Errors
@@ -804,18 +804,18 @@ impl<'a> DemSliceTemplateCompiler<'a> {
         model: &'a DetectorErrorModel,
         influence_map: &DagFaultInfluenceMap,
         circuit: &DagCircuit,
-    ) -> Result<Self, DemSliceStitchError> {
+    ) -> Result<Self, DemSliceComposeError> {
         let location_rounds = annotated_location_rounds(influence_map, circuit)?;
-        Self::from_location_rounds_named("DEM slice template", model, location_rounds)
+        Self::from_location_rounds_named("DEM slice fixture", model, location_rounds)
     }
 
     fn from_location_rounds_named(
         validation_name: &str,
         model: &'a DetectorErrorModel,
         location_rounds: Vec<i64>,
-    ) -> Result<Self, DemSliceStitchError> {
+    ) -> Result<Self, DemSliceComposeError> {
         if !model.source_locations_index_influence_map() {
-            return Err(DemSliceStitchError::StitchedSourceLocationIdentity {
+            return Err(DemSliceComposeError::ComposedSourceLocationIdentity {
                 slice: validation_name.to_owned(),
             });
         }
@@ -832,7 +832,7 @@ impl<'a> DemSliceTemplateCompiler<'a> {
         })
     }
 
-    /// Owner rounds available in this bounded template.
+    /// Owner rounds available in this bounded physical fixture.
     #[must_use]
     fn rounds(&self) -> &[i64] {
         &self.rounds
@@ -848,9 +848,9 @@ impl<'a> DemSliceTemplateCompiler<'a> {
         &self,
         name: impl Into<String>,
         owner_round: i64,
-    ) -> Result<DemSlice, DemSliceStitchError> {
+    ) -> Result<DemSlice, DemSliceComposeError> {
         if self.rounds.binary_search(&owner_round).is_err() {
-            return Err(DemSliceStitchError::UnknownTemplateRound { owner_round });
+            return Err(DemSliceComposeError::UnknownSliceRound { owner_round });
         }
         let name = name.into();
         let owned_locations = self
@@ -859,7 +859,7 @@ impl<'a> DemSliceTemplateCompiler<'a> {
             .enumerate()
             .filter(|&(_, &round)| round == owner_round)
             .map(|(location, _)| {
-                u32::try_from(location).map_err(|_| DemSliceStitchError::TooManyFaultLocations)
+                u32::try_from(location).map_err(|_| DemSliceComposeError::TooManyFaultLocations)
             })
             .collect::<Result<BTreeSet<_>, _>>()?;
         let source_map =
@@ -868,15 +868,15 @@ impl<'a> DemSliceTemplateCompiler<'a> {
                 |source_map, (&source_detector, &(stream, detector_round))| {
                     let offset = detector_round
                         .checked_sub(owner_round)
-                        .ok_or(DemSliceStitchError::RoundOverflow)?;
+                        .ok_or(DemSliceComposeError::RoundOverflow)?;
                     let offset = i32::try_from(offset).map_err(|_| {
-                        DemSliceStitchError::RelativeRoundOffsetOverflow {
+                        DemSliceComposeError::RelativeRoundOffsetOverflow {
                             source_detector,
                             owner_round,
                             detector_round,
                         }
                     })?;
-                    Ok::<_, DemSliceStitchError>(source_map.with_detector(
+                    Ok::<_, DemSliceComposeError>(source_map.with_detector(
                         source_detector,
                         RelativeDetectorTarget::new(stream, offset),
                     ))
@@ -896,7 +896,7 @@ impl<'a> DemSliceTemplateCompiler<'a> {
 fn annotated_location_rounds(
     influence_map: &DagFaultInfluenceMap,
     circuit: &DagCircuit,
-) -> Result<Vec<i64>, DemSliceStitchError> {
+) -> Result<Vec<i64>, DemSliceComposeError> {
     influence_map
         .locations
         .iter()
@@ -904,13 +904,13 @@ fn annotated_location_rounds(
         .map(|(location, spacetime)| {
             let Some(attribute) = circuit.get_gate_attr(spacetime.node, DEM_SLICE_ROUND_ATTRIBUTE)
             else {
-                return Err(DemSliceStitchError::MissingLocationRoundAttribute {
+                return Err(DemSliceComposeError::MissingLocationRoundAttribute {
                     location,
                     node: spacetime.node,
                 });
             };
             let Attribute::Int(round) = attribute else {
-                return Err(DemSliceStitchError::InvalidLocationRoundAttribute {
+                return Err(DemSliceComposeError::InvalidLocationRoundAttribute {
                     location,
                     node: spacetime.node,
                 });
@@ -971,7 +971,7 @@ impl DemSliceRoundSchedule {
         model: &DetectorErrorModel,
         influence_map: &DagFaultInfluenceMap,
         circuit: &DagCircuit,
-    ) -> Result<Self, DemSliceStitchError> {
+    ) -> Result<Self, DemSliceComposeError> {
         let location_rounds = annotated_location_rounds(influence_map, circuit)?;
         Self::from_location_rounds(name_prefix, model, &location_rounds)
     }
@@ -990,9 +990,9 @@ impl DemSliceRoundSchedule {
         name_prefix: impl AsRef<str>,
         model: &DetectorErrorModel,
         location_rounds: &[i64],
-    ) -> Result<Self, DemSliceStitchError> {
+    ) -> Result<Self, DemSliceComposeError> {
         let name_prefix = name_prefix.as_ref();
-        let compiler = DemSliceTemplateCompiler::from_location_rounds_named(
+        let compiler = DemSliceCompiler::from_location_rounds_named(
             name_prefix,
             model,
             location_rounds.to_vec(),
@@ -1005,7 +1005,7 @@ impl DemSliceRoundSchedule {
                     Arc::new(compiler.compile_round(format!("{name_prefix}@{round}"), round)?);
                 Ok(DemSliceInstance::identity(slice, round))
             })
-            .collect::<Result<_, DemSliceStitchError>>()?;
+            .collect::<Result<_, DemSliceComposeError>>()?;
 
         Ok(Self {
             instances,
@@ -1036,7 +1036,7 @@ impl DemSliceRoundSchedule {
         &self,
         start_round: i64,
         commit_rounds: u32,
-    ) -> Result<u32, DemSliceStitchError> {
+    ) -> Result<u32, DemSliceComposeError> {
         let spec = DemWindowSpec::new(start_round, commit_rounds, 0, DemBoundaryKind::Soft);
         let commit_end = spec.commit_end()?;
         let mut required_end = commit_end;
@@ -1050,7 +1050,7 @@ impl DemSliceRoundSchedule {
                         instance
                             .round
                             .checked_add(i64::from(target.round_offset))
-                            .ok_or(DemSliceStitchError::RoundOverflow)
+                            .ok_or(DemSliceComposeError::RoundOverflow)
                     })
                     .collect::<Result<Vec<_>, _>>()?;
                 let owner_is_committed =
@@ -1066,7 +1066,7 @@ impl DemSliceRoundSchedule {
                         required_end = required_end.max(
                             round
                                 .checked_add(1)
-                                .ok_or(DemSliceStitchError::RoundOverflow)?,
+                                .ok_or(DemSliceComposeError::RoundOverflow)?,
                         );
                     }
                 }
@@ -1075,42 +1075,42 @@ impl DemSliceRoundSchedule {
 
         let required = required_end
             .checked_sub(commit_end)
-            .ok_or(DemSliceStitchError::RoundOverflow)?;
-        u32::try_from(required).map_err(|_| DemSliceStitchError::RoundOverflow)
+            .ok_or(DemSliceComposeError::RoundOverflow)?;
+        u32::try_from(required).map_err(|_| DemSliceComposeError::RoundOverflow)
     }
 
     /// Assemble one commit-plus-buffer window from this schedule.
     ///
     /// # Errors
     ///
-    /// Returns the boundary, mapping, or model error reported by [`DemStitcher`].
-    pub fn stitch(&self, spec: DemWindowSpec) -> Result<StitchedDem, DemSliceStitchError> {
-        DemStitcher::new(spec)
+    /// Returns the boundary, mapping, or model error reported by [`DemComposer`].
+    pub fn compose(&self, spec: DemWindowSpec) -> Result<ComposedDem, DemSliceComposeError> {
+        DemComposer::new(spec)
             .with_observables(self.observables.clone())
             .with_tracked_paulis(self.tracked_paulis.clone())
-            .stitch(&self.instances)
+            .compose(&self.instances)
     }
 }
 
 fn detector_round_layout(
     model: &DetectorErrorModel,
-) -> Result<BTreeMap<u32, (u32, i64)>, DemSliceStitchError> {
+) -> Result<BTreeMap<u32, (u32, i64)>, DemSliceComposeError> {
     let mut parsed_detectors = Vec::with_capacity(model.detectors.len());
     let mut detectors_per_round = BTreeMap::<i64, usize>::new();
     let mut coordinate_owners = BTreeMap::new();
     for detector in &model.detectors {
         let Some([x, y, time]) = detector.coords else {
-            return Err(DemSliceStitchError::MissingDetectorCoordinates {
+            return Err(DemSliceComposeError::MissingDetectorCoordinates {
                 source_detector: detector.id,
             });
         };
         let Some(x) = finite_coordinate_key(x) else {
-            return Err(DemSliceStitchError::InvalidDetectorCoordinates {
+            return Err(DemSliceComposeError::InvalidDetectorCoordinates {
                 source_detector: detector.id,
             });
         };
         let Some(y) = finite_coordinate_key(y) else {
-            return Err(DemSliceStitchError::InvalidDetectorCoordinates {
+            return Err(DemSliceComposeError::InvalidDetectorCoordinates {
                 source_detector: detector.id,
             });
         };
@@ -1119,7 +1119,7 @@ fn detector_round_layout(
             (x, y, round),
             (detector.id, [f64::from_bits(x), f64::from_bits(y)]),
         ) {
-            return Err(DemSliceStitchError::DuplicateDetectorCoordinates {
+            return Err(DemSliceComposeError::DuplicateDetectorCoordinates {
                 first_detector,
                 second_detector: detector.id,
                 coords,
@@ -1145,14 +1145,14 @@ fn detector_round_layout(
     for &(_, spatial, round) in &parsed_detectors {
         if Some(round) == anchor_round && !stream_ids.contains_key(&spatial) {
             let stream = u32::try_from(stream_ids.len())
-                .map_err(|_| DemSliceStitchError::TooManyDetectorStreams)?;
+                .map_err(|_| DemSliceComposeError::TooManyDetectorStreams)?;
             stream_ids.insert(spatial, stream);
         }
     }
     for &(_, spatial, _) in &parsed_detectors {
         if !stream_ids.contains_key(&spatial) {
             let stream = u32::try_from(stream_ids.len())
-                .map_err(|_| DemSliceStitchError::TooManyDetectorStreams)?;
+                .map_err(|_| DemSliceComposeError::TooManyDetectorStreams)?;
             stream_ids.insert(spatial, stream);
         }
     }
@@ -1173,10 +1173,10 @@ fn finite_coordinate_key(value: f64) -> Option<u64> {
         .then(|| if value == 0.0 { 0 } else { value.to_bits() })
 }
 
-fn integral_detector_round(source_detector: u32, value: f64) -> Result<i64, DemSliceStitchError> {
+fn integral_detector_round(source_detector: u32, value: f64) -> Result<i64, DemSliceComposeError> {
     const MAX_EXACT_F64_INTEGER: f64 = 9_007_199_254_740_992.0;
     if !value.is_finite() || value.fract() != 0.0 || value.abs() > MAX_EXACT_F64_INTEGER {
-        return Err(DemSliceStitchError::NonIntegralDetectorRound {
+        return Err(DemSliceComposeError::NonIntegralDetectorRound {
             source_detector,
             value,
         });
@@ -1220,15 +1220,15 @@ fn validate_source_location_owners(
     slice: &str,
     model: &DetectorErrorModel,
     location_rounds: &[i64],
-) -> Result<(), DemSliceStitchError> {
+) -> Result<(), DemSliceComposeError> {
     for contribution in model.contributions() {
         let Some(&first) = contribution.location_indices.first() else {
-            return Err(DemSliceStitchError::UnattributedSourceContribution {
+            return Err(DemSliceComposeError::UnattributedSourceContribution {
                 slice: slice.to_owned(),
             });
         };
         let first_round = *location_rounds.get(first as usize).ok_or(
-            DemSliceStitchError::SourceLocationOutOfRange {
+            DemSliceComposeError::SourceLocationOutOfRange {
                 slice: slice.to_owned(),
                 location: first,
                 num_locations: location_rounds.len(),
@@ -1236,14 +1236,14 @@ fn validate_source_location_owners(
         )?;
         for &location in &contribution.location_indices[1..] {
             let round = *location_rounds.get(location as usize).ok_or(
-                DemSliceStitchError::SourceLocationOutOfRange {
+                DemSliceComposeError::SourceLocationOutOfRange {
                     slice: slice.to_owned(),
                     location,
                     num_locations: location_rounds.len(),
                 },
             )?;
             if round != first_round {
-                return Err(DemSliceStitchError::PartialSourceOwnership {
+                return Err(DemSliceComposeError::PartialSourceOwnership {
                     slice: slice.to_owned(),
                     location_indices: contribution.location_indices.to_vec(),
                 });
@@ -1258,7 +1258,7 @@ fn owned_temporal_horizon(
     model: &DetectorErrorModel,
     source_map: &DemSliceModelMap,
     owned_locations: &BTreeSet<u32>,
-) -> Result<DemTemporalHorizon, DemSliceStitchError> {
+) -> Result<DemTemporalHorizon, DemSliceComposeError> {
     let mut past_rounds = 0;
     let mut future_rounds = 0;
     for contribution in model.contributions() {
@@ -1291,10 +1291,10 @@ fn update_horizon_from_effect(
     source_map: &DemSliceModelMap,
     past_rounds: &mut u32,
     future_rounds: &mut u32,
-) -> Result<(), DemSliceStitchError> {
+) -> Result<(), DemSliceComposeError> {
     for detector in &effect.detectors {
         let target = source_map.detectors.get(detector).ok_or_else(|| {
-            DemSliceStitchError::MissingSourceDetectorMapping {
+            DemSliceComposeError::MissingSourceDetectorMapping {
                 slice: slice.to_owned(),
                 source_detector: *detector,
             }
@@ -1338,25 +1338,25 @@ impl DemWindowSpec {
         }
     }
 
-    fn commit_end(self) -> Result<i64, DemSliceStitchError> {
+    fn commit_end(self) -> Result<i64, DemSliceComposeError> {
         if self.commit_rounds == 0 {
-            return Err(DemSliceStitchError::EmptyCommitRegion);
+            return Err(DemSliceComposeError::EmptyCommitRegion);
         }
         self.start_round
             .checked_add(i64::from(self.commit_rounds))
-            .ok_or(DemSliceStitchError::RoundOverflow)
+            .ok_or(DemSliceComposeError::RoundOverflow)
     }
 
-    fn end(self) -> Result<i64, DemSliceStitchError> {
+    fn end(self) -> Result<i64, DemSliceComposeError> {
         self.commit_end()?
             .checked_add(i64::from(self.buffer_rounds))
-            .ok_or(DemSliceStitchError::RoundOverflow)
+            .ok_or(DemSliceComposeError::RoundOverflow)
     }
 }
 
-/// Algorithm-wide address assigned to one detector in a stitched model.
+/// Algorithm-wide address assigned to one detector in a composed model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct StitchedDetectorAddress {
+pub struct ComposedDetectorAddress {
     /// Syndrome round.
     pub round: i64,
     /// Stable detector-stream identity supplied by the slice instance.
@@ -1365,7 +1365,7 @@ pub struct StitchedDetectorAddress {
 
 /// Diagnostics describing boundary projection performed during assembly.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct DemStitchDiagnostics {
+pub struct DemComposeDiagnostics {
     /// Contributions with one or more targets projected through the hard backward boundary.
     pub projected_past_contributions: usize,
     /// Contributions with one or more targets projected through the soft forward boundary.
@@ -1374,25 +1374,25 @@ pub struct DemStitchDiagnostics {
 
 /// A structured window DEM and its local-to-algorithm detector map.
 #[derive(Debug, Clone)]
-pub struct StitchedDem {
+pub struct ComposedDem {
     /// Assembled decoder-facing model.
     pub model: DetectorErrorModel,
     /// `D<n>` index to algorithm-wide detector address.
-    pub detector_addresses: Vec<StitchedDetectorAddress>,
+    pub detector_addresses: Vec<ComposedDetectorAddress>,
     /// Boundary-projection diagnostics.
-    pub diagnostics: DemStitchDiagnostics,
+    pub diagnostics: DemComposeDiagnostics,
 }
 
 /// Just-in-time assembler for reusable DEM slice instances.
 #[derive(Debug, Clone)]
-struct DemStitcher {
+struct DemComposer {
     spec: DemWindowSpec,
     observables: Vec<DemOutput>,
     tracked_paulis: Vec<DemOutput>,
 }
 
-impl DemStitcher {
-    /// Create a stitcher for one commit-plus-buffer window.
+impl DemComposer {
+    /// Create a composer for one commit-plus-buffer window.
     #[must_use]
     const fn new(spec: DemWindowSpec) -> Self {
         Self {
@@ -1428,11 +1428,11 @@ impl DemStitcher {
     /// Returns an error when mappings are incomplete, an in-window target has no detector
     /// declaration, a hard terminal boundary has an unresolved future target, or a contribution
     /// reaches from the commit region beyond the supplied buffer.
-    fn stitch(&self, instances: &[DemSliceInstance]) -> Result<StitchedDem, DemSliceStitchError> {
+    fn compose(&self, instances: &[DemSliceInstance]) -> Result<ComposedDem, DemSliceComposeError> {
         let commit_end = self.spec.commit_end()?;
         let end_round = self.spec.end()?;
 
-        let mut declarations: BTreeMap<StitchedDetectorAddress, Option<[f64; 2]>> = BTreeMap::new();
+        let mut declarations: BTreeMap<ComposedDetectorAddress, Option<[f64; 2]>> = BTreeMap::new();
         for instance in instances {
             if instance.round < self.spec.start_round || instance.round >= end_round {
                 continue;
@@ -1442,12 +1442,12 @@ impl DemStitcher {
                     continue;
                 }
                 let placement = instance.detector_map.get(&detector.id).ok_or_else(|| {
-                    DemSliceStitchError::MissingDetectorMapping {
+                    DemSliceComposeError::MissingDetectorMapping {
                         slice: instance.slice.name.clone(),
                         detector: detector.id,
                     }
                 })?;
-                let address = StitchedDetectorAddress {
+                let address = ComposedDetectorAddress {
                     round: instance.round,
                     stream_id: placement.stream_id,
                 };
@@ -1455,7 +1455,7 @@ impl DemStitcher {
                 if let Some(existing) = declarations.insert(address, coords)
                     && existing != coords
                 {
-                    return Err(DemSliceStitchError::ConflictingDetectorDeclaration { address });
+                    return Err(DemSliceComposeError::ConflictingDetectorDeclaration { address });
                 }
             }
         }
@@ -1463,9 +1463,9 @@ impl DemStitcher {
         let mut address_to_id = BTreeMap::new();
         let mut detector_addresses = Vec::with_capacity(declarations.len());
         let mut model = DetectorErrorModel::with_capacity(declarations.len(), 0);
-        model.mark_source_locations_as_stitched_provenance();
+        model.mark_source_locations_as_composed_provenance();
         for (index, (address, coords)) in declarations.into_iter().enumerate() {
-            let id = u32::try_from(index).map_err(|_| DemSliceStitchError::TooManyDetectors)?;
+            let id = u32::try_from(index).map_err(|_| DemSliceComposeError::TooManyDetectors)?;
             address_to_id.insert(address, id);
             detector_addresses.push(address);
             let mut detector = DetectorDef::new(id);
@@ -1482,11 +1482,11 @@ impl DemStitcher {
             model.add_tracked_pauli(tracked_pauli.clone());
         }
 
-        let mut diagnostics = DemStitchDiagnostics::default();
+        let mut diagnostics = DemComposeDiagnostics::default();
         let mut referenced_outputs = BTreeSet::new();
         let mut referenced_tracked_paulis = BTreeSet::new();
-        let mut stitched_source_locations = BTreeMap::new();
-        let context = StitchContext {
+        let mut composed_source_locations = BTreeMap::new();
+        let context = ComposeContext {
             spec: self.spec,
             commit_end,
             end_round,
@@ -1509,18 +1509,18 @@ impl DemStitcher {
                     .source_locations()
                     .iter()
                     .map(|&local_location| {
-                        let next_location = u32::try_from(stitched_source_locations.len())
-                            .map_err(|_| DemSliceStitchError::TooManyFaultLocations)?;
-                        Ok(*stitched_source_locations
+                        let next_location = u32::try_from(composed_source_locations.len())
+                            .map_err(|_| DemSliceComposeError::TooManyFaultLocations)?;
+                        Ok(*composed_source_locations
                             .entry((instance_index, local_location))
                             .or_insert(next_location))
                     })
-                    .collect::<Result<SmallVec<[u32; 2]>, DemSliceStitchError>>()?;
+                    .collect::<Result<SmallVec<[u32; 2]>, DemSliceComposeError>>()?;
                 match &contribution.kind {
                     DemSliceContributionKind::Direct(_) => {
                         referenced_outputs.extend(complete.dem_outputs.iter().copied());
                         referenced_tracked_paulis.extend(complete.tracked_paulis.iter().copied());
-                        model.add_direct_contribution_with_stitched_locations(
+                        model.add_direct_contribution_with_composed_locations(
                             complete,
                             contribution.probability,
                             locations,
@@ -1546,7 +1546,7 @@ impl DemStitcher {
                         referenced_outputs.extend(z_effect.dem_outputs.iter().copied());
                         referenced_tracked_paulis.extend(x_effect.tracked_paulis.iter().copied());
                         referenced_tracked_paulis.extend(z_effect.tracked_paulis.iter().copied());
-                        model.add_y_decomposed_contribution_with_stitched_locations(
+                        model.add_y_decomposed_contribution_with_composed_locations(
                             &x_effect,
                             &z_effect,
                             contribution.probability,
@@ -1579,7 +1579,7 @@ impl DemStitcher {
                             referenced_tracked_paulis
                                 .extend(component.tracked_paulis.iter().copied());
                         }
-                        model.add_source_decomposed_contribution_with_stitched_locations(
+                        model.add_source_decomposed_contribution_with_composed_locations(
                             components,
                             contribution.probability,
                             locations,
@@ -1607,7 +1607,7 @@ impl DemStitcher {
             model.add_tracked_pauli(DemOutput::new(*output));
         }
 
-        Ok(StitchedDem {
+        Ok(ComposedDem {
             model,
             detector_addresses,
             diagnostics,
@@ -1615,10 +1615,10 @@ impl DemStitcher {
     }
 }
 
-fn round_coordinate(round: i64) -> Result<f64, DemSliceStitchError> {
+fn round_coordinate(round: i64) -> Result<f64, DemSliceComposeError> {
     const MAX_EXACT_F64_INTEGER: u64 = 1_u64 << f64::MANTISSA_DIGITS;
     if round.unsigned_abs() > MAX_EXACT_F64_INTEGER {
-        return Err(DemSliceStitchError::InexactRoundCoordinate { round });
+        return Err(DemSliceComposeError::InexactRoundCoordinate { round });
     }
     // The bound above proves that the integer is exactly representable as an f64.
     #[allow(clippy::cast_precision_loss)]
@@ -1630,7 +1630,7 @@ fn contribution_is_relevant(
     instance: &DemSliceInstance,
     spec: DemWindowSpec,
     end_round: i64,
-) -> Result<bool, DemSliceStitchError> {
+) -> Result<bool, DemSliceComposeError> {
     if instance.round >= spec.start_round && instance.round < end_round {
         return Ok(true);
     }
@@ -1639,7 +1639,7 @@ fn contribution_is_relevant(
         let round = instance
             .round
             .checked_add(i64::from(target.round_offset))
-            .ok_or(DemSliceStitchError::RoundOverflow)?;
+            .ok_or(DemSliceComposeError::RoundOverflow)?;
         if round >= spec.start_round && round < end_round {
             return Ok(true);
         }
@@ -1654,24 +1654,24 @@ struct Projection {
     touches_commit: bool,
 }
 
-struct StitchContext<'a> {
+struct ComposeContext<'a> {
     spec: DemWindowSpec,
     commit_end: i64,
     end_round: i64,
-    address_to_id: &'a BTreeMap<StitchedDetectorAddress, u32>,
+    address_to_id: &'a BTreeMap<ComposedDetectorAddress, u32>,
 }
 
 fn instantiate_effect(
     local: &SliceFaultMechanism,
     instance: &DemSliceInstance,
-    context: &StitchContext<'_>,
+    context: &ComposeContext<'_>,
     projection: &mut Projection,
     validate_boundary: bool,
-) -> Result<FaultMechanism, DemSliceStitchError> {
+) -> Result<FaultMechanism, DemSliceComposeError> {
     let mut detectors = Vec::with_capacity(local.detectors.len());
     for target in &local.detectors {
         let placement = instance.detector_map.get(&target.detector).ok_or_else(|| {
-            DemSliceStitchError::MissingDetectorMapping {
+            DemSliceComposeError::MissingDetectorMapping {
                 slice: instance.slice.name.clone(),
                 detector: target.detector,
             }
@@ -1679,7 +1679,7 @@ fn instantiate_effect(
         let round = instance
             .round
             .checked_add(i64::from(target.round_offset))
-            .ok_or(DemSliceStitchError::RoundOverflow)?;
+            .ok_or(DemSliceComposeError::RoundOverflow)?;
         if round < context.spec.start_round {
             projection.past = true;
             continue;
@@ -1687,7 +1687,7 @@ fn instantiate_effect(
         if round >= context.end_round {
             projection.future = true;
             if validate_boundary && context.spec.forward_boundary == DemBoundaryKind::Hard {
-                return Err(DemSliceStitchError::UnresolvedHardForwardPort {
+                return Err(DemSliceComposeError::UnresolvedHardForwardPort {
                     slice: instance.slice.name.clone(),
                     source_round: instance.round,
                     target_round: round,
@@ -1698,12 +1698,12 @@ fn instantiate_effect(
         if round < context.commit_end {
             projection.touches_commit = true;
         }
-        let address = StitchedDetectorAddress {
+        let address = ComposedDetectorAddress {
             round,
             stream_id: placement.stream_id,
         };
         let id = context.address_to_id.get(&address).ok_or(
-            DemSliceStitchError::MissingDetectorDeclaration {
+            DemSliceComposeError::MissingDetectorDeclaration {
                 slice: instance.slice.name.clone(),
                 address,
             },
@@ -1714,7 +1714,7 @@ fn instantiate_effect(
     let owner_is_committed =
         instance.round >= context.spec.start_round && instance.round < context.commit_end;
     if validate_boundary && projection.future && (projection.touches_commit || owner_is_committed) {
-        return Err(DemSliceStitchError::BufferTooSmall {
+        return Err(DemSliceComposeError::BufferTooSmall {
             slice: instance.slice.name.clone(),
             source_round: instance.round,
             commit_end: context.commit_end,
@@ -1725,7 +1725,7 @@ fn instantiate_effect(
     let mut outputs = Vec::new();
     for output in &local.dem_outputs {
         let mapped = instance.dem_output_map.get(output).ok_or_else(|| {
-            DemSliceStitchError::MissingDemOutputMapping {
+            DemSliceComposeError::MissingDemOutputMapping {
                 slice: instance.slice.name.clone(),
                 output: *output,
             }
@@ -1736,7 +1736,7 @@ fn instantiate_effect(
     let mut tracked_paulis = Vec::new();
     for output in &local.tracked_paulis {
         let mapped = instance.tracked_pauli_map.get(output).ok_or_else(|| {
-            DemSliceStitchError::MissingTrackedPauliMapping {
+            DemSliceComposeError::MissingTrackedPauliMapping {
                 slice: instance.slice.name.clone(),
                 output: *output,
             }
@@ -1753,9 +1753,9 @@ fn instantiate_effect(
     ))
 }
 
-/// Error returned while validating or stitching reusable DEM slices.
+/// Error returned during validation or composition of reusable DEM slices.
 #[derive(Debug, Clone, PartialEq)]
-pub enum DemSliceStitchError {
+pub enum DemSliceComposeError {
     /// A slice declares the same local detector more than once.
     DuplicateLocalDetector { slice: String, detector: u32 },
     /// A contribution references a detector the slice does not declare.
@@ -1776,8 +1776,8 @@ pub enum DemSliceStitchError {
     SourceComponentEffectMismatch { slice: String },
     /// A contribution has no influence-map location indices from which to determine ownership.
     UnattributedSourceContribution { slice: String },
-    /// A stitched model's source IDs are provenance, not influence-map indices.
-    StitchedSourceLocationIdentity { slice: String },
+    /// A composed model's source IDs are provenance, not influence-map indices.
+    ComposedSourceLocationIdentity { slice: String },
     /// Only part of one correlated source was assigned to this slice.
     PartialSourceOwnership {
         slice: String,
@@ -1806,8 +1806,8 @@ pub enum DemSliceStitchError {
         location: u32,
         num_locations: usize,
     },
-    /// The requested owner round is absent from the bounded physical template.
-    UnknownTemplateRound { owner_round: i64 },
+    /// The requested owner round is absent from the bounded physical fixture.
+    UnknownSliceRound { owner_round: i64 },
     /// A relative detector round does not fit the slice target representation.
     RelativeRoundOffsetOverflow {
         source_detector: u32,
@@ -1830,11 +1830,11 @@ pub enum DemSliceStitchError {
     /// An instance does not map one of its slice's PECOS tracked Paulis.
     MissingTrackedPauliMapping { slice: String, output: u32 },
     /// Two instances declare different coordinates for the same algorithm-wide detector.
-    ConflictingDetectorDeclaration { address: StitchedDetectorAddress },
+    ConflictingDetectorDeclaration { address: ComposedDetectorAddress },
     /// A contribution targets an in-window detector no instance declared.
     MissingDetectorDeclaration {
         slice: String,
-        address: StitchedDetectorAddress,
+        address: ComposedDetectorAddress,
     },
     /// A hard terminal boundary has an unresolved future target.
     UnresolvedHardForwardPort {
@@ -1855,7 +1855,7 @@ pub enum DemSliceStitchError {
     RoundOverflow,
     /// A round does not fit exactly in a DEM's floating-point time coordinate.
     InexactRoundCoordinate { round: i64 },
-    /// The stitched model contains more detectors than fit in a DEM `u32` identity.
+    /// The composed model contains more detectors than fit in a DEM `u32` identity.
     TooManyDetectors,
     /// A circuit contains more fault locations than fit in source metadata.
     TooManyFaultLocations,
@@ -1863,7 +1863,7 @@ pub enum DemSliceStitchError {
     TooManyDetectorStreams,
 }
 
-impl fmt::Display for DemSliceStitchError {
+impl fmt::Display for DemSliceComposeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::DuplicateLocalDetector { slice, detector } => {
@@ -1926,9 +1926,9 @@ impl fmt::Display for DemSliceStitchError {
                 f,
                 "source contribution in slice {slice:?} has no influence-map location identity"
             ),
-            Self::StitchedSourceLocationIdentity { slice } => write!(
+            Self::ComposedSourceLocationIdentity { slice } => write!(
                 f,
-                "DEM {slice:?} was assembled from slices; its source location IDs are stitched provenance, not influence-map indices, so it cannot be sliced again against a physical influence map"
+                "DEM {slice:?} was assembled from slices; its source location IDs are composed provenance, not influence-map indices, so it cannot be sliced again against a physical influence map"
             ),
             Self::PartialSourceOwnership {
                 slice,
@@ -1978,9 +1978,9 @@ impl fmt::Display for DemSliceStitchError {
                 f,
                 "source contribution in slice schedule {slice:?} references location {location}, but only {num_locations} location owners were supplied"
             ),
-            Self::UnknownTemplateRound { owner_round } => write!(
+            Self::UnknownSliceRound { owner_round } => write!(
                 f,
-                "bounded DEM template has no detector or physical source owned by round {owner_round}"
+                "bounded DEM physical fixture has no detector or physical source owned by round {owner_round}"
             ),
             Self::RelativeRoundOffsetOverflow {
                 source_detector,
@@ -2049,7 +2049,7 @@ impl fmt::Display for DemSliceStitchError {
                 f,
                 "DEM slice round {round} cannot be represented exactly as an f64 detector coordinate"
             ),
-            Self::TooManyDetectors => write!(f, "stitched DEM has more than u32::MAX detectors"),
+            Self::TooManyDetectors => write!(f, "composed DEM has more than u32::MAX detectors"),
             Self::TooManyFaultLocations => {
                 write!(f, "circuit has more than u32::MAX fault locations")
             }
@@ -2060,7 +2060,7 @@ impl fmt::Display for DemSliceStitchError {
     }
 }
 
-impl Error for DemSliceStitchError {}
+impl Error for DemSliceComposeError {}
 
 #[cfg(test)]
 mod tests {
@@ -2155,7 +2155,7 @@ mod tests {
         let error = detector_round_layout(&model).unwrap_err();
         assert_eq!(
             error,
-            DemSliceStitchError::DuplicateDetectorCoordinates {
+            DemSliceComposeError::DuplicateDetectorCoordinates {
                 first_detector: 4,
                 second_detector: 9,
                 coords: [3.0, -2.0],
@@ -2195,20 +2195,20 @@ mod tests {
     }
 
     #[test]
-    fn repeated_bulk_slice_stitches_a_soft_window() {
+    fn repeated_bulk_slice_composes_a_soft_window() {
         let slice = bulk_slice();
         let instances: Vec<_> = (0..3)
             .map(|round| DemSliceInstance::identity(Arc::clone(&slice), round))
             .collect();
-        let stitched = DemStitcher::new(DemWindowSpec::new(0, 2, 1, DemBoundaryKind::Soft))
-            .stitch(&instances)
+        let composed = DemComposer::new(DemWindowSpec::new(0, 2, 1, DemBoundaryKind::Soft))
+            .compose(&instances)
             .unwrap();
 
-        assert_eq!(stitched.detector_addresses.len(), 3);
-        assert_eq!(stitched.model.detectors[0].coords, Some([2.0, 3.0, 0.0]));
-        assert_eq!(stitched.diagnostics.projected_future_contributions, 1);
+        assert_eq!(composed.detector_addresses.len(), 3);
+        assert_eq!(composed.model.detectors[0].coords, Some([2.0, 3.0, 0.0]));
+        assert_eq!(composed.diagnostics.projected_future_contributions, 1);
         assert_eq!(
-            stitched.model.to_mechanisms().0,
+            composed.model.to_mechanisms().0,
             vec![
                 (0.01, vec![0, 1], vec![]),
                 (0.01, vec![1, 2], vec![]),
@@ -2223,24 +2223,24 @@ mod tests {
         let instances: Vec<_> = (0..3)
             .map(|round| DemSliceInstance::identity(Arc::clone(&slice), round))
             .collect();
-        let error = DemStitcher::new(DemWindowSpec::new(0, 3, 0, DemBoundaryKind::Soft))
-            .stitch(&instances)
+        let error = DemComposer::new(DemWindowSpec::new(0, 3, 0, DemBoundaryKind::Soft))
+            .compose(&instances)
             .unwrap_err();
 
-        assert!(matches!(error, DemSliceStitchError::BufferTooSmall { .. }));
+        assert!(matches!(error, DemSliceComposeError::BufferTooSmall { .. }));
     }
 
     #[test]
     fn hard_forward_boundary_rejects_an_unresolved_port() {
         let slice = bulk_slice();
         let instance = DemSliceInstance::identity(slice, 0);
-        let error = DemStitcher::new(DemWindowSpec::new(0, 1, 0, DemBoundaryKind::Hard))
-            .stitch(&[instance])
+        let error = DemComposer::new(DemWindowSpec::new(0, 1, 0, DemBoundaryKind::Hard))
+            .compose(&[instance])
             .unwrap_err();
 
         assert!(matches!(
             error,
-            DemSliceStitchError::UnresolvedHardForwardPort { .. }
+            DemSliceComposeError::UnresolvedHardForwardPort { .. }
         ));
     }
 
@@ -2262,13 +2262,13 @@ mod tests {
             )
             .unwrap(),
         );
-        let error = DemStitcher::new(DemWindowSpec::new(0, 1, 0, DemBoundaryKind::Hard))
-            .stitch(&[DemSliceInstance::identity(slice, 0)])
+        let error = DemComposer::new(DemWindowSpec::new(0, 1, 0, DemBoundaryKind::Hard))
+            .compose(&[DemSliceInstance::identity(slice, 0)])
             .unwrap_err();
 
         assert!(matches!(
             error,
-            DemSliceStitchError::UnresolvedHardForwardPort { .. }
+            DemSliceComposeError::UnresolvedHardForwardPort { .. }
         ));
     }
 
@@ -2289,22 +2289,22 @@ mod tests {
         let instance = DemSliceInstance::identity(slice, 7)
             .with_detector_placement(0, DemDetectorPlacement::new(42).with_coords([5.0, 6.0]))
             .with_dem_output_targets(0, [3]);
-        let stitched = DemStitcher::new(DemWindowSpec::new(7, 1, 0, DemBoundaryKind::Hard))
-            .stitch(&[instance])
+        let composed = DemComposer::new(DemWindowSpec::new(7, 1, 0, DemBoundaryKind::Hard))
+            .compose(&[instance])
             .unwrap();
 
         assert_eq!(
-            stitched.detector_addresses,
-            vec![StitchedDetectorAddress {
+            composed.detector_addresses,
+            vec![ComposedDetectorAddress {
                 round: 7,
                 stream_id: 42,
             }]
         );
         assert_eq!(
-            stitched.model.to_mechanisms().0,
+            composed.model.to_mechanisms().0,
             vec![(0.125, vec![0], vec![3])]
         );
-        assert_eq!(stitched.model.num_observables(), 4);
+        assert_eq!(composed.model.num_observables(), 4);
     }
 
     #[test]
@@ -2330,11 +2330,11 @@ mod tests {
             .with_dem_output_targets(1, [5, 6])
             .with_tracked_pauli_targets(0, [7, 8])
             .with_tracked_pauli_targets(1, [8, 9]);
-        let stitched = DemStitcher::new(DemWindowSpec::new(0, 1, 0, DemBoundaryKind::Hard))
-            .stitch(&[instance])
+        let composed = DemComposer::new(DemWindowSpec::new(0, 1, 0, DemBoundaryKind::Hard))
+            .compose(&[instance])
             .unwrap();
 
-        let contribution = &stitched.model.contributions()[0];
+        let contribution = &composed.model.contributions()[0];
         assert_eq!(contribution.effect.dem_outputs.as_slice(), &[3, 5]);
         assert_eq!(contribution.effect.tracked_paulis.as_slice(), &[7, 9]);
     }
@@ -2354,19 +2354,19 @@ mod tests {
             .unwrap(),
         );
         let instance = DemSliceInstance::identity(slice, 1);
-        let stitched = DemStitcher::new(DemWindowSpec::new(0, 1, 1, DemBoundaryKind::Soft))
-            .stitch(&[instance])
+        let composed = DemComposer::new(DemWindowSpec::new(0, 1, 1, DemBoundaryKind::Soft))
+            .compose(&[instance])
             .unwrap();
 
-        let mechanisms = stitched.model.to_mechanisms().0;
+        let mechanisms = composed.model.to_mechanisms().0;
         assert_eq!(mechanisms.len(), 1);
         assert_eq!(mechanisms[0].1, vec![0]);
         assert!((mechanisms[0].0 - 0.26).abs() < 1e-12);
-        assert_eq!(stitched.diagnostics.projected_future_contributions, 2);
+        assert_eq!(composed.diagnostics.projected_future_contributions, 2);
     }
 
     #[test]
-    fn repeated_template_instances_remap_source_location_provenance() {
+    fn repeated_slice_instances_remap_source_location_provenance() {
         let slice = Arc::new(
             DemSlice::new(
                 "located",
@@ -2388,10 +2388,10 @@ mod tests {
             DemSliceInstance::identity(slice, 2),
         ];
 
-        let stitched = DemStitcher::new(DemWindowSpec::new(0, 3, 0, DemBoundaryKind::Hard))
-            .stitch(&instances)
+        let composed = DemComposer::new(DemWindowSpec::new(0, 3, 0, DemBoundaryKind::Hard))
+            .compose(&instances)
             .unwrap();
-        let locations: Vec<_> = stitched
+        let locations: Vec<_> = composed
             .model
             .contributions()
             .iter()
@@ -2400,16 +2400,16 @@ mod tests {
         assert_eq!(locations, vec![vec![0], vec![1], vec![2]]);
 
         let error = DemSliceRoundSchedule::from_location_rounds(
-            "re-sliced stitched model",
-            &stitched.model,
+            "re-sliced composed model",
+            &composed.model,
             &[0, 1, 2],
         )
         .unwrap_err();
         assert!(matches!(
             error,
-            DemSliceStitchError::StitchedSourceLocationIdentity { .. }
+            DemSliceComposeError::ComposedSourceLocationIdentity { .. }
         ));
-        assert!(error.to_string().contains("stitched provenance"));
+        assert!(error.to_string().contains("composed provenance"));
     }
 
     #[test]
@@ -2424,7 +2424,7 @@ mod tests {
 
         assert!(matches!(
             error,
-            DemSliceStitchError::TemporalHorizonExceeded { .. }
+            DemSliceComposeError::TemporalHorizonExceeded { .. }
         ));
     }
 
@@ -2432,13 +2432,13 @@ mod tests {
     fn missing_in_window_port_destination_fails_loudly() {
         let slice = bulk_slice();
         let instance = DemSliceInstance::identity(slice, 0);
-        let error = DemStitcher::new(DemWindowSpec::new(0, 2, 0, DemBoundaryKind::Hard))
-            .stitch(&[instance])
+        let error = DemComposer::new(DemWindowSpec::new(0, 2, 0, DemBoundaryKind::Hard))
+            .compose(&[instance])
             .unwrap_err();
 
         assert!(matches!(
             error,
-            DemSliceStitchError::MissingDetectorDeclaration { .. }
+            DemSliceComposeError::MissingDetectorDeclaration { .. }
         ));
     }
 
@@ -2462,17 +2462,17 @@ mod tests {
             )
             .unwrap(),
         );
-        let stitched = DemStitcher::new(DemWindowSpec::new(0, 2, 0, DemBoundaryKind::Hard))
-            .stitch(&[
+        let composed = DemComposer::new(DemWindowSpec::new(0, 2, 0, DemBoundaryKind::Hard))
+            .compose(&[
                 DemSliceInstance::identity(init, 0),
                 DemSliceInstance::identity(next, 1),
             ])
             .unwrap();
 
-        assert_eq!(stitched.detector_addresses.len(), 1);
-        assert_eq!(stitched.model.detectors[0].coords, Some([1.0, 2.0, 1.0]));
+        assert_eq!(composed.detector_addresses.len(), 1);
+        assert_eq!(composed.model.detectors[0].coords, Some([1.0, 2.0, 1.0]));
         assert_eq!(
-            stitched.model.to_mechanisms().0,
+            composed.model.to_mechanisms().0,
             vec![(0.02, vec![0], vec![])]
         );
     }
@@ -2493,15 +2493,15 @@ mod tests {
             DemSliceInstance::identity(source_slice, -1),
             DemSliceInstance::identity(declaration_slice, 0),
         ];
-        let stitched = DemStitcher::new(DemWindowSpec::new(0, 1, 0, DemBoundaryKind::Hard))
-            .stitch(&instances)
+        let composed = DemComposer::new(DemWindowSpec::new(0, 1, 0, DemBoundaryKind::Hard))
+            .compose(&instances)
             .unwrap();
 
         assert_eq!(
-            stitched.model.to_mechanisms().0,
+            composed.model.to_mechanisms().0,
             vec![(0.01, vec![0], vec![])]
         );
-        assert_eq!(stitched.diagnostics.projected_past_contributions, 1);
+        assert_eq!(composed.diagnostics.projected_past_contributions, 1);
     }
 
     #[test]
@@ -2539,7 +2539,7 @@ mod tests {
         assert_eq!(schedule.required_buffer_rounds(0, 3).unwrap(), 0);
         assert_eq!(
             schedule.required_buffer_rounds(0, 0).unwrap_err(),
-            DemSliceStitchError::EmptyCommitRegion
+            DemSliceComposeError::EmptyCommitRegion
         );
     }
 
@@ -2607,15 +2607,15 @@ mod tests {
         let instance = DemSliceInstance::identity(slice, 7)
             .with_dem_output_targets(0, [6])
             .with_tracked_pauli_targets(1, [8]);
-        let stitched = DemStitcher::new(DemWindowSpec::new(7, 1, 0, DemBoundaryKind::Hard))
-            .stitch(&[instance])
+        let composed = DemComposer::new(DemWindowSpec::new(7, 1, 0, DemBoundaryKind::Hard))
+            .compose(&[instance])
             .unwrap();
 
         assert_eq!(
-            stitched.model.to_mechanisms().0,
+            composed.model.to_mechanisms().0,
             vec![(0.125, vec![0, 2, 3], vec![6])]
         );
-        let contribution = &stitched.model.contributions()[0];
+        let contribution = &composed.model.contributions()[0];
         assert_eq!(contribution.effect.tracked_paulis.as_slice(), &[8]);
         let components = contribution.source_component_effects().unwrap();
         assert_eq!(components.len(), 3);
@@ -2651,11 +2651,11 @@ mod tests {
         let instances: Vec<_> = (0..3)
             .map(|round| DemSliceInstance::identity(Arc::clone(&slice), round))
             .collect();
-        let stitched = DemStitcher::new(DemWindowSpec::new(0, 2, 1, DemBoundaryKind::Soft))
-            .stitch(&instances)
+        let composed = DemComposer::new(DemWindowSpec::new(0, 2, 1, DemBoundaryKind::Soft))
+            .compose(&instances)
             .unwrap();
         assert_eq!(
-            stitched.model.to_mechanisms().0,
+            composed.model.to_mechanisms().0,
             vec![
                 (0.01, vec![0, 1], vec![]),
                 (0.01, vec![1, 2], vec![]),
@@ -2683,7 +2683,7 @@ mod tests {
         circuit.set_meta("observables", Attribute::String("[]".to_string()));
 
         let reference = DemBuilder::try_from_tick_circuit(&circuit, 0.01, 0.0, 0.02, 0.03)
-            .expect("the physical template builds");
+            .expect("the physical fixture builds");
         let owned_locations: BTreeSet<_> = reference
             .contributions()
             .iter()
@@ -2692,7 +2692,7 @@ mod tests {
         assert!(!owned_locations.is_empty());
         let slice = Arc::new(
             DemSlice::from_detector_error_model_for_locations(
-                "physical MX template",
+                "physical MX fixture",
                 &reference,
                 &DemSliceModelMap::new().with_detector(0, target(0, 0)),
                 DemTemporalHorizon::new(0, 0),
@@ -2700,11 +2700,11 @@ mod tests {
             )
             .expect("the structured DEM adapts to a slice"),
         );
-        let stitched = DemStitcher::new(DemWindowSpec::new(0, 1, 0, DemBoundaryKind::Hard))
-            .stitch(&[DemSliceInstance::identity(slice, 0)])
-            .expect("the one-round slice stitches");
+        let composed = DemComposer::new(DemWindowSpec::new(0, 1, 0, DemBoundaryKind::Hard))
+            .compose(&[DemSliceInstance::identity(slice, 0)])
+            .expect("the one-round slice composes");
         assert!(
-            stitched
+            composed
                 .model
                 .contributions()
                 .iter()
@@ -2712,8 +2712,8 @@ mod tests {
         );
 
         let reference: ParsedDem = reference.to_string().parse().unwrap();
-        let stitched: ParsedDem = stitched.model.to_string().parse().unwrap();
-        let equivalence = compare_dems_exact(&reference, &stitched, 1e-12);
+        let composed: ParsedDem = composed.model.to_string().parse().unwrap();
+        let equivalence = compare_dems_exact(&reference, &composed, 1e-12);
         assert!(equivalence.equivalent, "{:#?}", equivalence.details);
     }
 
@@ -2736,24 +2736,23 @@ mod tests {
         .unwrap_err();
         assert!(matches!(
             error,
-            DemSliceStitchError::MissingLocationRoundAttribute { .. }
+            DemSliceComposeError::MissingLocationRoundAttribute { .. }
         ));
     }
 
     #[test]
-    fn bounded_templates_reconstruct_a_longer_repeated_measurement_dem() {
+    fn bounded_slices_reconstruct_a_longer_repeated_measurement_dem() {
         use crate::fault_tolerance::dem_builder::{ParsedDem, compare_dems_exact};
 
-        // This three-round circuit is the bounded physical-template oracle.
+        // This three-round circuit is the bounded physical fixture oracle.
         // Only its relative slices are retained after compilation.
-        let (template_circuit, template_influence, template_model) =
-            repeated_measurement_fixture(3);
-        let compiler = DemSliceTemplateCompiler::from_annotated_circuit(
-            &template_model,
-            &template_influence,
-            &template_circuit,
+        let (fixture_circuit, slice_influence, slice_model) = repeated_measurement_fixture(3);
+        let compiler = DemSliceCompiler::from_annotated_circuit(
+            &slice_model,
+            &slice_influence,
+            &fixture_circuit,
         )
-        .expect("the bounded template metadata is complete");
+        .expect("the bounded physical fixture metadata is complete");
         assert_eq!(compiler.rounds(), &[0, 1, 2]);
 
         let initialization = Arc::new(
@@ -2774,7 +2773,7 @@ mod tests {
         assert_eq!(bulk.horizon(), DemTemporalHorizon::new(0, 1));
         assert!(matches!(
             compiler.compile_round("absent", 3).unwrap_err(),
-            DemSliceStitchError::UnknownTemplateRound { owner_round: 3 }
+            DemSliceComposeError::UnknownSliceRound { owner_round: 3 }
         ));
 
         // Assemble five rounds without deriving slices from the five-round
@@ -2787,11 +2786,11 @@ mod tests {
             DemSliceInstance::identity(terminal, 4),
         ];
         assert!(Arc::ptr_eq(instances[1].slice(), instances[3].slice()));
-        let stitched = DemStitcher::new(DemWindowSpec::new(0, 5, 0, DemBoundaryKind::Hard))
-            .stitch(&instances)
-            .expect("the cached bounded templates stitch");
+        let composed = DemComposer::new(DemWindowSpec::new(0, 5, 0, DemBoundaryKind::Hard))
+            .compose(&instances)
+            .expect("the cached bounded slices compose");
         assert!(
-            stitched
+            composed
                 .model
                 .contributions()
                 .iter()
@@ -2800,8 +2799,8 @@ mod tests {
 
         let (_, _, reference) = repeated_measurement_fixture(5);
         let reference: ParsedDem = reference.to_string().parse().unwrap();
-        let stitched: ParsedDem = stitched.model.to_string().parse().unwrap();
-        let equivalence = compare_dems_exact(&reference, &stitched, 1e-12);
+        let composed: ParsedDem = composed.model.to_string().parse().unwrap();
+        let equivalence = compare_dems_exact(&reference, &composed, 1e-12);
         assert!(equivalence.equivalent, "{:#?}", equivalence.details);
     }
 
@@ -2873,7 +2872,7 @@ mod tests {
         .unwrap_err();
         assert!(matches!(
             error,
-            DemSliceStitchError::PartialSourceOwnership { .. }
+            DemSliceComposeError::PartialSourceOwnership { .. }
         ));
 
         let schedule = DemSliceRoundSchedule::from_annotated_circuit(
@@ -2902,13 +2901,13 @@ mod tests {
             })
         }));
 
-        let stitched = schedule
-            .stitch(DemWindowSpec::new(0, 3, 0, DemBoundaryKind::Hard))
-            .expect("the physical slices stitch");
+        let composed = schedule
+            .compose(DemWindowSpec::new(0, 3, 0, DemBoundaryKind::Hard))
+            .expect("the physical slices compose");
 
         let reference: ParsedDem = reference.to_string().parse().unwrap();
-        let stitched: ParsedDem = stitched.model.to_string().parse().unwrap();
-        let equivalence = compare_dems_exact(&reference, &stitched, 1e-12);
+        let composed: ParsedDem = composed.model.to_string().parse().unwrap();
+        let equivalence = compare_dems_exact(&reference, &composed, 1e-12);
         assert!(equivalence.equivalent, "{:#?}", equivalence.details);
     }
 }

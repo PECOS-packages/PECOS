@@ -178,11 +178,11 @@ def test_algorithm_segments_keep_structured_boundary_correlations():
     )
 
 
-def test_memory_provider_reuses_bounded_templates_and_preserves_detector_order(monkeypatch):
+def test_memory_provider_reuses_bounded_slices_and_preserves_detector_order(monkeypatch):
     """The public memory path caches a bounded compile, not an algorithm DEM."""
-    from pecos.qec.surface.logical_circuit import _cached_surface_memory_dem_templates
+    from pecos.qec.surface.logical_circuit import _cached_surface_memory_dem_slices
 
-    _cached_surface_memory_dem_templates.cache_clear()
+    _cached_surface_memory_dem_slices.cache_clear()
     patch = SurfacePatch.create(3)
     builder = LogicalCircuitBuilder()
     builder.add_patch(patch, "A")
@@ -201,7 +201,7 @@ def test_memory_provider_reuses_bounded_templates_and_preserves_detector_order(m
         p_prep=0.0,
     )
     assert descriptor["full_dem"] == oracle.to_string()
-    after_first = _cached_surface_memory_dem_templates.cache_info()
+    after_first = _cached_surface_memory_dem_slices.cache_info()
     assert after_first.misses == 1
     assert after_first.currsize == 1
 
@@ -214,15 +214,15 @@ def test_memory_provider_reuses_bounded_templates_and_preserves_detector_order(m
     )
     equivalent.add_memory("renamed", 11, "Z")
     equivalent.build_dem(p1=0.001, p2=0.001, p_meas=0.001, p_prep=0.0)
-    after_second = _cached_surface_memory_dem_templates.cache_info()
+    after_second = _cached_surface_memory_dem_slices.cache_info()
     assert after_second.misses == after_first.misses
     assert after_second.hits == after_first.hits + 1
 
     equivalent.build_dem(p1=0.002, p2=0.001, p_meas=0.001, p_prep=0.0)
-    assert _cached_surface_memory_dem_templates.cache_info().misses == after_second.misses + 1
+    assert _cached_surface_memory_dem_slices.cache_info().misses == after_second.misses + 1
 
     def reject_full_compile(*_args, **_kwargs):
-        message = "a warm bounded-template request compiled the full circuit"
+        message = "a warm bounded cached slice request compiled the full circuit"
         raise AssertionError(message)
 
     monkeypatch.setattr(LogicalCircuitBuilder, "_build_structured_dem", reject_full_compile)
@@ -232,15 +232,15 @@ def test_memory_provider_reuses_bounded_templates_and_preserves_detector_order(m
     warm.build_dem(p1=0.001, p2=0.001, p_meas=0.001, p_prep=0.0)
 
 
-def test_single_round_memory_provider_reuses_bounded_templates(monkeypatch):
+def test_single_round_memory_provider_reuses_bounded_slices(monkeypatch):
     """A one-round experiment is its own constant-depth boundary family."""
     from pecos.qec.surface.logical_circuit import (
-        _cached_surface_memory_dem_templates,
-        _cached_surface_singleton_memory_dem_templates,
+        _cached_surface_memory_dem_slices,
+        _cached_surface_singleton_memory_dem_slices,
     )
 
-    _cached_surface_memory_dem_templates.cache_clear()
-    _cached_surface_singleton_memory_dem_templates.cache_clear()
+    _cached_surface_memory_dem_slices.cache_clear()
+    _cached_surface_singleton_memory_dem_slices.cache_clear()
     builder = LogicalCircuitBuilder()
     builder.add_patch(SurfacePatch.create(3), "A", coord_offset=(-7.0, 5.0))
     builder.add_memory("A", 1, "X")
@@ -251,10 +251,10 @@ def test_single_round_memory_provider_reuses_bounded_templates(monkeypatch):
         p_prep=0.004,
     )
     assert builder.build_dem(p1=0.001, p2=0.002, p_meas=0.003, p_prep=0.004) == oracle.to_string()
-    after_first = _cached_surface_singleton_memory_dem_templates.cache_info()
+    after_first = _cached_surface_singleton_memory_dem_slices.cache_info()
     assert after_first.misses == 1
     assert after_first.currsize == 1
-    assert _cached_surface_memory_dem_templates.cache_info().currsize == 0
+    assert _cached_surface_memory_dem_slices.cache_info().currsize == 0
 
     equivalent = LogicalCircuitBuilder()
     equivalent.add_patch(
@@ -265,12 +265,12 @@ def test_single_round_memory_provider_reuses_bounded_templates(monkeypatch):
     )
     equivalent.add_memory("renamed", 1, "X")
     equivalent.build_algorithm_descriptor(p1=0.001, p2=0.002, p_meas=0.003, p_prep=0.004)
-    after_second = _cached_surface_singleton_memory_dem_templates.cache_info()
+    after_second = _cached_surface_singleton_memory_dem_slices.cache_info()
     assert after_second.misses == after_first.misses
     assert after_second.hits == after_first.hits + 1
 
     def reject_full_compile(*_args, **_kwargs):
-        message = "a warm one-round template request compiled the full circuit"
+        message = "a warm one-round cached slice request compiled the full circuit"
         raise AssertionError(message)
 
     monkeypatch.setattr(LogicalCircuitBuilder, "_build_structured_dem", reject_full_compile)
@@ -313,9 +313,9 @@ def test_multi_patch_memory_provider_matches_full_compile(rounds, shapes, bases)
 
 def test_multi_patch_memory_provider_reuses_physical_family(monkeypatch):
     """Labels, requested depth, qubit IDs, and placement are instance state."""
-    from pecos.qec.surface.logical_circuit import _cached_surface_multi_memory_dem_templates
+    from pecos.qec.surface.logical_circuit import _cached_surface_multi_memory_dem_slices
 
-    _cached_surface_multi_memory_dem_templates.cache_clear()
+    _cached_surface_multi_memory_dem_slices.cache_clear()
 
     def build(rounds, labels, offsets, coords):
         builder = LogicalCircuitBuilder()
@@ -333,13 +333,13 @@ def test_multi_patch_memory_provider_reuses_physical_family(monkeypatch):
 
     first = build(3, ["A", "B"], [0, 50], [(-7.0, 5.0), (29.0, -3.0)])
     first.build_dem(p1=0.001, p2=0.002, p_meas=0.003, p_prep=0.004)
-    after_first = _cached_surface_multi_memory_dem_templates.cache_info()
+    after_first = _cached_surface_multi_memory_dem_slices.cache_info()
     assert after_first.misses == 1
     assert after_first.currsize == 1
 
     second = build(11, ["left", "right"], [19, 119], [(41.0, 23.0), (-17.0, 12.0)])
     second.build_algorithm_descriptor(p1=0.001, p2=0.002, p_meas=0.003, p_prep=0.004)
-    after_second = _cached_surface_multi_memory_dem_templates.cache_info()
+    after_second = _cached_surface_multi_memory_dem_slices.cache_info()
     assert after_second.misses == after_first.misses
     assert after_second.hits == after_first.hits + 1
 
@@ -365,24 +365,24 @@ def test_default_patch_placement_handles_heterogeneous_sizes_and_memory_order():
     assert descriptor["segments"][0]["num_detectors"] == 80
 
 
-def test_surface_template_provider_caches_are_bounded():
+def test_surface_slice_provider_caches_are_bounded():
     """Noise sweeps cannot retain every compiled physical fixture forever."""
     from pecos.qec.surface.logical_circuit import (
-        _cached_surface_cx_dem_templates,
-        _cached_surface_h_dem_templates,
-        _cached_surface_memory_dem_templates,
-        _cached_surface_mixed_dem_templates,
-        _cached_surface_multi_memory_dem_templates,
-        _cached_surface_singleton_memory_dem_templates,
+        _cached_surface_cx_dem_slices,
+        _cached_surface_h_dem_slices,
+        _cached_surface_memory_dem_slices,
+        _cached_surface_mixed_dem_slices,
+        _cached_surface_multi_memory_dem_slices,
+        _cached_surface_singleton_memory_dem_slices,
     )
 
     providers = (
-        _cached_surface_memory_dem_templates,
-        _cached_surface_singleton_memory_dem_templates,
-        _cached_surface_multi_memory_dem_templates,
-        _cached_surface_h_dem_templates,
-        _cached_surface_cx_dem_templates,
-        _cached_surface_mixed_dem_templates,
+        _cached_surface_memory_dem_slices,
+        _cached_surface_singleton_memory_dem_slices,
+        _cached_surface_multi_memory_dem_slices,
+        _cached_surface_h_dem_slices,
+        _cached_surface_cx_dem_slices,
+        _cached_surface_mixed_dem_slices,
     )
     assert {provider.cache_info().maxsize for provider in providers} == {16}
 
@@ -411,15 +411,15 @@ def test_cached_memory_provider_matches_full_compile_across_geometries(dx, dz, b
     assert builder.build_dem(p1=0.002, p2=0.003, p_meas=0.004, p_prep=0.005) == oracle.to_string()
 
 
-def test_logical_h_provider_reuses_bounded_templates(monkeypatch):
+def test_logical_h_provider_reuses_bounded_slices(monkeypatch):
     """The H provider caches its boundary families independently of depth."""
     from pecos.qec.surface.logical_circuit import (
-        _cached_surface_h_dem_templates,
-        _cached_surface_memory_dem_templates,
+        _cached_surface_h_dem_slices,
+        _cached_surface_memory_dem_slices,
     )
 
-    _cached_surface_h_dem_templates.cache_clear()
-    _cached_surface_memory_dem_templates.cache_clear()
+    _cached_surface_h_dem_slices.cache_clear()
+    _cached_surface_memory_dem_slices.cache_clear()
     patch = SurfacePatch.create(3)
     builder = LogicalCircuitBuilder()
     builder.add_patch(patch, "A")
@@ -439,10 +439,10 @@ def test_logical_h_provider_reuses_bounded_templates(monkeypatch):
         p_prep=0.004,
     )
     assert descriptor["full_dem"] == oracle.to_string()
-    after_first = _cached_surface_h_dem_templates.cache_info()
+    after_first = _cached_surface_h_dem_slices.cache_info()
     assert after_first.misses == 1
     assert after_first.currsize == 1
-    assert _cached_surface_memory_dem_templates.cache_info().currsize == 0
+    assert _cached_surface_memory_dem_slices.cache_info().currsize == 0
 
     equivalent = LogicalCircuitBuilder()
     equivalent.add_patch(
@@ -455,15 +455,15 @@ def test_logical_h_provider_reuses_bounded_templates(monkeypatch):
     equivalent.add_transversal_h("renamed")
     equivalent.add_memory("renamed", 5, "X")
     equivalent.build_dem(p1=0.001, p2=0.002, p_meas=0.003, p_prep=0.004)
-    after_second = _cached_surface_h_dem_templates.cache_info()
+    after_second = _cached_surface_h_dem_slices.cache_info()
     assert after_second.misses == after_first.misses
     assert after_second.hits == after_first.hits + 1
 
     equivalent.build_dem(p1=0.002, p2=0.002, p_meas=0.003, p_prep=0.004)
-    assert _cached_surface_h_dem_templates.cache_info().misses == after_second.misses + 1
+    assert _cached_surface_h_dem_slices.cache_info().misses == after_second.misses + 1
 
     def reject_full_compile(*_args, **_kwargs):
-        message = "a warm bounded H-template request compiled the full circuit"
+        message = "a warm bounded H cached slice request compiled the full circuit"
         raise AssertionError(message)
 
     monkeypatch.setattr(LogicalCircuitBuilder, "_build_structured_dem", reject_full_compile)
@@ -549,9 +549,9 @@ def test_repeated_logical_h_provider_matches_full_compile(orientation, rounds, b
 
 def test_repeated_logical_h_provider_reuses_constant_boundary_families(monkeypatch):
     """Repeated-H cache cardinality and compilation are independent of depth."""
-    from pecos.qec.surface.logical_circuit import _cached_surface_h_dem_templates
+    from pecos.qec.surface.logical_circuit import _cached_surface_h_dem_slices
 
-    _cached_surface_h_dem_templates.cache_clear()
+    _cached_surface_h_dem_slices.cache_clear()
 
     def build(rounds, *, label, qubit_offset, coord_offset):
         builder = LogicalCircuitBuilder()
@@ -569,18 +569,18 @@ def test_repeated_logical_h_provider_reuses_constant_boundary_families(monkeypat
 
     first = build([3, 4, 5], label="A", qubit_offset=0, coord_offset=(0.0, 0.0))
     first.build_dem(p1=0.001, p2=0.002, p_meas=0.003, p_prep=0.004)
-    after_first = _cached_surface_h_dem_templates.cache_info()
+    after_first = _cached_surface_h_dem_slices.cache_info()
     assert after_first.misses == 2
     assert after_first.currsize == 2
 
     second = build([7, 2, 9], label="renamed", qubit_offset=29, coord_offset=(17.0, -8.0))
     second.build_dem(p1=0.001, p2=0.002, p_meas=0.003, p_prep=0.004)
-    after_second = _cached_surface_h_dem_templates.cache_info()
+    after_second = _cached_surface_h_dem_slices.cache_info()
     assert after_second.misses == after_first.misses
     assert after_second.hits == after_first.hits + 2
 
     def reject_full_compile(*_args, **_kwargs):
-        message = "a warm repeated-H template request compiled the full circuit"
+        message = "a warm repeated-H cached slice request compiled the full circuit"
         raise AssertionError(message)
 
     monkeypatch.setattr(LogicalCircuitBuilder, "_build_structured_dem", reject_full_compile)
@@ -588,11 +588,11 @@ def test_repeated_logical_h_provider_reuses_constant_boundary_families(monkeypat
     warm.build_algorithm_descriptor(p1=0.001, p2=0.002, p_meas=0.003, p_prep=0.004)
 
 
-def test_logical_cx_provider_reuses_bounded_templates_and_routes_patch_coordinates(monkeypatch):
-    """CX templates ignore depth and independently translate both patches."""
-    from pecos.qec.surface.logical_circuit import _cached_surface_cx_dem_templates
+def test_logical_cx_provider_reuses_bounded_slices_and_routes_patch_coordinates(monkeypatch):
+    """CX cached slices ignore depth and independently translate both patches."""
+    from pecos.qec.surface.logical_circuit import _cached_surface_cx_dem_slices
 
-    _cached_surface_cx_dem_templates.cache_clear()
+    _cached_surface_cx_dem_slices.cache_clear()
     builder = LogicalCircuitBuilder()
     builder.add_patch(SurfacePatch.create(3), "control", qubit_offset=11, coord_offset=(-13.0, 7.0))
     builder.add_patch(SurfacePatch.create(3), "target", qubit_offset=51, coord_offset=(27.0, -9.0))
@@ -613,7 +613,7 @@ def test_logical_cx_provider_reuses_bounded_templates_and_routes_patch_coordinat
     )
     assert descriptor["full_dem"] == oracle.to_string()
     assert descriptor["boundary_gates"][0][0]["type"] == "Cnot"
-    after_first = _cached_surface_cx_dem_templates.cache_info()
+    after_first = _cached_surface_cx_dem_slices.cache_info()
     assert after_first.misses == 1
     assert after_first.currsize == 1
 
@@ -624,15 +624,15 @@ def test_logical_cx_provider_reuses_bounded_templates_and_routes_patch_coordinat
     equivalent.add_transversal_cx("C", "T")
     equivalent.add_memory(["C", "T"], 5, {"C": "X", "T": "Z"})
     equivalent.build_dem(p1=0.001, p2=0.002, p_meas=0.003, p_prep=0.004)
-    after_second = _cached_surface_cx_dem_templates.cache_info()
+    after_second = _cached_surface_cx_dem_slices.cache_info()
     assert after_second.misses == after_first.misses
     assert after_second.hits == after_first.hits + 1
 
     equivalent.build_dem(p1=0.001, p2=0.003, p_meas=0.003, p_prep=0.004)
-    assert _cached_surface_cx_dem_templates.cache_info().misses == after_second.misses + 1
+    assert _cached_surface_cx_dem_slices.cache_info().misses == after_second.misses + 1
 
     def reject_full_compile(*_args, **_kwargs):
-        message = "a warm bounded CX-template request compiled the full circuit"
+        message = "a warm bounded CX cached slice request compiled the full circuit"
         raise AssertionError(message)
 
     monkeypatch.setattr(LogicalCircuitBuilder, "_build_structured_dem", reject_full_compile)
@@ -771,9 +771,9 @@ def test_repeated_logical_cx_provider_matches_full_compile(final_basis, rounds):
 
 def test_repeated_logical_cx_provider_reuses_one_physical_family(monkeypatch):
     """Repeated identical CX gates reuse one bounded physical compile."""
-    from pecos.qec.surface.logical_circuit import _cached_surface_cx_dem_templates
+    from pecos.qec.surface.logical_circuit import _cached_surface_cx_dem_slices
 
-    _cached_surface_cx_dem_templates.cache_clear()
+    _cached_surface_cx_dem_slices.cache_clear()
 
     def build(rounds, *, labels, offsets, coords):
         control, target = labels
@@ -788,7 +788,7 @@ def test_repeated_logical_cx_provider_reuses_one_physical_family(monkeypatch):
 
     first = build([3, 4, 5], labels=("C", "T"), offsets=(0, 50), coords=((0.0, 0.0), (20.0, 0.0)))
     first.build_dem(p1=0.001, p2=0.002, p_meas=0.003, p_prep=0.004)
-    after_first = _cached_surface_cx_dem_templates.cache_info()
+    after_first = _cached_surface_cx_dem_slices.cache_info()
     assert after_first.misses == 1
     assert after_first.currsize == 1
 
@@ -799,12 +799,12 @@ def test_repeated_logical_cx_provider_reuses_one_physical_family(monkeypatch):
         coords=((-17.0, 8.0), (42.0, -3.0)),
     )
     second.build_dem(p1=0.001, p2=0.002, p_meas=0.003, p_prep=0.004)
-    after_second = _cached_surface_cx_dem_templates.cache_info()
+    after_second = _cached_surface_cx_dem_slices.cache_info()
     assert after_second.misses == after_first.misses
     assert after_second.hits == after_first.hits + 1
 
     def reject_full_compile(*_args, **_kwargs):
-        message = "a warm repeated-CX template request compiled the full circuit"
+        message = "a warm repeated-CX cached slice request compiled the full circuit"
         raise AssertionError(message)
 
     monkeypatch.setattr(LogicalCircuitBuilder, "_build_structured_dem", reject_full_compile)
@@ -922,19 +922,19 @@ def test_shared_two_patch_clifford_transform_preserves_high_bits_and_rejects_unk
 def test_data_driven_boundary_provider_routes_repeated_cx(final_basis, boundary_index, expected):
     """The common provider assembler owns the repeated-CX GF(2) policy."""
 
-    class Template:
+    class CachedSlice:
         dem_outputs = (0, 1)
 
-    template = Template()
+    cached_slice = CachedSlice()
     provider = _BoundaryDemProviderDescription(
-        boundary_templates=(template, template),
+        boundary_slices=(cached_slice, cached_slice),
         memory_rounds=(2, 2, 2),
         output_routing=_BoundaryOutputRouting.REPEATED_CX,
         detector_coordinate_offsets={},
         final_basis=final_basis,
     )
 
-    assert _boundary_output_routings(provider, [(template, 7, boundary_index)])[7] == expected
+    assert _boundary_output_routings(provider, [(cached_slice, 7, boundary_index)])[7] == expected
 
 
 def test_mixed_h_cx_with_history_sensitive_outputs_uses_full_fallback(monkeypatch):
@@ -963,10 +963,10 @@ def test_mixed_h_cx_with_history_sensitive_outputs_uses_full_fallback(monkeypatc
     assert builder._assembled_dem_output_ids() == []  # noqa: SLF001
 
     def reject_mixed_cache(*_args, **_kwargs):
-        message = "history-sensitive output schema reached the mixed template cache"
+        message = "history-sensitive output schema reached the mixed cached slice cache"
         raise AssertionError(message)
 
-    monkeypatch.setattr(logical_circuit, "_cached_surface_mixed_dem_templates", reject_mixed_cache)
+    monkeypatch.setattr(logical_circuit, "_cached_surface_mixed_dem_slices", reject_mixed_cache)
     assert builder.build_dem(p1=0.001, p2=0.002, p_meas=0.003, p_prep=0.004) == oracle.to_string()
     assert "L0" not in oracle.to_string()
     assert "L1" not in oracle.to_string()
@@ -1023,9 +1023,9 @@ def test_logical_output_schema_matches_emitted_circuit_metadata():
 
 def test_mixed_h_cx_provider_reuses_normalized_boundary_families(monkeypatch):
     """Equivalent depths and placement reuse the finite mixed-state cache."""
-    from pecos.qec.surface.logical_circuit import _cached_surface_mixed_dem_templates
+    from pecos.qec.surface.logical_circuit import _cached_surface_mixed_dem_slices
 
-    _cached_surface_mixed_dem_templates.cache_clear()
+    _cached_surface_mixed_dem_slices.cache_clear()
 
     def build(rounds, *, labels, offsets, coords):
         control, target = labels
@@ -1048,7 +1048,7 @@ def test_mixed_h_cx_provider_reuses_normalized_boundary_families(monkeypatch):
         coords=((0.0, 0.0), (20.0, 0.0)),
     )
     first.build_dem(p1=0.001, p2=0.002, p_meas=0.003, p_prep=0.004)
-    after_first = _cached_surface_mixed_dem_templates.cache_info()
+    after_first = _cached_surface_mixed_dem_slices.cache_info()
     assert after_first.misses == 3
     assert after_first.currsize == 3
 
@@ -1059,12 +1059,12 @@ def test_mixed_h_cx_provider_reuses_normalized_boundary_families(monkeypatch):
         coords=((-17.0, 8.0), (42.0, -3.0)),
     )
     second.build_dem(p1=0.001, p2=0.002, p_meas=0.003, p_prep=0.004)
-    after_second = _cached_surface_mixed_dem_templates.cache_info()
+    after_second = _cached_surface_mixed_dem_slices.cache_info()
     assert after_second.misses == after_first.misses
     assert after_second.hits == after_first.hits + 3
 
     def reject_full_compile(*_args, **_kwargs):
-        message = "a warm mixed H/CX template request compiled the full circuit"
+        message = "a warm mixed H/CX cached slice request compiled the full circuit"
         raise AssertionError(message)
 
     monkeypatch.setattr(LogicalCircuitBuilder, "_build_structured_dem", reject_full_compile)
@@ -1080,12 +1080,12 @@ def test_mixed_h_cx_provider_reuses_normalized_boundary_families(monkeypatch):
 def test_unsupported_logical_gate_and_shallow_boundaries_retain_full_fallback():
     """Only complete bounded H and CX families bypass full construction."""
     from pecos.qec.surface.logical_circuit import (
-        _cached_surface_cx_dem_templates,
-        _cached_surface_h_dem_templates,
+        _cached_surface_cx_dem_slices,
+        _cached_surface_h_dem_slices,
     )
 
-    _cached_surface_h_dem_templates.cache_clear()
-    _cached_surface_cx_dem_templates.cache_clear()
+    _cached_surface_h_dem_slices.cache_clear()
+    _cached_surface_cx_dem_slices.cache_clear()
     sz_builder = LogicalCircuitBuilder()
     sz_builder.add_patch(SurfacePatch.create(3), "A")
     sz_builder.add_memory("A", 3, "Z")
@@ -1125,8 +1125,8 @@ def test_unsupported_logical_gate_and_shallow_boundaries_retain_full_fallback():
     mismatched_cx_builder.add_transversal_cx("C", "T")
     mismatched_cx_builder.add_memory(["C", "T"], 3, "Z")
     mismatched_cx_builder.build_dem()
-    assert _cached_surface_h_dem_templates.cache_info().currsize == 0
-    assert _cached_surface_cx_dem_templates.cache_info().currsize == 0
+    assert _cached_surface_h_dem_slices.cache_info().currsize == 0
+    assert _cached_surface_cx_dem_slices.cache_info().currsize == 0
 
 
 def test_explicit_algorithm_buffer_cannot_truncate_a_boundary_correlation():

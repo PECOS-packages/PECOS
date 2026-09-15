@@ -11,14 +11,14 @@
 // the License.
 
 use pecos_qec::fault_tolerance::dem_builder::{
-    DemBoundaryKind, DemDetectorPlacement, DemSlice, DemSliceContribution, DemSliceDetector,
-    DemSliceInstance, DemSliceRoundSchedule, DemTemporalHorizon, DemWindowSpec, DetectorErrorModel,
-    RelativeDetectorTarget, SliceFaultMechanism, StitchedDetectorAddress,
+    ComposedDetectorAddress, DemBoundaryKind, DemDetectorPlacement, DemSlice, DemSliceContribution,
+    DemSliceDetector, DemSliceInstance, DemSliceRoundSchedule, DemTemporalHorizon, DemWindowSpec,
+    DetectorErrorModel, RelativeDetectorTarget, SliceFaultMechanism,
 };
 use std::sync::Arc;
 
 #[test]
-fn public_api_stitches_relabelled_cached_slices() {
+fn public_api_composes_relabelled_cached_slices() {
     let slice = Arc::new(
         DemSlice::new(
             "idle",
@@ -46,34 +46,34 @@ fn public_api_stitches_relabelled_cached_slices() {
         .collect();
 
     let schedule = DemSliceRoundSchedule::from_instances(&DetectorErrorModel::new(), instances);
-    let stitched = schedule
-        .stitch(DemWindowSpec::new(4, 2, 1, DemBoundaryKind::Soft))
+    let composed = schedule
+        .compose(DemWindowSpec::new(4, 2, 1, DemBoundaryKind::Soft))
         .unwrap();
 
     assert_eq!(
-        stitched.detector_addresses,
+        composed.detector_addresses,
         vec![
-            StitchedDetectorAddress {
+            ComposedDetectorAddress {
                 round: 4,
                 stream_id: 23,
             },
-            StitchedDetectorAddress {
+            ComposedDetectorAddress {
                 round: 5,
                 stream_id: 23,
             },
-            StitchedDetectorAddress {
+            ComposedDetectorAddress {
                 round: 6,
                 stream_id: 23,
             },
         ]
     );
     assert_eq!(
-        stitched.model.to_mechanisms().0,
+        composed.model.to_mechanisms().0,
         vec![
             (0.01, vec![0, 1], vec![5]),
             (0.01, vec![1, 2], vec![5]),
             (0.01, vec![2], vec![5]),
         ]
     );
-    assert_eq!(stitched.diagnostics.projected_future_contributions, 1);
+    assert_eq!(composed.diagnostics.projected_future_contributions, 1);
 }

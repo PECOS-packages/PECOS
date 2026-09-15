@@ -7,26 +7,34 @@ round)` addresses instead of final `D<n>` indices.
 
 This representation supports two separate phases:
 
-1. An offline compiler analyzes constant-depth physical templates such as
+1. An offline compiler analyzes constant-depth physical fixtures such as
    initialization, idle syndrome extraction, measurement, and transversal
    Clifford operations.
-2. `DemSliceRoundSchedule` instantiates the cached templates for one decoding
-   window, resolves their temporal dependencies through the internal stitcher,
+2. `DemSliceRoundSchedule` instantiates the cached slices for one decoding
+   window, resolves their temporal dependencies through the internal composer,
    and returns a structured `DetectorErrorModel`.
 
-The split follows the DEM Stitch design in
-[Ikari et al.](https://arxiv.org/abs/2608.11719). PECOS keeps the more
-specialized static-Tanner-graph optimization from
-[Ye, Maksymov, and Delfosse](https://arxiv.org/abs/2608.25027) separate: a
-decoder may update only its prior vector when a window has identical incidence
-and logical-action matrices, but physical logical gates can also change those
-matrices and require general slice assembly.
+The split is the recipe construction of
+[Fowler et al., Topological code Autotune](https://arxiv.org/abs/1202.6111):
+analyze each structurally unique block once during a boot-up phase, then
+generate any part of the decoding lattice from the stored blocks. The window
+boundary follows the overlapping recovery of
+[Dennis et al.](https://arxiv.org/abs/quant-ph/0110143) and the buffering
+condition of [Bombin et al.](https://arxiv.org/abs/2303.04846), and the
+port interface is the gadget-level composition formalized by
+[Kliuchnikov, Lietz, and Pastawski](https://arxiv.org/abs/2609.13087).
+Contemporaneous work builds window models the same way for transversal-gate
+schedules ([Ikari et al.](https://arxiv.org/abs/2608.11719)). PECOS keeps the
+static-Tanner-graph special case separate: a decoder may update only its prior
+vector when a window has identical incidence and logical-action matrices, but
+physical logical gates can also change those matrices and require general
+slice assembly.
 
-## Ownership and temporal ports
+## Ownership and ports
 
 Every physical fault contribution must be owned by exactly one slice. Detector
 support outside the owning round is represented by a signed round offset. A
-positive offset is a forward temporal port; a negative offset is a dependency
+positive offset is a forward port; a negative offset is a dependency
 on a preceding slice.
 
 `DemTemporalHorizon` turns the assumption of bounded temporal correlation into
@@ -56,7 +64,7 @@ logical Clifford gates: H swaps logical X/Z columns and CX fans some Pauli
 effects into two output columns.
 
 The frontend cache deliberately uses caller-defined ordered keys. A physical
-template provider should include circuit identity, code geometry, detector
+cached slice provider should include circuit identity, code geometry, detector
 schema, temporal horizon, and noise-support topology in its key. It should not
 include instance-only relabeling state. The surface providers use bounded LRU
 caches; there is no second cache implementation in the Rust slicing layer.
@@ -81,19 +89,19 @@ contribution now also share one direct/Y/source-component shape, leaving a
 single checked conversion boundary for absolute-to-relative detector mapping.
 `DemSliceDetector` remains distinct from `DetectorDef` intentionally: the
 former declares a two-dimensional reusable stream and whether it is emitted or
-only a temporal port, while the latter is an assembled three-dimensional
+only a port, while the latter is an assembled three-dimensional
 detector tied to concrete measurement records. Combining those declarations
-would make either the reusable-template or final-model invariants optional.
+would make either the reusable cached slice or final-model invariants optional.
 
-For a physical template containing halo operations, the internal adapter accepts
+For a physical fixture containing halo operations, the internal adapter accepts
 the owned `DagFaultInfluenceMap` location IDs. A contribution is included only
 if all of its source locations are owned by the slice and omitted if none are.
 Partial or unattributed ownership fails loudly so one correlated source cannot
 be split or counted twice.
 
-## Bounded physical-template compiler
+## Bounded physical fixture compiler
 
-The internal template compiler extracts selected owner rounds from a bounded,
+The internal cached slice compiler extracts selected owner rounds from a bounded,
 source-tracked physical model. It validates the annotated circuit's source
 ownership and detector-stream layout once, then emits absolute-round-independent
 `DemSlice` values suitable for a frontend cache. The bounded model needs only
@@ -110,19 +118,19 @@ reconstruct a separately compiled five-round physical DEM exactly.
 
 At the Rust layer, callers compose cached `DemSliceInstance` values with
 `DemSliceRoundSchedule::from_instances`. Python exposes the same narrow path as
-opaque `DemSliceTemplate` values returned by `schedule.template(...)` and
-`DemSliceRoundSchedule.from_templates(...)`. The Python constructor requires an
+opaque `CachedDemSlice` values returned by `schedule.cached_slice(...)` and
+`DemSliceRoundSchedule.from_cached_slices(...)`. The Python constructor requires an
 independent declaration of the assembled circuit's standard-output and
 tracked-Pauli schema. It rejects a cached model with different declarations and
-requires every template output to be routed into that schema or explicitly
+requires every cached slice output to be routed into that schema or explicitly
 projected. The surface frontend obtains that declaration from the observable
 metadata emitted by the actual assembled circuit, including its full logical
 gate history, rather than restating measurement-reliability rules in each
-template provider. It uses identity detector/output mappings by default, accepts checked per-round
+cached slice provider. It uses identity detector/output mappings by default, accepts checked per-round
 GF(2) output routing tables, and supports checked global or per-stream spatial
-translations. Templates expose their referenced local output IDs so callers do
+translations. Cached slices expose their referenced local output IDs so callers do
 not need to guess the routing domain. Per-stream translation lets independently
-placed code blocks reuse one physical template; general detector-stream identity
+placed code blocks reuse one physical fixture; general detector-stream identity
 routing remains in the Rust instance API.
 
 The production `LogicalCircuitBuilder` uses a bounded three-round compile for
@@ -147,7 +155,7 @@ and instance mappings are implemented.
 A second bounded provider covers one or more transversal H gates separated by
 memory segments of at least two rounds each. A six-round canonical fixture yields
 initialization, ordinary pre-H bulk, the pre-H boundary round, H plus the first
-post-H SEC round, ordinary post-H bulk, pre-terminal, and terminal templates.
+post-H SEC round, ordinary post-H bulk, pre-terminal, and terminal cached slices.
 The rounds adjacent to H are distinct physical families: faults immediately
 before the gate can propagate through it, while H itself shares ownership with
 the first post-gate detector round. The cache key adds the initial and final
@@ -199,15 +207,15 @@ than two rounds retain the full-model fallback.
 H, CX, and mixed H/CX assembly is registered through one typed boundary-provider
 description. A provider first checks its logical operation shape and every
 condition that requires the exact compiler, then selects its depth-independent
-cached templates. The description contains only values consumed by assembly:
-templates, memory depths, detector placement, and a GF(2) routing policy. The
+cached slices. The description contains only values consumed by assembly:
+cached slices, memory depths, detector placement, and a GF(2) routing policy. The
 common assembler owns boundary placement, logical output-schema validation, and
-hard-boundary stitching. The schema is derived from logical operations and is
+hard-boundary composition. The schema is derived from logical operations and is
 pinned against physical circuit metadata, keeping a warm assembly independent
 of physical depth. To add another logical Clifford boundary family, the minimum work is
 therefore (1) an explicit eligibility/fallback check, (2) a bounded physical
 fixture compiler plus canonical cache key, and (3) a provider description. It
-does not require another schedule-construction or stitch path. In the three
+does not require another schedule-construction or compose path. In the three
 migrated providers this removes roughly 30 lines of orchestration from the
 marginal cost of each provider, while leaving their physical compilation and
 observable-reliability decisions visible in family-specific code.
@@ -215,7 +223,7 @@ observable-reliability decisions visible in family-specific code.
 The current standalone SZ/SZdg emitter is deliberately not cached. Its full DEM
 contains mechanisms whose detector span grows with the entire preceding memory
 segment (observed spans 3, 5, and 9 for corresponding pre-gate depths), violating
-the bounded-correlation requirement for JIT templates. A sound provider requires
+the bounded-correlation requirement for JIT cached slices. A sound provider requires
 the documented mid-cycle fold-transversal S-SE construction, rather than
 caching the current between-round physical phase layer with a depth-dependent
 key.
@@ -253,30 +261,30 @@ locations disagree on the owner round is also rejected.
 
 The schedule derives relative detector maps, temporal horizons, standard output
 mappings, and tracked-Pauli mappings, then passes the resulting slice instances
-to its internal stitcher. This removes the hand-authored ownership and mapping
+to its internal composer. This removes the hand-authored ownership and mapping
 tables from the equivalence path. Full-circuit source-tracked DEMs remain the
-independent equivalence oracle for bounded template composition.
+independent equivalence oracle for bounded cached slice composition.
 
-Template extraction retains each contribution's physical source-location IDs.
-Stitching remaps those IDs per template instance, so repeated use of one cached
+Cached slice extraction retains each contribution's physical source-location IDs.
+Composition remaps those IDs per cached slice instance, so repeated use of one cached
 slice preserves source provenance without aliasing different rounds. This keeps
-source-graphlike analysis available on the stitched structured model. The IDs
+source-graphlike analysis available on the composed structured model. The IDs
 identify sources within the assembled model; they are not indices into the
-bounded template's original influence map. The model records this identity-space
-change explicitly and rejects attempts to re-slice a stitched model against a
+bounded physical fixture's original influence map. The model records this identity-space
+change explicitly and rejects attempts to re-slice a composed model against a
 physical influence map.
 
 Python callers can exercise the same structured path through
-`DetectorErrorModel.stitched_round_window(...)`. It accepts the originating
+`DetectorErrorModel.composed_round_window(...)`. It accepts the originating
 influence map and annotated DAG and returns another structured model; rendered
 DEM text appears only at an explicit final serialization boundary.
 `required_buffer_rounds(...)` computes the exact minimum look-ahead for a
 commit region from source ownership and detector targets. Omitting
-`buffer_rounds` from `stitched_round_window(...)` applies that safe value;
+`buffer_rounds` from `composed_round_window(...)` applies that safe value;
 supplying an undersized value still fails loudly.
 
 For multiple windows, `DetectorErrorModel.round_schedule(...)` returns a
-reusable `DemSliceRoundSchedule`. Its `stitch(...)` and
+reusable `DemSliceRoundSchedule`. Its `compose(...)` and
 `required_buffer_rounds(...)` methods reuse the already-derived ownership,
 stream layout, relative mappings, and slice contributions instead of compiling
 the schedule again for every window. The one-shot model methods remain
@@ -309,7 +317,7 @@ The forward boundary is explicit:
 
 A soft boundary is not permission to truncate a correlation that touches the
 commit region. If a contribution reaches from a commit detector through the
-entire buffer, stitching reports `BufferTooSmall`. Increasing the buffer or
+entire buffer, composition reports `BufferTooSmall`. Increasing the buffer or
 rejecting the physical model is required.
 
 Buffer sizing, relevance, and boundary checks inspect every source-decomposition
@@ -336,13 +344,13 @@ are rejected explicitly because they are not standard DEM observables.
 All UF windowed decoder families accept `from_structured_dem`; their existing
 `from_dem` constructors are compatibility adapters that parse once. Decoder
 specifications accept `DecodeModel::StructuredDem`, and the Python
-`DetectorErrorModel.build_decoder()` binding passes a stitched model through
+`DetectorErrorModel.build_decoder()` binding passes a composed model through
 that path. Windowed and beam-search specs therefore avoid a top-level
 render/parse round trip; text-only leaf backends render only at their parser
 boundary. The windowed logical-subgraph decoder likewise accepts the structured
 model directly and partitions it through `SparseDem` without serialization. Time-window
 selection and detector relabeling are performed by `StructuredDem::window_by_time`
-with the same shared `DemBoundaryKind` used by slice stitching. Soft boundaries
+with the same shared `DemBoundaryKind` used by slice composition. Soft boundaries
 project outside detector targets into implicit boundary edges, while hard
 boundaries reject an independent error spanning selected and unselected
 detectors. Explicit window bounds provide both look-behind and look-ahead halos.
@@ -350,7 +358,7 @@ detectors. Explicit window bounds provide both look-behind and look-ahead halos.
 ## Current scope
 
 This layer provides the stable slice, cache, structured-DEM adapter, automatic
-round layout, ownership, bounded template extraction, mapping, and stitching
+round layout, ownership, bounded cached slice extraction, mapping, and composition
 API, including instance-time GF(2) routing for logical and tracked-Pauli output
 columns. Initialization, stationary bulk SEC, pre-terminal SEC, terminal, and
 fused one-round surface-memory families have exact composition coverage and a
@@ -360,7 +368,7 @@ and a production provider, as do repeated transversal CX gates and mixed H/CX
 schedules between matching patch shapes. It does not
 yet implement the bounded mid-cycle SZ/SZdg circuit, multi-patch logical-gate
 or lattice-surgery families, decoder prior mutation, the anti-snake
-logical-subgraph window decoder, or adaptive syndrome-extraction templates.
+logical-subgraph window decoder, or adaptive syndrome-extraction cached slices.
 Full-circuit DEM construction remains the equivalence oracle and the
 conservative fallback outside supported families.
 

@@ -62,7 +62,7 @@ def test_structured_dem_builds_windowed_decoder_without_top_level_text_handoff()
         p_prep=0.0,
     )
 
-    decoder = model.build_decoder("windowed:mode=overlap,step=2,buf=1")
+    decoder = model.build_decoder("windowed:step=2,buf=1,inner=pecos_uf")
     assert decoder.num_detectors == model.num_detectors
     assert len(decoder.decode_syndrome([0] * model.num_detectors)) == model.num_observables
 
@@ -767,6 +767,41 @@ def test_repeated_logical_cx_provider_matches_full_compile(final_basis, rounds):
     assert descriptor["full_dem"] == oracle.to_string()
     assert len(descriptor["segments"]) == len(rounds)
     assert len(descriptor["boundary_gates"]) == len(rounds) - 1
+
+    # Test 10: inject one observable-bearing provider error across the first CX cut.
+    from pecos_rslib.decoders import pymatching, windowed
+    from pecos_rslib.qec import SampleBatch
+
+    graphlike = oracle.to_string_source_graphlike_decomposed()
+    fixture = stim.DetectorErrorModel(graphlike).flattened()
+    coordinates = fixture.get_detector_coordinates()
+    cut = rounds[0]
+    crossing = []
+    for instruction in fixture:
+        if instruction.type != "error":
+            continue
+        targets = instruction.targets_copy()
+        detectors = [target.val for target in targets if target.is_relative_detector_id()]
+        observables = [target.val for target in targets if target.is_logical_observable_id()]
+        if (
+            detectors
+            and observables
+            and min(coordinates[d][2] for d in detectors) < cut <= max(coordinates[d][2] for d in detectors)
+        ):
+            crossing.append((detectors, observables))
+    assert crossing, "CX provider must supply an observable-bearing error across the window cut"
+    detectors, observables = crossing[0]
+    syndrome = [0] * fixture.num_detectors
+    truth = 0
+    for detector in detectors:
+        syndrome[detector] ^= 1
+    for observable in observables:
+        truth ^= 1 << observable
+    batch = SampleBatch([syndrome], [truth], num_observables=fixture.num_observables)
+    inner = pymatching(correlated=False)
+    expected = batch.decode(graphlike, inner, workers=1, predictions=True)
+    actual = batch.decode(graphlike, windowed(inner=inner, step=cut, buffer=3), workers=1, predictions=True)
+    assert actual.predictions == expected.predictions, "CX boundary correction must match monolithic decoding"
 
 
 def test_repeated_logical_cx_provider_reuses_one_physical_family(monkeypatch):

@@ -94,12 +94,7 @@ FACTORY_CASES: list[FactoryCase] = [
         lambda: windowed(
             step=5,
             buffer=7,
-            mode="sandwich",
-            seam=2,
-            core_extend=1,
-            commit_weight_max=2.5,
-            inner=pecos_uf(preset="balanced"),
-            sandwich_phase2=pymatching(correlated=False),
+            inner=pymatching(correlated=False),
         ),
     ),
     (
@@ -168,7 +163,6 @@ def test_pymatching_requires_correlated_argument() -> None:
         (lambda: fusion_blossom(solver="distributed"), "solver", "distributed"),
         (lambda: pecos_uf(preset="slow"), "preset", "slow"),
         (lambda: belief_matching(mode="hybrid"), "mode", "hybrid"),
-        (lambda: windowed(mode="sliding"), "mode", "sliding"),
         (lambda: mwpf(solver="exact"), "solver", "exact"),
         (
             lambda: relay_bp(stopping_criterion="eventually"),
@@ -195,7 +189,7 @@ def test_enum_validation_names_parameter_and_bad_value(
         lambda: pymatching(correlated=True, error_probability=1.5),
         lambda: k_mwpm(k=0),
         lambda: perturbed(sigma=-0.1),
-        lambda: windowed(step=-1),
+        lambda: windowed(step=-1, buffer=1, inner=pecos_uf()),
         lambda: relay_bp(stopping_criterion=0),
     ],
 )
@@ -210,7 +204,7 @@ def test_numeric_domain_errors_are_value_errors(
 def test_nested_specs_require_decoder_spec_values() -> None:
     """PyO3 extraction reports wrong nested-object types as TypeError."""
     with pytest.raises(TypeError):
-        windowed(inner="pecos_uf")
+        windowed(inner="pecos_uf", buffer=1)
     with pytest.raises(TypeError):
         ensemble(pymatching(correlated=True), "relay_bp")
 
@@ -252,7 +246,6 @@ def test_nested_specs_require_decoder_spec_values() -> None:
             "belief_matching_mgbp",
             belief_matching(mode="matching_graph_bp"),
         ),
-        ("windowed", windowed()),
         (
             "windowed:step=5,buf=5,inner=pecos_uf",
             windowed(step=5, buffer=5, inner=pecos_uf()),
@@ -319,7 +312,7 @@ def test_execution_traits(spec: DecoderSpec, history_dependent: bool, wall_clock
 
 def test_nested_composite_propagates_wall_clock_dependency() -> None:
     """Nested composite factories preserve transitive execution traits."""
-    spec = windowed(inner=perturbed(inner=mwpf(timeout=1.0)))
+    spec = windowed(inner=perturbed(inner=mwpf(timeout=1.0)), buffer=1)
 
     assert spec.history_dependent is False
     assert spec.wall_clock_dependent is True
@@ -359,3 +352,68 @@ def test_seed_accepts_the_full_u64_range() -> None:
 def test_stopping_criterion_rejects_bool() -> None:
     with pytest.raises(ValueError, match="stopping_criterion"):
         relay_bp(stopping_criterion=True)
+
+
+@pytest.mark.parametrize(
+    "keyword",
+    [
+        "mode",
+        "seam",
+        "ext",
+        "core_extend",
+        "wmax",
+        "commit_weight_max",
+        "sandwich_phase2",
+    ],
+)
+def test_11_windowed_rejects_removed_keywords(keyword: str) -> None:
+    """Removed options fail at the Python call boundary."""
+    with pytest.raises(TypeError, match="unexpected keyword"):
+        windowed(inner=pecos_uf(), buffer=1, **{keyword: 1})
+
+
+def test_11_windowed_requires_inner_and_buffer() -> None:
+    """Neither the estimator nor its forward context has a default."""
+    with pytest.raises(TypeError, match="inner"):
+        windowed(buffer=1)
+    with pytest.raises(TypeError, match="buffer"):
+        windowed(inner=pecos_uf())
+    assert beamsearch(phase2=pecos_uf(), commit_weight_max=2.5).family == "beamsearch"
+
+
+@pytest.mark.parametrize("probability", [0.005, 0.001])
+@pytest.mark.parametrize("inner", [pecos_uf(), pymatching(correlated=False), pymatching(correlated=True)])
+def test_8_windowed_paired_acceptance(probability: float, inner: DecoderSpec) -> None:
+    """At buffer=d, paired excess failures stay within three counting deviations."""
+    import math
+
+    import stim
+    from pecos_rslib.qec import ParsedDem
+
+    circuit = stim.Circuit.generated(
+        "surface_code:rotated_memory_z",
+        distance=5,
+        rounds=18,
+        after_clifford_depolarization=probability,
+        before_round_data_depolarization=probability,
+        before_measure_flip_probability=probability,
+        after_reset_flip_probability=probability,
+    )
+    dem = str(circuit.detector_error_model(decompose_errors=True).flattened())
+    sampler = ParsedDem.from_string(dem).to_dem_sampler()
+    batch = sampler.sample_batch(20000, seed=1234)
+    repeated = sampler.sample_batch(20000, seed=1234)
+    assert batch.detector_events() == repeated.detector_events(), "seeded detector samples must repeat"
+    assert batch.observable_flips() == repeated.observable_flips(), "seeded observable samples must repeat"
+    truth = [batch.get_observable_flips(i).mask for i in range(batch.num_shots)]
+    monolithic = batch.decode(dem, inner, workers=1, predictions=True)
+    sequential = batch.decode(dem, windowed(inner=inner, step=5, buffer=5), workers=1, predictions=True)
+    # The batch API raises on any decode error, so reaching scoring requires zero errors.
+    assert monolithic.predictions is not None
+    assert sequential.predictions is not None
+    a = b = 0
+    for expected, full, partial in zip(truth, monolithic.predictions, sequential.predictions, strict=True):
+        a += partial != expected and full == expected
+        b += full != expected and partial == expected
+    print(f"window acceptance: p={probability}, inner={inner!r}, a={a}, b={b}, decode_errors=0")
+    assert a - b <= 3 * math.sqrt(a + b + 1), f"p={probability}, inner={inner!r}, a={a}, b={b}"

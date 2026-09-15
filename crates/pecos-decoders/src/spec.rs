@@ -104,10 +104,7 @@ impl DecoderSpec {
                 history_dependent: false,
                 wall_clock_dependent: config.timeout.is_some(),
             },
-            Self::Windowed(config) => config
-                .inner
-                .execution_traits()
-                .or(config.sandwich_phase2.execution_traits()),
+            Self::Windowed(config) => config.inner.execution_traits(),
             Self::Perturbed(config) => config.inner.execution_traits(),
             Self::BeamSearch(config) => config.phase2.execution_traits(),
             Self::Ensemble(config) => config

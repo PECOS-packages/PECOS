@@ -341,19 +341,46 @@ uses the same equal-effect grouping and XOR probability combination as
 second factorization policy at the decoder boundary. PECOS tracked-Pauli outputs
 are rejected explicitly because they are not standard DEM observables.
 
-All UF windowed decoder families accept `from_structured_dem`; their existing
-`from_dem` constructors are compatibility adapters that parse once. Decoder
-specifications accept `DecodeModel::StructuredDem`, and the Python
-`DetectorErrorModel.build_decoder()` binding passes a composed model through
-that path. Windowed and beam-search specs therefore avoid a top-level
-render/parse round trip; text-only leaf backends render only at their parser
-boundary. The windowed logical-subgraph decoder likewise accepts the structured
-model directly and partitions it through `SparseDem` without serialization. Time-window
-selection and detector relabeling are performed by `StructuredDem::window_by_time`
-with the same shared `DemBoundaryKind` used by slice composition. Soft boundaries
-project outside detector targets into implicit boundary edges, while hard
-boundaries reject an independent error spanning selected and unselected
-detectors. Explicit window bounds provide both look-behind and look-ahead halos.
+`StreamingWindowedDecoder::from_structured_dem` accepts the model directly;
+`from_dem` parses the flattened text once. Decoder specifications also accept
+`DecodeModel::StructuredDem`, and Python `DetectorErrorModel.build_decoder()`
+uses that path. Beam search retains its existing independent-window and residual
+pass behavior in this phase.
+
+`StructuredDem::commit_window(rows, commit)` owns window construction. Time is
+coordinate element 2 and must be a non-negative integer on every detector.
+Columns are individual error components with one or two detectors. Ownership is
+the minimum detector time. Windows drop columns owned before the look-behind and
+project future endpoints while retaining each column's full global identity.
+Surviving components stay grouped by parent error for correlated matching.
+Construction rejects incomplete commit regions, rows without a path to a boundary,
+and parallel non-projected columns that disagree on observables.
+
+Each selected correction must reproduce the local input incidence before the
+window advances. Selected edges join only through local detector endpoints;
+neither the boundary nor projected far detectors join components. Components
+commit whole when old enough, when needed to clear look-behind defects, or in the
+last window. Carry toggles the full global incidence of the resolved columns,
+including projected endpoints. Logical-subgraph decoding keeps a separate
+residual in each subgraph's local detector space.
+
+The spec requires explicit `inner` and `buffer`, for example
+`windowed:step=5,buffer=5,inner=pymatching` (correlated) or
+`windowed:step=5,buffer=5,inner=pymatching_uncorrelated`. Python uses
+`decoders.windowed(inner=decoders.pymatching(correlated=True), step=5, buffer=5)`.
+Plain `pecos_uf` is also supported. Its other spec presets select BP or two-pass
+wrappers and are outside this phase's inner-decoder contract.
+`min_buffer_rounds(&dem)` reports the largest forward column span; use
+`buffer = d` for the recommended statistical accuracy setting. `step=0` retains
+the existing distance estimate. A final short core is merged into the preceding
+window and constructed once.
+
+Finite windows need not agree exactly with monolithic decoding. Correlation
+evidence does not cross windows, and deterministic edge representatives are
+valid global lifts rather than most-probable parent-fault explanations. The
+strict round-by-round streaming protocol and bounded raw-storage retirement
+remain phase 2 work. Slice composition still uses `window_by_time` and
+`DemBoundaryKind`; its boundary semantics are unchanged.
 
 ## Current scope
 

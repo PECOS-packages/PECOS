@@ -151,7 +151,7 @@ impl LogicalSubgraphWindowPlan {
     /// rounds per window.
     ///
     /// This is an ESTIMATE, not a guaranteed match of the exact window count an
-    /// `OverlappingWindowedDecoder` builds: it counts core ranges that contain a
+    /// `StreamingWindowedDecoder` builds: it counts core ranges that contain a
     /// detector and ignores the buffer overlap, and it requires an explicit
     /// `step` (the real decoder auto-derives `step` from the graph when none is
     /// given). It is sufficient for the load-bearing use here -- the
@@ -203,11 +203,7 @@ fn window_count_for_times(times: &[f64], step: usize) -> usize {
     let mut t_start = 0.0f64;
     while t_start < total_t {
         let is_last = t_start + 2.0 * step > total_t;
-        let t_core_end = if is_last {
-            total_t + 1.0
-        } else {
-            t_start + step
-        };
+        let t_core_end = if is_last { total_t } else { t_start + step };
         if times.iter().any(|&t| t >= t_start && t < t_core_end) {
             count += 1;
         }
@@ -242,5 +238,9 @@ mod tests {
         assert!(window_count_for_times(&times, 4) > 1);
         // A step covering the whole range -> a single window.
         assert_eq!(window_count_for_times(&times, 1000), 1);
+    }
+    #[test]
+    fn merged_tail_is_counted_once() {
+        assert_eq!(window_count_for_times(&[0.0, 1.0, 2.0, 3.0], 3), 1);
     }
 }

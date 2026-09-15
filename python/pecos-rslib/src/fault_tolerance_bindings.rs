@@ -5768,8 +5768,8 @@ impl PyLogicalSubgraphDecoder {
     ///
     /// NOTE: these strings carry NO `detector(...)` coordinate lines (subgraph
     /// graphs drop coordinates), so they are NOT suitable for *time-windowed*
-    /// decoding -- a windowed decoder would see no detector times and collapse to
-    /// a single window. For windowing, use the coord-preserving
+    /// decoding: the window constructor rejects missing detector times.
+    /// For windowing, use the coord-preserving
     /// `LogicalSubgraphWindowPlan` path (the `WindowedLogicalSubgraphDecoder` /
     /// logical-circuit windowed budget already do). These strings are fine for
     /// full (non-windowed) per-subgraph decoding.
@@ -5805,16 +5805,15 @@ impl PyLogicalSubgraphDecoder {
 /// Prevents the observing region from spanning the full circuit.
 ///
 /// Partitions the DEM per observable, then windows each subgraph with proper
-/// sliding-window core-commit (only correction edges whose both endpoints lie
-/// in a window's core are committed). The inner decoder is the native
-/// edge-tracking union-find decoder, which core-commit requires.
+/// whole-component commits and a separate residual in each subgraph.
+/// The inner decoder is native union-find with complete correction edge reporting.
 ///
 /// Args:
 ///     dem: DEM string.
 ///     `stab_coords`: Stabilizer coordinates per logical qubit.
 ///     step: Core window size in time steps.
-///     buffer: Buffer size on each side for matching context (0 =
-///         non-overlapping; recommend ~code distance).
+///     buffer: Forward matching context, at least the maximum column span.
+///         Recommend the code distance.
 #[pyclass(name = "WindowedLogicalSubgraphDecoder", module = "pecos_rslib.qec")]
 pub struct PyWindowedLogicalSubgraphDecoder {
     inner: pecos_decoders::WindowedLogicalSubgraphDecoder,
@@ -5848,11 +5847,7 @@ impl PyWindowedLogicalSubgraphDecoder {
             });
         }
 
-        let config = pecos_decoders::WindowedConfig {
-            step_size: step,
-            buffer_size: buffer,
-            ..Default::default()
-        };
+        let config = pecos_decoders::WindowedConfig { step, buffer };
 
         let inner =
             pecos_decoders::WindowedLogicalSubgraphDecoder::from_dem(dem, &sc, None, config)
@@ -6203,7 +6198,7 @@ impl PyLogicalAlgorithmDecoder {
 ///
 /// Selects decode strategy based on available reaction time:
 /// - ``"unlimited"``: full-circuit logical-subgraph decoder (Clifford circuits, offline)
-/// - ``"windowed"``: default windowed logical-subgraph decoder (~1ms reaction time)
+/// - ``"windowed"``: request a 1ms budget; currently uses the full-subgraph fallback
 /// - ``"10ms"``, ``"1000us"``, etc.: explicit reaction time budget
 ///
 /// The reaction time is the time available at feed-forward decision

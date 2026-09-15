@@ -15,6 +15,9 @@
 use crate::errors::DecoderError;
 use std::fmt::Write as _;
 
+mod commit;
+pub use commit::{CommitColumn, CommitEdge, CommitMember, CommitWindow, min_buffer_rounds};
+
 /// One graphlike or hypergraph component of an independent DEM error.
 #[derive(Debug, Clone, PartialEq)]
 pub struct StructuredDemComponent {

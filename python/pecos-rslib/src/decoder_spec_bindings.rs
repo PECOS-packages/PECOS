@@ -5,7 +5,7 @@ use pecos_decoders::spec::{
     BpSchedule, EnsembleConfig, FusionBlossomConfig, FusionBlossomSolverType, KMwpmConfig,
     MinSumBpConfig, MwpfConfig, MwpfSolverType, PecosUfPreset, PerturbedConfig,
     PerturbedFusionBlossomConfig, PyMatchingConfig, RelayBpConfig, RelayStoppingCriterion,
-    TesseractConfig, TesseractPreset, WindowedConfig, WindowedMode,
+    TesseractConfig, TesseractPreset, WindowedConfig,
 };
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
@@ -226,20 +226,6 @@ fn belief_matching_mode(value: &str) -> PyResult<BeliefMatchingMode> {
             "mode",
             value,
             "'standard', 'correlated', 'matching_graph_bp'",
-        )),
-    }
-}
-
-fn windowed_mode(value: &str) -> PyResult<WindowedMode> {
-    match value {
-        "auto" => Ok(WindowedMode::Auto),
-        "sandwich" => Ok(WindowedMode::Sandwich),
-        "overlap" => Ok(WindowedMode::Overlap),
-        "non_overlapping" => Ok(WindowedMode::NonOverlapping),
-        value => Err(invalid_choice(
-            "mode",
-            value,
-            "'auto', 'sandwich', 'overlap', 'non_overlapping'",
         )),
     }
 }
@@ -491,31 +477,13 @@ fn belief_matching(mode: &str) -> PyResult<PyDecoderSpec> {
 }
 
 #[pyfunction]
-#[pyo3(signature = (*, step=0, buffer=0, mode="auto", seam=0, core_extend=0, commit_weight_max=0.0, inner=None, sandwich_phase2=None))]
-fn windowed(
-    step: i64,
-    buffer: i64,
-    mode: &str,
-    seam: i64,
-    core_extend: i64,
-    commit_weight_max: f64,
-    inner: Option<PyRef<'_, PyDecoderSpec>>,
-    sandwich_phase2: Option<PyRef<'_, PyDecoderSpec>>,
-) -> PyResult<PyDecoderSpec> {
-    let defaults = WindowedConfig::default();
+#[pyo3(signature = (*, inner, buffer, step=0))]
+fn windowed(inner: PyRef<'_, PyDecoderSpec>, buffer: i64, step: i64) -> PyResult<PyDecoderSpec> {
     Ok(PyDecoderSpec::new(pecos_decoders::DecoderSpec::Windowed(
         WindowedConfig {
             step_size: usize_value("step", step, true)?,
             buffer_size: usize_value("buffer", buffer, true)?,
-            mode: windowed_mode(mode)?,
-            seam_half_width: usize_value("seam", seam, true)?,
-            core_extend: usize_value("core_extend", core_extend, true)?,
-            commit_weight_max: non_negative("commit_weight_max", commit_weight_max)?,
-            inner: Box::new(cloned_or_default(inner, &defaults.inner)),
-            sandwich_phase2: Box::new(cloned_or_default(
-                sandwich_phase2,
-                &defaults.sandwich_phase2,
-            )),
+            inner: Box::new(inner.inner.clone()),
         },
     )))
 }
@@ -896,34 +864,12 @@ fn relay_bp_repr(config: &RelayBpConfig) -> String {
 }
 
 fn windowed_repr(config: &WindowedConfig) -> String {
-    let default = WindowedConfig::default();
-    let mut args = Vec::new();
-    if config.step_size != default.step_size {
+    let mut args = vec![
+        format!("inner={}", spec_repr(&config.inner)),
+        format!("buffer={}", config.buffer_size),
+    ];
+    if config.step_size != 0 {
         args.push(format!("step={}", config.step_size));
-    }
-    if config.buffer_size != default.buffer_size {
-        args.push(format!("buffer={}", config.buffer_size));
-    }
-    if config.mode != default.mode {
-        args.push(format!("mode={:?}", windowed_mode_name(config.mode)));
-    }
-    if config.seam_half_width != default.seam_half_width {
-        args.push(format!("seam={}", config.seam_half_width));
-    }
-    if config.core_extend != default.core_extend {
-        args.push(format!("core_extend={}", config.core_extend));
-    }
-    if config.commit_weight_max.to_bits() != default.commit_weight_max.to_bits() {
-        args.push(format!("commit_weight_max={:?}", config.commit_weight_max));
-    }
-    if config.inner != default.inner {
-        args.push(format!("inner={}", spec_repr(&config.inner)));
-    }
-    if config.sandwich_phase2 != default.sandwich_phase2 {
-        args.push(format!(
-            "sandwich_phase2={}",
-            spec_repr(&config.sandwich_phase2)
-        ));
     }
     finish_repr("windowed", args)
 }
@@ -1026,14 +972,6 @@ fn belief_matching_mode_name(value: BeliefMatchingMode) -> &'static str {
         BeliefMatchingMode::Correlated => "correlated",
         BeliefMatchingMode::MatchingGraphBp => "matching_graph_bp",
         BeliefMatchingMode::Hybrid => "hybrid",
-    }
-}
-fn windowed_mode_name(value: WindowedMode) -> &'static str {
-    match value {
-        WindowedMode::Auto => "auto",
-        WindowedMode::Sandwich => "sandwich",
-        WindowedMode::Overlap => "overlap",
-        WindowedMode::NonOverlapping => "non_overlapping",
     }
 }
 fn mwpf_solver_name(value: MwpfSolverType) -> &'static str {

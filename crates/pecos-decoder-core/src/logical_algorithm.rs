@@ -860,14 +860,12 @@ impl DecodeStrategy for FullCircuitStrategy {
 // Strategy: Windowed logical-subgraph decoding (neutral atom / medium budget)
 // ============================================================================
 
-/// Windowed logical-subgraph strategy: per-logical-operator subgraph windowed decoding.
+/// Route each observable's syndrome into its own subgraph decoder.
 ///
-/// Each observable's subgraph is graphlike (no hyperedges). A windowed
-/// decoder (sandwich or plain PM) runs inside each subgraph with bounded
-/// latency. The full matching graph is pre-built; only syndrome routing
-/// and per-window matching are per-shot work.
-///
-/// This achieves bounded-latency streaming with logical-subgraph decoder-level accuracy.
+/// The factory determines whether the subgraph decoder uses windows or a full
+/// graph. The budget-selected strategy currently supplies full-subgraph decoders
+/// and exposes its fallback through the shared window plan. Whole-component
+/// window commits live in `pecos-uf-decoder` and keep their own local residuals.
 pub struct WindowedLogicalSubgraphStrategy {
     /// Per-subgraph decoders (windowed or plain).
     subgraph_decoders: Vec<Box<dyn ObservableDecoder + Send + Sync>>,

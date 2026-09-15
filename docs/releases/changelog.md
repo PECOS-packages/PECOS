@@ -6,6 +6,21 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+### Decoder changes
+
+- `windowed` specs with a buffer previously returned the result of a monolithic
+  decode by `sandwich_phase2` (correlated PyMatching by default). Callers who want
+  that result should request the monolithic decoder directly. `windowed` is now
+  a streaming decoder and requires `inner` and `buffer`. It commits whole local
+  correction components and carries their full detector incidence. The old
+  modes and their tuning options have been removed.
+- `PyMatchingDecoder`'s edge decode now applies correlations when the decoder
+  was built with them.
+- `DetailedDecoder::decode_to_edges` for `PyMatchingDecoder` now returns the
+  correction edges with their weights and observables. Previously it returned
+  matched detection-event pairs with zero weights and no observables.
+
+
 ### Python breaking changes
 
 - `LogicalCircuitBuilder.build_algorithm_descriptor(buffer=0)` now rejects a

@@ -229,6 +229,22 @@ pub trait ObservableDecoder {
     }
 }
 
+/// Complete correction in the edge order established by a commit-window builder.
+pub trait EdgeDecoder {
+    /// Return every selected window-local edge, including any preprocessing.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the syndrome cannot be decoded.
+    fn decode_to_edges(&mut self, syndrome: &[u8]) -> Result<Vec<usize>, DecoderError>;
+}
+
+impl<D: EdgeDecoder + ?Sized> EdgeDecoder for Box<D> {
+    fn decode_to_edges(&mut self, syndrome: &[u8]) -> Result<Vec<usize>, DecoderError> {
+        (**self).decode_to_edges(syndrome)
+    }
+}
+
 // ============================================================================
 // Re-exports
 // ============================================================================

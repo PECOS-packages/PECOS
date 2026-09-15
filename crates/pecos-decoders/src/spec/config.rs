@@ -223,45 +223,12 @@ pub struct BeliefMatchingConfig {
     pub embedded_full_dem: Option<String>,
 }
 
-/// Sliding-window construction mode.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum WindowedMode {
-    #[default]
-    NonOverlapping,
-    Sandwich,
-    Overlap,
-    Auto,
-}
-
-/// Sliding-window construction options.
+/// Whole-component window construction options. Inner and buffer are required.
 #[derive(Clone, Debug, PartialEq)]
 pub struct WindowedConfig {
     pub step_size: usize,
     pub buffer_size: usize,
-    pub mode: WindowedMode,
-    pub seam_half_width: usize,
-    pub core_extend: usize,
-    pub commit_weight_max: f64,
     pub inner: Box<DecoderSpec>,
-    pub sandwich_phase2: Box<DecoderSpec>,
-}
-
-impl Default for WindowedConfig {
-    fn default() -> Self {
-        Self {
-            step_size: 0,
-            buffer_size: 0,
-            mode: WindowedMode::Auto,
-            seam_half_width: 0,
-            core_extend: 0,
-            commit_weight_max: 0.0,
-            inner: Box::new(DecoderSpec::PecosUf(PecosUfPreset::Fast)),
-            sandwich_phase2: Box::new(DecoderSpec::PyMatching(PyMatchingConfig {
-                correlated: true,
-                error_probability: None,
-            })),
-        }
-    }
 }
 
 /// MWPF solver selection.

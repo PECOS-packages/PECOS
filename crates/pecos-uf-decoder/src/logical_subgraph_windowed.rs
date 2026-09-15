@@ -18,19 +18,11 @@
 //! package). For deep circuits an observing region would span the whole circuit,
 //! so we additionally window each subgraph in time.
 //!
-//! **Nesting: subgraph -> window.** Each per-observable subgraph is a clean
-//! graphlike matching graph, so we wrap it in an
-//! [`OverlappingWindowedDecoder`], which performs proper sliding-window
-//! decoding: every window is decoded with a buffer for matching context, but
-//! only correction edges whose BOTH endpoints lie in the window core are
-//! committed (Tan et al., arXiv:2209.09219). The per-observable committed
-//! observable flips are XOR-combined.
-//!
-//! An earlier implementation windowed the full DEM first and then ran a subgraph
-//! decoder per window, combining by a naive full-window observable XOR with no
-//! core-commit. That double-counted error chains crossing a window boundary and
-//! *anti-suppressed* (LER grew with code distance). The correct nesting here
-//! reuses the tested core-commit machinery instead.
+//! **Nesting: subgraph -> window.** Each per-observable subgraph has its own
+//! [`StreamingWindowedDecoder`] and residual in subgraph-local detector space.
+//! Selected local components are committed whole; their full global incidence
+//! is carried into later windows. Subgraph-local observable bit zero is mapped
+//! back to its global observable index.
 
 use pecos_decoder_core::ObservableDecoder;
 use pecos_decoder_core::dem::DemMatchingGraph;
@@ -44,7 +36,7 @@ use pecos_decoder_core::obs_mask::ObsMask;
 use pecos_decoder_core::window::StructuredDem;
 
 use crate::decoder::{UfDecoder, UfDecoderConfig};
-use crate::windowed::{OverlappingWindowedDecoder, WindowedConfig};
+use crate::windowed::{StreamingWindowedDecoder, WindowedConfig};
 
 /// One per-observable subgraph, windowed with sliding-window core-commit.
 struct SubgraphWindowed {
@@ -55,13 +47,13 @@ struct SubgraphWindowed {
     /// Number of subgraph-local detectors.
     num_local: usize,
     /// The time-windowed decoder over this subgraph (returns local bit 0).
-    decoder: OverlappingWindowedDecoder<UfDecoder>,
+    decoder: StreamingWindowedDecoder<UfDecoder>,
 }
 
 /// Windowed logical-subgraph decoder.
 ///
 /// Partitions the DEM per observable, then windows each subgraph with an
-/// [`OverlappingWindowedDecoder`] (sliding-window core-commit). Per-observable
+/// [`StreamingWindowedDecoder`] (sliding-window core-commit). Per-observable
 /// committed observable flips are XOR-combined into the final mask.
 pub struct WindowedLogicalSubgraphDecoder {
     subgraphs: Vec<SubgraphWindowed>,
@@ -124,8 +116,8 @@ impl WindowedLogicalSubgraphDecoder {
         let mut max_local = 0usize;
         for entry in plan.entries() {
             let decoder =
-                OverlappingWindowedDecoder::from_dem(&entry.sub_dem, window_config, |wdem| {
-                    UfDecoder::from_dem(wdem, UfDecoderConfig::windowed())
+                StreamingWindowedDecoder::from_dem(&entry.sub_dem, window_config, |wdem| {
+                    UfDecoder::from_commit_window(wdem, UfDecoderConfig::windowed())
                 })?;
             let num_local = entry.detector_map.len();
             max_local = max_local.max(num_local);
@@ -205,11 +197,7 @@ mod tests {
             x_positions: vec![(1.0, 0.0)],
             z_positions: vec![],
         }];
-        let config = WindowedConfig {
-            step_size: 1,
-            buffer_size: 0,
-            ..WindowedConfig::default()
-        };
+        let config = WindowedConfig { step: 1, buffer: 1 };
         let structured = StructuredDem::from_dem_str(dem).unwrap();
         let text = WindowedLogicalSubgraphDecoder::from_dem(dem, &coords, None, config).unwrap();
         let direct =

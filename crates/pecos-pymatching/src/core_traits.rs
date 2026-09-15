@@ -125,29 +125,29 @@ impl DetailedDecoder for PyMatchingDecoder {
         &mut self,
         syndrome: &ArrayView1<u8>,
     ) -> Result<Vec<MatchedEdge>, Self::Error> {
-        // First decode to get the result with weight
-        let _decode_result = <Self as Decoder>::decode(self, syndrome)?;
+        let pairs = PyMatchingDecoder::decode_to_edges(
+            self,
+            syndrome.as_slice().ok_or_else(|| {
+                PyMatchingError::Configuration("Input must be contiguous".to_string())
+            })?,
+        )?;
 
-        // Then get the matched pairs
-        let pairs = self.decode_to_matched_pairs(syndrome.as_slice().ok_or_else(|| {
-            PyMatchingError::Configuration("Input must be contiguous".to_string())
-        })?)?;
-
-        // Convert MatchedPair to MatchedEdge
-        // Note: PyMatching's MatchedPair doesn't include per-edge weights or observables
-        Ok(pairs
+        pairs
             .into_iter()
             .map(|pair| {
-                MatchedEdge {
-                    node1: pair.detector1 as usize,
-                    node2: pair
-                        .detector2
-                        .map_or(crate::decoder::BOUNDARY_NODE_MARKER, |d| d as usize),
-                    weight: 0.0,         // Individual edge weights not available
-                    observables: vec![], // Observable info not available per edge
-                }
+                let node1 = pair.detector1 as usize;
+                let data = match pair.detector2 {
+                    Some(node2) => self.get_edge_data(node1, node2 as usize)?,
+                    None => self.get_boundary_edge_data(node1)?,
+                };
+                Ok(MatchedEdge {
+                    node1,
+                    node2: data.node2.unwrap_or(crate::decoder::BOUNDARY_NODE_MARKER),
+                    weight: data.weight,
+                    observables: data.observables,
+                })
             })
-            .collect())
+            .collect()
     }
 
     fn decode_to_pairs(
@@ -301,5 +301,78 @@ mod tests {
             uncorrelated.decode_obs(&[1, 1, 1, 1]).unwrap().to_u64(),
             Some(0)
         );
+    }
+
+    #[test]
+    fn test_14_correlated_edge_decode() {
+        let dem = "error(0.01) D0 D1 ^ D2 D3 L0\nerror(0.1) D2\nerror(0.1) D3\n";
+        let syndrome = [1, 1, 1, 1];
+        let selections = [
+            (false, vec![(0, Some(1)), (2, None), (3, None)]),
+            (true, vec![(0, Some(1)), (2, Some(3))]),
+        ];
+        for (correlated, expected_edges) in selections {
+            let mut decoder =
+                PyMatchingDecoder::from_dem_with_correlations(dem, correlated).unwrap();
+            let expected_obs = decoder.decode_to_observables(&syndrome).unwrap();
+            let mut selected: Vec<_> = decoder
+                .decode_to_edges(&syndrome)
+                .unwrap()
+                .into_iter()
+                .map(|pair| match pair.detector2 {
+                    Some(b) if b < pair.detector1 => (b, Some(pair.detector1)),
+                    b => (pair.detector1, b),
+                })
+                .collect();
+            selected.sort_unstable();
+            assert_eq!(
+                selected, expected_edges,
+                "edge selection must honor correlated={correlated}"
+            );
+            let selected_obs = u64::from(selected.contains(&(2, Some(3))));
+            assert_eq!(
+                selected_obs, expected_obs,
+                "edge observable must match monolithic decoding"
+            );
+            let detailed =
+                DetailedDecoder::decode_to_edges(&mut decoder, &ArrayView1::from(&syndrome))
+                    .unwrap();
+            let detailed_obs = detailed
+                .iter()
+                .flat_map(|edge| &edge.observables)
+                .fold(0u64, |mask, &observable| mask ^ (1u64 << observable));
+            assert_eq!(
+                detailed_obs, expected_obs,
+                "detailed edge decode must use the same correlated correction"
+            );
+        }
+    }
+
+    #[test]
+    fn detailed_edges_include_intermediate_detectors() {
+        let dem = "error(0.1) D0 D1 L0\nerror(0.1) D1 D2\nerror(0.001) D0\n";
+        let mut decoder = PyMatchingDecoder::from_dem(dem).unwrap();
+        let syndrome = [1, 0, 1];
+        let expected = decoder.decode_to_observables(&syndrome).unwrap();
+        let edges =
+            DetailedDecoder::decode_to_edges(&mut decoder, &ArrayView1::from(&syndrome)).unwrap();
+        let mut incidence = [0u8; 3];
+        let mut observable = 0;
+        for edge in &edges {
+            incidence[edge.node1] ^= 1;
+            if edge.node2 < incidence.len() {
+                incidence[edge.node2] ^= 1;
+            }
+            for &o in &edge.observables {
+                observable ^= 1u64 << o;
+            }
+        }
+        assert_eq!(
+            edges.len(),
+            2,
+            "edge decode must report the path through detector 1"
+        );
+        assert_eq!(incidence, syndrome);
+        assert_eq!(observable, expected);
     }
 }

@@ -3123,14 +3123,9 @@ class decoders:
     @staticmethod
     def windowed(
         *,
+        inner: decoders.DecoderSpec,
+        buffer: int,
         step: int = ...,
-        buffer: int = ...,
-        mode: str = ...,
-        seam: int = ...,
-        core_extend: int = ...,
-        commit_weight_max: float = ...,
-        inner: decoders.DecoderSpec | None = ...,
-        sandwich_phase2: decoders.DecoderSpec | None = ...,
     ) -> decoders.DecoderSpec: ...
     @staticmethod
     def mwpf(

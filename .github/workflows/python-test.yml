@@ -369,9 +369,11 @@ jobs:
         mkdir -p dist/pecos-rslib-llvm
         maturin build --locked --manifest-path python/pecos-rslib-llvm/Cargo.toml --out dist/pecos-rslib-llvm
 
-    - name: Test macOS QIS executor and runtime symbol binding
-      if: runner.os == 'macOS'
-      run: cargo +stable test --locked -p pecos-qis --lib executor::tests
+    - name: Test QIS executor recovery and runtime symbol binding
+      if: runner.os == 'macOS' || runner.os == 'Windows'
+      run: |
+        cargo +stable test --locked -p pecos-qis-ffi --lib
+        cargo +stable test --locked -p pecos-qis --lib executor::tests
 
     - name: Build quantum-pecos wheel
       if: matrix.build-quantum-pecos

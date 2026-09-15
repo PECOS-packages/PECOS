@@ -551,8 +551,8 @@ fn panic_decodes_guppy_division_by_zero_constant() {
 
 #[test]
 fn inner_handler_scope_restores_outer_handler() {
-    unsafe extern "C" fn outer_handler() {}
-    unsafe extern "C" fn inner_handler() {}
+    unsafe extern "C-unwind" fn outer_handler() {}
+    unsafe extern "C-unwind" fn inner_handler() {}
 
     let original = pecos_get_program_panic_handler();
     unsafe { pecos_set_program_panic_handler(Some(outer_handler)) };
@@ -564,8 +564,36 @@ fn inner_handler_scope_restores_outer_handler() {
     unsafe { pecos_set_program_panic_handler(original) };
     assert!(std::ptr::fn_addr_eq(
         restored.expect("outer handler restored"),
-        outer_handler as unsafe extern "C" fn(),
+        outer_handler as unsafe extern "C-unwind" fn(),
     ));
+}
+
+#[test]
+fn invalid_allocation_can_unwind_through_the_ffi_boundary() {
+    // A Rust unwind models the ABI boundary on every host; the executor tests
+    // additionally exercise the real C longjmp/Windows forced-unwind path.
+    unsafe extern "C-unwind" fn transfer() {
+        std::panic::panic_any("test recovery transfer");
+    }
+    let registered = RegisteredContext::new();
+    let previous = pecos_get_program_panic_handler();
+    unsafe { pecos_set_program_panic_handler(Some(transfer)) };
+    let result = std::panic::catch_unwind(|| unsafe { heap_alloc(u64::MAX) });
+    unsafe { pecos_set_program_panic_handler(previous) };
+    assert_eq!(
+        result
+            .expect_err("recovery must transfer")
+            .downcast_ref::<&str>(),
+        Some(&"test recovery transfer")
+    );
+    assert!(matches!(
+        &*registered.context().program_error.lock().expect("error lock"),
+        Some(ProgramError::InvalidInput { entry, .. }) if entry == "heap_alloc"
+    ));
+    // No allocation lock may remain held or poisoned after recovery.
+    let allocation = unsafe { heap_alloc(16) };
+    assert!(!allocation.is_null());
+    unsafe { heap_free(allocation) };
 }
 
 #[test]

@@ -2985,7 +2985,7 @@ mod tests {
             let address: Symbol<unsafe extern "C" fn() -> *const ()> = program
                 .get(b"runtime_panic_address\0")
                 .expect("address probe");
-            let expected: Symbol<unsafe extern "C" fn(i32, *const std::ffi::c_char)> =
+            let expected: Symbol<unsafe extern "C-unwind" fn(i32, *const std::ffi::c_char)> =
                 ffi.get(b"panic\0").expect("PECOS panic");
             assert_eq!(
                 address(),

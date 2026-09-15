@@ -94,7 +94,7 @@ macro_rules! export_rng {
         /// With an execution guard installed, the caller's skipped frames must
         /// not own values requiring destruction if invalid input transfers to C.
         #[unsafe(no_mangle)]
-        pub unsafe extern "C" fn $name($($arg: $ty),*) -> $return {
+        pub unsafe extern "C-unwind" fn $name($($arg: $ty),*) -> $return {
             match $operation {
                 Ok(value) => value,
                 Err(detail) => {

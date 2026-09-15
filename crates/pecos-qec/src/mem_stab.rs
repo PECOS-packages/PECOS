@@ -182,12 +182,10 @@ impl MemStabSimBuilder {
         let analyzer = DagFaultAnalyzer::new(&dag);
         let influence_map = analyzer.build_influence_map();
 
-        let mut builder = MemBuilder::new(&influence_map).with_noise(
-            self.noise.p1,
-            self.noise.p2,
-            self.noise.p_meas,
-            self.noise.p_prep,
-        );
+        // Forward the whole configuration. Unpacking it into the four scalars
+        // rebuilds a fresh `NoiseConfig` and drops everything else the caller
+        // set -- per-gate rate tables above all -- without reporting it.
+        let mut builder = MemBuilder::new(&influence_map).with_noise_config(self.noise);
 
         if let Some(order) = self.measurement_order {
             builder = builder.with_measurement_order(order);

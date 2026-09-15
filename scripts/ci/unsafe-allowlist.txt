@@ -16,6 +16,7 @@ crates/pecos-qis-ffi
 crates/pecos-simulators
 crates/pecos-tesseract
 exp/pecos-experimental
+exp/pecos-frontier-wasm
 # zlup revival (experimental): zlup contains one reviewed `unsafe fn new_unchecked`
 # invariant constructor; zlup-ffi is a C-ABI boundary crate (Box::from_raw / slices).
 exp/zlup

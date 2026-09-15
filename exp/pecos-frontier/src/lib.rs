@@ -29,7 +29,33 @@ pub use pecos_trellis::{
     deadline_column_order_for_factors,
 };
 use std::cmp::Ordering;
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 use std::time::Instant;
+
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+type TimerStart = Instant;
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+struct TimerStart;
+
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+fn timer_start() -> TimerStart {
+    Instant::now()
+}
+
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+fn timer_start() -> TimerStart {
+    TimerStart
+}
+
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+fn timer_seconds(start: TimerStart) -> f64 {
+    start.elapsed().as_secs_f64()
+}
+
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+fn timer_seconds(_: TimerStart) -> f64 {
+    0.0
+}
 
 /// Parity-port name for [`pecos_trellis::TrellisDecoder`].
 pub type FrontierDecoder = pecos_trellis::TrellisDecoder;
@@ -104,7 +130,7 @@ impl FrontierCommittee {
     /// Returns [`DecoderError::InvalidConfiguration`] when the configuration or
     /// DEM is invalid.
     pub fn from_sparse_dem(dem: &SparseDem, config: FrontierConfig) -> Result<Self, DecoderError> {
-        let build_started = Instant::now();
+        let build_started = timer_start();
         if config.metric_mode == MetricMode::MaxLogInt {
             return Err(DecoderError::InvalidConfiguration(
                 "FrontierCommittee arbitration ranks on coset-mass posteriors; the integer max-log metric is not supported"
@@ -147,7 +173,7 @@ impl FrontierCommittee {
             int_metric_scale,
         };
         let backward = FrontierDecoder::from_sparse_dem(dem, backward_config)?;
-        let build_seconds = build_started.elapsed().as_secs_f64();
+        let build_seconds = timer_seconds(build_started);
         Ok(Self {
             forward,
             backward,

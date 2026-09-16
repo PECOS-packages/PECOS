@@ -83,6 +83,7 @@ mod dem_sampler;
 mod equivalence;
 mod mem_builder;
 pub(crate) mod sampler;
+mod slice;
 mod types;
 
 pub use builder::{DemBuilder, DemBuilderError, resolve_result_tags};
@@ -96,6 +97,12 @@ pub use mem_builder::MemBuilder;
 pub use sampler::{
     DemSampler, DemSamplerBuilder, DetectorValidationError, DualSampleResult, OutputMode,
     SamplerLabels,
+};
+pub use slice::{
+    ComposedDem, ComposedDetectorAddress, DEM_SLICE_ROUND_ATTRIBUTE, DemBoundaryKind,
+    DemComposeDiagnostics, DemDetectorPlacement, DemSlice, DemSliceComposeError,
+    DemSliceContribution, DemSliceDetector, DemSliceInstance, DemSliceRoundSchedule,
+    DemTemporalHorizon, DemWindowSpec, RelativeDetectorTarget, SliceFaultMechanism,
 };
 pub use types::{
     ContributionEffectSummary, ContributionRenderRecord, ContributionRenderStrategy,

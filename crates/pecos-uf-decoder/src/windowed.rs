@@ -10,856 +10,364 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-//! Sliding-window decoder for real-time surface code decoding.
-//!
-//! Two modes:
-//!
-//! - **Non-overlapping (`buf=0`)**: sub-DEM per window, any inner decoder,
-//!   observable XOR across windows. Converges to ~1.03x penalty at large r
-//!   (matching Tan et al.). Inner decoder is pluggable via factory.
-//!
-//! - **Overlapping (`buf>0`)**: uses `UfDecoder` for edge tracking. Each
-//!   window is extended by buffer rounds for matching context. Only corrections
-//!   with both endpoints in the core region are committed. No artificial defect
-//!   injection — the buffer just provides graph context (Tan et al.).
-//!
-//! Reference: Tan et al., PRX Quantum 2023 (arXiv:2209.09219).
+//! Sequential windows with whole-component commit and global residual carry.
 
-use pecos_decoder_core::ObservableDecoder;
-use pecos_decoder_core::correlated_decoder::EdgeTrackingDecoder;
-use pecos_decoder_core::dem::DemMatchingGraph;
-use pecos_decoder_core::errors::DecoderError;
-use std::fmt::Write as _;
+use pecos_decoder_core::streaming::StreamingDecoder;
+use pecos_decoder_core::window::{CommitColumn, CommitWindow, StructuredDem, min_buffer_rounds};
+use pecos_decoder_core::{DecoderError, EdgeDecoder, ObservableDecoder, obs_mask::ObsMask};
+use std::collections::BTreeSet;
+use std::ops::Range;
 
-/// Configuration for the windowed decoder.
-#[derive(Debug, Clone, Copy, Default)]
+pub use crate::beam_windowed::{BeamSearchConfig, BeamSearchWindowedDecoder, BeamWindowConfig};
+
+/// Explicit window engine parameters: positive step and forward buffer.
+#[derive(Clone, Copy, Debug)]
 pub struct WindowedConfig {
-    /// Commit rounds per window (step size). 0 = auto (code distance).
-    pub step_size: usize,
-    /// Buffer rounds on each side of the core. 0 = non-overlapping.
-    /// Recommended: set equal to code distance for near-zero penalty.
-    pub buffer_size: usize,
-    /// Half-width of Type-2 seam windows in rounds. 0 = auto (step/2).
-    pub seam_half_width: usize,
-    /// Extend core by this many layers into the buffer on each side.
-    /// Committed edges can touch the extended core, capturing more
-    /// boundary corrections. 0 = strict core only (default).
-    pub core_extend: usize,
-    /// Maximum edge weight for Phase-1 commit. Only correction edges
-    /// with weight below this are committed (high-confidence corrections).
-    /// 0.0 = no threshold (commit all core edges, default).
-    pub commit_weight_max: f64,
+    /// Number of commit rounds, at least 1; a latency and throughput choice.
+    pub step: usize,
+    /// Forward context in rounds, at least [`min_buffer_rounds`].
+    pub buffer: usize,
 }
 
-// =============================================================================
-// Non-overlapping windowed decoder (buf=0)
-// =============================================================================
-
-/// Pre-built window with a generic inner decoder.
-struct PrebuiltWindow {
-    decoder: Box<dyn ObservableDecoder>,
-    local_to_global: Vec<u32>,
-    num_local: usize,
-}
-
-/// Non-overlapping windowed decoder. Any `ObservableDecoder` as inner decoder.
-pub struct WindowedDecoder {
-    windows: Vec<PrebuiltWindow>,
-}
-
-impl WindowedDecoder {
-    /// Create from a DEM string with a decoder factory.
+impl WindowedConfig {
+    /// Validate the commit step, including for models with no windows.
     ///
     /// # Errors
-    ///
-    /// Returns `DecoderError` if the DEM is malformed or the factory fails.
-    pub fn from_dem<F>(
-        dem: &str,
-        config: WindowedConfig,
-        mut decoder_factory: F,
-    ) -> Result<Self, DecoderError>
-    where
-        F: FnMut(&str) -> Result<Box<dyn ObservableDecoder>, DecoderError>,
-    {
-        let (det_times, num_detectors, step_size, total_t) = parse_dem_params(dem, &config)?;
-        let mut windows = Vec::new();
-        let mut t_start = 0.0f64;
-
-        while t_start < total_t {
-            let is_last = t_start + 2.0 * step_size as f64 > total_t;
-            let t_end = if is_last {
-                total_t + 1.0
-            } else {
-                t_start + step_size as f64
-            };
-
-            let (local_to_global, window_dem) =
-                extract_window_dem(dem, &det_times, num_detectors, t_start, t_end);
-
-            let num_local = local_to_global.len();
-            if num_local > 0 && !window_dem.is_empty() {
-                let decoder = decoder_factory(&window_dem)?;
-                windows.push(PrebuiltWindow {
-                    decoder,
-                    local_to_global,
-                    num_local,
-                });
-            }
-
-            t_start += step_size as f64;
+    /// Returns an error if the step is zero or exceeds `u32::MAX`.
+    pub(crate) fn validate_step(&self) -> Result<u32, DecoderError> {
+        if self.step == 0 {
+            return Err(DecoderError::InvalidConfiguration(
+                "step must be at least 1".into(),
+            ));
         }
-
-        Ok(Self { windows })
-    }
-
-    /// Number of windows.
-    #[must_use]
-    pub fn num_windows(&self) -> usize {
-        self.windows.len()
+        u32::try_from(self.step)
+            .map_err(|_| DecoderError::InvalidConfiguration("step exceeds u32::MAX".into()))
     }
 }
 
-impl ObservableDecoder for WindowedDecoder {
-    fn decode_obs(
-        &mut self,
-        syndrome: &[u8],
-    ) -> Result<pecos_decoder_core::obs_mask::ObsMask, DecoderError> {
-        let mut obs_mask = 0u64;
-        for window in &mut self.windows {
-            let mut window_syn = vec![0u8; window.num_local];
-            for (local_id, &global_id) in window.local_to_global.iter().enumerate() {
-                let gid = global_id as usize;
-                if gid < syndrome.len() {
-                    window_syn[local_id] = syndrome[gid];
-                }
-            }
-            obs_mask ^= window.decoder.decode_to_observables(&window_syn)?;
-        }
-        Ok(pecos_decoder_core::obs_mask::ObsMask::from_u64(obs_mask))
-    }
-}
-
-// =============================================================================
-// Overlapping windowed decoder (buf>0, Tan et al.)
-// =============================================================================
-
-/// Pre-built overlapping window with an edge-tracking inner decoder.
-struct OverlappingWindow<D> {
+struct Window<D> {
+    model: CommitWindow,
     decoder: D,
-    local_to_global: Vec<u32>,
-    /// Per local detector: true = core region, false = buffer.
-    is_core: Vec<bool>,
-    num_local: usize,
+    commit: Range<u32>,
+    end: u32,
+    last: bool,
 }
 
-/// Overlapping windowed decoder using any `EdgeTrackingDecoder` for edge tracking.
+/// Per-shot diagnostics, reset with the decoder.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct WindowDiagnostics {
+    /// Number of forced commits containing at least one future edge.
+    pub forced_future_components: usize,
+    /// Number of deferred components across all processed windows.
+    pub deferred_components: usize,
+    /// Global column indices committed so far, retaining repeated toggles.
+    pub committed_columns: Vec<usize>,
+}
+
+/// Finite, predeclared window decoder. Batch and incremental input share one residual.
 ///
-/// Each window is extended by buffer rounds for matching context.
-/// Only core corrections are committed; buffer corrections are discarded.
-pub struct OverlappingWindowedDecoder<D> {
-    windows: Vec<OverlappingWindow<D>>,
-}
-
-impl<D: EdgeTrackingDecoder> OverlappingWindowedDecoder<D> {
-    /// Create from a DEM string with a factory for the inner decoder.
-    ///
-    /// # Errors
-    ///
-    /// Returns `DecoderError` if the DEM is malformed or the factory fails.
-    pub fn from_dem<F>(
-        dem: &str,
-        config: WindowedConfig,
-        mut factory: F,
-    ) -> Result<Self, DecoderError>
-    where
-        F: FnMut(&str) -> Result<D, DecoderError>,
-    {
-        let (det_times, num_detectors, step_size, total_t) = parse_dem_params(dem, &config)?;
-        let buffer_size = config.buffer_size;
-        let mut windows = Vec::new();
-        let mut t_start = 0.0f64;
-
-        while t_start < total_t {
-            let is_last = t_start + 2.0 * step_size as f64 > total_t;
-            let t_core_end = if is_last {
-                total_t + 1.0
-            } else {
-                t_start + step_size as f64
-            };
-            let t_win_start = (t_start - buffer_size as f64).max(0.0);
-            let t_win_end = if is_last {
-                total_t + 1.0
-            } else {
-                t_core_end + buffer_size as f64
-            };
-
-            let (local_to_global, window_dem) =
-                extract_window_dem(dem, &det_times, num_detectors, t_win_start, t_win_end);
-
-            let ext = config.core_extend as f64;
-            let is_core: Vec<bool> = local_to_global
-                .iter()
-                .map(|&gid| {
-                    let t = det_times[gid as usize];
-                    t >= (t_start - ext) && t < (t_core_end + ext)
-                })
-                .collect();
-
-            let num_local = local_to_global.len();
-            if num_local > 0 && !window_dem.is_empty() {
-                let decoder = factory(&window_dem)?;
-                windows.push(OverlappingWindow {
-                    decoder,
-                    local_to_global,
-                    is_core,
-                    num_local,
-                });
-            }
-
-            t_start += step_size as f64;
-        }
-
-        Ok(Self { windows })
-    }
-
-    /// Number of windows.
-    #[must_use]
-    pub fn num_windows(&self) -> usize {
-        self.windows.len()
-    }
-}
-
-impl<D: EdgeTrackingDecoder> ObservableDecoder for OverlappingWindowedDecoder<D> {
-    fn decode_obs(
-        &mut self,
-        syndrome: &[u8],
-    ) -> Result<pecos_decoder_core::obs_mask::ObsMask, DecoderError> {
-        let mut obs_mask = 0u64;
-
-        for window in &mut self.windows {
-            let mut window_syn = vec![0u8; window.num_local];
-            for (local_id, &global_id) in window.local_to_global.iter().enumerate() {
-                let gid = global_id as usize;
-                if gid < syndrome.len() {
-                    window_syn[local_id] = syndrome[gid];
-                }
-            }
-
-            // Use MatchingDecoder trait for edge tracking.
-            let (_, matched_edges) = window.decoder.decode_with_matching(&window_syn)?;
-
-            let boundary = window.num_local as u32;
-            for &edge_idx in &matched_edges {
-                let n1 = window.decoder.edge_node1(edge_idx);
-                let n2 = window.decoder.edge_node2(edge_idx);
-
-                let n1_core = n1 >= boundary
-                    || ((n1 as usize) < window.is_core.len() && window.is_core[n1 as usize]);
-                let n2_core = n2 >= boundary
-                    || ((n2 as usize) < window.is_core.len() && window.is_core[n2 as usize]);
-
-                if n1_core && n2_core {
-                    obs_mask ^= window.decoder.edge_obs_mask(edge_idx);
-                }
-            }
-        }
-
-        Ok(pecos_decoder_core::obs_mask::ObsMask::from_u64(obs_mask))
-    }
-}
-
-// =============================================================================
-// Sandwich windowed decoder (Tan et al. two-phase)
-// =============================================================================
-
-/// Sandwich windowed decoder: two-phase decoding for reduced boundary penalty.
-///
-/// Phase 1 (Type-1): Overlapping windows with core-only commit, same as
-/// `OverlappingWindowedDecoder`. Independent, can run in parallel.
-///
-/// Phase 2 (Type-2): Small seam windows at core boundaries decode the
-/// residual syndrome left by Type-1. The residual is computed as
-/// `original XOR correction_effect` where `correction_effect` tracks
-/// which syndrome bits were flipped by Type-1's committed edges.
-///
-/// This gives Type-2 bidirectional boundary information from both
-/// flanking Type-1 windows, reducing the boundary penalty.
-pub struct SandwichWindowedDecoder<D> {
-    type1_windows: Vec<OverlappingWindow<D>>,
-    residual_decoder: Box<dyn ObservableDecoder>,
-    num_detectors: usize,
-    commit_weight_max: f64,
-}
-
-impl<D: EdgeTrackingDecoder> SandwichWindowedDecoder<D> {
-    /// Create from a DEM string with factories for Phase-1 and Phase-2 decoders.
-    ///
-    /// # Errors
-    ///
-    /// Returns `DecoderError` if the DEM is malformed or factories fail.
-    pub fn from_dem<F1, F2>(
-        dem: &str,
-        config: WindowedConfig,
-        mut phase1_factory: F1,
-        mut phase2_factory: F2,
-    ) -> Result<Self, DecoderError>
-    where
-        F1: FnMut(&str) -> Result<D, DecoderError>,
-        F2: FnMut(&str) -> Result<Box<dyn ObservableDecoder>, DecoderError>,
-    {
-        let (det_times, num_detectors, step_size, total_t) = parse_dem_params(dem, &config)?;
-        let buffer_size = config.buffer_size;
-
-        let mut type1_windows = Vec::new();
-        let mut t_start = 0.0f64;
-
-        while t_start < total_t {
-            let is_last = t_start + 2.0 * step_size as f64 > total_t;
-            let t_core_end = if is_last {
-                total_t + 1.0
-            } else {
-                t_start + step_size as f64
-            };
-            let t_win_start = (t_start - buffer_size as f64).max(0.0);
-            let t_win_end = if is_last {
-                total_t + 1.0
-            } else {
-                t_core_end + buffer_size as f64
-            };
-
-            let (local_to_global, window_dem) =
-                extract_window_dem(dem, &det_times, num_detectors, t_win_start, t_win_end);
-
-            let ext = config.core_extend as f64;
-            let is_core: Vec<bool> = local_to_global
-                .iter()
-                .map(|&gid| {
-                    let t = det_times[gid as usize];
-                    t >= (t_start - ext) && t < (t_core_end + ext)
-                })
-                .collect();
-
-            let num_local = local_to_global.len();
-            if num_local > 0 && !window_dem.is_empty() {
-                let decoder = phase1_factory(&window_dem)?;
-                type1_windows.push(OverlappingWindow {
-                    decoder,
-                    local_to_global,
-                    is_core,
-                    num_local,
-                });
-            }
-
-            t_start += step_size as f64;
-        }
-
-        let residual_decoder = phase2_factory(dem)?;
-
-        Ok(Self {
-            type1_windows,
-            residual_decoder,
-            num_detectors,
-            commit_weight_max: config.commit_weight_max,
-        })
-    }
-
-    /// Number of Type-1 windows.
-    #[must_use]
-    pub fn num_windows(&self) -> usize {
-        self.type1_windows.len()
-    }
-
-    /// Decode with parallel Phase-1 windows using rayon.
-    ///
-    /// Requires `D: Send` for thread safety. Phase-1 windows run on rayon's
-    /// thread pool; Phase-2 residual runs sequentially after.
-    ///
-    /// # Errors
-    ///
-    /// Returns `DecoderError` if any window decoder fails.
-    pub fn decode_parallel(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError>
-    where
-        D: Send,
-    {
-        use rayon::prelude::*;
-
-        let commit_weight_max = self.commit_weight_max;
-        let num_detectors = self.num_detectors;
-
-        // Phase 1: Decode Type-1 windows in parallel.
-        let window_results: Result<Vec<_>, DecoderError> = self
-            .type1_windows
-            .par_iter_mut()
-            .map(|window| {
-                let mut window_syn = vec![0u8; window.num_local];
-                for (local_id, &global_id) in window.local_to_global.iter().enumerate() {
-                    let gid = global_id as usize;
-                    if gid < syndrome.len() {
-                        window_syn[local_id] = syndrome[gid];
-                    }
-                }
-
-                let (_, matched_edges) = window.decoder.decode_with_matching(&window_syn)?;
-
-                let mut obs = 0u64;
-                let mut corrections: Vec<(usize, u8)> = Vec::new();
-                let boundary = window.num_local as u32;
-
-                for &edge_idx in &matched_edges {
-                    let n1 = window.decoder.edge_node1(edge_idx);
-                    let n2 = window.decoder.edge_node2(edge_idx);
-
-                    let n1_core = n1 >= boundary
-                        || ((n1 as usize) < window.is_core.len() && window.is_core[n1 as usize]);
-                    let n2_core = n2 >= boundary
-                        || ((n2 as usize) < window.is_core.len() && window.is_core[n2 as usize]);
-
-                    let weight_ok = commit_weight_max <= 0.0
-                        || window.decoder.edge_weight(edge_idx) <= commit_weight_max;
-
-                    if n1_core && n2_core && weight_ok {
-                        obs ^= window.decoder.edge_obs_mask(edge_idx);
-                        if (n1 as usize) < window.num_local {
-                            corrections.push((window.local_to_global[n1 as usize] as usize, 1));
-                        }
-                        if (n2 as usize) < window.num_local {
-                            corrections.push((window.local_to_global[n2 as usize] as usize, 1));
-                        }
-                    }
-                }
-
-                Ok((obs, corrections))
-            })
-            .collect();
-
-        // Merge results (XOR is order-independent).
-        let mut obs_mask = 0u64;
-        let mut correction_effect = vec![0u8; num_detectors];
-        for (window_obs, corrections) in window_results? {
-            obs_mask ^= window_obs;
-            for (gid, bit) in corrections {
-                correction_effect[gid] ^= bit;
-            }
-        }
-
-        // Phase 2: Residual decode (sequential).
-        let mut residual_syn = vec![0u8; num_detectors];
-        for (i, &s) in syndrome.iter().enumerate() {
-            if i < num_detectors {
-                residual_syn[i] = s ^ correction_effect[i];
-            }
-        }
-        obs_mask ^= self.residual_decoder.decode_to_observables(&residual_syn)?;
-
-        Ok(obs_mask)
-    }
-}
-
-impl<D: EdgeTrackingDecoder> ObservableDecoder for SandwichWindowedDecoder<D> {
-    fn decode_obs(
-        &mut self,
-        syndrome: &[u8],
-    ) -> Result<pecos_decoder_core::obs_mask::ObsMask, DecoderError> {
-        let mut obs_mask = 0u64;
-        let mut correction_effect = vec![0u8; self.num_detectors];
-        let commit_weight_max = self.commit_weight_max;
-
-        // Phase 1: Decode Type-1 windows.
-        for window in &mut self.type1_windows {
-            let mut window_syn = vec![0u8; window.num_local];
-            for (local_id, &global_id) in window.local_to_global.iter().enumerate() {
-                let gid = global_id as usize;
-                if gid < syndrome.len() {
-                    window_syn[local_id] = syndrome[gid];
-                }
-            }
-
-            let (_, matched_edges) = window.decoder.decode_with_matching(&window_syn)?;
-
-            let boundary = window.num_local as u32;
-            for &edge_idx in &matched_edges {
-                let n1 = window.decoder.edge_node1(edge_idx);
-                let n2 = window.decoder.edge_node2(edge_idx);
-
-                let n1_core = n1 >= boundary
-                    || ((n1 as usize) < window.is_core.len() && window.is_core[n1 as usize]);
-                let n2_core = n2 >= boundary
-                    || ((n2 as usize) < window.is_core.len() && window.is_core[n2 as usize]);
-
-                let weight_ok = commit_weight_max <= 0.0
-                    || window.decoder.edge_weight(edge_idx) <= commit_weight_max;
-
-                if n1_core && n2_core && weight_ok {
-                    obs_mask ^= window.decoder.edge_obs_mask(edge_idx);
-
-                    if (n1 as usize) < window.num_local {
-                        let gid = window.local_to_global[n1 as usize] as usize;
-                        correction_effect[gid] ^= 1;
-                    }
-                    if (n2 as usize) < window.num_local {
-                        let gid = window.local_to_global[n2 as usize] as usize;
-                        correction_effect[gid] ^= 1;
-                    }
-                }
-            }
-        }
-
-        // Phase 2: Decode residual syndrome on the full graph.
-        let mut residual_syn = vec![0u8; self.num_detectors];
-        for (i, &s) in syndrome.iter().enumerate() {
-            if i < self.num_detectors {
-                residual_syn[i] = s ^ correction_effect[i];
-            }
-        }
-        obs_mask ^= self.residual_decoder.decode_to_observables(&residual_syn)?;
-
-        Ok(pecos_decoder_core::obs_mask::ObsMask::from_u64(obs_mask))
-    }
-}
-
-// =============================================================================
-// Shared helpers
-// =============================================================================
-
-/// Parse DEM parameters for windowing.
-fn parse_dem_params(
-    dem: &str,
-    config: &WindowedConfig,
-) -> Result<(Vec<f64>, usize, usize, f64), DecoderError> {
-    let graph = DemMatchingGraph::from_dem_str(dem)?;
-    // Every edge-tracking window family and its residual/beam aggregation use
-    // u64 observable masks internally. Reject a wider model before creating
-    // any sub-decoder so no global observable bit can be truncated.
-    graph.ensure_observables_fit_u64()?;
-    let num_detectors = graph.num_detectors;
-
-    let mut det_times = vec![0.0f64; num_detectors];
-    let mut max_time = 0.0f64;
-    for (i, coord) in graph.detector_coords.iter().enumerate() {
-        if let Some(c) = coord {
-            let t = c.get(2).copied().unwrap_or(0.0);
-            if i < det_times.len() {
-                det_times[i] = t;
-            }
-            if t > max_time {
-                max_time = t;
-            }
-        }
-    }
-
-    let num_rounds = (max_time + 1.0) as usize;
-    let num_stab = num_detectors
-        .checked_div(num_rounds)
-        .unwrap_or(num_detectors);
-    let d_est = ((num_stab as f64).sqrt().ceil() as usize).max(3);
-    let step_size = if config.step_size > 0 {
-        config.step_size
-    } else {
-        d_est
-    };
-    let total_t = num_rounds as f64;
-
-    Ok((det_times, num_detectors, step_size, total_t))
-}
-
-/// Extract a window sub-DEM by filtering the original DEM text.
-///
-/// Detectors in `[t_start, t_end)` are included and remapped to local IDs.
-/// Detectors outside the window are dropped from error mechanisms, creating
-/// implicit boundary edges.
-fn extract_window_dem(
-    dem: &str,
-    det_times: &[f64],
-    num_det: usize,
-    t_start: f64,
-    t_end: f64,
-) -> (Vec<u32>, String) {
-    let mut in_window = vec![false; num_det];
-    let mut local_to_global: Vec<u32> = Vec::new();
-    let mut global_to_local: Vec<Option<u32>> = vec![None; num_det];
-
-    for (i, &t) in det_times.iter().enumerate() {
-        if t >= t_start && t < t_end {
-            in_window[i] = true;
-            global_to_local[i] = Some(local_to_global.len() as u32);
-            local_to_global.push(i as u32);
-        }
-    }
-
-    let mut out = String::new();
-
-    for line in dem.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
-
-        if trimmed.starts_with("error(") {
-            let Some(close) = trimmed.find(')') else {
-                continue;
-            };
-            let prob_str = &trimmed[6..close];
-            let rest = &trimmed[close + 1..];
-            let tokens: Vec<&str> = rest.split_whitespace().collect();
-
-            // Split by ^ into decomposed segments.
-            let mut segments: Vec<Vec<&str>> = vec![Vec::new()];
-            for tok in &tokens {
-                if *tok == "^" {
-                    segments.push(Vec::new());
-                } else {
-                    segments.last_mut().unwrap().push(tok);
-                }
-            }
-
-            let mut remapped_segments: Vec<String> = Vec::new();
-            for seg in &segments {
-                let mut seg_dets: Vec<String> = Vec::new();
-                let mut seg_obs: Vec<String> = Vec::new();
-                let mut seg_any_in = false;
-
-                for tok in seg {
-                    if let Some(d_str) = tok.strip_prefix('D') {
-                        if let Ok(d) = d_str.parse::<usize>()
-                            && d < num_det
-                            && in_window[d]
-                        {
-                            seg_any_in = true;
-                            if let Some(local) = global_to_local[d] {
-                                seg_dets.push(format!("D{local}"));
-                            }
-                        }
-                    } else if tok.starts_with('L') {
-                        seg_obs.push((*tok).to_string());
-                    }
-                }
-
-                if seg_any_in {
-                    let mut seg_str = seg_dets.join(" ");
-                    for obs in &seg_obs {
-                        seg_str.push(' ');
-                        seg_str.push_str(obs);
-                    }
-                    remapped_segments.push(seg_str);
-                }
-            }
-
-            if !remapped_segments.is_empty() {
-                let _ = write!(out, "error({prob_str}) ");
-                out.push_str(&remapped_segments.join(" ^ "));
-                out.push('\n');
-            }
-        } else if trimmed.starts_with("detector(")
-            && let Some(d_start) = trimmed.rfind('D')
-            && let Ok(d) = trimmed[d_start + 1..].trim().parse::<usize>()
-            && d < num_det
-            && in_window[d]
-            && let Some(local) = global_to_local[d]
-        {
-            let coords_end = trimmed.find(')').unwrap_or(trimmed.len());
-            out.push_str(&trimmed[..=coords_end]);
-            let _ = writeln!(out, " D{local}");
-        }
-    }
-
-    (local_to_global, out)
-}
-
-// =============================================================================
-// Streaming windowed decoder
-// =============================================================================
-
-use std::collections::BTreeMap;
-
-/// Streaming windowed decoder that accepts syndrome data round-by-round.
-///
-/// Precomputes round-to-detector mapping from DEM coordinates. As rounds
-/// arrive via `feed_round`, buffers syndrome data and triggers window
-/// decoding when each window's extended region is complete. Emits partial
-/// observable corrections as windows commit.
+/// Correlation groups are retained within each window; correlation evidence does not
+/// cross windows. Finite windows need not reproduce the monolithic correction.
 pub struct StreamingWindowedDecoder<D> {
-    /// Prebuilt windows, ordered by start time.
-    windows: Vec<OverlappingWindow<D>>,
-    /// Round number → list of (`local_window_idx`, `local_detector_idx`) for each window.
-    round_to_dets: BTreeMap<usize, Vec<(usize, usize)>>,
-    /// Per-window syndrome buffers.
-    window_syndromes: Vec<Vec<u8>>,
-    /// Round at which each window becomes decodable (all data received).
-    window_ready_round: Vec<usize>,
-    /// Index of next window to decode.
+    windows: Vec<Window<D>>,
+    columns: Vec<CommitColumn>,
+    times: Vec<u32>,
+    raw: Vec<u8>,
+    residual: Vec<u8>,
     next_decode: usize,
-    /// Accumulated observable corrections.
     accumulated: u64,
+    diagnostics: WindowDiagnostics,
 }
 
-impl<D: EdgeTrackingDecoder> StreamingWindowedDecoder<D> {
-    /// Create from a DEM string with factory.
+impl<D: EdgeDecoder> StreamingWindowedDecoder<D> {
+    /// Construct from flattened DEM text and a checked-window decoder factory.
     ///
     /// # Errors
+    /// Returns an error for invalid models, incomplete or unsolvable windows, or factory errors.
+    pub fn from_dem<F>(dem: &str, config: WindowedConfig, factory: F) -> Result<Self, DecoderError>
+    where
+        F: FnMut(&CommitWindow) -> Result<D, DecoderError>,
+    {
+        Self::from_structured_dem(&StructuredDem::from_dem_str(dem)?, config, factory)
+    }
+
+    /// Construct from a structured model without a top-level render/parse cycle.
     ///
-    /// Returns `DecoderError` if the DEM is malformed or factory fails.
-    pub fn from_dem<F>(
-        dem: &str,
+    /// # Errors
+    /// Returns an error for invalid models, incomplete or unsolvable windows, or factory errors.
+    pub fn from_structured_dem<F>(
+        dem: &StructuredDem,
         config: WindowedConfig,
         mut factory: F,
     ) -> Result<Self, DecoderError>
     where
-        F: FnMut(&str) -> Result<D, DecoderError>,
+        F: FnMut(&CommitWindow) -> Result<D, DecoderError>,
     {
-        let (det_times, num_detectors, step_size, total_t) = parse_dem_params(dem, &config)?;
-        let buffer_size = config.buffer_size;
-
-        // Build windows (same as OverlappingWindowedDecoder).
+        let step = config.validate_step()?;
+        dem.ensure_observables_fit_u64()?;
+        let times = dem.commit_detector_times()?;
+        let columns = dem.commit_columns()?;
+        let minimum = min_buffer_rounds(dem)?;
+        if config.buffer < minimum as usize {
+            return Err(DecoderError::InvalidConfiguration(format!(
+                "buffer {} is below max_forward_span {minimum}",
+                config.buffer
+            )));
+        }
+        let total = times.iter().copied().max().map_or(0, |t| t + 1);
+        let buffer = u32::try_from(config.buffer)
+            .map_err(|_| DecoderError::InvalidConfiguration("buffer exceeds u32::MAX".into()))?;
         let mut windows = Vec::new();
-        let mut window_ranges: Vec<(f64, f64, f64)> = Vec::new(); // (win_start, win_end, core_end)
-        let mut t_start = 0.0f64;
-
-        while t_start < total_t {
-            let is_last = t_start + 2.0 * step_size as f64 > total_t;
-            let t_core_end = if is_last {
-                total_t + 1.0
+        let mut start = 0u32;
+        while start < total {
+            let end = start.saturating_add(step);
+            let last = u64::from(end) + u64::from(step) > u64::from(total);
+            let end = if last { total } else { end };
+            let rows = start.saturating_sub(step)..if last {
+                total
             } else {
-                t_start + step_size as f64
+                end.saturating_add(buffer).min(total)
             };
-            let t_win_start = (t_start - buffer_size as f64).max(0.0);
-            let t_win_end = if is_last {
-                total_t + 1.0
-            } else {
-                t_core_end + buffer_size as f64
-            };
-
-            let (local_to_global, window_dem) =
-                extract_window_dem(dem, &det_times, num_detectors, t_win_start, t_win_end);
-
-            let ext = config.core_extend as f64;
-            let is_core: Vec<bool> = local_to_global
-                .iter()
-                .map(|&gid| {
-                    let t = det_times[gid as usize];
-                    t >= (t_start - ext) && t < (t_core_end + ext)
-                })
-                .collect();
-
-            let num_local = local_to_global.len();
-            if num_local > 0 && !window_dem.is_empty() {
-                let decoder = factory(&window_dem)?;
-                window_ranges.push((t_win_start, t_win_end, t_core_end));
-                windows.push(OverlappingWindow {
-                    decoder,
-                    local_to_global,
-                    is_core,
-                    num_local,
-                });
+            let model = dem
+                .commit_window(rows.clone(), start..end)
+                .map_err(|error| {
+                    DecoderError::InvalidConfiguration(format!("window {}: {error}", windows.len()))
+                })?;
+            let decoder = factory(&model)?;
+            windows.push(Window {
+                model,
+                decoder,
+                commit: start..end,
+                end: rows.end,
+                last,
+            });
+            if last {
+                break;
             }
-
-            t_start += step_size as f64;
+            start = end;
         }
-
-        // Build round → (window_idx, local_det) mapping.
-        let mut round_to_dets: BTreeMap<usize, Vec<(usize, usize)>> = BTreeMap::new();
-        for (win_idx, window) in windows.iter().enumerate() {
-            for (local_id, &global_id) in window.local_to_global.iter().enumerate() {
-                let round = det_times[global_id as usize] as usize;
-                round_to_dets
-                    .entry(round)
-                    .or_default()
-                    .push((win_idx, local_id));
-            }
-        }
-
-        // Compute when each window has all its data.
-        let window_ready_round: Vec<usize> = window_ranges
-            .iter()
-            .map(|&(_, t_end, _)| (t_end.ceil() as usize).saturating_sub(1))
-            .collect();
-
-        let window_syndromes = windows.iter().map(|w| vec![0u8; w.num_local]).collect();
-
         Ok(Self {
             windows,
-            round_to_dets,
-            window_syndromes,
-            window_ready_round,
+            columns,
+            times,
+            raw: vec![0; dem.num_detectors],
+            residual: vec![0; dem.num_detectors],
             next_decode: 0,
             accumulated: 0,
+            diagnostics: WindowDiagnostics::default(),
         })
     }
 
-    /// Decode a ready window and return its observable contribution.
-    fn decode_window(&mut self, win_idx: usize) -> Result<u64, DecoderError> {
-        let window = &mut self.windows[win_idx];
-        let syn = &self.window_syndromes[win_idx];
+    /// Number of windows, including the merged tail exactly once.
+    #[must_use]
+    pub fn num_windows(&self) -> usize {
+        self.windows.len()
+    }
 
-        let (_, matched_edges) = window.decoder.decode_with_matching(syn)?;
+    /// Index of the next undecoded window.
+    #[must_use]
+    pub fn next_window(&self) -> usize {
+        self.next_decode
+    }
 
-        let mut obs = 0u64;
-        let boundary = window.num_local as u32;
-        for &edge_idx in &matched_edges {
-            let n1 = window.decoder.edge_node1(edge_idx);
-            let n2 = window.decoder.edge_node2(edge_idx);
+    /// Current global residual, `raw XOR incidence(committed columns)`.
+    #[must_use]
+    pub fn residual(&self) -> &[u8] {
+        &self.residual
+    }
 
-            let n1_core = n1 >= boundary
-                || ((n1 as usize) < window.is_core.len() && window.is_core[n1 as usize]);
-            let n2_core = n2 >= boundary
-                || ((n2 as usize) < window.is_core.len() && window.is_core[n2 as usize]);
+    /// Diagnostics for the current shot.
+    #[must_use]
+    pub fn diagnostics(&self) -> &WindowDiagnostics {
+        &self.diagnostics
+    }
 
-            if n1_core && n2_core {
-                obs ^= window.decoder.edge_obs_mask(edge_idx);
+    /// Reset and load a complete shot. Windows are advanced by [`Self::decode_next_window`].
+    ///
+    /// # Errors
+    /// Returns an error for incorrect width or non-binary input, before changing state.
+    pub fn start_shot(&mut self, syndrome: &[u8]) -> Result<(), DecoderError> {
+        if syndrome.len() != self.raw.len() {
+            return Err(DecoderError::InvalidDimensions {
+                expected: self.raw.len(),
+                actual: syndrome.len(),
+            });
+        }
+        if syndrome.iter().any(|&s| s > 1) {
+            return Err(DecoderError::InvalidSyndrome(
+                "window input must be binary".into(),
+            ));
+        }
+        self.reset();
+        self.raw.copy_from_slice(syndrome);
+        self.residual.copy_from_slice(syndrome);
+        Ok(())
+    }
+
+    /// Decode and commit the next window. Incidence is checked before state advances.
+    ///
+    /// # Errors
+    /// Returns an error naming the window and mismatching row if the correction is incomplete.
+    pub fn decode_next_window(&mut self) -> Result<u64, DecoderError> {
+        let index = self.next_decode;
+        let Some(window) = self.windows.get_mut(index) else {
+            return Ok(0);
+        };
+        let syndrome: Vec<_> = window
+            .model
+            .local_to_global_detector
+            .iter()
+            .map(|&d| self.residual[d as usize])
+            .collect();
+        let selected = window.decoder.decode_to_edges(&syndrome)?;
+        let mut incidence = vec![0; syndrome.len()];
+        let mut incident = vec![Vec::new(); syndrome.len()];
+        for (position, &edge_index) in selected.iter().enumerate() {
+            let edge = window.model.edges.get(edge_index).ok_or_else(|| {
+                DecoderError::DecodingFailed(format!("window {index}: invalid edge {edge_index}"))
+            })?;
+            for node in [Some(edge.node1), edge.node2].into_iter().flatten() {
+                incidence[node as usize] ^= 1;
+                incident[node as usize].push(position);
             }
         }
+        if let Some(row) = incidence.iter().zip(&syndrome).position(|(a, b)| a != b) {
+            return Err(DecoderError::DecodingFailed(format!(
+                "window {index}: incidence mismatch at row {row} (global detector {})",
+                window.model.local_to_global_detector[row]
+            )));
+        }
+        let mut visited = vec![false; selected.len()];
+        let mut committed = Vec::new();
+        let mut forced_future = 0;
+        let mut deferred = 0;
+        for first in 0..selected.len() {
+            if visited[first] {
+                continue;
+            }
+            visited[first] = true;
+            let mut stack = vec![first];
+            let mut resolved = Vec::new();
+            let mut sigma = BTreeSet::new();
+            let mut future = false;
+            while let Some(position) = stack.pop() {
+                let edge = &window.model.edges[selected[position]];
+                future |= edge.future;
+                let column = if edge.future {
+                    edge.rep_any
+                } else {
+                    edge.rep_nonprojected.ok_or_else(|| {
+                        DecoderError::InternalError(format!(
+                            "window {index}: non-future edge lacks a non-projected representative"
+                        ))
+                    })?
+                };
+                resolved.push(column);
+                for &detector in &self.columns[column].detectors {
+                    if !sigma.insert(detector) {
+                        sigma.remove(&detector);
+                    }
+                }
+                for node in [Some(edge.node1), edge.node2].into_iter().flatten() {
+                    for &next in &incident[node as usize] {
+                        if !visited[next] {
+                            visited[next] = true;
+                            stack.push(next);
+                        }
+                    }
+                }
+            }
+            let forced = sigma
+                .iter()
+                .any(|&d| self.times[d as usize] < window.commit.start);
+            let ordinary = !future
+                && sigma
+                    .iter()
+                    .all(|&d| self.times[d as usize] < window.commit.end);
+            if window.last || forced || ordinary {
+                forced_future += usize::from(forced && future);
+                committed.extend(resolved);
+            } else {
+                deferred += 1;
+            }
+        }
+        let mut obs = 0;
+        for &id in &committed {
+            for &d in &self.columns[id].detectors {
+                self.residual[d as usize] ^= 1;
+            }
+            for &o in &self.columns[id].observables {
+                obs ^= 1u64 << o;
+            }
+        }
+        self.diagnostics.committed_columns.extend(committed);
+        self.diagnostics.forced_future_components += forced_future;
+        self.diagnostics.deferred_components += deferred;
+        self.accumulated ^= obs;
+        self.next_decode += 1;
         Ok(obs)
     }
 }
 
-impl<D: EdgeTrackingDecoder> pecos_decoder_core::streaming::StreamingDecoder
-    for StreamingWindowedDecoder<D>
-{
-    fn feed_round(&mut self, round: usize, detectors: &[(u32, u8)]) -> Result<u64, DecoderError> {
-        // Store detection events into each window's syndrome buffer.
-        for &(det, val) in detectors {
-            if let Some(entries) = self.round_to_dets.get(&round) {
-                for &(win_idx, local_id) in entries {
-                    // Check if this detector matches
-                    if self.windows[win_idx].local_to_global.get(local_id) == Some(&det) {
-                        self.window_syndromes[win_idx][local_id] = val;
-                    }
-                }
-            }
-        }
-
-        // Also store by global detector index for windows that contain this detector.
-        for &(det, val) in detectors {
-            for (win_idx, window) in self.windows.iter().enumerate() {
-                for (local_id, &global_id) in window.local_to_global.iter().enumerate() {
-                    if global_id == det {
-                        self.window_syndromes[win_idx][local_id] = val;
-                    }
-                }
-            }
-        }
-
-        // Check if any window became ready.
-        let mut new_obs = 0u64;
-        while self.next_decode < self.windows.len() {
-            if round < self.window_ready_round[self.next_decode] {
-                break;
-            }
-            new_obs ^= self.decode_window(self.next_decode)?;
-            self.next_decode += 1;
-        }
-
-        self.accumulated ^= new_obs;
-        Ok(new_obs)
+impl<D: EdgeDecoder> ObservableDecoder for StreamingWindowedDecoder<D> {
+    fn num_detectors(&self) -> Option<usize> {
+        Some(self.raw.len())
     }
 
-    fn flush(&mut self) -> Result<u64, DecoderError> {
-        let mut new_obs = 0u64;
-        while self.next_decode < self.windows.len() {
-            new_obs ^= self.decode_window(self.next_decode)?;
-            self.next_decode += 1;
+    fn decode_obs(&mut self, syndrome: &[u8]) -> Result<ObsMask, DecoderError> {
+        self.start_shot(syndrome)?;
+        self.finish()?;
+        Ok(ObsMask::from_u64(self.accumulated))
+    }
+}
+
+impl<D: EdgeDecoder> StreamingDecoder for StreamingWindowedDecoder<D> {
+    fn feed_round(&mut self, round: usize, detectors: &[(u32, u8)]) -> Result<u64, DecoderError> {
+        if let Some(window) = self
+            .next_decode
+            .checked_sub(1)
+            .and_then(|index| self.windows.get(index))
+            && round < window.end as usize
+        {
+            return Err(DecoderError::InvalidSyndrome(format!(
+                "round {round} has already been decoded through round {}",
+                window.end - 1
+            )));
         }
-        self.accumulated ^= new_obs;
-        Ok(new_obs)
+        for &(detector, value) in detectors {
+            if self
+                .times
+                .get(detector as usize)
+                .is_none_or(|&time| time as usize != round)
+                || value > 1
+            {
+                return Err(DecoderError::InvalidSyndrome(format!(
+                    "invalid detector {detector} for round {round}"
+                )));
+            }
+        }
+        for &(detector, value) in detectors {
+            let row = detector as usize;
+            self.residual[row] ^= self.raw[row] ^ value;
+            self.raw[row] = value;
+        }
+        let mut obs = 0;
+        while self
+            .windows
+            .get(self.next_decode)
+            .is_some_and(|w| !w.last && round >= (w.end - 1) as usize)
+        {
+            obs ^= self.decode_next_window()?;
+        }
+        Ok(obs)
+    }
+
+    fn finish(&mut self) -> Result<u64, DecoderError> {
+        let mut obs = 0;
+        while self.next_decode < self.windows.len() {
+            obs ^= self.decode_next_window()?;
+        }
+        Ok(obs)
     }
 
     fn accumulated_obs(&self) -> u64 {
@@ -867,674 +375,39 @@ impl<D: EdgeTrackingDecoder> pecos_decoder_core::streaming::StreamingDecoder
     }
 
     fn reset(&mut self) {
-        for syn in &mut self.window_syndromes {
-            syn.fill(0);
-        }
+        self.raw.fill(0);
+        self.residual.fill(0);
         self.next_decode = 0;
         self.accumulated = 0;
-    }
-}
-
-// =============================================================================
-// Beam search windowed decoder
-// =============================================================================
-
-/// Configuration for the beam search windowed decoder.
-#[derive(Debug, Clone, Copy)]
-pub struct BeamSearchConfig {
-    /// Windowed decoder parameters.
-    pub window: WindowedConfig,
-    /// Number of beam hypotheses (K). Default 5.
-    pub beam_width: usize,
-    /// Perturbation sigma for log-normal weight noise. Default 0.5.
-    pub perturbation_sigma: f64,
-    /// RNG seed for reproducibility.
-    pub seed: u64,
-}
-
-impl Default for BeamSearchConfig {
-    fn default() -> Self {
-        Self {
-            window: WindowedConfig::default(),
-            beam_width: 5,
-            perturbation_sigma: 0.5,
-            seed: 42,
-        }
-    }
-}
-
-/// One beam hypothesis: accumulated state from windows processed so far.
-struct Hypothesis {
-    correction_effect: Vec<u8>,
-    obs_mask: u64,
-    total_weight: f64,
-}
-
-/// Per-window storage: K decoders (1 unperturbed + K-1 perturbed).
-struct BeamWindow<D> {
-    decoders: Vec<D>,
-    local_to_global: Vec<u32>,
-    is_core: Vec<bool>,
-    num_local: usize,
-}
-
-/// Beam search windowed decoder.
-///
-/// Maintains K correction hypotheses across window boundaries. Each window
-/// expands K hypotheses × K perturbed decoders = K² candidates, pruned
-/// to K by total correction weight. After all windows, picks the
-/// lowest-weight hypothesis and optionally runs a Phase-2 residual decode.
-///
-/// The key insight: different hypotheses propagate different
-/// `correction_effect` vectors to subsequent windows, so each hypothesis
-/// sees a different modified syndrome. This explores different string
-/// continuations across window boundaries.
-pub struct BeamSearchWindowedDecoder<D> {
-    windows: Vec<BeamWindow<D>>,
-    num_detectors: usize,
-    beam_width: usize,
-    commit_weight_max: f64,
-    residual_decoder: Option<Box<dyn ObservableDecoder>>,
-}
-
-impl<D: EdgeTrackingDecoder> BeamSearchWindowedDecoder<D> {
-    /// Create from a DEM string.
-    ///
-    /// `phase1_factory` builds the inner edge-tracking decoder from a sub-DEM.
-    /// `phase2_factory` (optional) builds the full-graph residual decoder.
-    ///
-    /// # Errors
-    ///
-    /// Returns `DecoderError` if the DEM is malformed or factories fail.
-    pub fn from_dem<F1, F2>(
-        dem: &str,
-        config: BeamSearchConfig,
-        mut phase1_factory: F1,
-        mut phase2_factory: Option<F2>,
-    ) -> Result<Self, DecoderError>
-    where
-        F1: FnMut(&str) -> Result<D, DecoderError>,
-        F2: FnMut(&str) -> Result<Box<dyn ObservableDecoder>, DecoderError>,
-    {
-        let (det_times, num_detectors, step_size, total_t) = parse_dem_params(dem, &config.window)?;
-        let buffer_size = config.window.buffer_size;
-        let k = config.beam_width;
-
-        let mut windows = Vec::new();
-        let mut t_start = 0.0f64;
-
-        while t_start < total_t {
-            let is_last = t_start + 2.0 * step_size as f64 > total_t;
-            let t_core_end = if is_last {
-                total_t + 1.0
-            } else {
-                t_start + step_size as f64
-            };
-            let t_win_start = (t_start - buffer_size as f64).max(0.0);
-            let t_win_end = if is_last {
-                total_t + 1.0
-            } else {
-                t_core_end + buffer_size as f64
-            };
-
-            let (local_to_global, window_dem) =
-                extract_window_dem(dem, &det_times, num_detectors, t_win_start, t_win_end);
-
-            let ext = config.window.core_extend as f64;
-            let is_core: Vec<bool> = local_to_global
-                .iter()
-                .map(|&gid| {
-                    let t = det_times[gid as usize];
-                    t >= (t_start - ext) && t < (t_core_end + ext)
-                })
-                .collect();
-
-            let num_local = local_to_global.len();
-            if num_local > 0 && !window_dem.is_empty() {
-                let mut decoders = Vec::with_capacity(k);
-
-                // Decoder 0: unperturbed anchor
-                decoders.push(phase1_factory(&window_dem)?);
-
-                // Decoders 1..K-1: perturbed weights
-                for member_idx in 1..k {
-                    let mut rng = pecos_random::PecosRng::seed_from_u64(
-                        config.seed.wrapping_add(member_idx as u64),
-                    );
-                    let mut next_f64 = || rng.next_f64();
-                    let perturbed = pecos_decoder_core::perturbed::perturb_dem(
-                        &window_dem,
-                        config.perturbation_sigma,
-                        &mut next_f64,
-                    );
-                    if let Ok(dec) = phase1_factory(&perturbed) {
-                        decoders.push(dec);
-                    }
-                }
-
-                windows.push(BeamWindow {
-                    decoders,
-                    local_to_global,
-                    is_core,
-                    num_local,
-                });
-            }
-
-            t_start += step_size as f64;
-        }
-
-        let residual_decoder = if let Some(ref mut f2) = phase2_factory {
-            Some(f2(dem)?)
-        } else {
-            None
-        };
-
-        Ok(Self {
-            windows,
-            num_detectors,
-            beam_width: k,
-            commit_weight_max: config.window.commit_weight_max,
-            residual_decoder,
-        })
-    }
-
-    /// Number of windows.
-    #[must_use]
-    pub fn num_windows(&self) -> usize {
-        self.windows.len()
-    }
-}
-
-impl<D: EdgeTrackingDecoder> ObservableDecoder for BeamSearchWindowedDecoder<D> {
-    fn decode_obs(
-        &mut self,
-        syndrome: &[u8],
-    ) -> Result<pecos_decoder_core::obs_mask::ObsMask, DecoderError> {
-        let k = self.beam_width;
-        let commit_weight_max = self.commit_weight_max;
-
-        // Initialize beam with K identical empty hypotheses.
-        let mut beam: Vec<Hypothesis> = (0..k)
-            .map(|_| Hypothesis {
-                correction_effect: vec![0u8; self.num_detectors],
-                obs_mask: 0,
-                total_weight: 0.0,
-            })
-            .collect();
-
-        // Process each window: expand K hypotheses × K decoders → prune to K.
-        for window in &mut self.windows {
-            let actual_k = window.decoders.len();
-            let mut candidates: Vec<Hypothesis> = Vec::with_capacity(beam.len() * actual_k);
-
-            // Build window syndrome from the original (Phase-1 windows are
-            // independent — correction_effect is only used for Phase-2 residual).
-            let mut window_syn = vec![0u8; window.num_local];
-            for (local_id, &global_id) in window.local_to_global.iter().enumerate() {
-                let gid = global_id as usize;
-                if gid < syndrome.len() {
-                    window_syn[local_id] = syndrome[gid];
-                }
-            }
-
-            for hyp in &beam {
-                // Decode with each perturbed decoder.
-                for decoder in &mut window.decoders {
-                    let (_, matched_edges) = decoder.decode_with_matching(&window_syn)?;
-
-                    let mut new_obs = hyp.obs_mask;
-                    let mut new_correction = hyp.correction_effect.clone();
-                    let mut new_weight = hyp.total_weight;
-                    let boundary = window.num_local as u32;
-
-                    for &edge_idx in &matched_edges {
-                        let n1 = decoder.edge_node1(edge_idx);
-                        let n2 = decoder.edge_node2(edge_idx);
-
-                        let n1_core = n1 >= boundary
-                            || ((n1 as usize) < window.is_core.len()
-                                && window.is_core[n1 as usize]);
-                        let n2_core = n2 >= boundary
-                            || ((n2 as usize) < window.is_core.len()
-                                && window.is_core[n2 as usize]);
-
-                        let weight_ok = commit_weight_max <= 0.0
-                            || decoder.edge_weight(edge_idx) <= commit_weight_max;
-
-                        if n1_core && n2_core && weight_ok {
-                            new_obs ^= decoder.edge_obs_mask(edge_idx);
-                            new_weight += decoder.edge_weight(edge_idx);
-
-                            if (n1 as usize) < window.num_local {
-                                let gid = window.local_to_global[n1 as usize] as usize;
-                                new_correction[gid] ^= 1;
-                            }
-                            if (n2 as usize) < window.num_local {
-                                let gid = window.local_to_global[n2 as usize] as usize;
-                                new_correction[gid] ^= 1;
-                            }
-                        }
-                    }
-
-                    candidates.push(Hypothesis {
-                        correction_effect: new_correction,
-                        obs_mask: new_obs,
-                        total_weight: new_weight,
-                    });
-                }
-            }
-
-            // Prune: sort by total weight (lower = more likely), dedup, truncate.
-            candidates.sort_by(|a, b| {
-                a.total_weight
-                    .partial_cmp(&b.total_weight)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
-            candidates.dedup_by(|a, b| a.correction_effect == b.correction_effect);
-            candidates.truncate(k);
-            beam = candidates;
-        }
-
-        // Pick the result via majority vote across surviving hypotheses.
-        // Each hypothesis may have a different Phase-1 obs_mask; we also run
-        // Phase-2 on each to get the complete observable prediction.
-        if beam.is_empty() {
-            return Ok(pecos_decoder_core::obs_mask::ObsMask::new());
-        }
-
-        // Collect final observable predictions from each hypothesis.
-        let mut predictions: Vec<u64> = Vec::with_capacity(beam.len());
-        if let Some(ref mut residual_dec) = self.residual_decoder {
-            for hyp in &beam {
-                let mut residual_syn = vec![0u8; self.num_detectors];
-                for (i, &s) in syndrome.iter().enumerate() {
-                    if i < self.num_detectors {
-                        residual_syn[i] = s ^ hyp.correction_effect[i];
-                    }
-                }
-                let phase2_obs = residual_dec.decode_to_observables(&residual_syn)?;
-                predictions.push(hyp.obs_mask ^ phase2_obs);
-            }
-        } else {
-            for hyp in &beam {
-                predictions.push(hyp.obs_mask);
-            }
-        }
-
-        // Majority vote across hypotheses (per observable bit).
-        let half = predictions.len() / 2;
-        let mut result = 0u64;
-        for bit in 0..64u32 {
-            let mask = 1u64 << bit;
-            let count = predictions.iter().filter(|&&p| p & mask != 0).count();
-            if count > half {
-                result |= mask;
-            }
-        }
-        Ok(pecos_decoder_core::obs_mask::ObsMask::from_u64(result))
+        self.diagnostics = WindowDiagnostics::default();
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    const D3_DEM: &str =
-        include_str!("../../../examples/surface_code_circuits/surface_code_d3_z_stim.dem");
-
-    fn uf_factory(dem: &str) -> Result<Box<dyn ObservableDecoder>, DecoderError> {
-        Ok(Box::new(crate::UfDecoder::from_dem(
-            dem,
-            crate::UfDecoderConfig::fast(),
-        )?))
-    }
-
-    fn uf_edge_factory(dem: &str) -> Result<crate::UfDecoder, DecoderError> {
-        crate::UfDecoder::from_dem(dem, crate::UfDecoderConfig::windowed())
-    }
-
-    fn observable_width_dem(highest_observable: usize) -> String {
-        format!("error(0.1) D0 L{highest_observable}\ndetector(0, 0, 0) D0\n")
-    }
+    use crate::UfDecoder;
 
     #[test]
-    fn every_windowed_family_accepts_64_and_rejects_65_observables() {
-        use pecos_decoder_core::streaming::StreamingDecoder;
-
-        let dem64 = observable_width_dem(63);
-        let dem65 = observable_width_dem(64);
-        let config = WindowedConfig {
-            step_size: 1,
-            buffer_size: 1,
-            ..Default::default()
-        };
-
-        let mut non_overlapping = WindowedDecoder::from_dem(&dem64, config, uf_factory).unwrap();
-        assert!(non_overlapping.decode_obs(&[0]).unwrap().is_zero());
-        assert!(WindowedDecoder::from_dem(&dem65, config, uf_factory).is_err());
-
-        let mut overlapping =
-            OverlappingWindowedDecoder::from_dem(&dem64, config, uf_edge_factory).unwrap();
-        assert!(overlapping.decode_obs(&[0]).unwrap().is_zero());
-        assert!(OverlappingWindowedDecoder::from_dem(&dem65, config, uf_edge_factory).is_err());
-
-        let mut sandwich =
-            SandwichWindowedDecoder::from_dem(&dem64, config, uf_edge_factory, uf_factory).unwrap();
-        assert!(sandwich.decode_obs(&[0]).unwrap().is_zero());
-        assert!(
-            SandwichWindowedDecoder::from_dem(&dem65, config, uf_edge_factory, uf_factory,)
-                .is_err()
-        );
-
-        let mut streaming =
-            StreamingWindowedDecoder::from_dem(&dem64, config, uf_edge_factory).unwrap();
-        streaming.feed_round(0, &[]).unwrap();
-        streaming.flush().unwrap();
-        assert_eq!(streaming.accumulated_obs(), 0);
-        assert!(StreamingWindowedDecoder::from_dem(&dem65, config, uf_edge_factory).is_err());
-
-        let beam_config = BeamSearchConfig {
-            window: config,
-            beam_width: 1,
-            perturbation_sigma: 0.0,
-            seed: 1,
-        };
-        let mut beam = BeamSearchWindowedDecoder::from_dem(
-            &dem64,
-            beam_config,
-            uf_edge_factory,
-            Some(uf_factory),
-        )
-        .unwrap();
-        assert!(beam.decode_obs(&[0]).unwrap().is_zero());
-        assert!(
-            BeamSearchWindowedDecoder::from_dem(
-                &dem65,
-                beam_config,
-                uf_edge_factory,
-                Some(uf_factory),
-            )
-            .is_err()
-        );
-    }
-
-    #[test]
-    fn test_windowed_construction() {
-        let dec = WindowedDecoder::from_dem(D3_DEM, WindowedConfig::default(), uf_factory);
-        assert!(dec.is_ok());
-        assert!(dec.unwrap().num_windows() > 0);
-    }
-
-    #[test]
-    fn test_windowed_no_errors() {
-        let graph = DemMatchingGraph::from_dem_str(D3_DEM).unwrap();
-        let mut dec =
-            WindowedDecoder::from_dem(D3_DEM, WindowedConfig::default(), uf_factory).unwrap();
-        let obs = dec.decode_to_observables(&vec![0u8; graph.num_detectors]);
-        assert!(obs.is_ok());
-        assert_eq!(obs.unwrap(), 0);
-    }
-
-    #[test]
-    fn test_single_window_matches_full() {
-        let graph = DemMatchingGraph::from_dem_str(D3_DEM).unwrap();
-        let config = WindowedConfig {
-            step_size: 100,
-            buffer_size: 0,
-            ..Default::default()
-        };
-        let mut wdec = WindowedDecoder::from_dem(D3_DEM, config, uf_factory).unwrap();
-        let mut udec = crate::UfDecoder::from_dem(D3_DEM, crate::UfDecoderConfig::fast()).unwrap();
-
-        let syn = vec![0u8; graph.num_detectors];
-        assert_eq!(
-            wdec.decode_to_observables(&syn).unwrap(),
-            udec.decode_to_observables(&syn).unwrap(),
-        );
-    }
-
-    #[test]
-    fn test_overlapping_construction() {
-        let config = WindowedConfig {
-            step_size: 3,
-            buffer_size: 2,
-            ..Default::default()
-        };
-        let dec = OverlappingWindowedDecoder::from_dem(D3_DEM, config, uf_edge_factory);
-        assert!(dec.is_ok());
-        assert!(dec.unwrap().num_windows() > 0);
-    }
-
-    #[test]
-    fn test_overlapping_no_errors() {
-        let graph = DemMatchingGraph::from_dem_str(D3_DEM).unwrap();
-        let config = WindowedConfig {
-            step_size: 3,
-            buffer_size: 2,
-            ..Default::default()
-        };
-        let mut dec =
-            OverlappingWindowedDecoder::from_dem(D3_DEM, config, uf_edge_factory).unwrap();
-        let obs = dec.decode_to_observables(&vec![0u8; graph.num_detectors]);
-        assert!(obs.is_ok());
-        assert_eq!(obs.unwrap(), 0);
-    }
-
-    #[test]
-    fn test_overlapping_single_window() {
-        let graph = DemMatchingGraph::from_dem_str(D3_DEM).unwrap();
-        let config = WindowedConfig {
-            step_size: 100,
-            buffer_size: 5,
-            ..Default::default()
-        };
-        let mut dec =
-            OverlappingWindowedDecoder::from_dem(D3_DEM, config, uf_edge_factory).unwrap();
-        assert_eq!(dec.num_windows(), 1);
-        let syn = vec![0u8; graph.num_detectors];
-        assert_eq!(dec.decode_to_observables(&syn).unwrap(), 0);
-    }
-
-    #[test]
-    fn test_sandwich_construction() {
-        let config = WindowedConfig {
-            step_size: 3,
-            buffer_size: 3,
-            ..Default::default()
-        };
-        let dec = SandwichWindowedDecoder::from_dem(D3_DEM, config, uf_edge_factory, uf_factory);
-        assert!(dec.is_ok());
-        let dec = dec.unwrap();
-        assert!(dec.num_windows() > 0);
-    }
-
-    #[test]
-    fn test_sandwich_no_errors() {
-        let graph = DemMatchingGraph::from_dem_str(D3_DEM).unwrap();
-        let config = WindowedConfig {
-            step_size: 3,
-            buffer_size: 3,
-            ..Default::default()
-        };
-        let mut dec =
-            SandwichWindowedDecoder::from_dem(D3_DEM, config, uf_edge_factory, uf_factory).unwrap();
-        let obs = dec.decode_to_observables(&vec![0u8; graph.num_detectors]);
-        assert!(obs.is_ok());
-        assert_eq!(obs.unwrap(), 0);
-    }
-
-    #[test]
-    fn test_sandwich_parallel_matches_sequential() {
-        let graph = DemMatchingGraph::from_dem_str(D3_DEM).unwrap();
-        let config = WindowedConfig {
-            step_size: 3,
-            buffer_size: 3,
-            ..Default::default()
-        };
-        let mut dec =
-            SandwichWindowedDecoder::from_dem(D3_DEM, config, uf_edge_factory, uf_factory).unwrap();
-
-        let syn = vec![0u8; graph.num_detectors];
-        let seq = dec.decode_to_observables(&syn).unwrap();
-        let par = dec.decode_parallel(&syn).unwrap();
-        assert_eq!(seq, par);
-    }
-
-    #[test]
-    fn test_streaming_construction() {
-        let config = WindowedConfig {
-            step_size: 3,
-            buffer_size: 2,
-            ..Default::default()
-        };
-        let dec = StreamingWindowedDecoder::from_dem(D3_DEM, config, uf_edge_factory);
-        assert!(dec.is_ok());
-    }
-
-    #[test]
-    fn test_streaming_no_errors() {
-        use pecos_decoder_core::streaming::StreamingDecoder;
-
-        let config = WindowedConfig {
-            step_size: 3,
-            buffer_size: 2,
-            ..Default::default()
-        };
-        let mut dec = StreamingWindowedDecoder::from_dem(D3_DEM, config, uf_edge_factory).unwrap();
-
-        // Feed empty rounds — no detectors fire.
-        let graph = DemMatchingGraph::from_dem_str(D3_DEM).unwrap();
-        let max_round = graph
-            .detector_coords
-            .iter()
-            .filter_map(|c| c.as_ref().and_then(|v| v.get(2)).copied())
-            .fold(0.0f64, f64::max) as usize;
-
-        for r in 0..=max_round {
-            dec.feed_round(r, &[]).unwrap();
+    fn zero_step_is_rejected_before_building_any_windows() {
+        for text in ["", "error(0.1) D0\ndetector(0,0,0) D0\n"] {
+            let dem = StructuredDem::from_dem_str(text).unwrap();
+            let config = WindowedConfig { step: 0, buffer: 1 };
+            let factory = |_: &CommitWindow| -> Result<UfDecoder, DecoderError> {
+                panic!("invalid step must be rejected before calling the factory")
+            };
+            for result in [
+                StreamingWindowedDecoder::from_dem(text, config, factory),
+                StreamingWindowedDecoder::from_structured_dem(&dem, config, factory),
+            ] {
+                assert!(
+                    result
+                        .err()
+                        .unwrap()
+                        .to_string()
+                        .contains("step must be at least 1")
+                );
+            }
         }
-        dec.flush().unwrap();
-        assert_eq!(dec.accumulated_obs(), 0);
-    }
-
-    #[test]
-    fn test_beam_k1_matches_sandwich_nonzero() {
-        // K=1 beam with non-zero syndrome should match sandwich.
-        let graph = DemMatchingGraph::from_dem_str(D3_DEM).unwrap();
-        let wconfig = WindowedConfig {
-            step_size: 3,
-            buffer_size: 3,
-            commit_weight_max: 2.5,
-            ..Default::default()
-        };
-
-        let mut sandwich =
-            SandwichWindowedDecoder::from_dem(D3_DEM, wconfig, uf_edge_factory, uf_factory)
-                .unwrap();
-
-        let bconfig = BeamSearchConfig {
-            window: wconfig,
-            beam_width: 1,
-            perturbation_sigma: 0.0,
-            seed: 42,
-        };
-        let mut beam =
-            BeamSearchWindowedDecoder::from_dem(D3_DEM, bconfig, uf_edge_factory, Some(uf_factory))
-                .unwrap();
-
-        // Test with single-defect syndrome.
-        let mut syn = vec![0u8; graph.num_detectors];
-        syn[0] = 1;
-        let sw_obs = sandwich.decode_to_observables(&syn).unwrap();
-        let bm_obs = beam.decode_to_observables(&syn).unwrap();
-        assert_eq!(
-            sw_obs, bm_obs,
-            "K=1 beam should match sandwich. sw={sw_obs}, bm={bm_obs}"
-        );
-
-        // Test with two defects.
-        syn[0] = 1;
-        syn[1] = 1;
-        let sw_obs = sandwich.decode_to_observables(&syn).unwrap();
-        let bm_obs = beam.decode_to_observables(&syn).unwrap();
-        assert_eq!(
-            sw_obs, bm_obs,
-            "K=1 beam should match sandwich on 2 defects. sw={sw_obs}, bm={bm_obs}"
-        );
-    }
-
-    #[test]
-    fn test_beam_search_construction() {
-        let config = BeamSearchConfig {
-            window: WindowedConfig {
-                step_size: 3,
-                buffer_size: 3,
-                ..Default::default()
-            },
-            beam_width: 3,
-            perturbation_sigma: 0.5,
-            seed: 42,
-        };
-        let dec =
-            BeamSearchWindowedDecoder::from_dem(D3_DEM, config, uf_edge_factory, Some(uf_factory));
-        assert!(dec.is_ok());
-        assert!(dec.unwrap().num_windows() > 0);
-    }
-
-    #[test]
-    fn test_beam_k1_matches_sandwich() {
-        // K=1 beam with no perturbation should match the sandwich decoder.
-        let graph = DemMatchingGraph::from_dem_str(D3_DEM).unwrap();
-        let wconfig = WindowedConfig {
-            step_size: 3,
-            buffer_size: 3,
-            commit_weight_max: 2.5,
-            ..Default::default()
-        };
-
-        // Sandwich
-        let mut sandwich =
-            SandwichWindowedDecoder::from_dem(D3_DEM, wconfig, uf_edge_factory, uf_factory)
-                .unwrap();
-
-        // Beam K=1
-        let bconfig = BeamSearchConfig {
-            window: wconfig,
-            beam_width: 1,
-            perturbation_sigma: 0.0,
-            seed: 42,
-        };
-        let mut beam =
-            BeamSearchWindowedDecoder::from_dem(D3_DEM, bconfig, uf_edge_factory, Some(uf_factory))
-                .unwrap();
-
-        let syn = vec![0u8; graph.num_detectors];
-        let sw_obs = sandwich.decode_to_observables(&syn).unwrap();
-        let bm_obs = beam.decode_to_observables(&syn).unwrap();
-        assert_eq!(
-            sw_obs, bm_obs,
-            "K=1 beam should match sandwich on zero syndrome"
-        );
-    }
-
-    #[test]
-    fn test_beam_search_no_errors() {
-        let graph = DemMatchingGraph::from_dem_str(D3_DEM).unwrap();
-        let config = BeamSearchConfig {
-            window: WindowedConfig {
-                step_size: 3,
-                buffer_size: 3,
-                ..Default::default()
-            },
-            beam_width: 3,
-            perturbation_sigma: 0.5,
-            seed: 42,
-        };
-        let mut dec =
-            BeamSearchWindowedDecoder::from_dem(D3_DEM, config, uf_edge_factory, Some(uf_factory))
-                .unwrap();
-        let obs = dec.decode_to_observables(&vec![0u8; graph.num_detectors]);
-        assert!(obs.is_ok());
-        assert_eq!(obs.unwrap(), 0);
     }
 }

@@ -81,7 +81,7 @@ fn check_python_available() -> Result<()> {
         .is_ok_and(|o| o.status.success());
 
     let python_ok = Command::new("uv")
-        .args(["run", "python", "--version"])
+        .args(["run", "--frozen", "python", "--version"])
         .output()
         .is_ok_and(|o| o.status.success());
 
@@ -251,20 +251,7 @@ fn run_build(profile: &str, rustflags: Option<&str>, cuda: bool) -> Result<()> {
     // Install quantum-pecos in editable mode (--no-deps since rslib crates
     // are already installed by maturin develop above)
     println!("Installing quantum-pecos...");
-    let mut pip_cmd = Command::new("uv");
-    pip_cmd.args(["pip", "install", "--no-deps", "-e"]);
-
-    // `--no-deps` (above) means this editable install pulls no dependencies, so
-    // naming a CUDA extra here would be inert: the CUDA Python stack
-    // (cupy/cuquantum/pytket-cutensornet) is installed separately via
-    // `uv sync --group cuda12|cuda13` (`just build`'s sync-deps, `pecos setup`, or
-    // `pecos cuda setup-python`), not by this command. Request the dependency-free
-    // `[all]` extra, which exists regardless of CUDA toolkit major and avoids an
-    // unknown-extra warning.
-    pip_cmd.arg("./python/quantum-pecos[all]");
-
-    pip_cmd.current_dir(&repo_root);
-    pip_cmd.env_remove("CONDA_PREFIX");
+    let mut pip_cmd = editable_install_command(&repo_root);
 
     let status = pip_cmd.status();
     match status {
@@ -277,6 +264,26 @@ fn run_build(profile: &str, rustflags: Option<&str>, cuda: bool) -> Result<()> {
             "Failed to install quantum-pecos: {e}"
         ))),
     }
+}
+
+fn editable_install_command(repo_root: &Path) -> Command {
+    let mut cmd = Command::new("uv");
+    // Respect uv's configured indexes, including for isolated build dependencies
+    // such as hatchling. PyPI is already the default when none is configured.
+    // `--no-deps` skips runtime dependencies, not isolated build dependencies.
+    // CUDA packages are installed separately by `uv sync --group cuda12|cuda13`
+    // or `pecos cuda setup-python`. The dependency-free `[all]` extra exists
+    // regardless of CUDA toolkit major and avoids an unknown-extra warning.
+    cmd.args([
+        "pip",
+        "install",
+        "--no-deps",
+        "-e",
+        "./python/quantum-pecos[all]",
+    ]);
+    cmd.current_dir(repo_root);
+    cmd.env_remove("CONDA_PREFIX");
+    cmd
 }
 
 fn cargo_profile_dir(profile: &str) -> &'static str {
@@ -364,6 +371,29 @@ fn remove_stale_extension_artifacts(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn editable_install_preserves_uv_index_configuration() {
+        let repo = PathBuf::from("repo");
+        let cmd = editable_install_command(&repo);
+        assert_eq!(cmd.get_program(), "uv");
+        assert_eq!(
+            cmd.get_args().collect::<Vec<_>>(),
+            [
+                "pip",
+                "install",
+                "--no-deps",
+                "-e",
+                "./python/quantum-pecos[all]"
+            ]
+        );
+        assert_eq!(cmd.get_current_dir(), Some(repo.as_path()));
+        // No index environment variables are overridden or removed.
+        assert_eq!(
+            cmd.get_envs().collect::<Vec<_>>(),
+            [(std::ffi::OsStr::new("CONDA_PREFIX"), None)]
+        );
+    }
 
     #[test]
     fn cargo_profile_dir_matches_cargos_target_subdir() {

@@ -479,7 +479,9 @@ sampling reports zero observable flips for these noiseless programs.
 Observable metadata has no sign field, so both raw-parity consumers,
 `pecos.testing.simulate_tick_circuit` and
 `pecos.qec.surface.extract_detection_events_and_observables`, must account for
-this reference. S then S-dagger before X readout has raw parity 0.
+this reference. S then S-dagger before X readout has raw parity 0. A readout with no
+supported logical image, as under a physical S layer, produces no observable
+at all.
 
 ```python
 import stim

@@ -518,7 +518,8 @@ class LogicalCircuitBuilder:
         and S-dagger pairs through a CX. The metadata has no sign field;
         raw-parity consumers pecos.testing.simulate_tick_circuit and
         pecos.qec.surface.extract_detection_events_and_observables must
-        account for that reference.
+        account for that reference. A readout with no supported logical
+        image, as under a physical S layer, produces no observable at all.
         """
         self._require_available_patch(label)
         self._require_square(label, "Fold-transversal S")

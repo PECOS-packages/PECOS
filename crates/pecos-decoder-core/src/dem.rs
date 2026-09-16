@@ -281,6 +281,50 @@ pub struct SparseDem {
 }
 
 impl SparseDem {
+    /// Convert an already validated structured model without a text round trip.
+    #[must_use]
+    pub fn from_structured_dem(dem: &crate::window::StructuredDem) -> Self {
+        let mechanisms = dem
+            .errors
+            .iter()
+            .map(|error| {
+                let mut detectors = std::collections::BTreeSet::new();
+                let mut observables = std::collections::BTreeSet::new();
+                for component in &error.components {
+                    for &detector in &component.detectors {
+                        if !detectors.remove(&detector) {
+                            detectors.insert(detector);
+                        }
+                    }
+                    for &observable in &component.observables {
+                        if !observables.remove(&observable) {
+                            observables.insert(observable);
+                        }
+                    }
+                }
+                (
+                    error.probability,
+                    detectors.into_iter().collect(),
+                    observables.into_iter().collect(),
+                )
+            })
+            .collect();
+        let detector_coords = dem
+            .detector_coords
+            .iter()
+            .enumerate()
+            .filter_map(|(detector, coords)| {
+                coords.as_ref().map(|coords| (detector, coords.clone()))
+            })
+            .collect();
+        Self {
+            mechanisms,
+            detector_coords,
+            num_detectors: dem.num_detectors,
+            num_observables: dem.num_observables,
+        }
+    }
+
     /// Parse a DEM string into its sparse mechanism + coordinate form.
     ///
     /// # Errors

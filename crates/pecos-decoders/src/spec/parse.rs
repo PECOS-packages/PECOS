@@ -4,7 +4,6 @@ use super::config::{
     EnsembleConfig, FusionBlossomConfig, FusionBlossomSolverType, KMwpmConfig, MinSumBpConfig,
     MwpfConfig, MwpfSolverType, PecosUfPreset, PerturbedConfig, PerturbedFusionBlossomConfig,
     PyMatchingConfig, RelayBpConfig, TesseractConfig, TesseractPreset, WindowedConfig,
-    WindowedMode,
 };
 use pecos_decoder_core::DecoderError;
 use std::fmt::Display;
@@ -44,7 +43,7 @@ pub(super) fn parse(type_string: &str) -> Result<DecoderSpec, DecoderError> {
         "belief_matching" => Ok(belief_matching(BeliefMatchingMode::Standard)),
         "belief_matching_correlated" => Ok(belief_matching(BeliefMatchingMode::Correlated)),
         "belief_matching_mgbp" => Ok(belief_matching(BeliefMatchingMode::MatchingGraphBp)),
-        "windowed" => Ok(DecoderSpec::Windowed(WindowedConfig::default())),
+        "windowed" => invalid("windowed requires inner, buffer, and step"),
         "mwpf" => Ok(DecoderSpec::Mwpf(MwpfConfig::default())),
         "perturbed" => Ok(DecoderSpec::Perturbed(PerturbedConfig::default())),
         "beamsearch" => Ok(DecoderSpec::BeamSearch(BeamSearchConfig::default())),
@@ -127,39 +126,32 @@ fn parse_perturbed_fb(params: &str) -> Result<DecoderSpec, DecoderError> {
 
 fn parse_windowed(params: &str) -> Result<DecoderSpec, DecoderError> {
     let (own_params, inner) = split_inner("windowed", params)?;
-    let mut config = WindowedConfig::default();
-    if let Some(inner) = inner {
-        let inner_spec = parse(inner)?;
-        config.inner = Box::new(inner_spec.clone());
-        config.sandwich_phase2 = if inner == "pecos_uf" {
-            Box::new(correlated_pymatching())
-        } else {
-            Box::new(inner_spec)
-        };
-    }
+    let mut step_size = None;
+    let mut buffer_size = None;
     for (key, value) in params_iter("windowed", own_params)? {
         match key {
-            "step" => config.step_size = parse_number("windowed", key, value)?,
-            "buf" | "buffer" => config.buffer_size = parse_number("windowed", key, value)?,
-            "mode" => {
-                config.mode = match value {
-                    "sandwich" => WindowedMode::Sandwich,
-                    "overlap" => WindowedMode::Overlap,
-                    "nonoverlap" | "non_overlapping" => WindowedMode::NonOverlapping,
-                    _ => return invalid(format!("windowed has unknown mode '{value}'")),
-                };
-            }
-            "seam" => config.seam_half_width = parse_number("windowed", key, value)?,
-            "ext" | "core_extend" => {
-                config.core_extend = parse_number("windowed", key, value)?;
-            }
-            "wmax" | "commit_weight_max" => {
-                config.commit_weight_max = parse_finite("windowed", key, value)?;
-            }
+            "step" => step_size = Some(parse_number("windowed", key, value)?),
+            "buf" | "buffer" => buffer_size = Some(parse_number("windowed", key, value)?),
             _ => return unknown_key("windowed", key),
         }
     }
-    Ok(DecoderSpec::Windowed(config))
+    let Some(inner) = inner else {
+        return invalid("windowed requires inner");
+    };
+    let Some(buffer_size) = buffer_size else {
+        return invalid("windowed requires buffer");
+    };
+    let Some(step_size) = step_size else {
+        return invalid("windowed requires step");
+    };
+    if step_size == 0 {
+        return invalid("step must be at least 1");
+    }
+    Ok(DecoderSpec::Windowed(WindowedConfig {
+        step_size,
+        buffer_size,
+        inner: Box::new(parse(inner)?),
+    }))
 }
 
 fn parse_mwpf(params: &str) -> Result<DecoderSpec, DecoderError> {
@@ -357,36 +349,25 @@ mod tests {
         assert_eq!(config.seed, 42);
         assert_eq!(*config.inner, correlated_pymatching());
 
-        let windowed = parse("windowed:step=5,buf=5,mode=sandwich,inner=bp_osd").unwrap();
+        let windowed = parse("windowed:step=5,buf=5,inner=bp_osd").unwrap();
         let DecoderSpec::Windowed(config) = windowed else {
             panic!("expected windowed spec");
         };
         assert_eq!(config.step_size, 5);
         assert_eq!(config.buffer_size, 5);
-        assert_eq!(config.mode, WindowedMode::Sandwich);
         assert!(matches!(*config.inner, DecoderSpec::BpOsd(_)));
-        assert!(matches!(*config.sandwich_phase2, DecoderSpec::BpOsd(_)));
 
         let explicit_fast = parse("windowed:step=5,buf=5,inner=pecos_uf:fast").unwrap();
-        let DecoderSpec::Windowed(config) = explicit_fast else {
+        let DecoderSpec::Windowed(ref config) = explicit_fast else {
             panic!("expected windowed spec");
         };
         assert!(matches!(
-            *config.sandwich_phase2,
+            *config.inner,
             DecoderSpec::PecosUf(PecosUfPreset::Fast)
         ));
 
         let exact_pecos_uf = parse("windowed:step=5,buf=5,inner=pecos_uf").unwrap();
-        let DecoderSpec::Windowed(config) = exact_pecos_uf else {
-            panic!("expected windowed spec");
-        };
-        assert!(matches!(
-            *config.sandwich_phase2,
-            DecoderSpec::PyMatching(PyMatchingConfig {
-                correlated: true,
-                ..
-            })
-        ));
+        assert_eq!(exact_pecos_uf, explicit_fast);
 
         assert_eq!(
             parse("perturbed_fb_corr:K=9,sigma=0.25,seed=7").unwrap(),
@@ -463,7 +444,7 @@ mod tests {
             "belief_matching",
             "belief_matching_correlated",
             "belief_matching_mgbp",
-            "windowed",
+            "windowed:step=1,buffer=1,inner=pecos_uf",
             "mwpf",
             "perturbed",
             "beamsearch",
@@ -478,7 +459,6 @@ mod tests {
         for (with_suffix, bare) in [
             ("k_mwpm:", "k_mwpm"),
             ("perturbed_fb_corr:", "perturbed_fb_corr"),
-            ("windowed:", "windowed"),
             ("mwpf:", "mwpf"),
             ("perturbed:", "perturbed"),
             ("beamsearch:", "beamsearch"),
@@ -575,5 +555,46 @@ mod tests {
     fn decoder_spec_has_required_auto_traits() {
         fn assert_traits<T: Clone + std::fmt::Debug + Send + Sync + PartialEq>() {}
         assert_traits::<DecoderSpec>();
+    }
+    #[test]
+    fn test_11_windowed_spec_surface() {
+        for key in [
+            "mode",
+            "seam",
+            "ext",
+            "core_extend",
+            "wmax",
+            "commit_weight_max",
+            "sandwich_phase2",
+        ] {
+            let error = parse(&format!("windowed:{key}=1,buffer=1,inner=pecos_uf")).unwrap_err();
+            assert!(error.to_string().contains("unknown"), "{key}: {error}");
+            assert!(error.to_string().contains(key));
+        }
+        for text in [
+            "windowed",
+            "windowed:",
+            "windowed:buffer=1",
+            "windowed:inner=pecos_uf",
+        ] {
+            assert!(
+                parse(text).unwrap_err().to_string().contains("requires"),
+                "{text}"
+            );
+        }
+        assert!(
+            parse("windowed:buffer=1,inner=pecos_uf")
+                .unwrap_err()
+                .to_string()
+                .contains("windowed requires step")
+        );
+        assert!(
+            parse("windowed:step=0,buffer=1,inner=pecos_uf")
+                .unwrap_err()
+                .to_string()
+                .contains("step must be at least 1")
+        );
+        assert!(parse("windowed:step=1,buffer=0,inner=pymatching_uncorrelated").is_ok());
+        assert!(parse("beamsearch:step=3,buf=2,wmax=2.5,K=2,sigma=0.3,seed=7").is_ok());
     }
 }

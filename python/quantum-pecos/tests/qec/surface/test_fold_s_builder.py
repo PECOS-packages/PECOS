@@ -186,7 +186,9 @@ def test_fold_descriptor():
     assert descriptor["num_observables"] == 1
     assert sum(segment["num_detectors"] for segment in descriptor["segments"]) == 24
     for segment in descriptor["segments"]:
-        assert stim.DetectorErrorModel(segment["dem"]).num_detectors == segment["num_detectors"]
+        # ``num_detectors`` counts the segment's own commit detectors; the
+        # segment DEM also carries the look-behind and look-ahead halo.
+        assert stim.DetectorErrorModel(segment["dem"]).num_detectors == segment["num_window_detectors"]
 
 
 def test_fold_dagger_descriptor_matches_s():

@@ -77,9 +77,7 @@ def test_parallel_predictions_match_sequential(options):
     assert parallel.workers_used == 4
     assert parallel.predictions == sequential.predictions
     assert parallel.num_errors == sequential.num_errors
-    assert parallel.num_errors == sum(
-        a != b for a, b in zip(parallel.predictions, truth, strict=True)
-    )
+    assert parallel.num_errors == sum(a != b for a, b in zip(parallel.predictions, truth, strict=True))
     assert parallel.stats.num_timing_samples == len(rows)
     assert parallel.reproducibility_warnings == []
 
@@ -96,11 +94,7 @@ def test_auto_execution_wide_observables_and_count_only():
     count = batch.decode(dem, "bp_trellis", workers=3)
     assert count.predictions is None
     assert count.num_errors == 0
-    empty = (
-        DemSampler.from_dem_string(dem)
-        .sample_batch(0, seed=1)
-        .decode(dem, bp_trellis(), workers=2)
-    )
+    empty = DemSampler.from_dem_string(dem).sample_batch(0, seed=1).decode(dem, bp_trellis(), workers=2)
     assert empty.num_shots == 0
 
 
@@ -115,12 +109,8 @@ def test_invalid_order_and_impossible_syndrome_are_errors(workers):
 
 def test_fused_sampling_matches_sequential_decoding():
     sampler = DemSampler.from_dem_string(DEM)
-    expected = sampler.decode(
-        DEM, 3073, bp_trellis(), seed=17, workers=1, predictions=True
-    )
-    fused = sampler.decode(
-        DEM, 3073, bp_trellis(), seed=17, workers=3, predictions=True
-    )
+    expected = sampler.decode(DEM, 3073, bp_trellis(), seed=17, workers=1, predictions=True)
+    fused = sampler.decode(DEM, 3073, bp_trellis(), seed=17, workers=3, predictions=True)
     assert fused.execution_path == "parallel"
     assert fused.workers_used == 3
     assert fused.predictions == expected.predictions
@@ -139,18 +129,14 @@ def test_predictions_match_direct_experimental_binding():
     ):
         direct = exp.BpTrellisDecoder.from_dem(DEM, **options)
         expected = [direct.decode_syndrome(row).observable_flips.mask for row in rows]
-        result = SampleBatch(rows, [0] * len(rows)).decode(
-            DEM, bp_trellis(**options), workers=3, predictions=True
-        )
+        result = SampleBatch(rows, [0] * len(rows)).decode(DEM, bp_trellis(**options), workers=3, predictions=True)
         assert result.predictions == expected
 
 
 @pytest.mark.parametrize("workers", [1, 4])
 def test_no_path_escalation_is_used_in_batch_execution(workers):
     dem = "error(0.4) D0\nerror(0.4) D1\nerror(0.1) D0 D1 D2 L0\n"
-    options = dict(
-        k=2, bp_score_iterations=0, merge_indistinguishable=False, ordering="time_order"
-    )
+    options = dict(k=2, bp_score_iterations=0, merge_indistinguishable=False, ordering="time_order")
     batch = SampleBatch([[0, 0, 1]] * 1025, [1] * 1025)
     with pytest.raises(RuntimeError, match="(?i)(path|syndrome|shot)"):
         batch.decode(dem, bp_trellis(**options), workers=workers)

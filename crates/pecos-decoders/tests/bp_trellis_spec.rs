@@ -1,4 +1,4 @@
-//! Feature-independent specs and native BpTrellis construction.
+//! Feature-independent specs and native BP-Trellis construction.
 use pecos_decoders::spec::{BpTrellisConfig, DecodeModel, DecoderSpec};
 
 #[test]

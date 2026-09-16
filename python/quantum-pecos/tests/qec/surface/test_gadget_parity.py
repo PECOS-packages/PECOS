@@ -358,9 +358,8 @@ def test_measurement_membership_uses_allocation(basis: str | None) -> None:
 
 def test_protocol_source_parity() -> None:
     """The post-fix protocol capture guards rendered source against drift."""
-    assert (
-        render_surface_protocol_module(SurfacePatch.create(distance=3)) == (GOLDENS / "protocol_d3.py.txt").read_text()
-    )
+    source = render_surface_protocol_module(SurfacePatch.create(distance=3))
+    assert source == (GOLDENS / "protocol_d3.py.txt").read_text()
 
 
 def test_two_register_ancilla_names() -> None:

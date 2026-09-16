@@ -375,6 +375,9 @@ jobs:
         cargo +stable test --locked -p pecos-qis-ffi --lib
         cargo +stable test --locked -p pecos-qis --lib executor::tests
 
+    - name: Test StabVec numerical reference contract
+      run: cargo +stable test --locked -p pecos-simulators --test stab_vec_correctness
+
     - name: Build quantum-pecos wheel
       if: matrix.build-quantum-pecos
       run: |

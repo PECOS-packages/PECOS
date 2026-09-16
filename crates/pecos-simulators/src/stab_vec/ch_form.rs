@@ -39,6 +39,28 @@ use pecos_core::{BitSet, IndexSet, QubitId, RngManageable};
 use pecos_random::rng_ext::RngProbabilityExt;
 use pecos_random::{PecosRng, Rng, SeedableRng};
 
+/// Evaluate the Hadamard normalization with a fixed multiplication order.
+///
+/// `f64::powi` has platform-dependent precision: LLVM lowers it to `pow` on
+/// Windows MSVC, but to integer exponentiation on Unix. Preserve the existing
+/// integer-exponentiation rounding used by the pinned `StabVec` reference corpus.
+/// Do not replace this with `powi`/`powf` or an algebraically equivalent power of 2:
+/// both would change the numerical contract, even though they are close in value.
+fn hadamard_norm(mut count: usize) -> f64 {
+    let mut factor = std::f64::consts::FRAC_1_SQRT_2;
+    let mut norm = 1.0;
+    while count != 0 {
+        if count & 1 != 0 {
+            norm *= factor;
+        }
+        count >>= 1;
+        if count != 0 {
+            factor *= factor;
+        }
+    }
+    norm
+}
+
 /// CH-form stabilizer simulator, generic over index set and RNG.
 ///
 /// State: `|psi> = omega * U_C * U_H * |s>`
@@ -448,9 +470,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CHFormGeneric<S, R> {
 
         // Count Hadamard qubits for normalization: 2^{-sum(v)/2}
         let v_count = self.v.len();
-        #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
-        // qubit count fits in i32
-        let norm = std::f64::consts::FRAC_1_SQRT_2.powi(v_count as i32);
+        let norm = hadamard_norm(v_count);
 
         // i^mu
         let mu_mod4 = ((mu % 4) + 4) % 4; // ensure positive mod
@@ -504,9 +524,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CHFormGeneric<S, R> {
         }
         let sign = if vus_count & 1 == 1 { -1.0 } else { 1.0 };
         let v_count = self.v.len();
-        #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
-        // qubit count fits in i32
-        let norm = std::f64::consts::FRAC_1_SQRT_2.powi(v_count as i32);
+        let norm = hadamard_norm(v_count);
         let mu_mod4 = ((mu % 4) + 4) % 4;
         let i_pow_mu = match mu_mod4 {
             0 => num_complex::Complex64::new(1.0, 0.0),
@@ -1690,9 +1708,7 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CHFormGeneric<S, R> {
         // The 2^{-(|v1|+|v2|)/2} comes from the normalization in each amplitude.
         let v1_count = self.v.len();
         let v2_count = other.v.len();
-        #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
-        // qubit count fits in i32
-        let norm = std::f64::consts::FRAC_1_SQRT_2.powi((v1_count + v2_count) as i32);
+        let norm = hadamard_norm(v1_count + v2_count);
         let omega_factor = self.omega.to_complex().conj() * other.omega.to_complex();
         let ip = omega_factor * norm * exp_sum.to_complex();
 
@@ -2729,6 +2745,32 @@ impl StabilizerSimulator for CHFormGeneric<BitSet, PecosRng> {
 mod tests {
     use super::*;
     use pecos_core::qid;
+
+    #[test]
+    fn hadamard_normalization_has_platform_independent_bits() {
+        // Pin the multiplication order, not merely proximity to 2^(-n/2).
+        // In particular MSVC pow(1/sqrt(2), 10) rounds differently from the
+        // integer-power path and broke the 256-term reference corpus.
+        for (count, expected) in [
+            (0, 0x3ff0_0000_0000_0000),
+            (1, 0x3fe6_a09e_667f_3bcd),
+            (2, 0x3fe0_0000_0000_0001),
+            (3, 0x3fd6_a09e_667f_3bce),
+            (8, 0x3fb0_0000_0000_0004),
+            (10, 0x3fa0_0000_0000_0005),
+            (20, 0x3f50_0000_0000_000a),
+            (100, 0x3cd0_0000_0000_0032),
+            (1024, 0x1ff0_0000_0000_0200),
+            (2048, 0x0004_0000_0000_0100),
+        ] {
+            assert_eq!(hadamard_norm(count).to_bits(), expected, "count={count}");
+            assert_eq!(
+                hadamard_norm(std::hint::black_box(count)).to_bits(),
+                expected,
+                "runtime count={count}"
+            );
+        }
+    }
 
     #[test]
     fn test_initial_state_is_zero() {

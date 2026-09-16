@@ -6,10 +6,14 @@
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum, auto
+from typing import Literal
 
 from pecos.qec.surface.circuit_builder import OpType, QubitAllocation, SurfaceCircuitStep
-from pecos.qec.surface.patch import SurfacePatch
+from pecos.qec.surface.layouts.rotated_lattice import rotated_id_to_position
+from pecos.qec.surface.patch import Stabilizer, SurfacePatch
 from pecos.qec.surface.schedule import compute_cnot_schedule
+
+_FOLD_AFTER_CX_LAYER = 2
 
 
 class GadgetKind(Enum):
@@ -35,6 +39,7 @@ class Gadget:
     dimensions: tuple[int, int]
     basis: str | None
     x_z_swapped: bool = False
+    fold: Literal["S", "SDG"] | None = None
 
 
 def default_allocation(patch: SurfacePatch) -> QubitAllocation:
@@ -73,18 +78,27 @@ def prep_gadget(patch: SurfacePatch, allocation: QubitAllocation, *, basis: str)
     return Gadget(GadgetKind.PREP, name, tuple(steps), (allocation,), (patch.dx, patch.dz), basis.upper())
 
 
-def _ancilla_steps(
+def _ancilla_register(
     patch: SurfacePatch,
     allocation: QubitAllocation,
     family: str,
-    op: OpType,
-) -> list[SurfaceCircuitStep]:
+) -> tuple[list[Stabilizer], list[int]]:
     stabilizers = patch.geometry.x_stabilizers if family == "X" else patch.geometry.z_stabilizers
     stabilizers = sorted(stabilizers, key=lambda s: s.index)
     qubits = allocation.x_ancilla_qubits if family == "X" else allocation.z_ancilla_qubits
     if {s.index for s in stabilizers} != set(range(len(qubits))):
         msg = f"{family} stabilizer indices must cover the ancilla register positions"
         raise ValueError(msg)
+    return stabilizers, qubits
+
+
+def _ancilla_steps(
+    patch: SurfacePatch,
+    allocation: QubitAllocation,
+    family: str,
+    op: OpType,
+) -> list[SurfaceCircuitStep]:
+    stabilizers, qubits = _ancilla_register(patch, allocation, family)
     prefix = "s" if op == OpType.MEASURE else "a"
     return [SurfaceCircuitStep(op, [qubits[s.index]], f"{prefix}{family.lower()}{s.index}") for s in stabilizers]
 
@@ -96,30 +110,33 @@ def _hadamards(patch: SurfacePatch, allocation: QubitAllocation, family: str = "
     ]
 
 
-def _cx_steps(
+def _cx_layers(
     patch: SurfacePatch,
     allocation: QubitAllocation,
     family: str | None = None,
     *,
     round_order: str | Sequence[int] | None = None,
     x_z_swapped: bool = False,
-) -> list[SurfaceCircuitStep]:
-    steps = []
+) -> list[list[SurfaceCircuitStep]]:
+    _, x_ancillas = _ancilla_register(patch, allocation, "X")
+    _, z_ancillas = _ancilla_register(patch, allocation, "Z")
+    layers = []
     for index, layer in enumerate(compute_cnot_schedule(patch, round_order=round_order)):
-        steps.append(SurfaceCircuitStep(OpType.COMMENT, label=f"CX round {index + 1}"))
+        steps = [SurfaceCircuitStep(OpType.COMMENT, label=f"CX round {index + 1}")]
         for kind, stab, data in layer:
             if family is not None and kind != family:
                 continue
             operands = (
-                [allocation.x_ancilla_qubits[stab], allocation.data_qubits[data]]
+                [x_ancillas[stab], allocation.data_qubits[data]]
                 if kind == "X"
-                else [allocation.data_qubits[data], allocation.z_ancilla_qubits[stab]]
+                else [allocation.data_qubits[data], z_ancillas[stab]]
             )
             if x_z_swapped:
                 operands.reverse()
             steps.append(SurfaceCircuitStep(OpType.CX, operands, f"{kind}{stab}"))
         steps.append(SurfaceCircuitStep(OpType.TICK))
-    return steps
+        layers.append(steps)
+    return layers
 
 
 def init_syndrome_gadget(
@@ -133,6 +150,9 @@ def init_syndrome_gadget(
     """Establish the complementary stabilizer signs after data preparation."""
     basis = _normalize_basis(basis, ("X", "Z"))
     family = "X" if basis.upper() == "Z" else "Z"
+    if x_z_swapped and patch.dx != patch.dz:
+        msg = "init_syndrome_gadget requires a square patch when x_z_swapped (dx == dz)"
+        raise ValueError(msg)
     h_family = "Z" if x_z_swapped else "X"
     if x_z_swapped:
         family = "Z" if family == "X" else "X"
@@ -141,7 +161,11 @@ def init_syndrome_gadget(
     if family == h_family:
         steps.extend(_hadamards(patch, allocation, h_family))
     steps.append(SurfaceCircuitStep(OpType.TICK))
-    steps.extend(_cx_steps(patch, allocation, family, round_order=round_order, x_z_swapped=x_z_swapped))
+    steps.extend(
+        step
+        for layer in _cx_layers(patch, allocation, family, round_order=round_order, x_z_swapped=x_z_swapped)
+        for step in layer
+    )
     if family == h_family:
         steps.extend(_hadamards(patch, allocation, h_family))
     steps.append(SurfaceCircuitStep(OpType.COMMENT, label="Measure ancillas"))
@@ -172,13 +196,32 @@ def syndrome_round_gadget(
     receive the Hadamards, and are allocated and measured first. Labels
     always refer to physical register slots by stabilizer index.
     """
+    layers = _cx_layers(patch, allocation, round_order=round_order, x_z_swapped=x_z_swapped)
+    return _syndrome_round(patch, allocation, layers, round_index=round_index, x_z_swapped=x_z_swapped)
+
+
+def _syndrome_round(
+    patch: SurfacePatch,
+    allocation: QubitAllocation,
+    layers: list[list[SurfaceCircuitStep]],
+    *,
+    round_index: int,
+    x_z_swapped: bool,
+    name: str = "syndrome_extraction",
+    fold: Literal["S", "SDG"] | None = None,
+) -> Gadget:
+    if x_z_swapped and patch.dx != patch.dz:
+        # Transversal H needs a square patch, so a swapped rectangle has no producer and no
+        # Guppy syndrome struct of its own.
+        msg = "syndrome_round_gadget requires a square patch when x_z_swapped (dx == dz)"
+        raise ValueError(msg)
     steps = [SurfaceCircuitStep(OpType.COMMENT, label=f"syndrome_extraction round {round_index + 1}")]
     families = ("Z", "X") if x_z_swapped else ("X", "Z")
     for family in families:
         steps.extend(_ancilla_steps(patch, allocation, family, OpType.ALLOC))
     steps.extend(_hadamards(patch, allocation, families[0]))
     steps.append(SurfaceCircuitStep(OpType.TICK))
-    steps.extend(_cx_steps(patch, allocation, round_order=round_order, x_z_swapped=x_z_swapped))
+    steps.extend(step for layer in layers for step in layer)
     steps.extend(_hadamards(patch, allocation, families[0]))
     steps.append(SurfaceCircuitStep(OpType.COMMENT, label="Measure ancillas"))
     for family in families:
@@ -186,12 +229,114 @@ def syndrome_round_gadget(
     steps.append(SurfaceCircuitStep(OpType.TICK))
     return Gadget(
         GadgetKind.SYNDROME_ROUND,
-        "syndrome_extraction" + ("_swapped" if x_z_swapped else ""),
+        name + ("_swapped" if x_z_swapped else ""),
         tuple(steps),
         (allocation,),
         (patch.dx, patch.dz),
         None,
         x_z_swapped=x_z_swapped,
+        fold=fold,
+    )
+
+
+def fold_s_round_gadget(
+    patch: SurfacePatch,
+    allocation: QubitAllocation,
+    *,
+    round_index: int,
+    x_z_swapped: bool = False,
+    dagger: bool = False,
+) -> Gadget:
+    """Apply logical S inside a default syndrome round on a square rotated patch.
+
+    After CX layer 2, transpose (x, y) -> (y, x) exchanges the entangled
+    block's code X/Z subgroups. Apply CZ to every exchanged pair of data
+    or bulk ancillas. Diagonal data sites have odd coordinates and bulk
+    ancilla sites even, so S on data and S-dagger on ancillas alternate
+    along the diagonal. Exterior weight-2 check ancillas are disentangled
+    and untouched. Distance must be at least 2 to have syndrome checks.
+    The same coordinate rule applies in the current X/Z orientation.
+
+    The exact round flow is X_L -> +Y_L * product(current Z checks) and
+    Z_L -> Z_L, with +Y_L = i X_L Z_L, SparseStab's Y = iXZ convention,
+    and PECOS SZ = diag(1, i). For an X-prepared patch the output logical
+    Y sign is (-1)**parity(round Z outcomes). With dagger=True all fixed
+    point phases reverse, giving -Y_L and the opposite frame sign.
+
+    X records are not bare X checks: on input, bottom-row bulk X ancillas
+    measure their X check times the left-boundary Z check at (0, x_j); other
+    X records measure bare checks. On output, an X record together with
+    the Z record at (y_j + 2, x_j) certifies X check j. If that partner is
+    absent the X record alone certifies the check. Coordinates here use
+    the current frame (transpose them when x_z_swapped=True).
+
+    Under circuit noise the X-sector fault distance is reduced: a Y fault
+    before the fold produces a Z pair on a mirror pair. Chen, Chen, Lu, Pan,
+    arXiv:2412.01391 (https://arxiv.org/abs/2412.01391), observe two to three
+    times the memory's logical error rate for their separated S-round benchmark.
+    See also the half-cycle construction of McEwen, Bacon, Gidney, arXiv:2302.02192
+    (https://arxiv.org/abs/2302.02192). Builder and detector integration
+    are separate from this physical gadget.
+
+    Raises:
+        ValueError: For non-rotated, rectangular, distance-1, or malformed patches,
+            or a CX schedule that does not have four layers.
+    """
+    if not patch.rotated:
+        msg = "fold_s_round_gadget requires a rotated patch"
+        raise ValueError(msg)
+    if patch.dx != patch.dz:
+        msg = "fold_s_round_gadget requires a square patch (dx=dz)"
+        raise ValueError(msg)
+    if patch.dx < 2:
+        msg = "fold_s_round_gadget requires distance at least 2 to have syndrome checks"
+        raise ValueError(msg)
+
+    positions = {i: rotated_id_to_position(i, patch.dx) for i in range(patch.geometry.num_data)}
+    by_position = {position: allocation.data_qubits[i] for i, position in positions.items()}
+    # Supports identify bulk centres without relying on placeholder stabilizer positions.
+    for family in ("X", "Z"):
+        stabilizers, ancillas = _ancilla_register(patch, allocation, family)
+        for stabilizer in stabilizers:
+            if len(stabilizer.data_qubits) == 4:
+                x_sum = sum(positions[q][0] for q in stabilizer.data_qubits)
+                y_sum = sum(positions[q][1] for q in stabilizer.data_qubits)
+                if x_sum % 4 or y_sum % 4:
+                    msg = "fold_s_round_gadget requires bulk-centre coordinate sums divisible by 4"
+                    raise ValueError(msg)
+                by_position[x_sum // 4, y_sum // 4] = ancillas[stabilizer.index]
+
+    if len(by_position) != patch.dx**2 + (patch.dx - 1) ** 2:
+        msg = "fold_s_round_gadget requires d*d + (d-1)**2 distinct data and bulk-ancilla sites"
+        raise ValueError(msg)
+
+    label = "fold-transversal S-dagger layer" if dagger else "fold-transversal S layer"
+    fold = [SurfaceCircuitStep(OpType.COMMENT, label=label)]
+    for (x, y), qubit in sorted(by_position.items()):
+        if (y, x) not in by_position:
+            msg = f"fold_s_round_gadget missing transpose partner for site {(x, y)}"
+            raise ValueError(msg)
+        if x < y:
+            fold.append(SurfaceCircuitStep(OpType.CZ, [qubit, by_position[y, x]]))
+        elif x == y:
+            op = OpType.SZ if (x % 2 == 1) != dagger else OpType.SZDG
+            fold.append(SurfaceCircuitStep(op, [qubit]))
+    fold.append(SurfaceCircuitStep(OpType.TICK))
+    layers = _cx_layers(patch, allocation, x_z_swapped=x_z_swapped)
+    if len(layers) != 4:
+        msg = "fold_s_round_gadget requires four CX layers in the default schedule"
+        raise ValueError(msg)
+    # Between CX layers 2 and 3 the half-cycle state is the unrotated code;
+    # round_order is deliberately absent because the fold depends on the default order.
+    layers.insert(_FOLD_AFTER_CX_LAYER, fold)
+    return _syndrome_round(
+        patch,
+        allocation,
+        layers,
+        round_index=round_index,
+        x_z_swapped=x_z_swapped,
+        name="syndrome_extraction_fold_sdg" if dagger else "syndrome_extraction_fold_s",
+        fold="SDG" if dagger else "S",
     )
 
 

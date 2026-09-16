@@ -81,7 +81,7 @@ fn check_python_available() -> Result<()> {
         .is_ok_and(|o| o.status.success());
 
     let python_ok = Command::new("uv")
-        .args(["run", "python", "--version"])
+        .args(["run", "--frozen", "python", "--version"])
         .output()
         .is_ok_and(|o| o.status.success());
 
@@ -248,7 +248,14 @@ fn run_build(profile: &str, rustflags: Option<&str>, cuda: bool) -> Result<()> {
     // are already installed by maturin develop above)
     println!("Installing quantum-pecos...");
     let mut pip_cmd = Command::new("uv");
-    pip_cmd.args(["pip", "install", "--no-deps", "-e"]);
+    pip_cmd.args([
+        "pip",
+        "install",
+        "--index-url",
+        "https://pypi.org/simple",
+        "--no-deps",
+        "-e",
+    ]);
 
     // `--no-deps` (above) means this editable install pulls no dependencies, so
     // naming a CUDA extra here would be inert: the CUDA Python stack

@@ -91,6 +91,8 @@ def test_all_gadget_functions_compile(module, patch):
         "transversal_cx",
         "apply_logical_x",
         "syndrome_extraction_swapped_a",
+        "syndrome_extraction_fold_s_a",
+        "syndrome_extraction_fold_sdg_a",
         *(f"syndrome_extraction_{scope}" for scope in ("a", "ctrl", "tgt", "data", "anc")),
     }
     rendered = {
@@ -313,7 +315,7 @@ def test_sidebands_and_memory_parity(patch):
                 sidebands.append(tag)
         else:
             assert not calls
-    assert len(sidebands) == 48
+    assert len(sidebands) == 64
     assert not re.search(r'output\("s[xz][0-9]+:', source)
     memory = render_surface_gadget_module(patch)
     golden = Path(__file__).parents[1] / "qec/surface/goldens/gadget_parity/guppy_d3.py.txt"
@@ -613,3 +615,45 @@ def test_shared_module_directory():
     from pecos.guppy_gen.transversal import _get_temp_dir as transversal_dir
 
     assert surface_dir() == transversal_dir() == protocol_dir() == _get_temp_dir()
+
+
+@pytest.mark.parametrize("dagger", [False, True])
+@pytest.mark.parametrize(("before", "after"), [(0, 2), (1, 1), (2, 0), (0, 0)])
+def test_logical_s_factory(patch, module, before, after, dagger):
+    """Compile either phase and certify scoped measurement ordinals against the builder."""
+    program = module["make_logical_s_experiment"](before, after, dagger=dagger)
+    assert program.compile() is not None
+    builder = LogicalCircuitBuilder()
+    builder.add_patch(patch, "D")
+    builder.add_memory("D", before, "Z")
+    builder.add_logical_s("D", dagger=dagger)
+    builder.add_memory("D", after, "Z")
+    assert_same_measurement_partition(
+        measurement_partition_from_trace(program, patch.geometry.num_qubits, {"a": "D"}),
+        measurement_partition_from_builder(builder),
+    )
+    results = _results(program, patch.geometry.num_qubits)
+    _assert_parity(results["final_a"], patch.geometry.logical_z.data_qubits, 0)
+    assert set(results) == {"synx_a", "synz_a", "final_a"} | _sideband_tags(("a",))
+    assert load_surface_protocol_module(patch) is module
+
+
+@pytest.mark.parametrize(("before", "after"), [(-1, 1), (1, -1)])
+def test_logical_s_factory_rejects_negative_rounds(module, before, after):
+    with pytest.raises(ValueError, match="Logical S experiment requires nonnegative round counts"):
+        module["make_logical_s_experiment"](before, after)
+
+
+def test_logical_s_factory_ordered_body(patch):
+    assert _factory_structure(render_surface_protocol_module(patch), "make_logical_s_experiment") == [
+        "a = prep_z_basis()",
+        _expected_rounds("rounds_before", "a"),
+        (
+            "if comptime(dagger):\n    syn = syndrome_extraction_fold_sdg_a(a)\n"
+            "else:\n    syn = syndrome_extraction_fold_s_a(a)"
+        ),
+        "output('synx_a', syn.synx)",
+        "output('synz_a', syn.synz)",
+        _expected_rounds("rounds_after", "a"),
+        *_expected_readout("a"),
+    ]

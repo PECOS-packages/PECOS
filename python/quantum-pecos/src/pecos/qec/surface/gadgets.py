@@ -151,7 +151,7 @@ def init_syndrome_gadget(
     basis = _normalize_basis(basis, ("X", "Z"))
     family = "X" if basis.upper() == "Z" else "Z"
     if x_z_swapped and patch.dx != patch.dz:
-        msg = "x_z_swapped requires a square patch (dx == dz)"
+        msg = "init_syndrome_gadget requires a square patch when x_z_swapped (dx == dz)"
         raise ValueError(msg)
     h_family = "Z" if x_z_swapped else "X"
     if x_z_swapped:
@@ -213,7 +213,7 @@ def _syndrome_round(
     if x_z_swapped and patch.dx != patch.dz:
         # Transversal H needs a square patch, so a swapped rectangle has no producer and no
         # Guppy syndrome struct of its own.
-        msg = "x_z_swapped requires a square patch (dx == dz)"
+        msg = "syndrome_round_gadget requires a square patch when x_z_swapped (dx == dz)"
         raise ValueError(msg)
     steps = [SurfaceCircuitStep(OpType.COMMENT, label=f"syndrome_extraction round {round_index + 1}")]
     families = ("Z", "X") if x_z_swapped else ("X", "Z")

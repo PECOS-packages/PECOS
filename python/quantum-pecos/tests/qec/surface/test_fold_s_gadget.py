@@ -414,8 +414,10 @@ def test_rectangular_swapped_round_rejected() -> None:
     """A swapped rectangle has no producer (transversal H needs a square) and no Guppy struct."""
     patch = SurfacePatch.create(dx=3, dz=5, rotated=True)
     allocation = gadgets.default_allocation(patch)
-    with pytest.raises(ValueError, match="x_z_swapped requires a square patch"):
+    with pytest.raises(ValueError, match="syndrome_round_gadget requires a square patch"):
         gadgets.syndrome_round_gadget(patch, allocation, round_index=0, x_z_swapped=True)
+    with pytest.raises(ValueError, match="init_syndrome_gadget requires a square patch"):
+        gadgets.init_syndrome_gadget(patch, allocation, basis="Z", x_z_swapped=True)
 
 
 def test_dag_rejects_unsupported_operation() -> None:

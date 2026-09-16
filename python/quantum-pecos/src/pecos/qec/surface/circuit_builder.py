@@ -150,6 +150,7 @@ class OpType(Enum):
 
     # Two-qubit gates
     CX = auto()  # CNOT
+    CZ = auto()  # Controlled Z
     SZZ = auto()  # sqrt ZZ
     SZZDG = auto()  # sqrt ZZ dagger
 
@@ -724,7 +725,7 @@ def _analyze_szz_forward_flow(ops: list[SurfaceCircuitStep]) -> SzzForwardFlowSu
             for q in op.qubits:
                 discharge_for_two_qubit(q, host_index, op)
             continue
-        if op.op_type == OpType.CX:
+        if op.op_type in {OpType.CX, OpType.CZ}:
             msg = "SZZ forward-flow analysis only supports SZZ/SZZdg two-qubit gates"
             raise ValueError(msg)
         if op.op_type == OpType.MEASURE:
@@ -856,7 +857,7 @@ def _lower_szz_forward_flow_ops(ops: list[SurfaceCircuitStep]) -> list[SurfaceCi
             append_prefix_ticks(virtual_steps, physical_steps)
             lowered.append(op)
             continue
-        if op.op_type == OpType.CX:
+        if op.op_type in {OpType.CX, OpType.CZ}:
             msg = "SZZ forward-flow lowering only supports SZZ/SZZdg two-qubit gates"
             raise ValueError(msg)
         if op.op_type == OpType.MEASURE:
@@ -1769,6 +1770,11 @@ class StimRenderer(CircuitRenderer):
         basis: str,
     ) -> str:
         """Render to Stim circuit string."""
+        if self.add_detectors and any(op.op_type == OpType.CZ for op in ops):
+            msg = (
+                "StimRenderer: detector annotation is unsupported for step lists with CZ (the fold-transversal S layer)"
+            )
+            raise ValueError(msg)
         geom = patch.geometry
         num_x_anc = len(geom.x_stabilizers)
 
@@ -1821,9 +1827,9 @@ class StimRenderer(CircuitRenderer):
                 if self.p1 > 0:
                     lines.append(f"DEPOLARIZE1({self.p1}) {op.qubits[0]}")
 
-            elif op.op_type == OpType.CX:
+            elif op.op_type in {OpType.CX, OpType.CZ}:
                 c, t = op.qubits
-                lines.append(f"CX {c} {t}")
+                lines.append(f"{op.op_type.name} {c} {t}")
                 if self.p2 > 0:
                     lines.append(f"DEPOLARIZE2({self.p2}) {c} {t}")
 
@@ -2059,6 +2065,9 @@ class DagCircuitRenderer(CircuitRenderer):
             elif op.op_type == OpType.CX:
                 circuit.cx([(op.qubits[0], op.qubits[1])])
 
+            elif op.op_type == OpType.CZ:
+                circuit.cz([(op.qubits[0], op.qubits[1])])
+
             elif op.op_type == OpType.SZZ:
                 circuit.szz([(op.qubits[0], op.qubits[1])])
 
@@ -2082,6 +2091,10 @@ class DagCircuitRenderer(CircuitRenderer):
                     "use TickCircuit / PauliFrameLookup path for twirled DEMs"
                 )
                 raise NotImplementedError(msg)
+
+            else:
+                msg = f"Unsupported DagCircuit operation: {op.op_type.name}"
+                raise ValueError(msg)
 
         return circuit
 
@@ -2150,6 +2163,9 @@ class TickCircuitRenderer(CircuitRenderer):
         - Tick-level: 'phase', 'syndrome_round', 'cx_round'
         - Gate-level: 'label', 'role'
         """
+        if self.add_detectors and any(op.op_type == OpType.CZ for op in ops):
+            msg = "TickCircuitRenderer: detector annotation is unsupported for step lists with CZ (fold-transversal S)"
+            raise ValueError(msg)
         import json
 
         from pecos_rslib.quantum import TickCircuit
@@ -2352,6 +2368,9 @@ class TickCircuitRenderer(CircuitRenderer):
                 elif "CX round" in op.label:
                     current_cx_round = int(op.label.split()[-1])
                     current_phase = f"cx_round_{current_cx_round}"
+                elif op.label in {"fold-transversal S layer", "fold-transversal S-dagger layer"}:
+                    current_phase = "fold_sdg" if "S-dagger" in op.label else "fold_s"
+                    current_cx_round = 0
                 elif "SZZ round" in op.label:
                     current_cx_round = int(op.label.split()[-1])
                     current_phase = f"szz_round_{current_cx_round}"
@@ -2495,6 +2514,13 @@ class TickCircuitRenderer(CircuitRenderer):
                 if op.label:
                     meta["label"] = op.label
                 apply_gate_metadata(tick, meta or None)
+
+            elif op.op_type == OpType.CZ:
+                qubits = op.qubits
+                tick = get_tick_for_qubits(qubits).cz([(qubits[0], qubits[1])])
+                mark_qubits_used(qubits)
+                # Fold pairs join data to data or ancilla to ancilla, not check touches.
+                apply_gate_metadata(tick, {"label": op.label} if op.label else None)
 
             elif op.op_type == OpType.SZZ:
                 qubits = op.qubits

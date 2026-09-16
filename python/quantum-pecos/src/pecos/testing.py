@@ -48,6 +48,8 @@ from pecos._traced_circuit import measurement_ids_in_execution_order
 from pecos.tracing import _trace_program_to_tick_circuit_with_result_traces
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable, Sequence
+
     from pecos_rslib.quantum import TickCircuit
 
     from pecos import Array
@@ -493,3 +495,55 @@ def assert_same_measurement_partition(
         if a.get(key) != b.get(key):
             msg = f"Measurement partition differs at {key!r}: {a.get(key)!r} != {b.get(key)!r}"
             raise AssertionError(msg)
+
+
+def deterministic_parity_basis(shots: Iterable[Sequence[int]]) -> tuple[int, ...]:
+    """Return a GF(2) basis of measurement parities constant across sampled shots.
+
+    Each input row is a sequence of binary measurement outcomes. Each returned
+    integer is a bit mask: bit j selects measurement j. The nullspace of shot
+    differences includes both constant-zero and constant-one parities. This is
+    a sampling oracle, so callers must use enough independent noiseless shots
+    to span the random outcomes (2048 or more for small Clifford circuits).
+    It does not infer the parity's constant value or prove sampling completeness.
+    At least width + 1 shots are required to allow full rank of shot differences.
+    A circuit with no measurements returns an empty basis.
+    """
+    rows = iter(shots)
+    first = next(rows, None)
+    if first is None:
+        msg = "deterministic_parity_basis requires at least one shot"
+        raise ValueError(msg)
+    width = len(first)
+
+    def mask(row: Sequence[int]) -> int:
+        if len(row) != width or any(value not in (0, 1) for value in row):
+            msg = "deterministic_parity_basis requires equal-width binary shots"
+            raise ValueError(msg)
+        return sum(int(value) << index for index, value in enumerate(row))
+
+    origin = mask(first)
+    pivots: dict[int, int] = {}
+    shot_count = 1
+    for row in rows:
+        shot_count += 1
+        value = mask(row) ^ origin
+        while value:
+            pivot = value.bit_length() - 1
+            if pivot not in pivots:
+                pivots[pivot] = value
+                break
+            value ^= pivots[pivot]
+    if shot_count < width + 1:
+        msg = f"deterministic_parity_basis requires at least width + 1 shots ({width + 1}); got {shot_count}"
+        raise ValueError(msg)
+    basis = []
+    for free in range(width):
+        if free in pivots:
+            continue
+        vector = 1 << free
+        for pivot, row in sorted(pivots.items()):
+            if (row & vector).bit_count() % 2:
+                vector |= 1 << pivot
+        basis.append(vector)
+    return tuple(basis)

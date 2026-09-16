@@ -8853,7 +8853,7 @@ mod tests {
                 return unit;
             }}
         "#,
-            std_path.display()
+            crate::tests::escape_source_string(&std_path.to_string_lossy())
         );
 
         analyze_and_compile_all(&source, "docs/tutorial standard-library angle example");

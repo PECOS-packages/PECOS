@@ -216,6 +216,10 @@ fn run_build(profile: &str, rustflags: Option<&str>, cuda: bool) -> Result<()> {
             cmd.env_remove("DYLD_LIBRARY_PATH");
             cmd.env_remove("DYLD_FALLBACK_LIBRARY_PATH");
             cmd.env("LIBRARY_PATH", "/usr/lib");
+            // Cargo caches failed target probes without accounting for changes
+            // to dyld search paths. Reprobe after sanitizing the environment so
+            // a previous incompatible-LLVM crash cannot survive this cleanup.
+            cmd.env("CARGO_CACHE_RUSTC_INFO", "0");
         }
 
         // Apply PECOS build environment (SDKROOT, LLVM, CUDA, etc.)

@@ -387,7 +387,8 @@ The fold has `d(d-1)/2` data CZ pairs and `(d-1)(d-2)/2` bulk-ancilla CZ
 pairs, totaling `(d-1)^2`, plus d data and d-1 ancilla fixed points. At
 distance 3 the complete round takes nine ticks and makes eight measurements,
 one tick more than the default round. The Tick and Stim renderers refuse
-detector annotation for this gadget. `LogicalCircuitBuilder` does not accept it.
+detector annotation for this standalone gadget. Use `LogicalCircuitBuilder.add_logical_s`
+for circuits with fold-aware detectors and observables.
 
 ```python
 gadget = gadgets.fold_s_round_gadget(patch, allocation, round_index=0)
@@ -411,9 +412,107 @@ assert sum(q in data for q in fixed_points) == d
 assert sum(q not in data for q in fixed_points) == d - 1
 ```
 
+The builder models the fold as one syndrome segment. Preparation and final
+readout are explicit memories; either can request zero plain rounds. X-check
+detectors use the fold round's input and output Z partners. A logical Z readout
+passes through unchanged. An X readout crossing one fold is random; an
+S then S-dagger restores a deterministic X observable whose parity includes
+both fold rounds' Z records. This observable is a frame parity; the descriptor's
+`SGate` boundary gate carries the logical frame update. The adjacent X-prepared
+pair has fault distance 2 at d=3, while Z memory retains distance 3.
+
+A zero-round final memory reads data immediately after the previous segment.
+Its final checks therefore compare with that segment's last syndrome round,
+including across H. This also fills a detector gap in programs without folds:
+`M(2,Z); M(0,Z)` and `M(2,Z); H; M(0,X)` each have 16 detectors at d=3.
+
+```python
+import json
+from pecos.qec.surface import LogicalCircuitBuilder, SurfacePatch
+
+for with_h in (False, True):
+    memory = LogicalCircuitBuilder()
+    memory.add_patch(SurfacePatch.create(distance=3), "A")
+    memory.add_memory("A", 2, "Z")
+    if with_h:
+        memory.add_transversal_h("A")
+    memory.add_memory("A", 0, "X" if with_h else "Z")
+    assert len(json.loads(memory.to_tick_circuit().get_meta("detectors"))) == 16
+```
+
+Fold rounds create hyperedges that `build_decoder`'s matching route
+(`LogicalSubgraphDecoder`) skips. Use a hypergraph decoder such as the
+[Tesseract route](decoders.md) for fold circuits.
+
+```python
+import json
+from pecos.qec import DetectorErrorModel
+from pecos.qec.surface import LogicalCircuitBuilder, SurfacePatch
+from pecos.testing import simulate_tick_circuit
+
+fold_builder = LogicalCircuitBuilder()
+fold_builder.add_patch(SurfacePatch.create(distance=3), "D")
+fold_builder.add_memory("D", 1, "Z")
+fold_builder.add_logical_s("D")
+fold_builder.add_memory("D", 1, "Z")
+fold_tc = fold_builder.to_tick_circuit()
+assert len(json.loads(fold_tc.get_meta("detectors"))) == 24
+assert len(json.loads(fold_tc.get_meta("observables"))) == 1
+for seed in range(8):
+    _, fired, observables = simulate_tick_circuit(fold_tc, seed=seed)
+    assert fired == 0
+    assert observables == {0: 0}
+fold_dem = DetectorErrorModel.from_circuit(fold_tc, p1=0.001, p2=0.001, p_meas=0.001, p_prep=0.001)
+assert fold_dem.per_observable_fault_distances(3)[0].distance == 3
+```
+
+Use `add_logical_s("D", dagger=True)` or `add_logical_sdg("D")` for
+S-dagger. Both variants emit `SGate` in the algorithm descriptor because it
+tracks sign-free Pauli frames: both propagate an X frame bit into X and Z.
+
+Observables are defined relative to the noiseless reference, as in Stim.
+Raw parity encodes the sign with which the program's net logical Clifford maps
+the readout Pauli back onto the prepared eigenstate: positive gives 0, negative
+gives 1. With folds it can be 1 noiselessly: S,S before an X readout, S,S,H
+before a Z readout, or S-dagger pairs through a CX. Stim's reference-relative
+sampling reports zero observable flips for these noiseless programs.
+Observable metadata has no sign field, so both raw-parity consumers,
+`pecos.testing.simulate_tick_circuit` and
+`pecos.qec.surface.extract_detection_events_and_observables`, must account for
+this reference. S then S-dagger before X readout has raw parity 0. A readout with no
+supported logical image, as under a physical S layer, produces no observable
+at all.
+
+```python
+import stim
+from pecos.qec import DetectorErrorModel
+from pecos.testing import simulate_tick_circuit
+from pecos.qec.surface.circuit_builder import tick_circuit_to_stim
+
+for dagger, expected_raw in ((False, 1), (True, 0)):
+    pair = LogicalCircuitBuilder()
+    pair.add_patch(SurfacePatch.create(distance=3), "D")
+    pair.add_memory("D", 1, "X")
+    pair.add_logical_s("D")
+    pair.add_logical_s("D", dagger=dagger)
+    pair.add_memory("D", 1, "X")
+    tc_pair = pair.to_tick_circuit()
+    for seed in range(8):
+        _, fired, raw = simulate_tick_circuit(tc_pair, seed=seed)
+        assert fired == 0
+        assert raw == {0: expected_raw}
+    circuit = stim.Circuit(tick_circuit_to_stim(tc_pair))
+    detectors, flips = circuit.compile_detector_sampler(seed=0).sample(256, separate_observables=True)
+    assert not detectors.any()
+    assert not flips.any()
+    dem_pair = DetectorErrorModel.from_circuit(tc_pair, p1=0.001, p2=0.001, p_meas=0.001, p_prep=0.001)
+    assert dem_pair.per_observable_fault_distances(3)[0].distance == 2
+```
+
 Render the Guppy function independently; the memory module does not include
 it. When assembling a Guppy module, also import `cz`, `s`, and `sdg` from
-`guppylang.std.quantum`. No fold protocol factory is provided.
+`guppylang.std.quantum`. The protocol module provides
+`make_logical_s_experiment(rounds_before, rounds_after, dagger=False)`.
 
 ```python
 gadget = gadgets.fold_s_round_gadget(patch, allocation, round_index=0)
@@ -635,7 +734,8 @@ def transversal_cx(ctrl: SurfaceCode_3x3, tgt: SurfaceCode_3x3) -> None:
 `render_surface_protocol_module(patch)` returns source;
 `load_surface_protocol_module(patch)` returns the loaded module's namespace and
 caches per patch geometry. Scoped tags support measurement-provenance checks.
-These four factories use full syndrome rounds without a separate initial
+These five factories (H, CX, logical S/S-dagger, SZ teleportation, and T
+injection) use full syndrome rounds without a separate initial
 projection. Each example places the factory next to the corresponding builder
 program. The two forms share operation order and measurement partition, not
 physical scheduling or allocation: the builder schedules patches together with
@@ -659,6 +759,36 @@ def new_builder(two_patches=False):
     if two_patches:
         builder.add_patch(patch, "A", qubit_offset=patch.geometry.num_qubits)
     return builder
+```
+
+### Logical S experiment
+
+The factory prepares Z, runs the requested plain rounds around one fold
+round, and reads Z. Both variants use scoped syndrome tags on `a`.
+The fold round is included in `synx_a`, but its X records are not bare X
+syndromes: bottom-row records carry input-side Z-check information. Consumers
+must combine X records with the partner Z records specified by
+`fold_s_round_gadget` to recover the corresponding check parity.
+
+```python
+from pecos.testing import (
+    assert_same_measurement_partition,
+    measurement_partition_from_builder,
+    measurement_partition_from_trace,
+)
+
+for dagger in (False, True):
+    program = module["make_logical_s_experiment"](1, 1, dagger=dagger)
+    builder = new_builder()
+    builder.add_memory("D", 1, "Z")
+    builder.add_logical_s("D", dagger=dagger)
+    builder.add_memory("D", 1, "Z")
+    assert program.compile() is not None
+    assert builder.to_tick_circuit().num_measurements() == 33
+    assert_same_measurement_partition(
+        measurement_partition_from_trace(program, patch.geometry.num_qubits, {"a": "D"}),
+        measurement_partition_from_builder(builder),
+    )
 ```
 
 The single-patch peak is `patch.geometry.num_qubits`. The two-patch Guppy
@@ -990,6 +1120,9 @@ for before_preparation in (True, False):
 | `default_allocation` | `pecos.qec.surface.gadgets` | Data and dedicated ancilla registers |
 | `prep_gadget`, `init_syndrome_gadget` | `pecos.qec.surface.gadgets` | Product preparation and complementary projection |
 | `syndrome_round_gadget`, `measure_out_gadget` | `pecos.qec.surface.gadgets` | Check extraction and destructive data readout |
+| `LogicalCircuitBuilder.add_logical_s`, `add_logical_sdg` | `pecos.qec.surface` | Fold syndrome segments with detectors and logical parity records |
+| `make_logical_s_experiment` | Loaded surface protocol namespace | Z memory with one fold S or S-dagger round |
+| `deterministic_parity_basis` | `pecos.testing` | Basis of parities constant across noiseless measurement shots |
 | `fold_s_round_gadget` | `pecos.qec.surface.gadgets` | Fold-transversal logical S or S-dagger inside a default round |
 | `logical_pauli_gadget`, `transversal_layer_gadget` | `pecos.qec.surface.gadgets` | Logical strings and physical layers |
 | `transversal_cx_gadget`, `memory_gadgets` | `pecos.qec.surface.gadgets` | Two-patch CX and memory composition |

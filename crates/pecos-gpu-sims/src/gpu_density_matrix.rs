@@ -237,9 +237,10 @@ impl<SV: GpuStateVecBackend> GpuDensityMatrix<SV> {
     }
 
     /// Returns true if the state is pure (purity within `tol` of 1.0).
-    /// The default `is_pure` uses `1e-5`, reflecting the f32-precision gate
-    /// constants in the backing state vectors. Pass a tighter tolerance if
-    /// you need stricter purity checks on known-noise-free states.
+    /// The default `is_pure` uses `1e-5`, which the f32 backend
+    /// (`GpuDensityMatrix32`, about 1e-7 per gate) needs. The f64 backend is
+    /// accurate to f64 roundoff, so pass a much tighter tolerance there if you
+    /// need strict purity checks on known-noise-free states.
     #[must_use]
     pub fn is_pure_with_tol(&mut self, tol: f64) -> bool {
         (self.purity() - 1.0).abs() < tol
@@ -1157,10 +1158,11 @@ mod tests {
         fn sync_backend(&mut self) {}
     }
 
-    // Primary tests run on the f32 backend (GpuDensityMatrix32), because the
-    // f64 backend has pre-existing shader bugs in RZZ/RXX/RYY we haven't
-    // fixed yet. Tolerance ~1e-3 reflects f32 precision for f64 comparisons.
+    // `TOL` is for the f32 backend (`GpuDensityMatrix32`, about 1e-7 per gate).
     const TOL: f64 = 1e-3;
+    // f64 roundoff only. An f32 value leaking into the f64 path shows up at 1e-8
+    // or worse, so a looser bound would hide exactly that defect.
+    const GPU_F64_TOLERANCE: f64 = 1e-10;
     const CONJUGATION_TOLERANCE: f64 = 1e-12;
     const UPPER_TAIL_SEED: u64 = 6_327_882;
 
@@ -1381,32 +1383,29 @@ mod tests {
 
     #[test]
     fn gpu_f64_complex_unitaries_have_analytic_off_diagonals() {
-        // Software and f32-class adapters introduce ~1e-7 noise; the reversed-conjugation
-        // failure mode is O(1), so this tolerance still kills it.
-        let Ok(()) = check_complex_unitary_analytics::<GpuStateVec64>(TOL) else {
+        let Ok(()) = check_complex_unitary_analytics::<GpuStateVec64>(GPU_F64_TOLERANCE) else {
             return;
         };
     }
 
     #[test]
     fn gpu_f64_seeded_complex_circuit_matches_state_vector_outer_product() {
-        // Software and f32-class adapters introduce ~1e-7 noise; the reversed-conjugation
-        // failure mode is O(1), so this tolerance still kills it.
-        let Ok(()) = check_seeded_state_vector_oracle::<GpuStateVec64>(TOL) else {
+        let Ok(()) = check_seeded_state_vector_oracle::<GpuStateVec64>(GPU_F64_TOLERANCE) else {
             return;
         };
     }
 
     #[test]
     fn gpu_f64_mixed_bit_flip_measurement_preserves_environment_information() {
-        let Ok(()) = check_mixed_bit_flip_measurement::<GpuStateVec64>(TOL) else {
+        let Ok(()) = check_mixed_bit_flip_measurement::<GpuStateVec64>(GPU_F64_TOLERANCE) else {
             return;
         };
     }
 
     #[test]
     fn gpu_f64_mixed_amplitude_damping_measurement_preserves_environment_information() {
-        let Ok(()) = check_mixed_amplitude_damping_measurement::<GpuStateVec64>(TOL) else {
+        let Ok(()) = check_mixed_amplitude_damping_measurement::<GpuStateVec64>(GPU_F64_TOLERANCE)
+        else {
             return;
         };
     }

@@ -269,6 +269,9 @@ ignore = [
     "FBT003",   # Boolean positional values - OK in tests for explicit boolean testing
     "TRY300",   # Try-except patterns in test code
 ]
+"scripts/ci/test_*.py" = [
+    "S101",     # Use of `assert` detected - standard in tests
+]
 "python/selene-plugins/*/tests/**/*.py" = [
     "F401",     # Imported but unused - OK in tests
     "INP001",   # File is part of an implicit namespace package - OK for test directories

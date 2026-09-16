@@ -90,9 +90,129 @@ pub type DefaultGpuStab = GpuStab<pecos_random::PecosRng>;
 /// Default multi-shot GPU stabilizer simulator using `PecosRng`
 pub type DefaultGpuStabMulti = GpuStabMulti<pecos_random::PecosRng>;
 
+/// Standard gate matrices in f64 for [`GpuStateVec64`], same layout as [`gates`].
+///
+/// Taken directly from the canonical f64 matrices in `pecos_core`, so the f64
+/// backend applies them with no rounding beyond f64 itself. [`gates`] holds the
+/// same matrices rounded to f32 for the f32 backend.
+pub mod gates_f64 {
+    use pecos_core::Clifford;
+    use pecos_core::gate_type::GateType;
+
+    const fn canonical(gate: GateType) -> [f64; 8] {
+        let Some(matrix) = gate.canonical_1q_matrix() else {
+            panic!("gate has no canonical single-qubit matrix");
+        };
+        matrix
+    }
+
+    const fn canonical_clifford(gate: Clifford) -> [f64; 8] {
+        let Some(matrix) = gate.canonical_1q_matrix() else {
+            panic!("gate has no canonical single-qubit Clifford matrix");
+        };
+        matrix
+    }
+
+    /// Identity gate
+    pub const I: [f64; 8] = canonical(GateType::I);
+
+    /// Pauli-X gate (NOT)
+    pub const X: [f64; 8] = canonical(GateType::X);
+
+    /// Pauli-Y gate
+    pub const Y: [f64; 8] = canonical(GateType::Y);
+
+    /// Pauli-Z gate
+    pub const Z: [f64; 8] = canonical(GateType::Z);
+
+    /// Hadamard gate H/H1
+    pub const H: [f64; 8] = canonical(GateType::H);
+
+    /// H2 gate
+    pub const H2: [f64; 8] = canonical_clifford(Clifford::H2);
+    /// H3 gate
+    pub const H3: [f64; 8] = canonical_clifford(Clifford::H3);
+    /// H4 gate
+    pub const H4: [f64; 8] = canonical_clifford(Clifford::H4);
+    /// H5 gate
+    pub const H5: [f64; 8] = canonical_clifford(Clifford::H5);
+    /// H6 gate
+    pub const H6: [f64; 8] = canonical_clifford(Clifford::H6);
+
+    /// S gate (sqrt(Z))
+    pub const S: [f64; 8] = canonical(GateType::SZ);
+
+    /// S-dagger gate
+    pub const SDG: [f64; 8] = canonical(GateType::SZdg);
+
+    /// Conventional T gate, `diag(1, exp(i*pi/4))`.
+    ///
+    /// This is `exp(i*pi/8) RZ(pi/4)`.
+    pub const T: [f64; 8] = canonical(GateType::T);
+
+    /// Conventional T-dagger gate, `diag(1, exp(-i*pi/4))`.
+    ///
+    /// This is `exp(-i*pi/8) RZ(-pi/4)`.
+    pub const TDG: [f64; 8] = canonical(GateType::Tdg);
+
+    /// SX gate (sqrt(X))
+    pub const SX: [f64; 8] = canonical(GateType::SX);
+
+    /// SX-dagger gate
+    pub const SXDG: [f64; 8] = canonical(GateType::SXdg);
+
+    /// SY gate (sqrt(Y))
+    pub const SY: [f64; 8] = canonical(GateType::SY);
+
+    /// SY-dagger gate
+    pub const SYDG: [f64; 8] = canonical(GateType::SYdg);
+
+    /// Face gate F/F1
+    pub const F: [f64; 8] = canonical(GateType::F);
+    /// Adjoint Face gate F/F1
+    pub const FDG: [f64; 8] = canonical(GateType::Fdg);
+    /// F2 gate
+    pub const F2: [f64; 8] = canonical_clifford(Clifford::F2);
+    /// Adjoint F2 gate
+    pub const F2DG: [f64; 8] = canonical_clifford(Clifford::F2dg);
+    /// F3 gate
+    pub const F3: [f64; 8] = canonical_clifford(Clifford::F3);
+    /// Adjoint F3 gate
+    pub const F3DG: [f64; 8] = canonical_clifford(Clifford::F3dg);
+    /// F4 gate
+    pub const F4: [f64; 8] = canonical_clifford(Clifford::F4);
+    /// Adjoint F4 gate
+    pub const F4DG: [f64; 8] = canonical_clifford(Clifford::F4dg);
+
+    /// Create RX(theta) gate matrix
+    #[must_use]
+    pub fn rx(theta: f64) -> [f64; 8] {
+        let c = (theta / 2.0).cos();
+        let s = (theta / 2.0).sin();
+        [c, 0.0, 0.0, -s, 0.0, -s, c, 0.0]
+    }
+
+    /// Create RY(theta) gate matrix
+    #[must_use]
+    pub fn ry(theta: f64) -> [f64; 8] {
+        let c = (theta / 2.0).cos();
+        let s = (theta / 2.0).sin();
+        [c, 0.0, -s, 0.0, s, 0.0, c, 0.0]
+    }
+
+    /// Create RZ(theta) gate matrix
+    #[must_use]
+    pub fn rz(theta: f64) -> [f64; 8] {
+        let c = (theta / 2.0).cos();
+        let s = (theta / 2.0).sin();
+        [c, -s, 0.0, 0.0, 0.0, 0.0, c, s]
+    }
+}
+
 /// Standard gate matrices as [`a_re`, `a_im`, `b_re`, `b_im`, `c_re`, `c_im`, `d_re`, `d_im`]
-// GPU shaders work with f32 for performance. The precision loss from f64->f32
-// conversion is acceptable for quantum simulation (errors are ~1e-7).
+// f32 tables for the f32 backend, whose shaders work in f32. Rounding the
+// canonical f64 matrices costs ~1e-7 per gate, which is that backend's precision.
+// The f64 backend uses `gates_f64`; widening these would cap it at f32 precision.
 #[allow(clippy::cast_possible_truncation)]
 pub mod gates {
     use pecos_core::Clifford;
@@ -186,24 +306,18 @@ pub mod gates {
     /// Create RX(theta) gate matrix
     #[must_use]
     pub fn rx(theta: f64) -> [f32; 8] {
-        let c = (theta / 2.0).cos() as f32;
-        let s = (theta / 2.0).sin() as f32;
-        [c, 0.0, 0.0, -s, 0.0, -s, c, 0.0]
+        super::gates_f64::rx(theta).map(|entry| entry as f32)
     }
 
     /// Create RY(theta) gate matrix
     #[must_use]
     pub fn ry(theta: f64) -> [f32; 8] {
-        let c = (theta / 2.0).cos() as f32;
-        let s = (theta / 2.0).sin() as f32;
-        [c, 0.0, -s, 0.0, s, 0.0, c, 0.0]
+        super::gates_f64::ry(theta).map(|entry| entry as f32)
     }
 
     /// Create RZ(theta) gate matrix
     #[must_use]
     pub fn rz(theta: f64) -> [f32; 8] {
-        let c = (theta / 2.0).cos() as f32;
-        let s = (theta / 2.0).sin() as f32;
-        [c, -s, 0.0, 0.0, 0.0, 0.0, c, s]
+        super::gates_f64::rz(theta).map(|entry| entry as f32)
     }
 }

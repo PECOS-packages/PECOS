@@ -6801,7 +6801,8 @@ fn decoder_dem_requirement(decoder_type: &str) -> PyResult<String> {
         | "belief_matching_hybrid"
         | "ensemble" => Ok("graphlike".to_string()),
         "tesseract" | "astar" | "astar_full" | "bp_osd" | "bp_lsd" | "belief_find"
-        | "union_find" | "min_sum_bp" | "relay_bp" | "mwpf" | "chromobius" => Ok("any".to_string()),
+        | "union_find" | "min_sum_bp" | "relay_bp" | "mwpf" | "chromobius" | "frontier"
+        | "bp_trellis" => Ok("any".to_string()),
         _ => Err(pyo3::exceptions::PyValueError::new_err(format!(
             "Unknown decoder type: {decoder_type:?}",
         ))),

@@ -337,3 +337,86 @@ impl Default for BeamSearchConfig {
 pub struct EnsembleConfig {
     pub members: Vec<DecoderSpec>,
 }
+
+/// Mechanism ordering for the Frontier decoder.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub enum FrontierColumnOrder {
+    #[default]
+    Deadline,
+    Time,
+    BackwardDeadline,
+    Explicit(Vec<usize>),
+}
+
+/// Route metric for the Frontier decoder.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FrontierMetricMode {
+    #[default]
+    LogSumExpFloat,
+    MaxLogInt,
+}
+
+/// Feature-independent Frontier options, matching the Python Frontier defaults.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FrontierConfig {
+    pub k: usize,
+    pub delta: f64,
+    pub score_alpha: f64,
+    pub column_order: FrontierColumnOrder,
+    pub merge_indistinguishable: bool,
+    pub bp_score_iterations: usize,
+    pub metric_mode: FrontierMetricMode,
+    pub int_metric_scale: i32,
+}
+
+impl Default for FrontierConfig {
+    fn default() -> Self {
+        Self {
+            k: 64,
+            delta: 50.0,
+            score_alpha: 0.8,
+            column_order: FrontierColumnOrder::Deadline,
+            merge_indistinguishable: false,
+            bp_score_iterations: 0,
+            metric_mode: FrontierMetricMode::LogSumExpFloat,
+            int_metric_scale: 1024,
+        }
+    }
+}
+
+/// Mechanism ordering for the BP-Trellis decoder.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum BpTrellisOrdering {
+    #[default]
+    Deadline,
+    BackwardDeadline,
+    TimeOrder,
+    Explicit(Vec<usize>),
+}
+
+/// Feature-independent options matching the native BP-Trellis facade.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BpTrellisConfig {
+    pub k: usize,
+    pub delta: f64,
+    pub score_alpha: f64,
+    pub bp_score_iterations: usize,
+    pub merge_indistinguishable: bool,
+    pub ordering: BpTrellisOrdering,
+    /// Additional widths attempted only when the preceding decode has no path.
+    pub escalation_ks: Vec<usize>,
+}
+
+impl Default for BpTrellisConfig {
+    fn default() -> Self {
+        Self {
+            k: 8,
+            delta: 100.0,
+            score_alpha: 0.8,
+            bp_score_iterations: 5,
+            merge_indistinguishable: true,
+            ordering: BpTrellisOrdering::Deadline,
+            escalation_ks: Vec::new(),
+        }
+    }
+}

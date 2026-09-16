@@ -293,13 +293,14 @@ assert len(sim_shots) == 500
 ## 5. Decode the samples and compute logical error rates
 
 Pass the same sampled batch to `batch.decode(...)` with a typed specification
-for each decoder. A shot counts as a logical error when the predicted
-observable flip disagrees with the flip the sample actually carried. The
+for PyMatching, Tesseract, BP+OSD, and the Rust-backed Frontier and BP-Trellis
+decoders. A shot counts as a logical error when the predicted observable flip
+disagrees with the flip the sample actually carried. The
 returned `DecodeResult` supplies the aggregate count and rate directly.
 
 <!--continuation-->
 ```python
-from pecos.decoders import bp_osd, pymatching, tesseract
+from pecos.decoders import bp_osd, bp_trellis, frontier, pymatching, tesseract
 
 pymatching_result = batch.decode(
     terminal_graphlike_text,
@@ -316,21 +317,63 @@ bp_osd_result = batch.decode(
     workers=None,
 )
 
+frontier_result = batch.decode(
+    raw_text,
+    frontier(k=64),
+    workers=4,
+    predictions=True,
+)
+
+bp_trellis_result = batch.decode(
+    raw_text,
+    bp_trellis(k=8, escalation_ks=[32, 128]),
+    workers=4,
+    predictions=True,
+)
+
 pymatching_errors = pymatching_result.num_errors
 tesseract_errors = tesseract_result.num_errors
 bp_osd_errors = bp_osd_result.num_errors
+frontier_errors = frontier_result.num_errors
+bp_trellis_errors = bp_trellis_result.num_errors
 
 shots = batch.num_shots
 assert 0 < pymatching_errors < shots
 assert 0 < tesseract_errors < shots
 assert 0 < bp_osd_errors < shots
+assert 0 < frontier_errors < shots
+assert len(frontier_result.predictions) == shots
+assert 0 < bp_trellis_errors < shots
+assert len(bp_trellis_result.predictions) == shots
 
 print("DEM-sampled shots")
 print(f"pymatching  {pymatching_errors:5}   {pymatching_errors / shots:.4%}")
 print(f"tesseract   {tesseract_errors:5}   {tesseract_errors / shots:.4%}")
 print(f"bp_osd      {bp_osd_errors:5}   {bp_osd_errors / shots:.4%}")
+print(f"frontier    {frontier_errors:5}   {frontier_result.logical_error_rate:.4%}")
+print(f"bp_trellis  {bp_trellis_errors:5}   {bp_trellis_result.logical_error_rate:.4%}")
 print(f"pymatching execution path: {pymatching_result.execution_path}")
+print(f"frontier execution path: {frontier_result.execution_path}")
+assert frontier_result.execution_path == "parallel"
+assert frontier_result.workers_used == 4
+print(f"bp_trellis execution path: {bp_trellis_result.execution_path}")
+assert bp_trellis_result.execution_path == "parallel"
+assert bp_trellis_result.workers_used == 4
 ```
+
+`frontier()` uses the native Rust Frontier decoder and accepts the raw DEM,
+including hyperedges. The example decodes shots across four Rust worker threads;
+`predictions=True` also returns observable masks in original shot order. Each
+worker owns a decoder, so memory use grows with the worker count and frontier
+width `k`. Frontier remains experimental; pruning can make its answers approximate.
+
+`bp_trellis()` uses PECOS’s native BP-guided trellis decoder on the same raw
+DEM. Its defaults are `k=8`, `delta=100.0`, `score_alpha=0.8`,
+`bp_score_iterations=5`, `merge_indistinguishable=True`, `ordering="deadline"`,
+and `escalation_ks=None`. The example opts into retry widths `[32, 128]`: these
+are attempted only if the preceding search finds no path. Each worker prebuilds
+the retry decoders, so enabling a ladder increases construction time and memory.
+BP-Trellis also remains experimental; pruning can make predictions approximate.
 
 With `workers=None`, PECOS automatically selects a native-batch, sequential, or
 parallel path based on the decoder and batch size. Pass `workers=N` to request
@@ -359,23 +402,37 @@ sim_errors = sim_batch.decode(
     pymatching(correlated=True),
 ).num_errors
 
+sim_frontier_result = sim_batch.decode(
+    raw_text,
+    frontier(k=64),
+    workers=4,
+)
+
+sim_bp_trellis_result = sim_batch.decode(
+    raw_text,
+    bp_trellis(escalation_ks=[32, 128]),
+    workers=4,
+)
+
 print(f"simulated shots, pymatching: {sim_errors}/{len(sim_shots)}")
+print(f"simulated shots, frontier: {sim_frontier_result.num_errors}/{len(sim_shots)}")
+print(f"simulated shots, bp_trellis: {sim_bp_trellis_result.num_errors}/{len(sim_shots)}")
 ```
 
-At this noise level the three decoders land within about a percentage point of
+At this noise level the five decoders land within about a percentage point of
 each other on this code; the gaps between decoders widen with code distance and
-with genuinely hyperedge-like noise, which is where BP+OSD and Tesseract consume
-the raw model rather than a graph-like projection.
+with genuinely hyperedge-like noise. Frontier, BP-Trellis, and BP+OSD consume the raw model
+in this example; Tesseract uses the source-informed decomposition chosen above.
 
 ## 6. Optional: per-shot confidence with an experimental decoder
 
 !!! warning "Experimental API"
 
-    The decoders below live in `exp/` and are reached through
-    `pecos_rslib_exp`. They are under active development, are not part of the
-    `pecos.decoders` surface, and may change without notice. They also do not
-    participate in the unified execution planning used above — call them
-    directly rather than through `batch.decode(...)`.
+    The detailed-result APIs below live in `pecos_rslib_exp` and may change
+    without notice. Use `pecos.decoders.frontier()` or `bp_trellis()` with `batch.decode(...)`
+    for parallel predictions and aggregate error rates. Use these direct APIs
+    when you need per-shot confidence data; that data is not returned by
+    `batch.decode(...)`.
 
 Every decoder in stage 5 answers "which observables flipped?". None of them
 reports how close the call was. The experimental Frontier and BP-Trellis
@@ -393,8 +450,8 @@ missing gap is not a pruning signal.
 ```python
 from pecos_rslib_exp import FrontierDecoder
 
-frontier = FrontierDecoder.from_dem(raw_text)
-results = [frontier.decode_syndrome(batch.get_syndrome(shot)) for shot in range(200)]
+frontier_decoder = FrontierDecoder.from_dem(raw_text)
+results = [frontier_decoder.decode_syndrome(batch.get_syndrome(shot)) for shot in range(200)]
 
 assert all(result.status == "exact" for result in results)
 gaps = [result.runner_up_gap for result in results if result.runner_up_gap is not None]

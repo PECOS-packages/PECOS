@@ -77,6 +77,8 @@ pecos-cppsparsestab.workspace = true
 # Decoders (all backends except mwpf, which remains opt in via the top-level
 # `mwpf` feature on this crate).
 pecos-decoders = { workspace = true, features = [
+    "frontier",
+    "bp-trellis",
     "ldpc",
     "fusion-blossom",
     "pymatching",

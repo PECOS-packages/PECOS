@@ -53,6 +53,8 @@ pub enum DecoderSpec {
     UnionFind,
     RelayBp(RelayBpConfig),
     MinSumBp(MinSumBpConfig),
+    Frontier(FrontierConfig),
+    BpTrellis(BpTrellisConfig),
     PecosUf(PecosUfPreset),
     BeliefMatching(BeliefMatchingConfig),
     Windowed(WindowedConfig),

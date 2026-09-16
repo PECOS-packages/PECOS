@@ -218,6 +218,8 @@ fn build_single(spec: &DecoderSpec, dem: &str) -> Result<Box<dyn ObservableDecod
         DecoderSpec::BeliefFind => build_belief_find(dem),
         DecoderSpec::UnionFind => build_union_find(dem),
         DecoderSpec::RelayBp(config) => build_relay_bp(dem, config),
+        DecoderSpec::BpTrellis(config) => build_bp_trellis(dem, config),
+        DecoderSpec::Frontier(config) => build_frontier(dem, config),
         DecoderSpec::MinSumBp(config) => build_min_sum_bp(dem, config),
         DecoderSpec::PecosUf(preset) => build_pecos_uf(dem, *preset),
         DecoderSpec::BeliefMatching(config) => build_belief_matching(dem, config),
@@ -254,6 +256,8 @@ fn family_name(spec: &DecoderSpec) -> &'static str {
         DecoderSpec::BeliefFind => "belief_find",
         DecoderSpec::UnionFind => "union_find",
         DecoderSpec::RelayBp(_) => "relay_bp",
+        DecoderSpec::BpTrellis(_) => "bp_trellis",
+        DecoderSpec::Frontier(_) => "frontier",
         DecoderSpec::MinSumBp(_) => "min_sum_bp",
         DecoderSpec::PecosUf(_) => "pecos_uf",
         DecoderSpec::BeliefMatching(_) => "belief_matching",
@@ -1382,6 +1386,84 @@ fn build_ensemble(
     Ok(Box::new(
         pecos_decoder_core::ensemble::EnsembleDecoder::new(members),
     ))
+}
+
+#[cfg(feature = "frontier")]
+fn build_frontier(
+    dem: &str,
+    config: &super::config::FrontierConfig,
+) -> Result<Box<dyn ObservableDecoder>, DecoderError> {
+    use super::config::{FrontierColumnOrder, FrontierMetricMode};
+    use pecos_frontier::{FrontierConfig, FrontierDecoder, MetricMode, SparseDem};
+    let dem = SparseDem::from_dem_str(dem)?;
+    let column_order = match &config.column_order {
+        FrontierColumnOrder::Deadline => Some(pecos_frontier::deadline_column_order(&dem)?),
+        FrontierColumnOrder::Time => None,
+        FrontierColumnOrder::BackwardDeadline => {
+            Some(pecos_frontier::backward_deadline_column_order(&dem)?)
+        }
+        FrontierColumnOrder::Explicit(order) => Some(order.clone()),
+    };
+    let decoder = FrontierDecoder::from_sparse_dem(
+        &dem,
+        FrontierConfig {
+            k: config.k,
+            delta: config.delta,
+            score_alpha: config.score_alpha,
+            column_order,
+            merge_indistinguishable: config.merge_indistinguishable,
+            bp_score_iterations: config.bp_score_iterations,
+            metric_mode: match config.metric_mode {
+                FrontierMetricMode::LogSumExpFloat => MetricMode::LogSumExpFloat,
+                FrontierMetricMode::MaxLogInt => MetricMode::MaxLogInt,
+            },
+            int_metric_scale: config.int_metric_scale,
+        },
+    )?;
+    Ok(Box::new(decoder))
+}
+
+#[cfg(not(feature = "frontier"))]
+fn build_frontier(
+    _dem: &str,
+    _config: &super::config::FrontierConfig,
+) -> Result<Box<dyn ObservableDecoder>, DecoderError> {
+    unavailable("frontier", "frontier")
+}
+
+#[cfg(feature = "bp-trellis")]
+fn build_bp_trellis(
+    dem: &str,
+    config: &super::config::BpTrellisConfig,
+) -> Result<Box<dyn ObservableDecoder>, DecoderError> {
+    use super::config::BpTrellisOrdering;
+    use pecos_bp_trellis::{BpTrellisConfig, BpTrellisDecoder, TrellisOrdering};
+    let ordering = match &config.ordering {
+        BpTrellisOrdering::Deadline => TrellisOrdering::Deadline,
+        BpTrellisOrdering::BackwardDeadline => TrellisOrdering::BackwardDeadline,
+        BpTrellisOrdering::TimeOrder => TrellisOrdering::TimeOrder,
+        BpTrellisOrdering::Explicit(order) => TrellisOrdering::Explicit(order.clone()),
+    };
+    Ok(Box::new(BpTrellisDecoder::from_dem_str(
+        dem,
+        BpTrellisConfig {
+            k: config.k,
+            delta: config.delta,
+            score_alpha: config.score_alpha,
+            bp_score_iterations: config.bp_score_iterations,
+            merge_indistinguishable: config.merge_indistinguishable,
+            ordering,
+            escalation_ks: config.escalation_ks.clone(),
+        },
+    )?))
+}
+
+#[cfg(not(feature = "bp-trellis"))]
+fn build_bp_trellis(
+    _dem: &str,
+    _config: &super::config::BpTrellisConfig,
+) -> Result<Box<dyn ObservableDecoder>, DecoderError> {
+    unavailable("bp_trellis", "bp-trellis")
 }
 
 #[cfg(test)]

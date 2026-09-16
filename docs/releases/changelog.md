@@ -6,6 +6,33 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+### Decoder changes
+
+- `windowed` specs with a buffer previously returned the result of a monolithic
+  decode by `sandwich_phase2` (correlated PyMatching by default). Callers who want
+  that result should request the monolithic decoder directly. `windowed` is now
+  a streaming decoder and requires `inner`, `buffer`, and `step`. It commits whole local
+  correction components and carries their full detector incidence. The old
+  modes and their tuning options have been removed.
+- `PyMatchingDecoder`'s edge decode now applies correlations when the decoder
+  was built with them.
+- `DetailedDecoder::decode_to_edges` for `PyMatchingDecoder` now returns the
+  correction edges with their weights and observables. Previously it returned
+  matched detection-event pairs with zero weights and no observables.
+
+
+### Python breaking changes
+
+- `LogicalCircuitBuilder.build_algorithm_descriptor(buffer=0)` now rejects a
+  non-terminal segment when its source-tracked detector model requires forward
+  look-ahead. Omit `buffer` to derive the safe minimum automatically, or pass at
+  least the reported number of rounds. Segment dictionaries now distinguish the
+  backward-compatible commit count (`num_detectors`, also available as
+  `num_commit_detectors`) from the detector count in the halo-bearing segment DEM
+  (`num_window_detectors`).
+- `WindowedLogicalSubgraphDecoder(dem, stab_coords, step, buffer)` now requires
+  `step` and `buffer`; they previously defaulted to 8 and 4.
+
 ### Rust breaking changes
 
 - `CliffordGateable::apply_global_phase` replaces the former

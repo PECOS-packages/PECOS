@@ -253,16 +253,13 @@ jobs:
             build-llvm: false
             build-quantum-pecos: false
             job-timeout: 30
-          # rustc 1.98.0 on aarch64-apple-darwin segfaults in LLVM target
-          # initialization under maturin's target probe; pinned to 1.97.1
-          # until fixed upstream. Unpin tracked in issue #566.
           - os: macOS-latest
             python-version: "3.12"
             artifact-name: python-compat-smoke-macos
             build-llvm: true
             build-quantum-pecos: false
-            job-timeout: 20
-            rust-toolchain: "1.97.1"
+            # Include QIS executor tests so macOS runtime failures block PRs.
+            job-timeout: 30
 
     steps:
     - name: Harden the runner (egress audit)
@@ -309,40 +306,10 @@ jobs:
     - name: Set up Rust (Unix)
       if: runner.os != 'Windows'
       run: |
-        bash scripts/ci/ensure-rust.sh "${{ matrix.rust-toolchain || 'stable' }}" minimal
+        bash scripts/ci/ensure-rust.sh stable minimal
         export PATH="$HOME/.cargo/bin:$PATH"
-        rustup default "${{ matrix.rust-toolchain || 'stable' }}"
+        rustup default stable
         rustup show
-
-    # Self-expiring pin: probe whether latest stable still crashes (issue
-    # #566) so the pin above cannot go stale silently. A hand-replicated
-    # rustc invocation previously survived 20/20 canary probes while the
-    # first real unpinned build crashed immediately (PR #574), so the probe
-    # now lets CARGO construct the target-info invocation itself, under the
-    # same link-arg RUSTFLAGS maturin applies — the invocation that actually
-    # crashes. The crash is nondeterministic, so probe repeatedly and only
-    # suggest unpinning when a run sees zero crashes — and unpin only once
-    # that holds across several PRs AND a real unpinned build is verified on
-    # a draft PR first. Never fails the job.
-    - name: Check whether the Rust toolchain pin is still needed
-      if: runner.os != 'Windows' && matrix.rust-toolchain
-      run: |
-        rustup toolchain install stable --profile minimal
-        probe_dir="$(mktemp -d)"
-        cargo +stable init --lib --name pin_probe "$probe_dir" >/dev/null 2>&1
-        crashes=0
-        for _ in 1 2 3 4 5; do
-          rm -rf "$probe_dir/target"
-          RUSTFLAGS="-C debuginfo=0 -C link-arg=-undefined -C link-arg=dynamic_lookup" \
-            cargo +stable check --manifest-path "$probe_dir/Cargo.toml" \
-            >/dev/null 2>&1 || crashes=$((crashes + 1))
-        done
-        rm -rf "$probe_dir"
-        if [ "$crashes" -eq 0 ]; then
-          echo "::warning title=Rust toolchain pin may be obsolete::rustc $(rustc +stable --version) survived 5/5 cargo target probes on this runner. The crash is nondeterministic, so remove the ${{ matrix.rust-toolchain }} pin only after this warning persists across several PRs AND an unpinned build passes on a draft PR (issue #566)."
-        else
-          echo "Latest stable ($(rustc +stable --version)) crashed $crashes/5 cargo target probes; the ${{ matrix.rust-toolchain }} pin remains required (issue #566)."
-        fi
 
     - name: Install just
       uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
@@ -378,19 +345,41 @@ jobs:
         path: ~/.pecos/deps/llvm-21.1
         key: ${{ steps.cache-llvm.outputs.cache-primary-key }}
 
+    # Keep this after ci-env: its GITHUB_ENV exports take effect in this step.
+    # Exercise latest stable with the actual build environment (#566).
+    - name: Check stable Rust in the PECOS build environment
+      if: runner.os == 'macOS'
+      run: bash scripts/ci/check-rust-build-env.sh
+
     - name: Install Python build tooling
       run: uv pip install --system maturin
 
     - name: Build pecos-rslib wheel
+      env:
+        RUSTUP_TOOLCHAIN: stable
       run: |
         mkdir -p dist/pecos-rslib
         maturin build --locked --manifest-path python/pecos-rslib/Cargo.toml --out dist/pecos-rslib
 
     - name: Build pecos-rslib-llvm wheel
       if: matrix.build-llvm
+      env:
+        RUSTUP_TOOLCHAIN: stable
       run: |
         mkdir -p dist/pecos-rslib-llvm
         maturin build --locked --manifest-path python/pecos-rslib-llvm/Cargo.toml --out dist/pecos-rslib-llvm
+
+    - name: Test QIS executor recovery and runtime symbol binding
+      if: runner.os == 'macOS' || runner.os == 'Windows'
+      run: |
+        cargo +stable test --locked -p pecos-qis-ffi --lib
+        cargo +stable test --locked -p pecos-qis --lib executor::tests
+
+    - name: Test StabVec numerical reference contract
+      run: cargo +stable test --locked -p pecos-simulators --test stab_vec_correctness
+
+    - name: Test canonical stabilizer amplitudes
+      run: cargo +stable test --locked -p pecos-stab-tn --lib stab_mps::canonical_ket::tests
 
     - name: Build quantum-pecos wheel
       if: matrix.build-quantum-pecos
@@ -551,11 +540,11 @@ jobs:
         if [ "${{ matrix.include-pecos }}" = "true" ]; then
           python scripts/ci/check_module_versions.py pecos pecos_rslib pecos_rslib_llvm
         else
-          # On macOS with include-llvm: true, validate the installed LLVM wheel package
-          # via metadata; importing the extension is currently not runtime-stable there.
+          # Exercise the LLVM extension itself: package metadata cannot detect
+          # loading the wrong LLVM library or a broken runtime search path.
           if [ "$(uname)" = "Darwin" ] && [ "${{ matrix.include-llvm }}" = "true" ]; then
-            python scripts/ci/check_module_versions.py pecos_rslib
-            python -c 'from importlib.metadata import version; print({"pecos_rslib_llvm": version("pecos-rslib-llvm")})'
+            python scripts/ci/check_module_versions.py pecos_rslib pecos_rslib_llvm
+            python -c 'from pecos_rslib_llvm import ir, binding; module = ir.Module("ci_smoke"); parsed = binding.parse_assembly(str(module)); assert parsed.as_bitcode()[:2] == b"BC"'
           else
             python scripts/ci/check_module_versions.py pecos_rslib
           fi

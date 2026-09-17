@@ -2,10 +2,11 @@
 
 use super::decoder_scoring::{DecodeRangeResult, ShotDecodeError, decode_and_score_range};
 use super::{PyDecodeStats, PySampleBatch, decoder_build_error_to_py};
+use crate::batch_decoder_spec::BatchDecoderSpec as DecoderSpec;
 use pecos_decoder_core::DecoderError;
 use pecos_decoder_core::obs_mask::ObsMask;
+use pecos_decoders::DecodeModel;
 use pecos_decoders::batch::{ExecutionPath, ExecutionPlan, IndexedChunk, native_sub_batches};
-use pecos_decoders::{DecodeModel, DecoderSpec};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use rayon::prelude::*;

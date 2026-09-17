@@ -4214,10 +4214,8 @@ name = "pecos-decoders"
 version = "0.2.0-dev.0"
 dependencies = [
  "pecos-bp",
- "pecos-bp-trellis",
  "pecos-chromobius",
  "pecos-decoder-core",
- "pecos-frontier",
  "pecos-fusion-blossom",
  "pecos-ldpc-decoders",
  "pecos-mwpf",
@@ -4753,6 +4751,7 @@ dependencies = [
  "pecos-bp-trellis",
  "pecos-build",
  "pecos-core",
+ "pecos-decoder-core",
  "pecos-eeg",
  "pecos-frontier",
  "pecos-neo",

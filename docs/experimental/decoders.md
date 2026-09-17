@@ -1,9 +1,11 @@
 # Experimental decoders
 
 Experimental decoder engines live in `exp/` and may change without notice.
-Frontier and BP-Trellis are available through `pecos.decoders.frontier()` and
-`pecos.decoders.bp_trellis()` for unified parallel batch decoding. The detailed-result APIs described here are reached through
-`pecos_rslib_exp`.
+Frontier and BP-Trellis are available through `pecos_rslib_exp.frontier()` and
+`pecos_rslib_exp.bp_trellis()` for unified parallel batch decoding. Install the
+optional `pecos-rslib-exp` package to use them. Standard decoder imports work
+without this package. The detailed-result APIs described here are also reached
+through `pecos_rslib_exp`.
 
 Two capabilities live here that the production decoders do not offer:
 

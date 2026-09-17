@@ -32,12 +32,6 @@ pub(super) fn parse(type_string: &str) -> Result<DecoderSpec, DecoderError> {
         "belief_find" => Ok(DecoderSpec::BeliefFind),
         "union_find" => Ok(DecoderSpec::UnionFind),
         "relay_bp" => Ok(DecoderSpec::RelayBp(RelayBpConfig::default())),
-        "frontier" => Ok(DecoderSpec::Frontier(
-            super::config::FrontierConfig::default(),
-        )),
-        "bp_trellis" => Ok(DecoderSpec::BpTrellis(
-            super::config::BpTrellisConfig::default(),
-        )),
         "min_sum_bp" => Ok(DecoderSpec::MinSumBp(MinSumBpConfig::default())),
         "pecos_uf" | "pecos_uf:fast" => Ok(DecoderSpec::PecosUf(PecosUfPreset::Fast)),
         "pecos_uf:balanced" | "pecos_uf_correlated" => {
@@ -80,7 +74,7 @@ pub(super) fn parse(type_string: &str) -> Result<DecoderSpec, DecoderError> {
             "Unsupported decoder_type: {type_string}. \
              Supported: pymatching, tesseract, mwpf, pecos_uf (or \
              pecos_uf:fast/balanced/accurate), logical_subgraph, ensemble:d1,d2,..., \
-             bp_osd, bp_lsd, union_find, relay_bp, min_sum_bp, frontier, bp_trellis."
+             bp_osd, bp_lsd, union_find, relay_bp, min_sum_bp."
         )),
     }
 }

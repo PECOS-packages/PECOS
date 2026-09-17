@@ -36,8 +36,8 @@ The following decoder APIs and supporting types are publicly re-exported from
 | API | Primary input | Description |
 |-----|---------------|-------------|
 | `MWPM2D` | QECC object | Legacy minimum-weight perfect matching for 2D codes. |
-| `bp_trellis()` | Raw DEM text via `SampleBatch.decode` | Experimental native Rust BP-guided trellis, with parallel shots and optional no-path retries. |
-| `frontier()` | Raw DEM text via `SampleBatch.decode` | Experimental native Rust Frontier, with parallel shot decoding. |
+| `bp_trellis()` (optional `pecos-rslib-exp`) | Raw DEM text via `SampleBatch.decode` | Experimental native Rust BP-guided trellis, with parallel shots and optional no-path retries. |
+| `frontier()` (optional `pecos-rslib-exp`) | Raw DEM text via `SampleBatch.decode` | Experimental native Rust Frontier, with parallel shot decoding. |
 | `DummyDecoder` | None | No-op decoder for tests and interface benchmarks. |
 | `PyMatchingDecoder` | Graph-like DEM text or `CheckMatrix` | PyMatching minimum-weight perfect matching, with optional correlated decoding. |
 | `FusionBlossomDecoder` | Check matrix, standard-code parameters, or a manual graph | Pure-Rust minimum-weight perfect matching. |
@@ -76,8 +76,6 @@ The Rust API provides access to a broader set of decoders:
 - Fusion Blossom MWPM (feature: `fusion-blossom`)
 - PyMatching MWPM (feature: `pymatching`)
 - Tesseract (feature: `tesseract`)
-- Frontier, experimental (feature: `frontier`)
-- BP-Trellis, experimental (feature: `bp-trellis`)
 - Chromobius color code decoder (feature: `chromobius`)
 
 ## Installation and Setup
@@ -337,8 +335,18 @@ match decoder.decode(&syndrome.view()) {
 
 ## Rust-backed Frontier batch decoding
 
+Install the optional `pecos-rslib-exp` package for this section and BP-Trellis
+below. Standard `pecos.decoders` imports do not load the experimental extension.
+The explicit `from pecos.decoders import frontier, bp_trellis` convenience import
+loads it lazily and raises an actionable `ImportError` if it is unavailable.
+Experimental factories are excluded from wildcard imports. Their specifications
+work with `SampleBatch.decode(...)` and `DemSampler.decode(...)`; the standard
+`DecoderSpec.parse` strings and composite-spec factories do not load optional
+providers. The experimental calls cross a Python adapter at each shot, with
+native model construction and decoding releasing the GIL.
+
 ```python
-from pecos.decoders import frontier
+from pecos_rslib_exp import frontier
 from pecos_rslib.qec import SampleBatch
 
 dem = "error(0.1) D0 D1 D2 L0\n"
@@ -364,7 +372,7 @@ status, and complementary gaps, use the direct experimental binding.
 ## Rust-backed BP-Trellis batch decoding
 
 ```python
-from pecos.decoders import bp_trellis
+from pecos_rslib_exp import bp_trellis
 from pecos_rslib.qec import SampleBatch
 
 dem = "error(0.1) D0 D1 D2 L0\n"

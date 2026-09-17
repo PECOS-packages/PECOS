@@ -2,13 +2,14 @@
 
 use super::batch_decode::{BatchExecutionError, BatchExecutionOutput, decode_model};
 use super::decoder_scoring::{DecodeRangeResult, ShotDecodeError};
+use crate::batch_decoder_spec::BatchDecoderSpec as DecoderSpec;
 use pecos_decoder_core::obs_mask::ObsMask;
 use pecos_decoder_core::{DecoderError, ObservableDecoder};
+use pecos_decoders::DecodeModel;
 use pecos_decoders::batch::{
     ExecutionPath, ExecutionPlan, IndexedChunk, SAMPLING_CHUNK_SHOTS, assemble_indexed_chunks,
     for_each_canonical_sample, sampling_chunks,
 };
-use pecos_decoders::{DecodeModel, DecoderSpec};
 use pecos_qec::fault_tolerance::dem_builder::DemSampler;
 use pecos_random::PecosRng;
 use rayon::prelude::*;

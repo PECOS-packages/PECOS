@@ -6,8 +6,10 @@ import math
 import random
 
 import pytest
-from pecos_rslib.decoders import DecoderSpec, frontier
 from pecos_rslib.qec import DemSampler, SampleBatch
+
+exp = pytest.importorskip("pecos_rslib_exp")
+frontier = exp.frontier
 
 DEM = "error(0.1) D0 D1 D2 L0\nerror(0.03) D0\nerror(0.03) D1\nerror(0.03) D2\n"
 
@@ -15,7 +17,7 @@ DEM = "error(0.1) D0 D1 D2 L0\nerror(0.03) D0\nerror(0.03) D1\nerror(0.03) D2\n"
 def test_public_spec_and_configuration():
     from pecos.decoders import frontier as public_frontier
 
-    assert public_frontier() == frontier() == DecoderSpec.parse("frontier")
+    assert public_frontier() == frontier()
     assert frontier().family == "frontier"
     assert not frontier().history_dependent
     assert not frontier().wall_clock_dependent
@@ -48,7 +50,7 @@ def test_public_spec_and_configuration():
     ],
 )
 def test_invalid_options(options):
-    with pytest.raises(ValueError, match="must|invalid|incompatible"):
+    with pytest.raises(ValueError, match=r"must|invalid|incompatible"):
         frontier(**options)
 
 
@@ -67,7 +69,7 @@ def test_invalid_options(options):
 )
 def test_parallel_predictions_match_sequential(options):
     # Aperiodic rows expose chunk-order errors; exercise several dynamic chunks.
-    rng = random.Random(35)  # noqa: S311 - deterministic test data
+    rng = random.Random(35)
     rows = [[rng.randrange(2) for _ in range(3)] for _ in range(1025)]
     truth = [rng.randrange(2) for _ in rows]
     batch = SampleBatch(rows, truth)
@@ -93,7 +95,7 @@ def test_auto_execution_wide_observables_and_count_only():
     assert auto.predictions == expected
     assert auto.num_errors == 0
     assert auto.execution_path == "parallel"
-    count = batch.decode(dem, "frontier", workers=3)
+    count = batch.decode(dem, frontier(), workers=3)
     assert count.predictions is None
     assert count.num_errors == 0
     empty = DemSampler.from_dem_string(dem).sample_batch(0, seed=1).decode(dem, frontier(), workers=2)
@@ -105,7 +107,7 @@ def test_invalid_order_and_impossible_syndrome_are_errors(workers):
     batch = SampleBatch([[0, 0, 0]], [0])
     with pytest.raises(RuntimeError, match="permutation"):
         batch.decode(DEM, frontier(column_order=[0, 0, 1, 2]), workers=workers)
-    with pytest.raises(RuntimeError, match="(?i)(path|syndrome|shot)"):
+    with pytest.raises(RuntimeError, match=r"(?i)(path|syndrome|shot)"):
         SampleBatch([[1]], [0]).decode("detector D0\n", frontier(), workers=workers)
 
 
@@ -133,3 +135,27 @@ def test_predictions_match_direct_experimental_binding():
         expected = [direct.decode_syndrome(row).observable_flips.mask for row in rows]
         result = SampleBatch(rows, [0] * len(rows)).decode(DEM, frontier(**options), workers=3, predictions=True)
         assert result.predictions == expected
+
+
+def test_gil_is_released_during_native_decode():
+    import threading
+
+    started = threading.Event()
+    stop = threading.Event()
+    progress = [0]
+
+    def worker():
+        started.set()
+        while not stop.is_set():
+            progress[0] += 1
+
+    thread = threading.Thread(target=worker)
+    thread.start()
+    started.wait()
+    before = progress[0]
+    try:
+        SampleBatch([[0, 0, 0]] * 2048, [0] * 2048).decode(DEM, frontier(), workers=4)
+    finally:
+        stop.set()
+        thread.join()
+    assert progress[0] - before > 100

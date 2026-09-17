@@ -12,8 +12,6 @@ import pytest
 
 from pecos_rslib.decoders import (
     bp_osd,
-    bp_trellis,
-    frontier,
     fusion_blossom,
     mwpf,
     pecos_uf,
@@ -280,8 +278,7 @@ def test_raw_measurement_error_precedes_invalid_decoder() -> None:
         batch.decode(DEM, "not_a_decoder", allow_dem_mismatch=True)
 
 
-@pytest.mark.parametrize("spec", [pymatching(correlated=True), frontier(), bp_trellis()])
-def test_gil_is_released_during_decode(spec) -> None:
+def test_gil_is_released_during_decode() -> None:
     batch = _batch(100_000)
     started = threading.Event()
     stop = threading.Event()
@@ -297,7 +294,7 @@ def test_gil_is_released_during_decode(spec) -> None:
     started.wait()
     before = progress[0]
     try:
-        batch.decode(DEM, spec)
+        batch.decode(DEM, pymatching(correlated=True))
     finally:
         stop.set()
         thread.join()

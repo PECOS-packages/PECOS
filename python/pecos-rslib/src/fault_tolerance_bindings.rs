@@ -3717,7 +3717,7 @@ impl PySampleBatch {
     }
 
     /// Decode and score every shot using a typed decoder specification or a
-    /// legacy decoder string.
+    /// legacy decoder string, or an optional decoder-provider specification.
     ///
     /// `dem=None` uses the exact DEM embedded by `SampleBatch.load`; generated
     /// batches require an explicit DEM. Automatic execution honors decoder
@@ -3749,16 +3749,7 @@ impl PySampleBatch {
         let decoder = decoder.ok_or_else(|| {
             pyo3::exceptions::PyTypeError::new_err("decoder is a required argument")
         })?;
-        let spec = if decoder.is_instance_of::<PyString>() {
-            let decoder_type = decoder.extract::<&str>()?;
-            pecos_decoders::DecoderSpec::parse(decoder_type).map_err(decoder_parse_error_to_py)?
-        } else if let Ok(spec) = decoder.extract::<PyRef<'_, PyDecoderSpec>>() {
-            spec.inner.clone()
-        } else {
-            return Err(pyo3::exceptions::PyTypeError::new_err(
-                "decoder must be a pecos.decoders.DecoderSpec or legacy decoder string",
-            ));
-        };
+        let spec = crate::batch_decoder_spec::BatchDecoderSpec::extract(decoder)?;
 
         let explicit_workers = workers
             .map(|workers| {
@@ -4592,7 +4583,7 @@ impl PyDemSampler {
     ///     dem: DEM text used to construct the decoder. It may deliberately be
     ///         a different projection from the sampler's own model.
     ///     `num_shots`: Number of shots to sample and decode.
-    ///     decoder: A typed `DecoderSpec` or legacy decoder string.
+    ///     decoder: A typed `DecoderSpec`, legacy decoder string, or optional decoder-provider specification.
     ///     seed: Optional sampling seed. The resolved seed is returned as
     ///         `sampling_seed_used` and can replay the run.
     ///     workers: Optional exact worker count.
@@ -4627,16 +4618,7 @@ impl PyDemSampler {
         let decoder = decoder.ok_or_else(|| {
             pyo3::exceptions::PyTypeError::new_err("decoder is a required argument")
         })?;
-        let spec = if decoder.is_instance_of::<PyString>() {
-            let decoder_type = decoder.extract::<&str>()?;
-            pecos_decoders::DecoderSpec::parse(decoder_type).map_err(decoder_parse_error_to_py)?
-        } else if let Ok(spec) = decoder.extract::<PyRef<'_, PyDecoderSpec>>() {
-            spec.inner.clone()
-        } else {
-            return Err(pyo3::exceptions::PyTypeError::new_err(
-                "decoder must be a pecos.decoders.DecoderSpec or legacy decoder string",
-            ));
-        };
+        let spec = crate::batch_decoder_spec::BatchDecoderSpec::extract(decoder)?;
 
         let explicit_workers = workers
             .map(|workers| {
@@ -6801,8 +6783,7 @@ fn decoder_dem_requirement(decoder_type: &str) -> PyResult<String> {
         | "belief_matching_hybrid"
         | "ensemble" => Ok("graphlike".to_string()),
         "tesseract" | "astar" | "astar_full" | "bp_osd" | "bp_lsd" | "belief_find"
-        | "union_find" | "min_sum_bp" | "relay_bp" | "mwpf" | "chromobius" | "frontier"
-        | "bp_trellis" => Ok("any".to_string()),
+        | "union_find" | "min_sum_bp" | "relay_bp" | "mwpf" | "chromobius" => Ok("any".to_string()),
         _ => Err(pyo3::exceptions::PyValueError::new_err(format!(
             "Unknown decoder type: {decoder_type:?}",
         ))),

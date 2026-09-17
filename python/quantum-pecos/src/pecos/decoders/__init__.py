@@ -16,6 +16,8 @@ This package provides various decoders for quantum error correction codes.
 # specific language governing permissions and limitations under the License.
 
 # Rust decoders (from pecos_rslib)
+from importlib import import_module
+
 from pecos_rslib.decoders import (
     BpLsdBuilder,
     BpLsdDecoder,
@@ -46,9 +48,7 @@ from pecos_rslib.decoders import (
     belief_matching,
     bp_lsd,
     bp_osd,
-    bp_trellis,
     ensemble,
-    frontier,
     fusion_blossom,
     k_mwpm,
     min_sum_bp,
@@ -98,9 +98,7 @@ __all__ = [
     "belief_matching",
     "bp_lsd",
     "bp_osd",
-    "bp_trellis",
     "ensemble",
-    "frontier",
     "fusion_blossom",
     "k_mwpm",
     "min_sum_bp",
@@ -114,3 +112,18 @@ __all__ = [
     "union_find",
     "windowed",
 ]
+
+
+def __getattr__(name: str) -> object:
+    """Load experimental decoder factories only when explicitly requested."""
+    if name in {"frontier", "bp_trellis"}:
+        try:
+            experimental = import_module("pecos_rslib_exp")
+        except ModuleNotFoundError as exc:
+            if exc.name != "pecos_rslib_exp":
+                raise
+            message = f"{name} requires the optional pecos-rslib-exp package; install it to use experimental decoders"
+            raise ImportError(message) from exc
+        return getattr(experimental, name)
+    message = f"module {__name__!r} has no attribute {name!r}"
+    raise AttributeError(message)

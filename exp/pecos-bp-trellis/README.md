@@ -13,9 +13,9 @@ remain provisional pending broader validation. The shared trellis engine lives
 in `pecos-trellis`; this crate contains PECOS's configuration and decoder
 facade.
 
-The `pecos-decoders` meta-crate exposes this facade through its `bp-trellis`
-feature and `DecoderSpec::BpTrellis`. Python builds enable it and provide
-`pecos.decoders.bp_trellis(...)` for `SampleBatch.decode` and `DemSampler.decode`,
-including parallel Rust workers. All seven configuration options are exposed.
-The direct `pecos_rslib_exp.BpTrellisDecoder` API additionally returns detailed
-per-shot confidence and retry telemetry.
+The optional `pecos-rslib-exp` package provides `pecos_rslib_exp.bp_trellis(...)`
+for `SampleBatch.decode` and `DemSampler.decode`, including parallel Rust workers.
+All seven configuration options are exposed. Standard `pecos-rslib` and
+`pecos-decoders` do not depend on this crate. The direct
+`pecos_rslib_exp.BpTrellisDecoder` API additionally returns detailed per-shot
+confidence and retry telemetry.

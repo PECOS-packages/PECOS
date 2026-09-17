@@ -6,8 +6,10 @@ import math
 import random
 
 import pytest
-from pecos_rslib.decoders import DecoderSpec, bp_trellis
 from pecos_rslib.qec import DemSampler, SampleBatch
+
+exp = pytest.importorskip("pecos_rslib_exp")
+bp_trellis = exp.bp_trellis
 
 DEM = "error(0.1) D0 D1 D2 L0\nerror(0.03) D0\nerror(0.03) D1\nerror(0.03) D2\n"
 
@@ -15,7 +17,7 @@ DEM = "error(0.1) D0 D1 D2 L0\nerror(0.03) D0\nerror(0.03) D1\nerror(0.03) D2\n"
 def test_public_spec_and_configuration():
     from pecos.decoders import bp_trellis as public_bp_trellis
 
-    assert public_bp_trellis() == bp_trellis() == DecoderSpec.parse("bp_trellis")
+    assert public_bp_trellis() == bp_trellis()
     assert bp_trellis().family == "bp_trellis"
     assert not bp_trellis().history_dependent
     assert not bp_trellis().wall_clock_dependent
@@ -46,7 +48,7 @@ def test_public_spec_and_configuration():
     ],
 )
 def test_invalid_options(options):
-    with pytest.raises(ValueError, match="must|invalid|incompatible"):
+    with pytest.raises(ValueError, match=r"must|invalid|incompatible"):
         bp_trellis(**options)
 
 
@@ -65,7 +67,7 @@ def test_invalid_options(options):
 )
 def test_parallel_predictions_match_sequential(options):
     # Aperiodic rows expose chunk-order errors; exercise several dynamic chunks.
-    rng = random.Random(35)  # noqa: S311 - deterministic test data
+    rng = random.Random(35)
     rows = [[rng.randrange(2) for _ in range(3)] for _ in range(1025)]
     truth = [rng.randrange(2) for _ in rows]
     batch = SampleBatch(rows, truth)
@@ -91,7 +93,7 @@ def test_auto_execution_wide_observables_and_count_only():
     assert auto.predictions == expected
     assert auto.num_errors == 0
     assert auto.execution_path == "parallel"
-    count = batch.decode(dem, "bp_trellis", workers=3)
+    count = batch.decode(dem, bp_trellis(), workers=3)
     assert count.predictions is None
     assert count.num_errors == 0
     empty = DemSampler.from_dem_string(dem).sample_batch(0, seed=1).decode(dem, bp_trellis(), workers=2)
@@ -103,7 +105,7 @@ def test_invalid_order_and_impossible_syndrome_are_errors(workers):
     batch = SampleBatch([[0, 0, 0]], [0])
     with pytest.raises(RuntimeError, match="permutation"):
         batch.decode(DEM, bp_trellis(ordering=[0, 0, 1, 2]), workers=workers)
-    with pytest.raises(RuntimeError, match="(?i)(path|syndrome|shot)"):
+    with pytest.raises(RuntimeError, match=r"(?i)(path|syndrome|shot)"):
         SampleBatch([[1]], [0]).decode("detector D0\n", bp_trellis(), workers=workers)
 
 
@@ -136,9 +138,9 @@ def test_predictions_match_direct_experimental_binding():
 @pytest.mark.parametrize("workers", [1, 4])
 def test_no_path_escalation_is_used_in_batch_execution(workers):
     dem = "error(0.4) D0\nerror(0.4) D1\nerror(0.1) D0 D1 D2 L0\n"
-    options = dict(k=2, bp_score_iterations=0, merge_indistinguishable=False, ordering="time_order")
+    options = {"k": 2, "bp_score_iterations": 0, "merge_indistinguishable": False, "ordering": "time_order"}
     batch = SampleBatch([[0, 0, 1]] * 1025, [1] * 1025)
-    with pytest.raises(RuntimeError, match="(?i)(path|syndrome|shot)"):
+    with pytest.raises(RuntimeError, match=r"(?i)(path|syndrome|shot)"):
         batch.decode(dem, bp_trellis(**options), workers=workers)
     result = batch.decode(
         dem,
@@ -148,3 +150,27 @@ def test_no_path_escalation_is_used_in_batch_execution(workers):
     )
     assert result.predictions == [1] * 1025
     assert result.num_errors == 0
+
+
+def test_gil_is_released_during_native_decode():
+    import threading
+
+    started = threading.Event()
+    stop = threading.Event()
+    progress = [0]
+
+    def worker():
+        started.set()
+        while not stop.is_set():
+            progress[0] += 1
+
+    thread = threading.Thread(target=worker)
+    thread.start()
+    started.wait()
+    before = progress[0]
+    try:
+        SampleBatch([[0, 0, 0]] * 2048, [0] * 2048).decode(DEM, bp_trellis(), workers=4)
+    finally:
+        stop.set()
+        thread.join()
+    assert progress[0] - before > 100

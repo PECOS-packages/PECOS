@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from guppylang import guppy
 from guppylang.std.builtins import array, comptime, owned, output
-from guppylang.std.quantum import cx, h, qubit, s, x
+from guppylang.std.quantum import cx, cz, h, qubit, s, sdg, x
 from guppylang.std.quantum import collect_measurements, measure, measure_array
 from pecos.guppy_gen.variant import variant_scoped
 
@@ -497,6 +497,190 @@ def syndrome_extraction_anc(surf: SurfaceCode_3x3) -> Syndrome_3x3:
 
 
 @guppy
+def syndrome_extraction_fold_s_a(surf: SurfaceCode_3x3) -> Syndrome_3x3:
+    """Extract full syndrome with the fold-transversal logical S between CX layers 2 and 3."""
+    # Allocate ancilla qubits (one per stabilizer)
+    ax0 = qubit()
+    ax1 = qubit()
+    ax2 = qubit()
+    ax3 = qubit()
+    az0 = qubit()
+    az1 = qubit()
+    az2 = qubit()
+    az3 = qubit()
+
+    # Hadamard on X ancillas
+    h(ax0)
+    h(ax1)
+    h(ax2)
+    h(ax3)
+
+    # Round 1
+    cx(surf.data[3], az0)
+    cx(ax1, surf.data[2])
+    cx(surf.data[1], az1)
+    cx(ax2, surf.data[4])
+    cx(surf.data[5], az2)
+    cx(ax3, surf.data[8])
+
+    # Round 2
+    cx(surf.data[6], az0)
+    cx(ax1, surf.data[1])
+    cx(surf.data[4], az1)
+    cx(ax2, surf.data[3])
+    cx(surf.data[8], az2)
+    cx(ax3, surf.data[7])
+
+    # fold-transversal S layer
+    s(surf.data[6])
+    cz(surf.data[3], surf.data[7])
+    cz(surf.data[0], surf.data[8])
+    sdg(ax2)
+    cz(az1, az2)
+    s(surf.data[4])
+    cz(surf.data[1], surf.data[5])
+    sdg(ax1)
+    s(surf.data[2])
+
+    # Round 3
+    cx(ax0, surf.data[1])
+    cx(ax1, surf.data[5])
+    cx(surf.data[0], az1)
+    cx(ax2, surf.data[7])
+    cx(surf.data[4], az2)
+    cx(surf.data[2], az3)
+
+    # Round 4
+    cx(ax0, surf.data[0])
+    cx(ax1, surf.data[4])
+    cx(surf.data[3], az1)
+    cx(ax2, surf.data[6])
+    cx(surf.data[7], az2)
+    cx(surf.data[5], az3)
+
+    # Hadamard on X ancillas
+    h(ax0)
+    h(ax1)
+    h(ax2)
+    h(ax3)
+
+    # Measure ancillas
+    sx0 = measure(ax0).read()
+    output("a:sx0:meas:0", sx0)
+    sx1 = measure(ax1).read()
+    output("a:sx1:meas:1", sx1)
+    sx2 = measure(ax2).read()
+    output("a:sx2:meas:2", sx2)
+    sx3 = measure(ax3).read()
+    output("a:sx3:meas:3", sx3)
+    sz0 = measure(az0).read()
+    output("a:sz0:meas:4", sz0)
+    sz1 = measure(az1).read()
+    output("a:sz1:meas:5", sz1)
+    sz2 = measure(az2).read()
+    output("a:sz2:meas:6", sz2)
+    sz3 = measure(az3).read()
+    output("a:sz3:meas:7", sz3)
+
+    synx = array(sx0, sx1, sx2, sx3)
+    synz = array(sz0, sz1, sz2, sz3)
+
+    return Syndrome_3x3(synx, synz)
+
+
+@guppy
+def syndrome_extraction_fold_sdg_a(surf: SurfaceCode_3x3) -> Syndrome_3x3:
+    """Extract full syndrome with the fold-transversal logical S-dagger between CX layers 2 and 3."""
+    # Allocate ancilla qubits (one per stabilizer)
+    ax0 = qubit()
+    ax1 = qubit()
+    ax2 = qubit()
+    ax3 = qubit()
+    az0 = qubit()
+    az1 = qubit()
+    az2 = qubit()
+    az3 = qubit()
+
+    # Hadamard on X ancillas
+    h(ax0)
+    h(ax1)
+    h(ax2)
+    h(ax3)
+
+    # Round 1
+    cx(surf.data[3], az0)
+    cx(ax1, surf.data[2])
+    cx(surf.data[1], az1)
+    cx(ax2, surf.data[4])
+    cx(surf.data[5], az2)
+    cx(ax3, surf.data[8])
+
+    # Round 2
+    cx(surf.data[6], az0)
+    cx(ax1, surf.data[1])
+    cx(surf.data[4], az1)
+    cx(ax2, surf.data[3])
+    cx(surf.data[8], az2)
+    cx(ax3, surf.data[7])
+
+    # fold-transversal S-dagger layer
+    sdg(surf.data[6])
+    cz(surf.data[3], surf.data[7])
+    cz(surf.data[0], surf.data[8])
+    s(ax2)
+    cz(az1, az2)
+    sdg(surf.data[4])
+    cz(surf.data[1], surf.data[5])
+    s(ax1)
+    sdg(surf.data[2])
+
+    # Round 3
+    cx(ax0, surf.data[1])
+    cx(ax1, surf.data[5])
+    cx(surf.data[0], az1)
+    cx(ax2, surf.data[7])
+    cx(surf.data[4], az2)
+    cx(surf.data[2], az3)
+
+    # Round 4
+    cx(ax0, surf.data[0])
+    cx(ax1, surf.data[4])
+    cx(surf.data[3], az1)
+    cx(ax2, surf.data[6])
+    cx(surf.data[7], az2)
+    cx(surf.data[5], az3)
+
+    # Hadamard on X ancillas
+    h(ax0)
+    h(ax1)
+    h(ax2)
+    h(ax3)
+
+    # Measure ancillas
+    sx0 = measure(ax0).read()
+    output("a:sx0:meas:0", sx0)
+    sx1 = measure(ax1).read()
+    output("a:sx1:meas:1", sx1)
+    sx2 = measure(ax2).read()
+    output("a:sx2:meas:2", sx2)
+    sx3 = measure(ax3).read()
+    output("a:sx3:meas:3", sx3)
+    sz0 = measure(az0).read()
+    output("a:sz0:meas:4", sz0)
+    sz1 = measure(az1).read()
+    output("a:sz1:meas:5", sz1)
+    sz2 = measure(az2).read()
+    output("a:sz2:meas:6", sz2)
+    sz3 = measure(az3).read()
+    output("a:sz3:meas:7", sz3)
+
+    synx = array(sx0, sx1, sx2, sx3)
+    synz = array(sz0, sz1, sz2, sz3)
+
+    return Syndrome_3x3(synx, synz)
+
+
+@guppy
 def syndrome_extraction_swapped_a(surf: SurfaceCode_3x3) -> Syndrome_3x3:
     """Extract full syndrome using 4-round parallel CNOT schedule."""
     # Allocate ancilla qubits (one per stabilizer)
@@ -686,3 +870,33 @@ def make_t_injection(rounds_before: int, rounds_after: int):
         final = measure_z_basis(anc)
         output("final_anc", final)
     return guppy(variant_scoped(t_injection, rounds_before, rounds_after))
+
+
+def make_logical_s_experiment(rounds_before: int, rounds_after: int, *, dagger: bool = False):
+    """Z memory with one fold-transversal logical S or S-dagger round.
+
+    The fold round's synx_a records are not bare X syndromes. Combine
+    them with partner Z records as specified by fold_s_round_gadget.
+    """
+    if rounds_before < 0 or rounds_after < 0:
+        raise ValueError("Logical S experiment requires nonnegative round counts")
+    def logical_s_experiment() -> None:
+        """Fold-transversal logical phase experiment."""
+        a = prep_z_basis()
+        for _ in range(comptime(rounds_before)):
+            syn = syndrome_extraction_a(a)
+            output("synx_a", syn.synx)
+            output("synz_a", syn.synz)
+        if comptime(dagger):
+            syn = syndrome_extraction_fold_sdg_a(a)
+        else:
+            syn = syndrome_extraction_fold_s_a(a)
+        output("synx_a", syn.synx)
+        output("synz_a", syn.synz)
+        for _ in range(comptime(rounds_after)):
+            syn = syndrome_extraction_a(a)
+            output("synx_a", syn.synx)
+            output("synz_a", syn.synz)
+        final = measure_z_basis(a)
+        output("final_a", final)
+    return guppy(variant_scoped(logical_s_experiment, rounds_before, rounds_after, dagger))

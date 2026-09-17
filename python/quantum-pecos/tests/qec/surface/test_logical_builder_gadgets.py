@@ -21,7 +21,7 @@ from pecos.qec.surface.logical_circuit import (
     LogicalOp,
     _CircuitGenerator,
     _conjugate_stabilizer_term,
-    _logical_readout_is_deterministic,
+    _logical_readout_flow,
     _propagate_stabilizer_terms,
     _PropagationContext,
 )
@@ -31,6 +31,13 @@ from pecos_rslib.quantum import TickCircuit
 
 GOLDENS = Path(__file__).parent / "goldens" / "logical_builder"
 SHAPES = (
+    "d3_mem_Z_zero_final",
+    "d3_h_zero_final",
+    "d3_fold_s_mid",
+    "d3_fold_s_first",
+    "d3_fold_s_last",
+    "d3_fold_pair_x",
+    "d3_h_fold",
     "dx3dz1_mem_Z",
     "dx1dz3_mem_Z",
     "dx1dz3_mem_X",
@@ -60,6 +67,13 @@ SHAPES = (
 )
 
 EXPECTED_OBSERVABLE_COUNTS = {
+    "d3_mem_Z_zero_final": 1,
+    "d3_h_zero_final": 1,
+    "d3_fold_s_mid": 1,
+    "d3_fold_s_first": 1,
+    "d3_fold_s_last": 1,
+    "d3_fold_pair_x": 1,
+    "d3_h_fold": 1,
     "d3_cx_xx": 2,
     "d3_cx_xz": 0,
     "d3_cx_zx": 2,
@@ -120,7 +134,7 @@ class GeneratorProbe(_CircuitGenerator):
         return self._allocation(label)
 
     def boundary_detector(self, key, measurement):
-        return self._emit_boundary_detector(*key, measurement)
+        return self._emit_boundary_detector(*key, [measurement])
 
     def last_round_of_segment(self, *key):
         return self._last_round_of_segment(*key)
@@ -168,8 +182,29 @@ def make_builder(name: str) -> LogicalCircuitBuilder:
     builder = BuilderProbe()
     for i, label in enumerate(labels):
         builder.add_patch(patch, label, qubit_offset=i * (patch.geometry.num_data + patch.geometry.num_ancilla))
-    if shape.startswith("mem_"):
+    if shape in {"mem_Z_zero_final", "h_zero_final"}:
+        builder.add_memory("A", 2, "Z")
+        if shape == "h_zero_final":
+            builder.add_transversal_h("A")
+        builder.add_memory("A", 0, "X" if shape == "h_zero_final" else "Z")
+    elif shape.startswith("mem_"):
         builder.add_memory("A", 3 if name.startswith("d5") else 2, shape[-1])
+    elif shape in {"fold_s_mid", "fold_s_first", "fold_s_last", "fold_pair_x", "h_fold"}:
+        if shape == "h_fold":
+            builder.add_memory("A", 2, "X")
+            builder.add_transversal_h("A")
+            builder.add_logical_s("A")
+            builder.add_memory("A", 2, "Z")
+        elif shape == "fold_pair_x":
+            builder.add_memory("A", 1, "X")
+            builder.add_logical_s("A")
+            builder.add_logical_sdg("A")
+            builder.add_memory("A", 1, "X")
+        else:
+            before, after = {"fold_s_first": (0, 2), "fold_s_mid": (1, 1), "fold_s_last": (2, 0)}[shape]
+            builder.add_memory("A", before, "Z")
+            builder.add_logical_s("A")
+            builder.add_memory("A", after, "Z")
     elif shape in {"h", "h_z_to_x", "h_x_to_z", "hh"}:
         before, after = ("X", "Z") if shape == "h_x_to_z" else ("Z", "X")
         builder.add_memory("A", 2, before)
@@ -266,6 +301,7 @@ def test_gadget_dependencies(shape, monkeypatch):
     names = (
         "prep_gadget",
         "syndrome_round_gadget",
+        "fold_s_round_gadget",
         "measure_out_gadget",
         "transversal_layer_gadget",
         "transversal_cx_gadget",
@@ -291,6 +327,9 @@ def test_gadget_dependencies(shape, monkeypatch):
                     expected["measure_out_gadget", allocation] += 1
                     prepared.add(label)
                 expected["syndrome_round_gadget", allocation] += op.rounds
+        elif op.fold:
+            allocation = tuple(GeneratorProbe(builder.patches, []).allocation(op.patches[0]).data_qubits)
+            expected["fold_s_round_gadget", allocation] += 1
         else:
             allocation = tuple(GeneratorProbe(builder.patches, []).allocation(op.patches[0]).data_qubits)
             name = (
@@ -1885,7 +1924,7 @@ def _memory_op(bases, rounds=2):
 @pytest.mark.parametrize("readout", ["X", "Z"])
 def test_readout_walk_preparation_closure(rounds, prepared, readout):
     operations = [_memory_op({"A": prepared}, rounds), _memory_op({"A": readout})]
-    assert _logical_readout_is_deterministic(operations, 1, "A", readout) == (prepared == readout)
+    assert _logical_readout_flow(operations, 1, "A", readout)[0] == (prepared == readout)
 
 
 @pytest.mark.parametrize(
@@ -1903,7 +1942,7 @@ def test_readout_walk_h_image(prepared, readout, expected):
         LogicalOp(LogicalGateType.TRANSVERSAL_H, ["A"]),
         _memory_op({"A": readout}),
     ]
-    assert _logical_readout_is_deterministic(operations, 1, "A", readout) is expected
+    assert _logical_readout_flow(operations, 1, "A", readout)[0] is expected
 
 
 @pytest.mark.parametrize(
@@ -1923,20 +1962,20 @@ def test_readout_walk_cx_images(patch, kind, prepared, expected):
         LogicalOp(LogicalGateType.TRANSVERSAL_CX, ["C", "T"]),
         _memory_op(prepared),
     ]
-    assert _logical_readout_is_deterministic(operations, 1, patch, kind) is expected
+    assert _logical_readout_flow(operations, 1, patch, kind)[0] is expected
 
 
 @pytest.mark.parametrize("gate", [LogicalGateType.TRANSVERSAL_SZ, LogicalGateType.TRANSVERSAL_SZdg])
 @pytest.mark.parametrize("kind", ["X", "Z"])
 def test_readout_walk_physical_s_image(gate, kind):
     operations = [_memory_op({"A": kind}), LogicalOp(gate, ["A"]), _memory_op({"A": kind})]
-    assert _logical_readout_is_deterministic(operations, 1, "A", kind) == (kind == "Z")
+    assert _logical_readout_flow(operations, 1, "A", kind)[0] == (kind == "Z")
 
 
 @pytest.mark.parametrize("gate", [LogicalGateType.TRANSVERSAL_H, LogicalGateType.TRANSVERSAL_SZ])
 def test_readout_walk_ignores_unrelated_gates(gate):
     operations = [_memory_op({"A": "X"}), LogicalOp(gate, ["B"]), _memory_op({"A": "X"})]
-    assert _logical_readout_is_deterministic(operations, 1, "A", "X")
+    assert _logical_readout_flow(operations, 1, "A", "X")[0]
 
 
 @pytest.mark.parametrize(("patch", "kind"), [("C", "X"), ("T", "Z")])
@@ -1947,7 +1986,7 @@ def test_readout_walk_rejects_dead_partner(patch, kind):
         LogicalOp(LogicalGateType.TRANSVERSAL_CX, ["C", "T"]),
         _memory_op({patch: kind}),
     ]
-    assert not _logical_readout_is_deterministic(operations, 1, patch, kind)
+    assert not _logical_readout_flow(operations, 1, patch, kind)[0]
 
 
 @pytest.mark.parametrize(("patch", "kind"), [("C", "Z"), ("T", "X")])
@@ -1957,7 +1996,7 @@ def test_readout_walk_unaffected_term_does_not_read_dead_partner(patch, kind):
         LogicalOp(LogicalGateType.TRANSVERSAL_CX, ["C", "T"]),
         _memory_op({patch: kind}),
     ]
-    assert _logical_readout_is_deterministic(operations, 1, patch, kind)
+    assert _logical_readout_flow(operations, 1, patch, kind)[0]
 
 
 def test_readout_walk_requires_preparation_for_every_term():
@@ -1967,23 +2006,23 @@ def test_readout_walk_requires_preparation_for_every_term():
         _memory_op({"C": "X"}),
     ]
     with pytest.raises(ValueError, match=r"without preparation.*T"):
-        _logical_readout_is_deterministic(operations, 1, "C", "X")
+        _logical_readout_flow(operations, 1, "C", "X")
 
 
 @pytest.mark.parametrize("segment", [-1, 1])
 def test_readout_walk_requires_existing_segment(segment):
     with pytest.raises(ValueError, match="No memory segment"):
-        _logical_readout_is_deterministic([_memory_op({"A": "Z"})], segment, "A", "Z")
+        _logical_readout_flow([_memory_op({"A": "Z"})], segment, "A", "Z")
 
 
 def test_readout_walk_requires_patch_in_segment():
     with pytest.raises(ValueError, match="Patch 'B' is not in memory segment"):
-        _logical_readout_is_deterministic([_memory_op({"A": "Z"})], 0, "B", "Z")
+        _logical_readout_flow([_memory_op({"A": "Z"})], 0, "B", "Z")
 
 
 def test_readout_walk_requires_logical_type():
     with pytest.raises(ValueError, match="Unsupported logical readout type"):
-        _logical_readout_is_deterministic([_memory_op({"A": "Z"})], 0, "A", "Y")
+        _logical_readout_flow([_memory_op({"A": "Z"})], 0, "A", "Y")
 
 
 @pytest.mark.parametrize("seed", range(8))

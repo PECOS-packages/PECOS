@@ -361,9 +361,10 @@ worker count automatically; `workers=1` runs sequentially. Parallel execution
 releases the Python GIL and preserves shot order. At most one Rust decoder per
 worker is alive at a time, so more workers and larger `k` increase memory use.
 `SampleBatch.decode(...)` builds exactly one decoder per worker;
-`DemSampler.decode(...)` builds one per scheduled group of sampling chunks, which
-can be several times the worker count on a long run, so a model that is slow to
-construct pays that cost more than once per worker there.
+`DemSampler.decode(...)` builds one up front to check dimensions and then one per
+scheduled group of sampling chunks, which can be several times the worker count
+on a long run, so a model that is slow to construct pays that cost more than
+once per worker there.
 
 Options match `pecos_rslib_exp.FrontierDecoder.from_dem`: `k`, `delta`,
 `score_alpha`, `bp_score_iterations`, `column_order`, `merge_indistinguishable`,

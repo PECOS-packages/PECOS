@@ -46,6 +46,7 @@ def test_public_spec_and_configuration():
         {"ordering": "unknown"},
         {"ordering": None},
         {"escalation_ks": [0]},
+        {"escalation_ks": [16, 0]},
     ],
 )
 def test_invalid_options(options):
@@ -55,7 +56,7 @@ def test_invalid_options(options):
         exp.BpTrellisDecoder.from_dem(DEM, **options)
     assert str(factory_error.value) == str(direct_error.value)
     if "escalation_ks" in options:
-        assert "escalation_ks[0]" in str(factory_error.value)
+        assert f"escalation_ks[{options['escalation_ks'].index(0)}]" in str(factory_error.value)
 
 
 @pytest.mark.parametrize(

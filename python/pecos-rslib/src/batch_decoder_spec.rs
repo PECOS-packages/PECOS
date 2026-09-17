@@ -14,7 +14,10 @@
 //!   wall-clock-dependent one, exactly as for built-in specifications.
 //! - `_pecos_build_decoder(dem: str)`, called once per decoder the batch planner
 //!   needs, possibly from several threads at once, and returning a worker object.
-//!   An exception it raises reaches the caller of `decode` unchanged.
+//!   The DEM must be flat (no `repeat` or `shift_detectors`), as for built-in
+//!   specifications; the bridge reads its observable count before calling the
+//!   provider. An exception the provider raises reaches the caller of `decode`
+//!   unchanged.
 //!
 //! A worker object has:
 //!

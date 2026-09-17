@@ -519,10 +519,26 @@ impl ErrorModelInterface for GeneralNoiseErrorModel {
                     self.builder.pz(&[qubit]);
                     self.last_operation_end[qubit] = Some(end);
                 }
-                Operation::RPPGate { .. } => {
-                    bail!(
-                        "RPP operations do not yet have a PECOS general-noise gate representation"
+                Operation::RPPGate {
+                    qubit_id_1,
+                    qubit_id_2,
+                    theta,
+                    phi,
+                } => {
+                    let first = self.qubit(qubit_id_1)?;
+                    let second = self.qubit(qubit_id_2)?;
+                    if first == second {
+                        bail!("RXYXY2Q requires two distinct qubits");
+                    }
+                    self.add_idle_before(first, start)?;
+                    self.add_idle_before(second, start)?;
+                    self.builder.rxyxy2q(
+                        Angle64::from_radians(theta),
+                        Angle64::from_radians(phi),
+                        &[(first, second)],
                     );
+                    self.last_operation_end[first] = Some(end);
+                    self.last_operation_end[second] = Some(end);
                 }
                 Operation::Custom { custom_tag, .. } => {
                     bail!(
@@ -1985,6 +2001,110 @@ mod tests {
     }
 
     #[test]
+    fn rpp_round_trip_preserves_one_gate_and_both_qubit_times() {
+        let mut model = build_error_model("{}", 3);
+        let mut sim = ClassicalSimulator::with_qubits(3);
+        model.shot_start(0, 41).unwrap();
+        model
+            .handle_operations(
+                runtime_batch(
+                    vec![Operation::RPPGate {
+                        qubit_id_1: 2,
+                        qubit_id_2: 0,
+                        theta: -0.73,
+                        phi: 0.41,
+                    }],
+                    20,
+                    7,
+                ),
+                &mut sim,
+            )
+            .unwrap();
+        assert_eq!(model.last_operation_end, vec![Some(27), None, Some(27)]);
+        let received = sim.received.concat();
+        assert_eq!(received.len(), 1);
+        let Operation::RPPGate {
+            qubit_id_1,
+            qubit_id_2,
+            theta,
+            phi,
+        } = received[0]
+        else {
+            panic!("expected a single RPP operation, got {received:?}");
+        };
+        assert_eq!((qubit_id_1, qubit_id_2), (2, 0));
+        assert!((theta + 0.73).abs() < 1e-12);
+        assert!((phi - 0.41).abs() < 1e-12);
+        // Either target is busy until 27ns, so a gate starting at 26ns
+        // must fail whichever of the two qubits it uses.
+        for qubit_id in [0, 2] {
+            assert!(
+                model
+                    .handle_operations(
+                        runtime_batch(
+                            vec![Operation::RZGate {
+                                qubit_id,
+                                theta: 0.5,
+                            }],
+                            26,
+                            1
+                        ),
+                        &mut sim
+                    )
+                    .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn rpp_uses_one_two_qubit_noise_channel() {
+        // Force an XI error for each two-qubit gate and Z for every
+        // single-qubit gate. An RPP should produce one XI error and no Z
+        // errors from its internal basis changes.
+        let mut model = build_error_model(
+            r#"{
+            "two_qubit":{"probability":1.0,"pauli_model":{"XI":1.0}},
+            "single_qubit":{"probability":1.0,"pauli_model":{"Z":1.0}}
+        }"#,
+            2,
+        );
+        let mut sim = ClassicalSimulator::with_qubits(2);
+        model.shot_start(0, 41).unwrap();
+        model
+            .handle_operations(
+                runtime_batch(
+                    vec![Operation::RPPGate {
+                        qubit_id_1: 0,
+                        qubit_id_2: 1,
+                        theta: 0.73,
+                        phi: 0.41,
+                    }],
+                    0,
+                    1,
+                ),
+                &mut sim,
+            )
+            .unwrap();
+        let received = sim.received.concat();
+        assert_eq!(received.len(), 2, "{received:?}");
+        assert_eq!(
+            received
+                .iter()
+                .filter(|op| matches!(op, Operation::RPPGate { .. }))
+                .count(),
+            1
+        );
+        assert_eq!(
+            received
+                .iter()
+                .filter(|op| matches!(op, Operation::RXYGate { theta, phi, .. }
+            if (*theta - PI).abs() < 1e-12 && phi.abs() < 1e-12))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
     fn adapter_rejects_invalid_runtime_contracts() {
         let config: Config =
             serde_json::from_str(r#"{"measurement":{"local_groups":[[0,2]]}}"#).unwrap();
@@ -2061,8 +2181,8 @@ mod tests {
                 &mut simulator,
             )
             .err()
-            .expect("an RPP operation must fail");
-        assert!(error.to_string().contains("RPP operations do not yet have"));
+            .expect("an RPP operation on the same qubit twice must fail");
+        assert!(error.to_string().contains("requires two distinct qubits"));
 
         let mut error_model = build_error_model("{}", 1);
         let error = error_model

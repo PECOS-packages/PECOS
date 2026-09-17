@@ -93,11 +93,11 @@ pub trait CliffordRotation: CliffordGateable {
         pairs: &[(QubitId, QubitId)],
     ) -> Result<&mut Self, String>;
 
-    /// Apply RPP when its Rz/Rxx decomposition consists of Clifford rotations.
+    /// Apply RXYXY2Q when its Rz/Rxx decomposition consists of Clifford rotations.
     ///
     /// # Errors
     /// Returns an error before changing the state if an angle is unsupported.
-    fn try_rpp(
+    fn try_rxyxy2q(
         &mut self,
         theta: Angle64,
         phi: Angle64,
@@ -110,7 +110,7 @@ pub trait CliffordRotation: CliffordGateable {
             || pecos_core::try_simplify_rotation_snapped(GateType::RZ, phi).is_none()
         {
             return Err(format!(
-                "RPP(theta={theta}, phi={phi}) is not a supported Clifford rotation"
+                "RXYXY2Q(theta={theta}, phi={phi}) is not a supported Clifford rotation"
             ));
         }
         for &(q0, q1) in pairs {
@@ -596,7 +596,7 @@ mod tests {
     }
 
     #[test]
-    fn try_rpp_matches_xx_and_yy_rotations() {
+    fn try_rxyxy2q_matches_xx_and_yy_rotations() {
         let angles = [
             Angle64::ZERO,
             Angle64::QUARTER_TURN,
@@ -620,7 +620,7 @@ mod tests {
                             .x(&[QubitId(2), QubitId(4)])
                             .cx(&[(QubitId(0), QubitId(4))]);
                     }
-                    actual.try_rpp(theta, phi, pairs).unwrap();
+                    actual.try_rxyxy2q(theta, phi, pairs).unwrap();
                     // At phi = 0 or pi, both factors are X up to sign, so
                     // their product is XX. At +/-pi/2, we get YY instead.
                     // Applying each pair separately also checks overlapping
@@ -643,14 +643,14 @@ mod tests {
     }
 
     #[test]
-    fn try_rpp_zero_theta_accepts_arbitrary_axis() {
+    fn try_rxyxy2q_zero_theta_accepts_arbitrary_axis() {
         let mut sim = SparseStab::new(3);
         sim.h(&qid(0)).sz(&qid(0)).cx(&[(QubitId(0), QubitId(2))]);
         let before = (sim.stab_tableau(), sim.destab_tableau());
 
         // With no rotation, phi doesn't matter. In particular, we shouldn't
         // reject an axis that would require non-Clifford basis changes.
-        sim.try_rpp(
+        sim.try_rxyxy2q(
             Angle64::ZERO,
             Angle64::from_radians(0.123),
             &[(QubitId(0), QubitId(1)), (QubitId(1), QubitId(2))],
@@ -660,7 +660,7 @@ mod tests {
     }
 
     #[test]
-    fn try_rpp_unsupported_angles_leave_state_unchanged() {
+    fn try_rxyxy2q_unsupported_angles_leave_state_unchanged() {
         let eighth = Angle64::QUARTER_TURN / 2u64;
         for (theta, phi) in [
             (eighth, Angle64::QUARTER_TURN),
@@ -675,7 +675,7 @@ mod tests {
             // Even if one angle is supported, we should reject the other
             // before applying any basis changes or touching either pair.
             assert!(
-                sim.try_rpp(
+                sim.try_rxyxy2q(
                     theta,
                     phi,
                     &[(QubitId(0), QubitId(1)), (QubitId(1), QubitId(2))],

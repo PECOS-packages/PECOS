@@ -884,15 +884,15 @@ impl Gate {
         )
     }
 
-    /// Create RPP(theta, phi) gates on qubit pairs.
+    /// Create RXYXY2Q(theta, phi) gates on qubit pairs.
     #[must_use]
-    pub fn rpp(
+    pub fn rxyxy2q(
         theta: Angle64,
         phi: Angle64,
         pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
     ) -> Self {
         Self::with_angles(
-            GateType::RPP,
+            GateType::RXYXY2Q,
             smallvec::smallvec![theta, phi],
             Self::flatten_qubit_pairs(pairs),
         )

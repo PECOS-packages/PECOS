@@ -727,6 +727,17 @@ impl QisEngine {
                             )]);
                             Self::push_gate_metadata(&mut gate_metadata, &mut pending_metadata);
                         }
+                        QuantumOp::RXYXY2Q(theta, phi, qubit1, qubit2) => {
+                            builder.rxyxy2q(
+                                Angle64::from_radians(*theta),
+                                Angle64::from_radians(*phi),
+                                &[(
+                                    self.mapped_qubit(*qubit1, qop)?,
+                                    self.mapped_qubit(*qubit2, qop)?,
+                                )],
+                            );
+                            Self::push_gate_metadata(&mut gate_metadata, &mut pending_metadata);
+                        }
                         QuantumOp::RZZ(angle, qubit1, qubit2) => {
                             builder.rzz(
                                 Angle64::from_radians(*angle),
@@ -886,6 +897,14 @@ impl QisEngine {
                     }
                     QuantumOp::ZZ(qubit1, qubit2) => {
                         builder.szz(&[(qubit1, qubit2)]);
+                        gate_metadata.push(metadata);
+                    }
+                    QuantumOp::RXYXY2Q(theta, phi, qubit1, qubit2) => {
+                        builder.rxyxy2q(
+                            Angle64::from_radians(theta),
+                            Angle64::from_radians(phi),
+                            &[(qubit1, qubit2)],
+                        );
                         gate_metadata.push(metadata);
                     }
                     QuantumOp::RZZ(angle, qubit1, qubit2) => {
@@ -2285,6 +2304,38 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    #[test]
+    fn test_rxyxy2q_lowering_preserves_gate_and_metadata() {
+        let mut engine = QisEngine::with_runtime(Box::new(DummyRuntime::default()));
+        let metadata = TraceMetadata::from([("source_label".to_string(), "xyxy".to_string())]);
+        let source = QuantumOp::RXYXY2Q(-0.73, 0.41, 2, 0);
+        let direct = engine
+            .operations_to_lowered_commands(&[
+                Operation::TraceMetadata {
+                    metadata: metadata.clone(),
+                    qubit: None,
+                },
+                source.clone().into(),
+            ])
+            .unwrap();
+        let scheduled = engine
+            .quantum_ops_to_lowered_commands(vec![LoweredQuantumOp::new(source, metadata.clone())])
+            .unwrap();
+        // Direct operations use program handles, which are assigned slots
+        // in encounter order. Scheduled operations already use physical IDs.
+        for (batch, qubits) in [(direct, [0, 1]), (scheduled, [2, 0])] {
+            let gates = batch.commands.quantum_ops().unwrap();
+            assert_eq!(gates.len(), 1);
+            assert_eq!(gates[0].gate_type, pecos_core::gate_type::GateType::RXYXY2Q);
+            assert_eq!(gates[0].qubits.as_slice(), &qubits.map(pecos_core::QubitId));
+            assert_eq!(
+                gates[0].angles.as_slice(),
+                &[Angle64::from_radians(-0.73), Angle64::from_radians(0.41)]
+            );
+            assert_eq!(batch.gate_metadata, vec![metadata.clone()]);
         }
     }
 

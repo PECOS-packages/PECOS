@@ -129,13 +129,13 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
 
     /// Rotate by theta about P(phi) tensor P(phi), where P(phi) = cos(phi) X + sin(phi) Y.
     ///
-    /// RPP = (Rz(phi) tensor Rz(phi)) Rxx(theta) (Rz(-phi) tensor Rz(-phi)).
+    /// RXYXY2Q = (Rz(phi) tensor Rz(phi)) Rxx(theta) (Rz(-phi) tensor Rz(-phi)).
     /// At phi = pi, the principal-value convention gives both inverse Z
     /// rotations the same sign. Each ion contributes a minus sign, so the
     /// two-qubit global phase still cancels.
     #[inline]
-    fn rpp(&mut self, theta: Angle64, phi: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
-        // These basis changes implement one RPP gate inside the simulator.
+    fn rxyxy2q(&mut self, theta: Angle64, phi: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        // These basis changes implement one RXYXY2Q gate inside the simulator.
         // Noise models still see a single two-qubit gate.
         for &(q0, q1) in pairs {
             self.rz(-phi, &[q0, q1]);
@@ -535,7 +535,7 @@ mod tests {
     }
 
     #[test]
-    fn default_rpp_matches_matrix_exactly() {
+    fn default_rxyxy2q_matches_matrix_exactly() {
         use crate::StateVecSoA32;
         use num_complex::Complex64;
 
@@ -555,7 +555,7 @@ mod tests {
                 let phase = Complex64::from_polar(1.0, 2.0 * phi.to_radians_signed());
                 let zero = Complex64::new(0.0, 0.0);
                 let diagonal = Complex64::new(c, 0.0);
-                // For RPP, phi changes the coupling between |00> and |11>,
+                // For RXYXY2Q, phi changes the coupling between |00> and |11>,
                 // but leaves the |01> and |10> coupling alone. At phi = pi,
                 // the principal-value Z rotations each introduce a minus
                 // sign, so the signs from the two qubits should cancel.
@@ -574,7 +574,7 @@ mod tests {
                             sim.x(&[QubitId(qubit)]);
                         }
                     }
-                    sim.rpp(theta, phi, &[(QubitId(0), QubitId(1))]);
+                    sim.rxyxy2q(theta, phi, &[(QubitId(0), QubitId(1))]);
                     for (row, expected_entry) in expected.iter().enumerate() {
                         let actual = sim.get_amplitude(row);
                         let actual = Complex64::new(f64::from(actual.re), f64::from(actual.im));
@@ -589,7 +589,7 @@ mod tests {
     }
 
     #[test]
-    fn default_rpp_batches_match_sequential_pairs() {
+    fn default_rxyxy2q_batches_match_sequential_pairs() {
         use crate::StateVecSoA32;
 
         let theta = Angle64::from_radians(0.73);
@@ -610,9 +610,9 @@ mod tests {
                     .x(&[QubitId(2), QubitId(4)])
                     .cx(&[(QubitId(0), QubitId(4))]);
             }
-            batched.rpp(theta, phi, pairs);
+            batched.rxyxy2q(theta, phi, pairs);
             for &pair in *pairs {
-                sequential.rpp(theta, phi, &[pair]);
+                sequential.rxyxy2q(theta, phi, &[pair]);
             }
             for basis in 0..32 {
                 assert!(

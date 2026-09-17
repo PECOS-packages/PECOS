@@ -20,7 +20,7 @@ use pyo3::exceptions::{PyAttributeError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyBytes, PyInt, PyList};
 
-enum TrellisOrderArgument {
+pub(crate) enum TrellisOrderArgument {
     Name(String),
     Explicit(Vec<usize>),
 }
@@ -81,33 +81,35 @@ fn parse_dem_and_config(
     ordering: TrellisOrderArgument,
     escalation_ks: Option<Vec<usize>>,
 ) -> PyResult<(SparseDem, RustBpTrellisConfig)> {
-    let dem = SparseDem::from_dem_str(dem_str).map_err(|error| runtime_error(&error))?;
-    let ordering = match ordering {
-        TrellisOrderArgument::Name(name) => match name.as_str() {
-            "deadline" => RustTrellisOrdering::Deadline,
-            "backward_deadline" => RustTrellisOrdering::BackwardDeadline,
-            "time_order" => RustTrellisOrdering::TimeOrder,
-            _ => {
-                return Err(PyValueError::new_err(format!(
-                    "invalid ordering {name:?}; expected 'deadline', 'backward_deadline', \
-                     'time_order', or a list of mechanism indices"
-                )));
-            }
-        },
-        TrellisOrderArgument::Explicit(order) => RustTrellisOrdering::Explicit(order),
+    let config = RustBpTrellisConfig {
+        k,
+        delta,
+        score_alpha,
+        bp_score_iterations,
+        merge_indistinguishable,
+        ordering: parse_ordering(ordering)?,
+        escalation_ks: escalation_ks.unwrap_or_default(),
     };
-    Ok((
-        dem,
-        RustBpTrellisConfig {
-            k,
-            delta,
-            score_alpha,
-            bp_score_iterations,
-            merge_indistinguishable,
-            ordering,
-            escalation_ks: escalation_ks.unwrap_or_default(),
+    config
+        .validate()
+        .map_err(|error| PyValueError::new_err(error.to_string()))?;
+    let dem = SparseDem::from_dem_str(dem_str).map_err(|error| runtime_error(&error))?;
+    Ok((dem, config))
+}
+
+pub(crate) fn parse_ordering(ordering: TrellisOrderArgument) -> PyResult<RustTrellisOrdering> {
+    match ordering {
+        TrellisOrderArgument::Name(name) => match name.as_str() {
+            "deadline" => Ok(RustTrellisOrdering::Deadline),
+            "backward_deadline" => Ok(RustTrellisOrdering::BackwardDeadline),
+            "time_order" => Ok(RustTrellisOrdering::TimeOrder),
+            _ => Err(PyValueError::new_err(format!(
+                "invalid ordering {name:?}; expected 'deadline', 'backward_deadline', \
+                     'time_order', or a list of mechanism indices"
+            ))),
         },
-    ))
+        TrellisOrderArgument::Explicit(order) => Ok(RustTrellisOrdering::Explicit(order)),
+    }
 }
 
 fn obs_mask_to_py(py: Python<'_>, mask: &ObsMask) -> PyResult<Py<PyAny>> {

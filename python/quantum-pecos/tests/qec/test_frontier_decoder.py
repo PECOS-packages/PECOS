@@ -183,7 +183,7 @@ def test_metric_and_factor_model_error_paths() -> None:
         )
     with pytest.raises(RuntimeError, match="integer max-log metric is not supported"):
         FrontierCommitteeDecoder.from_dem(SMALL_DEM, metric_mode="maxlog_int")
-    with pytest.raises(RuntimeError, match="delta must be finite under maxlog_int"):
+    with pytest.raises(ValueError, match="delta must be finite under maxlog_int"):
         FrontierDecoder.from_dem(
             SMALL_DEM,
             delta=float("inf"),

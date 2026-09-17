@@ -17,6 +17,11 @@ pub(crate) enum BatchDecoderSpec {
     },
 }
 
+pub(crate) enum DecoderBuildError {
+    Builtin(DecoderError),
+    Provider(PyErr),
+}
+
 impl BatchDecoderSpec {
     pub(crate) fn extract(decoder: &Bound<'_, PyAny>) -> PyResult<Self> {
         if decoder.is_instance_of::<PyString>() {
@@ -35,17 +40,27 @@ impl BatchDecoderSpec {
                 "decoder must be a DecoderSpec, legacy decoder string, or a version-1 decoder provider",
             ));
         }
-        if !decoder.getattr("_pecos_build_decoder")?.is_callable() {
-            return Err(PyTypeError::new_err(
-                "decoder provider _pecos_build_decoder must be callable",
-            ));
-        }
-        Ok(Self::Provider {
-            spec: decoder.clone().unbind(),
-            traits: ExecutionTraits {
+        let members = || -> PyResult<ExecutionTraits> {
+            if !decoder.getattr("_pecos_build_decoder")?.is_callable() {
+                return Err(PyTypeError::new_err(
+                    "_pecos_build_decoder must be callable",
+                ));
+            }
+            Ok(ExecutionTraits {
                 history_dependent: decoder.getattr("history_dependent")?.extract()?,
                 wall_clock_dependent: decoder.getattr("wall_clock_dependent")?.extract()?,
-            },
+            })
+        };
+        let traits = members().map_err(|cause| {
+            let error = PyTypeError::new_err(
+                "version-1 decoder providers require callable _pecos_build_decoder and boolean history_dependent and wall_clock_dependent members",
+            );
+            error.set_cause(decoder.py(), Some(cause));
+            error
+        })?;
+        Ok(Self::Provider {
+            spec: decoder.clone().unbind(),
+            traits,
         })
     }
 
@@ -70,18 +85,16 @@ impl BatchDecoderSpec {
     pub(crate) fn build(
         &self,
         model: &DecodeModel,
-    ) -> Result<Box<dyn ObservableDecoder>, DecoderError> {
+    ) -> Result<Box<dyn ObservableDecoder>, DecoderBuildError> {
         match self {
-            Self::Builtin(spec) => spec.build(model),
+            Self::Builtin(spec) => spec.build(model).map_err(DecoderBuildError::Builtin),
             Self::Provider { spec, .. } => {
-                let dem = match model {
-                    DecodeModel::SingleDem(text) => text.clone(),
-                    DecodeModel::StructuredDem(model) => model.to_dem_string(),
-                    DecodeModel::HybridDem { .. } => {
-                        return Err(DecoderError::InvalidConfiguration(
+                let DecodeModel::SingleDem(dem) = model else {
+                    return Err(DecoderBuildError::Builtin(
+                        DecoderError::InvalidConfiguration(
                             "decoder providers require a single DEM".into(),
-                        ));
-                    }
+                        ),
+                    ));
                 };
                 Python::attach(|py| -> PyResult<Box<dyn ObservableDecoder>> {
                     let worker = spec.bind(py).call_method1("_pecos_build_decoder", (dem,))?;
@@ -96,7 +109,7 @@ impl BatchDecoderSpec {
                         num_detectors,
                     }))
                 })
-                .map_err(|e| DecoderError::InvalidConfiguration(e.to_string()))
+                .map_err(DecoderBuildError::Provider)
             }
         }
     }

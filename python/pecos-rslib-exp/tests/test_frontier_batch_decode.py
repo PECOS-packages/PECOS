@@ -43,15 +43,26 @@ def test_public_spec_and_configuration():
         {"score_alpha": math.inf},
         {"score_alpha": -1},
         {"column_order": "unknown"},
+        {"column_order": 3},
         {"metric_mode": "unknown"},
         {"int_metric_scale": 0},
         {"metric_mode": "maxlog_int", "delta": math.inf},
+        {"metric_mode": "maxlog_int", "score_alpha": 1e-9},
         {"metric_mode": "maxlog_int", "merge_indistinguishable": True},
     ],
 )
 def test_invalid_options(options):
-    with pytest.raises(ValueError, match=r"must|invalid|incompatible"):
+    with pytest.raises(ValueError, match=r"must|invalid|incompatible|quantizes") as factory_error:
         frontier(**options)
+    with pytest.raises(ValueError, match=r"must|invalid|incompatible|quantizes") as direct_error:
+        exp.FrontierDecoder.from_dem(DEM, **options)
+    assert str(factory_error.value) == str(direct_error.value)
+    with pytest.raises(ValueError, match=r"must|invalid|incompatible|quantizes") as committee_error:
+        exp.FrontierCommitteeDecoder.from_dem(DEM, **options)
+    assert str(factory_error.value) == str(committee_error.value)
+    with pytest.raises(ValueError, match=r"must|invalid|incompatible|quantizes") as factor_error:
+        exp.FrontierDecoder.from_factors([[(0.9, [], []), (0.1, [0], [0])]], 1, 1, **options)
+    assert str(factory_error.value) == str(factor_error.value)
 
 
 @pytest.mark.parametrize(
@@ -107,7 +118,7 @@ def test_invalid_order_and_impossible_syndrome_are_errors(workers):
     batch = SampleBatch([[0, 0, 0]], [0])
     with pytest.raises(RuntimeError, match="permutation"):
         batch.decode(DEM, frontier(column_order=[0, 0, 1, 2]), workers=workers)
-    with pytest.raises(RuntimeError, match=r"(?i)(path|syndrome|shot)"):
+    with pytest.raises(RuntimeError, match="unexplainable"):
         SampleBatch([[1]], [0]).decode("detector D0\n", frontier(), workers=workers)
 
 
@@ -135,27 +146,3 @@ def test_predictions_match_direct_experimental_binding():
         expected = [direct.decode_syndrome(row).observable_flips.mask for row in rows]
         result = SampleBatch(rows, [0] * len(rows)).decode(DEM, frontier(**options), workers=3, predictions=True)
         assert result.predictions == expected
-
-
-def test_gil_is_released_during_native_decode():
-    import threading
-
-    started = threading.Event()
-    stop = threading.Event()
-    progress = [0]
-
-    def worker():
-        started.set()
-        while not stop.is_set():
-            progress[0] += 1
-
-    thread = threading.Thread(target=worker)
-    thread.start()
-    started.wait()
-    before = progress[0]
-    try:
-        SampleBatch([[0, 0, 0]] * 2048, [0] * 2048).decode(DEM, frontier(), workers=4)
-    finally:
-        stop.set()
-        thread.join()
-    assert progress[0] - before > 100

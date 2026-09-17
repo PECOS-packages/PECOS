@@ -78,7 +78,7 @@ for name in ('frontier', 'bp_trellis'):
 
 
 def test_published_decoder_manifest_has_no_unpublishable_dependencies():
-    """Optional dependencies must also be publishable for crates.io packaging."""
+    """crates/pecos-decoders must not transitively path-depend on a publish = false crate."""
     import tomllib
     from pathlib import Path
 
@@ -106,3 +106,129 @@ def test_published_decoder_manifest_has_no_unpublishable_dependencies():
                     inspect((directory / dependency["path"] / "Cargo.toml").resolve())
 
     inspect(root / "crates/pecos-decoders/Cargo.toml")
+
+
+def test_provider_workers_decode_concurrently():
+    import threading
+
+    workers = 3
+    barrier = threading.Barrier(workers, timeout=10)
+
+    class ConcurrentWorker(Worker):
+        first = True
+
+        def _pecos_decode_obs(self, syndrome):
+            if self.first:
+                self.first = False
+                barrier.wait()
+            return super()._pecos_decode_obs(syndrome)
+
+    class ConcurrentProvider(Provider):
+        def _pecos_build_decoder(self, dem):
+            assert dem == DEM
+            return ConcurrentWorker()
+
+    batch = SampleBatch([[0]] * 3073, [0] * 3073)
+    result = batch.decode(DEM, ConcurrentProvider(), workers=workers)
+    assert result.num_errors == 0
+    assert result.workers_used == workers
+    assert not barrier.broken
+
+
+@pytest.mark.parametrize("workers", [1, 3])
+@pytest.mark.parametrize("sampler", [False, True])
+@pytest.mark.parametrize("failure", ["build", "num_detectors", "_pecos_decode_obs"])
+def test_provider_build_exceptions_propagate(workers, sampler, failure):
+    import traceback
+
+    error = KeyError("boom")
+
+    def raise_error():
+        raise error
+
+    class InvalidWorker:
+        @property
+        def num_detectors(self):
+            if failure == "num_detectors":
+                raise_error()
+            return 1
+
+        @property
+        def _pecos_decode_obs(self):
+            raise_error()
+
+    class InvalidProvider(Provider):
+        def _pecos_build_decoder(self, dem):
+            if failure == "build":
+                raise_error()
+            return InvalidWorker()
+
+    if sampler:
+        source = DemSampler.from_dem_string(DEM)
+        args = (DEM, 3073, InvalidProvider())
+    else:
+        source = SampleBatch([[0]] * 3073, [0] * 3073)
+        args = (DEM, InvalidProvider())
+    with pytest.raises(KeyError, match="boom") as caught:
+        source.decode(*args, workers=workers)
+    assert caught.value is error
+    assert str(caught.value) == "'boom'"
+    assert traceback.extract_tb(caught.value.__traceback__)[-1].name == "raise_error"
+
+
+def test_fused_provider_build_exception_after_preflight():
+    import traceback
+
+    class InvalidProvider(Provider):
+        builds = 0
+
+        def _pecos_build_decoder(self, dem):
+            self.builds += 1
+            if self.builds > 1:
+                raise KeyError("boom")
+            return super()._pecos_build_decoder(dem)
+
+    provider = InvalidProvider()
+    with pytest.raises(KeyError, match="boom") as caught:
+        DemSampler.from_dem_string(DEM).decode(DEM, 3073, provider, workers=3)
+    assert provider.builds > 1
+    assert traceback.extract_tb(caught.value.__traceback__)[-1].name == "_pecos_build_decoder"
+
+
+@pytest.mark.parametrize("member", ["_pecos_build_decoder", "history_dependent", "wall_clock_dependent"])
+@pytest.mark.parametrize("missing", [False, True])
+def test_required_version_one_members(member, missing):
+    members = {
+        "_pecos_decoder_api_version": 1,
+        "_pecos_build_decoder": lambda self, dem: Worker(),
+        "history_dependent": False,
+        "wall_clock_dependent": False,
+    }
+    if missing:
+        del members[member]
+    else:
+        members[member] = "wrong type"
+    provider = type("InvalidProvider", (), members)()
+    with pytest.raises(TypeError) as caught:
+        SampleBatch([[0]], [0]).decode(DEM, provider)
+    message = str(caught.value)
+    assert "version-1" in message
+    for required in (
+        "_pecos_build_decoder",
+        "history_dependent",
+        "wall_clock_dependent",
+    ):
+        assert required in message
+
+
+def test_provider_per_shot_exception_keeps_shot_context():
+    class FailingWorker(Worker):
+        def _pecos_decode_obs(self, syndrome):
+            raise KeyError("boom")
+
+    class FailingProvider(Provider):
+        def _pecos_build_decoder(self, dem):
+            return FailingWorker()
+
+    with pytest.raises(RuntimeError, match="decoder failed on shot 0:.*KeyError.*boom"):
+        SampleBatch([[0]], [0]).decode(DEM, FailingProvider())

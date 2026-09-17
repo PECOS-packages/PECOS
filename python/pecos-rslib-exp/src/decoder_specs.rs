@@ -1,6 +1,9 @@
 //! Optional experimental decoder factories and native workers for batch decoding.
-use pecos_bp_trellis::{BpTrellisConfig, TrellisOrdering as BpTrellisOrdering};
+use crate::bp_trellis_bindings::{TrellisOrderArgument, parse_ordering};
+use crate::frontier_bindings::{ColumnOrderArgument, parse_column_order, parse_metric_mode};
+use pecos_bp_trellis::BpTrellisConfig;
 use pecos_decoder_core::{DecoderError, ObservableDecoder};
+use pecos_frontier::{FrontierConfig, TrellisOrdering};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
@@ -8,7 +11,7 @@ use std::sync::Mutex;
 
 #[derive(Clone, Debug, PartialEq)]
 enum ExperimentalSpec {
-    Frontier(FrontierConfig),
+    Frontier(FrontierConfig, TrellisOrdering),
     BpTrellis(BpTrellisConfig),
 }
 
@@ -19,7 +22,7 @@ enum ExperimentalSpec {
     from_py_object
 )]
 #[derive(Clone)]
-pub struct PyExperimentalDecoderSpec {
+struct PyExperimentalDecoderSpec {
     inner: ExperimentalSpec,
 }
 impl PyExperimentalDecoderSpec {
@@ -32,7 +35,7 @@ impl PyExperimentalDecoderSpec {
     #[getter]
     fn family(&self) -> &'static str {
         match self.inner {
-            ExperimentalSpec::Frontier(_) => "frontier",
+            ExperimentalSpec::Frontier(..) => "frontier",
             ExperimentalSpec::BpTrellis(_) => "bp_trellis",
         }
     }
@@ -50,7 +53,7 @@ impl PyExperimentalDecoderSpec {
     }
     fn __repr__(&self) -> String {
         match &self.inner {
-            ExperimentalSpec::Frontier(c) => frontier_repr(c),
+            ExperimentalSpec::Frontier(c, ordering) => frontier_repr(c, ordering),
             ExperimentalSpec::BpTrellis(c) => bp_trellis_repr(c),
         }
     }
@@ -64,6 +67,9 @@ impl PyExperimentalDecoderSpec {
             .into_any()
             .unbind())
     }
+    // Hashing only the family ensures equal specs have equal hashes, including
+    // float options such as -0.0 and 0.0. Collisions within a family use __eq__,
+    // which is sufficient for the small collections of decoder specs.
     fn __hash__(&self) -> u64 {
         use std::hash::{Hash, Hasher};
         let mut hasher = std::hash::DefaultHasher::new();
@@ -75,7 +81,7 @@ impl PyExperimentalDecoderSpec {
         let (inner, num_detectors) = py
             .detach(|| {
                 let inner = match &self.inner {
-                    ExperimentalSpec::Frontier(c) => build_frontier(dem, c),
+                    ExperimentalSpec::Frontier(c, ordering) => build_frontier(dem, c, ordering),
                     ExperimentalSpec::BpTrellis(c) => build_bp_trellis(dem, c),
                 }?;
                 let num_detectors = pecos_decoder_core::dem::utils::parse_dem_metadata(dem)?.0;
@@ -89,8 +95,8 @@ impl PyExperimentalDecoderSpec {
     }
 }
 
-#[pyclass(module = "pecos_rslib_exp")]
-pub struct PyExperimentalWorker {
+#[pyclass(name = "ExperimentalDecoderWorker", module = "pecos_rslib_exp")]
+struct PyExperimentalWorker {
     inner: Mutex<Box<dyn ObservableDecoder + Send>>,
     #[pyo3(get)]
     num_detectors: usize,
@@ -115,110 +121,29 @@ impl PyExperimentalWorker {
 fn finish_repr(family: &str, args: Vec<String>) -> String {
     format!("{family}({})", args.join(", "))
 }
-fn invalid_choice(parameter: &str, value: &str, accepted: &str) -> PyErr {
-    PyValueError::new_err(format!(
-        "{parameter} has invalid value {value:?}; accepted values: {accepted}"
-    ))
-}
-fn non_negative(parameter: &str, value: f64) -> PyResult<f64> {
-    if value.is_finite() && value >= 0.0 {
-        Ok(value)
-    } else {
-        Err(PyValueError::new_err(format!(
-            "{parameter} must be finite and non-negative"
-        )))
-    }
-}
-pub fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
+pub(crate) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<PyExperimentalDecoderSpec>()?;
     module.add_function(wrap_pyfunction!(frontier, module)?)?;
     module.add_function(wrap_pyfunction!(bp_trellis, module)?)?;
     Ok(())
 }
 
-/// Mechanism ordering for the Frontier decoder.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub enum FrontierColumnOrder {
-    #[default]
-    Deadline,
-    Time,
-    BackwardDeadline,
-    Explicit(Vec<usize>),
-}
-
-/// Route metric for the Frontier decoder.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum FrontierMetricMode {
-    #[default]
-    LogSumExpFloat,
-    MaxLogInt,
-}
-
-/// Frontier options, preserving the existing Python ordering defaults.
-#[derive(Clone, Debug, PartialEq)]
-pub struct FrontierConfig {
-    pub k: usize,
-    pub delta: f64,
-    pub score_alpha: f64,
-    pub column_order: FrontierColumnOrder,
-    pub merge_indistinguishable: bool,
-    pub bp_score_iterations: usize,
-    pub metric_mode: FrontierMetricMode,
-    pub int_metric_scale: i32,
-}
-
-impl Default for FrontierConfig {
-    fn default() -> Self {
-        Self {
-            k: 64,
-            delta: 50.0,
-            score_alpha: 0.8,
-            column_order: FrontierColumnOrder::Deadline,
-            merge_indistinguishable: false,
-            bp_score_iterations: 0,
-            metric_mode: FrontierMetricMode::LogSumExpFloat,
-            int_metric_scale: 1024,
-        }
-    }
-}
-
 fn build_frontier(
     dem: &str,
-    config: &self::FrontierConfig,
+    config: &FrontierConfig,
+    ordering: &TrellisOrdering,
 ) -> Result<Box<dyn ObservableDecoder + Send>, DecoderError> {
-    use self::{FrontierColumnOrder, FrontierMetricMode};
-    use pecos_frontier::{FrontierConfig, FrontierDecoder, MetricMode, SparseDem};
-    let dem = SparseDem::from_dem_str(dem)?;
-    let column_order = match &config.column_order {
-        FrontierColumnOrder::Deadline => Some(pecos_frontier::deadline_column_order(&dem)?),
-        FrontierColumnOrder::Time => None,
-        FrontierColumnOrder::BackwardDeadline => {
-            Some(pecos_frontier::backward_deadline_column_order(&dem)?)
-        }
-        FrontierColumnOrder::Explicit(order) => Some(order.clone()),
-    };
-    let decoder = FrontierDecoder::from_sparse_dem(
-        &dem,
-        FrontierConfig {
-            k: config.k,
-            delta: config.delta,
-            score_alpha: config.score_alpha,
-            column_order,
-            merge_indistinguishable: config.merge_indistinguishable,
-            bp_score_iterations: config.bp_score_iterations,
-            metric_mode: match config.metric_mode {
-                FrontierMetricMode::LogSumExpFloat => MetricMode::LogSumExpFloat,
-                FrontierMetricMode::MaxLogInt => MetricMode::MaxLogInt,
-            },
-            int_metric_scale: config.int_metric_scale,
-        },
-    )?;
-    Ok(Box::new(decoder))
+    let dem = pecos_frontier::SparseDem::from_dem_str(dem)?;
+    let mut config = config.clone();
+    config.column_order = ordering.resolve(&dem)?;
+    Ok(Box::new(pecos_frontier::FrontierDecoder::from_sparse_dem(
+        &dem, config,
+    )?))
 }
 
 fn build_bp_trellis(
     dem: &str,
-    config: &self::BpTrellisConfig,
+    config: &BpTrellisConfig,
 ) -> Result<Box<dyn ObservableDecoder + Send>, DecoderError> {
     Ok(Box::new(pecos_bp_trellis::BpTrellisDecoder::from_dem_str(
         dem,
@@ -226,102 +151,42 @@ fn build_bp_trellis(
     )?))
 }
 
-#[derive(FromPyObject)]
-enum FrontierOrderArgument {
-    Name(String),
-    Explicit(Vec<usize>),
-}
-
-impl Default for FrontierOrderArgument {
-    fn default() -> Self {
-        Self::Name("deadline_reorder".to_owned())
-    }
-}
-
 /// Native Rust Frontier decoder for raw DEMs, including hyperedges.
 /// Batch decoding supports independent Rust workers. Pruning makes predictions
 /// approximate; use pecos_rslib_exp.FrontierDecoder for per-shot confidence data.
 #[pyfunction]
-#[pyo3(signature = (*, k=64, delta=50.0, score_alpha=0.8, bp_score_iterations=0, column_order=FrontierOrderArgument::default(), merge_indistinguishable=false, metric_mode="logsumexp_float", int_metric_scale=1024),
+#[pyo3(signature = (*, k=64, delta=50.0, score_alpha=0.8, bp_score_iterations=0, column_order=ColumnOrderArgument::default(), merge_indistinguishable=false, metric_mode="logsumexp_float", int_metric_scale=1024),
     text_signature = "(*, k=64, delta=50.0, score_alpha=0.8, bp_score_iterations=0, column_order='deadline_reorder', merge_indistinguishable=False, metric_mode='logsumexp_float', int_metric_scale=1024)")]
 fn frontier(
     k: usize,
     delta: f64,
     score_alpha: f64,
     bp_score_iterations: usize,
-    column_order: FrontierOrderArgument,
+    column_order: ColumnOrderArgument,
     merge_indistinguishable: bool,
     metric_mode: &str,
     int_metric_scale: i32,
 ) -> PyResult<PyExperimentalDecoderSpec> {
-    use self::{FrontierColumnOrder, FrontierConfig, FrontierMetricMode};
-    if k == 0 {
-        return Err(PyValueError::new_err("k must be at least 1"));
-    }
-    if delta.is_nan() || delta < 0.0 {
-        return Err(PyValueError::new_err(
-            "delta must be non-negative and not NaN",
-        ));
-    }
-    let score_alpha = non_negative("score_alpha", score_alpha)?;
-    if int_metric_scale <= 0 {
-        return Err(PyValueError::new_err("int_metric_scale must be positive"));
-    }
-    let metric_mode = match metric_mode.trim() {
-        "logsumexp_float" | "float" | "exact" => FrontierMetricMode::LogSumExpFloat,
-        "maxlog_int" | "max_log_int" | "viterbi_int" | "frontierLite" | "frontier_lite"
-        | "frontier-lite" | "frontierlite" => FrontierMetricMode::MaxLogInt,
-        value => {
-            return Err(invalid_choice(
-                "metric_mode",
-                value,
-                "'logsumexp_float', 'maxlog_int'",
-            ));
-        }
+    let config = FrontierConfig {
+        k,
+        delta,
+        score_alpha,
+        column_order: None,
+        merge_indistinguishable,
+        bp_score_iterations,
+        metric_mode: parse_metric_mode(metric_mode)?,
+        int_metric_scale,
     };
-    if metric_mode == FrontierMetricMode::MaxLogInt {
-        if !delta.is_finite() {
-            return Err(PyValueError::new_err(
-                "delta must be finite under maxlog_int",
-            ));
-        }
-        if merge_indistinguishable {
-            return Err(PyValueError::new_err(
-                "merge_indistinguishable is incompatible with maxlog_int",
-            ));
-        }
-    }
-    let column_order = match column_order {
-        FrontierOrderArgument::Explicit(order) => FrontierColumnOrder::Explicit(order),
-        FrontierOrderArgument::Name(name) => match name.as_str() {
-            "deadline_reorder" => FrontierColumnOrder::Deadline,
-            "time_order" => FrontierColumnOrder::Time,
-            "backward_deadline_reorder" => FrontierColumnOrder::BackwardDeadline,
-            value => {
-                return Err(invalid_choice(
-                    "column_order",
-                    value,
-                    "'deadline_reorder', 'time_order', 'backward_deadline_reorder', or a list of column indices",
-                ));
-            }
-        },
-    };
+    config
+        .validate()
+        .map_err(|error| PyValueError::new_err(error.to_string()))?;
     Ok(PyExperimentalDecoderSpec::new(ExperimentalSpec::Frontier(
-        FrontierConfig {
-            k,
-            delta,
-            score_alpha,
-            column_order,
-            merge_indistinguishable,
-            bp_score_iterations,
-            metric_mode,
-            int_metric_scale,
-        },
+        config,
+        parse_column_order(column_order)?,
     )))
 }
 
-fn frontier_repr(config: &self::FrontierConfig) -> String {
-    use self::{FrontierColumnOrder, FrontierConfig, FrontierMetricMode};
+fn frontier_repr(config: &FrontierConfig, ordering: &TrellisOrdering) -> String {
     let default = FrontierConfig::default();
     let mut args = Vec::new();
     if config.k != default.k {
@@ -337,24 +202,24 @@ fn frontier_repr(config: &self::FrontierConfig) -> String {
     if config.score_alpha.to_bits() != default.score_alpha.to_bits() {
         args.push(format!("score_alpha={:?}", config.score_alpha));
     }
-    if config.bp_score_iterations != 0 {
+    if config.bp_score_iterations != default.bp_score_iterations {
         args.push(format!(
             "bp_score_iterations={}",
             config.bp_score_iterations
         ));
     }
-    match &config.column_order {
-        FrontierColumnOrder::Deadline => {}
-        FrontierColumnOrder::Time => args.push("column_order='time_order'".to_owned()),
-        FrontierColumnOrder::BackwardDeadline => {
+    match ordering {
+        TrellisOrdering::Deadline => {}
+        TrellisOrdering::TimeOrder => args.push("column_order='time_order'".to_owned()),
+        TrellisOrdering::BackwardDeadline => {
             args.push("column_order='backward_deadline_reorder'".to_owned());
         }
-        FrontierColumnOrder::Explicit(order) => args.push(format!("column_order={order:?}")),
+        TrellisOrdering::Explicit(order) => args.push(format!("column_order={order:?}")),
     }
-    if config.merge_indistinguishable {
+    if config.merge_indistinguishable != default.merge_indistinguishable {
         args.push("merge_indistinguishable=True".to_owned());
     }
-    if config.metric_mode == FrontierMetricMode::MaxLogInt {
+    if config.metric_mode != default.metric_mode {
         args.push("metric_mode='maxlog_int'".to_owned());
     }
     if config.int_metric_scale != default.int_metric_scale {
@@ -363,24 +228,12 @@ fn frontier_repr(config: &self::FrontierConfig) -> String {
     finish_repr("frontier", args)
 }
 
-#[derive(FromPyObject)]
-enum BpTrellisOrderArgument {
-    Name(String),
-    Explicit(Vec<usize>),
-}
-
-impl Default for BpTrellisOrderArgument {
-    fn default() -> Self {
-        Self::Name("deadline".to_owned())
-    }
-}
-
 /// Native Rust BP-guided trellis decoder for raw DEMs, including hyperedges.
 /// Batch decoding supports independent Rust workers. Each worker prebuilds the
 /// optional escalation ladder, retried only after a no-path result. Use
 /// pecos_rslib_exp.BpTrellisDecoder for per-shot confidence and retry telemetry.
 #[pyfunction]
-#[pyo3(signature = (*, k=8, delta=100.0, score_alpha=0.8, bp_score_iterations=5, merge_indistinguishable=true, ordering=BpTrellisOrderArgument::default(), escalation_ks=None),
+#[pyo3(signature = (*, k=8, delta=100.0, score_alpha=0.8, bp_score_iterations=5, merge_indistinguishable=true, ordering=TrellisOrderArgument::default(), escalation_ks=None),
     text_signature = "(*, k=8, delta=100.0, score_alpha=0.8, bp_score_iterations=5, merge_indistinguishable=True, ordering='deadline', escalation_ks=None)")]
 fn bp_trellis(
     k: usize,
@@ -388,55 +241,27 @@ fn bp_trellis(
     score_alpha: f64,
     bp_score_iterations: usize,
     merge_indistinguishable: bool,
-    ordering: BpTrellisOrderArgument,
+    ordering: TrellisOrderArgument,
     escalation_ks: Option<Vec<usize>>,
 ) -> PyResult<PyExperimentalDecoderSpec> {
-    use self::{BpTrellisConfig, BpTrellisOrdering};
-    if k == 0 {
-        return Err(PyValueError::new_err("k must be at least 1"));
-    }
-    if delta.is_nan() || delta < 0.0 {
-        return Err(PyValueError::new_err(
-            "delta must be non-negative and not NaN",
-        ));
-    }
-    let score_alpha = non_negative("score_alpha", score_alpha)?;
-    let escalation_ks = escalation_ks.unwrap_or_default();
-    if escalation_ks.contains(&0) {
-        return Err(PyValueError::new_err(
-            "escalation_ks widths must be at least 1",
-        ));
-    }
-    let ordering = match ordering {
-        BpTrellisOrderArgument::Explicit(order) => BpTrellisOrdering::Explicit(order),
-        BpTrellisOrderArgument::Name(name) => match name.as_str() {
-            "deadline" => BpTrellisOrdering::Deadline,
-            "backward_deadline" => BpTrellisOrdering::BackwardDeadline,
-            "time_order" => BpTrellisOrdering::TimeOrder,
-            value => {
-                return Err(invalid_choice(
-                    "ordering",
-                    value,
-                    "'deadline', 'backward_deadline', 'time_order', or a list of mechanism indices",
-                ));
-            }
-        },
+    let config = BpTrellisConfig {
+        k,
+        delta,
+        score_alpha,
+        bp_score_iterations,
+        merge_indistinguishable,
+        ordering: parse_ordering(ordering)?,
+        escalation_ks: escalation_ks.unwrap_or_default(),
     };
+    config
+        .validate()
+        .map_err(|error| PyValueError::new_err(error.to_string()))?;
     Ok(PyExperimentalDecoderSpec::new(ExperimentalSpec::BpTrellis(
-        BpTrellisConfig {
-            k,
-            delta,
-            score_alpha,
-            bp_score_iterations,
-            merge_indistinguishable,
-            ordering,
-            escalation_ks,
-        },
+        config,
     )))
 }
 
-fn bp_trellis_repr(config: &self::BpTrellisConfig) -> String {
-    use self::{BpTrellisConfig, BpTrellisOrdering};
+fn bp_trellis_repr(config: &BpTrellisConfig) -> String {
     let default = BpTrellisConfig::default();
     let mut args = Vec::new();
     if config.k != default.k {
@@ -458,16 +283,16 @@ fn bp_trellis_repr(config: &self::BpTrellisConfig) -> String {
             config.bp_score_iterations
         ));
     }
-    if !config.merge_indistinguishable {
+    if config.merge_indistinguishable != default.merge_indistinguishable {
         args.push("merge_indistinguishable=False".to_owned());
     }
     match &config.ordering {
-        BpTrellisOrdering::Deadline => {}
-        BpTrellisOrdering::TimeOrder => args.push("ordering='time_order'".to_owned()),
-        BpTrellisOrdering::BackwardDeadline => args.push("ordering='backward_deadline'".to_owned()),
-        BpTrellisOrdering::Explicit(order) => args.push(format!("ordering={order:?}")),
+        TrellisOrdering::Deadline => {}
+        TrellisOrdering::TimeOrder => args.push("ordering='time_order'".to_owned()),
+        TrellisOrdering::BackwardDeadline => args.push("ordering='backward_deadline'".to_owned()),
+        TrellisOrdering::Explicit(order) => args.push(format!("ordering={order:?}")),
     }
-    if !config.escalation_ks.is_empty() {
+    if config.escalation_ks != default.escalation_ks {
         args.push(format!("escalation_ks={:?}", config.escalation_ks));
     }
     finish_repr("bp_trellis", args)

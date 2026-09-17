@@ -36,8 +36,6 @@ The following decoder APIs and supporting types are publicly re-exported from
 | API | Primary input | Description |
 |-----|---------------|-------------|
 | `MWPM2D` | QECC object | Legacy minimum-weight perfect matching for 2D codes. |
-| `bp_trellis()` (optional `pecos-rslib-exp`) | Raw DEM text via `SampleBatch.decode` | Experimental native Rust BP-guided trellis, with parallel shots and optional no-path retries. |
-| `frontier()` (optional `pecos-rslib-exp`) | Raw DEM text via `SampleBatch.decode` | Experimental native Rust Frontier, with parallel shot decoding. |
 | `DummyDecoder` | None | No-op decoder for tests and interface benchmarks. |
 | `PyMatchingDecoder` | Graph-like DEM text or `CheckMatrix` | PyMatching minimum-weight perfect matching, with optional correlated decoding. |
 | `FusionBlossomDecoder` | Check matrix, standard-code parameters, or a manual graph | Pure-Rust minimum-weight perfect matching. |
@@ -50,6 +48,8 @@ The following decoder APIs and supporting types are publicly re-exported from
 | `UnionFindBuilder` / `UnionFindDecoder` | `SparseMatrix` check matrix or DEM text | Union-find decoding with inversion or peeling. |
 | `CheckMatrix` / `SparseMatrix` | Dense or coordinate-form matrix data | Matrix containers used by matching and LDPC decoder constructors. |
 | `MwpmResult` / `BpResult` / `TesseractResult` | Decoder output | Result objects for matching, belief-propagation, and Tesseract decoders. |
+
+The optional factories are described in the [Rust-backed Frontier](#rust-backed-frontier-batch-decoding) and [Rust-backed BP-Trellis](#rust-backed-bp-trellis-batch-decoding) sections below.
 
 Python decoder inputs name their encoding explicitly: use
 `decode_syndrome(...)` for a dense detector vector and

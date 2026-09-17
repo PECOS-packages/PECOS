@@ -302,13 +302,7 @@ returned `DecodeResult` supplies the aggregate count and rate directly.
 ```python
 from pecos.decoders import bp_osd, pymatching, tesseract
 
-# Optional package: standard decoders work without it.
-try:
-    from pecos_rslib_exp import bp_trellis, frontier
-except ModuleNotFoundError as error:
-    if error.name != "pecos_rslib_exp":
-        raise
-    bp_trellis = frontier = None
+from pecos_rslib_exp import bp_trellis, frontier
 
 pymatching_result = batch.decode(
     terminal_graphlike_text,
@@ -330,18 +324,16 @@ decoder_results = {
     "tesseract": tesseract_result,
     "bp_osd": bp_osd_result,
 }
-optional_specs = {}
-if frontier is not None:
-    optional_specs = {
-        "frontier": frontier(k=64),
-        "bp_trellis": bp_trellis(k=8, escalation_ks=[32, 128]),
-    }
-    for name, spec in optional_specs.items():
-        result = batch.decode(raw_text, spec, workers=4, predictions=True)
-        assert result.execution_path == "parallel"
-        assert result.workers_used == 4
-        assert len(result.predictions) == batch.num_shots
-        decoder_results[name] = result
+experimental_specs = {
+    "frontier": frontier(k=64),
+    "bp_trellis": bp_trellis(k=8, escalation_ks=[32, 128]),
+}
+for name, spec in experimental_specs.items():
+    result = batch.decode(raw_text, spec, workers=4, predictions=True)
+    assert result.execution_path == "parallel"
+    assert result.workers_used == 4
+    assert len(result.predictions) == batch.num_shots
+    decoder_results[name] = result
 
 print("DEM-sampled shots")
 for name, result in decoder_results.items():
@@ -351,7 +343,7 @@ for name, result in decoder_results.items():
 ```
 
 Install the optional `pecos-rslib-exp` package to run the Frontier and BP-Trellis
-examples. The imports and decoding blocks above are skipped when it is absent.
+examples.
 Explicit imports through `pecos.decoders` are also lazy conveniences, but the
 factories and native engines belong to `pecos_rslib_exp`.
 
@@ -397,7 +389,7 @@ sim_errors = sim_batch.decode(
 ).num_errors
 
 print(f"simulated shots, pymatching: {sim_errors}/{len(sim_shots)}")
-for name, spec in optional_specs.items():
+for name, spec in experimental_specs.items():
     result = sim_batch.decode(raw_text, spec, workers=4)
     print(f"simulated shots, {name}: {result.num_errors}/{len(sim_shots)}")
 ```
@@ -431,18 +423,17 @@ missing gap is not a pruning signal.
 
 <!--continuation-->
 ```python
-if frontier is not None:
-    from pecos_rslib_exp import FrontierDecoder
+from pecos_rslib_exp import FrontierDecoder
 
-    frontier_decoder = FrontierDecoder.from_dem(raw_text)
-    results = [frontier_decoder.decode_syndrome(batch.get_syndrome(shot)) for shot in range(200)]
+frontier_decoder = FrontierDecoder.from_dem(raw_text)
+results = [frontier_decoder.decode_syndrome(batch.get_syndrome(shot)) for shot in range(200)]
 
-    assert all(result.status == "exact" for result in results)
-    gaps = [result.runner_up_gap for result in results if result.runner_up_gap is not None]
+assert all(result.status == "exact" for result in results)
+gaps = [result.runner_up_gap for result in results if result.runner_up_gap is not None]
 
-    least_confident = min(gaps)
-    assert least_confident >= 0.0
-    print(f"least confident of {len(gaps)} shots: gap={least_confident:.3f}")
+least_confident = min(gaps)
+assert least_confident >= 0.0
+print(f"least confident of {len(gaps)} shots: gap={least_confident:.3f}")
 ```
 
 Because the gap is a per-shot quantity, a threshold on it partitions the run
@@ -450,9 +441,8 @@ into a confident majority and a tail worth treating differently:
 
 <!--continuation-->
 ```python
-if frontier is not None:
-    confident = [gap for gap in gaps if gap >= 1.0]
-    print(f"{len(confident)}/{len(gaps)} shots decoded with gap >= 1.0")
+confident = [gap for gap in gaps if gap >= 1.0]
+print(f"{len(confident)}/{len(gaps)} shots decoded with gap >= 1.0")
 ```
 
 Frontier consumes the raw model directly, so unlike the matching decoders it

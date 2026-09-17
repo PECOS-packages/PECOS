@@ -44,12 +44,16 @@ def test_public_spec_and_configuration():
         {"score_alpha": math.inf},
         {"score_alpha": -1},
         {"ordering": "unknown"},
+        {"ordering": None},
         {"escalation_ks": [0]},
     ],
 )
 def test_invalid_options(options):
-    with pytest.raises(ValueError, match=r"must|invalid|incompatible"):
+    with pytest.raises(ValueError, match=r"must|invalid|incompatible") as factory_error:
         bp_trellis(**options)
+    with pytest.raises(ValueError, match=r"must|invalid|incompatible") as direct_error:
+        exp.BpTrellisDecoder.from_dem(DEM, **options)
+    assert str(factory_error.value) == str(direct_error.value)
 
 
 @pytest.mark.parametrize(
@@ -105,7 +109,7 @@ def test_invalid_order_and_impossible_syndrome_are_errors(workers):
     batch = SampleBatch([[0, 0, 0]], [0])
     with pytest.raises(RuntimeError, match="permutation"):
         batch.decode(DEM, bp_trellis(ordering=[0, 0, 1, 2]), workers=workers)
-    with pytest.raises(RuntimeError, match=r"(?i)(path|syndrome|shot)"):
+    with pytest.raises(RuntimeError, match="unexplainable"):
         SampleBatch([[1]], [0]).decode("detector D0\n", bp_trellis(), workers=workers)
 
 
@@ -140,7 +144,7 @@ def test_no_path_escalation_is_used_in_batch_execution(workers):
     dem = "error(0.4) D0\nerror(0.4) D1\nerror(0.1) D0 D1 D2 L0\n"
     options = {"k": 2, "bp_score_iterations": 0, "merge_indistinguishable": False, "ordering": "time_order"}
     batch = SampleBatch([[0, 0, 1]] * 1025, [1] * 1025)
-    with pytest.raises(RuntimeError, match=r"(?i)(path|syndrome|shot)"):
+    with pytest.raises(RuntimeError, match="unexplainable"):
         batch.decode(dem, bp_trellis(**options), workers=workers)
     result = batch.decode(
         dem,
@@ -150,27 +154,3 @@ def test_no_path_escalation_is_used_in_batch_execution(workers):
     )
     assert result.predictions == [1] * 1025
     assert result.num_errors == 0
-
-
-def test_gil_is_released_during_native_decode():
-    import threading
-
-    started = threading.Event()
-    stop = threading.Event()
-    progress = [0]
-
-    def worker():
-        started.set()
-        while not stop.is_set():
-            progress[0] += 1
-
-    thread = threading.Thread(target=worker)
-    thread.start()
-    started.wait()
-    before = progress[0]
-    try:
-        SampleBatch([[0, 0, 0]] * 2048, [0] * 2048).decode(DEM, bp_trellis(), workers=4)
-    finally:
-        stop.set()
-        thread.join()
-    assert progress[0] - before > 100

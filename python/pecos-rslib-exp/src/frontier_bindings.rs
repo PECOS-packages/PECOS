@@ -15,16 +15,15 @@ use pecos_frontier::{
     FrontierCommittee as RustFrontierCommittee,
     FrontierCommitteeResult as RustFrontierCommitteeResult, FrontierConfig as RustFrontierConfig,
     FrontierDecoder as RustFrontierDecoder, FrontierResult as RustFrontierResult, FrontierStatus,
-    MetricMode, ObsMask, Outcome, SparseDem, backward_deadline_column_order,
-    backward_deadline_column_order_for_factors, deadline_column_order,
-    deadline_column_order_for_factors,
+    MetricMode, ObsMask, Outcome, SparseDem, TrellisOrdering,
+    backward_deadline_column_order_for_factors, deadline_column_order_for_factors,
 };
 use pyo3::Borrowed;
 use pyo3::exceptions::{PyAttributeError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyBytes, PyInt, PyList};
 
-enum ColumnOrderArgument {
+pub(crate) enum ColumnOrderArgument {
     Name(String),
     Explicit(Vec<usize>),
 }
@@ -59,7 +58,7 @@ fn runtime_error(error: &DecoderError) -> PyErr {
     PyRuntimeError::new_err(error.to_string())
 }
 
-fn parse_metric_mode(metric_mode: &str) -> PyResult<MetricMode> {
+pub(crate) fn parse_metric_mode(metric_mode: &str) -> PyResult<MetricMode> {
     match metric_mode.trim() {
         "logsumexp_float" | "float" | "exact" => Ok(MetricMode::LogSumExpFloat),
         "frontierLite" | "frontier_lite" | "frontier-lite" | "frontierlite" | "maxlog_int"
@@ -89,48 +88,34 @@ fn sparse_to_dense(indices: &[u64], num_detectors: usize) -> PyResult<Vec<u8>> {
     Ok(syndrome)
 }
 
-fn resolve_column_order(
-    dem: &SparseDem,
-    column_order: ColumnOrderArgument,
-) -> PyResult<Option<Vec<usize>>> {
+pub(crate) fn parse_column_order(column_order: ColumnOrderArgument) -> PyResult<TrellisOrdering> {
     match column_order {
         ColumnOrderArgument::Name(name) => match name.as_str() {
-            "deadline_reorder" => deadline_column_order(dem)
-                .map(Some)
-                .map_err(|e| runtime_error(&e)),
-            "time_order" => Ok(None),
-            "backward_deadline_reorder" => backward_deadline_column_order(dem)
-                .map(Some)
-                .map_err(|e| runtime_error(&e)),
+            "deadline_reorder" => Ok(TrellisOrdering::Deadline),
+            "time_order" => Ok(TrellisOrdering::TimeOrder),
+            "backward_deadline_reorder" => Ok(TrellisOrdering::BackwardDeadline),
             _ => Err(PyValueError::new_err(format!(
                 "invalid column_order {name:?}; expected 'deadline_reorder', 'time_order', \
                  'backward_deadline_reorder', or a list of column indices"
             ))),
         },
-        ColumnOrderArgument::Explicit(order) => Ok(Some(order)),
+        ColumnOrderArgument::Explicit(order) => Ok(TrellisOrdering::Explicit(order)),
     }
 }
 
 fn resolve_factor_column_order(
     model: &FactorModel,
-    column_order: ColumnOrderArgument,
+    ordering: TrellisOrdering,
 ) -> PyResult<Option<Vec<usize>>> {
-    match column_order {
-        ColumnOrderArgument::Name(name) => match name.as_str() {
-            "deadline_reorder" => deadline_column_order_for_factors(model)
-                .map(Some)
-                .map_err(|error| runtime_error(&error)),
-            "time_order" => Ok(None),
-            "backward_deadline_reorder" => backward_deadline_column_order_for_factors(model)
-                .map(Some)
-                .map_err(|error| runtime_error(&error)),
-            _ => Err(PyValueError::new_err(format!(
-                "invalid column_order {name:?}; expected 'deadline_reorder', 'time_order', \
-                 'backward_deadline_reorder', or a list of column indices"
-            ))),
-        },
-        ColumnOrderArgument::Explicit(order) => Ok(Some(order)),
+    match ordering {
+        TrellisOrdering::Deadline => deadline_column_order_for_factors(model).map(Some),
+        TrellisOrdering::BackwardDeadline => {
+            backward_deadline_column_order_for_factors(model).map(Some)
+        }
+        TrellisOrdering::TimeOrder => Ok(None),
+        TrellisOrdering::Explicit(order) => Ok(Some(order)),
     }
+    .map_err(|error| runtime_error(&error))
 }
 
 fn parse_dem_and_config(
@@ -144,22 +129,25 @@ fn parse_dem_and_config(
     metric_mode: &str,
     int_metric_scale: i32,
 ) -> PyResult<(SparseDem, RustFrontierConfig)> {
+    let mut config = RustFrontierConfig {
+        k,
+        delta,
+        score_alpha,
+        column_order: None,
+        merge_indistinguishable,
+        bp_score_iterations,
+        metric_mode: parse_metric_mode(metric_mode)?,
+        int_metric_scale,
+    };
+    config
+        .validate()
+        .map_err(|error| PyValueError::new_err(error.to_string()))?;
+    let ordering = parse_column_order(column_order)?;
     let dem = SparseDem::from_dem_str(dem_str).map_err(|e| runtime_error(&e))?;
-    let column_order = resolve_column_order(&dem, column_order)?;
-    let metric_mode = parse_metric_mode(metric_mode)?;
-    Ok((
-        dem,
-        RustFrontierConfig {
-            k,
-            delta,
-            score_alpha,
-            column_order,
-            merge_indistinguishable,
-            bp_score_iterations,
-            metric_mode,
-            int_metric_scale,
-        },
-    ))
+    config.column_order = ordering
+        .resolve(&dem)
+        .map_err(|error| runtime_error(&error))?;
+    Ok((dem, config))
 }
 
 fn obs_mask_to_py(py: Python<'_>, mask: &ObsMask) -> PyResult<Py<PyAny>> {
@@ -537,6 +525,20 @@ impl PyFrontierDecoder {
         int_metric_scale: i32,
     ) -> PyResult<Self> {
         let metric_mode = parse_metric_mode(metric_mode)?;
+        let mut config = RustFrontierConfig {
+            k,
+            delta,
+            score_alpha,
+            column_order: None,
+            merge_indistinguishable,
+            bp_score_iterations,
+            metric_mode,
+            int_metric_scale,
+        };
+        config
+            .validate()
+            .map_err(|error| PyValueError::new_err(error.to_string()))?;
+        let ordering = parse_column_order(column_order)?;
         let factors = factors
             .into_iter()
             .map(|outcomes| Factor {
@@ -552,17 +554,7 @@ impl PyFrontierDecoder {
             .collect();
         let model = FactorModel::new(factors, num_detectors, num_observables)
             .map_err(|error| runtime_error(&error))?;
-        let column_order = resolve_factor_column_order(&model, column_order)?;
-        let config = RustFrontierConfig {
-            k,
-            delta,
-            score_alpha,
-            column_order,
-            merge_indistinguishable,
-            bp_score_iterations,
-            metric_mode,
-            int_metric_scale,
-        };
+        config.column_order = resolve_factor_column_order(&model, ordering)?;
         let inner = RustFrontierDecoder::from_factor_model(&model, config)
             .map_err(|error| runtime_error(&error))?;
         Ok(Self {

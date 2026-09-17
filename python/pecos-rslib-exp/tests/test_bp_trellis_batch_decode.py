@@ -54,6 +54,8 @@ def test_invalid_options(options):
     with pytest.raises(ValueError, match=r"must|invalid|incompatible") as direct_error:
         exp.BpTrellisDecoder.from_dem(DEM, **options)
     assert str(factory_error.value) == str(direct_error.value)
+    if "escalation_ks" in options:
+        assert "escalation_ks[0]" in str(factory_error.value)
 
 
 @pytest.mark.parametrize(

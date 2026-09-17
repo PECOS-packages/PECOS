@@ -9,7 +9,7 @@ import pytest
 from pecos_rslib_exp import bp_trellis, frontier
 
 # A call this long spans many interpreter switch intervals, so a thread that
-# stalls for half of it can only mean the call held the GIL.
+# stalls for a quarter of it can only mean the call held the GIL.
 MIN_CALL_SECONDS = 0.2
 
 
@@ -59,7 +59,7 @@ def assert_releases_gil(native_call_for_length):
     for length in (500 * 2**doubling for doubling in range(8)):
         duration, stall = largest_python_stall(native_call_for_length(length))
         if duration > MIN_CALL_SECONDS:
-            assert stall < duration / 2, f"Python thread stalled for {stall:.3f}s of a {duration:.3f}s native call"
+            assert stall < duration / 4, f"Python thread stalled for {stall:.3f}s of a {duration:.3f}s native call"
             return
     pytest.fail(f"no native call exceeded {MIN_CALL_SECONDS}s; the largest took {duration:.3f}s")
 

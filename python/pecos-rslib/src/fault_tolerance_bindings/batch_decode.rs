@@ -35,8 +35,8 @@ pub(super) enum BatchExecutionError {
 impl BatchExecutionError {
     pub(super) fn into_pyerr(self) -> PyErr {
         match self {
-            Self::Build(DecoderBuildError::Builtin(error)) => decoder_build_error_to_py(error),
-            Self::Build(DecoderBuildError::Provider(error)) => error,
+            Self::Build(DecoderBuildError::Decoder(error)) => decoder_build_error_to_py(error),
+            Self::Build(DecoderBuildError::Python(error)) => error,
             Self::Dimension {
                 batch_detectors,
                 decoder_detectors,

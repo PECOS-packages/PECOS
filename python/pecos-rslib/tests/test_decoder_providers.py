@@ -52,9 +52,49 @@ def test_provider_validation_and_execution_traits():
     provider.history_dependent = True
     with pytest.raises(ValueError, match="history|stateful|workers"):
         batch.decode(DEM, provider, workers=3)
-    assert batch.decode(DEM, provider).execution_path == "sequential"
     with pytest.raises(ValueError, match="detectors"):
         SampleBatch([[0, 0]], [0]).decode(DEM, Provider())
+
+
+@pytest.mark.parametrize("trait", [None, "history_dependent", "wall_clock_dependent"])
+def test_execution_traits_steer_automatic_planning(trait):
+    # Large enough that automatic planning parallelizes a provider with neither trait.
+    batch = SampleBatch([[0]] * 3073, [0] * 3073)
+    provider = Provider()
+    if trait is not None:
+        setattr(provider, trait, True)
+    expected = "parallel" if trait is None else "sequential"
+    assert batch.decode(DEM, provider).execution_path == expected
+
+
+def test_member_access_errors_other_than_the_protocol_propagate():
+    class BrokenProvider(Provider):
+        @property
+        def history_dependent(self):
+            return 1 // 0
+
+    with pytest.raises(ZeroDivisionError):
+        SampleBatch([[0]], [0]).decode(DEM, BrokenProvider())
+
+
+@pytest.mark.parametrize("sampler", [False, True])
+def test_prediction_outside_the_model_observables_is_an_error(sampler):
+    class WideWorker(Worker):
+        def _pecos_decode_obs(self, syndrome):
+            return [0, 1 << 7]
+
+    class WideProvider(Provider):
+        def _pecos_build_decoder(self, dem):
+            return WideWorker()
+
+    if sampler:
+        source = DemSampler.from_dem_string(DEM)
+        args = (DEM, 8, WideProvider())
+    else:
+        source = SampleBatch([[0]], [0])
+        args = (DEM, WideProvider())
+    with pytest.raises(RuntimeError, match=r"predicted observable 71, but the DEM declares 71 observables"):
+        source.decode(*args, workers=1)
 
 
 def test_standard_decoders_import_without_experimental_package():
@@ -211,6 +251,7 @@ def test_required_version_one_members(member, missing):
     provider = type("InvalidProvider", (), members)()
     with pytest.raises(TypeError) as caught:
         SampleBatch([[0]], [0]).decode(DEM, provider)
+    assert isinstance(caught.value.__cause__, AttributeError if missing else TypeError)
     message = str(caught.value)
     assert "version-1" in message
     for required in (

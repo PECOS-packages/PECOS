@@ -300,9 +300,7 @@ returned `DecodeResult` supplies the aggregate count and rate directly.
 
 <!--continuation-->
 ```python
-from pecos.decoders import bp_osd, pymatching, tesseract
-
-from pecos_rslib_exp import bp_trellis, frontier
+from pecos.decoders import bp_osd, bp_trellis, frontier, pymatching, tesseract
 
 pymatching_result = batch.decode(
     terminal_graphlike_text,
@@ -318,22 +316,30 @@ bp_osd_result = batch.decode(
     bp_osd(max_iter=10, osd_order=1),
     workers=None,
 )
+frontier_result = batch.decode(
+    raw_text,
+    frontier(k=64),
+    workers=4,
+    predictions=True,
+)
+bp_trellis_result = batch.decode(
+    raw_text,
+    bp_trellis(k=8, escalation_ks=[32, 128]),
+    workers=4,
+    predictions=True,
+)
+
+assert frontier_result.execution_path == bp_trellis_result.execution_path == "parallel"
+assert frontier_result.workers_used == bp_trellis_result.workers_used == 4
+assert len(frontier_result.predictions) == len(bp_trellis_result.predictions) == batch.num_shots
 
 decoder_results = {
     "pymatching": pymatching_result,
     "tesseract": tesseract_result,
     "bp_osd": bp_osd_result,
+    "frontier": frontier_result,
+    "bp_trellis": bp_trellis_result,
 }
-experimental_specs = {
-    "frontier": frontier(k=64),
-    "bp_trellis": bp_trellis(k=8, escalation_ks=[32, 128]),
-}
-for name, spec in experimental_specs.items():
-    result = batch.decode(raw_text, spec, workers=4, predictions=True)
-    assert result.execution_path == "parallel"
-    assert result.workers_used == 4
-    assert len(result.predictions) == batch.num_shots
-    decoder_results[name] = result
 
 print("DEM-sampled shots")
 for name, result in decoder_results.items():
@@ -342,10 +348,10 @@ for name, result in decoder_results.items():
     print(f"{name} execution path: {result.execution_path}")
 ```
 
-Install the optional `pecos-rslib-exp` package to run the Frontier and BP-Trellis
-examples.
-Explicit imports through `pecos.decoders` are also lazy conveniences, but the
-factories and native engines belong to `pecos_rslib_exp`.
+`frontier` and `bp_trellis` are experimental: importing them from
+`pecos.decoders` loads the optional `pecos-rslib-exp` package, which must be
+installed, and raises an `ImportError` naming it otherwise. The other three
+factories need nothing beyond the standard install.
 
 `frontier()` uses the native Rust Frontier decoder and accepts the raw DEM,
 including hyperedges. The example decodes shots across four Rust worker threads;
@@ -383,18 +389,20 @@ sim_batch = SampleBatch(
     [syndrome for syndrome, _ in sim_shots],
     [observable_mask for _, observable_mask in sim_shots],
 )
-sim_errors = sim_batch.decode(
-    terminal_graphlike_text,
-    pymatching(correlated=True),
-).num_errors
+sim_results = {
+    "pymatching": sim_batch.decode(terminal_graphlike_text, pymatching(correlated=True)),
+    "tesseract": sim_batch.decode(source_graphlike_text, tesseract(preset="fast", pqlimit=50_000)),
+    "bp_osd": sim_batch.decode(raw_text, bp_osd(max_iter=10, osd_order=1)),
+    "frontier": sim_batch.decode(raw_text, frontier(k=64), workers=4),
+    "bp_trellis": sim_batch.decode(raw_text, bp_trellis(k=8, escalation_ks=[32, 128]), workers=4),
+}
 
-print(f"simulated shots, pymatching: {sim_errors}/{len(sim_shots)}")
-for name, spec in experimental_specs.items():
-    result = sim_batch.decode(raw_text, spec, workers=4)
-    print(f"simulated shots, {name}: {result.num_errors}/{len(sim_shots)}")
+print("simulated shots")
+for name, result in sim_results.items():
+    print(f"{name:11} {result.num_errors:5}/{len(sim_shots)}")
 ```
 
-With the optional package installed, at this noise level the five decoders land within about a percentage point of
+At this noise level the five decoders land within about a percentage point of
 each other on this code; the gaps between decoders widen with code distance and
 with genuinely hyperedge-like noise. Frontier, BP-Trellis, and BP+OSD consume the raw model
 in this example; Tesseract uses the source-informed decomposition chosen above.

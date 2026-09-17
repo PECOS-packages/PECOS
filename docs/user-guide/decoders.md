@@ -49,7 +49,7 @@ The following decoder APIs and supporting types are publicly re-exported from
 | `CheckMatrix` / `SparseMatrix` | Dense or coordinate-form matrix data | Matrix containers used by matching and LDPC decoder constructors. |
 | `MwpmResult` / `BpResult` / `TesseractResult` | Decoder output | Result objects for matching, belief-propagation, and Tesseract decoders. |
 
-The optional factories are described in the [Rust-backed Frontier](#rust-backed-frontier-batch-decoding) and [Rust-backed BP-Trellis](#rust-backed-bp-trellis-batch-decoding) sections below.
+The experimental `frontier()` and `bp_trellis()` factories are not part of this table: they import from `pecos.decoders` only when the optional `pecos-rslib-exp` package is installed, and are described in the [Rust-backed Frontier](#rust-backed-frontier-batch-decoding) and [Rust-backed BP-Trellis](#rust-backed-bp-trellis-batch-decoding) sections below.
 
 Python decoder inputs name their encoding explicitly: use
 `decode_syndrome(...)` for a dense detector vector and
@@ -358,8 +358,12 @@ assert result.num_errors == 0
 
 Frontier accepts raw DEMs, including hyperedges. `workers=None` selects the
 worker count automatically; `workers=1` runs sequentially. Parallel execution
-releases the Python GIL and uses one Rust decoder per worker, preserving shot
-order. More workers and larger `k` increase memory use.
+releases the Python GIL and preserves shot order. At most one Rust decoder per
+worker is alive at a time, so more workers and larger `k` increase memory use.
+`SampleBatch.decode(...)` builds exactly one decoder per worker;
+`DemSampler.decode(...)` builds one per scheduled group of sampling chunks, which
+can be several times the worker count on a long run, so a model that is slow to
+construct pays that cost more than once per worker there.
 
 Options match `pecos_rslib_exp.FrontierDecoder.from_dem`: `k`, `delta`,
 `score_alpha`, `bp_score_iterations`, `column_order`, `merge_indistinguishable`,

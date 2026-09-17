@@ -314,13 +314,13 @@ fn parallel(
                             seed,
                             options,
                         ),
-                        Err(DecoderBuildError::Builtin(error)) => {
+                        Err(DecoderBuildError::Decoder(error)) => {
                             Err(BatchExecutionError::Runtime(format!(
                                 "parallel decoder construction failed: {error}"
                             )))
                         }
-                        Err(DecoderBuildError::Provider(error)) => {
-                            Err(BatchExecutionError::Build(DecoderBuildError::Provider(
+                        Err(DecoderBuildError::Python(error)) => {
+                            Err(BatchExecutionError::Build(DecoderBuildError::Python(
                                 pyo3::Python::attach(|py| error.clone_ref(py)),
                             )))
                         }

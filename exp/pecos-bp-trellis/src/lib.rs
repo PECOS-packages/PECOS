@@ -79,9 +79,14 @@ impl BpTrellisConfig {
         }
         let mut config = self.trellis_config();
         config.validate()?;
-        for &k in &self.escalation_ks {
+        for (rung, &k) in self.escalation_ks.iter().enumerate() {
             config.k = k;
-            config.validate()?;
+            config.validate().map_err(|error| match error {
+                DecoderError::InvalidConfiguration(message) => {
+                    DecoderError::InvalidConfiguration(format!("escalation_ks[{rung}]: {message}"))
+                }
+                other => other,
+            })?;
         }
         Ok(())
     }

@@ -324,6 +324,7 @@ where
             | GateType::RXX
             | GateType::RYY
             | GateType::RZZ
+            | GateType::RPP
             | GateType::RXXRYYRZZ
             | GateType::U2q
             | GateType::T

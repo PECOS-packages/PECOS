@@ -33,6 +33,7 @@ pub fn parse_native_gate(name: &str) -> Option<CoreGateType> {
         "RX" => Some(CoreGateType::RX),
         "RY" => Some(CoreGateType::RY),
         "RZZ" => Some(CoreGateType::RZZ),
+        "RPP" => Some(CoreGateType::RPP),
         "RXY1Q" | "R1XY" => Some(CoreGateType::RXY1Q),
         "U" => Some(CoreGateType::U),
         _ => None,
@@ -106,6 +107,7 @@ mod tests {
             | CoreGateType::RXX
             | CoreGateType::RYY
             | CoreGateType::RXXRYYRZZ
+            | CoreGateType::RPP
             | CoreGateType::U2q
             | CoreGateType::CCX
             | CoreGateType::MX

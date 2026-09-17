@@ -127,6 +127,24 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
             .apply_global_phase(phase, qubits)
     }
 
+    /// Rotate by theta about P(phi) tensor P(phi), where P(phi) = cos(phi) X + sin(phi) Y.
+    ///
+    /// RPP = (Rz(phi) tensor Rz(phi)) Rxx(theta) (Rz(-phi) tensor Rz(-phi)).
+    /// At phi = pi, the principal-value convention gives both inverse Z
+    /// rotations the same sign. Each ion contributes a minus sign, so the
+    /// two-qubit global phase still cancels.
+    #[inline]
+    fn rpp(&mut self, theta: Angle64, phi: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        // These basis changes implement one RPP gate inside the simulator.
+        // Noise models still see a single two-qubit gate.
+        for &(q0, q1) in pairs {
+            self.rz(-phi, &[q0, q1]);
+            self.rxx(theta, &[(q0, q1)]);
+            self.rz(phi, &[q0, q1]);
+        }
+        self
+    }
+
     /// Applies an X-Y plane rotation gate with a specified angle and axis.
     ///
     /// `RXY1Q(theta, phi) = exp(-i*theta*(cos(phi) X + sin(phi) Y)/2)`, with matrix

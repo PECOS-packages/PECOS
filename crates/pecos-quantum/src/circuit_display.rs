@@ -48,6 +48,7 @@ fn gate_symbol(gate_type: GateType) -> &'static str {
         GateType::RZ => "RZ",
         GateType::U => "U",
         GateType::RXY1Q => "RXY1Q",
+        GateType::RPP => "RPP",
         GateType::CX => "CX",
         GateType::CY => "CY",
         GateType::CZ => "CZ",
@@ -223,6 +224,7 @@ fn gate_color(gate_type: GateType) -> CellColor {
         | GateType::SWAP
         | GateType::U
         | GateType::RXY1Q
+        | GateType::RPP
         | GateType::RXXRYYRZZ
         | GateType::U2q
         | GateType::TrackedPauliMeta => CellColor::None,

@@ -539,6 +539,20 @@ impl ByteMessageBuilder {
         self.add_gate_parts(GateType::RXY1Q, qubits, &[theta, phi], &[])
     }
 
+    /// Add RPP(theta, phi) gates, with one shared XY-plane axis on both qubits.
+    pub fn rpp(&mut self, theta: Angle64, phi: Angle64, pairs: &[(usize, usize)]) -> &mut Self {
+        if let [(q0, q1)] = pairs {
+            return self.add_two_qubit_gate_parts(GateType::RPP, *q0, *q1, &[theta, phi], &[]);
+        }
+        self.add_gate_parts_from_usizes(
+            GateType::RPP,
+            pairs.len() * 2,
+            pairs.iter().copied().flat_map(|(q0, q1)| [q0, q1]),
+            &[theta, phi],
+            &[],
+        )
+    }
+
     /// Add a U gate
     pub fn u(
         &mut self,

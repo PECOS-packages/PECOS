@@ -93,6 +93,34 @@ pub trait CliffordRotation: CliffordGateable {
         pairs: &[(QubitId, QubitId)],
     ) -> Result<&mut Self, String>;
 
+    /// Apply RPP when its Rz/Rxx decomposition consists of Clifford rotations.
+    ///
+    /// # Errors
+    /// Returns an error before changing the state if an angle is unsupported.
+    fn try_rpp(
+        &mut self,
+        theta: Angle64,
+        phi: Angle64,
+        pairs: &[(QubitId, QubitId)],
+    ) -> Result<&mut Self, String> {
+        if theta == Angle64::ZERO {
+            return Ok(self);
+        }
+        if simplify_two_qubit_clifford(GateType::RXX, theta).is_none()
+            || pecos_core::try_simplify_rotation_snapped(GateType::RZ, phi).is_none()
+        {
+            return Err(format!(
+                "RPP(theta={theta}, phi={phi}) is not a supported Clifford rotation"
+            ));
+        }
+        for &(q0, q1) in pairs {
+            self.try_rz(-phi, &[q0, q1])?;
+            self.try_rxx(theta, &[(q0, q1)])?;
+            self.try_rz(phi, &[q0, q1])?;
+        }
+        Ok(self)
+    }
+
     /// Try to apply RXY1Q(theta, phi). Succeeds when the combination maps to a
     /// named Clifford (identity, X, Y, SX, `SXdg`, SY, `SYdg`).
     ///

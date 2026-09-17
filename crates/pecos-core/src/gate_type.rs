@@ -82,6 +82,8 @@ pub enum GateType {
     RXXRYYRZZ = 83,
     /// General 2-qubit unitary via KAK decomposition
     U2q = 84,
+    /// exp(-i theta/2 P(phi) tensor P(phi)), where P(phi) = cos(phi) X + sin(phi) Y.
+    RPP = 85,
     /// Toffoli gate (CCX, 3 qubits)
     CCX = 90,
 
@@ -462,6 +464,7 @@ impl TryFrom<u8> for GateType {
             82 => GateType::RZZ,
             83 => GateType::RXXRYYRZZ,
             84 => GateType::U2q,
+            85 => GateType::RPP,
             90 => GateType::CCX,
             100 => GateType::MX,
             104 => GateType::MZ,
@@ -646,7 +649,7 @@ impl GateType {
             | GateType::Idle => 1,
 
             // Gates with two parameters
-            GateType::RXY1Q => 2,
+            GateType::RXY1Q | GateType::RPP => 2,
 
             // Gates with three parameters
             GateType::U | GateType::RXXRYYRZZ => 3,
@@ -722,7 +725,8 @@ impl GateType {
             | GateType::RYY
             | GateType::RZZ
             | GateType::RXXRYYRZZ
-            | GateType::U2q => 2,
+            | GateType::U2q
+            | GateType::RPP => 2,
 
             // Three-qubit gates
             GateType::CCX => 3,
@@ -766,7 +770,7 @@ impl GateType {
             | GateType::RXX
             | GateType::RYY
             | GateType::RZZ => 1,
-            GateType::RXY1Q => 2,
+            GateType::RXY1Q | GateType::RPP => 2,
             GateType::U | GateType::RXXRYYRZZ => 3,
             GateType::U2q => 15,
             // All other gates have no angle parameters
@@ -825,6 +829,7 @@ impl fmt::Display for GateType {
             GateType::Tdg => write!(f, "Tdg"),
             GateType::U => write!(f, "U"),
             GateType::RXY1Q => write!(f, "RXY1Q"),
+            GateType::RPP => write!(f, "RPP"),
             GateType::CX => write!(f, "CX"),
             GateType::CY => write!(f, "CY"),
             GateType::CZ => write!(f, "CZ"),
@@ -896,6 +901,7 @@ impl std::str::FromStr for GateType {
             "RY" => Ok(GateType::RY),
             "RZ" => Ok(GateType::RZ),
             "RXY1Q" | "R1XY" => Ok(GateType::RXY1Q),
+            "RPP" => Ok(GateType::RPP),
             "U" => Ok(GateType::U),
             "CX" | "CNOT" => Ok(GateType::CX),
             "CY" => Ok(GateType::CY),

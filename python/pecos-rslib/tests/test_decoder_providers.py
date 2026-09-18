@@ -33,7 +33,7 @@ def test_provider_batch_and_sampler_paths(workers):
     result = batch.decode(DEM, Provider(), workers=workers, predictions=True, timing=True)
     assert result.predictions == [0, 1 << 70]
     assert result.num_errors == 0
-    assert result.workers_used == workers
+    assert result.workers_used == min(workers, batch.num_shots)
     assert result.stats.num_timing_samples == 2
     sampler = DemSampler.from_dem_string(DEM)
     result = sampler.decode(DEM, 3073, Provider(), workers=workers, seed=2)
@@ -171,6 +171,19 @@ def test_published_decoder_manifest_has_no_unpublishable_dependencies():
                     inspect((directory / dependency["path"] / "Cargo.toml").resolve())
 
     inspect(root / "crates/pecos-decoders/Cargo.toml")
+
+
+def test_oversized_worker_request_builds_one_decoder_per_shot():
+    builds = [0]
+
+    class CountingProvider(Provider):
+        def _pecos_build_decoder(self, dem):
+            builds[0] += 1
+            return Worker()
+
+    result = SampleBatch([[0], [1]], [0, 1 << 70]).decode(DEM, CountingProvider(), workers=64)
+    assert result.workers_used == 2
+    assert builds[0] == 2
 
 
 def test_provider_workers_decode_concurrently():

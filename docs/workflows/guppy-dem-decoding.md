@@ -369,7 +369,10 @@ BP-Trellis also remains experimental; pruning can make predictions approximate.
 
 With `workers=None`, PECOS automatically selects a native-batch, sequential, or
 parallel path based on the decoder and batch size. Pass `workers=N` to request
-an exact worker count. `result.execution_path` reports which path ran. Request
+that many workers; a batch with fewer shots than `N` gets one worker per shot
+(at least one), and `result.workers_used` reports the size of the pool that ran.
+`result.execution_path`
+reports which path ran. Request
 `predictions=True` when you also need each shot's arbitrary-precision
 observable mask; the default avoids materializing them in Python.
 

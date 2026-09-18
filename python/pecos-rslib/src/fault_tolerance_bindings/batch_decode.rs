@@ -135,7 +135,7 @@ fn parallel(
             (0..workers)
                 .into_par_iter()
                 .map(|_| {
-                    // Build even when this worker wins no chunk: an explicit
+                    // Build even when this worker wins no chunk: the planned
                     // worker count means exactly that many decoder instances.
                     let mut decoder = spec.build(model).map_err(BatchExecutionError::Build)?;
                     preflight_dimensions(batch, decoder.as_ref())?;

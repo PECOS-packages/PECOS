@@ -188,6 +188,17 @@ def test_explicit_and_auto_worker_contracts() -> None:
     assert _batch().decode(DEM, spec).execution_path == "sequential"
 
 
+def test_explicit_workers_are_bounded_by_the_shot_count() -> None:
+    # A worker beyond one per shot could only idle, so the pool never grows past the batch.
+    batch = _batch(2)
+    result = batch.decode(DEM, tesseract(preset="fast"), workers=64)
+    assert result.execution_path == "parallel"
+    assert result.workers_used == 2
+    assert result.num_errors == batch.decode(DEM, tesseract(preset="fast"), workers=1).num_errors
+    empty = DemSampler.from_dem_string(DEM).sample_batch(0, seed=1).decode(DEM, tesseract(preset="fast"), workers=64)
+    assert (empty.execution_path, empty.workers_used, empty.num_shots) == ("parallel", 1, 0)
+
+
 def test_wall_clock_limited_mwpf_requires_explicit_parallel_opt_in() -> None:
     spec = mwpf(timeout=0.5)
     batch = _batch()

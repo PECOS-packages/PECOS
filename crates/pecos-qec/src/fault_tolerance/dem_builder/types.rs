@@ -5603,12 +5603,12 @@ impl DetectorErrorModel {
 
     /// Applies PECOS metadata embedded in extended DEM text.
     ///
-    /// Standard DEM lines are ignored by this method. PECOS extension lines
-    /// are parsed and merged into the observable/tracked-Pauli definitions.
+    /// Standard DEM instructions are validated but do not change metadata. PECOS
+    /// extension lines are parsed and merged into the observable/tracked-Pauli definitions.
     ///
     /// # Errors
     ///
-    /// Returns an error if a PECOS metadata line is malformed.
+    /// Returns an error for malformed instructions or metadata, or a DEM requiring flattening.
     pub fn apply_pecos_dem_metadata(
         &mut self,
         dem_text: &str,
@@ -5626,6 +5626,9 @@ impl DetectorErrorModel {
             else {
                 continue;
             };
+            instruction
+                .require_flat("DetectorErrorModel::with_pecos_dem_metadata")
+                .map_err(|err| PecosDemMetadataError::new(err.to_string()))?;
             if matches!(
                 instruction.kind,
                 Kind::PecosObservable | Kind::PecosTrackedPauli

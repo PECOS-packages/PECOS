@@ -44,3 +44,36 @@ fn parsed_dem_accepts_tracked_paulis_and_metadata() {
         Some("tracked")
     );
 }
+
+#[test]
+fn metadata_import_validates_flat_instructions_and_accepts_extensions() {
+    use pecos_qec::fault_tolerance::dem_builder::DetectorErrorModel;
+    for text in ["@bad", "error(0.1)D0"] {
+        let error = DetectorErrorModel::new()
+            .with_pecos_dem_metadata(text)
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("Invalid DEM syntax:"),
+            "{text}: {error}"
+        );
+    }
+    for text in ["repeat 2 {", "}", "} # c", "shift_detectors 1"] {
+        let error = DetectorErrorModel::new()
+            .with_pecos_dem_metadata(text)
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("requires a flattened DEM:"),
+            "{text}: {error}"
+        );
+    }
+    for text in [
+        "error[tag](0.1) D0",
+        "error(0.1) TP0",
+        "pecos_observable {\"id\":0}",
+        "pecos_tracked_pauli {\"id\":0,\"label\":\"a#b\"}",
+    ] {
+        DetectorErrorModel::new()
+            .with_pecos_dem_metadata(text)
+            .unwrap();
+    }
+}

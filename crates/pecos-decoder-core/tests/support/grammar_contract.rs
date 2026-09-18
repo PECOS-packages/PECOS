@@ -12,6 +12,11 @@ pub fn unescape(text: &str) -> String {
                 'n' => '\n',
                 't' => '\t',
                 '\\' => '\\',
+                'u' => {
+                    assert_eq!(chars.next(), Some('{'));
+                    let digits: String = chars.by_ref().take_while(|&c| c != '}').collect();
+                    char::from_u32(u32::from_str_radix(&digits, 16).unwrap()).unwrap()
+                }
                 other => panic!("unknown fixture escape: {other}"),
             }
         } else {
@@ -44,10 +49,11 @@ pub fn assert_outcome(
                     && rest
                         .split_once(" exceeds the supported maximum ")
                         .is_some_and(|(index, maximum)| {
-                            matches!(
-                                (index.parse::<u64>(), maximum.parse::<u64>()),
-                                (Ok(index), Ok(maximum)) if index > maximum
-                            )
+                            input.contains(index)
+                                && matches!(
+                                    (index.parse::<u64>(), maximum.parse::<u64>()),
+                                    (Ok(index), Ok(maximum)) if index > maximum
+                                )
                         })
             });
             let supports_index_limit = matches!(

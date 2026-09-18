@@ -5,11 +5,14 @@
 mod contract;
 
 use contract::{assert_outcome, unescape};
-use pecos_decoder_core::dem::grammar::{Instruction, Kind, parse_line};
+use pecos_decoder_core::dem::grammar::{Instruction, Kind, Target, parse_line};
 use pecos_decoder_core::dem::{
     DemCheckMatrix, DemMatchingGraph, SparseDem, parse_detector_coords, utils,
 };
 use pecos_decoder_core::window::StructuredDem;
+
+// Dense per-detector storage is sized by the maximum index.
+const DENSE_INDEX_THRESHOLD: u64 = 1 << 24;
 
 const FIXTURE: &str = include_str!("fixtures/stim_dem_grammar.tsv");
 
@@ -34,7 +37,7 @@ fn tokenizer_matches_stim_oracle() {
         if fields[1] == "accept" {
             assert_eq!(
                 result.unwrap(),
-                tokenize(&unescape(fields[2])).unwrap(),
+                tokenize(&unescape(fields.get(2).copied().unwrap_or_default())).unwrap(),
                 "{input:?}"
             );
         }
@@ -48,29 +51,27 @@ fn flat_consumers_match_grammar_verdicts_and_dimensions() {
         let input = unescape(fields[0]);
         let accepted = fields[1] == "accept";
         let expected = if accepted {
-            utils::parse_dem_metadata(&unescape(fields[2])).ok()
+            utils::parse_dem_metadata(&unescape(fields.get(2).copied().unwrap_or_default())).ok()
         } else {
             None
         };
-        let outcomes = [
+        let largest_index = tokenize(&input)
+            .ok()
+            .into_iter()
+            .flatten()
+            .flat_map(|instruction| instruction.targets)
+            .filter_map(|target| match target {
+                Target::Detector(index) | Target::Observable(index) => Some(index),
+                _ => None,
+            })
+            .max();
+        // Indices above u32::MAX must still exercise each reader's overflow check.
+        let check_dense_readers = largest_index
+            .is_none_or(|index| index < DENSE_INDEX_THRESHOLD || index > u64::from(u32::MAX));
+        let mut outcomes = vec![
             (
                 "SparseDem",
                 SparseDem::from_dem_str(&input)
-                    .map(|dem| Some((dem.num_detectors, dem.num_observables))),
-            ),
-            (
-                "DemCheckMatrix",
-                DemCheckMatrix::from_dem_str(&input)
-                    .map(|dem| Some((dem.num_detectors, dem.num_observables))),
-            ),
-            (
-                "DemMatchingGraph",
-                DemMatchingGraph::from_dem_str(&input)
-                    .map(|dem| Some((dem.num_detectors, dem.num_observables))),
-            ),
-            (
-                "StructuredDem",
-                StructuredDem::from_dem_str(&input)
                     .map(|dem| Some((dem.num_detectors, dem.num_observables))),
             ),
             ("metadata", utils::parse_dem_metadata(&input).map(Some)),
@@ -94,12 +95,39 @@ fn flat_consumers_match_grammar_verdicts_and_dimensions() {
                 "perturb",
                 pecos_decoder_core::perturbed::perturb_dem(&input, 0.5, &mut || 0.5).map(
                     |rendered| {
-                        tokenize(&rendered).unwrap();
+                        let original = tokenize(&input).unwrap();
+                        let perturbed = tokenize(&rendered).unwrap();
+                        assert_eq!(original.len(), perturbed.len(), "{input:?}");
+                        for (mut before, after) in original.into_iter().zip(perturbed) {
+                            if before.kind == Kind::Error {
+                                before.args.clone_from(&after.args);
+                            }
+                            assert_eq!(before, after, "{input:?}");
+                        }
                         None
                     },
                 ),
             ),
         ];
+        if check_dense_readers {
+            outcomes.extend([
+                (
+                    "DemCheckMatrix",
+                    DemCheckMatrix::from_dem_str(&input)
+                        .map(|dem| Some((dem.num_detectors, dem.num_observables))),
+                ),
+                (
+                    "DemMatchingGraph",
+                    DemMatchingGraph::from_dem_str(&input)
+                        .map(|dem| Some((dem.num_detectors, dem.num_observables))),
+                ),
+                (
+                    "StructuredDem",
+                    StructuredDem::from_dem_str(&input)
+                        .map(|dem| Some((dem.num_detectors, dem.num_observables))),
+                ),
+            ]);
+        }
         for (consumer, result) in outcomes {
             if accepted
                 && tokenize(&input).unwrap().iter().any(|instruction| {
@@ -165,6 +193,12 @@ fn instruction_tags_comments_and_components_retain_their_meaning() {
 fn grammar_validates_declarations_unknown_names_and_tag_escapes() {
     for text in [
         "unknown(0.1) D0",
+        "\u{a0}}",
+        "}\u{a0}",
+        "error(\u{a0}0.1) D0",
+        "error(0.1\u{a0}) D0",
+        "error(\u{c}0.1) D0",
+        "error(0.1\u{c}) D0",
         "detector L0",
         "detector D0 ^ D1",
         "logical_observable D0",

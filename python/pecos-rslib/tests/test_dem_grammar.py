@@ -10,7 +10,8 @@ from pathlib import Path
 
 import pytest
 import stim
-from pecos_rslib.decoders import DemAwareDecoder, bp_osd, pymatching
+import pecos_rslib.decoders as decoders
+from pecos_rslib.decoders import DemAwareDecoder, PyMatchingDecoder, bp_osd, pymatching
 from pecos_rslib.qec import DemSampler, ParsedDem, SampleBatch
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -20,31 +21,58 @@ assert SPEC is not None
 assert SPEC.loader is not None
 CONTRACT = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(CONTRACT)
+# Dense per-detector storage is sized by the maximum index.
+DENSE_INDEX_THRESHOLD = 1 << 24
+
 FIXTURE = ROOT / "crates/pecos-decoder-core/tests/fixtures/stim_dem_grammar.tsv"
 
 
 def _unescape(text: str) -> str:
     chars = iter(text)
-    return "".join({"n": "\n", "t": "\t", "\\": "\\"}[next(chars)] if char == "\\" else char for char in chars)
+    result = []
+    for char in chars:
+        if char != "\\":
+            result.append(char)
+            continue
+        escape = next(chars)
+        if escape == "u":
+            assert next(chars) == "{"
+            digits = []
+            for digit in chars:
+                if digit == "}":
+                    break
+                digits.append(digit)
+            result.append(chr(int("".join(digits), 16)))
+        else:
+            result.append({"n": "\n", "t": "\t", "\\": "\\"}[escape])
+    return "".join(result)
 
 
 ROWS = [line.split("\t") for line in FIXTURE.read_text().splitlines()[1:]]
 
 
 @pytest.mark.parametrize("row", ROWS, ids=[row[0] for row in ROWS])
-@pytest.mark.parametrize("consumer", ["DemSampler", "ParsedDem", "DemAwareDecoder", "bp_osd", "pymatching"])
+@pytest.mark.parametrize(
+    "consumer", ["DemSampler", "ParsedDem", "DemAwareDecoder", "bp_osd", "pymatching", "PyMatchingDecoder"]
+)
 def test_public_dem_grammar(row: list[str], consumer: str) -> None:
     text = _unescape(row[0])
     accepted = row[1] == "accept"
     expected = None
     needs_flattening = False
     if accepted:
-        oracle = stim.DetectorErrorModel(_unescape(row[2]))
+        oracle = stim.DetectorErrorModel(_unescape(row[2] if len(row) > 2 else ""))
         expected = oracle.num_detectors, oracle.num_observables
         needs_flattening = any(
             isinstance(instruction, stim.DemRepeatBlock) or instruction.type == "shift_detectors"
             for instruction in oracle
         )
+    if expected is not None and max(expected) - 1 >= DENSE_INDEX_THRESHOLD:
+        if consumer == "PyMatchingDecoder" or (
+            consumer in {"DemAwareDecoder", "bp_osd", "pymatching"} and max(expected) - 1 <= (1 << 32) - 1
+        ):
+            pytest.skip("dense per-detector storage is sized by the maximum index")
+        # Larger indices still exercise each PECOS consumer's own overflow rejection.
     counts = None
     error = None
     try:
@@ -53,6 +81,9 @@ def test_public_dem_grammar(row: list[str], consumer: str) -> None:
             counts = model.num_detectors, model.num_observables
         elif consumer == "ParsedDem":
             model = ParsedDem.from_string(text)
+            counts = model.num_detectors, model.num_observables
+        elif consumer == "PyMatchingDecoder":
+            model = PyMatchingDecoder.from_dem(text)
             counts = model.num_detectors, model.num_observables
         elif consumer == "DemAwareDecoder":
             model = DemAwareDecoder.from_dem(text, decoder_type="bp_osd")
@@ -66,10 +97,19 @@ def test_public_dem_grammar(row: list[str], consumer: str) -> None:
             batch.decode(text, bp_osd() if consumer == "bp_osd" else pymatching(correlated=False))
     except (ValueError, RuntimeError, OverflowError) as exc:
         error = str(exc)
-    if needs_flattening:
+    if needs_flattening and consumer != "PyMatchingDecoder":
         assert error is not None
         assert "requires a flattened DEM:" in error
-    CONTRACT.assert_outcome(accepted, consumer, counts, expected, error)
+    if (
+        accepted
+        and consumer == "pymatching"
+        and expected is not None
+        and expected[1] == 0
+        and error
+        == "decoder failed on shot 0: Decoding failed: native batch decoder returned 0 predictions for 1 shots"
+    ):
+        pytest.xfail("PECOS issue #799: PyMatching batch decoding returns no predictions for zero observables")
+    CONTRACT.assert_outcome(text, accepted, consumer, counts, expected, error)
 
 
 def test_tagged_mechanism_is_sampled_and_counted() -> None:
@@ -122,3 +162,20 @@ def test_syntax_discriminant_survives_public_wrappers(text: str, consumer: str) 
 def test_whitespace_and_repeat_variants_on_public_surfaces(text: str, consumer: str) -> None:
     canonical = str(stim.DetectorErrorModel(text))
     test_public_dem_grammar([text, "accept", canonical], consumer)
+
+
+DECODER_CLASSES = [
+    decoder
+    for name, decoder in sorted(vars(decoders).items())
+    if name.endswith("Decoder") and isinstance(decoder, type) and hasattr(decoder, "from_dem")
+]
+
+
+@pytest.mark.parametrize("decoder", DECODER_CLASSES, ids=lambda decoder: decoder.__name__)
+def test_exported_decoder_constructors_classify_dem_syntax(decoder: type) -> None:
+    if decoder.__name__ in {"PyMatchingDecoder", "TesseractDecoder", "ChromobiusDecoder"}:
+        with pytest.raises(RuntimeError, match="Unrecognized instruction name:"):
+            decoder.from_dem("@bad")
+    else:
+        with pytest.raises(ValueError, match="Invalid DEM syntax:"):
+            decoder.from_dem("@bad")

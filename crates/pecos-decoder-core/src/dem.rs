@@ -18,7 +18,7 @@ fn xor_targets(targets: Vec<u32>) -> Vec<u32> {
     parity.into_iter().collect()
 }
 
-fn dimension_count(max_index: Option<u32>, kind: &str) -> Result<usize, DecoderError> {
+pub(crate) fn dimension_count(max_index: Option<u32>, kind: &str) -> Result<usize, DecoderError> {
     max_index.map_or(Ok(0), |index| {
         let count = u64::from(index) + 1;
         usize::try_from(count).map_err(|_| {
@@ -156,16 +156,9 @@ pub mod utils {
     /// # Errors
     ///
     /// Returns [`DecoderError`] if:
-    /// - The DEM is empty
     /// - The DEM contains invalid commands or syntax
     /// - Detector/observable indices are invalid
     pub fn validate_dem(dem: &str) -> Result<(), DecoderError> {
-        if dem.trim().is_empty() {
-            return Err(DecoderError::InvalidConfiguration(
-                "DEM cannot be empty".to_string(),
-            ));
-        }
-
         for line in dem.lines() {
             if let Some(instruction) = super::parse_line(line)? {
                 instruction.require_flat("validate_dem")?;
@@ -534,6 +527,7 @@ impl DemMatchingGraph {
         let mut max_detector: Option<u32> = None;
         let mut max_observable: Option<u32> = None;
         let mut skipped = 0usize;
+        let mut coords = Vec::new();
         let mut fault_id = 0usize;
 
         for line in dem.lines() {
@@ -542,11 +536,18 @@ impl DemMatchingGraph {
             };
             instruction.require_flat("DemMatchingGraph")?;
             let (detectors, observables) = target_indices(&instruction.targets)?;
-            for id in detectors {
+            for &id in &detectors {
                 max_detector = Some(max_detector.map_or(id, |old| old.max(id)));
             }
             for id in observables {
                 max_observable = Some(max_observable.map_or(id, |old| old.max(id)));
+            }
+            if instruction.kind == Kind::Detector && !instruction.args.is_empty() {
+                coords.push(DetectorCoord {
+                    id: detectors[0],
+                    coords: instruction.args,
+                });
+                continue;
             }
             if instruction.kind != Kind::Error {
                 continue;
@@ -598,8 +599,6 @@ impl DemMatchingGraph {
 
         let edges = Self::merge_parallel_edges(edges);
 
-        // Parse detector coordinates
-        let coords = parse_detector_coords(dem)?;
         let mut detector_coords = vec![None; num_detectors];
         for dc in coords {
             if (dc.id as usize) < num_detectors {

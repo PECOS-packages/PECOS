@@ -12,6 +12,7 @@
 
 //! Structured detector-error-model windows shared by streaming decoders.
 
+use crate::dem::dimension_count;
 use crate::dem::grammar::{Kind, parse_line, target_indices};
 use crate::errors::DecoderError;
 use std::fmt::Write as _;
@@ -120,8 +121,8 @@ impl StructuredDem {
             }
         }
 
-        let num_detectors = dimension(max_detector, "detector")?;
-        let num_observables = dimension(max_observable, "observable")?;
+        let num_detectors = dimension_count(max_detector, "detector")?;
+        let num_observables = dimension_count(max_observable, "observable")?;
         let mut detector_coords = vec![None; num_detectors];
         for (detector, coords) in coordinates {
             detector_coords[detector] = Some(coords);
@@ -345,13 +346,6 @@ impl StructuredDem {
         }
         out
     }
-}
-
-fn dimension(maximum: Option<u32>, kind: &str) -> Result<usize, DecoderError> {
-    maximum.map_or(Ok(0), |id| {
-        usize::try_from(u64::from(id) + 1)
-            .map_err(|_| invalid(format!("{kind} count does not fit usize")))
-    })
 }
 
 fn invalid(message: impl Into<String>) -> DecoderError {

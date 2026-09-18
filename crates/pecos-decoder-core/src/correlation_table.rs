@@ -99,6 +99,7 @@ impl CorrelationTable {
                 continue;
             };
             instruction.require_flat("CorrelationTable")?;
+            // Validate consumer index limits even for mechanisms outside the probability window.
             target_indices(&instruction.targets)?;
             if instruction.kind != Kind::Error {
                 continue;

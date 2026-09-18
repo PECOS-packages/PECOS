@@ -33,8 +33,10 @@ PECOS reads flat Stim detector-error-model text using Stim's grammar:
 - Instruction names and detector/observable target prefixes are case-insensitive; tags and inline `#` comments are supported.
 - Targets and `^` separators require spacing; separators cannot be first, last, or adjacent.
 - Parenthesized arguments immediately follow the name or tag. `error` requires one probability in `[0, 1]`, with `error()` meaning zero; detector and logical-observable declarations require exactly one target of the appropriate kind.
-- `repeat` and `shift_detectors` require flattening before a model is passed to a flat reader.
-- PECOS extension targets and metadata statements require an explicit opt-in: `ParsedDem` supports both, and `DetectorErrorModel::with_pecos_dem_metadata` accepts metadata statements.
+- Grammar is validated per instruction; block balance is not checked. `repeat`, `shift_detectors`, and closing braces require flattening, including stray braces and unclosed repeat blocks.
+- PECOS extension targets and metadata statements require an explicit opt-in: `ParsedDem` and `DetectorErrorModel::with_pecos_dem_metadata` enable the whole PECOS superset, including `TP` targets and JSON metadata statements.
+
+PECOS-parsed Python constructors report grammar errors as `ValueError` with the `Invalid DEM syntax:` prefix; Stim-backed constructors such as `PyMatchingDecoder` and `TesseractDecoder` retain their native parser errors and exception types.
 
 ## Available Decoders
 

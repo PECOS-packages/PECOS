@@ -12,6 +12,7 @@ FLAT_CONSUMERS = INDEX_CONSUMERS
 
 
 def assert_outcome(
+    text: str,
     accepted: bool,
     consumer: str,
     counts: tuple[int, int] | None,
@@ -36,15 +37,9 @@ def assert_outcome(
         or (consumer == "DemAwareDecoder" and message == "dem contains no error mechanisms")
         or (
             consumer == "pymatching"
+            and text == "error(1) D0"
             and message
             == "decoder failed on shot 0: decoding failed: ffi error: maximum absolute edge weight of 16777215 exceeded."
-        )
-        or (
-            consumer == "pymatching"
-            and expected is not None
-            and expected[1] == 0
-            and message
-            == "decoder failed on shot 0: decoding failed: native batch decoder returned 0 predictions for 1 shots"
         )
     )
     if accepted:
@@ -60,4 +55,5 @@ def assert_outcome(
             "semantic error instead of grammar error",
             error,
         )
-        assert "Invalid DEM syntax: " in error, (consumer, error)
+        if consumer != "PyMatchingDecoder":
+            assert "Invalid DEM syntax: " in error, (consumer, error)

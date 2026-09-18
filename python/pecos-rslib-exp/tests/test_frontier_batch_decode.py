@@ -142,7 +142,7 @@ def test_batch_dimensions_follow_the_model_the_engine_parses():
 
 def test_batch_rejects_unspaced_separators():
     dem = "error(0.1) D0 L0^D3 L5\n"
-    with pytest.raises(RuntimeError, match="targets must be separated by spacing"):
+    with pytest.raises(ValueError, match=r"Invalid DEM syntax:.*targets must be separated by spacing"):
         SampleBatch([[1, 0, 0, 1]], [33]).decode(dem, frontier(), workers=1, predictions=True)
 
 
@@ -160,3 +160,17 @@ def test_predictions_match_direct_experimental_binding():
         expected = [direct.decode_syndrome(row).observable_flips.mask for row in rows]
         result = SampleBatch(rows, [0] * len(rows)).decode(DEM, frontier(**options), workers=3, predictions=True)
         assert result.predictions == expected
+
+
+@pytest.mark.parametrize(
+    "decoder",
+    [
+        decoder
+        for name, decoder in sorted(vars(exp).items())
+        if name.endswith("Decoder") and isinstance(decoder, type) and hasattr(decoder, "from_dem")
+    ],
+    ids=lambda decoder: decoder.__name__,
+)
+def test_exported_decoder_constructors_classify_dem_syntax(decoder):
+    with pytest.raises(ValueError, match="Invalid DEM syntax:"):
+        decoder.from_dem("@bad")

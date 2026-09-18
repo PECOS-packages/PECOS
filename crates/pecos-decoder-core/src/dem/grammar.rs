@@ -66,6 +66,9 @@ pub struct Instruction {
 impl Instruction {
     /// Reject instructions requiring loop expansion or detector offsets.
     ///
+    /// Parsing validates individual instructions, not block balance. A stray closing
+    /// brace or an unclosed repeat block therefore receives the flattening error too.
+    ///
     /// # Errors
     /// Returns an error for `repeat`, `shift_detectors`, and closing braces.
     pub fn require_flat(&self, consumer: &str) -> Result<(), DecoderError> {
@@ -110,18 +113,26 @@ fn spacing(c: char) -> bool {
     matches!(c, ' ' | '\t' | '\r')
 }
 
+fn leading_spacing(c: char) -> bool {
+    spacing(c) || matches!(c, '\u{000b}' | '\u{000c}')
+}
+
 fn integer(value: &str) -> Result<u64, DecoderError> {
     if value.is_empty() || !value.bytes().all(|c| c.is_ascii_digit()) {
         return Err(invalid(format!(
             "invalid DEM target token: {value}; targets must be separated by spacing"
         )));
     }
-    value.parse().map_err(|_| {
-        invalid(format!(
-            "DEM index {value} exceeds the supported maximum {}",
-            u64::MAX
-        ))
-    })
+    let maximum = (1u64 << 60) - 1;
+    value
+        .parse::<u64>()
+        .ok()
+        .filter(|&index| index <= maximum)
+        .ok_or_else(|| {
+            invalid(format!(
+                "DEM index {value} exceeds the supported maximum {maximum}"
+            ))
+        })
 }
 
 /// Parse a line using only standard Stim DEM instructions and targets.
@@ -143,7 +154,7 @@ pub fn parse_line_with_options(
     line: &str,
     options: Options,
 ) -> Result<Option<Instruction>, DecoderError> {
-    let line = line.trim_start_matches(char::is_whitespace);
+    let line = line.trim_start_matches(leading_spacing);
     if line.is_empty() || line.starts_with('#') {
         return Ok(None);
     }
@@ -159,7 +170,13 @@ pub fn parse_line_with_options(
         "shift_detectors" => Kind::ShiftDetectors,
         "pecos_observable" if options.pecos_extensions => Kind::PecosObservable,
         "pecos_tracked_pauli" if options.pecos_extensions => Kind::PecosTrackedPauli,
-        "" if line.split('#').next().unwrap_or_default().trim() == "}" => {
+        "" if line
+            .split('#')
+            .next()
+            .unwrap_or_default()
+            .trim_matches(leading_spacing)
+            == "}" =>
+        {
             return Ok(Some(Instruction {
                 kind: Kind::EndRepeat,
                 tag: None,
@@ -204,10 +221,10 @@ pub fn parse_line_with_options(
             .find(')')
             .ok_or_else(|| invalid("missing ) in DEM arguments"))?;
         for arg in after[..end].split(',') {
-            let value = if arg.trim().is_empty() {
+            let value = if arg.trim_matches(spacing).is_empty() {
                 0.0
             } else {
-                arg.trim()
+                arg.trim_matches(spacing)
                     .parse::<f64>()
                     .map_err(|_| invalid(format!("invalid DEM numeric argument: {arg}")))?
             };

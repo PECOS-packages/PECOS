@@ -124,6 +124,12 @@ def __getattr__(name: str) -> object:
                 raise
             message = f"{name} requires the optional pecos-rslib-exp package; install it to use experimental decoders"
             raise ImportError(message) from exc
-        return getattr(experimental, name)
+        try:
+            return getattr(experimental, name)
+        except AttributeError as exc:
+            message = (
+                f"the installed pecos-rslib-exp package does not provide {name}; upgrade it to match quantum-pecos"
+            )
+            raise ImportError(message) from exc
     message = f"module {__name__!r} has no attribute {name!r}"
     raise AttributeError(message)

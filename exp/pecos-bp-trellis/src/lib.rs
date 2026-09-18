@@ -66,7 +66,7 @@ pub struct BpTrellisConfig {
 }
 
 impl BpTrellisConfig {
-    /// Validate every rung without building a detector error model.
+    /// Validate the base configuration and every rung without a detector error model.
     ///
     /// # Errors
     ///

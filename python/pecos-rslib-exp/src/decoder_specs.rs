@@ -3,7 +3,7 @@ use crate::bp_trellis_bindings::{TrellisOrderArgument, parse_ordering};
 use crate::frontier_bindings::{ColumnOrderArgument, parse_column_order, parse_metric_mode};
 use pecos_bp_trellis::BpTrellisConfig;
 use pecos_decoder_core::{DecoderError, ObservableDecoder};
-use pecos_frontier::{FrontierConfig, TrellisOrdering};
+use pecos_frontier::{FrontierConfig, SparseDem, TrellisOrdering};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
@@ -78,20 +78,28 @@ impl PyExperimentalDecoderSpec {
     }
     /// Internal batch protocol: construct an independent native worker.
     fn _pecos_build_decoder(&self, py: Python<'_>, dem: &str) -> PyResult<PyExperimentalWorker> {
-        let (inner, num_detectors) = py
-            .detach(|| {
-                let inner = match &self.inner {
-                    ExperimentalSpec::Frontier(c, ordering) => build_frontier(dem, c, ordering),
-                    ExperimentalSpec::BpTrellis(c) => build_bp_trellis(dem, c),
-                }?;
-                let num_detectors = pecos_decoder_core::dem::utils::parse_dem_metadata(dem)?.0;
-                Ok::<_, DecoderError>((inner, num_detectors))
+        py.detach(|| {
+            // The engine and the reported dimensions come from the same parse.
+            let dem = SparseDem::from_dem_str(dem)?;
+            let inner: Box<dyn ObservableDecoder + Send> = match &self.inner {
+                ExperimentalSpec::Frontier(c, ordering) => {
+                    let mut config = c.clone();
+                    config.column_order = ordering.resolve(&dem)?;
+                    Box::new(pecos_frontier::FrontierDecoder::from_sparse_dem(
+                        &dem, config,
+                    )?)
+                }
+                ExperimentalSpec::BpTrellis(c) => Box::new(
+                    pecos_bp_trellis::BpTrellisDecoder::from_sparse_dem(&dem, c.clone())?,
+                ),
+            };
+            Ok::<_, DecoderError>(PyExperimentalWorker {
+                inner: Mutex::new(inner),
+                num_detectors: dem.num_detectors,
+                num_observables: dem.num_observables,
             })
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        Ok(PyExperimentalWorker {
-            inner: Mutex::new(inner),
-            num_detectors,
         })
+        .map_err(|e| PyRuntimeError::new_err(e.to_string()))
     }
 }
 
@@ -100,6 +108,8 @@ struct PyExperimentalWorker {
     inner: Mutex<Box<dyn ObservableDecoder + Send>>,
     #[pyo3(get)]
     num_detectors: usize,
+    #[pyo3(get)]
+    num_observables: usize,
 }
 #[pymethods]
 impl PyExperimentalWorker {
@@ -123,36 +133,14 @@ fn finish_repr(family: &str, args: Vec<String>) -> String {
 }
 pub(crate) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<PyExperimentalDecoderSpec>()?;
+    module.add_class::<PyExperimentalWorker>()?;
     module.add_function(wrap_pyfunction!(frontier, module)?)?;
     module.add_function(wrap_pyfunction!(bp_trellis, module)?)?;
     Ok(())
 }
 
-fn build_frontier(
-    dem: &str,
-    config: &FrontierConfig,
-    ordering: &TrellisOrdering,
-) -> Result<Box<dyn ObservableDecoder + Send>, DecoderError> {
-    let dem = pecos_frontier::SparseDem::from_dem_str(dem)?;
-    let mut config = config.clone();
-    config.column_order = ordering.resolve(&dem)?;
-    Ok(Box::new(pecos_frontier::FrontierDecoder::from_sparse_dem(
-        &dem, config,
-    )?))
-}
-
-fn build_bp_trellis(
-    dem: &str,
-    config: &BpTrellisConfig,
-) -> Result<Box<dyn ObservableDecoder + Send>, DecoderError> {
-    Ok(Box::new(pecos_bp_trellis::BpTrellisDecoder::from_dem_str(
-        dem,
-        config.clone(),
-    )?))
-}
-
 /// Native Rust Frontier decoder for raw DEMs, including hyperedges.
-/// Batch decoding supports independent Rust workers. Pruning makes predictions
+/// Batch decoding supports independent Rust workers. Pruning can make predictions
 /// approximate; use pecos_rslib_exp.FrontierDecoder for per-shot confidence data.
 #[pyfunction]
 #[pyo3(signature = (*, k=64, delta=50.0, score_alpha=0.8, bp_score_iterations=0, column_order=ColumnOrderArgument::default(), merge_indistinguishable=false, metric_mode="logsumexp_float", int_metric_scale=1024),

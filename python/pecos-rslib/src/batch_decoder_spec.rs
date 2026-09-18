@@ -14,20 +14,19 @@
 //!   wall-clock-dependent one, exactly as for built-in specifications.
 //! - `_pecos_build_decoder(dem: str)`, called once per decoder the batch planner
 //!   needs, possibly from several threads at once, and returning a worker object.
-//!   The DEM must be flat (no `repeat` or `shift_detectors`), as for built-in
-//!   specifications; the bridge reads its observable count before calling the
-//!   provider. An exception the provider raises reaches the caller of `decode`
-//!   unchanged.
+//!   An exception the provider raises reaches the caller of `decode` unchanged.
 //!
 //! A worker object has:
 //!
-//! - `num_detectors: int`, checked against the batch before any shot is decoded.
+//! - `num_detectors: int` and `num_observables: int`, the dimensions of the model
+//!   the worker was built from. Detectors are checked against the batch before any
+//!   shot is decoded.
 //! - `_pecos_decode_obs(syndrome: bytes) -> Sequence[int]`. `syndrome` holds one
 //!   byte per detector, each 0 or 1. The result is the predicted observable mask as
-//!   little-endian 64-bit words, lowest observables first, with no observable at or
-//!   above the count the DEM declares. A worker is only ever called from the one
-//!   thread that built it, one shot at a time. An exception it raises is reported as
-//!   a decode failure naming the shot.
+//!   little-endian 64-bit words, lowest observables first, no more words than
+//!   `num_observables` needs and no observable at or above it. A worker is only
+//!   ever called from the one thread that built it, one shot at a time. An
+//!   exception it raises is reported as a decode failure naming the shot.
 //!
 //! The bridge holds the GIL only around those calls. A provider that does native
 //! work should release it inside them, or its workers run one at a time.
@@ -62,13 +61,26 @@ impl BatchDecoderSpec {
         if let Ok(spec) = decoder.extract::<PyRef<'_, PyDecoderSpec>>() {
             return Ok(Self::Builtin(spec.inner.clone()));
         }
-        let version = decoder
-            .getattr("_pecos_decoder_api_version")
-            .and_then(|v| v.extract::<u32>());
-        if !matches!(version, Ok(1)) {
-            return Err(PyTypeError::new_err(
+        let py = decoder.py();
+        let not_a_provider = || {
+            PyTypeError::new_err(
                 "decoder must be a DecoderSpec, legacy decoder string, or a version-1 decoder provider",
-            ));
+            )
+        };
+        // An object without the version member is simply not a provider; any
+        // other failure while reading it belongs to the caller.
+        let version = match decoder.getattr("_pecos_decoder_api_version") {
+            Ok(version) => version.extract::<u32>().ok(),
+            Err(error)
+                if error.is_instance_of::<PyAttributeError>(py)
+                    || error.is_instance_of::<PyTypeError>(py) =>
+            {
+                None
+            }
+            Err(error) => return Err(error),
+        };
+        if version != Some(1) {
+            return Err(not_a_provider());
         }
         let members = || -> PyResult<ExecutionTraits> {
             if !decoder.getattr("_pecos_build_decoder")?.is_callable() {
@@ -82,7 +94,6 @@ impl BatchDecoderSpec {
             })
         };
         let traits = members().map_err(|cause| {
-            let py = decoder.py();
             // Only a missing or wrong-typed member is a protocol error; anything
             // else a provider's own attribute access raises belongs to the caller.
             if !(cause.is_instance_of::<PyAttributeError>(py)
@@ -134,12 +145,10 @@ impl BatchDecoderSpec {
                         ),
                     ));
                 };
-                let num_observables = pecos_decoder_core::dem::utils::parse_dem_metadata(dem)
-                    .map_err(DecoderBuildError::Decoder)?
-                    .1;
                 Python::attach(|py| -> PyResult<Box<dyn ObservableDecoder>> {
                     let worker = spec.bind(py).call_method1("_pecos_build_decoder", (dem,))?;
                     let num_detectors = worker.getattr("num_detectors")?.extract::<usize>()?;
+                    let num_observables = worker.getattr("num_observables")?.extract::<usize>()?;
                     if !worker.getattr("_pecos_decode_obs")?.is_callable() {
                         return Err(PyTypeError::new_err(
                             "decoder provider _pecos_decode_obs must be callable",
@@ -177,13 +186,21 @@ impl ObservableDecoder for ProviderDecoder {
         })
         .map_err(|e| DecoderError::DecodingFailed(e.to_string()))?;
         // The provider is outside this extension, so its answer is checked
-        // against the model it was built from rather than trusted.
+        // against the model it reports rather than trusted.
+        if mask.words().len() > self.num_observables.div_ceil(64) {
+            return Err(DecoderError::DecodingFailed(format!(
+                "decoder provider returned {} observable words, but {} observables need at most {}",
+                mask.words().len(),
+                self.num_observables,
+                self.num_observables.div_ceil(64)
+            )));
+        }
         if let Some(observable) = mask
             .iter_set_bits()
             .find(|&bit| bit >= self.num_observables)
         {
             return Err(DecoderError::DecodingFailed(format!(
-                "decoder provider predicted observable {observable}, but the DEM declares {} observables",
+                "decoder provider predicted observable {observable}, but its model has {} observables",
                 self.num_observables
             )));
         }

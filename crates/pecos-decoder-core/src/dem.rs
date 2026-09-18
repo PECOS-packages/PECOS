@@ -158,8 +158,8 @@ pub mod utils {
                 // ids; `logical_observable` declares deterministic logicals that
                 // Stim emits with no flipping mechanism but still count.
                 "error" | "logical_observable" => {
-                    // A decomposed mechanism may join components with `^` and no
-                    // surrounding spaces, which the other parsers accept.
+                    // Split on `^` so an unspaced separator counts the same targets
+                    // here as in the other parsers, which tokenize that way.
                     for part in parts[1..].iter().flat_map(|part| part.split('^')) {
                         if let Some(d_str) = part.strip_prefix('D') {
                             if let Ok(d) = d_str.parse::<usize>() {
@@ -1398,7 +1398,8 @@ mod tests {
 
     #[test]
     fn test_metadata_counts_targets_joined_by_an_unspaced_separator() {
-        // The highest detector and observable sit only behind an unspaced `^`.
+        // Parity with `SparseDem`, whose tokenizer splits on `^`: the highest
+        // detector and observable sit only behind an unspaced separator.
         let dem = "error(0.1) D0 L0^D3 L5\nerror(0.2) D1 L0\n";
         let sparse = SparseDem::from_dem_str(dem).unwrap();
         assert_eq!((sparse.num_detectors, sparse.num_observables), (4, 6));

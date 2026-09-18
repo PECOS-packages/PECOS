@@ -19,6 +19,7 @@ class Provider:
 
 class Worker:
     num_detectors = 1
+    num_observables = 71
 
     def _pecos_decode_obs(self, syndrome):
         return [0, (1 << 6) if syndrome[0] else 0]
@@ -83,11 +84,12 @@ def test_member_access_errors_other_than_the_protocol_propagate():
     [
         (DEM, [0, 1 << 7], 71, 71),
         ("error(0.1) D0 L0\n", [1 << 5], 5, 1),
-        ("error(0.1) D0\n", [1], 0, 0),
     ],
 )
 def test_prediction_outside_the_model_observables_is_an_error(sampler, dem, words, observable, declared):
     class WideWorker(Worker):
+        num_observables = declared
+
         def _pecos_decode_obs(self, syndrome):
             return words
 
@@ -101,25 +103,41 @@ def test_prediction_outside_the_model_observables_is_an_error(sampler, dem, word
     else:
         source = SampleBatch([[0]], [0])
         args = (dem, WideProvider())
-    message = f"predicted observable {observable}, but the DEM declares {declared} observables"
+    message = f"predicted observable {observable}, but its model has {declared} observables"
     with pytest.raises(RuntimeError, match=message):
         source.decode(*args, workers=1)
 
 
-def test_prediction_behind_an_unspaced_separator_is_inside_the_model():
-    class SeparatorWorker(Worker):
-        num_detectors = 2
-
+@pytest.mark.parametrize(
+    ("num_observables", "words", "message"),
+    [
+        (71, [0, 0, 0], "returned 3 observable words, but 71 observables need at most 2"),
+        (0, [1], "returned 1 observable words, but 0 observables need at most 0"),
+    ],
+)
+def test_too_many_prediction_words_is_an_error(num_observables, words, message):
+    class LongWorker(Worker):
         def _pecos_decode_obs(self, syndrome):
-            return [1 << 5]
+            return words
 
-    class SeparatorProvider(Provider):
+    class LongProvider(Provider):
         def _pecos_build_decoder(self, dem):
-            return SeparatorWorker()
+            worker = LongWorker()
+            worker.num_observables = num_observables
+            return worker
 
-    dem = "error(0.1) D0 L0^D1 L5\n"
-    result = SampleBatch([[0, 0]], [1 << 5]).decode(dem, SeparatorProvider(), workers=1, predictions=True)
-    assert result.predictions == [1 << 5]
+    with pytest.raises(RuntimeError, match=message):
+        SampleBatch([[0]], [0]).decode(DEM, LongProvider(), workers=1)
+
+
+def test_version_probe_errors_other_than_the_protocol_propagate():
+    class LazyProvider:
+        @property
+        def _pecos_decoder_api_version(self):
+            raise ImportError("optional extension missing")
+
+    with pytest.raises(ImportError, match="optional extension missing"):
+        SampleBatch([[0]], [0]).decode(DEM, LazyProvider())
 
 
 def test_standard_decoders_import_without_experimental_package():
@@ -225,6 +243,8 @@ def test_provider_build_exceptions_propagate(workers, sampler, failure):
         raise error
 
     class InvalidWorker:
+        num_observables = 71
+
         @property
         def num_detectors(self):
             if failure == "num_detectors":

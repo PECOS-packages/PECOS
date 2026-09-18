@@ -359,7 +359,7 @@ including hyperedges. The example decodes shots across four Rust worker threads;
 worker owns a decoder, so memory use grows with the worker count and frontier
 width `k`. Frontier remains experimental; pruning can make its answers approximate.
 
-`bp_trellis()` uses PECOS’s native BP-guided trellis decoder on the same raw
+`bp_trellis()` uses PECOS's native BP-guided trellis decoder on the same raw
 DEM. Its defaults are `k=8`, `delta=100.0`, `score_alpha=0.8`,
 `bp_score_iterations=5`, `merge_indistinguishable=True`, `ordering="deadline"`,
 and `escalation_ks=None`. The example opts into retry widths `[32, 128]`: these
@@ -371,8 +371,7 @@ With `workers=None`, PECOS automatically selects a native-batch, sequential, or
 parallel path based on the decoder and batch size. Pass `workers=N` to request
 that many workers; a batch with fewer shots than `N` gets one worker per shot
 (at least one), and `result.workers_used` reports the size of the pool that ran.
-`result.execution_path`
-reports which path ran. Request
+`result.execution_path` reports which path ran. Request
 `predictions=True` when you also need each shot's arbitrary-precision
 observable mask; the default avoids materializing them in Python.
 

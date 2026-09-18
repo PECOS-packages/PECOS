@@ -4596,7 +4596,8 @@ impl PyDemSampler {
     ///     decoder: A typed `DecoderSpec`, legacy decoder string, or optional decoder-provider specification.
     ///     seed: Optional sampling seed. The resolved seed is returned as
     ///         `sampling_seed_used` and can replay the run.
-    ///     workers: Optional exact worker count.
+    ///     workers: Optional worker count, bounded by one per 1024-shot
+    ///         sampling chunk and reported as `workers_used`.
     ///     predictions: Retain predictions in absolute shot order.
     ///     timing: Retain decode-call timings. Sampling time is excluded from
     ///         individual samples but included in `wall_elapsed`.

@@ -384,7 +384,9 @@ struct LogicalErrors {
 /// Simulate and decode the memory experiment at `distance`, once per test
 /// binary. The two distances are the expensive part of this file, so each
 /// has its own test (libtest runs them on separate threads) and the
-/// suppression test reads both cached results instead of resampling.
+/// suppression test reads both cached results instead of resampling. If
+/// the first attempt panics the cell stays empty and the next caller
+/// re-runs it, so a failing distance costs one extra run, not a hang.
 fn logical_errors(distance: usize) -> &'static LogicalErrors {
     static D3: OnceLock<LogicalErrors> = OnceLock::new();
     static D5: OnceLock<LogicalErrors> = OnceLock::new();

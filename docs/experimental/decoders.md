@@ -1,7 +1,11 @@
 # Experimental decoders
 
-Decoders in `exp/` that are not yet part of the unified `pecos.decoders` surface.
-They are reached through `pecos_rslib_exp` and may change without notice.
+Experimental decoder engines live in `exp/` and may change without notice.
+Frontier and BP-Trellis are available through `pecos_rslib_exp.frontier()` and
+`pecos_rslib_exp.bp_trellis()` for unified parallel batch decoding. Install the
+optional `pecos-rslib-exp` package to use them. Standard decoder imports work
+without this package. The detailed-result APIs described here are also reached
+through `pecos_rslib_exp`.
 
 Two capabilities live here that the production decoders do not offer:
 
@@ -174,7 +178,9 @@ rest — it has no circuit to re-derive provenance from.
 
 ## What is not here yet
 
-These decoders are not reachable through `DecoderSpec` / `pecos.decoders`, so
-they cannot be passed to `SampleBatch.decode(...)` or `DemSampler.decode(...)`
-and do not participate in unified execution planning, batching, or timing. Use
-their own `decode_syndrome` / `decode_batch` methods directly.
+`frontier()` and `bp_trellis()` are not `DecoderSpec` values: `DecoderSpec.parse`
+does not know their names and the composite factories such as `windowed(...)`
+cannot wrap them. They run through `SampleBatch.decode(...)` and
+`DemSampler.decode(...)` only, and those return predictions and aggregate
+scores; per-shot confidence, pruning status and retry telemetry still come from
+the direct `decode_syndrome` / `decode_batch` methods.

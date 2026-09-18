@@ -3717,14 +3717,15 @@ impl PySampleBatch {
     }
 
     /// Decode and score every shot using a typed decoder specification or a
-    /// legacy decoder string.
+    /// legacy decoder string, or an optional decoder-provider specification.
     ///
     /// `dem=None` uses the exact DEM embedded by `SampleBatch.load`; generated
     /// batches require an explicit DEM. Automatic execution honors decoder
     /// statefulness, uses native batching where available, and otherwise chooses
     /// sequential or bounded parallel per-shot execution. Set `workers` to opt
-    /// into an exact worker count, `predictions` to retain wide per-shot masks,
-    /// and `timing` to retain per-shot elapsed-time statistics.
+    /// into that many workers, bounded by one per shot (and never below one)
+    /// and reported as `workers_used`; `predictions` to retain wide per-shot
+    /// masks; and `timing` to retain per-shot elapsed-time statistics.
     #[pyo3(signature = (dem=None, decoder=None, *, workers=None, predictions=false, timing=false, allow_dem_mismatch=false))]
     fn decode(
         &self,
@@ -3749,16 +3750,7 @@ impl PySampleBatch {
         let decoder = decoder.ok_or_else(|| {
             pyo3::exceptions::PyTypeError::new_err("decoder is a required argument")
         })?;
-        let spec = if decoder.is_instance_of::<PyString>() {
-            let decoder_type = decoder.extract::<&str>()?;
-            pecos_decoders::DecoderSpec::parse(decoder_type).map_err(decoder_parse_error_to_py)?
-        } else if let Ok(spec) = decoder.extract::<PyRef<'_, PyDecoderSpec>>() {
-            spec.inner.clone()
-        } else {
-            return Err(pyo3::exceptions::PyTypeError::new_err(
-                "decoder must be a pecos.decoders.DecoderSpec or legacy decoder string",
-            ));
-        };
+        let spec = crate::batch_decoder_spec::BatchDecoderSpec::extract(decoder)?;
 
         let explicit_workers = workers
             .map(|workers| {
@@ -3775,7 +3767,7 @@ impl PySampleBatch {
             })
             .transpose()?;
         let traits = spec.execution_traits();
-        let plan =
+        let mut plan =
             pecos_decoders::batch::plan_execution(pecos_decoders::batch::ExecutionPlanInputs {
                 traits,
                 num_shots: self.num_shots,
@@ -3785,6 +3777,15 @@ impl PySampleBatch {
                 available_threads: rayon::current_num_threads(),
             })
             .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+
+        // Report the workers that can actually run: a worker needs at least one
+        // shot, so anything beyond one worker per shot would only idle. An empty
+        // batch keeps one worker, which builds its decoder and decodes nothing.
+        if plan.path == pecos_decoders::batch::ExecutionPath::Parallel {
+            plan.workers_used = plan
+                .workers_used
+                .min(pecos_decoders::batch::batch_worker_cap(self.num_shots));
+        }
 
         let output = py
             .detach(|| batch_decode::execute(self, resolved_dem, &spec, &plan, predictions, timing))
@@ -4592,10 +4593,11 @@ impl PyDemSampler {
     ///     dem: DEM text used to construct the decoder. It may deliberately be
     ///         a different projection from the sampler's own model.
     ///     `num_shots`: Number of shots to sample and decode.
-    ///     decoder: A typed `DecoderSpec` or legacy decoder string.
+    ///     decoder: A typed `DecoderSpec`, legacy decoder string, or optional decoder-provider specification.
     ///     seed: Optional sampling seed. The resolved seed is returned as
     ///         `sampling_seed_used` and can replay the run.
-    ///     workers: Optional exact worker count.
+    ///     workers: Optional worker count, bounded by one per 1024-shot
+    ///         sampling chunk and reported as `workers_used`.
     ///     predictions: Retain predictions in absolute shot order.
     ///     timing: Retain decode-call timings. Sampling time is excluded from
     ///         individual samples but included in `wall_elapsed`.
@@ -4627,16 +4629,7 @@ impl PyDemSampler {
         let decoder = decoder.ok_or_else(|| {
             pyo3::exceptions::PyTypeError::new_err("decoder is a required argument")
         })?;
-        let spec = if decoder.is_instance_of::<PyString>() {
-            let decoder_type = decoder.extract::<&str>()?;
-            pecos_decoders::DecoderSpec::parse(decoder_type).map_err(decoder_parse_error_to_py)?
-        } else if let Ok(spec) = decoder.extract::<PyRef<'_, PyDecoderSpec>>() {
-            spec.inner.clone()
-        } else {
-            return Err(pyo3::exceptions::PyTypeError::new_err(
-                "decoder must be a pecos.decoders.DecoderSpec or legacy decoder string",
-            ));
-        };
+        let spec = crate::batch_decoder_spec::BatchDecoderSpec::extract(decoder)?;
 
         let explicit_workers = workers
             .map(|workers| {

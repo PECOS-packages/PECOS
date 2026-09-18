@@ -20,8 +20,9 @@ text PECOS's parsers accept. Run offline with:
 
 Each row is ``input<TAB>verdict`` for rejected text and
 ``input<TAB>accept<TAB>canonical`` for accepted text, where canonical is Stim's
-own rendering. Backslash, newline and tab inside a field are escaped as
-``\\``, ``\n`` and ``\t``. The forms cover target spacing, separators, tags,
+own rendering; an accepted row whose canonical rendering is empty has no third
+field. Inside a field a backslash is ``\\``, newline is ``\n``, tab is ``\t``,
+and any other character outside printable ASCII is ``\u{hex}``. The forms cover target spacing, separators, tags,
 comments, case, arguments, declarations and the loop instructions PECOS does
 not implement.
 
@@ -93,12 +94,33 @@ FORMS = [
     "shift_detectors 1",
     "repeat 2 {\n error(0.1) D0\n}",
     "error(0.1) D0\nerror(0.1) D0",
+    "",
+    "   ",
+    "\x0cerror(0.1) D0",
+    "\x0berror(0.1) D0",
+    "\u00a0error(0.1) D0",
+    "error(0.1)\u00a0D0",
+    "error(0.1) D4294967295",
+    "error(0.1) D1152921504606846975",
+    "error(0.1) D1152921504606846976",
 ]
 
 
 def escape(text: str) -> str:
-    """Escape backslash, newline and tab so a field stays on one line."""
-    return text.replace("\\", "\\\\").replace("\n", "\\n").replace("\t", "\\t")
+    """Escape a field so it stays on one line of printable ASCII."""
+    out = []
+    for char in text:
+        if char == "\\":
+            out.append("\\\\")
+        elif char == "\n":
+            out.append("\\n")
+        elif char == "\t":
+            out.append("\\t")
+        elif " " <= char <= "~":
+            out.append(char)
+        else:
+            out.append(f"\\u{{{ord(char):x}}}")
+    return "".join(out)
 
 
 def main() -> None:
@@ -107,10 +129,13 @@ def main() -> None:
     for form in FORMS:
         try:
             canonical = str(stim.DetectorErrorModel(form)).strip()
-        except ValueError:
+        except (ValueError, IndexError):
+            # Stim raises IndexError for some malformed text, such as a leading
+            # non-breaking space or an index above its 2**60 - 1 ceiling.
             print(f"{escape(form)}\treject")
         else:
-            print(f"{escape(form)}\taccept\t{escape(canonical)}")
+            row = f"{escape(form)}\taccept"
+            print(f"{row}\t{escape(canonical)}" if canonical else row)
 
 
 if __name__ == "__main__":

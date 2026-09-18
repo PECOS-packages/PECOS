@@ -58,3 +58,12 @@ logical_observable	reject
 shift_detectors 1	accept	shift_detectors 1
 repeat 2 {\n error(0.1) D0\n}	accept	repeat 2 {\n    error(0.1000000000000000056) D0\n}
 error(0.1) D0\nerror(0.1) D0	accept	error(0.1000000000000000056) D0\nerror(0.1000000000000000056) D0
+	accept
+   	accept
+\u{c}error(0.1) D0	accept	error(0.1000000000000000056) D0
+\u{b}error(0.1) D0	accept	error(0.1000000000000000056) D0
+\u{a0}error(0.1) D0	reject
+error(0.1)\u{a0}D0	reject
+error(0.1) D4294967295	accept	error(0.1000000000000000056) D4294967295
+error(0.1) D1152921504606846975	accept	error(0.1000000000000000056) D1152921504606846975
+error(0.1) D1152921504606846976	reject

@@ -3,6 +3,13 @@
 //! Minimal set of FFI functions needed to link QIS programs
 //! with Rust. These functions simply collect operations into the thread-local interface
 //! without performing any simulation or complex state management.
+//!
+//! Program entry points that can invoke the recovery callback use `C-unwind`.
+//! Windows implements longjmp using stack unwinding; declaring those frames or
+//! the callback `C` makes Rust insert abort-on-unwind barriers. This preserves
+//! the C calling convention while permitting the transfer back to the C guard.
+//! Values and locks must still be released before transfer: Unix longjmp skips
+//! destructors, so unwinding support does not relax that lifetime requirement.
 
 pub use crate::random::*;
 
@@ -131,7 +138,7 @@ macro_rules! ffi_gate_1q {
         /// # Safety
         /// Called from C/LLVM code. Qubit must be a valid non-negative ID.
         #[unsafe(no_mangle)]
-        pub unsafe extern "C" fn $name(qubit: i64) {
+        pub unsafe extern "C-unwind" fn $name(qubit: i64) {
             let qubit_id = checked_ffi_id!(stringify!($name), qubit, usize);
             with_interface(|interface| {
                 interface.queue_operation(QuantumOp::$op(qubit_id).into());
@@ -146,7 +153,7 @@ macro_rules! ffi_gate_2q {
         /// # Safety
         /// Called from C/LLVM code. Qubit IDs must be valid non-negative values.
         #[unsafe(no_mangle)]
-        pub unsafe extern "C" fn $name(q1: i64, q2: i64) {
+        pub unsafe extern "C-unwind" fn $name(q1: i64, q2: i64) {
             let q1_id = checked_ffi_id!(stringify!($name), q1, usize);
             let q2_id = checked_ffi_id!(stringify!($name), q2, usize);
             with_interface(|interface| {
@@ -162,7 +169,7 @@ macro_rules! ffi_gate_3q {
         /// # Safety
         /// Called from C/LLVM code. Qubit IDs must be valid non-negative values.
         #[unsafe(no_mangle)]
-        pub unsafe extern "C" fn $name(q1: i64, q2: i64, q3: i64) {
+        pub unsafe extern "C-unwind" fn $name(q1: i64, q2: i64, q3: i64) {
             let q1_id = checked_ffi_id!(stringify!($name), q1, usize);
             let q2_id = checked_ffi_id!(stringify!($name), q2, usize);
             let q3_id = checked_ffi_id!(stringify!($name), q3, usize);
@@ -179,7 +186,7 @@ macro_rules! ffi_gate_rot_1q {
         /// # Safety
         /// Called from C/LLVM code. Qubit must be a valid non-negative ID.
         #[unsafe(no_mangle)]
-        pub unsafe extern "C" fn $name(theta: f64, qubit: i64) {
+        pub unsafe extern "C-unwind" fn $name(theta: f64, qubit: i64) {
             let qubit_id = checked_ffi_id!(stringify!($name), qubit, usize);
             with_interface(|interface| {
                 interface.queue_operation(QuantumOp::$op(theta, qubit_id).into());
@@ -194,7 +201,7 @@ macro_rules! ffi_gate_rot_2q {
         /// # Safety
         /// Called from C/LLVM code. Qubit IDs must be valid non-negative values.
         #[unsafe(no_mangle)]
-        pub unsafe extern "C" fn $name(theta: f64, q1: i64, q2: i64) {
+        pub unsafe extern "C-unwind" fn $name(theta: f64, q1: i64, q2: i64) {
             let q1_id = checked_ffi_id!(stringify!($name), q1, usize);
             let q2_id = checked_ffi_id!(stringify!($name), q2, usize);
             with_interface(|interface| {
@@ -212,7 +219,7 @@ macro_rules! ffi_gate_rot_2q {
 /// This function is safe to call from C/LLVM code. The qubit parameter must be a valid
 /// non-negative qubit ID that fits in usize. Invalid IDs produce a program error.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn __quantum__qis__h__body(qubit: i64) {
+pub unsafe extern "C-unwind" fn __quantum__qis__h__body(qubit: i64) {
     debug!("[FFI] __quantum__qis__h__body called with qubit={qubit}");
     let qubit_id = checked_ffi_id!(stringify!(__quantum__qis__h__body), qubit, usize);
     with_interface(|interface| {
@@ -232,7 +239,7 @@ pub unsafe extern "C" fn __quantum__qis__h__body(qubit: i64) {
 /// This function is safe to call from C/LLVM code. The qubit parameter must be a valid
 /// non-negative qubit ID that fits in usize. Invalid IDs produce a program error.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn __quantum__qis__x__body(qubit: i64) {
+pub unsafe extern "C-unwind" fn __quantum__qis__x__body(qubit: i64) {
     debug!("[FFI] __quantum__qis__x__body called with qubit={qubit}");
     let qubit_id = checked_ffi_id!(stringify!(__quantum__qis__x__body), qubit, usize);
     with_interface(|interface| {
@@ -274,7 +281,7 @@ ffi_gate_rot_2q!(__quantum__qis__rzz__body, RZZ);
 /// # Safety
 /// Called from C/LLVM code. Qubit must be a valid non-negative ID.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn __quantum__qis__r1xy__body(theta: f64, phi: f64, qubit: i64) {
+pub unsafe extern "C-unwind" fn __quantum__qis__r1xy__body(theta: f64, phi: f64, qubit: i64) {
     let qubit_id = checked_ffi_id!(stringify!(__quantum__qis__r1xy__body), qubit, usize);
     with_interface(|interface| {
         interface.queue_operation(QuantumOp::RXY(theta, phi, qubit_id).into());
@@ -299,7 +306,7 @@ ffi_gate_2q!(__quantum__qis__zz__body, ZZ);
 /// This function is safe to call from C/LLVM code. The qubit and result parameters must be valid
 /// non-negative IDs that fit in usize. Invalid IDs produce a program error.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn __quantum__qis__m__body(qubit: i64, result: i64) -> i32 {
+pub unsafe extern "C-unwind" fn __quantum__qis__m__body(qubit: i64, result: i64) -> i32 {
     let qubit_id = checked_ffi_id!(stringify!(__quantum__qis__m__body), qubit, usize);
     let result_id = checked_ffi_id!(stringify!(__quantum__qis__m__body), result, usize);
     with_interface(|interface| {
@@ -318,7 +325,7 @@ ffi_gate_1q!(__quantum__qis__reset__body, Reset);
 /// # Safety
 /// This function is safe to call from C/LLVM code.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn __quantum__rt__qubit_allocate() -> i64 {
+pub unsafe extern "C-unwind" fn __quantum__rt__qubit_allocate() -> i64 {
     let allocated_id = with_interface(|interface| {
         let id = interface.allocate_qubit();
         interface.queue_operation(Operation::AllocateQubit { id });
@@ -333,7 +340,7 @@ pub unsafe extern "C" fn __quantum__rt__qubit_allocate() -> i64 {
 /// This function is safe to call from C/LLVM code. The qubit parameter must be a valid
 /// non-negative qubit ID that fits in usize. Invalid IDs produce a program error.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn __quantum__rt__qubit_release(qubit: i64) {
+pub unsafe extern "C-unwind" fn __quantum__rt__qubit_release(qubit: i64) {
     let qubit_id = checked_ffi_id!(stringify!(__quantum__rt__qubit_release), qubit, usize);
     with_interface(|interface| {
         interface.queue_operation(Operation::ReleaseQubit { id: qubit_id });
@@ -345,7 +352,7 @@ pub unsafe extern "C" fn __quantum__rt__qubit_release(qubit: i64) {
 /// # Safety
 /// This function is safe to call from C/LLVM code.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn __quantum__rt__result_allocate() -> i64 {
+pub unsafe extern "C-unwind" fn __quantum__rt__result_allocate() -> i64 {
     let allocated_id = with_interface(|interface| {
         let id = interface.allocate_result();
         interface.queue_operation(Operation::AllocateResult { id });
@@ -373,7 +380,7 @@ fn record_result_read(result_id: usize) {
 /// This function is safe to call from C/LLVM code. The result parameter must be a valid
 /// non-negative result ID that fits in usize. Invalid IDs produce a program error.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn __quantum__rt__result_get_one(result: i64) -> i32 {
+pub unsafe extern "C-unwind" fn __quantum__rt__result_get_one(result: i64) -> i32 {
     log::debug!("__quantum__rt__result_get_one called with result={result}");
     let result_id = checked_ffi_id!(stringify!(__quantum__rt__result_get_one), result, usize);
 
@@ -484,7 +491,7 @@ fn queue_trace_metadata(func_name: &str, key: String, value: String, qubit: Opti
 /// The key and value pointers must be valid tket2 string structs with at least
 /// `len + 1` bytes. Invalid pointers cause undefined behavior.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pecos_qis_trace_metadata(
+pub unsafe extern "C-unwind" fn pecos_qis_trace_metadata(
     key_ptr: *const u8,
     key_len: i64,
     value_ptr: *const u8,
@@ -518,7 +525,10 @@ pub unsafe extern "C" fn pecos_qis_trace_metadata(
 /// The key and value pointers must be valid tket2 string structs. Invalid
 /// pointers cause undefined behavior.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pecos_qis_trace_metadata_hugr(key_ptr: *const u8, value_ptr: *const u8) {
+pub unsafe extern "C-unwind" fn pecos_qis_trace_metadata_hugr(
+    key_ptr: *const u8,
+    value_ptr: *const u8,
+) {
     if key_ptr.is_null() {
         log::error!("pecos_qis_trace_metadata_hugr: null key pointer");
         return;
@@ -562,7 +572,7 @@ pub unsafe extern "C" fn pecos_qis_trace_metadata_hugr(key_ptr: *const u8, value
 /// The key and value pointers must be valid tket2 string structs. Invalid
 /// pointers cause undefined behavior.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pecos_qis_trace_metadata_qubit_hugr(
+pub unsafe extern "C-unwind" fn pecos_qis_trace_metadata_qubit_hugr(
     qubit: i64,
     key_ptr: *const u8,
     value_ptr: *const u8,
@@ -622,7 +632,7 @@ pub unsafe extern "C" fn pecos_qis_trace_metadata_qubit_hugr(
 /// # Safety
 /// Called from C/LLVM code. Qubit must be a valid non-negative ID.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pecos_qis_runtime_barrier_qubit_hugr(qubit: i64) -> i64 {
+pub unsafe extern "C-unwind" fn pecos_qis_runtime_barrier_qubit_hugr(qubit: i64) -> i64 {
     let _ = checked_ffi_id!(
         stringify!(pecos_qis_runtime_barrier_qubit_hugr),
         qubit,
@@ -643,7 +653,7 @@ pub unsafe extern "C" fn pecos_qis_runtime_barrier_qubit_hugr(qubit: i64) -> i64
 /// # Safety
 /// Called from C/LLVM code. Qubits must be valid non-negative IDs.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pecos_qis_runtime_barrier_qubits2_hugr(
+pub unsafe extern "C-unwind" fn pecos_qis_runtime_barrier_qubits2_hugr(
     first: i64,
     second: i64,
 ) -> QubitPair {
@@ -673,7 +683,7 @@ pub unsafe extern "C" fn pecos_qis_runtime_barrier_qubits2_hugr(
 /// The key and value pointers must reference valid UTF-8 data of the provided
 /// lengths. Invalid pointers cause undefined behavior.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pecos_qis_trace_metadata_direct(
+pub unsafe extern "C-unwind" fn pecos_qis_trace_metadata_direct(
     key_ptr: *const u8,
     key_len: i64,
     value_ptr: *const u8,
@@ -716,7 +726,7 @@ ffi_gate_1q!(___reset, Reset);
 /// This function is safe to call from C/LLVM code. The qubit parameter must be a valid
 /// non-negative qubit ID that fits in usize. Invalid IDs produce a program error.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ___rxy(qubit: i64, theta: f64, phi: f64) {
+pub unsafe extern "C-unwind" fn ___rxy(qubit: i64, theta: f64, phi: f64) {
     // Delegate to the QIS-style function
     unsafe { __quantum__qis__r1xy__body(theta, phi, qubit) };
 }
@@ -727,7 +737,7 @@ pub unsafe extern "C" fn ___rxy(qubit: i64, theta: f64, phi: f64) {
 /// This function is safe to call from C/LLVM code. The qubit parameter must be a valid
 /// non-negative qubit ID that fits in usize. Invalid IDs produce a program error.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ___rz(qubit: i64, theta: f64) {
+pub unsafe extern "C-unwind" fn ___rz(qubit: i64, theta: f64) {
     // Delegate to the QIS-style function
     unsafe { __quantum__qis__rz__body(theta, qubit) };
 }
@@ -738,7 +748,7 @@ pub unsafe extern "C" fn ___rz(qubit: i64, theta: f64) {
 /// This function is safe to call from C/LLVM code. The qubit parameters must be valid
 /// non-negative qubit IDs that fit in usize. Invalid IDs produce a program error.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ___rzz(qubit1: i64, qubit2: i64, theta: f64) {
+pub unsafe extern "C-unwind" fn ___rzz(qubit1: i64, qubit2: i64, theta: f64) {
     // Delegate to the QIS-style function
     unsafe { __quantum__qis__rzz__body(theta, qubit1, qubit2) };
 }
@@ -748,7 +758,7 @@ pub unsafe extern "C" fn ___rzz(qubit1: i64, qubit2: i64, theta: f64) {
 /// # Safety
 /// This function is safe to call from C/LLVM code.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ___qalloc() -> i64 {
+pub unsafe extern "C-unwind" fn ___qalloc() -> i64 {
     // Delegate to the QIS-style function
     unsafe { __quantum__rt__qubit_allocate() }
 }
@@ -759,7 +769,7 @@ pub unsafe extern "C" fn ___qalloc() -> i64 {
 /// This function is safe to call from C/LLVM code. The qubit parameter must be a valid
 /// non-negative qubit ID that fits in usize. Invalid IDs produce a program error.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ___qfree(qubit: i64) {
+pub unsafe extern "C-unwind" fn ___qfree(qubit: i64) {
     // Delegate to the QIS-style function
     unsafe { __quantum__rt__qubit_release(qubit) };
 }
@@ -789,7 +799,7 @@ ffi_gate_2q!(___cx, CX);
 /// # Returns
 /// Returns the allocated result ID as i64.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ___lazy_measure(qubit: i64) -> i64 {
+pub unsafe extern "C-unwind" fn ___lazy_measure(qubit: i64) -> i64 {
     let qubit_id = checked_ffi_id!(stringify!(___lazy_measure), qubit, usize);
     let allocated_id = with_interface(|interface| {
         // Allocate a result ID for this measurement
@@ -809,7 +819,7 @@ pub unsafe extern "C" fn ___lazy_measure(qubit: i64) -> i64 {
 /// # Safety
 /// The same requirements as [`___lazy_measure`] apply.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ___lazy_measure_leaked(qubit: i64) -> i64 {
+pub unsafe extern "C-unwind" fn ___lazy_measure_leaked(qubit: i64) -> i64 {
     let qubit_id = checked_ffi_id!(stringify!(___lazy_measure_leaked), qubit, usize);
     let allocated_id = with_interface(|interface| {
         let result_id = interface.allocate_result();
@@ -838,7 +848,7 @@ pub unsafe extern "C" fn ___lazy_measure_leaked(qubit: i64) -> i64 {
 /// # Returns
 /// Returns the boolean measurement result (true = 1, false = 0).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ___read_future_bool(future_id: i64) -> bool {
+pub unsafe extern "C-unwind" fn ___read_future_bool(future_id: i64) -> bool {
     log::debug!("___read_future_bool called with future_id={future_id}");
     let result_id = checked_ffi_id!(stringify!(___read_future_bool), future_id, usize);
 
@@ -914,7 +924,7 @@ pub unsafe extern "C" fn ___read_future_bool(future_id: i64) -> bool {
 /// # Safety
 /// The same requirements as [`___read_future_bool`] apply.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ___read_future_uint(future_id: i64) -> u64 {
+pub unsafe extern "C-unwind" fn ___read_future_uint(future_id: i64) -> u64 {
     log::debug!("___read_future_uint called with future_id={future_id}");
     let result_id = checked_ffi_id!(stringify!(___read_future_uint), future_id, usize);
 
@@ -984,7 +994,7 @@ pub unsafe extern "C" fn teardown() -> i64 {
 
 thread_local! {
     // Installed only while this thread is inside the C shim's setjmp wrapper.
-    static PROGRAM_PANIC_TRANSFER: std::cell::Cell<Option<unsafe extern "C" fn()>> = const {
+    static PROGRAM_PANIC_TRANSFER: std::cell::Cell<Option<unsafe extern "C-unwind" fn()>> = const {
         std::cell::Cell::new(None)
     };
 }
@@ -996,13 +1006,15 @@ thread_local! {
 /// until replaced. A transferring handler must target a live setjmp. Only the
 /// execution wrapper may install it.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pecos_set_program_panic_handler(handler: Option<unsafe extern "C" fn()>) {
+pub unsafe extern "C" fn pecos_set_program_panic_handler(
+    handler: Option<unsafe extern "C-unwind" fn()>,
+) {
     PROGRAM_PANIC_TRANSFER.set(handler);
 }
 
 /// Get the current handler so an execution wrapper can save and restore it.
 #[unsafe(no_mangle)]
-pub extern "C" fn pecos_get_program_panic_handler() -> Option<unsafe extern "C" fn()> {
+pub extern "C" fn pecos_get_program_panic_handler() -> Option<unsafe extern "C-unwind" fn()> {
     PROGRAM_PANIC_TRANSFER.get()
 }
 
@@ -1051,7 +1063,11 @@ fn checked_slice_len<T>(len: u64) -> Result<usize, String> {
 /// # Safety
 /// `message` must be null or reference `len` readable bytes.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pecos_record_program_panic(code: i32, message: *const u8, len: usize) {
+pub unsafe extern "C-unwind" fn pecos_record_program_panic(
+    code: i32,
+    message: *const u8,
+    len: usize,
+) {
     if len > isize::MAX as usize {
         unsafe {
             fatal_ffi_input(
@@ -1108,7 +1124,7 @@ pub unsafe extern "C" fn pecos_record_program_panic(code: i32, message: *const u
 /// `message` must be null or point to a length byte followed by that many bytes.
 /// Program execution must take place inside the shim's setjmp wrapper.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn panic(code: i32, message: *const std::ffi::c_char) {
+pub unsafe extern "C-unwind" fn panic(code: i32, message: *const std::ffi::c_char) {
     if message.is_null() {
         unsafe { pecos_record_program_panic(code, std::ptr::null(), 0) };
     } else {
@@ -1167,7 +1183,7 @@ pub unsafe extern "C" fn __quantum__rt__result_record_output(
 /// This function is safe to call from C/LLVM code. The qubit parameter must be a valid
 /// non-negative qubit ID that fits in usize. Invalid IDs produce a program error.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn __quantum__qis__mz__body(qubit: i64) -> i32 {
+pub unsafe extern "C-unwind" fn __quantum__qis__mz__body(qubit: i64) -> i32 {
     // Call our standard measurement function with result ID = qubit ID
     unsafe { __quantum__qis__m__body(qubit, qubit) }
 }
@@ -1271,7 +1287,7 @@ macro_rules! named_result_exports {
         /// `label_ptr` must reference a tket string with at least `label_len + 1`
         /// bytes. The first byte is the length, and the data starts at byte one.
         #[unsafe(no_mangle)]
-        pub unsafe extern "C" fn $scalar(label_ptr: *const u8, label_len: i64, value: $ty) {
+        pub unsafe extern "C-unwind" fn $scalar(label_ptr: *const u8, label_len: i64, value: $ty) {
             let data = if label_ptr.is_null() {
                 label_ptr
             } else {
@@ -1287,7 +1303,11 @@ macro_rules! named_result_exports {
         /// a valid dense array with `x` initialized elements (data may be null
         /// when `x` is zero).
         #[unsafe(no_mangle)]
-        pub unsafe extern "C" fn $array(label_ptr: *const u8, label_len: i64, arr: *const $dense) {
+        pub unsafe extern "C-unwind" fn $array(
+            label_ptr: *const u8,
+            label_len: i64,
+            arr: *const $dense,
+        ) {
             if arr.is_null() || !arr.is_aligned() {
                 unsafe {
                     fatal_ffi_input(
@@ -1315,7 +1335,11 @@ macro_rules! named_result_exports {
         /// # Safety
         /// `label_ptr` must reference at least `label_len` bytes of string data.
         #[unsafe(no_mangle)]
-        pub unsafe extern "C" fn $selene_scalar(label_ptr: *const u8, label_len: i64, value: $ty) {
+        pub unsafe extern "C-unwind" fn $selene_scalar(
+            label_ptr: *const u8,
+            label_len: i64,
+            value: $ty,
+        ) {
             unsafe {
                 record_named_output(
                     label_ptr,
@@ -1335,7 +1359,7 @@ macro_rules! named_result_exports {
         /// `label_ptr` must reference `label_len` bytes. `arr_ptr` must reference
         /// `arr_len` initialized elements, or may be null for an empty array.
         #[unsafe(no_mangle)]
-        pub unsafe extern "C" fn $selene_array(
+        pub unsafe extern "C-unwind" fn $selene_array(
             label_ptr: *const u8,
             label_len: i64,
             arr_ptr: *const $ty,
@@ -1449,7 +1473,10 @@ pub unsafe extern "C" fn pecos_qis_free_operations(ptr: *mut crate::OperationCol
 /// This function is safe to call from C/LLVM code. The `pairs_ptr` may be null or must point to a
 /// valid array of at least count elements. Invalid pointers or counts will cause undefined behavior.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pecos_qis_set_measurements(pairs_ptr: *const (usize, bool), count: usize) {
+pub unsafe extern "C-unwind" fn pecos_qis_set_measurements(
+    pairs_ptr: *const (usize, bool),
+    count: usize,
+) {
     if count == 0 {
         return;
     }
@@ -1488,7 +1515,7 @@ pub unsafe extern "C" fn pecos_qis_set_measurements(pairs_ptr: *const (usize, bo
 /// # Safety
 /// The execution context must be registered. Zero size returns null.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn heap_alloc(size: u64) -> *mut u8 {
+pub unsafe extern "C-unwind" fn heap_alloc(size: u64) -> *mut u8 {
     if size == 0 {
         return std::ptr::null_mut();
     }
@@ -1525,7 +1552,7 @@ fn allocate_program_memory(size: u64) -> Result<*mut u8, String> {
 /// # Safety
 /// The pointer must be null or an allocation owned by the registered context.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn heap_free(ptr: *mut u8) {
+pub unsafe extern "C-unwind" fn heap_free(ptr: *mut u8) {
     if ptr.is_null() {
         return;
     }

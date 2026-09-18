@@ -26,6 +26,16 @@ The decoder system in PECOS is designed around modularity and performance:
 - **Unified API**: Consistent interface across different decoder implementations
 - **Cross-Language Support**: Some decoders available in both Python and Rust, others Rust-only
 
+## DEM text grammar
+
+PECOS reads flat Stim detector-error-model text using Stim's grammar:
+
+- Instruction names and detector/observable target prefixes are case-insensitive; tags and inline `#` comments are supported.
+- Targets and `^` separators require spacing; separators cannot be first, last, or adjacent.
+- Parenthesized arguments immediately follow the name or tag. `error` requires one probability in `[0, 1]`, with `error()` meaning zero; detector and logical-observable declarations require exactly one target of the appropriate kind.
+- `repeat` and `shift_detectors` require flattening before a model is passed to a flat reader.
+- PECOS extension targets and metadata statements require an explicit opt-in: `ParsedDem` supports both, and `DetectorErrorModel::with_pecos_dem_metadata` accepts metadata statements.
+
 ## Available Decoders
 
 ### Python Decoders

@@ -4223,27 +4223,19 @@ struct ParsedPecosDemMetadata {
 }
 
 pub(crate) fn parse_pecos_dem_metadata_line(
-    line: &str,
+    instruction: &pecos_decoder_core::dem::grammar::Instruction,
 ) -> Result<DemOutput, PecosDemMetadataError> {
-    let line = line.trim();
-    let (prefix, payload, forced_kind) =
-        if let Some(payload) = line.strip_prefix("pecos_tracked_pauli") {
-            (
-                "pecos_tracked_pauli",
-                payload.trim(),
-                Some(DemOutputKind::TrackedPauli),
-            )
-        } else if let Some(payload) = line.strip_prefix("pecos_observable") {
-            (
-                "pecos_observable",
-                payload.trim(),
-                Some(DemOutputKind::Observable),
-            )
-        } else {
+    use pecos_decoder_core::dem::grammar::Kind;
+    let (prefix, forced_kind) = match instruction.kind {
+        Kind::PecosTrackedPauli => ("pecos_tracked_pauli", DemOutputKind::TrackedPauli),
+        Kind::PecosObservable => ("pecos_observable", DemOutputKind::Observable),
+        _ => {
             return Err(PecosDemMetadataError::new(
                 "missing PECOS DEM metadata prefix",
             ));
-        };
+        }
+    };
+    let payload = instruction.payload.as_deref().unwrap_or_default();
     if payload.is_empty() {
         return Err(PecosDemMetadataError::new(format!(
             "{prefix} is missing its JSON payload"
@@ -4254,9 +4246,7 @@ pub(crate) fn parse_pecos_dem_metadata_line(
         PecosDemMetadataError::new(format!("invalid {prefix} JSON payload: {err}"))
     })?;
     let mut output = parse_pecos_metadata_dem_output(0, &value)?;
-    if let Some(kind) = forced_kind {
-        output.kind = Some(kind);
-    }
+    output.kind = Some(forced_kind);
     if output.is_tracked_pauli() && !output.records.is_empty() {
         return Err(PecosDemMetadataError::new(
             "tracked Pauli metadata cannot have measurement records",
@@ -5623,17 +5613,24 @@ impl DetectorErrorModel {
         &mut self,
         dem_text: &str,
     ) -> Result<(), PecosDemMetadataError> {
+        use pecos_decoder_core::dem::grammar::{Kind, Options, parse_line_with_options};
         for line in dem_text.lines() {
-            let line = line.trim();
-            if line.is_empty() || line.starts_with('#') {
+            // Metadata import explicitly accepts PECOS TP targets and JSON statements.
+            let Some(instruction) = parse_line_with_options(
+                line,
+                Options {
+                    pecos_extensions: true,
+                },
+            )
+            .map_err(|err| PecosDemMetadataError::new(err.to_string()))?
+            else {
                 continue;
-            }
-            if line.starts_with("pecos_observable") || line.starts_with("pecos_tracked_pauli") {
-                self.apply_dem_output_metadata(parse_pecos_dem_metadata_line(line)?);
-            } else if line.starts_with("pecos_") {
-                return Err(PecosDemMetadataError::new(format!(
-                    "unsupported PECOS DEM extension line: {line}"
-                )));
+            };
+            if matches!(
+                instruction.kind,
+                Kind::PecosObservable | Kind::PecosTrackedPauli
+            ) {
+                self.apply_dem_output_metadata(parse_pecos_dem_metadata_line(&instruction)?);
             }
         }
         Ok(())
@@ -8867,10 +8864,7 @@ mod tests {
             .with_pecos_dem_metadata(r#"pecos_old_extension {"id":1}"#)
             .unwrap_err();
 
-        assert!(
-            err.message()
-                .contains("unsupported PECOS DEM extension line")
-        );
+        assert!(err.message().contains("unrecognized DEM instruction"));
     }
 
     #[test]
@@ -8881,7 +8875,7 @@ mod tests {
 
         assert!(
             err.message()
-                .contains("unsupported PECOS DEM extension line: pecos_tracked_op")
+                .contains("unrecognized DEM instruction: pecos_tracked_op")
         );
     }
 

@@ -27,6 +27,7 @@
 //! The conditional weight is only applied during decoding if it's LOWER than
 //! the current weight (makes the correlated edge more likely).
 
+use crate::dem::grammar::{Kind, Target, parse_line, target_indices};
 use crate::errors::DecoderError;
 use std::collections::BTreeMap;
 
@@ -94,29 +95,23 @@ impl CorrelationTable {
         let mut joint_probs: BTreeMap<(EdgeKey, EdgeKey), f64> = BTreeMap::new();
 
         for line in dem.lines() {
-            let line = line.trim();
-            if !line.starts_with("error(") {
+            let Some(instruction) = parse_line(line)? else {
+                continue;
+            };
+            instruction.require_flat("CorrelationTable")?;
+            target_indices(&instruction.targets)?;
+            if instruction.kind != Kind::Error {
                 continue;
             }
-
-            let close_paren = line.find(')').ok_or_else(|| {
-                DecoderError::InvalidConfiguration("Missing closing parenthesis".into())
-            })?;
-            let prob_str = &line[6..close_paren];
-            let probability: f64 = prob_str.parse().map_err(|_| {
-                DecoderError::InvalidConfiguration(format!("Invalid probability: {prob_str}"))
-            })?;
-
+            let probability = instruction.args[0];
             if probability <= 0.0 || probability > 0.5 {
                 continue;
             }
-
-            let tokens_str = &line[close_paren + 1..];
-            let components: Vec<&str> = tokens_str.split('^').collect();
+            let components: Vec<_> = instruction.components().collect();
 
             if components.len() < 2 {
                 // Non-decomposed mechanism: accumulate marginal only
-                let key = parse_component_edge_key(components[0]);
+                let key = parse_component_edge_key(components[0])?;
                 if let Some(key) = key {
                     let marginal = joint_probs.entry((key, key)).or_insert(0.0);
                     *marginal = bernoulli_xor(*marginal, probability);
@@ -127,7 +122,7 @@ impl CorrelationTable {
             // Decomposed mechanism: accumulate joint and marginal for all pairs
             let mut component_keys: Vec<EdgeKey> = Vec::new();
             for component in &components {
-                if let Some(key) = parse_component_edge_key(component) {
+                if let Some(key) = parse_component_edge_key(component)? {
                     component_keys.push(key);
                 }
             }
@@ -204,18 +199,11 @@ impl CorrelationTable {
     }
 }
 
-/// Parse detector indices from a DEM component string, return edge key.
-fn parse_component_edge_key(component: &str) -> Option<EdgeKey> {
-    let mut detectors: Vec<u32> = Vec::new();
-    for token in component.split_whitespace() {
-        if let Some(d_str) = token.strip_prefix('D')
-            && let Ok(d) = d_str.parse::<u32>()
-        {
-            detectors.push(d);
-        }
-    }
+/// Collect detector indices from a component and return its edge key.
+fn parse_component_edge_key(component: &[Target]) -> Result<Option<EdgeKey>, DecoderError> {
+    let (detectors, _) = target_indices(component)?;
     // Pure observables and hyperedges do not define graph edges.
-    match detectors.len() {
+    Ok(match detectors.len() {
         1 => Some((detectors[0], u32::MAX)), // Boundary edge
         2 => {
             let (a, b) = if detectors[0] <= detectors[1] {
@@ -226,7 +214,7 @@ fn parse_component_edge_key(component: &str) -> Option<EdgeKey> {
             Some((a, b))
         }
         _ => None,
-    }
+    })
 }
 
 #[cfg(test)]

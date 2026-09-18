@@ -24,6 +24,9 @@ own rendering. Backslash, newline and tab inside a field are escaped as
 ``\\``, ``\n`` and ``\t``. The forms cover target spacing, separators, tags,
 comments, case, arguments, declarations and the loop instructions PECOS does
 not implement.
+
+Do not add an unclosed tag such as ``error[unclosed(0.1) D0``: Stim 1.15.0
+exhausts memory on it instead of raising, and the process is killed.
 """
 
 from __future__ import annotations

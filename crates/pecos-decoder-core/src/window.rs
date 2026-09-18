@@ -12,6 +12,7 @@
 
 //! Structured detector-error-model windows shared by streaming decoders.
 
+use crate::dem::grammar::{Kind, parse_line, target_indices};
 use crate::errors::DecoderError;
 use std::fmt::Write as _;
 
@@ -70,12 +71,8 @@ pub struct StructuredDemWindow {
 impl StructuredDem {
     /// Parse PECOS's strict flattened Stim-DEM subset without discarding components.
     ///
-    /// Accepted instructions are `error(p)` with `D<n>` / `L<n>` targets and
-    /// optional `^` components, `detector D<n>...` or `detector(coords) D<n>...`,
-    /// `logical_observable L<n>...`, blank lines, and whole-line `#` comments.
-    /// Probabilities must be finite and in `[0, 1]`; coordinates must be finite.
-    /// Inline comments, `TP<n>`, unknown instructions, `repeat`, and
-    /// `shift_detectors` are rejected instead of being silently ignored.
+    /// Accepts flat Stim instructions with tags, inline comments, and ordered
+    /// components. PECOS extension targets and statements are not supported.
     ///
     /// # Errors
     ///
@@ -87,101 +84,40 @@ impl StructuredDem {
         let mut max_detector = None;
         let mut max_observable = None;
 
-        for line in dem.lines().map(str::trim) {
-            if line.is_empty() || line.starts_with('#') {
+        for line in dem.lines() {
+            let Some(instruction) = parse_line(line)? else {
                 continue;
+            };
+            instruction.require_flat("StructuredDem")?;
+            let (detectors, observables) = target_indices(&instruction.targets)?;
+            for &id in &detectors {
+                max_detector = Some(max_detector.map_or(id, |old: u32| old.max(id)));
             }
-            if line.starts_with("repeat") || line.starts_with("shift_detectors") {
-                return Err(invalid(
-                    "StructuredDem requires a flattened DEM: `repeat` / `shift_detectors` are not supported",
-                ));
+            for id in observables {
+                max_observable = Some(max_observable.map_or(id, |old: u32| old.max(id)));
             }
-            if let Some(rest) = line.strip_prefix("error(") {
-                let close = rest
-                    .find(')')
-                    .ok_or_else(|| invalid("missing ) in error line"))?;
-                let probability = rest[..close]
-                    .parse::<f64>()
-                    .map_err(|_| invalid(format!("invalid probability: {}", &rest[..close])))?;
-                if !probability.is_finite() || !(0.0..=1.0).contains(&probability) {
-                    return Err(invalid(format!("invalid probability: {}", &rest[..close])));
-                }
-                let mut components = Vec::new();
-                for component in rest[close + 1..].split('^') {
-                    let mut detectors = Vec::new();
-                    let mut observables = Vec::new();
-                    for token in component.split_whitespace() {
-                        if let Some(value) = token.strip_prefix('D') {
-                            let detector = parse_target(value, "detector", token)?;
-                            max_detector =
-                                Some(max_detector.map_or(detector, |old: u32| old.max(detector)));
-                            detectors.push(detector);
-                        } else if let Some(value) = token.strip_prefix('L') {
-                            let observable = parse_target(value, "observable", token)?;
-                            max_observable = Some(
-                                max_observable.map_or(observable, |old: u32| old.max(observable)),
-                            );
-                            observables.push(observable);
-                        } else {
-                            return Err(invalid(format!("invalid DEM target: {token}")));
-                        }
-                    }
-                    components.push(StructuredDemComponent {
-                        detectors,
-                        observables,
-                    });
-                }
-                errors.push(StructuredDemError {
-                    probability,
-                    components,
-                });
-                continue;
-            }
-            if let Some(rest) = line.strip_prefix("detector") {
-                let (coords, targets) = if let Some(after) = rest.strip_prefix('(') {
-                    let close = after
-                        .find(')')
-                        .ok_or_else(|| invalid("missing ) in detector declaration"))?;
-                    let coords = after[..close]
-                        .split(',')
-                        .map(|value| {
-                            value.trim().parse::<f64>().map_err(|_| {
-                                invalid(format!("invalid detector coordinate: {value}"))
+            match instruction.kind {
+                Kind::Error => {
+                    let components = instruction
+                        .components()
+                        .map(|targets| {
+                            let (detectors, observables) = target_indices(targets)?;
+                            Ok(StructuredDemComponent {
+                                detectors,
+                                observables,
                             })
                         })
-                        .collect::<Result<Vec<_>, _>>()?;
-                    if coords.iter().any(|value| !value.is_finite()) {
-                        return Err(invalid("detector coordinates must be finite"));
-                    }
-                    (Some(coords), &after[close + 1..])
-                } else {
-                    (None, rest)
-                };
-                for token in targets.split_whitespace() {
-                    let value = token.strip_prefix('D').ok_or_else(|| {
-                        invalid(format!("invalid detector declaration target: {token}"))
-                    })?;
-                    let detector = parse_target(value, "detector", token)?;
-                    max_detector =
-                        Some(max_detector.map_or(detector, |old: u32| old.max(detector)));
-                    if let Some(coords) = &coords {
-                        coordinates.insert(detector as usize, coords.clone());
-                    }
+                        .collect::<Result<Vec<_>, DecoderError>>()?;
+                    errors.push(StructuredDemError {
+                        probability: instruction.args[0],
+                        components,
+                    });
                 }
-                continue;
-            }
-            if let Some(rest) = line.strip_prefix("logical_observable") {
-                for token in rest.split_whitespace() {
-                    let value = token.strip_prefix('L').ok_or_else(|| {
-                        invalid(format!("invalid observable declaration target: {token}"))
-                    })?;
-                    let observable = parse_target(value, "observable", token)?;
-                    max_observable =
-                        Some(max_observable.map_or(observable, |old: u32| old.max(observable)));
+                Kind::Detector if !instruction.args.is_empty() => {
+                    coordinates.insert(detectors[0] as usize, instruction.args);
                 }
-                continue;
+                _ => {}
             }
-            return Err(invalid(format!("unsupported DEM instruction: {line}")));
         }
 
         let num_detectors = dimension(max_detector, "detector")?;
@@ -409,12 +345,6 @@ impl StructuredDem {
         }
         out
     }
-}
-
-fn parse_target(value: &str, kind: &str, token: &str) -> Result<u32, DecoderError> {
-    value
-        .parse()
-        .map_err(|_| invalid(format!("invalid {kind}: {token}")))
 }
 
 fn dimension(maximum: Option<u32>, kind: &str) -> Result<usize, DecoderError> {

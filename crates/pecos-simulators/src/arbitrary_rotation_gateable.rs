@@ -127,6 +127,24 @@ pub trait ArbitraryRotationGateable: CliffordGateable {
             .apply_global_phase(phase, qubits)
     }
 
+    /// Rotate by theta about P(phi) tensor P(phi), where P(phi) = cos(phi) X + sin(phi) Y.
+    ///
+    /// RXYXY2Q = (Rz(phi) tensor Rz(phi)) Rxx(theta) (Rz(-phi) tensor Rz(-phi)).
+    /// At phi = pi, the principal-value convention gives both inverse Z
+    /// rotations the same sign. Each ion contributes a minus sign, so the
+    /// two-qubit global phase still cancels.
+    #[inline]
+    fn rxyxy2q(&mut self, theta: Angle64, phi: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        // These basis changes implement one RXYXY2Q gate inside the simulator.
+        // Noise models still see a single two-qubit gate.
+        for &(q0, q1) in pairs {
+            self.rz(-phi, &[q0, q1]);
+            self.rxx(theta, &[(q0, q1)]);
+            self.rz(phi, &[q0, q1]);
+        }
+        self
+    }
+
     /// Applies an X-Y plane rotation gate with a specified angle and axis.
     ///
     /// `RXY1Q(theta, phi) = exp(-i*theta*(cos(phi) X + sin(phi) Y)/2)`, with matrix
@@ -511,6 +529,95 @@ mod tests {
                 assert!(
                     (actual - expected_entry).norm() < 3e-6,
                     "column={basis}, row={row}: expected {expected_entry}, got {actual}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn default_rxyxy2q_matches_matrix_exactly() {
+        use crate::StateVecSoA32;
+        use num_complex::Complex64;
+
+        let angles = [
+            Angle64::ZERO,
+            Angle64::from_radians(0.73),
+            Angle64::from_radians(-0.41),
+            Angle64::QUARTER_TURN,
+            Angle64::HALF_TURN,
+            Angle64::THREE_QUARTERS_TURN,
+        ];
+        for theta in angles {
+            for phi in angles {
+                let c = (theta.to_radians_signed() / 2.0).cos();
+                let s = (theta.to_radians_signed() / 2.0).sin();
+                let minus_i_s = Complex64::new(0.0, -s);
+                let phase = Complex64::from_polar(1.0, 2.0 * phi.to_radians_signed());
+                let zero = Complex64::new(0.0, 0.0);
+                let diagonal = Complex64::new(c, 0.0);
+                // For RXYXY2Q, phi changes the coupling between |00> and |11>,
+                // but leaves the |01> and |10> coupling alone. At phi = pi,
+                // the principal-value Z rotations each introduce a minus
+                // sign, so the signs from the two qubits should cancel.
+                // We compare amplitudes directly so we can check that phase
+                // cancellation as well as the relative phases of the entries.
+                let columns = [
+                    [diagonal, zero, zero, minus_i_s * phase],
+                    [zero, diagonal, minus_i_s, zero],
+                    [zero, minus_i_s, diagonal, zero],
+                    [minus_i_s * phase.conj(), zero, zero, diagonal],
+                ];
+                for (basis, expected) in columns.iter().enumerate() {
+                    let mut sim = StateVecSoA32::new(2);
+                    for qubit in 0..2 {
+                        if basis & (1 << qubit) != 0 {
+                            sim.x(&[QubitId(qubit)]);
+                        }
+                    }
+                    sim.rxyxy2q(theta, phi, &[(QubitId(0), QubitId(1))]);
+                    for (row, expected_entry) in expected.iter().enumerate() {
+                        let actual = sim.get_amplitude(row);
+                        let actual = Complex64::new(f64::from(actual.re), f64::from(actual.im));
+                        assert!(
+                            (actual - expected_entry).norm() < 3e-6,
+                            "theta={theta}, phi={phi}, column={basis}, row={row}: expected {expected_entry}, got {actual}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn default_rxyxy2q_batches_match_sequential_pairs() {
+        use crate::StateVecSoA32;
+
+        let theta = Angle64::from_radians(0.73);
+        let phi = Angle64::from_radians(-0.41);
+        // Include disjoint, overlapping and reversed pairs, as well as an
+        // empty batch. Qubit 4 is a spectator in every case.
+        let batches: &[&[(QubitId, QubitId)]] = &[
+            &[],
+            &[(QubitId(2), QubitId(0)), (QubitId(1), QubitId(3))],
+            &[(QubitId(2), QubitId(0)), (QubitId(0), QubitId(1))],
+        ];
+        for pairs in batches {
+            let mut batched = StateVecSoA32::new(5);
+            let mut sequential = StateVecSoA32::new(5);
+            for sim in [&mut batched, &mut sequential] {
+                sim.h(&[QubitId(0), QubitId(3)])
+                    .sz(&[QubitId(0)])
+                    .x(&[QubitId(2), QubitId(4)])
+                    .cx(&[(QubitId(0), QubitId(4))]);
+            }
+            batched.rxyxy2q(theta, phi, pairs);
+            for &pair in *pairs {
+                sequential.rxyxy2q(theta, phi, &[pair]);
+            }
+            for basis in 0..32 {
+                assert!(
+                    (batched.get_amplitude(basis) - sequential.get_amplitude(basis)).norm() < 3e-6,
+                    "pairs={pairs:?}, basis={basis}"
                 );
             }
         }

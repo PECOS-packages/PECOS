@@ -48,31 +48,39 @@ impl Default for PerturbedConfig {
 
 /// Perturb error probabilities in a DEM string by multiplicative log-normal noise.
 ///
-/// Only the probability inside `error(...)` changes; the targets after the closing
-/// parenthesis are copied verbatim.
-pub fn perturb_dem(dem: &str, sigma: f64, rng: &mut dyn FnMut() -> f64) -> String {
+/// Instructions are rendered from their parsed structure with perturbed probabilities.
+/// Blank lines and comments are omitted from the output.
+///
+/// # Errors
+/// Returns an error for malformed instructions, a DEM requiring flattening,
+/// or a perturbation producing a non-finite probability.
+pub fn perturb_dem(
+    dem: &str,
+    sigma: f64,
+    rng: &mut dyn FnMut() -> f64,
+) -> Result<String, DecoderError> {
     use std::fmt::Write;
     let mut out = String::with_capacity(dem.len());
     for line in dem.lines() {
-        let trimmed = line.trim();
-        if let Some(rest) = trimmed.strip_prefix("error(")
-            && let Some(close) = rest.find(')')
-            && let Ok(p) = rest[..close].parse::<f64>()
-        {
+        let Some(mut instruction) = crate::dem::grammar::parse_line(line)? else {
+            continue;
+        };
+        instruction.require_flat("perturb_dem")?;
+        if instruction.kind == crate::dem::grammar::Kind::Error {
             let u1 = rng().max(1e-10);
             let u2 = rng();
             let z = (-2.0_f64 * u1.ln()).sqrt() * (2.0_f64 * std::f64::consts::PI * u2).cos();
             let factor = (sigma * z).exp();
-            let p_new = (p * factor).clamp(1e-15, 0.499);
-            let _ = write!(out, "error({p_new})");
-            out.push_str(&rest[close + 1..]);
-            out.push('\n');
-            continue;
+            instruction.args[0] = (instruction.args[0] * factor).clamp(1e-15, 0.499);
+            if !instruction.args[0].is_finite() {
+                return Err(DecoderError::InvalidConfiguration(
+                    "probability perturbation produced a non-finite probability".into(),
+                ));
+            }
         }
-        out.push_str(trimmed);
-        out.push('\n');
+        let _ = writeln!(out, "{instruction}");
     }
-    out
+    Ok(out)
 }
 
 /// Build a perturbed-weight ensemble from a DEM and a decoder factory.
@@ -104,7 +112,7 @@ where
     let mut next_f64 = move || -> f64 { rng.next_f64() };
 
     for _ in 1..config.k {
-        let perturbed = perturb_dem(dem, config.sigma, &mut next_f64);
+        let perturbed = perturb_dem(dem, config.sigma, &mut next_f64)?;
         members.push(factory(&perturbed)?);
     }
 
@@ -135,7 +143,7 @@ where
     let mut next_f64 = move || -> f64 { rng.next_f64() };
 
     for _ in 1..config.k {
-        let perturbed = perturb_dem(dem, config.sigma, &mut next_f64);
+        let perturbed = perturb_dem(dem, config.sigma, &mut next_f64)?;
         members.push(factory(&perturbed)?);
     }
 
@@ -188,7 +196,7 @@ mod tests {
             // Deterministic: 0.5, 0.6, 0.7, ...
             0.5 + (i as f64) * 0.01
         };
-        let perturbed = perturb_dem(SIMPLE_DEM, 0.5, &mut rng);
+        let perturbed = perturb_dem(SIMPLE_DEM, 0.5, &mut rng).unwrap();
         // Should still have error() lines.
         assert!(perturbed.contains("error("));
         // Should have D0, D1, L0.
@@ -206,7 +214,7 @@ mod tests {
             i += 1;
             0.5 + (i as f64) * 0.01
         };
-        let perturbed = perturb_dem(SIMPLE_DEM, 0.5, &mut rng);
+        let perturbed = perturb_dem(SIMPLE_DEM, 0.5, &mut rng).unwrap();
         assert!(
             !perturbed.contains("))"),
             "stray parenthesis in {perturbed:?}"
@@ -222,7 +230,7 @@ mod tests {
             i += 1;
             0.999 // Will push exp(10 * z) very high
         };
-        let perturbed = perturb_dem(SIMPLE_DEM, 10.0, &mut rng);
+        let perturbed = perturb_dem(SIMPLE_DEM, 10.0, &mut rng).unwrap();
         // Should still parse (probabilities clamped to 0.499 max).
         for line in perturbed.lines() {
             let trimmed = line.trim();

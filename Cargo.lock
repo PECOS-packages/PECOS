@@ -4751,6 +4751,7 @@ dependencies = [
  "pecos-bp-trellis",
  "pecos-build",
  "pecos-core",
+ "pecos-decoder-core",
  "pecos-eeg",
  "pecos-frontier",
  "pecos-neo",

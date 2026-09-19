@@ -243,6 +243,9 @@ ignore = [
 "python/quantum-pecos/tests/qec/surface/test_logical_subgraph_region_comparison.py" = [
     "SLF001",   # Private member access - unit-testing the internal graphlike-decomposition recommendation
 ]
+"python/pecos-rslib-exp/tests/test_decoder_spec_gil.py" = [
+    "SLF001",   # Private member access - timing single calls of the internal decoder-provider protocol
+]
 # SLR qeclib visualization - matplotlib lazy imports
 "python/quantum-pecos/src/pecos/slr/qeclib/color488/plot_layout.py" = [
     "PLC0415",  # Import inside function - matplotlib optional

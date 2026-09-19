@@ -34,6 +34,7 @@
 mod bp_trellis_bindings;
 mod coherent_idle_channel;
 mod compile_bindings;
+mod decoder_specs;
 mod eeg_bindings;
 mod frontier_bindings;
 mod mast_bindings;
@@ -108,6 +109,7 @@ fn pecos_rslib_exp(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // version (CARGO_PKG_VERSION) is a different number -- it rides the Rust workspace train.
     m.add("__version__", env!("PECOS_PYTHON_VERSION"))?;
 
+    decoder_specs::register(m)?;
     m.add_class::<bp_trellis_bindings::PyBpTrellisDecoder>()?;
     m.add_class::<bp_trellis_bindings::PyBpTrellisResult>()?;
     m.add_class::<bp_trellis_bindings::PyBpTrellisObservableFlips>()?;

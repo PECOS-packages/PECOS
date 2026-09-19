@@ -54,6 +54,38 @@ pub enum MetricMode {
     MaxLogInt,
 }
 
+/// Processing order used by the trellis decoders.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub enum TrellisOrdering {
+    /// Compute the deadline-optimized order with [`deadline_column_order`].
+    #[default]
+    Deadline,
+    /// Compute the backward deadline-optimized order with
+    /// [`backward_deadline_column_order`].
+    BackwardDeadline,
+    /// Preserve the detector error model's mechanism order.
+    TimeOrder,
+    /// Use an explicit permutation mapping target positions to source
+    /// mechanism indices.
+    Explicit(Vec<usize>),
+}
+
+impl TrellisOrdering {
+    /// Resolve the processing order for a sparse detector error model.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DecoderError`] if ordering generation fails.
+    pub fn resolve(&self, dem: &SparseDem) -> Result<Option<Vec<usize>>, DecoderError> {
+        match self {
+            Self::Deadline => deadline_column_order(dem).map(Some),
+            Self::BackwardDeadline => backward_deadline_column_order(dem).map(Some),
+            Self::TimeOrder => Ok(None),
+            Self::Explicit(order) => Ok(Some(order.clone())),
+        }
+    }
+}
+
 /// Pruning and column-order configuration for the trellis engine.
 ///
 /// The [`Default`] pruning values are provisional pending benchmarking.
@@ -90,6 +122,60 @@ pub struct TrellisConfig {
     /// Quantization units per natural-log unit for [`MetricMode::MaxLogInt`].
     /// This must be positive in every mode and is ignored by the float metric.
     pub int_metric_scale: i32,
+}
+
+impl TrellisConfig {
+    /// Validate configuration rules that do not depend on a detector error model.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DecoderError::InvalidConfiguration`] for invalid pruning or metric options.
+    pub fn validate(&self) -> Result<(), DecoderError> {
+        if self.k == 0 {
+            return Err(DecoderError::InvalidConfiguration(
+                "TrellisConfig.k must be at least 1".into(),
+            ));
+        }
+        if self.delta.is_nan() || self.delta < 0.0 {
+            return Err(DecoderError::InvalidConfiguration(format!(
+                "TrellisConfig.delta must be non-negative and not NaN, got {}",
+                self.delta
+            )));
+        }
+        if self.metric_mode == MetricMode::MaxLogInt && !self.delta.is_finite() {
+            return Err(DecoderError::InvalidConfiguration(
+                "delta must be finite under maxlog_int; infinite delta would quantize to zero and prune to score-ties"
+                    .into(),
+            ));
+        }
+        if self.metric_mode == MetricMode::MaxLogInt && self.merge_indistinguishable {
+            return Err(DecoderError::InvalidConfiguration(
+                "indistinguishable-mechanism merging sums coset mass and is incompatible with the max-log route metric"
+                    .into(),
+            ));
+        }
+        if self.int_metric_scale <= 0 {
+            return Err(DecoderError::InvalidConfiguration(
+                "TrellisConfig.int_metric_scale must be positive".into(),
+            ));
+        }
+        if self.metric_mode == MetricMode::MaxLogInt
+            && self.score_alpha > 0.0
+            && quantize_metric(self.score_alpha, self.int_metric_scale) == 0
+        {
+            return Err(DecoderError::InvalidConfiguration(format!(
+                "score_alpha {} quantizes to zero at int_metric_scale {} and would silently disable suffix scoring; pass score_alpha 0.0 to disable it explicitly or use a larger scale",
+                self.score_alpha, self.int_metric_scale
+            )));
+        }
+        if !self.score_alpha.is_finite() || self.score_alpha < 0.0 {
+            return Err(DecoderError::InvalidConfiguration(format!(
+                "TrellisConfig.score_alpha must be finite and non-negative, got {}",
+                self.score_alpha
+            )));
+        }
+        Ok(())
+    }
 }
 
 impl Default for TrellisConfig {
@@ -1556,49 +1642,7 @@ fn factor_supports(model: &FactorModel) -> Vec<Vec<u32>> {
 }
 
 fn validate_config(config: &TrellisConfig, mechanism_count: usize) -> Result<(), DecoderError> {
-    if config.k == 0 {
-        return Err(DecoderError::InvalidConfiguration(
-            "TrellisConfig.k must be at least 1".into(),
-        ));
-    }
-    if config.delta.is_nan() || config.delta < 0.0 {
-        return Err(DecoderError::InvalidConfiguration(format!(
-            "TrellisConfig.delta must be non-negative and not NaN, got {}",
-            config.delta
-        )));
-    }
-    if config.metric_mode == MetricMode::MaxLogInt && !config.delta.is_finite() {
-        return Err(DecoderError::InvalidConfiguration(
-            "delta must be finite under maxlog_int; infinite delta would quantize to zero and prune to score-ties"
-                .into(),
-        ));
-    }
-    if config.metric_mode == MetricMode::MaxLogInt && config.merge_indistinguishable {
-        return Err(DecoderError::InvalidConfiguration(
-            "indistinguishable-mechanism merging sums coset mass and is incompatible with the max-log route metric"
-                .into(),
-        ));
-    }
-    if config.int_metric_scale <= 0 {
-        return Err(DecoderError::InvalidConfiguration(
-            "TrellisConfig.int_metric_scale must be positive".into(),
-        ));
-    }
-    if config.metric_mode == MetricMode::MaxLogInt
-        && config.score_alpha > 0.0
-        && quantize_metric(config.score_alpha, config.int_metric_scale) == 0
-    {
-        return Err(DecoderError::InvalidConfiguration(format!(
-            "score_alpha {} quantizes to zero at int_metric_scale {} and would silently disable suffix scoring; pass score_alpha 0.0 to disable it explicitly or use a larger scale",
-            config.score_alpha, config.int_metric_scale
-        )));
-    }
-    if !config.score_alpha.is_finite() || config.score_alpha < 0.0 {
-        return Err(DecoderError::InvalidConfiguration(format!(
-            "TrellisConfig.score_alpha must be finite and non-negative, got {}",
-            config.score_alpha
-        )));
-    }
+    config.validate()?;
     if let Some(order) = &config.column_order {
         if order.len() != mechanism_count {
             return Err(DecoderError::InvalidConfiguration(format!(

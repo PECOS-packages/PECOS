@@ -2501,7 +2501,7 @@ class LogicalCircuitBuilder:
         circuit = stim.Circuit(stim_str)
 
         if use_stim_dem:
-            dem = circuit.detector_error_model(ignore_decomposition_failures=True)
+            dem = circuit.detector_error_model(ignore_decomposition_failures=True).flattened()
             dem_str = str(dem)
         else:
             dem_str = self.build_dem(p1=p1, p2=p2, p_meas=p_meas, p_prep=p_prep)

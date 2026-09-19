@@ -242,8 +242,9 @@ assert stats.num_shots == batch.num_shots
 `.logical_error_rate` hold aggregates, optional `.predictions` preserves shot
 order, and optional `.stats` holds timing statistics. With the default
 `workers=None`, the execution planner selects the native-batch, sequential, or
-parallel path. Pass `workers=N` to request a specific worker count and inspect
-`.execution_path` to see which path ran. A former raw-list call such as
+parallel path. Pass `workers=N` to request up to that many workers, never more
+than one per shot, and inspect `.execution_path` and `.workers_used` to see
+which path ran and how many workers it used. A former raw-list call such as
 `detectors, observables = sampler.sample_batch(...)` becomes a batch call
 followed by the two bulk accessors shown above.
 

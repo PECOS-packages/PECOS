@@ -62,7 +62,7 @@ class TestParsedDemBasics:
             rounds=1,
             after_clifford_depolarization=0.01,
         )
-        dem = circuit.detector_error_model(decompose_errors=True)
+        dem = circuit.detector_error_model(decompose_errors=True).flattened()
         dem_str = str(dem)
 
         parsed = ParsedDem.from_string(dem_str)
@@ -170,7 +170,7 @@ class TestParsedDemOptimizedSampler:
         """The PECOS DEM parser should not accept old tracked-op extension lines."""
         from pecos_rslib.qec import ParsedDem
 
-        with pytest.raises(ValueError, match="unsupported PECOS DEM extension line"):
+        with pytest.raises(ValueError, match="unrecognized DEM instruction: pecos_tracked_op"):
             ParsedDem.from_string('pecos_tracked_op {"id":0,"pauli":"+X0"}')
 
     def test_optimized_matches_naive_sampler(self) -> None:
@@ -211,7 +211,7 @@ error(0.02) D1
             after_reset_flip_probability=0.001,
             before_measure_flip_probability=0.001,
         )
-        stim_dem = circuit.detector_error_model(decompose_errors=True)
+        stim_dem = circuit.detector_error_model(decompose_errors=True).flattened()
         dem_str = str(stim_dem)
 
         # PECOS optimized sampler
@@ -262,7 +262,7 @@ class TestParsedDemVsStimComprehensive:
             after_reset_flip_probability=p,
             before_measure_flip_probability=p,
         )
-        stim_dem = circuit.detector_error_model(decompose_errors=True)
+        stim_dem = circuit.detector_error_model(decompose_errors=True).flattened()
         dem_str = str(stim_dem)
 
         # PECOS sampling
@@ -300,7 +300,7 @@ class TestParsedDemVsStimComprehensive:
             after_reset_flip_probability=0.1,
             before_measure_flip_probability=0.1,
         )
-        stim_dem = circuit.detector_error_model(decompose_errors=True)
+        stim_dem = circuit.detector_error_model(decompose_errors=True).flattened()
         dem_str = str(stim_dem)
 
         parsed = ParsedDem.from_string(dem_str)
@@ -337,7 +337,7 @@ class TestParsedDemPerformance:
             rounds=5,
             after_clifford_depolarization=0.001,
         )
-        dem_str = str(circuit.detector_error_model(decompose_errors=True))
+        dem_str = str(circuit.detector_error_model(decompose_errors=True).flattened())
 
         parsed = ParsedDem.from_string(dem_str)
         sampler = parsed.to_dem_sampler()

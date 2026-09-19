@@ -3,9 +3,22 @@
 //! This module provides standardized interfaces for decoders that work
 //! with Stim's detector error model format.
 
-use crate::errors::DecoderError;
+pub mod grammar;
 
-fn dimension_count(max_index: Option<u32>, kind: &str) -> Result<usize, DecoderError> {
+use crate::errors::DecoderError;
+use grammar::{Kind, Target, index_u32, parse_line, target_indices};
+
+fn xor_targets(targets: Vec<u32>) -> Vec<u32> {
+    let mut parity = std::collections::BTreeSet::new();
+    for id in targets {
+        if !parity.remove(&id) {
+            parity.insert(id);
+        }
+    }
+    parity.into_iter().collect()
+}
+
+pub(crate) fn dimension_count(max_index: Option<u32>, kind: &str) -> Result<usize, DecoderError> {
     max_index.map_or(Ok(0), |index| {
         let count = u64::from(index) + 1;
         usize::try_from(count).map_err(|_| {
@@ -113,93 +126,29 @@ pub mod utils {
     ///
     /// Returns [`DecoderError`] if the DEM format is invalid
     pub fn parse_dem_metadata(dem: &str) -> Result<(usize, usize), DecoderError> {
-        let mut max_detector = None;
-        // Count as `max index + 1` (not distinct-id count) to match the other
-        // parsers (`SparseDem`, `DemCheckMatrix`, `DemMatchingGraph`) and to size
-        // index-addressed buffers correctly when ids are non-contiguous
-        // (e.g. only `L2` present -> 3 observables, not 1).
-        let mut max_observable: Option<usize> = None;
-
+        let mut num_detectors = 0usize;
+        let mut num_observables = 0usize;
         for line in dem.lines() {
-            let line = line.trim();
-            if line.is_empty() || line.starts_with('#') {
+            let Some(instruction) = super::parse_line(line)? else {
                 continue;
-            }
-
-            // This is a flat single-pass counter; reject loop/offset commands
-            // rather than miscounting them (same contract as the other parsers).
-            if line.starts_with("repeat") || line.starts_with("shift_detectors") {
-                return Err(DecoderError::InvalidConfiguration(
-                    "parse_dem_metadata requires a flattened DEM: `repeat` / \
-                     `shift_detectors` are not supported. Flatten the DEM first."
-                        .into(),
-                ));
-            }
-
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.is_empty() {
-                continue;
-            }
-
-            // Normalize commands that carry parenthesized parameters:
-            // `error(0.01) ...` and `detector(x,y,t) Dk`. Stim emits bare
-            // `detector Dk` for declarations without coordinates; that form
-            // already matches via `parts[0]` below.
-            let command = if parts[0].starts_with("error(") {
-                "error"
-            } else if parts[0].starts_with("detector(") {
-                "detector"
-            } else {
-                parts[0]
             };
-
-            match command {
-                // `error` and `logical_observable` both contribute observable
-                // ids; `logical_observable` declares deterministic logicals that
-                // Stim emits with no flipping mechanism but still count.
-                "error" | "logical_observable" => {
-                    for part in &parts[1..] {
-                        if let Some(d_str) = part.strip_prefix('D') {
-                            if let Ok(d) = d_str.parse::<usize>() {
-                                max_detector = Some(max_detector.map_or(d, |m: usize| m.max(d)));
-                            }
-                        } else if let Some(l_str) = part.strip_prefix('L')
-                            && let Ok(l) = l_str.parse::<usize>()
-                        {
-                            max_observable = Some(max_observable.map_or(l, |m: usize| m.max(l)));
-                        }
-                    }
-                }
-                "detector" => {
-                    // Parse detector declarations
-                    for part in &parts[1..] {
-                        if let Some(d_str) = part.strip_prefix('D')
-                            && let Ok(d) = d_str.parse::<usize>()
-                        {
-                            max_detector = Some(max_detector.map_or(d, |m: usize| m.max(d)));
-                        }
-                    }
-                }
-                _ => {}
+            instruction.require_flat("parse_dem_metadata")?;
+            for target in instruction.targets {
+                let (index, maximum, kind) = match target {
+                    super::Target::Detector(id) => (id, &mut num_detectors, "detector"),
+                    super::Target::Observable(id) => (id, &mut num_observables, "observable"),
+                    _ => continue,
+                };
+                let count = usize::try_from(index)
+                    .ok()
+                    .and_then(|id| id.checked_add(1))
+                    .ok_or_else(|| {
+                        super::grammar::index_overflow(index, kind, (usize::MAX - 1) as u64)
+                    })?;
+                *maximum = (*maximum).max(count);
             }
         }
-
-        let detector_count = max_detector.map_or(Ok(0), |index| {
-            index.checked_add(1).ok_or_else(|| {
-                DecoderError::InvalidConfiguration(format!(
-                    "detector count for index {index} does not fit usize on this platform"
-                ))
-            })
-        })?;
-        let observable_count = max_observable.map_or(Ok(0), |index| {
-            index.checked_add(1).ok_or_else(|| {
-                DecoderError::InvalidConfiguration(format!(
-                    "observable count for index {index} does not fit usize on this platform"
-                ))
-            })
-        })?;
-
-        Ok((detector_count, observable_count))
+        Ok((num_detectors, num_observables))
     }
 
     /// Validate DEM format
@@ -207,36 +156,12 @@ pub mod utils {
     /// # Errors
     ///
     /// Returns [`DecoderError`] if:
-    /// - The DEM is empty
     /// - The DEM contains invalid commands or syntax
     /// - Detector/observable indices are invalid
     pub fn validate_dem(dem: &str) -> Result<(), DecoderError> {
-        if dem.trim().is_empty() {
-            return Err(DecoderError::InvalidConfiguration(
-                "DEM cannot be empty".to_string(),
-            ));
-        }
-
-        // Basic validation - check for valid DEM commands
-        let valid_commands = ["error", "detector", "logical_observable", "repeat"];
-
         for line in dem.lines() {
-            let line = line.trim();
-            if line.is_empty() || line.starts_with('#') {
-                continue;
-            }
-
-            let first_word = line.split_whitespace().next().unwrap_or("");
-            // Handle commands with probability parameters like "error(0.01)"
-            let command = if first_word.starts_with("error(") {
-                "error"
-            } else {
-                first_word
-            };
-            if !valid_commands.contains(&command) {
-                return Err(DecoderError::InvalidConfiguration(format!(
-                    "Invalid DEM command: {first_word}"
-                )));
+            if let Some(instruction) = super::parse_line(line)? {
+                instruction.require_flat("validate_dem")?;
             }
         }
 
@@ -337,128 +262,29 @@ impl SparseDem {
         let mut max_observable: Option<u32> = None;
 
         for line in dem.lines() {
-            let line = line.trim();
-
-            // This is a flat, single-pass parser: it does not expand `repeat`
-            // blocks or apply `shift_detectors`. Silently mis-parsing those would
-            // corrupt detector ids, so refuse them and tell the caller to flatten
-            // (e.g. stim's `DetectorErrorModel.flattened()`).
-            if line.starts_with("repeat") || line.starts_with("shift_detectors") {
-                return Err(DecoderError::InvalidConfiguration(
-                    "SparseDem requires a flattened DEM: `repeat` / `shift_detectors` \
-                     are not supported. Flatten the DEM first (e.g. stim's \
-                     DetectorErrorModel.flattened())."
-                        .into(),
-                ));
+            let Some(instruction) = parse_line(line)? else {
+                continue;
+            };
+            instruction.require_flat("SparseDem")?;
+            let (mut detectors, mut observables) = target_indices(&instruction.targets)?;
+            for &id in &detectors {
+                max_detector = Some(max_detector.map_or(id, |old| old.max(id)));
             }
-
-            if let Some(rest) = line.strip_prefix("error(") {
-                let close = rest.find(')').ok_or_else(|| {
-                    DecoderError::InvalidConfiguration("Missing ) in error line".into())
-                })?;
-                let probability: f64 = rest[..close].parse().map_err(|_| {
-                    DecoderError::InvalidConfiguration(format!(
-                        "Invalid probability: {}",
-                        &rest[..close]
-                    ))
-                })?;
-                let tokens = &rest[close + 1..];
-
-                let (detectors, observables) = if tokens.contains('^') {
-                    // Decomposed mechanism: XOR-combine components into sorted sets.
-                    let mut det_set = std::collections::BTreeSet::new();
-                    let mut obs_set = std::collections::BTreeSet::new();
-                    for token in tokens.split('^').flat_map(str::split_whitespace) {
-                        // Reject a malformed `D<bad>` / `L<bad>` token rather than
-                        // silently dropping it -- matches DemCheckMatrix /
-                        // DemMatchingGraph so all parsers agree on what is valid.
-                        if let Some(d_str) = token.strip_prefix('D') {
-                            let d: u32 = d_str.parse().map_err(|_| {
-                                DecoderError::InvalidConfiguration(format!(
-                                    "Invalid detector: {token}"
-                                ))
-                            })?;
-                            if !det_set.remove(&d) {
-                                det_set.insert(d);
-                            }
-                            max_detector = Some(max_detector.map_or(d, |m| m.max(d)));
-                        } else if let Some(l_str) = token.strip_prefix('L') {
-                            let l: u32 = l_str.parse().map_err(|_| {
-                                DecoderError::InvalidConfiguration(format!(
-                                    "Invalid observable: {token}"
-                                ))
-                            })?;
-                            if !obs_set.remove(&l) {
-                                obs_set.insert(l);
-                            }
-                            max_observable = Some(max_observable.map_or(l, |m| m.max(l)));
-                        }
+            for &id in &observables {
+                max_observable = Some(max_observable.map_or(id, |old| old.max(id)));
+            }
+            match instruction.kind {
+                Kind::Error => {
+                    if instruction.targets.contains(&Target::Separator) {
+                        detectors = xor_targets(detectors);
+                        observables = xor_targets(observables);
                     }
-                    (det_set.into_iter().collect(), obs_set.into_iter().collect())
-                } else {
-                    // Graphlike mechanism: keep DEM token order.
-                    let mut detectors = Vec::new();
-                    let mut observables = Vec::new();
-                    for token in tokens.split_whitespace() {
-                        // Reject malformed `D<bad>` / `L<bad>` (parser-agreement
-                        // contract, see the decomposed branch above).
-                        if let Some(d_str) = token.strip_prefix('D') {
-                            let d: u32 = d_str.parse().map_err(|_| {
-                                DecoderError::InvalidConfiguration(format!(
-                                    "Invalid detector: {token}"
-                                ))
-                            })?;
-                            detectors.push(d);
-                            max_detector = Some(max_detector.map_or(d, |m| m.max(d)));
-                        } else if let Some(l_str) = token.strip_prefix('L') {
-                            let l: u32 = l_str.parse().map_err(|_| {
-                                DecoderError::InvalidConfiguration(format!(
-                                    "Invalid observable: {token}"
-                                ))
-                            })?;
-                            observables.push(l);
-                            max_observable = Some(max_observable.map_or(l, |m| m.max(l)));
-                        }
-                    }
-                    (detectors, observables)
-                };
-
-                mechanisms.push((probability, detectors, observables));
-            } else if let Some(rest) = line.strip_prefix("detector") {
-                // `detector(x,y,t) Dk` carries coordinates; Stim emits bare
-                // `detector Dk` for declarations without coordinates. Both
-                // declare the id, which counts toward `num_detectors` even if
-                // no error mechanism references it.
-                let (coords, targets) = if let Some(after) = rest.strip_prefix('(') {
-                    let Some(close) = after.find(')') else {
-                        continue;
-                    };
-                    let coords: Vec<f64> = after[..close]
-                        .split(',')
-                        .filter_map(|s| s.trim().parse().ok())
-                        .collect();
-                    (Some(coords), &after[close + 1..])
-                } else {
-                    (None, rest)
-                };
-                for token in targets.split_whitespace() {
-                    if let Some(d) = token.strip_prefix('D').and_then(|s| s.parse::<u32>().ok()) {
-                        if let Some(c) = &coords {
-                            detector_coords.insert(d as usize, c.clone());
-                        }
-                        max_detector = Some(max_detector.map_or(d, |m| m.max(d)));
-                    }
+                    mechanisms.push((instruction.args[0], detectors, observables));
                 }
-            } else if let Some(rest) = line.strip_prefix("logical_observable") {
-                // Stim emits `logical_observable Lk` for observables that no
-                // error mechanism flips (deterministic / unflipped logicals).
-                // Honour the declared count so a trailing unflipped observable
-                // is not silently dropped from `num_observables`.
-                for token in rest.split_whitespace() {
-                    if let Some(l) = token.strip_prefix('L').and_then(|s| s.parse::<u32>().ok()) {
-                        max_observable = Some(max_observable.map_or(l, |m| m.max(l)));
-                    }
+                Kind::Detector if !instruction.args.is_empty() => {
+                    detector_coords.insert(detectors[0] as usize, instruction.args);
                 }
+                _ => {}
             }
         }
 
@@ -520,107 +346,20 @@ impl DemCheckMatrix {
     ///
     /// Returns [`DecoderError`] if the DEM string is malformed.
     pub fn from_dem_str(dem: &str) -> Result<Self, DecoderError> {
-        // First pass: collect mechanisms and find dimensions.
-        let mut mechanisms: Vec<(f64, Vec<u32>, Vec<u32>)> = Vec::new();
-        let mut max_detector: Option<u32> = None;
-        let mut max_observable: Option<u32> = None;
-
-        for line in dem.lines() {
-            let line = line.trim();
-            if line.is_empty() || line.starts_with('#') {
-                continue;
-            }
-            if let Some(rest) = line.strip_prefix("logical_observable") {
-                // Count declared observables that no mechanism flips.
-                for token in rest.split_whitespace() {
-                    if let Some(l) = token.strip_prefix('L').and_then(|s| s.parse::<u32>().ok()) {
-                        max_observable = Some(max_observable.map_or(l, |m| m.max(l)));
-                    }
-                }
-                continue;
-            }
-            if line.starts_with("repeat") || line.starts_with("shift_detectors") {
-                return Err(DecoderError::InvalidConfiguration(
-                    "DemCheckMatrix requires a flattened DEM: `repeat` / \
-                     `shift_detectors` are not supported. Flatten the DEM first."
-                        .into(),
-                ));
-            }
-            if let Some(rest) = line.strip_prefix("detector") {
-                // Count the declared detector id, which may not be referenced by
-                // any error mechanism. Stim emits `detector(x,y,t) Dk` when
-                // coordinates are attached and bare `detector Dk` when not; both
-                // declare the id. All parsers agree on
-                // `max(declared, error-referenced) + 1`.
-                let targets = if let Some(after) = rest.strip_prefix('(') {
-                    match after.find(')') {
-                        Some(close) => &after[close + 1..],
-                        None => continue,
-                    }
-                } else {
-                    rest
-                };
-                for token in targets.split_whitespace() {
-                    if let Some(d) = token.strip_prefix('D').and_then(|s| s.parse::<u32>().ok()) {
-                        max_detector = Some(max_detector.map_or(d, |m| m.max(d)));
-                    }
-                }
-                continue;
-            }
-            if !line.starts_with("error(") {
-                // Skip other non-error lines (logical_observable handled above).
-                continue;
-            }
-
-            // Parse "error(p) D0 D1 ... L0 ..." or "error(p) D0 ^ D1 ..."
-            let close_paren = line.find(')').ok_or_else(|| {
-                DecoderError::InvalidConfiguration(
-                    "Missing closing parenthesis in error line".into(),
+        let sparse = SparseDem::from_dem_str(dem)?;
+        let num_detectors = sparse.num_detectors;
+        let num_observables = sparse.num_observables;
+        let mechanisms: Vec<_> = sparse
+            .mechanisms
+            .into_iter()
+            .map(|(probability, detectors, observables)| {
+                (
+                    probability,
+                    xor_targets(detectors),
+                    xor_targets(observables),
                 )
-            })?;
-            let prob_str = &line[6..close_paren];
-            let probability: f64 = prob_str.parse().map_err(|_| {
-                DecoderError::InvalidConfiguration(format!("Invalid probability: {prob_str}"))
-            })?;
-
-            let tokens_str = &line[close_paren + 1..];
-
-            // Handle decomposed mechanisms (with ^) by XOR-ing components.
-            let mut det_set = std::collections::BTreeSet::new();
-            let mut obs_set = std::collections::BTreeSet::new();
-
-            for component in tokens_str.split('^') {
-                for token in component.split_whitespace() {
-                    if let Some(d_str) = token.strip_prefix('D') {
-                        let d: u32 = d_str.parse().map_err(|_| {
-                            DecoderError::InvalidConfiguration(format!("Invalid detector: {token}"))
-                        })?;
-                        // XOR: toggle membership
-                        if !det_set.remove(&d) {
-                            det_set.insert(d);
-                        }
-                        max_detector = Some(max_detector.map_or(d, |m| m.max(d)));
-                    } else if let Some(l_str) = token.strip_prefix('L') {
-                        let l: u32 = l_str.parse().map_err(|_| {
-                            DecoderError::InvalidConfiguration(format!(
-                                "Invalid observable: {token}"
-                            ))
-                        })?;
-                        if !obs_set.remove(&l) {
-                            obs_set.insert(l);
-                        }
-                        max_observable = Some(max_observable.map_or(l, |m| m.max(l)));
-                    }
-                }
-            }
-
-            let detectors: Vec<u32> = det_set.into_iter().collect();
-            let observables: Vec<u32> = obs_set.into_iter().collect();
-            mechanisms.push((probability, detectors, observables));
-        }
-
-        let num_detectors = dimension_count(max_detector, "detector")?;
-        let num_observables = dimension_count(max_observable, "observable")?;
+            })
+            .collect();
         let num_mechanisms = mechanisms.len();
 
         // Build matrices.
@@ -788,95 +527,42 @@ impl DemMatchingGraph {
         let mut max_detector: Option<u32> = None;
         let mut max_observable: Option<u32> = None;
         let mut skipped = 0usize;
+        let mut coords = Vec::new();
         let mut fault_id = 0usize;
 
         for line in dem.lines() {
-            let line = line.trim();
-            if let Some(rest) = line.strip_prefix("logical_observable") {
-                // Count declared observables that no mechanism flips.
-                for token in rest.split_whitespace() {
-                    if let Some(l) = token.strip_prefix('L').and_then(|s| s.parse::<u32>().ok()) {
-                        max_observable = Some(max_observable.map_or(l, |m| m.max(l)));
-                    }
-                }
+            let Some(instruction) = parse_line(line)? else {
+                continue;
+            };
+            instruction.require_flat("DemMatchingGraph")?;
+            let (detectors, observables) = target_indices(&instruction.targets)?;
+            for &id in &detectors {
+                max_detector = Some(max_detector.map_or(id, |old| old.max(id)));
+            }
+            for id in observables {
+                max_observable = Some(max_observable.map_or(id, |old| old.max(id)));
+            }
+            if instruction.kind == Kind::Detector && !instruction.args.is_empty() {
+                coords.push(DetectorCoord {
+                    id: detectors[0],
+                    coords: instruction.args,
+                });
                 continue;
             }
-            if line.starts_with("repeat") || line.starts_with("shift_detectors") {
-                return Err(DecoderError::InvalidConfiguration(
-                    "DemMatchingGraph requires a flattened DEM: `repeat` / \
-                     `shift_detectors` are not supported. Flatten the DEM first."
-                        .into(),
-                ));
-            }
-            if let Some(rest) = line.strip_prefix("detector") {
-                // Count the declared detector id (may not be error-referenced) so
-                // `num_detectors` matches the other parsers and its coordinate is
-                // not later dropped from `detector_coords`. Stim emits bare
-                // `detector Dk` (no parentheses) for coordinate-less declarations.
-                let targets = if let Some(after) = rest.strip_prefix('(') {
-                    match after.find(')') {
-                        Some(close) => &after[close + 1..],
-                        None => continue,
-                    }
-                } else {
-                    rest
-                };
-                for token in targets.split_whitespace() {
-                    if let Some(d) = token.strip_prefix('D').and_then(|s| s.parse::<u32>().ok()) {
-                        max_detector = Some(max_detector.map_or(d, |m| m.max(d)));
-                    }
-                }
+            if instruction.kind != Kind::Error {
                 continue;
             }
-            if line.is_empty() || line.starts_with('#') || !line.starts_with("error(") {
-                continue;
-            }
-
-            let close_paren = line.find(')').ok_or_else(|| {
-                DecoderError::InvalidConfiguration("Missing closing parenthesis".into())
-            })?;
-            let prob_str = &line[6..close_paren];
-            let probability: f64 = prob_str.parse().map_err(|_| {
-                DecoderError::InvalidConfiguration(format!("Invalid probability: {prob_str}"))
-            })?;
-
+            let probability = instruction.args[0];
             if probability <= 0.0 {
                 continue;
             }
-
             let weight = if probability < 1.0 {
                 ((1.0 - probability) / probability).ln()
             } else {
                 0.0
             };
-
-            let tokens_str = &line[close_paren + 1..];
-
-            // For decomposed mechanisms (with ^), each component is a separate edge.
-            // For non-decomposed mechanisms, there's one component.
-            let components: Vec<&str> = tokens_str.split('^').collect();
-
-            for component in &components {
-                let mut detectors = Vec::new();
-                let mut observables = Vec::new();
-
-                for token in component.split_whitespace() {
-                    if let Some(d_str) = token.strip_prefix('D') {
-                        let d: u32 = d_str.parse().map_err(|_| {
-                            DecoderError::InvalidConfiguration(format!("Invalid detector: {token}"))
-                        })?;
-                        detectors.push(d);
-                        max_detector = Some(max_detector.map_or(d, |m| m.max(d)));
-                    } else if let Some(l_str) = token.strip_prefix('L') {
-                        let l: u32 = l_str.parse().map_err(|_| {
-                            DecoderError::InvalidConfiguration(format!(
-                                "Invalid observable: {token}"
-                            ))
-                        })?;
-                        observables.push(l);
-                        max_observable = Some(max_observable.map_or(l, |m| m.max(l)));
-                    }
-                }
+            for component in instruction.components() {
+                let (detectors, observables) = target_indices(component)?;
 
                 match detectors.len() {
                     0 => {} // Pure observable error, skip
@@ -913,8 +599,6 @@ impl DemMatchingGraph {
 
         let edges = Self::merge_parallel_edges(edges);
 
-        // Parse detector coordinates
-        let coords = parse_detector_coords(dem);
         let mut detector_coords = vec![None; num_detectors];
         for dc in coords {
             if (dc.id as usize) < num_detectors {
@@ -1144,35 +828,27 @@ pub struct DetectorCoord {
 /// Parse detector coordinates from a DEM string.
 ///
 /// Returns a list of `DetectorCoord` for each `detector(...)` declaration.
-#[must_use]
-pub fn parse_detector_coords(dem: &str) -> Vec<DetectorCoord> {
+///
+/// # Errors
+/// Returns an error for malformed instructions, unsupported loops, or index overflow.
+pub fn parse_detector_coords(dem: &str) -> Result<Vec<DetectorCoord>, DecoderError> {
     let mut result = Vec::new();
     for line in dem.lines() {
-        let line = line.trim();
-        if !line.starts_with("detector(") {
+        let Some(instruction) = parse_line(line)? else {
             continue;
-        }
-        if let Some(close) = line.find(')') {
-            let coord_str = &line[9..close];
-            let coords: Vec<f64> = coord_str
-                .split(',')
-                .filter_map(|s| s.trim().parse().ok())
-                .collect();
-            // Find D_i after the closing paren
-            let rest = &line[close + 1..];
-            for token in rest.split_whitespace() {
-                if let Some(d_str) = token.strip_prefix('D')
-                    && let Ok(id) = d_str.parse::<u32>()
-                {
-                    result.push(DetectorCoord {
-                        id,
-                        coords: coords.clone(),
-                    });
-                }
-            }
+        };
+        instruction.require_flat("parse_detector_coords")?;
+        if instruction.kind == Kind::Detector
+            && !instruction.args.is_empty()
+            && let Target::Detector(id) = instruction.targets[0]
+        {
+            result.push(DetectorCoord {
+                id: index_u32(id, "detector")?,
+                coords: instruction.args,
+            });
         }
     }
-    result
+    Ok(result)
 }
 
 /// Information about a detector error model
@@ -1392,6 +1068,13 @@ mod tests {
             obs, 3,
             "parse_dem_metadata must agree (max+1, not distinct count)"
         );
+    }
+
+    #[test]
+    fn test_metadata_rejects_targets_joined_by_an_unspaced_separator() {
+        let dem = "error(0.1) D0 L0^D3 L5\nerror(0.2) D1 L0\n";
+        assert!(SparseDem::from_dem_str(dem).is_err());
+        assert!(utils::parse_dem_metadata(dem).is_err());
     }
 
     #[test]

@@ -224,7 +224,8 @@ impl AngleScaling {
 
     /// Calculate the scaling factor for a given angle.
     ///
-    /// Uses signed radians in [-pi, pi] for asymmetric scaling.
+    /// Uses signed radians in `(-pi, pi]` for asymmetric scaling. Unsigned
+    /// angles above pi use the negative branch; a half turn uses positive pi.
     /// The magnitude is normalized by pi before applying power.
     ///
     /// Formula: `offset + linear*|θ/π| + scale*|θ/π|^power`
@@ -810,6 +811,29 @@ mod tests {
 
         // For positive pi (normalized = 1.0): 0.2 + 1.0 * 1.0 + 0 = 1.2
         assert!((scaling.scale(Angle64::HALF_TURN) - 1.2).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_asymmetric_angle_scaling_wrapped_boundaries() {
+        use std::f64::consts::{FRAC_PI_4, PI, TAU};
+
+        let scaling = AngleScaling::asymmetric(0.1, 0.0, 2.0, 0.2, 0.0, 3.0, 2.0);
+        for (angle, expected) in [
+            (0.0, 0.15),
+            (FRAC_PI_4, 0.3875),
+            (-FRAC_PI_4, 0.225),
+            (PI, 3.2),
+            (-PI, 3.2),
+        ] {
+            for turns in [-4.0, -1.0, 0.0, 1.0, 4.0] {
+                let input = angle + turns * TAU;
+                let actual = scaling.scale(Angle64::from_radians(input));
+                assert!(
+                    (actual - expected).abs() < 1e-12,
+                    "angle {input}: expected {expected}, got {actual}"
+                );
+            }
+        }
     }
 
     #[test]

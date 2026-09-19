@@ -3209,7 +3209,10 @@ fn decoder_build_error_to_py(error: pecos_decoders::DecoderError) -> PyErr {
                  See: https://github.com/PECOS-packages/PECOS/blob/dev/docs/user-guide/cmake-setup.md",
             )
         }
-        pecos_decoders::DecoderError::BackendUnavailable { .. } => {
+        // Malformed DEM text is bad caller input, as the other DEM surfaces
+        // already report it.
+        pecos_decoders::DecoderError::BackendUnavailable { .. }
+        | pecos_decoders::DecoderError::InvalidDemSyntax(_) => {
             PyErr::new::<pyo3::exceptions::PyValueError, _>(error.to_string())
         }
         pecos_decoders::DecoderError::InternalError(message) => {
@@ -3717,14 +3720,15 @@ impl PySampleBatch {
     }
 
     /// Decode and score every shot using a typed decoder specification or a
-    /// legacy decoder string.
+    /// legacy decoder string, or an optional decoder-provider specification.
     ///
     /// `dem=None` uses the exact DEM embedded by `SampleBatch.load`; generated
     /// batches require an explicit DEM. Automatic execution honors decoder
     /// statefulness, uses native batching where available, and otherwise chooses
     /// sequential or bounded parallel per-shot execution. Set `workers` to opt
-    /// into an exact worker count, `predictions` to retain wide per-shot masks,
-    /// and `timing` to retain per-shot elapsed-time statistics.
+    /// into that many workers, bounded by one per shot (and never below one)
+    /// and reported as `workers_used`; `predictions` to retain wide per-shot
+    /// masks; and `timing` to retain per-shot elapsed-time statistics.
     #[pyo3(signature = (dem=None, decoder=None, *, workers=None, predictions=false, timing=false, allow_dem_mismatch=false))]
     fn decode(
         &self,
@@ -3749,16 +3753,7 @@ impl PySampleBatch {
         let decoder = decoder.ok_or_else(|| {
             pyo3::exceptions::PyTypeError::new_err("decoder is a required argument")
         })?;
-        let spec = if decoder.is_instance_of::<PyString>() {
-            let decoder_type = decoder.extract::<&str>()?;
-            pecos_decoders::DecoderSpec::parse(decoder_type).map_err(decoder_parse_error_to_py)?
-        } else if let Ok(spec) = decoder.extract::<PyRef<'_, PyDecoderSpec>>() {
-            spec.inner.clone()
-        } else {
-            return Err(pyo3::exceptions::PyTypeError::new_err(
-                "decoder must be a pecos.decoders.DecoderSpec or legacy decoder string",
-            ));
-        };
+        let spec = crate::batch_decoder_spec::BatchDecoderSpec::extract(decoder)?;
 
         let explicit_workers = workers
             .map(|workers| {
@@ -3775,7 +3770,7 @@ impl PySampleBatch {
             })
             .transpose()?;
         let traits = spec.execution_traits();
-        let plan =
+        let mut plan =
             pecos_decoders::batch::plan_execution(pecos_decoders::batch::ExecutionPlanInputs {
                 traits,
                 num_shots: self.num_shots,
@@ -3785,6 +3780,15 @@ impl PySampleBatch {
                 available_threads: rayon::current_num_threads(),
             })
             .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+
+        // Report the workers that can actually run: a worker needs at least one
+        // shot, so anything beyond one worker per shot would only idle. An empty
+        // batch keeps one worker, which builds its decoder and decodes nothing.
+        if plan.path == pecos_decoders::batch::ExecutionPath::Parallel {
+            plan.workers_used = plan
+                .workers_used
+                .min(pecos_decoders::batch::batch_worker_cap(self.num_shots));
+        }
 
         let output = py
             .detach(|| batch_decode::execute(self, resolved_dem, &spec, &plan, predictions, timing))
@@ -4095,37 +4099,18 @@ impl PyDemSampler {
         let mut mechanisms = Vec::new();
 
         for line in dem_string.lines() {
-            let line = line.trim();
-            if line.is_empty() || line.starts_with('#') {
-                continue;
-            }
-
-            // Parse: error(prob) D0 D3 L0
-            let Some(rest) = line.strip_prefix("error(") else {
+            let Some(instruction) = pecos_decoder_core::dem::grammar::parse_line(line)
+                .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?
+            else {
                 continue;
             };
-            let Some(paren_end) = rest.find(')') else {
+            if instruction.kind != pecos_decoder_core::dem::grammar::Kind::Error {
                 continue;
-            };
-            let prob: f64 = rest[..paren_end].parse().map_err(|e| {
-                pyo3::exceptions::PyValueError::new_err(format!("bad probability: {e}"))
-            })?;
-            let tokens = rest[paren_end + 1..].split_whitespace();
-            let mut dets = Vec::new();
-            let mut obs = Vec::new();
-            for tok in tokens {
-                if let Some(d) = tok.strip_prefix('D') {
-                    let id: u32 = d.parse().map_err(|e| {
-                        pyo3::exceptions::PyValueError::new_err(format!("bad detector: {e}"))
-                    })?;
-                    dets.push(id);
-                } else if let Some(l) = tok.strip_prefix('L') {
-                    let id: u32 = l.parse().map_err(|e| {
-                        pyo3::exceptions::PyValueError::new_err(format!("bad observable: {e}"))
-                    })?;
-                    obs.push(id);
-                }
             }
+            let prob = instruction.args[0];
+            let (dets, obs) =
+                pecos_decoder_core::dem::grammar::target_indices(&instruction.targets)
+                    .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
             if prob > 0.0 {
                 mechanisms.push((prob, dets, obs));
             }
@@ -4592,10 +4577,11 @@ impl PyDemSampler {
     ///     dem: DEM text used to construct the decoder. It may deliberately be
     ///         a different projection from the sampler's own model.
     ///     `num_shots`: Number of shots to sample and decode.
-    ///     decoder: A typed `DecoderSpec` or legacy decoder string.
+    ///     decoder: A typed `DecoderSpec`, legacy decoder string, or optional decoder-provider specification.
     ///     seed: Optional sampling seed. The resolved seed is returned as
     ///         `sampling_seed_used` and can replay the run.
-    ///     workers: Optional exact worker count.
+    ///     workers: Optional worker count, bounded by one per 1024-shot
+    ///         sampling chunk and reported as `workers_used`.
     ///     predictions: Retain predictions in absolute shot order.
     ///     timing: Retain decode-call timings. Sampling time is excluded from
     ///         individual samples but included in `wall_elapsed`.
@@ -4627,16 +4613,7 @@ impl PyDemSampler {
         let decoder = decoder.ok_or_else(|| {
             pyo3::exceptions::PyTypeError::new_err("decoder is a required argument")
         })?;
-        let spec = if decoder.is_instance_of::<PyString>() {
-            let decoder_type = decoder.extract::<&str>()?;
-            pecos_decoders::DecoderSpec::parse(decoder_type).map_err(decoder_parse_error_to_py)?
-        } else if let Ok(spec) = decoder.extract::<PyRef<'_, PyDecoderSpec>>() {
-            spec.inner.clone()
-        } else {
-            return Err(pyo3::exceptions::PyTypeError::new_err(
-                "decoder must be a pecos.decoders.DecoderSpec or legacy decoder string",
-            ));
-        };
+        let spec = crate::batch_decoder_spec::BatchDecoderSpec::extract(decoder)?;
 
         let explicit_workers = workers
             .map(|workers| {
@@ -5829,7 +5806,8 @@ impl PyLogicalSubgraphDecoder {
             });
         }
 
-        let edges = extract_ghost_edges_from_dem(dem, &sc);
+        let edges = extract_ghost_edges_from_dem(dem, &sc)
+            .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
         let num_qubits = sc.len();
         Ok((edges.len(), num_qubits))
     }

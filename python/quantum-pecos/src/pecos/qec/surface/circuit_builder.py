@@ -3396,7 +3396,7 @@ def generate_dem_from_patch(
         p_prep=p,
     )
     circuit = stim.Circuit(circuit_str)
-    return str(circuit.detector_error_model())
+    return str(circuit.detector_error_model().flattened())
 
 
 def generate_dem_from_tick_circuit_via_pauli_frame(
@@ -3750,7 +3750,7 @@ def generate_dem_from_tick_circuit_via_stim(
         p_prep=p_prep,
     )
     circuit = stim.Circuit(stim_str)
-    dem = circuit.detector_error_model(decompose_errors=decompose_errors or maximal_decomposition)
+    dem = circuit.detector_error_model(decompose_errors=decompose_errors or maximal_decomposition).flattened()
     if maximal_decomposition:
         return _maximally_decompose_graphlike_dem(str(dem))
     return str(dem)

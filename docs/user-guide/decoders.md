@@ -49,6 +49,8 @@ The following decoder APIs and supporting types are publicly re-exported from
 | `CheckMatrix` / `SparseMatrix` | Dense or coordinate-form matrix data | Matrix containers used by matching and LDPC decoder constructors. |
 | `MwpmResult` / `BpResult` / `TesseractResult` | Decoder output | Result objects for matching, belief-propagation, and Tesseract decoders. |
 
+The experimental `frontier()` and `bp_trellis()` factories are not part of this table: they import from `pecos.decoders` only when the optional `pecos-rslib-exp` package is installed, and are described in the [Rust-backed Frontier](#rust-backed-frontier-batch-decoding) and [Rust-backed BP-Trellis](#rust-backed-bp-trellis-batch-decoding) sections below.
+
 Python decoder inputs name their encoding explicitly: use
 `decode_syndrome(...)` for a dense detector vector and
 `decode_from_defects(...)` for sparse detector indices. The BP/LDPC classes'
@@ -331,6 +333,83 @@ match decoder.decode(&syndrome.view()) {
    - Use multiple threads for batch decoding
    - Consider memory layout for cache efficiency
 
+## Rust-backed Frontier batch decoding
+
+Install the optional `pecos-rslib-exp` package for this section and BP-Trellis
+below. Standard `pecos.decoders` imports do not load the experimental extension.
+The explicit `from pecos.decoders import frontier, bp_trellis` convenience import
+loads it lazily and raises an actionable `ImportError` if it is unavailable.
+Experimental factories are excluded from wildcard imports. Their specifications
+work with `SampleBatch.decode(...)` and `DemSampler.decode(...)`; the standard
+`DecoderSpec.parse` strings and composite-spec factories do not load optional
+providers. The experimental calls cross a Python adapter at each shot, with
+native model construction and decoding releasing the GIL.
+
+```python
+from pecos_rslib_exp import frontier
+from pecos_rslib.qec import SampleBatch
+
+dem = "error(0.1) D0 D1 D2 L0\n"
+batch = SampleBatch([[1, 1, 1], [0, 0, 0]], [1, 0])
+result = batch.decode(dem, frontier(k=64), workers=2, predictions=True)
+assert result.predictions == [1, 0]
+assert result.num_errors == 0
+```
+
+Frontier accepts raw DEMs, including hyperedges. `workers=None` selects the
+worker count automatically; `workers=1` runs sequentially. Parallel execution
+releases the Python GIL and preserves shot order. At most one Rust decoder per
+worker is alive at a time, so more workers and larger `k` increase memory use.
+`SampleBatch.decode(...)` builds exactly one decoder per worker;
+`DemSampler.decode(...)` builds one up front to check dimensions and then one per
+scheduled group of sampling chunks, which can be several times the worker count
+on a long run, so a model that is slow to construct pays that cost more than
+once per worker there.
+
+Options match `pecos_rslib_exp.FrontierDecoder.from_dem`: `k`, `delta`,
+`score_alpha`, `bp_score_iterations`, `column_order`, `merge_indistinguishable`,
+`metric_mode`, and `int_metric_scale`. The default ordering is
+`"deadline_reorder"`; `"time_order"`, `"backward_deadline_reorder"`, and explicit
+column permutations are also accepted. Frontier remains experimental, and
+pruning can make predictions approximate. For per-shot logical masses, pruning
+status, and complementary gaps, use the direct experimental binding.
+
+## Rust-backed BP-Trellis batch decoding
+
+```python
+from pecos_rslib_exp import bp_trellis
+from pecos_rslib.qec import SampleBatch
+
+dem = "error(0.1) D0 D1 D2 L0\n"
+batch = SampleBatch([[1, 1, 1], [0, 0, 0]], [1, 0])
+spec = bp_trellis(
+    k=8,
+    delta=100.0,
+    score_alpha=0.8,
+    bp_score_iterations=5,
+    merge_indistinguishable=True,
+    ordering="deadline",
+    escalation_ks=[32, 128],
+)
+result = batch.decode(dem, spec, workers=2, predictions=True)
+assert result.predictions == [1, 0]
+assert result.num_errors == 0
+```
+
+All seven native BP-Trellis configuration options are exposed. The example opts
+into a retry ladder; the default `escalation_ks=None` disables retries. Retries
+occur only after a no-path result, not after a successful but incorrect prediction.
+Each worker prebuilds its own ladder, increasing construction time and memory.
+`ordering` also accepts `"backward_deadline"`, `"time_order"`, or an explicit
+mechanism permutation. BP-Trellis uses floating-point coset masses and does not
+expose Frontier's integer metric options.
+
+Like Frontier, BP-Trellis accepts raw hyperedges and arbitrary-width observables,
+releases the GIL during batch decoding, and supports automatic worker selection
+and `DemSampler.decode(...)`. It remains experimental. Use
+`pecos_rslib_exp.BpTrellisDecoder` for per-shot confidence, pruning status, and
+retry telemetry; the unified batch result returns predictions and aggregate scores.
+
 ## Hyperedge models and matching decoders
 
 Matching-style decoders (PyMatching, Fusion Blossom and its perturbed
@@ -350,8 +429,8 @@ hyperedges such as bp_osd or tesseract.
 ```
 
 Decode such a model with a decoder that represents hyperedges directly --
-`bp_osd()` or `tesseract()` -- or supply a decomposed projection (a model
-written with `^` separators passes: each component is graphlike). See
+`bp_osd()`, `tesseract()`, `frontier()`, or `bp_trellis()` -- or supply a
+decomposed projection (a model written with `^` separators passes: each component is graphlike). See
 [Experimental Decoders](../experimental/decoders.md) for the Frontier and
 BP-Trellis decoders, which additionally report a per-shot complementary gap,
 and for provenance-based decomposition of a hyperedge model into a graphlike

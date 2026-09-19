@@ -10,11 +10,12 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
+use crate::decoder_specs::decoder_error_to_py;
 use pecos_bp_trellis::{
     BpTrellisConfig as RustBpTrellisConfig, BpTrellisDecoder as RustBpTrellisDecoder,
     TrellisOrdering as RustTrellisOrdering,
 };
-use pecos_trellis::{DecoderError, ObsMask, SparseDem, TrellisResult, TrellisStatus};
+use pecos_trellis::{ObsMask, SparseDem, TrellisResult, TrellisStatus};
 use pyo3::Borrowed;
 use pyo3::exceptions::{PyAttributeError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -46,10 +47,6 @@ impl Default for TrellisOrderArgument {
     fn default() -> Self {
         Self::Name("deadline".to_owned())
     }
-}
-
-fn runtime_error(error: &DecoderError) -> PyErr {
-    PyRuntimeError::new_err(error.to_string())
 }
 
 fn sparse_index_error(index: u64, num_detectors: usize) -> PyErr {
@@ -93,7 +90,7 @@ fn parse_dem_and_config(
     config
         .validate()
         .map_err(|error| PyValueError::new_err(error.to_string()))?;
-    let dem = SparseDem::from_dem_str(dem_str).map_err(|error| runtime_error(&error))?;
+    let dem = SparseDem::from_dem_str(dem_str).map_err(|error| decoder_error_to_py(&error))?;
     Ok((dem, config))
 }
 
@@ -335,7 +332,7 @@ impl PyBpTrellisDecoder {
         let num_detectors = dem.num_detectors;
         let num_observables = dem.num_observables;
         let inner = RustBpTrellisDecoder::from_sparse_dem(&dem, config)
-            .map_err(|error| runtime_error(&error))?;
+            .map_err(|error| decoder_error_to_py(&error))?;
         Ok(Self {
             inner,
             num_detectors,
@@ -363,7 +360,7 @@ impl PyBpTrellisDecoder {
                 inner,
                 num_observables: self.num_observables,
             })
-            .map_err(|error| runtime_error(&error))
+            .map_err(|error| decoder_error_to_py(&error))
     }
 
     /// Decode a batch of dense detector syndromes in input order.

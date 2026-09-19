@@ -227,7 +227,7 @@ impl<D: EdgeTrackingDecoder> BeamSearchWindowedDecoder<D> {
                         &window_dem,
                         config.perturbation_sigma,
                         &mut next_f64,
-                    );
+                    )?;
                     if let Ok(dec) = phase1_factory(&perturbed) {
                         decoders.push(dec);
                     }

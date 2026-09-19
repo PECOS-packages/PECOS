@@ -10,8 +10,9 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
+use crate::decoder_specs::decoder_error_to_py;
 use pecos_frontier::{
-    CommitteeDirection, CommitteeMember, CommitteeStatus, DecoderError, Factor, FactorModel,
+    CommitteeDirection, CommitteeMember, CommitteeStatus, Factor, FactorModel,
     FrontierCommittee as RustFrontierCommittee,
     FrontierCommitteeResult as RustFrontierCommitteeResult, FrontierConfig as RustFrontierConfig,
     FrontierDecoder as RustFrontierDecoder, FrontierResult as RustFrontierResult, FrontierStatus,
@@ -52,10 +53,6 @@ impl Default for ColumnOrderArgument {
     fn default() -> Self {
         Self::Name("deadline_reorder".to_owned())
     }
-}
-
-fn runtime_error(error: &DecoderError) -> PyErr {
-    PyRuntimeError::new_err(error.to_string())
 }
 
 pub(crate) fn parse_metric_mode(metric_mode: &str) -> PyResult<MetricMode> {
@@ -115,7 +112,7 @@ fn resolve_factor_column_order(
         TrellisOrdering::TimeOrder => Ok(None),
         TrellisOrdering::Explicit(order) => Ok(Some(order)),
     }
-    .map_err(|error| runtime_error(&error))
+    .map_err(|error| decoder_error_to_py(&error))
 }
 
 fn parse_dem_and_config(
@@ -143,10 +140,10 @@ fn parse_dem_and_config(
         .validate()
         .map_err(|error| PyValueError::new_err(error.to_string()))?;
     let ordering = parse_column_order(column_order)?;
-    let dem = SparseDem::from_dem_str(dem_str).map_err(|e| runtime_error(&e))?;
+    let dem = SparseDem::from_dem_str(dem_str).map_err(|e| decoder_error_to_py(&e))?;
     config.column_order = ordering
         .resolve(&dem)
-        .map_err(|error| runtime_error(&error))?;
+        .map_err(|error| decoder_error_to_py(&error))?;
     Ok((dem, config))
 }
 
@@ -497,7 +494,7 @@ impl PyFrontierDecoder {
         let num_detectors = dem.num_detectors;
         let num_observables = dem.num_observables;
         let inner = RustFrontierDecoder::from_sparse_dem(&dem, config)
-            .map_err(|error| runtime_error(&error))?;
+            .map_err(|error| decoder_error_to_py(&error))?;
         Ok(Self {
             inner,
             num_detectors,
@@ -553,10 +550,10 @@ impl PyFrontierDecoder {
             })
             .collect();
         let model = FactorModel::new(factors, num_detectors, num_observables)
-            .map_err(|error| runtime_error(&error))?;
+            .map_err(|error| decoder_error_to_py(&error))?;
         config.column_order = resolve_factor_column_order(&model, ordering)?;
         let inner = RustFrontierDecoder::from_factor_model(&model, config)
-            .map_err(|error| runtime_error(&error))?;
+            .map_err(|error| decoder_error_to_py(&error))?;
         Ok(Self {
             inner,
             num_detectors,
@@ -584,7 +581,7 @@ impl PyFrontierDecoder {
                 inner,
                 num_observables: self.num_observables,
             })
-            .map_err(|error| runtime_error(&error))
+            .map_err(|error| decoder_error_to_py(&error))
     }
 
     /// Decode a batch of dense detector syndromes in input order.
@@ -656,7 +653,7 @@ impl PyFrontierCommitteeDecoder {
         let num_detectors = dem.num_detectors;
         let num_observables = dem.num_observables;
         let inner = RustFrontierCommittee::from_sparse_dem(&dem, config)
-            .map_err(|error| runtime_error(&error))?;
+            .map_err(|error| decoder_error_to_py(&error))?;
         Ok(Self {
             inner,
             num_detectors,
@@ -684,7 +681,7 @@ impl PyFrontierCommitteeDecoder {
                 inner,
                 num_observables: self.num_observables,
             })
-            .map_err(|error| runtime_error(&error))
+            .map_err(|error| decoder_error_to_py(&error))
     }
 
     /// Decode a batch of dense detector syndromes in input order.

@@ -9,6 +9,13 @@ use pyo3::prelude::*;
 use pyo3::types::PyModule;
 use std::sync::Mutex;
 
+pub(crate) fn decoder_error_to_py(error: &DecoderError) -> PyErr {
+    match error {
+        DecoderError::InvalidDemSyntax(_) => PyValueError::new_err(error.to_string()),
+        _ => PyRuntimeError::new_err(error.to_string()),
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 enum ExperimentalSpec {
     Frontier(FrontierConfig, TrellisOrdering),
@@ -99,7 +106,7 @@ impl PyExperimentalDecoderSpec {
                 num_observables: dem.num_observables,
             })
         })
-        .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+        .map_err(|error| decoder_error_to_py(&error))
     }
 }
 
@@ -123,7 +130,7 @@ impl PyExperimentalWorker {
             decoder
                 .decode_obs(&syndrome)
                 .map(|mask| mask.words().to_vec())
-                .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+                .map_err(|error| decoder_error_to_py(&error))
         })
     }
 }

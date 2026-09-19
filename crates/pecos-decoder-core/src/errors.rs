@@ -16,6 +16,10 @@ pub enum DecoderError {
     #[error("Decoder failed to converge after {iterations} iterations")]
     ConvergenceFailure { iterations: usize },
 
+    /// Malformed detector-error-model text
+    #[error("Invalid DEM syntax: {0}")]
+    InvalidDemSyntax(String),
+
     /// Invalid configuration
     #[error("Invalid configuration: {0}")]
     InvalidConfiguration(String),

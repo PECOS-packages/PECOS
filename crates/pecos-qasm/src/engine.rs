@@ -626,6 +626,19 @@ impl QASMEngine {
                     );
                 }
             }
+            GateType::RXYXY2Q => {
+                let theta = params[0];
+                let phi = params[1];
+                for chunk in qubits.chunks(2) {
+                    if chunk.len() == 2 {
+                        self.message_builder.rxyxy2q(
+                            Angle64::from_radians(theta),
+                            Angle64::from_radians(phi),
+                            &[(chunk[0], chunk[1])],
+                        );
+                    }
+                }
+            }
             GateType::U => {
                 let theta = params[0];
                 let phi = params[1];
@@ -689,7 +702,7 @@ impl QASMEngine {
             | GateType::CH
             | GateType::SWAP => self.process_two_qubit_gate(gate.gate_type, &qubits),
             // Gates not yet supported in QASM engine
-            GateType::CCX | GateType::PX | GateType::Channel | GateType::RXYXY2Q => {
+            GateType::CCX | GateType::PX | GateType::Channel => {
                 Err(PecosError::Processing(format!(
                     "Gate type {:?} is not yet supported in the QASM engine",
                     gate.gate_type
@@ -701,6 +714,7 @@ impl QASMEngine {
             | GateType::RXX
             | GateType::RYY
             | GateType::RZZ
+            | GateType::RXYXY2Q
             | GateType::RXXRYYRZZ
             | GateType::U2q
             | GateType::RXY1Q

@@ -3209,7 +3209,10 @@ fn decoder_build_error_to_py(error: pecos_decoders::DecoderError) -> PyErr {
                  See: https://github.com/PECOS-packages/PECOS/blob/dev/docs/user-guide/cmake-setup.md",
             )
         }
-        pecos_decoders::DecoderError::BackendUnavailable { .. } => {
+        // Malformed DEM text is bad caller input, as the other DEM surfaces
+        // already report it.
+        pecos_decoders::DecoderError::BackendUnavailable { .. }
+        | pecos_decoders::DecoderError::InvalidDemSyntax(_) => {
             PyErr::new::<pyo3::exceptions::PyValueError, _>(error.to_string())
         }
         pecos_decoders::DecoderError::InternalError(message) => {
@@ -4096,37 +4099,18 @@ impl PyDemSampler {
         let mut mechanisms = Vec::new();
 
         for line in dem_string.lines() {
-            let line = line.trim();
-            if line.is_empty() || line.starts_with('#') {
-                continue;
-            }
-
-            // Parse: error(prob) D0 D3 L0
-            let Some(rest) = line.strip_prefix("error(") else {
+            let Some(instruction) = pecos_decoder_core::dem::grammar::parse_line(line)
+                .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?
+            else {
                 continue;
             };
-            let Some(paren_end) = rest.find(')') else {
+            if instruction.kind != pecos_decoder_core::dem::grammar::Kind::Error {
                 continue;
-            };
-            let prob: f64 = rest[..paren_end].parse().map_err(|e| {
-                pyo3::exceptions::PyValueError::new_err(format!("bad probability: {e}"))
-            })?;
-            let tokens = rest[paren_end + 1..].split_whitespace();
-            let mut dets = Vec::new();
-            let mut obs = Vec::new();
-            for tok in tokens {
-                if let Some(d) = tok.strip_prefix('D') {
-                    let id: u32 = d.parse().map_err(|e| {
-                        pyo3::exceptions::PyValueError::new_err(format!("bad detector: {e}"))
-                    })?;
-                    dets.push(id);
-                } else if let Some(l) = tok.strip_prefix('L') {
-                    let id: u32 = l.parse().map_err(|e| {
-                        pyo3::exceptions::PyValueError::new_err(format!("bad observable: {e}"))
-                    })?;
-                    obs.push(id);
-                }
             }
+            let prob = instruction.args[0];
+            let (dets, obs) =
+                pecos_decoder_core::dem::grammar::target_indices(&instruction.targets)
+                    .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
             if prob > 0.0 {
                 mechanisms.push((prob, dets, obs));
             }
@@ -5822,7 +5806,8 @@ impl PyLogicalSubgraphDecoder {
             });
         }
 
-        let edges = extract_ghost_edges_from_dem(dem, &sc);
+        let edges = extract_ghost_edges_from_dem(dem, &sc)
+            .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
         let num_qubits = sc.len();
         Ok((edges.len(), num_qubits))
     }

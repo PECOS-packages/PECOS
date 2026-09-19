@@ -2315,7 +2315,7 @@ def generate_circuit_level_dem(
     )
 
     # Generate DEM from circuit
-    dem = circuit.detector_error_model(decompose_errors=True)
+    dem = circuit.detector_error_model(decompose_errors=True).flattened()
 
     return str(dem)
 
@@ -2599,7 +2599,7 @@ def generate_dem_from_patch(
         >>> dem = generate_dem_from_patch(patch, num_rounds=3, noise=noise)
     """
     circuit = build_stim_circuit_from_patch(patch, num_rounds, noise, basis)
-    dem = circuit.detector_error_model(decompose_errors=decompose_errors)
+    dem = circuit.detector_error_model(decompose_errors=decompose_errors).flattened()
     return str(dem)
 
 

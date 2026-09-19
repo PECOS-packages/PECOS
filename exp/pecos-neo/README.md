@@ -42,3 +42,10 @@ for outcome in &results.outcomes {
 ## Documentation
 
 See the [full documentation](docs/README.md) for examples, guides, and reference material.
+
+## Cargo features
+
+Both features are off by default.
+
+- `qasm`: QASM program support.
+- `composite-noise`: Composite noise decision-tree primitives, builders, and patterns.

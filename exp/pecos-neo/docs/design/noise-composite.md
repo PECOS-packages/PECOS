@@ -16,7 +16,6 @@
 | CompositeChannel integration | Complete | `composite/channel.rs` |
 | CompositeNoiseModelBuilder | Complete | `composite/builder.rs` |
 | Geometric sampling optimization | Complete | `composite/batch.rs` |
-| Compiled primitives | Complete | `composite/compiled.rs` |
 | Crosstalk channel | Complete | `composite/channel.rs` |
 | Two-stage primitives | Complete | `composite/primitive.rs` |
 
@@ -399,13 +398,6 @@ for i in fault_mask.iter_ones() {
 }
 ```
 
-### Compilation
-
-Primitive trees can compile to optimized code:
-- Eliminate virtual dispatch
-- Inline small actions
-- Optimal branch ordering
-
 ## Visualization
 
 Multiple views for different needs:
@@ -470,7 +462,7 @@ This design relates to existing pecos-neo infrastructure:
 | `GeneralNoiseModelBuilder` | A preset that builds primitive trees |
 
 Options:
-1. **Internal implementation**: Primitives compile to existing channel interface
+1. **Internal implementation**: Primitives integrate through the existing channel interface
 2. **Alternative API**: New way to build models, coexists with channels
 3. **Replacement**: Migrate to primitives, deprecate channels
 
@@ -489,7 +481,7 @@ Recommendation: Start with option 1 (internal), validate the design works.
 |------|----------|
 | **Constrained** | Small fixed primitive set |
 | **Grounded** | Primitives map to physical processes |
-| **Fast** | Early exit, RNG batching, compilation |
+| **Fast** | Early exit, RNG batching |
 | **Flexible** | Primitives compose freely |
 | **Understandable** | Trees visualize as flowcharts |
 | **Tricky cases** | Outcome primitives + Crosstalk special construct |
@@ -562,7 +554,6 @@ crates/pecos-neo/src/noise/
 
 **Deliverables:**
 - Geometric sampling for batch processing: Complete (`composite/batch.rs`)
-- Tree compilation: Complete (`composite/compiled.rs`)
 - RNG batching: Complete (`GeometricSampler`)
 - Benchmarks: Available in `benches/hot_path.rs`
 

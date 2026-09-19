@@ -23,20 +23,10 @@
 //! ```no_run
 //! use pecos_neo::noise::prelude::*;
 //!
-//! let noise = seq![
-//!     skip_if_leaked(),
-//!     prob(0.01, when_leaked(seep(), pauli())),
-//! ];
-//!
-//! // Print the decision tree
-//! println!("{}", noise.describe_tree());
-//! // Output:
-//! // Seq
-//! // ├─ SkipIf(Leaked)
-//! // └─ Prob(0.01)
-//! //    └─ When(Leaked)
-//! //       ├─ then: seep
-//! //       └─ else: pauli
+//! let model = NoiseModelBuilder::new()
+//!     .with_depolarizing(0.001, 0.01)
+//!     .build();
+//! println!("{}", model.describe());
 //! ```
 
 use std::fmt::Write;

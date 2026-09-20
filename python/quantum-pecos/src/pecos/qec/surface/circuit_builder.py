@@ -3191,6 +3191,8 @@ def tick_circuit_to_stim(
     import json
     import math
 
+    from pecos_rslib import is_supported_noop_or_metadata_gate
+
     lines = []
 
     simple_gate_map = {
@@ -3302,7 +3304,32 @@ def tick_circuit_to_stim(
             msg = f"Unsupported traced Clifford RXY1Q angles: theta={theta!r}, phi={phi!r}"
             raise ValueError(msg)
 
-        return [], None
+        if gate_name == "RXYXY2Q":
+            if len(gate.angles) < 2:
+                return [], None
+            theta = float(gate.angles[0])
+            phi = float(gate.angles[1])
+            if _is_close_turn(theta, 0.0):
+                return [], None
+            axis = None
+            if _is_close_turn(phi, 0.0) or _is_close_turn(phi, math.pi):
+                axis = "X"
+            elif _is_close_turn(phi, math.pi / 2) or _is_close_turn(phi, 3 * math.pi / 2):
+                axis = "Y"
+            if axis is not None:
+                if _is_close_turn(theta, math.pi / 2):
+                    return [(f"SQRT_{axis}{axis}", qubits)], "two"
+                if _is_close_turn(theta, 3 * math.pi / 2):
+                    return [(f"SQRT_{axis}{axis}_DAG", qubits)], "two"
+                if _is_close_turn(theta, math.pi):
+                    return [(axis, qubits)], "two"
+            msg = f"Unsupported traced Clifford RXYXY2Q angles: theta={theta!r}, phi={phi!r}"
+            raise ValueError(msg)
+
+        if is_supported_noop_or_metadata_gate(gate.gate_type):
+            return [], None
+        msg = f"Unsupported gate for Stim export: {gate_name}"
+        raise ValueError(msg)
 
     for tick_idx in range(tc.num_ticks()):
         tick = tc.get_tick(tick_idx)

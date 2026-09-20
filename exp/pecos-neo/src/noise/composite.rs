@@ -159,7 +159,6 @@ pub mod batch;
 pub mod batch_composite;
 mod builder;
 pub mod channel;
-mod compiled;
 mod condition;
 mod primitive;
 mod response;
@@ -176,7 +175,6 @@ pub use channel::{
     BatchCompositeChannel, CompositeChannel, CompositeChannelBuilder, CompositeCrosstalkChannel,
     CompositeEventFilter,
 };
-pub use compiled::{CompiledAction, CompiledCondition, CompiledPrimitive};
 pub use condition::{
     Active, Always, AnyQubitLeaked, Condition, FnCondition, GateTypeIs, Leaked, Never, NotLeaked,
     OutcomeIs, PartnerLeaked,

@@ -23,13 +23,13 @@
 //! | [`depolarizing_only`] | Simple Pauli errors after gates |
 //! | [`depolarizing_with_measurement`] | Gate + measurement errors |
 //! | [`measurement_only`] | Just readout errors |
-//! | [`dephasing_only`] | Z errors only (T2-like) |
-//! | [`with_leakage`] | Leakage to non-computational states |
+//! | `dephasing_only` (requires `composite-noise`) | Z errors only (T2-like) |
+//! | `with_leakage` (requires `composite-noise`) | Leakage to non-computational states |
 //! | [`chain_correlated`] | Spatially correlated errors (1D) |
-//! | [`chain_measurement_crosstalk`] | Measurement affects neighbors (1D) |
-//! | [`grid_measurement_crosstalk`] | Measurement affects neighbors (2D) |
-//! | [`realistic_device_noise`] | Full device model with all parameters |
-//! | [`surface_code_noise`] | Optimized for surface code simulations |
+//! | `chain_measurement_crosstalk` (requires `composite-noise`) | Measurement affects neighbors (1D) |
+//! | `grid_measurement_crosstalk` (requires `composite-noise`) | Measurement affects neighbors (2D) |
+//! | `realistic_device_noise` (requires `composite-noise`) | Full device model with all parameters |
+//! | `surface_code_noise` (requires `composite-noise`) | Optimized for surface code simulations |
 //!
 //! # Examples
 //!
@@ -54,22 +54,6 @@
 //! let model = measurement_only(0.01, 0.05);  // 1% and 5%
 //! ```
 //!
-//! ## Device Noise
-//!
-//! ```
-//! use pecos_neo::noise::prelude::*;
-//!
-//! let model = realistic_device_noise(
-//!     &DeviceNoiseParams::new()
-//!         .with_p1(0.001)           // 0.1% single-qubit error
-//!         .with_p2(0.01)            // 1% two-qubit error
-//!         .with_measurement_error(0.02)
-//!         .with_prep_error(0.001)
-//!         .with_t1(0.0001)          // T1 decay rate
-//!         .with_t2(0.0005)          // T2 dephasing rate
-//! );
-//! ```
-//!
 //! ## Spatial Noise
 //!
 //! ```
@@ -78,14 +62,18 @@
 //! // Errors that spread between qubits
 //! let model = chain_correlated(0.01, 0.5);  // 50% correlation
 //!
-//! // Measurement crosstalk on a grid
-//! let model = grid_measurement_crosstalk(5, 0.01);  // 5 columns
 //! ```
+//!
+//! `DeviceNoiseParams`, realistic-device and surface-code models, leakage,
+//! dephasing, and measurement-crosstalk patterns require the `composite-noise`
+//! Cargo feature.
 
 use super::CorrelatedNoiseChannel;
 use super::builder::NoiseModelBuilder;
 use super::composer::ComposableNoiseModel;
+#[cfg(feature = "composite-noise")]
 use super::composite::prelude::*;
+#[cfg(feature = "composite-noise")]
 use super::topology::{chain_neighbors, grid_neighbors};
 
 // ============================================================================
@@ -176,6 +164,7 @@ pub fn measurement_only(p01: f64, p10: f64) -> ComposableNoiseModel {
 /// let model = dephasing_only(0.001, 0.01);
 /// ```
 #[must_use]
+#[cfg(feature = "composite-noise")]
 pub fn dephasing_only(p1: f64, p2: f64) -> ComposableNoiseModel {
     let sq_noise = prob(p1, inject_z());
     // For two-qubit dephasing: ZI, IZ, or ZZ
@@ -211,6 +200,7 @@ pub fn dephasing_only(p1: f64, p2: f64) -> ComposableNoiseModel {
 /// let model = with_leakage(0.001, 0.01, 0.1, 0.5);
 /// ```
 #[must_use]
+#[cfg(feature = "composite-noise")]
 pub fn with_leakage(
     p1: f64,
     p2: f64,
@@ -294,6 +284,7 @@ pub fn chain_correlated(base_probability: f64, correlation_factor: f64) -> Compo
 /// let model = chain_measurement_crosstalk(0.01);
 /// ```
 #[must_use]
+#[cfg(feature = "composite-noise")]
 pub fn chain_measurement_crosstalk(crosstalk_probability: f64) -> ComposableNoiseModel {
     let crosstalk =
         CompositeCrosstalkChannel::new("chain_crosstalk", prob(crosstalk_probability, pauli()))
@@ -318,6 +309,7 @@ pub fn chain_measurement_crosstalk(crosstalk_probability: f64) -> ComposableNois
 /// let model = grid_measurement_crosstalk(5, 0.01);
 /// ```
 #[must_use]
+#[cfg(feature = "composite-noise")]
 pub fn grid_measurement_crosstalk(cols: usize, crosstalk_probability: f64) -> ComposableNoiseModel {
     let crosstalk =
         CompositeCrosstalkChannel::new("grid_crosstalk", prob(crosstalk_probability, pauli()))
@@ -332,6 +324,7 @@ pub fn grid_measurement_crosstalk(cols: usize, crosstalk_probability: f64) -> Co
 // ============================================================================
 
 /// Parameters for realistic device noise.
+#[cfg(feature = "composite-noise")]
 #[derive(Debug, Clone)]
 pub struct DeviceNoiseParams {
     /// Single-qubit gate error probability.
@@ -354,6 +347,7 @@ pub struct DeviceNoiseParams {
     pub t2_rate: f64,
 }
 
+#[cfg(feature = "composite-noise")]
 impl Default for DeviceNoiseParams {
     fn default() -> Self {
         Self {
@@ -370,6 +364,7 @@ impl Default for DeviceNoiseParams {
     }
 }
 
+#[cfg(feature = "composite-noise")]
 impl DeviceNoiseParams {
     /// Create new device noise parameters.
     #[must_use]
@@ -464,7 +459,24 @@ impl DeviceNoiseParams {
 ///         .with_t2(0.0005)
 /// );
 /// ```
+///
+/// ## Device Parameters
+///
+/// ```
+/// use pecos_neo::noise::prelude::*;
+///
+/// let model = realistic_device_noise(
+///     &DeviceNoiseParams::new()
+///         .with_p1(0.001)           // 0.1% single-qubit error
+///         .with_p2(0.01)            // 1% two-qubit error
+///         .with_measurement_error(0.02)
+///         .with_prep_error(0.001)
+///         .with_t1(0.0001)          // T1 decay rate
+///         .with_t2(0.0005)          // T2 dephasing rate
+/// );
+/// ```
 #[must_use]
+#[cfg(feature = "composite-noise")]
 pub fn realistic_device_noise(params: &DeviceNoiseParams) -> ComposableNoiseModel {
     let mut builder = NoiseModelBuilder::new();
 
@@ -542,6 +554,7 @@ pub fn realistic_device_noise(params: &DeviceNoiseParams) -> ComposableNoiseMode
 /// let model = surface_code_noise(0.001, false);
 /// ```
 #[must_use]
+#[cfg(feature = "composite-noise")]
 pub fn surface_code_noise(physical_error_rate: f64, with_crosstalk: bool) -> ComposableNoiseModel {
     // For surface codes, 2Q errors are typically ~10x worse than 1Q
     let p1 = physical_error_rate;

@@ -19,6 +19,8 @@
 //! - **Composed**: Build decision trees using primitives (prob, when, seq, etc.)
 //! - **Custom**: Implement your own channels for complete control
 //!
+//! Decision-tree primitives are available with the `composite-noise` Cargo feature.
+//!
 //! # Quick Start
 //!
 //! Import everything with the prelude:
@@ -32,13 +34,6 @@
 //!     .with_measurement_error(0.02)
 //!     .build();
 //!
-//! // Composed: build custom decision trees
-//! let composed = NoiseModelBuilder::new()
-//!     .with_single_qubit_noise(seq![
-//!         skip_if_leaked(),
-//!         prob(0.001, when_leaked(seep(), pauli())),
-//!     ])
-//!     .build();
 //! ```
 //!
 //! Mixed approach (combine builder with custom channels):
@@ -99,6 +94,7 @@
 pub mod builder;
 pub mod category_channel;
 pub mod composer;
+#[cfg(feature = "composite-noise")]
 pub mod composite;
 pub mod context;
 pub mod correlated;

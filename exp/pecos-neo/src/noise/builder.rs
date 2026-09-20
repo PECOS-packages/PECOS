@@ -15,6 +15,8 @@
 //! This module provides [`NoiseModelBuilder`], the primary way to construct noise models.
 //! It unifies simple parameter-based configuration with composable channel construction.
 //!
+//! Decision-tree construction requires the `composite-noise` Cargo feature.
+//!
 //! # Philosophy
 //!
 //! The noise system is built on a few key concepts:
@@ -34,18 +36,6 @@
 //!     .with_measurement_error(0.02)
 //!     .build();
 //!
-//! // Composed: build custom decision trees
-//! let composed = NoiseModelBuilder::new()
-//!     .with_single_qubit_noise(seq![
-//!         skip_if_leaked(),
-//!         prob(0.001, when_leaked(seep(), pauli())),
-//!     ])
-//!     .with_two_qubit_noise(seq![
-//!         skip_if_leaked(),
-//!         prob(0.01, two_qubit_pauli()),
-//!     ])
-//!     .build();
-//!
 //! // Mixed: combine both approaches
 //! let mixed = NoiseModelBuilder::new()
 //!     .with_depolarizing(0.001, 0.01)  // Simple base rates
@@ -53,7 +43,9 @@
 //!     .build();
 //! ```
 
+#[cfg(feature = "composite-noise")]
 use super::composite::Primitive;
+#[cfg(feature = "composite-noise")]
 use super::composite::channel::{CompositeChannel, CompositeChannelBuilder};
 use super::crosstalk::CrosstalkChannel;
 use super::idle::IdleChannel;
@@ -87,19 +79,6 @@ use pecos_core::TimeScale;
 ///
 /// let model = NoiseModelBuilder::new()
 ///     .with_depolarizing(0.001, 0.01)  // p1=0.001, p2=0.01
-///     .build();
-/// ```
-///
-/// ## Custom composed noise
-///
-/// ```
-/// use pecos_neo::noise::prelude::*;
-///
-/// let model = NoiseModelBuilder::new()
-///     .with_single_qubit_noise(seq![
-///         skip_if_leaked(),
-///         prob(0.001, pauli()),
-///     ])
 ///     .build();
 /// ```
 ///
@@ -413,7 +392,21 @@ impl NoiseModelBuilder {
     ///     ])
     ///     .build();
     /// ```
+    ///
+    /// ## Custom composed noise
+    ///
+    /// ```
+    /// use pecos_neo::noise::prelude::*;
+    ///
+    /// let model = NoiseModelBuilder::new()
+    ///     .with_single_qubit_noise(seq![
+    ///         skip_if_leaked(),
+    ///         prob(0.001, pauli()),
+    ///     ])
+    ///     .build();
+    /// ```
     #[must_use]
+    #[cfg(feature = "composite-noise")]
     pub fn with_single_qubit_noise<P: Primitive + Clone + 'static>(mut self, primitive: P) -> Self {
         let channel = CompositeChannelBuilder::single_qubit("single_qubit", primitive);
         self.custom_channels.push(Box::new(channel));
@@ -425,6 +418,7 @@ impl NoiseModelBuilder {
     ///
     /// This overrides the simple p2-based configuration.
     #[must_use]
+    #[cfg(feature = "composite-noise")]
     pub fn with_two_qubit_noise<P: Primitive + Clone + 'static>(mut self, primitive: P) -> Self {
         let channel = CompositeChannelBuilder::two_qubit("two_qubit", primitive);
         self.custom_channels.push(Box::new(channel));
@@ -436,6 +430,7 @@ impl NoiseModelBuilder {
     ///
     /// This overrides the simple p_meas-based configuration.
     #[must_use]
+    #[cfg(feature = "composite-noise")]
     pub fn with_measurement_noise<P: Primitive + Clone + 'static>(mut self, primitive: P) -> Self {
         let channel = CompositeChannelBuilder::after_measurement("measurement", primitive);
         self.custom_channels.push(Box::new(channel));
@@ -447,6 +442,7 @@ impl NoiseModelBuilder {
     ///
     /// This overrides the simple p_prep-based configuration.
     #[must_use]
+    #[cfg(feature = "composite-noise")]
     pub fn with_preparation_noise<P: Primitive + Clone + 'static>(mut self, primitive: P) -> Self {
         let channel = CompositeChannelBuilder::preparation("preparation", primitive);
         self.custom_channels.push(Box::new(channel));
@@ -471,6 +467,7 @@ impl NoiseModelBuilder {
     ///     .build();
     /// ```
     #[must_use]
+    #[cfg(feature = "composite-noise")]
     pub fn with_custom_channel<P: Primitive + Clone + 'static>(
         mut self,
         channel: CompositeChannel<P>,

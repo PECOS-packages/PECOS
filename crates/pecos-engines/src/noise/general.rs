@@ -1199,10 +1199,9 @@ impl GeneralNoiseModel {
         for qubits in gate.qubits.as_chunks::<2>().0 {
             let mut add_original_gate = true;
 
-            // Check if the gate is acting on a leaked qubit in a way to
+            // Check whether this pair acts on a leaked qubit.
             let has_leakage = !self.leaked_qubits.is_empty()
-                && gate
-                    .qubits
+                && qubits
                     .iter()
                     .any(|&qubit| self.is_leaked(usize::from(qubit)));
 
@@ -1214,7 +1213,7 @@ impl GeneralNoiseModel {
                 if self.rng.occurs(self.p2_emission_ratio) {
                     if has_leakage {
                         // potentially seep qubits
-                        for qubit in &gate.qubits {
+                        for qubit in qubits {
                             if self.is_leaked(usize::from(*qubit))
                                 && let Some(gates) =
                                     self.seep(usize::from(*qubit), self.p2_seepage_prob)
@@ -1564,6 +1563,68 @@ mod tests {
             (actual - expected).abs() < f64::EPSILON,
             "expected {expected}, got {actual}"
         );
+    }
+
+    #[test]
+    fn test_batched_two_qubit_seepage_is_pair_local() {
+        for seed in 0..16 {
+            let mut noise = GeneralNoiseModel::builder()
+                .with_p2(1.0)
+                .with_p2_emission_ratio(1.0)
+                .with_p2_seepage_prob(0.5)
+                .build();
+            noise.set_seed(seed);
+            noise.mark_as_leaked(0);
+            noise.mark_as_leaked(2);
+            let mut separate = noise.clone();
+            let mut batched_output = ByteMessage::quantum_operations_builder();
+            noise.apply_tq_faults(&Gate::cx(&[(0, 1), (2, 3)]), 1.0, &mut batched_output);
+            let mut separate_output = ByteMessage::quantum_operations_builder();
+            for pair in [(0, 1), (2, 3)] {
+                separate.apply_tq_faults(&Gate::cx(&[pair]), 1.0, &mut separate_output);
+            }
+            assert_eq!(
+                batched_output.build().as_bytes(),
+                separate_output.build().as_bytes()
+            );
+            assert_eq!(noise.leaked_qubits, separate.leaked_qubits);
+        }
+    }
+
+    #[test]
+    fn test_batched_two_qubit_leakage_is_pair_local() {
+        for p2 in [0.0, 1.0] {
+            let mut noise = GeneralNoiseModel::builder()
+                .with_p_prep(1.0)
+                .with_prep_leak_ratio(1.0)
+                .with_p2(p2)
+                .build();
+            noise.set_seed(42);
+            let mut prep = ByteMessage::quantum_operations_builder();
+            prep.pz(&[0]);
+            noise.start(prep.build()).unwrap();
+            assert!(noise.is_leaked(0));
+
+            let mut builder = ByteMessage::quantum_operations_builder();
+            builder.cx(&[(0, 1), (2, 3)]);
+            let EngineStage::NeedsProcessing(output) = noise.start(builder.build()).unwrap() else {
+                panic!("Expected NeedsProcessing stage");
+            };
+            let gates = output.quantum_ops().unwrap();
+            assert_eq!(gates[0], Gate::cx(&[(2, 3)]));
+            assert!(
+                gates
+                    .iter()
+                    .all(|gate| gate.qubits.iter().all(|q| **q >= 2))
+            );
+            if p2 == 0.0 {
+                assert_eq!(gates.len(), 1);
+            } else {
+                assert!(gates[1..].iter().any(|gate| {
+                    matches!(gate.gate_type, GateType::X | GateType::Y | GateType::Z)
+                }));
+            }
+        }
     }
 
     #[test]

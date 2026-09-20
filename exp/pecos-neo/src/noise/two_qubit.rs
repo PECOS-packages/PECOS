@@ -534,6 +534,15 @@ impl TwoQubitChannel {
         ctx: &mut NoiseContext,
         rng: &mut PecosRng,
     ) -> NoiseResponse {
+        if qubits.len() > 2 {
+            let mut response = NoiseResponse::None;
+            for pair in qubits.as_chunks::<2>().0 {
+                response =
+                    response.combine(self.handle_after_gate(gate_type, pair, angles, ctx, rng));
+            }
+            return response;
+        }
+
         if qubits.len() < 2 {
             return NoiseResponse::None;
         }
@@ -657,6 +666,52 @@ mod tests {
                 responses.into_iter().flat_map(collect_gates).collect()
             }
             _ => Vec::new(),
+        }
+    }
+
+    #[test]
+    fn test_batched_two_qubit_faults() {
+        let channel = TwoQubitChannel::depolarizing(0.5);
+        let qubits = [QubitId(0), QubitId(1), QubitId(2), QubitId(3)];
+        let trailing = [QubitId(4), QubitId(5)];
+        for seed in 0..32 {
+            let mut ctx = NoiseContext::new();
+            let mut rng = PecosRng::seed_from_u64(seed);
+            let mut separate_ctx = NoiseContext::new();
+            let mut separate_rng = PecosRng::seed_from_u64(seed);
+            let mut batched_gates = Vec::new();
+            for pair_batch in [qubits.as_slice(), trailing.as_slice()] {
+                let event = NoiseEvent::AfterGate {
+                    gate_type: GateType::CX,
+                    qubits: pair_batch,
+                    angles: &[],
+                    gate_id: None,
+                };
+                batched_gates.extend(collect_gates(channel.apply(&event, &mut ctx, &mut rng)));
+            }
+            let mut separate_gates = Vec::new();
+            for pair in qubits
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .chain(std::iter::once(&trailing))
+            {
+                let event = NoiseEvent::AfterGate {
+                    gate_type: GateType::CX,
+                    qubits: pair,
+                    angles: &[],
+                    gate_id: None,
+                };
+                separate_gates.extend(collect_gates(channel.apply(
+                    &event,
+                    &mut separate_ctx,
+                    &mut separate_rng,
+                )));
+            }
+            assert_eq!(
+                batched_gates, separate_gates,
+                "batched fault stream differs at seed {seed}"
+            );
         }
     }
 

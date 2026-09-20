@@ -394,11 +394,9 @@ ignore = [
 # Subprocess calls (S603, S607) - These call trusted build tools and compilers
 "python/pecos-rslib/src/pecos_rslib/selene_compilation.py" = ["S603", "S607", "TRY301"]  # llc, gcc compilation
 "python/pecos-rslib/src/pecos_rslib/selene_simple_runtime.py" = ["S603", "S607"]  # Build tools
-"python/quantum-pecos/src/pecos/frontends/hugr_llvm_compiler.py" = ["S603", "S607"]  # cargo build
 "python/quantum-pecos/src/pecos/engines/selene_engine_builder.py" = ["S603", "S607", "TRY301"]  # file command
 "python/quantum-pecos/src/pecos/selene_subprocess_engine.py" = ["S603", "S607"]  # Selene subprocess
-"python/quantum-pecos/src/pecos/_compilation/guppy.py" = ["S603", "S607", "PLC0415", "TRY301"]  # HUGR/LLVM compilation tools
-"python/quantum-pecos/src/pecos/_compilation/hugr_llvm.py" = ["S603", "S607"]  # cargo build, hugr-to-llvm binary
+"python/quantum-pecos/src/pecos/_compilation/guppy.py" = ["TRY301"]  # serialization failure raised inside the compile try
 
 
 # Stub files (.pyi) - type stubs need flexibility

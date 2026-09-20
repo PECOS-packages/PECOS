@@ -3,10 +3,10 @@
 import re
 
 import pecos as pc
-import pecos_rslib_llvm
 from guppylang import guppy
 from guppylang.std.builtins import result
 from guppylang.std.quantum import h, measure, qubit, x
+from pecos import compilation_pipeline
 
 
 class TestAdvancedTypes:
@@ -23,7 +23,7 @@ class TestAdvancedTypes:
             return measure(q).read()
 
         hugr = test_measure_future.compile()
-        output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
+        output = compilation_pipeline.compile_hugr_to_qis(hugr.to_bytes())
 
         # Should compile successfully
         assert "___lazy_measure" in output
@@ -43,7 +43,7 @@ class TestAdvancedTypes:
             return result1, result2
 
         hugr = test_multi_measure.compile()
-        output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
+        output = compilation_pipeline.compile_hugr_to_qis(hugr.to_bytes())
 
         # Should handle multiple futures correctly
         measure_calls = re.findall(r"\bcall\b[^\n]*@___lazy_measure\(", output)
@@ -60,7 +60,7 @@ class TestAdvancedTypes:
             return measure(q).read()
 
         hugr = test_advanced.compile()
-        pecos_out = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
+        pecos_out = compilation_pipeline.compile_hugr_to_qis(hugr.to_bytes())
 
         # Should compile successfully
         assert len(pecos_out) > 100
@@ -114,7 +114,7 @@ class TestAdvancedTypes:
             return r1, r2, r3
 
         hugr = test_complex.compile()
-        output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
+        output = compilation_pipeline.compile_hugr_to_qis(hugr.to_bytes())
 
         # Should handle the complex program correctly
         assert "___qalloc" in output

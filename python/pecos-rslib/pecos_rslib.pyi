@@ -30,8 +30,6 @@ from typing import (
     overload,
 )
 
-from pecos_rslib import hugr_lowering as hugr_lowering
-
 # =============================================================================
 # Type Variables
 # =============================================================================

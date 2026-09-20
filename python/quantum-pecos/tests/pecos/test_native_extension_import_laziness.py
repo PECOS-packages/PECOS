@@ -53,6 +53,10 @@ _LLVM_SCRIPT = textwrap.dedent(
     loaded = sorted(name for name in sys.modules if "pecos_rslib_llvm" in name)
     if loaded:
         raise AssertionError(f"lowering API imported the LLVM wheel: {loaded}")
+
+    # Prove the native binary itself is installed and importable, not just the
+    # pure-Python wrapper package.
+    import pecos_rslib_llvm.pecos_rslib_llvm  # noqa: F401
     """,
 )
 

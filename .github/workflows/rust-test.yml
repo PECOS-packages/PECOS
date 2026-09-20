@@ -169,6 +169,7 @@ jobs:
             cd "crates/$crate" && cargo clippy --locked --all-targets -- -D warnings && cd ../..
           done
           cargo clippy --locked -p pecos-neo --lib -- -D warnings
+          RUSTDOCFLAGS="-D warnings" cargo doc --locked -p pecos-neo --no-deps
           echo "Testing pecos without default features..."
           cd crates/pecos && cargo clippy --locked --all-targets --no-default-features -- -D warnings && cd ../..
 

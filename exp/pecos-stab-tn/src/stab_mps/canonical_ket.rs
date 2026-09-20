@@ -25,6 +25,29 @@ use pecos_simulators::{Gens, SparseStabY};
 
 use super::tableau_compose::multiply_row_within;
 
+/// Magnitude of each amplitude in a uniform support of size `2^rank`.
+///
+/// Avoid `powf`: its platform-dependent rounding disagrees with the standard
+/// `1/sqrt(2)` constant on Windows. Construct the exact power-of-two scale and
+/// apply the irrational factor only for odd ranks, including subnormal scales.
+fn support_magnitude(rank: usize) -> f64 {
+    let half_rank = rank / 2;
+    if half_rank > 1074 {
+        return 0.0;
+    }
+    let bits = if half_rank <= 1022 {
+        ((1023 - half_rank) as u64) << 52
+    } else {
+        1_u64 << (1074 - half_rank)
+    };
+    let scale = f64::from_bits(bits);
+    if rank & 1 == 0 {
+        scale
+    } else {
+        scale * std::f64::consts::FRAC_1_SQRT_2
+    }
+}
+
 /// An exact fourth root of unity, represented by its exponent in `i^exponent`.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct QuarterPhase(u8);
@@ -123,7 +146,7 @@ impl CanonicalKet {
             }
         }
 
-        let support_amplitude_magnitude = 2.0_f64.powf(-(x_pivots.len() as f64) / 2.0);
+        let support_amplitude_magnitude = support_magnitude(x_pivots.len());
         Self {
             num_qubits,
             reduced_stabs,
@@ -488,6 +511,28 @@ mod tests {
     use nalgebra::DMatrix;
     use pecos_core::QubitId;
     use pecos_simulators::CliffordGateable;
+
+    #[test]
+    fn support_magnitude_has_platform_independent_bits() {
+        for (rank, expected) in [
+            (0, 0x3ff0_0000_0000_0000),
+            (1, 0x3fe6_a09e_667f_3bcd),
+            (2, 0x3fe0_0000_0000_0000),
+            (3, 0x3fd6_a09e_667f_3bcd),
+            (2044, 0x0010_0000_0000_0000),
+            (2045, 0x000b_504f_333f_9de6),
+            (2046, 0x0008_0000_0000_0000),
+            (2148, 1),
+            (2149, 1),
+            (2150, 0),
+            (usize::MAX, 0),
+        ] {
+            assert_eq!(
+                support_magnitude(std::hint::black_box(rank)).to_bits(),
+                expected
+            );
+        }
+    }
 
     #[test]
     fn known_y_state_uses_positive_first_amplitude() {

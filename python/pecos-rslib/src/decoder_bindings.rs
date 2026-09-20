@@ -42,6 +42,20 @@ use pyo3::prelude::*;
 
 use crate::observable_flips_bindings::PyObservableFlips;
 
+fn decoder_runtime_error_to_py(error: impl std::error::Error + 'static) -> PyErr {
+    let mut source: Option<&(dyn std::error::Error + 'static)> = Some(&error);
+    while let Some(current) = source {
+        if matches!(
+            current.downcast_ref::<pecos_decoder_core::DecoderError>(),
+            Some(pecos_decoder_core::DecoderError::InvalidDemSyntax(_))
+        ) {
+            return pyo3::exceptions::PyValueError::new_err(error.to_string());
+        }
+        source = current.source();
+    }
+    pyo3::exceptions::PyRuntimeError::new_err(error.to_string())
+}
+
 fn explicit_decode_attribute_error(class_name: &str, name: &str) -> PyErr {
     if name == "decode" {
         pyo3::exceptions::PyAttributeError::new_err(format!(
@@ -391,7 +405,7 @@ impl PyPyMatchingDecoder {
 
         RustPyMatchingDecoder::new(config)
             .map(|inner| Self { inner })
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+            .map_err(decoder_runtime_error_to_py)
     }
 
     /// Create decoder from a check matrix.
@@ -412,7 +426,7 @@ impl PyPyMatchingDecoder {
     fn from_check_matrix(check_matrix: &PyCheckMatrix) -> PyResult<Self> {
         RustPyMatchingDecoder::from_check_matrix(&check_matrix.inner)
             .map(|inner| Self { inner })
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+            .map_err(decoder_runtime_error_to_py)
     }
 
     /// Create decoder from check matrix with additional configuration.
@@ -440,7 +454,7 @@ impl PyPyMatchingDecoder {
 
         RustPyMatchingDecoder::from_check_matrix_with_config(&check_matrix.inner, config)
             .map(|inner| Self { inner })
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+            .map_err(decoder_runtime_error_to_py)
     }
 
     /// Create decoder from a Detector Error Model.
@@ -470,7 +484,7 @@ impl PyPyMatchingDecoder {
         };
         inner
             .map(|inner| Self { inner })
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+            .map_err(decoder_runtime_error_to_py)
     }
 
     /// Create decoder from a Detector Error Model with correlation support.
@@ -482,7 +496,7 @@ impl PyPyMatchingDecoder {
     fn from_dem_with_correlations(dem: &str, enable_correlations: bool) -> PyResult<Self> {
         RustPyMatchingDecoder::from_dem_with_correlations(dem, enable_correlations)
             .map(|inner| Self { inner })
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+            .map_err(decoder_runtime_error_to_py)
     }
 
     /// Add an edge between two detector nodes.
@@ -507,7 +521,7 @@ impl PyPyMatchingDecoder {
     ) -> PyResult<()> {
         self.inner
             .add_edge(node1, node2, &observables, weight, error_probability, None)
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+            .map_err(decoder_runtime_error_to_py)
     }
 
     /// Add a boundary edge from a detector node.
@@ -531,7 +545,7 @@ impl PyPyMatchingDecoder {
     ) -> PyResult<()> {
         self.inner
             .add_boundary_edge(node, &observables, weight, error_probability, None)
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+            .map_err(decoder_runtime_error_to_py)
     }
 
     /// Decode a syndrome to find the most likely error.
@@ -560,7 +574,7 @@ impl PyPyMatchingDecoder {
                 correction_data: result.observable,
                 weight: result.weight,
             })
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+            .map_err(decoder_runtime_error_to_py)
     }
 
     /// Decode a batch of syndromes at once.
@@ -604,7 +618,7 @@ impl PyPyMatchingDecoder {
         self.inner
             .decode_batch_with_config(&detection_events, num_shots, num_detectors, config)
             .map(|result| result.predictions)
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+            .map_err(decoder_runtime_error_to_py)
     }
 
     /// Number of detector nodes in the matching graph.
@@ -790,7 +804,7 @@ impl PyFusionBlossomDecoder {
 
         RustFusionBlossomDecoder::new(config)
             .map(|inner| Self { inner })
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+            .map_err(decoder_runtime_error_to_py)
     }
 
     /// Create decoder from a check matrix.
@@ -834,7 +848,7 @@ impl PyFusionBlossomDecoder {
         };
         inner
             .map(|inner| Self { inner })
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+            .map_err(decoder_runtime_error_to_py)
     }
 
     #[staticmethod]
@@ -864,7 +878,7 @@ impl PyFusionBlossomDecoder {
 
         RustFusionBlossomDecoder::from_check_matrix(&arr, weights.as_deref(), config)
             .map(|inner| Self { inner })
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+            .map_err(decoder_runtime_error_to_py)
     }
 
     /// Create decoder for a standard QEC code.
@@ -937,7 +951,7 @@ impl PyFusionBlossomDecoder {
         let config = RustFusionBlossomConfig::default();
         RustFusionBlossomDecoder::from_standard_code(code, config)
             .map(|inner| Self { inner })
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+            .map_err(decoder_runtime_error_to_py)
     }
 
     /// Add an edge between two nodes.
@@ -951,7 +965,7 @@ impl PyFusionBlossomDecoder {
     ) -> PyResult<()> {
         self.inner
             .add_edge(node1, node2, &observables, weight)
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+            .map_err(decoder_runtime_error_to_py)
     }
 
     /// Add a boundary edge from a node.
@@ -964,7 +978,7 @@ impl PyFusionBlossomDecoder {
     ) -> PyResult<()> {
         self.inner
             .add_boundary_edge(node, &observables, weight)
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+            .map_err(decoder_runtime_error_to_py)
     }
 
     /// Decode a syndrome.
@@ -984,7 +998,7 @@ impl PyFusionBlossomDecoder {
                 correction_data: result.observable,
                 weight: result.weight,
             })
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+            .map_err(decoder_runtime_error_to_py)
     }
 
     /// Decode from defect vertex indices (sparse syndrome representation).
@@ -1013,7 +1027,7 @@ impl PyFusionBlossomDecoder {
                 correction_data: result.observable,
                 weight: result.weight,
             })
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+            .map_err(decoder_runtime_error_to_py)
     }
 
     /// Clear decoder state for efficient reuse.
@@ -1575,7 +1589,7 @@ impl PyBpOsdBuilder {
             None,
         )
         .map(|inner| PyBpOsdDecoder { inner })
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+        .map_err(decoder_runtime_error_to_py)
     }
 
     fn __repr__(&self) -> String {
@@ -1647,7 +1661,7 @@ impl PyBpOsdDecoder {
                 converged: result.converged,
                 iterations: result.iterations,
             })
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+            .map_err(decoder_runtime_error_to_py)
     }
 
     #[allow(clippy::unused_self)] // Python instance method
@@ -1761,7 +1775,7 @@ impl PyBpLsdBuilder {
             None,
         )
         .map(|inner| PyBpLsdDecoder { inner })
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+        .map_err(decoder_runtime_error_to_py)
     }
 
     fn __repr__(&self) -> String {
@@ -1822,7 +1836,7 @@ impl PyBpLsdDecoder {
                 converged: result.converged,
                 iterations: result.iterations,
             })
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+            .map_err(decoder_runtime_error_to_py)
     }
 
     #[allow(clippy::unused_self)] // Python instance method
@@ -1886,7 +1900,7 @@ impl PyUnionFindBuilder {
 
         RustUnionFindDecoder::new(&self.pcm, uf_method)
             .map(|inner| PyUnionFindDecoder { inner })
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+            .map_err(decoder_runtime_error_to_py)
     }
 
     fn __repr__(&self) -> String {
@@ -1944,7 +1958,7 @@ impl PyUnionFindDecoder {
                 converged: result.converged,
                 iterations: result.iterations,
             })
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+            .map_err(decoder_runtime_error_to_py)
     }
 
     #[allow(clippy::unused_self)] // Python instance method
@@ -2138,7 +2152,7 @@ impl PyTesseractDecoder {
                 dem_string,
                 config,
             })
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+            .map_err(decoder_runtime_error_to_py)
     }
 
     /// Decode detection events to find the most likely error configuration.
@@ -2170,7 +2184,7 @@ impl PyTesseractDecoder {
                 low_confidence: result.low_confidence,
                 num_observables,
             })
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+            .map_err(decoder_runtime_error_to_py)
     }
 
     /// Decode a dense syndrome vector.
@@ -2220,7 +2234,7 @@ impl PyTesseractDecoder {
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(n_workers)
             .build()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+            .map_err(decoder_runtime_error_to_py)?;
 
         let dem_str = &self.dem_string;
         let config = &self.config;
@@ -2528,7 +2542,7 @@ impl PyRelayBpBuilder {
             .stopping_criterion(stopping_criterion)
             .build()
             .map(|inner| PyRelayBpDecoder { inner })
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+            .map_err(decoder_runtime_error_to_py)
     }
 
     fn __repr__(&self) -> String {
@@ -2609,7 +2623,7 @@ impl PyRelayBpDecoder {
                 converged: result.converged,
                 iterations: result.iterations,
             })
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+            .map_err(decoder_runtime_error_to_py)
     }
 
     /// Number of checks (rows in check matrix).
@@ -2721,7 +2735,7 @@ impl PyMinSumBpBuilder {
             .gamma0(self.gamma0)
             .build()
             .map(|inner| PyMinSumBpDecoder { inner })
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+            .map_err(decoder_runtime_error_to_py)
     }
 
     fn __repr__(&self) -> String {
@@ -2790,7 +2804,7 @@ impl PyMinSumBpDecoder {
                 converged: result.converged,
                 iterations: result.iterations,
             })
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+            .map_err(decoder_runtime_error_to_py)
     }
 
     /// Number of checks (rows in check matrix).
@@ -2922,7 +2936,7 @@ impl PyDemAwareDecoder {
                     None,
                     config.random_schedule_seed,
                 )
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+                .map_err(decoder_runtime_error_to_py)?;
                 InnerDecoder::BpOsd(decoder)
             }
             DemDecoderConfig::BpLsd(config) => {
@@ -2942,7 +2956,7 @@ impl PyDemAwareDecoder {
                     None,
                     config.random_schedule_seed,
                 )
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+                .map_err(decoder_runtime_error_to_py)?;
                 InnerDecoder::BpLsd(decoder)
             }
             DemDecoderConfig::UnionFind(config) => {

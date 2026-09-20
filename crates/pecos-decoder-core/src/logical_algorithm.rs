@@ -24,6 +24,7 @@
 //!   with buffer overlap at gate boundaries.
 
 use crate::ObservableDecoder;
+use crate::clifford_frame::{conjugate_cnot, conjugate_h, conjugate_s};
 use crate::decode_budget::DecodeStrategy;
 use crate::errors::DecoderError;
 use crate::obs_mask::ObsMask;
@@ -360,10 +361,12 @@ impl LogicalAlgorithmDecoder {
                 x_obs_bit,
                 z_obs_bit,
             } => {
-                let x_set = frame.get(*x_obs_bit as usize);
-                let z_set = frame.get(*z_obs_bit as usize);
-                frame.set(*x_obs_bit as usize, z_set);
-                frame.set(*z_obs_bit as usize, x_set);
+                let (x_set, z_set) = conjugate_h(
+                    frame.get(*x_obs_bit as usize),
+                    frame.get(*z_obs_bit as usize),
+                );
+                frame.set(*x_obs_bit as usize, x_set);
+                frame.set(*z_obs_bit as usize, z_set);
             }
             BoundaryGate::Cnot {
                 ctrl_x_bit,
@@ -371,20 +374,27 @@ impl LogicalAlgorithmDecoder {
                 tgt_x_bit,
                 tgt_z_bit,
             } => {
-                if frame.get(*ctrl_x_bit as usize) {
-                    frame.flip(*tgt_x_bit as usize);
-                }
-                if frame.get(*tgt_z_bit as usize) {
-                    frame.flip(*ctrl_z_bit as usize);
-                }
+                let (control_x, control_z, target_x, target_z) = conjugate_cnot(
+                    frame.get(*ctrl_x_bit as usize),
+                    frame.get(*ctrl_z_bit as usize),
+                    frame.get(*tgt_x_bit as usize),
+                    frame.get(*tgt_z_bit as usize),
+                );
+                frame.set(*ctrl_x_bit as usize, control_x);
+                frame.set(*ctrl_z_bit as usize, control_z);
+                frame.set(*tgt_x_bit as usize, target_x);
+                frame.set(*tgt_z_bit as usize, target_z);
             }
             BoundaryGate::SGate {
                 x_obs_bit,
                 z_obs_bit,
             } => {
-                if frame.get(*x_obs_bit as usize) {
-                    frame.flip(*z_obs_bit as usize);
-                }
+                let (x_set, z_set) = conjugate_s(
+                    frame.get(*x_obs_bit as usize),
+                    frame.get(*z_obs_bit as usize),
+                );
+                frame.set(*x_obs_bit as usize, x_set);
+                frame.set(*z_obs_bit as usize, z_set);
             }
             BoundaryGate::TGateInjection {
                 z_obs_bit,
@@ -850,14 +860,12 @@ impl DecodeStrategy for FullCircuitStrategy {
 // Strategy: Windowed logical-subgraph decoding (neutral atom / medium budget)
 // ============================================================================
 
-/// Windowed logical-subgraph strategy: per-logical-operator subgraph windowed decoding.
+/// Route each observable's syndrome into its own subgraph decoder.
 ///
-/// Each observable's subgraph is graphlike (no hyperedges). A windowed
-/// decoder (sandwich or plain PM) runs inside each subgraph with bounded
-/// latency. The full matching graph is pre-built; only syndrome routing
-/// and per-window matching are per-shot work.
-///
-/// This achieves bounded-latency streaming with logical-subgraph decoder-level accuracy.
+/// The factory determines whether the subgraph decoder uses windows or a full
+/// graph. The budget-selected strategy currently supplies full-subgraph decoders
+/// and exposes its fallback through the shared window plan. Whole-component
+/// window commits live in `pecos-uf-decoder` and keep their own local residuals.
 pub struct WindowedLogicalSubgraphStrategy {
     /// Per-subgraph decoders (windowed or plain).
     subgraph_decoders: Vec<Box<dyn ObservableDecoder + Send + Sync>>,

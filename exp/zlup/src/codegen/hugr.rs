@@ -2904,7 +2904,7 @@ mod tests {
                     return unit;
                 }}
                 "#,
-                std_path.display(),
+                crate::tests::escape_source_string(&std_path.to_string_lossy()),
             );
             let (slr_turns, hugr_half_turns, phir_radians, qasm_radians) =
                 emitted_angle_values(&source);

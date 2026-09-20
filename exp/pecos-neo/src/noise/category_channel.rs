@@ -141,17 +141,14 @@ impl NoiseChannel for CategoryBasedChannel {
         rng: &mut PecosRng,
     ) -> NoiseResponse {
         let NoiseEvent::AfterGate {
-            gate_type,
-            qubits,
-            gate_id,
-            ..
+            qubits, gate_id, ..
         } = event
         else {
             return NoiseResponse::None;
         };
 
         // Skip noiseless gates
-        if ctx.is_noiseless(*gate_type) {
+        if ctx.is_noiseless_operation(event) {
             return NoiseResponse::None;
         }
 

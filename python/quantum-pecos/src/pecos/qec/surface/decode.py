@@ -160,6 +160,10 @@ class NoiseParameters:
     Matches the Rust ``NoiseConfig`` type. All parameters are optional
     beyond the four base rates.
 
+    Per-gate two-qubit overrides emit ``SZZ`` and ``SZZdg`` keys. The surface
+    path lowers Clifford rotations before building, so these keys name the
+    lowered scheduled gates.
+
     Attributes:
         p1: Single-qubit gate error rate.
         p1_weights: Optional relative probabilities over single-qubit Pauli
@@ -2311,7 +2315,7 @@ def generate_circuit_level_dem(
     )
 
     # Generate DEM from circuit
-    dem = circuit.detector_error_model(decompose_errors=True)
+    dem = circuit.detector_error_model(decompose_errors=True).flattened()
 
     return str(dem)
 
@@ -2595,7 +2599,7 @@ def generate_dem_from_patch(
         >>> dem = generate_dem_from_patch(patch, num_rounds=3, noise=noise)
     """
     circuit = build_stim_circuit_from_patch(patch, num_rounds, noise, basis)
-    dem = circuit.detector_error_model(decompose_errors=decompose_errors)
+    dem = circuit.detector_error_model(decompose_errors=decompose_errors).flattened()
     return str(dem)
 
 

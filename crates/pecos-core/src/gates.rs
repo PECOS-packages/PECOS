@@ -100,6 +100,22 @@ pub struct Gate {
 /// gate operation.
 ///
 impl Gate {
+    /// The angle of a phase gate `diag(1, exp(i * lambda))` encoded as `U`.
+    ///
+    /// Recognition is exact: theta and phi must both be zero, and the native
+    /// three-angle payload must be present. General Euler gates are not phases.
+    #[must_use]
+    pub fn phase_angle(&self) -> Option<Angle64> {
+        match (self.gate_type, self.angles.as_slice()) {
+            (GateType::U, &[theta, phi, lambda])
+                if theta == Angle64::ZERO && phi == Angle64::ZERO =>
+            {
+                Some(lambda)
+            }
+            _ => None,
+        }
+    }
+
     /// Create a new gate command with angles and params
     ///
     /// # Panics
@@ -865,6 +881,20 @@ impl Gate {
             GateType::RXY1Q,
             smallvec::smallvec![theta, phi],
             qubits.iter().map(|&q| q.into()).collect::<GateQubits>(),
+        )
+    }
+
+    /// Create RXYXY2Q(theta, phi) gates on qubit pairs.
+    #[must_use]
+    pub fn rxyxy2q(
+        theta: Angle64,
+        phi: Angle64,
+        pairs: &[(impl Into<QubitId> + Copy, impl Into<QubitId> + Copy)],
+    ) -> Self {
+        Self::with_angles(
+            GateType::RXYXY2Q,
+            smallvec::smallvec![theta, phi],
+            Self::flatten_qubit_pairs(pairs),
         )
     }
 

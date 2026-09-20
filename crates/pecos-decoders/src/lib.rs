@@ -108,10 +108,10 @@ pub use pecos_chromobius::{
 // Re-export UF decoder when feature is enabled
 #[cfg(feature = "uf")]
 pub use pecos_uf_decoder::{
-    AStarConfig, AStarDecoder, BeamSearchConfig, BeamSearchWindowedDecoder,
-    BpSchedule as UfBpSchedule, BpUfConfig, BpUfDecoder, CssUfDecoder, OverlappingWindowedDecoder,
-    QubitEdgeMapping, SandwichWindowedDecoder, StreamingWindowedDecoder, UfDecoder,
-    UfDecoderConfig, WindowedConfig, WindowedDecoder, WindowedLogicalSubgraphDecoder,
+    AStarConfig, AStarDecoder, BeamSearchConfig, BeamSearchWindowedDecoder, BeamWindowConfig,
+    BpSchedule as UfBpSchedule, BpUfConfig, BpUfDecoder, CssUfDecoder, QubitEdgeMapping,
+    StreamingWindowedDecoder, UfDecoder, UfDecoderConfig, WindowedConfig,
+    WindowedLogicalSubgraphDecoder,
 };
 
 // Re-export Relay BP decoder when feature is enabled

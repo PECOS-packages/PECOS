@@ -10,8 +10,8 @@
 //! workgroup dispatch / indexing at state sizes 2 MB, 8 MB, and 32 MB where
 //! any 2^N overflow, workgroup-stride, or buffer-layout bug would surface.
 //!
-//! Reference: CPU `StateVecSoA`. Tolerance: f64 1e-5 (f32 gate constants limit
-//! precision regardless of backend), f32 5e-3.
+//! Reference: CPU `StateVecSoA`. Tolerance: f64 1e-10 (roundoff only; any f32
+//! value leaking into the f64 path shows up at 1e-8 or worse), f32 5e-3.
 
 use pecos_core::{Angle64, QubitId};
 use pecos_gpu_sims::{GpuStateVec32, GpuStateVec64};
@@ -134,7 +134,7 @@ fn run_cross_check(n: usize, gates: usize, seed: u64) {
         }
         let s = g64.state();
         let d = max_diff(&s, &cpu_state);
-        assert!(d < 1e-5, "N={n} G={gates} seed={seed} f64 diff={d:.3e}");
+        assert!(d < 1e-10, "N={n} G={gates} seed={seed} f64 diff={d:.3e}");
     }
 }
 

@@ -255,7 +255,7 @@ fn assert_density_eq(
     );
 }
 
-fn apply_f64(sim: &mut StateVecSoA, gate: GateType) {
+fn apply_f64<S: CliffordGateable + ArbitraryRotationGateable>(sim: &mut S, gate: GateType) {
     let qubit = [QubitId(0)];
     match gate {
         GateType::I => sim.identity(&qubit),
@@ -360,7 +360,7 @@ fn gpu_matrix(gate: GateType) -> Matrix2 {
     ]
 }
 
-fn apply_clifford_f64(sim: &mut StateVecSoA, gate: Clifford) {
+fn apply_clifford_f64<S: CliffordGateable>(sim: &mut S, gate: Clifford) {
     let qubit = [QubitId(0)];
     match gate {
         Clifford::H => sim.h(&qubit),
@@ -413,6 +413,41 @@ fn clifford_f64_matrix(gate: Clifford) -> Matrix2 {
         }
     }
     matrix
+}
+
+fn gpu64_simulator_matrix(apply: impl Fn(&mut GpuStateVec64)) -> Option<Matrix2> {
+    let mut matrix = [[Complex64::new(0.0, 0.0); 2]; 2];
+    for basis in 0..2 {
+        let mut sim = GpuStateVec64::new(1).ok()?;
+        if basis == 1 {
+            sim.x(&[QubitId(0)]);
+        }
+        apply(&mut sim);
+        let state = sim.state();
+        for (row, matrix_row) in matrix.iter_mut().enumerate() {
+            matrix_row[basis] = Complex64::new(state[row][0], state[row][1]);
+        }
+    }
+    Some(matrix)
+}
+
+fn rotation_matrix(axis: char, theta: Angle64) -> Matrix2 {
+    // The definition, not another backend: R_P(theta) = cos(theta/2) I - i sin(theta/2) P.
+    let (s, c) = theta.half_angle_sin_cos();
+    let zero = Complex64::new(0.0, 0.0);
+    let cos = Complex64::new(c, 0.0);
+    match axis {
+        'x' => [
+            [cos, Complex64::new(0.0, -s)],
+            [Complex64::new(0.0, -s), cos],
+        ],
+        'y' => [
+            [cos, Complex64::new(-s, 0.0)],
+            [Complex64::new(s, 0.0), cos],
+        ],
+        'z' => [[Complex64::new(c, -s), zero], [zero, Complex64::new(c, s)]],
+        other => panic!("unsupported rotation axis {other}"),
+    }
 }
 
 fn clifford_f32_matrix(gate: Clifford) -> Matrix2 {
@@ -590,6 +625,15 @@ fn single_qubit_simulator_tables_match_canonical_phase_exactly() {
             &canonical,
             F32_TOLERANCE,
         );
+        // The f64 GPU backend must hold f64 precision, not the f32 tables' 1e-7.
+        if let Some(gpu64) = gpu64_simulator_matrix(|sim| apply_f64(sim, gate)) {
+            assert_phase_exact_matrix_eq(
+                &format!("GpuStateVec64::{gate:?}"),
+                &gpu64,
+                &canonical,
+                F64_TOLERANCE,
+            );
+        }
     }
 
     // The additional H/F-family matrices are derived from the canonical
@@ -629,6 +673,39 @@ fn single_qubit_simulator_tables_match_canonical_phase_exactly() {
             &expected,
             F32_TOLERANCE,
         );
+        if let Some(gpu64) = gpu64_simulator_matrix(|sim| apply_clifford_f64(sim, gate)) {
+            assert_phase_exact_matrix_eq(
+                &format!("GpuStateVec64::{gate}"),
+                &gpu64,
+                &expected,
+                F64_TOLERANCE,
+            );
+        }
+    }
+}
+
+#[test]
+fn gpu_f64_rotations_match_definition_at_f64_precision() {
+    for radians in [0.731, -0.417, 1e-3, -2.5, std::f64::consts::FRAC_PI_3] {
+        let theta = Angle64::from_radians(radians);
+        for axis in ['x', 'y', 'z'] {
+            let Some(actual) = gpu64_simulator_matrix(|sim| {
+                let qubit = [QubitId(0)];
+                match axis {
+                    'x' => sim.rx(theta, &qubit),
+                    'y' => sim.ry(theta, &qubit),
+                    _ => sim.rz(theta, &qubit),
+                };
+            }) else {
+                return;
+            };
+            assert_phase_exact_matrix_eq(
+                &format!("GpuStateVec64 r{axis}({radians})"),
+                &actual,
+                &rotation_matrix(axis, theta),
+                F64_TOLERANCE,
+            );
+        }
     }
 }
 

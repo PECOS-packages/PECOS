@@ -5,7 +5,7 @@ pub mod config;
 mod build;
 mod parse;
 
-use pecos_decoder_core::{DecoderError, ObservableDecoder};
+use pecos_decoder_core::{DecoderError, ObservableDecoder, window::StructuredDem};
 
 pub use config::*;
 
@@ -13,7 +13,12 @@ pub use config::*;
 #[derive(Clone, Debug, PartialEq)]
 pub enum DecodeModel {
     SingleDem(String),
-    HybridDem { full: String, decomposed: String },
+    /// An already validated model, avoiding a top-level render/parse cycle.
+    StructuredDem(StructuredDem),
+    HybridDem {
+        full: String,
+        decomposed: String,
+    },
 }
 
 /// Cross-shot execution properties relevant to batching.
@@ -99,10 +104,7 @@ impl DecoderSpec {
                 history_dependent: false,
                 wall_clock_dependent: config.timeout.is_some(),
             },
-            Self::Windowed(config) => config
-                .inner
-                .execution_traits()
-                .or(config.sandwich_phase2.execution_traits()),
+            Self::Windowed(config) => config.inner.execution_traits(),
             Self::Perturbed(config) => config.inner.execution_traits(),
             Self::BeamSearch(config) => config.phase2.execution_traits(),
             Self::Ensemble(config) => config

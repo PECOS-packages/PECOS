@@ -75,6 +75,7 @@ nav:
   - Fault Catalog Tutorial: user-guide/fault-catalog.md
   - QEC Geometry: user-guide/qec-geometry.md
   - QEC with Guppy: user-guide/qec-guppy.md
+  - Surface Code Gadgets: user-guide/surface-gadgets.md
   - Detector Error Models from Guppy: user-guide/dem-from-guppy.md
   - Inferring DEM Annotations from Guppy Outputs: user-guide/inferred-guppy-dem.md
   - Decoders: user-guide/decoders.md
@@ -100,6 +101,7 @@ nav:
   - Foreign Language Plugins: development/foreign-plugins.md
   - Parallel Blocks: development/parallel-blocks-and-optimization.md
   - Noise Event Replay: development/noise-event-replay.md
+  - Just-in-time DEM Slices: development/jit-dem-slices.md
 - Experimental:
   - experimental/index.md
   - Composable Noise (pecos-neo): experimental/composable-noise.md

@@ -443,6 +443,14 @@ impl PyGateType {
     }
 
     #[classattr]
+    #[pyo3(name = "RXYXY2Q")]
+    fn rxyxy2q_attr() -> Self {
+        Self {
+            inner: GateType::RXYXY2Q,
+        }
+    }
+
+    #[classattr]
     #[pyo3(name = "RXY1Q")]
     fn rxy1q() -> Self {
         Self {
@@ -898,6 +906,14 @@ impl PyGate {
     fn rzz_gate(angle: AngleParam, pairs: Vec<(usize, usize)>) -> Self {
         Self {
             inner: Gate::rzz(angle.0, &pairs),
+        }
+    }
+
+    /// Create an RXYXY2Q gate.
+    #[staticmethod]
+    fn rxyxy2q(theta: AngleParam, phi: AngleParam, pairs: Vec<(usize, usize)>) -> Self {
+        Self {
+            inner: Gate::rxyxy2q(theta.0, phi.0, &pairs),
         }
     }
 
@@ -3630,6 +3646,19 @@ impl PyTickHandle {
     ) -> PyResult<Py<Self>> {
         slf.borrow_mut(py)
             .add_gate_internal(py, Gate::rzz(theta.0, &pairs))?;
+        Ok(slf)
+    }
+
+    /// Apply an RXYXY2Q rotation.
+    fn rxyxy2q(
+        slf: Py<Self>,
+        py: Python<'_>,
+        theta: AngleParam,
+        phi: AngleParam,
+        pairs: Vec<(usize, usize)>,
+    ) -> PyResult<Py<Self>> {
+        slf.borrow_mut(py)
+            .add_gate_internal(py, Gate::rxyxy2q(theta.0, phi.0, &pairs))?;
         Ok(slf)
     }
 

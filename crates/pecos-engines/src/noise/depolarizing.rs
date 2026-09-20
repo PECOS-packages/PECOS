@@ -213,6 +213,7 @@ impl DepolarizingNoiseModel {
             | GateType::SZZ
             | GateType::SZZdg
             | GateType::SWAP
+            | GateType::RXYXY2Q
             | GateType::RXX
             | GateType::RYY
             | GateType::RZZ

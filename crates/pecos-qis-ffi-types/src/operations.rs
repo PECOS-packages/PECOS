@@ -99,6 +99,7 @@ pub enum QuantumOp {
     // ZZ interaction
     ZZ(usize, usize),
     RZZ(f64, usize, usize),
+    RXYXY2Q(f64, f64, usize, usize), // theta, phi, qubit_1, qubit_2
 
     // Measurement
     Measure(usize, usize),       // qubit, result_id

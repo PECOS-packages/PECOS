@@ -146,7 +146,7 @@ fn test_compile_compact() {
 fn test_compile_rotation_gate() {
     let source = r#"fn main() -> unit {
     mut q := qalloc(1);
-    rz(1.57) q[0];
+    rz(1.57 rad) q[0];
     return unit;
 }"#;
 
@@ -174,6 +174,48 @@ fn test_compile_rotation_gate() {
     assert_eq!(body.len(), 1);
     assert_eq!(body[0]["gate"], "RZ");
     assert!(!body[0]["params"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn test_compile_formats_reject_unitless_rotation_parameter() {
+    let source = r#"plain_pi: f64 = pi;
+fn main() -> unit {
+    q := qalloc(2);
+    pz q;
+    crz(plain_pi) (q[0], q[1]);
+    return unit;
+}"#;
+    let formats = ["slr", "phir-json", "qasm"];
+
+    for format in formats {
+        let mut child = zlup_bin()
+            .args(["compile", "-", "--format", format, "-o", "-"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("failed to spawn");
+
+        {
+            use std::io::Write;
+            child
+                .stdin
+                .as_mut()
+                .expect("failed to get stdin")
+                .write_all(source.as_bytes())
+                .expect("failed to write");
+        }
+
+        let output = child.wait_with_output().expect("failed to wait");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(!output.status.success(), "format {format} accepted source");
+        assert!(stderr.contains("gate 'crz'"), "format {format}: {stderr}");
+        assert!(stderr.contains("plain_pi"), "format {format}: {stderr}");
+        assert!(
+            stderr.contains("explicit unit"),
+            "format {format}: {stderr}"
+        );
+    }
 }
 
 // =============================================================================

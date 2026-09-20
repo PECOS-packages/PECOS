@@ -66,6 +66,15 @@ impl ObsMask {
         self.words[word] |= 1u64 << (bit % WORD_BITS);
     }
 
+    /// Toggles observable bit `bit`, growing the storage if needed.
+    pub fn toggle(&mut self, bit: usize) {
+        let word = bit / WORD_BITS;
+        if word >= self.words.len() {
+            self.words.resize(word + 1, 0);
+        }
+        self.words[word] ^= 1u64 << (bit % WORD_BITS);
+    }
+
     /// Returns whether observable bit `bit` is set.
     #[must_use]
     pub fn get(&self, bit: usize) -> bool {
@@ -211,6 +220,17 @@ mod tests {
         assert_eq!(m.to_u64(), None, "does not fit in 64 bits");
         assert_eq!(m.count_ones(), 3);
         assert_eq!(m.iter_set_bits().collect::<Vec<_>>(), vec![5, 64, 130]);
+    }
+
+    #[test]
+    fn toggle_above_64_spills_and_cancels() {
+        let mut m = ObsMask::new();
+        m.toggle(130);
+        assert!(m.get(130));
+        assert_eq!(m.words().len(), 3);
+        m.toggle(130);
+        assert!(!m.get(130));
+        assert!(m.is_zero());
     }
 
     #[test]

@@ -561,7 +561,7 @@ impl GeneralNoiseModel {
             }
 
             // Skip noise application for noiseless gates.
-            if self.is_noiseless_gate(&gate.gate_type) {
+            if self.is_noiseless_operation(&gate) {
                 // Declaring a gate noiseless suppresses its FAULTS, not the physics it
                 // performs. Preparation returns a leaked qubit to the computational
                 // subspace whether or not it is noisy, and consumers lower a
@@ -1432,8 +1432,21 @@ impl GeneralNoiseModel {
     /// Calculate the two-qubit gate error rate based on the rotation angle
     ///
     /// with additional support for asymmetric scaling and power-law scaling
+    ///
+    /// Angles are reduced modulo a full turn into `(-pi, pi]` before selecting
+    /// the signed coefficients. Thus an unsigned angle such as `7*pi/4` uses
+    /// the negative branch at `-pi/4`; both half-turn endpoints use `+pi`.
     #[must_use]
     pub fn p2_angle_error_rate(&self, angle: f64) -> f64 {
+        let angle = angle % std::f64::consts::TAU;
+        let angle = if angle > std::f64::consts::PI {
+            angle - std::f64::consts::TAU
+        } else if angle <= -std::f64::consts::PI {
+            angle + std::f64::consts::TAU
+        } else {
+            angle
+        };
+
         // Normalize angle by π - convert to a value in [0, 1] range
         let theta = angle.abs() / std::f64::consts::PI;
 
@@ -1488,6 +1501,14 @@ impl GeneralNoiseModel {
     #[must_use]
     pub fn is_noiseless_gate(&self, gate_type: &GateType) -> bool {
         self.noiseless_gates.contains(gate_type)
+    }
+
+    /// Whether this scheduled operation is noiseless. Phase-shaped U gates
+    /// inherit the RZ exemption in addition to explicit U exemptions.
+    #[must_use]
+    pub fn is_noiseless_operation(&self, gate: &Gate) -> bool {
+        self.is_noiseless_gate(&gate.gate_type)
+            || (gate.phase_angle().is_some() && self.is_noiseless_gate(&GateType::RZ))
     }
 
     /// Accessor for the p1 Pauli distribution
@@ -3752,6 +3773,51 @@ mod tests {
             (error_quad - expected_quad).abs() < 1e-6,
             "Expected {expected_quad}, got {error_quad}"
         );
+    }
+
+    #[test]
+    fn test_rzz_error_rate_signed_periodicity() {
+        use std::f64::consts::{FRAC_PI_2, FRAC_PI_4, PI, TAU};
+
+        let mut model = GeneralNoiseModel::builder()
+            .with_p2(0.01)
+            .with_p2_angle_params(2.0, 0.1, 3.0, 0.2)
+            .with_p2_angle_power(2.0)
+            .build();
+        let noise = model
+            .as_any_mut()
+            .downcast_mut::<GeneralNoiseModel>()
+            .unwrap();
+
+        // Distinct coefficients expose selection of the wrong sign branch.
+        for (angle, scaling) in [
+            (0.0, 0.15),
+            (FRAC_PI_4, 0.3875),
+            (-FRAC_PI_4, 0.225),
+            (FRAC_PI_2, 0.95),
+            (-FRAC_PI_2, 0.6),
+            (PI, 3.2),
+            (-PI, 3.2),
+        ] {
+            for turns in [-4.0, -1.0, 0.0, 1.0, 4.0] {
+                let input = angle + turns * TAU;
+                let actual = noise.p2_angle_error_rate(input);
+                let expected = 0.01 * scaling;
+                assert!(
+                    (actual - expected).abs() < 1e-12,
+                    "angle {input}: expected {expected}, got {actual}"
+                );
+            }
+        }
+
+        // Avoid adding pi before reducing: that can erase tiny signed inputs.
+        assert!((noise.p2_angle_error_rate(-1e-20) - 0.001).abs() < 1e-12);
+        assert!((noise.p2_angle_error_rate(1e-20) - 0.002).abs() < 1e-12);
+        // The positive half-turn endpoint must not absorb neighboring angles.
+        assert!((noise.p2_angle_error_rate(PI.next_up()) - 0.021).abs() < 1e-12);
+        assert!((noise.p2_angle_error_rate(PI.next_down()) - 0.032).abs() < 1e-12);
+        assert!((noise.p2_angle_error_rate((-PI).next_up()) - 0.021).abs() < 1e-12);
+        assert!((noise.p2_angle_error_rate((-PI).next_down()) - 0.032).abs() < 1e-12);
     }
 
     #[test]

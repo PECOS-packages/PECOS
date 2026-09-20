@@ -54,6 +54,7 @@
 //! assert!(result.equivalent);
 //! ```
 
+use pecos_decoder_core::dem::grammar::{self, Instruction, Kind, Options, Target};
 use pecos_random::{PecosRng, Rng, RngExt};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -297,103 +298,43 @@ impl ParsedDem {
         ops[idx] = Some(op);
     }
 
-    /// Parses a single error line.
-    fn parse_error_line(line: &str) -> Result<ParsedMechanism, DemParseError> {
-        // Extract probability: error(0.01) ...
-        let prob_end = line
-            .find(')')
-            .ok_or_else(|| DemParseError::InvalidFormat("Missing closing parenthesis".into()))?;
-
-        let prob_str = &line[6..prob_end]; // Skip "error("
-        let probability: f64 = prob_str
-            .parse()
-            .map_err(|_| DemParseError::InvalidProbability(prob_str.to_string()))?;
-
-        // Get targets after probability
-        let rest = &line[prob_end + 1..].trim();
-
-        // Check for decomposition (XOR chains)
-        if rest.contains('^') {
-            let parts: Vec<&str> = rest.split('^').collect();
-            let mut components = Vec::new();
-
-            for part in parts {
-                let part = part.trim();
-                let comp = Self::parse_component(part)?;
-                components.push(comp);
-            }
-
-            Ok(ParsedMechanism {
-                probability,
-                components,
-            })
-        } else {
-            // Simple mechanism
-            let comp = Self::parse_component(rest)?;
-            Ok(ParsedMechanism {
-                probability,
-                components: vec![comp],
-            })
-        }
+    /// Builds a mechanism from a validated error instruction.
+    fn parse_error_line(instruction: &Instruction) -> Result<ParsedMechanism, DemParseError> {
+        let components = instruction
+            .components()
+            .map(Self::parse_component)
+            .collect::<Result<_, _>>()?;
+        Ok(ParsedMechanism {
+            probability: instruction.args[0],
+            components,
+        })
     }
 
-    /// Parses a component (part between ^ separators).
-    fn parse_component(s: &str) -> Result<MechanismComponent, DemParseError> {
+    /// Collects one component while retaining duplicate targets.
+    fn parse_component(targets: &[Target]) -> Result<MechanismComponent, DemParseError> {
         let mut detectors = Vec::new();
         let mut observables = Vec::new();
         let mut tracked_paulis = Vec::new();
-
-        for token in s.split_whitespace() {
-            if let Some(id_str) = token.strip_prefix('D') {
-                let id: u32 = id_str
-                    .parse()
-                    .map_err(|_| DemParseError::InvalidDetectorId(token.to_string()))?;
-                detectors.push(id);
-            } else if let Some(id_str) = token.strip_prefix('L') {
-                let id: u32 = id_str
-                    .parse()
-                    .map_err(|_| DemParseError::InvalidObservableId(token.to_string()))?;
-                observables.push(id);
-            } else if let Some(id_str) = token.strip_prefix("TP") {
-                let id: u32 = id_str
-                    .parse()
-                    .map_err(|_| DemParseError::InvalidTrackedPauliId(token.to_string()))?;
-                tracked_paulis.push(id);
-            } else {
-                return Err(DemParseError::InvalidTarget(token.to_string()));
-            }
+        for target in targets {
+            let (id, kind, indices) = match *target {
+                Target::Detector(id) => (id, "detector", &mut detectors),
+                Target::Observable(id) => (id, "observable", &mut observables),
+                Target::TrackedPauli(id) => (id, "tracked Pauli", &mut tracked_paulis),
+                _ => continue,
+            };
+            indices.push(
+                grammar::index_u32(id, kind)
+                    .map_err(|err| DemParseError::UnsupportedIndex(err.to_string()))?,
+            );
         }
-
         detectors.sort_unstable();
         observables.sort_unstable();
         tracked_paulis.sort_unstable();
-
         Ok(MechanismComponent {
             detectors,
             observables,
             tracked_paulis,
         })
-    }
-
-    /// Extracts detector ID from a detector declaration line.
-    fn extract_detector_id(line: &str) -> Option<u32> {
-        // Look for D followed by digits
-        let d_pos = line.find('D')?;
-        let rest = &line[d_pos + 1..];
-        let end = rest
-            .find(|c: char| !c.is_ascii_digit())
-            .unwrap_or(rest.len());
-        rest[..end].parse().ok()
-    }
-
-    /// Extracts observable ID from an observable declaration line.
-    fn extract_observable_id(line: &str) -> Option<u32> {
-        let l_pos = line.find('L')?;
-        let rest = &line[l_pos + 1..];
-        let end = rest
-            .find(|c: char| !c.is_ascii_digit())
-            .unwrap_or(rest.len());
-        rest[..end].parse().ok()
     }
 
     /// Aggregates mechanisms by their effect, combining probabilities.
@@ -633,131 +574,86 @@ impl FromStr for ParsedDem {
 
     fn from_str(dem_str: &str) -> Result<Self, Self::Err> {
         let mut mechanisms = Vec::new();
-        let mut max_det: i32 = -1;
-        let mut max_obs: i32 = -1;
-        let mut max_tracked_pauli: i32 = -1;
-        let mut dem_outputs: Vec<Option<DemOutput>> = Vec::new();
-        let mut tracked_paulis: Vec<Option<DemOutput>> = Vec::new();
+        let mut num_detectors = 0u32;
+        let mut num_dem_outputs = 0u32;
+        let mut num_tracked_paulis = 0u32;
+        let mut dem_outputs = Vec::new();
+        let mut tracked_paulis = Vec::new();
 
         for line in dem_str.lines() {
-            let line = line.trim();
-
-            // Skip empty lines and comments
-            if line.is_empty() || line.starts_with('#') {
+            // ParsedDem explicitly supports PECOS TP targets and JSON metadata statements.
+            let Some(instruction) = grammar::parse_line_with_options(
+                line,
+                Options {
+                    pecos_extensions: true,
+                },
+            )
+            .map_err(|err| DemParseError::InvalidFormat(err.to_string()))?
+            else {
                 continue;
+            };
+            instruction
+                .require_flat("ParsedDem")
+                .map_err(|err| DemParseError::RequiresFlattening(err.to_string()))?;
+            for target in &instruction.targets {
+                let (id, maximum, kind) = match *target {
+                    Target::Detector(id) => (id, &mut num_detectors, "detector"),
+                    Target::Observable(id) => (id, &mut num_dem_outputs, "observable"),
+                    Target::TrackedPauli(id) => (id, &mut num_tracked_paulis, "tracked Pauli"),
+                    _ => continue,
+                };
+                let id32 = grammar::index_u32(id, kind)
+                    .map_err(|err| DemParseError::UnsupportedIndex(err.to_string()))?;
+                let count = id32.checked_add(1).ok_or_else(|| {
+                    DemParseError::UnsupportedIndex(
+                        grammar::index_overflow(id, kind, u64::from(u32::MAX - 1)).to_string(),
+                    )
+                })?;
+                *maximum = (*maximum).max(count);
             }
-
-            // Parse error lines
-            if line.starts_with("error(") {
-                let mech = Self::parse_error_line(line)?;
-
-                // Update max IDs
-                for comp in &mech.components {
-                    for &d in &comp.detectors {
-                        #[allow(clippy::cast_possible_wrap)] // detector ID fits in i32
-                        {
-                            max_det = max_det.max(d as i32);
-                        }
-                    }
-                    for &o in &comp.observables {
-                        #[allow(clippy::cast_possible_wrap)] // observable ID fits in i32
-                        {
-                            max_obs = max_obs.max(o as i32);
-                        }
-                    }
-                    for &op in &comp.tracked_paulis {
-                        #[allow(clippy::cast_possible_wrap)] // tracked-Pauli ID fits in i32
-                        {
-                            max_tracked_pauli = max_tracked_pauli.max(op as i32);
-                        }
+            match instruction.kind {
+                Kind::Error => mechanisms.push(Self::parse_error_line(&instruction)?),
+                Kind::LogicalObservable => {
+                    if let Target::Observable(id) = instruction.targets[0] {
+                        let id = grammar::index_u32(id, "observable")
+                            .map_err(|err| DemParseError::UnsupportedIndex(err.to_string()))?;
+                        Self::record_metadata(
+                            &mut dem_outputs,
+                            DemOutput::new(id)
+                                .with_kind(crate::fault_tolerance::DemOutputKind::Observable),
+                        );
                     }
                 }
-
-                mechanisms.push(mech);
-            }
-            // Parse detector declarations
-            else if line.starts_with("detector") {
-                if let Some(id) = Self::extract_detector_id(line) {
-                    #[allow(clippy::cast_possible_wrap)] // detector ID fits in i32
-                    {
-                        max_det = max_det.max(id as i32);
-                    }
+                Kind::PecosObservable | Kind::PecosTrackedPauli => {
+                    let op = parse_pecos_dem_metadata_line(&instruction)
+                        .map_err(|err| DemParseError::InvalidPecosMetadata(err.to_string()))?;
+                    let (maximum, outputs) = if op.is_tracked_pauli() {
+                        (&mut num_tracked_paulis, &mut tracked_paulis)
+                    } else {
+                        (&mut num_dem_outputs, &mut dem_outputs)
+                    };
+                    let count = op.id.checked_add(1).ok_or_else(|| {
+                        DemParseError::UnsupportedIndex(
+                            grammar::index_overflow(
+                                u64::from(op.id),
+                                "metadata",
+                                u64::from(u32::MAX - 1),
+                            )
+                            .to_string(),
+                        )
+                    })?;
+                    *maximum = (*maximum).max(count);
+                    Self::record_metadata(outputs, op);
                 }
-            }
-            // Parse observable declarations
-            else if line.starts_with("logical_observable")
-                && let Some(id) = Self::extract_observable_id(line)
-            {
-                #[allow(clippy::cast_possible_wrap)] // observable ID fits in i32
-                {
-                    max_obs = max_obs.max(id as i32);
-                }
-                Self::record_metadata(
-                    &mut dem_outputs,
-                    DemOutput::new(id).with_kind(crate::fault_tolerance::DemOutputKind::Observable),
-                );
-            }
-            // Parse PECOS DEM-superset metadata declarations.
-            else if line.starts_with("pecos_observable")
-                || line.starts_with("pecos_tracked_pauli")
-            {
-                let op = parse_pecos_dem_metadata_line(line)
-                    .map_err(|err| DemParseError::InvalidPecosMetadata(err.to_string()))?;
-                if op.is_tracked_pauli() {
-                    #[allow(clippy::cast_possible_wrap)] // tracked-Pauli ID fits in i32
-                    {
-                        max_tracked_pauli = max_tracked_pauli.max(op.id as i32);
-                    }
-                    Self::record_metadata(&mut tracked_paulis, op);
-                } else {
-                    #[allow(clippy::cast_possible_wrap)] // observable ID fits in i32
-                    {
-                        max_obs = max_obs.max(op.id as i32);
-                    }
-                    Self::record_metadata(&mut dem_outputs, op);
-                }
-            }
-            // PECOS extensions are explicit; ordinary DEM lines remain valid,
-            // but unknown PECOS extension statements should not be silently
-            // accepted as historical aliases.
-            else if line.starts_with("pecos_") {
-                return Err(DemParseError::InvalidPecosMetadata(format!(
-                    "unsupported PECOS DEM extension line: {line}"
-                )));
+                _ => {}
             }
         }
-
-        if max_obs >= 0 {
-            #[allow(clippy::cast_sign_loss)] // guarded by >= 0 check
-            {
-                dem_outputs.resize(max_obs as usize + 1, None);
-            }
-        }
-        if max_tracked_pauli >= 0 {
-            #[allow(clippy::cast_sign_loss)] // guarded by >= 0 check
-            {
-                tracked_paulis.resize(max_tracked_pauli as usize + 1, None);
-            }
-        }
-
+        dem_outputs.resize(num_dem_outputs as usize, None);
+        tracked_paulis.resize(num_tracked_paulis as usize, None);
         Ok(Self {
             mechanisms,
-            num_detectors: if max_det >= 0 {
-                #[allow(clippy::cast_sign_loss)] // guarded by >= 0 check
-                {
-                    max_det as u32 + 1
-                }
-            } else {
-                0
-            },
-            num_dem_outputs: if max_obs >= 0 {
-                #[allow(clippy::cast_sign_loss)] // guarded by >= 0 check
-                {
-                    max_obs as u32 + 1
-                }
-            } else {
-                0
-            },
+            num_detectors,
+            num_dem_outputs,
             dem_outputs,
             tracked_paulis,
         })
@@ -771,18 +667,12 @@ impl FromStr for ParsedDem {
 /// Errors that can occur when parsing a DEM.
 #[derive(Debug, Clone)]
 pub enum DemParseError {
+    /// An index exceeds the consumer representation.
+    UnsupportedIndex(String),
+    /// A valid instruction requires flattening.
+    RequiresFlattening(String),
     /// Invalid DEM format.
     InvalidFormat(String),
-    /// Invalid probability value.
-    InvalidProbability(String),
-    /// Invalid detector ID.
-    InvalidDetectorId(String),
-    /// Invalid observable ID.
-    InvalidObservableId(String),
-    /// Invalid tracked-Pauli ID.
-    InvalidTrackedPauliId(String),
-    /// Invalid target token in an error line.
-    InvalidTarget(String),
     /// Invalid PECOS DEM-superset metadata.
     InvalidPecosMetadata(String),
 }
@@ -790,12 +680,10 @@ pub enum DemParseError {
 impl std::fmt::Display for DemParseError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::UnsupportedIndex(message) | Self::RequiresFlattening(message) => {
+                f.write_str(message)
+            }
             Self::InvalidFormat(msg) => write!(f, "Invalid DEM format: {msg}"),
-            Self::InvalidProbability(s) => write!(f, "Invalid probability: {s}"),
-            Self::InvalidDetectorId(s) => write!(f, "Invalid detector ID: {s}"),
-            Self::InvalidObservableId(s) => write!(f, "Invalid observable ID: {s}"),
-            Self::InvalidTrackedPauliId(s) => write!(f, "Invalid tracked Pauli ID: {s}"),
-            Self::InvalidTarget(s) => write!(f, "Invalid DEM error target: {s}"),
             Self::InvalidPecosMetadata(s) => write!(f, "Invalid PECOS DEM metadata: {s}"),
         }
     }
@@ -1335,8 +1223,8 @@ mod tests {
     #[test]
     fn test_parse_rejects_unknown_error_targets() {
         let err = ParsedDem::from_str("error(0.125) D1 T0").unwrap_err();
-        assert!(matches!(err, DemParseError::InvalidTarget(_)));
-        assert!(err.to_string().contains("Invalid DEM error target: T0"));
+        assert!(matches!(err, DemParseError::InvalidFormat(_)));
+        assert!(err.to_string().contains("invalid DEM target token: T0"));
     }
 
     #[test]
@@ -1344,7 +1232,7 @@ mod tests {
         for target in ["TP", "TPx", "TP-1"] {
             let err = ParsedDem::from_str(&format!("error(0.125) {target}")).unwrap_err();
             assert!(
-                matches!(err, DemParseError::InvalidTrackedPauliId(_)),
+                matches!(err, DemParseError::InvalidFormat(_)),
                 "{target} should be rejected as a malformed tracked-Pauli target"
             );
         }
@@ -1389,8 +1277,11 @@ mod tests {
     #[test]
     fn test_parse_rejects_unknown_pecos_dem_extension() {
         let err = ParsedDem::from_str("pecos_old_extension {}").unwrap_err();
-        assert!(matches!(err, DemParseError::InvalidPecosMetadata(_)));
-        assert!(err.to_string().contains("unsupported PECOS DEM extension"));
+        assert!(matches!(err, DemParseError::InvalidFormat(_)));
+        assert!(
+            err.to_string()
+                .contains("unrecognized DEM instruction: pecos_old_extension")
+        );
     }
 
     #[test]

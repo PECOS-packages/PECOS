@@ -5,11 +5,10 @@ edition = "2021"
 publish = false
 
 [dependencies]
-# Enable runtime and hugr features for full API access
-pecos = { path = "../../../../../crates/pecos", features = ["runtime", "hugr", "wasm"] }
+# Enable runtime simulation and WASM APIs used by the examples
+pecos = { path = "../../../../../crates/pecos", features = ["runtime", "wasm"] }
 # Also include internal crates that docs may reference directly
 pecos-core = { path = "../../../../../crates/pecos-core" }
-pecos-hugr = { path = "../../../../../crates/pecos-hugr" }
 pecos-engines = { path = "../../../../../crates/pecos-engines" }
 pecos-simulators = { path = "../../../../../crates/pecos-simulators" }
 pecos-quantum = { path = "../../../../../crates/pecos-quantum" }

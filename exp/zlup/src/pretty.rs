@@ -1697,9 +1697,9 @@ mod tests {
 
     #[test]
     fn test_parameterized_gate() {
-        let source = "fn test() -> unit { rx(0.5) q[0]; }";
+        let source = "fn test() -> unit { rx(0.5 turns) q[0]; }";
         let formatted = format(source);
-        assert!(formatted.contains("rx(0.5) q[0]"));
+        assert!(formatted.contains("rx(0.5 turns) q[0]"));
     }
 
     #[test]

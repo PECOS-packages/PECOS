@@ -29,7 +29,7 @@ def test_measurement_value_crosses_branch() -> None:
         result("marker", marker)
         discard(q)
 
-    results = sim(Guppy(main)).quantum(state_vector()).seed(1).run(3).to_dict()
+    results = sim(Guppy(main)).qubits(2).quantum(state_vector()).seed(1).run(3).to_dict()
     assert results["b"] == [0, 0, 0]
     assert results["marker"] == [10, 10, 10]
 
@@ -57,7 +57,7 @@ def test_called_measurement_value_crosses_branch() -> None:
         result("marker", marker)
         discard(q)
 
-    results = sim(Guppy(main)).quantum(state_vector()).seed(1).run(3).to_dict()
+    results = sim(Guppy(main)).qubits(2).quantum(state_vector()).seed(1).run(3).to_dict()
     assert results["b"] == [0, 0, 0]
     assert results["marker"] == [10, 10, 10]
 
@@ -84,7 +84,7 @@ def test_measurement_value_crosses_dynamic_branch() -> None:
         result("marker", marker)
         discard(q)
 
-    results = sim(Guppy(main)).quantum(state_vector()).seed(1).run(20).to_dict()
+    results = sim(Guppy(main)).qubits(2).quantum(state_vector()).seed(1).run(20).to_dict()
     assert results["b"] == [0] * 20
     assert set(results["marker"]) == {10, 20}
 
@@ -112,7 +112,7 @@ def test_measurement_value_crosses_two_branches() -> None:
         result("marker", marker)
         discard(q)
 
-    results = sim(Guppy(main)).quantum(state_vector()).seed(1).run(3).to_dict()
+    results = sim(Guppy(main)).qubits(2).quantum(state_vector()).seed(1).run(3).to_dict()
     assert results["b"] == [0, 0, 0]
     assert results["marker"] == [30, 30, 30]
 
@@ -141,6 +141,6 @@ def test_tailloop_remeasurement_uses_last_iteration() -> None:
         result("marker", marker)
         discard(q)
 
-    results = sim(Guppy(main)).quantum(state_vector()).seed(1).run(3).to_dict()
+    results = sim(Guppy(main)).qubits(2).quantum(state_vector()).seed(1).run(3).to_dict()
     assert results["last"] == [1, 1, 1]
     assert results["marker"] == [10, 10, 10]

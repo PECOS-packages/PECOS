@@ -21,8 +21,9 @@ pub(crate) mod signal_store;
 pub use builder::CommandBuilder;
 pub use signal_store::{SignalIter, SignalStore};
 
-use pecos_core::{Angle64, QubitId, Signal, TimeUnits};
+use pecos_core::{Angle64, Gate, QubitId, Signal, TimeUnits};
 use smallvec::SmallVec;
+use std::fmt;
 
 /// The type of a quantum gate operation.
 ///
@@ -84,6 +85,69 @@ pub enum GateType {
     // Idle
     Idle,
 }
+
+macro_rules! declare_all_gate_types {
+    ($($variant:ident),+ $(,)?) => {
+        impl GateType {
+            /// Every built-in gate type.
+            pub const ALL: &'static [Self] = &[$(Self::$variant),+];
+        }
+
+        // Adding a `GateType` variant without listing it above makes this
+        // match non-exhaustive, so `ALL` cannot silently fall behind the enum.
+        const fn gate_type_all_is_exhaustive(gate: GateType) {
+            match gate {
+                $(GateType::$variant => {}),+
+            }
+        }
+
+        const _: () = gate_type_all_is_exhaustive(GateType::ALL[0]);
+    };
+}
+
+declare_all_gate_types!(
+    I,
+    X,
+    Y,
+    Z,
+    H,
+    F,
+    Fdg,
+    SX,
+    SXdg,
+    SY,
+    SYdg,
+    SZ,
+    SZdg,
+    T,
+    Tdg,
+    RX,
+    RY,
+    RZ,
+    U,
+    RXY1Q,
+    CX,
+    CY,
+    CZ,
+    SZZ,
+    SZZdg,
+    SXX,
+    SXXdg,
+    SYY,
+    SYYdg,
+    SWAP,
+    RXX,
+    RYY,
+    RZZ,
+    CCX,
+    MZ,
+    MeasureLeaked,
+    MeasureFree,
+    PZ,
+    QAlloc,
+    QFree,
+    Idle,
+);
 
 impl GateType {
     /// Returns the number of qubits this gate operates on.
@@ -192,10 +256,85 @@ impl GateType {
     }
 }
 
+/// Error returned when a command has the wrong number of angle values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GateCommandAngleArityError {
+    /// The command gate type being validated.
+    pub gate_type: GateType,
+    /// The number of angles required by the command representation.
+    pub expected: usize,
+    /// The number of angles supplied by the command.
+    pub actual: usize,
+}
+
+impl fmt::Display for GateCommandAngleArityError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "Gate {:?} expected {} angle parameters, got {}",
+            self.gate_type, self.expected, self.actual
+        )
+    }
+}
+
+impl std::error::Error for GateCommandAngleArityError {}
+
+/// Error returned by command validation or conversion to a core gate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GateCommandError {
+    /// The command carries the wrong number of angles.
+    AngleArity(GateCommandAngleArityError),
+    /// The corresponding core gate payload is invalid.
+    InvalidGate {
+        /// The command gate type being validated.
+        gate_type: GateType,
+        /// The validation failure reported by core gate validation.
+        message: String,
+    },
+    /// An Idle command has no target qubits.
+    EmptyIdleBatch,
+    /// An Idle duration cannot be represented exactly by the core `f64`
+    /// duration field.
+    IdleDurationNotRepresentable { duration: u64 },
+}
+
+impl fmt::Display for GateCommandError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::AngleArity(error) => error.fmt(f),
+            Self::InvalidGate { message, .. } => f.write_str(message),
+            Self::EmptyIdleBatch => f.write_str("an Idle command must target at least one qubit"),
+            Self::IdleDurationNotRepresentable { duration } => write!(
+                f,
+                "Idle duration {duration} cannot be represented exactly as a core f64 duration"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for GateCommandError {}
+
+fn u64_is_exactly_representable_as_f64(value: u64) -> bool {
+    if value == 0 {
+        return true;
+    }
+    let significant_bits = u64::BITS - value.leading_zeros();
+    significant_bits <= 53 || value.trailing_zeros() >= significant_bits - 53
+}
+
+/// Rotation angles or an idle duration for a gate command.
+#[derive(Debug, Clone, PartialEq)]
+pub enum GatePayload {
+    /// Rotation angles, empty for non-parameterized gates.
+    Angles(SmallVec<[Angle64; 2]>),
+    /// An idle duration in abstract time units.
+    Duration(TimeUnits),
+}
+
 /// A single quantum gate command.
 ///
 /// This is a typed representation of a gate operation with its target qubits
-/// and any angle parameters.
+/// and either rotation angles or an idle duration.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GateCommand {
     /// The type of gate to apply.
@@ -205,19 +344,24 @@ pub struct GateCommand {
     /// Uses `SmallVec` to avoid heap allocation for common cases (1-4 qubits).
     pub qubits: SmallVec<[QubitId; 4]>,
 
-    /// Angle parameters for parameterized gates.
-    /// Empty for non-parameterized gates.
-    pub angles: SmallVec<[Angle64; 2]>,
+    /// Rotation angles or an idle duration, never both.
+    pub payload: GatePayload,
 }
 
 impl GateCommand {
+    /// Whether this command has complete qubit groups and the required angles.
+    #[must_use]
+    pub(crate) fn has_valid_shape(&self) -> bool {
+        !self.qubits.is_empty() && self.validate().is_ok()
+    }
+
     /// Create a new gate command.
     #[must_use]
     pub fn new(gate_type: GateType, qubits: impl Into<SmallVec<[QubitId; 4]>>) -> Self {
         Self {
             gate_type,
             qubits: qubits.into(),
-            angles: SmallVec::new(),
+            payload: GatePayload::Angles(SmallVec::new()),
         }
     }
 
@@ -231,7 +375,16 @@ impl GateCommand {
         Self {
             gate_type,
             qubits: qubits.into(),
-            angles: angles.into(),
+            payload: GatePayload::Angles(angles.into()),
+        }
+    }
+
+    /// Get the rotation angles. Duration payloads have no angles.
+    #[must_use]
+    pub fn angles(&self) -> &[Angle64] {
+        match &self.payload {
+            GatePayload::Angles(angles) => angles,
+            GatePayload::Duration(_) => &[],
         }
     }
 
@@ -258,7 +411,7 @@ impl GateCommand {
         let q = self.qubits.clone();
         let same = |t: GateType| Some(Self::new(t, q.clone()));
         let neg_first = |t: GateType| -> Option<Self> {
-            let theta = *self.angles.first()?;
+            let theta = *self.angles().first()?;
             Some(Self::with_angles(t, q.clone(), smallvec::smallvec![-theta]))
         };
         match self.gate_type {
@@ -299,8 +452,8 @@ impl GateCommand {
             | GateType::RZZ => neg_first(self.gate_type),
             // RXY1Q(theta, phi) dagger = RXY1Q(-theta, phi).
             GateType::RXY1Q => {
-                let theta = *self.angles.first()?;
-                let phi = *self.angles.get(1)?;
+                let theta = *self.angles().first()?;
+                let phi = *self.angles().get(1)?;
                 Some(Self::with_angles(
                     GateType::RXY1Q,
                     q,
@@ -309,9 +462,9 @@ impl GateCommand {
             }
             // U(theta, phi, lambda) dagger = U(-theta, -lambda, -phi).
             GateType::U => {
-                let theta = *self.angles.first()?;
-                let phi = *self.angles.get(1)?;
-                let lambda = *self.angles.get(2)?;
+                let theta = *self.angles().first()?;
+                let phi = *self.angles().get(1)?;
+                let lambda = *self.angles().get(2)?;
                 Some(Self::with_angles(
                     GateType::U,
                     q,
@@ -398,19 +551,17 @@ impl GateCommand {
 
     /// Create an idle gate with a specified duration.
     ///
-    /// The duration is stored in the angles field as abstract time units.
     /// Use [`Self::get_idle_duration`] to retrieve the duration.
     ///
     /// Time units are abstract - the interpretation (nanoseconds, clock cycles, etc.)
     /// is defined by the noise model configuration.
     #[must_use]
     pub fn idle(qubit: QubitId, duration: TimeUnits) -> Self {
-        // Store duration in the angles field (repurposing Angle64's u64 storage)
-        Self::with_angles(
-            GateType::Idle,
-            smallvec::smallvec![qubit],
-            smallvec::smallvec![Angle64::new(duration.as_u64())],
-        )
+        Self {
+            gate_type: GateType::Idle,
+            qubits: smallvec::smallvec![qubit],
+            payload: GatePayload::Duration(duration),
+        }
     }
 
     /// Get the idle duration for an Idle gate.
@@ -418,11 +569,79 @@ impl GateCommand {
     /// Returns `None` if this is not an Idle gate or has no duration.
     #[must_use]
     pub fn get_idle_duration(&self) -> Option<TimeUnits> {
-        if self.gate_type == GateType::Idle {
-            self.angles.first().map(|a| TimeUnits::new(a.fraction()))
-        } else {
-            None
+        match (self.gate_type, &self.payload) {
+            (GateType::Idle, GatePayload::Duration(duration)) => Some(*duration),
+            _ => None,
         }
+    }
+
+    /// Validate the command's payload and qubit support.
+    ///
+    /// # Errors
+    /// Returns an error for invalid arity or qubit support.
+    pub fn validate(&self) -> Result<(), GateCommandError> {
+        let expected = self.gate_type.angle_arity();
+        let actual = self.angles().len();
+        if actual != expected {
+            return Err(GateCommandError::AngleArity(GateCommandAngleArityError {
+                gate_type: self.gate_type,
+                expected,
+                actual,
+            }));
+        }
+        let gate = if self.gate_type == GateType::Idle {
+            if self.qubits.is_empty() {
+                return Err(GateCommandError::EmptyIdleBatch);
+            }
+            let duration =
+                self.get_idle_duration()
+                    .ok_or_else(|| GateCommandError::InvalidGate {
+                        gate_type: self.gate_type,
+                        message: "an Idle command requires a duration payload".to_string(),
+                    })?;
+            // Core validation checks support and parameter count. Only
+            // try_to_core_gate may return this floating-point representation.
+            Gate::idle(duration.as_f64(), self.qubits.clone())
+        } else {
+            if matches!(self.payload, GatePayload::Duration(_)) {
+                return Err(GateCommandError::InvalidGate {
+                    gate_type: self.gate_type,
+                    message: "only an Idle command can carry a duration payload".to_string(),
+                });
+            }
+            Gate::new(
+                self.gate_type.into(),
+                self.angles().to_vec(),
+                Vec::new(),
+                self.qubits.clone(),
+            )
+        };
+        gate.validate()
+            .map_err(|message| GateCommandError::InvalidGate {
+                gate_type: self.gate_type,
+                message,
+            })
+    }
+
+    /// Convert to a core gate without truncating Idle durations.
+    ///
+    /// # Errors
+    /// Returns an error for an invalid command or an inexact duration conversion.
+    pub fn try_to_core_gate(&self) -> Result<Gate, GateCommandError> {
+        self.validate()?;
+        if let Some(time) = self.get_idle_duration() {
+            let duration = time.as_u64();
+            if !u64_is_exactly_representable_as_f64(duration) {
+                return Err(GateCommandError::IdleDurationNotRepresentable { duration });
+            }
+            return Ok(Gate::idle(time.as_f64(), self.qubits.clone()));
+        }
+        Ok(Gate::new(
+            self.gate_type.into(),
+            self.angles().to_vec(),
+            Vec::new(),
+            self.qubits.clone(),
+        ))
     }
 }
 
@@ -453,9 +672,31 @@ impl CommandQueue {
         }
     }
 
-    /// Add a command to the queue.
+    /// Add a command without validation. Collection and builders preserve input;
+    /// execution and conversion boundaries report invalid commands as errors.
     pub fn push(&mut self, command: GateCommand) {
         self.commands.push(command);
+    }
+
+    /// Add a command after checking that it converts losslessly to a core gate.
+    ///
+    /// # Errors
+    /// Returns a command validation or representation error without changing the queue.
+    pub fn try_push(&mut self, command: GateCommand) -> Result<(), GateCommandError> {
+        command.try_to_core_gate()?;
+        self.commands.push(command);
+        Ok(())
+    }
+
+    /// Validate all commands for native execution without converting durations to f64.
+    ///
+    /// # Errors
+    /// Returns the first invalid command payload or qubit-support error.
+    pub fn validate_for_execution(&self) -> Result<(), GateCommandError> {
+        for command in self {
+            command.validate()?;
+        }
+        Ok(())
     }
 
     /// Push a signal at the current position (after the last pushed command).
@@ -524,6 +765,10 @@ impl CommandQueue {
         self.commands.iter()
     }
 
+    pub(crate) fn clear_commands(&mut self) {
+        self.commands.clear();
+    }
+
     /// Clear all gate commands and signals from the queue.
     pub fn clear(&mut self) {
         self.commands.clear();
@@ -539,10 +784,12 @@ impl CommandQueue {
 
 impl FromIterator<GateCommand> for CommandQueue {
     fn from_iter<I: IntoIterator<Item = GateCommand>>(iter: I) -> Self {
-        Self {
-            commands: iter.into_iter().collect(),
-            signals: SignalStore::default(),
+        let iter = iter.into_iter();
+        let mut queue = Self::with_capacity(iter.size_hint().0);
+        for command in iter {
+            queue.push(command);
         }
+        queue
     }
 }
 
@@ -573,7 +820,7 @@ mod tests {
         let x = GateCommand::x(QubitId(0));
         assert_eq!(x.gate_type, GateType::X);
         assert_eq!(x.qubits.as_slice(), &[QubitId(0)]);
-        assert!(x.angles.is_empty());
+        assert!(x.angles().is_empty());
 
         let cx = GateCommand::cx(QubitId(0), QubitId(1));
         assert_eq!(cx.gate_type, GateType::CX);
@@ -602,5 +849,98 @@ mod tests {
         assert_eq!(GateType::RXY1Q.angle_arity(), 2);
         assert_eq!(GateType::U.angle_arity(), 3);
         assert_eq!(GateType::H.angle_arity(), 0);
+        assert_eq!(GateType::Idle.angle_arity(), 0);
+    }
+
+    #[test]
+    fn try_push_rejects_wrong_angle_arity_without_changing_queue() {
+        let mut queue = CommandQueue::new();
+        let error = queue
+            .try_push(GateCommand::new(
+                GateType::RZ,
+                smallvec::smallvec![QubitId(0)],
+            ))
+            .expect_err("a malformed rotation must not enter a command queue");
+
+        let GateCommandError::AngleArity(error) = error else {
+            panic!("wrong error variant");
+        };
+        assert_eq!(error.gate_type, GateType::RZ);
+        assert_eq!(error.expected, 1);
+        assert_eq!(error.actual, 0);
+        assert!(queue.is_empty());
+    }
+
+    #[test]
+    fn try_push_rejects_surplus_angles_on_fixed_gate() {
+        let mut queue = CommandQueue::new();
+        let error = queue
+            .try_push(GateCommand::with_angles(
+                GateType::H,
+                smallvec::smallvec![QubitId(0)],
+                smallvec::smallvec![Angle64::QUARTER_TURN],
+            ))
+            .expect_err("a fixed gate must not silently discard supplied angles");
+
+        let GateCommandError::AngleArity(error) = error else {
+            panic!("wrong error variant");
+        };
+        assert_eq!(error.gate_type, GateType::H);
+        assert_eq!(error.expected, 0);
+        assert_eq!(error.actual, 1);
+        assert!(queue.is_empty());
+    }
+
+    #[test]
+    fn try_push_rejects_invalid_core_gate_payload_without_changing_queue() {
+        let mut queue = CommandQueue::new();
+        let error = queue
+            .try_push(GateCommand::cx(QubitId(0), QubitId(0)))
+            .expect_err("a command with duplicate operands must not enter the queue");
+
+        let GateCommandError::InvalidGate { gate_type, message } = error else {
+            panic!("wrong error variant");
+        };
+        assert_eq!(gate_type, GateType::CX);
+        assert!(message.contains("requires distinct qubits"));
+        assert!(queue.is_empty());
+    }
+
+    #[test]
+    fn try_push_rejects_idle_that_core_cannot_represent_losslessly() {
+        let mut queue = CommandQueue::new();
+        let duration = (1_u64 << 53) + 1;
+        let error = queue
+            .try_push(GateCommand::idle(QubitId(0), TimeUnits::new(duration)))
+            .expect_err("an inexact core f64 conversion must be rejected");
+
+        assert_eq!(
+            error,
+            GateCommandError::IdleDurationNotRepresentable { duration }
+        );
+        assert!(queue.is_empty());
+
+        let exactly_representable = 1_u64 << 54;
+        queue
+            .try_push(GateCommand::idle(
+                QubitId(0),
+                TimeUnits::new(exactly_representable),
+            ))
+            .expect("exact powers of two remain representable above 2^53");
+    }
+
+    #[test]
+    fn try_push_rejects_empty_idle_batch_without_panicking() {
+        let mut queue = CommandQueue::new();
+        let error = queue
+            .try_push(GateCommand {
+                gate_type: GateType::Idle,
+                qubits: SmallVec::new(),
+                payload: GatePayload::Duration(TimeUnits::ZERO),
+            })
+            .expect_err("a zero-width Idle must be rejected before conversion");
+
+        assert_eq!(error, GateCommandError::EmptyIdleBatch);
+        assert!(queue.is_empty());
     }
 }

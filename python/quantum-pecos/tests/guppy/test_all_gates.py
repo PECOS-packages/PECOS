@@ -1,7 +1,9 @@
-"""Gate verification tests for the HUGR interpreter."""
+"""Gate verification tests for the Selene QIS route."""
 
 import pytest
 from guppylang import guppy
+from guppylang.std.builtins import array
+from guppylang.std.builtins import result as record_result
 from guppylang.std.quantum import (
     crz,
     cx,
@@ -37,13 +39,13 @@ def run_circuit(
     shots: int = 100,
     seed: int = 42,
 ) -> dict:
-    """Run a Guppy function with PECOS direct HUGR interpreter."""
+    """Run a Guppy function with PECOS Selene QIS engine."""
     return sim(Guppy(guppy_func)).qubits(num_qubits).quantum(state_vector()).seed(seed).run(shots).to_dict()
 
 
 def get_measurements(results: dict) -> list:
-    """Extract measurements from results."""
-    return results["measurements"]
+    """Read scalar or array measurements recorded under the outcome tag."""
+    return results["outcome"]
 
 
 class TestSingleQubitGates:
@@ -56,10 +58,12 @@ class TestSingleQubitGates:
         def circuit() -> bool:
             q = qubit()
             x(q)
-            return measure(q).read()
+            output_value = measure(q).read()
+            record_result("outcome", output_value)
+            return output_value
 
         measurements = get_measurements(run_circuit(circuit, 1))
-        assert all(m == [1] for m in measurements)
+        assert all(m == 1 for m in measurements)
 
     def test_y_gate(self) -> None:
         """Y gate: |0> -> i|1> (measures as |1>)."""
@@ -68,10 +72,12 @@ class TestSingleQubitGates:
         def circuit() -> bool:
             q = qubit()
             y(q)
-            return measure(q).read()
+            output_value = measure(q).read()
+            record_result("outcome", output_value)
+            return output_value
 
         measurements = get_measurements(run_circuit(circuit, 1))
-        assert all(m == [1] for m in measurements)
+        assert all(m == 1 for m in measurements)
 
     def test_z_gate_on_zero(self) -> None:
         """Z gate: |0> -> |0> (no change in measurement)."""
@@ -80,10 +86,12 @@ class TestSingleQubitGates:
         def circuit() -> bool:
             q = qubit()
             z(q)
-            return measure(q).read()
+            output_value = measure(q).read()
+            record_result("outcome", output_value)
+            return output_value
 
         measurements = get_measurements(run_circuit(circuit, 1))
-        assert all(m == [0] for m in measurements)
+        assert all(m == 0 for m in measurements)
 
     def test_z_gate_on_one(self) -> None:
         """Z gate: |1> -> -|1> (still measures as |1>)."""
@@ -93,10 +101,12 @@ class TestSingleQubitGates:
             q = qubit()
             x(q)
             z(q)
-            return measure(q).read()
+            output_value = measure(q).read()
+            record_result("outcome", output_value)
+            return output_value
 
         measurements = get_measurements(run_circuit(circuit, 1))
-        assert all(m == [1] for m in measurements)
+        assert all(m == 1 for m in measurements)
 
     def test_h_gate_superposition(self) -> None:
         """H gate: |0> -> |+> (50/50 distribution)."""
@@ -105,11 +115,13 @@ class TestSingleQubitGates:
         def circuit() -> bool:
             q = qubit()
             h(q)
-            return measure(q).read()
+            output_value = measure(q).read()
+            record_result("outcome", output_value)
+            return output_value
 
         measurements = get_measurements(run_circuit(circuit, 1, shots=1000))
-        zeros = sum(1 for m in measurements if m == [0])
-        ones = sum(1 for m in measurements if m == [1])
+        zeros = sum(1 for m in measurements if m == 0)
+        ones = sum(1 for m in measurements if m == 1)
         # Expect roughly 50/50 with some tolerance
         assert 400 < zeros < 600, f"Expected ~500 zeros, got {zeros}"
         assert 400 < ones < 600, f"Expected ~500 ones, got {ones}"
@@ -122,10 +134,12 @@ class TestSingleQubitGates:
             q = qubit()
             h(q)
             h(q)
-            return measure(q).read()
+            output_value = measure(q).read()
+            record_result("outcome", output_value)
+            return output_value
 
         measurements = get_measurements(run_circuit(circuit, 1))
-        assert all(m == [0] for m in measurements)
+        assert all(m == 0 for m in measurements)
 
     def test_s_gate(self) -> None:
         """S gate (phase): |0> -> |0>."""
@@ -134,10 +148,12 @@ class TestSingleQubitGates:
         def circuit() -> bool:
             q = qubit()
             s(q)
-            return measure(q).read()
+            output_value = measure(q).read()
+            record_result("outcome", output_value)
+            return output_value
 
         measurements = get_measurements(run_circuit(circuit, 1))
-        assert all(m == [0] for m in measurements)
+        assert all(m == 0 for m in measurements)
 
     def test_sdg_gate(self) -> None:
         """Sdg gate (S-dagger): |0> -> |0>."""
@@ -146,10 +162,12 @@ class TestSingleQubitGates:
         def circuit() -> bool:
             q = qubit()
             sdg(q)
-            return measure(q).read()
+            output_value = measure(q).read()
+            record_result("outcome", output_value)
+            return output_value
 
         measurements = get_measurements(run_circuit(circuit, 1))
-        assert all(m == [0] for m in measurements)
+        assert all(m == 0 for m in measurements)
 
     def test_s_sdg_identity(self) -> None:
         """S-Sdg = I on superposition."""
@@ -161,10 +179,12 @@ class TestSingleQubitGates:
             s(q)
             sdg(q)
             h(q)
-            return measure(q).read()
+            output_value = measure(q).read()
+            record_result("outcome", output_value)
+            return output_value
 
         measurements = get_measurements(run_circuit(circuit, 1))
-        assert all(m == [0] for m in measurements)
+        assert all(m == 0 for m in measurements)
 
     def test_t_gate(self) -> None:
         """T gate: |0> -> |0>."""
@@ -173,10 +193,12 @@ class TestSingleQubitGates:
         def circuit() -> bool:
             q = qubit()
             t(q)
-            return measure(q).read()
+            output_value = measure(q).read()
+            record_result("outcome", output_value)
+            return output_value
 
         measurements = get_measurements(run_circuit(circuit, 1))
-        assert all(m == [0] for m in measurements)
+        assert all(m == 0 for m in measurements)
 
     def test_tdg_gate(self) -> None:
         """Tdg gate (T-dagger): |0> -> |0>."""
@@ -185,10 +207,12 @@ class TestSingleQubitGates:
         def circuit() -> bool:
             q = qubit()
             tdg(q)
-            return measure(q).read()
+            output_value = measure(q).read()
+            record_result("outcome", output_value)
+            return output_value
 
         measurements = get_measurements(run_circuit(circuit, 1))
-        assert all(m == [0] for m in measurements)
+        assert all(m == 0 for m in measurements)
 
     def test_t_tdg_identity(self) -> None:
         """T-Tdg = I on superposition."""
@@ -200,10 +224,12 @@ class TestSingleQubitGates:
             t(q)
             tdg(q)
             h(q)
-            return measure(q).read()
+            output_value = measure(q).read()
+            record_result("outcome", output_value)
+            return output_value
 
         measurements = get_measurements(run_circuit(circuit, 1))
-        assert all(m == [0] for m in measurements)
+        assert all(m == 0 for m in measurements)
 
     def test_v_gate_squared(self) -> None:
         """V gate (sqrt(X)): V^2 = X, so |0> -> |1>."""
@@ -213,10 +239,12 @@ class TestSingleQubitGates:
             q = qubit()
             v(q)
             v(q)
-            return measure(q).read()
+            output_value = measure(q).read()
+            record_result("outcome", output_value)
+            return output_value
 
         measurements = get_measurements(run_circuit(circuit, 1))
-        assert all(m == [1] for m in measurements)
+        assert all(m == 1 for m in measurements)
 
     def test_vdg_gate_squared(self) -> None:
         """Vdg gate: Vdg^2 = X, so |0> -> |1>."""
@@ -226,10 +254,12 @@ class TestSingleQubitGates:
             q = qubit()
             vdg(q)
             vdg(q)
-            return measure(q).read()
+            output_value = measure(q).read()
+            record_result("outcome", output_value)
+            return output_value
 
         measurements = get_measurements(run_circuit(circuit, 1))
-        assert all(m == [1] for m in measurements)
+        assert all(m == 1 for m in measurements)
 
     def test_v_vdg_identity(self) -> None:
         """V-Vdg = I."""
@@ -239,10 +269,12 @@ class TestSingleQubitGates:
             q = qubit()
             v(q)
             vdg(q)
-            return measure(q).read()
+            output_value = measure(q).read()
+            record_result("outcome", output_value)
+            return output_value
 
         measurements = get_measurements(run_circuit(circuit, 1))
-        assert all(m == [0] for m in measurements)
+        assert all(m == 0 for m in measurements)
 
 
 class TestRotationGates:
@@ -255,10 +287,12 @@ class TestRotationGates:
         def circuit() -> bool:
             q = qubit()
             rx(q, pi)
-            return measure(q).read()
+            output_value = measure(q).read()
+            record_result("outcome", output_value)
+            return output_value
 
         measurements = get_measurements(run_circuit(circuit, 1))
-        assert all(m == [1] for m in measurements)
+        assert all(m == 1 for m in measurements)
 
     def test_ry_pi(self) -> None:
         """RY(pi) = Y (up to global phase)."""
@@ -267,10 +301,12 @@ class TestRotationGates:
         def circuit() -> bool:
             q = qubit()
             ry(q, pi)
-            return measure(q).read()
+            output_value = measure(q).read()
+            record_result("outcome", output_value)
+            return output_value
 
         measurements = get_measurements(run_circuit(circuit, 1))
-        assert all(m == [1] for m in measurements)
+        assert all(m == 1 for m in measurements)
 
     def test_rz_on_zero(self) -> None:
         """RZ(pi) on |0> = |0>."""
@@ -279,10 +315,12 @@ class TestRotationGates:
         def circuit() -> bool:
             q = qubit()
             rz(q, pi)
-            return measure(q).read()
+            output_value = measure(q).read()
+            record_result("outcome", output_value)
+            return output_value
 
         measurements = get_measurements(run_circuit(circuit, 1))
-        assert all(m == [0] for m in measurements)
+        assert all(m == 0 for m in measurements)
 
     def test_rz_phase_flip(self) -> None:
         """RZ(pi): |+> -> |-> -> |1> via H-RZ-H."""
@@ -293,10 +331,12 @@ class TestRotationGates:
             h(q)
             rz(q, pi)
             h(q)
-            return measure(q).read()
+            output_value = measure(q).read()
+            record_result("outcome", output_value)
+            return output_value
 
         measurements = get_measurements(run_circuit(circuit, 1))
-        assert all(m == [1] for m in measurements)
+        assert all(m == 1 for m in measurements)
 
 
 class TestTwoQubitGates:
@@ -310,7 +350,9 @@ class TestTwoQubitGates:
             q0 = qubit()
             q1 = qubit()
             cx(q0, q1)
-            return measure(q0).read(), measure(q1).read()
+            output_value = measure(q0).read(), measure(q1).read()
+            record_result("outcome", array(output_value[0], output_value[1]))
+            return output_value
 
         measurements = get_measurements(run_circuit(circuit, 2))
         assert all(m == [0, 0] for m in measurements)
@@ -324,7 +366,9 @@ class TestTwoQubitGates:
             q1 = qubit()
             x(q0)
             cx(q0, q1)
-            return measure(q0).read(), measure(q1).read()
+            output_value = measure(q0).read(), measure(q1).read()
+            record_result("outcome", array(output_value[0], output_value[1]))
+            return output_value
 
         measurements = get_measurements(run_circuit(circuit, 2))
         assert all(m == [1, 1] for m in measurements)
@@ -337,7 +381,9 @@ class TestTwoQubitGates:
             q0 = qubit()
             q1 = qubit()
             cy(q0, q1)
-            return measure(q0).read(), measure(q1).read()
+            output_value = measure(q0).read(), measure(q1).read()
+            record_result("outcome", array(output_value[0], output_value[1]))
+            return output_value
 
         measurements = get_measurements(run_circuit(circuit, 2))
         assert all(m == [0, 0] for m in measurements)
@@ -351,7 +397,9 @@ class TestTwoQubitGates:
             q1 = qubit()
             x(q0)
             cy(q0, q1)
-            return measure(q0).read(), measure(q1).read()
+            output_value = measure(q0).read(), measure(q1).read()
+            record_result("outcome", array(output_value[0], output_value[1]))
+            return output_value
 
         measurements = get_measurements(run_circuit(circuit, 2))
         assert all(m == [1, 1] for m in measurements)
@@ -366,7 +414,9 @@ class TestTwoQubitGates:
             x(q0)
             x(q1)
             cz(q0, q1)
-            return measure(q0).read(), measure(q1).read()
+            output_value = measure(q0).read(), measure(q1).read()
+            record_result("outcome", array(output_value[0], output_value[1]))
+            return output_value
 
         measurements = get_measurements(run_circuit(circuit, 2))
         assert all(m == [1, 1] for m in measurements)
@@ -379,7 +429,9 @@ class TestTwoQubitGates:
             q0 = qubit()
             q1 = qubit()
             crz(q0, q1, pi)
-            return measure(q0).read(), measure(q1).read()
+            output_value = measure(q0).read(), measure(q1).read()
+            record_result("outcome", array(output_value[0], output_value[1]))
+            return output_value
 
         measurements = get_measurements(run_circuit(circuit, 2))
         assert all(m == [0, 0] for m in measurements)
@@ -395,7 +447,9 @@ class TestTwoQubitGates:
             h(q1)  # target = |+>
             crz(q0, q1, pi)  # target -> |->
             h(q1)  # target -> |1>
-            return measure(q0).read(), measure(q1).read()
+            output_value = measure(q0).read(), measure(q1).read()
+            record_result("outcome", array(output_value[0], output_value[1]))
+            return output_value
 
         measurements = get_measurements(run_circuit(circuit, 2))
         assert all(m == [1, 1] for m in measurements)
@@ -413,7 +467,9 @@ class TestThreeQubitGates:
             q1 = qubit()
             q2 = qubit()
             toffoli(q0, q1, q2)
-            return measure(q0).read(), measure(q1).read(), measure(q2).read()
+            output_value = measure(q0).read(), measure(q1).read(), measure(q2).read()
+            record_result("outcome", array(output_value[0], output_value[1], output_value[2]))
+            return output_value
 
         measurements = get_measurements(run_circuit(circuit, 3))
         assert all(m == [0, 0, 0] for m in measurements)
@@ -428,7 +484,9 @@ class TestThreeQubitGates:
             q2 = qubit()
             x(q0)
             toffoli(q0, q1, q2)
-            return measure(q0).read(), measure(q1).read(), measure(q2).read()
+            output_value = measure(q0).read(), measure(q1).read(), measure(q2).read()
+            record_result("outcome", array(output_value[0], output_value[1], output_value[2]))
+            return output_value
 
         measurements = get_measurements(run_circuit(circuit, 3))
         assert all(m == [1, 0, 0] for m in measurements)
@@ -443,7 +501,9 @@ class TestThreeQubitGates:
             q2 = qubit()
             x(q1)
             toffoli(q0, q1, q2)
-            return measure(q0).read(), measure(q1).read(), measure(q2).read()
+            output_value = measure(q0).read(), measure(q1).read(), measure(q2).read()
+            record_result("outcome", array(output_value[0], output_value[1], output_value[2]))
+            return output_value
 
         measurements = get_measurements(run_circuit(circuit, 3))
         assert all(m == [0, 1, 0] for m in measurements)
@@ -459,7 +519,9 @@ class TestThreeQubitGates:
             x(q0)
             x(q1)
             toffoli(q0, q1, q2)
-            return measure(q0).read(), measure(q1).read(), measure(q2).read()
+            output_value = measure(q0).read(), measure(q1).read(), measure(q2).read()
+            record_result("outcome", array(output_value[0], output_value[1], output_value[2]))
+            return output_value
 
         measurements = get_measurements(run_circuit(circuit, 3))
         assert all(m == [1, 1, 1] for m in measurements)
@@ -476,10 +538,12 @@ class TestResetAndDiscard:
             q = qubit()
             x(q)
             reset(q)
-            return measure(q).read()
+            output_value = measure(q).read()
+            record_result("outcome", output_value)
+            return output_value
 
         measurements = get_measurements(run_circuit(circuit, 1))
-        assert all(m == [0] for m in measurements)
+        assert all(m == 0 for m in measurements)
 
     def test_reset_from_zero(self) -> None:
         """Reset: |0> -> |0>."""
@@ -488,10 +552,12 @@ class TestResetAndDiscard:
         def circuit() -> bool:
             q = qubit()
             reset(q)
-            return measure(q).read()
+            output_value = measure(q).read()
+            record_result("outcome", output_value)
+            return output_value
 
         measurements = get_measurements(run_circuit(circuit, 1))
-        assert all(m == [0] for m in measurements)
+        assert all(m == 0 for m in measurements)
 
     def test_discard(self) -> None:
         """Discard doesn't crash and other qubits work."""
@@ -502,10 +568,12 @@ class TestResetAndDiscard:
             q2 = qubit()
             x(q1)
             discard(q2)
-            return measure(q1).read()
+            output_value = measure(q1).read()
+            record_result("outcome", output_value)
+            return output_value
 
         measurements = get_measurements(run_circuit(circuit, 2))
-        assert all(m == [1] for m in measurements)
+        assert all(m == 1 for m in measurements)
 
 
 class TestEntanglement:
@@ -520,7 +588,9 @@ class TestEntanglement:
             q1 = qubit()
             h(q0)
             cx(q0, q1)
-            return measure(q0).read(), measure(q1).read()
+            output_value = measure(q0).read(), measure(q1).read()
+            record_result("outcome", array(output_value[0], output_value[1]))
+            return output_value
 
         measurements = get_measurements(run_circuit(circuit, 2, shots=1000))
         # All measurements should be correlated
@@ -542,7 +612,9 @@ class TestEntanglement:
             h(q0)
             cx(q0, q1)
             cx(q1, q2)
-            return measure(q0).read(), measure(q1).read(), measure(q2).read()
+            output_value = measure(q0).read(), measure(q1).read(), measure(q2).read()
+            record_result("outcome", array(output_value[0], output_value[1], output_value[2]))
+            return output_value
 
         measurements = get_measurements(run_circuit(circuit, 3, shots=1000))
         # All measurements should be correlated

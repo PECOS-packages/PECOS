@@ -402,7 +402,7 @@ fn demo_conditional_program() {
     // Run multiple shots to see both branches
     let mut corrected_count = 0;
     for shot in 0..10 {
-        let result = runner.run_shot(&mut program);
+        let result = runner.run_shot(&mut program).expect("shot should succeed");
         let num_batches = result.num_batches;
         let corrected = num_batches == 2;
         if corrected {
@@ -436,38 +436,40 @@ fn demo_repeat_until_success() {
         fn next_commands(
             &mut self,
             outcomes: Option<&MeasurementOutcomes>,
-        ) -> Option<pecos_neo::command::CommandQueue> {
+        ) -> Result<Option<pecos_neo::command::CommandQueue>, pecos_core::errors::PecosError>
+        {
             // Check if previous attempt succeeded (measured 0)
             if let Some(o) = outcomes
                 && o.get_bit(QubitId(0)) == Some(false)
             {
                 self.success = true;
-                return None; // Success!
+                return Ok(None); // Success!
             }
 
             if self.current_attempt >= self.max_attempts {
-                return None; // Give up
+                return Ok(None); // Give up
             }
 
             self.current_attempt += 1;
 
             // Try again: prepare, rotate slightly, measure
-            Some(
+            Ok(Some(
                 CommandBuilder::new()
                     .pz(&[0])
                     .h(&[0]) // 50% chance of 0
                     .mz(&[0])
                     .build(),
-            )
+            ))
         }
 
         fn is_complete(&self) -> bool {
             self.success || self.current_attempt >= self.max_attempts
         }
 
-        fn reset(&mut self) {
+        fn reset(&mut self) -> Result<(), pecos_core::errors::PecosError> {
             self.current_attempt = 0;
             self.success = false;
+            Ok(())
         }
 
         fn num_qubits(&self) -> usize {
@@ -486,7 +488,7 @@ fn demo_repeat_until_success() {
     println!("\nRepeat-Until-Success Demo:");
 
     for trial in 0..5 {
-        let result = runner.run_shot(&mut program);
+        let result = runner.run_shot(&mut program).expect("shot should succeed");
         println!(
             "  Trial {}: {} attempts, success={}",
             trial, result.num_batches, program.success

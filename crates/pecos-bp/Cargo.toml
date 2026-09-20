@@ -1,0 +1,26 @@
+[package]
+name = "pecos-bp"
+version.workspace = true
+edition.workspace = true
+readme = "README.md"
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Native belief-propagation primitives for PECOS decoders"
+
+[dependencies]
+pecos-decoder-core.workspace = true
+pecos-random.workspace = true
+
+[dev-dependencies]
+ndarray.workspace = true
+pecos-relay-bp.workspace = true
+
+[lib]
+name = "pecos_bp"
+
+[lints]
+workspace = true

@@ -20,8 +20,8 @@
 use super::DemBuilderError;
 use super::types::{
     IdleChannelFamilies, MeasurementMechanism, MeasurementNoiseChannelResidual,
-    MeasurementNoiseModel, NoiseChannelKind, NoiseConfig, fit_exclusive_signatures,
-    validate_exclusive_probabilities,
+    MeasurementNoiseModel, NoiseChannelKind, NoiseConfig, ReplacementBranchApproximation,
+    fit_exclusive_signatures, is_two_qubit_noise_gate, validate_exclusive_probabilities,
 };
 use crate::fault_tolerance::propagator::{DagFaultInfluenceMap, Pauli};
 use pecos_core::gate_type::GateType;
@@ -74,14 +74,42 @@ impl<'a> MemBuilder<'a> {
     /// # Errors
     ///
     /// Returns an error if the influence map contains a gate that Pauli
-    /// propagation cannot faithfully represent.
+    /// propagation cannot faithfully represent, or a configuration error if a noise
+    /// input or signature channel is invalid. Configurations with replacement
+    /// entries in `BranchImpact` or `ExactBranchReplay` mode are rejected: this
+    /// builder does not represent their separate branch channels or circuit replay.
     ///
-    /// # Panics
-    ///
-    /// Panics if a noise input or signature channel is invalid.
+    /// Per-gate rate tables are honoured, not rejected: the fault paths resolve
+    /// them through `rates_1q_for_operation` and `rates_2q_for_operation`. Keys
+    /// are validated the same way `DemBuilder` validates them, so a key naming
+    /// another scheduled gate's Clifford action is rejected here too instead of
+    /// being silently ignored.
     pub fn build(&self) -> Result<MeasurementNoiseModel, DemBuilderError> {
         if let Some(error) = self.influence_map.unsupported_gate() {
             return Err(DemBuilderError::UnsupportedGate(error.clone()));
+        }
+        // MEM consumes these tables, so it must reject the same mis-keyed
+        // entries DemBuilder rejects; otherwise the two builders disagree and
+        // MEM drops the rate without a word.
+        self.noise
+            .validate_gate_rate_keys(&self.influence_map.locations)
+            .map_err(|error| DemBuilderError::ConfigurationError(error.to_string()))?;
+        // These modes separate replacement branches from the ordinary Pauli
+        // rates. MEM has no corresponding branch channels or replay provider.
+        if matches!(
+            self.noise.p2_replacement_approximation,
+            ReplacementBranchApproximation::BranchImpact
+                | ReplacementBranchApproximation::ExactBranchReplay
+        ) && self
+            .noise
+            .p2_weights
+            .as_ref()
+            .is_some_and(super::types::PauliWeights::has_replacement_entries)
+        {
+            return Err(DemBuilderError::ConfigurationError(format!(
+                "MEM cannot represent {:?} replacement branches; separate branch channels or a circuit-aware replay provider are required",
+                self.noise.p2_replacement_approximation
+            )));
         }
         let num_measurements = self.influence_map.measurements.len();
         let mut mem = MeasurementNoiseModel::new(num_measurements);
@@ -110,21 +138,7 @@ impl<'a> MemBuilder<'a> {
                 {
                     self.process_single_pauli_fault(loc_idx, Pauli::X, self.noise.p_meas, &mut mem);
                 }
-                GateType::CX
-                | GateType::CZ
-                | GateType::CY
-                | GateType::SZZ
-                | GateType::SZZdg
-                | GateType::SXX
-                | GateType::SXXdg
-                | GateType::SYY
-                | GateType::SYYdg
-                | GateType::SWAP
-                | GateType::RXX
-                | GateType::RYY
-                | GateType::RZZ
-                    if !loc.before =>
-                {
+                gate_type if is_two_qubit_noise_gate(gate_type) && !loc.before => {
                     two_qubit_groups.entry(loc.node).or_default().push(loc_idx);
                 }
                 GateType::H
@@ -146,33 +160,27 @@ impl<'a> MemBuilder<'a> {
                 | GateType::RZ
                 | GateType::U
                 | GateType::RXY1Q
-                    if self.noise.p1 != 0.0 && !loc.before =>
+                    if !loc.before =>
                 {
-                    self.process_single_qubit_fault(loc_idx, &mut mem);
+                    self.process_single_qubit_fault(loc_idx, &mut mem)?;
                 }
-                GateType::Idle if !loc.before => {
-                    if self.noise.uses_dedicated_idle_noise() {
-                        let duration = loc.idle_duration;
-                        let families = self
-                            .noise
-                            .try_idle_channel_families(duration)
-                            .unwrap_or_else(|error| {
-                                panic!("invalid DEM idle-noise configuration: {error}")
-                            });
-                        self.process_idle_fault(loc_idx, families, &mut mem);
-                    } else if self.noise.p1 != 0.0 {
-                        self.process_single_qubit_fault(loc_idx, &mut mem);
-                    }
+                GateType::Idle if !loc.before && self.noise.uses_dedicated_idle_noise() => {
+                    let duration = loc.idle_duration;
+                    let families = self
+                        .noise
+                        .try_idle_channel_families(duration)
+                        .map_err(|error| DemBuilderError::ConfigurationError(error.to_string()))?;
+                    self.process_idle_fault(loc_idx, families, &mut mem)?;
                 }
                 _ => {}
             }
         }
 
-        if self.noise.p2 != 0.0 {
+        if self.noise.has_any_p2_noise() {
             for loc_indices in two_qubit_groups.values() {
                 for pair in loc_indices.chunks(2) {
                     if pair.len() == 2 {
-                        self.process_two_qubit_fault(pair[0], pair[1], &mut mem);
+                        self.process_two_qubit_fault(pair[0], pair[1], &mut mem)?;
                     }
                 }
             }
@@ -221,12 +229,18 @@ impl<'a> MemBuilder<'a> {
         }
     }
 
-    fn process_single_qubit_fault(&self, loc_idx: usize, mem: &mut MeasurementNoiseModel) {
-        let prob = self.noise.p1 / 3.0;
-        let probabilities = [prob; 3];
+    fn process_single_qubit_fault(
+        &self,
+        loc_idx: usize,
+        mem: &mut MeasurementNoiseModel,
+    ) -> Result<(), DemBuilderError> {
+        let loc = &self.influence_map.locations[loc_idx];
+        let probabilities = self
+            .noise
+            .rates_1q_for_operation(loc.gate_type, loc.noise_gate_type);
         let context = format!("one-qubit gate at location {loc_idx}");
         validate_exclusive_probabilities(&probabilities, &context)
-            .unwrap_or_else(|error| panic!("invalid DEM noise configuration: {error}"));
+            .map_err(|error| DemBuilderError::ConfigurationError(error.to_string()))?;
         let mut exclusive = std::collections::BTreeMap::new();
         for (pauli, probability) in [Pauli::X, Pauli::Y, Pauli::Z]
             .into_iter()
@@ -244,7 +258,8 @@ impl<'a> MemBuilder<'a> {
             exclusive,
             &context,
             mem,
-        );
+        )?;
+        Ok(())
     }
 
     fn process_idle_fault(
@@ -252,7 +267,7 @@ impl<'a> MemBuilder<'a> {
         loc_idx: usize,
         families: IdleChannelFamilies,
         mem: &mut MeasurementNoiseModel,
-    ) {
+    ) -> Result<(), DemBuilderError> {
         let x_mechanism = self.compute_mechanism(loc_idx, Pauli::X);
         let y_mechanism = self.compute_mechanism(loc_idx, Pauli::Y);
         let z_mechanism = self.compute_mechanism(loc_idx, Pauli::Z);
@@ -280,7 +295,7 @@ impl<'a> MemBuilder<'a> {
                 |left, right| xor_measurement_mechanisms(Some(left), Some(right)),
                 &context,
             )
-            .unwrap_or_else(|error| panic!("invalid DEM idle-noise configuration: {error}"));
+            .map_err(|error| DemBuilderError::ConfigurationError(error.to_string()))?;
             for (mechanism, probability) in fit.mechanisms {
                 mem.add_mechanism(mechanism, probability);
             }
@@ -305,14 +320,22 @@ impl<'a> MemBuilder<'a> {
                 }
             }
         }
+        Ok(())
     }
 
-    fn process_two_qubit_fault(&self, loc1: usize, loc2: usize, mem: &mut MeasurementNoiseModel) {
-        let prob = self.noise.p2 / 15.0;
-        let probabilities = [prob; 15];
+    fn process_two_qubit_fault(
+        &self,
+        loc1: usize,
+        loc2: usize,
+        mem: &mut MeasurementNoiseModel,
+    ) -> Result<(), DemBuilderError> {
+        let loc = &self.influence_map.locations[loc1];
+        let probabilities = self
+            .noise
+            .rates_2q_for_operation(loc.gate_type, loc.clifford);
         let context = format!("two-qubit gate at locations {loc1} and {loc2}");
         validate_exclusive_probabilities(&probabilities, &context)
-            .unwrap_or_else(|error| panic!("invalid DEM noise configuration: {error}"));
+            .map_err(|error| DemBuilderError::ConfigurationError(error.to_string()))?;
         let paulis = [Pauli::I, Pauli::X, Pauli::Y, Pauli::Z];
 
         let mut effects1: [Option<MeasurementMechanism>; 4] = [None, None, None, None];
@@ -341,8 +364,9 @@ impl<'a> MemBuilder<'a> {
                     )
                 };
 
-                if !mechanism.is_empty() && prob != 0.0 {
-                    *exclusive.entry(mechanism).or_insert(0.0) += prob;
+                let index = usize::from(p1.as_u8()) * 4 + usize::from(p2.as_u8()) - 1;
+                if !mechanism.is_empty() && probabilities[index] != 0.0 {
+                    *exclusive.entry(mechanism).or_insert(0.0) += probabilities[index];
                 }
             }
         }
@@ -352,7 +376,8 @@ impl<'a> MemBuilder<'a> {
             exclusive,
             &context,
             mem,
-        );
+        )?;
+        Ok(())
     }
 
     fn add_exclusive_signatures(
@@ -361,13 +386,13 @@ impl<'a> MemBuilder<'a> {
         exclusive: std::collections::BTreeMap<MeasurementMechanism, f64>,
         context: &str,
         mem: &mut MeasurementNoiseModel,
-    ) {
+    ) -> Result<(), DemBuilderError> {
         let fit = fit_exclusive_signatures(
             exclusive,
             |left, right| xor_measurement_mechanisms(Some(left), Some(right)),
             context,
         )
-        .unwrap_or_else(|error| panic!("invalid DEM noise configuration: {error}"));
+        .map_err(|error| DemBuilderError::ConfigurationError(error.to_string()))?;
         for (mechanism, probability) in fit.mechanisms {
             mem.add_mechanism(mechanism, probability);
         }
@@ -380,6 +405,7 @@ impl<'a> MemBuilder<'a> {
                 magnitude,
             });
         }
+        Ok(())
     }
 
     fn compute_mechanism(&self, loc_idx: usize, pauli: Pauli) -> MeasurementMechanism {

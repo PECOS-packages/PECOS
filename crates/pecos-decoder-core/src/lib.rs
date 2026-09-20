@@ -24,8 +24,8 @@
 
 pub mod adaptive;
 pub mod advanced;
-pub mod bp;
 pub mod bp_matching;
+pub mod clifford_frame;
 pub mod config;
 pub mod correlated_decoder;
 pub mod correlated_reweighting;
@@ -49,6 +49,7 @@ pub mod results;
 pub mod streaming;
 pub mod telemetry;
 pub mod two_pass_decoder;
+pub mod window;
 
 use ndarray::ArrayView1;
 
@@ -225,6 +226,22 @@ pub trait ObservableDecoder {
             results.push(self.decode_obs(syn)?);
         }
         Ok(results)
+    }
+}
+
+/// Complete correction in the edge order established by a commit-window builder.
+pub trait EdgeDecoder {
+    /// Return every selected window-local edge, including any preprocessing.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the syndrome cannot be decoded.
+    fn decode_to_edges(&mut self, syndrome: &[u8]) -> Result<Vec<usize>, DecoderError>;
+}
+
+impl<D: EdgeDecoder + ?Sized> EdgeDecoder for Box<D> {
+    fn decode_to_edges(&mut self, syndrome: &[u8]) -> Result<Vec<usize>, DecoderError> {
+        (**self).decode_to_edges(syndrome)
     }
 }
 

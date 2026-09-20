@@ -53,6 +53,7 @@ jobs:
         uses: github/codeql-action/init@9e0d7b8d25671d64c341c19c0152d693099fb5ba # v4
         with:
           languages: ${{ matrix.language }}
+          config-file: ./.github/codeql/codeql-config.yml
 
       - name: Initialize CodeQL with build mode
         if: matrix.build-mode != ''
@@ -60,12 +61,24 @@ jobs:
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
+          config-file: ./.github/codeql/codeql-config.yml
 
       - name: Autobuild
         if: matrix.build-mode == 'autobuild'
         uses: github/codeql-action/autobuild@9e0d7b8d25671d64c341c19c0152d693099fb5ba # v4
 
+      # With build-mode none the Rust extractor runs inside this step. It loads
+      # the cargo workspace through rust-analyzer, which compiles and runs every
+      # build script into a scratch target dir (over 4 of the 9 extraction
+      # minutes on a cold runner). Pin that dir so the step below can report its
+      # size; caching it is a follow-up once the size is known.
       - name: Perform CodeQL analysis
         uses: github/codeql-action/analyze@9e0d7b8d25671d64c341c19c0152d693099fb5ba # v4
+        env:
+          CODEQL_EXTRACTOR_RUST_OPTION_CARGO_TARGET_DIR: ${{ runner.temp }}/codeql-cargo-target
         with:
           category: "/language:${{ matrix.language }}"
+
+      - name: Report the Rust extractor cargo target dir size
+        if: matrix.language == 'rust'
+        run: du -sh "${RUNNER_TEMP}/codeql-cargo-target"

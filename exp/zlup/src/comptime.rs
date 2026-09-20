@@ -37,10 +37,12 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
+use std::path::Path;
 
 use crate::ast::{
-    BinaryOp, Expr, FStringPart, FnDecl, ForRange, PrimitiveType, Stmt, TypeExpr, UnaryOp,
+    BinaryOp, Binding, Expr, FStringPart, FnDecl, ForRange, PrimitiveType, Stmt, TypeExpr, UnaryOp,
 };
+use crate::module::ModuleLoader;
 use crate::rational::Rational;
 use crate::semantic::{BitWidth, SemanticError, Type};
 
@@ -1482,8 +1484,13 @@ impl ComptimeEvaluator {
                             // since radians involve pi (irrational)
                             // But we can try to detect if it represents n*pi/d
                             let radians = r.to_f64();
-                            if let Some(turns_rational) = Rational::radians_to_turns(radians) {
-                                return Ok(ComptimeValue::Rational(turns_rational));
+                            if let Some((numerator, denominator)) =
+                                Rational::from_f64_pi_multiple(radians)
+                            {
+                                return Ok(ComptimeValue::Rational(Rational::new(
+                                    numerator,
+                                    2 * denominator as i64,
+                                )));
                             }
                             let turns = radians / (2.0 * std::f64::consts::PI);
                             return Ok(ComptimeValue::Float(turns));
@@ -1504,9 +1511,12 @@ impl ComptimeEvaluator {
 
                 // For radian values, try to detect pi-multiples and preserve precision
                 if let AngleUnit::Rad = angle.unit
-                    && let Some(turns_rational) = Rational::radians_to_turns(numeric)
+                    && let Some((numerator, denominator)) = Rational::from_f64_pi_multiple(numeric)
                 {
-                    return Ok(ComptimeValue::Rational(turns_rational));
+                    return Ok(ComptimeValue::Rational(Rational::new(
+                        numerator,
+                        2 * denominator as i64,
+                    )));
                 }
 
                 // Fall back to float conversion
@@ -2672,9 +2682,182 @@ impl ComptimeEvaluator {
     }
 }
 
+/// Create an evaluator for angle expressions.
+///
+/// Mathematical constants are plain numbers. An angle unit must come from an
+/// `AngleLit` at the use site or from a previously normalized `a64` binding.
+pub fn angle_evaluator() -> ComptimeEvaluator {
+    let mut evaluator = ComptimeEvaluator::new();
+    for (name, value) in [
+        ("PI", std::f64::consts::PI),
+        ("pi", std::f64::consts::PI),
+        ("TAU", std::f64::consts::TAU),
+        ("tau", std::f64::consts::TAU),
+        ("e", std::f64::consts::E),
+    ] {
+        evaluator.context.define(name, ComptimeValue::Float(value));
+    }
+    evaluator
+}
+
+/// Add an immutable binding to an angle evaluator when its value is known at
+/// compile time.
+pub fn define_comptime_binding(evaluator: &mut ComptimeEvaluator, binding: &Binding) -> bool {
+    if binding.is_mutable {
+        return false;
+    }
+    if let Some(expr) = &binding.value {
+        let value = import_path(expr).map_or_else(
+            || evaluator.eval_expr(expr),
+            |path| {
+                let mut loader = ModuleLoader::new();
+                let from_file = binding
+                    .location
+                    .as_ref()
+                    .and_then(|location| location.file.as_deref())
+                    .map(Path::new);
+                load_comptime_module(&mut loader, path, from_file)
+            },
+        );
+        if let Ok(value) = value {
+            evaluator.context.define(&binding.name, value);
+            return true;
+        }
+    }
+    false
+}
+
+fn import_path(expr: &Expr) -> Option<&str> {
+    let Expr::Builtin(builtin) = expr else {
+        return None;
+    };
+    if builtin.name != "import" {
+        return None;
+    }
+    match builtin.args.first() {
+        Some(Expr::StringLit(path)) => Some(path.value.as_str()),
+        _ => None,
+    }
+}
+
+fn load_comptime_module(
+    loader: &mut ModuleLoader,
+    import: &str,
+    from_file: Option<&Path>,
+) -> ComptimeResult<ComptimeValue> {
+    load_comptime_module_inner(loader, import, from_file, &mut Vec::new())
+}
+
+fn load_comptime_module_inner(
+    loader: &mut ModuleLoader,
+    import: &str,
+    from_file: Option<&Path>,
+    loading: &mut Vec<std::path::PathBuf>,
+) -> ComptimeResult<ComptimeValue> {
+    let module = loader
+        .load(import, from_file)
+        .map_err(|error| ComptimeError {
+            message: error.to_string(),
+        })?
+        .clone();
+
+    if let Some(cycle_start) = loading.iter().position(|path| path == &module.path) {
+        let mut cycle = loading[cycle_start..]
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect::<Vec<_>>();
+        cycle.push(module.path.display().to_string());
+        return Err(ComptimeError {
+            message: format!("circular import detected: {}", cycle.join(" -> ")),
+        });
+    }
+    loading.push(module.path.clone());
+
+    let result = evaluate_comptime_module(loader, &module, loading);
+    let popped = loading.pop();
+    debug_assert_eq!(popped.as_ref(), Some(&module.path));
+    result
+}
+
+fn evaluate_comptime_module(
+    loader: &mut ModuleLoader,
+    module: &crate::module::Module,
+    loading: &mut Vec<std::path::PathBuf>,
+) -> ComptimeResult<ComptimeValue> {
+    let mut evaluator = angle_evaluator();
+    let mut fields = BTreeMap::new();
+
+    for decl in &module.program.declarations {
+        let crate::ast::TopLevelDecl::Binding(binding) = decl else {
+            continue;
+        };
+        if binding.is_mutable {
+            continue;
+        }
+        let Some(expr) = &binding.value else {
+            continue;
+        };
+        let value = if let Some(import) = import_path(expr) {
+            load_comptime_module_inner(loader, import, Some(&module.path), loading)?
+        } else {
+            evaluator.eval_expr(expr)?
+        };
+        evaluator.context.define(&binding.name, value.clone());
+        if binding.is_pub {
+            fields.insert(binding.name.clone(), value);
+        }
+    }
+
+    Ok(ComptimeValue::Struct {
+        name: module.path.display().to_string(),
+        fields,
+    })
+}
+
+/// Resolve a unit-bearing angle expression to the language's native turns.
+pub fn resolve_angle_turns(evaluator: &mut ComptimeEvaluator, expr: &Expr) -> ComptimeResult<f64> {
+    let value = evaluator.eval_expr(expr)?;
+    value.as_float().ok_or_else(|| ComptimeError {
+        message: format!("angle value {value:?} is not numeric"),
+    })
+}
+
+/// Name an angle expression for diagnostics, preferring the runtime value it
+/// references over a source position.
+pub fn angle_expression_name(expr: &Expr) -> String {
+    fn referenced_name(expr: &Expr) -> Option<&str> {
+        match expr {
+            Expr::Ident(ident) => Some(&ident.name),
+            Expr::Binary(binary) => {
+                referenced_name(&binary.left).or_else(|| referenced_name(&binary.right))
+            }
+            Expr::Unary(unary) => referenced_name(&unary.operand),
+            Expr::AngleLit(angle) => referenced_name(&angle.value),
+            Expr::TypeAscription(ascription) => referenced_name(&ascription.value),
+            Expr::Comptime(comptime) => referenced_name(&comptime.inner),
+            Expr::Index(index) => referenced_name(&index.object),
+            Expr::Field(field) => referenced_name(&field.object),
+            _ => None,
+        }
+    }
+
+    match (referenced_name(expr), expr.get_location()) {
+        (Some(name), Some(location)) => format!(
+            "{name} at line {}, column {}",
+            location.line, location.column
+        ),
+        (Some(name), None) => name.to_string(),
+        (None, Some(location)) => {
+            format!("line {}, column {}", location.line, location.column)
+        }
+        (None, None) => "<unknown>".to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
 
     #[test]
     fn test_comptime_value_display() {
@@ -2711,6 +2894,26 @@ mod tests {
             eval.eval_binary_op(BinaryOp::Mod, &a, &b).unwrap(),
             ComptimeValue::Int(1)
         );
+    }
+
+    #[test]
+    fn test_comptime_module_cycle_is_reported() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let a_path = temp_dir.path().join("a.zlp");
+        let b_path = temp_dir.path().join("b.zlp");
+        let main_path = temp_dir.path().join("main.zlp");
+
+        let mut a = std::fs::File::create(&a_path).unwrap();
+        writeln!(a, "pub b := @import(\"b.zlp\"); pub aa: a64 = 1/8 turns;").unwrap();
+        let mut b = std::fs::File::create(&b_path).unwrap();
+        writeln!(b, "pub a := @import(\"a.zlp\"); pub bb: a64 = 1/4 turns;").unwrap();
+
+        let mut loader = ModuleLoader::new();
+        let error = load_comptime_module(&mut loader, "a.zlp", Some(&main_path))
+            .expect_err("cyclic comptime import should fail");
+        assert!(error.message.contains("circular import detected"));
+        assert!(error.message.contains("a.zlp"));
+        assert!(error.message.contains("b.zlp"));
     }
 
     #[test]

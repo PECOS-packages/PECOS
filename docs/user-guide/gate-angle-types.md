@@ -257,7 +257,7 @@ The gate and angle types form the foundation for the operator algebra:
 - `Angle64` is used by `UnitaryRep::Rotation` for rotation gate angles
 - `QuarterPhase` is carried by every `PauliString` for exact Pauli algebra
 - `GateType` is used by `UnitaryRep::Gate` for named gate nodes in expression trees
-- `GlobalPhase` is used by `UnitaryRep::Phase` for arbitrary global phases
+- `GlobalPhase` is used by `UnitaryRep::Phased` for arbitrary global phases
 - `GateRegistry` decomposes custom gates into sequences of base `GateType` operations during simulation
 
 For how these feed into the operator type system, see the [Quantum Operator Algebra guide](quantum-operator-algebra.md).

@@ -13,7 +13,7 @@ Supports:
 - Qubit allocation via `VarDefine` (no explicit Alloc instructions)
 
 Scope: Straight-line quantum circuits (no classical control flow).
-For programs with control flow, use `HugrEngine` directly.
+Programs with control flow require lowering to QIS at the Python boundary.
 */
 
 use crate::builtin_ops::{BuiltinOp, FuncOp, ModuleOp, VarDefineOp};
@@ -157,7 +157,7 @@ impl HugrToPhirConverter {
         // keeps just the FIRST `DataflowBlock` of a CFG, so a HUGR with real
         // control flow would silently lose every other block (commonly
         // dropping the measurements -> empty results). Reject it up front so
-        // callers fall back to `HugrEngine` instead of getting wrong output.
+        // callers receive an explicit error instead of incorrect output.
         Self::reject_control_flow(hugr, hugr.entrypoint())?;
 
         let mut module = ModuleOp::new("hugr_module");
@@ -526,23 +526,35 @@ impl HugrToPhirConverter {
                         })?;
                         // PHIR carries qubit identity in SSA operands, so only the lowered gate
                         // kinds and angles are retained from these placeholder qubit IDs.
-                        let [rzz, rz] = pecos_core::controlled_rotations::lower_crz(
+                        for gate in pecos_core::controlled_rotations::lower_crz(
                             angle.expect("rotation angle checked above"),
                             QubitId(0),
                             QubitId(1),
-                        );
-                        block.add_instruction(Instruction::new(
-                            Operation::Quantum(QuantumOp::RZZ(rzz.angles[0])),
-                            vec![control, target],
-                            vec![self.fresh_ssa(), self.fresh_ssa()],
-                            vec![Type::Qubit; 2],
-                        ));
-                        block.add_instruction(Instruction::new(
-                            Operation::Quantum(QuantumOp::RZ(rz.angles[0])),
-                            vec![target],
-                            vec![self.fresh_ssa()],
-                            vec![Type::Qubit],
-                        ));
+                        ) {
+                            let op = match gate.gate_type {
+                                pecos_core::gate_type::GateType::Z => QuantumOp::Z,
+                                pecos_core::gate_type::GateType::RZZ => {
+                                    QuantumOp::RZZ(gate.angles[0])
+                                }
+                                pecos_core::gate_type::GateType::RZ => {
+                                    QuantumOp::RZ(gate.angles[0])
+                                }
+                                _ => unreachable!("unexpected CRZ lowering gate"),
+                            };
+                            let operands: Vec<_> = gate
+                                .qubits
+                                .iter()
+                                .map(|qubit| if qubit.index() == 0 { control } else { target })
+                                .collect();
+                            let results = (0..operands.len()).map(|_| self.fresh_ssa()).collect();
+                            let types = vec![Type::Qubit; operands.len()];
+                            block.add_instruction(Instruction::new(
+                                Operation::Quantum(op),
+                                operands,
+                                results,
+                                types,
+                            ));
+                        }
                         self.map_wire(node, 0, control);
                         self.map_wire(node, 1, target);
                         continue;

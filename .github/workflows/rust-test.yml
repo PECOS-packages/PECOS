@@ -1,4 +1,5 @@
 name: Rust test / linting
+run-name: Rust validation (${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full-rust')) && 'full' || 'PR smoke' }})
 
 permissions:
   contents: read
@@ -9,6 +10,12 @@ env:
   RUST_BACKTRACE: 1
   LLVM_VERSION: "21.1"
   LLVM_RELEASE_VERSION: "21.1.8"
+  # Same cargo network settings as python-test.yml / pr-core-gate.yml. Beyond
+  # robustness, rust-cache hashes these values into its key, so the rust-test
+  # cache is only restorable by pr-core-rust if the sets match exactly.
+  CARGO_HTTP_MULTIPLEXING: "false"
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  CARGO_NET_RETRY: "10"
 
 on:
   workflow_dispatch:
@@ -31,6 +38,7 @@ on:
       - '.github/workflows/rust-test.yml'
       - '.pre-commit-config.yaml'
   pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
     branches: [ "main", "master", "development", "dev" ]
     paths:
       - 'crates/**'
@@ -50,11 +58,13 @@ on:
       - '.pre-commit-config.yaml'
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # Unrelated label events must not cancel an active validation run.
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ (github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name != 'ci:full-rust' && github.run_id || 'validation' }}
   cancel-in-progress: true
 
 jobs:
   rust-lint:
+    if: (github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'ci:full-rust'
     runs-on: ubuntu-latest
     steps:
       - name: Harden the runner (egress audit)
@@ -68,11 +78,6 @@ jobs:
 
       - name: Harden apt against mirror flakiness
         run: ./scripts/ci/harden-apt.sh
-
-      - name: Free disk space
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
-          sudo apt-get clean
 
       - name: Set up Rust
         run: |
@@ -128,6 +133,7 @@ jobs:
         run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 
   rust-lint-no-llvm:
+    if: (github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'ci:full-rust'
     runs-on: ubuntu-latest
     steps:
       - name: Harden the runner (egress audit)
@@ -158,7 +164,7 @@ jobs:
 
       - name: Run clippy without LLVM features
         run: |
-          for crate in pecos-core pecos-engines pecos-simulators pecos-programs pecos-random pecos-qasm pecos-phir-json pecos-qis-ffi-types; do
+          for crate in pecos-core pecos-engines pecos-simulators pecos-programs pecos-random pecos-qasm pecos-phir-json pecos-qis-ffi-types pecos-decoders; do
             echo "Testing $crate..."
             cd "crates/$crate" && cargo clippy --locked --all-targets -- -D warnings && cd ../..
           done
@@ -166,6 +172,7 @@ jobs:
           cd crates/pecos && cargo clippy --locked --all-targets --no-default-features -- -D warnings && cd ../..
 
   pre-commit:
+    if: (github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'ci:full-rust'
     runs-on: ubuntu-latest
     steps:
       - name: Harden the runner (egress audit)
@@ -184,6 +191,9 @@ jobs:
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version-file: ".github/uv.toml"
+          # Nothing here benefits from a uv cache; the default (auto) would save
+          # a PR-scoped cache on every pull request.
+          enable-cache: false
       - name: Harden apt against mirror flakiness
         run: ./scripts/ci/harden-apt.sh
 
@@ -199,10 +209,12 @@ jobs:
   rust-test:
     needs: [pre-commit, rust-lint]
     runs-on: ${{ matrix.os }}
+    env:
+      FULL_RUST_TESTS: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full-rust') }}
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ github.event_name == 'pull_request' && fromJSON('["ubuntu-latest"]') || fromJSON('["ubuntu-latest", "macos-latest", "windows-2022"]') }}
+        os: ${{ github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ci:full-rust') && fromJSON('["ubuntu-latest"]') || fromJSON('["ubuntu-latest", "macos-latest", "windows-2022"]') }}
 
     steps:
       - name: Harden the runner (egress audit)
@@ -219,14 +231,8 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: ./scripts/ci/harden-apt.sh
 
-      - name: Free disk space (Linux)
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
-          sudo apt-get clean
-
       - name: Set up Rust (Windows)
-        if: runner.os == 'Windows' && (github.event_name != 'pull_request' || matrix.os == 'ubuntu-latest')
+        if: runner.os == 'Windows'
         run: |
           rustup set default-host x86_64-pc-windows-msvc
           rustup toolchain install stable --profile minimal
@@ -236,26 +242,26 @@ jobs:
           rustup show
 
       - name: Set up Rust (Unix)
-        if: runner.os != 'Windows' && (github.event_name != 'pull_request' || matrix.os == 'ubuntu-latest')
+        if: runner.os != 'Windows'
         run: |
           bash scripts/ci/ensure-rust.sh stable minimal
           export PATH="$HOME/.cargo/bin:$PATH"
           rustup show
 
       - name: Install just
-        if: github.event_name != 'pull_request' || matrix.os == 'ubuntu-latest'
         uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
 
       - name: Cache Rust
-        if: github.event_name != 'pull_request' || matrix.os == 'ubuntu-latest'
         uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           cache-bin: false
           prefix-key: v1-rust-no-bin
           save-if: ${{ github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev') }}
+          # The cache saved here is what pr-core-rust (pr-core-gate.yml)
+          # restores on every PR.
+          shared-key: rust-test
 
       - name: Cache LLVM ${{ env.LLVM_VERSION }}
-        if: github.event_name != 'pull_request' || matrix.os == 'ubuntu-latest'
         id: cache-llvm
         uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
@@ -263,7 +269,7 @@ jobs:
           key: llvm-${{ env.LLVM_RELEASE_VERSION }}-${{ runner.os }}-${{ runner.arch }}-v3
 
       - name: Bootstrap MSVC for the Cargo build path (Windows)
-        if: runner.os == 'Windows' && (github.event_name != 'pull_request' || matrix.os == 'ubuntu-latest')
+        if: runner.os == 'Windows'
         shell: pwsh
         # Single mechanism: writes the linker + LIB/INCLUDE into
         # .cargo/config.toml (read by cargo after it spawns). Sets no env pin,
@@ -272,11 +278,10 @@ jobs:
         run: ./scripts/win-msvc-bootstrap.ps1
 
       - name: Ensure LLVM ${{ env.LLVM_VERSION }}
-        if: github.event_name != 'pull_request' || matrix.os == 'ubuntu-latest'
         run: just ci-env
 
       - name: Save LLVM ${{ env.LLVM_VERSION }} cache
-        if: (github.event_name != 'pull_request' || matrix.os == 'ubuntu-latest') && steps.cache-llvm.outputs.cache-hit != 'true' && github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev')
+        if: steps.cache-llvm.outputs.cache-hit != 'true' && github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev')
         uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: ~/.pecos/deps/llvm-21.1
@@ -297,7 +302,7 @@ jobs:
           non-cuda-sub-packages: '["libcublas", "libcublas-dev"]'
 
       - name: Compile tests (macOS)
-        if: matrix.os == 'macos-latest' && github.event_name != 'pull_request'
+        if: matrix.os == 'macos-latest' && env.FULL_RUST_TESTS == 'true'
         run: cargo build --locked -p pecos-cli --release
 
       - name: Compile tests (Linux)
@@ -308,11 +313,11 @@ jobs:
           cargo build --locked -p pecos-cli --release
 
       - name: Compile tests (Windows)
-        if: runner.os == 'Windows' && github.event_name != 'pull_request'
+        if: runner.os == 'Windows' && env.FULL_RUST_TESTS == 'true'
         run: cargo build --locked -p pecos-cli --release
 
       - name: Run tests (macOS)
-        if: matrix.os == 'macos-latest' && github.event_name != 'pull_request'
+        if: matrix.os == 'macos-latest' && env.FULL_RUST_TESTS == 'true'
         env:
           # Prevent Homebrew/system library paths from interfering with linking
           LIBRARY_PATH: /usr/lib
@@ -321,15 +326,15 @@ jobs:
           ./target/release/pecos rust test
 
       - name: Run tests (Linux)
-        if: matrix.os == 'ubuntu-latest' && github.event_name != 'pull_request'
+        if: matrix.os == 'ubuntu-latest' && env.FULL_RUST_TESTS == 'true'
         run: |
           ./target/release/pecos rust test
 
       - name: Run tests (Linux PR smoke path)
-        if: matrix.os == 'ubuntu-latest' && github.event_name == 'pull_request'
+        if: matrix.os == 'ubuntu-latest' && env.FULL_RUST_TESTS != 'true'
         run: |
           ./target/release/pecos rust test --help
 
       - name: Run tests (Windows)
-        if: runner.os == 'Windows' && github.event_name != 'pull_request'
+        if: runner.os == 'Windows' && env.FULL_RUST_TESTS == 'true'
         run: .\target\release\pecos.exe rust test

@@ -93,6 +93,34 @@ pub trait CliffordRotation: CliffordGateable {
         pairs: &[(QubitId, QubitId)],
     ) -> Result<&mut Self, String>;
 
+    /// Apply RXYXY2Q when its Rz/Rxx decomposition consists of Clifford rotations.
+    ///
+    /// # Errors
+    /// Returns an error before changing the state if an angle is unsupported.
+    fn try_rxyxy2q(
+        &mut self,
+        theta: Angle64,
+        phi: Angle64,
+        pairs: &[(QubitId, QubitId)],
+    ) -> Result<&mut Self, String> {
+        if theta == Angle64::ZERO {
+            return Ok(self);
+        }
+        if simplify_two_qubit_clifford(GateType::RXX, theta).is_none()
+            || pecos_core::try_simplify_rotation_snapped(GateType::RZ, phi).is_none()
+        {
+            return Err(format!(
+                "RXYXY2Q(theta={theta}, phi={phi}) is not a supported Clifford rotation"
+            ));
+        }
+        for &(q0, q1) in pairs {
+            self.try_rz(-phi, &[q0, q1])?;
+            self.try_rxx(theta, &[(q0, q1)])?;
+            self.try_rz(phi, &[q0, q1])?;
+        }
+        Ok(self)
+    }
+
     /// Try to apply RXY1Q(theta, phi). Succeeds when the combination maps to a
     /// named Clifford (identity, X, Y, SX, `SXdg`, SY, `SYdg`).
     ///
@@ -568,13 +596,116 @@ mod tests {
     }
 
     #[test]
+    fn try_rxyxy2q_matches_xx_and_yy_rotations() {
+        let angles = [
+            Angle64::ZERO,
+            Angle64::QUARTER_TURN,
+            Angle64::HALF_TURN,
+            Angle64::THREE_QUARTERS_TURN,
+        ];
+        let batches: &[&[(QubitId, QubitId)]] = &[
+            &[],
+            &[(QubitId(2), QubitId(0))],
+            &[(QubitId(2), QubitId(0)), (QubitId(1), QubitId(3))],
+            &[(QubitId(2), QubitId(0)), (QubitId(0), QubitId(1))],
+        ];
+        for theta in angles {
+            for (axis, phi) in angles.into_iter().enumerate() {
+                for pairs in batches {
+                    let mut actual = SparseStab::new(5);
+                    let mut expected = SparseStab::new(5);
+                    for sim in [&mut actual, &mut expected] {
+                        sim.h(&[QubitId(0), QubitId(3)])
+                            .sz(&[QubitId(0)])
+                            .x(&[QubitId(2), QubitId(4)])
+                            .cx(&[(QubitId(0), QubitId(4))]);
+                    }
+                    actual.try_rxyxy2q(theta, phi, pairs).unwrap();
+                    // At phi = 0 or pi, both factors are X up to sign, so
+                    // their product is XX. At +/-pi/2, we get YY instead.
+                    // Applying each pair separately also checks overlapping
+                    // batches without relying on RXX or RYY batch behaviour.
+                    for &pair in *pairs {
+                        if axis % 2 == 0 {
+                            expected.try_rxx(theta, &[pair]).unwrap();
+                        } else {
+                            expected.try_ryy(theta, &[pair]).unwrap();
+                        }
+                    }
+                    assert_eq!(
+                        (actual.stab_tableau(), actual.destab_tableau()),
+                        (expected.stab_tableau(), expected.destab_tableau()),
+                        "theta={theta}, phi={phi}, pairs={pairs:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn try_rxyxy2q_zero_theta_accepts_arbitrary_axis() {
+        let mut sim = SparseStab::new(3);
+        sim.h(&qid(0)).sz(&qid(0)).cx(&[(QubitId(0), QubitId(2))]);
+        let before = (sim.stab_tableau(), sim.destab_tableau());
+
+        // With no rotation, phi doesn't matter. In particular, we shouldn't
+        // reject an axis that would require non-Clifford basis changes.
+        sim.try_rxyxy2q(
+            Angle64::ZERO,
+            Angle64::from_radians(0.123),
+            &[(QubitId(0), QubitId(1)), (QubitId(1), QubitId(2))],
+        )
+        .unwrap();
+        assert_eq!((sim.stab_tableau(), sim.destab_tableau()), before);
+    }
+
+    #[test]
+    fn try_rxyxy2q_unsupported_angles_leave_state_unchanged() {
+        let eighth = Angle64::QUARTER_TURN / 2u64;
+        for (theta, phi) in [
+            (eighth, Angle64::QUARTER_TURN),
+            (Angle64::QUARTER_TURN, eighth),
+            (Angle64::from_radians(0.123), Angle64::HALF_TURN),
+            (Angle64::HALF_TURN, Angle64::from_radians(0.123)),
+        ] {
+            let mut sim = SparseStab::new(3);
+            sim.h(&qid(0)).sz(&qid(1)).cx(&[(QubitId(0), QubitId(2))]);
+            let before = (sim.stab_tableau(), sim.destab_tableau());
+
+            // Even if one angle is supported, we should reject the other
+            // before applying any basis changes or touching either pair.
+            assert!(
+                sim.try_rxyxy2q(
+                    theta,
+                    phi,
+                    &[(QubitId(0), QubitId(1)), (QubitId(1), QubitId(2))],
+                )
+                .is_err(),
+                "theta={theta}, phi={phi}"
+            );
+            assert_eq!((sim.stab_tableau(), sim.destab_tableau()), before);
+        }
+    }
+
+    #[test]
     fn lower_crz_pi_matches_sz_then_szzdg_tableau() {
-        let [rzz, rz] = lower_crz(std::f64::consts::PI, QubitId(0), QubitId(1));
         let mut lowered = SparseStab::new(2);
-        lowered
-            .try_rzz(rzz.angles[0], &[(rzz.qubits[0], rzz.qubits[1])])
-            .unwrap();
-        lowered.try_rz(rz.angles[0], &rz.qubits).unwrap();
+        for gate in lower_crz(std::f64::consts::PI, QubitId(0), QubitId(1)) {
+            match gate.gate_type {
+                pecos_core::gate_type::GateType::Z => {
+                    lowered.z(&gate.qubits);
+                }
+                pecos_core::gate_type::GateType::RZZ => {
+                    lowered
+                        .try_rzz(gate.angles[0], &[(gate.qubits[0], gate.qubits[1])])
+                        .unwrap();
+                }
+                pecos_core::gate_type::GateType::RZ => {
+                    lowered.try_rz(gate.angles[0], &gate.qubits).unwrap();
+                }
+                other => panic!("unexpected lowered gate {other:?}"),
+            }
+        }
 
         let mut expected = SparseStab::new(2);
         expected.sz(&qid(1)).szzdg(&[(QubitId(0), QubitId(1))]);

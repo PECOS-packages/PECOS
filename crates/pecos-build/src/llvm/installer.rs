@@ -807,6 +807,19 @@ fn apply_platform_fixes(llvm_dir: &Path) -> Result<()> {
     .into_iter()
     .find(|path| path.exists());
 
+    // This is the first execution of the just-extracted llvm-config, so it
+    // races the archive write the same way the wrapper below does.
+    // A readiness failure is not evidence that the platform fix is
+    // unnecessary. Skipping here would let a broken install proceed to a
+    // generic "verification failed" later, with the real cause only on stdout.
+    if let Err(error) = crate::executable::run_when_executable(&llvm_config, &["--version"]) {
+        println!("FAILED");
+        return Err(Error::Llvm(format!(
+            "Could not execute {} after extraction: {error}",
+            llvm_config.display()
+        )));
+    }
+
     let Ok(output) = Command::new(&llvm_config)
         .args(["--system-libs", "--link-static"])
         .output()
@@ -855,6 +868,16 @@ printf '%s\n' "$output"
     let mut permissions = fs::metadata(&llvm_config)?.permissions();
     permissions.set_mode(0o755);
     fs::set_permissions(&llvm_config, permissions)?;
+
+    // The caller verifies the installation by executing this wrapper straight
+    // away, which would otherwise race the write and report a good install as
+    // a failed one.
+    if let Err(error) = crate::executable::run_when_executable(&llvm_config, &["--version"]) {
+        return Err(Error::Llvm(format!(
+            "Wrote {} but it could not be executed: {error}",
+            llvm_config.display()
+        )));
+    }
 
     println!("OK");
     Ok(())

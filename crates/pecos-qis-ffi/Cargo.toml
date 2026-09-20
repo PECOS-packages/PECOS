@@ -21,6 +21,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 # Data structures (no FFI symbols)
 pecos-qis-ffi-types.workspace = true
+pecos-random.workspace = true
 # Minimal dependencies for fast compilation
 log.workspace = true
 # For heap allocation (malloc/free)

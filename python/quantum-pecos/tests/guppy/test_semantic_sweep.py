@@ -26,7 +26,8 @@ sequential loops sharing state.
 """
 
 from guppylang import guppy
-from guppylang.std.builtins import result
+from guppylang.std.builtins import array, result
+from guppylang.std.builtins import result as record_result
 from guppylang.std.quantum import h, measure, qubit, x
 from pecos import Guppy, sim
 from pecos_rslib import state_vector
@@ -34,8 +35,7 @@ from pecos_rslib import state_vector
 
 def _expect_all_ones(prog, shots: int = 3) -> None:
     results = sim(Guppy(prog)).qubits(4).quantum(state_vector()).seed(7).run(shots).to_dict()
-    raw_measurements = results["measurements"]
-    values = [m[-1] if isinstance(m, list) else m for m in raw_measurements]
+    values = results["outcome"]
     assert values == [1] * shots, f"semantic anchor failed: {values}"
 
 
@@ -53,7 +53,9 @@ def test_euclidean_matrix() -> None:
         ok = ok and (-9) // 2 == -5
         if ok:
             x(q)
-        return measure(q).read()
+        output_value = measure(q).read()
+        record_result("outcome", output_value)
+        return output_value
 
     _expect_all_ones(euclid_matrix)
 
@@ -71,7 +73,9 @@ def test_shift_chain() -> None:
         ok = ok and (7 >> 3) == 0
         if ok:
             x(q)
-        return measure(q).read()
+        output_value = measure(q).read()
+        record_result("outcome", output_value)
+        return output_value
 
     _expect_all_ones(shift_chain)
 
@@ -92,7 +96,9 @@ def test_comparison_chain_negatives() -> None:
         ok = ok and (a + 8) == b
         if ok:
             x(q)
-        return measure(q).read()
+        output_value = measure(q).read()
+        record_result("outcome", output_value)
+        return output_value
 
     _expect_all_ones(cmp_chain)
 
@@ -109,7 +115,9 @@ def test_nested_loop_accumulation() -> None:
                 count = count + 1
         if count == 12:
             x(q)
-        return measure(q).read()
+        output_value = measure(q).read()
+        record_result("outcome", output_value)
+        return output_value
 
     _expect_all_ones(nested_accumulate)
 
@@ -127,7 +135,9 @@ def test_zero_iteration_inner_loop() -> None:
                 count = count + 100
         if count == 3:
             x(q)
-        return measure(q).read()
+        output_value = measure(q).read()
+        record_result("outcome", output_value)
+        return output_value
 
     _expect_all_ones(zero_inner)
 
@@ -145,7 +155,9 @@ def test_while_countdown() -> None:
             steps = steps + 1
         if n == 0 and steps == 5:
             x(q)
-        return measure(q).read()
+        output_value = measure(q).read()
+        record_result("outcome", output_value)
+        return output_value
 
     _expect_all_ones(countdown)
 
@@ -165,7 +177,9 @@ def test_measurement_correlated_branch() -> None:
         q3 = qubit()
         if m1 == m2:
             x(q3)
-        return measure(q3).read()
+        output_value = measure(q3).read()
+        record_result("outcome", output_value)
+        return output_value
 
     _expect_all_ones(correlated, shots=10)
 
@@ -182,7 +196,9 @@ def test_function_call_arithmetic() -> None:
         q = qubit()
         if double(21) == 42 and double(-3) == -6:
             x(q)
-        return measure(q).read()
+        output_value = measure(q).read()
+        record_result("outcome", output_value)
+        return output_value
 
     _expect_all_ones(call_arith)
 
@@ -197,7 +213,9 @@ def test_tuple_roundtrip() -> None:
         a, b = pair
         if a + b == 7 and a * b == 12:
             x(q)
-        return measure(q).read()
+        output_value = measure(q).read()
+        record_result("outcome", output_value)
+        return output_value
 
     _expect_all_ones(tuple_roundtrip)
 
@@ -215,7 +233,9 @@ def test_sequential_loops_shared_state() -> None:
             total = total + 10
         if total == 26:
             x(q)
-        return measure(q).read()
+        output_value = measure(q).read()
+        record_result("outcome", output_value)
+        return output_value
 
     _expect_all_ones(sequential_loops)
 
@@ -238,7 +258,9 @@ def test_branch_chain_on_loop_counter() -> None:
                 high = high + 1
         if low == 2 and mid == 2 and high == 2:
             x(q)
-        return measure(q).read()
+        output_value = measure(q).read()
+        record_result("outcome", output_value)
+        return output_value
 
     _expect_all_ones(branch_chain)
 
@@ -254,7 +276,9 @@ def test_mixed_arithmetic_expression() -> None:
         ok = ok and (2 + 3) * (7 - 4) == 15
         if ok:
             x(q)
-        return measure(q).read()
+        output_value = measure(q).read()
+        record_result("outcome", output_value)
+        return output_value
 
     _expect_all_ones(mixed_expr)
 
@@ -273,7 +297,9 @@ def test_measured_bits_in_arithmetic() -> None:
         q3 = qubit()
         if total == 2:
             x(q3)
-        return measure(q3).read()
+        output_value = measure(q3).read()
+        record_result("outcome", output_value)
+        return output_value
 
     _expect_all_ones(bits_arith)
 
@@ -292,7 +318,9 @@ def test_loop_carrying_measured_state() -> None:
         q_out = qubit()
         if count == 3:
             x(q_out)
-        return measure(q_out).read()
+        output_value = measure(q_out).read()
+        record_result("outcome", output_value)
+        return output_value
 
     _expect_all_ones(loop_measures)
 
@@ -317,7 +345,6 @@ def test_result_label_containing_reserved_words() -> None:
 def test_array_result_label_containing_reserved_words() -> None:
     """Array results carry [String, BoundedNat] type args; the label must
     still come from the typed String arg."""
-    from guppylang.std.builtins import array
     from guppylang.std.quantum import collect_measurements, measure_array
 
     @guppy
@@ -342,18 +369,22 @@ def test_negative_divisor_euclidean_semantics() -> None:
     def neg_div() -> int:
         a = 7
         b = -3
-        return a // b
+        output_value = a // b
+        record_result("value", output_value)
+        return output_value
 
     @guppy
     def neg_mod() -> int:
         a = 7
         b = -3
-        return a % b
+        output_value = a % b
+        record_result("value", output_value)
+        return output_value
 
     r = sim(Guppy(neg_div)).qubits(1).quantum(state_vector()).seed(1).run(2).to_dict()
-    assert list(r["return"]) == [0, 0], f"7 // -3 per HUGR spec: {r['return']}"
+    assert list(r["value"]) == [0, 0], f"7 // -3 per HUGR spec: {r['value']}"
     r = sim(Guppy(neg_mod)).qubits(1).quantum(state_vector()).seed(1).run(2).to_dict()
-    assert list(r["return"]) == [7, 7], f"7 %% -3 per HUGR spec: {r['return']}"
+    assert list(r["value"]) == [7, 7], f"7 %% -3 per HUGR spec: {r['value']}"
 
 
 def test_logical_shift_on_negative_and_past_width() -> None:
@@ -363,15 +394,19 @@ def test_logical_shift_on_negative_and_past_width() -> None:
     @guppy
     def shift_negative() -> int:
         a = -8
-        return a >> 1
+        output_value = a >> 1
+        record_result("value", output_value)
+        return output_value
 
     @guppy
     def shift_past_width() -> int:
         a = 5
-        return a >> 70
+        output_value = a >> 70
+        record_result("value", output_value)
+        return output_value
 
     r = sim(Guppy(shift_negative)).qubits(1).quantum(state_vector()).seed(1).run(2).to_dict()
     # (-8 as u64) >> 1 = 0x7FFF_FFFF_FFFF_FFFC
-    assert list(r["return"]) == [0x7FFF_FFFF_FFFF_FFFC] * 2, f"logical shift: {r['return']}"
+    assert list(r["value"]) == [0x7FFF_FFFF_FFFF_FFFC] * 2, f"logical shift: {r['value']}"
     r = sim(Guppy(shift_past_width)).qubits(1).quantum(state_vector()).seed(1).run(2).to_dict()
-    assert list(r["return"]) == [0, 0], f"past-width shift: {r['return']}"
+    assert list(r["value"]) == [0, 0], f"past-width shift: {r['value']}"

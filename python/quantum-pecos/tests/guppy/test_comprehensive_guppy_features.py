@@ -4,6 +4,8 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 from guppylang import guppy
+from guppylang.std.builtins import array
+from guppylang.std.builtins import result as record_result
 from guppylang.std.quantum import cx, h, measure, qubit, x, y, z
 from pecos import Guppy, sim
 from pecos_rslib import state_vector
@@ -47,35 +49,8 @@ class GuppyPipelineTest:
             result_obj = builder.run(shots)
             result_dict = result_obj.to_dict()
 
-            # Format results to match expected structure.
-            # "measurements" holds one row per shot like [[1], [0, 1], ...];
-            # a missing key is a hard failure (reported via the except below).
-            raw_measurements = result_dict["measurements"]
-            if raw_measurements and isinstance(raw_measurements[0], list):
-                # Check if function returns single bool or tuple
-                import inspect
-
-                actual_func = func
-                if hasattr(func, "wrapped") and hasattr(
-                    func.wrapped,
-                    "python_func",
-                ):
-                    actual_func = func.wrapped.python_func
-                try:
-                    sig = inspect.signature(actual_func)
-                    return_type = sig.return_annotation
-                    is_tuple_return = hasattr(return_type, "__origin__") and return_type.__origin__ is tuple
-                except (ValueError, TypeError):
-                    is_tuple_return = False
-
-                if is_tuple_return:
-                    # Return full measurement tuples
-                    measurements = [tuple(m) for m in raw_measurements]
-                else:
-                    # For single bool return, take the last measurement from each shot
-                    measurements = [m[-1] if m else 0 for m in raw_measurements]
-            else:
-                measurements = raw_measurements
+            # Scalars remain scalars; array tags become measurement tuples.
+            measurements = [tuple(value) if isinstance(value, list) else value for value in result_dict["outcome"]]
 
             func_name = getattr(
                 func,
@@ -134,7 +109,9 @@ class TestBasicQuantumOperations:
         def hadamard_test() -> bool:
             q = qubit()
             h(q)
-            return measure(q).read()
+            output_value = measure(q).read()
+            record_result("outcome", output_value)
+            return output_value
 
         results = pipeline_tester.test_function_on_both_pipelines(
             hadamard_test,
@@ -154,19 +131,25 @@ class TestBasicQuantumOperations:
         def pauli_x_test() -> bool:
             q = qubit()
             x(q)  # Should flip |0⟩ to |1⟩
-            return measure(q).read()
+            output_value = measure(q).read()
+            record_result("outcome", output_value)
+            return output_value
 
         @guppy
         def pauli_y_test() -> bool:
             q = qubit()
             y(q)  # Should flip |0⟩ to |1⟩ with phase
-            return measure(q).read()
+            output_value = measure(q).read()
+            record_result("outcome", output_value)
+            return output_value
 
         @guppy
         def pauli_z_test() -> bool:
             q = qubit()
             z(q)  # Should leave |0⟩ unchanged
-            return measure(q).read()
+            output_value = measure(q).read()
+            record_result("outcome", output_value)
+            return output_value
 
         # Test X gate - should measure |1⟩ deterministically with fixed seed
         results_x = pipeline_tester.test_function_on_both_pipelines(
@@ -209,7 +192,9 @@ class TestBasicQuantumOperations:
             q0, q1 = qubit(), qubit()
             h(q0)
             cx(q0, q1)
-            return measure(q0).read(), measure(q1).read()
+            output_value = measure(q0).read(), measure(q1).read()
+            record_result("outcome", array(output_value[0], output_value[1]))
+            return output_value
 
         results = pipeline_tester.test_function_on_both_pipelines(bell_state, shots=50)
 
@@ -257,14 +242,18 @@ class TestClassicalComputation:
             # Simple boolean logic with quantum measurement
             q = qubit()
             result = measure(q).read()  # Will be False (|0⟩)
-            return result and True
+            output_value = result and True
+            record_result("outcome", output_value)
+            return output_value
 
         @guppy
         def boolean_or_test() -> bool:
             q = qubit()
             x(q)  # Flip to |1⟩
             result = measure(q).read()  # Will be True
-            return result or False
+            output_value = result or False
+            record_result("outcome", output_value)
+            return output_value
 
         # AND: measure(|0>) is deterministically 0
         results_and = pipeline_tester.test_function_on_both_pipelines(
@@ -291,13 +280,15 @@ class TestClassicalComputation:
             # Simple arithmetic that doesn't depend on quantum measurements
             a = 5
             b = 3
-            return a + b
+            output_value = a + b
+            record_result("value", output_value)
+            return output_value
 
         from pecos import Guppy, sim
         from pecos_rslib import state_vector
 
         results = sim(Guppy(arithmetic_test)).qubits(1).quantum(state_vector()).seed(1).run(5).to_dict()
-        assert list(results["return"]) == [8] * 5, f"keys: {sorted(results)}"
+        assert list(results["value"]) == [8] * 5, f"keys: {sorted(results)}"
 
 
 # ============================================================================
@@ -326,7 +317,9 @@ class TestHybridPrograms:
             if result1:
                 x(q2)  # This won't execute since result1 is False
 
-            return measure(q2).read()  # Should be False
+            output_value = measure(q2).read()
+            record_result("outcome", output_value)
+            return output_value
 
         results = pipeline_tester.test_function_on_both_pipelines(
             conditional_gate,
@@ -356,7 +349,9 @@ class TestHybridPrograms:
             if result1:
                 x(q2)  # Flip second qubit if first was |1⟩
 
-            return result1, measure(q2).read()
+            output_value = result1, measure(q2).read()
+            record_result("outcome", array(output_value[0], output_value[1]))
+            return output_value
 
         results = pipeline_tester.test_function_on_both_pipelines(
             feedback_circuit,
@@ -414,7 +409,9 @@ class TestAdvancedAlgorithms:
             cx(q0, q1)
 
             # Measure
-            return measure(q0).read(), measure(q1).read()
+            output_value = measure(q0).read(), measure(q1).read()
+            record_result("outcome", array(output_value[0], output_value[1]))
+            return output_value
 
         results = pipeline_tester.test_function_on_both_pipelines(qft_2qubit, shots=100)
 
@@ -459,7 +456,9 @@ class TestAdvancedAlgorithms:
             # Measure input qubits; the ancilla is discarded (linearity)
             r = measure(q0).read(), measure(q1).read()
             discard(anc)
-            return r
+            output_value = r
+            record_result("outcome", array(output_value[0], output_value[1]))
+            return output_value
 
         @guppy
         def deutsch_josza_balanced() -> tuple[bool, bool]:
@@ -489,7 +488,9 @@ class TestAdvancedAlgorithms:
             # Measure input qubits; the ancilla is discarded (linearity)
             r = measure(q0).read(), measure(q1).read()
             discard(anc)
-            return r
+            output_value = r
+            record_result("outcome", array(output_value[0], output_value[1]))
+            return output_value
 
         # Test constant function
         results_const = pipeline_tester.test_function_on_both_pipelines(
@@ -554,7 +555,9 @@ class TestAdvancedAlgorithms:
             h(q1)
 
             # Measure
-            return measure(q0).read(), measure(q1).read()
+            output_value = measure(q0).read(), measure(q1).read()
+            record_result("outcome", array(output_value[0], output_value[1]))
+            return output_value
 
         results = pipeline_tester.test_function_on_both_pipelines(
             grover_2qubit,

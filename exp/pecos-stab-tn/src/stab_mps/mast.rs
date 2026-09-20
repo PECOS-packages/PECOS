@@ -758,6 +758,14 @@ impl QuantumSimulator for Mast {
 }
 
 impl CliffordGateable for Mast {
+    fn apply_global_phase(&mut self, phase: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let scalar = Complex64::from_polar(1.0, phase.to_radians_signed());
+        for _ in qubits {
+            self.global_phase *= scalar;
+        }
+        self
+    }
+
     fn sz(&mut self, qubits: &[QubitId]) -> &mut Self {
         self.tableau.sz(qubits);
         self
@@ -770,6 +778,77 @@ impl CliffordGateable for Mast {
         }
         self.tableau.h(qubits);
         self
+    }
+
+    // The tableau primitives are not phase-canonical: several differ from
+    // `Clifford::to_matrix()` by a global phase (issue #666). The shared
+    // `CliffordGateable` defaults add the residue that makes a canonical word
+    // equal the canonical matrix, which double-counts on top of these
+    // primitives, so the composite Cliffords use the residue-free words here.
+    // Delete these overrides once the primitives are canonical. The phase
+    // hook itself stays live for the arbitrary-rotation decompositions.
+    fn y(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.z(qubits).x(qubits)
+    }
+
+    fn sy(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.z(qubits).h(qubits)
+    }
+
+    fn sydg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.h(qubits).z(qubits)
+    }
+
+    fn h2(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.sy(qubits).z(qubits)
+    }
+
+    fn h3(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.sz(qubits).y(qubits)
+    }
+
+    fn h4(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.sz(qubits).x(qubits)
+    }
+
+    fn h5(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.sx(qubits).z(qubits)
+    }
+
+    fn h6(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.sx(qubits).y(qubits)
+    }
+
+    fn f(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.sx(qubits).sz(qubits)
+    }
+
+    fn fdg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.szdg(qubits).sxdg(qubits)
+    }
+
+    fn f2(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.sxdg(qubits).sy(qubits)
+    }
+
+    fn f2dg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.sydg(qubits).sx(qubits)
+    }
+
+    fn f3(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.sxdg(qubits).sz(qubits)
+    }
+
+    fn f3dg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.szdg(qubits).sx(qubits)
+    }
+
+    fn f4(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.sz(qubits).sx(qubits)
+    }
+
+    fn f4dg(&mut self, qubits: &[QubitId]) -> &mut Self {
+        self.sxdg(qubits).szdg(qubits)
     }
 
     fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
@@ -874,14 +953,6 @@ impl ArbitraryRotationGateable for Mast {
         let phase =
             Angle64::from_radians((lambda.to_radians_signed() + phi.to_radians_signed()) / 2.0);
         self.apply_global_phase(phase, qubits)
-    }
-
-    fn apply_global_phase(&mut self, phase: Angle64, qubits: &[QubitId]) -> &mut Self {
-        let scalar = Complex64::from_polar(1.0, phase.to_radians_signed());
-        for _ in qubits {
-            self.global_phase *= scalar;
-        }
-        self
     }
 
     fn rzz(&mut self, theta: Angle64, pairs: &[(QubitId, QubitId)]) -> &mut Self {

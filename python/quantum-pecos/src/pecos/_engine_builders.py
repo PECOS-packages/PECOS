@@ -136,7 +136,7 @@ class QisEngineBuilder:
 
     Example:
         >>> from pecos import qis_engine, Qis
-        >>> results = qis_engine().program(Qis(llvm_ir_code)).to_sim().run(1000)
+        >>> results = qis_engine().program(Qis(llvm_ir_code)).to_sim().qubits(num_qubits).run(1000)
     """
 
     def __init__(self) -> None:
@@ -228,7 +228,7 @@ def qis_engine() -> QisEngineBuilder:
 
     Example:
         >>> from pecos import qis_engine, Qis
-        >>> results = qis_engine().program(Qis(llvm_ir_code)).to_sim().run(1000)
+        >>> results = qis_engine().program(Qis(llvm_ir_code)).to_sim().qubits(num_qubits).run(1000)
     """
     return QisEngineBuilder()
 

@@ -75,7 +75,8 @@ fn parse_gate_type(name: &str) -> PyResult<GateType> {
 /// Results are equivalent only up to global phase and are suitable only for
 /// projective consumers such as stabilizer/tableau simulators. They must not be
 /// used for phase-carrying simulation or matrix-exact rewriting. Concretely,
-/// `RZZ(3*pi/2) = -SZZdg`, while this function returns `SZZdg`.
+/// direct `RX(pi)` applies `-i*X` while this function returns `X`, so the
+/// lowered result is `+i` times the direct result.
 #[pyfunction]
 fn lower_clifford_rotation(
     py: Python<'_>,

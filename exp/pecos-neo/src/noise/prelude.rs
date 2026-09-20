@@ -49,8 +49,8 @@ pub use super::composite::prelude::*;
 
 // --- Core Traits and Types ---
 
+pub use super::{EventKinds, NoiseChannel, NoiseEvent, NoiseEventKind, NoiseResponse};
 pub use super::{GateInfo, IdleInfo, NoiseContext};
-pub use super::{NoiseChannel, NoiseEvent, NoiseResponse};
 
 // --- Topology (Spatial Noise Helpers) ---
 

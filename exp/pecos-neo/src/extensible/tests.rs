@@ -1556,7 +1556,7 @@ fn test_standard_clifford_gate_surface_is_consistent() {
         let command = command_from_builder(case.gate_type);
         assert_eq!(command.gate_type, case.gate_type, "{case:?}");
         assert_eq!(command.qubits.len(), case.arity as usize, "{case:?}");
-        assert!(command.angles.is_empty(), "{case:?}");
+        assert!(command.angles().is_empty(), "{case:?}");
     }
 }
 

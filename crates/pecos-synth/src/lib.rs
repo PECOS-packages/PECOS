@@ -22,6 +22,8 @@ pub mod matrix;
 pub mod ring;
 pub mod synthesis;
 
+pub(crate) mod diophantine;
+pub(crate) mod factor;
 pub(crate) mod grid;
 pub(crate) mod interval;
 
@@ -29,6 +31,11 @@ pub(crate) mod interval;
 // keeps its exact crate-internal entry-point signature connected to the library
 // target until the later `synthesize_rz` packet becomes its production caller.
 const _: fn(u64, u64, u32, u32, u32, u32) -> grid::CandidateStreamResult = grid::candidate_stream;
+
+// Phase 2b likewise stays crate-internal until the synthesis driver is added.
+// Keep the decided carrier and options signature linked in the library target.
+const _: fn(&diophantine::DyadicZSqrt2Value, &factor::FactorParams) -> diophantine::NormResolution =
+    diophantine::solve_norm_equation;
 
 pub use matrix::{GateToken, Matrix, OmegaExponent};
 pub use ring::{DOmega, ZOmega, ZSqrt2};

@@ -23,3 +23,15 @@ let h = circuit.add_gate(Gate::h(&[0]));
 let cx = circuit.add_gate(Gate::cx(&[(0, 1)]));
 circuit.connect(h, cx, QubitId::from(0)).unwrap();
 ```
+
+### HUGR angle limitation
+
+HUGR conversion currently requires compile-time constant rotation angles.
+Runtime-computed angles, a normal Guppy pattern, are not yet representable by
+PECOS `Gate`; conversion rejects these operations rather than dropping the angle.
+TODO(dynamic-angles): add representation and execution support for dynamic angles.
+
+`Gate` constructors check native angle arity, and DAG insertion and mutation
+validate gate payloads. `Gate` fields remain public: these checks do not make
+malformed states unrepresentable. Full encapsulation of both the gate type and
+angles is separate work.

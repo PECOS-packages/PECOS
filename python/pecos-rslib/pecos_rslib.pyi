@@ -144,8 +144,9 @@ def lower_clifford_rotation(symbol: str, angles: Sequence[float | ScalarAngle64]
     """Lower a rotation for projective stabilizer/tableau consumers.
 
     Results are equivalent only up to global phase and are not suitable for
-    phase-carrying simulation or matrix-exact rewriting. For example,
-    ``RZZ(3*pi/2) = -SZZdg``, while this function returns ``SZZdg``.
+    phase-carrying simulation or matrix-exact rewriting. For example, direct
+    ``RX(pi)`` applies ``-i*X`` while this function returns ``X``, so the
+    lowered result is ``+i`` times the direct result.
     """
     ...
 
@@ -1089,7 +1090,7 @@ class QisProgram:
     ...
 
 class HugrProgram:
-    """HUGR program representation."""
+    """HUGR program lowered to QIS for simulation; requires explicit qubits."""
 
     ...
 
@@ -2172,10 +2173,6 @@ def qis_selene_helios_interface(**kwargs: object) -> QisInterfaceBuilder:
 # =============================================================================
 # HUGR Compilation
 # =============================================================================
-def compile_hugr_to_qis(hugr_bytes: bytes, output_path: str | None = None) -> str:
-    """Compile HUGR bytes to QIS (LLVM IR with quantum instructions)."""
-    ...
-
 def get_compilation_backends() -> dict[str, object]:
     """Get information about available compilation backends."""
     ...
@@ -2407,10 +2404,14 @@ class ObservableFlips:
 class qec:
     """Fault-tolerance and detector-error-model submodule."""
 
+    DEM_SLICE_ROUND_ATTRIBUTE: str
     PAULI_I: int
     PAULI_X: int
     PAULI_Y: int
     PAULI_Z: int
+
+    @staticmethod
+    def transform_two_patch_pauli(pauli: int, gate: str) -> int: ...
 
     class FaultLocation:
         @property
@@ -2453,7 +2454,13 @@ class qec:
 
     class DagFaultAnalyzer:
         def __init__(self, dag: DagCircuit) -> None: ...
-        def build_influence_map(self) -> qec.DagFaultInfluenceMap: ...
+        def build_influence_map(self) -> qec.DagFaultInfluenceMap:
+            """Build the complete fault influence map.
+
+            Raises:
+                ValueError: The circuit contains a gate Pauli propagation cannot represent.
+            """
+
         @property
         def max_node(self) -> int: ...
         @property
@@ -2486,6 +2493,46 @@ class qec:
         def mask_firings(self, pauli_masks: Any) -> list[list[bool]]: ...
         def compute_mask_xor(self, pauli_masks: Any) -> tuple[list[list[bool]], list[list[bool]]]: ...
 
+    class CachedDemSlice:
+        @property
+        def name(self) -> str: ...
+        @property
+        def temporal_horizon(self) -> tuple[int, int]: ...
+        @property
+        def num_contributions(self) -> int: ...
+        @property
+        def dem_outputs(self) -> list[int]: ...
+        @property
+        def tracked_paulis(self) -> list[int]: ...
+        def __repr__(self) -> str: ...
+
+    class DemSliceRoundSchedule:
+        @staticmethod
+        def from_cached_slices(
+            output_model: qec.DetectorErrorModel,
+            cached_slices: Sequence[tuple[qec.CachedDemSlice, int]],
+            expected_dem_outputs: Sequence[int],
+            expected_tracked_paulis: Sequence[int],
+            coordinate_offset: tuple[float, float] | None = ...,
+            detector_coordinate_offsets: Mapping[int, tuple[float, float]] | None = ...,
+            dem_output_routings: Mapping[int, Mapping[int, Sequence[int]]] | None = ...,
+            tracked_pauli_routings: Mapping[int, Mapping[int, Sequence[int]]] | None = ...,
+            detector_order_routings: Mapping[int, Mapping[int, int]] | None = ...,
+        ) -> qec.DemSliceRoundSchedule: ...
+        @property
+        def num_instances(self) -> int: ...
+        def cached_slice(self, owner_round: int) -> qec.CachedDemSlice: ...
+        def rounds(self) -> list[int]: ...
+        def required_buffer_rounds(self, start_round: int, commit_rounds: int) -> int: ...
+        def compose(
+            self,
+            start_round: int,
+            commit_rounds: int,
+            buffer_rounds: int | None = ...,
+            forward_boundary: str = ...,
+        ) -> qec.DetectorErrorModel: ...
+        def __repr__(self) -> str: ...
+
     class DetectorErrorModel:
         @staticmethod
         def from_circuit(
@@ -2498,6 +2545,7 @@ class qec:
         ) -> qec.DetectorErrorModel: ...
         @staticmethod
         def from_pecos_metadata_json(json: str) -> qec.DetectorErrorModel: ...
+        def build_decoder(self, decoder: decoders.DecoderSpec | str) -> qec.StructuredDemDecoder: ...
         @property
         def num_detectors(self) -> int: ...
         @property
@@ -2508,6 +2556,28 @@ class qec:
         def num_tracked_paulis(self) -> int: ...
         @property
         def num_contributions(self) -> int: ...
+        def detector_coordinates(self) -> list[tuple[int, list[float] | None]]: ...
+        def round_schedule(
+            self,
+            influence_map: qec.DagFaultInfluenceMap,
+            circuit: DagCircuit,
+        ) -> qec.DemSliceRoundSchedule: ...
+        def required_buffer_rounds(
+            self,
+            influence_map: qec.DagFaultInfluenceMap,
+            circuit: DagCircuit,
+            start_round: int,
+            commit_rounds: int,
+        ) -> int: ...
+        def composed_round_window(
+            self,
+            influence_map: qec.DagFaultInfluenceMap,
+            circuit: DagCircuit,
+            start_round: int,
+            commit_rounds: int,
+            buffer_rounds: int | None = ...,
+            forward_boundary: str = ...,
+        ) -> qec.DetectorErrorModel: ...
         def to_string(self) -> str: ...
         def to_string_decomposed(self) -> str: ...
         def to_string_decomposed_maximally(self) -> str: ...
@@ -2526,6 +2596,13 @@ class qec:
         def contributions_for_effect(self, detectors: Sequence[int], dem_outputs: Sequence[int]) -> list[Any]: ...
         def contributions_for_mechanism(self, detectors: Sequence[int]) -> str: ...
         def to_sampler(self) -> qec.DemSampler: ...
+
+    class StructuredDemDecoder:
+        """Decoder built directly from a structured PECOS DEM."""
+
+        @property
+        def num_detectors(self) -> int | None: ...
+        def decode_syndrome(self, syndrome: list[int]) -> decoders.ObservableFlips: ...
 
     class DemBuilder:
         def __init__(self, influence_map: qec.DagFaultInfluenceMap) -> None: ...
@@ -2687,6 +2764,7 @@ class qec:
             p_meas: float,
             p_prep: float,
         ) -> qec.DemSampler: ...
+        def to_detector_error_model(self) -> qec.DetectorErrorModel: ...
         @property
         def num_mechanisms(self) -> int: ...
         @property
@@ -2838,8 +2916,8 @@ class qec:
             self,
             dem: str,
             stab_coords: Sequence[Mapping[str, Any]],
-            step: int = ...,
-            buffer: int = ...,
+            step: int,
+            buffer: int,
         ) -> None: ...
         def decode(self, syndrome: Sequence[int]) -> int: ...
         def decode_count(self, batch: qec.SampleBatch) -> int: ...
@@ -2876,8 +2954,12 @@ class qec:
         def actual_num_windows(self) -> list[int]: ...
         @property
         def effective_windowing(self) -> str: ...
-        def has_decision_points(self) -> bool: ...
-        def num_decision_points(self) -> int: ...
+        def has_decision_points(self) -> bool:
+            """Always false in phase 0; decision descriptors are rejected (issue #596). Phase 2 restores its meaning."""
+
+        def num_decision_points(self) -> int:
+            """Always 0 in phase 0; decision descriptors are rejected (issue #596). Phase 2 restores its meaning."""
+
         def total_detectors(self) -> int: ...
 
     @staticmethod
@@ -3042,15 +3124,21 @@ class decoders:
     @staticmethod
     def windowed(
         *,
-        step: int = ...,
-        buffer: int = ...,
-        mode: str = ...,
-        seam: int = ...,
-        core_extend: int = ...,
-        commit_weight_max: float = ...,
-        inner: decoders.DecoderSpec | None = ...,
-        sandwich_phase2: decoders.DecoderSpec | None = ...,
-    ) -> decoders.DecoderSpec: ...
+        inner: decoders.DecoderSpec,
+        buffer: int,
+        step: int,
+    ) -> decoders.DecoderSpec:
+        """Whole-component streaming decoder; inner, buffer, and step are required.
+
+        Step must be at least 1. The buffer relates to code distance: a buffer of
+        at least d is a sufficient worst-case condition for preserving fault distance
+        (Bombin et al., https://arxiv.org/abs/2303.04846); smaller buffers are often
+        enough in practice. Step is a latency and throughput choice: step=d with
+        buffer=d favors throughput; step=1 with a small window favors latency.
+        Real-time decoding requires one window to take less than step rounds of
+        syndrome extraction (Skoric et al., https://arxiv.org/abs/2209.08552).
+        """
+
     @staticmethod
     def mwpf(
         *,

@@ -16,6 +16,10 @@ pub enum DecoderError {
     #[error("Decoder failed to converge after {iterations} iterations")]
     ConvergenceFailure { iterations: usize },
 
+    /// Malformed detector-error-model text
+    #[error("Invalid DEM syntax: {0}")]
+    InvalidDemSyntax(String),
+
     /// Invalid configuration
     #[error("Invalid configuration: {0}")]
     InvalidConfiguration(String),
@@ -56,12 +60,6 @@ pub enum DecoderError {
     /// Invalid node index
     #[error("Invalid node index {index}: must be < {max}")]
     InvalidNodeIndex { index: usize, max: usize },
-
-    /// Observable-frame bit index out of range for the `u64` frame
-    #[error(
-        "Observable frame bit {bit} out of range: boundary-gate bits index a u64 frame and must be < 64"
-    )]
-    ObservableBitOutOfRange { bit: u32 },
 
     /// Invalid edge
     #[error("Invalid edge: {0}")]

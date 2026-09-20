@@ -12,6 +12,7 @@ This test file addresses gaps identified in the test coverage analysis:
 import pytest
 from guppylang import guppy
 from guppylang.std.builtins import array
+from guppylang.std.builtins import result as record_result
 from guppylang.std.quantum import cx, h, measure, qubit, x
 from pecos import Guppy, sim
 from pecos_rslib import (
@@ -57,30 +58,8 @@ def decode_integer_results(results: list[int], n_bits: int) -> list[tuple[bool, 
 
 
 def get_measurements(results: dict, _expected_count: int = 1) -> list:
-    """Extract measurements from results dict, handling new format.
-
-    Args:
-        results: The results dict from sim().run()
-        _expected_count: Expected number of measurements (for tuple returns)
-
-    Returns:
-        List of measurements (either single values or tuples)
-    """
-    # Get measurements from new format - [[m0], [m1], ...] or [[m0, m1], [m0, m1], ...]
-    raw_measurements = results["measurements"]
-    if not raw_measurements:
-        return []
-
-    # Handle nested list format
-    if isinstance(raw_measurements[0], list):
-        if len(raw_measurements[0]) == 1:
-            # Single measurement - [[1], [0], ...] -> [1, 0, ...]
-            return [m[-1] for m in raw_measurements]
-        # Tuple return - [[1, 0], [1, 1], ...] -> [(1, 0), (1, 1), ...]
-        return [tuple(m) for m in raw_measurements]
-
-    # Flat format (legacy)
-    return raw_measurements
+    """Read scalar outcome tags and convert array tags to measurement tuples."""
+    return [tuple(value) if isinstance(value, list) else value for value in results["outcome"]]
 
 
 # ============================================================================
@@ -98,7 +77,9 @@ class TestNoiseModels:
         def noisy_circuit() -> bool:
             q = qubit()
             x(q)  # Just X gate to flip to |1⟩ deterministically
-            return measure(q).read()
+            output_value = measure(q).read()
+            record_result("outcome", output_value)
+            return output_value
 
         # Test with no noise - should be deterministic
         results_ideal = sim(Guppy(noisy_circuit)).qubits(1).quantum(state_vector()).seed(42).run(10).to_dict()
@@ -125,7 +106,9 @@ class TestNoiseModels:
             q0, q1 = qubit(), qubit()
             h(q0)
             cx(q0, q1)
-            return measure(q0).read(), measure(q1).read()
+            output_value = measure(q0).read(), measure(q1).read()
+            record_result("outcome", array(output_value[0], output_value[1]))
+            return output_value
 
         # Test with biased noise
         noise = biased_depolarizing_noise().with_uniform_probability(
@@ -147,7 +130,9 @@ class TestNoiseModels:
             q = qubit()  # Preparation
             h(q)
             x(q)
-            return measure(q).read()  # Measurement
+            output_value = measure(q).read()
+            record_result("outcome", output_value)
+            return output_value
 
         # Custom noise: high prep error, low measurement error
         noise = (
@@ -203,7 +188,12 @@ class TestArrayOperations:
             m3 = measure(q3).read()
             m4 = measure(q4).read()
 
-            return m0, m1, m2, m3, m4
+            output_value = m0, m1, m2, m3, m4
+            record_result(
+                "outcome",
+                array(output_value[0], output_value[1], output_value[2], output_value[3], output_value[4]),
+            )
+            return output_value
 
         results = sim(measure_multiple_test).qubits(5).quantum(state_vector()).seed(789).run(10).to_dict()
         for result in get_measurements(results):
@@ -221,8 +211,7 @@ class TestArrayOperations:
     def test_discard_array(self) -> None:
         """Test discarding an array of qubits."""
         # First check if discard_array is available
-        if discard_array is None:
-            pytest.skip("discard_array not available in this guppy version")
+        assert discard_array is not None, "discard_array not available in this guppy version"
 
         @guppy
         def discard_array_test() -> bool:
@@ -238,7 +227,9 @@ class TestArrayOperations:
             # Create new qubit to return something
             q = qubit()
             x(q)
-            return measure(q).read()
+            output_value = measure(q).read()
+            record_result("outcome", output_value)
+            return output_value
 
         # Should run without errors
         results = sim(Guppy(discard_array_test)).qubits(10).quantum(state_vector()).seed(42).run(10).to_dict()
@@ -246,8 +237,7 @@ class TestArrayOperations:
 
     def test_array_indexing_and_loops(self) -> None:
         """Test array indexing within loops."""
-        if measure_array is None:
-            pytest.skip("measure_array not available in this guppy version")
+        assert measure_array is not None, "measure_array not available in this guppy version"
 
         @guppy
         def array_loop_test() -> int:
@@ -263,13 +253,17 @@ class TestArrayOperations:
             # Use measure_array to measure all at once
             results = collect_measurements(measure_array(qs))
 
+            record_result("outcome", results)
+
             # Encode as integer
             result = 0
             for i in range(4):
                 if results[i]:
                     result |= 1 << i
 
-            return result
+            output_value = result
+            record_result("value", output_value)
+            return output_value
 
         results = sim(Guppy(array_loop_test)).qubits(4).quantum(state_vector()).seed(42).run(10).to_dict()
         # Even indices (0,2) are in superposition, odd indices (1,3) are |1⟩
@@ -299,43 +293,40 @@ class TestArrayOperations:
 class TestAdvancedControlFlow:
     """Test complex control flow patterns."""
 
-    @pytest.mark.skip(
-        reason="For-loop with int return not supported by HUGR interpreter",
-    )
     def test_nested_loops(self) -> None:
         """Test loops with quantum operations."""
 
         @guppy
         def loop_test() -> int:
             count = 0
+            measured = array(False for _ in range(6))
 
             # Simple loop with quantum operations
-            for _i in range(6):  # Total of 6 iterations
+            for i in range(6):  # Total of 6 iterations
                 q = qubit()  # Create fresh qubit for each iteration
                 h(q)
                 # Directly add measurement result
                 m = measure(q).read()
+                measured[i] = m
                 if m:
                     count = count + 1
 
-            return count
+            record_result("outcome", measured)
+            output_value = count
+            record_result("value", output_value)
+            return output_value
 
         # Run multiple times to see distribution
         results = sim(Guppy(loop_test)).qubits(1).quantum(state_vector()).seed(111).run(10).to_dict()
 
-        # The function returns 6 measurement results (one for each iteration)
-        # Each shot should have 6 measurements
+        # Each shot records all six measurements and their accumulated count.
         measurements = get_measurements(results)
-        if isinstance(measurements[0], tuple):
-            # Each shot has 6 measurements as a tuple
-            for shot in measurements:
-                assert len(shot) == 6, f"Expected 6 measurements, got {len(shot)}"
-                # Count how many True values (roughly 50% expected from H gate)
-                count = sum(1 for m in shot if m)
-                assert 0 <= count <= 6, f"Count {count} out of range"
-        else:
-            # If flat list, should have 60 total measurements (10 shots * 6 measurements)
-            assert len(measurements) == 60, f"Expected 60 measurements, got {len(measurements)}"
+        assert len(measurements) == 10
+        assert len(results["value"]) == 10
+        for shot, count in zip(measurements, results["value"], strict=True):
+            assert len(shot) == 6, f"Expected 6 measurements, got {len(shot)}"
+            assert count == sum(shot), f"Count {count} should equal the six measurements"
+            assert 0 <= count <= 6, f"Count {count} out of range"
 
     def test_conditional_quantum_operations(self) -> None:
         """Test quantum operations inside conditionals."""
@@ -345,21 +336,27 @@ class TestAdvancedControlFlow:
         def conditional_quantum_0() -> bool:
             q = qubit()
             # n = 0: Do nothing - return |0⟩
-            return measure(q).read()
+            output_value = measure(q).read()
+            record_result("outcome", output_value)
+            return output_value
 
         @guppy
         def conditional_quantum_1() -> bool:
             q = qubit()
             # n = 1: Return |1⟩
             x(q)
-            return measure(q).read()
+            output_value = measure(q).read()
+            record_result("outcome", output_value)
+            return output_value
 
         @guppy
         def conditional_quantum_2() -> bool:
             q = qubit()
             # n = 2: Superposition
             h(q)
-            return measure(q).read()
+            output_value = measure(q).read()
+            record_result("outcome", output_value)
+            return output_value
 
         # Test case n=0
         results = sim(conditional_quantum_0).qubits(1).quantum(state_vector()).seed(42).run(10).to_dict()
@@ -386,7 +383,9 @@ class TestAdvancedControlFlow:
             h(q1)
 
             # Early return - measure consumes the qubit
-            return measure(q1).read()
+            output_value = measure(q1).read()
+            record_result("outcome", output_value)
+            return output_value
 
         @guppy
         def early_return_test_false() -> bool:
@@ -399,7 +398,9 @@ class TestAdvancedControlFlow:
             # Measure q2 to consume it
             measure(q2).read()  # Can't use _ in Guppy
 
-            return measure(q1).read()
+            output_value = measure(q1).read()
+            record_result("outcome", output_value)
+            return output_value
 
         # Test both paths
         results_true = sim(early_return_test_true).qubits(10).quantum(state_vector()).seed(42).run(100).to_dict()
@@ -426,7 +427,9 @@ class TestQuantumEngines:
             q0, q1 = qubit(), qubit()
             h(q0)
             cx(q0, q1)
-            return measure(q0).read(), measure(q1).read()
+            output_value = measure(q0).read(), measure(q1).read()
+            record_result("outcome", array(output_value[0], output_value[1]))
+            return output_value
 
         # Use state vector engine (already set by quantum())
         results = (
@@ -458,7 +461,9 @@ class TestQuantumEngines:
             x(q)  # Pauli X
             h(q)  # Hadamard
             # The sequence H-X-H = Z, so Z|0⟩ = |0⟩
-            return measure(q).read()
+            output_value = measure(q).read()
+            record_result("outcome", output_value)
+            return output_value
 
         # Test with state vector engine (compatible with all gate decompositions)
         results = sim(Guppy(clifford_circuit)).qubits(1).quantum(state_vector()).seed(42).run(100).to_dict()
@@ -475,11 +480,7 @@ class TestQuantumEngines:
         The sparse stabilizer simulator works with QASM programs that use
         true Clifford gates, unlike Guppy programs which get decomposed.
         """
-        try:
-            from pecos import Qasm
-            from pecos_rslib import sparse_stab
-        except ImportError:
-            pytest.skip("sparse_stab or Qasm not available")
+        from pecos import Qasm
 
         # Create a QASM program with pure Clifford gates
         qasm_str = """
@@ -497,23 +498,16 @@ class TestQuantumEngines:
         program = Qasm(qasm_str)
 
         # Test with sparse stabilizer - should work with QASM Clifford circuits
-        try:
-            results = sim(program).qubits(2).quantum(sparse_stab()).seed(42).run(100)
+        results = sim(program).qubits(2).quantum(sparse_stab()).seed(42).run(100)
 
-            # QASM returns dict with register names as keys
-            assert "c" in results, "Results should contain register 'c'"
-            measurements = results["c"]
+        # QASM returns dict with register names as keys
+        assert "c" in results, "Results should contain register 'c'"
+        measurements = results["c"]
 
-            # Bell state: values should be 0 (00) or 3 (11) for correlated qubits
-            # Never 1 (01) or 2 (10) for anti-correlated qubits
-            correlated = sum(1 for m in measurements if m in [0, 3])
-            assert correlated == 100, f"Bell state should be 100% correlated (0 or 3), got {correlated}/100"
-
-        except Exception as e:
-            if "not supported" in str(e) or "not available" in str(e):
-                pytest.skip(f"Sparse stabilizer with QASM not fully supported: {e}")
-            else:
-                raise
+        # Bell state: values should be 0 (00) or 3 (11) for correlated qubits
+        # Never 1 (01) or 2 (10) for anti-correlated qubits
+        correlated = sum(1 for m in measurements if m in [0, 3])
+        assert correlated == 100, f"Bell state should be 100% correlated (0 or 3), got {correlated}/100"
 
 
 # ============================================================================
@@ -554,7 +548,9 @@ class TestQuantumErrorHandling:
             # Always measure q2 to properly consume it
             m2 = measure(q2).read()
 
-            return success, m2
+            output_value = success, m2
+            record_result("outcome", array(m1, m2))
+            return output_value
 
         # Run the test with more shots for statistical stability
         results = sim(Guppy(error_handling_test)).qubits(2).quantum(state_vector()).seed(42).run(1000).to_dict()
@@ -603,7 +599,9 @@ class TestQuantumErrorHandling:
             h(q)  # Put in superposition
 
             # Measurement collapses the state
-            return measure(q).read()
+            output_value = measure(q).read()
+            record_result("outcome", output_value)
+            return output_value
 
             # Return the measurement result
 
@@ -631,7 +629,9 @@ class TestQuantumErrorHandling:
             q2 = qubit()  # Fresh qubits start in |0⟩
             m2 = measure(q2).read()
 
-            return m1, m2
+            output_value = m1, m2
+            record_result("outcome", array(output_value[0], output_value[1]))
+            return output_value
 
         results = sim(Guppy(reset_test)).qubits(2).quantum(state_vector()).seed(42).run(10).to_dict()
 

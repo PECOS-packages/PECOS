@@ -14,7 +14,7 @@ use pecos_core::{Angle64, Clifford, QubitId};
 use pecos_simulators::state_vector_test_utils::StateVectorSimulator;
 use pecos_simulators::{
     ArbitraryRotationGateable, CHForm, CliffordGateable, SparseStateVecAoS, SparseStateVecSoA,
-    StateVecAoS, StateVecSoA, StateVecSoA32,
+    StabVec, StateVecAoS, StateVecSoA, StateVecSoA32,
 };
 
 const F64_TOLERANCE: f64 = 1e-12;
@@ -451,12 +451,14 @@ fn phase_carrying_cpu_simulators_match_named_gate_conventions() {
     check_state_vector::<SparseStateVecSoA>("SparseStateVecSoA", F64_TOLERANCE);
     check_state_vector::<SparseStateVecAoS>("SparseStateVecAoS", F64_TOLERANCE);
     check_state_vector::<StateVecSoA32>("StateVecSoA32", F32_TOLERANCE);
+    check_state_vector::<StabVec>("StabVec", F64_TOLERANCE);
 
     check_state_vector_cliffords::<StateVecSoA>("StateVecSoA", F64_TOLERANCE);
     check_state_vector_cliffords::<StateVecAoS>("StateVecAoS", F64_TOLERANCE);
     check_state_vector_cliffords::<SparseStateVecSoA>("SparseStateVecSoA", F64_TOLERANCE);
     check_state_vector_cliffords::<SparseStateVecAoS>("SparseStateVecAoS", F64_TOLERANCE);
     check_state_vector_cliffords::<StateVecSoA32>("StateVecSoA32", F32_TOLERANCE);
+    check_state_vector_cliffords::<StabVec>("StabVec", F64_TOLERANCE);
 }
 
 #[test]
@@ -483,6 +485,7 @@ fn phase_carrying_cpu_simulators_match_multi_target_conventions_on_three_qubits(
         F32_TOLERANCE,
         |sim| sim.set_fusion(false),
     );
+    check_three_qubit_multi_target_calls::<StabVec, _>("StabVec", F64_TOLERANCE, |_| {});
 }
 
 #[test]
@@ -566,5 +569,316 @@ fn ch_form_matches_named_clifford_conventions() {
             &expected,
             F64_TOLERANCE,
         );
+    }
+}
+
+#[test]
+fn ch_form_matches_two_qubit_root_conventions() {
+    for gate in NAMED_TWO_QUBIT_ROOT_GATES {
+        let matrix = gate
+            .canonical_2q_matrix()
+            .expect("named two-qubit root must have a canonical matrix");
+        for (case, pairs) in [
+            ("scalar pair", vec![(QubitId(0), QubitId(1))]),
+            ("reversed pair", vec![(QubitId(4), QubitId(1))]),
+            ("distant vectorized pair", vec![(QubitId(2), QubitId(5))]),
+            (
+                "batched pairs",
+                vec![(QubitId(0), QubitId(1)), (QubitId(2), QubitId(5))],
+            ),
+        ] {
+            let mut sim = CHForm::new(6);
+            sim.h(&[QubitId(0), QubitId(1), QubitId(4)])
+                .sz(&[QubitId(2), QubitId(5)])
+                .cx(&[
+                    (QubitId(0), QubitId(2)),
+                    (QubitId(1), QubitId(4)),
+                    (QubitId(3), QubitId(5)),
+                ])
+                .cz(&[(QubitId(0), QubitId(1)), (QubitId(2), QubitId(5))])
+                .h4(&[QubitId(3)]);
+            let input = sim.state_vector();
+            let mut expected = input.clone();
+            for &(q1, q2) in &pairs {
+                apply_canonical_two_qubit_matrix(&mut expected, matrix, q1, q2);
+            }
+
+            apply_named_two_qubit_gate(&mut sim, gate, &pairs);
+
+            assert_phase_exact_state(
+                "CHForm",
+                &format!("{gate:?} {case}"),
+                &sim.state_vector(),
+                &expected,
+                F64_TOLERANCE,
+            );
+        }
+    }
+}
+
+fn apply_two_qubit_clifford<S: CliffordGateable>(
+    sim: &mut S,
+    gate: Clifford,
+    pairs: &[(QubitId, QubitId)],
+) {
+    match gate {
+        Clifford::CX => sim.cx(pairs),
+        Clifford::CY => sim.cy(pairs),
+        Clifford::CZ => sim.cz(pairs),
+        Clifford::SWAP => sim.swap(pairs),
+        Clifford::ISWAP => sim.iswap(pairs),
+        Clifford::ISWAPdg => sim.iswapdg(pairs),
+        Clifford::G => sim.g(pairs),
+        Clifford::Gdg => sim.gdg(pairs),
+        Clifford::SXX => sim.sxx(pairs),
+        Clifford::SXXdg => sim.sxxdg(pairs),
+        Clifford::SYY => sim.syy(pairs),
+        Clifford::SYYdg => sim.syydg(pairs),
+        Clifford::SZZ => sim.szz(pairs),
+        Clifford::SZZdg => sim.szzdg(pairs),
+        _ => panic!("expected a two-qubit Clifford: {gate}"),
+    };
+}
+
+fn read_three_qubit_state<S: StateVectorSimulator>(sim: &mut S) -> Vec<Complex64> {
+    (0..8).map(|index| sim.get_amplitude(index)).collect()
+}
+
+fn superposed_clifford_input<S: StateVectorSimulator>(basis: usize) -> (S, Vec<Complex64>) {
+    let mut sim = S::with_seed(3, 721);
+    let mut expected = vec![Complex64::new(0.0, 0.0); 8];
+    expected[0] = Complex64::new(1.0, 0.0);
+    // Four orthogonal superpositions on q0/q2 give a spanning input set.
+    // The spectator q1 stays superposed too. Prepare exclusively with canonical
+    // matrices on the reference side, never from a simulator's output.
+    for (gate, q) in [
+        (Clifford::H, 0),
+        (Clifford::SZ, 0),
+        (Clifford::H, 1),
+        (Clifford::H, 2),
+    ] {
+        apply_clifford_gate(&mut sim, gate, &[QubitId(q)]);
+        apply_canonical_matrix(
+            &mut expected,
+            gate.canonical_1q_matrix().unwrap(),
+            QubitId(q),
+        );
+    }
+    for (bit, q) in [(1, 0), (2, 2)] {
+        if basis & bit != 0 {
+            sim.z(&[QubitId(q)]);
+            apply_canonical_matrix(
+                &mut expected,
+                Clifford::Z.canonical_1q_matrix().unwrap(),
+                QubitId(q),
+            );
+        }
+    }
+    // Materialize preparation only. Subsequent local gates must remain deferred
+    // across the tested two-qubit compositions.
+    assert_phase_exact_state(
+        std::any::type_name::<S>(),
+        "conformance input",
+        &read_three_qubit_state(&mut sim),
+        &expected,
+        F64_TOLERANCE,
+    );
+    (sim, expected)
+}
+
+#[test]
+fn stab_vec_two_qubit_compositions_match_canonical_matrices() {
+    check_two_qubit_compositions::<StabVec>();
+}
+
+#[test]
+fn sparse_soa_two_qubit_compositions_match_canonical_matrices() {
+    check_two_qubit_compositions::<SparseStateVecSoA>();
+}
+
+fn check_two_qubit_compositions<S: StateVectorSimulator + Clone>() {
+    for basis in 0..4 {
+        let (input_sim, input) = superposed_clifford_input::<S>(basis);
+        for pair in [(QubitId(0), QubitId(2)), (QubitId(2), QubitId(0))] {
+            for &left in Clifford::all_1q() {
+                for &right in Clifford::all_1q() {
+                    let mut framed = input_sim.clone();
+                    let mut framed_expected = input.clone();
+                    for (local, q) in [(left, pair.0), (right, pair.1)] {
+                        apply_clifford_gate(&mut framed, local, &[q]);
+                        apply_canonical_matrix(
+                            &mut framed_expected,
+                            local.canonical_1q_matrix().unwrap(),
+                            q,
+                        );
+                    }
+                    for &gate in Clifford::all_2q() {
+                        let mut sim = framed.clone();
+                        let mut expected = framed_expected.clone();
+                        apply_two_qubit_clifford(&mut sim, gate, &[pair]);
+                        apply_canonical_two_qubit_matrix(
+                            &mut expected,
+                            gate.canonical_2q_matrix().unwrap(),
+                            pair.0,
+                            pair.1,
+                        );
+                        assert_phase_exact_state(
+                            std::any::type_name::<S>(),
+                            &format!(
+                                "{gate}, local=({left},{right}), pair={pair:?}, basis={basis}"
+                            ),
+                            &read_three_qubit_state(&mut sim),
+                            &expected,
+                            F64_TOLERANCE,
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn stab_vec_two_qubit_products_match_canonical_matrices() {
+    for basis in 0..4 {
+        let (input_sim, input) = superposed_clifford_input::<StabVec>(basis);
+        for &first in Clifford::all_2q() {
+            for &second in Clifford::all_2q() {
+                for left in [Clifford::I, Clifford::X, Clifford::Y, Clifford::Z] {
+                    for right in [Clifford::I, Clifford::X, Clifford::Y, Clifford::Z] {
+                        let mut sim = input_sim.clone();
+                        let mut expected = input.clone();
+                        for (local, q) in [(left, QubitId(0)), (right, QubitId(2))] {
+                            apply_clifford_gate(&mut sim, local, &[q]);
+                            apply_canonical_matrix(
+                                &mut expected,
+                                local.canonical_1q_matrix().unwrap(),
+                                q,
+                            );
+                        }
+                        for (gate, pair) in [
+                            (first, (QubitId(0), QubitId(2))),
+                            (second, (QubitId(2), QubitId(0))),
+                        ] {
+                            apply_two_qubit_clifford(&mut sim, gate, &[pair]);
+                            apply_canonical_two_qubit_matrix(
+                                &mut expected,
+                                gate.canonical_2q_matrix().unwrap(),
+                                pair.0,
+                                pair.1,
+                            );
+                        }
+                        assert_phase_exact_state(
+                            "StabVec",
+                            &format!("{second} * {first}, local=({left},{right}), basis={basis}"),
+                            &read_three_qubit_state(&mut sim),
+                            &expected,
+                            F64_TOLERANCE,
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn canonical_two_qubit_tables_match_unitary_definitions() {
+    use pecos_quantum::ToMatrix;
+    for &gate in Clifford::all_2q() {
+        let canonical = gate.canonical_2q_matrix().unwrap();
+        // Matrix tables put the first operand in the MSB, while ToMatrix
+        // indexes physical qubits little-endian.
+        let independent = gate.to_unitary_rep_on_qubits(1, 0).to_matrix();
+        for row in 0..4 {
+            for col in 0..4 {
+                let i = 2 * (4 * row + col);
+                let entry = Complex64::new(canonical[i], canonical[i + 1]);
+                assert!(
+                    (entry - independent[(row, col)]).norm() <= F64_TOLERANCE,
+                    "{gate} canonical table disagrees with its unitary definition at ({row},{col})"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn deferred_frames_preserve_phase_across_disjoint_batched_pairs() {
+    check_disjoint_batched_pairs::<StabVec>();
+    check_disjoint_batched_pairs::<SparseStateVecSoA>();
+}
+
+fn check_disjoint_batched_pairs<S: StateVectorSimulator + Clone>() {
+    let mut input_sim = S::with_seed(6, 721);
+    let mut input = vec![Complex64::new(0.0, 0.0); 64];
+    input[0] = Complex64::new(1.0, 0.0);
+    for (gate, q) in [
+        (Clifford::H, 0),
+        (Clifford::H, 1),
+        (Clifford::H, 2),
+        (Clifford::H, 3),
+        (Clifford::H, 4),
+        (Clifford::H, 5),
+        (Clifford::SZ, 3),
+    ] {
+        apply_clifford_gate(&mut input_sim, gate, &[QubitId(q)]);
+        apply_canonical_matrix(&mut input, gate.canonical_1q_matrix().unwrap(), QubitId(q));
+    }
+    let actual: Vec<_> = (0..64).map(|i| input_sim.get_amplitude(i)).collect();
+    assert_phase_exact_state(
+        std::any::type_name::<S>(),
+        "batched input",
+        &actual,
+        &input,
+        F64_TOLERANCE,
+    );
+    // An odd pair count prevents a per-pair global sign error from cancelling.
+    let pairs = [
+        (QubitId(3), QubitId(1)),
+        (QubitId(0), QubitId(2)),
+        (QubitId(5), QubitId(4)),
+    ];
+    for &left in Clifford::all_1q() {
+        for &right in Clifford::all_1q() {
+            let mut framed = input_sim.clone();
+            let mut framed_expected = input.clone();
+            for (local, q) in [
+                (left, pairs[0].0),
+                (right, pairs[0].1),
+                (right, pairs[1].0),
+                (left, pairs[1].1),
+                (left, pairs[2].0),
+                (right, pairs[2].1),
+            ] {
+                apply_clifford_gate(&mut framed, local, &[q]);
+                apply_canonical_matrix(
+                    &mut framed_expected,
+                    local.canonical_1q_matrix().unwrap(),
+                    q,
+                );
+            }
+            for &gate in Clifford::all_2q() {
+                let mut sim = framed.clone();
+                let mut expected = framed_expected.clone();
+                apply_two_qubit_clifford(&mut sim, gate, &pairs);
+                for &(q, r) in &pairs {
+                    apply_canonical_two_qubit_matrix(
+                        &mut expected,
+                        gate.canonical_2q_matrix().unwrap(),
+                        q,
+                        r,
+                    );
+                }
+                let actual: Vec<_> = (0..64).map(|i| sim.get_amplitude(i)).collect();
+                assert_phase_exact_state(
+                    std::any::type_name::<S>(),
+                    &format!("{gate} batched, local=({left},{right})"),
+                    &actual,
+                    &expected,
+                    F64_TOLERANCE,
+                );
+            }
+        }
     }
 }

@@ -459,7 +459,7 @@ The API uses DSL-style syntax (gate followed by target) with batch operations us
 // Single-qubit gates (space-separated syntax)
 h q[0];
 x q[1];
-rz(pi/4) q[0];
+rz((pi / 4) rad) q[0];
 
 // Batch operations with set literals
 h {q[0], q[1], q[2]};

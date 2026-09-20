@@ -18,7 +18,7 @@
 //!
 //! - **Typed Commands**: [`GateCommand`] and [`CommandQueue`] replacing `ByteMessage`
 //! - **Composable Noise**: Event-driven channels that can be freely combined
-//! - **Plugin System**: Bevy-inspired architecture for bundling functionality
+//! - **Reusable Simulations**: Owned state with seeded sequential and parallel shot loops
 //! - **Simple `CircuitRunner`**: Direct simulator execution via [`CircuitRunner`]
 //!
 //! ## Architecture
@@ -149,7 +149,6 @@ pub mod adapter;
 pub mod circuit;
 pub mod command;
 pub mod ecs;
-pub mod engines;
 pub mod extensible;
 pub mod inline_channel;
 pub mod noise;
@@ -160,8 +159,11 @@ pub mod sampling;
 pub mod tool;
 
 // Re-export main types at crate root
-pub use command::{CommandBuilder, CommandQueue, GateCommand, GateType};
-pub use engines::{CommandQueueEngine, DagCircuitEngine, TickCircuitEngine};
+pub use circuit::CircuitConversionError;
+pub use command::{
+    CommandBuilder, CommandQueue, GateCommand, GateCommandAngleArityError, GateCommandError,
+    GatePayload, GateType,
+};
 pub use extensible::{
     AdaptedGate,
     // Extended operations for stabilizer measurements/preparations
@@ -224,9 +226,9 @@ pub use extensible::{
     stabilizer_gates,
 };
 pub use noise::{
-    ComposableNoiseModel, ContextObserver, EventHandler, GeneralNoiseModelBuilder, NoiseChannel,
-    NoiseContext, NoiseEvent, NoiseModelConfig, NoisePlugin, NoiseResponse, PauliWeights,
-    TwoQubitPauliWeights,
+    ComposableNoiseModel, ContextObserver, EventHandler, EventKinds, GeneralNoiseModelBuilder,
+    NoiseChannel, NoiseContext, NoiseEvent, NoiseEventKind, NoiseModelConfig, NoisePlugin,
+    NoiseResponse, PauliWeights, TwoQubitPauliWeights,
     context::QubitState,
     correlated::{CorrelatedNoiseChannel, CorrelationStats},
     crosstalk::CrosstalkChannel,
@@ -264,7 +266,11 @@ pub use adapter::{
 /// use pecos_neo::prelude::*;
 /// ```
 pub mod prelude {
-    pub use crate::command::{CommandBuilder, CommandQueue, GateCommand, GateType};
+    pub use crate::circuit::CircuitConversionError;
+    pub use crate::command::{
+        CommandBuilder, CommandQueue, GateCommand, GateCommandAngleArityError, GateCommandError,
+        GatePayload, GateType,
+    };
     pub use crate::extensible::{
         // Extended operations
         AdaptedOp,
@@ -302,9 +308,9 @@ pub mod prelude {
         stabilizer_gates,
     };
     pub use crate::noise::{
-        ComposableNoiseModel, ContextObserver, EventHandler, GeneralNoiseModelBuilder,
-        NoiseChannel, NoiseContext, NoiseEvent, NoiseModelConfig, NoisePlugin, NoiseResponse,
-        PauliWeights, TwoQubitPauliWeights,
+        ComposableNoiseModel, ContextObserver, EventHandler, EventKinds, GeneralNoiseModelBuilder,
+        NoiseChannel, NoiseContext, NoiseEvent, NoiseEventKind, NoiseModelConfig, NoisePlugin,
+        NoiseResponse, PauliWeights, TwoQubitPauliWeights,
         context::QubitState,
         correlated::{CorrelatedNoiseChannel, CorrelationStats},
         crosstalk::CrosstalkChannel,

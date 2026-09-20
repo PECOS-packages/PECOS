@@ -5,7 +5,10 @@
 //!
 //! The actual FFI implementation (with `#[no_mangle]` functions) is in `pecos-qis-ffi`.
 
+mod named_results;
 mod operations;
+
+pub use named_results::{NamedResult, ProgramError};
 
 pub use operations::{LoweredQuantumOp, NamedResultTrace, Operation, QuantumOp, TraceMetadata};
 

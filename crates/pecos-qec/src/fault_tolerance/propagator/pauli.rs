@@ -17,7 +17,7 @@
 
 use super::{PauliFault, is_supported_noop_or_metadata_gate, is_supported_prep_gate};
 use pecos_core::gate_type::GateType;
-use pecos_core::{half_turn_decomposition, try_simplify_rotation, try_simplify_rxy1q};
+use pecos_core::{CliffordLowering, try_lower_rotation_to_clifford};
 use pecos_quantum::TickCircuit;
 use pecos_simulators::{CliffordGateable, PauliProp};
 use smallvec::SmallVec;
@@ -89,10 +89,9 @@ fn consecutive_pairs(
 ///
 /// Rotation eligibility follows the core lowering policy. Axis rotations such
 /// as `RZ` require exact Clifford-angle equality, while `RXY1Q` snaps angles
-/// within `1e-9` turns of its Clifford grid. [`InfluenceBuilder`](crate::fault_tolerance::InfluenceBuilder)
-/// is intentionally more conservative: its symbolic replay accepts `RX`,
-/// `RY`, `RZ`, `RXX`, `RYY`, `RZZ`, and `CRZ` only with one exactly-zero
-/// angle, and rejects every `RXY1Q`, including `RXY1Q(0, phi)`.
+/// within `1e-9` turns of its Clifford grid. Symbolic replay in
+/// [`InfluenceBuilder`](crate::fault_tolerance::InfluenceBuilder) lowers
+/// rotations under this same policy.
 ///
 /// Returns [`PauliPropagationOutcome::Unsupported`] when the gate changes the
 /// state in a way this Pauli-only representation cannot faithfully express, or
@@ -131,48 +130,23 @@ pub(crate) fn apply_gate_unchecked(
         return PauliPropagationOutcome::Propagated;
     }
 
-    match gate.gate_type {
-        GateType::RZ
-        | GateType::RX
-        | GateType::RY
-        | GateType::RZZ
-        | GateType::RXX
-        | GateType::RYY => {
-            let Some(&angle) = gate.angles.first() else {
-                return PauliPropagationOutcome::Unsupported;
-            };
-            if let Some(clifford) = try_simplify_rotation(gate.gate_type, angle) {
-                return if apply_named_gate(prop, clifford, &gate.qubits, direction) {
-                    PauliPropagationOutcome::Propagated
-                } else {
-                    PauliPropagationOutcome::Unsupported
-                };
-            }
-
-            if let Some(pauli) = half_turn_decomposition(gate.gate_type, angle) {
-                for &qubit in &gate.qubits {
-                    if !apply_named_gate(prop, pauli, &[qubit], direction) {
-                        return PauliPropagationOutcome::Unsupported;
-                    }
-                }
-                return PauliPropagationOutcome::Propagated;
-            }
-            PauliPropagationOutcome::Unsupported
-        }
-        GateType::RXY1Q if gate.angles.len() >= 2 => {
-            let theta = gate.angles[0];
-            let phi = gate.angles[1];
-            if let Some(clifford) = try_simplify_rxy1q(theta, phi) {
-                if apply_named_gate(prop, clifford, &gate.qubits, direction) {
-                    PauliPropagationOutcome::Propagated
-                } else {
-                    PauliPropagationOutcome::Unsupported
-                }
+    match try_lower_rotation_to_clifford(gate) {
+        Some(CliffordLowering::Named(clifford)) => {
+            if apply_named_gate(prop, clifford, &gate.qubits, direction) {
+                PauliPropagationOutcome::Propagated
             } else {
                 PauliPropagationOutcome::Unsupported
             }
         }
-        _ => PauliPropagationOutcome::Unsupported,
+        Some(CliffordLowering::PerQubit(pauli)) => {
+            for &qubit in &gate.qubits {
+                if !apply_named_gate(prop, pauli, &[qubit], direction) {
+                    return PauliPropagationOutcome::Unsupported;
+                }
+            }
+            PauliPropagationOutcome::Propagated
+        }
+        None => PauliPropagationOutcome::Unsupported,
     }
 }
 
@@ -856,5 +830,25 @@ mod collapse_tests {
         prop.track_y(&[1]);
         cross_measurement(&mut prop, 0, GateType::MZ, Direction::Forward);
         assert!(prop.contains_x(1) && prop.contains_z(1));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pecos_core::{Angle64, Gate};
+
+    #[test]
+    fn unchecked_rotation_rejects_extra_angles() {
+        for mut gate in [
+            Gate::rxy1q(Angle64::QUARTER_TURN, Angle64::ZERO, &[0]),
+            Gate::rz(Angle64::QUARTER_TURN, &[0]),
+        ] {
+            gate.angles.push(Angle64::ZERO);
+            assert_eq!(
+                apply_gate_unchecked(&mut PauliProp::new(), &gate, Direction::Forward),
+                PauliPropagationOutcome::Unsupported
+            );
+        }
     }
 }

@@ -13,12 +13,10 @@
 
 //! Shared unitary-Clifford dispatch for symbolic stabilizer replay.
 //!
-//! Two places replay a circuit against a [`SymbolicSparseStab`]: the influence
-//! builder's forward symbolic simulation, and the DEM builder's measurement
-//! crosstalk replay. They previously carried separate hand-written copies of
-//! the same gate table. Issue #325 was exactly a disagreement between two
-//! layers about what a gate does, so the table lives here once and both callers
-//! dispatch through it.
+//! The influence builder, measurement crosstalk replay, and fault sampler
+//! replay circuits against a [`SymbolicSparseStab`]. Issue #325 was a
+//! disagreement between layers about what a gate does, so they share this
+//! unitary gate table.
 //!
 //! Only unitary Cliffords belong here. Measurement, preparation, and meta gates
 //! carry caller-specific bookkeeping (measurement indices, payload nodes), so
@@ -180,6 +178,43 @@ pub(crate) fn apply_unitary_clifford(
     }
 
     Ok(Dispatch::Applied)
+}
+
+/// Apply the action returned by the rotation-lowering policy.
+///
+/// # Errors
+///
+/// Returns [`ArityError`] if the target list does not fit the lowered gate.
+///
+/// # Panics
+///
+/// Panics if the shared dispatch cannot handle the lowered gate. The policy
+/// emits only `I`, `X`, `Y`, `Z`, `SX`, `SXdg`, `SY`, `SYdg`, `SZ`, `SZdg`,
+/// `SXX`, `SXXdg`, `SYY`, `SYYdg`, `SZZ`, or `SZZdg`; all are handled here.
+pub(crate) fn apply_lowered_clifford(
+    sim: &mut SymbolicSparseStab,
+    lowering: pecos_core::CliffordLowering,
+    qubits: &[usize],
+) -> Result<(), ArityError> {
+    use pecos_core::CliffordLowering;
+    match lowering {
+        CliffordLowering::Named(GateType::I) => {}
+        CliffordLowering::Named(clifford) => {
+            if apply_unitary_clifford(sim, clifford, qubits)? == Dispatch::Unhandled {
+                unreachable!(
+                    "lowering {lowering:?} must emit I, X, Y, Z, SX, SXdg, SY, SYdg, SZ, SZdg, SXX, SXXdg, SYY, SYYdg, SZZ, or SZZdg"
+                );
+            }
+        }
+        CliffordLowering::PerQubit(pauli) => {
+            for &qubit in qubits {
+                if apply_unitary_clifford(sim, pauli, &[qubit])? == Dispatch::Unhandled {
+                    unreachable!("lowering {lowering:?} must emit a per-qubit X, Y, or Z");
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

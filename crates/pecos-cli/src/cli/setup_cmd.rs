@@ -358,7 +358,7 @@ fn setup_llvm(mode: PromptMode) -> Result<()> {
     if let Some(reason) = pecos_build::llvm::installer::managed_install_unavailable_reason() {
         println!("  LLVM 21.1 not found.");
         println!("  {reason}");
-        println!("  QIR/HUGR features will not be available until LLVM is configured.");
+        println!("  QIR/HUGR compilation will not be available until LLVM is configured.");
         return Ok(());
     }
 
@@ -372,7 +372,7 @@ fn setup_llvm(mode: PromptMode) -> Result<()> {
     ) {
         pecos_build::llvm::installer::install_llvm(false, false)?;
     } else {
-        println!("  Skipping LLVM. QIR/HUGR features will not be available.");
+        println!("  Skipping LLVM. QIR/HUGR compilation will not be available.");
     }
 
     Ok(())

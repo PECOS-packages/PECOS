@@ -5,7 +5,7 @@
 //! Python bindings for EEG DEM builder.
 
 use pecos_core::pauli::pauli_bitmask::BitmaskStorage;
-use pecos_core::{Angle64, Gate, GateAngles, GateMeasIds, GateParams, QubitId};
+use pecos_core::{Angle64, Gate, GateAngles, GateParams, QubitId};
 use pecos_eeg::Bm;
 use pecos_eeg::circuit::{self, NoiseModel};
 use pecos_eeg::correlation_table::CorrelationTableInput;
@@ -1148,14 +1148,17 @@ fn extract_gates(py_tc: &Bound<'_, PyAny>) -> PyResult<Vec<Gate>> {
                     };
                     for pair in qubits.chunks(2) {
                         if pair.len() == 2 {
-                            tick_gates.push(Gate {
-                                gate_type: gt,
-                                qubits: pair.iter().map(|&q| QubitId(q)).collect(),
-                                angles: GateAngles::new(),
-                                params: GateParams::new(),
-                                meas_ids: GateMeasIds::new(),
-                                channel: None,
-                            });
+                            tick_gates.push(
+                                Gate::try_new(
+                                    gt,
+                                    GateAngles::new(),
+                                    GateParams::new(),
+                                    pair.iter().map(|&q| QubitId(q)).collect::<Vec<_>>(),
+                                )
+                                .map_err(|err| {
+                                    pyo3::exceptions::PyValueError::new_err(err.to_string())
+                                })?,
+                            );
                         }
                     }
                 }
@@ -1177,27 +1180,26 @@ fn extract_gates(py_tc: &Bound<'_, PyAny>) -> PyResult<Vec<Gate>> {
                         _ => pecos_core::gate_type::GateType::SYdg,
                     };
                     for &q in &qubits {
-                        tick_gates.push(Gate {
-                            gate_type: gt,
-                            qubits: std::iter::once(QubitId(q)).collect(),
-                            angles: GateAngles::new(),
-                            params: GateParams::new(),
-                            meas_ids: GateMeasIds::new(),
-                            channel: None,
-                        });
+                        tick_gates.push(
+                            Gate::try_new(
+                                gt,
+                                GateAngles::new(),
+                                GateParams::new(),
+                                vec![QubitId(q)],
+                            )
+                            .map_err(|err| {
+                                pyo3::exceptions::PyValueError::new_err(err.to_string())
+                            })?,
+                        );
                     }
                 }
                 // PZ/QAlloc: split multi-qubit into per-qubit
                 "QAlloc" | "PZ" => {
                     for &q in &qubits {
-                        tick_gates.push(Gate {
-                            gate_type: pecos_core::gate_type::GateType::PZ,
-                            qubits: std::iter::once(QubitId(q)).collect(),
-                            angles: GateAngles::new(),
-                            params: GateParams::new(),
-                            meas_ids: GateMeasIds::new(),
-                            channel: None,
-                        });
+                        tick_gates.push(Gate::simple(
+                            pecos_core::gate_type::GateType::PZ,
+                            vec![QubitId(q)],
+                        ));
                     }
                 }
                 // MZ: keep multi-qubit (expansion handles per-qubit)
@@ -1216,21 +1218,24 @@ fn extract_gates(py_tc: &Bound<'_, PyAny>) -> PyResult<Vec<Gate>> {
                             )));
                         }
                     };
-                    let mut g = Gate {
-                        gate_type: gt,
-                        qubits: qubits.iter().map(|&q| QubitId(q)).collect(),
-                        angles: GateAngles::new(),
-                        params: GateParams::new(),
-                        meas_ids: GateMeasIds::new(),
-                        channel: None,
+                    let angles = if gt == pecos_core::gate_type::GateType::RZ {
+                        gate.getattr("angles")?
+                            .extract::<Vec<f64>>()?
+                            .into_iter()
+                            .map(Angle64::from_radians)
+                            .collect::<Vec<_>>()
+                    } else {
+                        Vec::new()
                     };
-                    if gt == pecos_core::gate_type::GateType::RZ
-                        && let Ok(angles) = gate.getattr("angles")?.extract::<Vec<f64>>()
-                        && let Some(&a) = angles.first()
-                    {
-                        g.angles.push(Angle64::from_radians(a));
-                    }
-                    tick_gates.push(g);
+                    tick_gates.push(
+                        Gate::try_new(
+                            gt,
+                            angles,
+                            GateParams::new(),
+                            qubits.iter().map(|&q| QubitId(q)).collect::<Vec<_>>(),
+                        )
+                        .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?,
+                    );
                 }
             }
         }

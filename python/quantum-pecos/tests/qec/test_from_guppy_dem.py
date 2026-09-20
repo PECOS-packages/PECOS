@@ -2637,3 +2637,58 @@ def test_prep_and_measurement_channels_stay_exact() -> None:
         text = build.dem.to_string()
         assert f"error({probability})" in text, f"{setter}: {text}"
         assert build.dem.idle_noise_residuals == [], setter
+
+
+@pytest.mark.parametrize("p2_weights", [None, {"XX": 0.5, "~XX": 0.5}])
+def test_raw_surface_trace_sampler_matches_lowered_dem(p2_weights: dict[str, float] | None) -> None:
+    """The sampler accepts runtime-lowered Clifford rotations directly and produces the model of their named forms."""
+    from pecos_rslib.qec import DemSampler
+    from pecos_rslib.quantum import GateType
+
+    raw_tc = _build_surface_tick_circuit_for_native_model(
+        SurfacePatch.create(distance=3),
+        num_rounds=2,
+        basis="Z",
+        ancilla_budget=2,
+        circuit_source="traced_qis",
+    )
+    assert any(
+        gate.gate_type == GateType.RXY1Q
+        for tick_index in range(raw_tc.num_ticks())
+        for gate in raw_tc.get_tick(tick_index).gate_batches()
+    )
+    noise = {"p1": 0.005, "p2": 0.005, "p_meas": 0.005, "p_prep": 0.005}
+    raw_dem = DemSampler.from_circuit(raw_tc, p2_weights=p2_weights, **noise).to_detector_error_model().to_string()
+    assert "error(" in raw_dem
+    raw_tc.lower_clifford_rotations()
+    assert not any(
+        gate.gate_type == GateType.RXY1Q
+        for tick_index in range(raw_tc.num_ticks())
+        for gate in raw_tc.get_tick(tick_index).gate_batches()
+    )
+    lowered_dem = DemSampler.from_circuit(raw_tc, p2_weights=p2_weights, **noise).to_detector_error_model().to_string()
+    assert raw_dem == lowered_dem
+
+
+def test_raw_surface_trace_gate_rate_keys_name_scheduled_gates() -> None:
+    """Per-gate rates reject action names until the traced rotations are lowered."""
+    from pecos_rslib.qec import DemSampler
+
+    raw_tc = _build_surface_tick_circuit_for_native_model(
+        SurfacePatch.create(distance=3),
+        num_rounds=2,
+        basis="Z",
+        ancilla_budget=2,
+        circuit_source="traced_qis",
+    )
+    noise = {"p1": 0.005, "p2": 0.005, "p_meas": 0.005, "p_prep": 0.005}
+    with pytest.raises(ValueError, match=r"p2_gate_rates key SZZ.*RZZ in p2_gate_rates.*lower_clifford_rotations"):
+        DemSampler.from_circuit(raw_tc, p2_gate_rates={"SZZ": 0.05}, **noise)
+    with pytest.raises(ValueError, match=r"p2_gate_rates key SZZ.*RZZ in p2_gate_rates.*lower_clifford_rotations"):
+        DetectorErrorModel.from_circuit(raw_tc, p2_gate_rates={"SZZ": 0.05}, **noise)
+    scalar = DemSampler.from_circuit(raw_tc, **noise).to_detector_error_model().to_string()
+    keyed = DemSampler.from_circuit(raw_tc, p2_gate_rates={"RZZ": 0.05}, **noise).to_detector_error_model().to_string()
+    assert "error(" in keyed
+    assert scalar != keyed
+    raw_tc.lower_clifford_rotations()
+    DemSampler.from_circuit(raw_tc, p2_gate_rates={"SZZ": 0.05}, **noise)

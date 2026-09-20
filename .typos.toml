@@ -55,4 +55,12 @@ pn = "pn"
 [files]
 # Base64-encoded binary test fixtures inevitably contain typo-lookalike
 # substrings; their bytes are sha256-pinned and must not be "corrected".
-extend-exclude = ["*.b64"]
+#
+# The StabVec correctness reference data is hexadecimal f64 bit patterns, for
+# the same reason: "ded", "fed" and similar are valid hex and occur by chance.
+# The file is compared with exact bit equality, so a spelling "correction"
+# would silently change what the harness pins.
+extend-exclude = [
+  "*.b64",
+  "crates/pecos-simulators/tests/data/stab_vec_correctness_bits.txt",
+]

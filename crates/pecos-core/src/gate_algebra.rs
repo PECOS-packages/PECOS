@@ -638,19 +638,19 @@ mod tests {
     // Pauli <-> Unitary -> UnitaryRep
     #[test]
     fn pauli_mul_unitary() {
-        let result = Pauli::X * Unitary::Named(crate::gate_type::GateType::H);
+        let result = Pauli::X * Unitary::named(crate::gate_type::GateType::H);
         assert_eq!(result.qubits(), vec![0]);
     }
 
     #[test]
     fn unitary_mul_pauli() {
-        let result = Unitary::Named(crate::gate_type::GateType::H) * Pauli::X;
+        let result = Unitary::named(crate::gate_type::GateType::H) * Pauli::X;
         assert_eq!(result.qubits(), vec![0]);
     }
 
     #[test]
     fn pauli_tensor_unitary() {
-        let result = Pauli::X & Unitary::Named(crate::gate_type::GateType::H);
+        let result = Pauli::X & Unitary::named(crate::gate_type::GateType::H);
         let qubits = result.qubits();
         assert!(qubits.contains(&0));
         assert!(qubits.contains(&1));
@@ -658,7 +658,7 @@ mod tests {
 
     #[test]
     fn unitary_tensor_pauli() {
-        let result = Unitary::Named(crate::gate_type::GateType::CX) & Pauli::Z;
+        let result = Unitary::named(crate::gate_type::GateType::CX) & Pauli::Z;
         let qubits = result.qubits();
         assert_eq!(qubits, vec![0, 1, 2]);
     }
@@ -704,7 +704,7 @@ mod tests {
 
     #[test]
     fn unitary_tensor_clifford() {
-        let result = Unitary::Named(crate::gate_type::GateType::H) & Clifford::CX;
+        let result = Unitary::named(crate::gate_type::GateType::H) & Clifford::CX;
         let qubits = result.qubits();
         assert_eq!(qubits, vec![0, 1, 2]);
     }

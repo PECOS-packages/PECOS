@@ -255,11 +255,447 @@ def half(x: float) -> float:
 fn test_e2e_parameterized_gate() {
     // Note: Guppy convention is gate(qubit, angle)
     let source = r#"
-def rotate() -> None:
+def main() -> None:
     q = qubit[1]
     rz(q[0], 3.14)
 "#;
-    compile_and_check(source, &["qalloc(1)", "rz(3.14) q[0]"]);
+    compile_and_check(source, &["qalloc(1)", "rz(3.14 / 2 turns) q[0]"]);
+}
+
+#[test]
+fn test_e2e_parameterized_gate_preserves_guppy_half_turns() {
+    let guppy_source = r#"
+def main() -> None:
+    q = qubit[1]
+    rz(q[0], 3.14)
+"#;
+    let zlup_source = lint_and_compile(guppy_source, None).expect("Guppy compilation failed");
+    let program = zlup::parse(&zlup_source).expect("generated Zlup failed to parse");
+    let slr = zlup::codegen::SlrCodegen::new()
+        .compile(&program)
+        .expect("generated Zlup failed to lower");
+    let zlup::codegen::slr::SlrStatement::Gate(gate) = &slr.body[0] else {
+        panic!("expected an RZ gate");
+    };
+    let zlup::codegen::slr::SlrExpression::Literal(literal) = &gate.params[0] else {
+        panic!("expected a literal angle");
+    };
+    let zlup::codegen::slr::SlrLiteralValue::Angle(turns) = &literal.value else {
+        panic!("expected an angle in turns");
+    };
+    assert_eq!(*turns, 1.57);
+}
+
+#[test]
+fn test_e2e_symbolic_parameterized_gate_is_typed_as_angle() {
+    let source = r#"
+def main(theta: float) -> None:
+    q = qubit[1]
+    rz(q[0], theta)
+"#;
+
+    compile_and_check(
+        source,
+        &[
+            "fn main(theta: f64)",
+            "__zlup_angle_theta: a64 = theta / 2 turns",
+            "rz(__zlup_angle_theta) q[0]",
+        ],
+    );
+}
+
+#[test]
+fn test_e2e_symbolic_angle_propagates_through_gate_arithmetic() {
+    let source = r#"
+def main(theta: float) -> None:
+    q = qubit[2]
+    rz(q[0], theta)
+    rz(q[1], theta * 2)
+"#;
+
+    compile_and_check(
+        source,
+        &[
+            "fn main(theta: f64)",
+            "__zlup_angle_theta: a64 = theta / 2 turns",
+            "rz(__zlup_angle_theta) q[0]",
+            "rz(__zlup_angle_theta * 2) q[1]",
+        ],
+    );
+}
+
+#[test]
+fn test_e2e_local_angle_propagates_through_gate_arithmetic() {
+    let source = r#"
+def main() -> None:
+    q = qubit[2]
+    x = 0.5
+    rz(q[0], x)
+    rz(q[1], x * 2)
+"#;
+
+    compile_and_check(
+        source,
+        &[
+            "x := 0.5",
+            "__zlup_angle_x: a64 = x / 2 turns",
+            "rz(__zlup_angle_x) q[0]",
+            "rz(__zlup_angle_x * 2) q[1]",
+        ],
+    );
+}
+
+#[test]
+fn test_e2e_angle_type_propagates_to_derived_local() {
+    let source = r#"
+def main() -> None:
+    q = qubit[1]
+    x = 0.5
+    rz(q[0], x)
+    y = x + 1.0
+"#;
+
+    compile_and_check(
+        source,
+        &[
+            "x := 0.5",
+            "__zlup_angle_x: a64 = x / 2 turns",
+            "y := x + 1",
+            "__zlup_angle_y: a64 = y / 2 turns",
+        ],
+    );
+}
+
+#[test]
+fn test_e2e_local_constant_angle_is_converted_at_its_binding() {
+    let source = r#"
+def main() -> None:
+    q = qubit[1]
+    x = 0.5
+    rz(q[0], x)
+"#;
+
+    let zlup = lint_and_compile(source, None).expect("Guppy compilation failed");
+    assert!(
+        zlup.contains("__zlup_angle_x: a64 = x / 2 turns"),
+        "generated source:\n{zlup}"
+    );
+    assert!(
+        zlup.contains("rz(__zlup_angle_x) q[0]"),
+        "generated source:\n{zlup}"
+    );
+
+    let program = zlup::parse(&zlup).expect("generated Zlup failed to parse");
+    let slr = zlup::codegen::SlrCodegen::new()
+        .compile(&program)
+        .expect("comptime local angle should lower to SLR");
+    let zlup::codegen::slr::SlrStatement::Gate(gate) = &slr.body[0] else {
+        panic!("expected RZ gate");
+    };
+    let zlup::codegen::slr::SlrExpression::Literal(literal) = &gate.params[0] else {
+        panic!("expected resolved angle");
+    };
+    assert!(matches!(
+        literal.value,
+        zlup::codegen::slr::SlrLiteralValue::Angle(0.25)
+    ));
+}
+
+#[test]
+fn test_e2e_angle_parameter_keeps_non_angle_uses() {
+    let source = r#"
+def scale(x: float) -> float:
+    return x * 2.0
+def main(theta: float) -> None:
+    q = qubit[1]
+    rz(q[0], theta)
+    rz(q[0], scale(theta))
+    if theta > 0.5:
+        h(q[0])
+"#;
+
+    compile_and_check(
+        source,
+        &[
+            "fn scale(x: f64)",
+            "fn main(theta: f64)",
+            "__zlup_angle_theta: a64 = theta / 2 turns",
+            "rz(__zlup_angle_theta) q[0]",
+            "rz(scale(theta) / 2 turns) q[0]",
+            "if (theta > 0.5)",
+        ],
+    );
+}
+
+#[test]
+fn test_e2e_angle_parameter_keeps_scalar_return_type() {
+    let source = r#"
+def echo(theta: float) -> float:
+    q = qubit[1]
+    rz(q[0], theta)
+    return theta
+"#;
+
+    compile_and_check(
+        source,
+        &[
+            "fn echo(theta: f64)",
+            "-> f64",
+            "__zlup_angle_theta: a64 = theta / 2 turns",
+            "return theta",
+        ],
+    );
+}
+
+#[test]
+fn test_e2e_integer_angle_keeps_integer_index() {
+    let source = r#"
+def main() -> None:
+    q = qubit[4]
+    i = 2
+    rz(q[0], i)
+    h(q[i])
+"#;
+
+    let zlup = lint_and_compile(source, None).expect("Guppy compilation failed");
+    for expected in [
+        "i := 2",
+        "__zlup_angle_i: a64 = i / 2 turns",
+        "rz(__zlup_angle_i) q[0]",
+        "h q[i]",
+    ] {
+        assert!(zlup.contains(expected), "missing {expected:?}:\n{zlup}");
+    }
+}
+
+#[test]
+fn test_e2e_angle_parameter_used_only_in_arithmetic() {
+    let source = r#"
+def main(theta: float) -> None:
+    q = qubit[1]
+    rz(q[0], theta * 2)
+"#;
+
+    compile_and_check(
+        source,
+        &[
+            "fn main(theta: f64)",
+            "__zlup_angle_theta: a64 = theta / 2 turns",
+            "rz(__zlup_angle_theta * 2) q[0]",
+        ],
+    );
+}
+
+#[test]
+fn test_e2e_parameter_never_used_as_angle_stays_scalar() {
+    let source = r#"
+def scale(theta: float) -> float:
+    return theta * 2.0
+"#;
+
+    let zlup = lint_and_compile(source, None).expect("Guppy compilation failed");
+    assert!(
+        zlup.contains("fn scale(theta: f64)"),
+        "generated source:\n{zlup}"
+    );
+    assert!(
+        !zlup.contains("__zlup_angle_theta"),
+        "generated source:\n{zlup}"
+    );
+}
+
+#[test]
+fn test_e2e_integer_parameter_keeps_index_type() {
+    let source = r#"
+def main(i: int) -> None:
+    q = qubit[4]
+    rz(q[0], i)
+    h(q[i])
+"#;
+
+    compile_and_check(
+        source,
+        &[
+            "fn main(i: i64)",
+            "__zlup_angle_i: a64 = i / 2 turns",
+            "rz(__zlup_angle_i) q[0]",
+            "h q[i]",
+        ],
+    );
+}
+
+#[test]
+fn test_e2e_angle_value_flowing_through_function_call() {
+    let source = r#"
+def scale(x: float) -> float:
+    return x * 2.0
+def main(theta: float) -> None:
+    q = qubit[1]
+    phi = scale(theta)
+    rz(q[0], phi)
+"#;
+
+    compile_and_check(
+        source,
+        &[
+            "fn main(theta: f64)",
+            "phi := scale(theta)",
+            "__zlup_angle_phi: a64 = phi / 2 turns",
+            "rz(__zlup_angle_phi) q[0]",
+        ],
+    );
+}
+
+#[test]
+fn test_e2e_derived_angles_convert_once_per_origin() {
+    let source = r#"
+def main(theta: float) -> None:
+    q = qubit[3]
+    rz(q[0], theta)
+    phi = theta * 2
+    rz(q[1], phi)
+    psi = phi + theta
+    rz(q[2], psi)
+"#;
+
+    let zlup = lint_and_compile(source, None).expect("Guppy compilation failed");
+    for name in ["theta", "phi", "psi"] {
+        let declaration = format!("__zlup_angle_{name}: a64");
+        assert_eq!(
+            zlup.matches(&declaration).count(),
+            1,
+            "angle origin {name} was not converted exactly once:\n{zlup}"
+        );
+        assert!(
+            zlup.contains(&format!("rz(__zlup_angle_{name})")),
+            "gate did not use converted {name}:\n{zlup}"
+        );
+    }
+    assert!(
+        zlup.contains("phi := theta * 2"),
+        "generated source:\n{zlup}"
+    );
+    assert!(
+        zlup.contains("psi := phi + theta"),
+        "generated source:\n{zlup}"
+    );
+}
+
+#[test]
+fn test_e2e_loop_variable_angle_has_no_synthesized_binding() {
+    let source = r#"
+def main() -> None:
+    q = qubit[4]
+    for i in range(4):
+        rz(q[i], i)
+"#;
+
+    let zlup = lint_and_compile(source, None).expect("Guppy compilation failed");
+    assert!(
+        zlup.contains("for i in 0..4") && zlup.contains("rz(i / 2 turns) q[i]"),
+        "generated source:\n{zlup}"
+    );
+    assert!(
+        !zlup.contains("__zlup_angle_i"),
+        "loop captures must not reference an unbound angle alias:\n{zlup}"
+    );
+}
+
+#[test]
+fn test_e2e_measurement_result_angle_has_no_synthesized_binding() {
+    let source = r#"
+def main() -> None:
+    q = qubit[2]
+    m = measure(q[0])
+    rz(q[1], m)
+"#;
+
+    let zlup = lint_and_compile(source, None).expect("Guppy compilation failed");
+    assert!(
+        zlup.contains("rz(m / 2 turns) q[1]"),
+        "generated source:\n{zlup}"
+    );
+    assert!(
+        !zlup.contains("__zlup_angle_m"),
+        "measurement results must not reference an unbound angle alias:\n{zlup}"
+    );
+}
+
+#[test]
+fn test_e2e_mixed_parameter_and_loop_angle_origins() {
+    let source = r#"
+def main(theta: float) -> None:
+    q = qubit[4]
+    for i in range(4):
+        rz(q[i], theta + i)
+"#;
+
+    let zlup = lint_and_compile(source, None).expect("Guppy compilation failed");
+    assert!(
+        zlup.contains("__zlup_angle_theta: a64 = theta / 2 turns"),
+        "generated source:\n{zlup}"
+    );
+    assert!(
+        zlup.contains("rz(__zlup_angle_theta + i / 2 turns) q[i]"),
+        "generated source:\n{zlup}"
+    );
+    assert!(
+        !zlup.contains("__zlup_angle_i"),
+        "loop captures must not reference an unbound angle alias:\n{zlup}"
+    );
+}
+
+#[test]
+fn test_e2e_mutable_angle_binding_is_refreshed_after_assignment() {
+    let source = r#"
+def main() -> None:
+    q = qubit[2]
+    theta: float = 0.5
+    rz(q[0], theta)
+    theta = 0.25
+    rz(q[1], theta)
+"#;
+
+    let zlup = lint_and_compile(source, None).expect("Guppy compilation failed");
+    for expected in [
+        "mut theta: f64 = 0.5",
+        "mut __zlup_angle_theta: a64 = theta / 2 turns",
+        "theta = 0.25",
+        "__zlup_angle_theta = theta / 2 turns",
+        "rz(__zlup_angle_theta) q[1]",
+    ] {
+        assert!(zlup.contains(expected), "missing {expected:?}:\n{zlup}");
+    }
+    assert!(
+        zlup.find("theta = 0.25") < zlup.find("__zlup_angle_theta = theta / 2 turns"),
+        "converted angle must refresh after its source assignment:\n{zlup}"
+    );
+}
+
+#[test]
+fn test_e2e_synthesized_angle_bindings_avoid_user_names_per_function() {
+    let source = r#"
+def first(theta: float, __zlup_angle_theta: float) -> None:
+    q = qubit[1]
+    rz(q[0], theta)
+
+def second(theta: float, __zlup_angle_theta: float) -> None:
+    q = qubit[1]
+    rz(q[0], theta)
+"#;
+
+    let zlup = lint_and_compile(source, None).expect("Guppy compilation failed");
+    assert_eq!(
+        zlup.matches("__zlup_angle_theta_2: a64 = theta / 2 turns")
+            .count(),
+        2,
+        "fresh-name selection must be isolated per function:\n{zlup}"
+    );
+    assert_eq!(
+        zlup.matches("rz(__zlup_angle_theta_2) q[0]").count(),
+        2,
+        "gates must use the collision-free aliases:\n{zlup}"
+    );
 }
 
 #[test]

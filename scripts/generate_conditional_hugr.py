@@ -1,7 +1,13 @@
-"""Generate a HUGR file with conditionals for testing HugrEngine.
+"""Generate a conditional HUGR fixture for control-flow rejection tests.
 
 This script creates a simple quantum circuit with a measurement followed by
-a conditional X gate on another qubit.
+a conditional X gate on another qubit. The fixture is read by:
+
+- crates/pecos-phir/tests/hugr_parser_tests.rs::parse_nested_control_flow_errors
+- crates/pecos/tests/neo_hugr_routing_test.rs::neo_hugr_control_flow_is_rejected
+
+These tests verify that the straight-line HUGR-to-PHIR route rejects control
+flow instead of silently dropping operations.
 
 Usage:
     python scripts/generate_conditional_hugr.py

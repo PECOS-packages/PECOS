@@ -55,7 +55,9 @@ pub mod subset;
 pub mod weight;
 
 pub use importance::{ImportanceConfig, ImportanceSamplingNoise};
-pub use importance_runner::{ImportanceSampledShot, ImportanceSamplingRunner, OutcomeBiasConfig};
+pub use importance_runner::{
+    ImportanceSampledShot, ImportanceSamplingError, ImportanceSamplingRunner, OutcomeBiasConfig,
+};
 pub use monte_carlo::{
     ImportanceSamplingResults, MonteCarloConfig, MonteCarloResults, MonteCarloRunner,
 };

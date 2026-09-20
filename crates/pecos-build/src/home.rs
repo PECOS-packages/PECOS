@@ -542,6 +542,12 @@ mod tests {
         std::env::temp_dir().join(format!("pecos_test_{prefix}_{pid}_{id}"))
     }
 
+    /// Write an executable stub reporting `version`, and return only once it can
+    /// actually be executed.
+    ///
+    /// Every test using this stub executes it immediately, which races the
+    /// write. See [`crate::executable::run_when_executable`] for why, and why
+    /// waiting is the available remedy.
     #[cfg(unix)]
     fn create_fake_llvm_config(llvm_dir: &Path, version: &str) {
         use std::os::unix::fs::PermissionsExt;
@@ -560,6 +566,15 @@ mod tests {
         permissions.set_mode(0o755);
         fs::set_permissions(&llvm_config, permissions)
             .expect("Should make fake llvm-config executable");
+
+        crate::executable::run_when_executable(&llvm_config, &["--version"]).unwrap_or_else(
+            |error| {
+                panic!(
+                    "fake llvm-config at {} never became executable: {error}",
+                    llvm_config.display()
+                )
+            },
+        );
     }
 
     #[test]

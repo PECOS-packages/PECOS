@@ -55,6 +55,7 @@
 //! components whose XOR equals the original mechanism. Components may still be
 //! hyperedges if the physical source component flips 3+ detectors.
 
+use pecos_core::CliffordLowering;
 use pecos_core::PauliString;
 use pecos_core::gate_type::GateType;
 use rand::RngExt;
@@ -65,6 +66,25 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 
 use crate::fault_tolerance::propagator::{DemOutputKind, DemOutputMetadata, Pauli};
+
+pub(crate) fn is_two_qubit_noise_gate(gate_type: GateType) -> bool {
+    matches!(
+        gate_type,
+        GateType::CX
+            | GateType::CZ
+            | GateType::CY
+            | GateType::SZZ
+            | GateType::SZZdg
+            | GateType::SXX
+            | GateType::SXXdg
+            | GateType::SYY
+            | GateType::SYYdg
+            | GateType::SWAP
+            | GateType::RXX
+            | GateType::RYY
+            | GateType::RZZ
+    )
+}
 
 // ============================================================================
 // Error Source Tracking
@@ -151,6 +171,28 @@ pub enum DirectSourceFamily {
 /// tracking both its effect and how it was generated. Multiple contributions
 /// with the same effect are grouped at output time, with their source types
 /// determining how they are output (direct vs decomposed forms).
+#[derive(Debug, Clone)]
+pub(crate) enum FaultContributionKind<Mechanism> {
+    Direct(Mechanism),
+    YDecomposed {
+        x_effect: Mechanism,
+        z_effect: Mechanism,
+    },
+    SourceDecomposed(Vec<Mechanism>),
+}
+
+impl<Mechanism> FaultContributionKind<Mechanism> {
+    pub(crate) fn components(&self) -> SmallVec<[&Mechanism; 4]> {
+        match self {
+            Self::Direct(effect) => smallvec::smallvec![effect],
+            Self::YDecomposed {
+                x_effect, z_effect, ..
+            } => smallvec::smallvec![x_effect, z_effect],
+            Self::SourceDecomposed(components) => components.iter().collect(),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct FaultContribution {
     /// The detector/DEM-output effect of this error.
@@ -249,12 +291,6 @@ impl<'a> DirectSourceComponents<'a> {
         }
     }
 
-    pub(crate) fn from_slice(components: &'a [FaultMechanism]) -> Self {
-        Self {
-            components: components.iter().collect(),
-        }
-    }
-
     fn as_slice(&self) -> &[&'a FaultMechanism] {
         &self.components
     }
@@ -313,6 +349,45 @@ impl FaultContribution {
             direct_source_family: None,
             direct_component_effects: None,
             source_component_effects: None,
+            replacement_branch: false,
+        }
+    }
+
+    /// Creates a contribution with an arbitrary source-frame decomposition.
+    ///
+    /// The complete effect is derived by XOR-ing `components`. Keeping the
+    /// components attached to one contribution preserves their correlated
+    /// source identity for decomposed rendering without changing the raw DEM
+    /// mechanism.
+    #[must_use]
+    pub fn source_decomposed(
+        components: impl IntoIterator<Item = FaultMechanism>,
+        probability: f64,
+    ) -> Self {
+        let source_component_effects: SmallVec<[FaultMechanism; 4]> =
+            components.into_iter().collect();
+        let effect = source_component_effects
+            .iter()
+            .fold(FaultMechanism::new(), |effect, component| {
+                effect.xor(component)
+            });
+        let direct_component_effects = if let [first, second] = source_component_effects.as_slice()
+        {
+            Some((first.clone(), second.clone()))
+        } else {
+            None
+        };
+        Self {
+            effect,
+            probability,
+            source_type: FaultSourceType::Direct,
+            location_indices: SmallVec::new(),
+            paulis: SmallVec::new(),
+            source_gate_types: SmallVec::new(),
+            source_before_flags: SmallVec::new(),
+            direct_source_family: None,
+            direct_component_effects,
+            source_component_effects: Some(source_component_effects),
             replacement_branch: false,
         }
     }
@@ -503,6 +578,18 @@ impl FaultContribution {
     pub fn source_component_effects(&self) -> Option<SmallVec<[FaultMechanism; 4]>> {
         self.source_component_effects.clone()
     }
+
+    pub(crate) fn component_kind(&self) -> FaultContributionKind<FaultMechanism> {
+        if let Some((x_effect, z_effect)) = self.decomposition_components() {
+            FaultContributionKind::YDecomposed { x_effect, z_effect }
+        } else if let Some(components) = self.source_component_effects() {
+            FaultContributionKind::SourceDecomposed(components.into_iter().collect())
+        } else if let Some((first, second)) = self.direct_component_effects() {
+            FaultContributionKind::SourceDecomposed(vec![first, second])
+        } else {
+            FaultContributionKind::Direct(self.effect.clone())
+        }
+    }
 }
 
 /// Aggregated source-tracked information for one unique effect.
@@ -632,10 +719,10 @@ struct RenderPolicies {
 /// `L<n>` targets. Mechanisms with the same effect are aggregated together.
 ///
 /// Detector and `L<n>` target indices are stored in sorted order for canonical representation.
-#[derive(Clone, Default)]
-pub struct FaultMechanism {
+#[derive(Clone)]
+pub struct FaultMechanism<Detector = u32> {
     /// Detector indices that flip together (sorted).
-    pub detectors: SmallVec<[u32; 4]>,
+    pub detectors: SmallVec<[Detector; 4]>,
     /// DEM `L<n>` target indices that flip together (sorted).
     ///
     /// New code should treat these as standard observable `L<n>` output channels.
@@ -647,14 +734,21 @@ pub struct FaultMechanism {
     pub tracked_paulis: SmallVec<[u32; 2]>,
 }
 
-impl FaultMechanism {
-    /// Creates a new empty fault mechanism.
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
+impl<Detector> Default for FaultMechanism<Detector> {
+    fn default() -> Self {
+        Self {
+            detectors: SmallVec::new(),
+            dem_outputs: SmallVec::new(),
+            tracked_paulis: SmallVec::new(),
+        }
     }
+}
 
+impl FaultMechanism<u32> {
     /// Creates a mechanism from unsorted detector and DEM-output indices.
+    ///
+    /// Repeated entries are preserved because full-model construction uses
+    /// concrete target lists rather than XOR-toggle streams.
     #[must_use]
     pub fn from_unsorted(
         detectors: impl IntoIterator<Item = u32>,
@@ -663,33 +757,33 @@ impl FaultMechanism {
         Self::from_unsorted_with_tracked_paulis(detectors, dem_outputs, std::iter::empty())
     }
 
-    /// Creates a mechanism from unsorted detector, DEM-output, and tracked-Pauli indices.
+    /// Creates a full-model mechanism from unsorted targets.
     #[must_use]
     pub fn from_unsorted_with_tracked_paulis(
         detectors: impl IntoIterator<Item = u32>,
         dem_outputs: impl IntoIterator<Item = u32>,
         tracked_paulis: impl IntoIterator<Item = u32>,
     ) -> Self {
-        let mut dets: SmallVec<[u32; 4]> = detectors.into_iter().collect();
+        let mut detectors: SmallVec<[u32; 4]> = detectors.into_iter().collect();
         let mut dem_outputs: SmallVec<[u32; 2]> = dem_outputs.into_iter().collect();
         let mut tracked_paulis: SmallVec<[u32; 2]> = tracked_paulis.into_iter().collect();
-        dets.sort_unstable();
+        detectors.sort_unstable();
         dem_outputs.sort_unstable();
         tracked_paulis.sort_unstable();
         Self {
-            detectors: dets,
+            detectors,
             dem_outputs,
             tracked_paulis,
         }
     }
 
-    /// Creates a mechanism from pre-sorted detector and DEM-output indices.
+    /// Creates a full-model mechanism from pre-sorted targets.
     #[must_use]
     pub fn from_sorted(detectors: SmallVec<[u32; 4]>, dem_outputs: SmallVec<[u32; 2]>) -> Self {
         Self::from_sorted_with_tracked_paulis(detectors, dem_outputs, SmallVec::new())
     }
 
-    /// Creates a mechanism from pre-sorted detector, DEM-output, and tracked-Pauli indices.
+    /// Creates a full-model mechanism from pre-sorted targets, including tracked Paulis.
     #[must_use]
     pub fn from_sorted_with_tracked_paulis(
         detectors: SmallVec<[u32; 4]>,
@@ -712,6 +806,40 @@ impl FaultMechanism {
             detectors,
             dem_outputs,
             tracked_paulis,
+        }
+    }
+}
+
+impl<Detector> FaultMechanism<Detector>
+where
+    Detector: Copy + Ord,
+{
+    /// Creates a new empty fault mechanism.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Creates a canonical XOR mechanism where repeated targets cancel by parity.
+    #[must_use]
+    pub fn from_unsorted_parity(
+        detectors: impl IntoIterator<Item = Detector>,
+        dem_outputs: impl IntoIterator<Item = u32>,
+    ) -> Self {
+        Self::from_unsorted_with_tracked_paulis_parity(detectors, dem_outputs, std::iter::empty())
+    }
+
+    /// Creates a canonical XOR mechanism including tracked-Pauli targets.
+    #[must_use]
+    pub fn from_unsorted_with_tracked_paulis_parity(
+        detectors: impl IntoIterator<Item = Detector>,
+        dem_outputs: impl IntoIterator<Item = u32>,
+        tracked_paulis: impl IntoIterator<Item = u32>,
+    ) -> Self {
+        Self {
+            detectors: parity_sorted(detectors),
+            dem_outputs: parity_sorted(dem_outputs),
+            tracked_paulis: parity_sorted(tracked_paulis),
         }
     }
 
@@ -769,9 +897,9 @@ impl FaultMechanism {
     #[must_use]
     pub fn xor(&self, other: &Self) -> Self {
         Self {
-            detectors: symmetric_difference_4(&self.detectors, &other.detectors),
-            dem_outputs: symmetric_difference_2(&self.dem_outputs, &other.dem_outputs),
-            tracked_paulis: symmetric_difference_2(&self.tracked_paulis, &other.tracked_paulis),
+            detectors: symmetric_difference(&self.detectors, &other.detectors),
+            dem_outputs: symmetric_difference(&self.dem_outputs, &other.dem_outputs),
+            tracked_paulis: symmetric_difference(&self.tracked_paulis, &other.tracked_paulis),
         }
     }
 
@@ -797,8 +925,26 @@ impl FaultMechanism {
     }
 }
 
-/// Computes symmetric difference of two sorted slices (4-element variant).
-fn symmetric_difference_4(a: &SmallVec<[u32; 4]>, b: &SmallVec<[u32; 4]>) -> SmallVec<[u32; 4]> {
+pub(super) fn parity_sorted<T, A>(values: impl IntoIterator<Item = T>) -> SmallVec<A>
+where
+    T: Copy + Ord,
+    A: smallvec::Array<Item = T>,
+{
+    let mut toggled = BTreeSet::new();
+    for value in values {
+        if !toggled.remove(&value) {
+            toggled.insert(value);
+        }
+    }
+    toggled.into_iter().collect()
+}
+
+/// Computes the symmetric difference of two sorted small vectors.
+fn symmetric_difference<A>(a: &SmallVec<A>, b: &SmallVec<A>) -> SmallVec<A>
+where
+    A: smallvec::Array,
+    A::Item: Copy + Ord,
+{
     let mut result = SmallVec::new();
     let mut i = 0;
     let mut j = 0;
@@ -826,36 +972,7 @@ fn symmetric_difference_4(a: &SmallVec<[u32; 4]>, b: &SmallVec<[u32; 4]>) -> Sma
     result
 }
 
-/// Computes symmetric difference of two sorted slices (2-element variant).
-fn symmetric_difference_2(a: &SmallVec<[u32; 2]>, b: &SmallVec<[u32; 2]>) -> SmallVec<[u32; 2]> {
-    let mut result = SmallVec::new();
-    let mut i = 0;
-    let mut j = 0;
-
-    while i < a.len() && j < b.len() {
-        match a[i].cmp(&b[j]) {
-            Ordering::Less => {
-                result.push(a[i]);
-                i += 1;
-            }
-            Ordering::Greater => {
-                result.push(b[j]);
-                j += 1;
-            }
-            Ordering::Equal => {
-                // Same element in both - XOR cancels
-                i += 1;
-                j += 1;
-            }
-        }
-    }
-
-    result.extend_from_slice(&a[i..]);
-    result.extend_from_slice(&b[j..]);
-    result
-}
-
-impl PartialEq for FaultMechanism {
+impl<Detector: PartialEq> PartialEq for FaultMechanism<Detector> {
     fn eq(&self, other: &Self) -> bool {
         self.detectors == other.detectors
             && self.dem_outputs == other.dem_outputs
@@ -863,9 +980,9 @@ impl PartialEq for FaultMechanism {
     }
 }
 
-impl Eq for FaultMechanism {}
+impl<Detector: Eq> Eq for FaultMechanism<Detector> {}
 
-impl Hash for FaultMechanism {
+impl<Detector: Hash> Hash for FaultMechanism<Detector> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.detectors.hash(state);
         self.dem_outputs.hash(state);
@@ -873,13 +990,13 @@ impl Hash for FaultMechanism {
     }
 }
 
-impl PartialOrd for FaultMechanism {
+impl<Detector: Ord> PartialOrd for FaultMechanism<Detector> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl Ord for FaultMechanism {
+impl<Detector: Ord> Ord for FaultMechanism<Detector> {
     fn cmp(&self, other: &Self) -> Ordering {
         self.detectors
             .cmp(&other.detectors)
@@ -888,7 +1005,7 @@ impl Ord for FaultMechanism {
     }
 }
 
-impl fmt::Debug for FaultMechanism {
+impl<Detector: fmt::Debug> fmt::Debug for FaultMechanism<Detector> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
@@ -1381,7 +1498,7 @@ impl GraphlikeDecompositionIndex {
         let mut best: Option<Vec<FaultMechanism>> = None;
 
         for (outputs, mut parts) in states {
-            let missing_outputs = symmetric_difference_2(&outputs, &hyperedge.dem_outputs);
+            let missing_outputs = symmetric_difference(&outputs, &hyperedge.dem_outputs);
             if !missing_outputs.is_empty() {
                 // Do not repair logical-frame parity by appending a pure `L<n>`
                 // component. Although this preserves the full XOR effect, it
@@ -1464,7 +1581,7 @@ impl GraphlikeDecompositionIndex {
 
             for candidate in candidates.iter() {
                 for (tail_outputs, tail_parts) in &tail_states {
-                    let outputs = symmetric_difference_2(&candidate.dem_outputs, tail_outputs);
+                    let outputs = symmetric_difference(&candidate.dem_outputs, tail_outputs);
                     let mut parts = Vec::with_capacity(candidate.parts.len() + tail_parts.len());
                     parts.extend(candidate.parts.iter().cloned());
                     parts.extend(tail_parts.iter().cloned());
@@ -1519,7 +1636,7 @@ impl GraphlikeDecompositionIndex {
                 if !self.candidate_allowed(&edge.mechanism, excluded_origin) {
                     continue;
                 }
-                let next_outputs = symmetric_difference_2(&outputs, &edge.mechanism.dem_outputs);
+                let next_outputs = symmetric_difference(&outputs, &edge.mechanism.dem_outputs);
                 let state = (edge.next, next_outputs.clone());
                 if !seen.insert(state) {
                     continue;
@@ -2166,7 +2283,7 @@ pub enum ReplacementBranchApproximation {
     /// Pauli entries. Useful as a baseline comparison.
     IgnoreGateRemoval,
     /// Convolve replacement entries with the Pauli twirl of the omitted ideal
-    /// gate's dagger. This is the default approximation for starred entries.
+    /// gate's dagger. This is the default approximation for replacement entries.
     #[default]
     PauliTwirlOmittedGate,
     /// Evaluate Pauli-projected replacement branches as their own contribution
@@ -2184,6 +2301,175 @@ pub enum ReplacementBranchApproximation {
     /// effect in the ideal-circuit frame, which standard DEM rows cannot always
     /// represent as one deterministic Pauli-like event.
     ExactBranchReplay,
+}
+
+impl ReplacementBranchApproximation {
+    /// Whether this mode consults the omitted gate's Pauli twirl.
+    #[must_use]
+    pub const fn consults_omitted_gate_twirl(self) -> bool {
+        !matches!(self, Self::IgnoreGateRemoval)
+    }
+}
+
+pub(crate) const EXACT_BRANCH_REPLAY_REQUIRES_PROVIDER: &str = "exact_branch_replay for p2 replacement branches requires a circuit-aware exact branch provider; use branch_impact or pauli_twirl_omitted_gate for the current Pauli-projected approximations";
+
+/// A replacement location whose resolved action has no omitted-gate twirl.
+#[derive(Debug, Clone, thiserror::Error)]
+#[error(
+    "replacement entries at node {node} with scheduled gate {gate_type:?} and Clifford {clifford:?} have no omitted-gate Pauli twirl"
+)]
+pub(crate) struct MissingOmittedGateTwirl {
+    pub node: usize,
+    pub gate_type: GateType,
+    pub clifford: CliffordLowering,
+}
+
+/// A rate key that names the action of a differently scheduled gate, whether
+/// or not it also matches scheduled gates in its qubit scope.
+#[derive(Debug, Clone)]
+pub(crate) struct GateRateKeyMismatch {
+    pub table: &'static str,
+    pub key: GateType,
+    pub node: usize,
+    pub scheduled: GateType,
+    pub remedy_table: &'static str,
+    pub matches_scheduled: bool,
+}
+
+impl fmt::Display for GateRateKeyMismatch {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.matches_scheduled {
+            write!(
+                f,
+                "{} key {:?} matches scheduled {:?} gates but also names the Clifford action of {:?} at node {}. ",
+                self.table, self.key, self.key, self.scheduled, self.node,
+            )?;
+        } else {
+            write!(
+                f,
+                "{} key {:?} matches no scheduled gate; node {} schedules {:?} whose Clifford action is {:?}. ",
+                self.table, self.key, self.node, self.scheduled, self.key,
+            )?;
+        }
+        let remedy = if self.matches_scheduled {
+            "add a key for"
+        } else {
+            "key the rate by"
+        };
+        write!(
+            f,
+            "Per-gate rates apply to the gate as scheduled: {remedy} {:?} in {}, or lower the circuit with lower_clifford_rotations() before building.",
+            self.scheduled, self.remedy_table,
+        )
+    }
+}
+
+impl std::error::Error for GateRateKeyMismatch {}
+
+/// The rate representation shared by the one- and two-qubit tables.
+#[derive(Clone, Copy)]
+enum GateRateTableFamily {
+    Scalar,
+    Pauli,
+    PerQubit,
+}
+
+/// The corresponding rate table for the scheduled gate's arity.
+fn scheduled_gate_rate_table(family: GateRateTableFamily, scheduled: GateType) -> &'static str {
+    match (family, scheduled.is_two_qubit()) {
+        (GateRateTableFamily::Scalar, false) => "p1_gate_rates",
+        (GateRateTableFamily::Scalar, true) => "p2_gate_rates",
+        (GateRateTableFamily::Pauli, false) => "rates_1q",
+        (GateRateTableFamily::Pauli, true) => "rates_2q",
+        (GateRateTableFamily::PerQubit, false) => "rates_1q_per_qubit",
+        (GateRateTableFamily::PerQubit, true) => "rates_2q_per_qubits",
+    }
+}
+
+/// The qubit scope of a gate-rate key.
+enum GateRateQubits {
+    Any,
+    One(QubitId),
+    Pair(QubitId, QubitId),
+}
+
+impl GateRateQubits {
+    fn matches(
+        &self,
+        location: &crate::fault_tolerance::propagator::DagSpacetimeLocation,
+        locations: &[crate::fault_tolerance::propagator::DagSpacetimeLocation],
+    ) -> bool {
+        match self {
+            Self::Any => true,
+            Self::One(qubit) => location.qubits.contains(qubit),
+            Self::Pair(control, target) => {
+                if !location.qubits.contains(control) {
+                    return false;
+                }
+                // Builders pair successive fault locations at a node in gate order.
+                let mut qubits = locations
+                    .iter()
+                    .filter(|other| other.node == location.node && other.before == location.before)
+                    .flat_map(|other| &other.qubits);
+                while let (Some(qc), Some(qt)) = (qubits.next(), qubits.next()) {
+                    if (qc, qt) == (control, target) {
+                        return true;
+                    }
+                }
+                false
+            }
+        }
+    }
+}
+
+/// Validate the scalar per-gate rate tables shared by every builder that owns
+/// them directly instead of through a [`NoiseConfig`].
+pub(crate) fn validate_scalar_gate_rate_tables(
+    p1_gate_rates: &BTreeMap<GateType, f64>,
+    p2_gate_rates: &BTreeMap<GateType, f64>,
+    locations: &[crate::fault_tolerance::propagator::DagSpacetimeLocation],
+) -> Result<(), GateRateKeyMismatch> {
+    for (table, rates) in [
+        ("p1_gate_rates", p1_gate_rates),
+        ("p2_gate_rates", p2_gate_rates),
+    ] {
+        validate_active_gate_rate_keys(
+            table,
+            rates.iter().filter_map(|(&key, &rate)| {
+                (rate != 0.0).then_some((key, GateRateQubits::Any, GateRateTableFamily::Scalar))
+            }),
+            locations,
+        )?;
+    }
+    Ok(())
+}
+
+/// Reject active keys that name the Clifford action of a different scheduled gate.
+fn validate_active_gate_rate_keys(
+    table: &'static str,
+    keys: impl IntoIterator<Item = (GateType, GateRateQubits, GateRateTableFamily)>,
+    locations: &[crate::fault_tolerance::propagator::DagSpacetimeLocation],
+) -> Result<(), GateRateKeyMismatch> {
+    for (key, qubits, family) in keys {
+        if let Some(location) = locations.iter().find(|location| {
+            location.gate_type != key
+                && matches!(location.clifford,
+                    CliffordLowering::Named(gate) | CliffordLowering::PerQubit(gate) if gate == key)
+                && qubits.matches(location, locations)
+        }) {
+            return Err(GateRateKeyMismatch {
+                table,
+                key,
+                node: location.node,
+                scheduled: location.gate_type,
+                remedy_table: scheduled_gate_rate_table(family, location.gate_type),
+                matches_scheduled: locations
+                    .iter()
+                    .any(|other| other.gate_type == key && qubits.matches(other, locations)),
+            });
+        }
+    }
+    Ok(())
 }
 
 /// A single Pauli-projected impact term produced by a replacement branch.
@@ -2306,14 +2592,16 @@ impl PauliWeights {
     /// Look up the effective two-qubit Pauli weight for a specific gate.
     ///
     /// Plain entries contribute directly. Replacement entries first convolve with
-    /// the Pauli twirl of the omitted gate, so `*II` on `SZZ` contributes half
-    /// `II` and half `ZZ`, while `*XX` on `SZZ` contributes half `XX` and half
+    /// the Pauli twirl of the omitted gate, so `~II` on `SZZ` contributes half
+    /// `II` and half `ZZ`, while `~XX` on `SZZ` contributes half `XX` and half
     /// `YY`. The identity component is intentionally not returned by callers that
-    /// query only non-identity Pauli labels.
+    /// query only non-identity Pauli labels. Per-qubit Pauli actions and
+    /// `Named(I)` give exact channels: a half-turn `RZZ` contributes `ZZ`,
+    /// while a zero rotation contributes only `II` before convolution.
     #[must_use]
     pub fn two_qubit_weight_for(
         &self,
-        gate_type: GateType,
+        clifford: CliffordLowering,
         pauli: &pecos_core::PauliString,
         approximation: ReplacementBranchApproximation,
     ) -> f64 {
@@ -2322,7 +2610,7 @@ impl PauliWeights {
         };
         let direct = self.post_gate_two_qubit_weight_for(pauli);
 
-        if approximation == ReplacementBranchApproximation::IgnoreGateRemoval {
+        if !approximation.consults_omitted_gate_twirl() {
             return direct
                 + self
                     .replacement_entries
@@ -2335,7 +2623,7 @@ impl PauliWeights {
 
         direct
             + self
-                .replacement_branch_impacts(gate_type)
+                .replacement_branch_impacts(clifford)
                 .into_iter()
                 .filter(|impact| impact.pauli_label == query_label)
                 .map(|impact| impact.relative_probability)
@@ -2358,15 +2646,18 @@ impl PauliWeights {
 
     /// Non-identity branch-impact terms from replacement entries.
     ///
-    /// Each starred replacement entry is convolved with the Pauli twirl of the
+    /// Each replacement entry is convolved with the Pauli twirl of the
     /// omitted ideal gate. The returned terms are deliberately not aggregated:
     /// the builder should evaluate each branch term as a separate contribution
     /// before the DEM's normal contribution grouping combines equivalent
     /// detector/logical effects. Identity effects are omitted because DEM
     /// builders only emit branches that flip detectors or logical observables.
     #[must_use]
-    pub fn replacement_branch_impacts(&self, gate_type: GateType) -> Vec<ReplacementBranchImpact> {
-        let Some(twirl) = omitted_two_qubit_gate_pauli_twirl(gate_type) else {
+    pub fn replacement_branch_impacts(
+        &self,
+        clifford: CliffordLowering,
+    ) -> Vec<ReplacementBranchImpact> {
+        let Some(twirl) = omitted_two_qubit_gate_pauli_twirl(clifford) else {
             return Vec::new();
         };
         let mut impacts = Vec::new();
@@ -2396,12 +2687,40 @@ impl PauliWeights {
     /// This is a convenience aggregation for callers that do not need source
     /// branch identity.
     #[must_use]
-    pub fn replacement_branch_impact_weights(&self, gate_type: GateType) -> BTreeMap<String, f64> {
+    pub fn replacement_branch_impact_weights(
+        &self,
+        clifford: CliffordLowering,
+    ) -> BTreeMap<String, f64> {
         let mut weights = BTreeMap::new();
-        for impact in self.replacement_branch_impacts(gate_type) {
+        for impact in self.replacement_branch_impacts(clifford) {
             *weights.entry(impact.pauli_label).or_insert(0.0) += impact.relative_probability;
         }
         weights
+    }
+
+    /// Validate replacement locations when the selected mode consults a twirl.
+    ///
+    /// Every two-qubit gate accepted by Pauli propagation has a twirl, including
+    /// per-qubit Paulis and the identity action of zero-angle rotations.
+    pub(crate) fn validate_replacement_locations(
+        &self,
+        locations: &[crate::fault_tolerance::propagator::DagSpacetimeLocation],
+        approximation: ReplacementBranchApproximation,
+    ) -> Result<(), MissingOmittedGateTwirl> {
+        if approximation.consults_omitted_gate_twirl() && self.has_replacement_entries() {
+            for loc in locations {
+                if is_two_qubit_noise_gate(loc.gate_type)
+                    && omitted_two_qubit_gate_pauli_twirl(loc.clifford).is_none()
+                {
+                    return Err(MissingOmittedGateTwirl {
+                        node: loc.node,
+                        gate_type: loc.gate_type,
+                        clifford: loc.clifford,
+                    });
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Get all entries as `(PauliString, weight)` pairs.
@@ -2416,7 +2735,7 @@ impl PauliWeights {
         &self.replacement_entries
     }
 
-    /// Whether this weight table contains starred replacement branches.
+    /// Whether this weight table contains replacement branches.
     #[must_use]
     pub fn has_replacement_entries(&self) -> bool {
         !self.replacement_entries.is_empty()
@@ -2439,22 +2758,40 @@ impl<const N: usize> From<[(pecos_core::PauliString, f64); N]> for PauliWeights 
 /// Pauli-twirl probabilities, so this helper returns the distribution in terms
 /// of two-qubit Pauli labels, including `"II"` when present.
 ///
+/// For `PerQubit(X/Y/Z)`, the omitted operation is exactly `XX/YY/ZZ`,
+/// respectively. For `Named(I)`, it is exactly `II`. Their twirls place unit
+/// weight on that single Pauli, with no approximation to the omitted channel.
+///
 /// This helper is intentionally parameter-free and device-agnostic. Callers
 /// remain responsible for deciding which fault branches are replacement
 /// branches, how leakage symbols are projected, and how branch probabilities are
 /// scaled.
 #[must_use]
 pub fn omitted_two_qubit_gate_pauli_twirl(
-    gate_type: GateType,
+    clifford: CliffordLowering,
 ) -> Option<BTreeMap<&'static str, f64>> {
-    let entries: &[(&str, f64)] = match gate_type {
-        GateType::CX => &[("II", 0.25), ("IX", 0.25), ("ZI", 0.25), ("ZX", 0.25)],
-        GateType::CY => &[("II", 0.25), ("IY", 0.25), ("ZI", 0.25), ("ZY", 0.25)],
-        GateType::CZ => &[("II", 0.25), ("IZ", 0.25), ("ZI", 0.25), ("ZZ", 0.25)],
-        GateType::SWAP => &[("II", 0.25), ("XX", 0.25), ("YY", 0.25), ("ZZ", 0.25)],
-        GateType::SXX | GateType::SXXdg => &[("II", 0.5), ("XX", 0.5)],
-        GateType::SYY | GateType::SYYdg => &[("II", 0.5), ("YY", 0.5)],
-        GateType::SZZ | GateType::SZZdg => &[("II", 0.5), ("ZZ", 0.5)],
+    let entries: &[(&str, f64)] = match clifford {
+        CliffordLowering::Named(GateType::I) => &[("II", 1.0)],
+        CliffordLowering::Named(GateType::CX) => {
+            &[("II", 0.25), ("IX", 0.25), ("ZI", 0.25), ("ZX", 0.25)]
+        }
+        CliffordLowering::Named(GateType::CY) => {
+            &[("II", 0.25), ("IY", 0.25), ("ZI", 0.25), ("ZY", 0.25)]
+        }
+        CliffordLowering::Named(GateType::CZ) => {
+            &[("II", 0.25), ("IZ", 0.25), ("ZI", 0.25), ("ZZ", 0.25)]
+        }
+        CliffordLowering::Named(GateType::SWAP) => {
+            &[("II", 0.25), ("XX", 0.25), ("YY", 0.25), ("ZZ", 0.25)]
+        }
+        CliffordLowering::Named(GateType::SXX | GateType::SXXdg) => &[("II", 0.5), ("XX", 0.5)],
+        CliffordLowering::Named(GateType::SYY | GateType::SYYdg) => &[("II", 0.5), ("YY", 0.5)],
+        CliffordLowering::Named(GateType::SZZ | GateType::SZZdg) => &[("II", 0.5), ("ZZ", 0.5)],
+        // Pauli orthogonality gives tr(P (p tensor p)) = 4 only for P = pp,
+        // so |tr(P U)|^2 / 16 places all weight on that Pauli.
+        CliffordLowering::PerQubit(GateType::X) => &[("XX", 1.0)],
+        CliffordLowering::PerQubit(GateType::Y) => &[("YY", 1.0)],
+        CliffordLowering::PerQubit(GateType::Z) => &[("ZZ", 1.0)],
         _ => return None,
     };
     Some(entries.iter().copied().collect())
@@ -2491,6 +2828,10 @@ pub struct NoiseConfig {
     /// When a single-qubit gate type appears here, this total rate replaces
     /// `p1` while still using `p1_weights` to distribute probability across
     /// Pauli channels.
+    /// Keys name the scheduled gate; traced rotations such as `RZZ` and `RXY1Q`
+    /// require rotation keys or lowering the circuit first. Nonzero keys naming
+    /// the action of a different scheduled gate are rejected, even if another
+    /// scheduled gate matches the key.
     pub p1_gate_rates: BTreeMap<GateType, f64>,
     /// Two-qubit gate error rate.
     pub p2: f64,
@@ -2499,6 +2840,10 @@ pub struct NoiseConfig {
     /// When a two-qubit gate type appears here, this total rate replaces
     /// `p2` while still using `p2_weights` to distribute probability across
     /// Pauli-pair channels.
+    /// Keys name the scheduled gate; traced rotations such as `RZZ` and `RXY1Q`
+    /// require rotation keys or lowering the circuit first. Nonzero keys naming
+    /// the action of a different scheduled gate are rejected, even if another
+    /// scheduled gate matches the key.
     pub p2_gate_rates: BTreeMap<GateType, f64>,
     /// Measurement error rate.
     pub p_meas: f64,
@@ -3191,6 +3536,14 @@ impl Default for NoiseConfig {
 }
 
 impl NoiseConfig {
+    /// Reject active rate keys that name an action of a different scheduled gate.
+    pub(crate) fn validate_gate_rate_keys(
+        &self,
+        locations: &[crate::fault_tolerance::propagator::DagSpacetimeLocation],
+    ) -> Result<(), GateRateKeyMismatch> {
+        validate_scalar_gate_rate_tables(&self.p1_gate_rates, &self.p2_gate_rates, locations)
+    }
+
     /// Creates a new noise configuration (idle defaults to `None`).
     #[must_use]
     pub fn new(p1: f64, p2: f64, p_meas: f64, p_prep: f64) -> Self {
@@ -3343,6 +3696,8 @@ impl NoiseConfig {
     }
 
     /// Sets a total single-qubit error-rate override for one gate type.
+    /// Phase-shaped U operations inherit the RZ rate unless an explicit U
+    /// override is configured. Their scheduled type remains U in provenance.
     ///
     /// The override changes only the total rate. If `p1_weights` is configured,
     /// those weights still determine the relative Pauli distribution for this
@@ -3360,6 +3715,61 @@ impl NoiseConfig {
             .get(&gate_type)
             .copied()
             .unwrap_or(self.p1)
+    }
+
+    /// Resolve a scheduled one-qubit operation's total rate. An explicit
+    /// scheduled-gate override takes precedence over its inherited noise type.
+    #[must_use]
+    pub fn p1_rate_for_operation(&self, scheduled: GateType, inherited: GateType) -> f64 {
+        self.p1_gate_rates
+            .get(&scheduled)
+            .copied()
+            .unwrap_or_else(|| self.p1_rate_for_gate(inherited))
+    }
+
+    pub(crate) fn rates_1q_for_operation(
+        &self,
+        scheduled: GateType,
+        inherited: GateType,
+    ) -> [f64; 3] {
+        resolve_1q_rates(
+            scheduled,
+            inherited,
+            self.p1,
+            &self.p1_gate_rates,
+            self.p1_weights.as_ref(),
+        )
+    }
+
+    pub(crate) fn rates_2q_for_operation(
+        &self,
+        gate_type: GateType,
+        clifford: CliffordLowering,
+    ) -> [f64; 15] {
+        if let Some(weights) = &self.p2_weights {
+            return std::array::from_fn(|idx| {
+                let flat = idx + 1;
+                let p1 = flat / 4;
+                let p2 = flat % 4;
+                let pauli = pauli_pair_for_weight(p1, p2);
+                let p2_total = self.p2_rate_for_gate(gate_type);
+                let weight = if self.p2_replacement_approximation
+                    == ReplacementBranchApproximation::BranchImpact
+                    || self.p2_replacement_approximation
+                        == ReplacementBranchApproximation::ExactBranchReplay
+                {
+                    weights.post_gate_two_qubit_weight_for(&pauli)
+                } else {
+                    weights.two_qubit_weight_for(
+                        clifford,
+                        &pauli,
+                        self.p2_replacement_approximation,
+                    )
+                };
+                p2_total * weight
+            });
+        }
+        [self.p2_rate_for_gate(gate_type) / 15.0; 15]
     }
 
     /// Sets custom per-Pauli weights for two-qubit gates.
@@ -3813,27 +4223,19 @@ struct ParsedPecosDemMetadata {
 }
 
 pub(crate) fn parse_pecos_dem_metadata_line(
-    line: &str,
+    instruction: &pecos_decoder_core::dem::grammar::Instruction,
 ) -> Result<DemOutput, PecosDemMetadataError> {
-    let line = line.trim();
-    let (prefix, payload, forced_kind) =
-        if let Some(payload) = line.strip_prefix("pecos_tracked_pauli") {
-            (
-                "pecos_tracked_pauli",
-                payload.trim(),
-                Some(DemOutputKind::TrackedPauli),
-            )
-        } else if let Some(payload) = line.strip_prefix("pecos_observable") {
-            (
-                "pecos_observable",
-                payload.trim(),
-                Some(DemOutputKind::Observable),
-            )
-        } else {
+    use pecos_decoder_core::dem::grammar::Kind;
+    let (prefix, forced_kind) = match instruction.kind {
+        Kind::PecosTrackedPauli => ("pecos_tracked_pauli", DemOutputKind::TrackedPauli),
+        Kind::PecosObservable => ("pecos_observable", DemOutputKind::Observable),
+        _ => {
             return Err(PecosDemMetadataError::new(
                 "missing PECOS DEM metadata prefix",
             ));
-        };
+        }
+    };
+    let payload = instruction.payload.as_deref().unwrap_or_default();
     if payload.is_empty() {
         return Err(PecosDemMetadataError::new(format!(
             "{prefix} is missing its JSON payload"
@@ -3844,9 +4246,7 @@ pub(crate) fn parse_pecos_dem_metadata_line(
         PecosDemMetadataError::new(format!("invalid {prefix} JSON payload: {err}"))
     })?;
     let mut output = parse_pecos_metadata_dem_output(0, &value)?;
-    if let Some(kind) = forced_kind {
-        output.kind = Some(kind);
-    }
+    output.kind = Some(forced_kind);
     if output.is_tracked_pauli() && !output.records.is_empty() {
         return Err(PecosDemMetadataError::new(
             "tracked Pauli metadata cannot have measurement records",
@@ -4070,6 +4470,12 @@ pub const PAULI_2Q_ORDER: [&str; 15] = [
 ///      [`Self::with_2q_rates_for_qubits`] for heterogeneous devices, or
 ///      [`Self::with_1q_rates`] / [`Self::with_2q_rates`] for homogeneous
 ///      models.
+///
+/// Keys in all gate-rate tables name the gate as scheduled; runtime-traced
+/// circuits schedule rotations such as `RZZ` and `RXY1Q`, so key by those
+/// or lower the circuit first. Nonzero keys naming the action of a different
+/// scheduled gate in the key's qubit scope are rejected, even if another
+/// scheduled gate matches the key.
 #[derive(Debug, Clone, Default)]
 pub struct PerGateTypeNoise {
     pub rates_1q: HashMap<GateType, [f64; 3]>,
@@ -4088,6 +4494,63 @@ pub struct PerGateTypeNoise {
 }
 
 impl PerGateTypeNoise {
+    /// Validate every gate-keyed rate table, including the base configuration.
+    pub(crate) fn validate_gate_rate_keys(
+        &self,
+        locations: &[crate::fault_tolerance::propagator::DagSpacetimeLocation],
+    ) -> Result<(), GateRateKeyMismatch> {
+        self.base.validate_gate_rate_keys(locations)?;
+        validate_active_gate_rate_keys(
+            "rates_1q",
+            self.rates_1q.iter().filter_map(|(&key, rates)| {
+                rates.iter().any(|&rate| rate != 0.0).then_some((
+                    key,
+                    GateRateQubits::Any,
+                    GateRateTableFamily::Pauli,
+                ))
+            }),
+            locations,
+        )?;
+        validate_active_gate_rate_keys(
+            "rates_2q",
+            self.rates_2q.iter().filter_map(|(&key, rates)| {
+                rates.iter().any(|&rate| rate != 0.0).then_some((
+                    key,
+                    GateRateQubits::Any,
+                    GateRateTableFamily::Pauli,
+                ))
+            }),
+            locations,
+        )?;
+        validate_active_gate_rate_keys(
+            "rates_1q_per_qubit",
+            self.rates_1q_per_qubit
+                .iter()
+                .filter_map(|(&(key, qubit), rates)| {
+                    rates.iter().any(|&rate| rate != 0.0).then_some((
+                        key,
+                        GateRateQubits::One(qubit),
+                        GateRateTableFamily::PerQubit,
+                    ))
+                }),
+            locations,
+        )?;
+        validate_active_gate_rate_keys(
+            "rates_2q_per_qubits",
+            self.rates_2q_per_qubits
+                .iter()
+                .filter_map(|(&(key, control, target), rates)| {
+                    rates.iter().any(|&rate| rate != 0.0).then_some((
+                        key,
+                        GateRateQubits::Pair(control, target),
+                        GateRateTableFamily::PerQubit,
+                    ))
+                }),
+            locations,
+        )?;
+        Ok(())
+    }
+
     /// Construct with empty gate maps; unspecified gates use `base`.
     #[must_use]
     pub fn from_base_noise(base: NoiseConfig) -> Self {
@@ -4189,6 +4652,32 @@ impl PerGateTypeNoise {
         self.rates_2q_per_qubits
             .insert((g, q_control, q_target), rates);
         self
+    }
+
+    /// Resolve scheduled-gate calibration before an inherited noise type.
+    /// Per-qubit scheduled rates, scheduled gate rates, and scheduled total-rate
+    /// overrides all take precedence over inherited calibration.
+    pub(crate) fn rates_1q_for_operation(
+        &self,
+        scheduled: GateType,
+        inherited: GateType,
+        qubit: Option<QubitId>,
+    ) -> [f64; 3] {
+        let explicit = |gate| {
+            qubit
+                .and_then(|q| self.explicit_1q_rates_on(gate, q))
+                .or_else(|| self.explicit_1q_rates(gate))
+        };
+        if let Some(rates) = explicit(scheduled) {
+            return rates;
+        }
+        if self.base.p1_gate_rates.contains_key(&scheduled) {
+            return [self.base.p1_rate_for_gate(scheduled) / 3.0; 3];
+        }
+        if let Some(rates) = explicit(inherited) {
+            return rates;
+        }
+        std::array::from_fn(|i| self.rate_1q(inherited, i))
     }
 
     /// Lookup 1Q Pauli rate for a gate. Returns the base single-qubit gate
@@ -4748,6 +5237,12 @@ pub struct DetectorErrorModel {
     graphlike_decomposable_counts: BTreeMap<(u32, u32), u32>,
     /// Quantified approximations introduced by infeasible categorical signature channels.
     idle_noise_residuals: Vec<NoiseChannelResidual>,
+    /// Whether contribution location IDs index the physical influence map.
+    ///
+    /// A composed model retains source-instance provenance in the same compact
+    /// field, but those synthetic IDs must never be interpreted as indices into
+    /// a physical circuit's influence map.
+    source_locations_index_influence_map: bool,
 }
 
 /// Structured DEM mechanism tuple: `(probability, detector_ids, observable_ids)`.
@@ -4767,6 +5262,7 @@ impl DetectorErrorModel {
             contributions: Vec::new(),
             graphlike_decomposable_counts: BTreeMap::new(),
             idle_noise_residuals: Vec::new(),
+            source_locations_index_influence_map: true,
         }
     }
 
@@ -4780,6 +5276,7 @@ impl DetectorErrorModel {
             contributions: Vec::new(),
             graphlike_decomposable_counts: BTreeMap::new(),
             idle_noise_residuals: Vec::new(),
+            source_locations_index_influence_map: true,
         }
     }
 
@@ -4863,6 +5360,91 @@ impl DetectorErrorModel {
     #[must_use]
     pub fn num_contributions(&self) -> usize {
         self.contributions.len()
+    }
+
+    /// Returns source-tracked contributions in insertion order.
+    ///
+    /// This read-only view is the structured handoff for transformations such
+    /// as DEM slicing. Callers should preserve each contribution as one
+    /// independent source rather than aggregating equal effects prematurely.
+    #[inline]
+    #[must_use]
+    pub fn contributions(&self) -> &[FaultContribution] {
+        &self.contributions
+    }
+
+    /// Convert this PECOS model into the structured decoder input boundary.
+    ///
+    /// This uses the same equal-effect grouping and XOR probability combination
+    /// as [`Self::to_mechanisms`] and the default [`Display`] representation.
+    /// Tracked-Pauli outputs are rejected because matching decoders only consume
+    /// standard DEM observables.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DecoderError`](pecos_decoder_core::errors::DecoderError) when
+    /// tracked-Pauli targets are present or model dimensions are inconsistent.
+    pub fn to_structured_decoder_dem(
+        &self,
+    ) -> Result<pecos_decoder_core::window::StructuredDem, pecos_decoder_core::errors::DecoderError>
+    {
+        use pecos_decoder_core::errors::DecoderError;
+        use pecos_decoder_core::window::{
+            StructuredDem, StructuredDemComponent, StructuredDemError,
+        };
+
+        if !self.tracked_paulis.is_empty()
+            || self.contributions.iter().any(|contribution| {
+                let kind = contribution.component_kind();
+                kind.components()
+                    .iter()
+                    .any(|component| !component.tracked_paulis.is_empty())
+            })
+        {
+            return Err(DecoderError::InvalidConfiguration(
+                "structured matching-decoder DEMs do not support PECOS tracked-Pauli outputs"
+                    .into(),
+            ));
+        }
+
+        let num_detectors = self.num_detectors();
+        let mut detector_coords = vec![None; num_detectors];
+        for detector in &self.detectors {
+            let index = detector.id as usize;
+            let Some(slot) = detector_coords.get_mut(index) else {
+                return Err(DecoderError::InvalidConfiguration(format!(
+                    "detector D{} is outside the model's detector dimension {num_detectors}",
+                    detector.id
+                )));
+            };
+            *slot = detector.coords.map(|coords| coords.to_vec());
+        }
+
+        let (mechanisms, _) = self.to_mechanisms();
+        let errors = mechanisms
+            .iter()
+            .map(|(probability, detectors, observables)| StructuredDemError {
+                probability: *probability,
+                components: vec![StructuredDemComponent {
+                    detectors: detectors.clone(),
+                    observables: observables.clone(),
+                }],
+            })
+            .collect();
+        StructuredDem::try_new(
+            errors,
+            detector_coords,
+            num_detectors,
+            self.num_observables(),
+        )
+    }
+
+    pub(crate) const fn source_locations_index_influence_map(&self) -> bool {
+        self.source_locations_index_influence_map
+    }
+
+    pub(crate) fn mark_source_locations_as_composed_provenance(&mut self) {
+        self.source_locations_index_influence_map = false;
     }
 
     /// Returns every quantified categorical-channel approximation made during build.
@@ -5021,27 +5603,37 @@ impl DetectorErrorModel {
 
     /// Applies PECOS metadata embedded in extended DEM text.
     ///
-    /// Standard DEM lines are ignored by this method. PECOS extension lines
-    /// are parsed and merged into the observable/tracked-Pauli definitions.
+    /// Standard DEM instructions are validated but do not change metadata. PECOS
+    /// extension lines are parsed and merged into the observable/tracked-Pauli definitions.
     ///
     /// # Errors
     ///
-    /// Returns an error if a PECOS metadata line is malformed.
+    /// Returns an error for malformed instructions or metadata, or a DEM requiring flattening.
     pub fn apply_pecos_dem_metadata(
         &mut self,
         dem_text: &str,
     ) -> Result<(), PecosDemMetadataError> {
+        use pecos_decoder_core::dem::grammar::{Kind, Options, parse_line_with_options};
         for line in dem_text.lines() {
-            let line = line.trim();
-            if line.is_empty() || line.starts_with('#') {
+            // Metadata import explicitly accepts PECOS TP targets and JSON statements.
+            let Some(instruction) = parse_line_with_options(
+                line,
+                Options {
+                    pecos_extensions: true,
+                },
+            )
+            .map_err(|err| PecosDemMetadataError::new(err.to_string()))?
+            else {
                 continue;
-            }
-            if line.starts_with("pecos_observable") || line.starts_with("pecos_tracked_pauli") {
-                self.apply_dem_output_metadata(parse_pecos_dem_metadata_line(line)?);
-            } else if line.starts_with("pecos_") {
-                return Err(PecosDemMetadataError::new(format!(
-                    "unsupported PECOS DEM extension line: {line}"
-                )));
+            };
+            instruction
+                .require_flat("DetectorErrorModel::with_pecos_dem_metadata")
+                .map_err(|err| PecosDemMetadataError::new(err.to_string()))?;
+            if matches!(
+                instruction.kind,
+                Kind::PecosObservable | Kind::PecosTrackedPauli
+            ) {
+                self.apply_dem_output_metadata(parse_pecos_dem_metadata_line(&instruction)?);
             }
         }
         Ok(())
@@ -5518,6 +6110,59 @@ impl DetectorErrorModel {
             .push(FaultContribution::direct(effect, probability));
     }
 
+    /// Adds a direct contribution carrying composed-model source identities.
+    pub(crate) fn add_direct_contribution_with_composed_locations(
+        &mut self,
+        effect: FaultMechanism,
+        probability: f64,
+        location_indices: SmallVec<[u32; 2]>,
+    ) {
+        if effect.is_empty() || probability <= 0.0 {
+            return;
+        }
+        let mut contribution = FaultContribution::direct(effect, probability);
+        contribution.location_indices = location_indices;
+        self.contributions.push(contribution);
+    }
+
+    /// Adds one correlated contribution with arbitrary source-frame components.
+    ///
+    /// The raw mechanism is the XOR of all components. Decomposed renderers may
+    /// retain the component boundaries when they are useful to a graphlike
+    /// consumer.
+    pub fn add_source_decomposed_contribution(
+        &mut self,
+        components: impl IntoIterator<Item = FaultMechanism>,
+        probability: f64,
+    ) {
+        if probability <= 0.0 {
+            return;
+        }
+        let contribution = FaultContribution::source_decomposed(components, probability);
+        if contribution.effect.is_empty() {
+            return;
+        }
+        self.contributions.push(contribution);
+    }
+
+    /// Adds a source-decomposed contribution carrying composed source identities.
+    pub(crate) fn add_source_decomposed_contribution_with_composed_locations(
+        &mut self,
+        components: impl IntoIterator<Item = FaultMechanism>,
+        probability: f64,
+        location_indices: SmallVec<[u32; 2]>,
+    ) {
+        if probability <= 0.0 {
+            return;
+        }
+        let mut contribution = FaultContribution::source_decomposed(components, probability);
+        if contribution.effect.is_empty() {
+            return;
+        }
+        contribution.location_indices = location_indices;
+        self.contributions.push(contribution);
+    }
+
     /// Adds a direct error contribution with source metadata.
     pub(crate) fn add_direct_contribution_with_source(
         &mut self,
@@ -5605,6 +6250,35 @@ impl DetectorErrorModel {
         ));
     }
 
+    /// Adds a Y-decomposed contribution carrying composed source identities.
+    pub(crate) fn add_y_decomposed_contribution_with_composed_locations(
+        &mut self,
+        x_effect: &FaultMechanism,
+        z_effect: &FaultMechanism,
+        probability: f64,
+        location_indices: SmallVec<[u32; 2]>,
+    ) {
+        if probability <= 0.0 {
+            return;
+        }
+        let combined = x_effect.xor(z_effect);
+        if combined.is_empty() {
+            return;
+        }
+        if x_effect.is_empty() || z_effect.is_empty() {
+            self.add_direct_contribution_with_composed_locations(
+                combined,
+                probability,
+                location_indices,
+            );
+            return;
+        }
+        let mut contribution =
+            FaultContribution::y_decomposed(combined, x_effect, z_effect, probability);
+        contribution.location_indices = location_indices;
+        self.contributions.push(contribution);
+    }
+
     /// Adds a Y-decomposed error contribution with source metadata.
     pub(crate) fn add_y_decomposed_contribution_with_source(
         &mut self,
@@ -5688,6 +6362,7 @@ impl DetectorErrorModel {
     /// Merge contributions and graphlike counts from another DEM.
     /// Used for parallelized DEM construction.
     pub fn merge_contributions_from(&mut self, other: Self) {
+        self.source_locations_index_influence_map &= other.source_locations_index_influence_map;
         self.contributions.extend(other.contributions);
         for (key, count) in other.graphlike_decomposable_counts {
             *self.graphlike_decomposable_counts.entry(key).or_insert(0) += count;
@@ -7040,8 +7715,78 @@ fn trim_trailing_zeros(s: &str) -> String {
     }
 }
 
+/// Resolve one-qubit calibration without losing scheduled-gate precedence.
+pub(crate) fn resolve_1q_rates(
+    scheduled: GateType,
+    inherited: GateType,
+    base: f64,
+    gate_rates: &BTreeMap<GateType, f64>,
+    weights: Option<&PauliWeights>,
+) -> [f64; 3] {
+    let total = gate_rates
+        .get(&scheduled)
+        .or_else(|| gate_rates.get(&inherited))
+        .copied()
+        .unwrap_or(base);
+    if let Some(weights) = weights {
+        use pecos_core::pauli::{X, Y, Z};
+        return [X(0), Y(0), Z(0)].map(|pauli| total * weights.weight_for(&pauli));
+    }
+    [total / 3.0; 3]
+}
+
+fn pauli_pair_for_weight(p1: usize, p2: usize) -> pecos_core::PauliString {
+    let mut paulis = Vec::new();
+    let pauli_from_index = |idx| match idx {
+        0 => pecos_core::Pauli::I,
+        1 => pecos_core::Pauli::X,
+        2 => pecos_core::Pauli::Y,
+        3 => pecos_core::Pauli::Z,
+        _ => unreachable!("Pauli index must be 0-3"),
+    };
+    let pa1 = pauli_from_index(p1);
+    let pa2 = pauli_from_index(p2);
+    if pa1 != pecos_core::Pauli::I {
+        paulis.push((pa1, pecos_core::QubitId::from(0usize)));
+    }
+    if pa2 != pecos_core::Pauli::I {
+        paulis.push((pa2, pecos_core::QubitId::from(1usize)));
+    }
+    pecos_core::PauliString::with_phase_and_paulis(pecos_core::QuarterPhase::PlusOne, paulis)
+}
+
 #[cfg(test)]
 mod tests {
+    use super::is_two_qubit_noise_gate;
+    use pecos_core::CliffordLowering;
+    use pecos_core::gate_type::GateType;
+
+    #[test]
+    fn two_qubit_noise_gate_membership_is_pinned() {
+        let actual: Vec<_> = (0..=u8::MAX)
+            .filter_map(|value| GateType::try_from(value).ok())
+            .filter(|gate_type| is_two_qubit_noise_gate(*gate_type))
+            .collect();
+
+        assert_eq!(
+            actual,
+            [
+                GateType::CX,
+                GateType::CY,
+                GateType::CZ,
+                GateType::SXX,
+                GateType::SXXdg,
+                GateType::SYY,
+                GateType::SYYdg,
+                GateType::SZZ,
+                GateType::SZZdg,
+                GateType::SWAP,
+                GateType::RXX,
+                GateType::RYY,
+                GateType::RZZ,
+            ]
+        );
+    }
 
     /// The boundary fit trades total-variation distance for exact preservation of
     /// the requested per-Pauli probabilities. Pin both halves of that trade so it
@@ -7172,6 +7917,12 @@ mod tests {
     }
     use super::*;
 
+    fn source_components_from_slice(components: &[FaultMechanism]) -> DirectSourceComponents<'_> {
+        DirectSourceComponents {
+            components: components.iter().collect(),
+        }
+    }
+
     #[test]
     fn test_error_mechanism_xor() {
         let m1 = FaultMechanism::from_unsorted([0, 1, 2], [0]);
@@ -7193,6 +7944,27 @@ mod tests {
         assert_eq!(m1, m2);
         assert_eq!(m1.detectors.as_slice(), &[0, 1, 2]);
         assert_eq!(m1.dem_outputs.as_slice(), &[0, 1]);
+    }
+
+    #[test]
+    fn fault_mechanism_constructor_preserves_repeated_targets() {
+        let mechanism = FaultMechanism::from_unsorted([2, 1, 2], [3, 3]);
+
+        assert_eq!(mechanism.detectors.as_slice(), &[1, 2, 2]);
+        assert_eq!(mechanism.dem_outputs.as_slice(), &[3, 3]);
+    }
+
+    #[test]
+    fn generic_fault_mechanism_parity_constructor_cancels_repeated_targets() {
+        let mechanism = FaultMechanism::from_unsorted_with_tracked_paulis_parity(
+            [(4, 1), (2, -1), (4, 1)],
+            [7, 3, 7],
+            [5, 5, 6],
+        );
+
+        assert_eq!(mechanism.detectors.as_slice(), &[(2, -1)]);
+        assert_eq!(mechanism.dem_outputs.as_slice(), &[3]);
+        assert_eq!(mechanism.tracked_paulis.as_slice(), &[6]);
     }
 
     #[test]
@@ -8095,10 +8867,7 @@ mod tests {
             .with_pecos_dem_metadata(r#"pecos_old_extension {"id":1}"#)
             .unwrap_err();
 
-        assert!(
-            err.message()
-                .contains("unsupported PECOS DEM extension line")
-        );
+        assert!(err.message().contains("unrecognized DEM instruction"));
     }
 
     #[test]
@@ -8109,7 +8878,7 @@ mod tests {
 
         assert!(
             err.message()
-                .contains("unsupported PECOS DEM extension line: pecos_tracked_op")
+                .contains("unrecognized DEM instruction: pecos_tracked_op")
         );
     }
 
@@ -8403,6 +9172,31 @@ mod tests {
         assert!((summary.direct_probability - 0.01).abs() < 1e-12);
         assert_eq!(summary.y_decomposed_count, 1);
         assert!((summary.y_decomposed_probability - 0.02).abs() < 1e-12);
+    }
+
+    #[test]
+    fn structured_decoder_handoff_matches_grouped_render_semantics() {
+        let mut dem = DetectorErrorModel::new();
+        dem.add_detector(DetectorDef::new(0).with_coords([1.0, 2.0, 3.0]));
+        dem.add_detector(DetectorDef::new(1).with_coords([4.0, 5.0, 6.0]));
+        dem.add_observable(DemOutput::new(0));
+        let x = FaultMechanism::from_unsorted([0], std::iter::empty());
+        let z = FaultMechanism::from_unsorted([1], [0]);
+        dem.add_y_decomposed_contribution(&x, &z, 0.125);
+
+        let structured = dem.to_structured_decoder_dem().unwrap();
+
+        assert_eq!(structured.num_detectors, 2);
+        assert_eq!(structured.num_observables, 1);
+        assert_eq!(structured.detector_coords[0], Some(vec![1.0, 2.0, 3.0]));
+        assert_eq!(structured.errors[0].components.len(), 1);
+        assert_eq!(structured.errors[0].components[0].detectors, [0, 1]);
+        assert_eq!(structured.errors[0].components[0].observables, [0]);
+
+        dem.add_y_decomposed_contribution(&x, &z, 0.125);
+        let grouped = dem.to_structured_decoder_dem().unwrap();
+        assert_eq!(grouped.errors.len(), 1);
+        assert!((grouped.errors[0].probability - 0.21875).abs() < 1e-12);
     }
 
     #[test]
@@ -8944,7 +9738,7 @@ mod tests {
                 &[GateType::SZZ, GateType::SZZ],
                 &[false, false],
             ),
-            &DirectSourceComponents::from_slice(&components),
+            &source_components_from_slice(&components),
         );
 
         let source_graphlike = dem.to_string_source_graphlike_decomposed();
@@ -9220,7 +10014,7 @@ mod tests {
                 &[GateType::SZZ, GateType::SZZ, GateType::SZZ],
                 &[false, false, false],
             ),
-            &DirectSourceComponents::from_slice(&[repeated.clone(), repeated, survivor]),
+            &source_components_from_slice(&[repeated.clone(), repeated, survivor]),
         );
 
         let source_decomposed = dem.to_string_source_decomposed();
@@ -9413,10 +10207,62 @@ mod tests {
     }
 
     #[test]
+    fn omitted_gate_twirl_matches_unitary_trace_oracle() {
+        use CliffordLowering::{Named, PerQubit};
+        use pecos_core::unitary_rep::{Unitary, UnitaryRep};
+        use pecos_quantum::unitary_matrix::ToMatrix;
+        let cases = [
+            Named(GateType::I),
+            Named(GateType::CX),
+            Named(GateType::CY),
+            Named(GateType::CZ),
+            Named(GateType::SWAP),
+            Named(GateType::SXX),
+            Named(GateType::SXXdg),
+            Named(GateType::SYY),
+            Named(GateType::SYYdg),
+            Named(GateType::SZZ),
+            Named(GateType::SZZdg),
+            PerQubit(GateType::X),
+            PerQubit(GateType::Y),
+            PerQubit(GateType::Z),
+        ];
+        let paulis = [GateType::I, GateType::X, GateType::Y, GateType::Z];
+        for clifford in cases {
+            let unitary = match clifford {
+                Named(GateType::I) => {
+                    Unitary::named(GateType::I).to_matrix()
+                        & Unitary::named(GateType::I).to_matrix()
+                }
+                Named(gate) => Unitary::named(gate).to_matrix(),
+                PerQubit(pauli) => {
+                    Unitary::named(pauli).to_matrix() & Unitary::named(pauli).to_matrix()
+                }
+            };
+            let twirl = omitted_two_qubit_gate_pauli_twirl(clifford).unwrap();
+            for p1 in paulis {
+                for p2 in paulis {
+                    let pauli =
+                        (UnitaryRep::gate(p1, vec![0]) & UnitaryRep::gate(p2, vec![1])).to_matrix();
+                    let expected = (&pauli * &unitary).trace().norm_sqr() / 16.0;
+                    let label = format!("{p1:?}{p2:?}");
+                    let actual = twirl.get(label.as_str()).copied().unwrap_or(0.0);
+                    assert!(
+                        (expected - actual).abs() < 1e-12,
+                        "{clifford:?} {label}: {expected} != {actual}"
+                    );
+                }
+            }
+            assert!((twirl.values().sum::<f64>() - 1.0).abs() < 1e-12);
+        }
+    }
+
+    #[test]
     fn test_omitted_two_qubit_gate_pauli_twirl_for_spp_gates() {
-        let szz = omitted_two_qubit_gate_pauli_twirl(GateType::SZZ).expect("SZZ is supported");
-        let szzdg =
-            omitted_two_qubit_gate_pauli_twirl(GateType::SZZdg).expect("SZZdg is supported");
+        let szz = omitted_two_qubit_gate_pauli_twirl(CliffordLowering::Named(GateType::SZZ))
+            .expect("SZZ is supported");
+        let szzdg = omitted_two_qubit_gate_pauli_twirl(CliffordLowering::Named(GateType::SZZdg))
+            .expect("SZZdg is supported");
 
         assert_eq!(szz, BTreeMap::from([("II", 0.5), ("ZZ", 0.5)]));
         assert_eq!(szzdg, szz);
@@ -9425,18 +10271,24 @@ mod tests {
     #[test]
     fn test_omitted_two_qubit_gate_pauli_twirl_for_entanglers() {
         assert_eq!(
-            omitted_two_qubit_gate_pauli_twirl(GateType::CX).expect("CX is supported"),
+            omitted_two_qubit_gate_pauli_twirl(CliffordLowering::Named(GateType::CX))
+                .expect("CX is supported"),
             BTreeMap::from([("II", 0.25), ("IX", 0.25), ("ZI", 0.25), ("ZX", 0.25)]),
         );
         assert_eq!(
-            omitted_two_qubit_gate_pauli_twirl(GateType::CZ).expect("CZ is supported"),
+            omitted_two_qubit_gate_pauli_twirl(CliffordLowering::Named(GateType::CZ))
+                .expect("CZ is supported"),
             BTreeMap::from([("II", 0.25), ("IZ", 0.25), ("ZI", 0.25), ("ZZ", 0.25)]),
         );
         assert_eq!(
-            omitted_two_qubit_gate_pauli_twirl(GateType::SWAP).expect("SWAP is supported"),
+            omitted_two_qubit_gate_pauli_twirl(CliffordLowering::Named(GateType::SWAP))
+                .expect("SWAP is supported"),
             BTreeMap::from([("II", 0.25), ("XX", 0.25), ("YY", 0.25), ("ZZ", 0.25)]),
         );
-        assert!(omitted_two_qubit_gate_pauli_twirl(GateType::RZZ).is_none());
+        assert_eq!(
+            omitted_two_qubit_gate_pauli_twirl(CliffordLowering::Named(GateType::I)),
+            Some(BTreeMap::from([("II", 1.0)]))
+        );
     }
 
     #[test]
@@ -9447,7 +10299,7 @@ mod tests {
 
         assert!(
             (weights.two_qubit_weight_for(
-                GateType::SZZ,
+                CliffordLowering::Named(GateType::SZZ),
                 &(X(0) & X(1)),
                 ReplacementBranchApproximation::PauliTwirlOmittedGate,
             ) - (0.25 + 0.75 * 0.5))
@@ -9456,7 +10308,7 @@ mod tests {
         );
         assert!(
             (weights.two_qubit_weight_for(
-                GateType::SZZ,
+                CliffordLowering::Named(GateType::SZZ),
                 &(Y(0) & Y(1)),
                 ReplacementBranchApproximation::PauliTwirlOmittedGate,
             ) - 0.75 * 0.5)
@@ -9465,7 +10317,7 @@ mod tests {
         );
         assert!(
             (weights.two_qubit_weight_for(
-                GateType::SZZ,
+                CliffordLowering::Named(GateType::SZZ),
                 &(Y(0) & Y(1)),
                 ReplacementBranchApproximation::BranchImpact,
             ) - 0.75 * 0.5)
@@ -9474,7 +10326,7 @@ mod tests {
         );
         assert!(
             (weights.two_qubit_weight_for(
-                GateType::SZZ,
+                CliffordLowering::Named(GateType::SZZ),
                 &(X(0) & X(1)),
                 ReplacementBranchApproximation::IgnoreGateRemoval,
             ) - 1.0)
@@ -9494,7 +10346,7 @@ mod tests {
         );
         assert!(
             (replacement_omits_only.two_qubit_weight_for(
-                GateType::SZZ,
+                CliffordLowering::Named(GateType::SZZ),
                 &(Z(0) & Z(1)),
                 ReplacementBranchApproximation::PauliTwirlOmittedGate,
             ) - 0.5)
@@ -9502,11 +10354,13 @@ mod tests {
                 < 1e-12
         );
         assert_eq!(
-            replacement_omits_only.replacement_branch_impact_weights(GateType::SZZ),
+            replacement_omits_only
+                .replacement_branch_impact_weights(CliffordLowering::Named(GateType::SZZ)),
             BTreeMap::from([("ZZ".to_string(), 0.5)])
         );
         assert_eq!(
-            replacement_omits_only.replacement_branch_impacts(GateType::SZZ),
+            replacement_omits_only
+                .replacement_branch_impacts(CliffordLowering::Named(GateType::SZZ)),
             vec![ReplacementBranchImpact {
                 replacement_pauli_label: "II".to_string(),
                 omitted_gate_twirl_label: "ZZ".to_string(),
@@ -9518,7 +10372,7 @@ mod tests {
         let cx_replacement_identity = PauliWeights::with_replacement([], [(Z(0) & X(1), 1.0)]);
         assert!(
             (cx_replacement_identity.two_qubit_weight_for(
-                GateType::CX,
+                CliffordLowering::Named(GateType::CX),
                 &(Z(0) & X(1)),
                 ReplacementBranchApproximation::PauliTwirlOmittedGate,
             ) - 0.25)
@@ -9527,7 +10381,7 @@ mod tests {
         );
         assert!(
             (cx_replacement_identity.two_qubit_weight_for(
-                GateType::CX,
+                CliffordLowering::Named(GateType::CX),
                 &Z(0),
                 ReplacementBranchApproximation::PauliTwirlOmittedGate,
             ) - 0.25)

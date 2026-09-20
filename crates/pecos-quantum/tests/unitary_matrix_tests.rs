@@ -306,7 +306,7 @@ fn to_matrix_clifford_all_2q_gates() {
 
 #[test]
 fn to_matrix_unitary_named_1q() {
-    let u = Unitary::Named(pecos_core::gate_type::GateType::H);
+    let u = Unitary::named(pecos_core::gate_type::GateType::H);
     let mat = u.to_matrix();
     assert_eq!(mat.num_qubits(), 1);
 
@@ -336,7 +336,7 @@ fn to_matrix_unitary_named_all_1q_are_unitary() {
         GateType::Tdg,
     ];
     for gt in gates_1q {
-        let u = Unitary::Named(gt);
+        let u = Unitary::named(gt);
         let mat = u.to_matrix();
         assert_eq!(mat.num_qubits(), 1, "{gt:?} should be 1-qubit");
         let product = mat.adjoint() * &mat;
@@ -347,7 +347,7 @@ fn to_matrix_unitary_named_all_1q_are_unitary() {
 
 #[test]
 fn to_matrix_unitary_named_2q() {
-    let u = Unitary::Named(pecos_core::gate_type::GateType::CX);
+    let u = Unitary::named(pecos_core::gate_type::GateType::CX);
     let mat = u.to_matrix();
     assert_eq!(mat.num_qubits(), 2);
 
@@ -373,7 +373,7 @@ fn to_matrix_unitary_named_all_2q_are_unitary() {
         GateType::SZZdg,
     ];
     for gt in gates_2q {
-        let u = Unitary::Named(gt);
+        let u = Unitary::named(gt);
         let mat = u.to_matrix();
         assert_eq!(mat.num_qubits(), 2, "{gt:?} should be 2-qubit");
         let product = mat.adjoint() * &mat;
@@ -622,7 +622,7 @@ fn other_negative_half_angle_dense_gates_use_the_signed_principal_angle() {
 #[test]
 fn to_matrix_unitary_named_ccx_is_unitary() {
     use pecos_core::gate_type::GateType;
-    let u = Unitary::Named(GateType::CCX);
+    let u = Unitary::named(GateType::CCX);
     let mat = u.to_matrix();
     assert_eq!(mat.num_qubits(), 3);
     let identity = UnitaryMatrix::identity(8);
@@ -634,7 +634,7 @@ fn to_matrix_unitary_named_ccx_is_unitary() {
 #[test]
 fn to_matrix_unitary_named_ccx_is_involution() {
     use pecos_core::gate_type::GateType;
-    let mat = Unitary::Named(GateType::CCX).to_matrix();
+    let mat = Unitary::named(GateType::CCX).to_matrix();
     let product = &mat * &mat;
     let identity = UnitaryMatrix::identity(8);
     let diff = (product - identity).norm();
@@ -642,17 +642,17 @@ fn to_matrix_unitary_named_ccx_is_involution() {
 }
 
 #[test]
-#[should_panic(expected = "requires angle parameter")]
+#[should_panic(expected = "Gate RX expected 1 angle parameters, got 0")]
 fn to_matrix_unitary_named_rx_panics() {
     use pecos_core::gate_type::GateType;
-    let _ = Unitary::Named(GateType::RX).to_matrix();
+    let _ = Unitary::named(GateType::RX).to_matrix();
 }
 
 #[test]
-#[should_panic(expected = "is not a unitary gate")]
+#[should_panic(expected = "Gate MZ is not a fixed unitary gate")]
 fn to_matrix_unitary_named_mz_panics() {
     use pecos_core::gate_type::GateType;
-    let _ = Unitary::Named(GateType::MZ).to_matrix();
+    let _ = Unitary::named(GateType::MZ).to_matrix();
 }
 
 // --- ToMatrix: CliffordRep ---
@@ -851,7 +851,7 @@ fn self_adjoint_2q_cliffords_are_involutions_via_matrix() {
 #[test]
 fn ccx_is_involution_via_matrix() {
     use pecos_core::gate_type::GateType;
-    let mat = Unitary::Named(GateType::CCX).to_matrix();
+    let mat = Unitary::named(GateType::CCX).to_matrix();
     let identity = UnitaryMatrix::identity(8);
     let product = &mat * &mat;
     assert!(
@@ -1098,7 +1098,7 @@ fn rotation_matches_named_gate_when_gate_type_exists() {
             angle,
         }
         .to_matrix();
-        let named_mat = Unitary::Named(expected_gt).to_matrix();
+        let named_mat = Unitary::named(expected_gt).to_matrix();
         assert!(
             rot_mat.equiv_up_to_phase(&named_mat),
             "{rot:?}({angle:?}) matrix should match Named({expected_gt:?}) matrix"
@@ -1138,7 +1138,7 @@ fn rotation_2q_matches_named_gate_when_gate_type_exists() {
         }
         .on_qubits(0, 1)
         .to_matrix();
-        let named_mat = Unitary::Named(expected_gt).on_qubits(0, 1).to_matrix();
+        let named_mat = Unitary::named(expected_gt).on_qubits(0, 1).to_matrix();
         assert!(
             rot_mat.equiv_up_to_phase(&named_mat),
             "{rot:?}({angle:?}) matrix should match Named({expected_gt:?}) matrix"
@@ -1270,7 +1270,7 @@ fn t_gate_has_order_8() {
     use pecos_core::gate_type::GateType;
     let identity = UnitaryMatrix::identity(2);
     for gt in [GateType::T, GateType::Tdg] {
-        let mat = Unitary::Named(gt).to_matrix();
+        let mat = Unitary::named(gt).to_matrix();
         let sq = &mat * &mat;
         let fourth = &sq * &sq;
         let eighth = &fourth * &fourth;

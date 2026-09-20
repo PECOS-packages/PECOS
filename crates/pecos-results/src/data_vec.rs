@@ -131,10 +131,12 @@ impl DataVec {
             (Self::BitVec(v), Data::BitVec(val)) => v.push(val),
             (Self::Json(v), Data::Json(val)) => v.push(val),
             (Self::Vec(v), Data::Vec(val)) => v.push(val),
-            _ => {
-                return Err(PecosError::Processing(
-                    "Data type mismatch when pushing to DataVec".to_string(),
-                ));
+            (target, value) => {
+                return Err(PecosError::Processing(format!(
+                    "Data type mismatch when pushing to DataVec: expected {:?}, received {:?}",
+                    target.data_type(),
+                    value.data_type()
+                )));
             }
         }
         Ok(())
@@ -413,6 +415,17 @@ impl DataVecType {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn push_mismatch_names_both_types() {
+        let mut values = DataVec::U32(vec![1]);
+        let error = values.push(Data::I64(7)).expect_err("different types");
+        assert_eq!(
+            error.to_string(),
+            "Processing error: Data type mismatch when pushing to DataVec: expected U32, received I64"
+        );
+        assert_eq!(values, DataVec::U32(vec![1]));
+    }
 
     #[test]
     fn test_data_vec_creation() {

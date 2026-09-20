@@ -32,7 +32,7 @@ enum EngineStage<I, O> {
 }
 ```
 
-Classical engines (QASM, HUGR, PHIR, PhirJson) implement this trait, managing state internally and communicating with quantum engines via `ByteMessage`.
+Classical engines (QASM, PHIR, PhirJson) implement this trait, managing state internally and communicating with quantum engines via `ByteMessage`.
 
 ### pecos-neo (DOD/Functional Pattern)
 

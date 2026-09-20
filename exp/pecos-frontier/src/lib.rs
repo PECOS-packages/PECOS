@@ -24,7 +24,7 @@
 use pecos_decoder_core::ObservableDecoder;
 pub use pecos_trellis::factor::{Factor, FactorModel, Outcome};
 pub use pecos_trellis::{
-    DecoderError, MetricMode, ObsMask, SparseDem, backward_deadline_column_order,
+    DecoderError, MetricMode, ObsMask, SparseDem, TrellisOrdering, backward_deadline_column_order,
     backward_deadline_column_order_for_factors, deadline_column_order,
     deadline_column_order_for_factors,
 };

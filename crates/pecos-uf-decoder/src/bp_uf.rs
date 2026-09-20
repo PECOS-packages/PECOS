@@ -23,7 +23,7 @@
 //! 3. **UF stage**: standard weighted UF growth + peeling
 
 use crate::decoder::{UfDecoder, UfDecoderConfig};
-use pecos_decoder_core::bp::{BpGraph, BpScratch, min_sum_bp_into};
+use pecos_bp::{BpGraph, BpScratch, min_sum_bp_into};
 use pecos_decoder_core::correlated_decoder::MatchingDecoder;
 use pecos_decoder_core::dem::{DemCheckMatrix, DemMatchingGraph};
 use pecos_decoder_core::errors::DecoderError;
@@ -594,7 +594,7 @@ fn validate_syndrome_length(graph: &BpGraph, syndrome: &[u8]) -> Result<(), Deco
 /// BP on the matching graph (Hack et al. 2026 style).
 ///
 /// This remains an implementation detail of BP+UF. The promoted native BP
-/// surface is the Tanner-graph belief primitive in `pecos_decoder_core::bp`.
+/// surface is the Tanner-graph belief primitive in `pecos_bp`.
 fn matching_graph_bp(
     graph: &DemMatchingGraph,
     syndrome: &[u8],

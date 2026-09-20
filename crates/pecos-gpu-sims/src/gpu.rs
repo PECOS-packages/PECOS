@@ -1587,6 +1587,17 @@ impl QuantumSimulator for GpuStateVec32 {
 // Trait implementations queue gates for batched dispatch.
 #[allow(clippy::cast_possible_truncation)] // Qubit indices from QubitId fit in u32
 impl CliffordGateable for GpuStateVec32 {
+    fn apply_global_phase(&mut self, phase: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let (sin, cos) = phase.to_radians_signed().sin_cos();
+        let matrix = [
+            cos as f32, sin as f32, 0.0, 0.0, 0.0, 0.0, cos as f32, sin as f32,
+        ];
+        for &q in qubits {
+            self.queue_single_gate(q.index() as u32, matrix);
+        }
+        self
+    }
+
     fn h(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
             self.queue_single_gate(q.index() as u32, gates::H);
@@ -1969,17 +1980,6 @@ impl ArbitraryRotationGateable for GpuStateVec32 {
     fn rz(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
         let theta = theta.to_radians_signed();
         let matrix = gates::rz(theta);
-        for &q in qubits {
-            self.queue_single_gate(q.index() as u32, matrix);
-        }
-        self
-    }
-
-    fn apply_global_phase(&mut self, phase: Angle64, qubits: &[QubitId]) -> &mut Self {
-        let (sin, cos) = phase.to_radians_signed().sin_cos();
-        let matrix = [
-            cos as f32, sin as f32, 0.0, 0.0, 0.0, 0.0, cos as f32, sin as f32,
-        ];
         for &q in qubits {
             self.queue_single_gate(q.index() as u32, matrix);
         }

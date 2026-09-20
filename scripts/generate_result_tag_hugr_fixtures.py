@@ -59,18 +59,6 @@ def funcdecl() -> None:
     _ = mystery(measure(q).read())
 
 
-@guppy
-def helper() -> None:
-    q = qubit()
-    _ = measure(q).read()
-
-
-@guppy
-def indirect() -> None:
-    g = helper
-    g()
-
-
 def main() -> None:
     fixtures = {
         "scrambled.hugr": scrambled,
@@ -78,7 +66,6 @@ def main() -> None:
         "computed.hugr": computed,
         "arr.hugr": arr,
         "funcdecl.hugr": funcdecl,
-        "indirect.hugr": indirect,
     }
     output_dir = Path("crates/pecos-hugr/tests/fixtures")
     for filename, program in fixtures.items():

@@ -36,13 +36,12 @@ fn synthetic_one_qubit_influence(
     z: &[u32],
 ) -> DagFaultInfluenceMap {
     let mut influence = DagFaultInfluenceMap::with_capacity(1);
-    influence.locations.push(DagSpacetimeLocation {
-        node: 0,
-        qubits: vec![QubitId::from(0usize)],
+    influence.locations.push(DagSpacetimeLocation::new(
+        0,
+        vec![QubitId::from(0usize)],
         before,
-        gate_type,
-        idle_duration: 0.0,
-    });
+        &pecos_core::Gate::simple(gate_type, vec![QubitId::from(0usize)]),
+    ));
     influence.influences.detectors_x.extend(x.iter().copied());
     influence.influences.detectors_y.extend(y.iter().copied());
     influence.influences.detectors_z.extend(z.iter().copied());
@@ -57,13 +56,12 @@ fn synthetic_two_qubit_influence() -> DagFaultInfluenceMap {
         (0, &[0][..], &[0, 1][..], &[1][..]),
         (1, &[2][..], &[2, 3][..], &[3][..]),
     ] {
-        influence.locations.push(DagSpacetimeLocation {
-            node: 0,
-            qubits: vec![QubitId::from(qubit)],
-            before: false,
-            gate_type: GateType::CX,
-            idle_duration: 0.0,
-        });
+        influence.locations.push(DagSpacetimeLocation::new(
+            0,
+            vec![QubitId::from(qubit)],
+            false,
+            &pecos_core::Gate::cx(&[(0, 1)]),
+        ));
         influence.influences.detectors_x.extend(x.iter().copied());
         influence.influences.detectors_y.extend(y.iter().copied());
         influence.influences.detectors_z.extend(z.iter().copied());

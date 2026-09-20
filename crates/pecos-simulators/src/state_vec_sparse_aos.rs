@@ -883,6 +883,18 @@ impl<R: Rng + Debug> QuantumSimulator for SparseStateVecAoS<R> {
 // =============================================================================
 
 impl<R: Rng + Debug> CliffordGateable for SparseStateVecAoS<R> {
+    fn apply_global_phase(&mut self, phase: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let unit_phase = Complex64::from_polar(1.0, phase.to_radians_signed());
+        let mut global_phase = Complex64::new(1.0, 0.0);
+        for _ in qubits {
+            global_phase *= unit_phase;
+        }
+        for (_, amplitude) in &mut self.amplitudes {
+            *amplitude *= global_phase;
+        }
+        self
+    }
+
     // -------------------------------------------------------------------------
     // Single-qubit Clifford gates
     // -------------------------------------------------------------------------
@@ -1662,18 +1674,6 @@ impl<R: Rng + Debug> ArbitraryRotationGateable for SparseStateVecAoS<R> {
                     *amp *= phase_high;
                 }
             }
-        }
-        self
-    }
-
-    fn apply_global_phase(&mut self, phase: Angle64, qubits: &[QubitId]) -> &mut Self {
-        let unit_phase = Complex64::from_polar(1.0, phase.to_radians_signed());
-        let mut global_phase = Complex64::new(1.0, 0.0);
-        for _ in qubits {
-            global_phase *= unit_phase;
-        }
-        for (_, amplitude) in &mut self.amplitudes {
-            *amplitude *= global_phase;
         }
         self
     }

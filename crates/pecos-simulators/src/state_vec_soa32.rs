@@ -892,6 +892,27 @@ impl<R> CliffordGateable for StateVecSoA32<R>
 where
     R: Rng,
 {
+    fn apply_global_phase(&mut self, phase: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let (sin, cos) = phase.sin_cos();
+        #[allow(clippy::cast_possible_truncation)]
+        let (sin, cos) = (sin as f32, cos as f32);
+        let matrix = Complex2x2_32 {
+            a_re: cos,
+            a_im: sin,
+            b_re: 0.0,
+            b_im: 0.0,
+            c_re: 0.0,
+            c_im: 0.0,
+            d_re: cos,
+            d_im: sin,
+        };
+
+        for &q in qubits {
+            self.queue_gate(q.index(), &matrix);
+        }
+        self
+    }
+
     #[inline]
     fn h(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
@@ -1358,27 +1379,6 @@ where
             c_im: 0.0,
             d_re: cos_half,
             d_im: sin_half,
-        };
-
-        for &q in qubits {
-            self.queue_gate(q.index(), &matrix);
-        }
-        self
-    }
-
-    fn apply_global_phase(&mut self, phase: Angle64, qubits: &[QubitId]) -> &mut Self {
-        let (sin, cos) = phase.sin_cos();
-        #[allow(clippy::cast_possible_truncation)]
-        let (sin, cos) = (sin as f32, cos as f32);
-        let matrix = Complex2x2_32 {
-            a_re: cos,
-            a_im: sin,
-            b_re: 0.0,
-            b_im: 0.0,
-            c_re: 0.0,
-            c_im: 0.0,
-            d_re: cos,
-            d_im: sin,
         };
 
         for &q in qubits {

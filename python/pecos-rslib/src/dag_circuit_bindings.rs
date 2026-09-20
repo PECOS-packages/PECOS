@@ -677,7 +677,11 @@ impl PyGate {
     /// * `qubits` - Qubit IDs the gate acts on
     #[new]
     #[pyo3(signature = (gate_type, params=None, qubits=None))]
-    fn new(gate_type: PyGateType, params: Option<Vec<f64>>, qubits: Option<Vec<usize>>) -> Self {
+    fn new(
+        gate_type: PyGateType,
+        params: Option<Vec<f64>>,
+        qubits: Option<Vec<usize>>,
+    ) -> PyResult<Self> {
         let params = params.unwrap_or_default();
         let qubits: Vec<QubitId> = qubits
             .unwrap_or_default()
@@ -693,9 +697,9 @@ impl PyGate {
             .map(|&r| Angle64::from_radians(r))
             .collect();
         let other_params: Vec<f64> = params.into_iter().skip(angle_count).collect();
-        Self {
-            inner: Gate::new(gate_type.inner, angles, other_params, qubits),
-        }
+        let inner = Gate::try_new(gate_type.inner, angles, other_params, qubits)
+            .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
+        Ok(Self { inner })
     }
 
     /// Get the gate type.
@@ -1083,7 +1087,7 @@ impl PyDagCircuit {
     fn add_gate(&mut self, gate: PyGate) -> PyResult<usize> {
         self.inner
             .try_add_gate(gate.inner)
-            .map_err(pyo3::exceptions::PyValueError::new_err)
+            .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))
     }
 
     /// Remove a gate from the circuit.
@@ -1443,7 +1447,7 @@ impl PyDagCircuit {
             .borrow_mut()
             .inner
             .try_mz(&qubits)
-            .map_err(pyo3::exceptions::PyValueError::new_err)?;
+            .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
         Ok(refs.iter().map(|r| (r.node, r.qubit.index())).collect())
     }
 
@@ -1452,7 +1456,7 @@ impl PyDagCircuit {
         slf.borrow_mut(py)
             .inner
             .try_mz_free(&qubits)
-            .map_err(pyo3::exceptions::PyValueError::new_err)?;
+            .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
         Ok(slf)
     }
 
@@ -3728,7 +3732,10 @@ impl PyTickHandle {
                     for chunk in qubits.chunks(arity) {
                         let qubit_ids: GateQubits =
                             chunk.iter().copied().map(QubitId::from).collect();
-                        let gate = Gate::new(gate_type, angle_vals.clone(), vec![], qubit_ids);
+                        let gate = Gate::try_new(gate_type, angle_vals.clone(), vec![], qubit_ids)
+                            .map_err(|err| {
+                                pyo3::exceptions::PyValueError::new_err(err.to_string())
+                            })?;
                         match tick.try_add_gate(gate) {
                             Ok(idx) => {
                                 tick.set_gate_attr(
@@ -3748,7 +3755,8 @@ impl PyTickHandle {
                 } else {
                     // Normal: create single gate
                     let qubit_ids: GateQubits = qubits.into_iter().map(QubitId::from).collect();
-                    let gate = Gate::new(gate_type, angle_vals, vec![], qubit_ids);
+                    let gate = Gate::try_new(gate_type, angle_vals, vec![], qubit_ids)
+                        .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
                     match tick.try_add_gate(gate) {
                         Ok(idx) => {
                             tick.set_gate_attr(idx, "_symbol", Attribute::String(name.to_string()));
@@ -3822,7 +3830,8 @@ impl PyTickHandle {
         }
 
         let qubit_ids: GateQubits = qubits.into_iter().map(QubitId::from).collect();
-        let gate = Gate::new(GateType::Custom, angle_vals, vec![], qubit_ids);
+        let gate = Gate::try_new(GateType::Custom, angle_vals, vec![], qubit_ids)
+            .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
 
         if let Some(tick) = circuit.inner.get_tick_mut(tick_idx) {
             match tick.try_add_gate(gate) {

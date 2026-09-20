@@ -34,7 +34,9 @@
 //!
 //! 3. **Binary Search**: Uses same algorithm as `AoS` for pair lookup
 
-use crate::clifford_frame::{CliffordFrame, ELEMENT_MATRIX, PHASE_COCYCLE, PHASE_ROOTS, PauliAxis};
+use crate::clifford_frame::{
+    CliffordFrame, ELEMENT_MATRIX, PHASE_COCYCLE, PHASE_ROOTS, PauliAxis, PauliFrameGate,
+};
 use crate::clifford_gateable::MeasurementResult;
 use crate::{ArbitraryRotationGateable, CliffordGateable, QuantumSimulator};
 use num_complex::Complex64;
@@ -1929,6 +1931,25 @@ impl<R: Rng + Debug> QuantumSimulator for SparseStateVecSoA<R> {
 // --- CliffordGateable trait implementation ---
 
 impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
+    fn apply_global_phase(&mut self, phase: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let unit_phase = Complex64::from_polar(1.0, phase.to_radians_signed());
+        let mut global_phase = Complex64::new(1.0, 0.0);
+        for _ in qubits {
+            global_phase *= unit_phase;
+        }
+        let (real, imag) = if self.active_a {
+            (&mut self.real_a[..self.len], &mut self.imag_a[..self.len])
+        } else {
+            (&mut self.real_b[..self.len], &mut self.imag_b[..self.len])
+        };
+        for (real, imag) in real.iter_mut().zip(imag) {
+            let amplitude = Complex64::new(*real, *imag) * global_phase;
+            *real = amplitude.re;
+            *imag = amplitude.im;
+        }
+        self
+    }
+
     // ---- Single-qubit Clifford gates: O(1) frame composition ----
 
     // -- Pauli gates (delta: X=0, Y=6, Z=0) --
@@ -2096,13 +2117,7 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
         if pairs.len() == 1 {
             // Single pair: fast path
             let (c, t) = (pairs[0].0.0, pairs[0].1.0);
-            let fc = self.frames[c];
-            let ft = self.frames[t];
-            if fc.is_pauli() && ft.is_pauli() {
-                let (new_c, new_t, _phase) = CliffordFrame::push_through_cx(fc, ft);
-                self.frames[c] = new_c;
-                self.frames[t] = new_t;
-            } else {
+            if !PauliFrameGate::Cx.propagate(&mut self.frames, &mut self.frame_phases[c], (c, t)) {
                 self.flush_frame(c);
                 self.flush_frame(t);
             }
@@ -2111,13 +2126,11 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
             // Multiple pairs: process all frames, then batch physical ops.
             for &(q0, q1) in pairs {
                 let (c, t) = (q0.0, q1.0);
-                let fc = self.frames[c];
-                let ft = self.frames[t];
-                if fc.is_pauli() && ft.is_pauli() {
-                    let (new_c, new_t, _phase) = CliffordFrame::push_through_cx(fc, ft);
-                    self.frames[c] = new_c;
-                    self.frames[t] = new_t;
-                } else {
+                if !PauliFrameGate::Cx.propagate(
+                    &mut self.frames,
+                    &mut self.frame_phases[c],
+                    (c, t),
+                ) {
                     self.flush_frame(c);
                     self.flush_frame(t);
                 }
@@ -2149,18 +2162,7 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
         if pairs.len() == 1 {
             // Single pair: fast path
             let (c, t) = (pairs[0].0.0, pairs[0].1.0);
-            let fc = self.frames[c];
-            let ft = self.frames[t];
-            if fc.is_pauli() && ft.is_pauli() {
-                let (xc, _) = fc.pauli_xz_bits();
-                let (xt, _) = ft.pauli_xz_bits();
-                let (new_c, new_t, _phase) = CliffordFrame::push_through_cz(fc, ft);
-                self.frames[c] = new_c;
-                self.frames[t] = new_t;
-                if xc && xt {
-                    self.frame_phases[c] = (self.frame_phases[c] + 4) % 8;
-                }
-            } else {
+            if !PauliFrameGate::Cz.propagate(&mut self.frames, &mut self.frame_phases[c], (c, t)) {
                 self.flush_frame(c);
                 self.flush_frame(t);
             }
@@ -2169,18 +2171,11 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
             // Multiple pairs: process all frames, then batch physical sign flips
             for &(q0, q1) in pairs {
                 let (c, t) = (q0.0, q1.0);
-                let fc = self.frames[c];
-                let ft = self.frames[t];
-                if fc.is_pauli() && ft.is_pauli() {
-                    let (xc, _) = fc.pauli_xz_bits();
-                    let (xt, _) = ft.pauli_xz_bits();
-                    let (new_c, new_t, _phase) = CliffordFrame::push_through_cz(fc, ft);
-                    self.frames[c] = new_c;
-                    self.frames[t] = new_t;
-                    if xc && xt {
-                        self.frame_phases[c] = (self.frame_phases[c] + 4) % 8;
-                    }
-                } else {
+                if !PauliFrameGate::Cz.propagate(
+                    &mut self.frames,
+                    &mut self.frame_phases[c],
+                    (c, t),
+                ) {
                     self.flush_frame(c);
                     self.flush_frame(t);
                 }
@@ -2276,22 +2271,17 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
     // (O(1) frame update + phase correction) instead of flushing (O(k)).
     // Then apply the physical gate directly.
     //
-    // Note: push_through_* functions return the Heisenberg-picture phase
-    // (G† P G = phase · P'), but we need the Schrödinger-picture phase
-    // (G P G† = phase* · P'). For 8th-root phases, conjugation is (8-k)%8.
+    // PauliFrameGate owns the conversion from the kernels' Heisenberg phase
+    // to this simulator's forward ELEMENT_MATRIX convention, including daggers.
 
     fn szz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         if pairs.len() == 1 {
             let (q1, q2) = (pairs[0].0.0, pairs[0].1.0);
-            let f1 = self.frames[q1];
-            let f2 = self.frames[q2];
-            if f1.is_pauli() && f2.is_pauli() {
-                let (new_f1, new_f2, heis_phase) = CliffordFrame::push_through_szz(f1, f2);
-                self.frames[q1] = new_f1;
-                self.frames[q2] = new_f2;
-                let schrod_phase = (8 - heis_phase) % 8;
-                self.frame_phases[q1] = (self.frame_phases[q1] + schrod_phase) % 8;
-            } else {
+            if !PauliFrameGate::Szz.propagate(
+                &mut self.frames,
+                &mut self.frame_phases[q1],
+                (q1, q2),
+            ) {
                 self.flush_frame(q1);
                 self.flush_frame(q2);
             }
@@ -2300,15 +2290,11 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
             // Multiple pairs: process frames, then batch physical diagonal phase
             for &(qa, qb) in pairs {
                 let (q1, q2) = (qa.0, qb.0);
-                let f1 = self.frames[q1];
-                let f2 = self.frames[q2];
-                if f1.is_pauli() && f2.is_pauli() {
-                    let (new_f1, new_f2, heis_phase) = CliffordFrame::push_through_szz(f1, f2);
-                    self.frames[q1] = new_f1;
-                    self.frames[q2] = new_f2;
-                    let schrod_phase = (8 - heis_phase) % 8;
-                    self.frame_phases[q1] = (self.frame_phases[q1] + schrod_phase) % 8;
-                } else {
+                if !PauliFrameGate::Szz.propagate(
+                    &mut self.frames,
+                    &mut self.frame_phases[q1],
+                    (q1, q2),
+                ) {
                     self.flush_frame(q1);
                     self.flush_frame(q2);
                 }
@@ -2365,16 +2351,11 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
     fn szzdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         if pairs.len() == 1 {
             let (q1, q2) = (pairs[0].0.0, pairs[0].1.0);
-            let f1 = self.frames[q1];
-            let f2 = self.frames[q2];
-            if f1.is_pauli() && f2.is_pauli() {
-                let (new_f1, new_f2, heis_phase) = CliffordFrame::push_through_szz(f1, f2);
-                self.frames[q1] = new_f1;
-                self.frames[q2] = new_f2;
-                // For SZZdg, Schrödinger phase = Heisenberg phase of SZZ (no conjugation),
-                // because SZZdg Schrödinger = SZZ† · P · SZZ = SZZ Heisenberg.
-                self.frame_phases[q1] = (self.frame_phases[q1] + heis_phase) % 8;
-            } else {
+            if !PauliFrameGate::SzzDg.propagate(
+                &mut self.frames,
+                &mut self.frame_phases[q1],
+                (q1, q2),
+            ) {
                 self.flush_frame(q1);
                 self.flush_frame(q2);
             }
@@ -2383,14 +2364,11 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
             // Multiple pairs: process frames, then batch physical diagonal phase
             for &(qa, qb) in pairs {
                 let (q1, q2) = (qa.0, qb.0);
-                let f1 = self.frames[q1];
-                let f2 = self.frames[q2];
-                if f1.is_pauli() && f2.is_pauli() {
-                    let (new_f1, new_f2, heis_phase) = CliffordFrame::push_through_szz(f1, f2);
-                    self.frames[q1] = new_f1;
-                    self.frames[q2] = new_f2;
-                    self.frame_phases[q1] = (self.frame_phases[q1] + heis_phase) % 8;
-                } else {
+                if !PauliFrameGate::SzzDg.propagate(
+                    &mut self.frames,
+                    &mut self.frame_phases[q1],
+                    (q1, q2),
+                ) {
                     self.flush_frame(q1);
                     self.flush_frame(q2);
                 }
@@ -2447,15 +2425,11 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
     fn iswap(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         if pairs.len() == 1 {
             let (q1, q2) = (pairs[0].0.0, pairs[0].1.0);
-            let f1 = self.frames[q1];
-            let f2 = self.frames[q2];
-            if f1.is_pauli() && f2.is_pauli() {
-                let (new_f1, new_f2, heis_phase) = CliffordFrame::push_through_iswap(f1, f2);
-                self.frames[q1] = new_f1;
-                self.frames[q2] = new_f2;
-                let schrod_phase = (8 - heis_phase) % 8;
-                self.frame_phases[q1] = (self.frame_phases[q1] + schrod_phase) % 8;
-            } else {
+            if !PauliFrameGate::ISwap.propagate(
+                &mut self.frames,
+                &mut self.frame_phases[q1],
+                (q1, q2),
+            ) {
                 self.flush_frame(q1);
                 self.flush_frame(q2);
             }
@@ -2464,15 +2438,11 @@ impl<R: Rng + Debug> CliffordGateable for SparseStateVecSoA<R> {
             // Multiple pairs: process frames, then batch physical iSWAP
             for &(qa, qb) in pairs {
                 let (q1, q2) = (qa.0, qb.0);
-                let f1 = self.frames[q1];
-                let f2 = self.frames[q2];
-                if f1.is_pauli() && f2.is_pauli() {
-                    let (new_f1, new_f2, heis_phase) = CliffordFrame::push_through_iswap(f1, f2);
-                    self.frames[q1] = new_f1;
-                    self.frames[q2] = new_f2;
-                    let schrod_phase = (8 - heis_phase) % 8;
-                    self.frame_phases[q1] = (self.frame_phases[q1] + schrod_phase) % 8;
-                } else {
+                if !PauliFrameGate::ISwap.propagate(
+                    &mut self.frames,
+                    &mut self.frame_phases[q1],
+                    (q1, q2),
+                ) {
                     self.flush_frame(q1);
                     self.flush_frame(q2);
                 }

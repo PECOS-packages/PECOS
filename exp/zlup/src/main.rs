@@ -1001,7 +1001,7 @@ fn cmd_compile(opts: CompileOptions) -> Result<(), CliError> {
                     message: e.to_string(),
                 })?;
 
-            // Serialize HUGR to text envelope format (compatible with PECOS hugr_engine)
+            // Serialize HUGR to text envelope format (compatible with the HUGR loader)
             codegen
                 .to_string(&hugr)
                 .map_err(|e| CliError::CodegenError {

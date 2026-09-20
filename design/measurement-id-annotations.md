@@ -151,9 +151,9 @@ it in the old space mid-migration.
    `From<TickCircuit>` went with it, and all three production callers already
    returned `Result`, so no public signature changed.
 3. **Pre-land the id-resolution helpers, tested, alongside the existing
-   node-based paths**: `DagCircuit::find_measurement(MeasId) -> Option<MeasRef>`
-   (an O(gates) scan, deliberately *not* a maintained index, which `gate_mut`
-   could desync -- `dag_circuit.rs:677`); id -> influence-map index via
+   node-based paths**: `DagCircuit::find_measurement(MeasId) -> Result<MeasRef, MeasResolveError>`
+   (an O(gates) scan rather than a maintained index; `update_gate` now validates
+   replacements and preserves measurement identity); id -> influence-map index via
    `influence_map.meas_ids`; eeg's id -> expansion-rank map.
 4. **The pivot, one commit:** the field type, the `detector`/`observable`
    signatures, every consumer switched to the step-3 helpers, fail-loud
@@ -222,13 +222,14 @@ both `records` and `meas_ids` with a consistency check.
 
 - **The error taxonomy** is now code: `MeasResolveError::{Unknown, Removed,
   RecordLess, Inconsistent}`. `Inconsistent` was added by the review -- a
-  `gate_mut` edit can leave an id held-but-unreserved or held twice, and a
-  resolver that silently returned the first holder would launder the desync.
+  malformed internal gate payload can leave an id held-but-unreserved or held
+  twice. Public insertion and `update_gate` reject these states; the resolver
+  retains a defensive check instead of silently returning the first holder.
   Honesty limits are documented on the resolver: a bare id cannot detect a
   reference from a *different* circuit (ids are circuit-local numbers; a
   colliding foreign id resolves to the local measurement), and `Removed`
-  cannot be told apart from an id overwritten via `gate_mut`. Rejecting
-  foreign references needs validation where a reference *enters* a circuit.
+  is tracked through removal tombstones. `update_gate` refuses identity edits.
+  Rejecting foreign references needs validation where a reference *enters* a circuit.
 - **The forgery seam: close it.** The review's verdict, judged against the
   helpers rather than on paper: they make forgery **more** dangerous, because a
   forged `MeasId(x)` that collides with a real id now resolves to a real
@@ -265,8 +266,9 @@ both `records` and `meas_ids` with a consistency check.
 
 Also carried forward: removing `From<&TickCircuit> for DagCircuit` must remove
 the owned `From<TickCircuit>` at `tick_circuit.rs:3582` too, and
-`From<&DagCircuit> for TickCircuit` is not proven infallible -- `gate_mut` can
-desync invariants the conversion then unwraps on.
+DAG-to-tick conversion still exposes `From`; its construction checks may panic
+on corrupt internal payloads. `update_gate` validates replacements and preserves
+DAG-owned identity data before they can reach conversion.
 
 ## Out of scope
 
@@ -324,8 +326,8 @@ Closed by the adversarial round (two independent reviews):
 
 - **Duplicate ids are refused at every id-resolving consumer.** `TickCircuit`
   permits duplicate supplied ids (and `try_add_gate` does not advance the mint
-  counter, so supplied/minted collisions are constructible); `gate_mut` can
-  duplicate ids on a `DagCircuit`. eeg's expansion and the sampler's
+  counter, so supplied/minted collisions are constructible). DAG insertion and
+  `update_gate` refuse duplicate identities. eeg's expansion and the sampler's
   annotation ingestion now refuse such circuits loudly, mirroring the guard
   the DEM JSON path already had. The influence builder was already safe via
   `find_measurement`'s `Inconsistent`.

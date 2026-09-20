@@ -1,3 +1,8 @@
+/// Fixed PCG32 initial state used by PECOS classical programs and Selene.
+/// The program seed selects the stream through `initseq`; this fixed
+/// `initstate` matches Selene's seeding convention.
+pub const PCG32_INIT_STATE: u64 = 42;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[allow(clippy::cast_possible_truncation)]
 #[allow(clippy::cast_possible_wrap)]
@@ -53,15 +58,22 @@ impl PCGRandom {
         PCGRandom::pcg_output_xsh(old_state)
     }
 
+    /// Generate an unbiased random integer in `[0, bound)`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `bound` is zero.
     #[inline]
-    #[allow(clippy::cast_possible_wrap, clippy::cast_sign_loss)]
-    pub fn pcg32_boundedrand_r(rng: &mut PCGRandom, ubound: u32) -> u32 {
-        let bound: i32 = ubound as i32;
-        let threshold: u32 = (-bound % bound) as u32;
+    pub fn pcg32_boundedrand_r(rng: &mut PCGRandom, bound: u32) -> u32 {
+        assert!(
+            bound > 0,
+            "PCGRandom::pcg32_boundedrand_r requires a positive bound"
+        );
+        let threshold = bound.wrapping_neg() % bound;
         loop {
             let random: u32 = PCGRandom::pcg32_random_r(rng);
             if random >= threshold {
-                return random % bound as u32;
+                return random % bound;
             }
         }
     }
@@ -75,11 +87,21 @@ impl PCGRandom {
 
     #[inline]
     pub fn pcg32_srandom_r(rng: &mut PCGRandom, initstate: u64, initseq: u64) {
-        rng.state = 0_u64;
-        rng.inc = (initseq << 1_u64) | 1_u64;
-        PCGRandom::pcg_setseq_64_step_r(rng);
+        *rng = Self::from_seed_and_stream(initstate, initseq);
+    }
+
+    /// Construct a PCG32 generator with the `pcg32_srandom_r` seeding convention.
+    /// `initstate` seeds the state, while `initseq` selects the stream.
+    #[must_use]
+    pub fn from_seed_and_stream(initstate: u64, initseq: u64) -> Self {
+        let mut rng = Self {
+            state: 0,
+            inc: (initseq << 1) | 1,
+        };
+        Self::pcg_setseq_64_step_r(&mut rng);
         rng.state = rng.state.wrapping_add(initstate);
-        PCGRandom::pcg_setseq_64_step_r(rng);
+        Self::pcg_setseq_64_step_r(&mut rng);
+        rng
     }
 
     /// Create a new `PCGRandom` seeded from a u64 value.
@@ -87,9 +109,13 @@ impl PCGRandom {
     /// This is a convenience method that creates a new instance and seeds it.
     #[must_use]
     pub fn seed_from_u64(seed: u64) -> Self {
-        let mut rng = Self::init_global_state();
-        Self::pcg32_srandom_r(&mut rng, seed, seed.wrapping_mul(0x9E37_79B9_7F4A_7C15));
-        rng
+        Self::from_seed_and_stream(seed, seed.wrapping_mul(0x9E37_79B9_7F4A_7C15))
+    }
+
+    /// Return the odd LCG increment for state jump-ahead calculations.
+    #[must_use]
+    pub fn increment(&self) -> u64 {
+        self.inc
     }
 
     /// Generate a random u64 value by combining two u32 values.
@@ -307,7 +333,7 @@ impl std::fmt::Debug for RNGModel {
 
 impl RNGModel {
     pub fn set_seed(&mut self, seed: u64) {
-        PCGRandom::pcg32_srandom_r(&mut self.rng_gen, 42_u64, seed);
+        PCGRandom::pcg32_srandom_r(&mut self.rng_gen, PCG32_INIT_STATE, seed);
     }
 
     /// Advance the RNG to a specific index.

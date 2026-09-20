@@ -10,12 +10,10 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-//! This is a PROJECTIVE check: each gate is compared to its reference up to one
-//! shared global phase, because a boundary conversion is only required to be exact
-//! up to an unobservable global phase. It therefore does NOT pin phase exactness --
-//! `phase_exactness_test.rs` is the test that does. Every RELATIVE phase, including
-//! the control-side phase that distinguishes a controlled rotation from a controlled
-//! phase, is compared exactly.
+//! Controlled rotations (`crz`, `crx`, `cry`) are compared phase-exactly, including
+//! at the half-angle wrap boundary. Other gates are compared up to one shared
+//! global phase; every relative phase is still compared exactly. Additional exact
+//! amplitude checks live in `phase_exactness_test.rs`.
 
 use num_complex::Complex64;
 use pecos_engines::{ClassicalEngine, DenseStateVecEngine, Engine};
@@ -224,6 +222,31 @@ fn rxx_matrix(theta: f64) -> Matrix {
     ])
 }
 
+/// `exp(-i theta/2 (P (x) P))` with `P = cos(phi) X + sin(phi) Y`. Written out
+/// directly from `P|0> = e^{i phi}|1>` and `P|1> = e^{-i phi}|0>`, so the
+/// `|00> <-> |11>` coupling carries `e^{+-2i phi}` and `|01> <-> |10>` none.
+fn rxyxy2q_matrix(theta: f64, phi: f64) -> Matrix {
+    let cosine = complex((theta / 2.0).cos(), 0.0);
+    let coupling = complex(0.0, -(theta / 2.0).sin());
+    let twist = cis(2.0 * phi);
+    matrix([
+        [
+            cosine,
+            complex(0.0, 0.0),
+            complex(0.0, 0.0),
+            coupling * twist.conj(),
+        ],
+        [complex(0.0, 0.0), cosine, coupling, complex(0.0, 0.0)],
+        [complex(0.0, 0.0), coupling, cosine, complex(0.0, 0.0)],
+        [
+            coupling * twist,
+            complex(0.0, 0.0),
+            complex(0.0, 0.0),
+            cosine,
+        ],
+    ])
+}
+
 /// Conventional two-qubit root: `((1+i) I + (1-i) P) / 2` for an involution P.
 fn conventional_root(pauli: &Matrix) -> Matrix {
     let a = complex(0.5, 0.5);
@@ -343,6 +366,7 @@ fn reference_matrix(name: &str, parameters: &[f64]) -> Matrix {
         "cphase90" => controlled(&phase_matrix(PI / 2.0)),
         "rzz" => rzz_matrix(parameters[0]),
         "rxx" => rxx_matrix(parameters[0]),
+        "rxyxy2q" => rxyxy2q_matrix(parameters[0], parameters[1]),
         "szz" | "ZZ" => szz_matrix(),
         "szzdg" => conventional_root_dagger(&zz_pauli()),
         "sxx" => conventional_root(&xx_pauli()),
@@ -366,6 +390,7 @@ fn has_non_periodic_theta(name: &str) -> bool {
             | "cry"
             | "crz"
             | "rxx"
+            | "rxyxy2q"
             | "rzz"
             | "u"
             | "u3"
@@ -395,6 +420,14 @@ fn parameter_cases(definition: &GateDefinition) -> Vec<Vec<f64>> {
             let mut parameters = baseline[..definition.params.len()].to_vec();
             parameters[0] = probe;
             cases.push(parameters);
+        }
+    }
+    if matches!(definition.name.as_str(), "crz" | "crx" | "cry") {
+        // Check both sides of each half-angle wrap as well as the boundary.
+        for boundary in [-TAU, TAU, 3.0 * TAU] {
+            for offset in [-1e-7, 0.0, 1e-7] {
+                cases.push(vec![boundary + offset]);
+            }
         }
     }
     cases
@@ -522,7 +555,11 @@ fn assert_matrix_matches(
         .max_by(|left, right| left.2.total_cmp(&right.2))
         .expect("a unitary matrix is nonempty");
     let phase_ratio = actual[pivot_row][pivot_column] / expected[pivot_row][pivot_column];
-    let phase = phase_ratio / phase_ratio.norm();
+    let phase = if matches!(gate_name, "crz" | "crx" | "cry") {
+        complex(1.0, 0.0)
+    } else {
+        phase_ratio / phase_ratio.norm()
+    };
 
     for (row_index, (actual_row, expected_row)) in actual.iter().zip(expected).enumerate() {
         for (column_index, (&actual_entry, &expected_entry)) in

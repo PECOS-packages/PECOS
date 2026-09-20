@@ -160,6 +160,10 @@ class NoiseParameters:
     Matches the Rust ``NoiseConfig`` type. All parameters are optional
     beyond the four base rates.
 
+    Per-gate two-qubit overrides emit ``SZZ`` and ``SZZdg`` keys. The surface
+    path lowers Clifford rotations before building, so these keys name the
+    lowered scheduled gates.
+
     Attributes:
         p1: Single-qubit gate error rate.
         p1_weights: Optional relative probabilities over single-qubit Pauli
@@ -172,18 +176,20 @@ class NoiseParameters:
             unset, ``SZZdg`` uses ``p2``.
         p2_weights: Optional relative probabilities over two-qubit Pauli error
             labels. Plain labels such as ``"XX"`` are post-gate Pauli branches;
-            labels prefixed by ``"*"`` such as ``"*XX"`` are replacement
+            labels such as ``"~XX"`` or ``":replace:XX"`` are replacement
             branches that omit the ideal two-qubit gate before applying the
-            Pauli. Values must sum to 1.0; ``p2`` remains the total two-qubit
-            error rate.
-        p2_replacement_approximation: Approximation used for starred
+            Pauli. ``"~II"`` (or ``":replace:II"``) omits the gate without a
+            Pauli. The two replacement spellings are equivalent and cannot both
+            name the same entry. Values must sum to 1.0; ``p2`` remains the
+            total two-qubit error rate.
+        p2_replacement_approximation: Approximation used for
             replacement labels. ``"pauli_twirl_omitted_gate"`` convolves with
             the omitted two-qubit gate's Pauli twirl; ``"branch_impact"``
-            evaluates starred entries as replacement branch impacts;
+            evaluates replacement entries as replacement branch impacts;
             ``"exact_branch_replay"`` uses the traced circuit context to replay
             omitted-gate branches at concrete two-qubit gate locations and
             fails loudly when a branch is not DEM-representable;
-            ``"ignore_gate_removal"`` treats starred entries like plain
+            ``"ignore_gate_removal"`` treats replacement entries like plain
             post-gate Pauli entries.
         p_meas: Measurement error rate.
         p_prep: Initialization error rate.
@@ -2309,7 +2315,7 @@ def generate_circuit_level_dem(
     )
 
     # Generate DEM from circuit
-    dem = circuit.detector_error_model(decompose_errors=True)
+    dem = circuit.detector_error_model(decompose_errors=True).flattened()
 
     return str(dem)
 
@@ -2593,7 +2599,7 @@ def generate_dem_from_patch(
         >>> dem = generate_dem_from_patch(patch, num_rounds=3, noise=noise)
     """
     circuit = build_stim_circuit_from_patch(patch, num_rounds, noise, basis)
-    dem = circuit.detector_error_model(decompose_errors=decompose_errors)
+    dem = circuit.detector_error_model(decompose_errors=decompose_errors).flattened()
     return str(dem)
 
 

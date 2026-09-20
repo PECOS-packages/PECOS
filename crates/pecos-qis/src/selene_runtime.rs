@@ -857,6 +857,33 @@ impl SeleneRuntime {
         Ok(())
     }
 
+    fn call_runtime_rpp(
+        &self,
+        runtime_qubit_1: u64,
+        runtime_qubit_2: u64,
+        theta: f64,
+        phi: f64,
+    ) -> Result<()> {
+        let lib = self
+            .library
+            .as_ref()
+            .ok_or_else(|| RuntimeError::FfiError("Selene runtime is not loaded".to_string()))?;
+        let instance = self.instance.ok_or_else(|| {
+            RuntimeError::FfiError("Selene runtime is not initialized".to_string())
+        })?;
+
+        unsafe {
+            let rpp_fn = Self::runtime_plugin_descriptor(lib)?.rpp_gate_fn;
+            let errno = rpp_fn(instance, runtime_qubit_1, runtime_qubit_2, theta, phi);
+            if errno != 0 {
+                return Err(RuntimeError::FfiError(format!(
+                    "rpp failed with errno {errno}"
+                )));
+            }
+        }
+        Ok(())
+    }
+
     fn call_runtime_reset(&self, runtime_qubit: u64) -> Result<()> {
         let lib = self
             .library
@@ -1060,6 +1087,9 @@ impl SeleneRuntime {
             QuantumOp::RZZ(theta, qubit_1, qubit_2) => {
                 QuantumOp::RZZ(*theta, map(*qubit_1)?, map(*qubit_2)?)
             }
+            QuantumOp::RXYXY2Q(theta, phi, qubit_1, qubit_2) => {
+                QuantumOp::RXYXY2Q(*theta, *phi, map(*qubit_1)?, map(*qubit_2)?)
+            }
             QuantumOp::Measure(qubit, result_id) => QuantumOp::Measure(map(*qubit)?, *result_id),
             QuantumOp::MeasureLeaked(qubit, result_id) => {
                 QuantumOp::MeasureLeaked(map(*qubit)?, *result_id)
@@ -1086,6 +1116,11 @@ impl SeleneRuntime {
                 let runtime_qubit_1 = self.runtime_qubit_for_program(*qubit_1)?;
                 let runtime_qubit_2 = self.runtime_qubit_for_program(*qubit_2)?;
                 self.call_runtime_rzz(runtime_qubit_1, runtime_qubit_2, *theta)?;
+            }
+            QuantumOp::RXYXY2Q(theta, phi, qubit_1, qubit_2) => {
+                let runtime_qubit_1 = self.runtime_qubit_for_program(*qubit_1)?;
+                let runtime_qubit_2 = self.runtime_qubit_for_program(*qubit_2)?;
+                self.call_runtime_rpp(runtime_qubit_1, runtime_qubit_2, *theta, *phi)?;
             }
             QuantumOp::Measure(qubit, result_id) => {
                 let runtime_qubit = self.runtime_qubit_for_program(*qubit)?;
@@ -1361,6 +1396,19 @@ impl SeleneRuntime {
                 *lowered_qubit_2,
             ),
             (
+                QuantumOp::RXYXY2Q(source_theta, source_phi, source_qubit_1, source_qubit_2),
+                QuantumOp::RXYXY2Q(lowered_theta, lowered_phi, lowered_qubit_1, lowered_qubit_2),
+            ) => {
+                Self::same_float(*source_theta, *lowered_theta)
+                    && Self::same_float(*source_phi, *lowered_phi)
+                    && Self::same_unordered_pair(
+                        *source_qubit_1,
+                        *source_qubit_2,
+                        *lowered_qubit_1,
+                        *lowered_qubit_2,
+                    )
+            }
+            (
                 QuantumOp::RZZ(source_theta, source_qubit_1, source_qubit_2),
                 QuantumOp::RZZ(lowered_theta, lowered_qubit_1, lowered_qubit_2),
             ) => {
@@ -1425,7 +1473,8 @@ impl SeleneRuntime {
             | QuantumOp::CH(qubit_1, qubit_2)
             | QuantumOp::CRZ(_, qubit_1, qubit_2)
             | QuantumOp::ZZ(qubit_1, qubit_2)
-            | QuantumOp::RZZ(_, qubit_1, qubit_2) => {
+            | QuantumOp::RZZ(_, qubit_1, qubit_2)
+            | QuantumOp::RXYXY2Q(_, _, qubit_1, qubit_2) => {
                 qubits.insert(*qubit_1);
                 qubits.insert(*qubit_2);
             }
@@ -1464,7 +1513,8 @@ impl SeleneRuntime {
             | QuantumOp::CH(qubit_1, qubit_2)
             | QuantumOp::CRZ(_, qubit_1, qubit_2)
             | QuantumOp::ZZ(qubit_1, qubit_2)
-            | QuantumOp::RZZ(_, qubit_1, qubit_2) => Some((*qubit_1, *qubit_2)),
+            | QuantumOp::RZZ(_, qubit_1, qubit_2)
+            | QuantumOp::RXYXY2Q(_, _, qubit_1, qubit_2) => Some((*qubit_1, *qubit_2)),
             _ => None,
         }
     }
@@ -1591,9 +1641,13 @@ impl SeleneRuntime {
                     theta,
                     phi,
                 } => {
-                    return Err(RuntimeError::ExecutionError(format!(
-                        "Selene runtime emitted unsupported RPP operation on qubits {qubit_id_1} and {qubit_id_2} (theta={theta}, phi={phi})"
-                    )));
+                    let qubit_1 = self.runtime_qubit_to_usize(qubit_id_1)?;
+                    let qubit_2 = self.runtime_qubit_to_usize(qubit_id_2)?;
+                    self.push_idle_before(&mut lowered_ops, qubit_1, start_time)?;
+                    self.push_idle_before(&mut lowered_ops, qubit_2, start_time)?;
+                    lowered_ops.push(QuantumOp::RXYXY2Q(theta, phi, qubit_1, qubit_2));
+                    self.mark_gate_end(qubit_1, end_time);
+                    self.mark_gate_end(qubit_2, end_time);
                 }
                 RuntimeScheduledOp::Custom => {}
             }
@@ -1790,7 +1844,8 @@ fn include_quantum_op_capacity(qop: &QuantumOp, num_qubits: &mut usize, num_resu
         | QuantumOp::CH(qubit_1, qubit_2)
         | QuantumOp::CRZ(_, qubit_1, qubit_2)
         | QuantumOp::ZZ(qubit_1, qubit_2)
-        | QuantumOp::RZZ(_, qubit_1, qubit_2) => {
+        | QuantumOp::RZZ(_, qubit_1, qubit_2)
+        | QuantumOp::RXYXY2Q(_, _, qubit_1, qubit_2) => {
             include_qubit(num_qubits, *qubit_1);
             include_qubit(num_qubits, *qubit_2);
         }
@@ -2277,24 +2332,110 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "selene-runtimes")]
     #[test]
-    fn test_runtime_batch_rpp_fails_loudly() {
+    fn test_rxyxy2q_round_trip_through_simple_runtime() {
+        let mut runtime = crate::selene_runtimes::selene_simple_runtime().unwrap();
+        let metadata = TraceMetadata::from([("source_label".to_string(), "xyxy".to_string())]);
+        let lowered = runtime
+            .lower_operations_with_metadata(&[
+                Operation::AllocateQubit { id: 7 },
+                Operation::AllocateQubit { id: 3 },
+                Operation::TraceMetadata {
+                    metadata: metadata.clone(),
+                    qubit: Some(7),
+                },
+                QuantumOp::RXYXY2Q(-0.73, 0.41, 3, 7).into(),
+            ])
+            .unwrap();
+        // The runtime assigns physical qubits in allocation order. The
+        // source handles are deliberately different so we check the mapping
+        // and the callback, as well as the two angles and source metadata.
+        let gates = lowered
+            .iter()
+            .filter(|gate| matches!(gate.op, QuantumOp::RXYXY2Q(..)))
+            .collect::<Vec<_>>();
+        assert_eq!(gates.len(), 1, "{lowered:?}");
+        assert_eq!(gates[0].op, QuantumOp::RXYXY2Q(-0.73, 0.41, 1, 0));
+        assert_eq!(gates[0].metadata, metadata);
+    }
+
+    #[test]
+    fn test_runtime_batch_rpp_preserves_angles_and_timing() {
         let mut runtime = SeleneRuntime::new("/path/to/selene.so");
-        let error = runtime
+        runtime.last_gate_time_end_nanos = vec![5, 10, 0];
+        let ops = runtime
             .convert_runtime_batch(RuntimeOperationBatch {
-                start_time_nanos: 0,
-                duration_nanos: 5,
+                start_time_nanos: 20,
+                duration_nanos: 7,
                 invoked: true,
                 operations: vec![RuntimeScheduledOp::Rpp {
-                    qubit_id_1: 0,
-                    qubit_id_2: 1,
-                    theta: 1.0,
-                    phi: 0.5,
+                    qubit_id_1: 1,
+                    qubit_id_2: 0,
+                    theta: -0.73,
+                    phi: 0.41,
                 }],
             })
-            .expect_err("RPP must not be silently discarded");
+            .unwrap();
 
-        assert!(error.to_string().contains("unsupported RPP"));
+        // Both qubits wait until 20ns, but their preceding gates ended at
+        // different times. The RPP should become one gate with both angles.
+        assert_eq!(
+            ops,
+            vec![
+                QuantumOp::Idle(10e-9, 1),
+                QuantumOp::Idle(15e-9, 0),
+                QuantumOp::RXYXY2Q(-0.73, 0.41, 1, 0),
+            ]
+        );
+        assert_eq!(runtime.last_gate_time_end_nanos, vec![27, 27, 0]);
+        let mut following = Vec::new();
+        runtime.push_idle_before(&mut following, 0, 30).unwrap();
+        runtime.push_idle_before(&mut following, 1, 30).unwrap();
+        assert_eq!(
+            following,
+            vec![QuantumOp::Idle(3e-9, 0), QuantumOp::Idle(3e-9, 1)]
+        );
+    }
+
+    #[test]
+    fn test_rxyxy2q_metadata_matches_both_angles_and_qubits() {
+        let source = QuantumOp::RXYXY2Q(-0.73, 0.41, 2, 5);
+        assert!(SeleneRuntime::source_op_matches_lowered_op(
+            &source,
+            &QuantumOp::RXYXY2Q(-0.73, 0.41, 5, 2),
+        ));
+        for other in [
+            QuantumOp::RXYXY2Q(0.73, 0.41, 2, 5),
+            QuantumOp::RXYXY2Q(-0.73, -0.41, 2, 5),
+            QuantumOp::RXYXY2Q(-0.73, 0.41, 2, 4),
+        ] {
+            assert!(!SeleneRuntime::source_op_matches_lowered_op(
+                &source, &other
+            ));
+        }
+        let metadata = TraceMetadata::from([("source_label".to_string(), "xyxy".to_string())]);
+        let mut pending = VecDeque::from([SourceTraceMetadata {
+            op: source.clone(),
+            metadata: metadata.clone(),
+        }]);
+        let mut lowered = Vec::new();
+        SeleneRuntime::push_lowered_ops_with_source_metadata(
+            &mut lowered,
+            vec![QuantumOp::Idle(3e-9, 2), source.clone()],
+            &mut pending,
+        );
+        assert!(pending.is_empty());
+        assert!(lowered[0].metadata.is_empty());
+        assert_eq!(lowered[1], LoweredQuantumOp::new(source.clone(), metadata));
+        assert_eq!(
+            SeleneRuntime::quantum_op_qubits(&source),
+            BTreeSet::from([2, 5])
+        );
+        assert_eq!(SeleneRuntime::two_qubit_gate_qubits(&source), Some((2, 5)));
+        let mut collector = OperationCollector::default();
+        collector.operations.push(source.into());
+        assert_eq!(collector_capacity(&collector), (6, 0));
     }
 
     #[test]

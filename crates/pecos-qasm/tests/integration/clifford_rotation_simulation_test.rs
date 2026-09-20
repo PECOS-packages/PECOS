@@ -627,3 +627,60 @@ fn qasm_u_s_gate() {
         assert_eq!(value, 1, "Two u(0,0,pi/2) = Z, H*Z*H = X");
     }
 }
+
+#[test]
+fn rxyxy2q_spellings_parse_and_execute_identically() {
+    // Uppercase native and the pecos.inc alias. theta = pi about the YY axis
+    // maps |00> to |11>.
+    let programs = [
+        r"
+            OPENQASM 2.0;
+            qreg q[2];
+            creg c[2];
+            RXYXY2Q(pi, pi/2) q[0], q[1];
+            measure q -> c;
+        ",
+        r#"
+            OPENQASM 2.0;
+            include "pecos.inc";
+            qreg q[2];
+            creg c[2];
+            rxyxy2q(pi, pi/2) q[0], q[1];
+            measure q -> c;
+        "#,
+    ];
+
+    for qasm in programs {
+        let results = qasm_engine()
+            .program(Qasm::from_string(qasm))
+            .to_sim()
+            .seed(42)
+            .workers(1)
+            .run(4)
+            .unwrap();
+        for shot in &results.shots {
+            assert_eq!(shot.data.get("c").unwrap().as_u32(), Some(3), "{qasm}");
+        }
+    }
+
+    // Both spellings must reach the engine as the native gate carrying both
+    // angles, in order.
+    for qasm in programs {
+        let program = QASMParser::parse_str(qasm).unwrap();
+        let gate = program
+            .operations
+            .iter()
+            .find_map(|op| match op {
+                Operation::NativeGate(gate) if gate.gate_type == GateType::RXYXY2Q => Some(gate),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(
+            gate.angles.as_slice(),
+            &[
+                pecos_core::Angle64::HALF_TURN,
+                pecos_core::Angle64::QUARTER_TURN
+            ]
+        );
+    }
+}

@@ -222,6 +222,31 @@ fn rxx_matrix(theta: f64) -> Matrix {
     ])
 }
 
+/// `exp(-i theta/2 (P (x) P))` with `P = cos(phi) X + sin(phi) Y`. Written out
+/// directly from `P|0> = e^{i phi}|1>` and `P|1> = e^{-i phi}|0>`, so the
+/// `|00> <-> |11>` coupling carries `e^{+-2i phi}` and `|01> <-> |10>` none.
+fn rxyxy2q_matrix(theta: f64, phi: f64) -> Matrix {
+    let cosine = complex((theta / 2.0).cos(), 0.0);
+    let coupling = complex(0.0, -(theta / 2.0).sin());
+    let twist = cis(2.0 * phi);
+    matrix([
+        [
+            cosine,
+            complex(0.0, 0.0),
+            complex(0.0, 0.0),
+            coupling * twist.conj(),
+        ],
+        [complex(0.0, 0.0), cosine, coupling, complex(0.0, 0.0)],
+        [complex(0.0, 0.0), coupling, cosine, complex(0.0, 0.0)],
+        [
+            coupling * twist,
+            complex(0.0, 0.0),
+            complex(0.0, 0.0),
+            cosine,
+        ],
+    ])
+}
+
 /// Conventional two-qubit root: `((1+i) I + (1-i) P) / 2` for an involution P.
 fn conventional_root(pauli: &Matrix) -> Matrix {
     let a = complex(0.5, 0.5);
@@ -341,6 +366,7 @@ fn reference_matrix(name: &str, parameters: &[f64]) -> Matrix {
         "cphase90" => controlled(&phase_matrix(PI / 2.0)),
         "rzz" => rzz_matrix(parameters[0]),
         "rxx" => rxx_matrix(parameters[0]),
+        "rxyxy2q" => rxyxy2q_matrix(parameters[0], parameters[1]),
         "szz" | "ZZ" => szz_matrix(),
         "szzdg" => conventional_root_dagger(&zz_pauli()),
         "sxx" => conventional_root(&xx_pauli()),
@@ -364,6 +390,7 @@ fn has_non_periodic_theta(name: &str) -> bool {
             | "cry"
             | "crz"
             | "rxx"
+            | "rxyxy2q"
             | "rzz"
             | "u"
             | "u3"

@@ -30,6 +30,9 @@ gate syydg a,b { SYYDG a,b; }
 gate szz a,b { SZZ a,b; }
 gate szzdg a,b { SZZDG a,b; }
 
+// XY-plane two-qubit rotation: exp(-i theta/2 (XY_phi x XY_phi))
+gate rxyxy2q(theta,phi) a,b { RXYXY2Q(theta,phi) a,b; }
+
 // --- Measurement ---
 // Note: Measurement is a built-in operation in QASM
 // measure q -> c;

@@ -178,23 +178,12 @@ def demo_comparison_with_qasm() -> None:
 
     print("\nPECOS Guppy API (New - Unified):")
     print("```python")
-    print("from pecos_rslib import selene_engine")
-    print("from pecos_rslib.programs import HugrProgram")
-    print("from pecos.frontends.guppy_frontend import GuppyFrontend")
+    print("from pecos import Guppy, sim")
     print("")
-    print("# Convert Guppy function to HUGR")
-    print("frontend = GuppyFrontend()")
-    print("hugr_bytes = frontend.guppy_to_hugr(my_circuit)")
-    print("hugr_program = HugrProgram.from_bytes(hugr_bytes)")
-    print("")
-    print("# Run simulation")
-    print("results = selene_engine().program(hugr_program).to_sim().run(1000)")
+    print("results = sim(Guppy(my_circuit)).qubits(2).seed(42).run(1000)")
+    print("data = results.to_dict()")
     print("```")
-
-    print("\nBoth return similar result dictionaries with:")
-    print("- 'results': List of measurement outcomes")
-    print("- 'shots': Number of executions")
-    print("- Backend information and timing")
+    print("\nUse Guppy's result() to name outputs; to_dict() returns those tagged shot values.")
 
 
 def demo_error_handling() -> None:

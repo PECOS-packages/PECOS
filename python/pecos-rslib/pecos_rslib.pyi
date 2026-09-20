@@ -2171,13 +2171,6 @@ def qis_selene_helios_interface(**kwargs: object) -> QisInterfaceBuilder:
     ...
 
 # =============================================================================
-# HUGR Compilation
-# =============================================================================
-def get_compilation_backends() -> dict[str, object]:
-    """Get information about available compilation backends."""
-    ...
-
-# =============================================================================
 # WASM
 # =============================================================================
 class WasmError(Exception): ...

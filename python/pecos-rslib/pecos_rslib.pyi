@@ -1741,6 +1741,10 @@ class llvm:
 
 PHYSICAL_DURATION_META_KEY: str
 
+def is_supported_noop_or_metadata_gate(gate_type: GateType) -> bool:
+    """Return whether the gate is transparent to Pauli propagation."""
+    ...
+
 class GateType:
     """Gate type marker."""
 
@@ -1766,6 +1770,7 @@ class GateType:
     RXX: GateType
     RYY: GateType
     RZZ: GateType
+    RXYXY2Q: GateType
     RXY1Q: GateType
     U: GateType
     F: GateType
@@ -1831,6 +1836,8 @@ class Gate:
     def cy(pairs: Sequence[tuple[int, int]]) -> Gate: ...
     @staticmethod
     def cz(pairs: Sequence[tuple[int, int]]) -> Gate: ...
+    @staticmethod
+    def rxyxy2q(theta: Any, phi: Any, pairs: Sequence[tuple[int, int]]) -> Gate: ...
     @staticmethod
     def mx(qubits: Sequence[int]) -> Gate: ...
     @staticmethod
@@ -1919,6 +1926,7 @@ class TickHandle:
     def rxx(self, theta: Any, pairs: Sequence[tuple[int, int]]) -> TickHandle: ...
     def ryy(self, theta: Any, pairs: Sequence[tuple[int, int]]) -> TickHandle: ...
     def rzz(self, theta: Any, pairs: Sequence[tuple[int, int]]) -> TickHandle: ...
+    def rxyxy2q(self, theta: Any, phi: Any, pairs: Sequence[tuple[int, int]]) -> TickHandle: ...
     def add_gate(
         self,
         name: str,

@@ -1741,6 +1741,10 @@ class llvm:
 
 PHYSICAL_DURATION_META_KEY: str
 
+def is_supported_noop_or_metadata_gate(gate_type: GateType) -> bool:
+    """Return whether the gate is transparent to Pauli propagation."""
+    ...
+
 class GateType:
     """Gate type marker."""
 

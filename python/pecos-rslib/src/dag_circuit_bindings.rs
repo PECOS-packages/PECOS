@@ -25,6 +25,9 @@
 use crate::dtypes::AngleParam;
 use crate::gate_registry_bindings::PyGateRegistry;
 use pecos_core::{Angle64, ChannelExpr, GateQubits, GateSignature, Pauli, TimeUnits};
+use pecos_qec::fault_tolerance::propagator::{
+    GateNoiseKind, gate_noise_kind, is_supported_noop_or_metadata_gate,
+};
 use pecos_quantum::{
     Attribute, DagCircuit, Gate, GateType, PHYSICAL_DURATION_META_KEY, QubitId, Tick, TickCircuit,
     TickGateError,
@@ -86,25 +89,6 @@ fn validate_probability(name: &str, p: f64) -> PyResult<()> {
             "{name} must be in [0, 1], got {p}"
         )))
     }
-}
-
-fn receives_two_qubit_noise(gate_type: GateType) -> bool {
-    matches!(
-        gate_type,
-        GateType::CX
-            | GateType::CY
-            | GateType::CZ
-            | GateType::SZZ
-            | GateType::SZZdg
-            | GateType::SXX
-            | GateType::SXXdg
-            | GateType::SYY
-            | GateType::SYYdg
-            | GateType::SWAP
-            | GateType::RXX
-            | GateType::RYY
-            | GateType::RZZ
-    )
 }
 
 /// Convert a Rust Attribute to a Python object.
@@ -645,6 +629,12 @@ impl PyGateType {
             inner: GateType::Custom,
         }
     }
+}
+
+/// Whether a gate is transparent to Pauli propagation.
+#[pyfunction(name = "is_supported_noop_or_metadata_gate")]
+fn py_is_supported_noop_or_metadata_gate(gate_type: PyGateType) -> bool {
+    is_supported_noop_or_metadata_gate(gate_type.inner)
 }
 
 impl From<GateType> for PyGateType {
@@ -2895,9 +2885,22 @@ impl PyTickCircuit {
             ));
         }
 
-        if p2 > 0.0 {
+        if p1 > 0.0 || p2 > 0.0 || p_prep > 0.0 {
             for (tick_idx, gate) in self.inner.iter_gate_batches_with_tick() {
-                if receives_two_qubit_noise(gate.gate_type) && !gate.qubits.len().is_multiple_of(2)
+                match gate_noise_kind(gate.gate_type) {
+                    GateNoiseKind::Prep
+                    | GateNoiseKind::Single
+                    | GateNoiseKind::Two
+                    | GateNoiseKind::Measurement
+                    | GateNoiseKind::Transparent => {}
+                    GateNoiseKind::Error => {
+                        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                            "Unsupported gate type {:?} at tick {tick_idx} for with_noise",
+                            gate.gate_type
+                        )));
+                    }
+                }
+                if p2 > 0.0 && gate.gate_type.is_two_qubit() && !gate.qubits.len().is_multiple_of(2)
                 {
                     return Err(pyo3::exceptions::PyValueError::new_err(format!(
                         "{:?} at tick {tick_idx} has {} qubits; expected pairs",
@@ -2912,63 +2915,36 @@ impl PyTickCircuit {
             .inner
             .try_with_noise(&|gate: &Gate| -> Vec<ChannelExpr> {
                 let mut channels = Vec::new();
-                match gate.gate_type {
-                    GateType::PZ | GateType::QAlloc if p_prep > 0.0 => {
-                        channels.extend(
-                            gate.qubits
-                                .iter()
-                                .map(|q| pecos_core::channel::BitFlip(p_prep, q.index())),
-                        );
+                match gate_noise_kind(gate.gate_type) {
+                    GateNoiseKind::Prep if p_prep > 0.0 => {
+                        // Match pecos-qec's dem_builder/mem_builder.rs: PX errors are Z flips.
+                        channels.extend(gate.qubits.iter().map(|q| {
+                            if gate.gate_type == GateType::PX {
+                                pecos_core::channel::Dephasing(p_prep, q.index())
+                            } else {
+                                pecos_core::channel::BitFlip(p_prep, q.index())
+                            }
+                        }));
                     }
-                    GateType::I
-                    | GateType::X
-                    | GateType::Y
-                    | GateType::Z
-                    | GateType::H
-                    | GateType::F
-                    | GateType::Fdg
-                    | GateType::SX
-                    | GateType::SXdg
-                    | GateType::SY
-                    | GateType::SYdg
-                    | GateType::SZ
-                    | GateType::SZdg
-                    | GateType::T
-                    | GateType::Tdg
-                    | GateType::RX
-                    | GateType::RY
-                    | GateType::RZ
-                    | GateType::U
-                    | GateType::RXY1Q
-                    | GateType::Idle
-                        if p1 > 0.0 =>
-                    {
+                    GateNoiseKind::Single if p1 > 0.0 => {
                         channels.extend(
                             gate.qubits
                                 .iter()
                                 .map(|q| pecos_core::channel::Depolarizing(p1, q.index())),
                         );
                     }
-                    GateType::CX
-                    | GateType::CY
-                    | GateType::CZ
-                    | GateType::SZZ
-                    | GateType::SZZdg
-                    | GateType::SXX
-                    | GateType::SXXdg
-                    | GateType::SYY
-                    | GateType::SYYdg
-                    | GateType::SWAP
-                    | GateType::RXX
-                    | GateType::RYY
-                    | GateType::RZZ
-                        if p2 > 0.0 =>
-                    {
+                    GateNoiseKind::Two if p2 > 0.0 => {
                         channels.extend(gate.qubits.as_chunks::<2>().0.iter().map(|pair| {
                             pecos_core::channel::Depolarizing2(p2, pair[0].index(), pair[1].index())
                         }));
                     }
-                    _ => {}
+                    // Unsupported gates were rejected above whenever noise is active.
+                    GateNoiseKind::Prep
+                    | GateNoiseKind::Single
+                    | GateNoiseKind::Two
+                    | GateNoiseKind::Measurement
+                    | GateNoiseKind::Transparent
+                    | GateNoiseKind::Error => {}
                 }
                 channels
             })
@@ -4128,6 +4104,10 @@ pub fn register_quantum_circuit_types(parent_module: &Bound<'_, PyModule>) -> Py
     // Add classes to parent module
     parent_module.add_class::<PyQubitId>()?;
     parent_module.add_class::<PyGateType>()?;
+    parent_module.add_function(wrap_pyfunction!(
+        py_is_supported_noop_or_metadata_gate,
+        parent_module
+    )?)?;
     parent_module.add_class::<PyGate>()?;
     parent_module.add_class::<PyDagCircuit>()?;
     parent_module.add_class::<PyTick>()?;

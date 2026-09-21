@@ -29,6 +29,7 @@ two_qubits = {
     "RXX",
     "RYY",
     "RZZ",
+    "RXYXY2Q",
     "RXXRYYRZZ",
 }
 

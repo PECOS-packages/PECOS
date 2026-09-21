@@ -392,19 +392,6 @@ impl NoiseModelBuilder {
     ///     ])
     ///     .build();
     /// ```
-    ///
-    /// ## Custom composed noise
-    ///
-    /// ```
-    /// use pecos_neo::noise::prelude::*;
-    ///
-    /// let model = NoiseModelBuilder::new()
-    ///     .with_single_qubit_noise(seq![
-    ///         skip_if_leaked(),
-    ///         prob(0.001, pauli()),
-    ///     ])
-    ///     .build();
-    /// ```
     #[must_use]
     #[cfg(feature = "composite-noise")]
     pub fn with_single_qubit_noise<P: Primitive + Clone + 'static>(mut self, primitive: P) -> Self {

@@ -33,7 +33,6 @@
 //!     .with_depolarizing(0.001, 0.01)
 //!     .with_measurement_error(0.02)
 //!     .build();
-//!
 //! ```
 //!
 //! Mixed approach (combine builder with custom channels):

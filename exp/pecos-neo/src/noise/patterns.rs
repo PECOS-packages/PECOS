@@ -61,7 +61,6 @@
 //!
 //! // Errors that spread between qubits
 //! let model = chain_correlated(0.01, 0.5);  // 50% correlation
-//!
 //! ```
 //!
 //! `DeviceNoiseParams`, realistic-device and surface-code models, leakage,
@@ -457,22 +456,6 @@ impl DeviceNoiseParams {
 ///         .with_measurement_error(0.02)
 ///         .with_t1(0.0001)
 ///         .with_t2(0.0005)
-/// );
-/// ```
-///
-/// ## Device Parameters
-///
-/// ```
-/// use pecos_neo::noise::prelude::*;
-///
-/// let model = realistic_device_noise(
-///     &DeviceNoiseParams::new()
-///         .with_p1(0.001)           // 0.1% single-qubit error
-///         .with_p2(0.01)            // 1% two-qubit error
-///         .with_measurement_error(0.02)
-///         .with_prep_error(0.001)
-///         .with_t1(0.0001)          // T1 decay rate
-///         .with_t2(0.0005)          // T2 dephasing rate
 /// );
 /// ```
 #[must_use]

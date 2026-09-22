@@ -151,7 +151,7 @@ The `GateType` enum classifies quantum gates for circuit representation and simu
 `CX`, `CY`, `CZ`, `SWAP`, `SXX`, `SXXdg`, `SYY`, `SYYdg`, `SZZ`, `SZZdg`, `ISWAP`, `ISWAPdg`
 
 **Parameterized (non-Clifford):**
-`RX`, `RY`, `RZ`, `RXX`, `RYY`, `RZZ`, `T`, `Tdg`, `U`, `RXY1Q`
+`RX`, `RY`, `RZ`, `RXX`, `RYY`, `RZZ`, `T`, `Tdg`, `U`, `RXY1Q`, `RXYXY2Q`
 
 Controlled-rotation names such as `CRX`, `CRY`, and `CRZ` are boundary
 spellings, not `GateType` variants. At direct PECOS ingresses their source

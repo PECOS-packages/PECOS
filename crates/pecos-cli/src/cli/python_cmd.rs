@@ -163,10 +163,14 @@ fn run_build(profile: &str, rustflags: Option<&str>, cuda: bool) -> Result<()> {
 
     // Build all rslib crates via maturin (incremental — cargo inside maturin
     // handles change detection, skips recompilation when nothing changed).
+    // pecos-rslib-exp is included: quantum-pecos imports it (pecos.qec.analysis,
+    // pecos.decoders), the default `just pytest` lane runs its tests, and the
+    // docs examples exercise it, so a build that leaves it out hands those a
+    // stale release wheel from the last `uv sync`.
     // The CUDA (Rust) backend is its own crate, built only on an explicit --cuda
     // (`cuda` is true only then -- see resolve_cuda_choice); the auto-detect path
     // does no CUDA setup, so it must not pull in pecos-rslib-cuda.
-    let mut crates = vec!["pecos-rslib", "pecos-rslib-llvm"];
+    let mut crates = vec!["pecos-rslib", "pecos-rslib-exp", "pecos-rslib-llvm"];
     if cuda {
         crates.push("pecos-rslib-cuda");
     }

@@ -1,9 +1,111 @@
 # Execution-ordered runtime effects: focused follow-up to #826
 
-Status: proposal for an implementation decision. No execution-effect support is
-implemented by this document. Base inspected: `b7b3fb94ef63444dd99cc8042cbcd0ce29788cb0`
+Status: reviewed proposal, blocked on noise-model composition semantics. The
+test-only review probes do not implement runtime-event support. Base inspected:
+`b7b3fb94ef63444dd99cc8042cbcd0ce29788cb0`
 (the merge of #826). The proposal is a bounded implementation slice of the
 execution/transport direction in RFC #591, not a replacement event framework.
+
+## Transport review: confirmed compatibility blocker
+
+The mandatory-command direction remains preferred. However, the proposed adapter
+cannot safely wrap an arbitrary existing `NoiseModel`. `ControlEngine::start`
+accepts a whole input, and `Complete` ends that input. There is no distinction
+between completing a segment and completing the original input. A model may
+legitimately perform noise at completion. Splitting around a trigger invokes that
+noise more than once, even if the trigger acknowledges metadata only.
+
+`crates/pecos-engines/tests/runtime_transport_review.rs` demonstrates this with an
+independently invented model that emits one X during its result continuation:
+
+- Unsplit `Z; Z`: one completion X, final measurement 1.
+- `Z; metadata acknowledgement; Z`: two completion X operations, measurement 0.
+
+The probe waits for every `NeedsProcessing`/`Complete` continuation. Thus simply
+waiting for pending measurement processing does not repair the counterexample.
+This is a contract counterexample, not a claim that every built-in model has a
+per-input fault. It prevents promising generic composition or exactly-once noise
+from the existing trait alone.
+
+Concrete alternatives requiring a scope decision:
+
+1. **Recommended: explicit opt-in composition contract.** Require a model to
+   declare and test its segment/barrier semantics, non-recursive effect handling,
+   fresh worker/shot state, abort/reset behavior, and RNG ordering. Default is
+   unsupported. Initially admit only individually verified models; do not infer
+   safety from implementing `NoiseModel` or accepting gate messages. Passing
+   `GeneralNoiseModel` through this bridge requires its own measurement,
+   crosstalk, leakage-state and seeded-RNG parity tests.
+2. Introduce resumable segment/batch lifecycle hooks on the controller so it can
+   preserve one logical input across event barriers. This is broader work toward
+   #591; an adapter cannot synthesize these hooks for arbitrary opaque models.
+
+Production implementation is paused at this decision. No new message type,
+reserved Selene tag, public event executor, or Python configuration is introduced.
+
+### Traced execution and rejection paths
+
+| Boundary | Current behavior and required change |
+|---|---|
+| Selene ABI `runtime_batch_custom` | Copies borrowed payload while the callback is active; validates null/length and uses fallible reservation. No configured byte/event ceiling. Finite limits must be checked **before** copying. A non-null readable allocation remains the plugin's responsibility. |
+| `drain_runtime_operations` / `convert_runtime_batch` | Drains native batches into one gate vector; custom events go to capture/metadata handling. Preserve explicit batches and event positions in a new lowering path; reject mixed simultaneous event/gate batches initially. Capture acknowledgement is not execution support. |
+| `QuantumOp` / `LoweredQuantumOp` | Gate-only operation enum and trace metadata; neither is mandatory event transport. A future typed command must survive serialization and measurement-result mapping. |
+| `QisEngine::quantum_ops_to_lowered_commands` | Builds gate bytes and parallel metadata; measurements have separate result IDs. Segment results must concatenate in exactly this order. |
+| `ByteMessageBuilder`, `ByteMessage::new`, `as_bytes`, aligned reconstruction | Bytes are the transport. No sidecar can carry mandatory semantics. Leave ordinary v1 gate messages byte-compatible. |
+| `parse_batch_header`, `process_gate_message`, `quantum_ops_into` | Header rejects unknown version; v1 skips unknown record types. An event-bearing envelope needs a distinct mandatory version, with a command parser separate from the gate-only parser. Gate-only parsing must reject the entire event-bearing input before executing any prefix. |
+| `HybridEngine` → `QuantumSystem` → `EngineSystem` | The controller may issue arbitrarily many simulator sends before completion. The proposed adapter must finish the preceding segment before dispatching an effect. Simulator failure returns immediately without notifying the controller. A host-level abort/poison contract is needed; controller-local error latching alone is insufficient. |
+| Pass-through / depolarizing / biased depolarizing noise | Pass-through forwards bytes; the other two parse gates and propagate parse errors. These are potential individually testable integrations, not an established compatibility list. |
+| `GeneralNoiseModel` | Parses gates using `expect`: unsupported version currently panics. It also owns leakage, prepared-qubit and pending-measurement state. Version rejection needs a normal error path; bypassing this model for physical effects must not bypass state semantics. |
+| State-vector, sparse-stabilizer, stab-vector dispatch | Gate parsers reject unsupported version. Test probes exercise all three through `QuantumSystem`. Custom gates or ignored crosstalk placeholders are not a mandatory command mechanism. |
+| QIS lowered-gate trace / raw byte dumps | Lowered-gate trace propagates gate parse errors; raw dumps preserve bytes. Extend event traces or reject event mode before execution. QIS/QASM debug-only parse attempts do not constitute execution validation. |
+| Python byte-message binding / PHIR bridge | Byte-message gate conversion raises a Python error. PHIR bridge catches parse errors and falls back to Python generation: this is not a fail-closed mandatory-event path. Keep event input unavailable there until fallback explicitly excludes mandatory/unsupported input. |
+| QASM, PHIR, PHIR-JSON, PHIR-Pliron producers | Existing paths construct ordinary gate messages. They need no event emission change; they must not be advertised as carrying opaque mandatory commands. |
+
+### Lifecycle, bounds, and RFC alignment
+
+Monte Carlo clones a template per worker, seeds each worker, then resets before
+each shot. Neither `DynClone` nor `Send + Sync` promises independent state: a
+model can clone a shared mutable allocation. `ControlEngine::reset` also provides
+no shot identity. The adapter must use an immutable factory and explicit shot
+context, not clone a live physical handler. `QuantumSystem::reset` resets noise
+before the simulator; a later simulator reset error must leave the whole adapter
+unusable. These are required implementation contracts, not tested guarantees.
+
+The retention proposal must bound event bytes, event count, outstanding buffered
+bytes, and effect operations separately. Check callback bounds before allocation,
+stream native batches rather than drain an entire shot, and latch limit/allocation
+failure until successful full reset. Never truncate or downgrade to Capture.
+The current source has fallible allocation but no such configured bounds. A
+callback cannot force a misbehaving native plugin to return; streaming does not
+provide native-process isolation. Numeric limits and their public configuration
+remain to be specified before implementation.
+
+RFC #591's actual diff at `95eef838b6be7e6099e0226969456d581132ebda` was reviewed,
+particularly **Runtime Batches and
+Simultaneous Operations**, **PECOS and Selene Trigger Transport**, **General-Noise
+Compatibility Facade**, and **Differential Conformance**. Event-only barriers,
+stable ordered targets, schema-versioned payloads, explicit unsupported
+capabilities, non-recursive generated effects, and preserved batch timing fit
+that direction. An unrestricted segmenting adapter does not establish its
+batch-lifecycle or exact RNG-compatibility contracts. Do not reserve a Selene
+wire schema independently of that RFC. No leakage-channel change is proposed.
+
+### What the review probes establish
+
+Six Rust tests pass: synthetic execution placement (`H; phase; H; M` differs
+from lowering-time placement), `M; flip; M`, explicit unsupported probe rejection,
+v1 unknown-record loss, unsupported-version rejection by three simulator paths,
+the current general-noise panic, and the segmentation counterexample (some are
+assertions within one test). The synthetic decoder and execution sketch exist
+only inside the test file; they do not exercise the Selene producer or define a
+wire protocol. The panic and silent-skip probes characterize current behavior;
+they must be revised when the corresponding production behavior is changed.
+
+No FFI-to-executor event path, idle accounting, shot/worker isolation, bounded
+retention, failure recovery, or Python event configuration has been implemented
+or validated. No fresh Python tests were run for this review-only change. These
+probes neither establish simulator parity nor device-model equivalence. The
+remaining sections describe the original proposal, subject to the blocker above.
 
 ## Objective and sequence
 

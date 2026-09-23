@@ -953,17 +953,18 @@ def build_surface_code_circuit(
         twirl.validate_runtime_supported()
     twirl_site_schedule = None if twirl is None else twirl.site_schedule
 
-    if (
-        resolved_plan.interaction_basis == "cx"
-        and effective_ancilla_budget == total_ancilla
-        and twirl is None
-        and clifford_frame_policy is None
-    ):
-        from pecos.qec.surface.gadgets import default_allocation, memory_gadgets
+    if resolved_plan.interaction_basis == "cx" and twirl is None and clifford_frame_policy is None:
+        from pecos.qec.surface.gadgets import memory_gadgets
 
-        allocation = default_allocation(patch)
-        gadgets = memory_gadgets(patch, num_rounds, basis, allocation=allocation, round_order=cnot_round_order)
-        return [step for gadget in gadgets for step in gadget.steps], allocation
+        gadgets = memory_gadgets(
+            patch,
+            num_rounds,
+            basis,
+            round_order=cnot_round_order,
+            ancilla_budget=effective_ancilla_budget,
+            ancilla_schedule=ancilla_schedule,
+        )
+        return [step for gadget in gadgets for step in gadget.steps], gadgets[0].allocations[0]
 
     # Qubit allocation layout. Under ancilla reuse, stabilizers map onto a
     # shared ancilla pool and different stabilizers can intentionally share the

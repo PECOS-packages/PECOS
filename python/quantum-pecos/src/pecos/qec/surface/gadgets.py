@@ -8,6 +8,11 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from typing import Literal
 
+from pecos.qec.surface._ancilla_batching import (
+    batched_stabilizers,
+    normalize_ancilla_budget,
+    normalize_ancilla_schedule,
+)
 from pecos.qec.surface.circuit_builder import OpType, QubitAllocation, SurfaceCircuitStep
 from pecos.qec.surface.layouts.rotated_lattice import rotated_id_to_position
 from pecos.qec.surface.patch import Stabilizer, SurfacePatch
@@ -42,12 +47,25 @@ class Gadget:
     fold: Literal["S", "SDG"] | None = None
 
 
-def default_allocation(patch: SurfacePatch) -> QubitAllocation:
-    """Allocate data, then dedicated X and Z ancillas in register order."""
+def default_allocation(
+    patch: SurfacePatch,
+    *,
+    ancilla_budget: int | None = None,
+    ancilla_schedule: str | None = None,
+) -> QubitAllocation:
+    """Allocate data and ancillas, sharing pool slots when a budget is supplied."""
     geom = patch.geometry
     n = geom.num_data
     nx = len(geom.x_stabilizers)
     nz = len(geom.z_stabilizers)
+    budget = normalize_ancilla_budget(nx + nz, ancilla_budget)
+    schedule = normalize_ancilla_schedule(ancilla_schedule)
+    if budget < nx + nz:
+        registers = {"X": [-1] * nx, "Z": [-1] * nz}
+        for batch in batched_stabilizers(patch, budget, ancilla_schedule=schedule):
+            for slot, (family, index) in enumerate(batch):
+                registers[family][index] = n + slot
+        return QubitAllocation(list(range(n)), registers["X"], registers["Z"])
     return QubitAllocation(list(range(n)), list(range(n, n + nx)), list(range(n + nx, n + nx + nz)))
 
 
@@ -117,6 +135,7 @@ def _cx_layers(
     *,
     round_order: str | Sequence[int] | None = None,
     x_z_swapped: bool = False,
+    stabilizers: set[tuple[str, int]] | None = None,
 ) -> list[list[SurfaceCircuitStep]]:
     _, x_ancillas = _ancilla_register(patch, allocation, "X")
     _, z_ancillas = _ancilla_register(patch, allocation, "Z")
@@ -125,6 +144,8 @@ def _cx_layers(
         steps = [SurfaceCircuitStep(OpType.COMMENT, label=f"CX round {index + 1}")]
         for kind, stab, data in layer:
             if family is not None and kind != family:
+                continue
+            if stabilizers is not None and (kind, stab) not in stabilizers:
                 continue
             operands = (
                 [x_ancillas[stab], allocation.data_qubits[data]]
@@ -139,6 +160,74 @@ def _cx_layers(
     return layers
 
 
+def _budgeted_syndrome_steps(
+    patch: SurfacePatch,
+    allocation: QubitAllocation,
+    *,
+    ancilla_budget: int | None,
+    ancilla_schedule: str | None,
+    round_order: str | Sequence[int] | None,
+    x_z_swapped: bool,
+    family: str | None = None,
+) -> list[SurfaceCircuitStep] | None:
+    registers = {kind: _ancilla_register(patch, allocation, kind)[1] for kind in ("X", "Z")}
+    total = sum(len(register) for register in registers.values())
+    budget = normalize_ancilla_budget(total, ancilla_budget)
+    schedule = normalize_ancilla_schedule(ancilla_schedule)
+    if budget == total:
+        return None
+    if len(set(allocation.x_ancilla_qubits + allocation.z_ancilla_qubits)) > budget:
+        msg = "allocation exceeds ancilla_budget; use default_allocation with the same budget and schedule"
+        raise ValueError(msg)
+    h_family = "Z" if x_z_swapped else "X"
+    steps = []
+    for batch in batched_stabilizers(patch, budget, ancilla_schedule=schedule):
+        batch_qubits = [registers[kind][index] for kind, index in batch]
+        if len(set(batch_qubits)) != len(batch_qubits) or set(batch_qubits) & set(allocation.data_qubits):
+            msg = "ancilla_schedule requires disjoint allocation within each batch and from data"
+            raise ValueError(msg)
+        selected = [(kind, index) for kind, index in batch if family is None or kind == family]
+        if not selected:
+            continue
+
+        def ancilla_steps(
+            op: OpType,
+            selected: list[tuple[str, int]],
+            *,
+            selected_family: str | None = None,
+        ) -> list[SurfaceCircuitStep]:
+            prefix = "s" if op == OpType.MEASURE else "a"
+            return [
+                SurfaceCircuitStep(op, [registers[kind][index]], f"{prefix}{kind.lower()}{index}")
+                for kind, index in selected
+                if selected_family is None or kind == selected_family
+            ]
+
+        hadamards = ancilla_steps(OpType.H, selected, selected_family=h_family)
+        if hadamards:
+            hadamards.insert(0, SurfaceCircuitStep(OpType.COMMENT, label=f"Hadamard on {h_family} ancillas"))
+        steps.append(SurfaceCircuitStep(OpType.COMMENT, label="Prepare ancillas"))
+        steps.extend(ancilla_steps(OpType.ALLOC, selected))
+        steps.extend(hadamards)
+        steps.append(SurfaceCircuitStep(OpType.TICK))
+        steps.extend(
+            step
+            for layer in _cx_layers(
+                patch,
+                allocation,
+                round_order=round_order,
+                x_z_swapped=x_z_swapped,
+                stabilizers=set(selected),
+            )
+            for step in layer
+        )
+        steps.extend(hadamards)
+        steps.append(SurfaceCircuitStep(OpType.COMMENT, label="Measure ancillas"))
+        steps.extend(ancilla_steps(OpType.MEASURE, selected))
+        steps.append(SurfaceCircuitStep(OpType.TICK))
+    return steps
+
+
 def init_syndrome_gadget(
     patch: SurfacePatch,
     allocation: QubitAllocation,
@@ -146,6 +235,8 @@ def init_syndrome_gadget(
     basis: str,
     round_order: str | Sequence[int] | None = None,
     x_z_swapped: bool = False,
+    ancilla_budget: int | None = None,
+    ancilla_schedule: str | None = None,
 ) -> Gadget:
     """Establish the complementary stabilizer signs after data preparation."""
     basis = _normalize_basis(basis, ("X", "Z"))
@@ -157,20 +248,32 @@ def init_syndrome_gadget(
     if x_z_swapped:
         family = "Z" if family == "X" else "X"
     steps = [SurfaceCircuitStep(OpType.COMMENT, label=f"init_{family.lower()}_syndrome")]
-    steps.extend(_ancilla_steps(patch, allocation, family, OpType.ALLOC))
-    if family == h_family:
-        steps.extend(_hadamards(patch, allocation, h_family))
-    steps.append(SurfaceCircuitStep(OpType.TICK))
-    steps.extend(
-        step
-        for layer in _cx_layers(patch, allocation, family, round_order=round_order, x_z_swapped=x_z_swapped)
-        for step in layer
+    budgeted = _budgeted_syndrome_steps(
+        patch,
+        allocation,
+        ancilla_budget=ancilla_budget,
+        ancilla_schedule=ancilla_schedule,
+        round_order=round_order,
+        x_z_swapped=x_z_swapped,
+        family=family,
     )
-    if family == h_family:
-        steps.extend(_hadamards(patch, allocation, h_family))
-    steps.append(SurfaceCircuitStep(OpType.COMMENT, label="Measure ancillas"))
-    steps.extend(_ancilla_steps(patch, allocation, family, OpType.MEASURE))
-    steps.append(SurfaceCircuitStep(OpType.TICK))
+    if budgeted is not None:
+        steps.extend(budgeted)
+    else:
+        steps.extend(_ancilla_steps(patch, allocation, family, OpType.ALLOC))
+        if family == h_family:
+            steps.extend(_hadamards(patch, allocation, h_family))
+        steps.append(SurfaceCircuitStep(OpType.TICK))
+        steps.extend(
+            step
+            for layer in _cx_layers(patch, allocation, family, round_order=round_order, x_z_swapped=x_z_swapped)
+            for step in layer
+        )
+        if family == h_family:
+            steps.extend(_hadamards(patch, allocation, h_family))
+        steps.append(SurfaceCircuitStep(OpType.COMMENT, label="Measure ancillas"))
+        steps.extend(_ancilla_steps(patch, allocation, family, OpType.MEASURE))
+        steps.append(SurfaceCircuitStep(OpType.TICK))
     return Gadget(
         GadgetKind.INIT_SYNDROME,
         f"init_{basis.lower()}_basis" + ("_swapped" if x_z_swapped else ""),
@@ -189,6 +292,8 @@ def syndrome_round_gadget(
     round_index: int,
     round_order: str | Sequence[int] | None = None,
     x_z_swapped: bool = False,
+    ancilla_budget: int | None = None,
+    ancilla_schedule: str | None = None,
 ) -> Gadget:
     """Extract a full windmill syndrome, reversing both CX families after H.
 
@@ -196,6 +301,27 @@ def syndrome_round_gadget(
     receive the Hadamards, and are allocated and measured first. Labels
     always refer to physical register slots by stabilizer index.
     """
+    budgeted = _budgeted_syndrome_steps(
+        patch,
+        allocation,
+        ancilla_budget=ancilla_budget,
+        ancilla_schedule=ancilla_schedule,
+        round_order=round_order,
+        x_z_swapped=x_z_swapped,
+    )
+    if budgeted is not None:
+        if x_z_swapped and patch.dx != patch.dz:
+            msg = "syndrome_round_gadget requires a square patch when x_z_swapped (dx == dz)"
+            raise ValueError(msg)
+        return Gadget(
+            GadgetKind.SYNDROME_ROUND,
+            "syndrome_extraction" + ("_swapped" if x_z_swapped else ""),
+            (SurfaceCircuitStep(OpType.COMMENT, label=f"syndrome_extraction round {round_index + 1}"), *budgeted),
+            (allocation,),
+            (patch.dx, patch.dz),
+            None,
+            x_z_swapped=x_z_swapped,
+        )
     layers = _cx_layers(patch, allocation, round_order=round_order, x_z_swapped=x_z_swapped)
     return _syndrome_round(patch, allocation, layers, round_index=round_index, x_z_swapped=x_z_swapped)
 
@@ -437,13 +563,32 @@ def memory_gadgets(
     *,
     allocation: QubitAllocation | None = None,
     round_order: str | Sequence[int] | None = None,
+    ancilla_budget: int | None = None,
+    ancilla_schedule: str | None = None,
 ) -> list[Gadget]:
-    """Compose the contiguous physical definitions of a memory experiment."""
+    """Compose memory with optional ancilla reuse across scheduled stabilizer batches."""
     if allocation is None:
-        allocation = default_allocation(patch)
+        allocation = default_allocation(patch, ancilla_budget=ancilla_budget, ancilla_schedule=ancilla_schedule)
     return [
         prep_gadget(patch, allocation, basis=basis),
-        init_syndrome_gadget(patch, allocation, basis=basis, round_order=round_order),
-        *(syndrome_round_gadget(patch, allocation, round_index=i, round_order=round_order) for i in range(num_rounds)),
+        init_syndrome_gadget(
+            patch,
+            allocation,
+            basis=basis,
+            round_order=round_order,
+            ancilla_budget=ancilla_budget,
+            ancilla_schedule=ancilla_schedule,
+        ),
+        *(
+            syndrome_round_gadget(
+                patch,
+                allocation,
+                round_index=i,
+                round_order=round_order,
+                ancilla_budget=ancilla_budget,
+                ancilla_schedule=ancilla_schedule,
+            )
+            for i in range(num_rounds)
+        ),
         measure_out_gadget(patch, allocation, basis=basis),
     ]

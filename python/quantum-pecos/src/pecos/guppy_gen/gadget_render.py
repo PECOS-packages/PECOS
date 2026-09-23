@@ -3,7 +3,12 @@
 
 """Render physical surface gadgets to reusable Guppy functions."""
 
-from pecos.qec.surface._check_plan import cnot_round_order_for_check_plan, resolve_surface_check_plan
+from pecos.qec.surface._check_plan import (
+    ancilla_schedule_for_check_plan,
+    cnot_round_order_for_check_plan,
+    require_current_surface_check_plan_renderer,
+    resolve_surface_check_plan,
+)
 from pecos.qec.surface.circuit_builder import OpType
 from pecos.qec.surface.gadgets import (
     Gadget,
@@ -16,6 +21,65 @@ from pecos.qec.surface.gadgets import (
     syndrome_round_gadget,
 )
 from pecos.qec.surface.patch import SurfacePatch
+
+
+def _allocation_epochs(
+    gadget: Gadget,
+    registers: tuple[str, ...],
+) -> tuple[dict[int, str], dict[int, str], list[str], list[str]]:
+    """Resolve names and result slots from live allocations, not reusable physical IDs."""
+    data_names = {}
+    candidates: dict[int, list[tuple[str, str, int, str]]] = {}
+    for register, allocation in zip(registers, gadget.allocations, strict=True):
+        for index, qubit in enumerate(allocation.data_qubits):
+            if qubit in data_names:
+                msg = f"{gadget.name}: allocations must be disjoint"
+                raise ValueError(msg)
+            data_names[qubit] = f"{register}[{index}]"
+        prefix = f"{register.split('.')[0]}_" if len(registers) > 1 else ""
+        for family, qubits in (("X", allocation.x_ancilla_qubits), ("Z", allocation.z_ancilla_qubits)):
+            for index, qubit in enumerate(qubits):
+                label = f"a{family.lower()}{index}"
+                candidates.setdefault(qubit, []).append((f"{prefix}{label}", family, index, label))
+    if data_names.keys() & candidates.keys():
+        msg = f"{gadget.name}: allocations must be disjoint"
+        raise ValueError(msg)
+    active = {}
+    epochs = {}
+    name_counts: dict[str, int] = {}
+    results: dict[str, list[tuple[int, str]]] = {"X": [], "Z": []}
+    for step_index, step in enumerate(gadget.steps):
+        if not step.qubits or step.qubits[0] in data_names:
+            continue
+        qubit = step.qubits[0]
+        if step.op_type == OpType.ALLOC:
+            if qubit in active:
+                msg = f"{gadget.name}: allocations must be disjoint within a live epoch"
+                raise ValueError(msg)
+            choices = candidates.get(qubit, [])
+            if len(choices) != 1:
+                choices = [choice for choice in choices if step.label in (choice[0], choice[3])]
+            if len(choices) != 1:
+                msg = f"{gadget.name}: ALLOC label {step.label!r} must identify an ancilla register slot"
+                raise ValueError(msg)
+            name, family, index, _label = choices[0]
+            epoch = name_counts.get(name, 0)
+            name_counts[name] = epoch + 1
+            epochs[step_index] = name if epoch == 0 else f"{name}_{epoch}"
+            active[qubit] = (family, index)
+        elif step.op_type == OpType.MEASURE:
+            if qubit not in active:
+                msg = f"{gadget.name}: measurement requires a live ancilla allocation"
+                raise ValueError(msg)
+            family, index = active.pop(qubit)
+            results[family].append((index, step.label))
+    x_family, z_family = ("Z", "X") if gadget.x_z_swapped else ("X", "Z")
+    return (
+        data_names,
+        epochs,
+        [label for _index, label in sorted(results[x_family], key=lambda item: item[0])],
+        [label for _index, label in sorted(results[z_family], key=lambda item: item[0])],
+    )
 
 
 def render_gadget_function(gadget: Gadget, *, tag_scope: str | None = None) -> list[str]:
@@ -39,30 +103,14 @@ def render_gadget_function(gadget: Gadget, *, tag_scope: str | None = None) -> l
     if len(gadget.allocations) != len(registers):
         msg = f"{gadget.name}: expected {len(registers)} allocations"
         raise ValueError(msg)
-    names = {}
-    data_registers = []
-    base_x, base_z = set(), set()
-    for register, allocation in zip(registers, gadget.allocations, strict=True):
-        data_registers.append(allocation.data_qubits)
-        mapping = {q: f"{register}[{i}]" for i, q in enumerate(allocation.data_qubits)}
-        prefix = f"{register.split('.')[0]}_" if len(registers) > 1 else ""
-        mapping.update({q: f"{prefix}ax{i}" for i, q in enumerate(allocation.x_ancilla_qubits)})
-        mapping.update({q: f"{prefix}az{i}" for i, q in enumerate(allocation.z_ancilla_qubits)})
-        qubits = [*allocation.data_qubits, *allocation.x_ancilla_qubits, *allocation.z_ancilla_qubits]
-        if len(mapping) != len(qubits) or names.keys() & mapping.keys():
-            msg = f"{gadget.name}: allocations must be disjoint"
-            raise ValueError(msg)
-        names.update(mapping)
-        base_x.update(allocation.x_ancilla_qubits)
-        base_z.update(allocation.z_ancilla_qubits)
+    names, epoch_names, x_labels, z_labels = _allocation_epochs(gadget, registers)
+    data_registers = [allocation.data_qubits for allocation in gadget.allocations]
     data = data_registers[0]
     register = registers[0]
     n = len(data)
-    current_x, current_z = (base_z, base_x) if gadget.x_z_swapped else (base_x, base_z)
-    if gadget.x_z_swapped and dx == dz and len(base_x) != len(base_z):
+    allocation = gadget.allocations[0]
+    if gadget.x_z_swapped and dx == dz and len(allocation.x_ancilla_qubits) != len(allocation.z_ancilla_qubits):
         syndrome += "_swapped"
-    x_labels = [s.label for s in gadget.steps if s.op_type == OpType.MEASURE and s.qubits[0] in current_x]
-    z_labels = [s.label for s in gadget.steps if s.op_type == OpType.MEASURE and s.qubits[0] in current_z]
     basis = gadget.basis
     argument = f"surf: {surface}"
     if kind == GadgetKind.PREP:
@@ -164,6 +212,7 @@ def render_gadget_function(gadget: Gadget, *, tag_scope: str | None = None) -> l
             index = end
             continue
         elif op == OpType.ALLOC:
+            names[step.qubits[0]] = epoch_names[index]
             lines.append(f"    {names[step.qubits[0]]} = qubit()")
         elif op in {OpType.H, OpType.X, OpType.Z, OpType.CX, OpType.CZ, OpType.SZ, OpType.SZDG}:
             operands = ", ".join(names[q] for q in step.qubits)
@@ -175,6 +224,7 @@ def render_gadget_function(gadget: Gadget, *, tag_scope: str | None = None) -> l
             tag = "init:meas" if kind == GadgetKind.INIT_SYNDROME else "meas"
             lines.append(f'    output("{tag_prefix}{label}:{tag}:{ordinal}", {label})')
             ordinal += 1
+            del names[step.qubits[0]]
         else:
             msg = f"Unsupported gadget operation: {op.name}"
             raise ValueError(msg)
@@ -198,15 +248,29 @@ def render_gadget_function(gadget: Gadget, *, tag_scope: str | None = None) -> l
     return lines
 
 
-def render_surface_gadget_module(patch: SurfacePatch) -> str:
+def render_surface_gadget_module(
+    patch: SurfacePatch,
+    *,
+    ancilla_budget: int | None = None,
+    check_plan: str | None = None,
+) -> str:
     """Assemble the default surface module from independently rendered gadgets."""
-    resolved_plan = resolve_surface_check_plan(interaction_basis="cx")
+    resolved_plan = resolve_surface_check_plan(check_plan=check_plan)
+    if resolved_plan.interaction_basis != "cx":
+        msg = f"check_plan {resolved_plan.plan_id!r} is unsupported by CX gadgets, including ancilla_budget"
+        raise ValueError(msg)
+    require_current_surface_check_plan_renderer(resolved_plan, context="surface gadget module")
+    ancilla_schedule = ancilla_schedule_for_check_plan(resolved_plan)
     round_order = cnot_round_order_for_check_plan(resolved_plan)
     geom = patch.geometry
     dx, dz = geom.dx, geom.dz
     n = geom.num_data
     nx, nz = len(geom.x_stabilizers), len(geom.z_stabilizers)
-    allocation = default_allocation(patch)
+    allocation = default_allocation(patch, ancilla_budget=ancilla_budget, ancilla_schedule=ancilla_schedule)
+    effective_budget = allocation.total - n
+    ancilla_description = (
+        f"{nx + nz} (one per stabilizer)" if effective_budget == nx + nz else f"{effective_budget} (reused)"
+    )
     lines = [
         f'"""Surface code patch (dx={dx}, dz={dz}) implementation in Guppy.',
         "",
@@ -215,7 +279,7 @@ def render_surface_gadget_module(patch: SurfacePatch) -> str:
         f"Data qubits: {n}",
         f"X stabilizers: {nx}",
         f"Z stabilizers: {nz}",
-        f"Ancilla qubits: {nx + nz} (one per stabilizer)",
+        f"Ancilla qubits: {ancilla_description}",
         "Interaction basis: cx",
         f"Check plan: {resolved_plan.plan_id}",
         '"""',
@@ -264,12 +328,43 @@ def render_surface_gadget_module(patch: SurfacePatch) -> str:
         lines.extend(["", ""])
     lines.extend(["# === Syndrome Extraction ===", ""])
     lines.extend(
-        render_gadget_function(syndrome_round_gadget(patch, allocation, round_index=0, round_order=round_order)),
+        render_gadget_function(
+            syndrome_round_gadget(
+                patch,
+                allocation,
+                round_index=0,
+                round_order=round_order,
+                ancilla_budget=ancilla_budget,
+                ancilla_schedule=ancilla_schedule,
+            ),
+        ),
     )
     lines.extend(["", "", "", ""])
-    lines.extend(render_gadget_function(init_syndrome_gadget(patch, allocation, basis="Z", round_order=round_order)))
+    lines.extend(
+        render_gadget_function(
+            init_syndrome_gadget(
+                patch,
+                allocation,
+                basis="Z",
+                round_order=round_order,
+                ancilla_budget=ancilla_budget,
+                ancilla_schedule=ancilla_schedule,
+            ),
+        ),
+    )
     lines.extend(["", ""])
-    lines.extend(render_gadget_function(init_syndrome_gadget(patch, allocation, basis="X", round_order=round_order)))
+    lines.extend(
+        render_gadget_function(
+            init_syndrome_gadget(
+                patch,
+                allocation,
+                basis="X",
+                round_order=round_order,
+                ancilla_budget=ancilla_budget,
+                ancilla_schedule=ancilla_schedule,
+            ),
+        ),
+    )
     lines.extend(["# === Measurement ===", ""])
     for basis in ("Z", "X"):
         lines.extend(render_gadget_function(measure_out_gadget(patch, allocation, basis=basis)))

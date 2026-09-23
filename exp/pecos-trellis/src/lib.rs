@@ -372,7 +372,7 @@ struct Column {
     logical_toggle: Vec<u64>,
     close_mask: Vec<u64>,
     active_mask: Vec<u64>,
-    suffix_compatibility: Vec<SuffixCompatibility>,
+    suffix_compatibility: Vec<SuffixRow>,
     log_odds: f64,
     log_one_minus_probability: f64,
     log_odds_int: i64,
@@ -390,7 +390,7 @@ struct FactorColumn {
     outcomes: Vec<ColumnOutcome>,
     close_mask: Vec<u64>,
     active_mask: Vec<u64>,
-    suffix_compatibility: Vec<SuffixCompatibility>,
+    suffix_compatibility: Vec<SuffixRow>,
 }
 
 #[derive(Clone, Debug)]
@@ -402,15 +402,87 @@ struct ColumnOutcome {
     log_prior_int: i64,
 }
 
+/// A packed detector bit index avoids storing a separate word index and mask.
+/// Columns retain these references in ascending detector order for scoring.
 #[derive(Clone, Debug)]
-struct SuffixCompatibility {
-    word_index: usize,
-    bit_mask: u64,
-    log_probability_zero: f64,
-    log_probability_one: f64,
-    log_probability_zero_int: i64,
-    log_probability_one_int: i64,
+struct SuffixRow {
+    detector: usize,
+    epoch_index: usize,
+}
+
+/// Initial epochs precede updates in reverse-column, ascending-detector order.
+/// A column's rows reference epochs BEFORE that column's toggle is applied.
+#[derive(Clone, Debug)]
+struct SuffixEpoch {
+    detector: usize,
+    column_index: Option<usize>,
+}
+
+#[derive(Clone, Debug)]
+struct SuffixLogProbabilities {
+    zero: f64,
+    one: f64,
+    zero_int: i64,
+    one_int: i64,
+}
+
+impl SuffixLogProbabilities {
+    fn new(eta: f64, int_metric_scale: Option<i32>) -> Self {
+        let log_probability_zero = libm::log(1.0_f64.midpoint(eta));
+        let log_probability_one = libm::log(1.0_f64.midpoint(-eta));
+        Self {
+            zero: log_probability_zero,
+            one: log_probability_one,
+            // Float tables never read these sentinels; the buffer's scale tag
+            // is asserted before integer suffix scoring.
+            zero_int: int_metric_scale.map_or(INT_METRIC_NEG_INF, |scale| {
+                quantize_metric(log_probability_zero, scale)
+            }),
+            one_int: int_metric_scale.map_or(INT_METRIC_NEG_INF, |scale| {
+                quantize_metric(log_probability_one, scale)
+            }),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct SuffixValues {
+    probabilities: Vec<SuffixLogProbabilities>,
     int_metric_scale: Option<i32>,
+}
+
+impl SuffixValues {
+    fn new(epoch_count: usize, int_metric_scale: Option<i32>) -> Self {
+        Self {
+            probabilities: vec![SuffixLogProbabilities::new(1.0, int_metric_scale); epoch_count],
+            int_metric_scale,
+        }
+    }
+
+    fn fill(
+        &mut self,
+        epochs: &[SuffixEpoch],
+        row_moments: &mut [f64],
+        moment: impl Fn(usize, usize) -> f64,
+    ) {
+        assert_eq!(self.probabilities.len(), epochs.len());
+        row_moments.fill(1.0);
+        // Epoch order encodes the original reverse scan, including the order
+        // of detector updates within each column. Never regroup products.
+        for (epoch, probability) in epochs.iter().zip(&mut self.probabilities) {
+            if let Some(column_index) = epoch.column_index {
+                row_moments[epoch.detector] *= moment(column_index, epoch.detector);
+            }
+            *probability =
+                SuffixLogProbabilities::new(row_moments[epoch.detector], self.int_metric_scale);
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct SuffixCompatibility<'a> {
+    rows: &'a [SuffixRow],
+    values: &'a SuffixValues,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -490,25 +562,31 @@ struct BpScoreState {
     scratch: BpScratch,
     posterior: Vec<f64>,
     residual_syndrome: Vec<u8>,
+    suffix_values: SuffixValues,
+    row_moments: Vec<f64>,
+    column_moments: Vec<f64>,
 }
 
 impl BpScoreState {
-    fn new(graph: BpGraph) -> Self {
+    fn new(graph: BpGraph, suffix_values: SuffixValues) -> Self {
         let scratch = BpScratch::new(&graph);
         let posterior = vec![0.0; graph.mechanism_count()];
         let residual_syndrome = vec![0; graph.check_count()];
+        let row_moments = vec![1.0; graph.check_count()];
+        let column_moments = vec![0.0; graph.mechanism_count()];
         Self {
             graph,
             scratch,
             posterior,
             residual_syndrome,
+            suffix_values,
+            row_moments,
+            column_moments,
         }
     }
 }
 
 type RawColumn = (Vec<u64>, Vec<u64>, f64);
-type SuffixCompatibilityTables = Vec<Vec<SuffixCompatibility>>;
-type BpSuffixPreparation = (Option<SuffixCompatibilityTables>, f64);
 
 /// Structured outcome of one trellis engine attempt.
 ///
@@ -551,6 +629,8 @@ pub struct TrellisDecoder {
     forced_syndrome: Vec<u64>,
     forced_logical: Vec<u64>,
     bp_score: Option<BpScoreState>,
+    suffix_epochs: Vec<SuffixEpoch>,
+    suffix_values: SuffixValues,
     build_seconds: f64,
 }
 
@@ -641,7 +721,7 @@ impl TrellisDecoder {
             raw_columns = merge_indistinguishable_columns(raw_columns);
         }
 
-        let bp_score = if config.bp_score_iterations > 0
+        let bp_graph = if config.bp_score_iterations > 0
             && !(config.k == usize::MAX && config.delta.is_infinite())
         {
             // This graph is deliberately built from exactly the post-order,
@@ -674,7 +754,7 @@ impl TrellisDecoder {
                 raw_columns.len(),
                 "BP mechanisms must correspond one-for-one with DP columns"
             );
-            Some(BpScoreState::new(graph))
+            Some(graph)
         } else {
             None
         };
@@ -728,15 +808,25 @@ impl TrellisDecoder {
             });
         }
 
-        let suffix_tables = build_suffix_compatibility_tables(
-            &columns,
-            &column_moments,
+        let (suffix_epochs, suffix_tables) = build_suffix_epochs(
+            columns
+                .iter()
+                .map(|column| (&column.active_mask[..], &column.detector_toggle[..])),
             dem.num_detectors,
+        );
+        for (column, rows) in columns.iter_mut().zip(suffix_tables) {
+            column.suffix_compatibility = rows;
+        }
+        let mut suffix_values = SuffixValues::new(
+            suffix_epochs.len(),
             (config.metric_mode == MetricMode::MaxLogInt).then_some(config.int_metric_scale),
         );
-        for (column, suffix_compatibility) in columns.iter_mut().zip(suffix_tables) {
-            column.suffix_compatibility = suffix_compatibility;
-        }
+        suffix_values.fill(
+            &suffix_epochs,
+            &mut vec![1.0; dem.num_detectors],
+            |column, _| column_moments[column],
+        );
+        let bp_score = bp_graph.map(|graph| BpScoreState::new(graph, suffix_values.clone()));
 
         debug_assert_model_invariants(&columns, &touched_detectors);
         let build_seconds = build_started.elapsed().as_secs_f64();
@@ -751,6 +841,8 @@ impl TrellisDecoder {
             forced_syndrome,
             forced_logical,
             bp_score,
+            suffix_epochs,
+            suffix_values,
             build_seconds,
         })
     }
@@ -880,9 +972,10 @@ impl TrellisDecoder {
         let mut open_detectors = forced_syndrome.clone();
         and_assign(&mut open_detectors, &touched_detectors);
         let mut columns = Vec::with_capacity(raw_columns.len());
-        for (column_index, (outcomes, support)) in raw_columns.into_iter().zip(supports).enumerate()
+        for (column_index, (outcomes, support)) in
+            raw_columns.into_iter().zip(&supports).enumerate()
         {
-            or_assign(&mut open_detectors, &support);
+            or_assign(&mut open_detectors, support);
             let mut close_mask = vec![0; detector_words];
             for (detector, &last) in last_touch.iter().enumerate() {
                 if last == Some(column_index) {
@@ -898,14 +991,36 @@ impl TrellisDecoder {
             });
         }
 
-        let suffix_tables = build_suffix_compatibility_tables_nary(
-            &columns,
+        let (suffix_epochs, suffix_tables) = build_suffix_epochs(
+            columns
+                .iter()
+                .zip(&supports)
+                .map(|(column, support)| (&column.active_mask[..], &support[..])),
             model.num_detectors(),
+        );
+        for (column, rows) in columns.iter_mut().zip(suffix_tables) {
+            column.suffix_compatibility = rows;
+        }
+        let mut suffix_values = SuffixValues::new(
+            suffix_epochs.len(),
             (config.metric_mode == MetricMode::MaxLogInt).then_some(config.int_metric_scale),
         );
-        for (column, suffix_compatibility) in columns.iter_mut().zip(suffix_tables) {
-            column.suffix_compatibility = suffix_compatibility;
-        }
+        suffix_values.fill(
+            &suffix_epochs,
+            &mut vec![1.0; model.num_detectors()],
+            |column, detector| {
+                let word_index = detector / WORD_BITS;
+                let bit_mask = 1 << (detector % WORD_BITS);
+                let toggle_probability = columns[column]
+                    .outcomes
+                    .iter()
+                    .filter(|outcome| outcome.detector_toggle[word_index] & bit_mask != 0)
+                    .map(|outcome| outcome.probability)
+                    .sum::<f64>()
+                    .min(1.0);
+                1.0 - 2.0 * toggle_probability
+            },
+        );
         debug_assert_factor_model_invariants(&columns, &touched_detectors);
         let build_seconds = build_started.elapsed().as_secs_f64();
 
@@ -919,6 +1034,8 @@ impl TrellisDecoder {
             forced_syndrome,
             forced_logical,
             bp_score: None,
+            suffix_epochs,
+            suffix_values,
             build_seconds,
         })
     }
@@ -1002,8 +1119,8 @@ impl TrellisDecoder {
             };
         }
 
-        let (bp_suffix_compatibility, bp_seconds) = match self.bp_suffix_compatibility(&observed) {
-            Ok(preparation) => preparation,
+        let bp_seconds = match self.bp_suffix_compatibility(&observed) {
+            Ok(seconds) => seconds.unwrap_or(0.0),
             Err(error) => return TrellisDecodeAttempt::Error(error),
         };
 
@@ -1024,7 +1141,7 @@ impl TrellisDecoder {
         let Kernel::Binary(columns) = &self.kernel else {
             unreachable!("binary decode called with N-ary kernel");
         };
-        for (column_index, column) in columns.iter().enumerate() {
+        for column in columns {
             let mut merged = BTreeMap::new();
             for (state, &log_mass) in &frontier {
                 let branch_base = log_mass + column.log_one_minus_probability;
@@ -1059,9 +1176,13 @@ impl TrellisDecoder {
                     bp_seconds,
                 };
             }
-            let suffix_compatibility = bp_suffix_compatibility
-                .as_ref()
-                .map_or(&column.suffix_compatibility, |tables| &tables[column_index]);
+            let suffix_compatibility = SuffixCompatibility {
+                rows: &column.suffix_compatibility,
+                values: self
+                    .bp_score
+                    .as_ref()
+                    .map_or(&self.suffix_values, |bp| &bp.suffix_values),
+            };
             let pruned = prune(
                 merged,
                 self.config.k,
@@ -1201,7 +1322,10 @@ impl TrellisDecoder {
                 self.config.k,
                 self.config.delta,
                 self.config.score_alpha,
-                &column.suffix_compatibility,
+                SuffixCompatibility {
+                    rows: &column.suffix_compatibility,
+                    values: &self.suffix_values,
+                },
                 &observed,
             );
             frontier = pruned.retained;
@@ -1282,8 +1406,8 @@ impl TrellisDecoder {
             };
         }
 
-        let (bp_suffix_compatibility, bp_seconds) = match self.bp_suffix_compatibility(&observed) {
-            Ok(preparation) => preparation,
+        let bp_seconds = match self.bp_suffix_compatibility(&observed) {
+            Ok(seconds) => seconds.unwrap_or(0.0),
             Err(error) => return TrellisDecodeAttempt::Error(error),
         };
         let mut initial_syndrome = self.forced_syndrome.clone();
@@ -1310,7 +1434,7 @@ impl TrellisDecoder {
         let Kernel::Binary(columns) = &self.kernel else {
             unreachable!("binary max-log decode called with N-ary kernel");
         };
-        for (column_index, column) in columns.iter().enumerate() {
+        for column in columns {
             let mut merged = BTreeMap::new();
             for (state, &log_mass) in &frontier {
                 let branch_base = int_metric_add(log_mass, column.log_one_minus_probability_int);
@@ -1344,9 +1468,13 @@ impl TrellisDecoder {
                     bp_seconds,
                 };
             }
-            let suffix_compatibility = bp_suffix_compatibility
-                .as_ref()
-                .map_or(&column.suffix_compatibility, |tables| &tables[column_index]);
+            let suffix_compatibility = SuffixCompatibility {
+                rows: &column.suffix_compatibility,
+                values: self
+                    .bp_score
+                    .as_ref()
+                    .map_or(&self.suffix_values, |bp| &bp.suffix_values),
+            };
             let pruned = prune_maxlog(
                 merged,
                 self.config.k,
@@ -1457,7 +1585,10 @@ impl TrellisDecoder {
                 delta_int,
                 alpha_int,
                 scale,
-                &column.suffix_compatibility,
+                SuffixCompatibility {
+                    rows: &column.suffix_compatibility,
+                    values: &self.suffix_values,
+                },
                 &observed,
             );
             frontier = pruned.retained;
@@ -1484,15 +1615,12 @@ impl TrellisDecoder {
         )
     }
 
-    fn bp_suffix_compatibility(
-        &mut self,
-        observed: &[u64],
-    ) -> Result<BpSuffixPreparation, DecoderError> {
+    fn bp_suffix_compatibility(&mut self, observed: &[u64]) -> Result<Option<f64>, DecoderError> {
         let Kernel::Binary(columns) = &self.kernel else {
-            return Ok((None, 0.0));
+            return Ok(None);
         };
         let Some(bp_score) = &mut self.bp_score else {
-            return Ok((None, 0.0));
+            return Ok(None);
         };
 
         let started = Instant::now();
@@ -1520,19 +1648,15 @@ impl TrellisDecoder {
         // These clamped probabilities are a heuristic for score arithmetic
         // only. The BP output never replaces the DEM probabilities used by
         // branch mass arithmetic.
-        let moments: Vec<f64> = bp_score
-            .posterior
-            .iter()
-            .map(|&llr| 1.0 - 2.0 * bp_score_probability(llr))
-            .collect();
-        let tables = build_suffix_compatibility_tables(
-            columns,
-            &moments,
-            self.num_detectors,
-            (self.config.metric_mode == MetricMode::MaxLogInt)
-                .then_some(self.config.int_metric_scale),
+        for (moment, &llr) in bp_score.column_moments.iter_mut().zip(&bp_score.posterior) {
+            *moment = 1.0 - 2.0 * bp_score_probability(llr);
+        }
+        bp_score.suffix_values.fill(
+            &self.suffix_epochs,
+            &mut bp_score.row_moments,
+            |column, _| bp_score.column_moments[column],
         );
-        Ok((Some(tables), started.elapsed().as_secs_f64()))
+        Ok(Some(started.elapsed().as_secs_f64()))
     }
 }
 
@@ -1925,7 +2049,7 @@ fn prune(
     k: usize,
     delta: f64,
     score_alpha: f64,
-    suffix_compatibility: &[SuffixCompatibility],
+    suffix_compatibility: SuffixCompatibility<'_>,
     observed: &[u64],
 ) -> PruneResult {
     if k == usize::MAX && delta.is_infinite() {
@@ -1999,13 +2123,11 @@ fn prune_maxlog(
     delta_int: i64,
     alpha_int: i64,
     scale: i32,
-    suffix_compatibility: &[SuffixCompatibility],
+    suffix_compatibility: SuffixCompatibility<'_>,
     observed: &[u64],
 ) -> IntPruneResult {
     assert!(
-        suffix_compatibility
-            .first()
-            .is_none_or(|row| row.int_metric_scale == Some(scale)),
+        suffix_compatibility.values.int_metric_scale == Some(scale),
         "integer suffix scoring requires a table quantized at the decoder's metric scale"
     );
     let mut candidates: Vec<ScoredIntCandidate> = frontier
@@ -2071,101 +2193,34 @@ fn prune_maxlog(
     }
 }
 
-fn build_suffix_compatibility_tables(
-    columns: &[Column],
-    column_moments: &[f64],
+fn build_suffix_epochs<'a>(
+    columns: impl DoubleEndedIterator<Item = (&'a [u64], &'a [u64])> + ExactSizeIterator,
     num_detectors: usize,
-    int_metric_scale: Option<i32>,
-) -> Vec<Vec<SuffixCompatibility>> {
-    assert_eq!(columns.len(), column_moments.len());
+) -> (Vec<SuffixEpoch>, Vec<Vec<SuffixRow>>) {
     let mut tables = vec![Vec::new(); columns.len()];
-    let mut row_moments = vec![1.0; num_detectors];
-    for ((column, table), &moment) in columns
-        .iter()
-        .rev()
-        .zip(tables.iter_mut().rev())
-        .zip(column_moments.iter().rev())
-    {
-        *table = set_bits(&column.active_mask)
-            .map(|detector| {
-                let eta = row_moments[detector];
-                let log_probability_zero = libm::log(1.0_f64.midpoint(eta));
-                let log_probability_one = libm::log(1.0_f64.midpoint(-eta));
-                SuffixCompatibility {
-                    word_index: detector / WORD_BITS,
-                    bit_mask: 1 << (detector % WORD_BITS),
-                    log_probability_zero,
-                    log_probability_one,
-                    // Float tables never read these sentinels; the scale tag is
-                    // asserted before integer suffix scoring.
-                    log_probability_zero_int: int_metric_scale
-                        .map_or(INT_METRIC_NEG_INF, |scale| {
-                            quantize_metric(log_probability_zero, scale)
-                        }),
-                    log_probability_one_int: int_metric_scale.map_or(INT_METRIC_NEG_INF, |scale| {
-                        quantize_metric(log_probability_one, scale)
-                    }),
-                    int_metric_scale,
-                }
+    let mut epochs: Vec<SuffixEpoch> = (0..num_detectors)
+        .map(|detector| SuffixEpoch {
+            detector,
+            column_index: None,
+        })
+        .collect();
+    let mut current_epochs: Vec<usize> = (0..num_detectors).collect();
+    for (column_index, (active_mask, detector_toggle)) in columns.enumerate().rev() {
+        tables[column_index] = set_bits(active_mask)
+            .map(|detector| SuffixRow {
+                detector,
+                epoch_index: current_epochs[detector],
             })
             .collect();
-        for detector in set_bits(&column.detector_toggle) {
-            row_moments[detector] *= moment;
+        for detector in set_bits(detector_toggle) {
+            current_epochs[detector] = epochs.len();
+            epochs.push(SuffixEpoch {
+                detector,
+                column_index: Some(column_index),
+            });
         }
     }
-    tables
-}
-
-fn build_suffix_compatibility_tables_nary(
-    columns: &[FactorColumn],
-    num_detectors: usize,
-    int_metric_scale: Option<i32>,
-) -> Vec<Vec<SuffixCompatibility>> {
-    let mut tables = vec![Vec::new(); columns.len()];
-    let mut row_moments = vec![1.0; num_detectors];
-    for (column, table) in columns.iter().rev().zip(tables.iter_mut().rev()) {
-        *table = set_bits(&column.active_mask)
-            .map(|detector| {
-                let eta = row_moments[detector];
-                let log_probability_zero = libm::log(1.0_f64.midpoint(eta));
-                let log_probability_one = libm::log(1.0_f64.midpoint(-eta));
-                SuffixCompatibility {
-                    word_index: detector / WORD_BITS,
-                    bit_mask: 1 << (detector % WORD_BITS),
-                    log_probability_zero,
-                    log_probability_one,
-                    // Float tables never read these sentinels; the scale tag is
-                    // asserted before integer suffix scoring.
-                    log_probability_zero_int: int_metric_scale
-                        .map_or(INT_METRIC_NEG_INF, |scale| {
-                            quantize_metric(log_probability_zero, scale)
-                        }),
-                    log_probability_one_int: int_metric_scale.map_or(INT_METRIC_NEG_INF, |scale| {
-                        quantize_metric(log_probability_one, scale)
-                    }),
-                    int_metric_scale,
-                }
-            })
-            .collect();
-
-        let mut support = vec![0; words_for(num_detectors)];
-        for outcome in &column.outcomes {
-            or_assign(&mut support, &outcome.detector_toggle);
-        }
-        for detector in set_bits(&support) {
-            let word_index = detector / WORD_BITS;
-            let bit_mask = 1 << (detector % WORD_BITS);
-            let toggle_probability = column
-                .outcomes
-                .iter()
-                .filter(|outcome| outcome.detector_toggle[word_index] & bit_mask != 0)
-                .map(|outcome| outcome.probability)
-                .sum::<f64>()
-                .min(1.0);
-            row_moments[detector] *= 1.0 - 2.0 * toggle_probability;
-        }
-    }
-    tables
+    (epochs, tables)
 }
 
 fn bp_score_probability(posterior_llr: f64) -> f64 {
@@ -2246,15 +2301,19 @@ fn debug_assert_factor_model_invariants(columns: &[FactorColumn], touched_detect
 fn suffix_compatibility_score(
     active_syndrome: &[u64],
     observed: &[u64],
-    suffix_compatibility: &[SuffixCompatibility],
+    suffix_compatibility: SuffixCompatibility<'_>,
 ) -> f64 {
     suffix_compatibility
+        .rows
         .iter()
-        .map(|row| {
-            if (active_syndrome[row.word_index] ^ observed[row.word_index]) & row.bit_mask == 0 {
-                row.log_probability_zero
+        .map(|reference| {
+            let row = &suffix_compatibility.values.probabilities[reference.epoch_index];
+            let word_index = reference.detector / WORD_BITS;
+            let bit_mask = 1 << (reference.detector % WORD_BITS);
+            if (active_syndrome[word_index] ^ observed[word_index]) & bit_mask == 0 {
+                row.zero
             } else {
-                row.log_probability_one
+                row.one
             }
         })
         .sum()
@@ -2263,17 +2322,22 @@ fn suffix_compatibility_score(
 fn suffix_compatibility_score_int(
     active_syndrome: &[u64],
     observed: &[u64],
-    suffix_compatibility: &[SuffixCompatibility],
+    suffix_compatibility: SuffixCompatibility<'_>,
 ) -> i64 {
-    suffix_compatibility.iter().fold(0, |total, row| {
-        let term =
-            if (active_syndrome[row.word_index] ^ observed[row.word_index]) & row.bit_mask == 0 {
-                row.log_probability_zero_int
+    suffix_compatibility
+        .rows
+        .iter()
+        .fold(0, |total, reference| {
+            let row = &suffix_compatibility.values.probabilities[reference.epoch_index];
+            let word_index = reference.detector / WORD_BITS;
+            let bit_mask = 1 << (reference.detector % WORD_BITS);
+            let term = if (active_syndrome[word_index] ^ observed[word_index]) & bit_mask == 0 {
+                row.zero_int
             } else {
-                row.log_probability_one_int
+                row.one_int
             };
-        int_metric_add(total, term)
-    })
+            int_metric_add(total, term)
+        })
 }
 
 fn finish_maxlog_decode(
@@ -2441,6 +2505,130 @@ mod tests {
         merge_indistinguishable_columns, quantize_metric,
     };
     use std::collections::BTreeMap;
+
+    #[test]
+    fn suffix_epochs_match_direct_recomputation() {
+        use rand::{RngExt, SeedableRng};
+        use rand_xoshiro::Xoshiro256PlusPlus;
+
+        let mut rng = Xoshiro256PlusPlus::seed_from_u64(0x4550_4f43_4853);
+        // Cross a word boundary and include positive, negative, and zero moments.
+        let dem = SparseDem {
+            mechanisms: (0..96)
+                .map(|column| {
+                    let probability = if column % 11 == 0 {
+                        0.5
+                    } else {
+                        rng.random_range(0.001..0.999)
+                    };
+                    let detectors = (0..70).filter(|_| rng.random_bool(0.12)).collect();
+                    (probability, detectors, Vec::new())
+                })
+                .collect(),
+            detector_coords: BTreeMap::new(),
+            num_detectors: 70,
+            num_observables: 0,
+        };
+        let prior_moments: Vec<f64> = dem
+            .mechanisms
+            .iter()
+            .map(|(p, _, _)| 1.0 - 2.0 * p)
+            .collect();
+        for metric_mode in [MetricMode::default(), MetricMode::MaxLogInt] {
+            let mut decoder = TrellisDecoder::from_sparse_dem(
+                &dem,
+                TrellisConfig {
+                    k: 2,
+                    bp_score_iterations: 5,
+                    metric_mode,
+                    ..TrellisConfig::default()
+                },
+            )
+            .unwrap();
+            let super::Kernel::Binary(columns) = &decoder.kernel else {
+                panic!("binary DEM");
+            };
+            assert_eq!(
+                decoder.suffix_epochs.len(),
+                dem.num_detectors
+                    + columns
+                        .iter()
+                        .map(|column| super::set_bits(&column.detector_toggle).count())
+                        .sum::<usize>()
+            );
+            assert_direct_suffix_values(
+                columns,
+                &decoder.suffix_values,
+                &prior_moments,
+                dem.num_detectors,
+            );
+            let allocation = decoder
+                .bp_score
+                .as_ref()
+                .unwrap()
+                .suffix_values
+                .probabilities
+                .as_ptr();
+            for _ in 0..4 {
+                let observed = super::indices_to_words(
+                    &(0..70).filter(|_| rng.random_bool(0.5)).collect::<Vec<_>>(),
+                    decoder.detector_words,
+                );
+                assert!(
+                    decoder
+                        .bp_suffix_compatibility(&observed)
+                        .unwrap()
+                        .is_some()
+                );
+                let bp = decoder.bp_score.as_ref().unwrap();
+                assert_eq!(allocation, bp.suffix_values.probabilities.as_ptr());
+                let moments: Vec<f64> = bp
+                    .posterior
+                    .iter()
+                    .map(|&llr| 1.0 - 2.0 * bp_score_probability(llr))
+                    .collect();
+                let super::Kernel::Binary(columns) = &decoder.kernel else {
+                    panic!("binary DEM");
+                };
+                assert_direct_suffix_values(
+                    columns,
+                    &bp.suffix_values,
+                    &moments,
+                    dem.num_detectors,
+                );
+            }
+        }
+    }
+
+    /// Independent old per-(column, row) formula, retained only as a test oracle.
+    fn assert_direct_suffix_values(
+        columns: &[super::Column],
+        values: &super::SuffixValues,
+        moments: &[f64],
+        num_detectors: usize,
+    ) {
+        let mut row_moments = vec![1.0; num_detectors];
+        for (column, &moment) in columns.iter().zip(moments).rev() {
+            let detectors: Vec<usize> = super::set_bits(&column.active_mask).collect();
+            assert_eq!(column.suffix_compatibility.len(), detectors.len());
+            for (reference, detector) in column.suffix_compatibility.iter().zip(detectors) {
+                assert_eq!(reference.detector, detector);
+                let eta = row_moments[detector];
+                let zero = libm::log(1.0_f64.midpoint(eta));
+                let one = libm::log(1.0_f64.midpoint(-eta));
+                let pair = &values.probabilities[reference.epoch_index];
+                assert_eq!(pair.zero.to_bits(), zero.to_bits());
+                assert_eq!(pair.one.to_bits(), one.to_bits());
+                if let Some(scale) = values.int_metric_scale {
+                    assert_eq!(pair.zero_int, quantize_metric(zero, scale));
+                    assert_eq!(pair.one_int, quantize_metric(one, scale));
+                }
+            }
+            for detector in super::set_bits(&column.detector_toggle) {
+                row_moments[detector] *= moment;
+            }
+        }
+    }
 
     #[test]
     fn logaddexp_handles_negative_infinity_on_either_side() {

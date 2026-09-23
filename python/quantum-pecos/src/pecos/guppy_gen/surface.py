@@ -296,6 +296,12 @@ def generate_guppy_source(
     num_data = geom.num_data
     num_x_stab = len(geom.x_stabilizers)
     num_z_stab = len(geom.z_stabilizers)
+    if num_x_stab == 0 or num_z_stab == 0:
+        msg = (
+            f"surface Guppy source for dx={geom.dx}, dz={geom.dz}, rotated={geom.rotated} requires nonempty X and Z "
+            "stabilizer families; Guppy cannot infer the type of empty syndrome arrays"
+        )
+        raise ValueError(msg)
     total_ancilla = num_x_stab + num_z_stab
     effective_budget = normalize_ancilla_budget(total_ancilla, ancilla_budget)
     constrained = effective_budget < total_ancilla

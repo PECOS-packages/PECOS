@@ -33,7 +33,7 @@ on dev to 14, 18, and 20, respectively. Measurement records, detectors, and
 observables are unchanged, so `dx1dz3_mem_Z` and `dx1dz3_mem_X` differ from
 the base revision only in `.stim` and `.noisy.stim`; their `.tickmeta.json` is
 byte-identical to it. The Guppy golden for `dx1dz3` was retired with the
-gadget module geometry guard: its captured source had an empty X stabilizer
+gadget module geometry guard: its captured source had an empty Z stabilizer
 family, which Guppy cannot type, so neither generator ever compiled it. The
 Tick, ops, and Stim goldens for that shape remain.
 

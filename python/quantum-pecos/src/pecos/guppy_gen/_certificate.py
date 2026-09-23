@@ -7,15 +7,16 @@ import hashlib
 import json
 from typing import TYPE_CHECKING
 
-from pecos._compilation import guppy_to_hugr
-from pecos.qec.surface.decode import _surface_abstract_measurement_result_refs
-
 if TYPE_CHECKING:
     from pecos_rslib.quantum import TickCircuit
 
 
 def certify_surface_measurement_layout(program: object, abstract_tc: "TickCircuit") -> None:
     """Bind a generated surface program to its abstract measurement order."""
+    # Imported here so that `import pecos` does not load guppylang.
+    from pecos._compilation import guppy_to_hugr
+    from pecos.qec.surface.decode import _surface_abstract_measurement_result_refs
+
     occurrence_by_tag: dict[str, int] = {}
     layout: list[tuple[str, int]] = []
     for ref in _surface_abstract_measurement_result_refs(abstract_tc):

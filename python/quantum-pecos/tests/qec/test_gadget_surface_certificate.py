@@ -10,7 +10,7 @@ from itertools import zip_longest
 import pecos
 import pytest
 from pecos._compilation import guppy_to_hugr
-from pecos.guppy_gen import gadget_render, get_num_qubits, make_surface_code, make_surface_memory
+from pecos.guppy_gen import gadget_render, generate_guppy_source, get_num_qubits, make_surface_code, make_surface_memory
 from pecos.qec import (
     Detector,
     DetectorErrorModel,
@@ -185,6 +185,9 @@ def test_empty_syndrome_geometry_rejected_before_rendering(
     )
     with pytest.raises(ValueError, match=error):
         gadget_render.render_surface_gadget_module(patch)
+    legacy_error = error.replace("surface gadget module", "surface Guppy source")
+    with pytest.raises(ValueError, match=legacy_error):
+        generate_guppy_source(patch)
 
 
 @pytest.mark.parametrize(("distance", "rotated"), [(2, True), (4, True), (3, False)])

@@ -172,6 +172,40 @@ assert "def make_memory_z" in source
 assert "def make_memory_x" in source
 ```
 
+### Certified Guppy memory
+
+`make_surface_memory` accepts a distance or `SurfacePatch` and returns a compiled
+gadget memory definition with a program-bound measurement-layout certificate.
+Its layout comes from the gadget steps, including batch order when ancillas are
+reused. `build_dem_from_guppy`, `GuppyDemBuilder.build`, and
+`DetectorErrorModel.from_guppy` need this certificate for programs whose compiled
+form contains loops or conditionals. The abstract-circuit route and the builder
+route (`LogicalCircuitBuilder.to_tick_circuit()` then
+`DetectorErrorModel.from_circuit`) do not need a certificate.
+
+```python
+from pecos.guppy_gen import get_num_qubits, make_surface_code, make_surface_memory
+from pecos.qec import DetectorErrorModel
+from pecos.qec.surface.circuit_builder import generate_tick_circuit_from_patch
+
+memory_patch = SurfacePatch.create(distance=3)
+memory_circuit = generate_tick_circuit_from_patch(memory_patch, 2, "Z", ancilla_budget=2)
+dem_options = dict(
+    num_qubits=get_num_qubits(patch=memory_patch, ancilla_budget=2),
+    detectors_json=memory_circuit.get_meta("detectors"),
+    observables_json=memory_circuit.get_meta("observables"),
+    p1=0.001,
+    p2=0.001,
+    p_meas=0.001,
+    p_prep=0.001,
+)
+gadget_memory = make_surface_memory(memory_patch, 2, "Z", ancilla_budget=2)
+legacy_memory = make_surface_code(3, 2, "Z", ancilla_budget=2)
+gadget_dem = DetectorErrorModel.from_guppy(gadget_memory, **dem_options)
+legacy_dem = DetectorErrorModel.from_guppy(legacy_memory, **dem_options)
+assert gadget_dem.to_string() == legacy_dem.to_string()
+```
+
 ### Preparation in Z
 
 `basis="Z"` prepares each data qubit in |0>. Z checks are initially fixed;
@@ -1007,7 +1041,7 @@ for recipe in ("h", "cx", "sz", "t"):
 The Guppy protocol factories on this page cannot be traced into a DEM:
 they contain `comptime` loops and carry no trusted measurement-layout
 certificate. Their scoped tags serve `measurement_partition_from_trace` only,
-not DEM construction. `make_surface_code` memory programs have a generator
+not DEM construction. `make_surface_code` and `make_surface_memory` programs have a generator
 certificate; these protocol factories do not. Use
 `LogicalCircuitBuilder.to_tick_circuit()` with `DetectorErrorModel.from_circuit`,
 or the builder's `build_dem`, for protocol DEMs.
@@ -1165,6 +1199,7 @@ for before_preparation in (True, False):
 | `TickCircuitRenderer`, `QubitAllocation`, `SurfaceCircuitStep` | `pecos.qec.surface.circuit_builder` | Render physical operations with register mapping |
 | `LogicalCircuitBuilder` | `pecos.qec.surface` | Compose protocols and export circuits, DEMs, and descriptors |
 | `render_gadget_function`, `render_surface_gadget_module` | `pecos.guppy_gen.gadget_render` | Render one function or the memory module |
+| `make_surface_memory` | `pecos.guppy_gen` | Compile certified single-patch gadget memory for Guppy DEM construction |
 | `render_surface_protocol_module`, `load_surface_protocol_module` | `pecos.guppy_gen` | Render or load the four protocol factories |
 | `simulate_tick_circuit`, `stabilizer_generators_after`, `group_contains` | `pecos.testing` | Noiseless simulation and signed stabilizer oracles |
 | `measurement_partition_from_builder`, `measurement_partition_from_trace`, `assert_same_measurement_partition` | `pecos.testing` | Measurement-partition agreement, not circuit or state-action equivalence |

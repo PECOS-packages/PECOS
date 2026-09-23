@@ -20,6 +20,8 @@ from pecos.guppy_gen._module_loader import _get_temp_dir, load_guppy_source
 from pecos.qec.surface.schedule import compute_cnot_schedule
 
 if TYPE_CHECKING:
+    from pecos_rslib.quantum import TickCircuit
+
     from pecos.qec.surface import GuppyRngMaskConfig, SurfacePatch, TwirlConfig
     from pecos.qec.surface._check_plan import ResolvedSurfaceCheckPlan
 
@@ -2839,7 +2841,6 @@ def make_surface_code(
         trace_metadata=trace_metadata,
     )
     from pecos.qec.surface.circuit_builder import generate_tick_circuit_from_patch
-    from pecos.qec.surface.decode import _surface_abstract_measurement_result_refs
 
     abstract_tc = generate_tick_circuit_from_patch(
         patch,
@@ -2851,6 +2852,14 @@ def make_surface_code(
         check_plan=check_plan,
         clifford_frame_policy=clifford_frame_policy,
     )
+    _certify_surface_measurement_layout(program, abstract_tc)
+    return program
+
+
+def _certify_surface_measurement_layout(program: object, abstract_tc: "TickCircuit") -> None:
+    """Bind a generated surface program to its abstract measurement order."""
+    from pecos.qec.surface.decode import _surface_abstract_measurement_result_refs
+
     occurrence_by_tag: dict[str, int] = {}
     layout: list[tuple[str, int]] = []
     for ref in _surface_abstract_measurement_result_refs(abstract_tc):
@@ -2872,4 +2881,3 @@ def make_surface_code(
         "__pecos_named_measurement_layout_v2__",
         (digest, certified_layout),
     )
-    return program

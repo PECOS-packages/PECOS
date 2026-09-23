@@ -3,13 +3,18 @@
 
 """Render physical surface gadgets to reusable Guppy functions."""
 
+import hashlib
+from functools import cache
+
+from pecos.guppy_gen._module_loader import _get_temp_dir, load_guppy_source
+from pecos.guppy_gen.surface import _certify_surface_measurement_layout, _validate_surface_memory_distance
 from pecos.qec.surface._check_plan import (
     ancilla_schedule_for_check_plan,
     cnot_round_order_for_check_plan,
     require_current_surface_check_plan_renderer,
     resolve_surface_check_plan,
 )
-from pecos.qec.surface.circuit_builder import OpType
+from pecos.qec.surface.circuit_builder import OpType, TickCircuitRenderer
 from pecos.qec.surface.gadgets import (
     Gadget,
     GadgetKind,
@@ -17,10 +22,71 @@ from pecos.qec.surface.gadgets import (
     init_syndrome_gadget,
     logical_pauli_gadget,
     measure_out_gadget,
+    memory_gadgets,
     prep_gadget,
     syndrome_round_gadget,
 )
 from pecos.qec.surface.patch import SurfacePatch
+
+
+@cache
+def _load_surface_gadget_source(source: str) -> dict:
+    """Keep module identity tied to the entire rendered geometry and schedule."""
+    key = f"surface_gadgets_{hashlib.sha256(source.encode()).hexdigest()}"
+    return load_guppy_source(source, _get_temp_dir() / f"{key}.py", f"pecos._generated.{key}")
+
+
+def make_surface_memory(
+    distance_or_patch: int | SurfacePatch,
+    num_rounds: int,
+    basis: str,
+    *,
+    ancilla_budget: int | None = None,
+    check_plan: str | None = None,
+) -> object:
+    """Compile gadget memory with a program-bound measurement-layout certificate.
+
+    Args:
+        distance_or_patch: Odd distance >= 3, or an existing SurfacePatch.
+        num_rounds: Number of syndrome extraction rounds.
+        basis: 'Z' or 'X', case insensitive.
+        ancilla_budget: Optional cap on simultaneously live ancillas.
+        check_plan: Named CX check-plan preset.
+
+    Returns:
+        Compiled Guppy definition accepted by the trusted Guppy-to-DEM routes.
+    """
+    basis = basis.upper()
+    if basis not in ("Z", "X"):
+        msg = f"basis must be 'Z' or 'X', got {basis!r}"
+        raise ValueError(msg)
+    if isinstance(distance_or_patch, SurfacePatch):
+        patch = distance_or_patch
+    else:
+        _validate_surface_memory_distance(distance_or_patch)
+        patch = SurfacePatch.create(distance=distance_or_patch)
+    source = render_surface_gadget_module(patch, ancilla_budget=ancilla_budget, check_plan=check_plan)
+    module = _load_surface_gadget_source(source)
+    program = module[f"make_memory_{basis.lower()}"](num_rounds)
+
+    resolved_plan = resolve_surface_check_plan(check_plan=check_plan)
+    parts = memory_gadgets(
+        patch,
+        num_rounds,
+        basis,
+        ancilla_budget=ancilla_budget,
+        ancilla_schedule=ancilla_schedule_for_check_plan(resolved_plan),
+        round_order=cnot_round_order_for_check_plan(resolved_plan),
+    )
+    abstract_tc = TickCircuitRenderer(add_typed_annotations=False).render(
+        [step for part in parts for step in part.steps],
+        parts[0].allocations[0],
+        patch,
+        num_rounds,
+        basis,
+    )
+    _certify_surface_measurement_layout(program, abstract_tc)
+    return program
 
 
 def _allocation_epochs(

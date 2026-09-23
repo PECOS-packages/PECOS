@@ -138,7 +138,8 @@ stabilizers, rotates back, measures, and ticks before the next allocation.
 batching contract. An explicit `QubitAllocation` must map stabilizers to pool
 slots for the same budget and schedule; `default_allocation` accepts both.
 The Guppy module derives its batching schedule from the CX `check_plan`;
-the gadget API takes `ancilla_budget` and `ancilla_schedule` separately. Returned syndrome arrays retain stabilizer-index order, while
+the gadget API takes `ancilla_budget` and `ancilla_schedule` separately.
+Returned syndrome arrays retain stabilizer-index order, while
 scalar tag ordinals follow the physical measurement order.
 
 ```python

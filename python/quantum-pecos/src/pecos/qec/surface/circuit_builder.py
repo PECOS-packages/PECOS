@@ -961,7 +961,7 @@ def build_surface_code_circuit(
             num_rounds,
             basis,
             round_order=cnot_round_order,
-            ancilla_budget=effective_ancilla_budget,
+            ancilla_budget=ancilla_budget,
             ancilla_schedule=ancilla_schedule,
         )
         return [step for gadget in gadgets for step in gadget.steps], gadgets[0].allocations[0]

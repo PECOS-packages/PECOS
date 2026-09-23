@@ -268,7 +268,13 @@ def test_matching_allocation_allows_physical_id_remapping(schedule: str, budget:
         ancilla_budget=budget,
         ancilla_schedule=schedule,
     )
-    assert [render_gadget_function(g) for g in canonical] == [render_gadget_function(g) for g in relocated]
+    for original_part, relocated_part in zip(canonical, relocated, strict=True):
+        render_gadget_function(original_part)
+        render_gadget_function(relocated_part)
+        assert (
+            tuple(replace(step, qubits=[100 + 3 * q for q in step.qubits]) for step in original_part.steps)
+            == relocated_part.steps
+        )
 
 
 @pytest.mark.parametrize("case", CASES, ids=lambda case: "-".join(map(str, case["shape"])))
@@ -340,13 +346,28 @@ def test_measurement_requires_live_allocation() -> None:
 
 
 @pytest.mark.parametrize("op", [OpType.H, OpType.CX])
-def test_use_after_measurement_has_no_live_name(op: OpType) -> None:
-    part = gadgets.memory_gadgets(SurfacePatch.create(distance=3), 1, "Z", ancilla_budget=1)[2]
+@pytest.mark.parametrize("two_registers", [False, True])
+def test_use_after_measurement_has_no_live_name(op: OpType, two_registers: bool) -> None:
+    patch = SurfacePatch.create(distance=3)
+    part = gadgets.memory_gadgets(patch, 1, "Z", ancilla_budget=1)[2]
     alloc = next(s for s in part.steps if s.op_type == OpType.ALLOC)
     measure = next(s for s in part.steps if s.op_type == OpType.MEASURE)
     qubit = alloc.qubits[0]
     qubits = [qubit] if op == OpType.H else [part.allocations[0].data_qubits[0], qubit]
-    with pytest.raises(KeyError, match=str(qubit)):
+    if two_registers:
+        allocation = part.allocations[0]
+        target = QubitAllocation(
+            *[
+                [100 + q for q in register]
+                for register in (allocation.data_qubits, allocation.x_ancilla_qubits, allocation.z_ancilla_qubits)
+            ],
+        )
+        part = replace(
+            part,
+            kind=gadgets.GadgetKind.TWO_PATCH,
+            allocations=(*part.allocations, target),
+        )
+    with pytest.raises(ValueError, match=rf"{part.name}: measured ancilla {qubit} has no live allocation"):
         render_gadget_function(replace(part, steps=(alloc, measure, SurfaceCircuitStep(op, qubits))))
 
 
@@ -389,3 +410,14 @@ def test_empty_ancilla_allocation(budget: int | None) -> None:
     parts = gadgets.memory_gadgets(SurfacePatch.create(distance=1), 1, "Z", ancilla_budget=budget)
     assert all(part.allocations == (QubitAllocation([0], [], []),) for part in parts)
     assert all(step.op_type != OpType.ALLOC for part in parts[1:-1] for step in part.steps)
+
+
+def test_builder_empty_ancilla_allocation() -> None:
+    patch = SurfacePatch.create(distance=1)
+    circuits = [build_surface_code_circuit(patch, 2, "Z", ancilla_budget=budget) for budget in (None, 1, 2)]
+    assert circuits[0] == circuits[1] == circuits[2]
+    steps, allocation = circuits[0]
+    assert len(steps) == 47
+    assert allocation == QubitAllocation([0], [], [])
+    with pytest.raises(ValueError, match="ancilla_budget must be >= 1"):
+        build_surface_code_circuit(patch, 2, "Z", ancilla_budget=0)

@@ -37,6 +37,7 @@ def _allocation_epochs(
                 raise ValueError(msg)
             data_names[qubit] = f"{register}[{index}]"
         ancillas = set(allocation.x_ancilla_qubits + allocation.z_ancilla_qubits)
+        # Two-register allocations must be globally disjoint regardless of use.
         if candidates.keys() & ancillas:
             msg = f"{gadget.name}: allocations must be disjoint across registers"
             raise ValueError(msg)
@@ -105,6 +106,13 @@ def render_gadget_function(gadget: Gadget, *, tag_scope: str | None = None) -> l
         msg = f"{gadget.name}: expected {len(registers)} allocations"
         raise ValueError(msg)
     names, epoch_names, x_labels, z_labels = _allocation_epochs(gadget, registers)
+
+    def live_name(qubit: int) -> str:
+        if qubit not in names:
+            msg = f"{gadget.name}: measured ancilla {qubit} has no live allocation"
+            raise ValueError(msg)
+        return names[qubit]
+
     data_registers = [allocation.data_qubits for allocation in gadget.allocations]
     data = data_registers[0]
     register = registers[0]
@@ -186,7 +194,7 @@ def render_gadget_function(gadget: Gadget, *, tag_scope: str | None = None) -> l
             if [s.qubits for s in gadget.steps[index:end]] == pairs:
                 lines.extend([f"    for i in range({n}):", "        cx(ctrl.data[i], tgt.data[i])"])
             else:
-                lines.extend(f"    cx({', '.join(names[q] for q in s.qubits)})" for s in gadget.steps[index:end])
+                lines.extend(f"    cx({', '.join(live_name(q) for q in s.qubits)})" for s in gadget.steps[index:end])
             index = end
             continue
         elif step.qubits[0] in data and op in {OpType.ALLOC, OpType.H, OpType.SZ, OpType.SZDG, OpType.MEASURE}:
@@ -220,7 +228,7 @@ def render_gadget_function(gadget: Gadget, *, tag_scope: str | None = None) -> l
             names[step.qubits[0]] = epoch_names[index]
             lines.append(f"    {names[step.qubits[0]]} = qubit()")
         elif op in {OpType.H, OpType.X, OpType.Z, OpType.CX, OpType.CZ, OpType.SZ, OpType.SZDG}:
-            operands = ", ".join(names[q] for q in step.qubits)
+            operands = ", ".join(live_name(q) for q in step.qubits)
             gate = {OpType.SZ: "s", OpType.SZDG: "sdg"}.get(op, op.name.lower())
             lines.append(f"    {gate}({operands})")
         elif op == OpType.MEASURE:

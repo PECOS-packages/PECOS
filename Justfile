@@ -985,7 +985,18 @@ sync-deps:
         exit 0
     fi
     echo "Python deps incomplete, running uv sync..."
-    SYNC_ARGS=(--project . --all-packages --locked)
+    # The extension crates that `pecos python build` installs right after this
+    # recipe are excluded from installation, as the python-ci-sync* recipes do:
+    # otherwise uv builds a release wheel of each one that the following
+    # maturin develop immediately replaces. Excluding them also removes any
+    # copy already in the venv, so the CLI build is the only thing that ever
+    # puts them there.
+    SYNC_ARGS=(
+      --project . --all-packages --locked
+      --no-install-package pecos-rslib
+      --no-install-package pecos-rslib-exp
+      --no-install-package pecos-rslib-llvm
+    )
     # Include CUDA Python packages (cupy, cuquantum, pytket-cutensornet) when
     # the toolkit is installed AND an NVIDIA GPU is present. Pure Rust users
     # and machines without a GPU skip this -- mirrors `pecos python build`.

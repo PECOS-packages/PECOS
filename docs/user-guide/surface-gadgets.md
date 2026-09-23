@@ -137,8 +137,8 @@ stabilizers, rotates back, measures, and ticks before the next allocation.
 `ancilla_schedule` selects `"default"` or `"balanced-data-v1"` using the shared
 batching contract. An explicit `QubitAllocation` must map stabilizers to pool
 slots for the same budget and schedule; `default_allocation` accepts both.
-The Guppy module accepts `ancilla_budget` and a CX `check_plan`, which selects
-the schedule. Returned syndrome arrays retain stabilizer-index order, while
+The Guppy module derives its batching schedule from the CX `check_plan`;
+the gadget API takes `ancilla_budget` and `ancilla_schedule` separately. Returned syndrome arrays retain stabilizer-index order, while
 scalar tag ordinals follow the physical measurement order.
 
 ```python
@@ -150,6 +150,8 @@ assert budget_allocation.data_qubits == allocation.data_qubits
 budget_tc = TickCircuitRenderer().render(
     [step for part in budgeted for step in part.steps], budget_allocation, patch, 2, "Z"
 )
+assert budget_tc.num_ticks() == 94
+assert budget_tc.num_measurements() == 29
 live = set()
 peak = 0
 for tick_index in range(budget_tc.num_ticks()):

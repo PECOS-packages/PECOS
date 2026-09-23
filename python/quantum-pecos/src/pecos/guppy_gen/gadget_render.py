@@ -36,6 +36,10 @@ def _allocation_epochs(
                 msg = f"{gadget.name}: allocations must be disjoint"
                 raise ValueError(msg)
             data_names[qubit] = f"{register}[{index}]"
+        ancillas = set(allocation.x_ancilla_qubits + allocation.z_ancilla_qubits)
+        if candidates.keys() & ancillas:
+            msg = f"{gadget.name}: allocations must be disjoint across registers"
+            raise ValueError(msg)
         prefix = f"{register.split('.')[0]}_" if len(registers) > 1 else ""
         for family, qubits in (("X", allocation.x_ancilla_qubits), ("Z", allocation.z_ancilla_qubits)):
             for index, qubit in enumerate(qubits):
@@ -46,7 +50,6 @@ def _allocation_epochs(
         raise ValueError(msg)
     active = {}
     epochs = {}
-    name_counts: dict[str, int] = {}
     results: dict[str, list[tuple[int, str]]] = {"X": [], "Z": []}
     for step_index, step in enumerate(gadget.steps):
         if not step.qubits or step.qubits[0] in data_names:
@@ -63,9 +66,7 @@ def _allocation_epochs(
                 msg = f"{gadget.name}: ALLOC label {step.label!r} must identify an ancilla register slot"
                 raise ValueError(msg)
             name, family, index, _label = choices[0]
-            epoch = name_counts.get(name, 0)
-            name_counts[name] = epoch + 1
-            epochs[step_index] = name if epoch == 0 else f"{name}_{epoch}"
+            epochs[step_index] = name
             active[qubit] = (family, index)
         elif step.op_type == OpType.MEASURE:
             if qubit not in active:
@@ -145,7 +146,11 @@ def render_gadget_function(gadget: Gadget, *, tag_scope: str | None = None) -> l
         doc = f"Apply logical {basis} (string along {edge} edge)."
     lines = ["@guppy", f"def {function_name}({argument}) -> {result}:", f'    """{doc}"""']
     if kind == GadgetKind.SYNDROME_ROUND:
-        lines.append("    # Allocate ancilla qubits (one per stabilizer)")
+        ancillas = allocation.x_ancilla_qubits + allocation.z_ancilla_qubits
+        if len(set(ancillas)) < len(ancillas):
+            lines.append("    # Reuse ancillas in batches to respect the live-qubit budget")
+        else:
+            lines.append("    # Allocate ancilla qubits (one per stabilizer)")
     index = 0
     ordinal = 0
     while index < len(gadget.steps):

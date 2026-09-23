@@ -1982,7 +1982,7 @@ class GuppyRenderer(CircuitRenderer):
     def render(
         self,
         _ops: list[SurfaceCircuitStep],
-        _allocation: QubitAllocation,
+        allocation: QubitAllocation,
         patch: SurfacePatch,
         _num_rounds: int,
         _basis: str,
@@ -2001,6 +2001,11 @@ class GuppyRenderer(CircuitRenderer):
         """
         from pecos.guppy_gen.gadget_render import render_surface_gadget_module
         from pecos.guppy_gen.surface import generate_guppy_source
+
+        ancillas = allocation.x_ancilla_qubits + allocation.z_ancilla_qubits
+        if len(set(ancillas)) < len(ancillas):
+            msg = "GuppyRenderer cannot honour ancilla_budget; use render_surface_gadget_module with ancilla_budget"
+            raise ValueError(msg)
 
         resolved_plan = resolve_surface_check_plan(interaction_basis=interaction_basis)
         if resolved_plan.interaction_basis == "cx":

@@ -435,9 +435,8 @@ def test_non_disjoint_allocations(within_register) -> None:
         bad = replace(allocation, x_ancilla_qubits=[allocation.data_qubits[0], *allocation.x_ancilla_qubits[1:]])
         gadget = replace(gadget, allocations=(bad,))
     else:
-        # Construct a valid two-patch gadget first, then inject overlapping IDs.
-        target = QubitAllocation([q + 100 for q in allocation.data_qubits], [], [])
+        # Disjoint data must not hide an overlap confined to the ancillary registers.
+        target = replace(allocation, data_qubits=[q + 100 for q in allocation.data_qubits])
         gadget = transversal_cx_gadget(patch, allocation, patch, target)
-        gadget = replace(gadget, allocations=(allocation, allocation))
     with pytest.raises(ValueError, match="allocations must be disjoint"):
         render_gadget_function(gadget)

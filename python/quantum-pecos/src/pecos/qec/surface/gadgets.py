@@ -160,6 +160,46 @@ def _cx_layers(
     return layers
 
 
+def _batch_ancilla_steps(
+    registers: dict[str, list[int]],
+    batch: list[tuple[str, int]],
+    op: OpType,
+    *,
+    family: str | None = None,
+) -> list[SurfaceCircuitStep]:
+    prefix = "s" if op == OpType.MEASURE else "a"
+    return [
+        SurfaceCircuitStep(op, [registers[kind][index]], f"{prefix}{kind.lower()}{index}")
+        for kind, index in batch
+        if family is None or kind == family
+    ]
+
+
+def _validate_ancilla_allocation(
+    patch: SurfacePatch,
+    allocation: QubitAllocation,
+    budget: int,
+    schedule: str,
+) -> None:
+    """Require the resolved pool-slot aliases while permitting physical ID remapping."""
+    ancillas = allocation.x_ancilla_qubits + allocation.z_ancilla_qubits
+    # Preserve the unconstrained form for patches with no checks, whose resolved budget is zero.
+    expected = default_allocation(
+        patch,
+        ancilla_budget=budget if budget < len(ancillas) else None,
+        ancilla_schedule=schedule,
+    )
+    expected_ancillas = expected.x_ancilla_qubits + expected.z_ancilla_qubits
+    pool_map = dict(zip(expected_ancillas, ancillas, strict=True))
+    if (
+        [pool_map[q] for q in expected_ancillas] != ancillas
+        or len(set(pool_map.values())) != len(pool_map)
+        or set(ancillas) & set(allocation.data_qubits)
+    ):
+        msg = f"allocation does not match ancilla_budget={budget} and ancilla_schedule={schedule!r}"
+        raise ValueError(msg)
+
+
 def _budgeted_syndrome_steps(
     patch: SurfacePatch,
     allocation: QubitAllocation,
@@ -174,40 +214,21 @@ def _budgeted_syndrome_steps(
     total = sum(len(register) for register in registers.values())
     budget = normalize_ancilla_budget(total, ancilla_budget)
     schedule = normalize_ancilla_schedule(ancilla_schedule)
+    _validate_ancilla_allocation(patch, allocation, budget, schedule)
     if budget == total:
         return None
-    if len(set(allocation.x_ancilla_qubits + allocation.z_ancilla_qubits)) > budget:
-        msg = "allocation exceeds ancilla_budget; use default_allocation with the same budget and schedule"
-        raise ValueError(msg)
     h_family = "Z" if x_z_swapped else "X"
     steps = []
     for batch in batched_stabilizers(patch, budget, ancilla_schedule=schedule):
-        batch_qubits = [registers[kind][index] for kind, index in batch]
-        if len(set(batch_qubits)) != len(batch_qubits) or set(batch_qubits) & set(allocation.data_qubits):
-            msg = "ancilla_schedule requires disjoint allocation within each batch and from data"
-            raise ValueError(msg)
         selected = [(kind, index) for kind, index in batch if family is None or kind == family]
         if not selected:
             continue
 
-        def ancilla_steps(
-            op: OpType,
-            selected: list[tuple[str, int]],
-            *,
-            selected_family: str | None = None,
-        ) -> list[SurfaceCircuitStep]:
-            prefix = "s" if op == OpType.MEASURE else "a"
-            return [
-                SurfaceCircuitStep(op, [registers[kind][index]], f"{prefix}{kind.lower()}{index}")
-                for kind, index in selected
-                if selected_family is None or kind == selected_family
-            ]
-
-        hadamards = ancilla_steps(OpType.H, selected, selected_family=h_family)
+        hadamards = _batch_ancilla_steps(registers, selected, OpType.H, family=h_family)
         if hadamards:
             hadamards.insert(0, SurfaceCircuitStep(OpType.COMMENT, label=f"Hadamard on {h_family} ancillas"))
         steps.append(SurfaceCircuitStep(OpType.COMMENT, label="Prepare ancillas"))
-        steps.extend(ancilla_steps(OpType.ALLOC, selected))
+        steps.extend(_batch_ancilla_steps(registers, selected, OpType.ALLOC))
         steps.extend(hadamards)
         steps.append(SurfaceCircuitStep(OpType.TICK))
         steps.extend(
@@ -223,7 +244,7 @@ def _budgeted_syndrome_steps(
         )
         steps.extend(hadamards)
         steps.append(SurfaceCircuitStep(OpType.COMMENT, label="Measure ancillas"))
-        steps.extend(ancilla_steps(OpType.MEASURE, selected))
+        steps.extend(_batch_ancilla_steps(registers, selected, OpType.MEASURE))
         steps.append(SurfaceCircuitStep(OpType.TICK))
     return steps
 
@@ -301,6 +322,11 @@ def syndrome_round_gadget(
     receive the Hadamards, and are allocated and measured first. Labels
     always refer to physical register slots by stabilizer index.
     """
+    if x_z_swapped and patch.dx != patch.dz:
+        # Transversal H needs a square patch, so a swapped rectangle has no producer and no
+        # Guppy syndrome struct of its own.
+        msg = "syndrome_round_gadget requires a square patch when x_z_swapped (dx == dz)"
+        raise ValueError(msg)
     budgeted = _budgeted_syndrome_steps(
         patch,
         allocation,
@@ -310,9 +336,6 @@ def syndrome_round_gadget(
         x_z_swapped=x_z_swapped,
     )
     if budgeted is not None:
-        if x_z_swapped and patch.dx != patch.dz:
-            msg = "syndrome_round_gadget requires a square patch when x_z_swapped (dx == dz)"
-            raise ValueError(msg)
         return Gadget(
             GadgetKind.SYNDROME_ROUND,
             "syndrome_extraction" + ("_swapped" if x_z_swapped else ""),
@@ -336,11 +359,6 @@ def _syndrome_round(
     name: str = "syndrome_extraction",
     fold: Literal["S", "SDG"] | None = None,
 ) -> Gadget:
-    if x_z_swapped and patch.dx != patch.dz:
-        # Transversal H needs a square patch, so a swapped rectangle has no producer and no
-        # Guppy syndrome struct of its own.
-        msg = "syndrome_round_gadget requires a square patch when x_z_swapped (dx == dz)"
-        raise ValueError(msg)
     steps = [SurfaceCircuitStep(OpType.COMMENT, label=f"syndrome_extraction round {round_index + 1}")]
     families = ("Z", "X") if x_z_swapped else ("X", "Z")
     for family in families:

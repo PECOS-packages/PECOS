@@ -402,12 +402,13 @@ struct ColumnOutcome {
     log_prior_int: i64,
 }
 
-/// A packed detector bit index avoids storing a separate word index and mask.
+/// A 12-byte word/bit record keeps epoch indices at 32 bits.
 /// Columns retain these references in ascending detector order for scoring.
 #[derive(Clone, Debug)]
 struct SuffixRow {
-    detector: usize,
-    epoch_index: usize,
+    word: u32,
+    epoch: u32,
+    bit: u8,
 }
 
 /// Initial epochs precede updates in reverse-column, ascending-detector order.
@@ -550,6 +551,7 @@ struct FrontierScratch<M> {
     branches: StateBuffer<M>,
     indices: Vec<usize>,
     scores: Vec<M>,
+    transposed: Vec<u64>,
     retained: Vec<bool>,
     detector_words: usize,
     stride: usize,
@@ -590,6 +592,23 @@ impl<M: Copy> FrontierScratch<M> {
                     fold(self.parent.masses[count - 1], self.branches.masses[index]);
             } else {
                 self.parent.copy_state(&self.branches, index, self.stride);
+            }
+        }
+    }
+
+    /// Transpose only detector words, after merging and only when scoring runs.
+    fn transpose_detectors(&mut self) {
+        let count = self.parent.masses.len();
+        self.transposed.resize(self.detector_words * count, 0);
+        if count == 0 {
+            return;
+        }
+        for (word, candidates) in self.transposed.chunks_exact_mut(count).enumerate() {
+            for (destination, key) in candidates
+                .iter_mut()
+                .zip(self.parent.words.chunks_exact(self.stride))
+            {
+                *destination = key[word];
             }
         }
     }
@@ -2123,6 +2142,74 @@ fn score_int_metric(log_mass: i64, parity: i64, alpha_int: i64, scale: i32) -> i
     )
 }
 
+/// Rows must remain in ascending detector order: each candidate performs the
+/// original left-to-right sum. Only the independent candidates may vectorize.
+fn score_candidates(
+    frontier: &mut FrontierScratch<f64>,
+    score_alpha: f64,
+    suffix_compatibility: SuffixCompatibility<'_>,
+    observed: &[u64],
+) {
+    frontier.scores.clear();
+    if score_alpha == 0.0 {
+        frontier.scores.extend_from_slice(&frontier.parent.masses);
+        return;
+    }
+    frontier.transpose_detectors();
+    let count = frontier.parent.masses.len();
+    let neutral = std::iter::empty::<f64>().sum::<f64>();
+    frontier.scores.resize(count, neutral);
+    for row in suffix_compatibility.rows {
+        let probabilities = &suffix_compatibility.values.probabilities[row.epoch as usize];
+        let (zero, one) = (probabilities.zero, probabilities.one);
+        let word = row.word as usize;
+        let observed_word = observed[word];
+        let mask = 1_u64 << row.bit;
+        let candidates = &frontier.transposed[word * count..(word + 1) * count];
+        for (accumulator, &candidate) in frontier.scores.iter_mut().zip(candidates) {
+            let mismatch = (candidate ^ observed_word) & mask != 0;
+            *accumulator += if mismatch { one } else { zero };
+        }
+    }
+    for (score, &log_mass) in frontier.scores.iter_mut().zip(&frontier.parent.masses) {
+        *score = log_mass + score_alpha * *score;
+    }
+}
+
+fn score_candidates_int(
+    frontier: &mut FrontierScratch<i64>,
+    alpha_int: i64,
+    scale: i32,
+    suffix_compatibility: SuffixCompatibility<'_>,
+    observed: &[u64],
+) {
+    frontier.scores.clear();
+    // Skip entirely: fixed_mul_round* handles sentinel parity before a zero
+    // multiplier, so multiplying an ln(0) suffix by zero would poison the score.
+    if alpha_int == 0 {
+        frontier.scores.extend_from_slice(&frontier.parent.masses);
+        return;
+    }
+    frontier.transpose_detectors();
+    let count = frontier.parent.masses.len();
+    frontier.scores.resize(count, 0);
+    for row in suffix_compatibility.rows {
+        let probabilities = &suffix_compatibility.values.probabilities[row.epoch as usize];
+        let (zero, one) = (probabilities.zero_int, probabilities.one_int);
+        let word = row.word as usize;
+        let observed_word = observed[word];
+        let mask = 1_u64 << row.bit;
+        let candidates = &frontier.transposed[word * count..(word + 1) * count];
+        for (accumulator, &candidate) in frontier.scores.iter_mut().zip(candidates) {
+            let mismatch = (candidate ^ observed_word) & mask != 0;
+            *accumulator = int_metric_add(*accumulator, if mismatch { one } else { zero });
+        }
+    }
+    for (score, &log_mass) in frontier.scores.iter_mut().zip(&frontier.parent.masses) {
+        *score = score_int_metric(log_mass, *score, alpha_int, scale);
+    }
+}
+
 fn prune(
     frontier: &mut FrontierScratch<f64>,
     k: usize,
@@ -2140,17 +2227,7 @@ fn prune(
         };
     }
 
-    frontier.scores.clear();
-    for (index, &log_mass) in frontier.parent.masses.iter().enumerate() {
-        let syndrome = &frontier.parent.key(index, frontier.stride)[..frontier.detector_words];
-        let score = if score_alpha == 0.0 {
-            log_mass
-        } else {
-            log_mass
-                + score_alpha * suffix_compatibility_score(syndrome, observed, suffix_compatibility)
-        };
-        frontier.scores.push(score);
-    }
+    score_candidates(frontier, score_alpha, suffix_compatibility, observed);
     frontier.indices.clear();
     frontier.indices.extend(0..frontier.parent.masses.len());
     frontier.indices.sort_by(|&left, &right| {
@@ -2209,23 +2286,7 @@ fn prune_maxlog(
         suffix_compatibility.values.int_metric_scale == Some(scale),
         "integer suffix scoring requires a table quantized at the decoder's metric scale"
     );
-    frontier.scores.clear();
-    for (index, &log_mass) in frontier.parent.masses.iter().enumerate() {
-        let syndrome = &frontier.parent.key(index, frontier.stride)[..frontier.detector_words];
-        // alpha_int == 0 must skip suffix scoring entirely, not multiply
-        // it away: fixed_mul_round* return the NEG_INF sentinel for a
-        // sentinel parity BEFORE checking multiplier == 0 (upstream-
-        // faithful order), so "0 times an ln(0) suffix row" would poison
-        // a feasible state's score and prune it. Mirrors the float
-        // path's score_alpha == 0.0 short-circuit.
-        let score = if alpha_int == 0 {
-            log_mass
-        } else {
-            let parity = suffix_compatibility_score_int(syndrome, observed, suffix_compatibility);
-            score_int_metric(log_mass, parity, alpha_int, scale)
-        };
-        frontier.scores.push(score);
-    }
+    score_candidates_int(frontier, alpha_int, scale, suffix_compatibility, observed);
     frontier.indices.clear();
     frontier.indices.extend(0..frontier.parent.masses.len());
     // Preserve the integer score tie-break: mass descending, then key.
@@ -2277,6 +2338,10 @@ fn build_suffix_epochs<'a>(
     columns: impl DoubleEndedIterator<Item = (&'a [u64], &'a [u64])> + ExactSizeIterator,
     num_detectors: usize,
 ) -> (Vec<SuffixEpoch>, Vec<Vec<SuffixRow>>) {
+    assert!(
+        u32::try_from(num_detectors.div_ceil(WORD_BITS)).is_ok(),
+        "detector word count must fit u32"
+    );
     let mut tables = vec![Vec::new(); columns.len()];
     let mut epochs: Vec<SuffixEpoch> = (0..num_detectors)
         .map(|detector| SuffixEpoch {
@@ -2288,8 +2353,9 @@ fn build_suffix_epochs<'a>(
     for (column_index, (active_mask, detector_toggle)) in columns.enumerate().rev() {
         tables[column_index] = set_bits(active_mask)
             .map(|detector| SuffixRow {
-                detector,
-                epoch_index: current_epochs[detector],
+                word: u32::try_from(detector / WORD_BITS).expect("detector word must fit u32"),
+                epoch: u32::try_from(current_epochs[detector]).expect("suffix epoch must fit u32"),
+                bit: u8::try_from(detector % WORD_BITS).expect("detector bit must fit u8"),
             })
             .collect();
         for detector in set_bits(detector_toggle) {
@@ -2300,6 +2366,10 @@ fn build_suffix_epochs<'a>(
             });
         }
     }
+    assert!(
+        u32::try_from(epochs.len()).is_ok(),
+        "suffix epoch count must fit u32"
+    );
     (epochs, tables)
 }
 
@@ -2378,6 +2448,7 @@ fn debug_assert_factor_model_invariants(columns: &[FactorColumn], touched_detect
     );
 }
 
+#[cfg(test)]
 fn suffix_compatibility_score(
     active_syndrome: &[u64],
     observed: &[u64],
@@ -2387,9 +2458,9 @@ fn suffix_compatibility_score(
         .rows
         .iter()
         .map(|reference| {
-            let row = &suffix_compatibility.values.probabilities[reference.epoch_index];
-            let word_index = reference.detector / WORD_BITS;
-            let bit_mask = 1 << (reference.detector % WORD_BITS);
+            let row = &suffix_compatibility.values.probabilities[reference.epoch as usize];
+            let word_index = reference.word as usize;
+            let bit_mask = 1 << reference.bit;
             if (active_syndrome[word_index] ^ observed[word_index]) & bit_mask == 0 {
                 row.zero
             } else {
@@ -2399,6 +2470,7 @@ fn suffix_compatibility_score(
         .sum()
 }
 
+#[cfg(test)]
 fn suffix_compatibility_score_int(
     active_syndrome: &[u64],
     observed: &[u64],
@@ -2408,9 +2480,9 @@ fn suffix_compatibility_score_int(
         .rows
         .iter()
         .fold(0, |total, reference| {
-            let row = &suffix_compatibility.values.probabilities[reference.epoch_index];
-            let word_index = reference.detector / WORD_BITS;
-            let bit_mask = 1 << (reference.detector % WORD_BITS);
+            let row = &suffix_compatibility.values.probabilities[reference.epoch as usize];
+            let word_index = reference.word as usize;
+            let bit_mask = 1 << reference.bit;
             let term = if (active_syndrome[word_index] ^ observed[word_index]) & bit_mask == 0 {
                 row.zero_int
             } else {
@@ -2630,6 +2702,126 @@ mod tests {
     }
 
     #[test]
+    fn candidate_scores_match_scalar_suffix_folds() {
+        use rand::{RngExt, SeedableRng};
+        use rand_xoshiro::Xoshiro256PlusPlus;
+
+        let mut rng = Xoshiro256PlusPlus::seed_from_u64(0x5343_4f52_4553);
+        let dem = SparseDem {
+            mechanisms: (0..24)
+                .map(|_| {
+                    (
+                        rng.random_range(0.001..0.999),
+                        (0..70).filter(|_| rng.random_bool(0.2)).collect(),
+                        vec![0],
+                    )
+                })
+                .collect(),
+            detector_coords: BTreeMap::new(),
+            num_detectors: 70,
+            num_observables: 1,
+        };
+        let decoder = TrellisDecoder::from_sparse_dem(
+            &dem,
+            TrellisConfig {
+                metric_mode: MetricMode::MaxLogInt,
+                ..TrellisConfig::default()
+            },
+        )
+        .unwrap();
+        let super::Kernel::Binary(columns) = &decoder.kernel else {
+            panic!("binary DEM");
+        };
+        assert!(columns.last().unwrap().suffix_compatibility.is_empty());
+        let mut float = super::FrontierScratch::<f64>::default();
+        let mut integer = super::FrontierScratch::<i64>::default();
+        for column in columns {
+            for count in [1, 3, 16, 33] {
+                float.reset(&[0, 0], &[0], &[0, 0], 0.0);
+                float.branches.clear();
+                // Include duplicate arrivals so the oracle sees a merged set.
+                for candidate in 0..count {
+                    let key = [
+                        rng.random::<u64>() & column.active_mask[0],
+                        rng.random::<u64>() & column.active_mask[1],
+                        candidate,
+                    ];
+                    float.branches.words.extend_from_slice(&key);
+                    float.branches.masses.push(if candidate == 0 {
+                        // Empty suffix sums must also preserve negative zero.
+                        if count == 1 { -0.0 } else { 0.0 }
+                    } else {
+                        rng.random_range(-100.0..0.0)
+                    });
+                    if candidate != 0 {
+                        float.branches.words.extend_from_slice(&key);
+                        float.branches.masses.push(-200.0);
+                    }
+                }
+                float.merge(logaddexp);
+                assert!(float.parent.masses.contains(&0.0));
+                integer.reset(&[0, 0], &[0], &[0, 0], 0);
+                integer.parent.words.clone_from(&float.parent.words);
+                integer.parent.masses = float
+                    .parent
+                    .masses
+                    .iter()
+                    .map(|&mass| quantize_metric(mass, 1024))
+                    .collect();
+                let compatibility = super::SuffixCompatibility {
+                    rows: &column.suffix_compatibility,
+                    values: &decoder.suffix_values,
+                };
+                for _ in 0..4 {
+                    let observed = [rng.random(), rng.random()];
+                    for alpha in [0.0, 0.8, 1.0] {
+                        super::score_candidates(&mut float, alpha, compatibility, &observed);
+                        for (index, &mass) in float.parent.masses.iter().enumerate() {
+                            let expected = if alpha == 0.0 {
+                                mass
+                            } else {
+                                mass + alpha
+                                    * super::suffix_compatibility_score(
+                                        &float.parent.key(index, float.stride)[..2],
+                                        &observed,
+                                        compatibility,
+                                    )
+                            };
+                            assert_eq!(float.scores[index].to_bits(), expected.to_bits());
+                        }
+                    }
+                    for alpha in [0, 819, 1024] {
+                        super::score_candidates_int(
+                            &mut integer,
+                            alpha,
+                            1024,
+                            compatibility,
+                            &observed,
+                        );
+                        for (index, &mass) in integer.parent.masses.iter().enumerate() {
+                            let expected = if alpha == 0 {
+                                mass
+                            } else {
+                                super::score_int_metric(
+                                    mass,
+                                    super::suffix_compatibility_score_int(
+                                        &integer.parent.key(index, integer.stride)[..2],
+                                        &observed,
+                                        compatibility,
+                                    ),
+                                    alpha,
+                                    1024,
+                                )
+                            };
+                            assert_eq!(integer.scores[index], expected);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn suffix_epochs_match_direct_recomputation() {
         use rand::{RngExt, SeedableRng};
         use rand_xoshiro::Xoshiro256PlusPlus;
@@ -2735,11 +2927,12 @@ mod tests {
             let detectors: Vec<usize> = super::set_bits(&column.active_mask).collect();
             assert_eq!(column.suffix_compatibility.len(), detectors.len());
             for (reference, detector) in column.suffix_compatibility.iter().zip(detectors) {
-                assert_eq!(reference.detector, detector);
+                assert_eq!(reference.word as usize, detector / super::WORD_BITS);
+                assert_eq!(usize::from(reference.bit), detector % super::WORD_BITS);
                 let eta = row_moments[detector];
                 let zero = libm::log(1.0_f64.midpoint(eta));
                 let one = libm::log(1.0_f64.midpoint(-eta));
-                let pair = &values.probabilities[reference.epoch_index];
+                let pair = &values.probabilities[reference.epoch as usize];
                 assert_eq!(pair.zero.to_bits(), zero.to_bits());
                 assert_eq!(pair.one.to_bits(), one.to_bits());
                 if let Some(scale) = values.int_metric_scale {

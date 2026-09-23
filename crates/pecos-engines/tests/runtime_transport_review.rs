@@ -34,14 +34,15 @@ fn gates(names: &[char]) -> ByteMessage {
 
 // A test-only decoder/executor sketch. There is deliberately no production
 // MessageType or reserved Selene tag. This does NOT exercise the FFI producer.
+// This intentionally incorrect segmenting sketch is NOT a capability adapter:
+// the completion-noise counterexample below rules it out for production.
 fn execute_probe(
     system: &mut QuantumSystem,
     before: ByteMessage,
     tag: &str,
     after: ByteMessage,
-    supports_effect: bool,
 ) -> Result<Vec<u32>, PecosError> {
-    if !supports_effect || !matches!(tag, "probe.flip" | "probe.phase" | "probe.ack") {
+    if !matches!(tag, "probe.flip" | "probe.phase" | "probe.ack") {
         return Err(PecosError::Input(
             "unsupported mandatory probe event".into(),
         ));
@@ -69,8 +70,7 @@ fn probe_effect_executes_between_gates_and_measurements() {
             &mut system,
             gates(&['H']),
             "probe.phase",
-            gates(&['H', 'M']),
-            true
+            gates(&['H', 'M'])
         )
         .unwrap(),
         [1]
@@ -87,14 +87,7 @@ fn probe_effect_executes_between_gates_and_measurements() {
     );
     system.reset().unwrap();
     assert_eq!(
-        execute_probe(
-            &mut system,
-            gates(&['M']),
-            "probe.flip",
-            gates(&['M']),
-            true
-        )
-        .unwrap(),
+        execute_probe(&mut system, gates(&['M']), "probe.flip", gates(&['M'])).unwrap(),
         [0, 1]
     );
 }
@@ -106,9 +99,8 @@ fn unsupported_probe_is_rejected_before_execution() {
         execute_probe(
             &mut system,
             gates(&['X']),
-            "probe.flip",
-            gates(&['M']),
-            false
+            "probe.unsupported",
+            gates(&['M'])
         )
         .is_err()
     );
@@ -134,7 +126,11 @@ fn unknown_v1_record_is_silently_skipped_so_it_cannot_be_mandatory() {
 }
 
 fn unsupported_version() -> ByteMessage {
-    let mut bytes = gates(&['X']).as_bytes().to_vec();
+    let mut bytes = gates(&['X', 'Z']).as_bytes().to_vec();
+    // Valid gate prefix followed by an unknown record: rejection must precede X.
+    let header_len = size_of::<BatchHeader>();
+    let record_len = (bytes.len() - header_len) / 2;
+    bytes[header_len + record_len] = 250;
     bytes[4] = 2; // A probe only; no v2 format is defined by this test.
     ByteMessage::new(&bytes)
 }
@@ -157,13 +153,18 @@ fn unsupported_version_is_rejected_by_gate_consumers() {
 }
 
 #[test]
-fn general_noise_currently_panics_instead_of_returning_version_error() {
-    // Characterize the existing incompatibility, not the desired future API.
+fn general_noise_returns_version_error_without_execution_or_rng_consumption() {
     let mut noise = GeneralNoiseModel::builder().build();
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        noise.start(unsupported_version())
-    }));
-    assert!(result.is_err());
+    let mut expected_rng = noise.rng().clone();
+    assert!(noise.start(unsupported_version()).is_err());
+    let mut actual_rng = noise.rng().clone();
+    assert_eq!(actual_rng.next_u64(), expected_rng.next_u64());
+    let mut system = QuantumSystem::new(Box::new(noise), Box::new(StateVecEngine::new(1)));
+    assert!(system.process(unsupported_version()).is_err());
+    assert_eq!(
+        system.process(gates(&['M'])).unwrap().outcomes().unwrap(),
+        [0]
+    );
 }
 
 /// A valid existing `NoiseModel` that applies one synthetic X at input completion.
@@ -250,7 +251,7 @@ fn splitting_around_acknowledgement_duplicates_completion_noise() {
     system.reset().unwrap();
     // Same gates, with a metadata-only boundary: two completed segments cause
     // two X faults. Waiting for every continuation is necessary but insufficient.
-    execute_probe(&mut system, gates(&['Z']), "probe.ack", gates(&['Z']), true).unwrap();
+    execute_probe(&mut system, gates(&['Z']), "probe.ack", gates(&['Z'])).unwrap();
     assert_eq!(
         system
             .quantum_engine_mut()

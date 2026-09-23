@@ -6,6 +6,14 @@ test-only review probes do not implement runtime-event support. Base inspected:
 (the merge of #826). The proposal is a bounded implementation slice of the
 execution/transport direction in RFC #591, not a replacement event framework.
 
+Follow-up: [GeneralNoiseModel and mandatory-envelope contracts](runtime-effect-contracts.md)
+records concrete general-noise leakage, RNG and idle counterexamples and proposes
+the minimum resumable interface. Production transport remains disabled. Two
+ordinary general-noise fixes are now implemented/tested: parse errors return
+errors instead of panicking, and reset clears abandoned result buffers. The
+review below is the initial investigation; the linked follow-up supersedes its
+open question about whether GeneralNoiseModel can be safely segmented.
+
 ## Transport review: confirmed compatibility blocker
 
 The mandatory-command direction remains preferred. However, the proposed adapter
@@ -55,7 +63,7 @@ reserved Selene tag, public event executor, or Python configuration is introduce
 | `parse_batch_header`, `process_gate_message`, `quantum_ops_into` | Header rejects unknown version; v1 skips unknown record types. An event-bearing envelope needs a distinct mandatory version, with a command parser separate from the gate-only parser. Gate-only parsing must reject the entire event-bearing input before executing any prefix. |
 | `HybridEngine` → `QuantumSystem` → `EngineSystem` | The controller may issue arbitrarily many simulator sends before completion. The proposed adapter must finish the preceding segment before dispatching an effect. Simulator failure returns immediately without notifying the controller. A host-level abort/poison contract is needed; controller-local error latching alone is insufficient. |
 | Pass-through / depolarizing / biased depolarizing noise | Pass-through forwards bytes; the other two parse gates and propagate parse errors. These are potential individually testable integrations, not an established compatibility list. |
-| `GeneralNoiseModel` | Parses gates using `expect`: unsupported version currently panics. It also owns leakage, prepared-qubit and pending-measurement state. Version rejection needs a normal error path; bypassing this model for physical effects must not bypass state semantics. |
+| `GeneralNoiseModel` | The reviewed base used `expect` and panicked on unsupported versions; the follow-up fixes error propagation. It also owns leakage, prepared-qubit and pending-measurement state. Bypassing this model for physical effects must not bypass state semantics. |
 | State-vector, sparse-stabilizer, stab-vector dispatch | Gate parsers reject unsupported version. Test probes exercise all three through `QuantumSystem`. Custom gates or ignored crosstalk placeholders are not a mandatory command mechanism. |
 | QIS lowered-gate trace / raw byte dumps | Lowered-gate trace propagates gate parse errors; raw dumps preserve bytes. Extend event traces or reject event mode before execution. QIS/QASM debug-only parse attempts do not constitute execution validation. |
 | Python byte-message binding / PHIR bridge | Byte-message gate conversion raises a Python error. PHIR bridge catches parse errors and falls back to Python generation: this is not a fail-closed mandatory-event path. Keep event input unavailable there until fallback explicitly excludes mandatory/unsupported input. |
@@ -95,11 +103,12 @@ wire schema independently of that RFC. No leakage-channel change is proposed.
 Six Rust tests pass: synthetic execution placement (`H; phase; H; M` differs
 from lowering-time placement), `M; flip; M`, explicit unsupported probe rejection,
 v1 unknown-record loss, unsupported-version rejection by three simulator paths,
-the current general-noise panic, and the segmentation counterexample (some are
+general-noise version rejection, and the segmentation counterexample (some are
 assertions within one test). The synthetic decoder and execution sketch exist
 only inside the test file; they do not exercise the Selene producer or define a
-wire protocol. The panic and silent-skip probes characterize current behavior;
-they must be revised when the corresponding production behavior is changed.
+wire protocol. The original panic probe was converted to a normal-error
+regression after the follow-up fix. The silent-skip probe characterizes v1
+behavior; it must not be mistaken for a mandatory-event contract.
 
 No FFI-to-executor event path, idle accounting, shot/worker isolation, bounded
 retention, failure recovery, or Python event configuration has been implemented

@@ -528,10 +528,6 @@ impl GeneralNoiseModel {
 
     /// Apply noise at the start of `QuantumSystem` processing (typically a collection of gates)
     ///
-    /// # Panics
-    ///
-    /// Panics if the input `ByteMessage` cannot be parsed as quantum operations.
-    ///
     /// # Errors
     ///
     /// Returns an error if noise application fails or the message cannot be processed.
@@ -542,7 +538,7 @@ impl GeneralNoiseModel {
         // Parse the input as quantum operations
         let gates = input
             .quantum_ops()
-            .expect("Failed to parse input as quantum operations");
+            .map_err(|err| format!("Failed to parse input as quantum operations: {err}"))?;
         if gates.iter().any(Gate::is_channel) {
             return Err(Self::channel_gate_error());
         }
@@ -1416,6 +1412,9 @@ impl GeneralNoiseModel {
 
     /// Reset the noise model for a new shot
     fn reset_noise_model(&mut self) {
+        // A failed/abandoned simulator continuation may leave user outcomes
+        // buffered. They belong to the previous shot, just like pending qubits.
+        self.results_builder.reset();
         // Clear leaked qubits
         self.leaked_qubits.clear();
         // Clear measured qubits

@@ -166,9 +166,16 @@ def test_direct_parallel_batch_matches_sequential():
     sequential = decoder.decode_batch(shots)
     parallel = decoder.decode_batch(shots, threads=4)
     fields = (
-        "log_evidence", "runner_up_gap", "peak_retained_states", "processed_columns",
-        "transitions", "dropped_states", "dropped_log_mass", "escalation_rungs_used",
-        "status", "logical_masses",
+        "log_evidence",
+        "runner_up_gap",
+        "peak_retained_states",
+        "processed_columns",
+        "transitions",
+        "dropped_states",
+        "dropped_log_mass",
+        "escalation_rungs_used",
+        "status",
+        "logical_masses",
     )
     assert len(parallel) == len(sequential) == len(shots)
     for actual, expected in zip(parallel, sequential, strict=True):
@@ -176,7 +183,7 @@ def test_direct_parallel_batch_matches_sequential():
         for field in fields:
             assert getattr(actual, field) == getattr(expected, field)
     assert decoder.decode_batch([], threads=4) == []
-    with pytest.raises(ValueError, match="threads must be at least 1"):
+    with pytest.raises(RuntimeError, match="threads must be at least 1"):
         decoder.decode_batch(shots, threads=0)
 
 

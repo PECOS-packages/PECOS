@@ -51,7 +51,10 @@ enum RuntimeScheduledOp {
         theta: f64,
         phi: f64,
     },
-    Custom,
+    Custom {
+        tag: usize,
+        data: Vec<u8>,
+    },
 }
 
 #[derive(Debug, Default)]
@@ -59,6 +62,7 @@ struct RuntimeOperationBatch {
     start_time_nanos: u64,
     duration_nanos: u64,
     invoked: bool,
+    callback_error: Option<&'static str>,
     operations: Vec<RuntimeScheduledOp>,
 }
 
@@ -170,15 +174,37 @@ unsafe extern "C" fn runtime_batch_reset(instance: RuntimeGetOperationInstance, 
     batch.invoked = true;
 }
 
+// The plugin must return our live batch pointer and provide readable payload
+// memory for the duration of this call, as in Selene's BatchExtractor. Foreign
+// non-null dangling pointers cannot be validated by the receiver.
 unsafe extern "C" fn runtime_batch_custom(
     instance: RuntimeGetOperationInstance,
-    _tag: usize,
-    _data: *const c_void,
-    _data_len: usize,
+    tag: usize,
+    data: *const c_void,
+    data_len: usize,
 ) {
     let batch = unsafe { &mut *(instance.cast::<RuntimeOperationBatch>()) };
-    batch.operations.push(RuntimeScheduledOp::Custom);
     batch.invoked = true;
+    if batch.callback_error.is_some() {
+        return;
+    }
+    if data_len > isize::MAX as usize || (data_len != 0 && data.is_null()) {
+        batch.callback_error = Some("invalid custom-event payload pointer/length");
+        return;
+    }
+    let mut owned = Vec::new();
+    if owned.try_reserve_exact(data_len).is_err() || batch.operations.try_reserve(1).is_err() {
+        batch.callback_error = Some("unable to allocate custom-event storage");
+        return;
+    }
+    if data_len != 0 {
+        // SAFETY: The plugin owns a readable allocation of data_len bytes until
+        // this callback returns. The size and null checks above precede slicing.
+        owned.extend_from_slice(unsafe { std::slice::from_raw_parts(data.cast::<u8>(), data_len) });
+    }
+    batch
+        .operations
+        .push(RuntimeScheduledOp::Custom { tag, data: owned });
 }
 
 unsafe extern "C" fn runtime_batch_set_time(
@@ -221,6 +247,45 @@ static RUNTIME_OPERATION_CALLBACKS: SeleneRuntimeGetOperationInterface =
         rz: runtime_batch_rz,
         rpp: runtime_batch_rpp,
     };
+
+/// An owned opaque event emitted by a Selene runtime, before QIS lowering.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeCustomEvent {
+    /// Plugin-defined identity; PECOS assigns no meaning to tags.
+    pub tag: usize,
+    /// Bytes copied before the plugin callback returns.
+    pub data: Vec<u8>,
+    /// Zero-based runtime batch ordinal within this shot (including ordinary batches).
+    pub batch_index: usize,
+    /// Zero-based operation position within the original runtime batch.
+    pub operation_index: usize,
+    /// Original batch start time, in nanoseconds.
+    pub start_time_nanos: u64,
+    /// Original batch duration, in nanoseconds.
+    pub duration_nanos: u64,
+}
+
+/// Compatibility policy for events not explicitly recognized as metadata.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum RuntimeCustomEventPolicy {
+    /// Retain events for inspection without changing ordinary execution (default).
+    #[default]
+    Capture,
+    /// Fail on every event not acknowledged as metadata-only by the handler.
+    RejectUnhandled,
+}
+
+/// A metadata handler must not acknowledge an unmodeled physical effect.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeCustomEventDisposition {
+    /// The event is understood and has no physical effect to simulate.
+    MetadataOnly,
+    /// Unknown schema or a physical effect unsupported by this integration.
+    Unsupported,
+}
+
+type CustomEventHandler =
+    Arc<dyn Fn(&RuntimeCustomEvent) -> Result<RuntimeCustomEventDisposition> + Send + Sync>;
 
 /// Selene runtime implementation
 ///
@@ -315,6 +380,10 @@ pub struct SeleneRuntime {
     /// `selene_runtime_shot_start`; `selene_runtime_shot_end` takes the same
     /// `(shot_id, seed)` pair, so it must be retained until shot end.
     active_shot: Option<(u64, u64)>,
+    custom_events: Vec<RuntimeCustomEvent>,
+    runtime_batch_index: usize,
+    custom_event_policy: RuntimeCustomEventPolicy,
+    custom_event_handler: Option<CustomEventHandler>,
 }
 
 // SAFETY: SeleneRuntime owns its instance pointer exclusively.
@@ -401,7 +470,41 @@ impl SeleneRuntime {
             last_gate_time_end_nanos: Vec::new(),
             pending_shot_start: None,
             active_shot: None,
+            custom_events: Vec::new(),
+            runtime_batch_index: 0,
+            custom_event_policy: RuntimeCustomEventPolicy::default(),
+            custom_event_handler: None,
         }
+    }
+
+    /// Configure handling of opaque events. Capture is backward-compatible;
+    /// strict emulation should use `RejectUnhandled`.
+    pub fn set_custom_event_policy(&mut self, policy: RuntimeCustomEventPolicy) {
+        self.custom_event_policy = policy;
+    }
+
+    /// Install a metadata-only handler, called in emission order outside the C
+    /// callback, after the final batch timing is known. Errors always propagate.
+    /// Return `Unsupported` for unknown events or unmodeled physical behavior.
+    /// The handler is shared across clones; any captured state must be thread-safe
+    /// and is not reset by PECOS. This hook does not inject gates or noise.
+    pub fn set_custom_event_handler<F>(&mut self, handler: F)
+    where
+        F: Fn(&RuntimeCustomEvent) -> Result<RuntimeCustomEventDisposition> + Send + Sync + 'static,
+    {
+        self.custom_event_handler = Some(Arc::new(handler));
+    }
+
+    /// Events captured in this shot, including the event causing a handler error.
+    /// Cleared on shot start and reset; retained at shot end for inspection.
+    #[must_use]
+    pub fn custom_events(&self) -> &[RuntimeCustomEvent] {
+        &self.custom_events
+    }
+
+    /// Drain captured events without resetting their batch ordinals.
+    pub fn take_custom_events(&mut self) -> Vec<RuntimeCustomEvent> {
+        std::mem::take(&mut self.custom_events)
     }
 
     /// Create a runtime from the generic Selene runtime-plugin shape.
@@ -1566,11 +1669,16 @@ impl SeleneRuntime {
     }
 
     fn convert_runtime_batch(&mut self, batch: RuntimeOperationBatch) -> Result<Vec<QuantumOp>> {
+        if let Some(error) = batch.callback_error {
+            return Err(RuntimeError::FfiError(error.to_string()));
+        }
+        let batch_index = self.runtime_batch_index;
+        self.runtime_batch_index += 1;
         let mut lowered_ops = Vec::new();
         let start_time = batch.start_time_nanos;
         let end_time = batch.end_time_nanos();
 
-        for op in batch.operations {
+        for (operation_index, op) in batch.operations.into_iter().enumerate() {
             match op {
                 RuntimeScheduledOp::Rxy {
                     qubit_id,
@@ -1649,7 +1757,31 @@ impl SeleneRuntime {
                     self.mark_gate_end(qubit_1, end_time);
                     self.mark_gate_end(qubit_2, end_time);
                 }
-                RuntimeScheduledOp::Custom => {}
+                RuntimeScheduledOp::Custom { tag, data } => {
+                    let event = RuntimeCustomEvent {
+                        tag,
+                        data,
+                        batch_index,
+                        operation_index,
+                        start_time_nanos: start_time,
+                        duration_nanos: batch.duration_nanos,
+                    };
+                    self.custom_events.push(event);
+                    let event = self.custom_events.last().expect("just inserted");
+                    let disposition = self
+                        .custom_event_handler
+                        .as_ref()
+                        .map_or(Ok(RuntimeCustomEventDisposition::Unsupported), |handler| {
+                            handler(event)
+                        })?;
+                    if disposition == RuntimeCustomEventDisposition::Unsupported
+                        && self.custom_event_policy == RuntimeCustomEventPolicy::RejectUnhandled
+                    {
+                        return Err(RuntimeError::ExecutionError(format!(
+                            "unsupported runtime custom event tag {tag} at batch {batch_index}, operation {operation_index}, start {start_time} ns; register a metadata-only handler for understood metadata; physical effects require downstream modeling"
+                        )));
+                    }
+                }
             }
         }
 
@@ -1745,6 +1877,10 @@ impl Clone for SeleneRuntime {
             last_gate_time_end_nanos: self.last_gate_time_end_nanos.clone(),
             pending_shot_start: self.pending_shot_start,
             active_shot: self.active_shot,
+            custom_events: self.custom_events.clone(),
+            runtime_batch_index: self.runtime_batch_index,
+            custom_event_policy: self.custom_event_policy,
+            custom_event_handler: self.custom_event_handler.clone(),
         }
     }
 }
@@ -2204,6 +2340,8 @@ impl QisRuntime for SeleneRuntime {
         self.runtime_to_program_results.clear();
         self.leakage_results.clear();
         self.last_gate_time_end_nanos.clear();
+        self.custom_events.clear();
+        self.runtime_batch_index = 0;
         self.pending_shot_start = Some((shot_id, seed));
         self.apply_pending_shot_start()?;
 
@@ -2255,6 +2393,8 @@ impl QisRuntime for SeleneRuntime {
         self.runtime_to_program_results.clear();
         self.leakage_results.clear();
         self.last_gate_time_end_nanos.clear();
+        self.custom_events.clear();
+        self.runtime_batch_index = 0;
         self.pending_shot_start = None;
         self.active_shot = None;
 
@@ -2293,6 +2433,257 @@ mod tests {
     use super::*;
 
     #[test]
+    fn custom_callback_preserves_owned_payload() {
+        let mut batch = RuntimeOperationBatch::default();
+        let mut payload = vec![17_u8, 29, 43];
+        unsafe {
+            runtime_batch_custom(
+                (&raw mut batch).cast(),
+                7301,
+                payload.as_ptr().cast(),
+                payload.len(),
+            );
+        }
+        payload.fill(0);
+        drop(payload);
+        assert!(matches!(&batch.operations[..],
+            [RuntimeScheduledOp::Custom { tag: 7301, data }] if data == &[17, 29, 43]));
+    }
+
+    #[test]
+    fn custom_events_round_trip_through_selene_batch_extractor() {
+        use selene_core::operation::{BatchOperation, Operation, plugin::BatchExtractor};
+        let source = BatchOperation::runtime(
+            vec![
+                Operation::Custom {
+                    custom_tag: 7301,
+                    data: vec![17, 29].into_boxed_slice(),
+                },
+                Operation::RZGate {
+                    qubit_id: 0,
+                    theta: 0.25,
+                },
+                Operation::Custom {
+                    custom_tag: 7302,
+                    data: vec![43].into_boxed_slice(),
+                },
+            ],
+            20.into(),
+            5.into(),
+        );
+        let mut extractor = BatchExtractor::from_batch_operation(source);
+        let input = extractor.runtime_batch_extraction();
+        let mut batch = RuntimeOperationBatch::default();
+        let output = SeleneRuntimeGetOperationHandle {
+            instance: (&raw mut batch).cast(),
+            interface: RUNTIME_OPERATION_CALLBACKS,
+        };
+        // Exercise the same repr(C) handle conversion as the plugin drain path.
+        unsafe {
+            (input.interface.extract_fn)(
+                input.instance,
+                std::mem::transmute::<
+                    SeleneRuntimeGetOperationHandle,
+                    selene_core::operation::plugin::RuntimeGetOperationHandle,
+                >(output),
+            );
+        }
+        drop(extractor);
+        let mut runtime = SeleneRuntime::new("synthetic-runtime.so");
+        runtime.convert_runtime_batch(batch).unwrap();
+        assert_eq!(
+            runtime
+                .custom_events()
+                .iter()
+                .map(|event| (
+                    event.tag,
+                    event.operation_index,
+                    event.start_time_nanos,
+                    event.duration_nanos
+                ))
+                .collect::<Vec<_>>(),
+            [(7301, 0, 20, 5), (7302, 2, 20, 5)]
+        );
+        assert_eq!(runtime.custom_events()[0].data, [17, 29]);
+        assert_eq!(runtime.custom_events()[1].data, [43]);
+    }
+
+    fn synthetic_custom_batch(tag: usize) -> RuntimeOperationBatch {
+        let mut batch = RuntimeOperationBatch::default();
+        let payload = [17_u8, 29, 43];
+        unsafe {
+            runtime_batch_rz((&raw mut batch).cast(), 0, 0.25);
+            runtime_batch_custom(
+                (&raw mut batch).cast(),
+                tag,
+                payload.as_ptr().cast(),
+                payload.len(),
+            );
+            runtime_batch_measure((&raw mut batch).cast(), 1, 901);
+            // Timing is allowed to arrive after the operations.
+            runtime_batch_set_time((&raw mut batch).cast(), 20, 5);
+        }
+        batch
+    }
+
+    #[test]
+    fn custom_capture_preserves_order_timing_and_measurement_routing() {
+        let mut runtime = SeleneRuntime::new("synthetic-runtime.so");
+        runtime.runtime_to_program_results.insert(901, 7);
+        let ops = runtime
+            .convert_runtime_batch(synthetic_custom_batch(7301))
+            .unwrap();
+        assert_eq!(
+            ops,
+            vec![
+                QuantumOp::Idle(20e-9, 0),
+                QuantumOp::RZ(0.25, 0),
+                QuantumOp::Idle(20e-9, 1),
+                QuantumOp::Measure(1, 7)
+            ]
+        );
+        assert_eq!(runtime.last_gate_time_end_nanos, [25, 25]);
+        runtime
+            .convert_runtime_batch(RuntimeOperationBatch::default())
+            .unwrap();
+        let mut next_batch = synthetic_custom_batch(7302);
+        next_batch.start_time_nanos = 30;
+        let next_ops = runtime.convert_runtime_batch(next_batch).unwrap();
+        assert_eq!(
+            next_ops,
+            vec![
+                QuantumOp::Idle(5e-9, 0),
+                QuantumOp::RZ(0.25, 0),
+                QuantumOp::Idle(5e-9, 1),
+                QuantumOp::Measure(1, 7)
+            ]
+        );
+        let events = runtime.take_custom_events();
+        assert_eq!(events.len(), 2);
+        assert_eq!(
+            events[0],
+            RuntimeCustomEvent {
+                tag: 7301,
+                data: vec![17, 29, 43],
+                batch_index: 0,
+                operation_index: 1,
+                start_time_nanos: 20,
+                duration_nanos: 5,
+            }
+        );
+        assert_eq!(events[1].tag, 7302);
+        assert_eq!(events[1].batch_index, 2);
+        assert!(runtime.custom_events().is_empty());
+        assert_eq!(runtime.runtime_batch_index, 3);
+    }
+
+    #[test]
+    fn custom_strict_policy_requires_explicit_metadata_acknowledgement() {
+        let mut runtime = SeleneRuntime::new("synthetic-runtime.so");
+        runtime.runtime_to_program_results.insert(901, 7);
+        runtime.set_custom_event_policy(RuntimeCustomEventPolicy::RejectUnhandled);
+        let error = runtime
+            .convert_runtime_batch(synthetic_custom_batch(7301))
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("tag 7301 at batch 0, operation 1, start 20 ns")
+        );
+        assert_eq!(runtime.custom_events().len(), 1);
+        runtime.set_custom_event_handler(|event| {
+            assert_eq!(event.data, [17, 29, 43]);
+            assert_eq!(event.start_time_nanos, 20);
+            Ok(if event.tag == 7301 {
+                RuntimeCustomEventDisposition::MetadataOnly
+            } else {
+                RuntimeCustomEventDisposition::Unsupported
+            })
+        });
+        runtime.last_gate_time_end_nanos.clear();
+        runtime
+            .convert_runtime_batch(synthetic_custom_batch(7301))
+            .unwrap();
+        runtime.last_gate_time_end_nanos.clear();
+        assert!(
+            runtime
+                .convert_runtime_batch(synthetic_custom_batch(7302))
+                .is_err()
+        );
+        // Compatibility mode retains unsupported events and handler failures still propagate.
+        runtime.set_custom_event_policy(RuntimeCustomEventPolicy::Capture);
+        runtime.last_gate_time_end_nanos.clear();
+        runtime
+            .convert_runtime_batch(synthetic_custom_batch(7302))
+            .unwrap();
+        runtime.set_custom_event_handler(|_| {
+            Err(RuntimeError::ExecutionError(
+                "synthetic handler failure".into(),
+            ))
+        });
+        runtime.last_gate_time_end_nanos.clear();
+        assert!(
+            runtime
+                .convert_runtime_batch(synthetic_custom_batch(7301))
+                .unwrap_err()
+                .to_string()
+                .contains("synthetic handler failure")
+        );
+    }
+
+    #[test]
+    fn custom_callback_validates_lengths_without_dereferencing_invalid_input() {
+        for (ptr, len) in [
+            (std::ptr::null(), 1),
+            (std::ptr::dangling::<u8>().cast(), usize::MAX),
+        ] {
+            let mut batch = RuntimeOperationBatch::default();
+            unsafe {
+                runtime_batch_custom((&raw mut batch).cast(), 7301, ptr, len);
+            }
+            let mut runtime = SeleneRuntime::new("synthetic-runtime.so");
+            assert!(matches!(
+                runtime.convert_runtime_batch(batch),
+                Err(RuntimeError::FfiError(_))
+            ));
+        }
+        let mut batch = RuntimeOperationBatch::default();
+        unsafe {
+            runtime_batch_custom((&raw mut batch).cast(), 7301, std::ptr::null(), 0);
+        }
+        let mut runtime = SeleneRuntime::new("synthetic-runtime.so");
+        runtime.convert_runtime_batch(batch).unwrap();
+        assert!(runtime.custom_events()[0].data.is_empty());
+    }
+
+    #[test]
+    fn custom_capture_lifecycle_and_cloned_configuration() {
+        let mut runtime = SeleneRuntime::new("synthetic-runtime.so");
+        runtime.runtime_to_program_results.insert(901, 7);
+        runtime.set_custom_event_policy(RuntimeCustomEventPolicy::RejectUnhandled);
+        runtime.set_custom_event_handler(|_| Ok(RuntimeCustomEventDisposition::MetadataOnly));
+        runtime.last_gate_time_end_nanos.clear();
+        runtime
+            .convert_runtime_batch(synthetic_custom_batch(7301))
+            .unwrap();
+        runtime.shot_end().unwrap();
+        assert_eq!(runtime.custom_events().len(), 1);
+        let mut cloned = runtime.clone();
+        cloned.shot_start(2, Some(13)).unwrap();
+        assert!(cloned.custom_events().is_empty());
+        assert_eq!(cloned.runtime_batch_index, 0);
+        assert_eq!(
+            cloned.custom_event_policy,
+            RuntimeCustomEventPolicy::RejectUnhandled
+        );
+        assert!(cloned.custom_event_handler.is_some());
+        assert_eq!(runtime.custom_events().len(), 1);
+        runtime.reset().unwrap();
+        assert!(runtime.custom_events().is_empty());
+        assert_eq!(runtime.runtime_batch_index, 0);
+    }
+
+    #[test]
     fn test_selene_runtime_creation() {
         let runtime = SeleneRuntime::new("/path/to/selene.so");
         assert_eq!(runtime.num_qubits(), 0);
@@ -2318,6 +2709,7 @@ mod tests {
             start_time_nanos: 20,
             duration_nanos: 5,
             invoked: true,
+            callback_error: None,
             operations: vec![RuntimeScheduledOp::Rxy {
                 qubit_id: 0,
                 theta: 1.0,
@@ -2369,6 +2761,7 @@ mod tests {
                 start_time_nanos: 20,
                 duration_nanos: 7,
                 invoked: true,
+                callback_error: None,
                 operations: vec![RuntimeScheduledOp::Rpp {
                     qubit_id_1: 1,
                     qubit_id_2: 0,

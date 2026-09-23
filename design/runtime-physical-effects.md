@@ -6,6 +6,12 @@ test-only review probes do not implement runtime-event support. Base inspected:
 (the merge of #826). The proposal is a bounded implementation slice of the
 execution/transport direction in RFC #591, not a replacement event framework.
 
+Latest: [the Rust frame prototype](runtime-frame-slice.md) implements a private
+test-only vertical slice while keeping production transport disabled. General
+physical admission remains restricted. Parse/reset correctness fixes are now
+separate in PR #828, on which #827 is stacked. The original review below is
+historical context; the prototype page states the current scope and evidence.
+
 Follow-up: [GeneralNoiseModel and mandatory-envelope contracts](runtime-effect-contracts.md)
 records concrete general-noise leakage, RNG and idle counterexamples and proposes
 the minimum resumable interface. Production transport remains disabled. Two

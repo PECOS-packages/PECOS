@@ -1,14 +1,19 @@
 # Runtime effect contracts: GeneralNoiseModel investigation
 
 Status: specification and executable investigation, **not enabled transport**.
+The [test-only Rust frame prototype](runtime-frame-slice.md) now provides a
+narrow executable slice: it preserves whole-frame sampling and supports only
+checked unconditional Pauli effects. General physical admission remains blocked.
+The two ordinary parse/reset fixes are isolated in PR #828; #827 is stacked on it.
 This supersedes the suggestion that a generic segmenting decorator is sufficient
-in [the original proposal](runtime-physical-effects.md). The actual production
+in [the original proposal](runtime-physical-effects.md). PR #828's production
 changes are only normal parse-error propagation and clearing abandoned result
-buffers on general-noise reset. No physical-event capability is granted.
+buffers on general-noise reset. No production physical-event capability is granted.
 
 ## Evidence and decision
 
-`tests/general_noise_segmentation.rs` in `pecos-engines` tests the real model:
+`tests/general_noise_segmentation.rs` and the separate
+`tests/general_noise_recovery.rs` regressions in #828 test the real model:
 
 - Start with a classically leaked qubit. Unsplit `MeasureLeaked; Prepare`
   returns 0; split execution returns 2. Start-time preparation changes leakage
@@ -79,13 +84,15 @@ into an opaque `PreparedEffectRun`. Its constructor and capability token are
 private. Execution accepts that prepared run, not `Box<dyn NoiseModel>` plus a
 boolean, a downcast, or an unchecked caller-supplied capability list.
 
-Initially the compiler rejects **all** physical bridge requests, including
+Initially the **production** compiler must reject all physical bridge requests, including
 GeneralNoiseModel, until a concrete implementation passes the contracts below.
 Adding support requires implementing the resumable controller and registering
 its tested profile. Downstream code supplies event interpretation; it cannot
 opt an arbitrary model into safe segmentation. Unsupported profiles, records,
 effects, simulators, trace modes or consumer routes fail before starting a shot.
-This is a proposed API restriction; no token/compiler API is implemented here.
+This is a proposed production API restriction. The private test-only factory
+implements admission for its limited profile; no library token/compiler API is
+exported.
 
 ## Minimum resumable extension to the existing controller
 

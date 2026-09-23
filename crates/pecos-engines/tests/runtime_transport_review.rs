@@ -4,7 +4,7 @@
 use pecos_core::RngManageable;
 use pecos_core::errors::PecosError;
 use pecos_engines::byte_message::protocol::BatchHeader;
-use pecos_engines::noise::{GeneralNoiseModel, NoiseModel, PassThroughNoiseModel};
+use pecos_engines::noise::{NoiseModel, PassThroughNoiseModel};
 use pecos_engines::quantum::{QuantumEngine, SparseStabEngine, StabVecEngine, StateVecEngine};
 use pecos_engines::{ByteMessage, ControlEngine, Engine, EngineStage, QuantumSystem};
 use pecos_random::PecosRng;
@@ -150,21 +150,6 @@ fn unsupported_version_is_rejected_by_gate_consumers() {
             [0]
         );
     }
-}
-
-#[test]
-fn general_noise_returns_version_error_without_execution_or_rng_consumption() {
-    let mut noise = GeneralNoiseModel::builder().build();
-    let mut expected_rng = noise.rng().clone();
-    assert!(noise.start(unsupported_version()).is_err());
-    let mut actual_rng = noise.rng().clone();
-    assert_eq!(actual_rng.next_u64(), expected_rng.next_u64());
-    let mut system = QuantumSystem::new(Box::new(noise), Box::new(StateVecEngine::new(1)));
-    assert!(system.process(unsupported_version()).is_err());
-    assert_eq!(
-        system.process(gates(&['M'])).unwrap().outcomes().unwrap(),
-        [0]
-    );
 }
 
 /// A valid existing `NoiseModel` that applies one synthetic X at input completion.

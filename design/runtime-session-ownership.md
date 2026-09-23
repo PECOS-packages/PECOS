@@ -69,6 +69,28 @@ host trait/storage boundaries; it is not an already-compatible drop-in wrapper.
 Option 2 is useful only if live branching is a product requirement, which the
 parity study does not currently require.
 
+## Smaller placement to assess before changing host traits
+
+A separate review raised a scoped executor: `Engine::process(&mut self, ...)`
+is synchronous and exclusive. A non-Clone frame executor can borrow the persistent
+model/simulator, consume yields internally, and be dropped before process returns.
+No inspected first-milestone caller requires external suspension or an escaping
+yield token. Therefore DynClone alone does **not** prove a new host is necessary;
+the earlier blanket blocker was too strong. No pending frame would exist at an
+ordinary clone boundary. Persistent shot identity and poisoning still need explicit
+plumbing, and component clones must not share physical-handler state.
+
+Among the two requested alternatives, prefer configuration-owned execution over
+live forks. Before approving the larger option-1 migration, assess this scoped
+placement within QuantumSystem::process as its smaller implementation candidate:
+keep existing template clones, use immutable event configuration, borrow owned
+worker state per input, and add only the required shot context/reset/error hooks.
+This may avoid changing host trait bounds or introducing a new session owner.
+It is not yet proven to satisfy admission, retention or GeneralNoiseModel borrowing
+requirements. Separate review must decide that placement first; no implementation
+is authorized by this record. Do not require externally resumable tokens unless
+a concrete consumer needs them.
+
 ## Concrete route back to Python sim(), after separate review
 
 Keep one execution implementation:

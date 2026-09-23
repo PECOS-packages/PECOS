@@ -953,17 +953,18 @@ def build_surface_code_circuit(
         twirl.validate_runtime_supported()
     twirl_site_schedule = None if twirl is None else twirl.site_schedule
 
-    if (
-        resolved_plan.interaction_basis == "cx"
-        and effective_ancilla_budget == total_ancilla
-        and twirl is None
-        and clifford_frame_policy is None
-    ):
-        from pecos.qec.surface.gadgets import default_allocation, memory_gadgets
+    if resolved_plan.interaction_basis == "cx" and twirl is None and clifford_frame_policy is None:
+        from pecos.qec.surface.gadgets import memory_gadgets
 
-        allocation = default_allocation(patch)
-        gadgets = memory_gadgets(patch, num_rounds, basis, allocation=allocation, round_order=cnot_round_order)
-        return [step for gadget in gadgets for step in gadget.steps], allocation
+        gadgets = memory_gadgets(
+            patch,
+            num_rounds,
+            basis,
+            round_order=cnot_round_order,
+            ancilla_budget=ancilla_budget,
+            ancilla_schedule=ancilla_schedule,
+        )
+        return [step for gadget in gadgets for step in gadget.steps], gadgets[0].allocations[0]
 
     # Qubit allocation layout. Under ancilla reuse, stabilizers map onto a
     # shared ancilla pool and different stabilizers can intentionally share the
@@ -1981,7 +1982,7 @@ class GuppyRenderer(CircuitRenderer):
     def render(
         self,
         _ops: list[SurfaceCircuitStep],
-        _allocation: QubitAllocation,
+        allocation: QubitAllocation,
         patch: SurfacePatch,
         _num_rounds: int,
         _basis: str,
@@ -2000,6 +2001,11 @@ class GuppyRenderer(CircuitRenderer):
         """
         from pecos.guppy_gen.gadget_render import render_surface_gadget_module
         from pecos.guppy_gen.surface import generate_guppy_source
+
+        ancillas = allocation.x_ancilla_qubits + allocation.z_ancilla_qubits
+        if len(set(ancillas)) < len(ancillas):
+            msg = "GuppyRenderer cannot honour ancilla_budget; use render_surface_gadget_module with ancilla_budget"
+            raise ValueError(msg)
 
         resolved_plan = resolve_surface_check_plan(interaction_basis=interaction_basis)
         if resolved_plan.interaction_basis == "cx":

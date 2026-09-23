@@ -50,9 +50,11 @@ native runtime clones mix reconstruction with copied bookkeeping. The scheduler
 needs fresh workers; other legacy callers preserve selected live state.
 
 #827 remains paused. Do not add a host interface or expand the prototype before
-that record receives separate review. The recommended configuration/session
-separation must integrate into the existing SimBuilder, MonteCarlo and HybridEngine
-route used by Python sim(), not become a disconnected Rust-only execution path.
+that record receives separate review. The latest assessment recommends a scoped non-Clone executor inside synchronous
+QuantumSystem::process, with context/recovery plumbing in the existing host.
+External suspension is not required for milestone one. Keep the SimBuilder,
+MonteCarlo and HybridEngine route used by Python sim(); no disconnected Rust-only
+execution path. This recommendation still awaits separate review.
 
 ## Proposed session decisions after host ownership is settled
 

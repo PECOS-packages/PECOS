@@ -60,7 +60,7 @@ seed, thread ID, pointer or clone-copied counters. Preserve existing RNG draws.
 
 | Choice | Minimum change and migration impact |
 |---|---|
-| **1. Configuration creates owned sessions — recommended** | Add repeatable, fallible worker construction to the existing SimBuilder/MonteCarlo path. Separate the cloneable template from the live worker used by the existing HybridEngine shot loop. Give that loop explicit shot context and abort/reset handling; own the non-Clone session there. A session cannot implement today’s DynClone-bound host traits unchanged: use an internal execution core without that bound, retaining legacy Clone wrappers/routes for existing callers. Preserve legacy builders accepting live engines; event mode requires reconstructible configuration. Do not change their clones to silently reset. |
+| **1. Configuration creates owned sessions** | Add repeatable, fallible worker construction to the existing SimBuilder/MonteCarlo path. Separate the cloneable template from the live worker used by the existing HybridEngine shot loop. Give that loop explicit shot context and abort/reset handling; own the non-Clone session there. A session cannot implement today’s DynClone-bound host traits unchanged: use an internal execution core without that bound, retaining legacy Clone wrappers/routes for existing callers. Preserve legacy builders accepting live engines; event mode requires reconstructible configuration. Do not change their clones to silently reset. |
 | **2. Explicit snapshot/fork** | Retain cloneable live execution but specify copied simulator/model/RNG/buffer state, fresh branch ownership, token/reply rebinding, fork lineage and reset behavior. Add a fallible explicit fork for components that cannot snapshot. Keep worker construction distinct. QIS dynamic threads and native runtime instances currently lack snapshot support; either add it or reject forks there. An infallible Clone cannot report that rejection, and a poisoned or fresh clone is not an honest snapshot. This requires more than copying the prototype runner. |
 
 Option 1 matches the actual scheduler use and avoids making native runtime
@@ -69,34 +69,65 @@ host trait/storage boundaries; it is not an already-compatible drop-in wrapper.
 Option 2 is useful only if live branching is a product requirement, which the
 parity study does not currently require.
 
-## Smaller placement to assess before changing host traits
+## Scoped synchronous executor evaluation — recommended for milestone one
 
-A separate review raised a scoped executor: `Engine::process(&mut self, ...)`
-is synchronous and exclusive. A non-Clone frame executor can borrow the persistent
-model/simulator, consume yields internally, and be dropped before process returns.
-No inspected first-milestone caller requires external suspension or an escaping
-yield token. Therefore DynClone alone does **not** prove a new host is necessary;
-the earlier blanket blocker was too strong. No pending frame would exist at an
-ordinary clone boundary. Persistent shot identity and poisoning still need explicit
-plumbing, and component clones must not share physical-handler state.
+**External suspension is not required.** Engine::process (engine.rs:13) takes
+an exclusive mutable borrow and returns completed output. HybridEngine::run_shot
+(hybrid/engine.rs:150–156) waits for that output before providing measurements to
+the classical controller. Monte Carlo creates its worker clones before entering
+the shot loop (monte_carlo/engine.rs:393, 422). There is no inspected caller needing
+an event token to survive process(). The first event is an unconditional synthetic
+X, not a request for asynchronous user input or processed measurement feedback.
 
-Among the two requested alternatives, prefer configuration-owned execution over
-live forks. Before approving the larger option-1 migration, assess this scoped
-placement within QuantumSystem::process as its smaller implementation candidate:
-keep existing template clones, use immutable event configuration, borrow owned
-worker state per input, and add only the required shot context/reset/error hooks.
-This may avoid changing host trait bounds or introducing a new session owner.
-It is not yet proven to satisfy admission, retention or GeneralNoiseModel borrowing
-requirements. Separate review must decide that placement first; no implementation
-is authorized by this record. Do not require externally resumable tokens unless
-a concrete consumer needs them.
+A private non-Clone executor can borrow QuantumSystem's disjoint noise-model and
+simulator fields for one call. It owns bounded frame buffers and consumes effect
+yields internally; it returns only completed results or an error. Persistent
+noise/simulator state, shot context, frame ordinal and poison status stay in the
+existing QuantumSystem across inputs. No frame or borrowing token is stored in
+that owner. Rust's exclusive borrow prevents ordinary cloning during execution;
+this is not a claim about arbitrary shared state hidden inside downstream engines.
+
+| Contract | Scoped executor | New owned-shot host |
+|---|---|---|
+| Placement and traits | Extend QuantumSystem::process with an admitted event branch; keep Engine/ControlEngine Clone bounds and the v1 route. Internal yields are not new public EngineStage values. | Requires configuration/worker construction and host-storage changes to accommodate non-Clone live sessions. |
+| Identity | Pass scheduler run/worker/local-shot context through the existing HybridEngine once after successful reset; retain it across process calls. Map QIS runtime-local IDs explicitly. Direct Rust users of event mode must establish context or receive an admission error. | Same identity source and QIS mapping required; owning a new session does not supply them automatically. |
+| Recovery | Preflight rejection leaves state/RNG/frame ordinal unchanged. Set a persistent in-progress/poison guard before mutation; clear only on successful completion. Drop or unwind releases buffers but leaves the owner poisoned. Only full classical/noise/simulator reset permits reuse. | Session abort encapsulates this, but still needs whole-host reset coordination. Neither option rolls back effects already executed. |
+| Cloning | No active frame escapes. Preserve existing model/simulator clone behavior and copy poison status; never turn a failed state into a healthy clone. For opt-in events, clear execution authorization on clone and require a new explicit context before processing, without resetting copied physics/RNG. Legacy v1 clones remain unchanged. No live fork capability is claimed. | Factory clones create fresh sessions. Existing callers preserving live components need a separate legacy route or migration. |
+| Python | Existing SimBuilder → MonteCarlo → HybridEngine → QuantumSystem path stays intact. Later expose opt-in configuration through the existing QIS wrapper. | Must migrate that same stack before Python can use it; a standalone host is insufficient. |
+
+The scoped approach is smaller, but not zero API work. QuantumSystem currently
+holds erased NoiseModel/QuantumEngine objects and exposes mutable component
+accessors (quantum_system.rs:164, 172). Event admission must be implementation-owned,
+compiled from supported configuration, with any mutable component access invalidating
+that admission before further event execution. A downcast, cached type name or
+caller capability flag is insufficient. Add a narrow default-reject capability
+entry on the existing noise boundary, or an internal checked wrapper; do not copy
+GeneralNoiseModel sampling into a competing engine. These are implementation
+choices for review, not new interfaces added by this document.
+
+Preserve one original input's start/continuation/completion lifecycle across all
+internal yields. Sample start-phase noise in the legacy order, accumulate raw
+measurements in source order, and perform readout/crosstalk continuation once at
+the original boundary. Event X observes no pending results or model state. It
+executes between intact noisy expansions without program-gate re-noising. Metadata
+cannot split idles/batches, advance RNG, or add completion. Require identical
+seeded outcomes, leakage readout, nonlinear idle behavior and relevant RNG state;
+no statistical relaxation. Physical configurations outside the checked profile
+reject. Wire validation and bounded expansion/retention remain prerequisites.
+
+This supersedes the earlier preference for a new owned-shot host as the first
+milestone. Retain that option only if a concrete future caller needs external
+suspension; live runtime snapshots are unnecessary here. The scoped recommendation
+is a source-based design assessment, not a production test result. Keep #827 draft
+and implementation paused until separate review resolves this choice.
 
 ## Concrete route back to Python sim(), after separate review
 
 Keep one execution implementation:
 
-1. Extend the existing Rust SimBuilder/MonteCarlo worker construction and
-   HybridEngine shot loop with the reviewed ownership policy. Keep GeneralNoiseModel
+1. Keep existing worker template construction; add reviewed shot context and
+   reset/error plumbing to the MonteCarlo/HybridEngine loop and scoped execution
+   inside QuantumSystem::process. Keep GeneralNoiseModel
    sampling and the existing simulator behind that loop. Introduce no second
    Rust-only runner API as the milestone’s endpoint.
 2. Carry mandatory events from QisEngine/Selene lowering to that same quantum

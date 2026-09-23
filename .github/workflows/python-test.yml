@@ -630,11 +630,10 @@ jobs:
         key: ${{ steps.cache-llvm.outputs.cache-primary-key }}
 
     - name: Build core Python packages
-      # python-ci-build-test, not python-ci-build: pytest COLLECTION imports
-      # every module under tests/, and tests/qec imports pecos_rslib_exp at
-      # module level -- without the exp wheel the whole lane dies in
-      # collection (it has failed this way on dev since the qec tests
-      # landed).
+      # python-ci-build-test, not python-ci-build: its uv sync also selects
+      # pecos-rslib-exp, so the environment is resolved for every package the
+      # lane imports. pytest COLLECTION imports every module under tests/, and
+      # tests/qec imports pecos_rslib_exp at module level.
       run: just python-ci-build-test
 
     - name: Run optional-dependency Python tests

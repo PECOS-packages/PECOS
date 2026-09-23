@@ -57,10 +57,12 @@ impl Factory {
         if plan.version != 2 || plan.records.len() > MAX_RECORDS {
             return Err(error("unsupported or oversized envelope"));
         }
+        builder.validate_configuration().map_err(error)?;
         let physical_profile = builder.simple_probabilities().is_some();
         for record in &plan.records {
             match record {
                 Record::Gate(gate) => {
+                    gate.validate().map_err(|err| error(&err))?;
                     if !matches!(
                         gate.gate_type,
                         GateType::PZ
@@ -78,6 +80,7 @@ impl Factory {
                         || (gate.gate_type == GateType::Idle && gate.params[0] < 0.0)
                         || !gate.angles.is_empty()
                         || gate.channel.is_some()
+                        || !gate.meas_ids.is_empty()
                     {
                         return Err(error("unsupported gate in frame"));
                     }
@@ -451,6 +454,24 @@ fn admission_rejects_unsupported_models_envelopes_and_physical_profiles() {
         )
         .is_err()
     );
+}
+
+#[test]
+fn admission_rejects_invalid_configuration_before_model_construction() {
+    let builder = GeneralNoiseModel::builder()
+        .with_p1(0.75)
+        .with_p1_scale(2.0);
+    assert!(builder.validate_configuration().is_err());
+    assert!(Factory::compile(general(builder), envelope(&[Gate::x(&[0])], true)).is_err());
+}
+
+#[test]
+fn admission_rejects_measurement_ids_that_positional_transport_cannot_preserve() {
+    for mut gate in [Gate::x(&[0]), Gate::mz(&[0])] {
+        gate.meas_ids.push(pecos_core::MeasId::from_raw(17));
+        let plan = envelope(&[Gate::x(&[0]), gate], false);
+        assert!(Factory::compile(general(GeneralNoiseModel::builder()), plan).is_err());
+    }
 }
 
 #[test]

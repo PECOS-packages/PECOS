@@ -54,6 +54,9 @@ validation; it is not an implementation of the proposed version-2 wire format.
 The whole envelope is checked before a runner/model/simulator is constructed:
 unknown records/tags, unsupported versions/models/physical profiles, invalid
 targets/gates and over-limit record counts fail even after a valid gate prefix.
+Noise configuration is validated before construction, including combined scales.
+Gates receive structural validation; nonempty measurement IDs are rejected because
+the prototype transport preserves positional outcomes only.
 The maximum is 128 records and two qubit slots. Native batch timing, event bytes,
 schema decoding and allocation-failure guarantees are outside this prototype.
 There is no representation for a physical event inside a simultaneous gate
@@ -68,7 +71,7 @@ seed domains. Old tokens remain invalid after reset. There is one
 frame per prototype shot; carrying state across multiple runtime inputs in a
 shot and allocating application-wide shot identities are not implemented.
 
-## Seven executable checks
+## Nine executable checks
 
 - Across 64 seeds, metadata insertion matches an ordinary whole-input
   GeneralNoiseModel execution: simulator gate trace, outcomes (including leakage
@@ -81,6 +84,8 @@ shot and allocating application-wide shot identities are not implemented.
 - Genuine general-noise crosstalk continuation emits its X exactly once, after
   all metadata yields, with the same trace/RNG as the unannotated frame.
 - Unsupported envelopes/models/profiles fail before execution is constructible.
+- Invalid combined noise scales reject before the builder can panic.
+- Measurement IDs reject before structural panics or loss of result identity.
 - Foreign/reused tokens fail; reset and four concurrent factory-created workers
   remain isolated.
 - A simulator error with a raw outcome already buffered abandons that state;

@@ -245,7 +245,7 @@ build-lite profile="debug": _msvc-bootstrap (validate-profile "build-lite" profi
 
 # Build PECOS with CUDA Python extras (profile: dev/debug, release, native)
 [group('build')]
-build-cuda profile="debug": _msvc-bootstrap (validate-profile "build-cuda" profile) setup-quiet
+build-cuda profile="debug": _msvc-bootstrap (validate-profile "build-cuda" profile) setup-quiet sync-deps
     #!/usr/bin/env bash
     set -euo pipefail
     PROFILE="{{profile}}"

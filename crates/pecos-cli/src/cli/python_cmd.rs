@@ -259,15 +259,43 @@ fn run_build(profile: &str, rustflags: Option<&str>, cuda: bool) -> Result<()> {
 
     let status = pip_cmd.status();
     match status {
-        Ok(s) if s.success() => {
-            println!("Python build completed successfully");
-            Ok(())
+        Ok(s) if s.success() => {}
+        Ok(_) => return Err(Error::Config("quantum-pecos install failed".to_string())),
+        Err(e) => {
+            return Err(Error::Config(format!(
+                "Failed to install quantum-pecos: {e}"
+            )));
         }
-        Ok(_) => Err(Error::Config("quantum-pecos install failed".to_string())),
-        Err(e) => Err(Error::Config(format!(
-            "Failed to install quantum-pecos: {e}"
-        ))),
     }
+
+    // The install above is --no-deps, so in a venv that was never synced
+    // quantum-pecos lands with its runtime dependencies absent and `import
+    // pecos` fails while the build has reported success. Refuse that state.
+    check_runtime_dependencies(&repo_root)?;
+
+    println!("Python build completed successfully");
+    Ok(())
+}
+
+/// Fail if `uv pip check` reports a missing or incompatible dependency.
+/// The report itself goes to the terminal; the error names the remedy.
+fn check_runtime_dependencies(repo_root: &Path) -> Result<()> {
+    let mut cmd = Command::new("uv");
+    cmd.args(["pip", "check"]);
+    cmd.current_dir(repo_root);
+    cmd.env_remove("CONDA_PREFIX");
+    let status = cmd
+        .status()
+        .map_err(|e| Error::Config(format!("Failed to run uv pip check: {e}")))?;
+    if status.success() {
+        return Ok(());
+    }
+    Err(Error::Config(
+        "the Python environment is missing runtime dependencies after the build (see the \
+         uv pip check report above). Run `just build`, which syncs them; `just build-lite` \
+         assumes a synced venv."
+            .to_string(),
+    ))
 }
 
 fn editable_install_command(repo_root: &Path) -> Command {

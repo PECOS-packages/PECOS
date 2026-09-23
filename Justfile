@@ -974,7 +974,7 @@ install-build-llvm: _msvc-bootstrap
             ;;
     esac
 
-# Sync Python deps (fast if already installed, skips maturin rebuilds)
+# Sync Python deps if incomplete; the extension crates are left to the CLI build
 [private]
 sync-deps:
     #!/usr/bin/env bash
@@ -985,7 +985,17 @@ sync-deps:
         exit 0
     fi
     echo "Python deps incomplete, running uv sync..."
-    SYNC_ARGS=(--project . --all-packages --locked)
+    # The extension crates that `pecos python build` installs later in `just
+    # build` are excluded here, as the python-ci-sync* recipes do: otherwise uv
+    # builds a release wheel of each one that maturin develop then replaces.
+    # An exact sync also removes any copy already in the venv, so a wheel from
+    # an earlier sync does not survive a `just build`.
+    SYNC_ARGS=(
+      --project . --all-packages --locked
+      --no-install-package pecos-rslib
+      --no-install-package pecos-rslib-exp
+      --no-install-package pecos-rslib-llvm
+    )
     # Include CUDA Python packages (cupy, cuquantum, pytket-cutensornet) when
     # the toolkit is installed AND an NVIDIA GPU is present. Pure Rust users
     # and machines without a GPU skip this -- mirrors `pecos python build`.

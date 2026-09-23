@@ -109,7 +109,7 @@ def render_gadget_function(gadget: Gadget, *, tag_scope: str | None = None) -> l
 
     def live_name(qubit: int) -> str:
         if qubit not in names:
-            msg = f"{gadget.name}: measured ancilla {qubit} has no live allocation"
+            msg = f"{gadget.name}: ancilla {qubit} has no live allocation"
             raise ValueError(msg)
         return names[qubit]
 

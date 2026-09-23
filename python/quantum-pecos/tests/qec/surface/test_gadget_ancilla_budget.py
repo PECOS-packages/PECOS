@@ -367,7 +367,7 @@ def test_use_after_measurement_has_no_live_name(op: OpType, two_registers: bool)
             kind=gadgets.GadgetKind.TWO_PATCH,
             allocations=(*part.allocations, target),
         )
-    with pytest.raises(ValueError, match=rf"{part.name}: measured ancilla {qubit} has no live allocation"):
+    with pytest.raises(ValueError, match=rf"{part.name}: ancilla {qubit} has no live allocation"):
         render_gadget_function(replace(part, steps=(alloc, measure, SurfaceCircuitStep(op, qubits))))
 
 
@@ -412,12 +412,13 @@ def test_empty_ancilla_allocation(budget: int | None) -> None:
     assert all(step.op_type != OpType.ALLOC for part in parts[1:-1] for step in part.steps)
 
 
-def test_builder_empty_ancilla_allocation() -> None:
+@pytest.mark.parametrize("basis", ["X", "Z"])
+def test_builder_empty_ancilla_allocation(basis: str) -> None:
     patch = SurfacePatch.create(distance=1)
-    circuits = [build_surface_code_circuit(patch, 2, "Z", ancilla_budget=budget) for budget in (None, 1, 2)]
+    circuits = [build_surface_code_circuit(patch, 2, basis, ancilla_budget=budget) for budget in (None, 1, 2)]
     assert circuits[0] == circuits[1] == circuits[2]
     steps, allocation = circuits[0]
     assert len(steps) == 47
     assert allocation == QubitAllocation([0], [], [])
     with pytest.raises(ValueError, match="ancilla_budget must be >= 1"):
-        build_surface_code_circuit(patch, 2, "Z", ancilla_budget=0)
+        build_surface_code_circuit(patch, 2, basis, ancilla_budget=0)

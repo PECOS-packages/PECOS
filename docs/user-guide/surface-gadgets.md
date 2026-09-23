@@ -86,14 +86,14 @@ otherwise. `round_order=None` uses the default schedule.
 | Function and remaining parameters | `GadgetKind` | Effect | Guppy sideband tags |
 |---|---|---|---|
 | `prep_gadget(..., basis=)` | `PREP` | Product preparation in Z, X, or Y; projection follows separately | None |
-| `init_syndrome_gadget(..., basis=, round_order=None, x_z_swapped=False)` | `INIT_SYNDROME` | Project the complementary family after Z or X preparation | `<label>:init:meas:<ordinal>` |
-| `syndrome_round_gadget(..., round_index=, round_order=None, x_z_swapped=False)` | `SYNDROME_ROUND` | Measure both check families | `<label>:meas:<ordinal>` |
+| `init_syndrome_gadget(..., basis=, round_order=None, x_z_swapped=False, ancilla_budget=None, ancilla_schedule=None)` | `INIT_SYNDROME` | Project the complementary family after Z or X preparation | `<label>:init:meas:<ordinal>` |
+| `syndrome_round_gadget(..., round_index=, round_order=None, x_z_swapped=False, ancilla_budget=None, ancilla_schedule=None)` | `SYNDROME_ROUND` | Measure both check families | `<label>:meas:<ordinal>` |
 | `fold_s_round_gadget(..., round_index=, x_z_swapped=False, dagger=False)` | `SYNDROME_ROUND` | Logical S or S-dagger within the default round | `<label>:meas:<ordinal>` |
 | `measure_out_gadget(..., basis=)` | `MEASURE_OUT` | Destructive Z or X data measurement | None; returns an array |
 | `logical_pauli_gadget(..., pauli=)` | `LOGICAL_PAULI` | Apply the geometry's logical X or Z string | None |
 | `transversal_layer_gadget(..., gate=)` | `TRANSVERSAL` | H exchanges X/Z orientation; SZ and SZDG are physical S layers | None |
 | `transversal_cx_gadget(ctrl_patch, ctrl_allocation, tgt_patch, tgt_allocation)` | `TWO_PATCH` | CX between corresponding data indices | None |
-| `memory_gadgets(patch, num_rounds, basis, allocation=None, round_order=None)` | List of gadget kinds | Z/X prep, initial projection, full rounds, readout | Constituent gadget tags |
+| `memory_gadgets(patch, num_rounds, basis, allocation=None, round_order=None, ancilla_budget=None, ancilla_schedule=None)` | List of gadget kinds | Z/X prep, initial projection, full rounds, readout | Constituent gadget tags |
 
 During generation the builder toggles its tracked orientation after a
 transversal H; standalone callers track orientation themselves and pass it to
@@ -128,6 +128,42 @@ steps = [step for gadget in parts for step in gadget.steps]
 tc = TickCircuitRenderer().render(steps, allocation, patch, 3, "Z")
 assert tc.num_measurements() == 37
 assert tc.num_ticks() == 34
+```
+
+`ancilla_budget` caps live ancillas without changing data-qubit lifetimes.
+`None` keeps dedicated ancillas. With a smaller budget, each batch allocates
+pool slots, rotates its X ancillas, runs the four CX layers filtered to its
+stabilizers, rotates back, measures, and ticks before the next allocation.
+`ancilla_schedule` selects `"default"` or `"balanced-data-v1"` using the shared
+batching contract. An explicit `QubitAllocation` must map stabilizers to pool
+slots for the same budget and schedule; `default_allocation` accepts both.
+The Guppy module derives its batching schedule from the CX `check_plan`;
+the gadget API takes `ancilla_budget` and `ancilla_schedule` separately.
+Returned syndrome arrays retain stabilizer-index order, while
+scalar tag ordinals follow the physical measurement order.
+
+```python
+from pecos.guppy_gen import get_num_qubits
+
+budgeted = gadgets.memory_gadgets(patch, 2, "Z", ancilla_budget=2)
+budget_allocation = budgeted[0].allocations[0]
+assert budget_allocation.data_qubits == allocation.data_qubits
+budget_tc = TickCircuitRenderer().render(
+    [step for part in budgeted for step in part.steps], budget_allocation, patch, 2, "Z"
+)
+assert budget_tc.num_ticks() == 94
+assert budget_tc.num_measurements() == 29
+live = set()
+peak = 0
+for tick_index in range(budget_tc.num_ticks()):
+    for gate in budget_tc.get_tick(tick_index).gate_batches():
+        if gate.gate_type.name == "QAlloc":
+            assert not live.intersection(gate.qubits)
+            live.update(gate.qubits)
+            peak = max(peak, len(live))
+        elif gate.gate_type.name == "MeasureFree":
+            live.difference_update(gate.qubits)
+assert peak == get_num_qubits(3, ancilla_budget=2) == 11
 ```
 
 ```python
@@ -1117,7 +1153,7 @@ for before_preparation in (True, False):
 |---|---|---|
 | `SurfacePatch.create` | `pecos.qec.surface` | Construct square or rectangular geometry |
 | `Gadget`, `GadgetKind` | `pecos.qec.surface.gadgets` | Physical definition and role |
-| `default_allocation` | `pecos.qec.surface.gadgets` | Data and dedicated ancilla registers |
+| `default_allocation` | `pecos.qec.surface.gadgets` | Data and dedicated or budgeted ancilla registers |
 | `prep_gadget`, `init_syndrome_gadget` | `pecos.qec.surface.gadgets` | Product preparation and complementary projection |
 | `syndrome_round_gadget`, `measure_out_gadget` | `pecos.qec.surface.gadgets` | Check extraction and destructive data readout |
 | `LogicalCircuitBuilder.add_logical_s`, `add_logical_sdg` | `pecos.qec.surface` | Fold syndrome segments with detectors and logical parity records |

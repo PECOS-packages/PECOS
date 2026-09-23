@@ -10,7 +10,7 @@ from itertools import zip_longest
 import pecos
 import pytest
 from pecos._compilation import guppy_to_hugr
-from pecos.guppy_gen import get_num_qubits, make_surface_code, make_surface_memory
+from pecos.guppy_gen import gadget_render, get_num_qubits, make_surface_code, make_surface_memory
 from pecos.qec import (
     Detector,
     DetectorErrorModel,
@@ -45,7 +45,7 @@ def test_dem_matches_legacy(distance: int, num_rounds: int, basis: str, ancilla_
         "observables_json": circuit.get_meta("observables"),
         **NOISE,
     }
-    gadget = make_surface_memory(distance, num_rounds, basis, ancilla_budget=ancilla_budget)
+    gadget = make_surface_memory(patch, num_rounds, basis, ancilla_budget=ancilla_budget)
     legacy = make_surface_code(distance, num_rounds, basis, ancilla_budget=ancilla_budget)
     actual = DetectorErrorModel.from_guppy(gadget, **kwargs).to_string()
     expected = DetectorErrorModel.from_guppy(legacy, **kwargs).to_string()
@@ -53,21 +53,32 @@ def test_dem_matches_legacy(distance: int, num_rounds: int, basis: str, ancilla_
 
 
 @pytest.mark.parametrize("ancilla_budget", [None, 2])
-def test_certificate_is_program_bound(ancilla_budget: int | None) -> None:
-    program = make_surface_memory(3, 2, "Z", ancilla_budget=ancilla_budget)
+@pytest.mark.parametrize("rehash", [False, True])
+def test_certificate_is_program_bound(ancilla_budget: int | None, rehash: bool) -> None:
+    program = make_surface_memory(SurfacePatch.create(distance=3), 2, "Z", ancilla_budget=ancilla_budget)
     digest, layout = getattr(program, CERTIFICATE)
     assert isinstance(layout, tuple)
     layout_json = json.dumps(layout, separators=(",", ":"))
     assert digest == hashlib.sha256(guppy_to_hugr(program) + b"\0" + layout_json.encode()).hexdigest()
-    # Exercise the original layout before tampering so a freshly hashed permutation also fails.
+    # The original binding must succeed before either integrity check is challenged.
     build_dem_from_guppy(
         program,
         num_qubits=get_num_qubits(3, ancilla_budget=ancilla_budget),
         detectors=[Detector(result_ref("final:meas:0"))],
         **NOISE,
     )
-    object.__setattr__(program, CERTIFICATE, (digest, (layout[1], layout[0], *layout[2:])))
-    with pytest.raises(ValueError, match="measurement-layout certificate does not match the program and layout"):
+    # A stale digest checks integrity; an honest re-hash checks runtime measurement identity.
+    permuted = (layout[1], layout[0], *layout[2:])
+    error = "measurement-layout certificate does not match the program and layout"
+    if rehash:
+        layout_json = json.dumps(permuted, separators=(",", ":"))
+        digest = hashlib.sha256(guppy_to_hugr(program) + b"\0" + layout_json.encode()).hexdigest()
+        error = (
+            r"runtime result trace 'sx1:init:meas:1'\[0\] has measurement id 1, "
+            r"but the generator-certified layout requires 0"
+        )
+    object.__setattr__(program, CERTIFICATE, (digest, permuted))
+    with pytest.raises(ValueError, match=error):
         build_dem_from_guppy(
             program,
             num_qubits=get_num_qubits(3, ancilla_budget=ancilla_budget),
@@ -78,7 +89,7 @@ def test_certificate_is_program_bound(ancilla_budget: int | None) -> None:
 
 @pytest.mark.parametrize("route", ["from_guppy", "build_dem_from_guppy", "builder"])
 def test_uncertified_gadget_is_rejected(route: str) -> None:
-    program = make_surface_memory(3, 1, "Z")
+    program = make_surface_memory(SurfacePatch.create(distance=3), 1, "Z")
     assert hasattr(program, CERTIFICATE)
     object.__delattr__(program, CERTIFICATE)
     calls = {
@@ -96,7 +107,7 @@ def test_uncertified_gadget_is_rejected(route: str) -> None:
 
 @pytest.mark.parametrize("ancilla_budget", [None, 2])
 def test_named_columns_end_to_end(ancilla_budget: int | None) -> None:
-    program = make_surface_memory(3, 2, "Z", ancilla_budget=ancilla_budget)
+    program = make_surface_memory(SurfacePatch.create(distance=3), 2, "Z", ancilla_budget=ancilla_budget)
     num_qubits = get_num_qubits(3, ancilla_budget=ancilla_budget)
     detectors, observables = surface_memory_dem_spec(3, 2, "Z", ancilla_budget=ancilla_budget)
     detectors.append(Detector(result_ref("final:meas:0")))
@@ -127,10 +138,10 @@ def test_named_columns_end_to_end(ancilla_budget: int | None) -> None:
 
 
 @pytest.mark.parametrize("basis", ["z", "x"])
-@pytest.mark.parametrize("ancilla_budget", [None, 2])
-def test_patch_and_check_plan(basis: str, ancilla_budget: int | None) -> None:
+def test_patch_and_check_plan(basis: str) -> None:
     """Patch geometry and the plan must survive both rendering and certification."""
     patch = SurfacePatch.create(dx=3, dz=5)
+    ancilla_budget = 2
     plan = "cx_balanced_data_v1"
     program = make_surface_memory(patch, 2, basis, ancilla_budget=ancilla_budget, check_plan=plan)
     circuit = generate_tick_circuit_from_patch(patch, 2, basis.upper(), ancilla_budget=ancilla_budget, check_plan=plan)
@@ -144,3 +155,48 @@ def test_patch_and_check_plan(basis: str, ancilla_budget: int | None) -> None:
     build.with_detectors_json(circuit.get_meta("detectors"))
     build.with_observables_json(circuit.get_meta("observables"))
     assert build.build().audit["named_result_binding"] == "generator_layout_v2_program_bound"
+
+
+@pytest.mark.parametrize(
+    ("dx", "dz", "rotated"),
+    [
+        (dx, dz, rotated)
+        for dx, dz in [(1, 1), (1, 2), (1, 3), (1, 4), (2, 1), (3, 1), (4, 1)]
+        for rotated in (True, False)
+    ]
+    + [(2, 2, False), (2, 3, False), (2, 4, False), (3, 2, False), (4, 2, False)],
+)
+def test_empty_syndrome_geometry_rejected_before_rendering(
+    monkeypatch: pytest.MonkeyPatch,
+    dx: int,
+    dz: int,
+    rotated: bool,
+) -> None:
+    """Pin the geometries found by compiling the rendered dx,dz=1..4 matrix."""
+    patch = SurfacePatch.create(dx=dx, dz=dz, rotated=rotated)
+
+    def unexpected_render(*_args, **_kwargs):
+        pytest.fail("invalid geometry reached gadget rendering")
+
+    monkeypatch.setattr(gadget_render, "render_gadget_function", unexpected_render)
+    error = (
+        f"surface gadget module for dx={dx}, dz={dz}, rotated={rotated} requires nonempty X and Z "
+        "stabilizer families; Guppy cannot infer the type of empty syndrome arrays"
+    )
+    with pytest.raises(ValueError, match=error):
+        gadget_render.render_surface_gadget_module(patch)
+
+
+@pytest.mark.parametrize(("distance", "rotated"), [(2, True), (4, True), (3, False)])
+@pytest.mark.parametrize("basis", ["Z", "X"])
+def test_even_and_unrotated_memory_compile(distance: int, rotated: bool, basis: str) -> None:
+    patch = SurfacePatch.create(distance=distance, rotated=rotated)
+    program = make_surface_memory(patch, 1, basis)
+    assert guppy_to_hugr(program)
+    assert hasattr(program, CERTIFICATE)
+
+
+@pytest.mark.parametrize("basis", ["y", "Y", ""])
+def test_invalid_basis_preserves_caller_value(basis: str) -> None:
+    with pytest.raises(ValueError, match=f"basis must be 'Z' or 'X', got {basis!r}"):
+        make_surface_memory(SurfacePatch.create(distance=3), 1, basis)

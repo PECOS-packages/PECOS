@@ -174,8 +174,10 @@ assert "def make_memory_x" in source
 
 ### Certified Guppy memory
 
-`make_surface_memory` accepts a distance or `SurfacePatch` and returns a compiled
+`make_surface_memory` accepts a `SurfacePatch` and returns a compiled
 gadget memory definition with a program-bound measurement-layout certificate.
+Memory modules require nonempty X and Z stabilizer families because Guppy
+cannot infer the type of the empty syndrome arrays emitted otherwise.
 Its layout comes from the gadget steps, including batch order when ancillas are
 reused. `build_dem_from_guppy`, `GuppyDemBuilder.build`, and
 `DetectorErrorModel.from_guppy` need this certificate for programs whose compiled
@@ -186,6 +188,7 @@ route (`LogicalCircuitBuilder.to_tick_circuit()` then
 ```python
 from pecos.guppy_gen import get_num_qubits, make_surface_code, make_surface_memory
 from pecos.qec import DetectorErrorModel
+from pecos.qec.surface import SurfacePatch
 from pecos.qec.surface.circuit_builder import generate_tick_circuit_from_patch
 
 memory_patch = SurfacePatch.create(distance=3)
@@ -1041,8 +1044,8 @@ for recipe in ("h", "cx", "sz", "t"):
 The Guppy protocol factories on this page cannot be traced into a DEM:
 they contain `comptime` loops and carry no trusted measurement-layout
 certificate. Their scoped tags serve `measurement_partition_from_trace` only,
-not DEM construction. `make_surface_code` and `make_surface_memory` programs have a generator
-certificate; these protocol factories do not. Use
+not DEM construction. `make_surface_code` and `make_surface_memory` programs
+have a generator certificate; these protocol factories do not. Use
 `LogicalCircuitBuilder.to_tick_circuit()` with `DetectorErrorModel.from_circuit`,
 or the builder's `build_dem`, for protocol DEMs.
 

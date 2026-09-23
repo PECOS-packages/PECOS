@@ -95,7 +95,6 @@ GUPPY_NAMES = (
     "guppy_d3nonrot.py.txt",
     "guppy_d5.py.txt",
     "guppy_d7.py.txt",
-    "guppy_dx1dz3.py.txt",
     "guppy_dx3dz5.py.txt",
     "guppy_dx5dz3.py.txt",
 )

@@ -41,45 +41,18 @@ each yield changes state and RNG order. The existing leakage and segmentation
 counterexamples rule that out. A future outcome-dependent event requires a
 separately reviewed sampling profile, not retroactive completion of a prefix.
 
-## Specific blocker: ownership in the production host
+## Host ownership: separate review required
 
-`Engine` and `ControlEngine` both require `DynClone`. `QuantumSystem::clone`
-deep-copies live controller and simulator state without a fallible admission
-boundary. `EngineSystem::process_as_system` has only start/continue/complete;
-there is no shot context or abort hook. `HybridEngine::run_shot` can call
-`QuantumSystem::process` repeatedly before the shot ends. Monte Carlo clones a
-hybrid template per worker, seeds it once, then resets it per shot. Its worker
-and shot indices are currently used for result ordering, not passed to the
-quantum system. `reset()` alone carries neither identity nor a successful
-whole-host reset transaction.
+See the [call-site decision record](runtime-session-ownership.md) for exact
+production references and the two migration alternatives. It supersedes the
+initial blanket characterization of engine clones as live snapshots: QIS and
+native runtime clones mix reconstruction with copied bookkeeping. The scheduler
+needs fresh workers; other legacy callers preserve selected live state.
 
-Therefore moving the non-Clone prototype runner into the existing controller
-trait does not implement the required clone/worker/multi-input contract. A local
-counter on each cloned controller can duplicate identities; treating each
-`process` call as a shot loses state across classical feedback inputs. Giving
-Clone fresh state silently changes existing snapshot behavior. These are public
-ownership choices, not additional prototype tests.
-
-Two concrete alternatives:
-
-1. **Recommended: additive owned-shot host interface.** Clone only immutable
-   compiled configuration for the event-aware route. A host supplies a unique
-   execution namespace plus worker/local-shot identity and starts an owned,
-   non-Clone session. The session retains state across inputs; only its factory
-   can create another worker/session. Add explicit begin/end/abort hooks at the
-   Rust host boundary and route the existing GeneralNoiseModel through that
-   session. Keep legacy Engine/ControlEngine cloning unchanged. This requires
-   an explicit opt-in Rust integration route, not a replacement noise framework.
-2. **Live snapshot forks through existing DynClone.** Define cloning as a fork
-   with copied quantum/noise state and RNG, a new ownership namespace, invalidated
-   external continuation tokens, and documented replay/branch semantics. This
-   keeps the trait shape but introduces observable fork behavior in clone and
-   must reconcile in-flight replies and worker-template use. It is a larger
-   contract than worker isolation and is not recommended for the first slice.
-
-Stop before implementation until the additive host route versus snapshot-fork
-contract is resolved. Do not silently remove DynClone, reset a live clone, or
-claim an unrelated standalone runner is the existing production path.
+#827 remains paused. Do not add a host interface or expand the prototype before
+that record receives separate review. The recommended configuration/session
+separation must integrate into the existing SimBuilder, MonteCarlo and HybridEngine
+route used by Python sim(), not become a disconnected Rust-only execution path.
 
 ## Proposed session decisions after host ownership is settled
 

@@ -328,7 +328,7 @@ pub struct TrellisResult {
     /// Number of probabilistic binary mechanisms or non-forced factors processed.
     pub processed_columns: usize,
     /// Number of candidate branch evaluations, counted at entry to
-    /// `merge_branch` (two per retained state for a binary column, or one per
+    /// `BranchContext::emit` (two per retained state for a binary column, or one per
     /// outcome and retained state for an N-ary column).
     /// For an escalated `BpTrellis` result, this is the total across
     /// the base attempt and every attempted rung.
@@ -510,38 +510,143 @@ struct Candidate {
     log_mass: f64,
 }
 
-#[derive(Clone, Debug)]
-struct ScoredCandidate {
-    candidate: Candidate,
-    score: f64,
-}
-
-struct PruneResult {
-    retained: BTreeMap<StateKey, f64>,
+struct PruneResult<M> {
     dropped_states: u64,
-    dropped_log_mass: f64,
+    dropped_log_mass: M,
     k_capped: bool,
     delta_pruned: bool,
 }
 
-#[derive(Clone, Debug)]
-struct IntCandidate {
-    key: StateKey,
-    log_mass: i64,
+/// Fixed-stride keys: detector words followed by logical words. Mass count is
+/// the state count, including when both word counts (and the stride) are zero.
+#[derive(Clone, Debug, Default)]
+struct StateBuffer<M> {
+    words: Vec<u64>,
+    masses: Vec<M>,
 }
 
-#[derive(Clone, Debug)]
-struct ScoredIntCandidate {
-    candidate: IntCandidate,
-    score: i64,
+impl<M: Copy> StateBuffer<M> {
+    fn clear(&mut self) {
+        self.words.clear();
+        self.masses.clear();
+    }
+
+    fn key(&self, index: usize, stride: usize) -> &[u64] {
+        &self.words[index * stride..(index + 1) * stride]
+    }
+
+    fn copy_state(&mut self, source: &Self, index: usize, stride: usize) {
+        self.words.extend_from_slice(source.key(index, stride));
+        self.masses.push(source.masses[index]);
+    }
 }
 
-struct IntPruneResult {
-    retained: BTreeMap<StateKey, i64>,
-    dropped_states: u64,
-    dropped_log_mass: i64,
-    k_capped: bool,
-    delta_pruned: bool,
+/// Both arenas and all sorting/scoring workspaces survive columns and shots.
+/// `parent` is always in ascending key order at a column boundary: expansion
+/// order determines the load-bearing left-to-right floating-point merge fold.
+#[derive(Clone, Debug, Default)]
+struct FrontierScratch<M> {
+    parent: StateBuffer<M>,
+    branches: StateBuffer<M>,
+    indices: Vec<usize>,
+    scores: Vec<M>,
+    retained: Vec<bool>,
+    detector_words: usize,
+    stride: usize,
+}
+
+impl<M: Copy> FrontierScratch<M> {
+    fn reset(&mut self, syndrome: &[u64], logical: &[u64], touched: &[u64], mass: M) {
+        self.detector_words = syndrome.len();
+        self.stride = syndrome.len() + logical.len();
+        self.parent.clear();
+        self.branches.clear();
+        self.parent.words.extend_from_slice(syndrome);
+        and_assign(&mut self.parent.words, touched);
+        self.parent.words.extend_from_slice(logical);
+        self.parent.masses.push(mass);
+    }
+
+    /// Stable sorting preserves arrival order within each equal-key run. The
+    /// first arrival is installed verbatim, and subsequent arrivals fold into
+    /// it from left to right, exactly as ordered-map entry updates did.
+    fn merge(&mut self, fold: impl Fn(M, M) -> M) {
+        self.indices.clear();
+        self.indices.extend(0..self.branches.masses.len());
+        self.indices.sort_by(|&left, &right| {
+            compare_state_words(
+                self.branches.key(left, self.stride),
+                self.branches.key(right, self.stride),
+                self.detector_words,
+            )
+        });
+        self.parent.clear();
+        for &index in &self.indices {
+            let count = self.parent.masses.len();
+            if count != 0
+                && self.parent.key(count - 1, self.stride) == self.branches.key(index, self.stride)
+            {
+                self.parent.masses[count - 1] =
+                    fold(self.parent.masses[count - 1], self.branches.masses[index]);
+            } else {
+                self.parent.copy_state(&self.branches, index, self.stride);
+            }
+        }
+    }
+
+    /// Copy in merged key order, never score order, for the next expansion.
+    fn retain(&mut self) {
+        self.branches.clear();
+        for (index, &keep) in self.retained.iter().enumerate() {
+            if keep {
+                self.branches.copy_state(&self.parent, index, self.stride);
+            }
+        }
+        std::mem::swap(&mut self.parent, &mut self.branches);
+    }
+}
+
+fn compare_state_words(left: &[u64], right: &[u64], detector_words: usize) -> Ordering {
+    compare_words_as_unsigned(&left[..detector_words], &right[..detector_words])
+        .then_with(|| compare_words_as_unsigned(&left[detector_words..], &right[detector_words..]))
+}
+
+/// A column's compatibility masks and syndrome are shared by every branch.
+struct BranchContext<'a> {
+    close_mask: &'a [u64],
+    active_mask: &'a [u64],
+    observed: &'a [u64],
+}
+
+impl BranchContext<'_> {
+    fn emit<M: Copy>(
+        &self,
+        destination: &mut StateBuffer<M>,
+        parent: &[u64],
+        toggles: Option<(&[u64], &[u64])>,
+        mass: M,
+        transitions: &mut u64,
+    ) {
+        *transitions += 1;
+        let start = destination.words.len();
+        destination.words.extend_from_slice(parent);
+        let (syndrome, logical) = destination.words[start..].split_at_mut(self.close_mask.len());
+        if let Some((detector_toggle, logical_toggle)) = toggles {
+            xor_assign(syndrome, detector_toggle);
+            xor_assign(logical, logical_toggle);
+        }
+        if syndrome
+            .iter()
+            .zip(self.observed)
+            .zip(self.close_mask)
+            .any(|((&accumulated, &expected), &closing)| (accumulated ^ expected) & closing != 0)
+        {
+            destination.words.truncate(start);
+            return;
+        }
+        and_assign(syndrome, self.active_mask);
+        destination.masses.push(mass);
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -629,6 +734,8 @@ pub struct TrellisDecoder {
     forced_syndrome: Vec<u64>,
     forced_logical: Vec<u64>,
     bp_score: Option<BpScoreState>,
+    float_frontier: FrontierScratch<f64>,
+    int_frontier: FrontierScratch<i64>,
     suffix_epochs: Vec<SuffixEpoch>,
     suffix_values: SuffixValues,
     build_seconds: f64,
@@ -843,6 +950,8 @@ impl TrellisDecoder {
             bp_score,
             suffix_epochs,
             suffix_values,
+            float_frontier: FrontierScratch::default(),
+            int_frontier: FrontierScratch::default(),
             build_seconds,
         })
     }
@@ -1036,6 +1145,8 @@ impl TrellisDecoder {
             bp_score: None,
             suffix_epochs,
             suffix_values,
+            float_frontier: FrontierScratch::default(),
+            int_frontier: FrontierScratch::default(),
             build_seconds,
         })
     }
@@ -1124,14 +1235,14 @@ impl TrellisDecoder {
             Err(error) => return TrellisDecodeAttempt::Error(error),
         };
 
-        let mut initial_syndrome = self.forced_syndrome.clone();
-        and_assign(&mut initial_syndrome, &self.touched_detectors);
-        let initial = StateKey {
-            active_syndrome: initial_syndrome,
-            logical: self.forced_logical.clone(),
-        };
-        let mut frontier = BTreeMap::from([(initial, 0.0)]);
-        let mut peak_retained_states = frontier.len();
+        let frontier = &mut self.float_frontier;
+        frontier.reset(
+            &self.forced_syndrome,
+            &self.forced_logical,
+            &self.touched_detectors,
+            0.0,
+        );
+        let mut peak_retained_states = frontier.parent.masses.len();
         let mut transitions = 0;
         let mut dropped_states = 0;
         let mut dropped_log_mass = f64::NEG_INFINITY;
@@ -1142,34 +1253,32 @@ impl TrellisDecoder {
             unreachable!("binary decode called with N-ary kernel");
         };
         for column in columns {
-            let mut merged = BTreeMap::new();
-            for (state, &log_mass) in &frontier {
+            frontier.branches.clear();
+            let branch_context = BranchContext {
+                close_mask: &column.close_mask,
+                active_mask: &column.active_mask,
+                observed: &observed,
+            };
+            for (index, &log_mass) in frontier.parent.masses.iter().enumerate() {
+                let state = frontier.parent.key(index, frontier.stride);
                 let branch_base = log_mass + column.log_one_minus_probability;
-                merge_branch(
-                    &mut merged,
-                    state.clone(),
+                branch_context.emit(
+                    &mut frontier.branches,
+                    state,
+                    None,
                     branch_base,
-                    &column.close_mask,
-                    &column.active_mask,
-                    &observed,
                     &mut transitions,
                 );
-
-                let mut taken = state.clone();
-                xor_assign(&mut taken.active_syndrome, &column.detector_toggle);
-                xor_assign(&mut taken.logical, &column.logical_toggle);
-                merge_branch(
-                    &mut merged,
-                    taken,
+                branch_context.emit(
+                    &mut frontier.branches,
+                    state,
+                    Some((&column.detector_toggle, &column.logical_toggle)),
                     branch_base + column.log_odds,
-                    &column.close_mask,
-                    &column.active_mask,
-                    &observed,
                     &mut transitions,
                 );
             }
-
-            if merged.is_empty() {
+            frontier.merge(logaddexp);
+            if frontier.parent.masses.is_empty() {
                 return TrellisDecodeAttempt::NoPath {
                     error: unexplainable_error(),
                     transitions,
@@ -1184,19 +1293,18 @@ impl TrellisDecoder {
                     .map_or(&self.suffix_values, |bp| &bp.suffix_values),
             };
             let pruned = prune(
-                merged,
+                frontier,
                 self.config.k,
                 self.config.delta,
                 self.config.score_alpha,
                 suffix_compatibility,
                 &observed,
             );
-            frontier = pruned.retained;
             dropped_states += pruned.dropped_states;
             dropped_log_mass = logaddexp(dropped_log_mass, pruned.dropped_log_mass);
             k_capped |= pruned.k_capped;
             delta_pruned |= pruned.delta_pruned;
-            if frontier.is_empty() {
+            if frontier.parent.masses.is_empty() {
                 // Pruning always retains the best-scoring candidate of a
                 // nonempty set, so an empty frontier here means the scores
                 // themselves were unusable (non-finite) -- an engine fault,
@@ -1206,12 +1314,24 @@ impl TrellisDecoder {
                     "pruning emptied a nonempty frontier; candidate scores were not finite".into(),
                 ));
             }
-            peak_retained_states = peak_retained_states.max(frontier.len());
+            peak_retained_states = peak_retained_states.max(frontier.parent.masses.len());
         }
 
         let mut terminal: Vec<Candidate> = frontier
-            .into_iter()
-            .map(|(key, log_mass)| Candidate { key, log_mass })
+            .parent
+            .masses
+            .iter()
+            .enumerate()
+            .map(|(index, &log_mass)| {
+                let words = frontier.parent.key(index, frontier.stride);
+                Candidate {
+                    key: StateKey {
+                        active_syndrome: words[..frontier.detector_words].to_vec(),
+                        logical: words[frontier.detector_words..].to_vec(),
+                    },
+                    log_mass,
+                }
+            })
             .collect();
         sort_candidates(&mut terminal);
         let winner = &terminal[0];
@@ -1274,14 +1394,14 @@ impl TrellisDecoder {
             };
         }
 
-        let mut initial_syndrome = self.forced_syndrome.clone();
-        and_assign(&mut initial_syndrome, &self.touched_detectors);
-        let initial = StateKey {
-            active_syndrome: initial_syndrome,
-            logical: self.forced_logical.clone(),
-        };
-        let mut frontier = BTreeMap::from([(initial, 0.0)]);
-        let mut peak_retained_states = frontier.len();
+        let frontier = &mut self.float_frontier;
+        frontier.reset(
+            &self.forced_syndrome,
+            &self.forced_logical,
+            &self.touched_detectors,
+            0.0,
+        );
+        let mut peak_retained_states = frontier.parent.masses.len();
         let mut transitions = 0;
         let mut dropped_states = 0;
         let mut dropped_log_mass = f64::NEG_INFINITY;
@@ -1292,25 +1412,26 @@ impl TrellisDecoder {
             unreachable!("N-ary decode called with binary kernel");
         };
         for column in columns {
-            let mut merged = BTreeMap::new();
-            for (state, &log_mass) in &frontier {
+            frontier.branches.clear();
+            let branch_context = BranchContext {
+                close_mask: &column.close_mask,
+                active_mask: &column.active_mask,
+                observed: &observed,
+            };
+            for (index, &log_mass) in frontier.parent.masses.iter().enumerate() {
+                let state = frontier.parent.key(index, frontier.stride);
                 for outcome in &column.outcomes {
-                    let mut taken = state.clone();
-                    xor_assign(&mut taken.active_syndrome, &outcome.detector_toggle);
-                    xor_assign(&mut taken.logical, &outcome.logical_toggle);
-                    merge_branch(
-                        &mut merged,
-                        taken,
+                    branch_context.emit(
+                        &mut frontier.branches,
+                        state,
+                        Some((&outcome.detector_toggle, &outcome.logical_toggle)),
                         log_mass + outcome.log_prior,
-                        &column.close_mask,
-                        &column.active_mask,
-                        &observed,
                         &mut transitions,
                     );
                 }
             }
-
-            if merged.is_empty() {
+            frontier.merge(logaddexp);
+            if frontier.parent.masses.is_empty() {
                 return TrellisDecodeAttempt::NoPath {
                     error: unexplainable_error(),
                     transitions,
@@ -1318,7 +1439,7 @@ impl TrellisDecoder {
                 };
             }
             let pruned = prune(
-                merged,
+                frontier,
                 self.config.k,
                 self.config.delta,
                 self.config.score_alpha,
@@ -1328,22 +1449,33 @@ impl TrellisDecoder {
                 },
                 &observed,
             );
-            frontier = pruned.retained;
             dropped_states += pruned.dropped_states;
             dropped_log_mass = logaddexp(dropped_log_mass, pruned.dropped_log_mass);
             k_capped |= pruned.k_capped;
             delta_pruned |= pruned.delta_pruned;
-            if frontier.is_empty() {
+            if frontier.parent.masses.is_empty() {
                 return TrellisDecodeAttempt::Error(DecoderError::InternalError(
                     "pruning emptied a nonempty frontier; candidate scores were not finite".into(),
                 ));
             }
-            peak_retained_states = peak_retained_states.max(frontier.len());
+            peak_retained_states = peak_retained_states.max(frontier.parent.masses.len());
         }
 
         let mut terminal: Vec<Candidate> = frontier
-            .into_iter()
-            .map(|(key, log_mass)| Candidate { key, log_mass })
+            .parent
+            .masses
+            .iter()
+            .enumerate()
+            .map(|(index, &log_mass)| {
+                let words = frontier.parent.key(index, frontier.stride);
+                Candidate {
+                    key: StateKey {
+                        active_syndrome: words[..frontier.detector_words].to_vec(),
+                        logical: words[frontier.detector_words..].to_vec(),
+                    },
+                    log_mass,
+                }
+            })
             .collect();
         sort_candidates(&mut terminal);
         let winner = &terminal[0];
@@ -1410,14 +1542,14 @@ impl TrellisDecoder {
             Ok(seconds) => seconds.unwrap_or(0.0),
             Err(error) => return TrellisDecodeAttempt::Error(error),
         };
-        let mut initial_syndrome = self.forced_syndrome.clone();
-        and_assign(&mut initial_syndrome, &self.touched_detectors);
-        let initial = StateKey {
-            active_syndrome: initial_syndrome,
-            logical: self.forced_logical.clone(),
-        };
-        let mut frontier = BTreeMap::from([(initial, 0_i64)]);
-        let mut peak_retained_states = frontier.len();
+        let frontier = &mut self.int_frontier;
+        frontier.reset(
+            &self.forced_syndrome,
+            &self.forced_logical,
+            &self.touched_detectors,
+            0_i64,
+        );
+        let mut peak_retained_states = frontier.parent.masses.len();
         let mut transitions = 0;
         let mut dropped_states = 0;
         let mut dropped_log_mass = INT_METRIC_NEG_INF;
@@ -1435,33 +1567,32 @@ impl TrellisDecoder {
             unreachable!("binary max-log decode called with N-ary kernel");
         };
         for column in columns {
-            let mut merged = BTreeMap::new();
-            for (state, &log_mass) in &frontier {
+            frontier.branches.clear();
+            let branch_context = BranchContext {
+                close_mask: &column.close_mask,
+                active_mask: &column.active_mask,
+                observed: &observed,
+            };
+            for (index, &log_mass) in frontier.parent.masses.iter().enumerate() {
+                let state = frontier.parent.key(index, frontier.stride);
                 let branch_base = int_metric_add(log_mass, column.log_one_minus_probability_int);
-                merge_branch_maxlog(
-                    &mut merged,
-                    state.clone(),
+                branch_context.emit(
+                    &mut frontier.branches,
+                    state,
+                    None,
                     branch_base,
-                    &column.close_mask,
-                    &column.active_mask,
-                    &observed,
                     &mut transitions,
                 );
-
-                let mut taken = state.clone();
-                xor_assign(&mut taken.active_syndrome, &column.detector_toggle);
-                xor_assign(&mut taken.logical, &column.logical_toggle);
-                merge_branch_maxlog(
-                    &mut merged,
-                    taken,
+                branch_context.emit(
+                    &mut frontier.branches,
+                    state,
+                    Some((&column.detector_toggle, &column.logical_toggle)),
                     int_metric_add(branch_base, column.log_odds_int),
-                    &column.close_mask,
-                    &column.active_mask,
-                    &observed,
                     &mut transitions,
                 );
             }
-            if merged.is_empty() {
+            frontier.merge(i64::max);
+            if frontier.parent.masses.is_empty() {
                 return TrellisDecodeAttempt::NoPath {
                     error: unexplainable_error(),
                     transitions,
@@ -1476,7 +1607,7 @@ impl TrellisDecoder {
                     .map_or(&self.suffix_values, |bp| &bp.suffix_values),
             };
             let pruned = prune_maxlog(
-                merged,
+                frontier,
                 self.config.k,
                 delta_int,
                 alpha_int,
@@ -1484,12 +1615,11 @@ impl TrellisDecoder {
                 suffix_compatibility,
                 &observed,
             );
-            frontier = pruned.retained;
             dropped_states += pruned.dropped_states;
             dropped_log_mass = dropped_log_mass.max(pruned.dropped_log_mass);
             k_capped |= pruned.k_capped;
             delta_pruned |= pruned.delta_pruned;
-            peak_retained_states = peak_retained_states.max(frontier.len());
+            peak_retained_states = peak_retained_states.max(frontier.parent.masses.len());
         }
 
         finish_maxlog_decode(
@@ -1530,14 +1660,14 @@ impl TrellisDecoder {
             };
         }
 
-        let mut initial_syndrome = self.forced_syndrome.clone();
-        and_assign(&mut initial_syndrome, &self.touched_detectors);
-        let initial = StateKey {
-            active_syndrome: initial_syndrome,
-            logical: self.forced_logical.clone(),
-        };
-        let mut frontier = BTreeMap::from([(initial, 0_i64)]);
-        let mut peak_retained_states = frontier.len();
+        let frontier = &mut self.int_frontier;
+        frontier.reset(
+            &self.forced_syndrome,
+            &self.forced_logical,
+            &self.touched_detectors,
+            0_i64,
+        );
+        let mut peak_retained_states = frontier.parent.masses.len();
         let mut transitions = 0;
         let mut dropped_states = 0;
         let mut dropped_log_mass = INT_METRIC_NEG_INF;
@@ -1555,24 +1685,26 @@ impl TrellisDecoder {
             unreachable!("N-ary max-log decode called with binary kernel");
         };
         for column in columns {
-            let mut merged = BTreeMap::new();
-            for (state, &log_mass) in &frontier {
+            frontier.branches.clear();
+            let branch_context = BranchContext {
+                close_mask: &column.close_mask,
+                active_mask: &column.active_mask,
+                observed: &observed,
+            };
+            for (index, &log_mass) in frontier.parent.masses.iter().enumerate() {
+                let state = frontier.parent.key(index, frontier.stride);
                 for outcome in &column.outcomes {
-                    let mut taken = state.clone();
-                    xor_assign(&mut taken.active_syndrome, &outcome.detector_toggle);
-                    xor_assign(&mut taken.logical, &outcome.logical_toggle);
-                    merge_branch_maxlog(
-                        &mut merged,
-                        taken,
+                    branch_context.emit(
+                        &mut frontier.branches,
+                        state,
+                        Some((&outcome.detector_toggle, &outcome.logical_toggle)),
                         int_metric_add(log_mass, outcome.log_prior_int),
-                        &column.close_mask,
-                        &column.active_mask,
-                        &observed,
                         &mut transitions,
                     );
                 }
             }
-            if merged.is_empty() {
+            frontier.merge(i64::max);
+            if frontier.parent.masses.is_empty() {
                 return TrellisDecodeAttempt::NoPath {
                     error: unexplainable_error(),
                     transitions,
@@ -1580,7 +1712,7 @@ impl TrellisDecoder {
                 };
             }
             let pruned = prune_maxlog(
-                merged,
+                frontier,
                 self.config.k,
                 delta_int,
                 alpha_int,
@@ -1591,12 +1723,11 @@ impl TrellisDecoder {
                 },
                 &observed,
             );
-            frontier = pruned.retained;
             dropped_states += pruned.dropped_states;
             dropped_log_mass = dropped_log_mass.max(pruned.dropped_log_mass);
             k_capped |= pruned.k_capped;
             delta_pruned |= pruned.delta_pruned;
-            peak_retained_states = peak_retained_states.max(frontier.len());
+            peak_retained_states = peak_retained_states.max(frontier.parent.masses.len());
         }
 
         finish_maxlog_decode(
@@ -1992,69 +2123,16 @@ fn score_int_metric(log_mass: i64, parity: i64, alpha_int: i64, scale: i32) -> i
     )
 }
 
-fn merge_branch(
-    merged: &mut BTreeMap<StateKey, f64>,
-    mut state: StateKey,
-    log_mass: f64,
-    close_mask: &[u64],
-    active_mask: &[u64],
-    observed: &[u64],
-    transitions: &mut u64,
-) {
-    *transitions += 1;
-    if state
-        .active_syndrome
-        .iter()
-        .zip(observed)
-        .zip(close_mask)
-        .any(|((&accumulated, &expected), &closing)| (accumulated ^ expected) & closing != 0)
-    {
-        return;
-    }
-    and_assign(&mut state.active_syndrome, active_mask);
-    merged
-        .entry(state)
-        .and_modify(|mass| *mass = logaddexp(*mass, log_mass))
-        .or_insert(log_mass);
-}
-
-fn merge_branch_maxlog(
-    merged: &mut BTreeMap<StateKey, i64>,
-    mut state: StateKey,
-    log_mass: i64,
-    close_mask: &[u64],
-    active_mask: &[u64],
-    observed: &[u64],
-    transitions: &mut u64,
-) {
-    *transitions += 1;
-    if state
-        .active_syndrome
-        .iter()
-        .zip(observed)
-        .zip(close_mask)
-        .any(|((&accumulated, &expected), &closing)| (accumulated ^ expected) & closing != 0)
-    {
-        return;
-    }
-    and_assign(&mut state.active_syndrome, active_mask);
-    merged
-        .entry(state)
-        .and_modify(|mass| *mass = (*mass).max(log_mass))
-        .or_insert(log_mass);
-}
-
 fn prune(
-    frontier: BTreeMap<StateKey, f64>,
+    frontier: &mut FrontierScratch<f64>,
     k: usize,
     delta: f64,
     score_alpha: f64,
     suffix_compatibility: SuffixCompatibility<'_>,
     observed: &[u64],
-) -> PruneResult {
+) -> PruneResult<f64> {
     if k == usize::MAX && delta.is_infinite() {
         return PruneResult {
-            retained: frontier,
             dropped_states: 0,
             dropped_log_mass: f64::NEG_INFINITY,
             k_capped: false,
@@ -2062,54 +2140,55 @@ fn prune(
         };
     }
 
-    let mut candidates: Vec<ScoredCandidate> = frontier
-        .into_iter()
-        .map(|(key, log_mass)| {
-            let score = if score_alpha == 0.0 {
-                log_mass
-            } else {
-                log_mass
-                    + score_alpha
-                        * suffix_compatibility_score(
-                            &key.active_syndrome,
-                            observed,
-                            suffix_compatibility,
-                        )
-            };
-            ScoredCandidate {
-                candidate: Candidate { key, log_mass },
-                score,
-            }
-        })
-        .collect();
-    candidates.sort_by(|left, right| {
-        right
-            .score
-            .total_cmp(&left.score)
-            .then_with(|| left.candidate.key.cmp(&right.candidate.key))
+    frontier.scores.clear();
+    for (index, &log_mass) in frontier.parent.masses.iter().enumerate() {
+        let syndrome = &frontier.parent.key(index, frontier.stride)[..frontier.detector_words];
+        let score = if score_alpha == 0.0 {
+            log_mass
+        } else {
+            log_mass
+                + score_alpha * suffix_compatibility_score(syndrome, observed, suffix_compatibility)
+        };
+        frontier.scores.push(score);
+    }
+    frontier.indices.clear();
+    frontier.indices.extend(0..frontier.parent.masses.len());
+    frontier.indices.sort_by(|&left, &right| {
+        frontier.scores[right]
+            .total_cmp(&frontier.scores[left])
+            .then_with(|| {
+                compare_state_words(
+                    frontier.parent.key(left, frontier.stride),
+                    frontier.parent.key(right, frontier.stride),
+                    frontier.detector_words,
+                )
+            })
     });
-    let cutoff = candidates[0].score - delta;
-    let mut retained = BTreeMap::new();
+    let cutoff = frontier.scores[frontier.indices[0]] - delta;
+    frontier.retained.clear();
+    frontier
+        .retained
+        .resize(frontier.parent.masses.len(), false);
     let mut dropped_states = 0;
     let mut dropped_log_mass = f64::NEG_INFINITY;
     let mut k_capped = false;
     let mut delta_pruned = false;
 
-    for (index, scored) in candidates.into_iter().enumerate() {
+    for (index, &candidate) in frontier.indices.iter().enumerate() {
         let within_k = index < k;
-        let within_delta = scored.score >= cutoff;
+        let within_delta = frontier.scores[candidate] >= cutoff;
         if within_k && within_delta {
-            retained.insert(scored.candidate.key, scored.candidate.log_mass);
+            frontier.retained[candidate] = true;
         } else {
             dropped_states += 1;
-            dropped_log_mass = logaddexp(dropped_log_mass, scored.candidate.log_mass);
+            dropped_log_mass = logaddexp(dropped_log_mass, frontier.parent.masses[candidate]);
             k_capped |= !within_k;
             delta_pruned |= within_k && !within_delta;
         }
     }
 
+    frontier.retain();
     PruneResult {
-        retained,
         dropped_states,
         dropped_log_mass,
         k_capped,
@@ -2118,74 +2197,75 @@ fn prune(
 }
 
 fn prune_maxlog(
-    frontier: BTreeMap<StateKey, i64>,
+    frontier: &mut FrontierScratch<i64>,
     k: usize,
     delta_int: i64,
     alpha_int: i64,
     scale: i32,
     suffix_compatibility: SuffixCompatibility<'_>,
     observed: &[u64],
-) -> IntPruneResult {
+) -> PruneResult<i64> {
     assert!(
         suffix_compatibility.values.int_metric_scale == Some(scale),
         "integer suffix scoring requires a table quantized at the decoder's metric scale"
     );
-    let mut candidates: Vec<ScoredIntCandidate> = frontier
-        .into_iter()
-        .map(|(key, log_mass)| {
-            // alpha_int == 0 must skip suffix scoring entirely, not multiply
-            // it away: fixed_mul_round* return the NEG_INF sentinel for a
-            // sentinel parity BEFORE checking multiplier == 0 (upstream-
-            // faithful order), so "0 times an ln(0) suffix row" would poison
-            // a feasible state's score and prune it. Mirrors the float
-            // path's score_alpha == 0.0 short-circuit.
-            let score = if alpha_int == 0 {
-                log_mass
-            } else {
-                let parity = suffix_compatibility_score_int(
-                    &key.active_syndrome,
-                    observed,
-                    suffix_compatibility,
-                );
-                score_int_metric(log_mass, parity, alpha_int, scale)
-            };
-            ScoredIntCandidate {
-                candidate: IntCandidate { key, log_mass },
-                score,
-            }
-        })
-        .collect();
-    // The integer path matches upstream's common score ties by preferring log
-    // mass descending before StateKey; the float path keeps this engine's order.
-    candidates.sort_by(|left, right| {
-        right
-            .score
-            .cmp(&left.score)
-            .then_with(|| right.candidate.log_mass.cmp(&left.candidate.log_mass))
-            .then_with(|| left.candidate.key.cmp(&right.candidate.key))
+    frontier.scores.clear();
+    for (index, &log_mass) in frontier.parent.masses.iter().enumerate() {
+        let syndrome = &frontier.parent.key(index, frontier.stride)[..frontier.detector_words];
+        // alpha_int == 0 must skip suffix scoring entirely, not multiply
+        // it away: fixed_mul_round* return the NEG_INF sentinel for a
+        // sentinel parity BEFORE checking multiplier == 0 (upstream-
+        // faithful order), so "0 times an ln(0) suffix row" would poison
+        // a feasible state's score and prune it. Mirrors the float
+        // path's score_alpha == 0.0 short-circuit.
+        let score = if alpha_int == 0 {
+            log_mass
+        } else {
+            let parity = suffix_compatibility_score_int(syndrome, observed, suffix_compatibility);
+            score_int_metric(log_mass, parity, alpha_int, scale)
+        };
+        frontier.scores.push(score);
+    }
+    frontier.indices.clear();
+    frontier.indices.extend(0..frontier.parent.masses.len());
+    // Preserve the integer score tie-break: mass descending, then key.
+    frontier.indices.sort_by(|&left, &right| {
+        frontier.scores[right]
+            .cmp(&frontier.scores[left])
+            .then_with(|| frontier.parent.masses[right].cmp(&frontier.parent.masses[left]))
+            .then_with(|| {
+                compare_state_words(
+                    frontier.parent.key(left, frontier.stride),
+                    frontier.parent.key(right, frontier.stride),
+                    frontier.detector_words,
+                )
+            })
     });
-    let cutoff = candidates[0].score.saturating_sub(delta_int);
-    let mut retained = BTreeMap::new();
+    let cutoff = frontier.scores[frontier.indices[0]].saturating_sub(delta_int);
+    frontier.retained.clear();
+    frontier
+        .retained
+        .resize(frontier.parent.masses.len(), false);
     let mut dropped_states = 0;
     let mut dropped_log_mass = INT_METRIC_NEG_INF;
     let mut k_capped = false;
     let mut delta_pruned = false;
 
-    for (index, scored) in candidates.into_iter().enumerate() {
+    for (index, &candidate) in frontier.indices.iter().enumerate() {
         let within_k = index < k;
-        let within_delta = scored.score >= cutoff;
+        let within_delta = frontier.scores[candidate] >= cutoff;
         if within_k && within_delta {
-            retained.insert(scored.candidate.key, scored.candidate.log_mass);
+            frontier.retained[candidate] = true;
         } else {
             dropped_states += 1;
-            dropped_log_mass = dropped_log_mass.max(scored.candidate.log_mass);
+            dropped_log_mass = dropped_log_mass.max(frontier.parent.masses[candidate]);
             k_capped |= !within_k;
             delta_pruned |= within_k && !within_delta;
         }
     }
 
-    IntPruneResult {
-        retained,
+    frontier.retain();
+    PruneResult {
         dropped_states,
         dropped_log_mass,
         k_capped,
@@ -2341,17 +2421,19 @@ fn suffix_compatibility_score_int(
 }
 
 fn finish_maxlog_decode(
-    frontier: BTreeMap<StateKey, i64>,
+    frontier: &FrontierScratch<i64>,
     scale: i32,
     stats: MaxLogDecodeStats,
 ) -> TrellisDecodeAttempt {
     let mut terminal_by_logical = BTreeMap::<Vec<u64>, i64>::new();
-    for (key, log_mass) in frontier {
+    for (index, &log_mass) in frontier.parent.masses.iter().enumerate() {
+        let logical =
+            frontier.parent.key(index, frontier.stride)[frontier.detector_words..].to_vec();
         // The final column closes every active detector, so StateKey uniqueness
         // already implies one terminal entry per logical label. Upstream's
         // per-label MAX fold is therefore a no-op in this representation.
         assert!(
-            terminal_by_logical.insert(key.logical, log_mass).is_none(),
+            terminal_by_logical.insert(logical, log_mass).is_none(),
             "terminal boundary states must be unique per logical label"
         );
     }
@@ -2505,6 +2587,47 @@ mod tests {
         merge_indistinguishable_columns, quantize_metric,
     };
     use std::collections::BTreeMap;
+
+    #[test]
+    fn flat_merge_preserves_branch_arrival_fold_order() {
+        let (first, second, third) = (-0.1, -0.2, -1.0);
+        let expected = logaddexp(logaddexp(first, second), third);
+        let right_associated = logaddexp(first, logaddexp(second, third));
+        let reordered = logaddexp(logaddexp(first, third), second);
+        assert_ne!(expected.to_bits(), right_associated.to_bits());
+        assert_ne!(expected.to_bits(), reordered.to_bits());
+
+        let mut frontier = super::FrontierScratch::<f64>::default();
+        frontier.reset(&[0, 0], &[0], &[0, 0], 0.0);
+        let context = super::BranchContext {
+            close_mask: &[0, 0],
+            active_mask: &[u64::MAX, u64::MAX],
+            observed: &[0, 0],
+        };
+        let mut transitions = 0;
+        // Interleave other keys so sorting must move the colliding arrivals.
+        // Detector words compare most-significant first, before logical words.
+        for (key, mass) in [
+            ([0, 1, 0], -4.0),
+            ([1, 0, 1], first),
+            ([1, 0, 0], -5.0),
+            ([1, 0, 1], second),
+            ([0, 1, 0], -6.0),
+            ([1, 0, 1], third),
+        ] {
+            context.emit(&mut frontier.branches, &key, None, mass, &mut transitions);
+        }
+        frontier.merge(logaddexp);
+        assert_eq!(transitions, 6);
+        assert_eq!(frontier.parent.masses.len(), 3);
+        assert_eq!(frontier.parent.words, [1, 0, 0, 1, 0, 1, 0, 1, 0]);
+        assert_eq!(frontier.parent.masses[1].to_bits(), expected.to_bits());
+        assert_ne!(
+            frontier.parent.masses[1].to_bits(),
+            right_associated.to_bits()
+        );
+        assert_ne!(frontier.parent.masses[1].to_bits(), reordered.to_bits());
+    }
 
     #[test]
     fn suffix_epochs_match_direct_recomputation() {

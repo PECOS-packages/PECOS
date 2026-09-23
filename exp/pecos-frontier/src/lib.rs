@@ -24,9 +24,9 @@
 use pecos_decoder_core::ObservableDecoder;
 pub use pecos_trellis::factor::{Factor, FactorModel, Outcome};
 pub use pecos_trellis::{
-    DecoderError, MetricMode, ObsMask, SparseDem, TrellisOrdering, backward_deadline_column_order,
-    backward_deadline_column_order_for_factors, deadline_column_order,
-    deadline_column_order_for_factors,
+    DecoderError, MetricMode, ObsMask, SparseDem, TrellisOrdering, TrellisStreamingDecoder,
+    backward_deadline_column_order, backward_deadline_column_order_for_factors,
+    deadline_column_order, deadline_column_order_for_factors,
 };
 use std::cmp::Ordering;
 use std::time::Instant;

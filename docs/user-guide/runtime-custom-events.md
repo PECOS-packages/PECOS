@@ -34,10 +34,18 @@ runtime.set_custom_event_handler(|event| {
 ```
 
 Handlers run synchronously during lowering, after the plugin callback has returned
-and final batch timing is available. Handler errors propagate in both policies.
+and final batch timing is available. This is callback emission order during
+lowering, not execution-time interleaving: preceding gates or measurements may
+not yet have been simulated. No measurement outcome or before/after execution
+phase is supplied. Handler errors propagate in both policies.
 A rejected event remains available through `custom_events()` for diagnosis.
-After an error, abandon the failed execution and reset before another shot;
-handler side effects and preceding scheduling changes are not rolled back.
+A failed callback batch, batch-conversion error, or handler error latches a terminal
+failure in the runtime. Further lowering, draining, measurement updates, and shot
+completion/start fail until `QisRuntime::reset()` succeeds. Draining captured
+events, changing policy/handler, or cloning does not clear the failure. Handler
+panics unwind in Rust outside the C callback; if a caller catches one, the runtime
+still requires reset. Handler side effects and preceding scheduling changes are
+not rolled back.
 Handlers are shared across runtime clones and must be thread-safe. Prefer
 stateless handlers: PECOS does not reset state captured by a closure.
 
@@ -45,7 +53,15 @@ stateless handlers: PECOS does not reset state captured by a closure.
 drains them without changing the batch numbering. Shot start and runtime reset
 clear the history and numbering. Shot end retains history until the next start.
 Capturing retains payload memory, so direct users processing large streams can
-periodically drain it. Clones copy history independently and share the handler.
+periodically drain it between lowering calls. There is no hard retention limit,
+and one lowering call may drain many runtime batches before returning. Clones
+copy history independently and share the handler. Events do not carry a shot or
+worker ID; a shared handler must not infer such identity from batch ordinals.
+
+Configure a runtime before moving it into `qis_engine().runtime(runtime)`. Once
+owned by the engine, the runtime history accessors are not exposed through
+`QisRuntime`; use the configured handler for external observation. A handler
+does not drain the retained history or provide bounded-memory streaming.
 
 This is a Rust runtime transport and metadata-handling interface. It does not
 serialize events into operation traces, expose Python handler configuration, or
@@ -61,6 +77,8 @@ The callback layout and payload lifetime follow the pinned Selene 0.3
 bytes for the callback duration, and PECOS owns its copy thereafter. Null with a
 nonzero length and lengths above `isize::MAX` produce an FFI error after the
 callback returns. Zero-length payloads accept null. Allocation failures are
-recorded without panicking across C. As with the rest of the plugin ABI, the
+recorded by fallible payload/operation-vector reservations, and later callbacks
+stop appending after the first batch error. This does not promise recovery from
+all process-wide out-of-memory conditions. As with the rest of the plugin ABI, the
 plugin must return the supplied live instance pointer and valid non-null payload
 allocations; arbitrary dangling foreign pointers cannot be validated by PECOS.

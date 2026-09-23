@@ -245,7 +245,7 @@ build-lite profile="debug": _msvc-bootstrap (validate-profile "build-lite" profi
 
 # Build PECOS with CUDA Python extras (profile: dev/debug, release, native)
 [group('build')]
-build-cuda profile="debug": _msvc-bootstrap (validate-profile "build-cuda" profile) setup-quiet sync-deps
+build-cuda profile="debug": _msvc-bootstrap (validate-profile "build-cuda" profile) setup-quiet
     #!/usr/bin/env bash
     set -euo pipefail
     PROFILE="{{profile}}"
@@ -966,9 +966,12 @@ install-build-llvm: _msvc-bootstrap
 sync-deps:
     #!/usr/bin/env bash
     set -euo pipefail
-    # Quick check: ensure the packages used by the default dev/test lane are importable.
-    # This catches newly added workspace members that an older .venv may be missing.
-    if uv run --frozen python -c "import importlib.util, sys; required = ('pecos', 'pecos_rslib', 'pecos_selene_stab_vec', 'pecos_selene_stabilizer', 'pecos_selene_statevec', 'pecos_selene_stab_mps', 'pecos_selene_mast'); missing = [name for name in required if importlib.util.find_spec(name) is None]; sys.exit(1 if missing else 0)" 2>/dev/null; then
+    # Quick check: the packages used by the default dev/test lane are importable
+    # (catches newly added workspace members an older .venv lacks) and every
+    # installed package has its dependencies (catches a venv that was never
+    # synced, which is what `pecos python build` refuses at the end).
+    if uv run --frozen python -c "import importlib.util, sys; required = ('pecos', 'pecos_rslib', 'pecos_selene_stab_vec', 'pecos_selene_stabilizer', 'pecos_selene_statevec', 'pecos_selene_stab_mps', 'pecos_selene_mast'); missing = [name for name in required if importlib.util.find_spec(name) is None]; sys.exit(1 if missing else 0)" 2>/dev/null \
+        && uv pip check >/dev/null 2>&1; then
         exit 0
     fi
     echo "Python deps incomplete, running uv sync..."

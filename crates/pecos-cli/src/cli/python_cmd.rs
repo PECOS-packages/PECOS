@@ -291,9 +291,9 @@ fn check_runtime_dependencies(repo_root: &Path) -> Result<()> {
         return Ok(());
     }
     Err(Error::Config(
-        "the Python environment is missing runtime dependencies after the build (see the \
-         uv pip check report above). Run `just build`, which syncs them; `just build-lite` \
-         assumes a synced venv."
+        "the Python environment has missing or incompatible dependencies after the build \
+         (see the uv pip check report above). Run `just build`, which syncs the \
+         environment; `just build-lite` assumes a synced venv."
             .to_string(),
     ))
 }
@@ -304,8 +304,9 @@ fn editable_install_command(repo_root: &Path) -> Command {
     // such as hatchling. PyPI is already the default when none is configured.
     // `--no-deps` skips runtime dependencies, not isolated build dependencies.
     // CUDA packages are installed separately by `uv sync --group cuda12|cuda13`
-    // or `pecos cuda setup-python`. The dependency-free `[all]` extra exists
-    // regardless of CUDA toolkit major and avoids an unknown-extra warning.
+    // or `pecos cuda setup-python`. `[all]` is requested because it exists
+    // regardless of CUDA toolkit major, so no unknown-extra warning; with
+    // --no-deps it installs nothing.
     cmd.args([
         "pip",
         "install",

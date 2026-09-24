@@ -164,7 +164,7 @@ def test_direct_parallel_batch_matches_sequential():
     shots = [[rng.randrange(2) for _ in range(3)] for _ in range(1025)]
     decoder = exp.BpTrellisDecoder.from_dem(DEM, k=2, escalation_ks=[16, 32])
     sequential = decoder.decode_batch(shots)
-    parallel = decoder.decode_batch(shots, threads=4)
+    parallel = decoder.decode_batch(shots, workers=4)
     fields = (
         "log_evidence",
         "runner_up_gap",
@@ -182,9 +182,9 @@ def test_direct_parallel_batch_matches_sequential():
         assert actual.observable_flips.mask == expected.observable_flips.mask
         for field in fields:
             assert getattr(actual, field) == getattr(expected, field)
-    assert decoder.decode_batch([], threads=4) == []
-    with pytest.raises(RuntimeError, match="threads must be at least 1"):
-        decoder.decode_batch(shots, threads=0)
+    assert decoder.decode_batch([], workers=4) == []
+    with pytest.raises(RuntimeError, match="workers must be at least 1"):
+        decoder.decode_batch(shots, workers=0)
 
 
 def test_direct_parallel_batch_releases_gil():
@@ -193,6 +193,6 @@ def test_direct_parallel_batch_releases_gil():
     def decode_call(length):
         decoder = exp.BpTrellisDecoder.from_dem(synthetic_dem(length, 64))
         shots = [[0] * (length + 64) for _ in range(8)]
-        return lambda: decoder.decode_batch(shots, threads=4)
+        return lambda: decoder.decode_batch(shots, workers=4)
 
     assert_releases_gil(decode_call)

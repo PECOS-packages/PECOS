@@ -9,32 +9,32 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 /// The factory must share immutable models and allocate independent scratch.
 ///
 /// # Errors
-/// Returns `InvalidConfiguration` for zero threads or pool construction failure.
+/// Returns `InvalidConfiguration` for zero workers or pool construction failure.
 pub fn decode_batch<W, R: Send>(
     shots: &[Vec<u8>],
-    threads: usize,
+    workers: usize,
     worker: impl Fn() -> W + Sync,
     decode: impl Fn(&mut W, &[u8]) -> R + Sync,
 ) -> Result<Vec<R>, DecoderError> {
-    if threads == 0 {
+    if workers == 0 {
         return Err(DecoderError::InvalidConfiguration(
-            "threads must be at least 1".into(),
+            "workers must be at least 1".into(),
         ));
     }
-    if threads == 1 {
+    if workers == 1 {
         let mut state = worker();
         return Ok(shots.iter().map(|shot| decode(&mut state, shot)).collect());
     }
     let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(threads)
+        .num_threads(workers)
         .build()
         .map_err(|error| DecoderError::InvalidConfiguration(error.to_string()))?;
     // Mirror pecos-decoders/src/batch.rs:51-65 without a dependency on the
     // higher-level decoder aggregator: 64 shots, reduced for small batches.
-    let chunk_shots = 64.min(shots.len().div_ceil(threads)).max(1);
+    let chunk_shots = 64.min(shots.len().div_ceil(workers)).max(1);
     let cursor = AtomicUsize::new(0);
     let mut chunks: Vec<_> = pool.install(|| {
-        (0..threads)
+        (0..workers)
             .into_par_iter()
             .map(|_| {
                 let mut state = worker();

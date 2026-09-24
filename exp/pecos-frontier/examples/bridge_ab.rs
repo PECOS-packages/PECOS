@@ -19,7 +19,7 @@
 //! where mechanism order IS the processing order and `fired` lists the indices
 //! of the detectors that fired.
 //!
-//! Usage: `bridge_ab <model.json> <k> <delta> <score_alpha> [bp_score_iterations] [threads]`
+//! Usage: `bridge_ab <model.json> <k> <delta> <score_alpha> [bp_score_iterations] [workers]`
 //! Prints one `shot,predicted,truth,status,gap,log_evidence,seconds` line per
 //! shot (no-path rows leave the gap and evidence fields empty) plus a summary
 //! line.
@@ -60,7 +60,7 @@ fn main() {
         .next()
         .map_or(0, |raw| raw.parse().expect("bp_score_iterations"));
 
-    let threads: Option<usize> = args.next().map(|raw| raw.parse().expect("threads"));
+    let workers: Option<usize> = args.next().map(|raw| raw.parse().expect("workers"));
 
     let model: BridgeModel =
         serde_json::from_str(&std::fs::read_to_string(&path).expect("read model json"))
@@ -90,7 +90,7 @@ fn main() {
         model.num_observables <= 128,
         "bridge truth_logical is u128; wider observables need a format change"
     );
-    let mut batch = threads.map(|threads| {
+    let mut batch = workers.map(|workers| {
         let shots: Vec<_> = model
             .shots
             .iter()
@@ -103,7 +103,7 @@ fn main() {
             })
             .collect();
         decoder
-            .decode_batch(&shots, threads)
+            .decode_batch(&shots, workers)
             .expect("decode batch")
             .into_iter()
     });
@@ -124,7 +124,7 @@ fn main() {
             decoder.decode(&syndrome)
         };
         // Batch mode has no per-shot wall-clock measurement.
-        let shot_seconds = if threads.is_some() {
+        let shot_seconds = if workers.is_some() {
             f64::NAN
         } else {
             shot_started.elapsed().as_secs_f64()

@@ -585,17 +585,17 @@ impl PyFrontierDecoder {
     }
 
     /// Decode dense detector syndromes in input order. Defaults to sequential
-    /// execution; threads > 1 shares the model across workers and releases the GIL.
-    /// threads must be positive. Each worker owns independent decoding scratch.
-    #[pyo3(signature = (shots, *, threads=1))]
+    /// execution; workers > 1 shares the model across workers and releases the GIL.
+    /// workers must be positive. Each worker owns independent decoding scratch.
+    #[pyo3(signature = (shots, *, workers=1))]
     fn decode_batch(
         &self,
         py: Python<'_>,
         shots: Vec<Vec<u8>>,
-        threads: usize,
+        workers: usize,
     ) -> PyResult<Vec<PyFrontierResult>> {
-        let decode = || self.inner.decode_batch(&shots, threads);
-        let results = if threads > 1 {
+        let decode = || self.inner.decode_batch(&shots, workers);
+        let results = if workers > 1 {
             py.detach(decode)
         } else {
             decode()
@@ -712,17 +712,17 @@ impl PyFrontierCommitteeDecoder {
     }
 
     /// Decode dense detector syndromes in input order. Defaults to sequential
-    /// execution; threads > 1 shares the model across workers and releases the GIL.
-    /// threads must be positive. Each worker owns independent decoding scratch.
-    #[pyo3(signature = (shots, *, threads=1))]
+    /// execution; workers > 1 shares the model across workers and releases the GIL.
+    /// workers must be positive. Each worker owns independent decoding scratch.
+    #[pyo3(signature = (shots, *, workers=1))]
     fn decode_batch(
         &self,
         py: Python<'_>,
         shots: Vec<Vec<u8>>,
-        threads: usize,
+        workers: usize,
     ) -> PyResult<Vec<PyFrontierCommitteeResult>> {
-        let decode = || self.inner.decode_batch(&shots, threads);
-        let results = if threads > 1 {
+        let decode = || self.inner.decode_batch(&shots, workers);
+        let results = if workers > 1 {
             py.detach(decode)
         } else {
             decode()

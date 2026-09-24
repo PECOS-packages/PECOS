@@ -175,16 +175,16 @@ impl FrontierCommittee {
     /// Decode dense shots in input order with shared models and worker-local scratch.
     ///
     /// # Errors
-    /// Returns `InvalidConfiguration` for zero threads or pool creation failure.
+    /// Returns `InvalidConfiguration` for zero workers or pool creation failure.
     /// Individual shot errors are retained in input order.
     pub fn decode_batch(
         &self,
         shots: &[Vec<u8>],
-        threads: usize,
+        workers: usize,
     ) -> Result<Vec<Result<FrontierCommitteeResult, DecoderError>>, DecoderError> {
         pecos_trellis::batch::decode_batch(
             shots,
-            threads,
+            workers,
             || Self {
                 forward: self.forward.fresh_worker(),
                 backward: self.backward.fresh_worker(),
@@ -367,9 +367,9 @@ mod tests {
         let shots: Vec<Vec<u8>> = (0..257)
             .map(|i| (0..3).map(|bit| u8::from(i & (1 << bit) != 0)).collect())
             .collect();
-        for threads in [1, 4] {
+        for workers in [1, 4] {
             for (actual, shot) in decoder
-                .decode_batch(&shots, threads)
+                .decode_batch(&shots, workers)
                 .unwrap()
                 .into_iter()
                 .zip(&shots)

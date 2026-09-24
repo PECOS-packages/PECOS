@@ -426,8 +426,8 @@ fn parallel_batch_matches_bp_ladder_shot_for_shot() {
             .any(|result| result.as_ref().is_ok_and(|r| r.escalation_rungs_used > 0))
     );
     assert!(sequential.iter().any(Result::is_err));
-    for threads in [1, 4] {
-        let batch = decoder.decode_batch(&shots, threads).unwrap();
+    for workers in [1, 4] {
+        let batch = decoder.decode_batch(&shots, workers).unwrap();
         assert_eq!(batch.len(), shots.len());
         for (actual, expected) in batch.iter().zip(&sequential) {
             match (actual, expected) {
@@ -455,7 +455,7 @@ fn parallel_batch_matches_bp_ladder_shot_for_shot() {
                 _ => panic!("batch outcome differs"),
             }
         }
-        assert!(decoder.decode_batch(&[], threads).unwrap().is_empty());
+        assert!(decoder.decode_batch(&[], workers).unwrap().is_empty());
     }
     assert!(matches!(
         decoder.decode_batch(&[], 0),

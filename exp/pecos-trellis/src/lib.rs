@@ -1303,13 +1303,13 @@ impl TrellisDecoder {
     /// Decode dense shots in input order using independent worker scratch.
     ///
     /// # Errors
-    /// Returns `InvalidConfiguration` for zero threads or a pool creation failure.
+    /// Returns `InvalidConfiguration` for zero workers or a pool creation failure.
     pub fn decode_batch(
         &self,
         shots: &[Vec<u8>],
-        threads: usize,
+        workers: usize,
     ) -> Result<Vec<TrellisDecodeAttempt>, DecoderError> {
-        batch::decode_batch(shots, threads, || self.fresh_worker(), Self::decode_attempt)
+        batch::decode_batch(shots, workers, || self.fresh_worker(), Self::decode_attempt)
     }
 }
 

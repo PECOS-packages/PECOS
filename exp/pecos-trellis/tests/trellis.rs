@@ -1674,8 +1674,8 @@ fn batch_preserves_all_kernel_outcomes_and_shares_models() {
         )
         .unwrap();
         for mut decoder in [binary, nary] {
-            for threads in [1, 4] {
-                let batch = decoder.decode_batch(&shots, threads).unwrap();
+            for workers in [1, 4] {
+                let batch = decoder.decode_batch(&shots, workers).unwrap();
                 for (actual, shot) in batch.into_iter().zip(&shots) {
                     match (actual, decoder.decode_attempt(shot)) {
                         (
@@ -1715,7 +1715,7 @@ fn batch_preserves_all_kernel_outcomes_and_shares_models() {
                         _ => panic!("batch outcome differs"),
                     }
                 }
-                assert!(decoder.decode_batch(&[], threads).unwrap().is_empty());
+                assert!(decoder.decode_batch(&[], workers).unwrap().is_empty());
             }
             assert!(matches!(
                 decoder.decode_batch(&[], 0),

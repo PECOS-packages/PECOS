@@ -345,8 +345,8 @@ def test_decode_batch_threads_match_all_public_fields(decoder_class, metric_mode
         fields += ("direction", "forward_log_evidence", "backward_log_evidence")
     else:
         fields += ("escalation_rungs_used",)
-    sequential = decoder.decode_batch(shots, threads=1)
-    for actual_batch in (decoder.decode_batch(shots), decoder.decode_batch(shots, threads=4)):
+    sequential = decoder.decode_batch(shots, workers=1)
+    for actual_batch in (decoder.decode_batch(shots), decoder.decode_batch(shots, workers=4)):
         assert len(actual_batch) == len(sequential) == len(shots)
         for actual, expected in zip(actual_batch, sequential, strict=True):
             assert actual.observable_flips.mask == expected.observable_flips.mask
@@ -354,26 +354,26 @@ def test_decode_batch_threads_match_all_public_fields(decoder_class, metric_mode
             assert actual.observable_flips.indices() == expected.observable_flips.indices()
             for field in fields:
                 assert getattr(actual, field) == getattr(expected, field), field
-    assert decoder.decode_batch([], threads=4) == []
+    assert decoder.decode_batch([], workers=4) == []
 
 
 @pytest.mark.parametrize("decoder_class", [FrontierDecoder, FrontierCommitteeDecoder])
 @pytest.mark.parametrize("shots", [[], [[0, 0]]])
 def test_decode_batch_rejects_zero_threads(decoder_class, shots: list[list[int]]) -> None:
     decoder = decoder_class.from_dem(SMALL_DEM)
-    with pytest.raises(RuntimeError, match="threads must be at least 1"):
-        decoder.decode_batch(shots, threads=0)
+    with pytest.raises(RuntimeError, match="workers must be at least 1"):
+        decoder.decode_batch(shots, workers=0)
 
 
 @pytest.mark.parametrize("decoder_class", [FrontierDecoder, FrontierCommitteeDecoder])
-@pytest.mark.parametrize("threads", [1, 4])
+@pytest.mark.parametrize("workers", [1, 4])
 @pytest.mark.parametrize("shot", [[0], [0, 1]])
-def test_decode_batch_preserves_individual_errors(decoder_class, threads: int, shot: list[int]) -> None:
+def test_decode_batch_preserves_individual_errors(decoder_class, workers: int, shot: list[int]) -> None:
     decoder = decoder_class.from_dem("error(0.1) D0 L0\ndetector D1\n")
     with pytest.raises(RuntimeError) as individual_error:
         decoder.decode_syndrome(shot)
     with pytest.raises(RuntimeError) as batch_error:
-        decoder.decode_batch([[0, 0], shot], threads=threads)
+        decoder.decode_batch([[0, 0], shot], workers=workers)
     assert str(batch_error.value) == str(individual_error.value)
 
 

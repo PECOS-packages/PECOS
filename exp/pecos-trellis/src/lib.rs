@@ -24,6 +24,7 @@
 //! same algorithm class; that contract is maintained by a separate crate and
 //! is not a constraint this crate imposes on its callers.
 
+pub mod batch;
 pub mod factor;
 
 use factor::{FactorModel, NormalizedFactor, Outcome};
@@ -34,6 +35,7 @@ pub use pecos_decoder_core::errors::DecoderError;
 pub use pecos_decoder_core::obs_mask::ObsMask;
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
+use std::sync::Arc;
 use std::time::Instant;
 
 const WORD_BITS: usize = u64::BITS as usize;
@@ -714,7 +716,6 @@ struct MaxLogDecodeStats {
 
 #[derive(Clone, Debug)]
 struct BpScoreState {
-    graph: BpGraph,
     scratch: BpScratch,
     posterior: Vec<f64>,
     residual_syndrome: Vec<u8>,
@@ -724,15 +725,14 @@ struct BpScoreState {
 }
 
 impl BpScoreState {
-    fn new(graph: BpGraph, suffix_values: SuffixValues, num_detectors: usize) -> Self {
+    fn new(graph: &BpGraph, suffix_values: SuffixValues, num_detectors: usize) -> Self {
         debug_assert_eq!(graph.check_count(), num_detectors);
-        let scratch = BpScratch::new(&graph);
+        let scratch = BpScratch::new(graph);
         let posterior = vec![0.0; graph.mechanism_count()];
         let residual_syndrome = vec![0; graph.check_count()];
         let row_moments = vec![1.0; num_detectors];
         let column_moments = vec![0.0; graph.mechanism_count()];
         Self {
-            graph,
             scratch,
             posterior,
             residual_syndrome,
@@ -777,6 +777,39 @@ impl TrellisDecodeAttempt {
 /// Ordered, pruned dynamic-programming decoder for sparse DEMs and factor models.
 #[derive(Clone, Debug)]
 pub struct TrellisDecoder {
+    model: Arc<TrellisModel>,
+    scratch: TrellisScratch,
+}
+
+#[derive(Clone, Debug)]
+struct TrellisScratch {
+    bp_score: Option<BpScoreState>,
+    float_frontier: FrontierScratch<f64>,
+    int_frontier: FrontierScratch<i64>,
+}
+
+impl TrellisScratch {
+    fn new(model: &TrellisModel) -> Self {
+        Self {
+            bp_score: model.bp_graph.as_ref().map(|graph| {
+                BpScoreState::new(
+                    graph,
+                    SuffixValues::new(
+                        model.suffix_epochs.len(),
+                        model.suffix_values.int_metric_scale,
+                    ),
+                    model.num_detectors,
+                )
+            }),
+            float_frontier: FrontierScratch::default(),
+            int_frontier: FrontierScratch::default(),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct TrellisModel {
+    bp_graph: Option<BpGraph>,
     config: TrellisConfig,
     kernel: Kernel,
     num_detectors: usize,
@@ -785,9 +818,6 @@ pub struct TrellisDecoder {
     touched_detectors: Vec<u64>,
     forced_syndrome: Vec<u64>,
     forced_logical: Vec<u64>,
-    bp_score: Option<BpScoreState>,
-    float_frontier: FrontierScratch<f64>,
-    int_frontier: FrontierScratch<i64>,
     suffix_epochs: Vec<SuffixEpoch>,
     suffix_values: SuffixValues,
     build_seconds: f64,
@@ -985,18 +1015,9 @@ impl TrellisDecoder {
             &mut vec![1.0; dem.num_detectors],
             |column, _| column_moments[column],
         );
-        let bp_score = bp_graph.map(|graph| {
-            BpScoreState::new(
-                graph,
-                SuffixValues::new(suffix_epochs.len(), suffix_values.int_metric_scale),
-                dem.num_detectors,
-            )
-        });
 
         debug_assert_model_invariants(&columns, &touched_detectors);
-        let build_seconds = build_started.elapsed().as_secs_f64();
-
-        Ok(Self {
+        let mut model = TrellisModel {
             config,
             kernel: Kernel::Binary(columns),
             num_detectors: dem.num_detectors,
@@ -1005,12 +1026,16 @@ impl TrellisDecoder {
             touched_detectors,
             forced_syndrome,
             forced_logical,
-            bp_score,
+            bp_graph,
             suffix_epochs,
             suffix_values,
-            float_frontier: FrontierScratch::default(),
-            int_frontier: FrontierScratch::default(),
-            build_seconds,
+            build_seconds: 0.0,
+        };
+        let scratch = TrellisScratch::new(&model);
+        model.build_seconds = build_started.elapsed().as_secs_f64();
+        Ok(Self {
+            scratch,
+            model: Arc::new(model),
         })
     }
 
@@ -1190,9 +1215,7 @@ impl TrellisDecoder {
             },
         );
         debug_assert_factor_model_invariants(&columns, &touched_detectors);
-        let build_seconds = build_started.elapsed().as_secs_f64();
-
-        Ok(Self {
+        let mut model = TrellisModel {
             config,
             kernel: Kernel::Nary(columns),
             num_detectors: model.num_detectors(),
@@ -1201,19 +1224,23 @@ impl TrellisDecoder {
             touched_detectors,
             forced_syndrome,
             forced_logical,
-            bp_score: None,
+            bp_graph: None,
             suffix_epochs,
             suffix_values,
-            float_frontier: FrontierScratch::default(),
-            int_frontier: FrontierScratch::default(),
-            build_seconds,
+            build_seconds: 0.0,
+        };
+        let scratch = TrellisScratch::new(&model);
+        model.build_seconds = build_started.elapsed().as_secs_f64();
+        Ok(Self {
+            scratch,
+            model: Arc::new(model),
         })
     }
 
     /// Wall-clock seconds spent constructing this model.
     #[must_use]
     pub fn build_seconds(&self) -> f64 {
-        self.build_seconds
+        self.model.build_seconds
     }
 
     /// Addresses of this decoder's BP scoring state, if BP scoring is enabled.
@@ -1221,8 +1248,12 @@ impl TrellisDecoder {
     #[doc(hidden)]
     #[must_use]
     pub fn bp_state_addrs(&self) -> Option<(usize, usize)> {
-        self.bp_score.as_ref().map(|bp_score| {
-            let graph: &BpGraph = &bp_score.graph;
+        self.scratch.bp_score.as_ref().map(|bp_score| {
+            let graph = self
+                .model
+                .bp_graph
+                .as_ref()
+                .expect("BP scratch has a graph");
             let scratch: &BpScratch = &bp_score.scratch;
             (
                 std::ptr::from_ref(graph).addr(),
@@ -1257,17 +1288,58 @@ impl TrellisDecoder {
     /// policies.
     #[must_use]
     pub fn decode_attempt(&mut self, syndrome: &[u8]) -> TrellisDecodeAttempt {
-        match (self.config.metric_mode, &self.kernel) {
-            (MetricMode::LogSumExpFloat, Kernel::Binary(_)) => self.decode_attempt_binary(syndrome),
-            (MetricMode::LogSumExpFloat, Kernel::Nary(_)) => self.decode_attempt_nary(syndrome),
-            (MetricMode::MaxLogInt, Kernel::Binary(_)) => {
-                self.decode_attempt_binary_maxlog(syndrome)
-            }
-            (MetricMode::MaxLogInt, Kernel::Nary(_)) => self.decode_attempt_nary_maxlog(syndrome),
+        self.model.decode_attempt(&mut self.scratch, syndrome)
+    }
+
+    /// Share the immutable model with a decoder owning fresh scratch.
+    #[must_use]
+    pub fn fresh_worker(&self) -> Self {
+        Self {
+            model: Arc::clone(&self.model),
+            scratch: TrellisScratch::new(&self.model),
         }
     }
 
-    fn decode_attempt_binary(&mut self, syndrome: &[u8]) -> TrellisDecodeAttempt {
+    /// Decode dense shots in input order using independent worker scratch.
+    ///
+    /// # Errors
+    /// Returns `InvalidConfiguration` for zero workers or a pool creation failure.
+    pub fn decode_batch(
+        &self,
+        shots: &[Vec<u8>],
+        workers: usize,
+    ) -> Result<Vec<TrellisDecodeAttempt>, DecoderError> {
+        batch::decode_batch(shots, workers, || self.fresh_worker(), Self::decode_attempt)
+    }
+}
+
+impl TrellisModel {
+    fn decode_attempt(
+        &self,
+        scratch: &mut TrellisScratch,
+        syndrome: &[u8],
+    ) -> TrellisDecodeAttempt {
+        match (self.config.metric_mode, &self.kernel) {
+            (MetricMode::LogSumExpFloat, Kernel::Binary(_)) => {
+                self.decode_attempt_binary(scratch, syndrome)
+            }
+            (MetricMode::LogSumExpFloat, Kernel::Nary(_)) => {
+                self.decode_attempt_nary(scratch, syndrome)
+            }
+            (MetricMode::MaxLogInt, Kernel::Binary(_)) => {
+                self.decode_attempt_binary_maxlog(scratch, syndrome)
+            }
+            (MetricMode::MaxLogInt, Kernel::Nary(_)) => {
+                self.decode_attempt_nary_maxlog(scratch, syndrome)
+            }
+        }
+    }
+
+    fn decode_attempt_binary(
+        &self,
+        scratch: &mut TrellisScratch,
+        syndrome: &[u8],
+    ) -> TrellisDecodeAttempt {
         if syndrome.len() != self.num_detectors {
             return TrellisDecodeAttempt::Error(DecoderError::InvalidDimensions {
                 expected: self.num_detectors,
@@ -1289,12 +1361,12 @@ impl TrellisDecoder {
             };
         }
 
-        let bp_seconds = match self.refresh_bp_suffix_values(&observed) {
+        let bp_seconds = match self.refresh_bp_suffix_values(scratch, &observed) {
             Ok(seconds) => seconds.unwrap_or(0.0),
             Err(error) => return TrellisDecodeAttempt::Error(error),
         };
 
-        let frontier = &mut self.float_frontier;
+        let frontier = &mut scratch.float_frontier;
         frontier.reset(
             &self.forced_syndrome,
             &self.forced_logical,
@@ -1308,7 +1380,7 @@ impl TrellisDecoder {
         let mut k_capped = false;
         let mut delta_pruned = false;
 
-        let suffix_values = self
+        let suffix_values = scratch
             .bp_score
             .as_ref()
             .map_or(&self.suffix_values, |bp| &bp.suffix_values);
@@ -1440,7 +1512,11 @@ impl TrellisDecoder {
         })
     }
 
-    fn decode_attempt_nary(&mut self, syndrome: &[u8]) -> TrellisDecodeAttempt {
+    fn decode_attempt_nary(
+        &self,
+        scratch: &mut TrellisScratch,
+        syndrome: &[u8],
+    ) -> TrellisDecodeAttempt {
         if syndrome.len() != self.num_detectors {
             return TrellisDecodeAttempt::Error(DecoderError::InvalidDimensions {
                 expected: self.num_detectors,
@@ -1462,7 +1538,7 @@ impl TrellisDecoder {
             };
         }
 
-        let frontier = &mut self.float_frontier;
+        let frontier = &mut scratch.float_frontier;
         frontier.reset(
             &self.forced_syndrome,
             &self.forced_logical,
@@ -1592,7 +1668,11 @@ impl TrellisDecoder {
         })
     }
 
-    fn decode_attempt_binary_maxlog(&mut self, syndrome: &[u8]) -> TrellisDecodeAttempt {
+    fn decode_attempt_binary_maxlog(
+        &self,
+        scratch: &mut TrellisScratch,
+        syndrome: &[u8],
+    ) -> TrellisDecodeAttempt {
         if syndrome.len() != self.num_detectors {
             return TrellisDecodeAttempt::Error(DecoderError::InvalidDimensions {
                 expected: self.num_detectors,
@@ -1614,11 +1694,11 @@ impl TrellisDecoder {
             };
         }
 
-        let bp_seconds = match self.refresh_bp_suffix_values(&observed) {
+        let bp_seconds = match self.refresh_bp_suffix_values(scratch, &observed) {
             Ok(seconds) => seconds.unwrap_or(0.0),
             Err(error) => return TrellisDecodeAttempt::Error(error),
         };
-        let frontier = &mut self.int_frontier;
+        let frontier = &mut scratch.int_frontier;
         frontier.reset(
             &self.forced_syndrome,
             &self.forced_logical,
@@ -1639,7 +1719,7 @@ impl TrellisDecoder {
         );
         let alpha_int = quantize_metric(self.config.score_alpha, scale);
 
-        let suffix_values = self
+        let suffix_values = scratch
             .bp_score
             .as_ref()
             .map_or(&self.suffix_values, |bp| &bp.suffix_values);
@@ -1723,7 +1803,11 @@ impl TrellisDecoder {
         )
     }
 
-    fn decode_attempt_nary_maxlog(&mut self, syndrome: &[u8]) -> TrellisDecodeAttempt {
+    fn decode_attempt_nary_maxlog(
+        &self,
+        scratch: &mut TrellisScratch,
+        syndrome: &[u8],
+    ) -> TrellisDecodeAttempt {
         if syndrome.len() != self.num_detectors {
             return TrellisDecodeAttempt::Error(DecoderError::InvalidDimensions {
                 expected: self.num_detectors,
@@ -1745,7 +1829,7 @@ impl TrellisDecoder {
             };
         }
 
-        let frontier = &mut self.int_frontier;
+        let frontier = &mut scratch.int_frontier;
         frontier.reset(
             &self.forced_syndrome,
             &self.forced_logical,
@@ -1839,11 +1923,15 @@ impl TrellisDecoder {
         )
     }
 
-    fn refresh_bp_suffix_values(&mut self, observed: &[u64]) -> Result<Option<f64>, DecoderError> {
+    fn refresh_bp_suffix_values(
+        &self,
+        scratch: &mut TrellisScratch,
+        observed: &[u64],
+    ) -> Result<Option<f64>, DecoderError> {
         let Kernel::Binary(columns) = &self.kernel else {
             return Ok(None);
         };
-        let Some(bp_score) = &mut self.bp_score else {
+        let Some(bp_score) = &mut scratch.bp_score else {
             return Ok(None);
         };
 
@@ -1855,7 +1943,7 @@ impl TrellisDecoder {
                 u8::from((observed[word_index] ^ self.forced_syndrome[word_index]) & bit_mask != 0);
         }
         min_sum_bp_into(
-            &bp_score.graph,
+            self.bp_graph.as_ref().expect("BP scratch has a graph"),
             &bp_score.residual_syndrome,
             self.config.bp_score_iterations,
             BP_MIN_SUM_SCALE,
@@ -1890,7 +1978,7 @@ impl ObservableDecoder for TrellisDecoder {
     }
 
     fn decode_to_observables(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
-        if self.logical_words > 1 {
+        if self.model.logical_words > 1 {
             return Err(DecoderError::InvalidConfiguration(
                 "decoder has more than 64 observables; use decode_obs() for the wide mask".into(),
             ));
@@ -2862,7 +2950,7 @@ mod tests {
                 },
             )
             .unwrap();
-            let super::Kernel::Binary(columns) = &decoder.kernel else {
+            let super::Kernel::Binary(columns) = &decoder.model.kernel else {
                 panic!("binary DEM");
             };
             assert!(columns.last().unwrap().suffix_compatibility.is_empty());
@@ -2914,7 +3002,7 @@ mod tests {
                         .collect();
                     let compatibility = super::SuffixCompatibility {
                         rows: &column.suffix_compatibility,
-                        values: &decoder.suffix_values,
+                        values: &decoder.model.suffix_values,
                     };
                     for _ in 0..4 {
                         let observed: Vec<u64> =
@@ -3018,11 +3106,11 @@ mod tests {
                 },
             )
             .unwrap();
-            let super::Kernel::Binary(columns) = &decoder.kernel else {
+            let super::Kernel::Binary(columns) = &decoder.model.kernel else {
                 panic!("binary DEM");
             };
             assert_eq!(
-                decoder.suffix_epochs.len(),
+                decoder.model.suffix_epochs.len(),
                 dem.num_detectors
                     + columns
                         .iter()
@@ -3031,11 +3119,12 @@ mod tests {
             );
             assert_direct_suffix_values(
                 columns,
-                &decoder.suffix_values,
+                &decoder.model.suffix_values,
                 &prior_moments,
                 dem.num_detectors,
             );
             let allocation = decoder
+                .scratch
                 .bp_score
                 .as_ref()
                 .unwrap()
@@ -3045,22 +3134,23 @@ mod tests {
             for _ in 0..4 {
                 let observed = super::indices_to_words(
                     &(0..70).filter(|_| rng.random_bool(0.5)).collect::<Vec<_>>(),
-                    decoder.detector_words,
+                    decoder.model.detector_words,
                 );
                 assert!(
                     decoder
-                        .refresh_bp_suffix_values(&observed)
+                        .model
+                        .refresh_bp_suffix_values(&mut decoder.scratch, &observed)
                         .unwrap()
                         .is_some()
                 );
-                let bp = decoder.bp_score.as_ref().unwrap();
+                let bp = decoder.scratch.bp_score.as_ref().unwrap();
                 assert_eq!(allocation, bp.suffix_values.probabilities.as_ptr());
                 let moments: Vec<f64> = bp
                     .posterior
                     .iter()
                     .map(|&llr| 1.0 - 2.0 * bp_score_probability(llr))
                     .collect();
-                let super::Kernel::Binary(columns) = &decoder.kernel else {
+                let super::Kernel::Binary(columns) = &decoder.model.kernel else {
                     panic!("binary DEM");
                 };
                 assert_direct_suffix_values(

@@ -363,11 +363,33 @@ impl PyBpTrellisDecoder {
             .map_err(|error| decoder_error_to_py(&error))
     }
 
-    /// Decode a batch of dense detector syndromes in input order.
-    fn decode_batch(&mut self, shots: Vec<Vec<u8>>) -> PyResult<Vec<PyBpTrellisResult>> {
-        shots
+    /// Decode dense detector syndromes in input order. Defaults to sequential
+    /// execution; workers > 1 shares the model across workers and releases the GIL.
+    /// workers must be positive. Each worker owns independent decoding scratch.
+    #[pyo3(signature = (shots, *, workers=1))]
+    fn decode_batch(
+        &self,
+        py: Python<'_>,
+        shots: Vec<Vec<u8>>,
+        workers: usize,
+    ) -> PyResult<Vec<PyBpTrellisResult>> {
+        let decode = || self.inner.decode_batch(&shots, workers);
+        let results = if workers > 1 {
+            py.detach(decode)
+        } else {
+            decode()
+        }
+        .map_err(|error| decoder_error_to_py(&error))?;
+        results
             .into_iter()
-            .map(|syndrome| self.decode_syndrome(syndrome))
+            .map(|result| {
+                result
+                    .map(|inner| PyBpTrellisResult {
+                        inner,
+                        num_observables: self.num_observables,
+                    })
+                    .map_err(|error| decoder_error_to_py(&error))
+            })
             .collect()
     }
 

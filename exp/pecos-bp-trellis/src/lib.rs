@@ -191,6 +191,33 @@ impl BpTrellisDecoder {
         Self::from_sparse_dem(&dem, config)
     }
 
+    /// Decode dense shots in input order with shared models and worker-local scratch.
+    ///
+    /// # Errors
+    /// Returns `InvalidConfiguration` for zero workers or pool creation failure.
+    /// Individual shot errors are retained in input order.
+    pub fn decode_batch(
+        &self,
+        shots: &[Vec<u8>],
+        workers: usize,
+    ) -> Result<Vec<Result<TrellisResult, DecoderError>>, DecoderError> {
+        pecos_trellis::batch::decode_batch(
+            shots,
+            workers,
+            || Self {
+                inner: self.inner.fresh_worker(),
+                escalation: self
+                    .escalation
+                    .iter()
+                    .map(TrellisDecoder::fresh_worker)
+                    .collect(),
+                has_wide_observables: self.has_wide_observables,
+                build_seconds: self.build_seconds,
+            },
+            Self::decode,
+        )
+    }
+
     /// Decode a dense detector syndrome with the shared trellis engine.
     ///
     /// Every nonzero byte is treated as a fired detector. A no-path base

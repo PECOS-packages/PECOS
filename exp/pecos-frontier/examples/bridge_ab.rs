@@ -19,7 +19,7 @@
 //! where mechanism order IS the processing order and `fired` lists the indices
 //! of the detectors that fired.
 //!
-//! Usage: `bridge_ab <model.json> <k> <delta> <score_alpha> [bp_score_iterations]`
+//! Usage: `bridge_ab <model.json> <k> <delta> <score_alpha> [bp_score_iterations] [workers]`
 //! Prints one `shot,predicted,truth,status,gap,log_evidence,seconds` line per
 //! shot (no-path rows leave the gap and evidence fields empty) plus a summary
 //! line.
@@ -60,6 +60,8 @@ fn main() {
         .next()
         .map_or(0, |raw| raw.parse().expect("bp_score_iterations"));
 
+    let workers: Option<usize> = args.next().map(|raw| raw.parse().expect("workers"));
+
     let model: BridgeModel =
         serde_json::from_str(&std::fs::read_to_string(&path).expect("read model json"))
             .expect("parse model json");
@@ -88,6 +90,23 @@ fn main() {
         model.num_observables <= 128,
         "bridge truth_logical is u128; wider observables need a format change"
     );
+    let mut batch = workers.map(|workers| {
+        let shots: Vec<_> = model
+            .shots
+            .iter()
+            .map(|entry| {
+                let mut syndrome = vec![0; model.num_detectors];
+                for &fired in &entry.fired {
+                    syndrome[fired as usize] = 1;
+                }
+                syndrome
+            })
+            .collect();
+        decoder
+            .decode_batch(&shots, workers)
+            .expect("decode batch")
+            .into_iter()
+    });
     let mut syndrome = vec![0_u8; model.num_detectors];
     for (shot, entry) in model.shots.iter().enumerate() {
         syndrome.fill(0);
@@ -95,8 +114,21 @@ fn main() {
             syndrome[fired as usize] = 1;
         }
         let shot_started = std::time::Instant::now();
-        let outcome = decoder.decode(&syndrome);
-        let shot_seconds = shot_started.elapsed().as_secs_f64();
+        let outcome = if let Some(batch) = &mut batch {
+            match batch.next().expect("one result per shot") {
+                pecos_frontier::FrontierDecodeAttempt::Success(result) => Ok(result),
+                pecos_frontier::FrontierDecodeAttempt::NoPath { error, .. }
+                | pecos_frontier::FrontierDecodeAttempt::Error(error) => Err(error),
+            }
+        } else {
+            decoder.decode(&syndrome)
+        };
+        // Batch mode has no per-shot wall-clock measurement.
+        let shot_seconds = if workers.is_some() {
+            f64::NAN
+        } else {
+            shot_started.elapsed().as_secs_f64()
+        };
         if let Err(error) = &outcome {
             // Only a genuine no-path is a shot outcome. Anything else is an
             // engine fault, and recording it as no_path would silently skew

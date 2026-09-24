@@ -5,7 +5,8 @@ use pecos_decoders::spec::{
     BpSchedule, EnsembleConfig, FusionBlossomConfig, FusionBlossomSolverType, KMwpmConfig,
     MinSumBpConfig, MwpfConfig, MwpfSolverType, PecosUfPreset, PerturbedConfig,
     PerturbedFusionBlossomConfig, PyMatchingConfig, RelayBpConfig, RelayStoppingCriterion,
-    TesseractConfig, TesseractPreset, WindowedConfig,
+    TesseractConfig, TesseractPreset, TesseractTrellisConfig, TesseractTrellisRankingMode,
+    WindowedConfig,
 };
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
@@ -301,7 +302,7 @@ fn pymatching(correlated: bool, error_probability: Option<f64>) -> PyResult<PyDe
 }
 
 #[pyfunction]
-#[pyo3(signature = (*, preset="default", det_beam=None, beam_climbing=None, verbose=None, no_revisit_dets=None, pqlimit=None, det_penalty=None))]
+#[pyo3(signature = (*, preset="default", det_beam=None, beam_climbing=None, verbose=None, no_revisit_dets=None, pqlimit=None, det_penalty=None, merge_errors=None))]
 fn tesseract(
     preset: &str,
     det_beam: Option<i64>,
@@ -310,6 +311,7 @@ fn tesseract(
     no_revisit_dets: Option<bool>,
     pqlimit: Option<i64>,
     det_penalty: Option<f64>,
+    merge_errors: Option<bool>,
 ) -> PyResult<PyDecoderSpec> {
     let det_beam = det_beam
         .map(|value| usize_value("det_beam", value, false))
@@ -328,6 +330,7 @@ fn tesseract(
     Ok(PyDecoderSpec::new(pecos_decoders::DecoderSpec::Tesseract(
         TesseractConfig {
             preset: tesseract_preset(preset)?,
+            merge_errors,
             det_beam,
             beam_climbing,
             verbose,
@@ -336,6 +339,50 @@ fn tesseract(
             det_penalty: optional_non_negative("det_penalty", det_penalty)?,
         },
     )))
+}
+
+#[pyfunction]
+#[pyo3(signature = (*, beam_width=None, beam_eps=None, future_detcost_scale=None, verbose=None, merge_errors=None, ranking_mode=None))]
+fn tesseract_trellis(
+    beam_width: Option<i64>,
+    beam_eps: Option<f64>,
+    future_detcost_scale: Option<f64>,
+    verbose: Option<bool>,
+    merge_errors: Option<bool>,
+    ranking_mode: Option<&str>,
+) -> PyResult<PyDecoderSpec> {
+    let defaults = TesseractTrellisConfig::default();
+    Ok(PyDecoderSpec::new(
+        pecos_decoders::DecoderSpec::TesseractTrellis(TesseractTrellisConfig {
+            beam_width: beam_width
+                .map(|value| usize_value("beam_width", value, false))
+                .transpose()?
+                .unwrap_or(defaults.beam_width),
+            beam_eps: optional_non_negative("beam_eps", beam_eps)?.unwrap_or(defaults.beam_eps),
+            future_detcost_scale: optional_non_negative(
+                "future_detcost_scale",
+                future_detcost_scale,
+            )?
+            .unwrap_or(defaults.future_detcost_scale),
+            verbose: verbose.unwrap_or(defaults.verbose),
+            merge_errors: merge_errors.unwrap_or(defaults.merge_errors),
+            ranking_mode: match ranking_mode {
+                None => defaults.ranking_mode,
+                Some("mass") => TesseractTrellisRankingMode::MassOnly,
+                Some("future_detcost") => TesseractTrellisRankingMode::FutureDetcostRanked,
+                Some("future_active_detcost") => {
+                    TesseractTrellisRankingMode::FutureActiveDetcostRanked
+                }
+                Some(value) => {
+                    return Err(invalid_choice(
+                        "ranking_mode",
+                        value,
+                        "'mass', 'future_detcost', 'future_active_detcost'",
+                    ));
+                }
+            },
+        }),
+    ))
 }
 
 #[pyfunction]
@@ -646,6 +693,7 @@ fn spec_family_name(spec: &pecos_decoders::DecoderSpec) -> &'static str {
     match spec {
         pecos_decoders::DecoderSpec::PyMatching(_) => "pymatching",
         pecos_decoders::DecoderSpec::Tesseract(_) => "tesseract",
+        pecos_decoders::DecoderSpec::TesseractTrellis(_) => "tesseract_trellis",
         pecos_decoders::DecoderSpec::KMwpm(_) => "k_mwpm",
         pecos_decoders::DecoderSpec::AStar => "astar",
         pecos_decoders::DecoderSpec::AStarFull => "astar_full",
@@ -675,10 +723,50 @@ fn spec_repr(spec: &pecos_decoders::DecoderSpec) -> String {
             push_option(&mut args, "error_probability", config.error_probability);
             finish_repr("pymatching", args)
         }
+        pecos_decoders::DecoderSpec::TesseractTrellis(config) => {
+            let defaults = TesseractTrellisConfig::default();
+            let mut args = Vec::new();
+            if config.beam_width != defaults.beam_width {
+                args.push(format!("beam_width={}", config.beam_width));
+            }
+            if config.beam_eps.partial_cmp(&defaults.beam_eps) != Some(std::cmp::Ordering::Equal) {
+                args.push(format!("beam_eps={}", config.beam_eps));
+            }
+            if config
+                .future_detcost_scale
+                .partial_cmp(&defaults.future_detcost_scale)
+                != Some(std::cmp::Ordering::Equal)
+            {
+                args.push(format!(
+                    "future_detcost_scale={}",
+                    config.future_detcost_scale
+                ));
+            }
+            if config.verbose != defaults.verbose {
+                args.push(format!("verbose={}", py_bool(config.verbose)));
+            }
+            if config.merge_errors != defaults.merge_errors {
+                args.push(format!("merge_errors={}", py_bool(config.merge_errors)));
+            }
+            if config.ranking_mode != defaults.ranking_mode {
+                let name = match config.ranking_mode {
+                    TesseractTrellisRankingMode::MassOnly => "mass",
+                    TesseractTrellisRankingMode::FutureDetcostRanked => "future_detcost",
+                    TesseractTrellisRankingMode::FutureActiveDetcostRanked => {
+                        "future_active_detcost"
+                    }
+                };
+                args.push(format!("ranking_mode={name:?}"));
+            }
+            finish_repr("tesseract_trellis", args)
+        }
         pecos_decoders::DecoderSpec::Tesseract(config) => {
             let mut args = Vec::new();
             if config.preset != TesseractPreset::Default {
                 args.push(format!("preset={:?}", tesseract_preset_name(config.preset)));
+            }
+            if let Some(value) = config.merge_errors {
+                args.push(format!("merge_errors={}", py_bool(value)));
             }
             push_option(&mut args, "det_beam", config.det_beam);
             if let Some(value) = config.beam_climbing {
@@ -1003,6 +1091,7 @@ pub fn register_decoder_specs(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<PyDecoderSpec>()?;
     module.add_function(wrap_pyfunction!(pymatching, module)?)?;
     module.add_function(wrap_pyfunction!(tesseract, module)?)?;
+    module.add_function(wrap_pyfunction!(tesseract_trellis, module)?)?;
     module.add_function(wrap_pyfunction!(bp_osd, module)?)?;
     module.add_function(wrap_pyfunction!(bp_lsd, module)?)?;
     module.add_function(wrap_pyfunction!(fusion_blossom, module)?)?;

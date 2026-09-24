@@ -1977,6 +1977,9 @@ impl PyUnionFindDecoder {
 
 use pecos_decoders::{
     TesseractConfig as RustTesseractConfig, TesseractDecoder as RustTesseractDecoder,
+    TesseractTrellisConfig as RustTesseractTrellisConfig,
+    TesseractTrellisDecoder as RustTesseractTrellisDecoder,
+    TesseractTrellisRankingMode as RustTesseractTrellisRankingMode,
 };
 
 fn tesseract_config(
@@ -1987,6 +1990,7 @@ fn tesseract_config(
     no_revisit_dets: Option<bool>,
     pqlimit: Option<usize>,
     det_penalty: Option<f64>,
+    merge_errors: Option<bool>,
 ) -> Result<RustTesseractConfig, String> {
     let mut config = match preset {
         "fast" => RustTesseractConfig::fast(),
@@ -2014,6 +2018,9 @@ fn tesseract_config(
         config.det_penalty = det_penalty;
     }
 
+    if let Some(merge_errors) = merge_errors {
+        config.merge_errors = merge_errors;
+    }
     Ok(config)
 }
 
@@ -2111,6 +2118,7 @@ impl PyTesseractDecoder {
     /// * `no_revisit_dets` - Avoid revisiting detectors, reducing runtime at possible accuracy cost
     /// * `pqlimit` - Priority queue entry cap; smaller values bound memory at possible accuracy cost
     /// * `det_penalty` - Search penalty for adding detectors; larger values prune more aggressively
+    /// * `merge_errors` - Merge mechanisms with identical detector and observable symptoms
     ///
     /// # Example
     ///
@@ -2121,7 +2129,7 @@ impl PyTesseractDecoder {
     /// decoder = TesseractDecoder.from_dem(dem, preset="fast")
     /// ```
     #[staticmethod]
-    #[pyo3(signature = (dem, preset="default", det_beam=None, beam_climbing=None, verbose=None, no_revisit_dets=None, pqlimit=None, det_penalty=None))]
+    #[pyo3(signature = (dem, preset="default", det_beam=None, beam_climbing=None, verbose=None, no_revisit_dets=None, pqlimit=None, det_penalty=None, merge_errors=None))]
     fn from_dem(
         dem: &str,
         preset: &str,
@@ -2131,6 +2139,7 @@ impl PyTesseractDecoder {
         no_revisit_dets: Option<bool>,
         pqlimit: Option<i128>,
         det_penalty: Option<f64>,
+        merge_errors: Option<bool>,
     ) -> PyResult<Self> {
         let det_beam = optional_u16(det_beam, "det_beam")?;
         let pqlimit = optional_usize(pqlimit, "pqlimit")?;
@@ -2142,6 +2151,7 @@ impl PyTesseractDecoder {
             no_revisit_dets,
             pqlimit,
             det_penalty,
+            merge_errors,
         )
         .map_err(PyErr::new::<pyo3::exceptions::PyValueError, _>)?;
 
@@ -2314,6 +2324,289 @@ impl PyTesseractDecoder {
 
     fn __getattr__(&self, name: &str) -> PyResult<()> {
         Err(explicit_decode_attribute_error("TesseractDecoder", name))
+    }
+}
+
+/// Result from TesseractTrellis decoder.
+///
+/// # Attributes
+///
+/// * `observable_flips` - Observables affected by predicted errors
+/// * `observable_probability` - Surviving probability mass that flips the observable
+/// * `low_confidence` - Whether this is a low-confidence prediction
+#[pyclass(
+    name = "TesseractTrellisResult",
+    module = "pecos_rslib.decoders",
+    skip_from_py_object
+)]
+#[derive(Clone)]
+pub struct PyTesseractTrellisResult {
+    observables_mask: u64,
+    #[pyo3(get)]
+    observable_probability: f64,
+    #[pyo3(get)]
+    num_states_expanded: usize,
+    #[pyo3(get)]
+    num_states_merged: usize,
+    #[pyo3(get)]
+    max_beam_size_seen: usize,
+    #[pyo3(get)]
+    max_frontier_width_seen: usize,
+    #[pyo3(get)]
+    low_confidence: bool,
+    num_observables: usize,
+}
+
+#[pymethods]
+impl PyTesseractTrellisResult {
+    /// The decoded observable flips with the decoder's observable count.
+    #[getter]
+    fn observable_flips(&self) -> PyObservableFlips {
+        PyObservableFlips::from_mask_value(
+            pecos_decoder_core::obs_mask::ObsMask::from_u64(self.observables_mask),
+            self.num_observables,
+        )
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "TesseractTrellisResult(observable_flips=ObservableFlips(num_observables={}, mask={}), observable_probability={:.6}, low_confidence={})",
+            self.num_observables,
+            self.observables_mask,
+            self.observable_probability,
+            self.low_confidence
+        )
+    }
+}
+
+/// Tesseract trellis decoder, supporting at most one observable and a 256-detector frontier.
+#[pyclass(
+    name = "TesseractTrellisDecoder",
+    module = "pecos_rslib.decoders",
+    unsendable
+)]
+pub struct PyTesseractTrellisDecoder {
+    inner: RustTesseractTrellisDecoder,
+    dem_string: String,
+    config: RustTesseractTrellisConfig,
+}
+
+#[pymethods]
+impl PyTesseractTrellisDecoder {
+    /// Construct a trellis decoder using upstream defaults for omitted options.
+    #[staticmethod]
+    #[pyo3(signature = (dem, beam_width=None, beam_eps=None, future_detcost_scale=None, verbose=None, merge_errors=None, ranking_mode=None))]
+    fn from_dem(
+        dem: &str,
+        beam_width: Option<i128>,
+        beam_eps: Option<f64>,
+        future_detcost_scale: Option<f64>,
+        verbose: Option<bool>,
+        merge_errors: Option<bool>,
+        ranking_mode: Option<&str>,
+    ) -> PyResult<Self> {
+        let defaults = RustTesseractTrellisConfig::default();
+        let config = RustTesseractTrellisConfig {
+            beam_width: optional_usize(beam_width, "beam_width")?.unwrap_or(defaults.beam_width),
+            beam_eps: beam_eps.unwrap_or(defaults.beam_eps),
+            future_detcost_scale: future_detcost_scale.unwrap_or(defaults.future_detcost_scale),
+            verbose: verbose.unwrap_or(defaults.verbose),
+            merge_errors: merge_errors.unwrap_or(defaults.merge_errors),
+            ranking_mode: match ranking_mode {
+                None => defaults.ranking_mode,
+                Some("mass") => RustTesseractTrellisRankingMode::MassOnly,
+                Some("future_detcost") => RustTesseractTrellisRankingMode::FutureDetcostRanked,
+                Some("future_active_detcost") => {
+                    RustTesseractTrellisRankingMode::FutureActiveDetcostRanked
+                }
+                Some(value) => {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "ranking_mode has invalid value {value:?}; accepted values: 'mass', 'future_detcost', 'future_active_detcost'"
+                    )));
+                }
+            },
+        };
+
+        let dem_string = dem.to_string();
+        RustTesseractTrellisDecoder::new(dem, config.clone())
+            .map(|inner| Self {
+                inner,
+                dem_string,
+                config,
+            })
+            .map_err(decoder_runtime_error_to_py)
+    }
+
+    /// Decode detection events by summing surviving probability mass.
+    ///
+    /// # Arguments
+    ///
+    /// * `detections` - List of detector indices that fired (sparse representation)
+    ///
+    /// # Returns
+    ///
+    /// `TesseractTrellisResult` with observable flips, probability, and confidence info.
+    ///
+    /// # Example
+    ///
+    /// ```python
+    /// # Detectors 0 and 2 fired
+    /// result = decoder.decode_from_defects([0, 2])
+    /// print(f"Observable prediction: {list(result.observable_flips)}")
+    /// ```
+    fn decode_from_defects(&mut self, detections: Vec<u64>) -> PyResult<PyTesseractTrellisResult> {
+        let detections_arr = ndarray::Array1::from_vec(detections);
+        let num_observables = self.inner.num_observables();
+
+        self.inner
+            .decode_detections(&detections_arr.view())
+            .map(|result| PyTesseractTrellisResult {
+                observables_mask: result.observables_mask,
+                observable_probability: result.observable_probability,
+                num_states_expanded: result.num_states_expanded,
+                num_states_merged: result.num_states_merged,
+                max_beam_size_seen: result.max_beam_size_seen,
+                max_frontier_width_seen: result.max_frontier_width_seen,
+                low_confidence: result.low_confidence,
+                num_observables,
+            })
+            .map_err(decoder_runtime_error_to_py)
+    }
+
+    /// Decode a dense syndrome vector.
+    ///
+    /// # Arguments
+    ///
+    /// * `syndrome` - Dense syndrome vector (0 or 1 for each detector)
+    ///
+    /// # Returns
+    ///
+    /// `TesseractTrellisResult` with observables mask and probability.
+    fn decode_syndrome(&mut self, syndrome: Vec<u8>) -> PyResult<PyTesseractTrellisResult> {
+        // Convert dense syndrome to sparse detection indices
+        let detections: Vec<u64> = syndrome
+            .iter()
+            .enumerate()
+            .filter_map(|(i, &val)| if val != 0 { Some(i as u64) } else { None })
+            .collect();
+
+        self.decode_from_defects(detections)
+    }
+
+    /// Decode a batch of syndromes in parallel using multiple decoder instances.
+    ///
+    /// Creates worker decoders on background threads and distributes shots
+    /// across them. Much faster than sequential decoding for large batches.
+    ///
+    /// # Arguments
+    ///
+    /// * `syndromes` - List of dense syndrome vectors
+    /// * `num_workers` - Number of parallel workers (default: number of CPUs)
+    ///
+    /// # Returns
+    ///
+    /// List of `TesseractTrellisResult` in the same order as inputs.
+    #[pyo3(signature = (syndromes, num_workers=None))]
+    fn decode_batch(
+        &self,
+        syndromes: Vec<Vec<u8>>,
+        num_workers: Option<usize>,
+    ) -> PyResult<Vec<PyTesseractTrellisResult>> {
+        use rayon::prelude::*;
+
+        let n_workers = num_workers.unwrap_or_else(rayon::current_num_threads);
+
+        // Build a thread pool with the requested size
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(n_workers)
+            .build()
+            .map_err(decoder_runtime_error_to_py)?;
+
+        let dem_str = &self.dem_string;
+        let config = &self.config;
+        let num_observables = self.inner.num_observables();
+
+        let results: Result<Vec<_>, _> = pool.install(|| {
+            syndromes
+                .par_iter()
+                .map(|syndrome| {
+                    // Each rayon task gets its own thread-local decoder
+                    thread_local! {
+                        static DECODER: std::cell::RefCell<Option<RustTesseractTrellisDecoder>> =
+                            const { std::cell::RefCell::new(None) };
+                    }
+
+                    DECODER.with(|cell| {
+                        let mut decoder_ref = cell.borrow_mut();
+                        if decoder_ref.is_none() {
+                            *decoder_ref = Some(
+                                RustTesseractTrellisDecoder::new(dem_str, config.clone())
+                                    .map_err(|e| e.to_string())?,
+                            );
+                        }
+                        let decoder = decoder_ref.as_mut().unwrap();
+
+                        // Convert dense to sparse
+                        let detections: Vec<u64> = syndrome
+                            .iter()
+                            .enumerate()
+                            .filter_map(|(i, &val)| if val != 0 { Some(i as u64) } else { None })
+                            .collect();
+
+                        let detections_arr = ndarray::Array1::from_vec(detections);
+                        decoder
+                            .decode_detections(&detections_arr.view())
+                            .map(|r| PyTesseractTrellisResult {
+                                observables_mask: r.observables_mask,
+                                observable_probability: r.observable_probability,
+                                num_states_expanded: r.num_states_expanded,
+                                num_states_merged: r.num_states_merged,
+                                max_beam_size_seen: r.max_beam_size_seen,
+                                max_frontier_width_seen: r.max_frontier_width_seen,
+                                low_confidence: r.low_confidence,
+                                num_observables,
+                            })
+                            .map_err(|e| e.to_string())
+                    })
+                })
+                .collect()
+        });
+
+        results.map_err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>)
+    }
+
+    /// Number of detectors in the error model.
+    #[getter]
+    fn num_detectors(&self) -> usize {
+        self.inner.num_detectors()
+    }
+
+    /// Number of errors in the error model.
+    #[getter]
+    fn num_errors(&self) -> usize {
+        self.inner.num_errors()
+    }
+
+    /// Number of observables in the error model.
+    #[getter]
+    fn num_observables(&self) -> usize {
+        self.inner.num_observables()
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "TesseractTrellisDecoder(detectors={}, errors={}, observables={})",
+            self.inner.num_detectors(),
+            self.inner.num_errors(),
+            self.inner.num_observables()
+        )
+    }
+
+    fn __getattr__(&self, name: &str) -> PyResult<()> {
+        Err(explicit_decode_attribute_error(
+            "TesseractTrellisDecoder",
+            name,
+        ))
     }
 }
 
@@ -3238,6 +3531,8 @@ pub fn register_decoders_module(parent_module: &Bound<'_, PyModule>) -> PyResult
     // Search-based decoders
     decoders_module.add_class::<PyTesseractResult>()?;
     decoders_module.add_class::<PyTesseractDecoder>()?;
+    decoders_module.add_class::<PyTesseractTrellisDecoder>()?;
+    decoders_module.add_class::<PyTesseractTrellisResult>()?;
 
     // Relay BP decoders
     decoders_module.add_class::<PyRelayBpBuilder>()?;
@@ -3316,10 +3611,11 @@ mod dem_tuning_tests {
 
     #[test]
     fn tesseract_default_preset_has_documented_fields() {
-        let config = tesseract_config("default", None, None, None, None, None, None).unwrap();
+        let config = tesseract_config("default", None, None, None, None, None, None, None).unwrap();
 
-        assert_eq!(config.det_beam, u16::MAX);
+        assert_eq!(config.det_beam, 5);
         assert!(!config.beam_climbing);
+        assert!(config.merge_errors);
         assert!(config.no_revisit_dets);
         assert!(!config.verbose);
         assert_eq!(config.pqlimit, 200_000);
@@ -3328,7 +3624,7 @@ mod dem_tuning_tests {
 
     #[test]
     fn tesseract_fast_preset_has_documented_fields() {
-        let config = tesseract_config("fast", None, None, None, None, None, None).unwrap();
+        let config = tesseract_config("fast", None, None, None, None, None, None, None).unwrap();
 
         assert_eq!(config.det_beam, 5);
         assert!(config.beam_climbing);
@@ -3340,7 +3636,8 @@ mod dem_tuning_tests {
 
     #[test]
     fn tesseract_accurate_preset_has_documented_fields() {
-        let config = tesseract_config("accurate", None, None, None, None, None, None).unwrap();
+        let config =
+            tesseract_config("accurate", None, None, None, None, None, None, None).unwrap();
 
         assert_eq!(config.det_beam, u16::MAX);
         assert!(!config.beam_climbing);
@@ -3352,7 +3649,8 @@ mod dem_tuning_tests {
 
     #[test]
     fn tesseract_det_beam_override_reaches_config() {
-        let config = tesseract_config("default", Some(17), None, None, None, None, None).unwrap();
+        let config =
+            tesseract_config("default", Some(17), None, None, None, None, None, None).unwrap();
 
         assert_eq!(config.det_beam, 17);
     }
@@ -3360,42 +3658,47 @@ mod dem_tuning_tests {
     #[test]
     fn tesseract_beam_climbing_override_reaches_config() {
         let config =
-            tesseract_config("accurate", None, Some(true), None, None, None, None).unwrap();
+            tesseract_config("accurate", None, Some(true), None, None, None, None, None).unwrap();
 
         assert!(config.beam_climbing);
     }
 
     #[test]
     fn tesseract_verbose_override_reaches_config() {
-        let config = tesseract_config("default", None, None, Some(true), None, None, None).unwrap();
+        let config =
+            tesseract_config("default", None, None, Some(true), None, None, None, None).unwrap();
 
         assert!(config.verbose);
     }
 
     #[test]
     fn tesseract_no_revisit_dets_override_reaches_config() {
-        let config = tesseract_config("fast", None, None, None, Some(false), None, None).unwrap();
+        let config =
+            tesseract_config("fast", None, None, None, Some(false), None, None, None).unwrap();
 
         assert!(!config.no_revisit_dets);
     }
 
     #[test]
     fn tesseract_pqlimit_override_reaches_config() {
-        let config = tesseract_config("fast", None, None, None, None, Some(345_678), None).unwrap();
+        let config =
+            tesseract_config("fast", None, None, None, None, Some(345_678), None, None).unwrap();
 
         assert_eq!(config.pqlimit, 345_678);
     }
 
     #[test]
     fn tesseract_det_penalty_override_reaches_config() {
-        let config = tesseract_config("fast", None, None, None, None, None, Some(0.25)).unwrap();
+        let config =
+            tesseract_config("fast", None, None, None, None, None, Some(0.25), None).unwrap();
 
         assert_eq!(config.det_penalty.to_bits(), 0.25_f64.to_bits());
     }
 
     #[test]
     fn tesseract_override_wins_over_preset() {
-        let config = tesseract_config("fast", Some(19), None, None, None, None, None).unwrap();
+        let config =
+            tesseract_config("fast", Some(19), None, None, None, None, None, None).unwrap();
 
         assert_eq!(config.det_beam, 19);
         assert!(config.beam_climbing);
@@ -3403,7 +3706,7 @@ mod dem_tuning_tests {
 
     #[test]
     fn tesseract_omitted_override_preserves_preset() {
-        let config = tesseract_config("fast", None, None, None, None, None, None).unwrap();
+        let config = tesseract_config("fast", None, None, None, None, None, None, None).unwrap();
 
         assert_eq!(config.det_beam, 5);
         assert!(config.beam_climbing);
@@ -3415,7 +3718,8 @@ mod dem_tuning_tests {
 
     #[test]
     fn tesseract_unknown_preset_names_parameter() {
-        let error = tesseract_config("quick", None, None, None, None, None, None).unwrap_err();
+        let error =
+            tesseract_config("quick", None, None, None, None, None, None, None).unwrap_err();
 
         assert!(error.contains("preset"));
     }
@@ -3640,10 +3944,13 @@ mod dem_tuning_tests {
             Some(false),
             Some(12_345),
             Some(0.25),
+            Some(false),
         )
         .unwrap();
 
         assert!(!decoder.config.no_revisit_dets);
+        assert!(!decoder.config.merge_errors);
+        assert!(!decoder.inner.merge_errors());
         assert_eq!(decoder.config.pqlimit, 12_345);
         assert!((decoder.config.det_penalty - 0.25).abs() < f64::EPSILON);
         assert_eq!(decoder.config.det_beam, 5);
@@ -3756,7 +4063,7 @@ mod dem_tuning_tests {
         pyo3::Python::initialize();
 
         let preset_error =
-            PyTesseractDecoder::from_dem(DEM, "quick", None, None, None, None, None, None)
+            PyTesseractDecoder::from_dem(DEM, "quick", None, None, None, None, None, None, None)
                 .err()
                 .unwrap();
         assert!(preset_error.to_string().contains("preset"));

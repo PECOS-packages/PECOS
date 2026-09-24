@@ -6,16 +6,31 @@
 #include <stdexcept>
 #include <sstream>
 #include <numeric>   // Required for std::iota on MSVC
-#include <random>    // std::mt19937, std::shuffle
-#include <algorithm> // std::shuffle
 
 // Include Tesseract headers
 #include "tesseract.h"
+#include "tesseract_trellis.h"
 #include "common.h"
 #include "utils.h"
 
 // Include Stim headers
 #include "stim/dem/detector_error_model.h"
+
+using namespace tesseract_decoder;
+
+namespace {
+
+stim::DetectorErrorModel parse_dem(const std::string& dem_string) {
+    try {
+        return stim::DetectorErrorModel(dem_string);
+    } catch (const std::exception& e) {
+        throw std::runtime_error(std::string("Failed to parse DEM string: ") + e.what());
+    } catch (...) {
+        throw std::runtime_error("Failed to parse DEM string: unknown error");
+    }
+}
+
+}  // namespace
 
 // PIMPL implementation to hide Tesseract details
 class TesseractDecoderWrapper::Impl {
@@ -25,32 +40,27 @@ private:
 
 public:
     Impl(const std::string& dem_string, const TesseractConfigRepr& config_repr) {
-        // Parse the DEM string using the string_view constructor
-        stim::DetectorErrorModel dem;
-        try {
-            dem = stim::DetectorErrorModel(dem_string);
-        } catch (const std::exception& e) {
-            throw std::runtime_error(std::string("Failed to parse DEM string: ") + e.what());
-        } catch (...) {
-            throw std::runtime_error("Failed to parse DEM string: unknown error");
-        }
-
         // Convert config representation to TesseractConfig
         TesseractConfig config;
-        config.dem = std::move(dem);
+        config.dem = parse_dem(dem_string);
         config.det_beam = (config_repr.det_beam == std::numeric_limits<uint16_t>::max()) ?
                           INF_DET_BEAM : static_cast<int>(config_repr.det_beam);
         config.beam_climbing = config_repr.beam_climbing;
         config.no_revisit_dets = config_repr.no_revisit_dets;
         config.verbose = config_repr.verbose;
-        config.merge_errors = true;
+        config.merge_errors = config_repr.merge_errors;
         config.pqlimit = config_repr.pqlimit;
         config.det_penalty = config_repr.det_penalty;
 
-        // Generate BFS-based detector orderings (upstream default).
-        // BFS on the detector graph produces spatially-aware orderings
-        // that help the A* search find short paths faster.
-        config.det_orders = build_det_orders(config.dem, 20, DetOrder::DetBFS, 2384753);
+        // Twenty BFS-based detector orderings from a fixed seed, the shape
+        // this wrap has always shipped. Upstream's generator before commit
+        // ccb61bc ("Fix detector traversal order semantics") emitted the
+        // inverse permutation, so earlier pins searched scrambled orders;
+        // true BFS orders cost about 2.5x more per shot on a 936-detector
+        // BB144 model (210 ms versus 83 ms, 1000 shots) and fail no more
+        // often (0 versus 2 with the fast preset). The decoder resolves the
+        // orderings against its flattened, merged DEM at construction.
+        config.detector_orders = make_detector_orders(20, DetectorOrder::Method::BFS, 2384753);
 
         config_ = config;
         decoder_ = std::make_unique<TesseractDecoder>(std::move(config));
@@ -101,8 +111,20 @@ public:
         return config_.dem.count_detectors();
     }
 
+    // Predicted errors and every per-error accessor use flattened-DEM
+    // indices; the decoder keeps merged, nonzero mechanisms in its own
+    // compact index space and exposes the map between them.
     size_t get_num_errors() const {
-        return decoder_->errors.size();
+        return decoder_->dem_error_to_error.size();
+    }
+
+    size_t retained_index(size_t dem_error_idx) const {
+        size_t retained = decoder_->dem_error_to_error.at(dem_error_idx);
+        if (retained == std::numeric_limits<size_t>::max()) {
+            throw std::invalid_argument("DEM error index " + std::to_string(dem_error_idx) +
+                                        " was merged into another mechanism or removed for zero probability");
+        }
+        return retained;
     }
 
     size_t get_num_observables() const {
@@ -126,6 +148,10 @@ public:
         return config_.verbose;
     }
 
+    bool get_merge_errors() const {
+        return config_.merge_errors;
+    }
+
     size_t get_pqlimit() const {
         return config_.pqlimit;
     }
@@ -134,37 +160,24 @@ public:
         return config_.det_penalty;
     }
 
-    double get_error_probability(size_t error_idx) const {
-        if (error_idx >= decoder_->errors.size()) {
-            throw std::out_of_range("Error index out of range");
-        }
-        return decoder_->errors[error_idx].get_probability();
+    double get_error_probability(size_t dem_error_idx) const {
+        return decoder_->errors[retained_index(dem_error_idx)].get_probability();
     }
 
-    double get_error_cost(size_t error_idx) const {
-        if (error_idx >= decoder_->errors.size()) {
-            throw std::out_of_range("Error index out of range");
-        }
-        return decoder_->errors[error_idx].likelihood_cost;
+    double get_error_cost(size_t dem_error_idx) const {
+        return decoder_->errors[retained_index(dem_error_idx)].likelihood_cost;
     }
 
-    rust::Vec<int32_t> get_error_detectors(size_t error_idx) const {
-        if (error_idx >= decoder_->errors.size()) {
-            throw std::out_of_range("Error index out of range");
-        }
-
+    rust::Vec<int32_t> get_error_detectors(size_t dem_error_idx) const {
         rust::Vec<int32_t> detectors;
-        for (int det : decoder_->errors[error_idx].symptom.detectors) {
+        for (int det : decoder_->errors[retained_index(dem_error_idx)].symptom.detectors) {
             detectors.push_back(static_cast<int32_t>(det));
         }
         return detectors;
     }
 
-    uint64_t get_error_observables(size_t error_idx) const {
-        if (error_idx >= decoder_->errors.size()) {
-            throw std::out_of_range("Error index out of range");
-        }
-        return vector_to_u64_mask(decoder_->errors[error_idx].symptom.observables);
+    uint64_t get_error_observables(size_t dem_error_idx) const {
+        return vector_to_u64_mask(decoder_->errors[retained_index(dem_error_idx)].symptom.observables);
     }
 
     uint64_t mask_from_errors(const rust::Slice<const size_t> error_indices) const {
@@ -224,9 +237,12 @@ bool TesseractDecoderWrapper::get_no_revisit_dets() const {
     return pimpl_->get_no_revisit_dets();
 }
 
-
 bool TesseractDecoderWrapper::get_verbose() const {
     return pimpl_->get_verbose();
+}
+
+bool TesseractDecoderWrapper::get_merge_errors() const {
+    return pimpl_->get_merge_errors();
 }
 
 size_t TesseractDecoderWrapper::get_pqlimit() const {
@@ -259,6 +275,92 @@ uint64_t TesseractDecoderWrapper::mask_from_errors(const rust::Slice<const size_
 
 double TesseractDecoderWrapper::cost_from_errors(const rust::Slice<const size_t> error_indices) const {
     return pimpl_->cost_from_errors(error_indices);
+}
+
+// Trellis-mode decoder wrapper
+class TesseractTrellisDecoderWrapper::Impl {
+private:
+    std::unique_ptr<TesseractTrellisDecoder> decoder_;
+
+    static TesseractTrellisRankingMode ranking_mode_from_repr(TesseractTrellisRankingModeRepr repr) {
+        switch (repr) {
+            case TesseractTrellisRankingModeRepr::MassOnly:
+                return TesseractTrellisRankingMode::MassOnly;
+            case TesseractTrellisRankingModeRepr::FutureDetcostRanked:
+                return TesseractTrellisRankingMode::FutureDetcostRanked;
+            case TesseractTrellisRankingModeRepr::FutureActiveDetcostRanked:
+                return TesseractTrellisRankingMode::FutureActiveDetcostRanked;
+        }
+        throw std::invalid_argument("Unknown trellis ranking mode");
+    }
+
+public:
+    Impl(const std::string& dem_string, const TesseractTrellisConfigRepr& config_repr) {
+        TesseractTrellisConfig config;
+        config.dem = parse_dem(dem_string);
+        config.beam_width = config_repr.beam_width;
+        config.beam_eps = config_repr.beam_eps;
+        config.future_detcost_scale = config_repr.future_detcost_scale;
+        config.verbose = config_repr.verbose;
+        config.merge_errors = config_repr.merge_errors;
+        config.ranking_mode = ranking_mode_from_repr(config_repr.ranking_mode);
+
+        decoder_ = std::make_unique<TesseractTrellisDecoder>(std::move(config));
+    }
+
+    TesseractTrellisResultRepr decode_detections(const rust::Slice<const uint64_t> detections) {
+        std::vector<uint64_t> det_vec(detections.data(), detections.data() + detections.size());
+
+        decoder_->decode_shot(det_vec);
+
+        TesseractTrellisResultRepr result;
+        result.observables_mask = decoder_->predicted_obs_mask;
+        result.observable_probability = decoder_->observable_probability();
+        result.low_confidence = decoder_->low_confidence_flag;
+        result.num_states_expanded = decoder_->num_states_expanded;
+        result.num_states_merged = decoder_->num_states_merged;
+        result.max_beam_size_seen = decoder_->max_beam_size_seen;
+        result.max_frontier_width_seen = decoder_->max_frontier_width_seen;
+        return result;
+    }
+
+    size_t get_num_detectors() const {
+        return decoder_->num_detectors;
+    }
+
+    size_t get_num_errors() const {
+        return decoder_->errors.size();
+    }
+
+    size_t get_num_observables() const {
+        return decoder_->num_observables;
+    }
+};
+
+TesseractTrellisDecoderWrapper::TesseractTrellisDecoderWrapper(
+    const std::string& dem_string,
+    const TesseractTrellisConfigRepr& config_repr
+) : pimpl_(std::make_unique<Impl>(dem_string, config_repr)) {
+}
+
+TesseractTrellisDecoderWrapper::~TesseractTrellisDecoderWrapper() = default;
+
+TesseractTrellisResultRepr TesseractTrellisDecoderWrapper::decode_detections(
+    const rust::Slice<const uint64_t> detections
+) {
+    return pimpl_->decode_detections(detections);
+}
+
+size_t TesseractTrellisDecoderWrapper::get_num_detectors() const {
+    return pimpl_->get_num_detectors();
+}
+
+size_t TesseractTrellisDecoderWrapper::get_num_errors() const {
+    return pimpl_->get_num_errors();
+}
+
+size_t TesseractTrellisDecoderWrapper::get_num_observables() const {
+    return pimpl_->get_num_observables();
 }
 
 // FFI function implementations
@@ -325,6 +427,10 @@ bool get_verbose(const TesseractDecoderWrapper& decoder) {
     return decoder.get_verbose();
 }
 
+bool get_merge_errors(const TesseractDecoderWrapper& decoder) {
+    return decoder.get_merge_errors();
+}
+
 size_t get_pqlimit(const TesseractDecoderWrapper& decoder) {
     return decoder.get_pqlimit();
 }
@@ -361,4 +467,39 @@ double cost_from_errors(
     const rust::Slice<const size_t> error_indices
 ) {
     return decoder.cost_from_errors(error_indices);
+}
+
+std::unique_ptr<TesseractTrellisDecoderWrapper> create_tesseract_trellis_decoder(
+    const rust::Str dem_string,
+    const TesseractTrellisConfigRepr& config
+) {
+    try {
+        std::string dem_str(dem_string);
+        return std::make_unique<TesseractTrellisDecoderWrapper>(dem_str, config);
+    } catch (const std::exception& e) {
+        throw std::runtime_error("Failed to create Tesseract trellis decoder: " + std::string(e.what()));
+    }
+}
+
+TesseractTrellisResultRepr trellis_decode_detections(
+    TesseractTrellisDecoderWrapper& decoder,
+    const rust::Slice<const uint64_t> detections
+) {
+    try {
+        return decoder.decode_detections(detections);
+    } catch (const std::exception& e) {
+        throw std::runtime_error("Decoding failed: " + std::string(e.what()));
+    }
+}
+
+size_t trellis_num_detectors(const TesseractTrellisDecoderWrapper& decoder) {
+    return decoder.get_num_detectors();
+}
+
+size_t trellis_num_errors(const TesseractTrellisDecoderWrapper& decoder) {
+    return decoder.get_num_errors();
+}
+
+size_t trellis_num_observables(const TesseractTrellisDecoderWrapper& decoder) {
+    return decoder.get_num_observables();
 }

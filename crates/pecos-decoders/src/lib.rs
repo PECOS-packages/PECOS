@@ -96,6 +96,8 @@ pub use pecos_pymatching::{
 #[cfg(feature = "tesseract")]
 pub use pecos_tesseract::{
     DecodingResult as TesseractDecodingResult, TesseractConfig, TesseractDecoder,
+    TesseractTrellisConfig, TesseractTrellisDecoder, TesseractTrellisRankingMode,
+    TesseractTrellisResult,
 };
 
 // Re-export Chromobius decoder when feature is enabled

@@ -33,6 +33,56 @@ pub struct TesseractConfig {
     pub no_revisit_dets: Option<bool>,
     pub pqlimit: Option<usize>,
     pub det_penalty: Option<f64>,
+    pub merge_errors: Option<bool>,
+}
+
+/// Rule for ranking beam states when truncating a trellis layer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TesseractTrellisRankingMode {
+    /// Keep the states carrying the most probability mass (upstream default).
+    #[default]
+    MassOnly,
+    /// Discount each state's mass by a detector-cost estimate of the mass
+    /// still needed to clear its remaining active detectors.
+    FutureDetcostRanked,
+    /// Like [`FutureDetcostRanked`](Self::FutureDetcostRanked), but the
+    /// estimate only counts detectors that are active in the state.
+    FutureActiveDetcostRanked,
+}
+
+/// Configuration for Tesseract's trellis-mode decoder. Defaults are
+/// upstream's `TesseractTrellisConfig` defaults.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TesseractTrellisConfig {
+    /// Maximum number of partial-syndrome states kept per trellis layer.
+    pub beam_width: usize,
+    /// After the `beam_width` cut, keep only the highest-scoring states
+    /// whose cumulative mass reaches `1 - beam_eps` of the layer's total
+    /// mass; zero keeps every state up to `beam_width`.
+    pub beam_eps: f64,
+    /// Scale applied to the future detector-cost estimate in the ranked
+    /// modes; ignored under [`TesseractTrellisRankingMode::MassOnly`].
+    pub future_detcost_scale: f64,
+    /// Print per-shot beam statistics to stdout.
+    pub verbose: bool,
+    /// Merge error mechanisms with identical detector and observable
+    /// symptoms before decoding.
+    pub merge_errors: bool,
+    /// Beam ranking rule.
+    pub ranking_mode: TesseractTrellisRankingMode,
+}
+
+impl Default for TesseractTrellisConfig {
+    fn default() -> Self {
+        Self {
+            beam_width: 1024,
+            beam_eps: 0.0,
+            future_detcost_scale: 2.0,
+            verbose: false,
+            merge_errors: true,
+            ranking_mode: TesseractTrellisRankingMode::MassOnly,
+        }
+    }
 }
 
 /// K-MWPM construction options.

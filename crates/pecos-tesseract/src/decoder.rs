@@ -47,6 +47,9 @@ pub struct TesseractConfig {
     pub no_revisit_dets: bool,
     /// Enable verbose output
     pub verbose: bool,
+    /// Merge error mechanisms with identical detector and observable
+    /// symptoms before decoding (upstream default)
+    pub merge_errors: bool,
     /// Priority queue size limit
     pub pqlimit: usize,
     /// Detector penalty factor
@@ -71,6 +74,7 @@ impl Default for TesseractConfig {
             beam_climbing: false,
             no_revisit_dets: true,
             verbose: false,
+            merge_errors: true,
             pqlimit: 200_000,
             det_penalty: 0.0,
         }
@@ -111,6 +115,7 @@ impl TesseractConfig {
             beam_climbing: true,
             no_revisit_dets: true,
             verbose: false,
+            merge_errors: true,
             pqlimit: 200_000,
             det_penalty: 0.1,
         }
@@ -124,6 +129,7 @@ impl TesseractConfig {
             beam_climbing: false,
             no_revisit_dets: false,
             verbose: false,
+            merge_errors: true,
             pqlimit: 1_000_000,
             det_penalty: 0.0,
         }
@@ -137,6 +143,7 @@ impl TesseractConfig {
             beam_climbing: self.beam_climbing,
             no_revisit_dets: self.no_revisit_dets,
             verbose: self.verbose,
+            merge_errors: self.merge_errors,
             pqlimit: self.pqlimit,
             det_penalty: self.det_penalty,
         }
@@ -146,7 +153,9 @@ impl TesseractConfig {
 /// Result of a Tesseract decoding operation
 #[derive(Debug, Clone)]
 pub struct DecodingResult {
-    /// Indices of predicted errors
+    /// Indices into the flattened detector error model of the predicted
+    /// error mechanisms; valid arguments for
+    /// [`TesseractDecoder::get_error_info`] and friends
     pub predicted_errors: Array1<usize>,
     /// Observables mask (bitwise XOR of all error observables)
     pub observables_mask: u64,
@@ -308,30 +317,40 @@ impl TesseractDecoder {
         })
     }
 
-    /// Get the observables mask for a set of error indices
-    #[must_use]
-    pub fn mask_from_errors(&self, error_indices: &[usize]) -> u64 {
+    /// Get the combined observables mask for a set of flattened-DEM error indices
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TesseractError::InvalidInput`] if an index is out of range
+    /// or names a mechanism the decoder does not retain (merged into an
+    /// identical mechanism, or removed for zero probability).
+    pub fn mask_from_errors(&self, error_indices: &[usize]) -> Result<u64, TesseractError> {
         ffi::mask_from_errors(&self.inner, error_indices)
+            .map_err(|e| TesseractError::InvalidInput(e.what().to_string()))
     }
 
-    /// Get the total cost for a set of error indices
-    #[must_use]
-    pub fn cost_from_errors(&self, error_indices: &[usize]) -> f64 {
+    /// Get the total likelihood cost for a set of flattened-DEM error indices
+    ///
+    /// # Errors
+    ///
+    /// Same conditions as [`mask_from_errors`](Self::mask_from_errors).
+    pub fn cost_from_errors(&self, error_indices: &[usize]) -> Result<f64, TesseractError> {
         ffi::cost_from_errors(&self.inner, error_indices)
+            .map_err(|e| TesseractError::InvalidInput(e.what().to_string()))
     }
 
-    /// Get information about a specific error
-    #[must_use]
-    pub fn get_error_info(&self, error_idx: usize) -> Option<ErrorInfo> {
-        if error_idx >= self.num_errors {
-            return None;
-        }
-
-        Some(ErrorInfo {
-            probability: ffi::get_error_probability(&self.inner, error_idx),
-            cost: ffi::get_error_cost(&self.inner, error_idx),
-            detectors: ffi::get_error_detectors(&self.inner, error_idx),
-            observables: ffi::get_error_observables(&self.inner, error_idx),
+    /// Get information about a flattened-DEM error mechanism
+    ///
+    /// # Errors
+    ///
+    /// Same conditions as [`mask_from_errors`](Self::mask_from_errors).
+    pub fn get_error_info(&self, dem_error_idx: usize) -> Result<ErrorInfo, TesseractError> {
+        let invalid = |e: cxx::Exception| TesseractError::InvalidInput(e.what().to_string());
+        Ok(ErrorInfo {
+            probability: ffi::get_error_probability(&self.inner, dem_error_idx).map_err(invalid)?,
+            cost: ffi::get_error_cost(&self.inner, dem_error_idx).map_err(invalid)?,
+            detectors: ffi::get_error_detectors(&self.inner, dem_error_idx).map_err(invalid)?,
+            observables: ffi::get_error_observables(&self.inner, dem_error_idx).map_err(invalid)?,
         })
     }
 
@@ -343,7 +362,11 @@ impl TesseractDecoder {
         self.num_detectors
     }
 
-    /// Get the number of errors in the error model
+    /// Get the number of error mechanisms in the flattened error model
+    ///
+    /// Merged and zero-probability mechanisms keep their index, so this is
+    /// the index space of [`DecodingResult::predicted_errors`] and of
+    /// [`get_error_info`](Self::get_error_info).
     #[must_use]
     pub fn num_errors(&self) -> usize {
         self.num_errors
@@ -383,6 +406,12 @@ impl TesseractDecoder {
     #[must_use]
     pub fn verbose(&self) -> bool {
         ffi::get_verbose(&self.inner)
+    }
+
+    /// Check if indistinguishable error mechanisms were merged
+    #[must_use]
+    pub fn merge_errors(&self) -> bool {
+        ffi::get_merge_errors(&self.inner)
     }
 
     /// Get the priority queue limit
@@ -445,10 +474,10 @@ impl Decoder for TesseractDecoder {
     }
 }
 
-/// Information about a specific error in the error model
+/// Information about a retained error mechanism, looked up by flattened-DEM index
 #[derive(Debug, Clone)]
 pub struct ErrorInfo {
-    /// Probability of this error occurring
+    /// Probability of this error occurring (merged when identical mechanisms were combined)
     pub probability: f64,
     /// Likelihood cost (-log(probability))
     pub cost: f64,
@@ -472,6 +501,7 @@ mod tests {
         assert_ne!(config.det_beam, INFINITE_DET_BEAM);
         assert!(!config.beam_climbing);
         assert!(!config.verbose);
+        assert!(config.merge_errors);
     }
 
     #[test]

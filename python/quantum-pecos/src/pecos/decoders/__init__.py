@@ -39,6 +39,8 @@ from pecos_rslib.decoders import (
     SparseMatrix,
     TesseractDecoder,
     TesseractResult,
+    TesseractTrellisDecoder,
+    TesseractTrellisResult,
     UnionFindBuilder,
     UnionFindDecoder,
     astar,
@@ -59,6 +61,7 @@ from pecos_rslib.decoders import (
     pymatching,
     relay_bp,
     tesseract,
+    tesseract_trellis,
     union_find,
     windowed,
 )
@@ -89,6 +92,8 @@ __all__ = [
     "SparseMatrix",
     "TesseractDecoder",
     "TesseractResult",
+    "TesseractTrellisDecoder",
+    "TesseractTrellisResult",
     "UnionFindBuilder",
     "UnionFindDecoder",
     "astar",
@@ -109,6 +114,7 @@ __all__ = [
     "pymatching",
     "relay_bp",
     "tesseract",
+    "tesseract_trellis",
     "union_find",
     "windowed",
 ]

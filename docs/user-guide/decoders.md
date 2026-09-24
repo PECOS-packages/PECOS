@@ -52,6 +52,7 @@ The following decoder APIs and supporting types are publicly re-exported from
 | `PyMatchingDecoder` | Graph-like DEM text or `CheckMatrix` | PyMatching minimum-weight perfect matching, with optional correlated decoding. |
 | `FusionBlossomDecoder` | Check matrix, standard-code parameters, or a manual graph | Pure-Rust minimum-weight perfect matching. |
 | `TesseractDecoder` | DEM text | Search-based decoder that accepts raw hyperedges. |
+| `TesseractTrellisDecoder` | DEM text | Sums probability mass over a beam of partial syndromes and reports a per-shot observable probability; accepts at most one observable and a 256-detector active frontier. The probability and `low_confidence` flag come only from this class; the `tesseract_trellis()` spec path yields the observable mask. |
 | `DemAwareDecoder` | DEM text | Maps DEM mechanisms and observables onto BP-OSD and other check-matrix decoders. |
 | `BpOsdBuilder` / `BpOsdDecoder` | `SparseMatrix` check matrix or DEM text | Belief propagation with ordered-statistics post-processing. |
 | `BpLsdBuilder` / `BpLsdDecoder` | `SparseMatrix` check matrix or DEM text | Belief propagation with localized-statistics post-processing. |
@@ -59,7 +60,7 @@ The following decoder APIs and supporting types are publicly re-exported from
 | `RelayBpBuilder` / `RelayBpDecoder` | Dense check matrix and error priors, or DEM text | Relay belief propagation. |
 | `UnionFindBuilder` / `UnionFindDecoder` | `SparseMatrix` check matrix or DEM text | Union-find decoding with inversion or peeling. |
 | `CheckMatrix` / `SparseMatrix` | Dense or coordinate-form matrix data | Matrix containers used by matching and LDPC decoder constructors. |
-| `MwpmResult` / `BpResult` / `TesseractResult` | Decoder output | Result objects for matching, belief-propagation, and Tesseract decoders. |
+| `MwpmResult` / `BpResult` / `TesseractResult` / `TesseractTrellisResult` | Decoder output | Result objects for matching, belief-propagation, and Tesseract decoders. |
 
 The experimental `frontier()` and `bp_trellis()` factories are not part of this table: they import from `pecos.decoders` only when the optional `pecos-rslib-exp` package is installed, and are described in the [Rust-backed Frontier](#rust-backed-frontier-batch-decoding) and [Rust-backed BP-Trellis](#rust-backed-bp-trellis-batch-decoding) sections below.
 
@@ -441,7 +442,7 @@ hyperedges such as bp_osd or tesseract.
 ```
 
 Decode such a model with a decoder that represents hyperedges directly --
-`bp_osd()`, `tesseract()`, `frontier()`, or `bp_trellis()` -- or supply a
+`bp_osd()`, `tesseract()`, `tesseract_trellis()`, `frontier()`, or `bp_trellis()` -- or supply a
 decomposed projection (a model written with `^` separators passes: each component is graphlike). See
 [Experimental Decoders](../experimental/decoders.md) for the Frontier and
 BP-Trellis decoders, which additionally report a per-shot complementary gap,

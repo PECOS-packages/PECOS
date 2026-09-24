@@ -18,6 +18,7 @@ from pecos_rslib.decoders import (
     pymatching,
     relay_bp,
     tesseract,
+    tesseract_trellis,
 )
 from pecos_rslib import TickCircuit
 from pecos_rslib.qec import DagFaultAnalyzer, DemSampler, SampleBatch
@@ -47,6 +48,7 @@ def _aperiodic_batch(num_shots: int) -> SampleBatch:
         ("pymatching", lambda: pymatching(correlated=True)),
         ("pymatching_uncorrelated", lambda: pymatching(correlated=False)),
         ("tesseract", lambda: tesseract(preset="fast")),
+        ("tesseract_trellis", lambda: tesseract_trellis()),
         ("bp_osd", bp_osd),
         ("fusion_blossom_serial", lambda: fusion_blossom(solver="serial")),
         ("pecos_uf", pecos_uf),

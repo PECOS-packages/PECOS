@@ -23,6 +23,7 @@ from pecos_rslib.decoders import (
     PyMatchingDecoder,
     SparseMatrix,
     TesseractDecoder,
+    TesseractTrellisDecoder,
 )
 from pecos_rslib.qec import (
     ObservableFlips as QecObservableFlips,
@@ -197,6 +198,7 @@ def test_uniform_loop_preserves_one_observable_error_counts() -> None:
     decoders = {
         "pymatching": PyMatchingDecoder.from_dem(_ONE_OBSERVABLE_DEM),
         "tesseract": TesseractDecoder.from_dem(_ONE_OBSERVABLE_DEM),
+        "tesseract_trellis": TesseractTrellisDecoder.from_dem(_ONE_OBSERVABLE_DEM),
         "bp_osd": BpOsdDecoder.from_dem(_ONE_OBSERVABLE_DEM),
     }
     error_counts = dict.fromkeys(decoders, 0)
@@ -209,7 +211,7 @@ def test_uniform_loop_preserves_one_observable_error_counts() -> None:
         for name, result in results.items():
             error_counts[name] += result.observable_flips != actual_flips
 
-    assert error_counts == {"pymatching": 2, "tesseract": 2, "bp_osd": 2}
+    assert error_counts == {"pymatching": 2, "tesseract": 2, "tesseract_trellis": 2, "bp_osd": 2}
 
 
 def test_any_observable_and_per_observable_counts_are_distinct() -> None:

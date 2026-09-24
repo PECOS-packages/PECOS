@@ -12,11 +12,26 @@ from __future__ import annotations
 
 import json
 import math
+from importlib import import_module
 from itertools import combinations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+
+
+def _require_pecos_rslib_exp(caller: str) -> None:
+    """Raise a clear ImportError when the source-built pecos-rslib-exp package is absent."""
+    try:
+        import_module("pecos_rslib_exp")
+    except ModuleNotFoundError as exc:
+        if exc.name != "pecos_rslib_exp":
+            raise
+        message = (
+            f"{caller} requires the optional pecos-rslib-exp package, which is not published to PyPI; "
+            "build it from a PECOS source checkout with `just build`"
+        )
+        raise ImportError(message) from exc
 
 
 def logical_x_from_data(d: int, data: Sequence[int]) -> int:
@@ -578,6 +593,7 @@ def empirical_correlation_table(
         for indices, prob in table:
             print(f"P({indices}) = {prob:.6f}")
     """
+    _require_pecos_rslib_exp("empirical_correlation_table")
     from pecos_rslib_exp import (
         meas_sampling,
         monte_carlo,
@@ -702,6 +718,7 @@ def fit_dem_from_simulation(
     Returns:
         Stim-format DEM string with simulation-fitted probabilities.
     """
+    _require_pecos_rslib_exp("fit_dem_from_simulation")
     if max_correlation_order < 1:
         msg = "max_correlation_order must be at least 1"
         raise ValueError(msg)
@@ -817,6 +834,7 @@ def build_adaptive_dem(
         Tuple of (json_str, dem_str) — noise characterization JSON and
         Stim DEM string.
     """
+    _require_pecos_rslib_exp("build_adaptive_dem")
     idle_rz = noise_params.get("idle_rz", 0.0)
 
     if idle_rz == 0.0 or idle_rz < 1e-10:

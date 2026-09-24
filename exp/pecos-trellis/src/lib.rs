@@ -664,6 +664,8 @@ impl BranchContext<'_> {
         transitions: &mut u64,
     ) {
         debug_assert_eq!(self.close_mask.len(), self.detector_words);
+        debug_assert_eq!(self.active_mask.len(), self.detector_words);
+        debug_assert_eq!(self.observed.len(), self.detector_words);
         debug_assert_eq!(
             destination.words.len(),
             destination.masses.len() * parent.len()
@@ -671,7 +673,7 @@ impl BranchContext<'_> {
         *transitions += 1;
         let start = destination.words.len();
         destination.words.extend_from_slice(parent);
-        let (syndrome, logical) = destination.words[start..].split_at_mut(self.close_mask.len());
+        let (syndrome, logical) = destination.words[start..].split_at_mut(self.detector_words);
         if let Some((detector_toggle, logical_toggle)) = toggles {
             xor_assign(syndrome, detector_toggle);
             xor_assign(logical, logical_toggle);
@@ -2837,116 +2839,142 @@ mod tests {
         use rand_xoshiro::Xoshiro256PlusPlus;
 
         let mut rng = Xoshiro256PlusPlus::seed_from_u64(0x5343_4f52_4553);
-        let dem = SparseDem {
-            mechanisms: (0..24)
-                .map(|_| {
-                    (
-                        rng.random_range(0.001..0.999),
-                        (0..70).filter(|_| rng.random_bool(0.2)).collect(),
-                        vec![0],
-                    )
-                })
-                .collect(),
-            detector_coords: BTreeMap::new(),
-            num_detectors: 70,
-            num_observables: 1,
-        };
-        let decoder = TrellisDecoder::from_sparse_dem(
-            &dem,
-            TrellisConfig {
-                metric_mode: MetricMode::MaxLogInt,
-                ..TrellisConfig::default()
-            },
-        )
-        .unwrap();
-        let super::Kernel::Binary(columns) = &decoder.kernel else {
-            panic!("binary DEM");
-        };
-        assert!(columns.last().unwrap().suffix_compatibility.is_empty());
-        let mut float = super::FrontierScratch::<f64>::default();
-        let mut integer = super::FrontierScratch::<i64>::default();
-        for column in columns {
-            for count in [1, 3, 16, 33] {
-                float.reset(&[0, 0], &[0], &[0, 0], 0.0);
-                float.branches.clear(float.stride);
-                // Include duplicate arrivals so the oracle sees a merged set.
-                for candidate in 0..count {
-                    let key = [
-                        rng.random::<u64>() & column.active_mask[0],
-                        rng.random::<u64>() & column.active_mask[1],
-                        candidate,
-                    ];
-                    float.branches.words.extend_from_slice(&key);
-                    float.branches.masses.push(if candidate == 0 {
-                        // Empty suffix sums must also preserve negative zero.
-                        if count == 1 { -0.0 } else { 0.0 }
-                    } else {
-                        rng.random_range(-100.0..0.0)
-                    });
-                    if candidate != 0 {
+        for (num_detectors, window) in [(70, 0..70), (200, 70..190)] {
+            let dem = SparseDem {
+                mechanisms: (0..24)
+                    .map(|_| {
+                        (
+                            rng.random_range(0.001..0.999),
+                            window.clone().filter(|_| rng.random_bool(0.2)).collect(),
+                            vec![0],
+                        )
+                    })
+                    .collect(),
+                detector_coords: BTreeMap::new(),
+                num_detectors,
+                num_observables: 1,
+            };
+            let decoder = TrellisDecoder::from_sparse_dem(
+                &dem,
+                TrellisConfig {
+                    metric_mode: MetricMode::MaxLogInt,
+                    ..TrellisConfig::default()
+                },
+            )
+            .unwrap();
+            let super::Kernel::Binary(columns) = &decoder.kernel else {
+                panic!("binary DEM");
+            };
+            assert!(columns.last().unwrap().suffix_compatibility.is_empty());
+            let mut float = super::FrontierScratch::<f64>::default();
+            let mut integer = super::FrontierScratch::<i64>::default();
+            let detector_words = super::words_for(num_detectors);
+            let zeros = vec![0; detector_words];
+            let mut nonzero_origins = 0;
+            let mut nonzero_multiword_spans = 0;
+            for column in columns {
+                let rows = &column.suffix_compatibility;
+                if let (Some(first), Some(last)) = (rows.first(), rows.last()) {
+                    nonzero_origins += usize::from(first.word > 0);
+                    nonzero_multiword_spans +=
+                        usize::from(first.word > 0 && last.word > first.word);
+                }
+                for count in [1, 3, 16, 33] {
+                    float.reset(&zeros, &[0], &zeros, 0.0);
+                    float.branches.clear(float.stride);
+                    // Include duplicate arrivals so the oracle sees a merged set.
+                    for candidate in 0..count {
+                        let mut key: Vec<_> = column
+                            .active_mask
+                            .iter()
+                            .map(|mask| rng.random::<u64>() & mask)
+                            .collect();
+                        key.push(candidate);
                         float.branches.words.extend_from_slice(&key);
-                        float.branches.masses.push(-200.0);
+                        float.branches.masses.push(if candidate == 0 {
+                            // Empty suffix sums must also preserve negative zero.
+                            if count == 1 { -0.0 } else { 0.0 }
+                        } else {
+                            rng.random_range(-100.0..0.0)
+                        });
+                        if candidate != 0 {
+                            float.branches.words.extend_from_slice(&key);
+                            float.branches.masses.push(-200.0);
+                        }
                     }
-                }
-                float.merge(logaddexp);
-                assert!(float.parent.masses.contains(&0.0));
-                integer.reset(&[0, 0], &[0], &[0, 0], 0);
-                integer.parent.words.clone_from(&float.parent.words);
-                integer.parent.masses = float
-                    .parent
-                    .masses
-                    .iter()
-                    .map(|&mass| quantize_metric(mass, 1024))
-                    .collect();
-                let compatibility = super::SuffixCompatibility {
-                    rows: &column.suffix_compatibility,
-                    values: &decoder.suffix_values,
-                };
-                for _ in 0..4 {
-                    let observed = [rng.random(), rng.random()];
-                    for alpha in [0.0, 0.8, 1.0] {
-                        super::score_candidates(&mut float, alpha, compatibility, &observed);
-                        for (index, &mass) in float.parent.masses.iter().enumerate() {
-                            let expected = if alpha == 0.0 {
-                                mass
-                            } else {
-                                mass + alpha
-                                    * super::suffix_compatibility_score(
-                                        &float.parent.key(index, float.stride)[..2],
-                                        &observed,
-                                        compatibility,
+                    float.merge(logaddexp);
+                    assert!(float.parent.masses.contains(&0.0));
+                    integer.reset(&zeros, &[0], &zeros, 0);
+                    integer.parent.words.clone_from(&float.parent.words);
+                    integer.parent.masses = float
+                        .parent
+                        .masses
+                        .iter()
+                        .map(|&mass| quantize_metric(mass, 1024))
+                        .collect();
+                    let compatibility = super::SuffixCompatibility {
+                        rows: &column.suffix_compatibility,
+                        values: &decoder.suffix_values,
+                    };
+                    for _ in 0..4 {
+                        let observed: Vec<u64> =
+                            (0..detector_words).map(|_| rng.random()).collect();
+                        for alpha in [0.0, 0.8, 1.0] {
+                            super::score_candidates(&mut float, alpha, compatibility, &observed);
+                            for (index, &mass) in float.parent.masses.iter().enumerate() {
+                                let expected = if alpha == 0.0 {
+                                    mass
+                                } else {
+                                    mass + alpha
+                                        * super::suffix_compatibility_score(
+                                            &float.parent.key(index, float.stride)
+                                                [..detector_words],
+                                            &observed,
+                                            compatibility,
+                                        )
+                                };
+                                assert_eq!(float.scores[index].to_bits(), expected.to_bits());
+                            }
+                        }
+                        for alpha in [0, 819, 1024] {
+                            super::score_candidates_int(
+                                &mut integer,
+                                alpha,
+                                1024,
+                                compatibility,
+                                &observed,
+                            );
+                            for (index, &mass) in integer.parent.masses.iter().enumerate() {
+                                let expected = if alpha == 0 {
+                                    mass
+                                } else {
+                                    super::score_int_metric(
+                                        mass,
+                                        super::suffix_compatibility_score_int(
+                                            &integer.parent.key(index, integer.stride)
+                                                [..detector_words],
+                                            &observed,
+                                            compatibility,
+                                        ),
+                                        alpha,
+                                        1024,
                                     )
-                            };
-                            assert_eq!(float.scores[index].to_bits(), expected.to_bits());
-                        }
-                    }
-                    for alpha in [0, 819, 1024] {
-                        super::score_candidates_int(
-                            &mut integer,
-                            alpha,
-                            1024,
-                            compatibility,
-                            &observed,
-                        );
-                        for (index, &mass) in integer.parent.masses.iter().enumerate() {
-                            let expected = if alpha == 0 {
-                                mass
-                            } else {
-                                super::score_int_metric(
-                                    mass,
-                                    super::suffix_compatibility_score_int(
-                                        &integer.parent.key(index, integer.stride)[..2],
-                                        &observed,
-                                        compatibility,
-                                    ),
-                                    alpha,
-                                    1024,
-                                )
-                            };
-                            assert_eq!(integer.scores[index], expected);
+                                };
+                                assert_eq!(integer.scores[index], expected);
+                            }
                         }
                     }
                 }
+            }
+            if window.start > 0 {
+                assert!(
+                    nonzero_origins > 0,
+                    "windowed model must exercise nonzero origins"
+                );
+                assert!(
+                    nonzero_multiword_spans > 0,
+                    "windowed model must exercise nonzero multiword spans"
+                );
             }
         }
     }

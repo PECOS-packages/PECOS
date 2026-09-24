@@ -10,6 +10,9 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
+//! Guard bitwise decoder results against stale state across successful and failed shots.
+//! Compare one reused decoder with fresh decoders across seeded models and supported configurations.
+
 use pecos_decoder_core::dem::SparseDem;
 use pecos_trellis::factor::{Factor, FactorModel, Outcome};
 use pecos_trellis::{
@@ -88,13 +91,29 @@ fn assert_attempt_bits(actual: &TrellisDecodeAttempt, expected: &TrellisDecodeAt
     }
 }
 
-fn check_sequence(build: impl Fn() -> TrellisDecoder, shots: &[Vec<u8>], pruned: bool) {
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ShotKind {
+    Regular,
+    UntouchedDetector,
+    OddPairParity,
+    WrongLength,
+}
+
+fn check_sequence(
+    build: impl Fn() -> TrellisDecoder,
+    shots: &[(ShotKind, Vec<u8>)],
+    pruned: bool,
+    bp_enabled: bool,
+) {
     let mut reused = build();
+    assert_eq!(reused.bp_state_addrs().is_some(), bp_enabled);
     let mut successes = 0;
     let mut saw_pruning = false;
-    for (index, shot) in shots.iter().enumerate() {
+    for (kind, shot) in shots {
         let actual = reused.decode_attempt(shot);
-        let expected = build().decode_attempt(shot);
+        let mut fresh = build();
+        assert_eq!(fresh.bp_state_addrs().is_some(), bp_enabled);
+        let expected = fresh.decode_attempt(shot);
         assert_attempt_bits(&actual, &expected);
         match &actual {
             TrellisDecodeAttempt::Success(result) => {
@@ -105,13 +124,20 @@ fn check_sequence(build: impl Fn() -> TrellisDecoder, shots: &[Vec<u8>], pruned:
                 }
             }
             TrellisDecodeAttempt::NoPath { .. } => {}
-            TrellisDecodeAttempt::Error(_) => assert_eq!(index, 5),
+            TrellisDecodeAttempt::Error(_) => assert!(*kind == ShotKind::WrongLength),
         }
-        if index == 3 {
-            assert!(matches!(actual, TrellisDecodeAttempt::NoPath { .. }));
-        }
-        if index == 5 {
-            assert!(matches!(actual, TrellisDecodeAttempt::Error(_)));
+        for attempt in [&actual, &expected] {
+            match kind {
+                ShotKind::Regular => {}
+                ShotKind::UntouchedDetector => assert!(matches!(
+                    attempt,
+                    TrellisDecodeAttempt::NoPath { transitions: 0, .. }
+                )),
+                ShotKind::OddPairParity => assert!(matches!(
+                    attempt, TrellisDecodeAttempt::NoPath { transitions, .. } if *transitions > 0
+                )),
+                ShotKind::WrongLength => assert!(matches!(attempt, TrellisDecodeAttempt::Error(_))),
+            }
         }
     }
     assert!(successes >= 3, "successes must surround the error paths");
@@ -178,6 +204,28 @@ fn cross_shot_reuse_matches_fresh_decoders_bitwise() {
                 ],
             });
         }
+        // This disjoint component can only produce even detector parity.
+        let pair_start = offset + active_count;
+        for detectors in [
+            vec![pair_start, pair_start + 1],
+            vec![pair_start + 1, pair_start + 2],
+        ] {
+            mechanisms.push((0.1, detectors.clone(), vec![]));
+            factors.push(Factor {
+                outcomes: vec![
+                    Outcome {
+                        probability: 0.9,
+                        detectors: vec![],
+                        observables: vec![],
+                    },
+                    Outcome {
+                        probability: 0.1,
+                        detectors,
+                        observables: vec![],
+                    },
+                ],
+            });
+        }
         let dem = SparseDem {
             mechanisms,
             detector_coords: BTreeMap::new(),
@@ -192,7 +240,19 @@ fn cross_shot_reuse_matches_fresh_decoders_bitwise() {
         c[(offset + 1) as usize] = 1;
         let mut no_path = a.clone();
         no_path[num_detectors - 1] = 1;
-        let shots = [a.clone(), b.clone(), c, no_path, a, vec![0], b];
+        let mut odd_pair_parity = a.clone();
+        odd_pair_parity[pair_start as usize] = 1;
+        let shots = [
+            (ShotKind::Regular, a.clone()),
+            (ShotKind::Regular, b.clone()),
+            (ShotKind::Regular, c),
+            (ShotKind::UntouchedDetector, no_path),
+            (ShotKind::Regular, a.clone()),
+            (ShotKind::OddPairParity, odd_pair_parity),
+            (ShotKind::Regular, a),
+            (ShotKind::WrongLength, vec![0]),
+            (ShotKind::Regular, b),
+        ];
 
         for metric_mode in [MetricMode::LogSumExpFloat, MetricMode::MaxLogInt] {
             for pruned in [false, true] {
@@ -206,9 +266,11 @@ fn cross_shot_reuse_matches_fresh_decoders_bitwise() {
                             k: if pruned { 2 } else { usize::MAX },
                             delta: if pruned {
                                 2.0
-                            } else if metric_mode == MetricMode::MaxLogInt {
-                                // Integer mode requires finite delta; this
-                                // exceeds every score spread in these models.
+                            } else if metric_mode == MetricMode::MaxLogInt
+                                || bp_score_iterations > 0
+                            {
+                                // A finite delta also keeps BP live in exact float runs;
+                                // this exceeds every score spread in these models.
                                 1_000_000.0
                             } else {
                                 f64::INFINITY
@@ -223,6 +285,7 @@ fn cross_shot_reuse_matches_fresh_decoders_bitwise() {
                             || TrellisDecoder::from_sparse_dem(&dem, config.clone()).unwrap(),
                             &shots,
                             pruned,
+                            bp_score_iterations > 0,
                         );
                         if bp_score_iterations == 0 && !merge_indistinguishable {
                             check_sequence(
@@ -232,6 +295,7 @@ fn cross_shot_reuse_matches_fresh_decoders_bitwise() {
                                 },
                                 &shots,
                                 pruned,
+                                false,
                             );
                         }
                     }

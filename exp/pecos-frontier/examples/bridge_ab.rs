@@ -24,6 +24,7 @@
 //! shot (no-path rows leave the gap and evidence fields empty) plus a summary
 //! line. Streaming reports the zero-based index of the last processed column
 //! at first non-reset commitment; NaN means no such commitment occurred.
+//! Both `committed_before_flush` and `early_committed_bits` exclude bits that never toggle.
 //! Lookahead includes logical-only columns, whose own detector index is -1.
 
 use pecos_decoder_core::dem::SparseDem;
@@ -171,7 +172,8 @@ fn main() {
                         first_commit.get_or_insert(progress.columns_processed);
                     }
                 }
-                committed_before_flush += u64::from(stream.committed().1.count_ones());
+                committed_before_flush +=
+                    u64::from(stream.committed().1.count_ones() - reset_mask.count_ones());
                 stream.flush()
             })();
             if let Some(column) = first_commit {

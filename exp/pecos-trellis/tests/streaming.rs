@@ -423,6 +423,9 @@ fn assert_stored_failure(later: &[u8]) {
         .unwrap_err();
     let mut stream = TrellisStreamingDecoder::from_dem_str(text, config).unwrap();
     assert_no_path(&stream.feed_prefix(&[1]).unwrap_err(), &expected);
+    assert_no_path(&stream.feed_dense(&[1, 0]).unwrap_err(), &expected);
+    // The exact-length check must also defer to the stored failure.
+    assert_no_path(&stream.feed_dense(&[1]).unwrap_err(), &expected);
     assert_no_path(&stream.feed_prefix(later).unwrap_err(), &expected);
     assert_no_path(&stream.flush().unwrap_err(), &expected);
 }
@@ -445,7 +448,10 @@ fn dense_requires_a_complete_fresh_shot_and_flush_exposes_commitments() {
     ));
     assert!(matches!(
         stream.feed_dense(&[1, 0]),
-        Err(DecoderError::InvalidDimensions { .. })
+        Err(DecoderError::InvalidDimensions {
+            expected: 2,
+            actual: 3
+        })
     ));
     stream.reset();
     assert_eq!(stream.committed().1.count_ones(), 0);

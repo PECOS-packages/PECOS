@@ -191,18 +191,12 @@ impl TrellisStreamingDecoder {
     /// Feed the whole syndrome in one block before any detectors have arrived.
     ///
     /// # Errors
-    /// Returns a stored failure first, then `InvalidDimensions` unless no detectors
-    /// have arrived and the syndrome has exactly the model's detector count.
-    /// Otherwise returns the same errors as [`Self::feed_prefix`].
+    /// Returns a stored failure first, then `InvalidDimensions` for a syndrome
+    /// whose length differs from the model's detector count. Appends through
+    /// [`Self::feed_prefix`], which rejects overflow after a partial feed.
     pub fn feed_dense(&mut self, syndrome: &[u8]) -> Result<(), DecoderError> {
         if let Some(failure) = self.failure {
             return Err(failure.error());
-        }
-        if self.arrived_count != 0 {
-            return Err(DecoderError::InvalidDimensions {
-                expected: 0,
-                actual: self.arrived_count,
-            });
         }
         if syndrome.len() != self.model.num_detectors {
             return Err(DecoderError::InvalidDimensions {

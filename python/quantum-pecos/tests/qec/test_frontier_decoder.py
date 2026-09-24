@@ -359,10 +359,19 @@ def test_decode_batch_workers_match_all_public_fields(decoder_class, metric_mode
 
 @pytest.mark.parametrize("decoder_class", [FrontierDecoder, FrontierCommitteeDecoder])
 @pytest.mark.parametrize("shots", [[], [[0, 0]]])
-@pytest.mark.parametrize("workers", [0, -1])
-def test_decode_batch_rejects_invalid_workers(decoder_class, shots: list[list[int]], workers: int) -> None:
+@pytest.mark.parametrize(
+    ("workers", "error"),
+    [(0, ValueError), (-1, ValueError), (-(2**70), OverflowError), (2**70, OverflowError)],
+)
+def test_decode_batch_rejects_invalid_workers(
+    decoder_class,
+    shots: list[list[int]],
+    workers: int,
+    error: type[Exception],
+) -> None:
     decoder = decoder_class.from_dem(SMALL_DEM)
-    with pytest.raises(ValueError, match="workers must be at least 1"):
+    match = "workers must be at least 1" if error is ValueError else None
+    with pytest.raises(error, match=match):
         decoder.decode_batch(shots, workers=workers)
 
 

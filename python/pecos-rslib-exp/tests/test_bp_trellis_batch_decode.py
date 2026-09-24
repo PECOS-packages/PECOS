@@ -186,6 +186,9 @@ def test_direct_parallel_batch_matches_sequential():
     for workers in (0, -1):
         with pytest.raises(ValueError, match="workers must be at least 1"):
             decoder.decode_batch(shots, workers=workers)
+    for workers in (-(2**70), 2**70):
+        with pytest.raises(OverflowError):
+            decoder.decode_batch(shots, workers=workers)
 
 
 def test_direct_parallel_batch_releases_gil():

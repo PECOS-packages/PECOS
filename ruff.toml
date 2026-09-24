@@ -180,6 +180,9 @@ ignore = [
 "python/quantum-pecos/src/pecos/guppy_gen/__init__.py" = [
     "RUF022",   # __all__ not sorted - grouped by code type (surface, color, transversal)
 ]
+"python/quantum-pecos/src/pecos/guppy_gen/_certificate.py" = [
+    "PLC0415",  # Import inside function - lazy guppylang so `import pecos` stays light
+]
 "python/quantum-pecos/src/pecos/guppy_gen/color.py" = [
     "PLC0415",  # Import inside function - lazy loading of qec.color
 ]

@@ -11,11 +11,11 @@ The generated syndrome extraction uses a 4-round parallel CNOT
 schedule (N/Z windmill pattern) with dedicated per-stabilizer ancillas.
 """
 
-import hashlib
 import json
 from collections.abc import Callable
 from typing import TYPE_CHECKING, ClassVar
 
+from pecos.guppy_gen._certificate import certify_surface_measurement_layout
 from pecos.guppy_gen._module_loader import _get_temp_dir, load_guppy_source
 from pecos.qec.surface.schedule import compute_cnot_schedule
 
@@ -296,6 +296,12 @@ def generate_guppy_source(
     num_data = geom.num_data
     num_x_stab = len(geom.x_stabilizers)
     num_z_stab = len(geom.z_stabilizers)
+    if num_x_stab == 0 or num_z_stab == 0:
+        msg = (
+            f"surface Guppy source for dx={geom.dx}, dz={geom.dz}, rotated={geom.rotated} requires nonempty X and Z "
+            "stabilizer families; Guppy cannot infer the type of empty syndrome arrays"
+        )
+        raise ValueError(msg)
     total_ancilla = num_x_stab + num_z_stab
     effective_budget = normalize_ancilla_budget(total_ancilla, ancilla_budget)
     constrained = effective_budget < total_ancilla
@@ -2839,7 +2845,6 @@ def make_surface_code(
         trace_metadata=trace_metadata,
     )
     from pecos.qec.surface.circuit_builder import generate_tick_circuit_from_patch
-    from pecos.qec.surface.decode import _surface_abstract_measurement_result_refs
 
     abstract_tc = generate_tick_circuit_from_patch(
         patch,
@@ -2851,25 +2856,5 @@ def make_surface_code(
         check_plan=check_plan,
         clifford_frame_policy=clifford_frame_policy,
     )
-    occurrence_by_tag: dict[str, int] = {}
-    layout: list[tuple[str, int]] = []
-    for ref in _surface_abstract_measurement_result_refs(abstract_tc):
-        if ref[0] == "scalar":
-            _, tag = ref
-            occurrence = occurrence_by_tag.get(tag, 0)
-            occurrence_by_tag[tag] = occurrence + 1
-            layout.append((tag, occurrence))
-        else:
-            _, tag, element = ref
-            layout.append((f"{tag}:meas:{element}", 0))
-    from pecos._compilation import guppy_to_hugr
-
-    certified_layout = tuple(layout)
-    layout_json = json.dumps(certified_layout, separators=(",", ":"))
-    digest = hashlib.sha256(guppy_to_hugr(program) + b"\0" + layout_json.encode()).hexdigest()
-    object.__setattr__(
-        program,
-        "__pecos_named_measurement_layout_v2__",
-        (digest, certified_layout),
-    )
+    certify_surface_measurement_layout(program, abstract_tc)
     return program

@@ -745,8 +745,9 @@ source-graphlike form for Tesseract so it matches the QEC-with-Guppy workflow.
   `if measure(q).read(): x(other)`) would yield a DEM built from a single sampled
   branch — wrong and seed-dependent. Guppy programs whose compiled HUGR
   contains branching or looping control flow therefore raise `ValueError`
-  before tracing; built-in generators such as `make_surface_code` cross
-  this boundary through a trusted program-bound layout certificate.
+  before tracing; built-in generators such as `make_surface_code` and
+  `make_surface_memory` cross this boundary through a trusted program-bound
+  layout certificate.
   Statically-scheduled gates after measurements (every QEC round has them)
   are fine; genuinely conditioned gates are not.
 - **Clifford circuits only.** Traced operations must normalize to named

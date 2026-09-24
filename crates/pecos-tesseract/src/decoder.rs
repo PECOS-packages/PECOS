@@ -262,8 +262,9 @@ impl TesseractDecoder {
     ///
     /// # Errors
     ///
-    /// Returns [`TesseractError::InvalidInput`] if the detection array is not contiguous,
-    /// or [`TesseractError::DecodingFailed`] if the C++ decoder fails.
+    /// Returns [`TesseractError::InvalidInput`] if the detection array is not
+    /// contiguous or repeats a detector, or [`TesseractError::DecodingFailed`]
+    /// if the C++ decoder fails (including a detector index outside the model).
     pub fn decode_detections(
         &mut self,
         detections: &ArrayView1<u64>,
@@ -271,6 +272,7 @@ impl TesseractDecoder {
         let detections_slice = detections.as_slice().ok_or_else(|| {
             TesseractError::InvalidInput("Detection array is not contiguous".to_string())
         })?;
+        reject_repeated_detections(detections_slice)?;
 
         let result = ffi::decode_detections(self.inner.pin_mut(), detections_slice)
             .map_err(|e| TesseractError::DecodingFailed(e.what().to_string()))?;
@@ -294,8 +296,7 @@ impl TesseractDecoder {
     ///
     /// # Errors
     ///
-    /// Returns [`TesseractError::InvalidInput`] if the detection array is not contiguous,
-    /// or [`TesseractError::DecodingFailed`] if the C++ decoder fails.
+    /// Same conditions as [`decode_detections`](Self::decode_detections).
     pub fn decode_with_order(
         &mut self,
         detections: &ArrayView1<u64>,
@@ -304,6 +305,7 @@ impl TesseractDecoder {
         let detections_slice = detections.as_slice().ok_or_else(|| {
             TesseractError::InvalidInput("Detection array is not contiguous".to_string())
         })?;
+        reject_repeated_detections(detections_slice)?;
 
         let result =
             ffi::decode_detections_with_order(self.inner.pin_mut(), detections_slice, det_order)
@@ -427,19 +429,44 @@ impl TesseractDecoder {
     }
 }
 
+/// Sparse detections name a set of fired detectors. Upstream's A* sets each
+/// detector bit once but counts every occurrence in its per-error detector
+/// tallies, and the trellis kernel XORs each occurrence, so a repeated index
+/// silently changes the answer in both; reject it at the boundary.
+///
+/// # Errors
+///
+/// Returns [`TesseractError::InvalidInput`] naming the repeated detector.
+pub(crate) fn reject_repeated_detections(detections: &[u64]) -> Result<(), TesseractError> {
+    let mut sorted = detections.to_vec();
+    sorted.sort_unstable();
+    match sorted.windows(2).find(|pair| pair[0] == pair[1]) {
+        Some(pair) => Err(TesseractError::InvalidInput(format!(
+            "detector {} is repeated; detections must name each fired detector once",
+            pair[0]
+        ))),
+        None => Ok(()),
+    }
+}
+
+/// Indices of the nonzero entries of a dense syndrome, as sparse detections.
+pub(crate) fn fired_detectors<'a>(syndrome: impl IntoIterator<Item = &'a u8>) -> Array1<u64> {
+    Array1::from_iter(
+        syndrome
+            .into_iter()
+            .enumerate()
+            .filter(|(_, val)| **val != 0)
+            .map(|(i, _)| i as u64),
+    )
+}
+
 impl pecos_decoder_core::ObservableDecoder for TesseractDecoder {
     fn decode_obs(
         &mut self,
         syndrome: &[u8],
     ) -> Result<pecos_decoder_core::obs_mask::ObsMask, pecos_decoder_core::DecoderError> {
-        let detections: Vec<u64> = syndrome
-            .iter()
-            .enumerate()
-            .filter_map(|(i, &val)| if val != 0 { Some(i as u64) } else { None })
-            .collect();
-        let det_arr = Array1::from_vec(detections);
         let result = self
-            .decode_detections(&det_arr.view())
+            .decode_detections(&fired_detectors(syndrome.iter()).view())
             .map_err(|e| pecos_decoder_core::DecoderError::DecodingFailed(e.to_string()))?;
         Ok(pecos_decoder_core::obs_mask::ObsMask::from_u64(
             result.observables_mask,
@@ -452,17 +479,7 @@ impl Decoder for TesseractDecoder {
     type Error = TesseractError;
 
     fn decode(&mut self, input: &ArrayView1<u8>) -> Result<Self::Result, Self::Error> {
-        // Convert u8 detections to u64 indices
-        let detections: Vec<u64> = input
-            .iter()
-            .enumerate()
-            .filter_map(|(i, &val)| if val != 0 { Some(i as u64) } else { None })
-            .collect();
-
-        let detections_array = Array1::from_vec(detections);
-        let result = self.decode_detections(&detections_array.view())?;
-
-        Ok(result)
+        self.decode_detections(&fired_detectors(input.iter()).view())
     }
 
     fn check_count(&self) -> usize {

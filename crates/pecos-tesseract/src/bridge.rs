@@ -212,7 +212,7 @@ pub(crate) mod ffi {
         /// Get the number of detectors in the error model.
         fn trellis_num_detectors(decoder: &TesseractTrellisDecoderWrapper) -> usize;
 
-        /// Get the number of (merged, nonzero) errors in the error model.
+        /// Get the number of error mechanisms in the flattened error model.
         fn trellis_num_errors(decoder: &TesseractTrellisDecoderWrapper) -> usize;
 
         /// Get the number of observables in the error model.

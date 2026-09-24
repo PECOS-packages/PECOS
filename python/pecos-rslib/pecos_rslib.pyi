@@ -3619,7 +3619,7 @@ class decoders:
             Args:
                 dem: DEM text with at most one observable and an active-detector frontier of at most 256.
                 beam_width: Maximum states retained per layer (default 1024).
-                beam_eps: After the beam_width cut, keep the top states holding 1 - beam_eps of the layer mass (default 0.0 keeps all).
+                beam_eps: After the beam_width cut, keep the top states holding 1 - beam_eps of the layer mass; in [0, 1), default 0.0 keeps all.
                 future_detcost_scale: Future detector-cost scale in ranked modes (default 2.0).
                 verbose: Print beam statistics (default False).
                 merge_errors: Merge mechanisms with identical symptoms (default True).

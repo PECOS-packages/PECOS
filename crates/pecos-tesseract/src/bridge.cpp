@@ -119,7 +119,12 @@ public:
     }
 
     size_t retained_index(size_t dem_error_idx) const {
-        size_t retained = decoder_->dem_error_to_error.at(dem_error_idx);
+        if (dem_error_idx >= decoder_->dem_error_to_error.size()) {
+            throw std::out_of_range("DEM error index " + std::to_string(dem_error_idx) +
+                                    " is out of range for " +
+                                    std::to_string(decoder_->dem_error_to_error.size()) + " errors");
+        }
+        size_t retained = decoder_->dem_error_to_error[dem_error_idx];
         if (retained == std::numeric_limits<size_t>::max()) {
             throw std::invalid_argument("DEM error index " + std::to_string(dem_error_idx) +
                                         " was merged into another mechanism or removed for zero probability");
@@ -329,7 +334,7 @@ public:
     }
 
     size_t get_num_errors() const {
-        return decoder_->errors.size();
+        return decoder_->dem_error_to_error.size();
     }
 
     size_t get_num_observables() const {

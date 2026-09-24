@@ -48,6 +48,12 @@ fn decoder_runtime_error_to_py(error: impl std::error::Error + 'static) -> PyErr
         if matches!(
             current.downcast_ref::<pecos_decoder_core::DecoderError>(),
             Some(pecos_decoder_core::DecoderError::InvalidDemSyntax(_))
+        ) || matches!(
+            current.downcast_ref::<pecos_decoders::TesseractError>(),
+            Some(
+                pecos_decoders::TesseractError::InvalidConfig(_)
+                    | pecos_decoders::TesseractError::InvalidInput(_)
+            )
         ) {
             return pyo3::exceptions::PyValueError::new_err(error.to_string());
         }
@@ -2301,7 +2307,8 @@ impl PyTesseractDecoder {
         self.inner.num_detectors()
     }
 
-    /// Number of errors in the error model.
+    /// Number of error mechanisms in the flattened error model; merged and
+    /// zero-probability mechanisms keep their index.
     #[getter]
     fn num_errors(&self) -> usize {
         self.inner.num_errors()
@@ -2581,7 +2588,8 @@ impl PyTesseractTrellisDecoder {
         self.inner.num_detectors()
     }
 
-    /// Number of errors in the error model.
+    /// Number of error mechanisms in the flattened error model; merged and
+    /// zero-probability mechanisms keep their index.
     #[getter]
     fn num_errors(&self) -> usize {
         self.inner.num_errors()

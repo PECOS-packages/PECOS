@@ -20,7 +20,7 @@ pub mod decoder;
 pub mod trellis;
 
 // Re-export main types for convenience
-pub use self::decoder::{DecodingResult, TesseractConfig, TesseractDecoder};
+pub use self::decoder::{DecodingResult, TesseractConfig, TesseractDecoder, TesseractError};
 pub use self::trellis::{
     TesseractTrellisConfig, TesseractTrellisDecoder, TesseractTrellisRankingMode,
     TesseractTrellisResult,

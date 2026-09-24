@@ -52,13 +52,17 @@ pub enum TesseractTrellisRankingMode {
 
 /// Configuration for Tesseract's trellis-mode decoder. Defaults are
 /// upstream's `TesseractTrellisConfig` defaults.
+///
+/// This mirrors `pecos_tesseract::TesseractTrellisConfig` field for field
+/// because the spec layer must compile without the `tesseract` feature;
+/// `build::trellis_engine_config` and its test keep the two in step.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TesseractTrellisConfig {
     /// Maximum number of partial-syndrome states kept per trellis layer.
     pub beam_width: usize,
     /// After the `beam_width` cut, keep only the highest-scoring states
     /// whose cumulative mass reaches `1 - beam_eps` of the layer's total
-    /// mass; zero keeps every state up to `beam_width`.
+    /// mass; zero keeps every state up to `beam_width`. Must be in `[0, 1)`.
     pub beam_eps: f64,
     /// Scale applied to the future detector-cost estimate in the ranked
     /// modes; ignored under [`TesseractTrellisRankingMode::MassOnly`].

@@ -358,7 +358,15 @@ fn tesseract_trellis(
                 .map(|value| usize_value("beam_width", value, false))
                 .transpose()?
                 .unwrap_or(defaults.beam_width),
-            beam_eps: optional_non_negative("beam_eps", beam_eps)?.unwrap_or(defaults.beam_eps),
+            beam_eps: match optional_non_negative("beam_eps", beam_eps)? {
+                Some(value) if value >= 1.0 => {
+                    return Err(PyValueError::new_err(
+                        "beam_eps must be in [0, 1); at 1 or above the beam keeps a single state",
+                    ));
+                }
+                Some(value) => value,
+                None => defaults.beam_eps,
+            },
             future_detcost_scale: optional_non_negative(
                 "future_detcost_scale",
                 future_detcost_scale,

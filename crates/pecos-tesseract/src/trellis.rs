@@ -13,9 +13,9 @@
 //! detectors. Each is rejected at construction with upstream's own message.
 
 use super::bridge::ffi;
-use super::decoder::TesseractError;
+use super::decoder::{TesseractError, fired_detectors, reject_repeated_detections};
 use cxx::UniquePtr;
-use ndarray::{Array1, ArrayView1};
+use ndarray::ArrayView1;
 use pecos_decoder_core::{Decoder, DecodingResultTrait};
 
 /// Rule for ranking beam states when truncating a trellis layer.
@@ -52,7 +52,9 @@ pub struct TesseractTrellisConfig {
     pub beam_width: usize,
     /// After the `beam_width` cut, keep only the highest-scoring states
     /// whose cumulative mass reaches `1 - beam_eps` of the layer's total
-    /// mass; zero keeps every state up to `beam_width`.
+    /// mass; zero keeps every state up to `beam_width`. Must be in `[0, 1)`:
+    /// at 1 or above the target mass is nonpositive and the beam collapses
+    /// to a single state per layer.
     pub beam_eps: f64,
     /// Scale applied to the future detector-cost estimate in the ranked
     /// modes; ignored under [`TesseractTrellisRankingMode::MassOnly`].
@@ -92,9 +94,9 @@ impl TesseractTrellisConfig {
                 "beam_width must be greater than 0".to_string(),
             ));
         }
-        if !self.beam_eps.is_finite() || self.beam_eps < 0.0 {
+        if !(0.0..1.0).contains(&self.beam_eps) {
             return Err(TesseractError::InvalidConfig(
-                "beam_eps must be finite and non-negative".to_string(),
+                "beam_eps must be in [0, 1)".to_string(),
             ));
         }
         if !self.future_detcost_scale.is_finite() || self.future_detcost_scale < 0.0 {
@@ -187,14 +189,15 @@ impl TesseractTrellisDecoder {
     /// Decode sparse detection events (indices of fired detectors).
     ///
     /// A fired detector that no mechanism touches is upstream's
-    /// low-confidence case and decodes; a detector index outside the model
-    /// is an input error, as it is for the A* decoder.
+    /// low-confidence case and decodes. A repeated index or a detector
+    /// outside the model is an input error, as for the A* decoder.
     ///
     /// # Errors
     ///
     /// Returns [`TesseractError::InvalidInput`] if the detection array is not
-    /// contiguous or names a detector at or beyond `num_detectors`, or
-    /// [`TesseractError::DecodingFailed`] if the C++ decoder fails.
+    /// contiguous, repeats a detector, or names a detector at or beyond
+    /// `num_detectors`, or [`TesseractError::DecodingFailed`] if the C++
+    /// decoder fails.
     pub fn decode_detections(
         &mut self,
         detections: &ArrayView1<u64>,
@@ -211,6 +214,7 @@ impl TesseractTrellisDecoder {
                 self.num_detectors
             )));
         }
+        reject_repeated_detections(detections_slice)?;
         let result = ffi::trellis_decode_detections(self.inner.pin_mut(), detections_slice)
             .map_err(|e| TesseractError::DecodingFailed(e.what().to_string()))?;
         Ok(TesseractTrellisResult {
@@ -230,7 +234,8 @@ impl TesseractTrellisDecoder {
         self.num_detectors
     }
 
-    /// Number of error mechanisms after merging and zero-probability removal.
+    /// Number of error mechanisms in the flattened error model, the same
+    /// count the A* wrap reports for the same model.
     #[must_use]
     pub fn num_errors(&self) -> usize {
         self.num_errors
@@ -247,16 +252,6 @@ impl TesseractTrellisDecoder {
     pub fn config(&self) -> &TesseractTrellisConfig {
         &self.config
     }
-}
-
-fn fired_detectors<'a>(syndrome: impl IntoIterator<Item = &'a u8>) -> Array1<u64> {
-    Array1::from_iter(
-        syndrome
-            .into_iter()
-            .enumerate()
-            .filter(|(_, val)| **val != 0)
-            .map(|(i, _)| i as u64),
-    )
 }
 
 impl pecos_decoder_core::ObservableDecoder for TesseractTrellisDecoder {
@@ -325,6 +320,13 @@ mod tests {
             (
                 TesseractTrellisConfig {
                     beam_eps: f64::NAN,
+                    ..TesseractTrellisConfig::default()
+                },
+                "beam_eps",
+            ),
+            (
+                TesseractTrellisConfig {
+                    beam_eps: 1.0,
                     ..TesseractTrellisConfig::default()
                 },
                 "beam_eps",

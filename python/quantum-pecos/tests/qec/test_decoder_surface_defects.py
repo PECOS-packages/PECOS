@@ -34,6 +34,7 @@ from pecos.decoders import (
     TesseractTrellisDecoder,
     UnionFindBuilder,
     UnionFindDecoder,
+    tesseract_trellis,
 )
 from pecos_rslib.qec import decoder_dem_requirement
 
@@ -339,6 +340,33 @@ def test_tesseract_trellis_probability_and_decoding_paths(ranking_mode: str) -> 
         decoder.decode([1])
 
 
+def test_tesseract_argument_errors_are_value_errors_on_both_paths() -> None:
+    """A rejected tuning value is a ValueError whether it is caught at the
+    binding or by the engine, for the class and the spec factory alike."""
+    dem = "error(0.1) D0 L0\n"
+    for build, parameter in (
+        (lambda: TesseractTrellisDecoder.from_dem(dem, beam_width=0), "beam_width"),
+        (lambda: TesseractTrellisDecoder.from_dem(dem, beam_eps=-0.1), "beam_eps"),
+        (lambda: TesseractTrellisDecoder.from_dem(dem, beam_eps=1.0), "beam_eps"),
+        (
+            lambda: TesseractTrellisDecoder.from_dem(dem, future_detcost_scale=float("nan")),
+            "future_detcost_scale",
+        ),
+        (lambda: TesseractDecoder.from_dem(dem, det_beam=0), "det_beam"),
+        (lambda: TesseractDecoder.from_dem(dem, det_penalty=-0.1), "det_penalty"),
+        (lambda: tesseract_trellis(beam_eps=1.0), "beam_eps"),
+    ):
+        with pytest.raises(ValueError, match=parameter):
+            build()
+    # A repeated detector index is malformed input for both decoders.
+    for decoder in (
+        TesseractTrellisDecoder.from_dem("error(0.1) D0\nerror(0.2) D0 L0\n"),
+        TesseractDecoder.from_dem("error(0.1) D0\nerror(0.2) D0 L0\n"),
+    ):
+        with pytest.raises(ValueError, match="repeated"):
+            decoder.decode_from_defects([0, 0])
+
+
 def test_tesseract_trellis_surfaces_observable_limit() -> None:
     """Upstream construction errors retain the A* exception mapping."""
     with pytest.raises(RuntimeError) as bad_dem:
@@ -350,12 +378,17 @@ def test_tesseract_trellis_surfaces_observable_limit() -> None:
 def test_tesseract_merge_errors_override() -> None:
     """Disabling merging preserves duplicate nonzero mechanisms."""
     dem = "error(0.1) D0 L0\nerror(0.1) D0 L0\n"
-    # The trellis wrap counts retained mechanisms.
-    assert TesseractTrellisDecoder.from_dem(dem).num_errors == 1
-    assert TesseractTrellisDecoder.from_dem(dem, merge_errors=False).num_errors == 2
-    # The A* wrap keeps flattened-DEM indexing, so the count is unchanged and
-    # the merge shows in the reported cost: -ln(p / (1 - p)) with p = 0.18
-    # merged versus a single p = 0.1 mechanism unmerged.
+    # Both wraps count flattened-DEM mechanisms, so merging shows in the
+    # decode, not the count: one trellis layer instead of two expands fewer
+    # states, and the A* cost is -ln(p / (1 - p)) with p = 0.18 merged
+    # versus a single p = 0.1 mechanism unmerged.
+    trellis_merged = TesseractTrellisDecoder.from_dem(dem)
+    trellis_unmerged = TesseractTrellisDecoder.from_dem(dem, merge_errors=False)
+    assert trellis_merged.num_errors == trellis_unmerged.num_errors == 2
+    assert (
+        trellis_unmerged.decode_from_defects([0]).num_states_expanded
+        > trellis_merged.decode_from_defects([0]).num_states_expanded
+    )
     merged = TesseractDecoder.from_dem(dem)
     unmerged = TesseractDecoder.from_dem(dem, merge_errors=False)
     assert merged.num_errors == unmerged.num_errors == 2

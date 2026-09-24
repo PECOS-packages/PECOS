@@ -152,9 +152,8 @@ fn every_ranking_mode_decodes_the_ambiguous_syndrome() {
 #[test]
 fn merge_errors_combines_identical_mechanisms() {
     let dem = "error(0.1) D0 L0\nerror(0.1) D0 L0\nerror(0) D0\ndetector(0, 0, 0) D0\n";
-    let merged = TesseractTrellisDecoder::new(dem, TesseractTrellisConfig::default()).unwrap();
-    assert_eq!(merged.num_errors(), 1);
-    let unmerged = TesseractTrellisDecoder::new(
+    let mut merged = TesseractTrellisDecoder::new(dem, TesseractTrellisConfig::default()).unwrap();
+    let mut unmerged = TesseractTrellisDecoder::new(
         dem,
         TesseractTrellisConfig {
             merge_errors: false,
@@ -162,12 +161,49 @@ fn merge_errors_combines_identical_mechanisms() {
         },
     )
     .unwrap();
-    assert_eq!(unmerged.num_errors(), 2);
-    for mut decoder in [merged, unmerged] {
-        let result = decode(&mut decoder, &[0]);
+    // Both count the three flattened-DEM mechanisms, like the A* wrap.
+    assert_eq!(merged.num_errors(), 3);
+    assert_eq!(unmerged.num_errors(), 3);
+    let merged_result = decode(&mut merged, &[0]);
+    let unmerged_result = decode(&mut unmerged, &[0]);
+    for result in [&merged_result, &unmerged_result] {
         assert_eq!(result.observables_mask, 1);
         assert!((result.observable_probability - 1.0).abs() < 1e-12);
     }
+    // Merging leaves one trellis layer instead of two, so fewer states expand.
+    assert!(
+        unmerged_result.num_states_expanded > merged_result.num_states_expanded,
+        "{unmerged_result:?} vs {merged_result:?}"
+    );
+}
+
+#[test]
+fn repeated_detector_indices_are_rejected_by_both_decoders() {
+    let dem = "error(0.1) D0\nerror(0.2) D0 L0\n";
+    let mut trellis = TesseractTrellisDecoder::new(dem, TesseractTrellisConfig::default()).unwrap();
+    let mut astar = TesseractDecoder::new(dem, TesseractConfig::default()).unwrap();
+    let repeated = Array1::from_vec(vec![0u64, 0]);
+    for error in [
+        trellis
+            .decode_detections(&repeated.view())
+            .err()
+            .unwrap()
+            .to_string(),
+        astar
+            .decode_detections(&repeated.view())
+            .err()
+            .unwrap()
+            .to_string(),
+        astar
+            .decode_with_order(&repeated.view(), 0)
+            .err()
+            .unwrap()
+            .to_string(),
+    ] {
+        assert!(error.contains("repeated"), "{error}");
+    }
+    // The set form still decodes.
+    assert_eq!(decode(&mut trellis, &[0]).observables_mask, 1);
 }
 
 #[test]

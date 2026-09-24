@@ -56,6 +56,9 @@ impl FrameRecord {
 pub(crate) fn error(s: &str) -> PecosError {
     PecosError::Input(s.into())
 }
+pub(crate) fn processing_error(s: &str) -> PecosError {
+    PecosError::Processing(s.into())
+}
 
 fn opcode(g: &Gate) -> Result<u32, PecosError> {
     g.validate().map_err(|e| error(&e))?;
@@ -97,7 +100,7 @@ pub fn encode_frame(records: &[FrameRecord]) -> Result<ByteMessage, PecosError> 
     let mut bytes = Vec::new();
     bytes
         .try_reserve_exact(MAX_FRAME_BYTES)
-        .map_err(|_| error("frame allocation failed"))?;
+        .map_err(|_| processing_error("frame allocation failed"))?;
     bytes.extend_from_slice(&crate::byte_message::protocol::BATCH_MAGIC.to_le_bytes());
     bytes.extend_from_slice(&[2, 0, 0, 0]);
     bytes.extend_from_slice(
@@ -167,7 +170,7 @@ pub(crate) fn decode(
     let mut records = Vec::new();
     records
         .try_reserve_exact(count)
-        .map_err(|_| error("frame allocation failed"))?;
+        .map_err(|_| processing_error("frame allocation failed"))?;
     let mut pos = 16;
     for _ in 0..count {
         if bytes.len() - pos < 8 {
@@ -296,56 +299,28 @@ pub(crate) struct RuntimeGeneralNoise {
     physical: bool,
 }
 impl RuntimeGeneralNoise {
+    // QuantumSystem has already admitted this complete input before latching.
+    pub(crate) fn start_validated(
+        &mut self,
+        input: ByteMessage,
+    ) -> Result<EngineStage<ByteMessage, ByteMessage>, PecosError> {
+        self.inner.start(input)
+    }
+
     pub(crate) fn preflight_legacy(&self, input: &ByteMessage) -> Result<(), PecosError> {
         // Restrict opt-in v1 inputs too: the retained model must never acquire
         // out-of-range bookkeeping that invalidates a later expansion bound.
-        if input.as_bytes().len() > MAX_FRAME_BYTES {
+        let bytes = input.as_bytes();
+        if !(16..=MAX_FRAME_BYTES).contains(&bytes.len()) {
             return Err(error("legacy frame byte limit"));
         }
-        // Inspect the bounded legacy wire before invoking its general parser:
-        // unsupported angle records can panic during floating-point conversion.
-        let bytes = input.as_bytes();
-        if bytes.len() < 16
-            || word(bytes, 0) != crate::byte_message::protocol::BATCH_MAGIC
-            || bytes[4..8] != [1, 0, 0, 0]
-            || word(bytes, 12) as usize != bytes.len()
-        {
-            return Err(error("invalid legacy frame header"));
-        }
+        // The shared parser reserves from the declared count. Bound it before
+        // parsing, even when the wire contains fewer records than it claims.
         let count = word(bytes, 8) as usize;
         if count > self.limits.records
             || count * 16 * (self.qubits + 1) > self.limits.expanded_operations
         {
             return Err(error("frame record or expansion limit"));
-        }
-        let mut pos = 16;
-        for _ in 0..count {
-            if bytes.len() - pos < 16 || bytes[pos..pos + 4] != [10, 0, 0, 0] {
-                return Err(error("unsupported legacy frame record"));
-            }
-            let len = word(bytes, pos + 4) as usize;
-            let kind = GateType::try_from(bytes[pos + 8]).map_err(PecosError::Input)?;
-            let idle = kind == GateType::Idle;
-            if !matches!(
-                kind,
-                GateType::PZ
-                    | GateType::X
-                    | GateType::Z
-                    | GateType::H
-                    | GateType::MZ
-                    | GateType::MeasureLeaked
-                    | GateType::Idle
-                    | GateType::MeasCrosstalkLocalPayload
-            ) || len != if idle { 16 } else { 8 }
-                || len > bytes.len() - pos - 8
-                || bytes[pos + 9..pos + 12] != [1, u8::from(idle), 0]
-            {
-                return Err(error("unsupported legacy frame gate"));
-            }
-            pos += 8 + len;
-        }
-        if pos != bytes.len() {
-            return Err(error("trailing legacy frame bytes"));
         }
         let gates = input.quantum_ops()?;
         let mut canonical = ByteMessage::quantum_operations_builder();
@@ -362,11 +337,6 @@ impl RuntimeGeneralNoise {
         if canonical.build().as_bytes() != input.as_bytes() {
             return Err(error("noncanonical or unknown legacy record"));
         }
-        if gates.len() > self.limits.records
-            || gates.len() * 16 * (self.qubits + 1) > self.limits.expanded_operations
-        {
-            return Err(error("frame record or expansion limit"));
-        }
         Ok(())
     }
 }
@@ -380,7 +350,7 @@ impl ControlEngine for RuntimeGeneralNoise {
         input: ByteMessage,
     ) -> Result<EngineStage<ByteMessage, ByteMessage>, PecosError> {
         self.preflight_legacy(&input)?;
-        self.inner.start(input)
+        self.start_validated(input)
     }
     fn continue_processing(
         &mut self,
@@ -420,13 +390,6 @@ pub(crate) struct FrameExecutor<'a> {
 }
 impl FrameExecutor<'_> {
     pub(crate) fn execute(&mut self, records: Vec<FrameRecord>) -> Result<ByteMessage, PecosError> {
-        let mut queue = Vec::new();
-        queue
-            .try_reserve_exact(records.len())
-            .map_err(|_| error("frame allocation failed"))?;
-        let mut raw = Vec::new();
-        raw.try_reserve_exact(self.model.limits.expanded_operations)
-            .map_err(|_| error("outcome allocation failed"))?;
         let mut original = ByteMessage::quantum_operations_builder();
         for record in &records {
             if let FrameRecord::Gate(g) = record {
@@ -438,50 +401,56 @@ impl FrameExecutor<'_> {
             .model
             .inner
             .start_runtime_frame(&original.build(), records.len())?;
-        let gates = expanded.quantum_ops()?;
-        if gates.len() > self.model.limits.expanded_operations {
-            return Err(error("expansion invariant exceeded"));
+        let bound = records.len() * 16 * (self.model.qubits + 1);
+        if ends.last().copied().unwrap_or(0) as usize > bound {
+            return Err(processing_error("expansion invariant exceeded"));
         }
-        let mut ends = ends.into_iter();
-        let mut start = 0;
-        for record in records {
-            match record {
-                FrameRecord::Gate(_) => {
-                    let end = ends
-                        .next()
-                        .ok_or_else(|| error("missing expansion boundary"))?
-                        as usize;
-                    let slice = gates
-                        .get(start..end)
-                        .ok_or_else(|| error("invalid expansion boundary"))?;
-                    let commands = ByteMessage::quantum_operations_builder()
-                        .add_gate_commands(slice)
-                        .build();
-                    queue.push((Some(commands), None));
-                    start = end;
-                }
-                FrameRecord::Event { id, target } => queue.push((None, Some((id, target)))),
+        // Metadata does not introduce simulator dispatch boundaries.
+        let mut reply = if records
+            .iter()
+            .any(|r| matches!(r, FrameRecord::Event { id: FLIP, .. }))
+        {
+            let gates = expanded.quantum_ops()?;
+            if gates.len() > bound {
+                return Err(processing_error("expansion invariant exceeded"));
             }
-        }
-        drop(gates);
-        drop(expanded);
-        for (commands, event) in queue {
-            if let Some(commands) = commands {
-                let reply = self.simulator.process(commands)?;
-                let values = reply.outcomes()?;
-                if raw.len() + values.len() > self.model.limits.expanded_operations {
-                    return Err(error("outcome budget exceeded"));
+            let mut raw = Vec::new();
+            raw.try_reserve_exact(bound)
+                .map_err(|_| processing_error("outcome allocation failed"))?;
+            let mut ends = ends.into_iter();
+            let mut start = 0;
+            let mut end = 0;
+            for record in records {
+                match record {
+                    FrameRecord::Gate(_) => {
+                        end = ends
+                            .next()
+                            .ok_or_else(|| processing_error("missing expansion boundary"))?
+                            as usize;
+                    }
+                    FrameRecord::Event { id: FLIP, target } => {
+                        let slice = gates
+                            .get(start..end)
+                            .ok_or_else(|| processing_error("invalid expansion boundary"))?;
+                        self.execute_segment(slice, &mut raw, bound)?;
+                        self.simulator.process(
+                            ByteMessage::quantum_operations_builder()
+                                .x(&[target as usize])
+                                .build(),
+                        )?;
+                        start = end;
+                    }
+                    FrameRecord::Event { .. } => {}
                 }
-                raw.extend(values.into_iter().map(|v| v as usize));
-            } else if let Some((FLIP, target)) = event {
-                self.simulator.process(
-                    ByteMessage::quantum_operations_builder()
-                        .x(&[target as usize])
-                        .build(),
-                )?;
             }
-        }
-        let mut reply = ByteMessage::outcomes_builder().add_outcomes(&raw).build();
+            let slice = gates
+                .get(start..end)
+                .ok_or_else(|| processing_error("invalid expansion boundary"))?;
+            self.execute_segment(slice, &mut raw, bound)?;
+            ByteMessage::outcomes_builder().add_outcomes(&raw).build()
+        } else {
+            self.simulator.process(expanded)?
+        };
         // The admitted singleton profile can generate one crosstalk continuation.
         for _ in 0..2 {
             match self.model.inner.continue_processing(reply)? {
@@ -491,7 +460,29 @@ impl FrameExecutor<'_> {
                 }
             }
         }
-        Err(error("continuation budget exceeded"))
+        Err(processing_error("continuation budget exceeded"))
+    }
+
+    fn execute_segment(
+        &mut self,
+        gates: &[Gate],
+        raw: &mut Vec<usize>,
+        bound: usize,
+    ) -> Result<(), PecosError> {
+        if gates.is_empty() {
+            return Ok(());
+        }
+        let reply = self.simulator.process(
+            ByteMessage::quantum_operations_builder()
+                .add_gate_commands(gates)
+                .build(),
+        )?;
+        let values = reply.outcomes()?;
+        if raw.len() + values.len() > bound {
+            return Err(processing_error("outcome budget exceeded"));
+        }
+        raw.extend(values.into_iter().map(|v| v as usize));
+        Ok(())
     }
 }
 
@@ -503,5 +494,5 @@ pub(crate) fn next_run() -> Result<u64, PecosError> {
             std::sync::atomic::Ordering::Relaxed,
             |v| v.checked_add(1),
         )
-        .map_err(|_| error("run identity exhausted"))
+        .map_err(|_| processing_error("run identity exhausted"))
 }

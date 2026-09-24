@@ -1,6 +1,7 @@
 //! All execution here enters exported QuantumSystem/HybridEngine/SimBuilder APIs.
 use pecos_core::{QubitId, RngManageable};
 use pecos_engines::noise::{GeneralNoiseModelBuilder, IntoNoiseModel};
+use pecos_engines::quantum::SparseStabEngine;
 use pecos_engines::runtime_frame::{
     FLIP, FrameLimits, FrameRecord, METADATA, RuntimeNoise, ShotContext, encode_frame,
 };
@@ -980,4 +981,240 @@ fn expansion_admission_accounts_for_persistent_crosstalk_victims() {
             .unwrap()
     );
     assert_rng_equal(&accepted, &legacy);
+}
+
+#[test]
+fn failed_host_readmission_requires_whole_host_reset() {
+    let mut host = hybrid::HybridEngineBuilder::new()
+        .with_classical_engine(Box::new(script(false)))
+        .with_quantum_system(setup(GeneralNoiseModel::builder(), 7))
+        .build();
+    host.reset().unwrap();
+    host.run_shot_with_context(context(0)).unwrap();
+    assert!(host.run_shot_with_context(context(1)).is_err());
+    assert!(matches!(
+        host.quantum_system.process(frame(&[Gate::mz(&[0])], false)),
+        Err(PecosError::Processing(_))
+    ));
+    host.quantum_system.reset().unwrap();
+    assert!(host.run_shot_with_context(context(2)).is_err());
+    host.reset().unwrap();
+    assert_eq!(
+        host.run_shot_with_context(context(3)).unwrap().data["m1"],
+        Data::U32(1)
+    );
+}
+
+#[test]
+fn shared_parser_rejects_nonfinite_angles_without_panicking() {
+    for angle in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        let mut bytes = message(&[
+            Gate::x(&[0]),
+            Gate::rz(pecos_core::Angle64::from_radians(0.5), &[0]),
+        ])
+        .as_bytes()
+        .to_vec();
+        let end = bytes.len();
+        bytes[end - 8..].copy_from_slice(&angle.to_le_bytes());
+        let result = std::panic::catch_unwind(|| ByteMessage::new(&bytes).quantum_ops());
+        assert!(matches!(result, Ok(Err(PecosError::Input(_)))));
+    }
+}
+
+#[test]
+fn sim_builder_propagates_worker_failure_after_physical_execution() {
+    let mut controller = script(false);
+    controller.fail_after_input = true;
+    let mut sim = sim_builder()
+        .classical(ScriptBuilder(controller))
+        .quantum(state_vector())
+        .qubits(2)
+        .noise(RuntimeNoise::new(GeneralNoiseModel::builder(), 2, FrameLimits::default()).unwrap())
+        .seed(17)
+        .workers(4)
+        .build()
+        .unwrap();
+    assert!(
+        matches!(sim.run(24), Err(PecosError::Processing(message)) if message.contains("classical continuation failure"))
+    );
+}
+
+#[test]
+fn legacy_declared_count_is_bounded_before_parser_reservation() {
+    let mut bytes = message(&[Gate::x(&[0])]).as_bytes().to_vec();
+    bytes[8..12].copy_from_slice(&u32::MAX.to_le_bytes());
+    let mut system = setup(GeneralNoiseModel::builder(), 11);
+    let before = system.clone();
+    assert!(matches!(
+        system.process(ByteMessage::new(&bytes)),
+        Err(PecosError::Input(_))
+    ));
+    assert_rng_equal(&system, &before);
+    assert_eq!(
+        system
+            .process(frame(&[Gate::mz(&[0])], false))
+            .unwrap()
+            .outcomes()
+            .unwrap(),
+        vec![0]
+    );
+}
+
+#[test]
+fn metadata_around_physical_boundaries_preserves_rng_and_reset() {
+    for seed in 0..32 {
+        let builder = GeneralNoiseModel::builder()
+            .with_p1(0.375)
+            .with_p_meas_0(0.25);
+        let records = vec![
+            FrameRecord::gate(Gate::h(&[0])),
+            FrameRecord::Event {
+                id: FLIP,
+                target: 0,
+            },
+            FrameRecord::gate(Gate::h(&[0])),
+            FrameRecord::gate(Gate::mz(&[0])),
+            FrameRecord::Event {
+                id: FLIP,
+                target: 0,
+            },
+            FrameRecord::gate(Gate::mz(&[0])),
+        ];
+        let annotated: Vec<_> = records
+            .iter()
+            .flat_map(|r| {
+                [
+                    FrameRecord::Event {
+                        id: METADATA,
+                        target: 0,
+                    },
+                    r.clone(),
+                ]
+            })
+            .collect();
+        let mut plain = setup(builder.clone(), seed);
+        let mut metadata = setup(builder, seed);
+        for shot in 0..2 {
+            if shot != 0 {
+                plain.reset().unwrap();
+                metadata.reset().unwrap();
+                plain.begin_shot(context(shot)).unwrap();
+                metadata.begin_shot(context(shot)).unwrap();
+            }
+            assert_eq!(
+                plain
+                    .process(encode_frame(&records).unwrap())
+                    .unwrap()
+                    .outcomes()
+                    .unwrap(),
+                metadata
+                    .process(encode_frame(&annotated).unwrap())
+                    .unwrap()
+                    .outcomes()
+                    .unwrap()
+            );
+            assert_rng_equal(&plain, &metadata);
+        }
+    }
+}
+
+#[test]
+fn mandatory_frames_are_rejected_by_ordinary_gate_consumers() {
+    for engine in [
+        Box::new(StateVecEngine::new(1)) as Box<dyn QuantumEngine>,
+        Box::new(SparseStabEngine::new(1)),
+        Box::new(StabVecEngine::new(1)),
+    ] {
+        let mut system = QuantumSystem::new_without_noise(engine);
+        assert!(matches!(
+            system.process(frame(&[Gate::x(&[0])], true)),
+            Err(PecosError::Input(_))
+        ));
+        assert_eq!(
+            system
+                .process(message(&[Gate::mz(&[0])]))
+                .unwrap()
+                .outcomes()
+                .unwrap(),
+            vec![0]
+        );
+    }
+}
+
+#[test]
+fn unknown_legacy_record_after_valid_prefix_is_rejected_atomically() {
+    let mut bytes = message(&[Gate::x(&[0]), Gate::z(&[0])]).as_bytes().to_vec();
+    bytes[32] = 250;
+    let mut system = setup(GeneralNoiseModel::builder(), 11);
+    let before = system.clone();
+    assert!(matches!(
+        system.process(ByteMessage::new(&bytes)),
+        Err(PecosError::Input(_))
+    ));
+    assert_rng_equal(&system, &before);
+    assert_eq!(
+        system
+            .process(frame(&[Gate::mz(&[0])], false))
+            .unwrap()
+            .outcomes()
+            .unwrap(),
+        vec![0]
+    );
+}
+
+#[test]
+fn empty_and_adjacent_event_segments_complete_without_extra_sampling() {
+    let mut system = setup(GeneralNoiseModel::builder(), 31);
+    let before = system.clone();
+    for records in [
+        vec![],
+        vec![FrameRecord::Event {
+            id: METADATA,
+            target: 0,
+        }],
+    ] {
+        assert!(
+            system
+                .process(encode_frame(&records).unwrap())
+                .unwrap()
+                .outcomes()
+                .unwrap()
+                .is_empty()
+        );
+        assert_rng_equal(&system, &before);
+    }
+    // An idle with no configured faults expands to zero operations. Empty spans
+    // around adjacent effects must not drop, duplicate, or move either effect.
+    let records = [
+        FrameRecord::Event {
+            id: FLIP,
+            target: 0,
+        },
+        FrameRecord::gate(Gate::idle(1.0, vec![QubitId(0)])),
+        FrameRecord::Event {
+            id: METADATA,
+            target: 0,
+        },
+        FrameRecord::Event {
+            id: FLIP,
+            target: 0,
+        },
+    ];
+    assert!(
+        system
+            .process(encode_frame(&records).unwrap())
+            .unwrap()
+            .outcomes()
+            .unwrap()
+            .is_empty()
+    );
+    assert_rng_equal(&system, &before);
+    assert_eq!(
+        system
+            .process(frame(&[Gate::mz(&[0])], true))
+            .unwrap()
+            .outcomes()
+            .unwrap(),
+        vec![0]
+    );
 }

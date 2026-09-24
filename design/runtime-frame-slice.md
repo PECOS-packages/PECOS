@@ -1,5 +1,10 @@
 # Rust-only frame prototype
 
+Historical executable probes were removed after separate production review.
+Their source remains at commit `d4eaaa7b`; current regression coverage is in
+`tests/runtime_frame_production.rs`. Descriptions of prototype tests below are
+historical, not claims about current test targets.
+
 Current milestone: [scoped production Rust execution](runtime-production-milestone.md).
 This file describes the earlier test-only prototype; it remains historical evidence.
 

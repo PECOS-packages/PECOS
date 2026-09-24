@@ -450,7 +450,7 @@ impl GeneralNoiseModel {
         let mut boundaries = Vec::new();
         boundaries
             .try_reserve_exact(count)
-            .map_err(|_| PecosError::Input("boundary allocation failed".into()))?;
+            .map_err(|_| PecosError::Processing("boundary allocation failed".into()))?;
         match self.start_with_boundaries(input, Some(&mut boundaries))? {
             EngineStage::NeedsProcessing(commands) => Ok((commands, boundaries)),
             EngineStage::Complete(_) => {

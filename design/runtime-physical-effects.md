@@ -1,5 +1,10 @@
 # Execution-ordered runtime effects: focused follow-up to #826
 
+Historical executable probes were removed after separate production review.
+Their source remains at commit `d4eaaa7b`; current regression coverage is in
+`tests/runtime_frame_production.rs`. Descriptions of prototype tests below are
+historical, not claims about current test targets.
+
 Status: historical reviewed proposal. Current scope and validation are in the
 [scoped production Rust milestone](runtime-production-milestone.md). The following
 blocked/proposed statements describe earlier investigation. The

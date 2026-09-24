@@ -123,8 +123,13 @@ impl HybridEngine {
     /// - Processing commands through the quantum engine fails.
     /// - Handling measurements through the classical engine fails.
     pub fn run_shot(&mut self) -> Result<Shot, PecosError> {
+        if !self.quantum_system.uses_runtime_frames() {
+            return self.run_shot_inner();
+        }
         let context = crate::runtime_frame::ShotContext {
-            run: crate::runtime_frame::next_run()?,
+            run: crate::runtime_frame::next_run().inspect_err(|_| {
+                self.quantum_system.block_host();
+            })?,
             worker: 0,
             shot: 0,
         };
@@ -150,13 +155,13 @@ impl HybridEngine {
                 }
             }
         }
-        if self.quantum_system.uses_runtime_frames() {
-            self.quantum_system.begin_shot(context)?;
-        }
         let mut guard = Guard {
             engine: self,
             complete: false,
         };
+        if guard.engine.quantum_system.uses_runtime_frames() {
+            guard.engine.quantum_system.begin_shot(context)?;
+        }
         let result = guard.engine.run_shot_inner();
         guard.complete = result.is_ok();
         result

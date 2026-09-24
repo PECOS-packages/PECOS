@@ -58,7 +58,14 @@ impl QuantumSystem {
     }
 
     fn drive_legacy(&mut self, input: ByteMessage) -> Result<ByteMessage, PecosError> {
-        let mut stage = self.noise_model.start(input)?;
+        let stage = self.noise_model.start(input)?;
+        self.drive_stage(stage)
+    }
+
+    fn drive_stage(
+        &mut self,
+        mut stage: crate::EngineStage<ByteMessage, ByteMessage>,
+    ) -> Result<ByteMessage, PecosError> {
         loop {
             match stage {
                 crate::EngineStage::Complete(output) => return Ok(output),
@@ -77,7 +84,9 @@ impl QuantumSystem {
     /// retain this context until reset; no per-input shot identity is inferred.
     pub fn begin_shot(&mut self, context: ShotContext) -> Result<(), PecosError> {
         if self.frame_poisoned || self.host_blocked || self.shot_context.is_some() {
-            return Err(runtime_frame::error("shot requires successful reset"));
+            return Err(runtime_frame::processing_error(
+                "shot requires successful reset",
+            ));
         }
         self.shot_context = Some(context);
         Ok(())
@@ -148,7 +157,10 @@ impl QuantumSystem {
         &*self.noise_model
     }
 
-    /// Returns a mutable reference to the noise model
+    /// Returns a mutable reference to the noise model.
+    ///
+    /// For runtime-enabled systems, this poisons execution and clears shot
+    /// authorization. Successful reset and a new shot context are required.
     #[must_use]
     pub fn noise_model_mut(&mut self) -> &mut dyn NoiseModel {
         if self.uses_runtime_frames() {
@@ -164,7 +176,10 @@ impl QuantumSystem {
         &*self.quantum_engine
     }
 
-    /// Returns a mutable reference to the quantum engine
+    /// Returns a mutable reference to the quantum engine.
+    ///
+    /// For runtime-enabled systems, this poisons execution and clears shot
+    /// authorization. Successful reset and a new shot context are required.
     #[must_use]
     pub fn quantum_engine_mut(&mut self) -> &mut dyn QuantumEngine {
         if self.uses_runtime_frames() {
@@ -199,12 +214,14 @@ impl Engine for QuantumSystem {
             return self.drive_legacy(input);
         }
         if self.frame_poisoned || self.host_blocked {
-            return Err(runtime_frame::error(
+            return Err(runtime_frame::processing_error(
                 "execution owner poisoned; reset required",
             ));
         }
         if self.shot_context.is_none() {
-            return Err(runtime_frame::error("explicit shot context required"));
+            return Err(runtime_frame::processing_error(
+                "explicit shot context required",
+            ));
         }
         let model = self
             .noise_model
@@ -242,7 +259,8 @@ impl Engine for QuantumSystem {
         } else {
             model.preflight_legacy(&input)?;
             self.frame_poisoned = true;
-            let result = self.drive_legacy(input)?;
+            let stage = model.start_validated(input)?;
+            let result = self.drive_stage(stage)?;
             self.frame_poisoned = false;
             Ok(result)
         }
@@ -277,6 +295,8 @@ impl EngineSystem for QuantumSystem {
         &self.noise_model
     }
 
+    /// Mutable access invalidates runtime shot authorization and poisons execution.
+    /// Reset successfully and establish a new context before reuse.
     fn controller_mut(&mut self) -> &mut Self::Controller {
         if self.uses_runtime_frames() {
             self.frame_poisoned = true;
@@ -289,6 +309,8 @@ impl EngineSystem for QuantumSystem {
         &self.quantum_engine
     }
 
+    /// Mutable access invalidates runtime shot authorization and poisons execution.
+    /// Reset successfully and establish a new context before reuse.
     fn engine_mut(&mut self) -> &mut Self::ControlledEngine {
         if self.uses_runtime_frames() {
             self.frame_poisoned = true;

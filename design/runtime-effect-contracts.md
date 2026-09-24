@@ -1,5 +1,10 @@
 # Runtime effect contracts: GeneralNoiseModel investigation
 
+Historical executable probes were removed after separate production review.
+Their source remains at commit `d4eaaa7b`; current regression coverage is in
+`tests/runtime_frame_production.rs`. Descriptions of prototype tests below are
+historical, not claims about current test targets.
+
 Status: historical specification and executable investigation. The current
 [production Rust slice](runtime-production-milestone.md) implements a narrower
 sequential wire subset and scoped executor; broader transport below is proposed.

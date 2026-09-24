@@ -52,9 +52,9 @@ profiles require separate sampling/state decisions under RFC #591.
 
 ## Shot identity, cloning and recovery
 
-Monte Carlo allocates a checked process-local run namespace, and supplies worker
+For runtime-enabled systems only, Monte Carlo allocates a checked process-local run namespace, and supplies worker
 and local-shot indices after successful reset. HybridEngine retains that context
-in QuantumSystem across all inputs in the shot. Direct HybridEngine execution
+in QuantumSystem across all inputs in the shot. Direct runtime-enabled HybridEngine execution
 allocates its own run namespace; direct QuantumSystem callers must call begin_shot
 with explicit context. Context never reseeds RNG; existing worker seed streams
 are preserved. Run namespaces identify execution instances, not portable replay
@@ -70,13 +70,15 @@ supplied contexts; the scheduler assigns distinct contexts for its workers/shots
 
 At QuantumSystem level, preflight rejection leaves model, simulator and RNG
 unchanged and permits a corrected input. HybridEngine aborts the enclosing shot
-on any returned error and requires whole-host reset. Before execution, QuantumSystem latches failure state; success
+on any returned error and requires whole-host reset. The HybridEngine guard covers shot-context admission as well as execution.
+Before execution, QuantumSystem latches failure state; success
 clears it, while errors or unwind retain it. HybridEngine additionally guards
-classical start/continuation failures and failed classical resets. Quantum reset
-alone cannot clear a failed host's latch: classical, noise and simulator reset
-must all succeed. Dropping a frame releases its buffers; reset discards abandoned
+classical start/continuation failures and failed classical resets. QuantumSystem::reset clears the quantum execution latch after noise and simulator
+reset succeed. It cannot clear a failed HybridEngine host latch: classical, noise
+and simulator reset must all succeed through HybridEngine::reset. Dropping a frame releases its buffers; reset discards abandoned
 controller results without reseeding. No rollback of already executed effects is
-promised. Ordinary non-opted-in v1 execution keeps its existing behavior.
+promised. Ordinary non-opted-in v1 execution keeps its existing controller lifecycle;
+shared parsing now returns Input for non-finite angles instead of unwinding.
 
 ## Wire subset and retention bounds
 
@@ -105,13 +107,15 @@ and local crosstalk at most one measurement plus one continuation command. The
 budget includes injected X operations and outcomes. Unsupported gate arities are
 rejected rather than assigned an unproven bound.
 
-Opted-in v1 inputs are wire-checked against the admitted singleton subset before
-entering the general parser, which can panic on non-finite unsupported angles.
-They share the built-in simulator capacity check with v2, preventing automatic
-growth from recreating persistent state. They are size/arity/target/budget checked
-and must canonically
+Opted-in v1 inputs have byte and declared-count budgets checked before parsing
+(the parser reserves from the declared count). Shared angle parsing rejects
+non-finite values with an input error. Gates, targets and idle arithmetic are
+checked once at QuantumSystem admission and must canonically
 round-trip, so preceding inputs cannot grow bookkeeping outside this profile.
-Only one frame is retained; consumed queues are dropped, with no event history.
+Both v1 and v2 share the simulator-capacity check, preventing automatic growth
+from recreating persistent state. A private validated start avoids repeated
+admission within the model.
+Only one frame is retained; consumed segments are dropped, with no event history.
 Persistent leakage/preparation sets are bounded by configured qubits. Expansion
 invariant violations and unexpected continuation growth abort; nothing is silently
 truncated. Existing ByteMessage/model allocations remain infallible Rust allocator
@@ -120,7 +124,7 @@ New top-level vector reservations return errors on allocation failure.
 
 ## Evidence and remaining work
 
-`tests/runtime_frame_production.rs` has 16 tests exercising exported production APIs:
+`tests/runtime_frame_production.rs` has 24 tests exercising exported production APIs:
 
 - Metadata versus ordinary legacy execution over 64 seeds, multiple inputs,
   leakage readout, nonlinear idle and complete debug-visible noise/simulator RNG
@@ -135,7 +139,7 @@ New top-level vector reservations return errors on allocation failure.
 - SimBuilder multi-input shots across four workers, repeated runs, noisy seeded
   metadata replay, and explicit distinct worker contexts.
 
-Validation: full `cargo test -p pecos-engines --offline` passed 418 tests/doctests
+Validation: full `cargo test -p pecos-engines --offline` passed 412 tests/doctests
 with zero failures/ignored tests; all-target Clippy with `-D warnings`, formatting,
 changed-file pre-commit and diff checks passed. No fresh Python test run because
 no Python path was added. The historical diagnostic library-search skip remains
@@ -150,7 +154,9 @@ Matched circuits, schedules, model parameters, decoders and approximations remai
 necessary before studying parity. Synthetic tests do not establish simulator or
 device-model equivalence. Keep #827 draft; do not merge either PR.
 
-## Production self-review of f3bb9f75
+## Historical production self-review of f3bb9f75
+
+The raw-scan containment below was superseded by the separate-review fixes.
 
 Two confirmed admission issues were reproduced before correction:
 
@@ -176,3 +182,42 @@ This is implementation-author self-review, not independent external review.
 The fixes do not alter the scope or the RFC #591 limitations above: preserved
 native simultaneous batches and outcome-dependent physical profiles remain
 unimplemented. Ordinary non-opted-in legacy parser behavior is unchanged.
+
+## Response to separate review of d4eaaa7b
+
+The [separate review](https://github.com/PECOS-packages/PECOS/pull/827#issuecomment-5805975740)
+reported a P1 admission-guard hole and shared-parser panic. Both were reproduced
+before correction. The new regressions are
+`failed_host_readmission_requires_whole_host_reset` and
+`shared_parser_rejects_nonfinite_angles_without_panicking`.
+
+The guard now exists before begin_shot can fail; a failed second shot cannot
+execute quantum commands or recover through quantum-only reset. Shared parsing
+checks angle finiteness before conversion. The hand-written raw gate scan is
+removed; bounded count admission and canonical round-trip remain necessary to
+prevent excessive parser reservation and silent unknown-record skipping.
+
+Execution now sends the entire expansion directly to the simulator when no
+physical event exists, and otherwise splits only at physical events. There is no
+per-gate message queue. Outcome retention for physical frames reserves the admitted
+per-input expansion bound, rather than the configured maximum. Fallible reservations
+remain intentional: their failures can be returned even though other allocator
+sites preclude a general process-wide OOM recovery guarantee.
+
+Shot identity remains an explicit contract; ordinary systems no longer allocate
+run namespaces. Mutable accessor rustdoc states invalidation/reset requirements.
+Malformed input returns Input; owner-state, allocation and internal frame failures
+return Processing. Empty/event-only frames and zero-operation spans between adjacent
+physical events are covered by production regressions. Underlying component errors retain their original variants, so
+an error after execution still requires reset regardless of its variant.
+
+Removed the obsolete test-local executors in runtime_frame_slice.rs and
+runtime_transport_review.rs. Production regressions retain physical-event metadata
+invariance/reset and unsupported-consumer/unknown-record rejection; scoped frames
+have no public continuation tokens to test. Historical counterexamples and design
+rationale remain in these design notes and git history. A SimBuilder/four-worker
+regression confirms a post-physical-input classical error reaches the caller.
+
+The separate review applies to d4eaaa7b. These corrections and their validation
+are implementation-author work awaiting follow-up review, not a new independent
+approval. #828 remains unchanged. No producer, Python API or broader profile is added.

@@ -52,7 +52,7 @@ dev = [
   "ruff",                                   # Fast Python linting
   "tomli>=1.1.0; python_version < '3.11'",  # TOML parsing (stdlib in 3.11+)
   "mkdocs",                                 # Documentation framework
-  "mkdocs-material",                        # Material theme for MkDocs
+  "mkdocs-material>=9.7.7",                 # Material theme for MkDocs
   "mkdocstrings[python]",                   # Code documentation extraction
   "markdown-exec[ansi]",                    # Executable markdown blocks
   "pyyaml>=6.0.3",
@@ -96,10 +96,10 @@ cuda12 = [ # CUDA 12
 
 [tool.uv]
 default-groups = ["dev", "test"]
-# Security floors for transitive dependencies. Keep in sync with
-# docs/requirements.txt, which pins the same floors for the readthedocs build
-# (that file does not constrain this workspace's resolution).
+# Security floors for transitive dependencies. Mirror applicable docs dependencies
+# in docs/requirements.txt; that file does not constrain workspace resolution.
 constraint-dependencies = [
+  "jupyter-server>=2.21.0", # GHSA-c3mw-737p-c7g2: redact token-bearing Referer headers in logs
   "idna>=3.18", # CVE-2026-45409 (re-fix of CVE-2024-3651): idna.encode() DoS on crafted long inputs
 ]
 # CUDA 12 and CUDA 13 stacks are mutually exclusive (separate cupy/cuquantum

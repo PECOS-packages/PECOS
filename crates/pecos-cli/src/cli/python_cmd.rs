@@ -259,15 +259,43 @@ fn run_build(profile: &str, rustflags: Option<&str>, cuda: bool) -> Result<()> {
 
     let status = pip_cmd.status();
     match status {
-        Ok(s) if s.success() => {
-            println!("Python build completed successfully");
-            Ok(())
+        Ok(s) if s.success() => {}
+        Ok(_) => return Err(Error::Config("quantum-pecos install failed".to_string())),
+        Err(e) => {
+            return Err(Error::Config(format!(
+                "Failed to install quantum-pecos: {e}"
+            )));
         }
-        Ok(_) => Err(Error::Config("quantum-pecos install failed".to_string())),
-        Err(e) => Err(Error::Config(format!(
-            "Failed to install quantum-pecos: {e}"
-        ))),
     }
+
+    // The install above is --no-deps, so in a venv that was never synced
+    // quantum-pecos lands with its runtime dependencies absent and `import
+    // pecos` fails while the build has reported success. Refuse that state.
+    check_runtime_dependencies(&repo_root)?;
+
+    println!("Python build completed successfully");
+    Ok(())
+}
+
+/// Fail if `uv pip check` reports a missing or incompatible dependency.
+/// The report itself goes to the terminal; the error names the remedy.
+fn check_runtime_dependencies(repo_root: &Path) -> Result<()> {
+    let mut cmd = Command::new("uv");
+    cmd.args(["pip", "check"]);
+    cmd.current_dir(repo_root);
+    cmd.env_remove("CONDA_PREFIX");
+    let status = cmd
+        .status()
+        .map_err(|e| Error::Config(format!("Failed to run uv pip check: {e}")))?;
+    if status.success() {
+        return Ok(());
+    }
+    Err(Error::Config(
+        "the Python environment has missing or incompatible dependencies after the build \
+         (see the uv pip check report above). Run `just build`, which syncs the \
+         environment; `just build-lite` assumes a synced venv."
+            .to_string(),
+    ))
 }
 
 fn editable_install_command(repo_root: &Path) -> Command {
@@ -276,8 +304,9 @@ fn editable_install_command(repo_root: &Path) -> Command {
     // such as hatchling. PyPI is already the default when none is configured.
     // `--no-deps` skips runtime dependencies, not isolated build dependencies.
     // CUDA packages are installed separately by `uv sync --group cuda12|cuda13`
-    // or `pecos cuda setup-python`. The dependency-free `[all]` extra exists
-    // regardless of CUDA toolkit major and avoids an unknown-extra warning.
+    // or `pecos cuda setup-python`. `[all]` is requested because it exists
+    // regardless of CUDA toolkit major, so no unknown-extra warning; with
+    // --no-deps it installs nothing.
     cmd.args([
         "pip",
         "install",

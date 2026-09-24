@@ -429,14 +429,7 @@ impl GeneralNoiseModel {
             ));
         }
         // Apply noise to the gates
-        let noisy_gates = match self.apply_noise_on_start_with_boundaries(input, boundaries) {
-            Ok(gates) => gates,
-            Err(e) => {
-                return Err(PecosError::Processing(format!(
-                    "Noise application error: {e}"
-                )));
-            }
-        };
+        let noisy_gates = self.apply_noise_on_start_with_boundaries(input, boundaries)?;
 
         // Return the noisy operations to QuantumEngine for processing/simulation
         Ok(EngineStage::NeedsProcessing(noisy_gates))
@@ -610,22 +603,28 @@ impl GeneralNoiseModel {
     /// Returns an error if noise application fails or the message cannot be processed.
     pub fn apply_noise_on_start(&mut self, input: &ByteMessage) -> Result<ByteMessage, String> {
         self.apply_noise_on_start_with_boundaries(input, None)
+            .map_err(|error| match error {
+                PecosError::Input(message) | PecosError::Processing(message) => message,
+                other => other.to_string(),
+            })
     }
 
     fn apply_noise_on_start_with_boundaries(
         &mut self,
         input: &ByteMessage,
         mut boundaries: Option<&mut Vec<u32>>,
-    ) -> Result<ByteMessage, String> {
+    ) -> Result<ByteMessage, PecosError> {
         let mut builder = NoiseUtils::create_quantum_builder();
         let mut err = None;
 
         // Parse the input as quantum operations
-        let gates = input
-            .quantum_ops()
-            .map_err(|err| format!("Failed to parse input as quantum operations: {err}"))?;
+        let gates = input.quantum_ops().map_err(|err| {
+            PecosError::Input(format!(
+                "Failed to parse input as quantum operations: {err}"
+            ))
+        })?;
         if gates.iter().any(Gate::is_channel) {
-            return Err(Self::channel_gate_error());
+            return Err(PecosError::Input(Self::channel_gate_error()));
         }
 
         for gate in gates {
@@ -764,7 +763,7 @@ impl GeneralNoiseModel {
         }
 
         if let Some(e) = err {
-            return Err(e);
+            return Err(PecosError::Processing(e));
         }
 
         Ok(builder.build())

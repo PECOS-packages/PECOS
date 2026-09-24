@@ -1,5 +1,6 @@
 //! Regression tests for parse rejection and abandoned-continuation reset.
-use pecos_core::RngManageable;
+use pecos_core::{RngManageable, errors::PecosError};
+use pecos_engines::byte_message::protocol::BatchHeader;
 use pecos_engines::noise::GeneralNoiseModel;
 use pecos_engines::quantum::StateVecEngine;
 use pecos_engines::{ByteMessage, ControlEngine, Engine, EngineStage, QuantumSystem};
@@ -30,8 +31,6 @@ fn program(ops: &str) -> ByteMessage {
     b.build()
 }
 
-use pecos_engines::byte_message::protocol::BatchHeader;
-
 fn unsupported_version() -> ByteMessage {
     let mut bytes = program("XX").as_bytes().to_vec();
     // Valid gate prefix followed by an unknown record: rejection must precede X.
@@ -46,11 +45,17 @@ fn unsupported_version() -> ByteMessage {
 fn general_noise_returns_version_error_without_execution_or_rng_consumption() {
     let mut noise = GeneralNoiseModel::builder().build();
     let mut expected_rng = noise.rng().clone();
-    assert!(noise.start(unsupported_version()).is_err());
+    assert!(matches!(
+        noise.start(unsupported_version()),
+        Err(PecosError::Input(_))
+    ));
     let mut actual_rng = noise.rng().clone();
     assert_eq!(actual_rng.next_u64(), expected_rng.next_u64());
     let mut system = QuantumSystem::new(Box::new(noise), Box::new(StateVecEngine::new(1)));
-    assert!(system.process(unsupported_version()).is_err());
+    assert!(matches!(
+        system.process(unsupported_version()),
+        Err(PecosError::Input(_))
+    ));
     assert_eq!(
         system.process(program("M")).unwrap().outcomes().unwrap(),
         [0]

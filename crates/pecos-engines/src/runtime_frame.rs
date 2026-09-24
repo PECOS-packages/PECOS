@@ -60,6 +60,16 @@ pub(crate) fn processing_error(s: &str) -> PecosError {
     PecosError::Processing(s.into())
 }
 
+// Public admission bounds make overflow unreachable; keep every factor checked
+// so this calculation remains defensive if those limits change.
+fn expansion_bound(count: usize, qubits: usize) -> Result<usize, PecosError> {
+    qubits
+        .checked_add(1)
+        .and_then(|n| n.checked_mul(16))
+        .and_then(|factor| count.checked_mul(factor))
+        .ok_or_else(|| error("expansion overflow"))
+}
+
 fn opcode(g: &Gate) -> Result<u32, PecosError> {
     g.validate().map_err(|e| error(&e))?;
     if g.qubits.len() != 1
@@ -161,9 +171,7 @@ pub(crate) fn decode(
     // <=3 preparation commands plus <=qubits raw crosstalk results; each
     // crosstalk payload adds <=1 measurement and <=1 continuation command.
     // 16*(qubits+1) per record conservatively covers all commands and outcomes.
-    let bound = count
-        .checked_mul(16 * (config.qubits + 1))
-        .ok_or_else(|| error("expansion overflow"))?;
+    let bound = expansion_bound(count, config.qubits)?;
     if bound > config.limits.expanded_operations {
         return Err(error("frame expansion budget"));
     }
@@ -318,10 +326,7 @@ impl RuntimeGeneralNoise {
         // parsing, even when the wire contains fewer records than it claims.
         let count = word(bytes, 8) as usize;
         if count > self.limits.records
-            || count
-                .checked_mul(16 * (self.qubits + 1))
-                .ok_or_else(|| error("expansion overflow"))?
-                > self.limits.expanded_operations
+            || expansion_bound(count, self.qubits)? > self.limits.expanded_operations
         {
             return Err(error("frame record or expansion limit"));
         }
@@ -404,7 +409,8 @@ impl FrameExecutor<'_> {
             .model
             .inner
             .start_runtime_frame(&original.build(), records.len())?;
-        let bound = records.len() * 16 * (self.model.qubits + 1);
+        let bound = expansion_bound(records.len(), self.model.qubits)
+            .map_err(|_| processing_error("expansion overflow"))?;
         if ends.last().copied().unwrap_or(0) as usize > bound {
             return Err(processing_error("expansion invariant exceeded"));
         }
@@ -498,4 +504,20 @@ pub(crate) fn next_run() -> Result<u64, PecosError> {
             |v| v.checked_add(1),
         )
         .map_err(|_| processing_error("run identity exhausted"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn expansion_bound_checks_each_arithmetic_step() {
+        assert_eq!(expansion_bound(128, 16).unwrap(), 34816);
+        assert_eq!(expansion_bound(0, 16).unwrap(), 0);
+        for (count, qubits) in [(1, usize::MAX), (1, usize::MAX / 16), (usize::MAX, 1)] {
+            assert!(
+                matches!(expansion_bound(count, qubits), Err(PecosError::Input(message)) if message == "expansion overflow")
+            );
+        }
+    }
 }

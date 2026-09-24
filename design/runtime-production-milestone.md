@@ -139,7 +139,7 @@ New top-level vector reservations return errors on allocation failure.
 - SimBuilder multi-input shots across four workers, repeated runs, noisy seeded
   metadata replay, and explicit distinct worker contexts.
 
-Validation: full `cargo test -p pecos-engines --offline` passed 412 tests/doctests
+Validation: full `cargo test -p pecos-engines --offline` passed 413 tests/doctests
 with zero failures/ignored tests; all-target Clippy with `-D warnings`, formatting,
 changed-file pre-commit and diff checks passed. No fresh Python test run because
 no Python path was added. The historical diagnostic library-search skip remains
@@ -221,3 +221,15 @@ regression confirms a post-physical-input classical error reaches the caller.
 The separate review applies to d4eaaa7b. These corrections and their validation
 are implementation-author work awaiting follow-up review, not a new independent
 approval. #828 remains unchanged. No producer, Python API or broader profile is added.
+
+## Combined PR review nits
+
+The [review of combined #828 at 3751142a](https://github.com/PECOS-packages/PECOS/pull/828#issuecomment-5806864169)
+reported no blockers and three nits. Expansion arithmetic now shares a private
+helper that checks addition and both multiplications; unit coverage exercises
+all overflow steps plus zero and the maximum admitted product. Such overflow is
+unreachable through the validated public limits, so this is defensive coverage,
+not evidence of a reachable input bug. GeneralNoiseModel start preserves malformed
+parse failures as Input; the public string-returning noise helper remains compatible.
+The recovery regression now checks the variant through both model and system entry
+points. Its BatchHeader import is grouped with the other imports.

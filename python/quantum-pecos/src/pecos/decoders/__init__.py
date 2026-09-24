@@ -122,7 +122,10 @@ def __getattr__(name: str) -> object:
         except ModuleNotFoundError as exc:
             if exc.name != "pecos_rslib_exp":
                 raise
-            message = f"{name} requires the optional pecos-rslib-exp package; install it to use experimental decoders"
+            message = (
+                f"{name} requires the pecos-rslib-exp package, which is not published to PyPI; "
+                "build it from a PECOS source checkout with `just build`"
+            )
             raise ImportError(message) from exc
         try:
             return getattr(experimental, name)

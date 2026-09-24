@@ -21,6 +21,8 @@ The API is designed to mirror the original library APIs:
 - LDPC: ldpc.bposd_decoder, ldpc.bplsd_decoder
 """
 
+import sys
+
 import pytest
 
 
@@ -538,3 +540,14 @@ class TestRelayBpDecoder:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+def test_experimental_factory_names_the_missing_package(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(sys.modules, "pecos_rslib_exp", None)
+    import pecos.decoders as decoders
+
+    with pytest.raises(
+        ImportError,
+        match=r"frontier requires the pecos-rslib-exp package.*not published to PyPI.*just build",
+    ):
+        _ = decoders.frontier

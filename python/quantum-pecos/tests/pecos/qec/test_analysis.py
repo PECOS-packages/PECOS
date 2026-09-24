@@ -3,8 +3,13 @@
 
 """Tests for pecos.qec.analysis utilities."""
 
+import sys
+
 import pytest
 from pecos.qec.analysis import (
+    build_adaptive_dem,
+    empirical_correlation_table,
+    fit_dem_from_simulation,
     logical_error_rate,
     logical_fidelity,
     logical_from_data,
@@ -217,3 +222,24 @@ class TestLowerBoundFidelity:
         bound = lower_bound_fidelity(0.9, 0.8)
         expected = (4 / 5) * (0.9 + 0.8) - (3 / 5)
         assert bound == pytest.approx(expected)
+
+
+class TestMissingExperimentalPackage:
+    """The functions that need pecos-rslib-exp say so when it is absent."""
+
+    @pytest.mark.parametrize(
+        ("func", "args"),
+        [
+            (empirical_correlation_table, (None, None, 1)),
+            (fit_dem_from_simulation, (None, None, 1)),
+            (build_adaptive_dem, (None, {})),
+        ],
+        ids=["empirical_correlation_table", "fit_dem_from_simulation", "build_adaptive_dem"],
+    )
+    def test_names_the_package_and_how_to_get_it(self, monkeypatch: pytest.MonkeyPatch, func, args) -> None:
+        monkeypatch.setitem(sys.modules, "pecos_rslib_exp", None)
+        with pytest.raises(
+            ImportError,
+            match=rf"{func.__name__} requires the pecos-rslib-exp package.*not published to PyPI.*just build",
+        ):
+            func(*args)

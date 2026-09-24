@@ -1,6 +1,8 @@
 # Execution-ordered runtime effects: focused follow-up to #826
 
-Status: reviewed proposal, blocked on noise-model composition semantics. The
+Status: historical reviewed proposal. Current scope and validation are in the
+[scoped production Rust milestone](runtime-production-milestone.md). The following
+blocked/proposed statements describe earlier investigation. The
 test-only review probes do not implement runtime-event support. Base inspected:
 `b7b3fb94ef63444dd99cc8042cbcd0ce29788cb0`
 (the merge of #826). The proposal is a bounded implementation slice of the

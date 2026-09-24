@@ -1,12 +1,12 @@
 # Rust-only frame prototype
 
-Next milestone: [production contract decisions and host-ownership blocker](runtime-production-milestone.md).
-This prototype is frozen pending that decision; it is not being promoted to production.
+Current milestone: [scoped production Rust execution](runtime-production-milestone.md).
+This file describes the earlier test-only prototype; it remains historical evidence.
 
 Status: implemented **only inside an integration test target**,
 `crates/pecos-engines/tests/runtime_frame_slice.rs`. Nothing is exported by the
 library or connected to Selene, `sim()`, Python, or a byte-message encoder.
-Production transport remains disabled. This is executable evidence for the
+The prototype itself is not production transport. This is executable evidence for the
 [proposed contracts](runtime-effect-contracts.md), not their full implementation.
 
 The two ordinary general-noise correctness fixes and their three regression

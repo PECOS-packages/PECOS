@@ -1,6 +1,8 @@
 # Runtime effect contracts: GeneralNoiseModel investigation
 
-Status: specification and executable investigation, **not enabled transport**.
+Status: historical specification and executable investigation. The current
+[production Rust slice](runtime-production-milestone.md) implements a narrower
+sequential wire subset and scoped executor; broader transport below is proposed.
 The [test-only Rust frame prototype](runtime-frame-slice.md) now provides a
 narrow executable slice: it preserves whole-frame sampling and supports only
 checked unconditional Pauli effects. General physical admission remains blocked.

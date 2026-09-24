@@ -1,9 +1,10 @@
 # Decision pending: session ownership on the existing simulation path
 
-Status: **awaiting separate review**. #827 is paused; production transport stays
-disabled. No prototype expansion or architectural implementation is authorized
-before that review. #828 remains independent at
-`e20a12bee0bc68fd006aa5949d5ff4f71ca9224b`.
+Status: **scoped executor approved and implemented for the first Rust slice**.
+The user selected synchronous internal yields; the new owned-shot host and live
+snapshot/fork alternatives below are historical comparisons, not prerequisites.
+See [production behavior and limits](runtime-production-milestone.md). #827 stays
+draft; #828 remains independent at `e20a12bee0bc68fd006aa5949d5ff4f71ca9224b`.
 
 Source links below pin production dev `b7b3fb94ef63444dd99cc8042cbcd0ce29788cb0`.
 This refines the [milestone record](runtime-production-milestone.md): DynClone
@@ -118,8 +119,8 @@ reject. Wire validation and bounded expansion/retention remain prerequisites.
 This supersedes the earlier preference for a new owned-shot host as the first
 milestone. Retain that option only if a concrete future caller needs external
 suspension; live runtime snapshots are unnecessary here. The scoped recommendation
-is a source-based design assessment, not a production test result. Keep #827 draft
-and implementation paused until separate review resolves this choice.
+is a source-based design assessment, not a production test result. The user approved this choice; the production milestone now implements it.
+Keep #827 draft while evaluating the implemented slice.
 
 ## Concrete route back to Python sim(), after separate review
 
@@ -147,4 +148,5 @@ RFC #591 at `95eef838b6be7e6099e0226969456d581132ebda` requires typed phase/outc
 availability, preserved batches, non-recursive effects and exact compatibility
 sampling. Neither ownership choice waives those requirements; the RFC does not
 supply a native-runtime snapshot contract. This is a source-based recommendation
-awaiting separate review, not implemented behavior or a parity claim.
+retained for rationale; implementation evidence is in the production milestone.
+Neither the decision nor the implementation establishes parity.

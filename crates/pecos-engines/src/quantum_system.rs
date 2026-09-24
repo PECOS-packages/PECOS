@@ -3,6 +3,7 @@ use crate::byte_message::ByteMessage;
 use crate::engine_system::EngineSystem;
 use crate::noise::{NoiseModel, PassThroughNoiseModel};
 use crate::quantum::QuantumEngine;
+use crate::runtime_frame::{self, FrameExecutor, RuntimeGeneralNoise, ShotContext};
 use pecos_core::errors::PecosError;
 use std::fmt::Debug;
 
@@ -31,6 +32,9 @@ pub struct QuantumSystem {
     // Core components
     noise_model: Box<dyn NoiseModel>,
     quantum_engine: Box<dyn QuantumEngine>,
+    shot_context: Option<ShotContext>,
+    frame_poisoned: bool,
+    host_blocked: bool,
 }
 
 impl QuantumSystem {
@@ -47,7 +51,52 @@ impl QuantumSystem {
         Self {
             noise_model,
             quantum_engine,
+            shot_context: None,
+            frame_poisoned: false,
+            host_blocked: false,
         }
+    }
+
+    fn drive_legacy(&mut self, input: ByteMessage) -> Result<ByteMessage, PecosError> {
+        let mut stage = self.noise_model.start(input)?;
+        loop {
+            match stage {
+                crate::EngineStage::Complete(output) => return Ok(output),
+                crate::EngineStage::NeedsProcessing(commands) => {
+                    let reply = self.quantum_engine.process(commands)?;
+                    stage = self.noise_model.continue_processing(reply)?;
+                }
+            }
+        }
+    }
+
+    /// Establish host identity after reset. Identity never changes RNG streams.
+    ///
+    /// # Errors
+    /// Rejects a failed owner or an already active shot. Multiple process inputs
+    /// retain this context until reset; no per-input shot identity is inferred.
+    pub fn begin_shot(&mut self, context: ShotContext) -> Result<(), PecosError> {
+        if self.frame_poisoned || self.host_blocked || self.shot_context.is_some() {
+            return Err(runtime_frame::error("shot requires successful reset"));
+        }
+        self.shot_context = Some(context);
+        Ok(())
+    }
+
+    /// Current explicit host identity, if established.
+    #[must_use]
+    pub fn shot_context(&self) -> Option<ShotContext> {
+        self.shot_context
+    }
+
+    pub(crate) fn uses_runtime_frames(&self) -> bool {
+        self.noise_model.as_any().is::<RuntimeGeneralNoise>()
+    }
+    pub(crate) fn block_host(&mut self) {
+        self.host_blocked = true;
+    }
+    pub(crate) fn finish_host_reset(&mut self) {
+        self.host_blocked = false;
     }
 
     /// Create a new `QuantumSystem` with the given quantum engine and no noise
@@ -102,6 +151,10 @@ impl QuantumSystem {
     /// Returns a mutable reference to the noise model
     #[must_use]
     pub fn noise_model_mut(&mut self) -> &mut dyn NoiseModel {
+        if self.uses_runtime_frames() {
+            self.frame_poisoned = true;
+        }
+        self.shot_context = None;
         &mut *self.noise_model
     }
 
@@ -114,6 +167,10 @@ impl QuantumSystem {
     /// Returns a mutable reference to the quantum engine
     #[must_use]
     pub fn quantum_engine_mut(&mut self) -> &mut dyn QuantumEngine {
+        if self.uses_runtime_frames() {
+            self.frame_poisoned = true;
+        }
+        self.shot_context = None;
         &mut *self.quantum_engine
     }
 
@@ -133,17 +190,67 @@ impl Engine for QuantumSystem {
     type Output = ByteMessage;
 
     fn process(&mut self, input: Self::Input) -> Result<Self::Output, PecosError> {
-        // Delegate to process_as_system for the standard implementation
-        self.process_as_system(input)
+        let framed = input.as_bytes().get(4) == Some(&2);
+        if !self.uses_runtime_frames() {
+            // Ordinary consumers reject v2 through their existing parser.
+            if framed {
+                return Err(runtime_frame::error("runtime frame capability required"));
+            }
+            return self.drive_legacy(input);
+        }
+        if self.frame_poisoned || self.host_blocked {
+            return Err(runtime_frame::error(
+                "execution owner poisoned; reset required",
+            ));
+        }
+        if self.shot_context.is_none() {
+            return Err(runtime_frame::error("explicit shot context required"));
+        }
+        let model = self
+            .noise_model
+            .as_any_mut()
+            .downcast_mut::<RuntimeGeneralNoise>()
+            .expect("checked private compiled model");
+        if framed {
+            let records = runtime_frame::decode(&input, model)?;
+            // Only the tested built-in state-vector consumer is admitted initially.
+            let sim = self
+                .quantum_engine
+                .as_any()
+                .downcast_ref::<crate::StateVecEngine>()
+                .ok_or_else(|| runtime_frame::error("unsupported frame simulator"))?;
+            if sim.simulator().num_qubits() < model.qubits {
+                return Err(runtime_frame::error(
+                    "simulator capacity below frame profile",
+                ));
+            }
+            // Latch before mutation; errors and unwinding leave this set.
+            self.frame_poisoned = true;
+            let result = FrameExecutor {
+                model,
+                simulator: &mut *self.quantum_engine,
+            }
+            .execute(records)?;
+            self.frame_poisoned = false;
+            Ok(result)
+        } else {
+            model.preflight_legacy(&input)?;
+            self.frame_poisoned = true;
+            let result = self.drive_legacy(input)?;
+            self.frame_poisoned = false;
+            Ok(result)
+        }
     }
 
     fn reset(&mut self) -> Result<(), PecosError> {
-        // Reset the noise model using the ControlEngine trait
+        self.frame_poisoned = true;
+        self.shot_context = None;
+        // Clear poison only after both resets succeed.
         self.noise_model.reset()?;
 
         // Reset the quantum engine
         self.quantum_engine.reset()?;
-
+        self.frame_poisoned = false;
         Ok(())
     }
 }
@@ -156,11 +263,19 @@ impl EngineSystem for QuantumSystem {
     type EngineInput = ByteMessage;
     type EngineOutput = ByteMessage;
 
+    fn process_as_system(&mut self, input: ByteMessage) -> Result<ByteMessage, PecosError> {
+        self.process(input)
+    }
+
     fn controller(&self) -> &Self::Controller {
         &self.noise_model
     }
 
     fn controller_mut(&mut self) -> &mut Self::Controller {
+        if self.uses_runtime_frames() {
+            self.frame_poisoned = true;
+        }
+        self.shot_context = None;
         &mut self.noise_model
     }
 
@@ -169,6 +284,10 @@ impl EngineSystem for QuantumSystem {
     }
 
     fn engine_mut(&mut self) -> &mut Self::ControlledEngine {
+        if self.uses_runtime_frames() {
+            self.frame_poisoned = true;
+        }
+        self.shot_context = None;
         &mut self.quantum_engine
     }
 }
@@ -178,6 +297,9 @@ impl Clone for QuantumSystem {
         Self {
             noise_model: dyn_clone::clone_box(&*self.noise_model),
             quantum_engine: dyn_clone::clone_box(&*self.quantum_engine),
+            shot_context: None,
+            frame_poisoned: self.frame_poisoned,
+            host_blocked: self.host_blocked,
         }
     }
 }
@@ -188,6 +310,9 @@ impl Debug for QuantumSystem {
         f.debug_struct("QuantumSystem")
             .field("noise_model", &format!("{:p}", &self.noise_model))
             .field("quantum_engine", &format!("{:p}", &self.quantum_engine))
+            .field("shot_context", &self.shot_context)
+            .field("frame_poisoned", &self.frame_poisoned)
+            .field("host_blocked", &self.host_blocked)
             .finish()
     }
 }

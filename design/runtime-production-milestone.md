@@ -1,126 +1,147 @@
-# Production Rust event milestone: contract decision record
+# Scoped production Rust frame milestone
 
-Status: proposed production contracts; implementation blocked on host ownership.
-No production transport is enabled. The nine tests in `runtime_frame_slice.rs`
-exercise a test-local prototype, not this production contract. This record does
-not extend that prototype. Python and downstream event interpretation are deferred.
+Status: implemented in the Rust library, opt-in, draft #827. This supersedes the
+owned-shot-host recommendation. No externally suspended continuation or new host
+is introduced. The [ownership record](runtime-session-ownership.md) retains the
+source-based comparison and approved choice. #828 remains independent at
+`e20a12bee0bc68fd006aa5949d5ff4f71ca9224b`; it contains only parse/reset fixes.
 
-Reviewed dev `b7b3fb94ef63444dd99cc8042cbcd0ce29788cb0`, #827 prototype
-`2b5494d79dcd196d9b18a71a894a884ff29f320a`, #828
-`e20a12bee0bc68fd006aa5949d5ff4f71ca9224b`, and RFC #591
-`95eef838b6be7e6099e0226969456d581132ebda`.
+## Production route and admission
 
-## Measurement and state contract for the first slice
+`RuntimeNoise::new(general_builder, qubits, limits)` validates configuration and
+creates an opaque opt-in configuration accepted by existing `SimBuilder::noise`.
+The built wrapper owns GeneralNoiseModel and its checked capabilities. No caller
+support flag, arbitrary-model downcast, mutable inner-model access, or callback
+can grant admission. An ordinary GeneralNoiseModel does not implicitly opt in.
 
-Recommended profile: preserve legacy GeneralNoiseModel sampling. One original
-input has one start phase and one continuation/completion lifecycle, regardless
-of yields. Completion is per original input, not per event or per whole shot.
-Multiple completed inputs share the same shot's model, simulator and RNG state.
-An event cannot split a simultaneous batch or an idle. Metadata annotations do
-not introduce completion, sampling, implicit idle, or reset boundaries.
+`encode_frame` produces mandatory version-2 ByteMessages; those enter the existing
+SimBuilder → MonteCarlo → HybridEngine → QuantumSystem path. QuantumSystem::process
+validates the entire input and borrows model/simulator state into a private,
+non-Clone FrameExecutor. All yields are consumed synchronously. The existing
+Engine and ControlEngine Clone bounds and v1 consumer format remain unchanged.
 
-Use one independently invented unconditional Pauli-X event. It executes after
-the preceding complete noisy gate/measurement expansion and before the following
-expansion, without ordinary program-gate noise being applied to the injected X.
-The event consumes no RNG and observes no measurement values or model state.
-In particular, a preceding simulator measurement has physically executed, but its
-noise-processed readout is unavailable until the original input completes.
-Previously returned inputs' results remain owned by the caller; they are not a
-mutable callback context. Metadata likewise cannot inspect or mutate the model.
+Initial consumer: built-in StateVecEngine, with capacity checked before effects.
+Initial gates: one target per PZ, X, Z, H, MZ, MeasureLeaked, Idle or local crosstalk
+payload record. No simultaneous batches, two-qubit gates, measurement IDs,
+channels, arbitrary trigger payloads or processed-outcome callbacks are admitted.
+This sequential format does not flatten or claim support for native runtime
+simultaneous batches. The Selene producer remains unwired; no Python API is added.
 
-Physical admission requires the existing checked simple-probabilities profile;
-leakage/crosstalk/state-dependent physical effects reject before execution.
-Metadata-only inputs must retain the broader legacy profile, including leakage
-readout and nonlinear idle. This separation is an enforced compiler decision,
-not a caller assertion. It is not full general-noise physical support.
+## Execution and measurement contract
 
-Rationale: GeneralNoiseModel updates leakage/preparation and samples future gate
-faults during `apply_noise_on_start`, then interprets raw measurements and samples
-readout/crosstalk during `apply_noise_on_continue_processing`. Moving readout to
-each yield changes state and RNG order. The existing leakage and segmentation
-counterexamples rule that out. A future outcome-dependent event requires a
-separately reviewed sampling profile, not retroactive completion of a prefix.
+One original input has one shared GeneralNoiseModel start phase, with expansion
+end offsets recorded without changing sampling, then its existing continuation/
+completion lifecycle. Start-phase sampling finishes before simulator execution,
+exactly as in ordinary execution. Gate expansions execute in source order. Raw
+measurements accumulate and enter readout/crosstalk processing once at the original
+input boundary. Generated crosstalk work remains inside that lifecycle.
 
-## Host ownership: separate review required
+Invented metadata ID 4101 does nothing: no RNG draw, idle split, additional
+completion or reset. Invented physical ID 4102 applies unconditional X after the
+previous complete noisy expansion and before the next. It observes no model
+state, raw outcomes or processed readout, and receives no program-gate noise.
+Physical admission requires the builder's checked simple-probabilities profile;
+leakage, idle-noise, emission, crosstalk and other excluded physical configurations
+reject before execution. Metadata supports the broader legacy profile for the
+listed gates. Idle arithmetic that would become non-finite is rejected.
 
-See the [call-site decision record](runtime-session-ownership.md) for exact
-production references and the two migration alternatives. It supersedes the
-initial blanket characterization of engine clones as live snapshots: QIS and
-native runtime clones mix reconstruction with copied bookkeeping. The scheduler
-needs fresh workers; other legacy callers preserve selected live state.
+This preserves legacy measurement-state behavior, including preparation updating
+leakage bookkeeping before a preceding measurement's deferred readout. It does not
+promise post-noise measurement availability at an internal event. Broader physical
+profiles require separate sampling/state decisions under RFC #591.
 
-#827 remains paused. Do not add a host interface or expand the prototype before
-that record receives separate review. The latest assessment recommends a scoped non-Clone executor inside synchronous
-QuantumSystem::process, with context/recovery plumbing in the existing host.
-External suspension is not required for milestone one. Keep the SimBuilder,
-MonteCarlo and HybridEngine route used by Python sim(); no disconnected Rust-only
-execution path. This recommendation still awaits separate review.
+## Shot identity, cloning and recovery
 
-## Proposed session decisions after host ownership is settled
+Monte Carlo allocates a checked process-local run namespace, and supplies worker
+and local-shot indices after successful reset. HybridEngine retains that context
+in QuantumSystem across all inputs in the shot. Direct HybridEngine execution
+allocates its own run namespace; direct QuantumSystem callers must call begin_shot
+with explicit context. Context never reseeds RNG; existing worker seed streams
+are preserved. Run namespaces identify execution instances, not portable replay
+IDs. Mapping this host context into native runtime-local shot IDs is deferred
+with Selene producer integration; no such mapping is claimed here.
 
-- A shot key is `(execution namespace, worker index, local shot index)` and is
-  explicit at begin-shot. Frame ordinals increase across accepted inputs in that
-  session. Tokens additionally carry a private owner/generation and position;
-  checked overflow returns an error, never wraps. Identity does not reseed RNG.
-- Preserve current worker seeding domains and streams across ordinary resets;
-  do not introduce per-shot reseeding as part of transport. Replay uses the same
-  worker seed report/topology; worker-count invariance is not promised.
-- Only one input may be active. A yield retains that input's controller lifecycle.
-  Frame completion releases its storage, publishes results once, and leaves shot
-  state intact for the next input. End-shot requires no pending continuation.
-- Admission errors mutate neither model, simulator, RNG nor frame ordinal; a
-  corrected message can be submitted. Errors after execution starts poison the
-  shot and discard pending results/tokens. Recovery requires successful reset of
-  the complete host, followed by a new generation; partial reset stays poisoned.
-- Configuration clones have independent sessions. Live-session cloning is absent
-  from the recommended new API; compile-time coverage must enforce that boundary.
+Clones retain component clone behavior and copy failure state, but clear event
+execution authorization: a successful clone needs an explicit context before
+processing event-enabled inputs. No frame/token escapes process, and no live
+native-runtime snapshot capability is added. Mutable model/simulator access
+invalidates authorization and requires reset. Direct users own uniqueness of
+supplied contexts; the scheduler assigns distinct contexts for its workers/shots.
 
-## Wire admission and retention: next, not implemented
+At QuantumSystem level, preflight rejection leaves model, simulator and RNG
+unchanged and permits a corrected input. HybridEngine aborts the enclosing shot
+on any returned error and requires whole-host reset. Before execution, QuantumSystem latches failure state; success
+clears it, while errors or unwind retain it. HybridEngine additionally guards
+classical start/continuation failures and failed classical resets. Quantum reset
+alone cannot clear a failed host's latch: classical, noise and simulator reset
+must all succeed. Dropping a frame releases its buffers; reset discards abandoned
+controller results without reseeding. No rollback of already executed effects is
+promised. Ordinary non-opted-in v1 execution keeps its existing behavior.
 
-Use the proposed mandatory v2 envelope in `runtime-effect-contracts.md`, with an
-exhaustive parser that validates every nested record rather than certifying it
-through the permissive legacy gate parser. Preserve original batch descriptors.
-Reject unknown versions, mandatory records, schema/trigger IDs, measurement IDs
-without supported mapping, configuration, targets, ordering, reserved bits,
-truncation and trailing bytes before any part of the message executes. Existing
-gate-only consumers must reject v2 wholesale. No new ignorable v1 record type.
+## Wire subset and retention bounds
 
-Proposed finite first-slice limits: 1 MiB encoded input, 4096 records, 64 KiB
-aggregate event payload, 65536 expanded simulator commands, and 65536 outcomes
-per frame, one retained frame per session, no retained event history. These are
-proposed defaults requiring enforcement tests, not measured production bounds.
-Validate encoded limits before copies; use checked length arithmetic and fallible
-reservations. Bound model expansion buffers as well as parser storage. A proven
-worst-case expansion budget must be admitted before model mutation; a profile
-without such a bound is unsupported. Unexpected execution-time exhaustion aborts
-the shot without publishing partial results; it does not promise rollback of
-already executed effects. Retained caller-owned outputs are outside session
-storage. Consumed payloads are released; overflow never drops or truncates events.
+This implemented sequential v2 subset supersedes the earlier nested GateBatch
+wire proposal **for this slice only**. That richer timed format is not implemented.
+All fields are little-endian; headers and records have no implicit host pointers.
 
-## Acceptance evidence required before enabling transport
+- 16-byte header: existing numeric PECS magic; version 2; zero flags/reserved;
+  u32 count and exact total length.
+- 8-byte record header: kind u8; three zero bytes; u32 payload length.
+- Kind 10, 16-byte gate payload: opcode u32 (PZ=1, X=2, Z=3, H=4, MZ=5,
+  MeasureLeaked=6, Idle=7, local crosstalk payload=8), target u32, f64 idle seconds
+  (zero for other gates).
+- Kind 30, 8-byte event payload: ID u32 and target u32. Only 4101/4102 exist.
+- Unknown versions/kinds/opcodes/IDs, flags, targets, malformed lengths, truncation,
+  trailing bytes and unsupported profiles reject the entire message. Gate-only
+  consumers reject version 2 wholesale. No ignorable v1 event record is added.
 
-Tests must call the exported Rust host/session path, not duplicate its logic in
-a test. Required coverage includes metadata versus ordinary legacy execution
-(over seeds, full relevant RNG state, leakage readout, nonlinear idle and
-crosstalk completion), `M; event-X; M` placement, one completion across yields,
-multiple inputs in one shot, explicit identities across workers and resets,
-configuration cloning, stale-token rejection, failed reset and recovery. Wire
-negative tests must put invalid records after valid effectful prefixes and check
-that simulator/model/RNG state stays unchanged. Exercise exact capacity limits,
-one-over-limit inputs and expansion overflow. Ordinary v1 execution must remain
-unchanged. These tests do not yet exist for a production event path.
+Hard limits: 16 configured qubits, 128 records, 3088 input bytes and 65536 expanded
+operations/outcomes per frame. FrameLimits can lower record/expansion limits.
+Before model mutation, admission reserves a conservative budget of
+`record_count * 16 * (qubits + 1)` against the configured expansion bound. For
+singleton gates, idle emits at most eight operations, single-qubit faults at most
+four, preparation at most three commands with at most qubits crosstalk outcomes,
+and local crosstalk at most one measurement plus one continuation command. The
+budget includes injected X operations and outcomes. Unsupported gate arities are
+rejected rather than assigned an unproven bound.
 
-## Alignment with #591 and independent fixes
+Opted-in v1 inputs are also size/arity/target/budget checked and must canonically
+round-trip, so preceding inputs cannot grow bookkeeping outside this profile.
+Only one frame is retained; consumed queues are dropped, with no event history.
+Persistent leakage/preparation sets are bounded by configured qubits. Expansion
+invariant violations and unexpected continuation growth abort; nothing is silently
+truncated. Existing ByteMessage/model allocations remain infallible Rust allocator
+operations; this slice does not claim recoverability from process-wide OOM.
+New top-level vector reservations return errors on allocation failure.
 
-The recommendation preserves #591's typed phase/outcome availability, distinct
-generation origin, non-recursive generated effects, whole simultaneous batches,
-strict capability compilation and exact legacy compatibility requirement. It
-does not implement the RFC's general event compiler or compatibility facade.
-Shot-session ownership is an additional host contract the RFC does not settle.
+## Evidence and remaining work
 
-#828 remains separate at `e20a12bee0bc68fd006aa5949d5ff4f71ca9224b`:
-normal parse-error propagation and abandoned-result reset only. Its three
-regressions cover rejection before effects/RNG, reset after continuation failure,
-and clone independence. Keep it available for independent review; do not merge.
-Neither synthetic interface tests nor this decision record establishes simulator
-or device-model equivalence.
+`tests/runtime_frame_production.rs` has 11 tests exercising exported production APIs:
+
+- Metadata versus ordinary legacy execution over 64 seeds, multiple inputs,
+  leakage readout, nonlinear idle and complete debug-visible noise/simulator RNG
+  states (including RNG caches); deterministic historical leakage and idle cases.
+- H;X-event;H;M and M;X-event;M placement; p1=1 proves no duplicate gate noise.
+- Exactly-once crosstalk completion, checked through the following input.
+- Invalid records after a valid effectful prefix; every truncation of a sample;
+  versions, IDs, flags, targets, NaN, unsupported profiles/consumers and limits.
+- Clone state/authorization, mutable-access invalidation, simulator execution and
+  reset failure through the shared opted-in v1 guard, classical failure after a
+  physical input, and failed whole-host reset followed by recovery.
+- SimBuilder multi-input shots across four workers, repeated runs, noisy seeded
+  metadata replay, and explicit distinct worker contexts.
+
+Validation: full `cargo test -p pecos-engines --offline` passed 413 tests/doctests
+with zero failures/ignored tests; all-target Clippy with `-D warnings`, formatting,
+changed-file pre-commit and diff checks passed. No fresh Python test run because
+no Python path was added. The historical diagnostic library-search skip remains
+a skip, not a pass.
+
+The earlier test-local prototype is historical evidence only. No tests are
+claimed for private interpretation, Python exposure or a native Selene producer.
+Next connect a generic producer with preserved native batch semantics and host/
+runtime identity mapping, then expose configuration through existing Python sim()
+and run fresh integration tests. Do not add a disconnected executor stack.
+Matched circuits, schedules, model parameters, decoders and approximations remain
+necessary before studying parity. Synthetic tests do not establish simulator or
+device-model equivalence. Keep #827 draft; do not merge either PR.

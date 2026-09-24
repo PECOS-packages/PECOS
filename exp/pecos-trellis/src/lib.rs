@@ -327,9 +327,9 @@ pub struct TrellisResult {
     pub peak_retained_states: usize,
     /// Number of probabilistic binary mechanisms or non-forced factors processed.
     pub processed_columns: usize,
-    /// Number of candidate branch evaluations, counted at entry to
-    /// `BranchContext::emit` (two per retained state for a binary column, or one per
-    /// outcome and retained state for an N-ary column).
+    /// Number of candidate branch evaluations before closing-detector checks:
+    /// two per retained state for a binary column, or one per outcome and
+    /// retained state for an N-ary column.
     /// For an escalated `BpTrellis` result, this is the total across
     /// the base attempt and every attempted rung.
     pub transitions: u64,
@@ -527,22 +527,27 @@ struct StateBuffer<M> {
 }
 
 impl<M: Copy> StateBuffer<M> {
-    fn clear(&mut self) {
+    fn clear(&mut self, stride: usize) {
+        debug_assert_eq!(self.words.len(), self.masses.len() * stride);
         self.words.clear();
         self.masses.clear();
     }
 
     fn key(&self, index: usize, stride: usize) -> &[u64] {
+        debug_assert_eq!(self.words.len(), self.masses.len() * stride);
         &self.words[index * stride..(index + 1) * stride]
     }
 
     fn copy_state(&mut self, source: &Self, index: usize, stride: usize) {
+        debug_assert_eq!(self.words.len(), self.masses.len() * stride);
         self.words.extend_from_slice(source.key(index, stride));
         self.masses.push(source.masses[index]);
+        debug_assert_eq!(self.words.len(), self.masses.len() * stride);
     }
 }
 
 /// Both arenas and all sorting/scoring workspaces survive columns and shots.
+/// Their buffers keep their high-water capacity for the decoder's lifetime by design.
 /// `parent` is always in ascending key order at a column boundary: expansion
 /// order determines the load-bearing left-to-right floating-point merge fold.
 #[derive(Clone, Debug, Default)]
@@ -559,19 +564,23 @@ struct FrontierScratch<M> {
 
 impl<M: Copy> FrontierScratch<M> {
     fn reset(&mut self, syndrome: &[u64], logical: &[u64], touched: &[u64], mass: M) {
+        self.parent.clear(self.stride);
+        self.branches.clear(self.stride);
         self.detector_words = syndrome.len();
         self.stride = syndrome.len() + logical.len();
-        self.parent.clear();
-        self.branches.clear();
         self.parent.words.extend_from_slice(syndrome);
         and_assign(&mut self.parent.words, touched);
         self.parent.words.extend_from_slice(logical);
         self.parent.masses.push(mass);
+        debug_assert_eq!(
+            self.parent.words.len(),
+            self.parent.masses.len() * self.stride
+        );
     }
 
     /// Stable sorting preserves arrival order within each equal-key run. The
-    /// first arrival is installed verbatim, and subsequent arrivals fold into
-    /// it from left to right, exactly as ordered-map entry updates did.
+    /// first arrival is installed verbatim, then each subsequent arrival applies
+    /// `fold(accumulated, next)` in arrival order.
     fn merge(&mut self, fold: impl Fn(M, M) -> M) {
         self.indices.clear();
         self.indices.extend(0..self.branches.masses.len());
@@ -582,7 +591,7 @@ impl<M: Copy> FrontierScratch<M> {
                 self.detector_words,
             )
         });
-        self.parent.clear();
+        self.parent.clear(self.stride);
         for &index in &self.indices {
             let count = self.parent.masses.len();
             if count != 0
@@ -596,10 +605,17 @@ impl<M: Copy> FrontierScratch<M> {
         }
     }
 
-    /// Transpose only detector words, after merging and only when scoring runs.
-    fn transpose_detectors(&mut self) {
+    /// Transpose the inclusive detector-word span read by the scoring rows.
+    fn transpose_detectors(&mut self, first_word: usize, last_word: usize) {
+        debug_assert!(first_word <= last_word);
+        debug_assert!(last_word < self.detector_words);
+        debug_assert_eq!(
+            self.parent.words.len(),
+            self.parent.masses.len() * self.stride
+        );
         let count = self.parent.masses.len();
-        self.transposed.resize(self.detector_words * count, 0);
+        self.transposed
+            .resize((last_word - first_word + 1) * count, 0);
         if count == 0 {
             return;
         }
@@ -608,14 +624,14 @@ impl<M: Copy> FrontierScratch<M> {
                 .iter_mut()
                 .zip(self.parent.words.chunks_exact(self.stride))
             {
-                *destination = key[word];
+                *destination = key[first_word + word];
             }
         }
     }
 
     /// Copy in merged key order, never score order, for the next expansion.
     fn retain(&mut self) {
-        self.branches.clear();
+        self.branches.clear(self.stride);
         for (index, &keep) in self.retained.iter().enumerate() {
             if keep {
                 self.branches.copy_state(&self.parent, index, self.stride);
@@ -632,6 +648,7 @@ fn compare_state_words(left: &[u64], right: &[u64], detector_words: usize) -> Or
 
 /// A column's compatibility masks and syndrome are shared by every branch.
 struct BranchContext<'a> {
+    detector_words: usize,
     close_mask: &'a [u64],
     active_mask: &'a [u64],
     observed: &'a [u64],
@@ -646,6 +663,11 @@ impl BranchContext<'_> {
         mass: M,
         transitions: &mut u64,
     ) {
+        debug_assert_eq!(self.close_mask.len(), self.detector_words);
+        debug_assert_eq!(
+            destination.words.len(),
+            destination.masses.len() * parent.len()
+        );
         *transitions += 1;
         let start = destination.words.len();
         destination.words.extend_from_slice(parent);
@@ -661,10 +683,18 @@ impl BranchContext<'_> {
             .any(|((&accumulated, &expected), &closing)| (accumulated ^ expected) & closing != 0)
         {
             destination.words.truncate(start);
+            debug_assert_eq!(
+                destination.words.len(),
+                destination.masses.len() * parent.len()
+            );
             return;
         }
         and_assign(syndrome, self.active_mask);
         destination.masses.push(mass);
+        debug_assert_eq!(
+            destination.words.len(),
+            destination.masses.len() * parent.len()
+        );
     }
 }
 
@@ -692,11 +722,12 @@ struct BpScoreState {
 }
 
 impl BpScoreState {
-    fn new(graph: BpGraph, suffix_values: SuffixValues) -> Self {
+    fn new(graph: BpGraph, suffix_values: SuffixValues, num_detectors: usize) -> Self {
+        debug_assert_eq!(graph.check_count(), num_detectors);
         let scratch = BpScratch::new(&graph);
         let posterior = vec![0.0; graph.mechanism_count()];
         let residual_syndrome = vec![0; graph.check_count()];
-        let row_moments = vec![1.0; graph.check_count()];
+        let row_moments = vec![1.0; num_detectors];
         let column_moments = vec![0.0; graph.mechanism_count()];
         Self {
             graph,
@@ -772,7 +803,7 @@ impl TrellisDecoder {
     /// # Errors
     ///
     /// Returns [`DecoderError::InvalidConfiguration`] for invalid pruning
-    /// parameters, probabilities, indices, or column order.
+    /// parameters, probabilities, indices, column order, or suffix-record widths.
     ///
     /// # Panics
     ///
@@ -781,7 +812,7 @@ impl TrellisDecoder {
         let build_started = Instant::now();
         validate_config(&config, dem.mechanisms.len())?;
 
-        let detector_words = words_for(dem.num_detectors);
+        let detector_words = checked_detector_words(dem.num_detectors)? as usize;
         let logical_words = words_for(dem.num_observables);
         let order = config
             .column_order
@@ -939,7 +970,7 @@ impl TrellisDecoder {
                 .iter()
                 .map(|column| (&column.active_mask[..], &column.detector_toggle[..])),
             dem.num_detectors,
-        );
+        )?;
         for (column, rows) in columns.iter_mut().zip(suffix_tables) {
             column.suffix_compatibility = rows;
         }
@@ -952,7 +983,13 @@ impl TrellisDecoder {
             &mut vec![1.0; dem.num_detectors],
             |column, _| column_moments[column],
         );
-        let bp_score = bp_graph.map(|graph| BpScoreState::new(graph, suffix_values.clone()));
+        let bp_score = bp_graph.map(|graph| {
+            BpScoreState::new(
+                graph,
+                SuffixValues::new(suffix_epochs.len(), suffix_values.int_metric_scale),
+                dem.num_detectors,
+            )
+        });
 
         debug_assert_model_invariants(&columns, &touched_detectors);
         let build_seconds = build_started.elapsed().as_secs_f64();
@@ -988,7 +1025,8 @@ impl TrellisDecoder {
     ///
     /// Returns [`DecoderError::InvalidConfiguration`] for invalid pruning or
     /// ordering configuration, or when binary-only BP scoring or mechanism
-    /// merging is requested for a genuinely N-ary model.
+    /// merging is requested for a genuinely N-ary model, or if suffix-record
+    /// widths exceed their limits.
     pub fn from_factor_model(
         model: &FactorModel,
         config: TrellisConfig,
@@ -1033,7 +1071,7 @@ impl TrellisDecoder {
         validate_config(&config, model.factors().len())?;
 
         let build_started = Instant::now();
-        let detector_words = words_for(model.num_detectors());
+        let detector_words = checked_detector_words(model.num_detectors())? as usize;
         let logical_words = words_for(model.num_observables());
         let order = config
             .column_order
@@ -1125,7 +1163,7 @@ impl TrellisDecoder {
                 .zip(&supports)
                 .map(|(column, support)| (&column.active_mask[..], &support[..])),
             model.num_detectors(),
-        );
+        )?;
         for (column, rows) in columns.iter_mut().zip(suffix_tables) {
             column.suffix_compatibility = rows;
         }
@@ -1249,7 +1287,7 @@ impl TrellisDecoder {
             };
         }
 
-        let bp_seconds = match self.bp_suffix_compatibility(&observed) {
+        let bp_seconds = match self.refresh_bp_suffix_values(&observed) {
             Ok(seconds) => seconds.unwrap_or(0.0),
             Err(error) => return TrellisDecodeAttempt::Error(error),
         };
@@ -1268,12 +1306,24 @@ impl TrellisDecoder {
         let mut k_capped = false;
         let mut delta_pruned = false;
 
+        let suffix_values = self
+            .bp_score
+            .as_ref()
+            .map_or(&self.suffix_values, |bp| &bp.suffix_values);
         let Kernel::Binary(columns) = &self.kernel else {
             unreachable!("binary decode called with N-ary kernel");
         };
         for column in columns {
-            frontier.branches.clear();
+            debug_assert!((1..frontier.parent.masses.len()).all(|index| {
+                compare_state_words(
+                    frontier.parent.key(index - 1, frontier.stride),
+                    frontier.parent.key(index, frontier.stride),
+                    frontier.detector_words,
+                ) == Ordering::Less
+            }));
+            frontier.branches.clear(frontier.stride);
             let branch_context = BranchContext {
+                detector_words: frontier.detector_words,
                 close_mask: &column.close_mask,
                 active_mask: &column.active_mask,
                 observed: &observed,
@@ -1306,10 +1356,7 @@ impl TrellisDecoder {
             }
             let suffix_compatibility = SuffixCompatibility {
                 rows: &column.suffix_compatibility,
-                values: self
-                    .bp_score
-                    .as_ref()
-                    .map_or(&self.suffix_values, |bp| &bp.suffix_values),
+                values: suffix_values,
             };
             let pruned = prune(
                 frontier,
@@ -1431,8 +1478,16 @@ impl TrellisDecoder {
             unreachable!("N-ary decode called with binary kernel");
         };
         for column in columns {
-            frontier.branches.clear();
+            debug_assert!((1..frontier.parent.masses.len()).all(|index| {
+                compare_state_words(
+                    frontier.parent.key(index - 1, frontier.stride),
+                    frontier.parent.key(index, frontier.stride),
+                    frontier.detector_words,
+                ) == Ordering::Less
+            }));
+            frontier.branches.clear(frontier.stride);
             let branch_context = BranchContext {
+                detector_words: frontier.detector_words,
                 close_mask: &column.close_mask,
                 active_mask: &column.active_mask,
                 observed: &observed,
@@ -1557,7 +1612,7 @@ impl TrellisDecoder {
             };
         }
 
-        let bp_seconds = match self.bp_suffix_compatibility(&observed) {
+        let bp_seconds = match self.refresh_bp_suffix_values(&observed) {
             Ok(seconds) => seconds.unwrap_or(0.0),
             Err(error) => return TrellisDecodeAttempt::Error(error),
         };
@@ -1582,12 +1637,24 @@ impl TrellisDecoder {
         );
         let alpha_int = quantize_metric(self.config.score_alpha, scale);
 
+        let suffix_values = self
+            .bp_score
+            .as_ref()
+            .map_or(&self.suffix_values, |bp| &bp.suffix_values);
         let Kernel::Binary(columns) = &self.kernel else {
             unreachable!("binary max-log decode called with N-ary kernel");
         };
         for column in columns {
-            frontier.branches.clear();
+            debug_assert!((1..frontier.parent.masses.len()).all(|index| {
+                compare_state_words(
+                    frontier.parent.key(index - 1, frontier.stride),
+                    frontier.parent.key(index, frontier.stride),
+                    frontier.detector_words,
+                ) == Ordering::Less
+            }));
+            frontier.branches.clear(frontier.stride);
             let branch_context = BranchContext {
+                detector_words: frontier.detector_words,
                 close_mask: &column.close_mask,
                 active_mask: &column.active_mask,
                 observed: &observed,
@@ -1620,10 +1687,7 @@ impl TrellisDecoder {
             }
             let suffix_compatibility = SuffixCompatibility {
                 rows: &column.suffix_compatibility,
-                values: self
-                    .bp_score
-                    .as_ref()
-                    .map_or(&self.suffix_values, |bp| &bp.suffix_values),
+                values: suffix_values,
             };
             let pruned = prune_maxlog(
                 frontier,
@@ -1704,8 +1768,16 @@ impl TrellisDecoder {
             unreachable!("N-ary max-log decode called with binary kernel");
         };
         for column in columns {
-            frontier.branches.clear();
+            debug_assert!((1..frontier.parent.masses.len()).all(|index| {
+                compare_state_words(
+                    frontier.parent.key(index - 1, frontier.stride),
+                    frontier.parent.key(index, frontier.stride),
+                    frontier.detector_words,
+                ) == Ordering::Less
+            }));
+            frontier.branches.clear(frontier.stride);
             let branch_context = BranchContext {
+                detector_words: frontier.detector_words,
                 close_mask: &column.close_mask,
                 active_mask: &column.active_mask,
                 observed: &observed,
@@ -1765,7 +1837,7 @@ impl TrellisDecoder {
         )
     }
 
-    fn bp_suffix_compatibility(&mut self, observed: &[u64]) -> Result<Option<f64>, DecoderError> {
+    fn refresh_bp_suffix_values(&mut self, observed: &[u64]) -> Result<Option<f64>, DecoderError> {
         let Kernel::Binary(columns) = &self.kernel else {
             return Ok(None);
         };
@@ -2155,9 +2227,23 @@ fn score_candidates(
         frontier.scores.extend_from_slice(&frontier.parent.masses);
         return;
     }
-    frontier.transpose_detectors();
-    let count = frontier.parent.masses.len();
+    // Bit-identity requires the standard library's Sum neutral element and
+    // left-fold order; the cfg(test) scalar oracle catches changes to either.
     let neutral = std::iter::empty::<f64>().sum::<f64>();
+    let rows = suffix_compatibility.rows;
+    let (Some(first), Some(last)) = (rows.first(), rows.last()) else {
+        frontier.scores.extend(
+            frontier
+                .parent
+                .masses
+                .iter()
+                .map(|&log_mass| log_mass + score_alpha * neutral),
+        );
+        return;
+    };
+    let first_word = first.word as usize;
+    frontier.transpose_detectors(first_word, last.word as usize);
+    let count = frontier.parent.masses.len();
     frontier.scores.resize(count, neutral);
     for row in suffix_compatibility.rows {
         let probabilities = &suffix_compatibility.values.probabilities[row.epoch as usize];
@@ -2165,7 +2251,8 @@ fn score_candidates(
         let word = row.word as usize;
         let observed_word = observed[word];
         let mask = 1_u64 << row.bit;
-        let candidates = &frontier.transposed[word * count..(word + 1) * count];
+        let offset = word - first_word;
+        let candidates = &frontier.transposed[offset * count..(offset + 1) * count];
         for (accumulator, &candidate) in frontier.scores.iter_mut().zip(candidates) {
             let mismatch = (candidate ^ observed_word) & mask != 0;
             *accumulator += if mismatch { one } else { zero };
@@ -2190,7 +2277,19 @@ fn score_candidates_int(
         frontier.scores.extend_from_slice(&frontier.parent.masses);
         return;
     }
-    frontier.transpose_detectors();
+    let rows = suffix_compatibility.rows;
+    let (Some(first), Some(last)) = (rows.first(), rows.last()) else {
+        frontier.scores.extend(
+            frontier
+                .parent
+                .masses
+                .iter()
+                .map(|&log_mass| score_int_metric(log_mass, 0, alpha_int, scale)),
+        );
+        return;
+    };
+    let first_word = first.word as usize;
+    frontier.transpose_detectors(first_word, last.word as usize);
     let count = frontier.parent.masses.len();
     frontier.scores.resize(count, 0);
     for row in suffix_compatibility.rows {
@@ -2199,7 +2298,8 @@ fn score_candidates_int(
         let word = row.word as usize;
         let observed_word = observed[word];
         let mask = 1_u64 << row.bit;
-        let candidates = &frontier.transposed[word * count..(word + 1) * count];
+        let offset = word - first_word;
+        let candidates = &frontier.transposed[offset * count..(offset + 1) * count];
         for (accumulator, &candidate) in frontier.scores.iter_mut().zip(candidates) {
             let mismatch = (candidate ^ observed_word) & mask != 0;
             *accumulator = int_metric_add(*accumulator, if mismatch { one } else { zero });
@@ -2337,11 +2437,8 @@ fn prune_maxlog(
 fn build_suffix_epochs<'a>(
     columns: impl DoubleEndedIterator<Item = (&'a [u64], &'a [u64])> + ExactSizeIterator,
     num_detectors: usize,
-) -> (Vec<SuffixEpoch>, Vec<Vec<SuffixRow>>) {
-    assert!(
-        u32::try_from(num_detectors.div_ceil(WORD_BITS)).is_ok(),
-        "detector word count must fit u32"
-    );
+) -> Result<(Vec<SuffixEpoch>, Vec<Vec<SuffixRow>>), DecoderError> {
+    let detector_words = checked_detector_words(num_detectors)?;
     let mut tables = vec![Vec::new(); columns.len()];
     let mut epochs: Vec<SuffixEpoch> = (0..num_detectors)
         .map(|detector| SuffixEpoch {
@@ -2351,13 +2448,24 @@ fn build_suffix_epochs<'a>(
         .collect();
     let mut current_epochs: Vec<usize> = (0..num_detectors).collect();
     for (column_index, (active_mask, detector_toggle)) in columns.enumerate().rev() {
-        tables[column_index] = set_bits(active_mask)
-            .map(|detector| SuffixRow {
-                word: u32::try_from(detector / WORD_BITS).expect("detector word must fit u32"),
-                epoch: u32::try_from(current_epochs[detector]).expect("suffix epoch must fit u32"),
-                bit: u8::try_from(detector % WORD_BITS).expect("detector bit must fit u8"),
-            })
-            .collect();
+        debug_assert_eq!(active_mask.len(), detector_words as usize);
+        for (word, mask) in (0..detector_words).zip(active_mask) {
+            for bit in set_bits(std::slice::from_ref(mask)) {
+                let detector = word as usize * WORD_BITS + bit;
+                // Only referenced epochs must fit; final first-toggle updates
+                // can create epochs that no column ever reads.
+                let epoch = u32::try_from(current_epochs[detector]).map_err(|_| {
+                    DecoderError::InvalidConfiguration(
+                        "referenced suffix epoch must fit u32".into(),
+                    )
+                })?;
+                tables[column_index].push(SuffixRow {
+                    word,
+                    epoch,
+                    bit: u8::try_from(bit).expect("detector bit must fit u8"),
+                });
+            }
+        }
         for detector in set_bits(detector_toggle) {
             current_epochs[detector] = epochs.len();
             epochs.push(SuffixEpoch {
@@ -2366,11 +2474,12 @@ fn build_suffix_epochs<'a>(
             });
         }
     }
-    assert!(
-        u32::try_from(epochs.len()).is_ok(),
-        "suffix epoch count must fit u32"
-    );
-    (epochs, tables)
+    Ok((epochs, tables))
+}
+
+fn checked_detector_words(num_detectors: usize) -> Result<u32, DecoderError> {
+    u32::try_from(words_for(num_detectors))
+        .map_err(|_| DecoderError::InvalidConfiguration("detector word count must fit u32".into()))
 }
 
 fn bp_score_probability(posterior_llr: f64) -> f64 {
@@ -2660,6 +2769,26 @@ mod tests {
     };
     use std::collections::BTreeMap;
 
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    fn detector_word_width_is_checked_before_allocation() {
+        let largest_width = u32::MAX as usize * super::WORD_BITS;
+        assert_eq!(
+            super::checked_detector_words(largest_width).unwrap(),
+            u32::MAX
+        );
+        let dem = SparseDem {
+            mechanisms: Vec::new(),
+            detector_coords: BTreeMap::new(),
+            num_detectors: largest_width + 1,
+            num_observables: 0,
+        };
+        assert!(matches!(
+            TrellisDecoder::from_sparse_dem(&dem, TrellisConfig::default()),
+            Err(super::DecoderError::InvalidConfiguration(_))
+        ));
+    }
+
     #[test]
     fn flat_merge_preserves_branch_arrival_fold_order() {
         let (first, second, third) = (-0.1, -0.2, -1.0);
@@ -2672,6 +2801,7 @@ mod tests {
         let mut frontier = super::FrontierScratch::<f64>::default();
         frontier.reset(&[0, 0], &[0], &[0, 0], 0.0);
         let context = super::BranchContext {
+            detector_words: frontier.detector_words,
             close_mask: &[0, 0],
             active_mask: &[u64::MAX, u64::MAX],
             observed: &[0, 0],
@@ -2738,7 +2868,7 @@ mod tests {
         for column in columns {
             for count in [1, 3, 16, 33] {
                 float.reset(&[0, 0], &[0], &[0, 0], 0.0);
-                float.branches.clear();
+                float.branches.clear(float.stride);
                 // Include duplicate arrivals so the oracle sees a merged set.
                 for candidate in 0..count {
                     let key = [
@@ -2891,7 +3021,7 @@ mod tests {
                 );
                 assert!(
                     decoder
-                        .bp_suffix_compatibility(&observed)
+                        .refresh_bp_suffix_values(&observed)
                         .unwrap()
                         .is_some()
                 );

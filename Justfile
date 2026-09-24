@@ -245,19 +245,11 @@ build-lite profile="debug": _msvc-bootstrap (validate-profile "build-lite" profi
 
 # Build PECOS with CUDA Python extras (profile: dev/debug, release, native)
 [group('build')]
-build-cuda profile="debug": _msvc-bootstrap (validate-profile "build-cuda" profile) setup-quiet
+build-cuda profile="debug": _msvc-bootstrap (validate-profile "build-cuda" profile) setup-quiet sync-deps
     #!/usr/bin/env bash
     set -euo pipefail
     PROFILE="{{profile}}"
     {{pecos}} python build --profile "$PROFILE" --cuda
-
-# Build only the Python workspace members needed by the fast CI smoke lanes.
-[group('build')]
-python-ci-build profile="debug": _msvc-bootstrap (validate-profile "python-ci-build" profile) python-ci-sync
-    #!/usr/bin/env bash
-    set -euo pipefail
-    PROFILE="{{profile}}"
-    {{pecos}} python build --profile "$PROFILE" --no-cuda
 
 # Build only the Python packages needed for docs validation.
 [group('build')]
@@ -351,11 +343,6 @@ pytest-ci-core-shard shard:
 pytest-zluppy:
     uv sync --project exp/zluppy --frozen
     uv run --project exp/zluppy --frozen pytest exp/zluppy/tests
-
-# Build and import the core Python packages on a target platform/interpreter.
-[group('test')]
-python-ci-smoke profile="debug": (validate-profile "python-ci-smoke" profile) (python-ci-build profile)
-    uv run --frozen python -c "from importlib.metadata import version; import pecos, pecos_rslib, pecos_rslib_llvm; print({'pecos': pecos.__version__, 'pecos_rslib': pecos_rslib.__version__, 'pecos_rslib_llvm': version('pecos-rslib-llvm')})"
 
 # Run Rust tests (CUDA-aware; mode: dev/debug, release, native)
 [group('test')]
@@ -979,9 +966,12 @@ install-build-llvm: _msvc-bootstrap
 sync-deps:
     #!/usr/bin/env bash
     set -euo pipefail
-    # Quick check: ensure the packages used by the default dev/test lane are importable.
-    # This catches newly added workspace members that an older .venv may be missing.
-    if uv run --frozen python -c "import importlib.util, sys; required = ('pecos', 'pecos_rslib', 'pecos_selene_stab_vec', 'pecos_selene_stabilizer', 'pecos_selene_statevec', 'pecos_selene_stab_mps', 'pecos_selene_mast'); missing = [name for name in required if importlib.util.find_spec(name) is None]; sys.exit(1 if missing else 0)" 2>/dev/null; then
+    # Quick check: the packages used by the default dev/test lane are importable
+    # (catches newly added workspace members an older .venv lacks) and every
+    # installed package has its dependencies (catches a venv that was never
+    # synced, which is what `pecos python build` refuses at the end).
+    if uv run --frozen python -c "import importlib.util, sys; required = ('pecos', 'pecos_rslib', 'pecos_selene_stab_vec', 'pecos_selene_stabilizer', 'pecos_selene_statevec', 'pecos_selene_stab_mps', 'pecos_selene_mast'); missing = [name for name in required if importlib.util.find_spec(name) is None]; sys.exit(1 if missing else 0)" 2>/dev/null \
+        && uv pip check >/dev/null 2>&1; then
         exit 0
     fi
     echo "Python deps incomplete, running uv sync..."
@@ -1014,19 +1004,6 @@ sync-deps:
 # `--no-install-package`: otherwise uv builds release wheels of each one
 # (~20 min on a 4-core runner) that the following `pecos python build`
 # step immediately replaces with a debug build.
-[group('setup')]
-python-ci-sync:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    uv sync --locked \
-      --group dev \
-      --group test \
-      --package pecos-rslib \
-      --package pecos-rslib-llvm \
-      --package quantum-pecos \
-      --no-install-package pecos-rslib \
-      --no-install-package pecos-rslib-llvm
-
 [group('setup')]
 python-ci-sync-test:
     #!/usr/bin/env bash

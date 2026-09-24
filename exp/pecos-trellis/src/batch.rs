@@ -4,12 +4,16 @@ use crate::DecoderError;
 use rayon::prelude::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+/// Mirrors `PARALLEL_CHUNK_SHOTS` in `crates/pecos-decoders/src/batch.rs` without
+/// depending on the higher-level decoder aggregator.
+const PARALLEL_CHUNK_SHOTS: usize = 64;
+
 /// Decode dense shots with fresh worker state, returning outcomes in input order.
 ///
 /// The factory must share immutable models and allocate independent scratch.
 ///
 /// # Errors
-/// Returns `InvalidConfiguration` for zero workers or pool construction failure.
+/// Returns `InvalidConfiguration` for zero workers and `InternalError` for pool construction failure.
 pub fn decode_batch<W, R: Send>(
     shots: &[Vec<u8>],
     workers: usize,
@@ -28,10 +32,10 @@ pub fn decode_batch<W, R: Send>(
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(workers)
         .build()
-        .map_err(|error| DecoderError::InvalidConfiguration(error.to_string()))?;
-    // Mirror pecos-decoders/src/batch.rs:51-65 without a dependency on the
-    // higher-level decoder aggregator: 64 shots, reduced for small batches.
-    let chunk_shots = 64.min(shots.len().div_ceil(workers)).max(1);
+        .map_err(|error| DecoderError::InternalError(error.to_string()))?;
+    let chunk_shots = PARALLEL_CHUNK_SHOTS
+        .min(shots.len().div_ceil(workers))
+        .max(1);
     let cursor = AtomicUsize::new(0);
     let mut chunks: Vec<_> = pool.install(|| {
         (0..workers)
@@ -62,4 +66,29 @@ pub fn decode_batch<W, R: Send>(
         .into_iter()
         .flat_map(|(_, results)| results)
         .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn constructs_exactly_the_requested_worker_states() {
+        for workers in [1, 4] {
+            for shots in [vec![], vec![vec![7]; 129]] {
+                let factories = AtomicUsize::new(0);
+                let results = decode_batch(
+                    &shots,
+                    workers,
+                    || {
+                        factories.fetch_add(1, Ordering::Relaxed);
+                    },
+                    |(), shot| shot.to_vec(),
+                )
+                .unwrap();
+                assert_eq!(factories.load(Ordering::Relaxed), workers);
+                assert_eq!(results, shots);
+            }
+        }
+    }
 }

@@ -6,7 +6,7 @@ import threading
 import time
 
 import pytest
-from pecos_rslib_exp import bp_trellis, frontier
+from pecos_rslib_exp import FrontierCommitteeDecoder, FrontierDecoder, bp_trellis, frontier
 
 # A call this long spans many interpreter switch intervals, so a thread that
 # stalls for a quarter of it can only mean the call held the GIL.
@@ -80,5 +80,15 @@ def test_decode_releases_gil(spec):
         worker = spec._pecos_build_decoder(synthetic_dem(length, stride))
         syndrome = bytes(length + stride)
         return lambda: worker._pecos_decode_obs(syndrome)
+
+    assert_releases_gil(decode_call)
+
+
+@pytest.mark.parametrize("decoder_class", [FrontierDecoder, FrontierCommitteeDecoder])
+def test_direct_parallel_batch_releases_gil(decoder_class):
+    def decode_call(length):
+        decoder = decoder_class.from_dem(synthetic_dem(length, 64))
+        shots = [[0] * (length + 64) for _ in range(8)]
+        return lambda: decoder.decode_batch(shots, workers=4)
 
     assert_releases_gil(decode_call)

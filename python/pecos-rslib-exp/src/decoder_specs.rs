@@ -10,9 +10,17 @@ use pyo3::types::PyModule;
 use std::sync::Mutex;
 
 pub(crate) fn decoder_error_to_py(error: &DecoderError) -> PyErr {
+    decoder_error_with_message(error, error.to_string())
+}
+
+pub(crate) fn indexed_decoder_error_to_py(shot_index: usize, error: &DecoderError) -> PyErr {
+    decoder_error_with_message(error, format!("shot {shot_index}: {error}"))
+}
+
+fn decoder_error_with_message(error: &DecoderError, message: String) -> PyErr {
     match error {
-        DecoderError::InvalidDemSyntax(_) => PyValueError::new_err(error.to_string()),
-        _ => PyRuntimeError::new_err(error.to_string()),
+        DecoderError::InvalidDemSyntax(_) => PyValueError::new_err(message),
+        _ => PyRuntimeError::new_err(message),
     }
 }
 

@@ -324,7 +324,7 @@ def test_decode_batch_matches_individual_decodes() -> None:
         (FrontierCommitteeDecoder, "logsumexp_float"),
     ],
 )
-def test_decode_batch_threads_match_all_public_fields(decoder_class, metric_mode: str) -> None:
+def test_decode_batch_workers_match_all_public_fields(decoder_class, metric_mode: str) -> None:
     rng = random.Random(35)
     shots = [[rng.randrange(2) for _ in range(2)] for _ in range(1025)]
     # BP is disabled so the public wall-clock field is also exactly comparable.
@@ -359,10 +359,11 @@ def test_decode_batch_threads_match_all_public_fields(decoder_class, metric_mode
 
 @pytest.mark.parametrize("decoder_class", [FrontierDecoder, FrontierCommitteeDecoder])
 @pytest.mark.parametrize("shots", [[], [[0, 0]]])
-def test_decode_batch_rejects_zero_threads(decoder_class, shots: list[list[int]]) -> None:
+@pytest.mark.parametrize("workers", [0, -1])
+def test_decode_batch_rejects_invalid_workers(decoder_class, shots: list[list[int]], workers: int) -> None:
     decoder = decoder_class.from_dem(SMALL_DEM)
-    with pytest.raises(RuntimeError, match="workers must be at least 1"):
-        decoder.decode_batch(shots, workers=0)
+    with pytest.raises(ValueError, match="workers must be at least 1"):
+        decoder.decode_batch(shots, workers=workers)
 
 
 @pytest.mark.parametrize("decoder_class", [FrontierDecoder, FrontierCommitteeDecoder])
@@ -373,8 +374,8 @@ def test_decode_batch_preserves_individual_errors(decoder_class, workers: int, s
     with pytest.raises(RuntimeError) as individual_error:
         decoder.decode_syndrome(shot)
     with pytest.raises(RuntimeError) as batch_error:
-        decoder.decode_batch([[0, 0], shot], workers=workers)
-    assert str(batch_error.value) == str(individual_error.value)
+        decoder.decode_batch([[0, 0], shot, [1]], workers=workers)
+    assert str(batch_error.value) == f"shot 1: {individual_error.value}"
 
 
 DUPLICATE_DEM = """\

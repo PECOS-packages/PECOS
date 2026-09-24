@@ -15,6 +15,7 @@ use pecos_trellis::{
     DecoderError, MetricMode, SparseDem, TrellisConfig, TrellisDecoder, TrellisResult,
     TrellisStreamingDecoder,
 };
+use rand::seq::SliceRandom;
 use rand::{RngExt, SeedableRng};
 use rand_xoshiro::Xoshiro256PlusPlus;
 use std::collections::BTreeMap;
@@ -55,10 +56,11 @@ fn random_rounds_match_batch_for_every_chunk_size_and_reset() {
     let mut rng = Xoshiro256PlusPlus::seed_from_u64(0xdec0_de42);
     let mut saw_early_commitment = false;
     for case in 0..24 {
+        let width = [12, 65, 129][case % 3];
         let mut dem = SparseDem {
             mechanisms: Vec::new(),
             detector_coords: BTreeMap::new(),
-            num_detectors: 12,
+            num_detectors: width,
             num_observables: 70,
         };
         for round in 0..4_u32 {
@@ -98,7 +100,18 @@ fn random_rounds_match_batch_for_every_chunk_size_and_reset() {
         dem.mechanisms.push((0.0, vec![11], vec![0]));
         dem.mechanisms
             .push((1.0, if case % 2 == 0 { vec![10] } else { vec![] }, vec![64]));
+        // Spread the same coupled rounds across detector word boundaries.
+        for (_, detectors, _) in &mut dem.mechanisms {
+            for detector in detectors {
+                *detector = u32::try_from((*detector as usize) * (width - 1) / 11).unwrap();
+            }
+        }
+        let mut order: Vec<_> = (0..dem.mechanisms.len()).collect();
+        if case != 0 {
+            order.shuffle(&mut rng);
+        }
         let config = TrellisConfig {
+            column_order: Some(order),
             k: [usize::MAX, 1, 4, 16][case % 4],
             delta: if case % 3 == 0 { f64::INFINITY } else { 2.0 },
             score_alpha: if case % 5 == 0 { 0.0 } else { 0.8 },
@@ -106,7 +119,7 @@ fn random_rounds_match_batch_for_every_chunk_size_and_reset() {
             ..TrellisConfig::default()
         };
         let mut batch = TrellisDecoder::from_sparse_dem(&dem, config.clone()).unwrap();
-        let mut streams: Vec<_> = [1, 3, 12]
+        let mut streams: Vec<_> = [1, 3, width]
             .into_iter()
             .map(|chunk| {
                 (
@@ -116,9 +129,15 @@ fn random_rounds_match_batch_for_every_chunk_size_and_reset() {
             })
             .collect();
         for _ in 0..32 {
-            let syndrome: Vec<u8> = (0..12).map(|_| if rng.random() { 0 } else { 7 }).collect();
+            let mut syndrome = vec![0; width];
+            for detector in 0..12 {
+                syndrome[detector * (width - 1) / 11] = if rng.random() { 0 } else { 7 };
+            }
             let expected = batch.decode(&syndrome);
             for (chunk, stream) in &mut streams {
+                stream.reset();
+                let _ = stream.feed_prefix(&syndrome[..width / 2]);
+                let _ = stream.advance();
                 stream.reset();
                 let mut commitments = Vec::new();
                 let mut early = false;
@@ -280,7 +299,7 @@ fn empty_models_forced_bits_and_dimensions() {
         })
     ));
     stream.feed_prefix(&[]).unwrap();
-    stream.feed_dense(&[9]).unwrap();
+    stream.feed_prefix(&[9]).unwrap();
     assert!(matches!(
         stream.feed_prefix(&[0]),
         Err(DecoderError::InvalidDimensions {
@@ -318,7 +337,7 @@ fn rejects_bp_nary_and_integer_metrics() {
                 .contains(if config.bp_score_iterations > 0 {
                     "whole syndrome"
                 } else {
-                    "streaming v1 supports the binary float kernel"
+                    "streaming v1 supports the LogSumExpFloat metric"
                 })
         );
     }
@@ -383,4 +402,57 @@ fn word_boundaries_and_nonmonotone_column_detectors() {
         .decode(&syndrome)
         .unwrap();
     assert_bit_identical(&stream.flush().unwrap(), &expected);
+}
+
+#[test]
+fn stored_failure_precedes_incomplete_flush() {
+    assert_stored_failure(&[0]);
+}
+
+#[test]
+fn stored_failure_precedes_overflowing_feed() {
+    assert_stored_failure(&[0, 0]);
+}
+
+fn assert_stored_failure(later: &[u8]) {
+    let text = "detector D0\nerror(0.1) D1 L0";
+    let config = TrellisConfig::default();
+    let expected = TrellisDecoder::from_dem_str(text, config.clone())
+        .unwrap()
+        .decode(&[1, 0])
+        .unwrap_err();
+    let mut stream = TrellisStreamingDecoder::from_dem_str(text, config).unwrap();
+    assert_no_path(&stream.feed_prefix(&[1]).unwrap_err(), &expected);
+    assert_no_path(&stream.feed_prefix(later).unwrap_err(), &expected);
+    assert_no_path(&stream.flush().unwrap_err(), &expected);
+}
+
+#[test]
+fn dense_requires_a_complete_fresh_shot_and_flush_exposes_commitments() {
+    let mut stream = TrellisStreamingDecoder::from_dem_str(
+        "error(0.1) D0 L0\nerror(0.1) D1 L1",
+        TrellisConfig::default(),
+    )
+    .unwrap();
+    assert!(matches!(
+        stream.feed_dense(&[1]),
+        Err(DecoderError::InvalidDimensions { .. })
+    ));
+    stream.feed_prefix(&[1]).unwrap();
+    assert!(matches!(
+        stream.feed_dense(&[0]),
+        Err(DecoderError::InvalidDimensions { .. })
+    ));
+    assert!(matches!(
+        stream.feed_dense(&[1, 0]),
+        Err(DecoderError::InvalidDimensions { .. })
+    ));
+    stream.reset();
+    assert_eq!(stream.committed().1.count_ones(), 0);
+    stream.feed_dense(&[1, 0]).unwrap();
+    assert_eq!(stream.committed().1.count_ones(), 0);
+    let result = stream.flush().unwrap();
+    let (values, mask) = stream.committed();
+    assert_eq!(mask.count_ones(), 2);
+    assert_eq!(values, result.predicted);
 }

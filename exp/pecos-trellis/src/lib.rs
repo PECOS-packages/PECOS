@@ -824,14 +824,16 @@ struct BinaryProgress {
 
 impl Default for BinaryProgress {
     fn default() -> Self {
+        let frontier = FrontierScratch::default();
+        let peak_retained_states = frontier.parent.masses.len();
         Self {
-            frontier: FrontierScratch::default(),
+            frontier,
             transitions: 0,
             dropped_states: 0,
             dropped_log_mass: f64::NEG_INFINITY,
             k_capped: false,
             delta_pruned: false,
-            peak_retained_states: 1,
+            peak_retained_states,
         }
     }
 }
@@ -849,7 +851,7 @@ impl BinaryProgress {
         self.dropped_log_mass = f64::NEG_INFINITY;
         self.k_capped = false;
         self.delta_pruned = false;
-        self.peak_retained_states = 1;
+        self.peak_retained_states = self.frontier.parent.masses.len();
     }
 }
 
@@ -1366,7 +1368,7 @@ impl TrellisDecoder {
     /// Decode dense shots in input order using independent worker scratch.
     ///
     /// # Errors
-    /// Returns `InvalidConfiguration` for zero workers or a pool creation failure.
+    /// Returns `InvalidConfiguration` for zero workers and `InternalError` for a pool creation failure.
     pub fn decode_batch(
         &self,
         shots: &[Vec<u8>],

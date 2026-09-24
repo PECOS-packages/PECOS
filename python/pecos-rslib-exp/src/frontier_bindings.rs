@@ -10,7 +10,7 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-use crate::decoder_specs::decoder_error_to_py;
+use crate::decoder_specs::{decoder_error_to_py, indexed_decoder_error_to_py};
 use pecos_frontier::{
     CommitteeDirection, CommitteeMember, CommitteeStatus, Factor, FactorModel,
     FrontierCommittee as RustFrontierCommittee,
@@ -592,8 +592,12 @@ impl PyFrontierDecoder {
         &self,
         py: Python<'_>,
         shots: Vec<Vec<u8>>,
-        workers: usize,
+        workers: isize,
     ) -> PyResult<Vec<PyFrontierResult>> {
+        let workers = usize::try_from(workers)
+            .ok()
+            .filter(|&value| value >= 1)
+            .ok_or_else(|| PyValueError::new_err("workers must be at least 1"))?;
         let decode = || self.inner.decode_batch(&shots, workers);
         let results = if workers > 1 {
             py.detach(decode)
@@ -603,7 +607,8 @@ impl PyFrontierDecoder {
         .map_err(|error| decoder_error_to_py(&error))?;
         results
             .into_iter()
-            .map(|result| {
+            .enumerate()
+            .map(|(shot_index, result)| {
                 let result = match result {
                     FrontierDecodeAttempt::Success(inner) => Ok(inner),
                     FrontierDecodeAttempt::NoPath { error, .. }
@@ -614,7 +619,7 @@ impl PyFrontierDecoder {
                         inner,
                         num_observables: self.num_observables,
                     })
-                    .map_err(|error| decoder_error_to_py(&error))
+                    .map_err(|error| indexed_decoder_error_to_py(shot_index, &error))
             })
             .collect()
     }
@@ -719,8 +724,12 @@ impl PyFrontierCommitteeDecoder {
         &self,
         py: Python<'_>,
         shots: Vec<Vec<u8>>,
-        workers: usize,
+        workers: isize,
     ) -> PyResult<Vec<PyFrontierCommitteeResult>> {
+        let workers = usize::try_from(workers)
+            .ok()
+            .filter(|&value| value >= 1)
+            .ok_or_else(|| PyValueError::new_err("workers must be at least 1"))?;
         let decode = || self.inner.decode_batch(&shots, workers);
         let results = if workers > 1 {
             py.detach(decode)
@@ -730,13 +739,14 @@ impl PyFrontierCommitteeDecoder {
         .map_err(|error| decoder_error_to_py(&error))?;
         results
             .into_iter()
-            .map(|result| {
+            .enumerate()
+            .map(|(shot_index, result)| {
                 result
                     .map(|inner| PyFrontierCommitteeResult {
                         inner,
                         num_observables: self.num_observables,
                     })
-                    .map_err(|error| decoder_error_to_py(&error))
+                    .map_err(|error| indexed_decoder_error_to_py(shot_index, &error))
             })
             .collect()
     }

@@ -13,9 +13,9 @@
 //! Incremental binary float decoding with zero-regret logical commitments.
 
 use crate::{
-    BinaryFailure, BinaryProgress, DecoderError, Kernel, MetricMode, NormalizedFactor, ObsMask,
-    SparseDem, TrellisConfig, TrellisDecoder, TrellisModel, TrellisResult, WORD_BITS,
-    factor::FactorModel, set_bit, set_bits,
+    BinaryFailure, BinaryProgress, DecoderError, Kernel, MetricMode, ObsMask, SparseDem,
+    TrellisConfig, TrellisDecoder, TrellisModel, TrellisResult, WORD_BITS, factor::FactorModel,
+    set_bit, set_bits,
 };
 use std::sync::Arc;
 
@@ -92,14 +92,10 @@ impl TrellisStreamingDecoder {
         config: TrellisConfig,
     ) -> Result<Self, DecoderError> {
         validate_streaming_config(&config)?;
-        if model
-            .normalized_factors()
-            .iter()
-            .any(|factor| matches!(factor, NormalizedFactor::Nary(_)))
-        {
+        let decoder = TrellisDecoder::from_factor_model(model, config)?;
+        if !matches!(decoder.model.kernel, Kernel::Binary(_)) {
             return Err(binary_kernel_error());
         }
-        let decoder = TrellisDecoder::from_factor_model(model, config)?;
         Ok(Self::from_binary_decoder(decoder, model.num_observables()))
     }
 
@@ -120,7 +116,12 @@ impl TrellisStreamingDecoder {
             ready.push(prefix_requirement);
             // Adding one expresses None as -1 without signed index conversions.
             let own_detector_count = set_bits(&column.detector_toggle).max().map_or(0, |d| d + 1);
-            lookahead.push(prefix_requirement.map_or(0, |d| d + 1) - own_detector_count);
+            lookahead.push(
+                prefix_requirement
+                    .map_or(0, |d| d + 1)
+                    .checked_sub(own_detector_count)
+                    .expect("toggled detectors are a subset of close | active rows"),
+            );
             for logical in set_bits(&column.logical_toggle) {
                 last_toggle_column[logical] = Some(index);
             }
@@ -159,15 +160,15 @@ impl TrellisStreamingDecoder {
     /// the batch decoder's `DecodingFailed` error as soon as an inconsistent
     /// untouched detector arrives. A previous shot failure is returned again.
     pub fn feed_prefix(&mut self, detectors: &[u8]) -> Result<(), DecoderError> {
+        if let Some(failure) = self.failure {
+            return Err(failure.error());
+        }
         let total = self.arrived_count.saturating_add(detectors.len());
         if total > self.model.num_detectors {
             return Err(DecoderError::InvalidDimensions {
                 expected: self.model.num_detectors,
                 actual: total,
             });
-        }
-        if let Some(failure) = self.failure {
-            return Err(failure.error());
         }
         for (offset, &value) in detectors.iter().enumerate() {
             let detector = self.arrived_count + offset;
@@ -187,11 +188,28 @@ impl TrellisStreamingDecoder {
         self.failure.map_or(Ok(()), |failure| Err(failure.error()))
     }
 
-    /// Feed the whole syndrome in one block; equivalent to one `feed_prefix` call.
+    /// Feed the whole syndrome in one block before any detectors have arrived.
     ///
     /// # Errors
-    /// Returns the same errors as [`Self::feed_prefix`].
+    /// Returns a stored failure first, then `InvalidDimensions` unless no detectors
+    /// have arrived and the syndrome has exactly the model's detector count.
+    /// Otherwise returns the same errors as [`Self::feed_prefix`].
     pub fn feed_dense(&mut self, syndrome: &[u8]) -> Result<(), DecoderError> {
+        if let Some(failure) = self.failure {
+            return Err(failure.error());
+        }
+        if self.arrived_count != 0 {
+            return Err(DecoderError::InvalidDimensions {
+                expected: 0,
+                actual: self.arrived_count,
+            });
+        }
+        if syndrome.len() != self.model.num_detectors {
+            return Err(DecoderError::InvalidDimensions {
+                expected: self.model.num_detectors,
+                actual: syndrome.len(),
+            });
+        }
         self.feed_prefix(syndrome)
     }
 
@@ -228,15 +246,31 @@ impl TrellisStreamingDecoder {
         })
     }
 
+    /// Current commitment values and mask, including commitments discovered by flush.
+    #[must_use]
+    pub fn committed(&self) -> (ObsMask, ObsMask) {
+        (
+            ObsMask::from_words(&self.committed),
+            ObsMask::from_words(&self.committed_mask),
+        )
+    }
+
     /// Finish a fully fed shot using the batch terminal-result construction.
+    ///
+    /// Remaining commitments discovered here are visible through [`Self::committed`].
     ///
     /// # Errors
     /// Returns `InvalidDimensions` until all detectors arrive, or the same no-path
     /// or internal error as [`Self::advance`].
     ///
     /// # Panics
-    /// Panics if a committed bit disagrees with the final prediction, an engine invariant.
+    /// Panics if any column remains unprocessed or a committed bit disagrees with
+    /// the final prediction; both indicate an engine invariant violation.
     pub fn flush(&mut self) -> Result<TrellisResult, DecoderError> {
+        if let Some(failure) = self.failure {
+            return Err(failure.error());
+        }
+
         if self.arrived_count != self.model.num_detectors {
             return Err(DecoderError::InvalidDimensions {
                 expected: self.model.num_detectors,
@@ -244,6 +278,14 @@ impl TrellisStreamingDecoder {
             });
         }
         self.advance()?;
+        let Kernel::Binary(columns) = &self.model.kernel else {
+            unreachable!("streaming constructors validate the binary kernel");
+        };
+        assert_eq!(
+            self.next_column,
+            columns.len(),
+            "flush must process every column"
+        );
         let result = TrellisModel::finish_binary(&self.progress, self.next_column, 0.0);
         for logical in set_bits(&self.committed_mask) {
             let value = self.committed[logical / WORD_BITS] & (1_u64 << (logical % WORD_BITS)) != 0;
@@ -297,7 +339,9 @@ fn binary_kernel_error() -> DecoderError {
 
 fn validate_streaming_config(config: &TrellisConfig) -> Result<(), DecoderError> {
     if config.metric_mode != MetricMode::LogSumExpFloat {
-        return Err(binary_kernel_error());
+        return Err(DecoderError::InvalidConfiguration(
+            "streaming v1 supports the LogSumExpFloat metric".into(),
+        ));
     }
     if config.bp_score_iterations != 0 {
         return Err(DecoderError::InvalidConfiguration(

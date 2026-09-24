@@ -194,7 +194,7 @@ impl BpTrellisDecoder {
     /// Decode dense shots in input order with shared models and worker-local scratch.
     ///
     /// # Errors
-    /// Returns `InvalidConfiguration` for zero workers or pool creation failure.
+    /// Returns `InvalidConfiguration` for zero workers and `InternalError` for pool creation failure.
     /// Individual shot errors are retained in input order.
     pub fn decode_batch(
         &self,

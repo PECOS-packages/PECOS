@@ -183,8 +183,9 @@ def test_direct_parallel_batch_matches_sequential():
         for field in fields:
             assert getattr(actual, field) == getattr(expected, field)
     assert decoder.decode_batch([], workers=4) == []
-    with pytest.raises(RuntimeError, match="workers must be at least 1"):
-        decoder.decode_batch(shots, workers=0)
+    for workers in (0, -1):
+        with pytest.raises(ValueError, match="workers must be at least 1"):
+            decoder.decode_batch(shots, workers=workers)
 
 
 def test_direct_parallel_batch_releases_gil():
@@ -196,3 +197,14 @@ def test_direct_parallel_batch_releases_gil():
         return lambda: decoder.decode_batch(shots, workers=4)
 
     assert_releases_gil(decode_call)
+
+
+@pytest.mark.parametrize("workers", [1, 4])
+@pytest.mark.parametrize("shot", [[0], [0, 1]])
+def test_direct_batch_reports_first_failing_shot(workers, shot):
+    decoder = exp.BpTrellisDecoder.from_dem("error(0.1) D0 L0\ndetector D1\n")
+    with pytest.raises(RuntimeError) as individual_error:
+        decoder.decode_syndrome(shot)
+    with pytest.raises(RuntimeError) as batch_error:
+        decoder.decode_batch([[0, 0], shot, [1]], workers=workers)
+    assert str(batch_error.value) == f"shot 1: {individual_error.value}"

@@ -2256,7 +2256,7 @@ impl PyTesseractDecoder {
         let config = &self.config;
         let num_observables = self.inner.num_observables();
 
-        let results: Result<Vec<_>, _> = pool.install(|| {
+        let results: Result<Vec<_>, pecos_decoders::TesseractError> = pool.install(|| {
             syndromes
                 .par_iter()
                 .map(|syndrome| {
@@ -2269,10 +2269,8 @@ impl PyTesseractDecoder {
                     DECODER.with(|cell| {
                         let mut decoder_ref = cell.borrow_mut();
                         if decoder_ref.is_none() {
-                            *decoder_ref = Some(
-                                RustTesseractDecoder::new(dem_str, config.clone())
-                                    .map_err(|e| e.to_string())?,
-                            );
+                            *decoder_ref =
+                                Some(RustTesseractDecoder::new(dem_str, config.clone())?);
                         }
                         let decoder = decoder_ref.as_mut().unwrap();
 
@@ -2284,21 +2282,20 @@ impl PyTesseractDecoder {
                             .collect();
 
                         let detections_arr = ndarray::Array1::from_vec(detections);
-                        decoder
-                            .decode_detections(&detections_arr.view())
-                            .map(|r| PyTesseractResult {
+                        decoder.decode_detections(&detections_arr.view()).map(|r| {
+                            PyTesseractResult {
                                 observables_mask: r.observables_mask,
                                 cost: r.cost,
                                 low_confidence: r.low_confidence,
                                 num_observables,
-                            })
-                            .map_err(|e| e.to_string())
+                            }
+                        })
                     })
                 })
                 .collect()
         });
 
-        results.map_err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>)
+        results.map_err(decoder_runtime_error_to_py)
     }
 
     /// Number of detectors in the error model.
@@ -2533,7 +2530,7 @@ impl PyTesseractTrellisDecoder {
         let config = &self.config;
         let num_observables = self.inner.num_observables();
 
-        let results: Result<Vec<_>, _> = pool.install(|| {
+        let results: Result<Vec<_>, pecos_decoders::TesseractError> = pool.install(|| {
             syndromes
                 .par_iter()
                 .map(|syndrome| {
@@ -2546,10 +2543,8 @@ impl PyTesseractTrellisDecoder {
                     DECODER.with(|cell| {
                         let mut decoder_ref = cell.borrow_mut();
                         if decoder_ref.is_none() {
-                            *decoder_ref = Some(
-                                RustTesseractTrellisDecoder::new(dem_str, config.clone())
-                                    .map_err(|e| e.to_string())?,
-                            );
+                            *decoder_ref =
+                                Some(RustTesseractTrellisDecoder::new(dem_str, config.clone())?);
                         }
                         let decoder = decoder_ref.as_mut().unwrap();
 
@@ -2561,9 +2556,8 @@ impl PyTesseractTrellisDecoder {
                             .collect();
 
                         let detections_arr = ndarray::Array1::from_vec(detections);
-                        decoder
-                            .decode_detections(&detections_arr.view())
-                            .map(|r| PyTesseractTrellisResult {
+                        decoder.decode_detections(&detections_arr.view()).map(|r| {
+                            PyTesseractTrellisResult {
                                 observables_mask: r.observables_mask,
                                 observable_probability: r.observable_probability,
                                 num_states_expanded: r.num_states_expanded,
@@ -2572,14 +2566,14 @@ impl PyTesseractTrellisDecoder {
                                 max_frontier_width_seen: r.max_frontier_width_seen,
                                 low_confidence: r.low_confidence,
                                 num_observables,
-                            })
-                            .map_err(|e| e.to_string())
+                            }
+                        })
                     })
                 })
                 .collect()
         });
 
-        results.map_err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>)
+        results.map_err(decoder_runtime_error_to_py)
     }
 
     /// Number of detectors in the error model.

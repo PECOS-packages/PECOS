@@ -358,13 +358,19 @@ def test_tesseract_argument_errors_are_value_errors_on_both_paths() -> None:
     ):
         with pytest.raises(ValueError, match=parameter):
             build()
-    # A repeated detector index is malformed input for both decoders.
+    # A repeated detector index is malformed input for both decoders, on the
+    # single-shot path and on the batch path alike.
     for decoder in (
         TesseractTrellisDecoder.from_dem("error(0.1) D0\nerror(0.2) D0 L0\n"),
         TesseractDecoder.from_dem("error(0.1) D0\nerror(0.2) D0 L0\n"),
     ):
         with pytest.raises(ValueError, match="repeated"):
             decoder.decode_from_defects([0, 0])
+    trellis = TesseractTrellisDecoder.from_dem("error(0.1) D0 L0\n")
+    with pytest.raises(ValueError, match="out of range"):
+        trellis.decode_syndrome([0, 1])
+    with pytest.raises(ValueError, match="out of range"):
+        trellis.decode_batch([[0, 1]], num_workers=1)
 
 
 def test_tesseract_trellis_surfaces_observable_limit() -> None:

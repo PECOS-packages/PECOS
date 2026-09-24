@@ -173,7 +173,7 @@ DECODER_CLASSES = [
 
 @pytest.mark.parametrize("decoder", DECODER_CLASSES, ids=lambda decoder: decoder.__name__)
 def test_exported_decoder_constructors_classify_dem_syntax(decoder: type) -> None:
-    if decoder.__name__ in {"PyMatchingDecoder", "TesseractDecoder", "ChromobiusDecoder"}:
+    if decoder.__name__ in {"PyMatchingDecoder", "TesseractDecoder", "TesseractTrellisDecoder", "ChromobiusDecoder"}:
         with pytest.raises(RuntimeError, match="Unrecognized instruction name:"):
             decoder.from_dem("@bad")
     else:

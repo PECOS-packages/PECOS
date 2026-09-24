@@ -39,6 +39,8 @@ from pecos_rslib.decoders import (
     SparseMatrix,
     TesseractDecoder,
     TesseractResult,
+    TesseractTrellisDecoder,
+    TesseractTrellisResult,
     UnionFindBuilder,
     UnionFindDecoder,
     astar,
@@ -59,6 +61,7 @@ from pecos_rslib.decoders import (
     pymatching,
     relay_bp,
     tesseract,
+    tesseract_trellis,
     union_find,
     windowed,
 )
@@ -89,6 +92,8 @@ __all__ = [
     "SparseMatrix",
     "TesseractDecoder",
     "TesseractResult",
+    "TesseractTrellisDecoder",
+    "TesseractTrellisResult",
     "UnionFindBuilder",
     "UnionFindDecoder",
     "astar",
@@ -109,6 +114,7 @@ __all__ = [
     "pymatching",
     "relay_bp",
     "tesseract",
+    "tesseract_trellis",
     "union_find",
     "windowed",
 ]
@@ -122,7 +128,10 @@ def __getattr__(name: str) -> object:
         except ModuleNotFoundError as exc:
             if exc.name != "pecos_rslib_exp":
                 raise
-            message = f"{name} requires the optional pecos-rslib-exp package; install it to use experimental decoders"
+            message = (
+                f"{name} requires the optional pecos-rslib-exp package, which is not published to PyPI; "
+                "build it from a PECOS source checkout with `just build`"
+            )
             raise ImportError(message) from exc
         try:
             return getattr(experimental, name)

@@ -7,11 +7,23 @@ requires-python = ">=3.12"
 dependencies = []
 
 [project.optional-dependencies]
-# Keep these in sync with the cuda dependency groups below. The extras support
-# `uv sync --extra cuda13`; the groups support `uv run --group cuda13 ...`.
-# Pick the extra matching your CUDA major -- do not install both.
-cuda13 = ["quantum-pecos[cuda13]==0.11.0.dev0"]
-cuda12 = ["quantum-pecos[cuda12]==0.11.0.dev0"]
+# The CUDA stack, one extra per toolkit major. The extras support `uv sync --extra
+# cuda13`; the identical dependency groups below support `uv run --group cuda13 ...`.
+# Both list the packages themselves rather than `quantum-pecos[cudaNN]`: a group
+# whose entry is a workspace member's extra does not propagate that extra into the
+# lock, so `uv sync --group cudaNN` installed nothing (#834). Each list must stay
+# identical to the matching quantum-pecos extra; scripts/check_python_workspace.py
+# enforces that. Pick the extra matching your CUDA major -- do not install both.
+cuda13 = [
+  "cupy-cuda13x>=13.0.0; python_version >= '3.11'",
+  "cuquantum-python-cu13>=25.9.0; python_version >= '3.11'",
+  "pytket-cutensornet>=0.12.0; python_version >= '3.11'",
+]
+cuda12 = [
+  "cupy-cuda12x>=13.0.0; python_version >= '3.11'",
+  "cuquantum-python-cu12>=25.3.0; python_version >= '3.11'",
+  "pytket-cutensornet>=0.12.0; python_version >= '3.11'",
+]
 
 [tool.uv.workspace]
 members = [
@@ -27,9 +39,6 @@ members = [
   "python/selene-plugins/pecos-selene-stabilizer",
   "python/selene-plugins/pecos-selene-statevec",
 ]
-
-[tool.uv.sources]
-quantum-pecos = { workspace = true }
 
 [dependency-groups]
 # Build, lint, and docs tooling. Runtime deps used by member packages
@@ -73,11 +82,16 @@ numpy-compat = [ # NumPy/SciPy compatibility tests - verify compatibility with s
   "numpy>=1.15.0",
   "scipy>=1.1.0",
 ]
-cuda13 = [ # CUDA 13 Python packages for GPU-accelerated simulations (requires CUDA toolkit)
-  "quantum-pecos[cuda13]==0.11.0.dev0",
+# CUDA Python packages; see the cuda extras above for why these list packages directly.
+cuda13 = [ # CUDA 13 (requires CUDA toolkit)
+  "cupy-cuda13x>=13.0.0; python_version >= '3.11'",
+  "cuquantum-python-cu13>=25.9.0; python_version >= '3.11'",
+  "pytket-cutensornet>=0.12.0; python_version >= '3.11'",
 ]
-cuda12 = [ # CUDA 12 Python packages for GPU-accelerated simulations
-  "quantum-pecos[cuda12]==0.11.0.dev0",
+cuda12 = [ # CUDA 12
+  "cupy-cuda12x>=13.0.0; python_version >= '3.11'",
+  "cuquantum-python-cu12>=25.3.0; python_version >= '3.11'",
+  "pytket-cutensornet>=0.12.0; python_version >= '3.11'",
 ]
 
 [tool.uv]

@@ -359,23 +359,7 @@ impl ControlEngine for GeneralNoiseModel {
         &mut self,
         input: Self::Input,
     ) -> Result<EngineStage<Self::EngineInput, Self::Output>, PecosError> {
-        if self.results_builder.message_count() > 0 {
-            return Err(PecosError::Processing(
-                "Results builder not empty at start of processing".to_string(),
-            ));
-        }
-        // Apply noise to the gates
-        let noisy_gates = match self.apply_noise_on_start(&input) {
-            Ok(gates) => gates,
-            Err(e) => {
-                return Err(PecosError::Processing(format!(
-                    "Noise application error: {e}"
-                )));
-            }
-        };
-
-        // Return the noisy operations to QuantumEngine for processing/simulation
-        Ok(EngineStage::NeedsProcessing(noisy_gates))
+        self.start_with_boundaries(&input, None)
     }
 
     /// Method called when the `NoiseModel` has sent a message to its `QuantumEngine` and is
@@ -434,6 +418,92 @@ impl RngManageable for GeneralNoiseModel {
 impl ProbabilityValidator for GeneralNoiseModel {}
 
 impl GeneralNoiseModel {
+    fn start_with_boundaries(
+        &mut self,
+        input: &ByteMessage,
+        boundaries: Option<&mut Vec<u32>>,
+    ) -> Result<EngineStage<ByteMessage, ByteMessage>, PecosError> {
+        if self.results_builder.message_count() > 0 {
+            return Err(PecosError::Processing(
+                "Results builder not empty at start of processing".to_string(),
+            ));
+        }
+        // Apply noise to the gates
+        let noisy_gates = self.apply_noise_on_start_with_boundaries(input, boundaries)?;
+
+        // Return the noisy operations to QuantumEngine for processing/simulation
+        Ok(EngineStage::NeedsProcessing(noisy_gates))
+    }
+
+    pub(crate) fn start_runtime_frame(
+        &mut self,
+        input: &ByteMessage,
+        count: usize,
+    ) -> Result<(ByteMessage, Vec<u32>), PecosError> {
+        let mut boundaries = Vec::new();
+        boundaries
+            .try_reserve_exact(count)
+            .map_err(|_| PecosError::Processing("boundary allocation failed".into()))?;
+        match self.start_with_boundaries(input, Some(&mut boundaries))? {
+            EngineStage::NeedsProcessing(commands) => Ok((commands, boundaries)),
+            EngineStage::Complete(_) => {
+                Err(PecosError::Processing("unexpected start completion".into()))
+            }
+        }
+    }
+
+    pub(crate) fn validate_runtime_configuration(&self) -> Result<(), PecosError> {
+        let probabilities = [
+            self.p_prep,
+            self.p_prep_leak_ratio,
+            self.p1,
+            self.p1_emission_ratio,
+            self.p1_seepage_prob,
+            self.p2,
+            self.p2_emission_ratio,
+            self.p2_seepage_prob,
+            self.p_meas_0,
+            self.p_meas_1,
+            self.p_prep_crosstalk,
+            self.p_meas_crosstalk_local,
+            self.p_meas_crosstalk_global,
+        ];
+        let rates = [
+            self.leakage_scale,
+            self.p_idle_linear_rate,
+            self.p_idle_sin_squared_rate,
+            self.p_idle_coherent_rate,
+        ];
+        if !probabilities
+            .into_iter()
+            .all(|p| p.is_finite() && (0.0..=1.0).contains(&p))
+            || !rates.into_iter().all(|p| p.is_finite() && p >= 0.0)
+        {
+            return Err(PecosError::Input(
+                "resolved general-noise configuration exceeds runtime profile".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    // Reject durations whose scaled idle calculations could become non-finite.
+    pub(crate) fn validate_frame_idle(&self, duration: f64) -> Result<(), PecosError> {
+        let linear = self.p_idle_linear_rate * duration;
+        let stochastic = self
+            .p_idle_sin_squared_model
+            .values()
+            .all(|m| (self.p_idle_sin_squared_rate * m * duration).is_finite());
+        let coherent = self.p_idle_coherent_model.values().all(|m| {
+            (std::f64::consts::TAU * self.p_idle_coherent_rate * m * duration).is_finite()
+        });
+        if !linear.is_finite() || !stochastic || !coherent {
+            return Err(PecosError::Input(
+                "idle arithmetic exceeds runtime profile".into(),
+            ));
+        }
+        Ok(())
+    }
+
     fn channel_gate_error() -> String {
         "ByteMessage noise models cannot process GateType::Channel; channel operations carry typed payloads and must use a channel-aware circuit path"
             .to_string()
@@ -528,23 +598,33 @@ impl GeneralNoiseModel {
 
     /// Apply noise at the start of `QuantumSystem` processing (typically a collection of gates)
     ///
-    /// # Panics
-    ///
-    /// Panics if the input `ByteMessage` cannot be parsed as quantum operations.
-    ///
     /// # Errors
     ///
     /// Returns an error if noise application fails or the message cannot be processed.
     pub fn apply_noise_on_start(&mut self, input: &ByteMessage) -> Result<ByteMessage, String> {
+        self.apply_noise_on_start_with_boundaries(input, None)
+            .map_err(|error| match error {
+                PecosError::Input(message) | PecosError::Processing(message) => message,
+                other => other.to_string(),
+            })
+    }
+
+    fn apply_noise_on_start_with_boundaries(
+        &mut self,
+        input: &ByteMessage,
+        mut boundaries: Option<&mut Vec<u32>>,
+    ) -> Result<ByteMessage, PecosError> {
         let mut builder = NoiseUtils::create_quantum_builder();
         let mut err = None;
 
         // Parse the input as quantum operations
-        let gates = input
-            .quantum_ops()
-            .expect("Failed to parse input as quantum operations");
+        let gates = input.quantum_ops().map_err(|err| {
+            PecosError::Input(format!(
+                "Failed to parse input as quantum operations: {err}"
+            ))
+        })?;
         if gates.iter().any(Gate::is_channel) {
-            return Err(Self::channel_gate_error());
+            return Err(PecosError::Input(Self::channel_gate_error()));
         }
 
         for gate in gates {
@@ -579,6 +659,9 @@ impl GeneralNoiseModel {
                 }
                 builder.add_gate_command(&gate);
                 trace!("Skipping noise for noiseless gate: {:?}", gate.gate_type);
+                if let Some(ends) = boundaries.as_deref_mut() {
+                    ends.push(builder.message_count());
+                }
                 continue;
             }
 
@@ -674,10 +757,13 @@ impl GeneralNoiseModel {
                     err = Some(err_msg);
                 }
             }
+            if let Some(ends) = boundaries.as_deref_mut() {
+                ends.push(builder.message_count());
+            }
         }
 
         if let Some(e) = err {
-            return Err(e);
+            return Err(PecosError::Processing(e));
         }
 
         Ok(builder.build())
@@ -1416,6 +1502,9 @@ impl GeneralNoiseModel {
 
     /// Reset the noise model for a new shot
     fn reset_noise_model(&mut self) {
+        // A failed/abandoned simulator continuation may leave user outcomes
+        // buffered. They belong to the previous shot, just like pending qubits.
+        self.results_builder.reset();
         // Clear leaked qubits
         self.leaked_qubits.clear();
         // Clear measured qubits

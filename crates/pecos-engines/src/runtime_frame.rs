@@ -302,6 +302,51 @@ impl RuntimeGeneralNoise {
         if input.as_bytes().len() > MAX_FRAME_BYTES {
             return Err(error("legacy frame byte limit"));
         }
+        // Inspect the bounded legacy wire before invoking its general parser:
+        // unsupported angle records can panic during floating-point conversion.
+        let bytes = input.as_bytes();
+        if bytes.len() < 16
+            || word(bytes, 0) != crate::byte_message::protocol::BATCH_MAGIC
+            || bytes[4..8] != [1, 0, 0, 0]
+            || word(bytes, 12) as usize != bytes.len()
+        {
+            return Err(error("invalid legacy frame header"));
+        }
+        let count = word(bytes, 8) as usize;
+        if count > self.limits.records
+            || count * 16 * (self.qubits + 1) > self.limits.expanded_operations
+        {
+            return Err(error("frame record or expansion limit"));
+        }
+        let mut pos = 16;
+        for _ in 0..count {
+            if bytes.len() - pos < 16 || bytes[pos..pos + 4] != [10, 0, 0, 0] {
+                return Err(error("unsupported legacy frame record"));
+            }
+            let len = word(bytes, pos + 4) as usize;
+            let kind = GateType::try_from(bytes[pos + 8]).map_err(PecosError::Input)?;
+            let idle = kind == GateType::Idle;
+            if !matches!(
+                kind,
+                GateType::PZ
+                    | GateType::X
+                    | GateType::Z
+                    | GateType::H
+                    | GateType::MZ
+                    | GateType::MeasureLeaked
+                    | GateType::Idle
+                    | GateType::MeasCrosstalkLocalPayload
+            ) || len != if idle { 16 } else { 8 }
+                || len > bytes.len() - pos - 8
+                || bytes[pos + 9..pos + 12] != [1, u8::from(idle), 0]
+            {
+                return Err(error("unsupported legacy frame gate"));
+            }
+            pos += 8 + len;
+        }
+        if pos != bytes.len() {
+            return Err(error("trailing legacy frame bytes"));
+        }
         let gates = input.quantum_ops()?;
         let mut canonical = ByteMessage::quantum_operations_builder();
         for gate in &gates {

@@ -105,7 +105,11 @@ and local crosstalk at most one measurement plus one continuation command. The
 budget includes injected X operations and outcomes. Unsupported gate arities are
 rejected rather than assigned an unproven bound.
 
-Opted-in v1 inputs are also size/arity/target/budget checked and must canonically
+Opted-in v1 inputs are wire-checked against the admitted singleton subset before
+entering the general parser, which can panic on non-finite unsupported angles.
+They share the built-in simulator capacity check with v2, preventing automatic
+growth from recreating persistent state. They are size/arity/target/budget checked
+and must canonically
 round-trip, so preceding inputs cannot grow bookkeeping outside this profile.
 Only one frame is retained; consumed queues are dropped, with no event history.
 Persistent leakage/preparation sets are bounded by configured qubits. Expansion
@@ -116,7 +120,7 @@ New top-level vector reservations return errors on allocation failure.
 
 ## Evidence and remaining work
 
-`tests/runtime_frame_production.rs` has 11 tests exercising exported production APIs:
+`tests/runtime_frame_production.rs` has 16 tests exercising exported production APIs:
 
 - Metadata versus ordinary legacy execution over 64 seeds, multiple inputs,
   leakage readout, nonlinear idle and complete debug-visible noise/simulator RNG
@@ -131,7 +135,7 @@ New top-level vector reservations return errors on allocation failure.
 - SimBuilder multi-input shots across four workers, repeated runs, noisy seeded
   metadata replay, and explicit distinct worker contexts.
 
-Validation: full `cargo test -p pecos-engines --offline` passed 413 tests/doctests
+Validation: full `cargo test -p pecos-engines --offline` passed 418 tests/doctests
 with zero failures/ignored tests; all-target Clippy with `-D warnings`, formatting,
 changed-file pre-commit and diff checks passed. No fresh Python test run because
 no Python path was added. The historical diagnostic library-search skip remains
@@ -145,3 +149,30 @@ and run fresh integration tests. Do not add a disconnected executor stack.
 Matched circuits, schedules, model parameters, decoders and approximations remain
 necessary before studying parity. Synthetic tests do not establish simulator or
 device-model equivalence. Keep #827 draft; do not merge either PR.
+
+## Production self-review of f3bb9f75
+
+Two confirmed admission issues were reproduced before correction:
+
+- **P1:** Opted-in v1 messages containing an unsupported RZ with a non-finite angle
+  unwound in the general parser instead of returning an admission error. A strict
+  bounded wire scan now rejects unsupported records before angle conversion.
+  NaN and both infinities following a valid X prefix return errors without RNG or
+  simulator mutation; a corrected message still executes.
+- **P1:** Simulator capacity admission covered v2 only. Opted-in v1 could grow an
+  undersized StateVecEngine, recreating its state and losing previous inputs.
+  Capacity is now checked before either route. The regression preserves a
+  previously prepared state and checks both RNGs and unchanged capacity.
+
+Additional production regressions cover consecutive measurements over 32 seeds,
+execution/reset unwind and independently poisoned clones, and 128-record expansion
+admission with 16 persistent preparation-crosstalk victims. The latter accepts the
+conservative budget exactly and rejects one below it before model/RNG effects.
+A suspected joint-measurement batching issue was not reproduced: the admitted
+StateVecEngine uses SparseStateVecSoA's sequential measurement implementation.
+No dispatch change or additional simulator capability was added.
+
+This is implementation-author self-review, not independent external review.
+The fixes do not alter the scope or the RFC #591 limitations above: preserved
+native simultaneous batches and outcome-dependent physical profiles remain
+unimplemented. Ordinary non-opted-in legacy parser behavior is unchanged.

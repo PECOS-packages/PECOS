@@ -211,18 +211,24 @@ impl Engine for QuantumSystem {
             .as_any_mut()
             .downcast_mut::<RuntimeGeneralNoise>()
             .expect("checked private compiled model");
+        // Legacy inputs share this persistent simulator with later frames.
+        // Automatic growth recreates state, so reject undersized configuration
+        // before either route can mutate the model, simulator, or RNG.
+        if let Some(sim) = self
+            .quantum_engine
+            .as_any()
+            .downcast_ref::<crate::StateVecEngine>()
+            && sim.simulator().num_qubits() < model.qubits
+        {
+            return Err(runtime_frame::error(
+                "simulator capacity below frame profile",
+            ));
+        }
         if framed {
             let records = runtime_frame::decode(&input, model)?;
             // Only the tested built-in state-vector consumer is admitted initially.
-            let sim = self
-                .quantum_engine
-                .as_any()
-                .downcast_ref::<crate::StateVecEngine>()
-                .ok_or_else(|| runtime_frame::error("unsupported frame simulator"))?;
-            if sim.simulator().num_qubits() < model.qubits {
-                return Err(runtime_frame::error(
-                    "simulator capacity below frame profile",
-                ));
+            if !self.quantum_engine.as_any().is::<crate::StateVecEngine>() {
+                return Err(runtime_frame::error("unsupported frame simulator"));
             }
             // Latch before mutation; errors and unwinding leave this set.
             self.frame_poisoned = true;

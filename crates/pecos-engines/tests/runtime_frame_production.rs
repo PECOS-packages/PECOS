@@ -364,6 +364,8 @@ fn invalid_suffixes_versions_ids_profiles_and_budgets_reject_before_prefix_effec
 
 #[derive(Clone, Debug)]
 struct FailingSimulator {
+    panic_process: Arc<AtomicBool>,
+    panic_reset: Arc<AtomicBool>,
     fail_process: Arc<AtomicBool>,
     fail_reset: Arc<AtomicBool>,
 }
@@ -371,6 +373,10 @@ impl Engine for FailingSimulator {
     type Input = ByteMessage;
     type Output = ByteMessage;
     fn process(&mut self, _: ByteMessage) -> Result<ByteMessage, PecosError> {
+        assert!(
+            !self.panic_process.load(Ordering::SeqCst),
+            "synthetic execution panic"
+        );
         if self.fail_process.load(Ordering::SeqCst) {
             Err(PecosError::Processing("synthetic execution failure".into()))
         } else {
@@ -378,6 +384,10 @@ impl Engine for FailingSimulator {
         }
     }
     fn reset(&mut self) -> Result<(), PecosError> {
+        assert!(
+            !self.panic_reset.load(Ordering::SeqCst),
+            "synthetic reset panic"
+        );
         if self.fail_reset.load(Ordering::SeqCst) {
             Err(PecosError::Processing("synthetic reset failure".into()))
         } else {
@@ -400,6 +410,8 @@ fn errors_and_failed_reset_poison_owner_and_clones() {
     let fail_process = Arc::new(AtomicBool::new(true));
     let fail_reset = Arc::new(AtomicBool::new(true));
     let sim = FailingSimulator {
+        panic_process: Arc::new(AtomicBool::new(false)),
+        panic_reset: Arc::new(AtomicBool::new(false)),
         fail_process: fail_process.clone(),
         fail_reset: fail_reset.clone(),
     };
@@ -754,4 +766,218 @@ fn resolved_configuration_and_idle_arithmetic_reject_nonfinite_values() {
             .unwrap(),
         [0]
     );
+}
+
+#[test]
+fn metadata_preserves_consecutive_measurement_sampling() {
+    let gates: Vec<_> = (0..4)
+        .map(|q| Gate::h(&[q]))
+        .chain((0..4).map(|q| Gate::mz(&[q])))
+        .collect();
+    for seed in 0..32 {
+        let mut legacy = QuantumSystem::new(
+            Box::new(GeneralNoiseModel::builder().build()),
+            Box::new(StateVecEngine::new(4)),
+        );
+        legacy.set_seed(seed);
+        let expected = legacy.process(message(&gates)).unwrap().outcomes().unwrap();
+        for metadata in [false, true] {
+            let noise = RuntimeNoise::new(GeneralNoiseModel::builder(), 4, FrameLimits::default())
+                .unwrap()
+                .into_noise_model();
+            let mut actual = QuantumSystem::new(noise, Box::new(StateVecEngine::new(4)));
+            actual.set_seed(seed);
+            actual.begin_shot(context(0)).unwrap();
+            let got = actual
+                .process(frame(&gates, metadata))
+                .unwrap()
+                .outcomes()
+                .unwrap();
+            assert_eq!(got, expected, "seed {seed}, metadata {metadata}");
+            assert_rng_equal(&actual, &legacy);
+        }
+    }
+}
+
+#[test]
+fn malformed_legacy_angles_are_rejected_without_unwinding_or_mutation() {
+    for invalid in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        let mut bytes = message(&[
+            Gate::x(&[0]),
+            Gate::rz(pecos_core::Angle64::from_radians(0.5), &[0]),
+        ])
+        .as_bytes()
+        .to_vec();
+        let end = bytes.len();
+        bytes[end - 8..].copy_from_slice(&invalid.to_le_bytes());
+        let mut system = setup(GeneralNoiseModel::builder().with_p1(0.5), 17);
+        let before = system.clone();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            system.process(ByteMessage::new(&bytes))
+        }));
+        assert!(result.is_ok(), "admission must return an error, not unwind");
+        assert!(result.unwrap().is_err());
+        assert_rng_equal(&system, &before);
+        assert_eq!(
+            system
+                .process(frame(&[Gate::mz(&[0])], false))
+                .unwrap()
+                .outcomes()
+                .unwrap(),
+            vec![0]
+        );
+    }
+}
+
+#[test]
+fn legacy_inputs_reject_undersized_simulator_before_mutation() {
+    let noise = RuntimeNoise::new(
+        GeneralNoiseModel::builder().with_p1(0.5),
+        2,
+        FrameLimits::default(),
+    )
+    .unwrap()
+    .into_noise_model();
+    let mut simulator = StateVecEngine::new(1);
+    simulator.process(message(&[Gate::x(&[0])])).unwrap();
+    let mut system = QuantumSystem::new(noise, Box::new(simulator));
+    system.set_seed(17);
+    system.begin_shot(context(0)).unwrap();
+    let before = system.clone();
+    assert!(
+        system
+            .process(message(&[Gate::z(&[0]), Gate::h(&[1])]))
+            .is_err()
+    );
+    assert_rng_equal(&system, &before);
+    assert_eq!(
+        system
+            .quantum_engine()
+            .as_any()
+            .downcast_ref::<StateVecEngine>()
+            .unwrap()
+            .simulator()
+            .num_qubits(),
+        1
+    );
+    let mut preserved = system
+        .quantum_engine()
+        .as_any()
+        .downcast_ref::<StateVecEngine>()
+        .unwrap()
+        .clone();
+    assert_eq!(
+        preserved
+            .process(message(&[Gate::mz(&[0])]))
+            .unwrap()
+            .outcomes()
+            .unwrap(),
+        vec![1]
+    );
+}
+
+#[test]
+fn caught_execution_and_reset_panics_preserve_poison_in_clones() {
+    let panic_process = Arc::new(AtomicBool::new(true));
+    let panic_reset = Arc::new(AtomicBool::new(true));
+    let sim = FailingSimulator {
+        fail_process: Arc::new(AtomicBool::new(false)),
+        fail_reset: Arc::new(AtomicBool::new(false)),
+        panic_process: panic_process.clone(),
+        panic_reset: panic_reset.clone(),
+    };
+    let cfg = RuntimeNoise::new(GeneralNoiseModel::builder(), 2, FrameLimits::default()).unwrap();
+    let mut system = QuantumSystem::new(cfg.into_noise_model(), Box::new(sim));
+    system.begin_shot(context(0)).unwrap();
+    assert!(
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            system.process(message(&[Gate::x(&[0])]))
+        }))
+        .is_err()
+    );
+    panic_process.store(false, Ordering::SeqCst);
+    assert!(system.clone().begin_shot(context(1)).is_err());
+    assert!(system.process(message(&[Gate::x(&[0])])).is_err());
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| system.reset())).is_err());
+    let mut poisoned_clone = system.clone();
+    assert!(system.begin_shot(context(2)).is_err());
+    assert!(poisoned_clone.begin_shot(context(3)).is_err());
+    panic_reset.store(false, Ordering::SeqCst);
+    system.reset().unwrap();
+    system.begin_shot(context(4)).unwrap();
+    system.process(message(&[Gate::x(&[0])])).unwrap();
+    // Recovery of one owner does not clear its clone's copied failure latch.
+    assert!(poisoned_clone.begin_shot(context(5)).is_err());
+    poisoned_clone.reset().unwrap();
+    poisoned_clone.begin_shot(context(6)).unwrap();
+    poisoned_clone.process(message(&[Gate::x(&[0])])).unwrap();
+}
+
+#[test]
+fn expansion_admission_accounts_for_persistent_crosstalk_victims() {
+    let builder = GeneralNoiseModel::builder().with_p_prep_crosstalk(1.0);
+    let prepare: Vec<_> = (0..16).map(|q| Gate::pz(&[q])).collect();
+    let gates: Vec<_> = (0..64).map(|q| Gate::pz(&[q % 16])).collect();
+    let records: Vec<_> = gates
+        .iter()
+        .flat_map(|g| {
+            [
+                FrameRecord::gate(g.clone()),
+                FrameRecord::Event {
+                    id: METADATA,
+                    target: 0,
+                },
+            ]
+        })
+        .collect();
+    let input = encode_frame(&records).unwrap();
+    let bound = 128 * 16 * 17;
+    let make = |budget| {
+        let cfg = RuntimeNoise::new(
+            builder.clone(),
+            16,
+            FrameLimits {
+                records: 128,
+                expanded_operations: budget,
+            },
+        )
+        .unwrap();
+        let mut system =
+            QuantumSystem::new(cfg.into_noise_model(), Box::new(StateVecEngine::new(16)));
+        system.set_seed(29);
+        system.begin_shot(context(0)).unwrap();
+        system.process(message(&prepare)).unwrap();
+        system
+    };
+    let mut rejected = make(bound - 1);
+    let before = rejected.clone();
+    assert!(rejected.process(input.clone()).is_err());
+    assert_rng_equal(&rejected, &before);
+    // Corrected input is still usable: admission did not start/abandon a controller.
+    rejected.process(message(&[Gate::mz(&[0])])).unwrap();
+
+    let mut accepted = make(bound);
+    let mut legacy =
+        QuantumSystem::new(Box::new(builder.build()), Box::new(StateVecEngine::new(16)));
+    legacy.set_seed(29);
+    legacy.process(message(&prepare)).unwrap();
+    assert_eq!(
+        accepted.process(input).unwrap().outcomes().unwrap(),
+        legacy.process(message(&gates)).unwrap().outcomes().unwrap()
+    );
+    assert_rng_equal(&accepted, &legacy);
+    let measurements: Vec<_> = (0..16).map(|q| Gate::mz(&[q])).collect();
+    assert_eq!(
+        accepted
+            .process(message(&measurements))
+            .unwrap()
+            .outcomes()
+            .unwrap(),
+        legacy
+            .process(message(&measurements))
+            .unwrap()
+            .outcomes()
+            .unwrap()
+    );
+    assert_rng_equal(&accepted, &legacy);
 }

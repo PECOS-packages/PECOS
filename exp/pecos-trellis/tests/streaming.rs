@@ -453,6 +453,15 @@ fn dense_requires_a_complete_fresh_shot_and_flush_exposes_commitments() {
             actual: 3
         })
     ));
+    // A rejected dense feed leaves the partial shot intact.
+    stream.feed_prefix(&[0]).unwrap();
+    let mut batch = TrellisDecoder::from_dem_str(
+        "error(0.1) D0 L0\nerror(0.1) D1 L1",
+        TrellisConfig::default(),
+    )
+    .unwrap();
+    let expected = batch.decode(&[1, 0]).unwrap();
+    assert_bit_identical(&stream.flush().unwrap(), &expected);
     stream.reset();
     assert_eq!(stream.committed().1.count_ones(), 0);
     stream.feed_dense(&[1, 0]).unwrap();
@@ -461,4 +470,13 @@ fn dense_requires_a_complete_fresh_shot_and_flush_exposes_commitments() {
     let (values, mask) = stream.committed();
     assert_eq!(mask.count_ones(), 2);
     assert_eq!(values, result.predicted);
+    // A second full feed is rejected with the cumulative count and the shot survives.
+    assert!(matches!(
+        stream.feed_dense(&[1, 0]),
+        Err(DecoderError::InvalidDimensions {
+            expected: 2,
+            actual: 4
+        })
+    ));
+    assert_bit_identical(&stream.flush().unwrap(), &result);
 }

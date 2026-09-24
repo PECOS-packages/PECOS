@@ -1366,6 +1366,7 @@ impl TrellisDecoder {
     }
 
     /// Decode dense shots in input order using independent worker scratch.
+    ///
     /// Workers are capped at one per shot, with one worker for an empty batch.
     ///
     /// # Errors

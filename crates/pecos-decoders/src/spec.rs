@@ -42,6 +42,7 @@ impl ExecutionTraits {
 pub enum DecoderSpec {
     PyMatching(PyMatchingConfig),
     Tesseract(TesseractConfig),
+    TesseractTrellis(TesseractTrellisConfig),
     KMwpm(KMwpmConfig),
     AStar,
     AStarFull,

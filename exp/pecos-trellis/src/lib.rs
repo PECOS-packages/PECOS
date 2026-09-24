@@ -26,6 +26,9 @@
 
 pub mod batch;
 pub mod factor;
+pub mod streaming;
+
+pub use streaming::{StreamingProgress, TrellisStreamingDecoder};
 
 use factor::{FactorModel, NormalizedFactor, Outcome};
 use pecos_bp::{BpGraph, BpScratch, min_sum_bp_into};
@@ -784,7 +787,7 @@ pub struct TrellisDecoder {
 #[derive(Clone, Debug)]
 struct TrellisScratch {
     bp_score: Option<BpScoreState>,
-    float_frontier: FrontierScratch<f64>,
+    float_progress: BinaryProgress,
     int_frontier: FrontierScratch<i64>,
 }
 
@@ -801,8 +804,70 @@ impl TrellisScratch {
                     model.num_detectors,
                 )
             }),
-            float_frontier: FrontierScratch::default(),
+            float_progress: BinaryProgress::default(),
             int_frontier: FrontierScratch::default(),
+        }
+    }
+}
+
+/// Scratch and cumulative telemetry across one or more binary column ranges.
+#[derive(Clone, Debug)]
+struct BinaryProgress {
+    frontier: FrontierScratch<f64>,
+    transitions: u64,
+    dropped_states: u64,
+    dropped_log_mass: f64,
+    k_capped: bool,
+    delta_pruned: bool,
+    peak_retained_states: usize,
+}
+
+impl Default for BinaryProgress {
+    fn default() -> Self {
+        let frontier = FrontierScratch::default();
+        let peak_retained_states = frontier.parent.masses.len();
+        Self {
+            frontier,
+            transitions: 0,
+            dropped_states: 0,
+            dropped_log_mass: f64::NEG_INFINITY,
+            k_capped: false,
+            delta_pruned: false,
+            peak_retained_states,
+        }
+    }
+}
+
+impl BinaryProgress {
+    fn reset(&mut self, model: &TrellisModel) {
+        self.frontier.reset(
+            &model.forced_syndrome,
+            &model.forced_logical,
+            &model.touched_detectors,
+            0.0,
+        );
+        self.transitions = 0;
+        self.dropped_states = 0;
+        self.dropped_log_mass = f64::NEG_INFINITY;
+        self.k_capped = false;
+        self.delta_pruned = false;
+        self.peak_retained_states = self.frontier.parent.masses.len();
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum BinaryFailure {
+    NoPath,
+    UnusableScores,
+}
+
+impl BinaryFailure {
+    fn error(self) -> DecoderError {
+        match self {
+            Self::NoPath => unexplainable_error(),
+            Self::UnusableScores => DecoderError::InternalError(
+                "pruning emptied a nonempty frontier; candidate scores were not finite".into(),
+            ),
         }
     }
 }
@@ -1302,8 +1367,10 @@ impl TrellisDecoder {
 
     /// Decode dense shots in input order using independent worker scratch.
     ///
+    /// Workers are capped at one per shot, with one worker for an empty batch.
+    ///
     /// # Errors
-    /// Returns `InvalidConfiguration` for zero workers or a pool creation failure.
+    /// Returns `InvalidConfiguration` for zero workers and `InternalError` for a pool creation failure.
     pub fn decode_batch(
         &self,
         shots: &[Vec<u8>],
@@ -1366,28 +1433,51 @@ impl TrellisModel {
             Err(error) => return TrellisDecodeAttempt::Error(error),
         };
 
-        let frontier = &mut scratch.float_frontier;
-        frontier.reset(
-            &self.forced_syndrome,
-            &self.forced_logical,
-            &self.touched_detectors,
-            0.0,
-        );
-        let mut peak_retained_states = frontier.parent.masses.len();
-        let mut transitions = 0;
-        let mut dropped_states = 0;
-        let mut dropped_log_mass = f64::NEG_INFINITY;
-        let mut k_capped = false;
-        let mut delta_pruned = false;
-
+        let progress = &mut scratch.float_progress;
+        progress.reset(self);
+        let Kernel::Binary(columns) = &self.kernel else {
+            unreachable!("binary decode called with N-ary kernel");
+        };
         let suffix_values = scratch
             .bp_score
             .as_ref()
             .map_or(&self.suffix_values, |bp| &bp.suffix_values);
+        if let Err(failure) =
+            self.process_binary_range(progress, &observed, suffix_values, 0..columns.len())
+        {
+            return match failure {
+                BinaryFailure::NoPath => TrellisDecodeAttempt::NoPath {
+                    error: failure.error(),
+                    transitions: progress.transitions,
+                    bp_seconds,
+                },
+                BinaryFailure::UnusableScores => TrellisDecodeAttempt::Error(failure.error()),
+            };
+        }
+        TrellisDecodeAttempt::Success(Self::finish_binary(progress, columns.len(), bp_seconds))
+    }
+
+    /// The single binary float column walk, shared by batch and streaming.
+    fn process_binary_range(
+        &self,
+        progress: &mut BinaryProgress,
+        observed: &[u64],
+        suffix_values: &SuffixValues,
+        range: std::ops::Range<usize>,
+    ) -> Result<(), BinaryFailure> {
+        let BinaryProgress {
+            frontier,
+            transitions,
+            dropped_states,
+            dropped_log_mass,
+            k_capped,
+            delta_pruned,
+            peak_retained_states,
+        } = progress;
         let Kernel::Binary(columns) = &self.kernel else {
             unreachable!("binary decode called with N-ary kernel");
         };
-        for column in columns {
+        for column in &columns[range] {
             debug_assert!((1..frontier.parent.masses.len()).all(|index| {
                 compare_state_words(
                     frontier.parent.key(index - 1, frontier.stride),
@@ -1400,7 +1490,7 @@ impl TrellisModel {
                 detector_words: frontier.detector_words,
                 close_mask: &column.close_mask,
                 active_mask: &column.active_mask,
-                observed: &observed,
+                observed,
             };
             for (index, &log_mass) in frontier.parent.masses.iter().enumerate() {
                 let state = frontier.parent.key(index, frontier.stride);
@@ -1410,23 +1500,19 @@ impl TrellisModel {
                     state,
                     None,
                     branch_base,
-                    &mut transitions,
+                    transitions,
                 );
                 branch_context.emit(
                     &mut frontier.branches,
                     state,
                     Some((&column.detector_toggle, &column.logical_toggle)),
                     branch_base + column.log_odds,
-                    &mut transitions,
+                    transitions,
                 );
             }
             frontier.merge(logaddexp);
             if frontier.parent.masses.is_empty() {
-                return TrellisDecodeAttempt::NoPath {
-                    error: unexplainable_error(),
-                    transitions,
-                    bp_seconds,
-                };
+                return Err(BinaryFailure::NoPath);
             }
             let suffix_compatibility = SuffixCompatibility {
                 rows: &column.suffix_compatibility,
@@ -1438,24 +1524,40 @@ impl TrellisModel {
                 self.config.delta,
                 self.config.score_alpha,
                 suffix_compatibility,
-                &observed,
+                observed,
             );
-            dropped_states += pruned.dropped_states;
-            dropped_log_mass = logaddexp(dropped_log_mass, pruned.dropped_log_mass);
-            k_capped |= pruned.k_capped;
-            delta_pruned |= pruned.delta_pruned;
+            *dropped_states += pruned.dropped_states;
+            *dropped_log_mass = logaddexp(*dropped_log_mass, pruned.dropped_log_mass);
+            *k_capped |= pruned.k_capped;
+            *delta_pruned |= pruned.delta_pruned;
             if frontier.parent.masses.is_empty() {
                 // Pruning always retains the best-scoring candidate of a
                 // nonempty set, so an empty frontier here means the scores
                 // themselves were unusable (non-finite) -- an engine fault,
                 // not an unexplainable syndrome. Genuine no-path exits happen
                 // above, before pruning, when no branch is compatible.
-                return TrellisDecodeAttempt::Error(DecoderError::InternalError(
-                    "pruning emptied a nonempty frontier; candidate scores were not finite".into(),
-                ));
+                return Err(BinaryFailure::UnusableScores);
             }
-            peak_retained_states = peak_retained_states.max(frontier.parent.masses.len());
+            *peak_retained_states = (*peak_retained_states).max(frontier.parent.masses.len());
         }
+
+        Ok(())
+    }
+
+    fn finish_binary(
+        progress: &BinaryProgress,
+        processed_columns: usize,
+        bp_seconds: f64,
+    ) -> TrellisResult {
+        let BinaryProgress {
+            ref frontier,
+            transitions,
+            dropped_states,
+            dropped_log_mass,
+            k_capped,
+            delta_pruned,
+            peak_retained_states,
+        } = *progress;
 
         let mut terminal: Vec<Candidate> = frontier
             .parent
@@ -1494,14 +1596,14 @@ impl TrellisModel {
             }
         };
 
-        TrellisDecodeAttempt::Success(TrellisResult {
+        TrellisResult {
             predicted: ObsMask::from_words(&winner.key.logical),
             log_evidence,
             runner_up_gap: terminal
                 .get(1)
                 .map(|runner_up| winner.log_mass - runner_up.log_mass),
             peak_retained_states,
-            processed_columns: columns.len(),
+            processed_columns,
             transitions,
             dropped_states,
             dropped_log_mass,
@@ -1509,7 +1611,7 @@ impl TrellisModel {
             escalation_rungs_used: 0,
             status,
             logical_masses,
-        })
+        }
     }
 
     fn decode_attempt_nary(
@@ -1538,7 +1640,7 @@ impl TrellisModel {
             };
         }
 
-        let frontier = &mut scratch.float_frontier;
+        let frontier = &mut scratch.float_progress.frontier;
         frontier.reset(
             &self.forced_syndrome,
             &self.forced_logical,

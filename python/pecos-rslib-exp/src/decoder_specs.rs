@@ -10,9 +10,26 @@ use pyo3::types::PyModule;
 use std::sync::Mutex;
 
 pub(crate) fn decoder_error_to_py(error: &DecoderError) -> PyErr {
+    decoder_error_with_message(error, error.to_string())
+}
+
+pub(crate) fn indexed_decoder_error_to_py(shot_index: usize, error: &DecoderError) -> PyErr {
+    decoder_error_with_message(error, format!("shot {shot_index}: {error}"))
+}
+
+/// Validate a Python `workers` argument the way `SampleBatch.decode` does.
+pub(crate) fn validate_batch_workers(workers: i64) -> PyResult<usize> {
+    if workers < 1 {
+        return Err(PyValueError::new_err("workers must be at least 1"));
+    }
+    usize::try_from(workers)
+        .map_err(|_| PyValueError::new_err("workers is too large for this platform"))
+}
+
+fn decoder_error_with_message(error: &DecoderError, message: String) -> PyErr {
     match error {
-        DecoderError::InvalidDemSyntax(_) => PyValueError::new_err(error.to_string()),
-        _ => PyRuntimeError::new_err(error.to_string()),
+        DecoderError::InvalidDemSyntax(_) => PyValueError::new_err(message),
+        _ => PyRuntimeError::new_err(message),
     }
 }
 

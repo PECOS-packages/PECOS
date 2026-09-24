@@ -24,9 +24,9 @@
 use pecos_decoder_core::ObservableDecoder;
 pub use pecos_trellis::factor::{Factor, FactorModel, Outcome};
 pub use pecos_trellis::{
-    DecoderError, MetricMode, ObsMask, SparseDem, TrellisOrdering, backward_deadline_column_order,
-    backward_deadline_column_order_for_factors, deadline_column_order,
-    deadline_column_order_for_factors,
+    DecoderError, MetricMode, ObsMask, SparseDem, TrellisOrdering, TrellisStreamingDecoder,
+    backward_deadline_column_order, backward_deadline_column_order_for_factors,
+    deadline_column_order, deadline_column_order_for_factors,
 };
 use std::cmp::Ordering;
 use std::time::Instant;
@@ -174,8 +174,10 @@ impl FrontierCommittee {
 
     /// Decode dense shots in input order with shared models and worker-local scratch.
     ///
+    /// Workers are capped at one per shot, with one worker for an empty batch.
+    ///
     /// # Errors
-    /// Returns `InvalidConfiguration` for zero workers or pool creation failure.
+    /// Returns `InvalidConfiguration` for zero workers and `InternalError` for pool creation failure.
     /// Individual shot errors are retained in input order.
     pub fn decode_batch(
         &self,

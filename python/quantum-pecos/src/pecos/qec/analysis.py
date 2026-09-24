@@ -28,7 +28,7 @@ def _require_pecos_rslib_exp(caller: str) -> None:
         if exc.name != "pecos_rslib_exp":
             raise
         message = (
-            f"{caller} requires the pecos-rslib-exp package, which is not published to PyPI; "
+            f"{caller} requires the optional pecos-rslib-exp package, which is not published to PyPI; "
             "build it from a PECOS source checkout with `just build`"
         )
         raise ImportError(message) from exc

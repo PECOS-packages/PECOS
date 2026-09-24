@@ -548,6 +548,6 @@ def test_experimental_factory_names_the_missing_package(monkeypatch: pytest.Monk
 
     with pytest.raises(
         ImportError,
-        match=r"frontier requires the pecos-rslib-exp package.*not published to PyPI.*just build",
+        match=r"frontier requires the optional pecos-rslib-exp package.*not published to PyPI.*just build",
     ):
         _ = decoders.frontier

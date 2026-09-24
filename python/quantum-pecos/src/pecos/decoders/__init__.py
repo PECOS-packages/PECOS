@@ -123,7 +123,7 @@ def __getattr__(name: str) -> object:
             if exc.name != "pecos_rslib_exp":
                 raise
             message = (
-                f"{name} requires the pecos-rslib-exp package, which is not published to PyPI; "
+                f"{name} requires the optional pecos-rslib-exp package, which is not published to PyPI; "
                 "build it from a PECOS source checkout with `just build`"
             )
             raise ImportError(message) from exc

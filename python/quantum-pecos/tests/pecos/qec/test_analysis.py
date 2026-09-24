@@ -240,6 +240,6 @@ class TestMissingExperimentalPackage:
         monkeypatch.setitem(sys.modules, "pecos_rslib_exp", None)
         with pytest.raises(
             ImportError,
-            match=rf"{func.__name__} requires the pecos-rslib-exp package.*not published to PyPI.*just build",
+            match=rf"{func.__name__} requires the optional pecos-rslib-exp package.*not published to PyPI.*just build",
         ):
             func(*args)

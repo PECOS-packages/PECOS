@@ -318,7 +318,10 @@ impl RuntimeGeneralNoise {
         // parsing, even when the wire contains fewer records than it claims.
         let count = word(bytes, 8) as usize;
         if count > self.limits.records
-            || count * 16 * (self.qubits + 1) > self.limits.expanded_operations
+            || count
+                .checked_mul(16 * (self.qubits + 1))
+                .ok_or_else(|| error("expansion overflow"))?
+                > self.limits.expanded_operations
         {
             return Err(error("frame record or expansion limit"));
         }

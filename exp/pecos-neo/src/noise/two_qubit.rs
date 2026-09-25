@@ -224,7 +224,8 @@ impl AngleScaling {
 
     /// Calculate the scaling factor for a given angle.
     ///
-    /// Uses signed radians in [-pi, pi] for asymmetric scaling.
+    /// Uses signed radians in `(-pi, pi]` for asymmetric scaling. Unsigned
+    /// angles above pi use the negative branch; a half turn uses positive pi.
     /// The magnitude is normalized by pi before applying power.
     ///
     /// Formula: `offset + linear*|θ/π| + scale*|θ/π|^power`
@@ -533,6 +534,15 @@ impl TwoQubitChannel {
         ctx: &mut NoiseContext,
         rng: &mut PecosRng,
     ) -> NoiseResponse {
+        if qubits.len() > 2 {
+            let mut response = NoiseResponse::None;
+            for pair in qubits.as_chunks::<2>().0 {
+                response =
+                    response.combine(self.handle_after_gate(gate_type, pair, angles, ctx, rng));
+            }
+            return response;
+        }
+
         if qubits.len() < 2 {
             return NoiseResponse::None;
         }
@@ -656,6 +666,52 @@ mod tests {
                 responses.into_iter().flat_map(collect_gates).collect()
             }
             _ => Vec::new(),
+        }
+    }
+
+    #[test]
+    fn test_batched_two_qubit_faults() {
+        let channel = TwoQubitChannel::depolarizing(0.5);
+        let qubits = [QubitId(0), QubitId(1), QubitId(2), QubitId(3)];
+        let trailing = [QubitId(4), QubitId(5)];
+        for seed in 0..32 {
+            let mut ctx = NoiseContext::new();
+            let mut rng = PecosRng::seed_from_u64(seed);
+            let mut separate_ctx = NoiseContext::new();
+            let mut separate_rng = PecosRng::seed_from_u64(seed);
+            let mut batched_gates = Vec::new();
+            for pair_batch in [qubits.as_slice(), trailing.as_slice()] {
+                let event = NoiseEvent::AfterGate {
+                    gate_type: GateType::CX,
+                    qubits: pair_batch,
+                    angles: &[],
+                    gate_id: None,
+                };
+                batched_gates.extend(collect_gates(channel.apply(&event, &mut ctx, &mut rng)));
+            }
+            let mut separate_gates = Vec::new();
+            for pair in qubits
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .chain(std::iter::once(&trailing))
+            {
+                let event = NoiseEvent::AfterGate {
+                    gate_type: GateType::CX,
+                    qubits: pair,
+                    angles: &[],
+                    gate_id: None,
+                };
+                separate_gates.extend(collect_gates(channel.apply(
+                    &event,
+                    &mut separate_ctx,
+                    &mut separate_rng,
+                )));
+            }
+            assert_eq!(
+                batched_gates, separate_gates,
+                "batched fault stream differs at seed {seed}"
+            );
         }
     }
 
@@ -810,6 +866,29 @@ mod tests {
 
         // For positive pi (normalized = 1.0): 0.2 + 1.0 * 1.0 + 0 = 1.2
         assert!((scaling.scale(Angle64::HALF_TURN) - 1.2).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_asymmetric_angle_scaling_wrapped_boundaries() {
+        use std::f64::consts::{FRAC_PI_4, PI, TAU};
+
+        let scaling = AngleScaling::asymmetric(0.1, 0.0, 2.0, 0.2, 0.0, 3.0, 2.0);
+        for (angle, expected) in [
+            (0.0, 0.15),
+            (FRAC_PI_4, 0.3875),
+            (-FRAC_PI_4, 0.225),
+            (PI, 3.2),
+            (-PI, 3.2),
+        ] {
+            for turns in [-4.0, -1.0, 0.0, 1.0, 4.0] {
+                let input = angle + turns * TAU;
+                let actual = scaling.scale(Angle64::from_radians(input));
+                assert!(
+                    (actual - expected).abs() < 1e-12,
+                    "angle {input}: expected {expected}, got {actual}"
+                );
+            }
+        }
     }
 
     #[test]

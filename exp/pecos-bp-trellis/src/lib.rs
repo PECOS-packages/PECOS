@@ -27,27 +27,12 @@
 //! trellis engine lives in `pecos-trellis`.
 
 use pecos_decoder_core::ObservableDecoder;
+pub use pecos_trellis::TrellisOrdering;
 use pecos_trellis::{
     DecoderError, MetricMode, ObsMask, SparseDem, TrellisConfig, TrellisDecodeAttempt,
-    TrellisDecoder, TrellisResult, backward_deadline_column_order, deadline_column_order,
+    TrellisDecoder, TrellisResult,
 };
 use std::time::Instant;
-
-/// Processing order used by [`BpTrellisDecoder`].
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub enum TrellisOrdering {
-    /// Compute the deadline-optimized order with [`deadline_column_order`].
-    #[default]
-    Deadline,
-    /// Compute the backward deadline-optimized order with
-    /// [`backward_deadline_column_order`].
-    BackwardDeadline,
-    /// Preserve the detector error model's mechanism order.
-    TimeOrder,
-    /// Use an explicit permutation mapping target positions to source
-    /// mechanism indices.
-    Explicit(Vec<usize>),
-}
 
 /// Configuration for PECOS's [`BpTrellisDecoder`].
 ///
@@ -78,6 +63,47 @@ pub struct BpTrellisConfig {
     /// default because escalation changes per-shot work; whether a future
     /// default should enable a ladder is deferred to the evaluation campaign.
     pub escalation_ks: Vec<usize>,
+}
+
+impl BpTrellisConfig {
+    /// Validate the base configuration and every rung without a detector error model.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DecoderError::InvalidConfiguration`] for an oversized ladder or invalid rung.
+    pub fn validate(&self) -> Result<(), DecoderError> {
+        if u32::try_from(self.escalation_ks.len()).is_err() {
+            return Err(DecoderError::InvalidConfiguration(
+                "escalation ladder has more rungs than escalation_rungs_used can represent".into(),
+            ));
+        }
+        let mut config = self.trellis_config();
+        config.validate()?;
+        for (rung, &k) in self.escalation_ks.iter().enumerate() {
+            config.k = k;
+            config.validate().map_err(|error| match error {
+                DecoderError::InvalidConfiguration(message) => {
+                    DecoderError::InvalidConfiguration(format!("escalation_ks[{rung}]: {message}"))
+                }
+                other => other,
+            })?;
+        }
+        Ok(())
+    }
+
+    fn trellis_config(&self) -> TrellisConfig {
+        TrellisConfig {
+            k: self.k,
+            delta: self.delta,
+            score_alpha: self.score_alpha,
+            column_order: None,
+            merge_indistinguishable: self.merge_indistinguishable,
+            bp_score_iterations: self.bp_score_iterations,
+            // BpTrellis escalation is defined over coset masses, so max-log is deliberately absent from its config.
+            metric_mode: MetricMode::LogSumExpFloat,
+            int_metric_scale: 1024,
+        }
+    }
 }
 
 impl Default for BpTrellisConfig {
@@ -117,7 +143,7 @@ impl BpTrellisDecoder {
     /// Construct a decoder from a sparse detector error model.
     ///
     /// Unlike [`TrellisDecoder`], the default ordering is the explicitly
-    /// computed [`deadline_column_order`], not input order. Every configured
+    /// computed [`pecos_trellis::deadline_column_order`], not input order. Every configured
     /// escalation rung is constructed here as an independent
     /// [`TrellisDecoder`], so construction cost scales with the full ladder
     /// and decode-time escalation performs no model building.
@@ -127,40 +153,13 @@ impl BpTrellisDecoder {
     /// Returns [`DecoderError`] if ordering generation or the mapped trellis
     /// configuration fails validation.
     pub fn from_sparse_dem(dem: &SparseDem, config: BpTrellisConfig) -> Result<Self, DecoderError> {
+        config.validate()?;
         let build_started = Instant::now();
-        let BpTrellisConfig {
-            k,
-            delta,
-            score_alpha,
-            bp_score_iterations,
-            merge_indistinguishable,
-            ordering,
-            escalation_ks,
-        } = config;
-        if u32::try_from(escalation_ks.len()).is_err() {
-            return Err(DecoderError::InvalidConfiguration(
-                "escalation ladder has more rungs than escalation_rungs_used can represent".into(),
-            ));
-        }
-        let column_order = match ordering {
-            TrellisOrdering::Deadline => Some(deadline_column_order(dem)?),
-            TrellisOrdering::BackwardDeadline => Some(backward_deadline_column_order(dem)?),
-            TrellisOrdering::TimeOrder => None,
-            TrellisOrdering::Explicit(order) => Some(order),
-        };
-        let trellis_config = TrellisConfig {
-            k,
-            delta,
-            score_alpha,
-            column_order,
-            merge_indistinguishable,
-            bp_score_iterations,
-            // BpTrellis escalation is defined over coset masses, so max-log is deliberately absent from its config.
-            metric_mode: MetricMode::LogSumExpFloat,
-            int_metric_scale: 1024,
-        };
+        let mut trellis_config = config.trellis_config();
+        trellis_config.column_order = config.ordering.resolve(dem)?;
         let inner = TrellisDecoder::from_sparse_dem(dem, trellis_config.clone())?;
-        let escalation = escalation_ks
+        let escalation = config
+            .escalation_ks
             .into_iter()
             .map(|rung_k| {
                 TrellisDecoder::from_sparse_dem(
@@ -190,6 +189,35 @@ impl BpTrellisDecoder {
     pub fn from_dem_str(dem_str: &str, config: BpTrellisConfig) -> Result<Self, DecoderError> {
         let dem = SparseDem::from_dem_str(dem_str)?;
         Self::from_sparse_dem(&dem, config)
+    }
+
+    /// Decode dense shots in input order with shared models and worker-local scratch.
+    ///
+    /// Workers are capped at one per shot, with one worker for an empty batch.
+    ///
+    /// # Errors
+    /// Returns `InvalidConfiguration` for zero workers and `InternalError` for pool creation failure.
+    /// Individual shot errors are retained in input order.
+    pub fn decode_batch(
+        &self,
+        shots: &[Vec<u8>],
+        workers: usize,
+    ) -> Result<Vec<Result<TrellisResult, DecoderError>>, DecoderError> {
+        pecos_trellis::batch::decode_batch(
+            shots,
+            workers,
+            || Self {
+                inner: self.inner.fresh_worker(),
+                escalation: self
+                    .escalation
+                    .iter()
+                    .map(TrellisDecoder::fresh_worker)
+                    .collect(),
+                has_wide_observables: self.has_wide_observables,
+                build_seconds: self.build_seconds,
+            },
+            Self::decode,
+        )
     }
 
     /// Decode a dense detector syndrome with the shared trellis engine.

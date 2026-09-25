@@ -81,7 +81,7 @@ fn check_python_available() -> Result<()> {
         .is_ok_and(|o| o.status.success());
 
     let python_ok = Command::new("uv")
-        .args(["run", "python", "--version"])
+        .args(["run", "--frozen", "python", "--version"])
         .output()
         .is_ok_and(|o| o.status.success());
 
@@ -163,10 +163,14 @@ fn run_build(profile: &str, rustflags: Option<&str>, cuda: bool) -> Result<()> {
 
     // Build all rslib crates via maturin (incremental — cargo inside maturin
     // handles change detection, skips recompilation when nothing changed).
+    // pecos-rslib-exp is included: quantum-pecos imports it (pecos.qec.analysis,
+    // pecos.decoders), the default `just pytest` lane runs its tests, and the
+    // docs examples exercise it, so a build that leaves it out hands those a
+    // stale release wheel from the last `uv sync`.
     // The CUDA (Rust) backend is its own crate, built only on an explicit --cuda
     // (`cuda` is true only then -- see resolve_cuda_choice); the auto-detect path
     // does no CUDA setup, so it must not pull in pecos-rslib-cuda.
-    let mut crates = vec!["pecos-rslib", "pecos-rslib-llvm"];
+    let mut crates = vec!["pecos-rslib", "pecos-rslib-exp", "pecos-rslib-llvm"];
     if cuda {
         crates.push("pecos-rslib-cuda");
     }
@@ -216,6 +220,10 @@ fn run_build(profile: &str, rustflags: Option<&str>, cuda: bool) -> Result<()> {
             cmd.env_remove("DYLD_LIBRARY_PATH");
             cmd.env_remove("DYLD_FALLBACK_LIBRARY_PATH");
             cmd.env("LIBRARY_PATH", "/usr/lib");
+            // Cargo caches failed target probes without accounting for changes
+            // to dyld search paths. Reprobe after sanitizing the environment so
+            // a previous incompatible-LLVM crash cannot survive this cleanup.
+            cmd.env("CARGO_CACHE_RUSTC_INFO", "0");
         }
 
         // Apply PECOS build environment (SDKROOT, LLVM, CUDA, etc.)
@@ -247,32 +255,68 @@ fn run_build(profile: &str, rustflags: Option<&str>, cuda: bool) -> Result<()> {
     // Install quantum-pecos in editable mode (--no-deps since rslib crates
     // are already installed by maturin develop above)
     println!("Installing quantum-pecos...");
-    let mut pip_cmd = Command::new("uv");
-    pip_cmd.args(["pip", "install", "--no-deps", "-e"]);
-
-    // `--no-deps` (above) means this editable install pulls no dependencies, so
-    // naming a CUDA extra here would be inert: the CUDA Python stack
-    // (cupy/cuquantum/pytket-cutensornet) is installed separately via
-    // `uv sync --group cuda12|cuda13` (`just build`'s sync-deps, `pecos setup`, or
-    // `pecos cuda setup-python`), not by this command. Request the dependency-free
-    // `[all]` extra, which exists regardless of CUDA toolkit major and avoids an
-    // unknown-extra warning.
-    pip_cmd.arg("./python/quantum-pecos[all]");
-
-    pip_cmd.current_dir(&repo_root);
-    pip_cmd.env_remove("CONDA_PREFIX");
+    let mut pip_cmd = editable_install_command(&repo_root);
 
     let status = pip_cmd.status();
     match status {
-        Ok(s) if s.success() => {
-            println!("Python build completed successfully");
-            Ok(())
+        Ok(s) if s.success() => {}
+        Ok(_) => return Err(Error::Config("quantum-pecos install failed".to_string())),
+        Err(e) => {
+            return Err(Error::Config(format!(
+                "Failed to install quantum-pecos: {e}"
+            )));
         }
-        Ok(_) => Err(Error::Config("quantum-pecos install failed".to_string())),
-        Err(e) => Err(Error::Config(format!(
-            "Failed to install quantum-pecos: {e}"
-        ))),
     }
+
+    // The install above is --no-deps, so in a venv that was never synced
+    // quantum-pecos lands with its runtime dependencies absent and `import
+    // pecos` fails while the build has reported success. Refuse that state.
+    check_runtime_dependencies(&repo_root)?;
+
+    println!("Python build completed successfully");
+    Ok(())
+}
+
+/// Fail if `uv pip check` reports a missing or incompatible dependency.
+/// The report itself goes to the terminal; the error names the remedy.
+fn check_runtime_dependencies(repo_root: &Path) -> Result<()> {
+    let mut cmd = Command::new("uv");
+    cmd.args(["pip", "check"]);
+    cmd.current_dir(repo_root);
+    cmd.env_remove("CONDA_PREFIX");
+    let status = cmd
+        .status()
+        .map_err(|e| Error::Config(format!("Failed to run uv pip check: {e}")))?;
+    if status.success() {
+        return Ok(());
+    }
+    Err(Error::Config(
+        "the Python environment has missing or incompatible dependencies after the build \
+         (see the uv pip check report above). Run `just build`, which syncs the \
+         environment; `just build-lite` assumes a synced venv."
+            .to_string(),
+    ))
+}
+
+fn editable_install_command(repo_root: &Path) -> Command {
+    let mut cmd = Command::new("uv");
+    // Respect uv's configured indexes, including for isolated build dependencies
+    // such as hatchling. PyPI is already the default when none is configured.
+    // `--no-deps` skips runtime dependencies, not isolated build dependencies.
+    // CUDA packages are installed separately by `uv sync --group cuda12|cuda13`
+    // or `pecos cuda setup-python`. `[all]` is requested because it exists
+    // regardless of CUDA toolkit major, so no unknown-extra warning; with
+    // --no-deps it installs nothing.
+    cmd.args([
+        "pip",
+        "install",
+        "--no-deps",
+        "-e",
+        "./python/quantum-pecos[all]",
+    ]);
+    cmd.current_dir(repo_root);
+    cmd.env_remove("CONDA_PREFIX");
+    cmd
 }
 
 fn cargo_profile_dir(profile: &str) -> &'static str {
@@ -360,6 +404,29 @@ fn remove_stale_extension_artifacts(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn editable_install_preserves_uv_index_configuration() {
+        let repo = PathBuf::from("repo");
+        let cmd = editable_install_command(&repo);
+        assert_eq!(cmd.get_program(), "uv");
+        assert_eq!(
+            cmd.get_args().collect::<Vec<_>>(),
+            [
+                "pip",
+                "install",
+                "--no-deps",
+                "-e",
+                "./python/quantum-pecos[all]"
+            ]
+        );
+        assert_eq!(cmd.get_current_dir(), Some(repo.as_path()));
+        // No index environment variables are overridden or removed.
+        assert_eq!(
+            cmd.get_envs().collect::<Vec<_>>(),
+            [(std::ffi::OsStr::new("CONDA_PREFIX"), None)]
+        );
+    }
 
     #[test]
     fn cargo_profile_dir_matches_cargos_target_subdir() {

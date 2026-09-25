@@ -242,8 +242,9 @@ assert stats.num_shots == batch.num_shots
 `.logical_error_rate` hold aggregates, optional `.predictions` preserves shot
 order, and optional `.stats` holds timing statistics. With the default
 `workers=None`, the execution planner selects the native-batch, sequential, or
-parallel path. Pass `workers=N` to request a specific worker count and inspect
-`.execution_path` to see which path ran. A former raw-list call such as
+parallel path. Pass `workers=N` to request up to that many workers, never more
+than one per shot, and inspect `.execution_path` and `.workers_used` to see
+which path ran and how many workers it used. A former raw-list call such as
 `detectors, observables = sampler.sample_batch(...)` becomes a batch call
 followed by the two bulk accessors shown above.
 
@@ -744,8 +745,9 @@ source-graphlike form for Tesseract so it matches the QEC-with-Guppy workflow.
   `if measure(q).read(): x(other)`) would yield a DEM built from a single sampled
   branch — wrong and seed-dependent. Guppy programs whose compiled HUGR
   contains branching or looping control flow therefore raise `ValueError`
-  before tracing; built-in generators such as `make_surface_code` cross
-  this boundary through a trusted program-bound layout certificate.
+  before tracing; built-in generators such as `make_surface_code` and
+  `make_surface_memory` cross this boundary through a trusted program-bound
+  layout certificate.
   Statically-scheduled gates after measurements (every QEC round has them)
   are fine; genuinely conditioned gates are not.
 - **Clifford circuits only.** Traced operations must normalize to named

@@ -4,6 +4,7 @@
 """Capture both surface golden suites using the PECOS version in the environment.
 
 Run from the repository root; see README.md for provenance and revision choice.
+Fold shapes are post-fix captures for PR #777.
 No git operations are performed. Existing files require explicit --force.
 """
 
@@ -23,6 +24,19 @@ from pecos.qec.surface.circuit_builder import (
 
 BASE_REVISION = "8568727d5"
 POST_FIX_SHAPES = (
+    "d2_h_even",
+    "d3_cx_chain",
+    "d3_cxcx",
+    "d3_hh_adjacent",
+    "d3_late_partner_cx",
+    "d3_skip_segment",
+    "d3_mem_Z_zero_final",
+    "d3_h_zero_final",
+    "d3_fold_s_mid",
+    "d3_fold_s_first",
+    "d3_fold_s_last",
+    "d3_fold_pair_x",
+    "d3_h_fold",
     "dx3dz1_mem_Z",
     "dx1dz3_mem_Z",
     "dx1dz3_mem_X",
@@ -81,7 +95,6 @@ GUPPY_NAMES = (
     "guppy_d3nonrot.py.txt",
     "guppy_d5.py.txt",
     "guppy_d7.py.txt",
-    "guppy_dx1dz3.py.txt",
     "guppy_dx3dz5.py.txt",
     "guppy_dx5dz3.py.txt",
 )
@@ -123,6 +136,19 @@ def _ops(steps: list, allocation: QubitAllocation) -> dict:
 
 
 SHAPES = (
+    "d2_h_even",
+    "d3_cx_chain",
+    "d3_cxcx",
+    "d3_hh_adjacent",
+    "d3_late_partner_cx",
+    "d3_skip_segment",
+    "d3_mem_Z_zero_final",
+    "d3_h_zero_final",
+    "d3_fold_s_mid",
+    "d3_fold_s_first",
+    "d3_fold_s_last",
+    "d3_fold_pair_x",
+    "d3_h_fold",
     "dx3dz1_mem_Z",
     "dx1dz3_mem_Z",
     "dx1dz3_mem_X",
@@ -160,7 +186,11 @@ def make_builder(name: str) -> LogicalCircuitBuilder:
         labels = ["D", "Y"]
     elif shape.startswith("t_"):
         labels = ["D", "A"]
-    elif shape.startswith("cx_"):
+    elif shape == "cx_chain":
+        labels = ["A", "B", "C"]
+    elif shape in {"skip_segment", "late_partner_cx"}:
+        labels = ["A", "B"]
+    elif shape.startswith("cx_") or shape == "cxcx":
         labels = ["C", "T"]
     elif shape == "h_cx_h":
         labels = ["A", "B"]
@@ -169,8 +199,29 @@ def make_builder(name: str) -> LogicalCircuitBuilder:
     builder = LogicalCircuitBuilder()
     for i, label in enumerate(labels):
         builder.add_patch(patch, label, qubit_offset=i * (patch.geometry.num_data + patch.geometry.num_ancilla))
-    if shape.startswith("mem_"):
+    if shape in {"mem_Z_zero_final", "h_zero_final"}:
+        builder.add_memory("A", 2, "Z")
+        if shape == "h_zero_final":
+            builder.add_transversal_h("A")
+        builder.add_memory("A", 0, "X" if shape == "h_zero_final" else "Z")
+    elif shape.startswith("mem_"):
         builder.add_memory("A", 3 if name.startswith("d5") else 2, shape[-1])
+    elif shape in {"fold_s_mid", "fold_s_first", "fold_s_last", "fold_pair_x", "h_fold"}:
+        if shape == "h_fold":
+            builder.add_memory("A", 2, "X")
+            builder.add_transversal_h("A")
+            builder.add_logical_s("A")
+            builder.add_memory("A", 2, "Z")
+        elif shape == "fold_pair_x":
+            builder.add_memory("A", 1, "X")
+            builder.add_logical_s("A")
+            builder.add_logical_sdg("A")
+            builder.add_memory("A", 1, "X")
+        else:
+            before, after = {"fold_s_first": (0, 2), "fold_s_mid": (1, 1), "fold_s_last": (2, 0)}[shape]
+            builder.add_memory("A", before, "Z")
+            builder.add_logical_s("A")
+            builder.add_memory("A", after, "Z")
     elif shape in {"h", "h_z_to_x", "h_x_to_z", "hh"}:
         before, after = ("X", "Z") if shape == "h_x_to_z" else ("Z", "X")
         builder.add_memory("A", 2, before)
@@ -179,6 +230,30 @@ def make_builder(name: str) -> LogicalCircuitBuilder:
         if shape == "hh":
             builder.add_transversal_h("A")
             builder.add_memory("A", 2, "Z")
+    elif shape in {"hh_adjacent", "h_even"}:
+        builder.add_memory("A", 2, "Z")
+        builder.add_transversal_h("A")
+        if shape == "hh_adjacent":
+            builder.add_transversal_h("A")
+        builder.add_memory("A", 2, "Z" if shape == "hh_adjacent" else "X")
+    elif shape == "cxcx":
+        builder.add_memory(labels, 2, "Z")
+        builder.add_transversal_cx("C", "T")
+        builder.add_transversal_cx("C", "T")
+        builder.add_memory(labels, 2, "Z")
+    elif shape == "cx_chain":
+        builder.add_memory(labels, 2, "X")
+        builder.add_transversal_cx("A", "B")
+        builder.add_transversal_cx("B", "C")
+        builder.add_memory(labels, 2, "X")
+    elif shape == "skip_segment":
+        for label in ["A", "B", "A", "B"]:
+            builder.add_memory(label, 2, "Z")
+    elif shape == "late_partner_cx":
+        builder.add_memory("B", 2, "Z")
+        builder.add_memory("A", 2, "Z")
+        builder.add_transversal_cx("A", "B")
+        builder.add_memory(labels, 2, "Z")
     elif shape.startswith("cx_"):
         basis = {"C": shape[-2].upper(), "T": shape[-1].upper()}
         builder.add_memory(labels, 2, basis)
@@ -250,14 +325,21 @@ def main() -> None:
     """Write captures only after checking all selected output paths."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", type=Path, default=Path(__file__).parent)
+    parser.add_argument("--fold-only", action="store_true", help="Capture only PR #777 fold drift guards")
     parser.add_argument("--force", action="store_true", help="Allow replacement of existing golden files")
     parser.add_argument(
         "--post-fix-only",
         action="store_true",
-        help="Capture only the protocol, injection and repetition post-change outputs",
+        help="Capture only the protocol and post-fix builder outputs",
     )
     args = parser.parse_args()
     outputs = capture_outputs()
+    if args.fold_only:
+        outputs = {
+            name: contents
+            for name, contents in outputs.items()
+            if "fold" in name or name == "gadget_parity/protocol_d3.py.txt"
+        }
     if args.post_fix_only:
         outputs = {
             name: contents

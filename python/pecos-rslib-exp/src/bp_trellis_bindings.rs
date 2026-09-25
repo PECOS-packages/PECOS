@@ -10,17 +10,20 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
+use crate::decoder_specs::{
+    decoder_error_to_py, indexed_decoder_error_to_py, validate_batch_workers,
+};
 use pecos_bp_trellis::{
     BpTrellisConfig as RustBpTrellisConfig, BpTrellisDecoder as RustBpTrellisDecoder,
     TrellisOrdering as RustTrellisOrdering,
 };
-use pecos_trellis::{DecoderError, ObsMask, SparseDem, TrellisResult, TrellisStatus};
+use pecos_trellis::{ObsMask, SparseDem, TrellisResult, TrellisStatus};
 use pyo3::Borrowed;
 use pyo3::exceptions::{PyAttributeError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyBytes, PyInt, PyList};
 
-enum TrellisOrderArgument {
+pub(crate) enum TrellisOrderArgument {
     Name(String),
     Explicit(Vec<usize>),
 }
@@ -46,10 +49,6 @@ impl Default for TrellisOrderArgument {
     fn default() -> Self {
         Self::Name("deadline".to_owned())
     }
-}
-
-fn runtime_error(error: &DecoderError) -> PyErr {
-    PyRuntimeError::new_err(error.to_string())
 }
 
 fn sparse_index_error(index: u64, num_detectors: usize) -> PyErr {
@@ -81,33 +80,35 @@ fn parse_dem_and_config(
     ordering: TrellisOrderArgument,
     escalation_ks: Option<Vec<usize>>,
 ) -> PyResult<(SparseDem, RustBpTrellisConfig)> {
-    let dem = SparseDem::from_dem_str(dem_str).map_err(|error| runtime_error(&error))?;
-    let ordering = match ordering {
-        TrellisOrderArgument::Name(name) => match name.as_str() {
-            "deadline" => RustTrellisOrdering::Deadline,
-            "backward_deadline" => RustTrellisOrdering::BackwardDeadline,
-            "time_order" => RustTrellisOrdering::TimeOrder,
-            _ => {
-                return Err(PyValueError::new_err(format!(
-                    "invalid ordering {name:?}; expected 'deadline', 'backward_deadline', \
-                     'time_order', or a list of mechanism indices"
-                )));
-            }
-        },
-        TrellisOrderArgument::Explicit(order) => RustTrellisOrdering::Explicit(order),
+    let config = RustBpTrellisConfig {
+        k,
+        delta,
+        score_alpha,
+        bp_score_iterations,
+        merge_indistinguishable,
+        ordering: parse_ordering(ordering)?,
+        escalation_ks: escalation_ks.unwrap_or_default(),
     };
-    Ok((
-        dem,
-        RustBpTrellisConfig {
-            k,
-            delta,
-            score_alpha,
-            bp_score_iterations,
-            merge_indistinguishable,
-            ordering,
-            escalation_ks: escalation_ks.unwrap_or_default(),
+    config
+        .validate()
+        .map_err(|error| PyValueError::new_err(error.to_string()))?;
+    let dem = SparseDem::from_dem_str(dem_str).map_err(|error| decoder_error_to_py(&error))?;
+    Ok((dem, config))
+}
+
+pub(crate) fn parse_ordering(ordering: TrellisOrderArgument) -> PyResult<RustTrellisOrdering> {
+    match ordering {
+        TrellisOrderArgument::Name(name) => match name.as_str() {
+            "deadline" => Ok(RustTrellisOrdering::Deadline),
+            "backward_deadline" => Ok(RustTrellisOrdering::BackwardDeadline),
+            "time_order" => Ok(RustTrellisOrdering::TimeOrder),
+            _ => Err(PyValueError::new_err(format!(
+                "invalid ordering {name:?}; expected 'deadline', 'backward_deadline', \
+                     'time_order', or a list of mechanism indices"
+            ))),
         },
-    ))
+        TrellisOrderArgument::Explicit(order) => Ok(RustTrellisOrdering::Explicit(order)),
+    }
 }
 
 fn obs_mask_to_py(py: Python<'_>, mask: &ObsMask) -> PyResult<Py<PyAny>> {
@@ -333,7 +334,7 @@ impl PyBpTrellisDecoder {
         let num_detectors = dem.num_detectors;
         let num_observables = dem.num_observables;
         let inner = RustBpTrellisDecoder::from_sparse_dem(&dem, config)
-            .map_err(|error| runtime_error(&error))?;
+            .map_err(|error| decoder_error_to_py(&error))?;
         Ok(Self {
             inner,
             num_detectors,
@@ -361,14 +362,39 @@ impl PyBpTrellisDecoder {
                 inner,
                 num_observables: self.num_observables,
             })
-            .map_err(|error| runtime_error(&error))
+            .map_err(|error| decoder_error_to_py(&error))
     }
 
-    /// Decode a batch of dense detector syndromes in input order.
-    fn decode_batch(&mut self, shots: Vec<Vec<u8>>) -> PyResult<Vec<PyBpTrellisResult>> {
-        shots
+    /// Decode dense detector syndromes in input order. Defaults to sequential
+    /// execution; workers > 1 shares the model across workers and releases the GIL.
+    /// workers must be positive and is capped at one per shot (one for an empty batch).
+    /// Each worker owns independent decoding scratch.
+    #[pyo3(signature = (shots, *, workers=1))]
+    fn decode_batch(
+        &self,
+        py: Python<'_>,
+        shots: Vec<Vec<u8>>,
+        workers: i64,
+    ) -> PyResult<Vec<PyBpTrellisResult>> {
+        let workers = validate_batch_workers(workers)?;
+        let decode = || self.inner.decode_batch(&shots, workers);
+        let results = if workers > 1 {
+            py.detach(decode)
+        } else {
+            decode()
+        }
+        .map_err(|error| decoder_error_to_py(&error))?;
+        results
             .into_iter()
-            .map(|syndrome| self.decode_syndrome(syndrome))
+            .enumerate()
+            .map(|(shot_index, result)| {
+                result
+                    .map(|inner| PyBpTrellisResult {
+                        inner,
+                        num_observables: self.num_observables,
+                    })
+                    .map_err(|error| indexed_decoder_error_to_py(shot_index, &error))
+            })
             .collect()
     }
 

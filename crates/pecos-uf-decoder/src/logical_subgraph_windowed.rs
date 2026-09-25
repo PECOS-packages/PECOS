@@ -18,31 +18,25 @@
 //! package). For deep circuits an observing region would span the whole circuit,
 //! so we additionally window each subgraph in time.
 //!
-//! **Nesting: subgraph -> window.** Each per-observable subgraph is a clean
-//! graphlike matching graph, so we wrap it in an
-//! [`OverlappingWindowedDecoder`], which performs proper sliding-window
-//! decoding: every window is decoded with a buffer for matching context, but
-//! only correction edges whose BOTH endpoints lie in the window core are
-//! committed (Tan et al., arXiv:2209.09219). The per-observable committed
-//! observable flips are XOR-combined.
-//!
-//! An earlier implementation windowed the full DEM first and then ran a subgraph
-//! decoder per window, combining by a naive full-window observable XOR with no
-//! core-commit. That double-counted error chains crossing a window boundary and
-//! *anti-suppressed* (LER grew with code distance). The correct nesting here
-//! reuses the tested core-commit machinery instead.
+//! **Nesting: subgraph -> window.** Each per-observable subgraph has its own
+//! [`StreamingWindowedDecoder`] and residual in subgraph-local detector space.
+//! Selected local components are committed whole; their full global incidence
+//! is carried into later windows. Subgraph-local observable bit zero is mapped
+//! back to its global observable index.
 
 use pecos_decoder_core::ObservableDecoder;
 use pecos_decoder_core::dem::DemMatchingGraph;
 use pecos_decoder_core::errors::DecoderError;
 use pecos_decoder_core::logical_subgraph::window_plan::LogicalSubgraphWindowPlan;
 use pecos_decoder_core::logical_subgraph::{
-    MaxTimeRadius, StabCoords, partition_dem_by_logical_windowed,
+    LogicalSubgraph, MaxTimeRadius, StabCoords, partition_dem_by_logical_windowed,
+    partition_structured_dem_by_logical_windowed,
 };
 use pecos_decoder_core::obs_mask::ObsMask;
+use pecos_decoder_core::window::StructuredDem;
 
 use crate::decoder::{UfDecoder, UfDecoderConfig};
-use crate::windowed::{OverlappingWindowedDecoder, WindowedConfig};
+use crate::windowed::{StreamingWindowedDecoder, WindowedConfig};
 
 /// One per-observable subgraph, windowed with sliding-window core-commit.
 struct SubgraphWindowed {
@@ -53,13 +47,13 @@ struct SubgraphWindowed {
     /// Number of subgraph-local detectors.
     num_local: usize,
     /// The time-windowed decoder over this subgraph (returns local bit 0).
-    decoder: OverlappingWindowedDecoder<UfDecoder>,
+    decoder: StreamingWindowedDecoder<UfDecoder>,
 }
 
 /// Windowed logical-subgraph decoder.
 ///
 /// Partitions the DEM per observable, then windows each subgraph with an
-/// [`OverlappingWindowedDecoder`] (sliding-window core-commit). Per-observable
+/// [`StreamingWindowedDecoder`] (sliding-window core-commit). Per-observable
 /// committed observable flips are XOR-combined into the final mask.
 pub struct WindowedLogicalSubgraphDecoder {
     subgraphs: Vec<SubgraphWindowed>,
@@ -91,14 +85,40 @@ impl WindowedLogicalSubgraphDecoder {
         // subgraph-local indices) into each sub-DEM, giving the time-based
         // windowing real detector times. Empty-region observables are dropped.
         let full_coords = DemMatchingGraph::from_dem_str(dem)?.detector_coords;
-        let plan = LogicalSubgraphWindowPlan::new(&parts, &full_coords);
+        Self::from_partition(&parts, &full_coords, window_config)
+    }
+
+    /// Build directly from a validated structured DEM and stabilizer coordinates.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DecoderError` if detector coordinates cannot be assigned to an
+    /// observing region or a subgraph decoder fails to build.
+    pub fn from_structured_dem(
+        dem: &StructuredDem,
+        stab_coords: &StabCoords,
+        max_time_radius: MaxTimeRadius,
+        window_config: WindowedConfig,
+    ) -> Result<Self, DecoderError> {
+        let parts =
+            partition_structured_dem_by_logical_windowed(dem, stab_coords, max_time_radius)?;
+        Self::from_partition(&parts, &dem.detector_coords, window_config)
+    }
+
+    fn from_partition(
+        parts: &[LogicalSubgraph],
+        full_coords: &[Option<Vec<f64>>],
+        window_config: WindowedConfig,
+    ) -> Result<Self, DecoderError> {
+        window_config.validate_step()?;
+        let plan = LogicalSubgraphWindowPlan::new(parts, full_coords);
 
         let mut subgraphs = Vec::with_capacity(plan.num_observables());
         let mut max_local = 0usize;
         for entry in plan.entries() {
             let decoder =
-                OverlappingWindowedDecoder::from_dem(&entry.sub_dem, window_config, |wdem| {
-                    UfDecoder::from_dem(wdem, UfDecoderConfig::windowed())
+                StreamingWindowedDecoder::from_dem(&entry.sub_dem, window_config, |wdem| {
+                    UfDecoder::from_commit_window(wdem, UfDecoderConfig::windowed())
                 })?;
             let num_local = entry.detector_map.len();
             max_local = max_local.max(num_local);
@@ -161,5 +181,46 @@ impl ObservableDecoder for WindowedLogicalSubgraphDecoder {
             }
         }
         Ok(obs_mask)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pecos_decoder_core::logical_subgraph::QubitStabCoords;
+
+    #[test]
+    fn empty_subgraphs_still_reject_zero_step() {
+        let result = WindowedLogicalSubgraphDecoder::from_partition(
+            &[],
+            &[],
+            WindowedConfig { step: 0, buffer: 1 },
+        );
+        assert!(
+            result
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("step must be at least 1")
+        );
+    }
+
+    #[test]
+    fn structured_constructor_matches_text_plan() {
+        let dem = "error(0.1) D0 L0\nerror(0.1) D0 D1\n\
+                   detector(1, 0, 0) D0\ndetector(1, 0, 1) D1\n\
+                   logical_observable L0\n";
+        let coords = vec![QubitStabCoords {
+            x_positions: vec![(1.0, 0.0)],
+            z_positions: vec![],
+        }];
+        let config = WindowedConfig { step: 1, buffer: 1 };
+        let structured = StructuredDem::from_dem_str(dem).unwrap();
+        let text = WindowedLogicalSubgraphDecoder::from_dem(dem, &coords, None, config).unwrap();
+        let direct =
+            WindowedLogicalSubgraphDecoder::from_structured_dem(&structured, &coords, None, config)
+                .unwrap();
+        assert_eq!(direct.num_subgraphs(), text.num_subgraphs());
+        assert_eq!(direct.num_windows(), text.num_windows());
     }
 }

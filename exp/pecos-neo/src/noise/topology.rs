@@ -26,21 +26,18 @@
 //!
 //! # Neighbor Functions
 //!
-//! Use these with `CompositeCrosstalkChannel::local()` to define which qubits
-//! are affected by crosstalk:
+//! Neighbor functions can be used directly, or with
+//! `CompositeCrosstalkChannel::local()` when `composite-noise` is enabled:
 //!
 //! ```
 //! use pecos_neo::noise::prelude::*;
+//! use pecos_core::QubitId;
 //!
-//! // 1D chain: qubit i has neighbors i-1 and i+1
-//! let crosstalk = CompositeCrosstalkChannel::new("chain", prob(0.01, pauli()))
-//!     .responds_to_measurement()
-//!     .local(chain_neighbors);
-//!
-//! // 2D grid (5 columns): up/down/left/right neighbors
-//! let crosstalk = CompositeCrosstalkChannel::new("grid", prob(0.01, pauli()))
-//!     .responds_to_measurement()
-//!     .local(grid_neighbors(5));
+//! let neighbors = chain_neighbors(&[QubitId(2)]);
+//! assert!(neighbors.contains(&QubitId(1)));
+//! assert!(neighbors.contains(&QubitId(3)));
+//! let grid = grid_neighbors(5);
+//! assert!(grid(&[QubitId(6)]).contains(&QubitId(1)));
 //! ```
 //!
 //! ## Grid Topology

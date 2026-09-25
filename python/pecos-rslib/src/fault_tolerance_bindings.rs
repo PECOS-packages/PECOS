@@ -43,23 +43,31 @@
 //! ```
 
 use crate::code_matrix_bindings::PyParityCheckMatrix;
-use crate::dag_circuit_bindings::PyTickCircuit;
+use crate::dag_circuit_bindings::{PyDagCircuit, PyTickCircuit};
 use crate::decoder_spec_bindings::PyDecoderSpec;
 use crate::pecos_array::{Array, ArrayData};
 use crate::stabilizer_code_spec_bindings::PyStabilizerCodeSpec;
 use pecos_core::gate_type::GateType;
+use pecos_decoder_core::clifford_frame::{
+    TwoPatchClifford as RustTwoPatchClifford,
+    transform_two_patch_pauli as rust_transform_two_patch_pauli,
+};
 use pecos_qec::fault_tolerance::dem_builder::{
     ComparisonMethod as RustComparisonMethod,
     ContributionEffectSummary as RustContributionEffectSummary,
     ContributionRenderRecord as RustContributionRenderRecord,
     ContributionRenderStrategy as RustContributionRenderStrategy,
-    ContributionRenderSummary as RustContributionRenderSummary, DemBuilder as RustDemBuilder,
-    DemSampler as RustNewDemSampler, DemSamplerBuilder as RustNewDemSamplerBuilder,
-    DetectorErrorModel as RustDetectorErrorModel, DirectSourceFamily as RustDirectSourceFamily,
-    EquivalenceResult as RustEquivalenceResult, FaultContribution as RustFaultContribution,
-    FaultSourceType as RustFaultSourceType, IdleNoiseFamily, MeasurementCrosstalkDemMode,
-    MeasurementCrosstalkTransitionModel, NoiseConfig, OutputMode, PAULI_2Q_ORDER,
-    ParsedDem as RustParsedDem, PauliWeights, ReplacementBranchApproximation,
+    ContributionRenderSummary as RustContributionRenderSummary,
+    DemBoundaryKind as RustDemBoundaryKind, DemBuilder as RustDemBuilder,
+    DemDetectorPlacement as RustDemDetectorPlacement, DemSampler as RustNewDemSampler,
+    DemSamplerBuilder as RustNewDemSamplerBuilder, DemSlice as RustDemSlice,
+    DemSliceInstance as RustDemSliceInstance, DemSliceRoundSchedule as RustDemSliceRoundSchedule,
+    DemWindowSpec as RustDemWindowSpec, DetectorErrorModel as RustDetectorErrorModel,
+    DirectSourceFamily as RustDirectSourceFamily, EquivalenceResult as RustEquivalenceResult,
+    FaultContribution as RustFaultContribution, FaultSourceType as RustFaultSourceType,
+    IdleNoiseFamily, MeasurementCrosstalkDemMode, MeasurementCrosstalkTransitionModel, NoiseConfig,
+    OutputMode, PAULI_2Q_ORDER, ParsedDem as RustParsedDem, PauliWeights,
+    ReplacementBranchApproximation,
     TwoDetectorDirectRenderPolicy as RustTwoDetectorDirectRenderPolicy,
     compare_dems_exact as rust_compare_dems_exact,
     compare_dems_statistical as rust_compare_dems_statistical,
@@ -124,6 +132,7 @@ use pyo3::types::PyString;
 use crate::observable_flips_bindings::{PyObservableFlips, obsmask_to_py, py_to_obsmask};
 use std::collections::{BTreeMap, BTreeSet};
 use std::str::FromStr;
+use std::sync::Arc;
 
 mod batch_decode;
 mod decoder_comparison;
@@ -1643,7 +1652,454 @@ impl PyFaultDistanceUpperBoundResult {
 /// ```
 #[pyclass(subclass, name = "DetectorErrorModel", module = "pecos_rslib.qec")]
 pub struct PyDetectorErrorModel {
-    inner: RustDetectorErrorModel,
+    pub(crate) inner: RustDetectorErrorModel,
+}
+
+/// A decoder built directly from a structured PECOS detector error model.
+#[pyclass(name = "StructuredDemDecoder", module = "pecos_rslib.qec", unsendable)]
+pub struct PyStructuredDemDecoder {
+    inner: Box<dyn pecos_decoders::ObservableDecoder>,
+    num_observables: usize,
+}
+
+#[pymethods]
+impl PyStructuredDemDecoder {
+    /// Decode one detector-event syndrome.
+    fn decode_syndrome(&mut self, syndrome: Vec<u8>) -> PyResult<PyObservableFlips> {
+        self.inner
+            .decode_obs(&syndrome)
+            .map(|mask| PyObservableFlips::from_mask_value(mask, self.num_observables))
+            .map_err(decoder_build_error_to_py)
+    }
+
+    /// Number of detector bits expected by the decoder, when declared by the backend.
+    #[getter]
+    fn num_detectors(&self) -> Option<usize> {
+        self.inner.num_detectors()
+    }
+}
+
+/// One reusable, absolute-round-independent DEM slice compiled from a bounded physical fixture.
+#[pyclass(name = "CachedDemSlice", module = "pecos_rslib.qec")]
+pub struct PyCachedDemSlice {
+    inner: Arc<RustDemSlice>,
+}
+
+#[pymethods]
+impl PyCachedDemSlice {
+    /// Human-readable cached slice name.
+    #[getter]
+    fn name(&self) -> String {
+        self.inner.name().to_owned()
+    }
+
+    /// Validated ``(past_rounds, future_rounds)`` temporal horizon.
+    #[getter]
+    fn temporal_horizon(&self) -> (u32, u32) {
+        let horizon = self.inner.horizon();
+        (horizon.past_rounds, horizon.future_rounds)
+    }
+
+    /// Number of independent physical-source contributions in the cached slice.
+    #[getter]
+    fn num_contributions(&self) -> usize {
+        self.inner.contributions().len()
+    }
+
+    /// Slice-local standard DEM-output identities.
+    #[getter]
+    fn dem_outputs(&self) -> Vec<u32> {
+        self.inner.local_dem_outputs().collect()
+    }
+
+    /// Slice-local PECOS tracked-Pauli identities.
+    #[getter]
+    fn tracked_paulis(&self) -> Vec<u32> {
+        self.inner.local_tracked_paulis().collect()
+    }
+
+    fn __repr__(&self) -> String {
+        let (past, future) = self.temporal_horizon();
+        format!(
+            "CachedDemSlice(name={:?}, num_contributions={}, temporal_horizon=({}, {}))",
+            self.inner.name(),
+            self.inner.contributions().len(),
+            past,
+            future
+        )
+    }
+}
+
+/// A reusable round schedule compiled from one source-tracked DEM and annotated circuit.
+///
+/// Compile this once and call ``compose`` for each decoding window. The schedule
+/// owns its relative DEM slices, so subsequent window assembly does not repeat
+/// detector-stream discovery or source-ownership partitioning.
+#[pyclass(name = "DemSliceRoundSchedule", module = "pecos_rslib.qec")]
+pub struct PyDemSliceRoundSchedule {
+    inner: RustDemSliceRoundSchedule,
+}
+
+fn parse_dem_boundary_kind(forward_boundary: &str) -> PyResult<RustDemBoundaryKind> {
+    match forward_boundary {
+        "soft" => Ok(RustDemBoundaryKind::Soft),
+        "hard" => Ok(RustDemBoundaryKind::Hard),
+        _ => Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "forward_boundary must be 'soft' or 'hard', got {forward_boundary:?}"
+        ))),
+    }
+}
+
+type PySliceOutputRoutings = BTreeMap<i64, BTreeMap<u32, Vec<u32>>>;
+type PyDetectorOrderRoutings = BTreeMap<i64, BTreeMap<u32, u32>>;
+
+fn validate_detector_order_routings(
+    routings: Option<&PyDetectorOrderRoutings>,
+    known_by_round: &BTreeMap<i64, BTreeSet<u32>>,
+) -> PyResult<()> {
+    let Some(routings) = routings else {
+        return Ok(());
+    };
+    for (&round, routing) in routings {
+        let Some(known) = known_by_round.get(&round) else {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "detector_order_routings contains unknown owner round {round}"
+            )));
+        };
+        let sources: BTreeSet<_> = routing.keys().copied().collect();
+        let targets: BTreeSet<_> = routing.values().copied().collect();
+        if &sources != known || &targets != known {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "detector_order_routings[{round}] must be a permutation of detector streams {known:?}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_slice_output_routings(
+    argument: &str,
+    routings: Option<&PySliceOutputRoutings>,
+    known_by_round: &BTreeMap<i64, BTreeSet<u32>>,
+    declared_outputs: &BTreeSet<u32>,
+) -> PyResult<()> {
+    let Some(routings) = routings else {
+        return Ok(());
+    };
+    for (&round, local_routings) in routings {
+        let Some(known_outputs) = known_by_round.get(&round) else {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "{argument} contains unknown owner round {round}"
+            )));
+        };
+        for (&local_output, global_outputs) in local_routings {
+            if !known_outputs.contains(&local_output) {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "{argument}[{round}] contains unknown local output {local_output}"
+                )));
+            }
+            for global_output in global_outputs {
+                if !declared_outputs.contains(global_output) {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "{argument}[{round}][{local_output}] targets undeclared output {global_output}"
+                    )));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_slice_output_schema(
+    kind: &str,
+    expected: &BTreeSet<u32>,
+    declared: &BTreeSet<u32>,
+    known_by_round: &BTreeMap<i64, BTreeSet<u32>>,
+    routings: Option<&PySliceOutputRoutings>,
+) -> PyResult<()> {
+    if expected != declared {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "output_model declares {kind} {declared:?}, but the assembled circuit expects {expected:?}"
+        )));
+    }
+
+    for (&round, local_outputs) in known_by_round {
+        for &local_output in local_outputs {
+            let routed = routings
+                .and_then(|by_round| by_round.get(&round))
+                .and_then(|by_output| by_output.get(&local_output));
+            let unexpected = routed.map_or(!expected.contains(&local_output), |targets| {
+                targets.iter().any(|target| !expected.contains(target))
+            });
+            if unexpected {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "cached slice {kind} {local_output} at owner round {round} is not projected or routed into the expected output schema {expected:?}"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[pymethods]
+impl PyDemSliceRoundSchedule {
+    /// Assemble a schedule from cached slices at requested absolute rounds.
+    ///
+    /// Identity stream and output mappings are used. ``output_model`` supplies
+    /// only standard-output and tracked-Pauli declarations; its detector and
+    /// contribution contents are ignored. ``coordinate_offset`` translates
+    /// every available cached slice-local detector coordinate at instantiation.
+    /// ``detector_coordinate_offsets`` adds a further translation selected by
+    /// local detector-stream ID, allowing independently placed code blocks.
+    /// ``detector_order_routings`` optionally supplies a full stream-order
+    /// permutation for selected absolute rounds. It changes dense detector-ID
+    /// order without changing stable stream identity or relative targeting.
+    /// Output routings select a GF(2) target set by owner round and local output;
+    /// repeated targets cancel, and an empty target set projects a column away.
+    /// The expected output lists are an independent declaration of the assembled
+    /// circuit schema. They must exactly match ``output_model`` and every
+    /// unprojected cached slice output must route into them.
+    #[staticmethod]
+    #[pyo3(signature = (output_model, cached_slices, expected_dem_outputs, expected_tracked_paulis, coordinate_offset=None, detector_coordinate_offsets=None, dem_output_routings=None, tracked_pauli_routings=None, detector_order_routings=None))]
+    fn from_cached_slices(
+        py: Python<'_>,
+        output_model: &PyDetectorErrorModel,
+        cached_slices: Vec<(Py<PyCachedDemSlice>, i64)>,
+        expected_dem_outputs: Vec<u32>,
+        expected_tracked_paulis: Vec<u32>,
+        coordinate_offset: Option<(f64, f64)>,
+        detector_coordinate_offsets: Option<BTreeMap<u32, (f64, f64)>>,
+        dem_output_routings: Option<PySliceOutputRoutings>,
+        tracked_pauli_routings: Option<PySliceOutputRoutings>,
+        detector_order_routings: Option<PyDetectorOrderRoutings>,
+    ) -> PyResult<Self> {
+        if let Some((x, y)) = coordinate_offset
+            && (!x.is_finite() || !y.is_finite())
+        {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "coordinate_offset values must be finite",
+            ));
+        }
+        if let Some(offsets) = &detector_coordinate_offsets {
+            for (&detector, &(x, y)) in offsets {
+                if !x.is_finite() || !y.is_finite() {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "detector_coordinate_offsets[{detector}] values must be finite"
+                    )));
+                }
+                let known = cached_slices.iter().any(|(cached_slice, _)| {
+                    cached_slice
+                        .borrow(py)
+                        .inner
+                        .detectors()
+                        .iter()
+                        .any(|candidate| candidate.id == detector)
+                });
+                if !known {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "detector_coordinate_offsets contains unknown detector stream {detector}"
+                    )));
+                }
+            }
+        }
+        let mut known_dem_outputs = BTreeMap::<i64, BTreeSet<u32>>::new();
+        let mut known_tracked_paulis = BTreeMap::<i64, BTreeSet<u32>>::new();
+        let mut known_detectors = BTreeMap::<i64, BTreeSet<u32>>::new();
+        for (cached_slice, round) in &cached_slices {
+            let cached_slice = cached_slice.borrow(py);
+            known_detectors.entry(*round).or_default().extend(
+                cached_slice
+                    .inner
+                    .detectors()
+                    .iter()
+                    .map(|detector| detector.id),
+            );
+            known_dem_outputs
+                .entry(*round)
+                .or_default()
+                .extend(cached_slice.inner.local_dem_outputs());
+            known_tracked_paulis
+                .entry(*round)
+                .or_default()
+                .extend(cached_slice.inner.local_tracked_paulis());
+        }
+        let declared_dem_outputs = output_model
+            .inner
+            .observables()
+            .map(|output| output.id)
+            .collect();
+        let declared_tracked_paulis = output_model
+            .inner
+            .iter_tracked_paulis()
+            .map(|output| output.id)
+            .collect();
+        let expected_dem_outputs = expected_dem_outputs.into_iter().collect();
+        let expected_tracked_paulis = expected_tracked_paulis.into_iter().collect();
+        validate_detector_order_routings(detector_order_routings.as_ref(), &known_detectors)?;
+        validate_slice_output_routings(
+            "dem_output_routings",
+            dem_output_routings.as_ref(),
+            &known_dem_outputs,
+            &declared_dem_outputs,
+        )?;
+        validate_slice_output_routings(
+            "tracked_pauli_routings",
+            tracked_pauli_routings.as_ref(),
+            &known_tracked_paulis,
+            &declared_tracked_paulis,
+        )?;
+        validate_slice_output_schema(
+            "standard outputs",
+            &expected_dem_outputs,
+            &declared_dem_outputs,
+            &known_dem_outputs,
+            dem_output_routings.as_ref(),
+        )?;
+        validate_slice_output_schema(
+            "tracked Paulis",
+            &expected_tracked_paulis,
+            &declared_tracked_paulis,
+            &known_tracked_paulis,
+            tracked_pauli_routings.as_ref(),
+        )?;
+        let instances = cached_slices
+            .into_iter()
+            .map(|(cached_slice, round)| -> PyResult<_> {
+                let cached_slice = cached_slice.borrow(py);
+                let mut instance =
+                    RustDemSliceInstance::identity(Arc::clone(&cached_slice.inner), round);
+                if coordinate_offset.is_some() || detector_coordinate_offsets.is_some() {
+                    let (global_x, global_y) = coordinate_offset.unwrap_or((0.0, 0.0));
+                    for detector in cached_slice.inner.detectors() {
+                        if let Some([x, y]) = detector.coords {
+                            let (local_x, local_y) = detector_coordinate_offsets
+                                .as_ref()
+                                .and_then(|offsets| offsets.get(&detector.id))
+                                .copied()
+                                .unwrap_or((0.0, 0.0));
+                            let translated = [x + global_x + local_x, y + global_y + local_y];
+                            if !translated.into_iter().all(f64::is_finite) {
+                                return Err(pyo3::exceptions::PyValueError::new_err(
+                                    "translated detector coordinates must be finite",
+                                ));
+                            }
+                            instance = instance.with_detector_placement(
+                                detector.id,
+                                RustDemDetectorPlacement::new(detector.id).with_coords(translated),
+                            );
+                        }
+                    }
+                }
+                if let Some(routings) = dem_output_routings
+                    .as_ref()
+                    .and_then(|routings| routings.get(&round))
+                {
+                    for (&local_output, global_outputs) in routings {
+                        instance = instance
+                            .with_dem_output_targets(local_output, global_outputs.iter().copied());
+                    }
+                }
+                if let Some(routings) = tracked_pauli_routings
+                    .as_ref()
+                    .and_then(|routings| routings.get(&round))
+                {
+                    for (&local_output, global_outputs) in routings {
+                        instance = instance.with_tracked_pauli_targets(
+                            local_output,
+                            global_outputs.iter().copied(),
+                        );
+                    }
+                }
+                Ok(instance)
+            })
+            .collect::<PyResult<Vec<_>>>()?;
+        Ok(Self {
+            inner: RustDemSliceRoundSchedule::from_instances(&output_model.inner, instances)
+                .with_detector_order_routings(detector_order_routings.unwrap_or_default()),
+        })
+    }
+
+    /// Number of scheduled owner rounds.
+    #[getter]
+    fn num_instances(&self) -> usize {
+        self.inner.instances().len()
+    }
+
+    /// Owner rounds in deterministic assembly order.
+    fn rounds(&self) -> Vec<i64> {
+        self.inner
+            .instances()
+            .iter()
+            .map(RustDemSliceInstance::round)
+            .collect()
+    }
+
+    /// Extract one compiled owner-round slice for caching and later reuse.
+    fn cached_slice(&self, owner_round: i64) -> PyResult<PyCachedDemSlice> {
+        let instance = self
+            .inner
+            .instances()
+            .iter()
+            .find(|instance| instance.round() == owner_round)
+            .ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "DEM round schedule has no cached slice at owner round {owner_round}"
+                ))
+            })?;
+        Ok(PyCachedDemSlice {
+            inner: Arc::clone(instance.slice()),
+        })
+    }
+
+    /// Return the exact minimum safe look-ahead for a commit region.
+    fn required_buffer_rounds(&self, start_round: i64, commit_rounds: u32) -> PyResult<u32> {
+        self.inner
+            .required_buffer_rounds(start_round, commit_rounds)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
+    }
+
+    /// Assemble one structured commit-plus-buffer window.
+    ///
+    /// ``buffer_rounds=None`` derives the minimum safe look-ahead from this
+    /// schedule. An explicit undersized buffer fails instead of truncating a
+    /// commit-region correlation.
+    #[pyo3(signature = (start_round, commit_rounds, buffer_rounds=None, forward_boundary="soft"))]
+    fn compose(
+        &self,
+        start_round: i64,
+        commit_rounds: u32,
+        buffer_rounds: Option<u32>,
+        forward_boundary: &str,
+    ) -> PyResult<PyDetectorErrorModel> {
+        let forward_boundary = parse_dem_boundary_kind(forward_boundary)?;
+        let buffer_rounds = match buffer_rounds {
+            Some(buffer_rounds) => buffer_rounds,
+            None => self
+                .inner
+                .required_buffer_rounds(start_round, commit_rounds)
+                .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?,
+        };
+        let composed = self
+            .inner
+            .compose(RustDemWindowSpec::new(
+                start_round,
+                commit_rounds,
+                buffer_rounds,
+                forward_boundary,
+            ))
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+        Ok(PyDetectorErrorModel {
+            inner: composed.model,
+        })
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "DemSliceRoundSchedule(num_instances={}, rounds={:?})",
+            self.inner.instances().len(),
+            self.rounds()
+        )
+    }
 }
 
 fn split_dem_outputs_for_dem(
@@ -2018,6 +2474,124 @@ impl PyDetectorErrorModel {
     #[getter]
     fn num_tracked_paulis(&self) -> usize {
         self.inner.num_tracked_paulis()
+    }
+
+    /// Detector identities and their optional ``[x, y, time]`` coordinates.
+    fn detector_coordinates(&self) -> Vec<(u32, Option<[f64; 3]>)> {
+        self.inner
+            .detectors
+            .iter()
+            .map(|detector| (detector.id, detector.coords))
+            .collect()
+    }
+
+    /// Build a decoder without rendering and reparsing this model at the API boundary.
+    ///
+    /// Windowed and beam-search specifications consume the structured model directly;
+    /// backends that only expose a text parser are rendered at their leaf boundary.
+    fn build_decoder(&self, decoder: &Bound<'_, PyAny>) -> PyResult<PyStructuredDemDecoder> {
+        let spec = if decoder.is_instance_of::<PyString>() {
+            pecos_decoders::DecoderSpec::parse(decoder.extract::<&str>()?)
+                .map_err(decoder_parse_error_to_py)?
+        } else if let Ok(spec) = decoder.extract::<PyRef<'_, PyDecoderSpec>>() {
+            spec.inner.clone()
+        } else {
+            return Err(pyo3::exceptions::PyTypeError::new_err(
+                "decoder must be a pecos.decoders.DecoderSpec or legacy decoder string",
+            ));
+        };
+        let model = self
+            .inner
+            .to_structured_decoder_dem()
+            .map_err(decoder_build_error_to_py)?;
+        let num_observables = model.num_observables;
+        let inner = spec
+            .build(&pecos_decoders::DecodeModel::StructuredDem(model))
+            .map_err(decoder_build_error_to_py)?;
+        Ok(PyStructuredDemDecoder {
+            inner,
+            num_observables,
+        })
+    }
+
+    /// Compile a reusable round schedule from this source-tracked model.
+    ///
+    /// The influence map and DAG circuit must be the same pair used to build
+    /// the model. Every referenced gate must carry an integer
+    /// ``dem_slice_round`` attribute. Composed windows number detectors in this
+    /// model's order within each round.
+    fn round_schedule(
+        &self,
+        influence_map: &PyDagFaultInfluenceMap,
+        circuit: &PyDagCircuit,
+    ) -> PyResult<PyDemSliceRoundSchedule> {
+        let inner = RustDemSliceRoundSchedule::from_annotated_circuit(
+            "python DEM round",
+            &self.inner,
+            &influence_map.inner,
+            &circuit.inner,
+        )
+        .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+        Ok(PyDemSliceRoundSchedule { inner })
+    }
+
+    /// Return the minimum safe look-ahead for an annotated round window.
+    ///
+    /// Sources owned by the commit region, plus source-halo contributions that
+    /// reach it, determine the required buffer. The result includes all of
+    /// their later detector targets.
+    ///
+    /// Raises:
+    ///     ValueError: If metadata, ownership, mapping, or round validation fails.
+    fn required_buffer_rounds(
+        &self,
+        influence_map: &PyDagFaultInfluenceMap,
+        circuit: &PyDagCircuit,
+        start_round: i64,
+        commit_rounds: u32,
+    ) -> PyResult<u32> {
+        let schedule = self.round_schedule(influence_map, circuit)?;
+        schedule
+            .inner
+            .required_buffer_rounds(start_round, commit_rounds)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
+    }
+
+    /// Build a structured DEM for one annotated commit-plus-buffer round window.
+    ///
+    /// The influence map and DAG circuit must be the same pair used to build
+    /// this source-tracked model. Every physical gate referenced by the map must
+    /// carry an integer ``dem_slice_round`` attribute. Detector ``[x, y, t]``
+    /// coordinates define stable streams and syndrome rounds.
+    ///
+    /// Args:
+    ///     influence_map: Source influence map for this model.
+    ///     circuit: Annotated physical DAG circuit.
+    ///     start_round: First round included in the window.
+    ///     commit_rounds: Number of rounds whose corrections may be committed.
+    ///     buffer_rounds: Look-ahead rounds after the commit region. ``None``
+    ///         derives the minimum safe value from source correlations.
+    ///     forward_boundary: ``"soft"`` for a sliding window or ``"hard"``
+    ///         for a terminal window.
+    ///
+    /// Raises:
+    ///     ValueError: If metadata, ownership, mapping, or boundary validation fails.
+    #[pyo3(signature = (influence_map, circuit, start_round, commit_rounds, buffer_rounds=None, forward_boundary="soft"))]
+    fn composed_round_window(
+        &self,
+        influence_map: &PyDagFaultInfluenceMap,
+        circuit: &PyDagCircuit,
+        start_round: i64,
+        commit_rounds: u32,
+        buffer_rounds: Option<u32>,
+        forward_boundary: &str,
+    ) -> PyResult<Self> {
+        self.round_schedule(influence_map, circuit)?.compose(
+            start_round,
+            commit_rounds,
+            buffer_rounds,
+            forward_boundary,
+        )
     }
 
     /// Compute exact fault distance when every mechanism is graphlike.
@@ -2635,7 +3209,10 @@ fn decoder_build_error_to_py(error: pecos_decoders::DecoderError) -> PyErr {
                  See: https://github.com/PECOS-packages/PECOS/blob/dev/docs/user-guide/cmake-setup.md",
             )
         }
-        pecos_decoders::DecoderError::BackendUnavailable { .. } => {
+        // Malformed DEM text is bad caller input, as the other DEM surfaces
+        // already report it.
+        pecos_decoders::DecoderError::BackendUnavailable { .. }
+        | pecos_decoders::DecoderError::InvalidDemSyntax(_) => {
             PyErr::new::<pyo3::exceptions::PyValueError, _>(error.to_string())
         }
         pecos_decoders::DecoderError::InternalError(message) => {
@@ -3143,14 +3720,15 @@ impl PySampleBatch {
     }
 
     /// Decode and score every shot using a typed decoder specification or a
-    /// legacy decoder string.
+    /// legacy decoder string, or an optional decoder-provider specification.
     ///
     /// `dem=None` uses the exact DEM embedded by `SampleBatch.load`; generated
     /// batches require an explicit DEM. Automatic execution honors decoder
     /// statefulness, uses native batching where available, and otherwise chooses
     /// sequential or bounded parallel per-shot execution. Set `workers` to opt
-    /// into an exact worker count, `predictions` to retain wide per-shot masks,
-    /// and `timing` to retain per-shot elapsed-time statistics.
+    /// into that many workers, bounded by one per shot (and never below one)
+    /// and reported as `workers_used`; `predictions` to retain wide per-shot
+    /// masks; and `timing` to retain per-shot elapsed-time statistics.
     #[pyo3(signature = (dem=None, decoder=None, *, workers=None, predictions=false, timing=false, allow_dem_mismatch=false))]
     fn decode(
         &self,
@@ -3175,16 +3753,7 @@ impl PySampleBatch {
         let decoder = decoder.ok_or_else(|| {
             pyo3::exceptions::PyTypeError::new_err("decoder is a required argument")
         })?;
-        let spec = if decoder.is_instance_of::<PyString>() {
-            let decoder_type = decoder.extract::<&str>()?;
-            pecos_decoders::DecoderSpec::parse(decoder_type).map_err(decoder_parse_error_to_py)?
-        } else if let Ok(spec) = decoder.extract::<PyRef<'_, PyDecoderSpec>>() {
-            spec.inner.clone()
-        } else {
-            return Err(pyo3::exceptions::PyTypeError::new_err(
-                "decoder must be a pecos.decoders.DecoderSpec or legacy decoder string",
-            ));
-        };
+        let spec = crate::batch_decoder_spec::BatchDecoderSpec::extract(decoder)?;
 
         let explicit_workers = workers
             .map(|workers| {
@@ -3201,7 +3770,7 @@ impl PySampleBatch {
             })
             .transpose()?;
         let traits = spec.execution_traits();
-        let plan =
+        let mut plan =
             pecos_decoders::batch::plan_execution(pecos_decoders::batch::ExecutionPlanInputs {
                 traits,
                 num_shots: self.num_shots,
@@ -3211,6 +3780,15 @@ impl PySampleBatch {
                 available_threads: rayon::current_num_threads(),
             })
             .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+
+        // Report the workers that can actually run: a worker needs at least one
+        // shot, so anything beyond one worker per shot would only idle. An empty
+        // batch keeps one worker, which builds its decoder and decodes nothing.
+        if plan.path == pecos_decoders::batch::ExecutionPath::Parallel {
+            plan.workers_used = plan
+                .workers_used
+                .min(pecos_decoders::batch::batch_worker_cap(self.num_shots));
+        }
 
         let output = py
             .detach(|| batch_decode::execute(self, resolved_dem, &spec, &plan, predictions, timing))
@@ -3521,37 +4099,18 @@ impl PyDemSampler {
         let mut mechanisms = Vec::new();
 
         for line in dem_string.lines() {
-            let line = line.trim();
-            if line.is_empty() || line.starts_with('#') {
-                continue;
-            }
-
-            // Parse: error(prob) D0 D3 L0
-            let Some(rest) = line.strip_prefix("error(") else {
+            let Some(instruction) = pecos_decoder_core::dem::grammar::parse_line(line)
+                .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?
+            else {
                 continue;
             };
-            let Some(paren_end) = rest.find(')') else {
+            if instruction.kind != pecos_decoder_core::dem::grammar::Kind::Error {
                 continue;
-            };
-            let prob: f64 = rest[..paren_end].parse().map_err(|e| {
-                pyo3::exceptions::PyValueError::new_err(format!("bad probability: {e}"))
-            })?;
-            let tokens = rest[paren_end + 1..].split_whitespace();
-            let mut dets = Vec::new();
-            let mut obs = Vec::new();
-            for tok in tokens {
-                if let Some(d) = tok.strip_prefix('D') {
-                    let id: u32 = d.parse().map_err(|e| {
-                        pyo3::exceptions::PyValueError::new_err(format!("bad detector: {e}"))
-                    })?;
-                    dets.push(id);
-                } else if let Some(l) = tok.strip_prefix('L') {
-                    let id: u32 = l.parse().map_err(|e| {
-                        pyo3::exceptions::PyValueError::new_err(format!("bad observable: {e}"))
-                    })?;
-                    obs.push(id);
-                }
             }
+            let prob = instruction.args[0];
+            let (dets, obs) =
+                pecos_decoder_core::dem::grammar::target_indices(&instruction.targets)
+                    .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
             if prob > 0.0 {
                 mechanisms.push((prob, dets, obs));
             }
@@ -4018,10 +4577,11 @@ impl PyDemSampler {
     ///     dem: DEM text used to construct the decoder. It may deliberately be
     ///         a different projection from the sampler's own model.
     ///     `num_shots`: Number of shots to sample and decode.
-    ///     decoder: A typed `DecoderSpec` or legacy decoder string.
+    ///     decoder: A typed `DecoderSpec`, legacy decoder string, or optional decoder-provider specification.
     ///     seed: Optional sampling seed. The resolved seed is returned as
     ///         `sampling_seed_used` and can replay the run.
-    ///     workers: Optional exact worker count.
+    ///     workers: Optional worker count, bounded by one per 1024-shot
+    ///         sampling chunk and reported as `workers_used`.
     ///     predictions: Retain predictions in absolute shot order.
     ///     timing: Retain decode-call timings. Sampling time is excluded from
     ///         individual samples but included in `wall_elapsed`.
@@ -4053,16 +4613,7 @@ impl PyDemSampler {
         let decoder = decoder.ok_or_else(|| {
             pyo3::exceptions::PyTypeError::new_err("decoder is a required argument")
         })?;
-        let spec = if decoder.is_instance_of::<PyString>() {
-            let decoder_type = decoder.extract::<&str>()?;
-            pecos_decoders::DecoderSpec::parse(decoder_type).map_err(decoder_parse_error_to_py)?
-        } else if let Ok(spec) = decoder.extract::<PyRef<'_, PyDecoderSpec>>() {
-            spec.inner.clone()
-        } else {
-            return Err(pyo3::exceptions::PyTypeError::new_err(
-                "decoder must be a pecos.decoders.DecoderSpec or legacy decoder string",
-            ));
-        };
+        let spec = crate::batch_decoder_spec::BatchDecoderSpec::extract(decoder)?;
 
         let explicit_workers = workers
             .map(|workers| {
@@ -5255,7 +5806,8 @@ impl PyLogicalSubgraphDecoder {
             });
         }
 
-        let edges = extract_ghost_edges_from_dem(dem, &sc);
+        let edges = extract_ghost_edges_from_dem(dem, &sc)
+            .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
         let num_qubits = sc.len();
         Ok((edges.len(), num_qubits))
     }
@@ -5264,8 +5816,8 @@ impl PyLogicalSubgraphDecoder {
     ///
     /// NOTE: these strings carry NO `detector(...)` coordinate lines (subgraph
     /// graphs drop coordinates), so they are NOT suitable for *time-windowed*
-    /// decoding -- a windowed decoder would see no detector times and collapse to
-    /// a single window. For windowing, use the coord-preserving
+    /// decoding: the window constructor rejects missing detector times.
+    /// For windowing, use the coord-preserving
     /// `LogicalSubgraphWindowPlan` path (the `WindowedLogicalSubgraphDecoder` /
     /// logical-circuit windowed budget already do). These strings are fine for
     /// full (non-windowed) per-subgraph decoding.
@@ -5301,16 +5853,15 @@ impl PyLogicalSubgraphDecoder {
 /// Prevents the observing region from spanning the full circuit.
 ///
 /// Partitions the DEM per observable, then windows each subgraph with proper
-/// sliding-window core-commit (only correction edges whose both endpoints lie
-/// in a window's core are committed). The inner decoder is the native
-/// edge-tracking union-find decoder, which core-commit requires.
+/// whole-component commits and a separate residual in each subgraph.
+/// The inner decoder is native union-find with complete correction edge reporting.
 ///
 /// Args:
 ///     dem: DEM string.
 ///     `stab_coords`: Stabilizer coordinates per logical qubit.
-///     step: Core window size in time steps.
-///     buffer: Buffer size on each side for matching context (0 =
-///         non-overlapping; recommend ~code distance).
+///     step: Required core window size in time steps, at least 1.
+///     buffer: Required forward matching context, at least the maximum column span.
+///         Recommend the code distance.
 #[pyclass(name = "WindowedLogicalSubgraphDecoder", module = "pecos_rslib.qec")]
 pub struct PyWindowedLogicalSubgraphDecoder {
     inner: pecos_decoders::WindowedLogicalSubgraphDecoder,
@@ -5319,7 +5870,7 @@ pub struct PyWindowedLogicalSubgraphDecoder {
 #[pymethods]
 impl PyWindowedLogicalSubgraphDecoder {
     #[new]
-    #[pyo3(signature = (dem, stab_coords, step=8, buffer=4))]
+    #[pyo3(signature = (dem, stab_coords, step, buffer))]
     fn new(
         dem: &str,
         stab_coords: Vec<pyo3::Bound<'_, pyo3::types::PyDict>>,
@@ -5344,11 +5895,7 @@ impl PyWindowedLogicalSubgraphDecoder {
             });
         }
 
-        let config = pecos_decoders::WindowedConfig {
-            step_size: step,
-            buffer_size: buffer,
-            ..Default::default()
-        };
+        let config = pecos_decoders::WindowedConfig { step, buffer };
 
         let inner =
             pecos_decoders::WindowedLogicalSubgraphDecoder::from_dem(dem, &sc, None, config)
@@ -5699,7 +6246,7 @@ impl PyLogicalAlgorithmDecoder {
 ///
 /// Selects decode strategy based on available reaction time:
 /// - ``"unlimited"``: full-circuit logical-subgraph decoder (Clifford circuits, offline)
-/// - ``"windowed"``: default windowed logical-subgraph decoder (~1ms reaction time)
+/// - ``"windowed"``: request a 1ms budget; currently uses the full-subgraph fallback
 /// - ``"10ms"``, ``"1000us"``, etc.: explicit reaction time budget
 ///
 /// The reaction time is the time available at feed-forward decision
@@ -5859,7 +6406,11 @@ impl PyLogicalCircuitDecoder {
                     .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?
                     .detector_coords;
                 let plan = full_osd.window_plan(&full_coords);
-                let step = decode_budget.code_distance.max(1);
+                // Use the known code distance as a throughput-oriented commit step.
+                let step =
+                    std::num::NonZeroUsize::new(decode_budget.code_distance).ok_or_else(|| {
+                        pyo3::exceptions::PyValueError::new_err("step must be at least 1")
+                    })?;
                 can_window = plan.effective_windowing(step) == EffectiveWindowing::RealWindowed;
 
                 // `strict` rejects only when genuine windowing was POSSIBLE (the
@@ -6227,8 +6778,10 @@ fn decoder_dem_requirement(decoder_type: &str) -> PyResult<String> {
         | "belief_matching_mgbp"
         | "belief_matching_hybrid"
         | "ensemble" => Ok("graphlike".to_string()),
-        "tesseract" | "astar" | "astar_full" | "bp_osd" | "bp_lsd" | "belief_find"
-        | "union_find" | "min_sum_bp" | "relay_bp" | "mwpf" | "chromobius" => Ok("any".to_string()),
+        "tesseract" | "tesseract_trellis" | "astar" | "astar_full" | "bp_osd" | "bp_lsd"
+        | "belief_find" | "union_find" | "min_sum_bp" | "relay_bp" | "mwpf" | "chromobius" => {
+            Ok("any".to_string())
+        }
         _ => Err(pyo3::exceptions::PyValueError::new_err(format!(
             "Unknown decoder type: {decoder_type:?}",
         ))),
@@ -7603,9 +8156,29 @@ fn coloration_memory_circuit(
     Ok(PyTickCircuit { inner })
 }
 
+/// Transform a sign-free two-patch Pauli mask through H0, H1, or CX.
+#[pyfunction]
+fn transform_two_patch_pauli(pauli: u8, gate: &str) -> PyResult<u8> {
+    let gate = match gate {
+        "h0" => RustTwoPatchClifford::HadamardFirst,
+        "h1" => RustTwoPatchClifford::HadamardSecond,
+        "cx" => RustTwoPatchClifford::Cnot,
+        _ => {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "unknown two-patch Clifford gate {gate:?}"
+            )));
+        }
+    };
+    Ok(rust_transform_two_patch_pauli(pauli, gate))
+}
+
 /// Register the QEC fault tolerance module.
 pub fn register_qec_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let qec = PyModule::new(m.py(), "qec")?;
+    qec.add(
+        "DEM_SLICE_ROUND_ATTRIBUTE",
+        pecos_qec::fault_tolerance::dem_builder::DEM_SLICE_ROUND_ATTRIBUTE,
+    )?;
 
     qec.add_class::<PyObservableFlips>()?;
     qec.add_class::<PyFaultLocation>()?;
@@ -7617,6 +8190,9 @@ pub fn register_qec_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     qec.add_class::<PyFaultDistanceUpperBoundConfig>()?;
     qec.add_class::<PyFaultDistanceUpperBoundResult>()?;
     qec.add_class::<PyDetectorErrorModel>()?;
+    qec.add_class::<PyStructuredDemDecoder>()?;
+    qec.add_class::<PyCachedDemSlice>()?;
+    qec.add_class::<PyDemSliceRoundSchedule>()?;
     qec.add_class::<PyDemBuilder>()?;
     qec.add_class::<PySampleBatch>()?;
     qec.add_class::<batch_decode::PyDecodeResult>()?;
@@ -7686,6 +8262,7 @@ pub fn register_qec_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     qec.add_function(wrap_pyfunction!(certified_classical_distance, &qec)?)?;
     qec.add_function(wrap_pyfunction!(bb_memory_circuit, &qec)?)?;
     qec.add_function(wrap_pyfunction!(coloration_memory_circuit, &qec)?)?;
+    qec.add_function(wrap_pyfunction!(transform_two_patch_pauli, &qec)?)?;
 
     // Add Pauli constants
     qec.add("PAULI_I", 0u8)?;

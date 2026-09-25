@@ -94,6 +94,7 @@ PECOS supports two categories of quantum gates:
 | SXX, SYY, SZZ | Clifford | Square root of Pauli-Pauli interactions |
 | G | Clifford | Two-qubit Clifford |
 | RXX, RYY, RZZ | Non-Clifford | Two-qubit rotations |
+| RXYXY2Q | Non-Clifford | Two-qubit rotation about a shared XY-plane axis |
 
 `CRX`, `CRY`, `CRZ`, `CPhase`, and `CU1` may be accepted by source-format and
 simulator APIs, but they are boundary spellings rather than stored PECOS gates.
@@ -1021,6 +1022,35 @@ RZZ(θ) = [[e^(-iθ/2),     0,          0,          0       ],
 === ":fontawesome-brands-rust: Rust"
     ```rust
     sim.rzz(theta, &[(q1, q2)]);
+    ```
+
+---
+
+#### RXYXY2Q (XY-Plane Two-Qubit Rotation)
+
+Two-qubit rotation about the product of one XY-plane axis on both qubits. With
+`XY_φ = cos(φ)X + sin(φ)Y`, the same axis that parameterizes `RXY1Q`:
+
+```
+RXYXY2Q(θ,φ) = exp(-iθ (XY_φ ⊗ XY_φ)/2)
+             = [[cos(θ/2),        0,             0,         -i e^(-2iφ) sin(θ/2)],
+                [    0,       cos(θ/2),   -i sin(θ/2),              0           ],
+                [    0,     -i sin(θ/2),   cos(θ/2),                0           ],
+                [-i e^(2iφ) sin(θ/2),  0,         0,             cos(θ/2)       ]]
+```
+
+The axis angle φ only affects the |00⟩ ↔ |11⟩ coupling. At φ = 0 or π the gate
+equals `RXX(θ)`, and at φ = π/2 or 3π/2 it equals `RYY(θ)`, in both cases
+exactly rather than up to a global phase. It is Selene's `RPP` operation;
+Selene traces map `RPP` onto this gate one-to-one, so noise models see a single
+two-qubit gate rather than its `RZ`, `RXX`, `RZ` decomposition.
+
+Stabilizer simulators accept it when θ is a multiple of π/2 and φ is a multiple
+of π/2 (any φ when θ = 0); state-vector simulators accept any angles.
+
+=== ":fontawesome-brands-rust: Rust"
+    ```rust
+    sim.rxyxy2q(theta, phi, &[(q1, q2)]);
     ```
 
 ---

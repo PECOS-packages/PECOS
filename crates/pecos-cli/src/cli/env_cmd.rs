@@ -149,7 +149,11 @@ fn add_llvm_runtime_library_path(env: &mut BTreeMap<String, String>, libdir: &Pa
 
 #[cfg(target_os = "macos")]
 fn add_llvm_runtime_library_path(env: &mut BTreeMap<String, String>, libdir: &Path) {
-    prepend_path_env(env, "DYLD_LIBRARY_PATH", libdir);
+    // DYLD_LIBRARY_PATH overrides even resolved @rpath dependencies: Homebrew's
+    // libLLVM.dylib can replace rustc's bundled LLVM with an incompatible major
+    // version before compilation starts. A fallback keeps existing install
+    // names/rpaths authoritative while allowing PECOS to find its shared LLVM.
+    prepend_path_env(env, "DYLD_FALLBACK_LIBRARY_PATH", libdir);
 }
 
 #[cfg(target_os = "windows")]

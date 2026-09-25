@@ -81,7 +81,6 @@ GUPPY_NAMES = (
     "guppy_d3nonrot.py.txt",
     "guppy_d5.py.txt",
     "guppy_d7.py.txt",
-    "guppy_dx1dz3.py.txt",
     "guppy_dx3dz5.py.txt",
     "guppy_dx5dz3.py.txt",
 )
@@ -358,9 +357,8 @@ def test_measurement_membership_uses_allocation(basis: str | None) -> None:
 
 def test_protocol_source_parity() -> None:
     """The post-fix protocol capture guards rendered source against drift."""
-    assert (
-        render_surface_protocol_module(SurfacePatch.create(distance=3)) == (GOLDENS / "protocol_d3.py.txt").read_text()
-    )
+    source = render_surface_protocol_module(SurfacePatch.create(distance=3))
+    assert source == (GOLDENS / "protocol_d3.py.txt").read_text()
 
 
 def test_two_register_ancilla_names() -> None:
@@ -436,9 +434,8 @@ def test_non_disjoint_allocations(within_register) -> None:
         bad = replace(allocation, x_ancilla_qubits=[allocation.data_qubits[0], *allocation.x_ancilla_qubits[1:]])
         gadget = replace(gadget, allocations=(bad,))
     else:
-        # Construct a valid two-patch gadget first, then inject overlapping IDs.
-        target = QubitAllocation([q + 100 for q in allocation.data_qubits], [], [])
+        # Disjoint data must not hide an overlap confined to the ancillary registers.
+        target = replace(allocation, data_qubits=[q + 100 for q in allocation.data_qubits])
         gadget = transversal_cx_gadget(patch, allocation, patch, target)
-        gadget = replace(gadget, allocations=(allocation, allocation))
     with pytest.raises(ValueError, match="allocations must be disjoint"):
         render_gadget_function(gadget)

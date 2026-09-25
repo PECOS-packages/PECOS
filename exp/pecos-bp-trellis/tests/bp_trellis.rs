@@ -384,3 +384,85 @@ fn bptrellis_escalates_through_observable_decoder_trait_object() {
 
     assert_eq!(boxed.decode_to_observables(&[0, 0, 1]).unwrap(), 1);
 }
+
+#[test]
+fn parallel_batch_matches_bp_ladder_shot_for_shot() {
+    use std::hash::{DefaultHasher, Hash, Hasher};
+    // Deterministic pseudorandom small DEM, without a new RNG dependency.
+    let mechanisms = (0_u32..24)
+        .map(|index| {
+            let mut hash = DefaultHasher::new();
+            (0x4250_4241_u32, index).hash(&mut hash);
+            let bits = hash.finish();
+            let probability = 0.02 + f64::from(u32::try_from(bits % 350).unwrap()) / 1000.0;
+            let detectors = (0..5).filter(|bit| bits & (1 << bit) != 0).collect();
+            (probability, detectors, vec![index % 2])
+        })
+        .collect();
+    // Detector 5 is untouched, providing terminal NoPath shots as well.
+    let dem = sparse_dem(mechanisms, 6, 2);
+    let config = BpTrellisConfig {
+        k: 1,
+        delta: f64::INFINITY,
+        score_alpha: 0.01,
+        bp_score_iterations: 5,
+        merge_indistinguishable: false,
+        ordering: TrellisOrdering::TimeOrder,
+        escalation_ks: vec![2, 64],
+    };
+    let mut decoder = BpTrellisDecoder::from_sparse_dem(&dem, config).unwrap();
+    let shots: Vec<Vec<u8>> = (0..1025)
+        .map(|index| {
+            let pattern = (index * 37) % 64;
+            (0..6)
+                .map(|bit| u8::from(pattern & (1 << bit) != 0))
+                .collect()
+        })
+        .collect();
+    let sequential: Vec<_> = shots.iter().map(|shot| decoder.decode(shot)).collect();
+    assert!(
+        sequential
+            .iter()
+            .any(|result| result.as_ref().is_ok_and(|r| r.escalation_rungs_used > 0))
+    );
+    assert!(sequential.iter().any(Result::is_err));
+    for workers in [1, 4] {
+        let batch = decoder.decode_batch(&shots, workers).unwrap();
+        assert_eq!(batch.len(), shots.len());
+        for (actual, expected) in batch.iter().zip(&sequential) {
+            match (actual, expected) {
+                (Ok(actual), Ok(expected)) => {
+                    assert_results_bitwise_equal_except_timing(actual, expected);
+                    assert_eq!(
+                        actual.log_evidence.to_bits(),
+                        expected.log_evidence.to_bits()
+                    );
+                    assert_eq!(
+                        actual.dropped_log_mass.to_bits(),
+                        expected.dropped_log_mass.to_bits()
+                    );
+                    assert_eq!(
+                        actual.runner_up_gap.map(f64::to_bits),
+                        expected.runner_up_gap.map(f64::to_bits)
+                    );
+                    for (a, b) in actual.logical_masses.iter().zip(&expected.logical_masses) {
+                        assert_eq!(a.log_mass.to_bits(), b.log_mass.to_bits());
+                    }
+                }
+                (Err(actual), Err(expected)) => {
+                    assert_eq!(actual.to_string(), expected.to_string());
+                }
+                _ => panic!("batch outcome differs"),
+            }
+        }
+        assert!(decoder.decode_batch(&[], workers).unwrap().is_empty());
+    }
+    assert!(matches!(
+        decoder.decode_batch(&[], 0),
+        Err(DecoderError::InvalidConfiguration(_))
+    ));
+    assert!(matches!(
+        &decoder.decode_batch(&[vec![0]], 4).unwrap()[0],
+        Err(DecoderError::InvalidDimensions { .. })
+    ));
+}

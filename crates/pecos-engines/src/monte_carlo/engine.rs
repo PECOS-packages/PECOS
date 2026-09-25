@@ -372,6 +372,15 @@ impl MonteCarloEngine {
         seed_report: &SeedReport,
     ) -> Result<ShotVec, PecosError> {
         seed_report.validate()?;
+        let run = if self
+            .hybrid_engine_template
+            .quantum_system
+            .uses_runtime_frames()
+        {
+            Some(crate::runtime_frame::next_run()?)
+        } else {
+            None
+        };
 
         debug!(
             "Executing {} shots across {} workers",
@@ -425,7 +434,17 @@ impl MonteCarloEngine {
                         // Catch panics during shot execution and convert to PecosError
                         let shot_result =
                             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                                engine.run_shot()
+                                if let Some(run) = run {
+                                    engine.run_shot_with_context(
+                                        crate::runtime_frame::ShotContext {
+                                            run,
+                                            worker: worker_idx,
+                                            shot: shot_idx,
+                                        },
+                                    )
+                                } else {
+                                    engine.run_shot()
+                                }
                             }));
 
                         let shot_result = match shot_result {

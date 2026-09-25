@@ -634,10 +634,10 @@ impl ByteMessage {
         params_offset: usize,
         gate_type: GateType,
         param_count: usize,
-    ) -> (GateAngles, GateParams) {
+    ) -> Result<(GateAngles, GateParams), PecosError> {
         let trace_enabled = log::log_enabled!(Level::Trace);
         if param_count == 0 {
-            return (GateAngles::new(), GateParams::new());
+            return Ok((GateAngles::new(), GateParams::new()));
         }
 
         if trace_enabled {
@@ -658,6 +658,9 @@ impl ByteMessage {
                 trace!("parse_gate_parameters: Parameter {i} at offset {param_offset}: {param}");
             }
             if i < angle_count {
+                if !param.is_finite() {
+                    return Err(PecosError::Input("gate angle must be finite".into()));
+                }
                 angles.push(Angle64::from_radians(param));
             } else {
                 params.push(param);
@@ -673,7 +676,7 @@ impl ByteMessage {
             );
         }
 
-        (angles, params)
+        Ok((angles, params))
     }
 
     /// Validate that the payload has exactly the parameter bytes required by the gate.
@@ -759,7 +762,7 @@ impl ByteMessage {
         // The wire format stores all classical parameters as f64, with angles first (in radians)
         let (angles, params) = if has_params || (gate_type == GateType::Custom && param_count > 0) {
             let parsed =
-                Self::parse_gate_parameters(payload, params_offset, gate_type, param_count);
+                Self::parse_gate_parameters(payload, params_offset, gate_type, param_count)?;
             if trace_enabled {
                 trace!(
                     "parse_gate_command: Parsed parameters: angles={:?}, params={:?}",

@@ -294,6 +294,13 @@ fn process_clifford_message<S: CliffordGateable + CliffordRotation + QuantumSimu
                 };
                 result.map_err(PecosError::Processing)?;
             }
+            GateType::RXYXY2Q => {
+                with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
+                    sim.try_rxyxy2q(cmd.angles[0], cmd.angles[1], pairs)
+                        .map(|_| ())
+                })
+                .map_err(PecosError::Processing)?;
+            }
             GateType::RXY1Q => {
                 sim.try_rxy1q(cmd.angles[0], cmd.angles[1], &cmd.qubits)
                     .map_err(PecosError::Processing)?;
@@ -528,6 +535,11 @@ fn process_general_message<
             GateType::RYY => {
                 with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
                     sim.ryy(cmd.angles[0], pairs);
+                });
+            }
+            GateType::RXYXY2Q => {
+                with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
+                    sim.rxyxy2q(cmd.angles[0], cmd.angles[1], pairs);
                 });
             }
             GateType::RXY1Q => {
@@ -1111,6 +1123,16 @@ where
                         cmd.qubits
                     );
                     self.simulator.rz(angle, &cmd.qubits);
+                }
+                GateType::RXYXY2Q => {
+                    if cmd.qubits.len() % 2 != 0 {
+                        return Err(quantum_error(format!(
+                            "RXYXY2Q gate requires even number of qubits, got {}",
+                            cmd.qubits.len()
+                        )));
+                    }
+                    let pairs = flat_to_pairs(&cmd.qubits);
+                    self.simulator.rxyxy2q(cmd.angles[0], cmd.angles[1], &pairs);
                 }
                 GateType::RXY1Q => {
                     let theta = cmd.angles[0];

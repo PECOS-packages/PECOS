@@ -132,16 +132,18 @@ pub struct GhostMessage {
 /// and 1 is on another:
 /// - `ghost_edge` = the 2-detector pair (within one qubit)
 /// - `ghost_singleton` = the lone detector (on the partner qubit)
-#[must_use]
+///
+/// # Errors
+/// Returns an error for malformed or non-flat DEM text or unsupported indices.
 pub fn extract_ghost_edges_from_dem(
     dem_str: &str,
     stab_coords: &crate::logical_subgraph::StabCoords,
-) -> Vec<GhostEdge> {
+) -> Result<Vec<GhostEdge>, crate::errors::DecoderError> {
     use crate::logical_subgraph::classify_detector;
     use std::collections::BTreeMap;
 
     // Parse detector coordinates
-    let det_coords = crate::dem::parse_detector_coords(dem_str);
+    let det_coords = crate::dem::parse_detector_coords(dem_str)?;
     let mut coord_map: BTreeMap<usize, Vec<f64>> = BTreeMap::new();
     for dc in &det_coords {
         coord_map.insert(dc.id as usize, dc.coords.clone());
@@ -160,26 +162,20 @@ pub fn extract_ghost_edges_from_dem(
     let mut ghost_edges = Vec::new();
 
     for line in dem_str.lines() {
-        let line = line.trim();
-        if !line.starts_with("error(") {
+        let Some(instruction) = crate::dem::grammar::parse_line(line)? else {
+            continue;
+        };
+        instruction.require_flat("extract_ghost_edges_from_dem")?;
+        if instruction.kind != crate::dem::grammar::Kind::Error {
             continue;
         }
-
-        let Some(close) = line.find(')') else {
-            continue;
-        };
-
-        let prob: f64 = match line[6..close].parse() {
-            Ok(p) => p,
-            Err(_) => continue,
-        };
-
+        let prob = instruction.args[0];
         let mut dets = Vec::new();
-        for token in line[close + 1..].split_whitespace() {
-            if let Some(d_str) = token.strip_prefix('D')
-                && let Ok(d) = d_str.parse::<usize>()
-            {
-                dets.push(d);
+        for target in instruction.targets {
+            if let crate::dem::grammar::Target::Detector(id) = target {
+                dets.push(usize::try_from(id).map_err(|_| {
+                    crate::dem::grammar::index_overflow(id, "detector", usize::MAX as u64)
+                })?);
             }
         }
 
@@ -220,7 +216,7 @@ pub fn extract_ghost_edges_from_dem(
         }
     }
 
-    ghost_edges
+    Ok(ghost_edges)
 }
 
 #[cfg(test)]
@@ -291,7 +287,7 @@ mod tests {
             error(0.01) D0 D1 D2\n\
             error(0.02) D0 D1\n";
 
-        let edges = extract_ghost_edges_from_dem(dem, &stab_coords);
+        let edges = extract_ghost_edges_from_dem(dem, &stab_coords).unwrap();
 
         // Should extract exactly 1 ghost edge from the 3-body mechanism
         assert_eq!(edges.len(), 1);
@@ -323,7 +319,7 @@ mod tests {
             error(0.01) D0 D1\n\
             error(0.005) D0\n";
 
-        let edges = extract_ghost_edges_from_dem(dem, &stab_coords);
+        let edges = extract_ghost_edges_from_dem(dem, &stab_coords).unwrap();
         assert_eq!(edges.len(), 0);
     }
 
@@ -343,7 +339,7 @@ mod tests {
             detector(3, 1, 0) D2\n\
             error(0.01) D0 D1 D2\n";
 
-        let edges = extract_ghost_edges_from_dem(dem, &stab_coords);
+        let edges = extract_ghost_edges_from_dem(dem, &stab_coords).unwrap();
         assert_eq!(edges.len(), 0);
     }
 }

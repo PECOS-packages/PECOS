@@ -196,6 +196,13 @@ def _replay_qis_trace_into_tick_circuit(
                 float(theta),
                 [(mapped_slot(int(qubit_a), op_name), mapped_slot(int(qubit_b), op_name))],
             )
+        elif op_name == "RXYXY2Q":
+            theta, phi, qubit_a, qubit_b = tuple_args(payload, op_name, 4)
+            tick.rxyxy2q(
+                float(theta),
+                float(phi),
+                [(mapped_slot(int(qubit_a), op_name), mapped_slot(int(qubit_b), op_name))],
+            )
         elif op_name in {"Measure", "MeasureLeaked"}:
             program_id, result_id = tuple_args(payload, op_name, 2)
             measurement_qubit = mapped_slot(int(program_id), op_name)
@@ -440,6 +447,9 @@ def _replay_lowered_qis_trace_into_tick_circuit(
             elif gate_type == "RZZ":
                 (theta,) = _require_gate_angles(angles, gate_type, 1)
                 tick.rzz(theta, _gate_pairs(qubits, gate_type))
+            elif gate_type == "RXYXY2Q":
+                theta, phi = _require_gate_angles(angles, gate_type, 2)
+                tick.rxyxy2q(theta, phi, _gate_pairs(qubits, gate_type))
             elif gate_type == "CCX":
                 tick.ccx(_gate_triples(qubits, gate_type))
             else:

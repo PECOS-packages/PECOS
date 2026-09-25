@@ -57,6 +57,7 @@ nav:
   - WASM Foreign Objects: user-guide/wasm-foreign-objects.md
   - HUGR & Guppy Simulation: user-guide/hugr-simulation.md
   - Runtime QIS Tracing: user-guide/runtime-qis-tracing.md
+  - Runtime Custom Events: user-guide/runtime-custom-events.md
   - Simulators: user-guide/simulators.md
   - Stabilizer Tensor Networks: user-guide/stabilizer-tensor-networks.md
   - Engine Selection: user-guide/engine-selection.md
@@ -101,6 +102,7 @@ nav:
   - Foreign Language Plugins: development/foreign-plugins.md
   - Parallel Blocks: development/parallel-blocks-and-optimization.md
   - Noise Event Replay: development/noise-event-replay.md
+  - Just-in-time DEM Slices: development/jit-dem-slices.md
 - Experimental:
   - experimental/index.md
   - Composable Noise (pecos-neo): experimental/composable-noise.md

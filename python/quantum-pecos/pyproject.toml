@@ -37,6 +37,7 @@ dependencies = [
     "tket~=0.15.0",
     "hugr~=0.18.0",
     "selene-sim~=0.3.0",
+    "selene-hugr-qis-compiler~=0.4.2",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",

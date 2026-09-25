@@ -4036,6 +4036,25 @@ mod tests {
     use super::*;
 
     #[test]
+    fn generated_import_paths_round_trip() {
+        for path in [
+            r"\\?\D:\a\PECOS\PECOS\exp\zlup\std\std.zlp",
+            r"\\server\share\std.zlp",
+            "/tmp/a\"quoted\"/std.zlp",
+            "/tmp/line\nbreak\tand\rcarriage/std.zlp",
+        ] {
+            let escaped = crate::tests::escape_source_string(path);
+            let source = format!("std := @import(\"{escaped}\");");
+            super::parse(&source).expect("generated import must parse on every host");
+            let literal = format!("\"{escaped}\"");
+            assert_eq!(
+                super::ParserState::new("").parse_string_content(&literal),
+                path
+            );
+        }
+    }
+
+    #[test]
     fn test_parse_empty() {
         let result = parse("");
         assert!(result.is_ok());

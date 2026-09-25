@@ -1,5 +1,5 @@
 mkdocs>=1.5.3
-mkdocs-material>=9.4.7
+mkdocs-material>=9.7.7  # GHSA-xvg9-69gf-fjrf: search.suggest DOM XSS
 mkdocstrings>=0.24.0
 mkdocstrings-python>=1.7.4
 markdown-exec>=1.10.3

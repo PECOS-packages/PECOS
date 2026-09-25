@@ -21,28 +21,28 @@
 //! [`FrontierDecoder`] is the parity port of Leverrier and Urbanke's Frontier
 //! decoder. Its input-order defaults remain those of that port.
 
-use pecos_decoder_core::ObservableDecoder;
-pub use pecos_trellis::factor::{Factor, FactorModel, Outcome};
-pub use pecos_trellis::{
+pub use crate::factor::{Factor, FactorModel, Outcome};
+pub use crate::{
     DecoderError, MetricMode, ObsMask, SparseDem, TrellisOrdering, TrellisStreamingDecoder,
     backward_deadline_column_order, backward_deadline_column_order_for_factors,
     deadline_column_order, deadline_column_order_for_factors,
 };
+use pecos_decoder_core::ObservableDecoder;
 use std::cmp::Ordering;
 use std::time::Instant;
 
-/// Parity-port name for [`pecos_trellis::TrellisDecoder`].
-pub type FrontierDecoder = pecos_trellis::TrellisDecoder;
-/// Parity-port name for [`pecos_trellis::TrellisConfig`].
-pub type FrontierConfig = pecos_trellis::TrellisConfig;
-/// Parity-port name for [`pecos_trellis::TrellisResult`].
-pub type FrontierResult = pecos_trellis::TrellisResult;
-/// Parity-port name for [`pecos_trellis::TrellisStatus`].
-pub type FrontierStatus = pecos_trellis::TrellisStatus;
-/// Parity-port name for [`pecos_trellis::TrellisDecodeAttempt`].
-pub type FrontierDecodeAttempt = pecos_trellis::TrellisDecodeAttempt;
-/// Parity-port name for [`pecos_trellis::TrellisLogicalMass`].
-pub type FrontierLogicalMass = pecos_trellis::TrellisLogicalMass;
+/// Parity-port name for [`crate::TrellisDecoder`].
+pub type FrontierDecoder = crate::TrellisDecoder;
+/// Parity-port name for [`crate::TrellisConfig`].
+pub type FrontierConfig = crate::TrellisConfig;
+/// Parity-port name for [`crate::TrellisResult`].
+pub type FrontierResult = crate::TrellisResult;
+/// Parity-port name for [`crate::TrellisStatus`].
+pub type FrontierStatus = crate::TrellisStatus;
+/// Parity-port name for [`crate::TrellisDecodeAttempt`].
+pub type FrontierDecodeAttempt = crate::TrellisDecodeAttempt;
+/// Parity-port name for [`crate::TrellisLogicalMass`].
+pub type FrontierLogicalMass = crate::TrellisLogicalMass;
 
 /// Direction selected by [`FrontierCommittee`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -184,7 +184,7 @@ impl FrontierCommittee {
         shots: &[Vec<u8>],
         workers: usize,
     ) -> Result<Vec<Result<FrontierCommitteeResult, DecoderError>>, DecoderError> {
-        pecos_trellis::batch::decode_batch(
+        crate::batch::decode_batch(
             shots,
             workers,
             || Self {
@@ -238,7 +238,7 @@ fn resolve_committee_attempts(
     forward_attempt: FrontierDecodeAttempt,
     backward_attempt: FrontierDecodeAttempt,
 ) -> Result<FrontierCommitteeResult, DecoderError> {
-    use pecos_trellis::TrellisDecodeAttempt::{Error, NoPath, Success};
+    use crate::TrellisDecodeAttempt::{Error, NoPath, Success};
 
     let forward = committee_member(&forward_attempt);
     let backward = committee_member(&backward_attempt);

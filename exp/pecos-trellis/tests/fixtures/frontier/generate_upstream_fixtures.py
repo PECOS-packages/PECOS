@@ -1,4 +1,4 @@
-"""Golden-fixture generator for pecos-frontier, run against the upstream frontier package.
+"""Golden-fixture generator for pecos_trellis::frontier, run against the upstream frontier package.
 
 Orchestrator-owned oracle: this script and its JSON output are authored and
 committed by the reviewer, not by the implementation. The implementation must

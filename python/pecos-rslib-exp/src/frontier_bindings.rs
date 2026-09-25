@@ -13,7 +13,7 @@
 use crate::decoder_specs::{
     decoder_error_to_py, indexed_decoder_error_to_py, validate_batch_workers,
 };
-use pecos_frontier::{
+use pecos_trellis::frontier::{
     CommitteeDirection, CommitteeMember, CommitteeStatus, Factor, FactorModel,
     FrontierCommittee as RustFrontierCommittee,
     FrontierCommitteeResult as RustFrontierCommitteeResult, FrontierConfig as RustFrontierConfig,

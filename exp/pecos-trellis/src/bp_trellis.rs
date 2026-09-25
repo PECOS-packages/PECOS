@@ -26,12 +26,12 @@
 //! defaults, ordering semantics, and optional no-path escalation ladder. The
 //! trellis engine lives in `pecos-trellis`.
 
-use pecos_decoder_core::ObservableDecoder;
-pub use pecos_trellis::TrellisOrdering;
-use pecos_trellis::{
+pub use crate::TrellisOrdering;
+use crate::{
     DecoderError, MetricMode, ObsMask, SparseDem, TrellisConfig, TrellisDecodeAttempt,
     TrellisDecoder, TrellisResult,
 };
+use pecos_decoder_core::ObservableDecoder;
 use std::time::Instant;
 
 /// Configuration for PECOS's [`BpTrellisDecoder`].
@@ -143,7 +143,7 @@ impl BpTrellisDecoder {
     /// Construct a decoder from a sparse detector error model.
     ///
     /// Unlike [`TrellisDecoder`], the default ordering is the explicitly
-    /// computed [`pecos_trellis::deadline_column_order`], not input order. Every configured
+    /// computed [`crate::deadline_column_order`], not input order. Every configured
     /// escalation rung is constructed here as an independent
     /// [`TrellisDecoder`], so construction cost scales with the full ladder
     /// and decode-time escalation performs no model building.
@@ -203,7 +203,7 @@ impl BpTrellisDecoder {
         shots: &[Vec<u8>],
         workers: usize,
     ) -> Result<Vec<Result<TrellisResult, DecoderError>>, DecoderError> {
-        pecos_trellis::batch::decode_batch(
+        crate::batch::decode_batch(
             shots,
             workers,
             || Self {

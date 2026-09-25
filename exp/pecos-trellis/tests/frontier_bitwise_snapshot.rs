@@ -10,15 +10,15 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-use pecos_frontier::{
+use pecos_trellis::frontier::{
     FrontierCommittee, FrontierConfig, FrontierDecoder, FrontierResult, SparseDem,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-const UPSTREAM_FIXTURES_JSON: &str = include_str!("fixtures/upstream_fixtures.json");
-const ORDER_FIXTURES_JSON: &str = include_str!("fixtures/upstream_order_fixtures.json");
+const UPSTREAM_FIXTURES_JSON: &str = include_str!("fixtures/frontier/upstream_fixtures.json");
+const ORDER_FIXTURES_JSON: &str = include_str!("fixtures/frontier/upstream_order_fixtures.json");
 
 #[derive(Debug, Deserialize)]
 struct FixtureFile<T> {
@@ -172,7 +172,7 @@ fn collect_snapshot() -> SnapshotFile {
                     column_order: None,
                     merge_indistinguishable: false,
                     bp_score_iterations: 0,
-                    metric_mode: pecos_frontier::MetricMode::default(),
+                    metric_mode: pecos_trellis::frontier::MetricMode::default(),
                     int_metric_scale: 1024,
                 },
             ),
@@ -185,7 +185,7 @@ fn collect_snapshot() -> SnapshotFile {
                     column_order: None,
                     merge_indistinguishable: false,
                     bp_score_iterations: 0,
-                    metric_mode: pecos_frontier::MetricMode::default(),
+                    metric_mode: pecos_trellis::frontier::MetricMode::default(),
                     int_metric_scale: 1024,
                 },
             ),
@@ -197,7 +197,10 @@ fn collect_snapshot() -> SnapshotFile {
                 let outcome = decoder.decode(&syndrome).map_or_else(
                     |error| {
                         assert!(
-                            matches!(error, pecos_frontier::DecoderError::DecodingFailed(_)),
+                            matches!(
+                                error,
+                                pecos_trellis::frontier::DecoderError::DecodingFailed(_)
+                            ),
                             "snapshot scenario hit an engine fault: {error}"
                         );
                         SnapshotOutcome::NoPath
@@ -230,7 +233,7 @@ fn collect_snapshot() -> SnapshotFile {
                 column_order: Some(fixture.forward_ordering),
                 merge_indistinguishable: false,
                 bp_score_iterations: 0,
-                metric_mode: pecos_frontier::MetricMode::default(),
+                metric_mode: pecos_trellis::frontier::MetricMode::default(),
                 int_metric_scale: 1024,
             },
         )
@@ -240,7 +243,10 @@ fn collect_snapshot() -> SnapshotFile {
             let outcome = committee.decode(&syndrome).map_or_else(
                 |error| {
                     assert!(
-                        matches!(error, pecos_frontier::DecoderError::DecodingFailed(_)),
+                        matches!(
+                            error,
+                            pecos_trellis::frontier::DecoderError::DecodingFailed(_)
+                        ),
                         "snapshot scenario hit an engine fault: {error}"
                     );
                     SnapshotOutcome::NoPath
@@ -261,7 +267,7 @@ fn collect_snapshot() -> SnapshotFile {
 }
 
 fn snapshot_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/bitwise_snapshot.json")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/frontier/bitwise_snapshot.json")
 }
 
 #[test]
@@ -295,7 +301,7 @@ fn bp_flag_is_bitwise_inert_on_the_unpruned_fast_path() {
             column_order: None,
             merge_indistinguishable: false,
             bp_score_iterations: 0,
-            metric_mode: pecos_frontier::MetricMode::default(),
+            metric_mode: pecos_trellis::frontier::MetricMode::default(),
             int_metric_scale: 1024,
         };
         let mut off = FrontierDecoder::from_sparse_dem(&dem, off_config.clone()).unwrap();

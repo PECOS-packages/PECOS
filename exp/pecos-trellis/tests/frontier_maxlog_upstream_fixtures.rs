@@ -10,13 +10,13 @@
 // either express or implied. See the License for the specific language governing permissions and
 // limitations under the License.
 
-use pecos_frontier::{
+use pecos_trellis::frontier::{
     FrontierConfig, FrontierDecoder, FrontierResult, FrontierStatus, MetricMode, ObsMask, SparseDem,
 };
 use serde::Deserialize;
 use std::collections::BTreeMap;
 
-const FIXTURES_JSON: &str = include_str!("fixtures/upstream_maxlog_fixtures.json");
+const FIXTURES_JSON: &str = include_str!("fixtures/frontier/upstream_maxlog_fixtures.json");
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]

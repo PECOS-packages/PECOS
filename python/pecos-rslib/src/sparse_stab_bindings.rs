@@ -96,6 +96,7 @@ fn supports(entry: &SymbolEntry) -> bool {
         Rxx => ["RXX"];
         Ryy => ["RYY"];
         Rzz => ["RZZ"];
+        Rxyxy2q => ["RXYXY2Q"];
         RxxRyyRzz => ["RXXRYYRZZ", "RZZRYYRXX", "R2XXYYZZ", "RXXYYZZ"];
         Ii => ["II"];
     }
@@ -505,6 +506,13 @@ impl PySparseStab {
                 let angle = extract_angle(params, "RYY")?;
                 self.inner
                     .try_ryy(angle, pair)
+                    .map_err(pyo3::exceptions::PyValueError::new_err)?;
+                Ok(None)
+            }
+            "RXYXY2Q" => {
+                let angles = extract_angles(params, "RXYXY2Q", GateType::RXYXY2Q.angle_arity())?;
+                self.inner
+                    .try_rxyxy2q(angles[0], angles[1], pair)
                     .map_err(pyo3::exceptions::PyValueError::new_err)?;
                 Ok(None)
             }

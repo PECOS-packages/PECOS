@@ -90,6 +90,7 @@ fn supports(entry: &SymbolEntry) -> bool {
         Rxx => ["RXX"];
         Ryy => ["RYY"];
         Rzz => ["RZZ"];
+        Rxyxy2q => ["RXYXY2Q"];
         RxxRyyRzz => ["RXXRYYRZZ", "RZZRYYRXX", "R2XXYYZZ", "RXXYYZZ"];
         Ii => ["II"];
     }
@@ -433,6 +434,11 @@ impl PyStabVec {
             "RYY" => {
                 let angle = extract_angle(params, "RYY")?;
                 self.inner.ryy(angle, pair);
+                Ok(None)
+            }
+            "RXYXY2Q" => {
+                let angles = extract_angles(params, "RXYXY2Q", GateType::RXYXY2Q.angle_arity())?;
+                self.inner.rxyxy2q(angles[0], angles[1], pair);
                 Ok(None)
             }
             "RZZ" => {

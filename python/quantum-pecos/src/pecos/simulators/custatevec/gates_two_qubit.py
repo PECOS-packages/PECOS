@@ -273,6 +273,26 @@ def RYY(
     _apply_two_qubit_matrix(state, qubits, matrix)
 
 
+def RXYXY2Q(
+    state: CuStateVec,
+    qubits: tuple[int, int],
+    angles: tuple[float, float],
+    **_params: SimulatorGateParams,
+) -> None:
+    """Apply the phase-exact shared XY-axis two-qubit rotation matrix."""
+    if len(angles) != 2:
+        msg = "RXYXY2Q requires exactly 2 angle parameters."
+        raise ValueError(msg)
+    theta, phi = angles
+    c = cmath.cos(theta / 2)
+    s = -1j * cmath.sin(theta / 2)
+    matrix = cp.asarray(
+        [c, 0, 0, s * cmath.exp(-2j * phi), 0, c, s, 0, 0, s, c, 0, s * cmath.exp(2j * phi), 0, 0, c],
+        dtype=state.cp_type,
+    )
+    _apply_two_qubit_matrix(state, qubits, matrix)
+
+
 def RZZ(
     state: CuStateVec,
     qubits: tuple[int, int],

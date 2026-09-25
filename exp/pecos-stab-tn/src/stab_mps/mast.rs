@@ -668,11 +668,9 @@ impl Mast {
             candidate_tableau = self.tableau.clone();
             candidate_mps = self.mps.clone();
             let original_config = self.mps.config().clone();
-            let mut retry_config = original_config.clone();
-            retry_config.max_bond_dim = candidate_mps.physical_rank_ceiling();
-            retry_config.svd_cutoff = 0.0;
-            retry_config.max_truncation_error = Some(0.0);
-            candidate_mps.set_config(retry_config);
+            candidate_mps.set_config(
+                original_config.without_truncation(candidate_mps.physical_rank_ceiling()),
+            );
             projection = super::measure::project_forced_z_with_update(
                 &mut candidate_tableau,
                 &mut candidate_mps,
@@ -2191,6 +2189,30 @@ mod tests {
             m.num_ancillas_used(),
             0,
             "CZ should not flush pending_rz, merge persists"
+        );
+    }
+
+    #[test]
+    fn mast_data_measurement_skips_transaction_with_non_truncating_config() {
+        let config = MpsConfig {
+            max_bond_dim: 2,
+            svd_cutoff: 0.0,
+            max_truncation_error: Some(0.0),
+            parallel: false,
+        };
+        let mut mast = Mast::with_seed(2, 1, 17).with_mps_config(config);
+        mast.h(&[QubitId(0), QubitId(1)]);
+        mast.cx(&[(QubitId(0), QubitId(1))]);
+        mast.rz(Angle64::from_radians(0.37), &[QubitId(0)]);
+        let before = super::super::EXACT_MEASUREMENT_TRANSACTIONS.get();
+        mast.mz(&[QubitId(0)]);
+        assert_eq!(super::super::EXACT_MEASUREMENT_TRANSACTIONS.get(), before);
+        assert!((mast.mps.norm_squared() - 1.0).abs() < 1e-12);
+        mast.mps.set_max_bond_dim(1);
+        mast.mz(&[QubitId(1)]);
+        assert_eq!(
+            super::super::EXACT_MEASUREMENT_TRANSACTIONS.get(),
+            before + 1
         );
     }
 

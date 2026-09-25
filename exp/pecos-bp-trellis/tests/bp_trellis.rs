@@ -10,7 +10,7 @@
 // either express or implied. See the License for the specific language governing permissions and
 // limitations under the License.
 
-use pecos_bp_trellis::{BpTrellisConfig, BpTrellisDecoder, TrellisOrdering};
+use pecos_bp_trellis::{BpTrellisConfig, BpTrellisDecoder, EscalationRung, TrellisOrdering};
 use pecos_decoder_core::ObservableDecoder;
 use pecos_trellis::{
     DecoderError, ObsMask, SparseDem, TrellisConfig, TrellisDecoder, TrellisResult,
@@ -75,7 +75,7 @@ fn bptrellis_defaults_enable_bp_merge_and_deadline_order() {
     assert_eq!(defaults.bp_score_iterations, 5);
     assert!(defaults.merge_indistinguishable);
     assert_eq!(defaults.ordering, TrellisOrdering::Deadline);
-    assert!(defaults.escalation_ks.is_empty());
+    assert!(defaults.escalation.is_empty());
 
     let dem = defaults_identity_dem();
     let deadline_order = deadline_column_order(&dem).unwrap();
@@ -169,7 +169,7 @@ fn bptrellis_matches_hand_mapped_trellis_for_every_ordering() {
                 bp_score_iterations: 0,
                 merge_indistinguishable: true,
                 ordering,
-                escalation_ks: Vec::new(),
+                escalation: Vec::new(),
             },
         )
         .unwrap();
@@ -257,7 +257,13 @@ fn escalation_config(k: usize, escalation_ks: Vec<usize>) -> BpTrellisConfig {
         bp_score_iterations: 0,
         merge_indistinguishable: false,
         ordering: TrellisOrdering::TimeOrder,
-        escalation_ks,
+        escalation: escalation_ks
+            .into_iter()
+            .map(|k| EscalationRung {
+                k,
+                delta: f64::INFINITY,
+            })
+            .collect(),
     }
 }
 
@@ -286,16 +292,19 @@ fn no_path_escalates_to_k16_and_accumulates_transitions() {
 fn exhausted_ladder_propagates_the_final_rung_error() {
     let dem = overpruning_escalation_dem();
     let syndrome = [0, 0, 1];
-    let mut bare_final =
-        BpTrellisDecoder::from_sparse_dem(&dem, escalation_config(2, Vec::new())).unwrap();
-    let expected = bare_final.decode(&syndrome).unwrap_err();
-
     let mut ladder =
         BpTrellisDecoder::from_sparse_dem(&dem, escalation_config(1, vec![2])).unwrap();
     let actual = ladder.decode(&syndrome).unwrap_err();
 
     assert!(matches!(actual, DecoderError::DecodingFailed(_)));
-    assert_eq!(actual.to_string(), expected.to_string());
+    assert_eq!(
+        actual.to_string(),
+        DecoderError::DecodingFailed(
+            "syndrome is unexplainable at the given pruning parameters after 1 escalation rungs"
+                .into()
+        )
+        .to_string()
+    );
 }
 
 #[test]
@@ -348,14 +357,20 @@ fn ladder_rung_matches_a_hand_built_decoder_except_accumulated_work() {
         3,
         1,
     );
-    let config_for = |k, escalation_ks| BpTrellisConfig {
+    let config_for = |k, escalation_ks: Vec<usize>| BpTrellisConfig {
         k,
         delta: f64::INFINITY,
         score_alpha: 0.0,
         bp_score_iterations: 0,
         merge_indistinguishable: true,
         ordering: TrellisOrdering::Explicit(vec![1, 2, 3, 0]),
-        escalation_ks,
+        escalation: escalation_ks
+            .into_iter()
+            .map(|k| EscalationRung {
+                k,
+                delta: f64::INFINITY,
+            })
+            .collect(),
     };
     let syndrome = [0, 0, 1];
     let mut ladder = BpTrellisDecoder::from_sparse_dem(&dem, config_for(2, vec![16])).unwrap();
@@ -408,7 +423,16 @@ fn parallel_batch_matches_bp_ladder_shot_for_shot() {
         bp_score_iterations: 5,
         merge_indistinguishable: false,
         ordering: TrellisOrdering::TimeOrder,
-        escalation_ks: vec![2, 64],
+        escalation: vec![
+            EscalationRung {
+                k: 2,
+                delta: f64::INFINITY,
+            },
+            EscalationRung {
+                k: 64,
+                delta: f64::INFINITY,
+            },
+        ],
     };
     let mut decoder = BpTrellisDecoder::from_sparse_dem(&dem, config).unwrap();
     let shots: Vec<Vec<u8>> = (0..1025)

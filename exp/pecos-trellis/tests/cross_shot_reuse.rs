@@ -35,10 +35,12 @@ fn assert_result_bits(actual: &TrellisResult, expected: &TrellisResult) {
         dropped_states,
         dropped_log_mass,
         bp_seconds: _,
+        bp_runs,
         escalation_rungs_used,
         status,
         logical_masses,
     } = actual;
+    assert_eq!(*bp_runs, expected.bp_runs);
     assert_eq!(predicted, &expected.predicted);
     assert_eq!(log_evidence.to_bits(), expected.log_evidence.to_bits());
     assert_eq!(
@@ -73,16 +75,19 @@ fn assert_attempt_bits(actual: &TrellisDecodeAttempt, expected: &TrellisDecodeAt
             TrellisDecodeAttempt::NoPath {
                 error: actual,
                 transitions: actual_transitions,
+                dropped_states: actual_drops,
                 bp_seconds: _,
             },
             TrellisDecodeAttempt::NoPath {
                 error: expected,
                 transitions: expected_transitions,
+                dropped_states: expected_drops,
                 bp_seconds: _,
             },
         ) => {
             assert_eq!(actual.to_string(), expected.to_string());
             assert_eq!(actual_transitions, expected_transitions);
+            assert_eq!(actual_drops, expected_drops);
         }
         (TrellisDecodeAttempt::Error(actual), TrellisDecodeAttempt::Error(expected)) => {
             assert_eq!(actual.to_string(), expected.to_string());

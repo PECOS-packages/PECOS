@@ -184,6 +184,13 @@ The second return value is graphlike and can go to any matching decoder.
 splits only mechanisms whose provenance is already recorded and raises for the
 rest — it has no circuit to re-derive provenance from.
 
+## BP-Trellis no-path outcomes
+
+The direct BP-Trellis methods support `on_no_path="report"` for explicit
+placeholders, while the spec route stays strict. See the
+[BP-Trellis user guide](../user-guide/decoders.md#rust-backed-bp-trellis-batch-decoding)
+for ladder parameters, no-path causes, and per-shot telemetry.
+
 ## What is not here yet
 
 `frontier()` and `bp_trellis()` are not `DecoderSpec` values: `DecoderSpec.parse`

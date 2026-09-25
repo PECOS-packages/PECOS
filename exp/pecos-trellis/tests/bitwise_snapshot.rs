@@ -172,6 +172,7 @@ fn snapshot_outcome(attempt: TrellisDecodeAttempt) -> SnapshotOutcome {
     match attempt {
         TrellisDecodeAttempt::Success(result) => snapshot_result(result),
         TrellisDecodeAttempt::NoPath {
+            dropped_states: _,
             error,
             transitions,
             bp_seconds,

@@ -13,6 +13,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::path::Path;
 use std::str::FromStr;
+use std::sync::Arc;
 
 use crate::ast::{Expression, Operation};
 use crate::bitvec_expression::{
@@ -33,8 +34,10 @@ struct GateInfo {
 
 /// A QASM Engine that can generate native commands from a QASM program
 pub struct QASMEngine {
-    /// The QASM Program being executed
-    program: Option<QASMProgram>,
+    /// The QASM Program being executed. Immutable once loaded and shared
+    /// through an `Arc` so the batch loop can hold a handle without copying
+    /// the AST.
+    program: Option<Arc<QASMProgram>>,
 
     /// Mapping from measurement order to register names and bit indices
     /// Each entry is (`register_name`, `bit_index`) mapped by the order of measurements
@@ -128,7 +131,7 @@ impl QASMEngine {
         self.raw_measurements.clear();
         self.register_result_mappings.clear();
 
-        self.program = Some(program);
+        self.program = Some(Arc::new(program));
         self.reset_state();
     }
 
@@ -737,11 +740,10 @@ impl QASMEngine {
         }
     }
 
-    /// Get the gate table for table-driven processing
-    #[allow(clippy::too_many_lines)]
-    fn get_gate_table() -> Vec<GateInfo> {
+    /// Gate table for table-driven processing, searched in order.
+    const GATE_TABLE: &[GateInfo] = {
         use GateInfo as G;
-        vec![
+        &[
             // Single-qubit gates
             G {
                 name: "h",
@@ -883,7 +885,7 @@ impl QASMEngine {
                 handler: Self::handle_swap,
             },
         ]
-    }
+    };
 
     /// Process a single gate operation using table-driven approach
     fn process_gate_operation(
@@ -892,12 +894,9 @@ impl QASMEngine {
         qubits: &[usize],
         parameters: &[f64],
     ) -> Result<bool, PecosError> {
-        let gate_table = Self::get_gate_table();
-        let name_lower = name.to_lowercase();
-
-        // Find the gate in the table
-        for gate_info in &gate_table {
-            if gate_info.name == name_lower {
+        // Find the gate in the table; QASM gate names are ASCII identifiers
+        for gate_info in Self::GATE_TABLE {
+            if gate_info.name.eq_ignore_ascii_case(name) {
                 // Validate qubit count
                 if qubits.len() != gate_info.required_qubits {
                     return Err(PecosError::Input(format!(
@@ -1029,12 +1028,14 @@ impl QASMEngine {
         self.message_builder.reset();
         let _ = self.message_builder.for_quantum_operations();
 
-        // Clone to avoid borrow checking issues
+        // The loop below needs `&mut self` while it reads the program, so hold
+        // the program through its own handle. Cloning the `QASMProgram` itself
+        // here copied the whole AST and gate table once per batch, which
+        // dominated the per-shot time of circuit simulations.
         let qasm_program = self
             .program
-            .as_ref()
-            .ok_or_else(|| PecosError::Input("No QASM program loaded".to_string()))?
-            .clone();
+            .clone()
+            .ok_or_else(|| PecosError::Input("No QASM program loaded".to_string()))?;
 
         let program = qasm_program.program();
 

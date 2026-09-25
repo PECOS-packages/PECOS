@@ -39,6 +39,7 @@ pub struct StructuredDemError {
 }
 
 /// A flattened DEM retaining component structure and detector coordinates.
+/// Preserves written targets.
 #[derive(Debug, Clone, PartialEq)]
 pub struct StructuredDem {
     /// Independent error instructions.

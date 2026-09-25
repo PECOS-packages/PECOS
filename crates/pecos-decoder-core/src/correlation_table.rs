@@ -27,7 +27,7 @@
 //! The conditional weight is only applied during decoding if it's LOWER than
 //! the current weight (makes the correlated edge more likely).
 
-use crate::dem::grammar::{Kind, Target, parse_line, target_indices};
+use crate::dem::grammar::{Kind, Target, parse_line, target_effect, target_indices, xor_indices};
 use crate::errors::DecoderError;
 use std::collections::BTreeMap;
 
@@ -100,33 +100,22 @@ impl CorrelationTable {
             };
             instruction.require_flat("CorrelationTable")?;
             // Validate consumer index limits even for mechanisms outside the probability window.
-            target_indices(&instruction.targets)?;
+            let (detectors, _) = target_indices(&instruction.targets)?;
             if instruction.kind != Kind::Error {
                 continue;
             }
             let probability = instruction.args[0];
-            if probability <= 0.0 || probability > 0.5 {
+            if probability <= 0.0 || probability > 0.5 || xor_indices(detectors).is_empty() {
                 continue;
             }
-            let components: Vec<_> = instruction.components().collect();
-
-            if components.len() < 2 {
-                // Non-decomposed mechanism: accumulate marginal only
-                let key = parse_component_edge_key(components[0])?;
-                if let Some(key) = key {
-                    let marginal = joint_probs.entry((key, key)).or_insert(0.0);
-                    *marginal = bernoulli_xor(*marginal, probability);
-                }
-                continue;
-            }
-
-            // Decomposed mechanism: accumulate joint and marginal for all pairs
-            let mut component_keys: Vec<EdgeKey> = Vec::new();
-            for component in &components {
+            let mut component_keys = Vec::new();
+            // Validate all written indices first, then fold each component for its edge key.
+            for component in instruction.components() {
                 if let Some(key) = parse_component_edge_key(component)? {
                     component_keys.push(key);
                 }
             }
+            let component_keys = xor_indices(component_keys);
 
             // Joint probabilities for all pairs
             for i in 0..component_keys.len() {
@@ -202,7 +191,7 @@ impl CorrelationTable {
 
 /// Collect detector indices from a component and return its edge key.
 fn parse_component_edge_key(component: &[Target]) -> Result<Option<EdgeKey>, DecoderError> {
-    let (detectors, _) = target_indices(component)?;
+    let (detectors, _) = target_effect(component)?;
     // Pure observables and hyperedges do not define graph edges.
     Ok(match detectors.len() {
         1 => Some((detectors[0], u32::MAX)), // Boundary edge
@@ -227,6 +216,32 @@ mod tests {
         assert!((bernoulli_xor(0.1, 0.2) - 0.26).abs() < 1e-10);
         assert!((bernoulli_xor(0.0, 0.5) - 0.5).abs() < 1e-10);
         assert!((bernoulli_xor(0.5, 0.5) - 0.5).abs() < 1e-10);
+    }
+
+    #[test]
+    fn duplicate_targets_and_components_cancel_before_correlating() {
+        let edge_map = BTreeMap::from([((0, u32::MAX), 0), ((1, 2), 1)]);
+        for targets in ["D0 D0 ^ D1 D2", "D0 ^ D0 ^ D1 D2", "D0 D1 ^ D1 D2 ^ D0 D2"] {
+            let table =
+                CorrelationTable::from_dem_str(&format!("error(0.1) {targets}"), &edge_map, 2)
+                    .unwrap();
+            assert!(!table.has_correlations(), "{targets}");
+        }
+        let text = "error(0.1) D0 ^ D0 ^ D0 ^ D1 D2";
+        let table = CorrelationTable::from_dem_str(text, &edge_map, 2).unwrap();
+        let reference =
+            CorrelationTable::from_dem_str("error(0.1) D0 ^ D1 D2", &edge_map, 2).unwrap();
+        assert_eq!(table.num_correlations(), 2);
+        for (actual, expected) in table.implied_weights.iter().zip(&reference.implied_weights) {
+            assert_eq!(actual.len(), expected.len());
+            for (actual, expected) in actual.iter().zip(expected) {
+                assert_eq!(actual.target_edge_idx, expected.target_edge_idx);
+                assert_eq!(
+                    actual.conditional_weight.to_bits(),
+                    expected.conditional_weight.to_bits()
+                );
+            }
+        }
     }
 
     #[test]

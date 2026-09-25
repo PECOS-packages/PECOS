@@ -635,10 +635,15 @@ fn rejects_duplicate_detector_and_observable_indices() {
     let observable_message = observable_error.to_string();
     assert!(observable_message.contains("mechanism 0"));
     assert!(observable_message.contains("observable index 1"));
+}
 
-    let parsed_error =
-        TrellisDecoder::from_dem_str("error(0.1) D0 D0\n", TrellisConfig::default()).unwrap_err();
-    assert!(parsed_error.to_string().contains("detector index 0"));
+#[test]
+fn parsed_duplicate_targets_have_an_empty_effect() {
+    let mut decoder = TrellisDecoder::from_dem_str("error(0.1) D0 D0\n", exact_config()).unwrap();
+    let result = decoder.decode(&[0]).unwrap();
+    assert!(result.predicted.is_zero());
+    assert!(result.log_evidence.abs() < 1e-12);
+    assert!(decoder.decode(&[1]).is_err());
 }
 
 #[test]

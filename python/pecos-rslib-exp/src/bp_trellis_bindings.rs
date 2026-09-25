@@ -10,7 +10,9 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-use crate::decoder_specs::decoder_error_to_py;
+use crate::decoder_specs::{
+    decoder_error_to_py, indexed_decoder_error_to_py, validate_batch_workers,
+};
 use pecos_bp_trellis::{
     BpTrellisConfig as RustBpTrellisConfig, BpTrellisDecoder as RustBpTrellisDecoder,
     TrellisOrdering as RustTrellisOrdering,
@@ -363,11 +365,36 @@ impl PyBpTrellisDecoder {
             .map_err(|error| decoder_error_to_py(&error))
     }
 
-    /// Decode a batch of dense detector syndromes in input order.
-    fn decode_batch(&mut self, shots: Vec<Vec<u8>>) -> PyResult<Vec<PyBpTrellisResult>> {
-        shots
+    /// Decode dense detector syndromes in input order. Defaults to sequential
+    /// execution; workers > 1 shares the model across workers and releases the GIL.
+    /// workers must be positive and is capped at one per shot (one for an empty batch).
+    /// Each worker owns independent decoding scratch.
+    #[pyo3(signature = (shots, *, workers=1))]
+    fn decode_batch(
+        &self,
+        py: Python<'_>,
+        shots: Vec<Vec<u8>>,
+        workers: i64,
+    ) -> PyResult<Vec<PyBpTrellisResult>> {
+        let workers = validate_batch_workers(workers)?;
+        let decode = || self.inner.decode_batch(&shots, workers);
+        let results = if workers > 1 {
+            py.detach(decode)
+        } else {
+            decode()
+        }
+        .map_err(|error| decoder_error_to_py(&error))?;
+        results
             .into_iter()
-            .map(|syndrome| self.decode_syndrome(syndrome))
+            .enumerate()
+            .map(|(shot_index, result)| {
+                result
+                    .map(|inner| PyBpTrellisResult {
+                        inner,
+                        num_observables: self.num_observables,
+                    })
+                    .map_err(|error| indexed_decoder_error_to_py(shot_index, &error))
+            })
             .collect()
     }
 

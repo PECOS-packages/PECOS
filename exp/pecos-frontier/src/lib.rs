@@ -24,9 +24,9 @@
 use pecos_decoder_core::ObservableDecoder;
 pub use pecos_trellis::factor::{Factor, FactorModel, Outcome};
 pub use pecos_trellis::{
-    DecoderError, MetricMode, ObsMask, SparseDem, TrellisOrdering, backward_deadline_column_order,
-    backward_deadline_column_order_for_factors, deadline_column_order,
-    deadline_column_order_for_factors,
+    DecoderError, MetricMode, ObsMask, SparseDem, TrellisOrdering, TrellisStreamingDecoder,
+    backward_deadline_column_order, backward_deadline_column_order_for_factors,
+    deadline_column_order, deadline_column_order_for_factors,
 };
 use std::cmp::Ordering;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
@@ -198,6 +198,30 @@ impl FrontierCommittee {
         Self::from_sparse_dem(&dem, config)
     }
 
+    /// Decode dense shots in input order with shared models and worker-local scratch.
+    ///
+    /// Workers are capped at one per shot, with one worker for an empty batch.
+    ///
+    /// # Errors
+    /// Returns `InvalidConfiguration` for zero workers and `InternalError` for pool creation failure.
+    /// Individual shot errors are retained in input order.
+    pub fn decode_batch(
+        &self,
+        shots: &[Vec<u8>],
+        workers: usize,
+    ) -> Result<Vec<Result<FrontierCommitteeResult, DecoderError>>, DecoderError> {
+        pecos_trellis::batch::decode_batch(
+            shots,
+            workers,
+            || Self {
+                forward: self.forward.fresh_worker(),
+                backward: self.backward.fresh_worker(),
+                build_seconds: self.build_seconds,
+            },
+            Self::decode,
+        )
+    }
+
     /// Decode with both processing directions and select the stronger result.
     ///
     /// Failure provenance comes from the engine's structured
@@ -354,6 +378,48 @@ mod tests {
     };
     use pecos_decoder_core::obs_mask::ObsMask;
     use std::collections::BTreeMap;
+
+    #[test]
+    fn committee_batch_matches_sequential() {
+        let dem =
+            SparseDem::from_dem_str("error(0.2) D0 D1 L0\nerror(0.1) D0\ndetector D2\n").unwrap();
+        let mut decoder = FrontierCommittee::from_sparse_dem(
+            &dem,
+            FrontierConfig {
+                k: 1,
+                bp_score_iterations: 5,
+                ..FrontierConfig::default()
+            },
+        )
+        .unwrap();
+        let shots: Vec<Vec<u8>> = (0..257)
+            .map(|i| (0..3).map(|bit| u8::from(i & (1 << bit) != 0)).collect())
+            .collect();
+        for workers in [1, 4] {
+            for (actual, shot) in decoder
+                .decode_batch(&shots, workers)
+                .unwrap()
+                .into_iter()
+                .zip(&shots)
+            {
+                match (actual, decoder.decode(shot)) {
+                    (Ok(mut actual), Ok(mut expected)) => {
+                        actual.selected.bp_seconds = 0.0;
+                        expected.selected.bp_seconds = 0.0;
+                        assert_eq!(actual, expected);
+                    }
+                    (Err(actual), Err(expected)) => {
+                        assert_eq!(actual.to_string(), expected.to_string());
+                    }
+                    _ => panic!("committee batch outcome differs"),
+                }
+            }
+        }
+        assert!(matches!(
+            decoder.decode_batch(&[], 0),
+            Err(DecoderError::InvalidConfiguration(_))
+        ));
+    }
 
     fn no_path_attempt() -> FrontierDecodeAttempt {
         FrontierDecodeAttempt::NoPath {

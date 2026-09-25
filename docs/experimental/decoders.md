@@ -50,6 +50,14 @@ batch = FrontierDecoder.from_dem(dem).decode_batch([[1, 1, 1], [0, 0, 0]])
 assert [list(shot.observable_flips) for shot in batch] == [[True], [False]]
 ```
 
+For `FrontierDecoder`, `FrontierCommitteeDecoder` (Rust `FrontierCommittee`), and
+`BpTrellisDecoder`, `decode_batch(shots, workers=N)` decodes on N workers sharing
+one model (both leg models for the committee), with results returned in input order.
+The default is `workers=1` (sequential). Workers are capped at one per shot,
+with one worker for an empty batch. Zero or negative `workers` raises
+`ValueError`; integers outside the signed 64-bit range raise `OverflowError`.
+If a shot fails, the raised error includes the first failing shot's zero-based index.
+
 BP-Trellis exposes the identical result surface:
 
 <!--continuation-->

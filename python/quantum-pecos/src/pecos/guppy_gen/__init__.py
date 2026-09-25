@@ -29,6 +29,7 @@ from pecos.guppy_gen.color import (
     get_num_qubits_color,
     make_color_code,
 )
+from pecos.guppy_gen.gadget_render import make_surface_memory
 from pecos.guppy_gen.protocol_render import load_surface_protocol_module, render_surface_protocol_module
 from pecos.guppy_gen.surface import (
     generate_guppy_source,
@@ -60,6 +61,7 @@ __all__ = [
     "get_num_qubits",
     "get_surface_code_module",
     "make_surface_code",
+    "make_surface_memory",
     "render_surface_protocol_module",
     "load_surface_protocol_module",
     # Color code

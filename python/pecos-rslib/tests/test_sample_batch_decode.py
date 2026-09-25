@@ -18,6 +18,7 @@ from pecos_rslib.decoders import (
     pymatching,
     relay_bp,
     tesseract,
+    tesseract_trellis,
 )
 from pecos_rslib import TickCircuit
 from pecos_rslib.qec import DagFaultAnalyzer, DemSampler, SampleBatch
@@ -47,6 +48,7 @@ def _aperiodic_batch(num_shots: int) -> SampleBatch:
         ("pymatching", lambda: pymatching(correlated=True)),
         ("pymatching_uncorrelated", lambda: pymatching(correlated=False)),
         ("tesseract", lambda: tesseract(preset="fast")),
+        ("tesseract_trellis", lambda: tesseract_trellis()),
         ("bp_osd", bp_osd),
         ("fusion_blossom_serial", lambda: fusion_blossom(solver="serial")),
         ("pecos_uf", pecos_uf),
@@ -87,6 +89,32 @@ def test_native_batch_honors_both_pymatching_correlation_modes() -> None:
         predictions_by_mode.append(native.predictions)
 
     assert predictions_by_mode[0] != predictions_by_mode[1]
+
+
+@pytest.mark.parametrize("correlated", [False, True])
+@pytest.mark.parametrize(("workers", "execution_path"), [(1, "sequential"), (3, "parallel"), (None, "native_batch")])
+@pytest.mark.parametrize("predictions", [False, True])
+def test_pymatching_without_observables(correlated, workers, execution_path, predictions) -> None:
+    dem = "error(0.1) D0 D1"
+    batch = SampleBatch([[0, 0], [1, 1]], [0, 0], num_observables=0)
+    result = batch.decode(dem, pymatching(correlated=correlated), workers=workers, predictions=predictions)
+    reference = batch.decode(dem, bp_osd(), workers=workers, predictions=predictions)
+
+    assert result.execution_path == execution_path
+    assert result.num_shots == reference.num_shots == 2
+    assert result.num_errors == reference.num_errors == 0
+    assert result.predictions == reference.predictions == ([0, 0] if predictions else None)
+
+    sampler = DemSampler.from_dem_string(dem)
+    sampled = sampler.decode(
+        dem, 64, pymatching(correlated=correlated), seed=1, workers=workers, predictions=predictions
+    )
+    sampled_reference = sampler.decode(dem, 64, bp_osd(), seed=1, workers=workers, predictions=predictions)
+
+    assert sampled.execution_path == execution_path
+    assert sampled.num_shots == sampled_reference.num_shots == 64
+    assert sampled.num_errors == sampled_reference.num_errors == 0
+    assert sampled.predictions == sampled_reference.predictions == ([0] * 64 if predictions else None)
 
 
 def test_prediction_and_timing_requests_can_be_combined() -> None:

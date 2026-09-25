@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import math
+import random
 
 import pytest
 
@@ -313,6 +314,77 @@ def test_decode_batch_matches_individual_decodes() -> None:
     assert [result.observable_flips.mask for result in batch] == [result.observable_flips.mask for result in individual]
     assert [result.log_evidence for result in batch] == [result.log_evidence for result in individual]
     assert [result.logical_masses for result in batch] == [result.logical_masses for result in individual]
+
+
+@pytest.mark.parametrize(
+    ("decoder_class", "metric_mode"),
+    [
+        (FrontierDecoder, "logsumexp_float"),
+        (FrontierDecoder, "maxlog_int"),
+        (FrontierCommitteeDecoder, "logsumexp_float"),
+    ],
+)
+def test_decode_batch_workers_match_all_public_fields(decoder_class, metric_mode: str) -> None:
+    rng = random.Random(35)
+    shots = [[rng.randrange(2) for _ in range(2)] for _ in range(1025)]
+    # BP is disabled so the public wall-clock field is also exactly comparable.
+    decoder = decoder_class.from_dem(SMALL_DEM, metric_mode=metric_mode, bp_score_iterations=0)
+    fields = (
+        "log_evidence",
+        "runner_up_gap",
+        "peak_retained_states",
+        "processed_columns",
+        "transitions",
+        "dropped_states",
+        "dropped_log_mass",
+        "bp_seconds",
+        "status",
+        "logical_masses",
+    )
+    if decoder_class is FrontierCommitteeDecoder:
+        fields += ("direction", "forward_log_evidence", "backward_log_evidence")
+    else:
+        fields += ("escalation_rungs_used",)
+    sequential = decoder.decode_batch(shots, workers=1)
+    for actual_batch in (decoder.decode_batch(shots), decoder.decode_batch(shots, workers=4)):
+        assert len(actual_batch) == len(sequential) == len(shots)
+        for actual, expected in zip(actual_batch, sequential, strict=True):
+            assert actual.observable_flips.mask == expected.observable_flips.mask
+            assert list(actual.observable_flips) == list(expected.observable_flips)
+            assert actual.observable_flips.indices() == expected.observable_flips.indices()
+            for field in fields:
+                assert getattr(actual, field) == getattr(expected, field), field
+    assert decoder.decode_batch([], workers=4) == []
+
+
+@pytest.mark.parametrize("decoder_class", [FrontierDecoder, FrontierCommitteeDecoder])
+@pytest.mark.parametrize("shots", [[], [[0, 0]]])
+@pytest.mark.parametrize(
+    ("workers", "error"),
+    [(0, ValueError), (-1, ValueError), (-(2**70), OverflowError), (2**70, OverflowError)],
+)
+def test_decode_batch_rejects_invalid_workers(
+    decoder_class,
+    shots: list[list[int]],
+    workers: int,
+    error: type[Exception],
+) -> None:
+    decoder = decoder_class.from_dem(SMALL_DEM)
+    match = "workers must be at least 1" if error is ValueError else None
+    with pytest.raises(error, match=match):
+        decoder.decode_batch(shots, workers=workers)
+
+
+@pytest.mark.parametrize("decoder_class", [FrontierDecoder, FrontierCommitteeDecoder])
+@pytest.mark.parametrize("workers", [1, 4])
+@pytest.mark.parametrize("shot", [[0], [0, 1]])
+def test_decode_batch_preserves_individual_errors(decoder_class, workers: int, shot: list[int]) -> None:
+    decoder = decoder_class.from_dem("error(0.1) D0 L0\ndetector D1\n")
+    with pytest.raises(RuntimeError) as individual_error:
+        decoder.decode_syndrome(shot)
+    with pytest.raises(RuntimeError) as batch_error:
+        decoder.decode_batch([[0, 0], shot, [1]], workers=workers)
+    assert str(batch_error.value) == f"shot 1: {individual_error.value}"
 
 
 DUPLICATE_DEM = """\

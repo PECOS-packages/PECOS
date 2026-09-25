@@ -3,7 +3,8 @@ use super::config::{
     BeamSearchConfig, BeliefMatchingConfig, BeliefMatchingMode, BpLsdConfig, BpOsdConfig,
     EnsembleConfig, FusionBlossomConfig, FusionBlossomSolverType, KMwpmConfig, MinSumBpConfig,
     MwpfConfig, MwpfSolverType, PecosUfPreset, PerturbedConfig, PerturbedFusionBlossomConfig,
-    PyMatchingConfig, RelayBpConfig, TesseractConfig, TesseractPreset, WindowedConfig,
+    PyMatchingConfig, RelayBpConfig, TesseractConfig, TesseractPreset, TesseractTrellisConfig,
+    WindowedConfig,
 };
 use pecos_decoder_core::DecoderError;
 use std::fmt::Display;
@@ -13,6 +14,9 @@ pub(super) fn parse(type_string: &str) -> Result<DecoderSpec, DecoderError> {
     match type_string {
         "pymatching" | "pymatching_correlated" => Ok(correlated_pymatching()),
         "pymatching_uncorrelated" => Ok(DecoderSpec::PyMatching(PyMatchingConfig::default())),
+        "tesseract_trellis" => Ok(DecoderSpec::TesseractTrellis(
+            TesseractTrellisConfig::default(),
+        )),
         "tesseract" => Ok(DecoderSpec::Tesseract(TesseractConfig {
             preset: TesseractPreset::Fast,
             ..TesseractConfig::default()
@@ -72,7 +76,7 @@ pub(super) fn parse(type_string: &str) -> Result<DecoderSpec, DecoderError> {
         value if value.starts_with("ensemble:") => parse_ensemble(&value["ensemble:".len()..]),
         _ => invalid(format!(
             "Unsupported decoder_type: {type_string}. \
-             Supported: pymatching, tesseract, mwpf, pecos_uf (or \
+             Supported: pymatching, tesseract, tesseract_trellis, mwpf, pecos_uf (or \
              pecos_uf:fast/balanced/accurate), logical_subgraph, ensemble:d1,d2,..., \
              bp_osd, bp_lsd, union_find, relay_bp, min_sum_bp."
         )),
@@ -420,6 +424,7 @@ mod tests {
             "pymatching_correlated",
             "pymatching_uncorrelated",
             "tesseract",
+            "tesseract_trellis",
             "k_mwpm",
             "astar",
             "astar_full",

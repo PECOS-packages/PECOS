@@ -86,14 +86,14 @@ otherwise. `round_order=None` uses the default schedule.
 | Function and remaining parameters | `GadgetKind` | Effect | Guppy sideband tags |
 |---|---|---|---|
 | `prep_gadget(..., basis=)` | `PREP` | Product preparation in Z, X, or Y; projection follows separately | None |
-| `init_syndrome_gadget(..., basis=, round_order=None, x_z_swapped=False)` | `INIT_SYNDROME` | Project the complementary family after Z or X preparation | `<label>:init:meas:<ordinal>` |
-| `syndrome_round_gadget(..., round_index=, round_order=None, x_z_swapped=False)` | `SYNDROME_ROUND` | Measure both check families | `<label>:meas:<ordinal>` |
+| `init_syndrome_gadget(..., basis=, round_order=None, x_z_swapped=False, ancilla_budget=None, ancilla_schedule=None)` | `INIT_SYNDROME` | Project the complementary family after Z or X preparation | `<label>:init:meas:<ordinal>` |
+| `syndrome_round_gadget(..., round_index=, round_order=None, x_z_swapped=False, ancilla_budget=None, ancilla_schedule=None)` | `SYNDROME_ROUND` | Measure both check families | `<label>:meas:<ordinal>` |
 | `fold_s_round_gadget(..., round_index=, x_z_swapped=False, dagger=False)` | `SYNDROME_ROUND` | Logical S or S-dagger within the default round | `<label>:meas:<ordinal>` |
 | `measure_out_gadget(..., basis=)` | `MEASURE_OUT` | Destructive Z or X data measurement | None; returns an array |
 | `logical_pauli_gadget(..., pauli=)` | `LOGICAL_PAULI` | Apply the geometry's logical X or Z string | None |
 | `transversal_layer_gadget(..., gate=)` | `TRANSVERSAL` | H exchanges X/Z orientation; SZ and SZDG are physical S layers | None |
 | `transversal_cx_gadget(ctrl_patch, ctrl_allocation, tgt_patch, tgt_allocation)` | `TWO_PATCH` | CX between corresponding data indices | None |
-| `memory_gadgets(patch, num_rounds, basis, allocation=None, round_order=None)` | List of gadget kinds | Z/X prep, initial projection, full rounds, readout | Constituent gadget tags |
+| `memory_gadgets(patch, num_rounds, basis, allocation=None, round_order=None, ancilla_budget=None, ancilla_schedule=None)` | List of gadget kinds | Z/X prep, initial projection, full rounds, readout | Constituent gadget tags |
 
 During generation the builder toggles its tracked orientation after a
 transversal H; standalone callers track orientation themselves and pass it to
@@ -130,10 +130,83 @@ assert tc.num_measurements() == 37
 assert tc.num_ticks() == 34
 ```
 
+`ancilla_budget` caps live ancillas without changing data-qubit lifetimes.
+`None` keeps dedicated ancillas. With a smaller budget, each batch allocates
+pool slots, rotates its X ancillas, runs the four CX layers filtered to its
+stabilizers, rotates back, measures, and ticks before the next allocation.
+`ancilla_schedule` selects `"default"` or `"balanced-data-v1"` using the shared
+batching contract. An explicit `QubitAllocation` must map stabilizers to pool
+slots for the same budget and schedule; `default_allocation` accepts both.
+The Guppy module derives its batching schedule from the CX `check_plan`;
+the gadget API takes `ancilla_budget` and `ancilla_schedule` separately.
+Returned syndrome arrays retain stabilizer-index order, while
+scalar tag ordinals follow the physical measurement order.
+
+```python
+from pecos.guppy_gen import get_num_qubits
+
+budgeted = gadgets.memory_gadgets(patch, 2, "Z", ancilla_budget=2)
+budget_allocation = budgeted[0].allocations[0]
+assert budget_allocation.data_qubits == allocation.data_qubits
+budget_tc = TickCircuitRenderer().render(
+    [step for part in budgeted for step in part.steps], budget_allocation, patch, 2, "Z"
+)
+assert budget_tc.num_ticks() == 94
+assert budget_tc.num_measurements() == 29
+live = set()
+peak = 0
+for tick_index in range(budget_tc.num_ticks()):
+    for gate in budget_tc.get_tick(tick_index).gate_batches():
+        if gate.gate_type.name == "QAlloc":
+            assert not live.intersection(gate.qubits)
+            live.update(gate.qubits)
+            peak = max(peak, len(live))
+        elif gate.gate_type.name == "MeasureFree":
+            live.difference_update(gate.qubits)
+assert peak == get_num_qubits(3, ancilla_budget=2) == 11
+```
+
 ```python
 source = render_surface_gadget_module(patch)
 assert "def make_memory_z" in source
 assert "def make_memory_x" in source
+```
+
+### Certified Guppy memory
+
+`make_surface_memory` accepts a `SurfacePatch` and returns a compiled
+gadget memory definition with a program-bound measurement-layout certificate.
+Memory modules require nonempty X and Z stabilizer families because Guppy
+cannot infer the type of the empty syndrome arrays emitted otherwise.
+Its layout comes from the gadget steps, including batch order when ancillas are
+reused. `build_dem_from_guppy`, `GuppyDemBuilder.build`, and
+`DetectorErrorModel.from_guppy` need this certificate for programs whose compiled
+form contains loops or conditionals. The abstract-circuit route and the builder
+route (`LogicalCircuitBuilder.to_tick_circuit()` then
+`DetectorErrorModel.from_circuit`) do not need a certificate.
+
+```python
+from pecos.guppy_gen import get_num_qubits, make_surface_code, make_surface_memory
+from pecos.qec import DetectorErrorModel
+from pecos.qec.surface import SurfacePatch
+from pecos.qec.surface.circuit_builder import generate_tick_circuit_from_patch
+
+memory_patch = SurfacePatch.create(distance=3)
+memory_circuit = generate_tick_circuit_from_patch(memory_patch, 2, "Z", ancilla_budget=2)
+dem_options = dict(
+    num_qubits=get_num_qubits(patch=memory_patch, ancilla_budget=2),
+    detectors_json=memory_circuit.get_meta("detectors"),
+    observables_json=memory_circuit.get_meta("observables"),
+    p1=0.001,
+    p2=0.001,
+    p_meas=0.001,
+    p_prep=0.001,
+)
+gadget_memory = make_surface_memory(memory_patch, 2, "Z", ancilla_budget=2)
+legacy_memory = make_surface_code(3, 2, "Z", ancilla_budget=2)
+gadget_dem = DetectorErrorModel.from_guppy(gadget_memory, **dem_options)
+legacy_dem = DetectorErrorModel.from_guppy(legacy_memory, **dem_options)
+assert gadget_dem.to_string() == legacy_dem.to_string()
 ```
 
 ### Preparation in Z
@@ -971,8 +1044,8 @@ for recipe in ("h", "cx", "sz", "t"):
 The Guppy protocol factories on this page cannot be traced into a DEM:
 they contain `comptime` loops and carry no trusted measurement-layout
 certificate. Their scoped tags serve `measurement_partition_from_trace` only,
-not DEM construction. `make_surface_code` memory programs have a generator
-certificate; these protocol factories do not. Use
+not DEM construction. `make_surface_code` and `make_surface_memory` programs
+have a generator certificate; these protocol factories do not. Use
 `LogicalCircuitBuilder.to_tick_circuit()` with `DetectorErrorModel.from_circuit`,
 or the builder's `build_dem`, for protocol DEMs.
 
@@ -1117,7 +1190,7 @@ for before_preparation in (True, False):
 |---|---|---|
 | `SurfacePatch.create` | `pecos.qec.surface` | Construct square or rectangular geometry |
 | `Gadget`, `GadgetKind` | `pecos.qec.surface.gadgets` | Physical definition and role |
-| `default_allocation` | `pecos.qec.surface.gadgets` | Data and dedicated ancilla registers |
+| `default_allocation` | `pecos.qec.surface.gadgets` | Data and dedicated or budgeted ancilla registers |
 | `prep_gadget`, `init_syndrome_gadget` | `pecos.qec.surface.gadgets` | Product preparation and complementary projection |
 | `syndrome_round_gadget`, `measure_out_gadget` | `pecos.qec.surface.gadgets` | Check extraction and destructive data readout |
 | `LogicalCircuitBuilder.add_logical_s`, `add_logical_sdg` | `pecos.qec.surface` | Fold syndrome segments with detectors and logical parity records |
@@ -1129,6 +1202,7 @@ for before_preparation in (True, False):
 | `TickCircuitRenderer`, `QubitAllocation`, `SurfaceCircuitStep` | `pecos.qec.surface.circuit_builder` | Render physical operations with register mapping |
 | `LogicalCircuitBuilder` | `pecos.qec.surface` | Compose protocols and export circuits, DEMs, and descriptors |
 | `render_gadget_function`, `render_surface_gadget_module` | `pecos.guppy_gen.gadget_render` | Render one function or the memory module |
+| `make_surface_memory` | `pecos.guppy_gen` | Compile certified single-patch gadget memory for Guppy DEM construction |
 | `render_surface_protocol_module`, `load_surface_protocol_module` | `pecos.guppy_gen` | Render or load the four protocol factories |
 | `simulate_tick_circuit`, `stabilizer_generators_after`, `group_contains` | `pecos.testing` | Noiseless simulation and signed stabilizer oracles |
 | `measurement_partition_from_builder`, `measurement_partition_from_trace`, `assert_same_measurement_partition` | `pecos.testing` | Measurement-partition agreement, not circuit or state-action equivalence |

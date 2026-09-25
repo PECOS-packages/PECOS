@@ -2,7 +2,7 @@ use super::config::{
     BeamSearchConfig, BeliefMatchingConfig, BeliefMatchingMode, BpLsdConfig, BpOsdConfig,
     EnsembleConfig, FusionBlossomConfig, KMwpmConfig, MinSumBpConfig, MwpfConfig, PecosUfPreset,
     PerturbedConfig, PerturbedFusionBlossomConfig, PyMatchingConfig, RelayBpConfig,
-    TesseractConfig, WindowedConfig,
+    TesseractConfig, TesseractTrellisConfig, WindowedConfig,
 };
 use super::{DecodeModel, DecoderSpec};
 use pecos_decoder_core::window::StructuredDem;
@@ -206,6 +206,7 @@ fn build_single(spec: &DecoderSpec, dem: &str) -> Result<Box<dyn ObservableDecod
     match spec {
         DecoderSpec::PyMatching(config) => build_pymatching(dem, config),
         DecoderSpec::Tesseract(config) => build_tesseract(dem, config),
+        DecoderSpec::TesseractTrellis(config) => build_tesseract_trellis(dem, config),
         DecoderSpec::KMwpm(config) => build_k_mwpm(dem, *config),
         DecoderSpec::AStar => build_astar(dem, false),
         DecoderSpec::AStarFull => build_astar(dem, true),
@@ -244,6 +245,7 @@ fn family_name(spec: &DecoderSpec) -> &'static str {
     match spec {
         DecoderSpec::PyMatching(_) => "pymatching",
         DecoderSpec::Tesseract(_) => "tesseract",
+        DecoderSpec::TesseractTrellis(_) => "tesseract_trellis",
         DecoderSpec::KMwpm(_) => "k_mwpm",
         DecoderSpec::AStar => "astar",
         DecoderSpec::AStarFull => "astar_full",
@@ -350,6 +352,43 @@ fn build_pymatching(
 }
 
 #[cfg(feature = "tesseract")]
+fn trellis_engine_config(config: &TesseractTrellisConfig) -> crate::TesseractTrellisConfig {
+    use super::config::TesseractTrellisRankingMode as SpecRanking;
+    use crate::TesseractTrellisRankingMode as EngineRanking;
+    crate::TesseractTrellisConfig {
+        beam_width: config.beam_width,
+        beam_eps: config.beam_eps,
+        future_detcost_scale: config.future_detcost_scale,
+        verbose: config.verbose,
+        merge_errors: config.merge_errors,
+        ranking_mode: match config.ranking_mode {
+            SpecRanking::MassOnly => EngineRanking::MassOnly,
+            SpecRanking::FutureDetcostRanked => EngineRanking::FutureDetcostRanked,
+            SpecRanking::FutureActiveDetcostRanked => EngineRanking::FutureActiveDetcostRanked,
+        },
+    }
+}
+
+#[cfg(feature = "tesseract")]
+fn build_tesseract_trellis(
+    dem: &str,
+    config: &TesseractTrellisConfig,
+) -> Result<Box<dyn ObservableDecoder>, DecoderError> {
+    Ok(Box::new(
+        crate::TesseractTrellisDecoder::new(dem, trellis_engine_config(config))
+            .map_err(internal)?,
+    ))
+}
+
+#[cfg(not(feature = "tesseract"))]
+fn build_tesseract_trellis(
+    _dem: &str,
+    _config: &TesseractTrellisConfig,
+) -> Result<Box<dyn ObservableDecoder>, DecoderError> {
+    unavailable("tesseract_trellis", "tesseract")
+}
+
+#[cfg(feature = "tesseract")]
 fn build_tesseract(
     dem: &str,
     config: &TesseractConfig,
@@ -359,6 +398,9 @@ fn build_tesseract(
         TesseractPreset::Fast => TesseractEngineConfig::fast(),
         TesseractPreset::Accurate => TesseractEngineConfig::accurate(),
     };
+    if let Some(merge_errors) = config.merge_errors {
+        engine_config.merge_errors = merge_errors;
+    }
     if let Some(det_beam) = config.det_beam {
         engine_config.det_beam = det_beam;
     }
@@ -1464,6 +1506,7 @@ mod tests {
         for spec in [
             DecoderSpec::BpOsd(BpOsdConfig::default()),
             DecoderSpec::Tesseract(TesseractConfig::default()),
+            DecoderSpec::TesseractTrellis(TesseractTrellisConfig::default()),
             DecoderSpec::AStarFull,
         ] {
             assert!(
@@ -1770,6 +1813,10 @@ mod tests {
                 "tesseract",
             ),
             (
+                DecoderSpec::TesseractTrellis(TesseractTrellisConfig::default()),
+                "tesseract",
+            ),
+            (
                 DecoderSpec::FusionBlossom(FusionBlossomConfig::default()),
                 "fusion-blossom",
             ),
@@ -1785,10 +1832,60 @@ mod tests {
             assert!(matches!(
                 error,
                 DecoderError::BackendUnavailable {
+                    family,
                     required_feature,
-                    ..
-                } if required_feature == expected_feature
+                } if required_feature == expected_feature && family == family_name(&spec)
             ));
+        }
+    }
+
+    #[cfg(feature = "tesseract")]
+    #[test]
+    fn trellis_spec_config_reaches_the_engine_field_by_field() {
+        use super::super::config::TesseractTrellisRankingMode as SpecRanking;
+        use crate::TesseractTrellisRankingMode as EngineRanking;
+
+        // The spec defaults are the engine defaults, so an omitted option
+        // builds the same decoder either way.
+        assert_eq!(
+            trellis_engine_config(&TesseractTrellisConfig::default()),
+            crate::TesseractTrellisConfig::default()
+        );
+
+        let engine = trellis_engine_config(&TesseractTrellisConfig {
+            beam_width: 7,
+            beam_eps: 0.25,
+            future_detcost_scale: 0.5,
+            verbose: true,
+            merge_errors: false,
+            ranking_mode: SpecRanking::FutureActiveDetcostRanked,
+        });
+        assert_eq!(engine.beam_width, 7);
+        assert_eq!(engine.beam_eps.to_bits(), 0.25_f64.to_bits());
+        assert_eq!(engine.future_detcost_scale.to_bits(), 0.5_f64.to_bits());
+        assert!(engine.verbose);
+        assert!(!engine.merge_errors);
+        assert_eq!(
+            engine.ranking_mode,
+            EngineRanking::FutureActiveDetcostRanked
+        );
+
+        for (spec, expected) in [
+            (SpecRanking::MassOnly, EngineRanking::MassOnly),
+            (
+                SpecRanking::FutureDetcostRanked,
+                EngineRanking::FutureDetcostRanked,
+            ),
+            (
+                SpecRanking::FutureActiveDetcostRanked,
+                EngineRanking::FutureActiveDetcostRanked,
+            ),
+        ] {
+            let config = TesseractTrellisConfig {
+                ranking_mode: spec,
+                ..TesseractTrellisConfig::default()
+            };
+            assert_eq!(trellis_engine_config(&config).ranking_mode, expected);
         }
     }
 
@@ -1868,11 +1965,18 @@ mod tests {
     #[cfg(feature = "tesseract")]
     #[test]
     fn parse_build_and_decode_tesseract() {
-        let mut decoder = DecoderSpec::parse("tesseract")
-            .unwrap()
-            .build(&DecodeModel::SingleDem(DEM.to_string()))
-            .unwrap();
-        assert!(decoder.decode_obs(&[0, 0]).is_ok());
+        for family in ["tesseract", "tesseract_trellis"] {
+            let spec = DecoderSpec::parse(family).unwrap();
+            assert_eq!(
+                spec.execution_traits(),
+                super::super::ExecutionTraits::default()
+            );
+            assert!(!spec.native_batch_capable());
+            let mut decoder = spec
+                .build(&DecodeModel::SingleDem(DEM.to_string()))
+                .unwrap();
+            assert_eq!(decoder.decode_obs(&[0, 0]).unwrap().to_u64(), Some(0));
+        }
     }
 
     #[cfg(feature = "ldpc")]

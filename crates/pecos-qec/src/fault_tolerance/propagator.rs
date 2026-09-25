@@ -152,6 +152,52 @@ pub fn is_supported_noop_or_metadata_gate(gate_type: GateType) -> bool {
     )
 }
 
+/// Gate classification for compiling gate-triggered quantum noise.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GateNoiseKind {
+    /// Preparation or allocation receiving preparation noise.
+    Prep,
+    /// Single-qubit operation receiving single-qubit noise.
+    Single,
+    /// Two-qubit operation receiving one noise channel per pair.
+    Two,
+    /// Measurement receiving no post-gate quantum noise.
+    Measurement,
+    /// Operation left unchanged by the noise callback.
+    Transparent,
+    /// Unsupported operation that must be rejected when noise is active.
+    Error,
+}
+
+/// Classify a gate for preparation, single-qubit, or two-qubit quantum noise.
+///
+/// Identity and idle gates retain single-qubit noise even though they are
+/// transparent to Pauli propagation. Custom gates have no known arity.
+#[inline]
+#[must_use]
+pub fn gate_noise_kind(gate_type: GateType) -> GateNoiseKind {
+    match gate_type {
+        // Custom has placeholder arity 1, not a known single-qubit operation.
+        GateType::Custom => GateNoiseKind::Error,
+        gate if is_supported_prep_gate(gate) => GateNoiseKind::Prep,
+        // consumes_measurement_record excludes MeasureLeaked, which still collapses
+        // the qubit. A complete measurement predicate belongs in pecos_core::GateType,
+        // alongside consumes_measurement_record (see also Gate::validate).
+        gate if gate.consumes_measurement_record() || gate == GateType::MeasureLeaked => {
+            GateNoiseKind::Measurement
+        }
+        // Identity and idle operations retain their physical single-qubit noise.
+        GateType::I | GateType::Idle => GateNoiseKind::Single,
+        // The core rejects Channel upstream of the noise callback.
+        gate if is_supported_noop_or_metadata_gate(gate) || gate == GateType::Channel => {
+            GateNoiseKind::Transparent
+        }
+        gate if gate.is_single_qubit() => GateNoiseKind::Single,
+        gate if gate.is_two_qubit() => GateNoiseKind::Two,
+        _ => GateNoiseKind::Error,
+    }
+}
+
 /// Circuit position of a gate that cannot be faithfully Pauli-propagated.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnsupportedGateLocation {
@@ -758,6 +804,43 @@ pub fn propagate_backward_from_node(dag: &DagCircuit, prop: &mut PauliProp, star
 mod tests {
     use super::*;
     use pecos_quantum::TickCircuit;
+
+    #[test]
+    fn every_gate_has_an_explicit_noise_classification() {
+        for value in u8::MIN..=u8::MAX {
+            let Ok(gate) = GateType::try_from(value) else {
+                continue;
+            };
+            let prep = is_supported_prep_gate(gate);
+            let measurement = gate.consumes_measurement_record() || gate == GateType::MeasureLeaked;
+            let transparent = (is_supported_noop_or_metadata_gate(gate)
+                && !matches!(gate, GateType::I | GateType::Idle))
+                || gate == GateType::Channel;
+            let single = gate.is_single_qubit()
+                && gate != GateType::Custom
+                && !prep
+                && !measurement
+                && !transparent;
+            let two = gate.is_two_qubit();
+            // Intentionally enumerate errors: a future unclassified variant must fail.
+            let error = matches!(gate, GateType::CCX | GateType::Custom);
+            let buckets = [
+                (prep, GateNoiseKind::Prep),
+                (single, GateNoiseKind::Single),
+                (two, GateNoiseKind::Two),
+                (measurement, GateNoiseKind::Measurement),
+                (transparent, GateNoiseKind::Transparent),
+                (error, GateNoiseKind::Error),
+            ];
+            assert_eq!(
+                buckets.iter().filter(|(member, _)| *member).count(),
+                1,
+                "{gate:?}"
+            );
+            let expected = buckets.iter().find(|(member, _)| *member).unwrap().1;
+            assert_eq!(gate_noise_kind(gate), expected, "{gate:?}");
+        }
+    }
 
     fn simple_syndrome_circuit() -> TickCircuit {
         // Simple Z-stabilizer measurement: Z0 Z1

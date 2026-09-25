@@ -635,10 +635,15 @@ fn rejects_duplicate_detector_and_observable_indices() {
     let observable_message = observable_error.to_string();
     assert!(observable_message.contains("mechanism 0"));
     assert!(observable_message.contains("observable index 1"));
+}
 
-    let parsed_error =
-        TrellisDecoder::from_dem_str("error(0.1) D0 D0\n", TrellisConfig::default()).unwrap_err();
-    assert!(parsed_error.to_string().contains("detector index 0"));
+#[test]
+fn parsed_duplicate_targets_have_an_empty_effect() {
+    let mut decoder = TrellisDecoder::from_dem_str("error(0.1) D0 D0\n", exact_config()).unwrap();
+    let result = decoder.decode(&[0]).unwrap();
+    assert!(result.predicted.is_zero());
+    assert!(result.log_evidence.abs() < 1e-12);
+    assert!(decoder.decode(&[1]).is_err());
 }
 
 #[test]
@@ -1612,4 +1617,115 @@ fn maxlog_rejects_score_alpha_that_quantizes_to_zero() {
     );
     build(0.0, 1).expect("explicit zero alpha is a deliberate off-switch");
     build(0.4, 1024).expect("a preserving scale accepts the same alpha");
+}
+
+#[test]
+fn batch_preserves_all_kernel_outcomes_and_shares_models() {
+    use pecos_trellis::factor::{Factor, Outcome};
+    let dem = sparse_dem(
+        vec![(0.2, vec![0], vec![70]), (0.3, vec![0, 1], vec![0])],
+        3,
+        71,
+    );
+    let factor = FactorModel::new(
+        vec![Factor {
+            outcomes: vec![
+                Outcome {
+                    probability: 0.5,
+                    detectors: vec![],
+                    observables: vec![],
+                },
+                Outcome {
+                    probability: 0.2,
+                    detectors: vec![0],
+                    observables: vec![70],
+                },
+                Outcome {
+                    probability: 0.3,
+                    detectors: vec![0, 1],
+                    observables: vec![0],
+                },
+            ],
+        }],
+        3,
+        71,
+    )
+    .unwrap();
+    let mut shots: Vec<Vec<u8>> = (0..257)
+        .map(|i| (0..3).map(|bit| u8::from(i & (1 << bit) != 0)).collect())
+        .collect();
+    shots.push(vec![1]);
+    for metric_mode in [MetricMode::LogSumExpFloat, MetricMode::MaxLogInt] {
+        let config = TrellisConfig {
+            k: 1,
+            delta: 10.0,
+            bp_score_iterations: 5,
+            metric_mode,
+            ..TrellisConfig::default()
+        };
+        let binary = TrellisDecoder::from_sparse_dem(&dem, config.clone()).unwrap();
+        let (graph, scratch) = binary.bp_state_addrs().unwrap();
+        for worker in [binary.clone(), binary.fresh_worker()] {
+            let (worker_graph, worker_scratch) = worker.bp_state_addrs().unwrap();
+            assert_eq!(graph, worker_graph);
+            assert_ne!(scratch, worker_scratch);
+        }
+        let nary = TrellisDecoder::from_factor_model(
+            &factor,
+            TrellisConfig {
+                bp_score_iterations: 0,
+                ..config
+            },
+        )
+        .unwrap();
+        for mut decoder in [binary, nary] {
+            for workers in [1, 4] {
+                let batch = decoder.decode_batch(&shots, workers).unwrap();
+                for (actual, shot) in batch.into_iter().zip(&shots) {
+                    match (actual, decoder.decode_attempt(shot)) {
+                        (
+                            TrellisDecodeAttempt::Success(mut actual),
+                            TrellisDecodeAttempt::Success(mut expected),
+                        ) => {
+                            actual.bp_seconds = 0.0;
+                            expected.bp_seconds = 0.0;
+                            assert_eq!(actual, expected);
+                            assert_eq!(
+                                actual.log_evidence.to_bits(),
+                                expected.log_evidence.to_bits()
+                            );
+                            for (a, b) in actual.logical_masses.iter().zip(&expected.logical_masses)
+                            {
+                                assert_eq!(a.log_mass.to_bits(), b.log_mass.to_bits());
+                            }
+                        }
+                        (
+                            TrellisDecodeAttempt::NoPath {
+                                transitions: a,
+                                error: ae,
+                                ..
+                            },
+                            TrellisDecodeAttempt::NoPath {
+                                transitions: b,
+                                error: be,
+                                ..
+                            },
+                        ) => {
+                            assert_eq!(a, b);
+                            assert_eq!(ae.to_string(), be.to_string());
+                        }
+                        (TrellisDecodeAttempt::Error(a), TrellisDecodeAttempt::Error(b)) => {
+                            assert_eq!(a.to_string(), b.to_string());
+                        }
+                        _ => panic!("batch outcome differs"),
+                    }
+                }
+                assert!(decoder.decode_batch(&[], workers).unwrap().is_empty());
+            }
+            assert!(matches!(
+                decoder.decode_batch(&[], 0),
+                Err(DecoderError::InvalidConfiguration(_))
+            ));
+        }
+    }
 }

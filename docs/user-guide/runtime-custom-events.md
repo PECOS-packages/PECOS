@@ -38,10 +38,21 @@ runtime.set_custom_event_handler(|event| {
 Select the policy when configuring the runtime for `sim()`:
 
 ```python
-import pecos
+from guppylang import guppy
+from guppylang.std.quantum import measure, qubit
 
-engine = pecos.selene_engine(runtime_plugin, custom_event_policy="reject_unhandled")
-# results = pecos.sim(program).classical(engine).qubits(n).run(shots)
+from pecos import Guppy, selene_engine, sim
+
+
+@guppy
+def prepare_zero() -> bool:
+    return measure(qubit()).read()
+
+
+# The default runtime emits no custom events, so strict execution succeeds.
+engine = selene_engine(custom_event_policy="reject_unhandled")
+results = sim(Guppy(prepare_zero)).classical(engine).qubits(1).seed(42).run(10)
+assert not any(results.to_dict()["measurement_0"])
 ```
 
 The same keyword is accepted by `pecos.qis_engine().selene_runtime(...)` and by

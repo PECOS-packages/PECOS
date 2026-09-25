@@ -36,7 +36,7 @@ PECOS reads flat Stim detector-error-model text using Stim's grammar:
 - Grammar is validated per instruction; block balance is not checked. `repeat`, `shift_detectors`, and closing braces require flattening, including stray braces and unclosed repeat blocks.
 - PECOS extension targets and metadata statements require an explicit opt-in: `ParsedDem` and `DetectorErrorModel::with_pecos_dem_metadata` enable the whole PECOS superset, including `TP` targets and JSON metadata statements.
 
-PECOS-parsed Python constructors report grammar errors as `ValueError` with the `Invalid DEM syntax:` prefix; Stim-backed constructors such as `PyMatchingDecoder` and `TesseractDecoder` retain their native parser errors and exception types.
+PECOS-parsed Python constructors report grammar errors as `ValueError` with the `Invalid DEM syntax:` prefix; Stim-backed constructors such as `PyMatchingDecoder` and `TesseractDecoder` retain their native parser errors and exception types. Those backends also apply their own semantics to a target listed twice inside one mechanism: Tesseract and Chromobius cancel it as Stim's sampler and every PECOS reader do, while PyMatching keeps upstream PyMatching's behaviour of one edge per written component, so `error(p) D0 D0` becomes a self-loop there. No PECOS DEM writer emits a duplicated target.
 
 ## Available Decoders
 

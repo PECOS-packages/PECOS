@@ -2,8 +2,8 @@
 use crate::bp_trellis_bindings::{TrellisOrderArgument, parse_ordering};
 use crate::frontier_bindings::{ColumnOrderArgument, parse_column_order, parse_metric_mode};
 use pecos_decoder_core::{DecoderError, ObservableDecoder};
+use pecos_frontier::{FrontierConfig, SparseDem, TrellisOrdering};
 use pecos_trellis::bp_trellis::BpTrellisConfig;
-use pecos_trellis::frontier::{FrontierConfig, SparseDem, TrellisOrdering};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
@@ -109,7 +109,7 @@ impl PyExperimentalDecoderSpec {
                 ExperimentalSpec::Frontier(c, ordering) => {
                     let mut config = c.clone();
                     config.column_order = ordering.resolve(&dem)?;
-                    Box::new(pecos_trellis::frontier::FrontierDecoder::from_sparse_dem(
+                    Box::new(pecos_frontier::FrontierDecoder::from_sparse_dem(
                         &dem, config,
                     )?)
                 }

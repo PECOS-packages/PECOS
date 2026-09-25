@@ -13,14 +13,14 @@
 use pecos_decoder_core::ObservableDecoder;
 use pecos_decoder_core::dem::SparseDem;
 use pecos_decoder_core::obs_mask::ObsMask;
-use pecos_trellis::frontier::{
+use pecos_frontier::{
     CommitteeDirection, CommitteeStatus, FrontierCommittee, FrontierConfig,
     backward_deadline_column_order, deadline_column_order,
 };
 use serde::Deserialize;
 use std::collections::BTreeMap;
 
-const FIXTURES_JSON: &str = include_str!("fixtures/frontier/upstream_order_fixtures.json");
+const FIXTURES_JSON: &str = include_str!("fixtures/upstream_order_fixtures.json");
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -139,7 +139,7 @@ fn ordering_and_committee_match_upstream_fixtures() {
                 column_order: Some(fixture.forward_ordering.clone()),
                 merge_indistinguishable: false,
                 bp_score_iterations: 0,
-                metric_mode: pecos_trellis::frontier::MetricMode::default(),
+                metric_mode: pecos_frontier::MetricMode::default(),
                 int_metric_scale: 1024,
             },
         )

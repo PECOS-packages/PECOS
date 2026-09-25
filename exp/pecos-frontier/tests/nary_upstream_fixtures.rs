@@ -10,14 +10,14 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-use pecos_trellis::frontier::{
+use pecos_frontier::{
     Factor, FactorModel, FrontierConfig, FrontierDecoder, FrontierResult, FrontierStatus, ObsMask,
     Outcome,
 };
 use serde::Deserialize;
 use std::collections::BTreeMap;
 
-const FIXTURES_JSON: &str = include_str!("fixtures/frontier/upstream_nary_fixtures.json");
+const FIXTURES_JSON: &str = include_str!("fixtures/upstream_nary_fixtures.json");
 type FixtureOutcome = (f64, Vec<u32>, Vec<u32>);
 type FixtureFactor = Vec<FixtureOutcome>;
 
@@ -190,7 +190,7 @@ fn assert_expected_results(
                 assert!(
                     matches!(
                         decoded,
-                        Err(pecos_trellis::frontier::DecoderError::DecodingFailed(_))
+                        Err(pecos_frontier::DecoderError::DecodingFailed(_))
                     ),
                     "{} {regime} syndrome {syndrome_mask}: expected no path, got {decoded:?}",
                     fixture.name
@@ -221,7 +221,7 @@ fn unpruned_and_pruned_nary_results_match_upstream_golden_fixtures() {
                 column_order: None,
                 merge_indistinguishable: false,
                 bp_score_iterations: 0,
-                metric_mode: pecos_trellis::frontier::MetricMode::default(),
+                metric_mode: pecos_frontier::MetricMode::default(),
                 int_metric_scale: 1024,
             },
             &fixture.expected_unpruned,
@@ -236,7 +236,7 @@ fn unpruned_and_pruned_nary_results_match_upstream_golden_fixtures() {
                 column_order: None,
                 merge_indistinguishable: false,
                 bp_score_iterations: 0,
-                metric_mode: pecos_trellis::frontier::MetricMode::default(),
+                metric_mode: pecos_frontier::MetricMode::default(),
                 int_metric_scale: 1024,
             },
             &fixture.expected_pruned,

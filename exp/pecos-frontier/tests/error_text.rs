@@ -10,7 +10,7 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-use pecos_trellis::frontier::{FrontierCommittee, FrontierConfig, FrontierDecoder, SparseDem};
+use pecos_frontier::{FrontierCommittee, FrontierConfig, FrontierDecoder, SparseDem};
 use std::collections::BTreeMap;
 
 fn sparse_dem(
@@ -34,7 +34,7 @@ fn exact_config() -> FrontierConfig {
         column_order: None,
         merge_indistinguishable: false,
         bp_score_iterations: 0,
-        metric_mode: pecos_trellis::frontier::MetricMode::default(),
+        metric_mode: pecos_frontier::MetricMode::default(),
         int_metric_scale: 1024,
     }
 }
@@ -67,7 +67,7 @@ fn committee_propagates_a_dimension_error_instead_of_reporting_no_path() {
     assert!(
         matches!(
             direct_error,
-            pecos_trellis::frontier::DecoderError::InvalidDimensions { .. }
+            pecos_frontier::DecoderError::InvalidDimensions { .. }
         ),
         "expected the engine to reject a short syndrome, got {direct_error:?}"
     );

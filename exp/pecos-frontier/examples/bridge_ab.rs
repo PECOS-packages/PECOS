@@ -28,7 +28,7 @@
 //! Lookahead includes logical-only columns, whose own detector index is -1.
 
 use pecos_decoder_core::dem::SparseDem;
-use pecos_trellis::frontier::{FrontierConfig, FrontierDecoder, TrellisStreamingDecoder};
+use pecos_frontier::{FrontierConfig, FrontierDecoder, TrellisStreamingDecoder};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 
@@ -101,7 +101,7 @@ fn main() {
         column_order: None,
         merge_indistinguishable: false,
         bp_score_iterations,
-        metric_mode: pecos_trellis::frontier::MetricMode::default(),
+        metric_mode: pecos_frontier::MetricMode::default(),
         int_metric_scale: 1024,
     };
     let mut stream = stream_chunk.map(|_| {
@@ -184,9 +184,9 @@ fn main() {
             outcome
         } else if let Some(batch) = &mut batch {
             match batch.next().expect("one result per shot") {
-                pecos_trellis::frontier::FrontierDecodeAttempt::Success(result) => Ok(result),
-                pecos_trellis::frontier::FrontierDecodeAttempt::NoPath { error, .. }
-                | pecos_trellis::frontier::FrontierDecodeAttempt::Error(error) => Err(error),
+                pecos_frontier::FrontierDecodeAttempt::Success(result) => Ok(result),
+                pecos_frontier::FrontierDecodeAttempt::NoPath { error, .. }
+                | pecos_frontier::FrontierDecodeAttempt::Error(error) => Err(error),
             }
         } else {
             decoder
@@ -205,10 +205,7 @@ fn main() {
             // engine fault, and recording it as no_path would silently skew
             // the A/B comparison.
             assert!(
-                matches!(
-                    error,
-                    pecos_trellis::frontier::DecoderError::DecodingFailed(_)
-                ),
+                matches!(error, pecos_frontier::DecoderError::DecodingFailed(_)),
                 "engine fault on shot {shot}: {error}"
             );
         }

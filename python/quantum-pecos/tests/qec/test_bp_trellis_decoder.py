@@ -139,7 +139,7 @@ def test_no_path_reports_across_direct_methods(observable: int) -> None:
     for index, message in [
         (1, "detector 5 has a residual"),
         (2, "under the detector error model"),
-        (3, "after 1 escalation rung"),
+        (3, r"after 1 escalation rung\Z"),
     ]:
         with pytest.raises(RuntimeError, match=message):
             decoder.decode_syndrome(shots[index])

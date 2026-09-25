@@ -289,7 +289,7 @@ fn no_path_escalates_to_k16_and_accumulates_transitions() {
 }
 
 #[test]
-fn exhausted_ladder_propagates_the_final_rung_error() {
+fn exhausted_ladder_reports_the_attempted_rung_count() {
     let dem = overpruning_escalation_dem();
     let syndrome = [0, 0, 1];
     let mut ladder =
@@ -300,7 +300,7 @@ fn exhausted_ladder_propagates_the_final_rung_error() {
     assert_eq!(
         actual.to_string(),
         DecoderError::DecodingFailed(
-            "syndrome is unexplainable at the given pruning parameters after 1 escalation rungs"
+            "syndrome is unexplainable at the given pruning parameters after 1 escalation rung"
                 .into()
         )
         .to_string()

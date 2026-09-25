@@ -81,8 +81,9 @@ impl NoPathReport {
                 "syndrome is unexplainable under the detector error model".into()
             }
             NoPathCause::Exhausted => format!(
-                "syndrome is unexplainable at the given pruning parameters after {} escalation rungs",
-                self.rungs_tried
+                "syndrome is unexplainable at the given pruning parameters after {} escalation rung{}",
+                self.rungs_tried,
+                if self.rungs_tried == 1 { "" } else { "s" }
             ),
         })
     }

@@ -100,15 +100,6 @@ def test_public_dem_grammar(row: list[str], consumer: str) -> None:
     if needs_flattening and consumer != "PyMatchingDecoder":
         assert error is not None
         assert "requires a flattened DEM:" in error
-    if (
-        accepted
-        and consumer == "pymatching"
-        and expected is not None
-        and expected[1] == 0
-        and error
-        == "decoder failed on shot 0: Decoding failed: native batch decoder returned 0 predictions for 1 shots"
-    ):
-        pytest.xfail("PECOS issue #799: PyMatching batch decoding returns no predictions for zero observables")
     CONTRACT.assert_outcome(text, accepted, consumer, counts, expected, error)
 
 

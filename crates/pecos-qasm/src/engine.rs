@@ -13,6 +13,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::path::Path;
 use std::str::FromStr;
+use std::sync::Arc;
 
 use crate::ast::{Expression, Operation};
 use crate::bitvec_expression::{
@@ -33,8 +34,10 @@ struct GateInfo {
 
 /// A QASM Engine that can generate native commands from a QASM program
 pub struct QASMEngine {
-    /// The QASM Program being executed
-    program: Option<QASMProgram>,
+    /// The QASM Program being executed. Immutable once loaded and shared
+    /// through an `Arc` so the batch loop can hold a handle without copying
+    /// the AST.
+    program: Option<Arc<QASMProgram>>,
 
     /// Mapping from measurement order to register names and bit indices
     /// Each entry is (`register_name`, `bit_index`) mapped by the order of measurements
@@ -128,7 +131,7 @@ impl QASMEngine {
         self.raw_measurements.clear();
         self.register_result_mappings.clear();
 
-        self.program = Some(program);
+        self.program = Some(Arc::new(program));
         self.reset_state();
     }
 
@@ -1029,12 +1032,14 @@ impl QASMEngine {
         self.message_builder.reset();
         let _ = self.message_builder.for_quantum_operations();
 
-        // Clone to avoid borrow checking issues
+        // The loop below needs `&mut self` while it reads the program, so hold
+        // the program through its own handle. Cloning the `QASMProgram` itself
+        // here copied the whole AST and gate table once per batch, which
+        // dominated the per-shot time of circuit simulations.
         let qasm_program = self
             .program
-            .as_ref()
-            .ok_or_else(|| PecosError::Input("No QASM program loaded".to_string()))?
-            .clone();
+            .clone()
+            .ok_or_else(|| PecosError::Input("No QASM program loaded".to_string()))?;
 
         let program = qasm_program.program();
 

@@ -684,9 +684,9 @@ fn test_stim_dem_batch_processing() {
 fn test_stim_specific_dem_features() {
     // Test DEM with Stim-specific features
     let stim_dem = r"
-        # Pauli frame changes
-        error(0.1) D0 D1 L0 L0  # L0 appears twice (Pauli frame)
-        error(0.1) D1 D2 L1 L1
+        # Observable targets cancel across distinct components
+        error(0.1) D0 L0 ^ D1 L0
+        error(0.1) D1 L1 ^ D2 L1
 
         # Hypergraph errors (more than 2 detectors)
         error(0.01) D0 D1 D2 L0

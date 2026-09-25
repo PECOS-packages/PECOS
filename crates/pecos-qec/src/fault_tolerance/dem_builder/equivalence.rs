@@ -295,7 +295,7 @@ impl ParsedDem {
         })
     }
 
-    /// Collects one component while retaining duplicate targets.
+    /// Collects the targets of one component.
     fn parse_component(targets: &[Target]) -> Result<MechanismComponent, DemParseError> {
         let mut detectors = Vec::new();
         let mut observables = Vec::new();
@@ -1164,7 +1164,7 @@ mod tests {
 
     #[test]
     fn test_decomposed_tracked_pauli_targets_xor_by_parity() {
-        let cancels = ParsedDem::from_str("error(0.5) TP0 ^ TP0").unwrap();
+        let cancels = ParsedDem::from_str("error(0.5) TP0 TP1 ^ TP1 TP2 ^ TP2 TP0").unwrap();
         let (dets, obs, tracked_paulis) = cancels.mechanisms[0].combined_effect();
         assert!(dets.is_empty());
         assert!(obs.is_empty());
@@ -1180,15 +1180,14 @@ mod tests {
     }
 
     #[test]
-    fn test_duplicate_tracked_pauli_targets_cancel_by_parity() {
-        let dem = ParsedDem::from_str("error(0.1) TP0 TP0").unwrap();
-        assert_eq!(dem.mechanisms[0].components[0].tracked_paulis, vec![0, 0]);
-
-        let (dets, obs, tracked_paulis) = dem.mechanisms[0].combined_effect();
-        assert!(dets.is_empty());
-        assert!(obs.is_empty());
-        assert!(tracked_paulis.is_empty());
-        assert_eq!(dem.mechanisms[0].effect_key().to_string(), "(empty)");
+    fn test_duplicate_tracked_pauli_targets_are_rejected() {
+        let error = ParsedDem::from_str("error(0.1) TP0 TP0").unwrap_err();
+        assert!(matches!(error, DemParseError::InvalidFormat(_)));
+        assert!(
+            error
+                .to_string()
+                .contains("tracked Pauli TP0 is listed twice")
+        );
     }
 
     #[test]
@@ -1377,16 +1376,9 @@ error(0.02) D1 D2
 
     #[test]
     fn aggregate_uses_the_combined_effect_without_changing_targets() {
-        for (targets, expected) in [
-            ("D0 D0", ""),
-            ("D0 ^ D0", ""),
-            ("D0 D1 ^ D1 D2", "D0 D2"),
-            ("D0 L0 L0", "D0"),
-            ("D0 D0 L0", "L0"),
-            ("L0 ^ L0", ""),
-        ] {
+        for (targets, effect) in [("D0 D1 ^ D1 D2", "D0 D2"), ("D0 L0 ^ D1 L0", "D0 D1")] {
             let dem = ParsedDem::from_str(&format!("error(0.5) {targets}")).unwrap();
-            let reference = ParsedDem::from_str(&format!("error(0.5) {expected}")).unwrap();
+            let reference = ParsedDem::from_str(&format!("error(0.5) {effect}")).unwrap();
             assert_eq!(dem.aggregate(), reference.aggregate());
             assert_eq!(dem.mechanisms[0].format_targets(), targets);
         }
@@ -1394,8 +1386,8 @@ error(0.02) D1 D2
 
     #[test]
     fn test_xor_cancellation() {
-        // error(p) D0 ^ D0 should result in no net effect (XOR cancellation)
-        let dem = ParsedDem::from_str("error(0.5) D0 ^ D0").unwrap();
+        // A cycle of distinct components has no net detector effect.
+        let dem = ParsedDem::from_str("error(0.5) D0 D1 ^ D1 D2 ^ D2 D0").unwrap();
 
         // The combined effect should be empty
         let (dets, obs, tracked_paulis) = dem.mechanisms[0].combined_effect();

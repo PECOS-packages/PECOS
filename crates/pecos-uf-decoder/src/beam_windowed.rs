@@ -402,6 +402,35 @@ mod tests {
     use crate::{UfDecoder, UfDecoderConfig};
 
     #[test]
+    fn beamsearch_accepts_components_that_coincide_after_projection() {
+        let dem = "error(0.1) D0 D2 ^ D0 D3\nerror(0.01) D0\nerror(0.01) D1\nerror(0.01) D2\nerror(0.01) D3\ndetector(0,0,0) D0\ndetector(0,0,1) D1\ndetector(0,0,2) D2\ndetector(0,0,3) D3";
+        for buffer_size in [0, 1, 2] {
+            let config = BeamSearchConfig {
+                window: BeamWindowConfig {
+                    step_size: 1,
+                    buffer_size,
+                    ..BeamWindowConfig::default()
+                },
+                ..BeamSearchConfig::default()
+            };
+            let factory = |text: &str| UfDecoder::from_dem(text, UfDecoderConfig::windowed());
+            let full_factory = |text: &str| -> Result<Box<dyn ObservableDecoder>, DecoderError> {
+                Ok(Box::new(UfDecoder::from_dem(
+                    text,
+                    UfDecoderConfig::fast(),
+                )?))
+            };
+            let mut decoder =
+                BeamSearchWindowedDecoder::from_dem(dem, config, factory, Some(full_factory))
+                    .unwrap();
+            for bits in 0_u8..16 {
+                let syndrome: Vec<_> = (0..4).map(|bit| (bits >> bit) & 1).collect();
+                assert_eq!(decoder.decode_to_observables(&syndrome).unwrap(), 0);
+            }
+        }
+    }
+
+    #[test]
     fn beam_residual_and_constructor_contracts() {
         let dem =
             include_str!("../../../examples/surface_code_circuits/surface_code_d3_z_stim.dem");

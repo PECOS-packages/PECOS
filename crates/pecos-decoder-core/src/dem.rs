@@ -6,17 +6,7 @@
 pub mod grammar;
 
 use crate::errors::DecoderError;
-use grammar::{Kind, Target, index_u32, parse_line, target_indices};
-
-fn xor_targets(targets: Vec<u32>) -> Vec<u32> {
-    let mut parity = std::collections::BTreeSet::new();
-    for id in targets {
-        if !parity.remove(&id) {
-            parity.insert(id);
-        }
-    }
-    parity.into_iter().collect()
-}
+use grammar::{Kind, Target, index_u32, parse_line, target_effect, target_indices, xor_indices};
 
 pub(crate) fn dimension_count(max_index: Option<u32>, kind: &str) -> Result<usize, DecoderError> {
     max_index.map_or(Ok(0), |index| {
@@ -173,9 +163,9 @@ pub mod utils {
 /// without the dense matrices of [`DemCheckMatrix`].
 ///
 /// Each `error(p) ...` line becomes one `(probability, detector_ids,
-/// observable_ids)` entry. Decomposed mechanisms (`D0 ^ D1`) are XOR-combined;
-/// graphlike mechanisms keep their DEM token order. `detector(x, y, t) D_i`
-/// declarations are collected into `detector_coords`.
+/// observable_ids)` entry. Targets are XOR-combined across all components and
+/// sorted ascending. `detector(x, y, t) D_i` declarations are collected into
+/// `detector_coords`.
 ///
 /// Parsing runs once at decoder construction (never in a decode hot loop), so
 /// this is plain line-based parsing — a byte-level variant was profiled and
@@ -194,7 +184,7 @@ pub mod utils {
 /// ```
 #[derive(Debug, Clone)]
 pub struct SparseDem {
-    /// Per-mechanism: `(probability, detector_ids, observable_ids)`.
+    /// Per-mechanism: `(probability, detector_ids, observable_ids)`, with sorted effects.
     pub mechanisms: Vec<(f64, Vec<u32>, Vec<u32>)>,
     /// Detector id → coordinates (spatial + time), from `detector(...)` lines.
     pub detector_coords: std::collections::BTreeMap<usize, Vec<f64>>,
@@ -213,24 +203,20 @@ impl SparseDem {
             .errors
             .iter()
             .map(|error| {
-                let mut detectors = std::collections::BTreeSet::new();
-                let mut observables = std::collections::BTreeSet::new();
-                for component in &error.components {
-                    for &detector in &component.detectors {
-                        if !detectors.remove(&detector) {
-                            detectors.insert(detector);
-                        }
-                    }
-                    for &observable in &component.observables {
-                        if !observables.remove(&observable) {
-                            observables.insert(observable);
-                        }
-                    }
-                }
                 (
                     error.probability,
-                    detectors.into_iter().collect(),
-                    observables.into_iter().collect(),
+                    xor_indices(
+                        error
+                            .components
+                            .iter()
+                            .flat_map(|part| part.detectors.iter().copied()),
+                    ),
+                    xor_indices(
+                        error
+                            .components
+                            .iter()
+                            .flat_map(|part| part.observables.iter().copied()),
+                    ),
                 )
             })
             .collect();
@@ -266,23 +252,20 @@ impl SparseDem {
                 continue;
             };
             instruction.require_flat("SparseDem")?;
-            let (mut detectors, mut observables) = target_indices(&instruction.targets)?;
-            for &id in &detectors {
+            let (written_detectors, written_observables) = target_indices(&instruction.targets)?;
+            for &id in &written_detectors {
                 max_detector = Some(max_detector.map_or(id, |old| old.max(id)));
             }
-            for &id in &observables {
+            for &id in &written_observables {
                 max_observable = Some(max_observable.map_or(id, |old| old.max(id)));
             }
             match instruction.kind {
                 Kind::Error => {
-                    if instruction.targets.contains(&Target::Separator) {
-                        detectors = xor_targets(detectors);
-                        observables = xor_targets(observables);
-                    }
+                    let (detectors, observables) = instruction.effect()?;
                     mechanisms.push((instruction.args[0], detectors, observables));
                 }
                 Kind::Detector if !instruction.args.is_empty() => {
-                    detector_coords.insert(detectors[0] as usize, instruction.args);
+                    detector_coords.insert(written_detectors[0] as usize, instruction.args);
                 }
                 _ => {}
             }
@@ -339,8 +322,8 @@ impl DemCheckMatrix {
     ///
     /// Each `error(p) D_i D_j ... L_k ...` line becomes one column in the
     /// check matrix (for the D entries) and one column in the observable
-    /// matrix (for the L entries). Decomposed mechanisms (`D0 ^ D1`) are
-    /// combined by XOR.
+    /// matrix (for the L entries). Targets across all components are combined
+    /// by XOR.
     ///
     /// # Errors
     ///
@@ -349,17 +332,7 @@ impl DemCheckMatrix {
         let sparse = SparseDem::from_dem_str(dem)?;
         let num_detectors = sparse.num_detectors;
         let num_observables = sparse.num_observables;
-        let mechanisms: Vec<_> = sparse
-            .mechanisms
-            .into_iter()
-            .map(|(probability, detectors, observables)| {
-                (
-                    probability,
-                    xor_targets(detectors),
-                    xor_targets(observables),
-                )
-            })
-            .collect();
+        let mechanisms = sparse.mechanisms;
         let num_mechanisms = mechanisms.len();
 
         // Build matrices.
@@ -487,6 +460,7 @@ pub struct MatchingEdge {
 /// Parses a DEM into edges suitable for MWPM decoders (`PyMatching`, Fusion
 /// Blossom). Each graphlike error mechanism (1-2 detectors) becomes one edge.
 /// Decomposed mechanisms (`D0 ^ D1`) are split into their components.
+/// Targets and repeated component edges cancel by parity within each mechanism.
 /// Hyperedges (3+ detectors after resolution) are silently skipped and only
 /// counted in `skipped_hyperedges`; callers that cannot represent them must
 /// check that count and reject the model.
@@ -552,8 +526,14 @@ impl DemMatchingGraph {
             if instruction.kind != Kind::Error {
                 continue;
             }
+            let current_fault_id = fault_id;
+            fault_id += 1;
             let probability = instruction.args[0];
             if probability <= 0.0 {
+                continue;
+            }
+            // The instruction-level check keeps cancelled hyperedges out of skipped_hyperedges.
+            if xor_indices(detectors).is_empty() {
                 continue;
             }
             let weight = if probability < 1.0 {
@@ -561,8 +541,9 @@ impl DemMatchingGraph {
             } else {
                 0.0
             };
+            // Written targets determine dimensions; component effects determine graph edges.
             for component in instruction.components() {
-                let (detectors, observables) = target_indices(component)?;
+                let (detectors, observables) = target_effect(component)?;
 
                 match detectors.len() {
                     0 => {} // Pure observable error, skip
@@ -573,7 +554,7 @@ impl DemMatchingGraph {
                             weight,
                             observables,
                             probability,
-                            fault_id,
+                            fault_id: current_fault_id,
                         });
                     }
                     2 => {
@@ -583,7 +564,7 @@ impl DemMatchingGraph {
                             weight,
                             observables,
                             probability,
-                            fault_id,
+                            fault_id: current_fault_id,
                         });
                     }
                     _ => {
@@ -591,7 +572,6 @@ impl DemMatchingGraph {
                     }
                 }
             }
-            fault_id += 1;
         }
 
         let num_detectors = dimension_count(max_detector, "detector")?;
@@ -641,39 +621,81 @@ impl DemMatchingGraph {
     /// Merge edges with independent fault-ID-aware probability combination.
     ///
     /// Components from the same fault mechanism (same `fault_id`) that land on
-    /// the same edge pair are NOT merged -- they're part of one correlated event.
+    /// the same edge pair cancel in pairs as part of one correlated event.
     /// Components from different fault mechanisms (different `fault_id`) are
     /// combined using: `p_combined = p_a*(1-p_b) + p_b*(1-p_a)`.
     ///
     /// This matches `PyMatching`'s "independent" merge strategy with fault ID tracking.
     pub(crate) fn merge_parallel_edges(edges: Vec<MatchingEdge>) -> Vec<MatchingEdge> {
+        Self::merge_independent_edges(Self::fold_correlated_edges(edges))
+    }
+
+    /// Cancel correlated edges before independent faults are merged.
+    pub(crate) fn fold_correlated_edges(edges: Vec<MatchingEdge>) -> Vec<MatchingEdge> {
         use std::collections::BTreeMap;
 
         type EdgeKey = (u32, Option<u32>);
 
-        // First, deduplicate: for each (edge_key, fault_id), keep only one entry.
-        // Multiple components from the same fault_id on the same edge just confirm
-        // that the fault affects this edge -- don't double-count the probability.
-        let mut per_fault: BTreeMap<(EdgeKey, usize), MatchingEdge> = BTreeMap::new();
+        // Repeated edges from one mechanism flip together and cancel in pairs.
+        let mut per_fault: BTreeMap<(EdgeKey, usize), (bool, MatchingEdge)> = BTreeMap::new();
+        let mut fault_detectors: BTreeMap<usize, Vec<u32>> = BTreeMap::new();
 
         for edge in edges {
+            let detectors = fault_detectors.entry(edge.fault_id).or_default();
+            detectors.push(edge.node1);
+            detectors.extend(edge.node2);
             let key = match edge.node2 {
                 Some(n2) if edge.node1 > n2 => (n2, Some(edge.node1)),
                 _ => (edge.node1, edge.node2),
             };
             let fault_key = (key, edge.fault_id);
-            // First occurrence of this (edge, fault_id) wins
-            per_fault.entry(fault_key).or_insert(MatchingEdge {
-                node1: key.0,
-                node2: key.1,
-                ..edge
-            });
+            match per_fault.entry(fault_key) {
+                std::collections::btree_map::Entry::Occupied(mut entry) => {
+                    let (parity, existing) = entry.get_mut();
+                    *parity = !*parity;
+                    existing.observables = xor_indices(
+                        existing
+                            .observables
+                            .iter()
+                            .chain(&edge.observables)
+                            .copied(),
+                    );
+                }
+                std::collections::btree_map::Entry::Vacant(entry) => {
+                    entry.insert((
+                        true,
+                        MatchingEdge {
+                            node1: key.0,
+                            node2: key.1,
+                            ..edge
+                        },
+                    ));
+                }
+            }
         }
 
-        // Now merge across different fault_ids for the same edge pair
-        let mut merged: BTreeMap<EdgeKey, MatchingEdge> = BTreeMap::new();
+        // commit_window needs this check after projecting components onto local detectors.
+        let empty_faults: std::collections::BTreeSet<_> = fault_detectors
+            .into_iter()
+            .filter_map(|(fault_id, detectors)| {
+                xor_indices(detectors).is_empty().then_some(fault_id)
+            })
+            .collect();
 
-        for ((edge_key, _fault_id), edge) in per_fault {
+        per_fault
+            .into_iter()
+            .filter_map(|((_, fault_id), (parity, edge))| {
+                (parity && !empty_faults.contains(&fault_id)).then_some(edge)
+            })
+            .collect()
+    }
+
+    /// Combine surviving edges from independent faults by endpoint pair.
+    pub(crate) fn merge_independent_edges(edges: Vec<MatchingEdge>) -> Vec<MatchingEdge> {
+        let mut merged: std::collections::BTreeMap<(u32, Option<u32>), MatchingEdge> =
+            std::collections::BTreeMap::new();
+        for edge in edges {
+            let edge_key = (edge.node1, edge.node2);
             if let Some(existing) = merged.get_mut(&edge_key) {
                 // Independent combination: p_ab = p_a*(1-p_b) + p_b*(1-p_a)
                 let p_a = existing.probability;
@@ -922,6 +944,32 @@ impl Default for DemConfigBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn merged_graph_discards_detector_free_faults() {
+        let edges = [
+            (0, Some(1), 0),
+            (1, Some(2), 0),
+            (2, Some(0), 0),
+            (0, None, 1),
+        ]
+        .into_iter()
+        .map(|(node1, node2, fault_id)| MatchingEdge {
+            node1,
+            node2,
+            weight: 0.0,
+            observables: vec![],
+            probability: 0.5,
+            fault_id,
+        })
+        .collect();
+        let edges = DemMatchingGraph::merge_parallel_edges(edges);
+        assert_eq!(edges.len(), 1);
+        assert_eq!(
+            (edges[0].node1, edges[0].node2, edges[0].fault_id),
+            (0, None, 1)
+        );
+    }
 
     #[test]
     fn test_dem_validation() {

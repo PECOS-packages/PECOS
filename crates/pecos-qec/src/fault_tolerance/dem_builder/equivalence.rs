@@ -103,39 +103,23 @@ impl ParsedMechanism {
     /// Returns the combined effect of this mechanism (XOR of all components).
     #[must_use]
     pub fn combined_effect(&self) -> (Vec<u32>, Vec<u32>, Vec<u32>) {
-        let mut all_dets: BTreeSet<u32> = BTreeSet::new();
-        let mut all_obs: BTreeSet<u32> = BTreeSet::new();
-        let mut all_tracked_paulis: BTreeSet<u32> = BTreeSet::new();
-
-        for comp in &self.components {
-            for &d in &comp.detectors {
-                if all_dets.contains(&d) {
-                    all_dets.remove(&d);
-                } else {
-                    all_dets.insert(d);
-                }
-            }
-            for &o in &comp.observables {
-                if all_obs.contains(&o) {
-                    all_obs.remove(&o);
-                } else {
-                    all_obs.insert(o);
-                }
-            }
-            for &op in &comp.tracked_paulis {
-                if all_tracked_paulis.contains(&op) {
-                    all_tracked_paulis.remove(&op);
-                } else {
-                    all_tracked_paulis.insert(op);
-                }
-            }
-        }
-
-        // BTreeSet is already sorted, so just collect
-        let dets: Vec<u32> = all_dets.into_iter().collect();
-        let obs: Vec<u32> = all_obs.into_iter().collect();
-        let tracked_paulis: Vec<u32> = all_tracked_paulis.into_iter().collect();
-        (dets, obs, tracked_paulis)
+        (
+            grammar::xor_indices(
+                self.components
+                    .iter()
+                    .flat_map(|c| c.detectors.iter().copied()),
+            ),
+            grammar::xor_indices(
+                self.components
+                    .iter()
+                    .flat_map(|c| c.observables.iter().copied()),
+            ),
+            grammar::xor_indices(
+                self.components
+                    .iter()
+                    .flat_map(|c| c.tracked_paulis.iter().copied()),
+            ),
+        )
     }
 
     /// Creates an effect key for this mechanism (for aggregation).
@@ -234,6 +218,7 @@ impl fmt::Display for EffectKey {
 // ============================================================================
 
 /// A parsed Detector Error Model.
+/// Preserves written targets.
 #[derive(Debug, Clone)]
 pub struct ParsedDem {
     /// All mechanisms in the DEM.
@@ -345,25 +330,11 @@ impl ParsedDem {
         let mut aggregated: BTreeMap<EffectKey, f64> = BTreeMap::new();
 
         for mech in &self.mechanisms {
-            if mech.is_decomposed() {
-                // For decomposed mechanisms, each component fires independently
-                for comp in &mech.components {
-                    let mut key = EffectKey::new(comp.detectors.clone(), comp.observables.clone());
-                    key.tracked_paulis.clone_from(&comp.tracked_paulis);
-                    key.tracked_paulis.sort_unstable();
-                    aggregated
-                        .entry(key)
-                        .and_modify(|p| *p = combine_probabilities(*p, mech.probability))
-                        .or_insert(mech.probability);
-                }
-            } else {
-                // Simple mechanism
-                let key = mech.effect_key();
-                aggregated
-                    .entry(key)
-                    .and_modify(|p| *p = combine_probabilities(*p, mech.probability))
-                    .or_insert(mech.probability);
-            }
+            let key = mech.effect_key();
+            aggregated
+                .entry(key)
+                .and_modify(|p| *p = combine_probabilities(*p, mech.probability))
+                .or_insert(mech.probability);
         }
 
         aggregated
@@ -1402,6 +1373,23 @@ error(0.02) D1 D2
         // dem1: P(D0 fires) = P(D1 fires) = P(both fire) = 0.1
         // dem2: P(D0 fires) = P(D1 fires) = 0.1, P(both fire) = 0.01
         assert!(!result.equivalent);
+    }
+
+    #[test]
+    fn aggregate_uses_the_combined_effect_without_changing_targets() {
+        for (targets, expected) in [
+            ("D0 D0", ""),
+            ("D0 ^ D0", ""),
+            ("D0 D1 ^ D1 D2", "D0 D2"),
+            ("D0 L0 L0", "D0"),
+            ("D0 D0 L0", "L0"),
+            ("L0 ^ L0", ""),
+        ] {
+            let dem = ParsedDem::from_str(&format!("error(0.5) {targets}")).unwrap();
+            let reference = ParsedDem::from_str(&format!("error(0.5) {expected}")).unwrap();
+            assert_eq!(dem.aggregate(), reference.aggregate());
+            assert_eq!(dem.mechanisms[0].format_targets(), targets);
+        }
     }
 
     #[test]

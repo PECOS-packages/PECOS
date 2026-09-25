@@ -4108,9 +4108,9 @@ impl PyDemSampler {
                 continue;
             }
             let prob = instruction.args[0];
-            let (dets, obs) =
-                pecos_decoder_core::dem::grammar::target_indices(&instruction.targets)
-                    .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
+            let (dets, obs) = instruction
+                .effect()
+                .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
             if prob > 0.0 {
                 mechanisms.push((prob, dets, obs));
             }

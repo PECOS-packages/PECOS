@@ -159,7 +159,7 @@ class QisEngineBuilder:
             self._builder = self._builder.program(program)
         return self
 
-    def selene_runtime(self, runtime: object | None = None) -> Self:
+    def selene_runtime(self, runtime: object | None = None, *, custom_event_policy: str = "capture") -> Self:
         """Use a Selene runtime.
 
         Args:
@@ -169,11 +169,14 @@ class QisEngineBuilder:
                 value, or any Selene runtime plugin object exposing
                 ``library_file``, ``get_init_args()``, and optional
                 ``library_search_dirs``, is passed through generically.
+            custom_event_policy: ``"capture"`` preserves compatibility without
+                modeling custom effects. ``"reject_unhandled"`` rejects any custom
+                event; Python does not yet expose metadata or physical-effect handlers.
 
         Returns:
             Self for method chaining.
         """
-        self._builder = _configure_selene_runtime(self._builder, runtime)
+        self._builder = _configure_selene_runtime(self._builder, runtime, custom_event_policy=custom_event_policy)
         return self
 
     def interface(self, builder: object) -> Self:
@@ -263,35 +266,43 @@ def _plugin_object_from_module(module: object) -> object:
     raise error
 
 
-def _configure_selene_runtime(builder: object, runtime: object | None) -> object:
+def _configure_selene_runtime(
+    builder: object,
+    runtime: object | None,
+    *,
+    custom_event_policy: str = "capture",
+) -> object:
+    if custom_event_policy not in ("capture", "reject_unhandled"):
+        msg = "custom_event_policy must be 'capture' or 'reject_unhandled'"
+        raise ValueError(msg)
     if runtime is None:
         # Issue #365: freshly built Cargo artifacts win for dev iteration; the
         # installed plugin package is the stable cwd-independent fallback.
         try:
-            return builder.selene_runtime()
+            return builder.selene_runtime(custom_event_policy=custom_event_policy)
         except RuntimeError as original_error:
             try:
                 plugin_module = import_module("selene_simple_runtime_plugin")
                 plugin = _plugin_object_from_module(plugin_module)
-                return _configure_selene_runtime(builder, plugin)
+                return _configure_selene_runtime(builder, plugin, custom_event_policy=custom_event_policy)
             except Exception as fallback_error:
                 raise original_error from fallback_error
 
     if isinstance(runtime, str):
         if _looks_like_library_path(runtime):
-            return builder.selene_runtime_plugin(runtime)
+            return builder.selene_runtime_plugin(runtime, custom_event_policy=custom_event_policy)
         try:
-            return builder.selene_runtime(runtime)
+            return builder.selene_runtime(runtime, custom_event_policy=custom_event_policy)
         except RuntimeError as original_error:
             try:
                 plugin_module = import_module(f"{runtime}_plugin")
                 plugin = _plugin_object_from_module(plugin_module)
-                return _configure_selene_runtime(builder, plugin)
+                return _configure_selene_runtime(builder, plugin, custom_event_policy=custom_event_policy)
             except Exception as fallback_error:
                 raise original_error from fallback_error
 
     if isinstance(runtime, PathLike):
-        return builder.selene_runtime_plugin(fspath(runtime))
+        return builder.selene_runtime_plugin(fspath(runtime), custom_event_policy=custom_event_policy)
 
     library_file = getattr(runtime, "library_file", None)
     if library_file is None:
@@ -308,21 +319,29 @@ def _configure_selene_runtime(builder: object, runtime: object | None) -> object
         fspath(library_file),
         [str(arg) for arg in init_args],
         library_search_dirs,
+        custom_event_policy=custom_event_policy,
     )
 
 
-def selene_engine(runtime: object | None = None) -> QisEngineBuilder:
+def selene_engine(runtime: object | None = None, *, custom_event_policy: str = "capture") -> QisEngineBuilder:
     """Create a Selene-backed QIS engine builder.
 
     Args:
         runtime: Optional runtime selector. ``None`` selects the default
             ``selene_simple_runtime``. A built runtime name, shared-library
             path, or generic Selene runtime plugin object may also be supplied.
+        custom_event_policy: ``"capture"`` (compatibility default) or
+            ``"reject_unhandled"`` (fail on custom events rather than omit effects).
+            Selecting this policy does not implement a physical model.
 
     Returns:
         QisEngineBuilder: A builder for Selene-backed QIS/HUGR simulations.
     """
-    return QisEngineBuilder().selene_runtime(runtime).interface(pecos_rslib.qis_helios_interface())
+    return (
+        QisEngineBuilder()
+        .selene_runtime(runtime, custom_event_policy=custom_event_policy)
+        .interface(pecos_rslib.qis_helios_interface())
+    )
 
 
 __all__ = [

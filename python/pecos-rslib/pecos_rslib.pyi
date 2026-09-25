@@ -1120,7 +1120,20 @@ class QasmEngineBuilder:
 class QisEngineBuilder:
     """Builder for QIS engines."""
 
-    ...
+    def selene_runtime(
+        self,
+        runtime_name: str | None = None,
+        *,
+        custom_event_policy: str = "capture",
+    ) -> QisEngineBuilder: ...
+    def selene_runtime_plugin(
+        self,
+        library_file: str,
+        init_args: list[str] | None = None,
+        library_search_dirs: list[str] | None = None,
+        *,
+        custom_event_policy: str = "capture",
+    ) -> QisEngineBuilder: ...
 
 class PhirJsonEngineBuilder:
     """Builder for PHIR JSON engines."""

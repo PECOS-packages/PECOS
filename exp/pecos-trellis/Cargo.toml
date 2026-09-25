@@ -21,6 +21,8 @@ pecos-decoder-core.workspace = true
 libm.workspace = true
 
 [dev-dependencies]
+serde.workspace = true
+serde_json.workspace = true
 rand.workspace = true
 rand_xoshiro.workspace = true
 

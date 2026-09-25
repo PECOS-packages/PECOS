@@ -228,8 +228,27 @@ impl QASMEngine {
         bit_index: usize,
         value: u8,
     ) -> Result<(), PecosError> {
+        Self::set_register_bit(
+            self.program.as_deref(),
+            &mut self.classical_registers,
+            register_name,
+            bit_index,
+            value,
+        )
+    }
+
+    /// Set one bit of a classical register. Takes the fields it needs rather
+    /// than `&mut self` so callers can hold a borrow of another field (the
+    /// measurement mappings) across the call.
+    fn set_register_bit(
+        program: Option<&QASMProgram>,
+        classical_registers: &mut BTreeMap<String, BitVec<u8, Lsb0>>,
+        register_name: &str,
+        bit_index: usize,
+        value: u8,
+    ) -> Result<(), PecosError> {
         // Validate bounds if we have a program loaded
-        if let Some(qasm_program) = &self.program {
+        if let Some(qasm_program) = program {
             let program = qasm_program.program();
             if let Some(size) = program.classical_registers.get(register_name) {
                 if bit_index >= *size {
@@ -245,12 +264,9 @@ impl QASMEngine {
         }
 
         // Get the register
-        let register = self
-            .classical_registers
-            .get_mut(register_name)
-            .ok_or_else(|| {
-                PecosError::Input(format!("Classical register '{register_name}' not found"))
-            })?;
+        let register = classical_registers.get_mut(register_name).ok_or_else(|| {
+            PecosError::Input(format!("Classical register '{register_name}' not found"))
+        })?;
 
         // Set the bit value
         register.set(bit_index, value != 0);
@@ -1538,8 +1554,6 @@ impl ClassicalEngine for QASMEngine {
 
         match message.outcomes() {
             Ok(outcomes) => {
-                let mappings = self.register_result_mappings.clone();
-
                 debug!("Processing {} measurement results", outcomes.len());
                 debug!(
                     "Starting from global measurement index {}",
@@ -1554,11 +1568,17 @@ impl ClassicalEngine for QASMEngine {
                         "Found measurement local_index={local_index} global_index={global_index} value={value}"
                     );
 
-                    if let Some((register, bit)) = mappings.get(global_index) {
+                    if let Some((register, bit)) = self.register_result_mappings.get(global_index) {
                         debug!("Updating register {register}[{bit}] with value {value}");
 
                         let safe_value = u8::try_from(value).unwrap_or(1);
-                        self.update_register_bit(register, *bit, safe_value)?;
+                        Self::set_register_bit(
+                            self.program.as_deref(),
+                            &mut self.classical_registers,
+                            register,
+                            *bit,
+                            safe_value,
+                        )?;
                     } else {
                         debug!(
                             "No register mapping found for measurement global_index={global_index}"

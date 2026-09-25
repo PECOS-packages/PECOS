@@ -4083,6 +4083,8 @@ version = "0.2.0-dev.0"
 dependencies = [
  "pecos-decoder-core",
  "pecos-trellis",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -4929,6 +4931,9 @@ dependencies = [
  "pecos-decoder-core",
  "rand 0.10.2",
  "rand_xoshiro 0.8.1",
+ "rayon",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

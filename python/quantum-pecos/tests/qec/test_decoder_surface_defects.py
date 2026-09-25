@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING
 
 import pytest
@@ -30,8 +31,10 @@ from pecos.decoders import (
     RelayBpDecoder,
     SparseMatrix,
     TesseractDecoder,
+    TesseractTrellisDecoder,
     UnionFindBuilder,
     UnionFindDecoder,
+    tesseract_trellis,
 )
 from pecos_rslib.qec import decoder_dem_requirement
 
@@ -179,6 +182,15 @@ def test_each_family_accepts_only_its_real_tuning_surface() -> None:
     ("build", "parameter"),
     [
         (lambda: TesseractDecoder.from_dem(_ENCODING_DEM, preset="quick"), "preset"),
+        (lambda: TesseractTrellisDecoder.from_dem(_ENCODING_DEM, ranking_mode="best"), "ranking_mode"),
+        (lambda: TesseractTrellisDecoder.from_dem(_ENCODING_DEM, beam_width=0), "beam_width"),
+        (lambda: TesseractTrellisDecoder.from_dem(_ENCODING_DEM, beam_width=-1), "beam_width"),
+        (lambda: TesseractTrellisDecoder.from_dem(_ENCODING_DEM, beam_eps=-0.1), "beam_eps"),
+        (lambda: TesseractTrellisDecoder.from_dem(_ENCODING_DEM, beam_eps=float("nan")), "beam_eps"),
+        (
+            lambda: TesseractTrellisDecoder.from_dem(_ENCODING_DEM, future_detcost_scale=float("inf")),
+            "future_detcost_scale",
+        ),
         (lambda: TesseractDecoder.from_dem(_ENCODING_DEM, det_beam=0), "det_beam"),
         (lambda: TesseractDecoder.from_dem(_ENCODING_DEM, det_beam=2**16), "det_beam"),
         (lambda: TesseractDecoder.from_dem(_ENCODING_DEM, pqlimit=-1), "pqlimit"),
@@ -246,6 +258,7 @@ def test_legacy_measurement_protocol_decoders_keep_decode() -> None:
         ("belief_matching_mgbp", "graphlike"),
         ("belief_matching_hybrid:inner=pymatching", "graphlike"),
         ("tesseract", "any"),
+        ("tesseract_trellis", "any"),
         ("astar", "any"),
         ("bp_osd", "any"),
         ("bp_lsd", "any"),
@@ -279,3 +292,111 @@ def test_perturbed_requirement_follows_its_inner_decoder(spec: str, requirement:
 def test_unknown_decoder_still_raises() -> None:
     with pytest.raises(ValueError, match="Unknown decoder type"):
         decoder_dem_requirement("not_a_decoder")
+
+
+@pytest.mark.parametrize("ranking_mode", ["mass", "future_detcost", "future_active_detcost"])
+def test_tesseract_trellis_probability_and_decoding_paths(ranking_mode: str) -> None:
+    """All decoding paths retain the upstream posterior and input order."""
+    decoder = TesseractTrellisDecoder.from_dem(
+        "error(0.1) D0\nerror(0.2) D0 L0\n",
+        ranking_mode=ranking_mode,
+    )
+    fired = decoder.decode_from_defects([0])
+    assert fired.observable_flips.mask == 1
+    assert fired.observable_probability == pytest.approx(0.18 / 0.26, abs=1e-12)
+    assert fired.low_confidence is False
+    quiet = decoder.decode_from_defects([])
+    assert quiet.observable_flips.mask == 0
+    assert quiet.observable_probability == pytest.approx(0.02 / 0.74, abs=1e-12)
+    assert quiet.low_confidence is False
+    dense = decoder.decode_syndrome([1])
+    assert dense.observable_flips == fired.observable_flips
+    assert dense.observable_probability == fired.observable_probability
+    assert dense.low_confidence == fired.low_confidence
+    for name in ("num_states_expanded", "num_states_merged", "max_beam_size_seen", "max_frontier_width_seen"):
+        assert getattr(dense, name) == getattr(fired, name)
+    syndromes = [[1], [0], [0], [1], [0], [1]]
+    fields = (
+        "observable_probability",
+        "low_confidence",
+        "num_states_expanded",
+        "num_states_merged",
+        "max_beam_size_seen",
+        "max_frontier_width_seen",
+    )
+    expected = [decoder.decode_syndrome(row) for row in syndromes]
+    for workers in (None, 1, 2):
+        results = decoder.decode_batch(syndromes, num_workers=workers)
+        assert [r.observable_flips.mask for r in results] == [e.observable_flips.mask for e in expected]
+        for result, sequential in zip(results, expected, strict=True):
+            for name in fields:
+                assert getattr(result, name) == getattr(sequential, name), name
+    assert decoder.num_detectors == 1
+    assert decoder.num_errors == 2
+    assert decoder.num_observables == 1
+    assert "TesseractTrellisDecoder" in repr(decoder)
+    assert "TesseractTrellisResult" in repr(fired)
+    with pytest.raises(AttributeError, match="decode_syndrome"):
+        decoder.decode([1])
+
+
+def test_tesseract_argument_errors_are_value_errors_on_both_paths() -> None:
+    """A rejected tuning value is a ValueError whether it is caught at the
+    binding or by the engine, for the class and the spec factory alike."""
+    dem = "error(0.1) D0 L0\n"
+    for build, parameter in (
+        (lambda: TesseractTrellisDecoder.from_dem(dem, beam_width=0), "beam_width"),
+        (lambda: TesseractTrellisDecoder.from_dem(dem, beam_eps=-0.1), "beam_eps"),
+        (lambda: TesseractTrellisDecoder.from_dem(dem, beam_eps=1.0), "beam_eps"),
+        (
+            lambda: TesseractTrellisDecoder.from_dem(dem, future_detcost_scale=float("nan")),
+            "future_detcost_scale",
+        ),
+        (lambda: TesseractDecoder.from_dem(dem, det_beam=0), "det_beam"),
+        (lambda: TesseractDecoder.from_dem(dem, det_penalty=-0.1), "det_penalty"),
+        (lambda: tesseract_trellis(beam_eps=1.0), "beam_eps"),
+    ):
+        with pytest.raises(ValueError, match=parameter):
+            build()
+    # A repeated detector index is malformed input for both decoders, on the
+    # single-shot path and on the batch path alike.
+    for decoder in (
+        TesseractTrellisDecoder.from_dem("error(0.1) D0\nerror(0.2) D0 L0\n"),
+        TesseractDecoder.from_dem("error(0.1) D0\nerror(0.2) D0 L0\n"),
+    ):
+        with pytest.raises(ValueError, match="repeated"):
+            decoder.decode_from_defects([0, 0])
+    trellis = TesseractTrellisDecoder.from_dem("error(0.1) D0 L0\n")
+    with pytest.raises(ValueError, match="out of range"):
+        trellis.decode_syndrome([0, 1])
+    with pytest.raises(ValueError, match="out of range"):
+        trellis.decode_batch([[0, 1]], num_workers=1)
+
+
+def test_tesseract_trellis_surfaces_observable_limit() -> None:
+    """Upstream construction errors retain the A* exception mapping."""
+    with pytest.raises(RuntimeError) as bad_dem:
+        TesseractDecoder.from_dem("not a detector error model")
+    with pytest.raises(type(bad_dem.value), match="at most one observable"):
+        TesseractTrellisDecoder.from_dem("error(0.1) D0 L0\nerror(0.2) D1 L1\n")
+
+
+def test_tesseract_merge_errors_override() -> None:
+    """Disabling merging preserves duplicate nonzero mechanisms."""
+    dem = "error(0.1) D0 L0\nerror(0.1) D0 L0\n"
+    # Both wraps count flattened-DEM mechanisms, so merging shows in the
+    # decode, not the count: one trellis layer instead of two expands fewer
+    # states, and the A* cost is -ln(p / (1 - p)) with p = 0.18 merged
+    # versus a single p = 0.1 mechanism unmerged.
+    trellis_merged = TesseractTrellisDecoder.from_dem(dem)
+    trellis_unmerged = TesseractTrellisDecoder.from_dem(dem, merge_errors=False)
+    assert trellis_merged.num_errors == trellis_unmerged.num_errors == 2
+    assert (
+        trellis_unmerged.decode_from_defects([0]).num_states_expanded
+        > trellis_merged.decode_from_defects([0]).num_states_expanded
+    )
+    merged = TesseractDecoder.from_dem(dem)
+    unmerged = TesseractDecoder.from_dem(dem, merge_errors=False)
+    assert merged.num_errors == unmerged.num_errors == 2
+    assert merged.decode_from_defects([0]).cost == pytest.approx(math.log(0.82 / 0.18), abs=1e-12)
+    assert unmerged.decode_from_defects([0]).cost == pytest.approx(math.log(0.9 / 0.1), abs=1e-12)

@@ -125,7 +125,9 @@ pub use executor::{HeliosSyncHandle, QisHeliosInterface};
 #[cfg(feature = "selene")]
 pub use selene_builder::{HeliosInterfaceBuilder, helios_interface_builder};
 #[cfg(feature = "selene")]
-pub use selene_runtime::SeleneRuntime;
+pub use selene_runtime::{
+    RuntimeCustomEvent, RuntimeCustomEventDisposition, RuntimeCustomEventPolicy, SeleneRuntime,
+};
 #[cfg(feature = "selene")]
 pub use selene_runtimes::{
     RuntimeFetchError, find_selene_runtime, selene_runtime_auto, selene_simple_runtime,

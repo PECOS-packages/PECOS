@@ -157,3 +157,57 @@ def test_no_path_escalation_is_used_in_batch_execution(workers):
     )
     assert result.predictions == [1] * 1025
     assert result.num_errors == 0
+
+
+def test_direct_parallel_batch_matches_sequential():
+    rng = random.Random(35)
+    shots = [[rng.randrange(2) for _ in range(3)] for _ in range(1025)]
+    decoder = exp.BpTrellisDecoder.from_dem(DEM, k=2, escalation_ks=[16, 32])
+    sequential = decoder.decode_batch(shots)
+    parallel = decoder.decode_batch(shots, workers=4)
+    fields = (
+        "log_evidence",
+        "runner_up_gap",
+        "peak_retained_states",
+        "processed_columns",
+        "transitions",
+        "dropped_states",
+        "dropped_log_mass",
+        "escalation_rungs_used",
+        "status",
+        "logical_masses",
+    )
+    assert len(parallel) == len(sequential) == len(shots)
+    for actual, expected in zip(parallel, sequential, strict=True):
+        assert actual.observable_flips.mask == expected.observable_flips.mask
+        for field in fields:
+            assert getattr(actual, field) == getattr(expected, field)
+    assert decoder.decode_batch([], workers=4) == []
+    for workers in (0, -1):
+        with pytest.raises(ValueError, match="workers must be at least 1"):
+            decoder.decode_batch(shots, workers=workers)
+    for workers in (-(2**70), 2**70):
+        with pytest.raises(OverflowError):
+            decoder.decode_batch(shots, workers=workers)
+
+
+def test_direct_parallel_batch_releases_gil():
+    from test_decoder_spec_gil import assert_releases_gil, synthetic_dem
+
+    def decode_call(length):
+        decoder = exp.BpTrellisDecoder.from_dem(synthetic_dem(length, 64))
+        shots = [[0] * (length + 64) for _ in range(8)]
+        return lambda: decoder.decode_batch(shots, workers=4)
+
+    assert_releases_gil(decode_call)
+
+
+@pytest.mark.parametrize("workers", [1, 4])
+@pytest.mark.parametrize("shot", [[0], [0, 1]])
+def test_direct_batch_reports_first_failing_shot(workers, shot):
+    decoder = exp.BpTrellisDecoder.from_dem("error(0.1) D0 L0\ndetector D1\n")
+    with pytest.raises(RuntimeError) as individual_error:
+        decoder.decode_syndrome(shot)
+    with pytest.raises(RuntimeError) as batch_error:
+        decoder.decode_batch([[0, 0], shot, [1]], workers=workers)
+    assert str(batch_error.value) == f"shot 1: {individual_error.value}"

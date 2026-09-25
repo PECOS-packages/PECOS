@@ -103,7 +103,9 @@ pub trait CliffordRotation: CliffordGateable {
         phi: Angle64,
         pairs: &[(QubitId, QubitId)],
     ) -> Result<&mut Self, String> {
-        if theta == Angle64::ZERO {
+        // Snap before the zero check so a theta within the Clifford tolerance
+        // of zero is the identity for any phi, as `try_rxx` would treat it.
+        if pecos_core::try_simplify_rotation_snapped(GateType::RXX, theta) == Some(GateType::I) {
             return Ok(self);
         }
         if simplify_two_qubit_clifford(GateType::RXX, theta).is_none()
@@ -649,14 +651,18 @@ mod tests {
         let before = (sim.stab_tableau(), sim.destab_tableau());
 
         // With no rotation, phi doesn't matter. In particular, we shouldn't
-        // reject an axis that would require non-Clifford basis changes.
-        sim.try_rxyxy2q(
-            Angle64::ZERO,
-            Angle64::from_radians(0.123),
-            &[(QubitId(0), QubitId(1)), (QubitId(1), QubitId(2))],
-        )
-        .unwrap();
-        assert_eq!((sim.stab_tableau(), sim.destab_tableau()), before);
+        // reject an axis that would require non-Clifford basis changes. A
+        // theta within the Clifford snapping tolerance counts as no rotation,
+        // exactly as `try_rxx` treats it.
+        for theta in [Angle64::ZERO, Angle64::from_radians(1e-12)] {
+            sim.try_rxyxy2q(
+                theta,
+                Angle64::from_radians(0.123),
+                &[(QubitId(0), QubitId(1)), (QubitId(1), QubitId(2))],
+            )
+            .unwrap();
+            assert_eq!((sim.stab_tableau(), sim.destab_tableau()), before);
+        }
     }
 
     #[test]

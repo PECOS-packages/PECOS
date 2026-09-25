@@ -1741,6 +1741,10 @@ class llvm:
 
 PHYSICAL_DURATION_META_KEY: str
 
+def is_supported_noop_or_metadata_gate(gate_type: GateType) -> bool:
+    """Return whether the gate is transparent to Pauli propagation."""
+    ...
+
 class GateType:
     """Gate type marker."""
 
@@ -1766,6 +1770,7 @@ class GateType:
     RXX: GateType
     RYY: GateType
     RZZ: GateType
+    RXYXY2Q: GateType
     RXY1Q: GateType
     U: GateType
     F: GateType
@@ -1831,6 +1836,8 @@ class Gate:
     def cy(pairs: Sequence[tuple[int, int]]) -> Gate: ...
     @staticmethod
     def cz(pairs: Sequence[tuple[int, int]]) -> Gate: ...
+    @staticmethod
+    def rxyxy2q(theta: Any, phi: Any, pairs: Sequence[tuple[int, int]]) -> Gate: ...
     @staticmethod
     def mx(qubits: Sequence[int]) -> Gate: ...
     @staticmethod
@@ -1919,6 +1926,7 @@ class TickHandle:
     def rxx(self, theta: Any, pairs: Sequence[tuple[int, int]]) -> TickHandle: ...
     def ryy(self, theta: Any, pairs: Sequence[tuple[int, int]]) -> TickHandle: ...
     def rzz(self, theta: Any, pairs: Sequence[tuple[int, int]]) -> TickHandle: ...
+    def rxyxy2q(self, theta: Any, phi: Any, pairs: Sequence[tuple[int, int]]) -> TickHandle: ...
     def add_gate(
         self,
         name: str,
@@ -2168,13 +2176,6 @@ def qis_helios_interface(**kwargs: object) -> QisInterfaceBuilder:
 
 def qis_selene_helios_interface(**kwargs: object) -> QisInterfaceBuilder:
     """Create a QIS Selene-Helios interface builder."""
-    ...
-
-# =============================================================================
-# HUGR Compilation
-# =============================================================================
-def get_compilation_backends() -> dict[str, object]:
-    """Get information about available compilation backends."""
     ...
 
 # =============================================================================
@@ -3074,6 +3075,17 @@ class decoders:
         no_revisit_dets: bool | None = ...,
         pqlimit: int | None = ...,
         det_penalty: float | None = ...,
+        merge_errors: bool | None = ...,
+    ) -> decoders.DecoderSpec: ...
+    @staticmethod
+    def tesseract_trellis(
+        *,
+        beam_width: int | None = ...,
+        beam_eps: float | None = ...,
+        future_detcost_scale: float | None = ...,
+        verbose: bool | None = ...,
+        merge_errors: bool | None = ...,
+        ranking_mode: str | None = ...,
     ) -> decoders.DecoderSpec: ...
     @staticmethod
     def bp_osd(
@@ -3544,6 +3556,7 @@ class decoders:
             no_revisit_dets: bool | None = ...,
             pqlimit: int | None = ...,
             det_penalty: float | None = ...,
+            merge_errors: bool | None = ...,
         ) -> decoders.TesseractDecoder:
             """Build Tesseract from a detector error model and optional preset overrides.
 
@@ -3556,6 +3569,7 @@ class decoders:
                 no_revisit_dets: Avoids revisits for lower runtime, with a possible accuracy cost.
                 pqlimit: Priority-queue cap; smaller values bound memory at a possible accuracy cost.
                 det_penalty: Larger penalties prune search more aggressively for speed at possible accuracy cost.
+                merge_errors: Merge mechanisms with identical detector and observable symptoms (default True).
             """
             ...
 
@@ -3566,6 +3580,66 @@ class decoders:
             syndromes: list[list[int]],
             num_workers: int | None = ...,
         ) -> list[decoders.TesseractResult]: ...
+        def __repr__(self) -> str: ...
+
+    class TesseractTrellisResult:
+        """Trellis prediction and beam statistics; probability is NaN when low_confidence."""
+
+        @property
+        def observable_flips(self) -> ObservableFlips: ...
+        @property
+        def observable_probability(self) -> float: ...
+        @property
+        def low_confidence(self) -> bool: ...
+        @property
+        def num_states_expanded(self) -> int: ...
+        @property
+        def num_states_merged(self) -> int: ...
+        @property
+        def max_beam_size_seen(self) -> int: ...
+        @property
+        def max_frontier_width_seen(self) -> int: ...
+        def __repr__(self) -> str: ...
+
+    class TesseractTrellisDecoder:
+        """Tesseract probability-mass trellis decoder."""
+
+        @staticmethod
+        def from_dem(
+            dem: str,
+            beam_width: int | None = ...,
+            beam_eps: float | None = ...,
+            future_detcost_scale: float | None = ...,
+            verbose: bool | None = ...,
+            merge_errors: bool | None = ...,
+            ranking_mode: str | None = ...,
+        ) -> decoders.TesseractTrellisDecoder:
+            """Build a trellis decoder from a detector error model.
+
+            Args:
+                dem: DEM text with at most one observable and an active-detector frontier of at most 256.
+                beam_width: Maximum states retained per layer (default 1024).
+                beam_eps: After the beam_width cut, keep the top states holding 1 - beam_eps of the layer mass; in [0, 1), default 0.0 keeps all.
+                future_detcost_scale: Future detector-cost scale in ranked modes (default 2.0).
+                verbose: Print beam statistics (default False).
+                merge_errors: Merge mechanisms with identical symptoms (default True).
+                ranking_mode: "mass", "future_detcost", or "future_active_detcost" (default "mass").
+            """
+            ...
+
+        def decode_from_defects(self, detections: list[int]) -> decoders.TesseractTrellisResult: ...
+        def decode_syndrome(self, syndrome: list[int]) -> decoders.TesseractTrellisResult: ...
+        def decode_batch(
+            self,
+            syndromes: list[list[int]],
+            num_workers: int | None = ...,
+        ) -> list[decoders.TesseractTrellisResult]: ...
+        @property
+        def num_detectors(self) -> int: ...
+        @property
+        def num_errors(self) -> int: ...
+        @property
+        def num_observables(self) -> int: ...
         def __repr__(self) -> str: ...
 
     class DemAwareResult:

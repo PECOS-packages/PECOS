@@ -237,23 +237,25 @@ impl PerGatePauliChannel {
                 };
                 gates.push(GateCommand::new(pauli, smallvec::smallvec![qubit]));
             }
-        } else if qubits.len() == 2 {
-            let (first, second) = (qubits[0], qubits[1]);
-            if !ctx.is_leaked(first) && !ctx.is_leaked(second) {
-                let rates = self.rates_2q_for(gate_type, first, second);
-                let r = rng.random::<f64>();
-                let mut cumulative = 0.0;
-                for (idx, &p) in rates.iter().enumerate() {
-                    cumulative += p;
-                    if r < cumulative {
-                        let (pauli0, pauli1) = TWO_QUBIT_PAULIS[idx];
-                        if pauli0 != GateType::I {
-                            gates.push(GateCommand::new(pauli0, smallvec::smallvec![first]));
+        } else if gate_type.is_two_qubit() {
+            for qubits in qubits.as_chunks::<2>().0 {
+                let (first, second) = (qubits[0], qubits[1]);
+                if !ctx.is_leaked(first) && !ctx.is_leaked(second) {
+                    let rates = self.rates_2q_for(gate_type, first, second);
+                    let r = rng.random::<f64>();
+                    let mut cumulative = 0.0;
+                    for (idx, &p) in rates.iter().enumerate() {
+                        cumulative += p;
+                        if r < cumulative {
+                            let (pauli0, pauli1) = TWO_QUBIT_PAULIS[idx];
+                            if pauli0 != GateType::I {
+                                gates.push(GateCommand::new(pauli0, smallvec::smallvec![first]));
+                            }
+                            if pauli1 != GateType::I {
+                                gates.push(GateCommand::new(pauli1, smallvec::smallvec![second]));
+                            }
+                            break;
                         }
-                        if pauli1 != GateType::I {
-                            gates.push(GateCommand::new(pauli1, smallvec::smallvec![second]));
-                        }
-                        break;
                     }
                 }
             }
@@ -396,6 +398,60 @@ mod tests {
     use crate::noise::ComposableNoiseModel;
     use crate::prelude::*;
     use pecos_simulators::SparseStab;
+
+    fn collect_gates(response: NoiseResponse) -> Vec<GateCommand> {
+        match response {
+            NoiseResponse::InjectGates(gates) => (*gates).into_vec(),
+            NoiseResponse::None => Vec::new(),
+            _ => panic!("Expected Pauli faults or no fault"),
+        }
+    }
+
+    #[test]
+    fn test_batched_two_qubit_faults() {
+        let channel = PerGatePauliChannel::new().with_base(0.0, 0.5);
+        let qubits = [QubitId(0), QubitId(1), QubitId(2), QubitId(3)];
+        let trailing = [QubitId(4), QubitId(5)];
+        for seed in 0..32 {
+            let mut ctx = NoiseContext::new();
+            let mut rng = PecosRng::seed_from_u64(seed);
+            let mut separate_ctx = NoiseContext::new();
+            let mut separate_rng = PecosRng::seed_from_u64(seed);
+            let mut batched_gates = Vec::new();
+            for pair_batch in [qubits.as_slice(), trailing.as_slice()] {
+                let event = NoiseEvent::AfterGate {
+                    gate_type: GateType::CX,
+                    qubits: pair_batch,
+                    angles: &[],
+                    gate_id: None,
+                };
+                batched_gates.extend(collect_gates(channel.apply(&event, &mut ctx, &mut rng)));
+            }
+            let mut separate_gates = Vec::new();
+            for pair in qubits
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .chain(std::iter::once(&trailing))
+            {
+                let event = NoiseEvent::AfterGate {
+                    gate_type: GateType::CX,
+                    qubits: pair,
+                    angles: &[],
+                    gate_id: None,
+                };
+                separate_gates.extend(collect_gates(channel.apply(
+                    &event,
+                    &mut separate_ctx,
+                    &mut separate_rng,
+                )));
+            }
+            assert_eq!(
+                batched_gates, separate_gates,
+                "batched fault stream differs at seed {seed}"
+            );
+        }
+    }
 
     const SHOTS: usize = 20_000;
 

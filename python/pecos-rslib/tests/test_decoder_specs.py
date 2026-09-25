@@ -25,6 +25,7 @@ from pecos_rslib.decoders import (
     pymatching,
     relay_bp,
     tesseract,
+    tesseract_trellis,
     union_find,
     windowed,
 )
@@ -44,6 +45,18 @@ FACTORY_CASES: list[FactoryCase] = [
             no_revisit_dets=True,
             pqlimit=1000,
             det_penalty=0.25,
+            merge_errors=False,
+        ),
+    ),
+    (
+        "tesseract_trellis",
+        lambda: tesseract_trellis(
+            beam_width=32,
+            beam_eps=0.01,
+            future_detcost_scale=1.5,
+            verbose=True,
+            merge_errors=False,
+            ranking_mode="future_active_detcost",
         ),
     ),
     (
@@ -159,6 +172,7 @@ def test_pymatching_requires_correlated_argument() -> None:
     ("factory", "parameter", "bad_value"),
     [
         (lambda: tesseract(preset="turbo"), "preset", "turbo"),
+        (lambda: tesseract_trellis(ranking_mode="best"), "ranking_mode", "best"),
         (lambda: bp_osd(bp_schedule="random"), "bp_schedule", "random"),
         (lambda: fusion_blossom(solver="distributed"), "solver", "distributed"),
         (lambda: pecos_uf(preset="slow"), "preset", "slow"),
@@ -188,6 +202,11 @@ def test_enum_validation_names_parameter_and_bad_value(
     [
         lambda: pymatching(correlated=True, error_probability=1.5),
         lambda: k_mwpm(k=0),
+        lambda: tesseract_trellis(beam_width=0),
+        lambda: tesseract_trellis(beam_width=-1),
+        lambda: tesseract_trellis(beam_eps=-0.1),
+        lambda: tesseract_trellis(beam_eps=float("nan")),
+        lambda: tesseract_trellis(future_detcost_scale=float("inf")),
         lambda: perturbed(sigma=-0.1),
         lambda: windowed(step=-1, buffer=1, inner=pecos_uf()),
         lambda: relay_bp(stopping_criterion=0),
@@ -215,6 +234,7 @@ def test_nested_specs_require_decoder_spec_values() -> None:
         ("pymatching", pymatching(correlated=True)),
         ("pymatching_uncorrelated", pymatching(correlated=False)),
         ("tesseract", tesseract(preset="fast")),
+        ("tesseract_trellis", tesseract_trellis()),
         ("k_mwpm:K=4", k_mwpm(k=4)),
         ("astar", astar()),
         ("astar_full", astar_full()),
@@ -437,3 +457,28 @@ def test_8_windowed_paired_acceptance(probability: float, inner: DecoderSpec) ->
         b += full != expected and partial == expected
     print(f"window acceptance: p={probability}, inner={inner!r}, a={a}, b={b}, decode_errors=0")
     assert a - b <= 3 * math.sqrt(a + b + 1), f"p={probability}, inner={inner!r}, a={a}, b={b}"
+
+
+def test_tesseract_trellis_defaults_and_repr() -> None:
+    """Omitted options and explicit upstream defaults describe the same decoder."""
+    defaults = tesseract_trellis()
+    assert defaults == tesseract_trellis(
+        beam_width=1024,
+        beam_eps=0.0,
+        future_detcost_scale=2.0,
+        verbose=False,
+        merge_errors=True,
+        ranking_mode="mass",
+    )
+    assert defaults == tesseract_trellis(
+        beam_width=None,
+        beam_eps=None,
+        future_detcost_scale=None,
+        verbose=None,
+        merge_errors=None,
+        ranking_mode=None,
+    )
+    assert repr(defaults) == "tesseract_trellis()"
+    assert repr(tesseract_trellis(merge_errors=False)) == "tesseract_trellis(merge_errors=False)"
+    assert not defaults.history_dependent
+    assert not defaults.wall_clock_dependent

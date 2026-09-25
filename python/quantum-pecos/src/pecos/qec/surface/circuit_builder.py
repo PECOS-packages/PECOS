@@ -953,17 +953,18 @@ def build_surface_code_circuit(
         twirl.validate_runtime_supported()
     twirl_site_schedule = None if twirl is None else twirl.site_schedule
 
-    if (
-        resolved_plan.interaction_basis == "cx"
-        and effective_ancilla_budget == total_ancilla
-        and twirl is None
-        and clifford_frame_policy is None
-    ):
-        from pecos.qec.surface.gadgets import default_allocation, memory_gadgets
+    if resolved_plan.interaction_basis == "cx" and twirl is None and clifford_frame_policy is None:
+        from pecos.qec.surface.gadgets import memory_gadgets
 
-        allocation = default_allocation(patch)
-        gadgets = memory_gadgets(patch, num_rounds, basis, allocation=allocation, round_order=cnot_round_order)
-        return [step for gadget in gadgets for step in gadget.steps], allocation
+        gadgets = memory_gadgets(
+            patch,
+            num_rounds,
+            basis,
+            round_order=cnot_round_order,
+            ancilla_budget=ancilla_budget,
+            ancilla_schedule=ancilla_schedule,
+        )
+        return [step for gadget in gadgets for step in gadget.steps], gadgets[0].allocations[0]
 
     # Qubit allocation layout. Under ancilla reuse, stabilizers map onto a
     # shared ancilla pool and different stabilizers can intentionally share the
@@ -1981,7 +1982,7 @@ class GuppyRenderer(CircuitRenderer):
     def render(
         self,
         _ops: list[SurfaceCircuitStep],
-        _allocation: QubitAllocation,
+        allocation: QubitAllocation,
         patch: SurfacePatch,
         _num_rounds: int,
         _basis: str,
@@ -2000,6 +2001,11 @@ class GuppyRenderer(CircuitRenderer):
         """
         from pecos.guppy_gen.gadget_render import render_surface_gadget_module
         from pecos.guppy_gen.surface import generate_guppy_source
+
+        ancillas = allocation.x_ancilla_qubits + allocation.z_ancilla_qubits
+        if len(set(ancillas)) < len(ancillas):
+            msg = "GuppyRenderer cannot honour ancilla_budget; use render_surface_gadget_module with ancilla_budget"
+            raise ValueError(msg)
 
         resolved_plan = resolve_surface_check_plan(interaction_basis=interaction_basis)
         if resolved_plan.interaction_basis == "cx":
@@ -3191,6 +3197,8 @@ def tick_circuit_to_stim(
     import json
     import math
 
+    from pecos_rslib import is_supported_noop_or_metadata_gate
+
     lines = []
 
     simple_gate_map = {
@@ -3302,7 +3310,32 @@ def tick_circuit_to_stim(
             msg = f"Unsupported traced Clifford RXY1Q angles: theta={theta!r}, phi={phi!r}"
             raise ValueError(msg)
 
-        return [], None
+        if gate_name == "RXYXY2Q":
+            if len(gate.angles) < 2:
+                return [], None
+            theta = float(gate.angles[0])
+            phi = float(gate.angles[1])
+            if _is_close_turn(theta, 0.0):
+                return [], None
+            axis = None
+            if _is_close_turn(phi, 0.0) or _is_close_turn(phi, math.pi):
+                axis = "X"
+            elif _is_close_turn(phi, math.pi / 2) or _is_close_turn(phi, 3 * math.pi / 2):
+                axis = "Y"
+            if axis is not None:
+                if _is_close_turn(theta, math.pi / 2):
+                    return [(f"SQRT_{axis}{axis}", qubits)], "two"
+                if _is_close_turn(theta, 3 * math.pi / 2):
+                    return [(f"SQRT_{axis}{axis}_DAG", qubits)], "two"
+                if _is_close_turn(theta, math.pi):
+                    return [(axis, qubits)], "two"
+            msg = f"Unsupported traced Clifford RXYXY2Q angles: theta={theta!r}, phi={phi!r}"
+            raise ValueError(msg)
+
+        if is_supported_noop_or_metadata_gate(gate.gate_type):
+            return [], None
+        msg = f"Unsupported gate for Stim export: {gate_name}"
+        raise ValueError(msg)
 
     for tick_idx in range(tc.num_ticks()):
         tick = tc.get_tick(tick_idx)

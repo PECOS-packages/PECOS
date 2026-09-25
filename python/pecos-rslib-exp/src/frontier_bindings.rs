@@ -10,14 +10,16 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-use crate::decoder_specs::decoder_error_to_py;
+use crate::decoder_specs::{
+    decoder_error_to_py, indexed_decoder_error_to_py, validate_batch_workers,
+};
 use pecos_frontier::{
     CommitteeDirection, CommitteeMember, CommitteeStatus, Factor, FactorModel,
     FrontierCommittee as RustFrontierCommittee,
     FrontierCommitteeResult as RustFrontierCommitteeResult, FrontierConfig as RustFrontierConfig,
-    FrontierDecoder as RustFrontierDecoder, FrontierResult as RustFrontierResult, FrontierStatus,
-    MetricMode, ObsMask, Outcome, SparseDem, TrellisOrdering,
-    backward_deadline_column_order_for_factors, deadline_column_order_for_factors,
+    FrontierDecodeAttempt, FrontierDecoder as RustFrontierDecoder,
+    FrontierResult as RustFrontierResult, FrontierStatus, MetricMode, ObsMask, Outcome, SparseDem,
+    TrellisOrdering, backward_deadline_column_order_for_factors, deadline_column_order_for_factors,
 };
 use pyo3::Borrowed;
 use pyo3::exceptions::{PyAttributeError, PyRuntimeError, PyValueError};
@@ -584,11 +586,41 @@ impl PyFrontierDecoder {
             .map_err(|error| decoder_error_to_py(&error))
     }
 
-    /// Decode a batch of dense detector syndromes in input order.
-    fn decode_batch(&mut self, shots: Vec<Vec<u8>>) -> PyResult<Vec<PyFrontierResult>> {
-        shots
+    /// Decode dense detector syndromes in input order. Defaults to sequential
+    /// execution; workers > 1 shares the model across workers and releases the GIL.
+    /// workers must be positive and is capped at one per shot (one for an empty batch).
+    /// Each worker owns independent decoding scratch.
+    #[pyo3(signature = (shots, *, workers=1))]
+    fn decode_batch(
+        &self,
+        py: Python<'_>,
+        shots: Vec<Vec<u8>>,
+        workers: i64,
+    ) -> PyResult<Vec<PyFrontierResult>> {
+        let workers = validate_batch_workers(workers)?;
+        let decode = || self.inner.decode_batch(&shots, workers);
+        let results = if workers > 1 {
+            py.detach(decode)
+        } else {
+            decode()
+        }
+        .map_err(|error| decoder_error_to_py(&error))?;
+        results
             .into_iter()
-            .map(|syndrome| self.decode_syndrome(syndrome))
+            .enumerate()
+            .map(|(shot_index, result)| {
+                let result = match result {
+                    FrontierDecodeAttempt::Success(inner) => Ok(inner),
+                    FrontierDecodeAttempt::NoPath { error, .. }
+                    | FrontierDecodeAttempt::Error(error) => Err(error),
+                };
+                result
+                    .map(|inner| PyFrontierResult {
+                        inner,
+                        num_observables: self.num_observables,
+                    })
+                    .map_err(|error| indexed_decoder_error_to_py(shot_index, &error))
+            })
             .collect()
     }
 
@@ -684,11 +716,36 @@ impl PyFrontierCommitteeDecoder {
             .map_err(|error| decoder_error_to_py(&error))
     }
 
-    /// Decode a batch of dense detector syndromes in input order.
-    fn decode_batch(&mut self, shots: Vec<Vec<u8>>) -> PyResult<Vec<PyFrontierCommitteeResult>> {
-        shots
+    /// Decode dense detector syndromes in input order. Defaults to sequential
+    /// execution; workers > 1 shares the model across workers and releases the GIL.
+    /// workers must be positive and is capped at one per shot (one for an empty batch).
+    /// Each worker owns independent decoding scratch.
+    #[pyo3(signature = (shots, *, workers=1))]
+    fn decode_batch(
+        &self,
+        py: Python<'_>,
+        shots: Vec<Vec<u8>>,
+        workers: i64,
+    ) -> PyResult<Vec<PyFrontierCommitteeResult>> {
+        let workers = validate_batch_workers(workers)?;
+        let decode = || self.inner.decode_batch(&shots, workers);
+        let results = if workers > 1 {
+            py.detach(decode)
+        } else {
+            decode()
+        }
+        .map_err(|error| decoder_error_to_py(&error))?;
+        results
             .into_iter()
-            .map(|syndrome| self.decode_syndrome(syndrome))
+            .enumerate()
+            .map(|(shot_index, result)| {
+                result
+                    .map(|inner| PyFrontierCommitteeResult {
+                        inner,
+                        num_observables: self.num_observables,
+                    })
+                    .map_err(|error| indexed_decoder_error_to_py(shot_index, &error))
+            })
             .collect()
     }
 

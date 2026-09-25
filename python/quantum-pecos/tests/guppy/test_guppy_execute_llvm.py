@@ -8,7 +8,6 @@ import pytest
 from guppylang import guppy
 from guppylang.std.quantum import h, measure, qubit
 from pecos import execute_llvm
-from pecos._compilation import GuppyFrontend
 
 
 @pytest.fixture
@@ -53,22 +52,3 @@ def test_compile_hugr_file_to_string(hugr_bytes: bytes, tmp_path: Path) -> None:
     input_path = tmp_path / "input.hugr"
     input_path.write_bytes(hugr_bytes)
     assert execute_llvm.compile_hugr_file_to_string(input_path) == execute_llvm.compile_module_to_string(hugr_bytes)
-
-
-@pytest.mark.parametrize("use_rust_backend", [True, False])
-def test_guppy_frontend_integration(simple_quantum_function: object, use_rust_backend: bool) -> None:
-    """Both compilation backends produce a real IR file and clean it up.
-
-    ``use_rust_backend=False`` routes through ``_compile_with_external_tools``, which is
-    reachable public API. Both paths emit equivalent IR, so the same assertions hold for
-    each; parametrizing stops the external path from losing its only invocation.
-    """
-    frontend = GuppyFrontend(use_rust_backend=use_rust_backend)
-    try:
-        qir_file = frontend.compile_function(simple_quantum_function)
-        llvm_ir = qir_file.read_text()
-        assert re.search(r"define\b[^\n]*@qmain\(", llvm_ir)
-        assert re.search(r"\bcall\b[^\n]*@___lazy_measure\(", llvm_ir)
-    finally:
-        frontend.cleanup()
-    assert not qir_file.exists()

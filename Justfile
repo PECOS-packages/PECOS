@@ -245,19 +245,11 @@ build-lite profile="debug": _msvc-bootstrap (validate-profile "build-lite" profi
 
 # Build PECOS with CUDA Python extras (profile: dev/debug, release, native)
 [group('build')]
-build-cuda profile="debug": _msvc-bootstrap (validate-profile "build-cuda" profile) setup-quiet
+build-cuda profile="debug": _msvc-bootstrap (validate-profile "build-cuda" profile) setup-quiet sync-deps
     #!/usr/bin/env bash
     set -euo pipefail
     PROFILE="{{profile}}"
     {{pecos}} python build --profile "$PROFILE" --cuda
-
-# Build only the Python workspace members needed by the fast CI smoke lanes.
-[group('build')]
-python-ci-build profile="debug": _msvc-bootstrap (validate-profile "python-ci-build" profile) python-ci-sync
-    #!/usr/bin/env bash
-    set -euo pipefail
-    PROFILE="{{profile}}"
-    {{pecos}} python build --profile "$PROFILE" --no-cuda
 
 # Build only the Python packages needed for docs validation.
 [group('build')]
@@ -266,20 +258,14 @@ python-ci-build-docs profile="debug": _msvc-bootstrap (validate-profile "python-
     set -euo pipefail
     PROFILE="{{profile}}"
     PECOS_BUILD_MWPF=0 {{pecos}} python build --profile "$PROFILE" --no-cuda
-    # --no-sync: a package-scoped `uv run` otherwise syncs pecos-rslib-exp into the
-    # environment first, i.e. builds the release wheel this very command replaces.
-    uv run --frozen --no-sync --package pecos-rslib-exp maturin develop --uv --locked --manifest-path python/pecos-rslib-exp/Cargo.toml
 
-# Build the extra experimental bindings exercised by the fast Python core test lane.
+# Build the Python packages exercised by the fast Python core test lane.
 [group('build')]
 python-ci-build-test profile="debug": _msvc-bootstrap (validate-profile "python-ci-build-test" profile) python-ci-sync-test
     #!/usr/bin/env bash
     set -euo pipefail
     PROFILE="{{profile}}"
     {{pecos}} python build --profile "$PROFILE" --no-cuda
-    # --no-sync: a package-scoped `uv run` otherwise syncs pecos-rslib-exp into the
-    # environment first, i.e. builds the release wheel this very command replaces.
-    uv run --frozen --no-sync --package pecos-rslib-exp maturin develop --uv --locked --manifest-path python/pecos-rslib-exp/Cargo.toml
 
 # =============================================================================
 # Testing
@@ -357,11 +343,6 @@ pytest-ci-core-shard shard:
 pytest-zluppy:
     uv sync --project exp/zluppy --frozen
     uv run --project exp/zluppy --frozen pytest exp/zluppy/tests
-
-# Build and import the core Python packages on a target platform/interpreter.
-[group('test')]
-python-ci-smoke profile="debug": (validate-profile "python-ci-smoke" profile) (python-ci-build profile)
-    uv run --frozen python -c "from importlib.metadata import version; import pecos, pecos_rslib, pecos_rslib_llvm; print({'pecos': pecos.__version__, 'pecos_rslib': pecos_rslib.__version__, 'pecos_rslib_llvm': version('pecos-rslib-llvm')})"
 
 # Run Rust tests (CUDA-aware; mode: dev/debug, release, native)
 [group('test')]
@@ -980,18 +961,31 @@ install-build-llvm: _msvc-bootstrap
             ;;
     esac
 
-# Sync Python deps (fast if already installed, skips maturin rebuilds)
+# Sync Python deps if incomplete; the extension crates are left to the CLI build
 [private]
 sync-deps:
     #!/usr/bin/env bash
     set -euo pipefail
-    # Quick check: ensure the packages used by the default dev/test lane are importable.
-    # This catches newly added workspace members that an older .venv may be missing.
-    if uv run --frozen python -c "import importlib.util, sys; required = ('pecos', 'pecos_rslib', 'pecos_selene_stab_vec', 'pecos_selene_stabilizer', 'pecos_selene_statevec', 'pecos_selene_stab_mps', 'pecos_selene_mast'); missing = [name for name in required if importlib.util.find_spec(name) is None]; sys.exit(1 if missing else 0)" 2>/dev/null; then
+    # Quick check: the packages used by the default dev/test lane are importable
+    # (catches newly added workspace members an older .venv lacks) and every
+    # installed package has its dependencies (catches a venv that was never
+    # synced, which is what `pecos python build` refuses at the end).
+    if uv run --frozen python -c "import importlib.util, sys; required = ('pecos', 'pecos_rslib', 'pecos_selene_stab_vec', 'pecos_selene_stabilizer', 'pecos_selene_statevec', 'pecos_selene_stab_mps', 'pecos_selene_mast'); missing = [name for name in required if importlib.util.find_spec(name) is None]; sys.exit(1 if missing else 0)" 2>/dev/null \
+        && uv pip check >/dev/null 2>&1; then
         exit 0
     fi
     echo "Python deps incomplete, running uv sync..."
-    SYNC_ARGS=(--project . --all-packages --locked)
+    # The extension crates that `pecos python build` installs later in `just
+    # build` are excluded here, as the python-ci-sync* recipes do: otherwise uv
+    # builds a release wheel of each one that maturin develop then replaces.
+    # An exact sync also removes any copy already in the venv, so a wheel from
+    # an earlier sync does not survive a `just build`.
+    SYNC_ARGS=(
+      --project . --all-packages --locked
+      --no-install-package pecos-rslib
+      --no-install-package pecos-rslib-exp
+      --no-install-package pecos-rslib-llvm
+    )
     # Include CUDA Python packages (cupy, cuquantum, pytket-cutensornet) when
     # the toolkit is installed AND an NVIDIA GPU is present. Pure Rust users
     # and machines without a GPU skip this -- mirrors `pecos python build`.
@@ -1008,21 +1002,8 @@ sync-deps:
 # only. The native packages are listed with `--package` so their dependencies
 # land in the environment, but are excluded from installation with
 # `--no-install-package`: otherwise uv builds release wheels of each one
-# (~20 min on a 4-core runner) that the following `pecos python build` /
-# `maturin develop` step immediately replaces with a debug build.
-[group('setup')]
-python-ci-sync:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    uv sync --locked \
-      --group dev \
-      --group test \
-      --package pecos-rslib \
-      --package pecos-rslib-llvm \
-      --package quantum-pecos \
-      --no-install-package pecos-rslib \
-      --no-install-package pecos-rslib-llvm
-
+# (~20 min on a 4-core runner) that the following `pecos python build`
+# step immediately replaces with a debug build.
 [group('setup')]
 python-ci-sync-test:
     #!/usr/bin/env bash

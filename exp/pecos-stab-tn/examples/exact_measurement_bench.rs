@@ -10,8 +10,13 @@
 // express or implied. See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Time one exact MZ on a fresh GHZ state with coefficient-MPS bond dimension one.
-//! Run: `cargo run --release -p pecos-stab-tn --example exact_measurement_bench`.
+//! Time one MZ on a fresh GHZ state with coefficient-MPS bond dimension one.
+//! This product/GHZ regime is not representative of repeated measurement in QEC
+//! circuits. A user-measured 118-qubit surface-code circuit through Python went
+//! from 222 to 214 ms/shot (about 4%); Exact MZ cost about 422 us/call versus
+//! 77 us/call for Pragmatic, with compensation accounting for the remaining gap.
+//! Run: `cargo run --release -p pecos-stab-tn --example exact_measurement_bench -- exact`.
+//! Use `pragmatic` for the reference mode; selection occurs once, before timing.
 
 use pecos_core::QubitId;
 use pecos_simulators::CliffordGateable;
@@ -19,13 +24,17 @@ use pecos_stab_tn::stab_mps::{MeasurementMode, StabMps};
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
-fn run(num_qubits: usize, samples: u64) -> f64 {
+fn run<const EXACT: bool>(num_qubits: usize, samples: u64) -> f64 {
     let rank_ceiling = (1usize << (num_qubits / 2)).min(usize::MAX / 8);
     let mut elapsed = Duration::ZERO;
     for seed in 0..samples {
         let mut simulator = StabMps::builder(num_qubits)
             .seed(seed)
-            .measurement(MeasurementMode::Exact)
+            .measurement(if EXACT {
+                MeasurementMode::Exact
+            } else {
+                MeasurementMode::Pragmatic
+            })
             .max_bond_dim(rank_ceiling)
             .svd_cutoff(0.0)
             .max_truncation_error(0.0)
@@ -43,14 +52,23 @@ fn run(num_qubits: usize, samples: u64) -> f64 {
     elapsed.as_secs_f64() * 1e6 / samples as f64
 }
 
-fn main() {
+fn benchmark<const EXACT: bool>() {
+    let mode = if EXACT { "Exact" } else { "Pragmatic" };
     for num_qubits in [26, 64, 118] {
-        black_box(run(num_qubits, 100));
-        let mut runs: Vec<_> = (0..7).map(|_| run(num_qubits, 1_000)).collect();
+        black_box(run::<EXACT>(num_qubits, 100));
+        let mut runs: Vec<_> = (0..7).map(|_| run::<EXACT>(num_qubits, 1_000)).collect();
         runs.sort_by(f64::total_cmp);
         println!(
-            "qubits={num_qubits} exact_mz_us={:.3} min_us={:.3} max_us={:.3} runs=7 samples_per_run=1000",
+            "qubits={num_qubits} mode={mode} mz_us={:.3} min_us={:.3} max_us={:.3} runs=7 samples_per_run=1000",
             runs[3], runs[0], runs[6]
         );
+    }
+}
+
+fn main() {
+    match std::env::args().nth(1).as_deref() {
+        None | Some("exact") => benchmark::<true>(),
+        Some("pragmatic") => benchmark::<false>(),
+        Some(mode) => panic!("unknown measurement mode: {mode}; expected exact or pragmatic"),
     }
 }

@@ -40,6 +40,11 @@ use tensor::{
 // consume that entire budget one boundary-passing gate at a time.
 const ISOMETRY_PRESERVING_UNITARY_TOLERANCE: f64 = 1e-12;
 
+#[cfg(test)]
+std::thread_local! {
+    pub(crate) static NORM_SQUARED_EVALUATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// Configuration for MPS truncation.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MpsConfig {
@@ -848,6 +853,8 @@ impl Mps {
     #[must_use]
     pub fn norm_squared(&self) -> f64 {
         // Contract from left to right, building the transfer matrix product.
+        #[cfg(test)]
+        NORM_SQUARED_EVALUATIONS.set(NORM_SQUARED_EVALUATIONS.get() + 1);
         // E[alpha, beta] = sum_{sigma} A*[alpha, sigma] A[beta, sigma]
         // Start with E = 1x1 identity.
         let mut transfer = DMatrix::from_element(1, 1, Complex64::new(1.0, 0.0));

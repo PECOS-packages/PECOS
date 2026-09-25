@@ -10,7 +10,10 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
+use pecos_decoder_core::dem::SparseDem;
 use std::{env, fs, path::PathBuf};
+
+const MAX_BITS: usize = 128;
 
 fn main() {
     println!("cargo:rerun-if-env-changed=FRONTIER_DEM_PATH");
@@ -24,14 +27,12 @@ fn main() {
 
     let dem = fs::read_to_string(&source)
         .unwrap_or_else(|error| panic!("failed to read DEM {}: {error}", source.display()));
-    if dem.lines().any(|line| {
-        let line = line.trim_start();
-        line.starts_with("repeat") || line.starts_with("shift_detectors")
-    }) {
-        panic!(
-            "{} is not flattened; flatten it first (for example with stim.DetectorErrorModel.flattened())",
-            source.display()
-        );
-    }
+    let parsed = SparseDem::from_dem_str(&dem)
+        .unwrap_or_else(|error| panic!("invalid flattened DEM {}: {error}", source.display()));
+    assert!(
+        parsed.num_detectors <= MAX_BITS && parsed.num_observables <= MAX_BITS,
+        "DEM {} exceeds the 128-detector or 128-observable WebAssembly ABI limit",
+        source.display()
+    );
     fs::write(output, dem).expect("failed to stage embedded DEM");
 }

@@ -71,16 +71,20 @@ impl State {
 
     fn decode(&mut self, words: [i32; 4]) {
         self.result = [0; 4];
+        let Some(decoder) = self.decoder.as_mut() else {
+            self.status = STATUS_MODEL_ERROR;
+            return;
+        };
+        if has_bits_at_or_above(words, self.detector_count) {
+            self.status = STATUS_DECODE_ERROR;
+            return;
+        }
         let mut syndrome = vec![0_u8; self.detector_count];
         for (detector, value) in syndrome.iter_mut().enumerate() {
             let word = words[detector / 32].cast_unsigned();
             *value = ((word >> (detector % 32)) & 1) as u8;
         }
 
-        let Some(decoder) = self.decoder.as_mut() else {
-            self.status = STATUS_MODEL_ERROR;
-            return;
-        };
         match decoder.decode(syndrome.as_slice()) {
             Ok(decoded) => {
                 for observable in decoded.predicted.iter_set_bits() {
@@ -91,6 +95,21 @@ impl State {
             Err(_) => self.status = STATUS_DECODE_ERROR,
         }
     }
+}
+
+fn has_bits_at_or_above(words: [i32; 4], detector_count: usize) -> bool {
+    let complete_words = detector_count / i32::BITS as usize;
+    let remaining_bits = detector_count % i32::BITS as usize;
+    let first_padding_word = if remaining_bits == 0 {
+        complete_words
+    } else {
+        let valid_mask = (1_u32 << remaining_bits) - 1;
+        if words[complete_words].cast_unsigned() & !valid_mask != 0 {
+            return true;
+        }
+        complete_words + 1
+    };
+    words[first_padding_word..].iter().any(|word| *word != 0)
 }
 
 thread_local! {
@@ -181,5 +200,20 @@ mod tests {
         state.decode([0, 1, 0, 0]);
         assert_eq!(state.status, STATUS_OK);
         assert_eq!(state.result, [0, 1, 0, 0]);
+    }
+
+    #[test]
+    fn syndrome_bits_beyond_model_width_are_rejected() {
+        let mut state = State::empty();
+        state.initialize("error(0.1) D0 L0\nerror(0.2) D1");
+
+        state.decode([1 | (1 << 5), 0, 0, 0]);
+
+        assert_eq!(state.status, STATUS_DECODE_ERROR);
+        assert_eq!(state.result, [0; 4]);
+
+        state.initialize("error(0.1) D31");
+        state.decode([0, 1, 0, 0]);
+        assert_eq!(state.status, STATUS_DECODE_ERROR);
     }
 }

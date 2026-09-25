@@ -84,6 +84,7 @@ jobs:
           bash scripts/ci/ensure-rust.sh stable minimal
           export PATH="$HOME/.cargo/bin:$PATH"
           rustup override set stable
+          rustup target add wasm32-unknown-unknown
           rustup show
 
       - name: Install just
@@ -131,6 +132,11 @@ jobs:
 
       - name: Run clippy
         run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+
+      - name: Check Frontier bare WebAssembly adapter
+        env:
+          RUSTFLAGS: '--cfg getrandom_backend="unsupported"'
+        run: cargo check --locked --target wasm32-unknown-unknown -p pecos-frontier-wasm
 
   rust-lint-no-llvm:
     if: (github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'ci:full-rust'

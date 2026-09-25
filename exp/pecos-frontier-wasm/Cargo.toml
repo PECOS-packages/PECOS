@@ -12,6 +12,9 @@ publish = false
 [dependencies]
 pecos-frontier.workspace = true
 
+[build-dependencies]
+pecos-decoder-core.workspace = true
+
 [lib]
 crate-type = ["cdylib"]
 

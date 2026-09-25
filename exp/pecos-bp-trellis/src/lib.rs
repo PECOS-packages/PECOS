@@ -130,7 +130,9 @@ impl BpTrellisConfig {
     ///
     /// # Errors
     ///
-    /// Returns [`DecoderError::InvalidConfiguration`] for an oversized ladder or invalid rung.
+    /// Returns [`DecoderError::InvalidConfiguration`] for an oversized ladder, an invalid
+    /// rung, or a non-empty ladder on an exact base (an exact base never prunes, so no
+    /// rung could help).
     pub fn validate(&self) -> Result<(), DecoderError> {
         if u32::try_from(self.escalation.len()).is_err() {
             return Err(DecoderError::InvalidConfiguration(

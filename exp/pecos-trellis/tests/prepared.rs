@@ -371,6 +371,30 @@ fn residual_invalidates_ready() {
 }
 
 #[test]
+fn residual_reports_the_lowest_detector_within_and_across_words() {
+    // No probabilistic mechanism touches any detector, so every fired detector
+    // beyond the forced D0 is a residual; the report must name the lowest one.
+    let mut decoder =
+        TrellisDecoder::from_dem_str("error(1) D0 L0\nerror(0) D69", config(false)).unwrap();
+    let mut same_word = [0; 70];
+    same_word[0] = 1;
+    same_word[3] = 1;
+    same_word[5] = 1;
+    assert_eq!(
+        decoder.prepare(&same_word).unwrap(),
+        TrellisPrepared::Residual { detector: 3 }
+    );
+    let mut across_words = [0; 70];
+    across_words[0] = 1;
+    across_words[5] = 1;
+    across_words[69] = 1;
+    assert_eq!(
+        decoder.prepare(&across_words).unwrap(),
+        TrellisPrepared::Residual { detector: 5 }
+    );
+}
+
+#[test]
 fn forced_observables_and_lowest_residual() {
     let mut decoder =
         TrellisDecoder::from_dem_str("error(1) D0 L0 L70\nerror(0) D69", config(false)).unwrap();

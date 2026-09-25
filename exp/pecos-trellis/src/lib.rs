@@ -798,7 +798,8 @@ pub enum TrellisDecodeAttempt {
         transitions: u64,
         /// States discarded before the empty column.
         dropped_states: u64,
-        /// Wall-clock seconds spent on BP suffix scoring in this attempt.
+        /// Wall-clock seconds the shot's single BP refresh took, repeated on
+        /// every attempt of that shot; never sum it across attempts.
         bp_seconds: f64,
     },
     /// A non-retryable decoding error.
@@ -1411,7 +1412,7 @@ impl TrellisDecoder {
         }
     }
 
-    /// Check the syndrome and refresh BP once, preserving frontier progress.
+    /// Check the syndrome and refresh BP once; the DP runs later in `attempt`.
     ///
     /// # Errors
     /// Returns a dimension error or a BP engine error. Any unsuccessful prepare

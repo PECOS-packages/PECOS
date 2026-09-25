@@ -425,10 +425,13 @@ residual cannot be changed, `"infeasible"` when an attempt proves there is no
 path without pruning, or `"exhausted"` when all attempts fail after pruning.
 Residual and infeasible outcomes skip remaining rungs. Other errors still raise.
 
-Both outcome classes expose `no_path`, `observable_flips`, `transitions`,
-`bp_runs`, and `bp_seconds`. A no-path mask is the forced contribution of probability-one
-mechanisms, including wide observables; it is a placeholder, not a correction.
-The report also exposes `detector` (only for residual) and `rungs_tried`.
+Both outcome classes expose `no_path`, `transitions`, `bp_runs`, and
+`bp_seconds`. Only a decoded result exposes `observable_flips`; a report exposes
+`placeholder_flips` instead, the forced contribution of probability-one
+mechanisms, including wide observables. The names differ on purpose, so code
+written for a correction raises `AttributeError` on a report rather than
+silently consuming a placeholder. The report also exposes `detector` (only for
+residual) and `rungs_tried`.
 BP time is counted once, while transitions sum all attempts.
 The `bp_trellis(...)` spec route remains strict and accepts no `on_no_path`.
 

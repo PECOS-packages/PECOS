@@ -115,8 +115,14 @@ def test_no_path_reports_across_direct_methods(observable: int) -> None:
         for result in (actual, dense, sparse):
             assert type(result) is type(expected)
             assert result.no_path == (index != 0)
-            assert result.observable_flips.mask == 1 << observable
-            assert len(result.observable_flips) == observable + 1
+            if index:
+                assert not hasattr(result, "observable_flips")
+                flips = result.placeholder_flips
+            else:
+                assert not hasattr(result, "placeholder_flips")
+                flips = result.observable_flips
+            assert flips.mask == 1 << observable
+            assert len(flips) == observable + 1
             assert result.bp_runs == 0
             assert result.bp_seconds == 0.0
             assert result.transitions == expected.transitions

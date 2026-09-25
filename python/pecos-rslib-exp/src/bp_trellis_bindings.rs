@@ -390,9 +390,11 @@ impl PyBpTrellisNoPath {
             _ => None,
         }
     }
-    /// Initial forced observable flips with their intrinsic width; a placeholder, not a correction.
+    /// Initial forced observable flips with their intrinsic width. Deliberately
+    /// not named `observable_flips`: this is a placeholder, not a correction, so
+    /// code written for a decoded result cannot pick it up by duck typing.
     #[getter]
-    fn observable_flips(&self) -> PyBpTrellisObservableFlips {
+    fn placeholder_flips(&self) -> PyBpTrellisObservableFlips {
         PyBpTrellisObservableFlips {
             mask: self.inner.placeholder.clone(),
             num_observables: self.num_observables,

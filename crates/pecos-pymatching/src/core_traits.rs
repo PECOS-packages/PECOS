@@ -288,6 +288,23 @@ mod tests {
     }
 
     #[test]
+    fn native_observable_batch_without_observables_preserves_shots() {
+        for correlated in [false, true] {
+            let mut decoder =
+                PyMatchingDecoder::from_dem_with_correlations("error(0.1) D0 D1", correlated)
+                    .unwrap();
+            let masks = decoder
+                .decode_batch_to_observables(&[0, 0, 1, 1], 2, 2)
+                .unwrap();
+            assert_eq!(masks.len(), 2);
+            for (mask, syndrome) in masks.iter().zip([[0, 0], [1, 1]]) {
+                assert!(mask.is_zero());
+                assert_eq!(*mask, decoder.decode_obs(&syndrome).unwrap());
+            }
+        }
+    }
+
+    #[test]
     fn correlated_mode_changes_the_correlation_sensitive_fixture() {
         let dem = "error(0.01) D0 D1 ^ D2 D3 L0\nerror(0.1) D2\nerror(0.1) D3\n";
         let mut correlated = PyMatchingDecoder::from_dem_with_correlations(dem, true).unwrap();

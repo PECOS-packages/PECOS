@@ -740,11 +740,10 @@ impl QASMEngine {
         }
     }
 
-    /// Get the gate table for table-driven processing
-    #[allow(clippy::too_many_lines)]
-    fn get_gate_table() -> Vec<GateInfo> {
+    /// Gate table for table-driven processing, searched in order.
+    const GATE_TABLE: &[GateInfo] = {
         use GateInfo as G;
-        vec![
+        &[
             // Single-qubit gates
             G {
                 name: "h",
@@ -886,7 +885,7 @@ impl QASMEngine {
                 handler: Self::handle_swap,
             },
         ]
-    }
+    };
 
     /// Process a single gate operation using table-driven approach
     fn process_gate_operation(
@@ -895,12 +894,9 @@ impl QASMEngine {
         qubits: &[usize],
         parameters: &[f64],
     ) -> Result<bool, PecosError> {
-        let gate_table = Self::get_gate_table();
-        let name_lower = name.to_lowercase();
-
-        // Find the gate in the table
-        for gate_info in &gate_table {
-            if gate_info.name == name_lower {
+        // Find the gate in the table; QASM gate names are ASCII identifiers
+        for gate_info in Self::GATE_TABLE {
+            if gate_info.name.eq_ignore_ascii_case(name) {
                 // Validate qubit count
                 if qubits.len() != gate_info.required_qubits {
                     return Err(PecosError::Input(format!(

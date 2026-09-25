@@ -76,3 +76,117 @@ pub fn assert_outcome(
         Err(error) => panic!("{consumer}: unexpected rejection of {input:?}: {error}"),
     }
 }
+
+pub fn assert_mechanism_effects(input: &str, dense_index_threshold: u64) {
+    use pecos_decoder_core::dem::grammar::{Kind, Target, parse_line};
+    use pecos_decoder_core::dem::{DemCheckMatrix, DemMatchingGraph, SparseDem};
+    use std::collections::{BTreeMap, BTreeSet};
+
+    let mut instructions: Vec<_> = input
+        .lines()
+        .filter_map(|line| parse_line(line).unwrap())
+        .collect();
+    let mut detector_ids = BTreeSet::new();
+    let mut observable_ids = BTreeSet::new();
+    for instruction in &instructions {
+        for target in &instruction.targets {
+            match target {
+                Target::Detector(id) => {
+                    detector_ids.insert(*id);
+                }
+                Target::Observable(id) => {
+                    observable_ids.insert(*id);
+                }
+                _ => {}
+            }
+        }
+    }
+    // Dimensions and index limits are tested separately; compact huge indices to test parity too.
+    let text = if detector_ids
+        .iter()
+        .chain(&observable_ids)
+        .any(|&id| id >= dense_index_threshold)
+    {
+        let detectors: BTreeMap<_, _> = detector_ids.into_iter().zip(0u64..).collect();
+        let observables: BTreeMap<_, _> = observable_ids.into_iter().zip(0u64..).collect();
+        for instruction in &mut instructions {
+            for target in &mut instruction.targets {
+                match target {
+                    Target::Detector(id) => *id = detectors[id],
+                    Target::Observable(id) => *id = observables[id],
+                    _ => {}
+                }
+            }
+        }
+        instructions
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\n")
+    } else {
+        input.to_string()
+    };
+    let sparse = SparseDem::from_dem_str(&text).unwrap();
+    let matrix = DemCheckMatrix::from_dem_str(&text).unwrap();
+    assert_eq!(sparse.mechanisms.len(), matrix.num_mechanisms, "{input:?}");
+    let errors: Vec<_> = instructions
+        .into_iter()
+        .filter(|i| i.kind == Kind::Error)
+        .collect();
+    assert_eq!(sparse.mechanisms.len(), errors.len(), "{input:?}");
+    for (column, ((probability, detectors, observables), mut instruction)) in
+        sparse.mechanisms.iter().zip(errors).enumerate()
+    {
+        assert!(
+            (probability - matrix.error_priors[column]).abs() < f64::EPSILON,
+            "{input:?}"
+        );
+        let column_detectors: Vec<_> = matrix
+            .check_matrix
+            .column(column)
+            .iter()
+            .enumerate()
+            .filter(|&(_, &bit)| bit != 0)
+            .map(|(row, _)| u32::try_from(row).unwrap())
+            .collect();
+        let column_observables: Vec<_> = matrix
+            .observable_matrix
+            .column(column)
+            .iter()
+            .enumerate()
+            .filter(|&(_, &bit)| bit != 0)
+            .map(|(row, _)| u32::try_from(row).unwrap())
+            .collect();
+        assert_eq!(
+            *detectors, column_detectors,
+            "{input:?}, mechanism {column}"
+        );
+        assert_eq!(
+            *observables, column_observables,
+            "{input:?}, mechanism {column}"
+        );
+
+        // Isolate each fault before independent parallel edges lose their fault provenance.
+        let mut graph = DemMatchingGraph::from_dem_str(&instruction.to_string()).unwrap();
+        if *probability == 0.0 {
+            assert!(graph.edges.is_empty(), "{input:?}");
+            // A zero-probability mechanism still has an effect when it fires.
+            instruction.args[0] = 0.5;
+            graph = DemMatchingGraph::from_dem_str(&instruction.to_string()).unwrap();
+        }
+        assert_eq!(graph.skipped_hyperedges, 0, "{input:?}");
+        let mut endpoints = vec![0; sparse.num_detectors];
+        for edge in graph.edges {
+            assert_eq!(edge.fault_id, 0, "{input:?}");
+            endpoints[edge.node1 as usize] ^= 1;
+            if let Some(node2) = edge.node2 {
+                endpoints[node2 as usize] ^= 1;
+            }
+        }
+        assert_eq!(
+            endpoints,
+            matrix.check_matrix.column(column).to_vec(),
+            "{input:?}, mechanism {column}"
+        );
+    }
+}

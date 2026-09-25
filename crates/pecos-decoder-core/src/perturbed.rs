@@ -48,6 +48,7 @@ impl Default for PerturbedConfig {
 
 /// Perturb error probabilities in a DEM string by multiplicative log-normal noise.
 ///
+/// Preserves written targets.
 /// Instructions are rendered from their parsed structure with perturbed probabilities.
 /// Blank lines and comments are omitted from the output.
 ///

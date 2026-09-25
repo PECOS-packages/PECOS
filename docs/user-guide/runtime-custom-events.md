@@ -33,6 +33,32 @@ runtime.set_custom_event_handler(|event| {
 });
 ```
 
+## Python execution policy
+
+Select the policy when configuring the runtime for `sim()`:
+
+```python
+import pecos
+
+engine = pecos.selene_engine(runtime_plugin, custom_event_policy="reject_unhandled")
+# results = pecos.sim(program).classical(engine).qubits(n).run(shots)
+```
+
+The same keyword is accepted by `pecos.qis_engine().selene_runtime(...)` and by
+native `pecos_rslib` runtime configuration methods. It follows the runtime through
+plugin-object, library-path, built-runtime and installed-plugin fallback selection.
+Unknown policy values raise `ValueError` before runtime discovery or configuration.
+
+The default `"capture"` keeps existing behavior: custom events do not change the
+simulated physics. `"reject_unhandled"` stops execution with the event tag and
+batch/operation/timing context. Python does not expose a metadata handler or a
+physical-effect adapter here, so this policy rejects **every** custom event,
+including metadata. A successful run in capture mode is not a fidelity check;
+strict rejection identifies missing integration, rather than implementing it.
+Selecting the policy does not enable the separate bounded runtime-frame executor.
+
+## Rust handler and lifecycle contract
+
 Handlers run synchronously during lowering, after the plugin callback has returned
 and final batch timing is available. This is callback emission order during
 lowering, not execution-time interleaving: preceding gates or measurements may

@@ -92,6 +92,16 @@ impl PyQasmEngineBuilder {
     }
 }
 
+fn runtime_custom_event_policy(value: &str) -> PyResult<pecos_qis::RuntimeCustomEventPolicy> {
+    match value {
+        "capture" => Ok(pecos_qis::RuntimeCustomEventPolicy::Capture),
+        "reject_unhandled" => Ok(pecos_qis::RuntimeCustomEventPolicy::RejectUnhandled),
+        _ => Err(pyo3::exceptions::PyValueError::new_err(
+            "custom_event_policy must be 'capture' or 'reject_unhandled'",
+        )),
+    }
+}
+
 /// Python wrapper for QIS Engine builder (unified QIS/HUGR engine)
 #[pyclass(name = "QisEngineBuilder", from_py_object)]
 #[derive(Clone)]
@@ -139,9 +149,14 @@ impl PyQisEngineBuilder {
     }
 
     /// Use a Selene runtime built into the current PECOS/Cargo target.
-    #[pyo3(signature = (runtime_name = None))]
-    fn selene_runtime(&mut self, runtime_name: Option<&str>) -> PyResult<Self> {
-        let runtime = match runtime_name {
+    #[pyo3(signature = (runtime_name = None, *, custom_event_policy = "capture"))]
+    fn selene_runtime(
+        &mut self,
+        runtime_name: Option<&str>,
+        custom_event_policy: &str,
+    ) -> PyResult<Self> {
+        let policy = runtime_custom_event_policy(custom_event_policy)?;
+        let mut runtime = match runtime_name {
             None | Some("selene_simple_runtime") => pecos_qis::selene_simple_runtime(),
             Some(name) => pecos_qis::selene_runtime_auto(name),
         }
@@ -150,20 +165,23 @@ impl PyQisEngineBuilder {
                 "Failed to load Selene runtime: {e}"
             ))
         })?;
+        runtime.set_custom_event_policy(policy);
         self.inner = self.inner.clone().runtime(runtime);
         self.runtime_configured = true;
         Ok(self.clone())
     }
 
     /// Use a generic Selene runtime plugin by its shared library and plugin arguments.
-    #[pyo3(signature = (library_file, init_args = None, library_search_dirs = None))]
+    #[pyo3(signature = (library_file, init_args = None, library_search_dirs = None, *, custom_event_policy = "capture"))]
     fn selene_runtime_plugin(
         &mut self,
         library_file: &str,
         init_args: Option<Vec<String>>,
         library_search_dirs: Option<Vec<String>>,
+        custom_event_policy: &str,
     ) -> PyResult<Self> {
-        let runtime = pecos_qis::SeleneRuntime::with_plugin_config(
+        let policy = runtime_custom_event_policy(custom_event_policy)?;
+        let mut runtime = pecos_qis::SeleneRuntime::with_plugin_config(
             library_file,
             init_args.unwrap_or_default(),
             library_search_dirs
@@ -172,6 +190,7 @@ impl PyQisEngineBuilder {
                 .map(PathBuf::from)
                 .collect(),
         );
+        runtime.set_custom_event_policy(policy);
         self.inner = self.inner.clone().runtime(runtime);
         self.runtime_configured = true;
         Ok(self.clone())

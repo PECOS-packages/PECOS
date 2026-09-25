@@ -345,4 +345,44 @@ entry:
             );
         }
     }
+    #[test]
+    fn test_rpp_pipeline_ron_roundtrip() {
+        let ir = r"
+declare void @___rpp(i64, i64, double, double)
+declare i64 @___qalloc()
+define void @main() {
+entry:
+  %q0 = call i64 @___qalloc()
+  %q1 = call i64 @___qalloc()
+  %q2 = call i64 @___qalloc()
+  call void @___rpp(i64 %q2, i64 %q0, double -0.73, double 0.41)
+  ret void
+}
+";
+        let module = crate::parse_qis_to_quantum(ir).unwrap();
+        let ron = to_ron(&module).unwrap();
+        assert!(ron.contains("RXYXY2Q("));
+        assert_eq!(from_ron(&ron).unwrap(), module);
+        let gate = module.body.blocks[0]
+            .operations
+            .iter()
+            .find(|instruction| {
+                matches!(
+                    instruction.operation,
+                    crate::ops::Operation::Quantum(crate::ops::QuantumOp::RXYXY2Q(..))
+                )
+            })
+            .unwrap();
+        assert_eq!(
+            gate.operands,
+            vec![crate::ops::SSAValue::new(2), crate::ops::SSAValue::new(0)]
+        );
+        assert_eq!(
+            gate.operation,
+            crate::ops::Operation::Quantum(crate::ops::QuantumOp::RXYXY2Q(
+                pecos_core::Angle64::from_radians(-0.73),
+                pecos_core::Angle64::from_radians(0.41)
+            ))
+        );
+    }
 }

@@ -120,3 +120,76 @@ def test_malformed_result_cop_still_rejected() -> None:
 
     with pytest.raises(ValidationError):
         PhirModel.model_validate(data)
+
+
+@pytest.mark.parametrize("unit", ["rad", "pi"])
+@pytest.mark.parametrize("block", [None, "sequence", "qparallel", "if"])
+def test_pecos_rxyxy2q_schema(unit: str, block: str | None) -> None:
+    """The PECOS extension validates at top level and inside every block kind."""
+    gate = {"qop": "RXYXY2Q", "angles": [[-0.73, 0.41], unit], "args": [[["q", 2], ["q", 0]]]}
+    operation = gate
+    if block == "if":
+        operation = {"block": block, "condition": {"cop": "==", "args": [0, 0]}, "true_branch": [gate]}
+    elif block is not None:
+        operation = {"block": block, "ops": [gate]}
+    data = {"format": "PHIR/JSON", "version": "0.1.0", "ops": [operation]}
+    model = PhirModel.model_validate(data)
+    validated = model.model_dump(mode="json", exclude_none=True)["ops"][0]
+    if block is not None:
+        validated = validated["true_branch" if block == "if" else "ops"][0]
+    assert validated["qop"] == gate["qop"]
+    assert validated["angles"] == gate["angles"]
+    assert validated["args"] == gate["args"]
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"angles": None},
+        {"angles": [[], "rad"]},
+        {"angles": [[-0.73], "rad"]},
+        {"angles": [[-0.73, 0.41, 0.2], "rad"]},
+        {"angles": [[-0.73, 0.41], "invalid"]},
+        {"args": []},
+        {"args": [[["q", 2]]]},
+        {"args": [[["q", 2], ["q", 0], ["q", 1]]]},
+        {"qop": "unknown"},
+        {"qop": "RZZ"},
+        {"qop": "CX"},
+    ],
+)
+def test_pecos_rxyxy2q_schema_stays_strict(changes: dict) -> None:
+    """The extension rejects malformed payloads without relaxing upstream gates."""
+    from pydantic import ValidationError
+
+    gate = {"qop": "RXYXY2Q", "angles": [[-0.73, 0.41], "rad"], "args": [[["q", 2], ["q", 0]]]}
+    gate.update(changes)
+    with pytest.raises(ValidationError):
+        PhirModel.model_validate({"format": "PHIR/JSON", "version": "0.1.0", "ops": [gate]})
+
+
+@pytest.mark.parametrize("test_mode", [False, True])
+def test_rxyxy2q_public_python_bridge(test_mode: bool) -> None:
+    """The public bridge accepts the schema extension and preserves its payload."""
+    import math
+
+    import pecos_rslib
+
+    data = {
+        "format": "PHIR/JSON",
+        "version": "0.1.0",
+        "ops": [
+            {"data": "qvar_define", "data_type": "qubits", "variable": "q", "size": 3},
+            {"qop": "RXYXY2Q", "angles": [[-0.73, 0.41], "rad"], "args": [[["q", 2], ["q", 0]]]},
+        ],
+    }
+    if test_mode:
+        data["ops"].insert(1, {"data": "cvar_define", "data_type": "u32", "variable": "m", "size": 3})
+        data["ops"].append({"qop": "Measure", "args": [["q", 0]], "returns": [["m", 0]]})
+    commands = pecos_rslib.PhirJsonEngine(json.dumps(data)).process_program()
+    assert len(commands) == (2 if test_mode else 1)
+    assert commands[0]["gate_type"] == "RXYXY2Q"
+    assert commands[0]["qubits"] == [2, 0]
+    theta, phi = commands[0]["params"]["angles"]
+    assert math.remainder(theta, math.tau) == pytest.approx(-0.73)
+    assert phi == pytest.approx(0.41)

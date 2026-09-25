@@ -199,6 +199,9 @@ impl<'de> Deserialize<'de> for Operation {
                 .get("returns")
                 .map_or(Ok(vec![]), |v| serde_json::from_value(v.clone()))
                 .map_err(|e| D::Error::custom(format!("returns: {e}")))?;
+            if qop == "RXYXY2Q" {
+                validate_rxyxy2q_args(angles.as_deref(), &args).map_err(D::Error::custom)?;
+            }
             let metadata = extract_metadata(obj);
             Ok(Operation::QuantumOp {
                 qop,
@@ -422,6 +425,36 @@ pub fn infer_size(data_type: &str, explicit_size: Option<usize>) -> usize {
     } else {
         width
     }
+}
+
+/// Validate a two-angle rotation's PHIR qubit argument grouping.
+pub(crate) fn validate_rxyxy2q_args(
+    angles: Option<&[f64]>,
+    args: &[QubitArg],
+) -> Result<(), String> {
+    let mut count = 0;
+    for arg in args {
+        match arg {
+            QubitArg::MultipleQubits(pair) if pair.len() == 2 => count += 2,
+            _ => {
+                return Err("RXYXY2Q requires exactly two qubits per pair".to_string());
+            }
+        }
+    }
+    validate_rxyxy2q(angles, count)
+}
+
+/// Validate the angles and complete qubit pairs of an RXYXY2Q operation.
+pub(crate) fn validate_rxyxy2q(angles: Option<&[f64]>, qubit_count: usize) -> Result<(), String> {
+    if angles.is_none_or(|angles| angles.len() != 2) {
+        return Err("RXYXY2Q requires exactly two angles (theta, phi)".to_string());
+    }
+    if qubit_count == 0 || !qubit_count.is_multiple_of(2) {
+        return Err(format!(
+            "RXYXY2Q requires complete qubit pairs, got {qubit_count} qubits"
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

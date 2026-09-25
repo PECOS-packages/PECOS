@@ -219,6 +219,18 @@ impl PhirJsonEngine {
                                         "RZ" if !op.params.is_empty() => {
                                             params_dict.set_item("theta", op.params[0])?;
                                         }
+                                        "RXYXY2Q" => {
+                                            let angles: Vec<f64> =
+                                                op.angles.iter().map(Angle64::to_radians).collect();
+                                            validate_rxyxy2q(&angles, op.qubits.len()).map_err(
+                                                |error| {
+                                                    pyo3::exceptions::PyValueError::new_err(
+                                                        error.to_string(),
+                                                    )
+                                                },
+                                            )?;
+                                            params_dict.set_item("angles", angles)?;
+                                        }
                                         "RXY1Q" if op.params.len() >= 2 => {
                                             params_dict
                                                 .set_item("angles", [op.params[0], op.params[1]])?;
@@ -682,6 +694,11 @@ fn convert_to_py_commands(py: Python<'_>, commands: &Py<PyAny>) -> PyResult<Vec<
 
         for item in args.try_iter()? {
             let item = item?;
+            if name == "RXYXY2Q" {
+                let [q1, q2]: [usize; 2] = item.extract()?;
+                qubits.extend([q1, q2]);
+                continue;
+            }
             let qubit_idx: usize = if item.is_instance_of::<PyList>() {
                 let idx = item.get_item(1)?;
                 idx.extract()?
@@ -697,6 +714,13 @@ fn convert_to_py_commands(py: Python<'_>, commands: &Py<PyAny>) -> PyResult<Vec<
                 let angles: Vec<f64> = py_cmd.getattr("angles")?.extract()?;
                 py_dict.set_item("gate_type", "RZ")?;
                 params_dict.set_item("theta", angles[0])?;
+            }
+            "RXYXY2Q" => {
+                let angles: Vec<f64> = py_cmd.getattr("angles")?.extract()?;
+                validate_rxyxy2q(&angles, qubits.len())
+                    .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+                py_dict.set_item("gate_type", "RXYXY2Q")?;
+                params_dict.set_item("angles", angles)?;
             }
             "RXY1Q" | "R1XY" => {
                 let angles: Vec<f64> = py_cmd.getattr("angles")?.extract()?;
@@ -814,6 +838,12 @@ fn process_py_command(py_cmd: &Bound<PyAny>) -> Result<(String, Vec<usize>, Vec<
             Err(e) => return Err(to_pecos_error(e)),
         };
 
+        if name == "RXYXY2Q" {
+            let [q1, q2]: [usize; 2] = item.extract().map_err(to_pecos_error)?;
+            qubits.extend([q1, q2]);
+            continue;
+        }
+
         let qubit_idx = if item.is_instance_of::<PyList>() {
             match item.get_item(1) {
                 Ok(idx) => match idx.extract::<usize>() {
@@ -835,7 +865,7 @@ fn process_py_command(py_cmd: &Bound<PyAny>) -> Result<(String, Vec<usize>, Vec<
     // Extract parameters based on gate type
     let mut params = Vec::new();
 
-    if matches!(name.as_str(), "RZ" | "RXY1Q" | "R1XY") {
+    if matches!(name.as_str(), "RZ" | "RXY1Q" | "R1XY" | "RXYXY2Q") {
         let angles = match py_cmd.getattr("angles") {
             Ok(a) => match a.extract::<Vec<f64>>() {
                 Ok(v) => v,
@@ -881,6 +911,9 @@ fn process_py_command(py_cmd: &Bound<PyAny>) -> Result<(String, Vec<usize>, Vec<
         params.push(f64::from(result_id32));
     }
 
+    if name == "RXYXY2Q" {
+        validate_rxyxy2q(&params, qubits.len())?;
+    }
     Ok((name, qubits, params))
 }
 
@@ -993,6 +1026,20 @@ impl ClassicalEngine for PhirJsonEngine {
                     }
                     "Prep" => {
                         builder.pz(&qubits);
+                    }
+                    "RXYXY2Q" => {
+                        validate_rxyxy2q(&params, qubits.len())?;
+                        let pairs: Vec<_> = qubits
+                            .as_chunks::<2>()
+                            .0
+                            .iter()
+                            .map(|pair| (pair[0], pair[1]))
+                            .collect();
+                        builder.rxyxy2q(
+                            Angle64::from_radians(params[0]),
+                            Angle64::from_radians(params[1]),
+                            &pairs,
+                        );
                     }
                     "RZZ" => {
                         if qubits.len() >= 2 && !params.is_empty() {
@@ -1296,4 +1343,13 @@ impl Engine for PhirJsonEngine {
         // Call the ControlEngine's reset method to avoid ambiguity
         <PhirJsonEngine as ControlEngine>::reset(self)
     }
+}
+
+fn validate_rxyxy2q(angles: &[f64], qubit_count: usize) -> Result<(), PecosError> {
+    if angles.len() != 2 || qubit_count == 0 || !qubit_count.is_multiple_of(2) {
+        return Err(PecosError::ValidationInvalidGateParameters(
+            "RXYXY2Q requires exactly two angles and complete qubit pairs".to_string(),
+        ));
+    }
+    Ok(())
 }

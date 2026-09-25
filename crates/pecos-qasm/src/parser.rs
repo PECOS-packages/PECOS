@@ -39,7 +39,7 @@ pub struct QASMParser;
 pub const PECOS_NATIVE_GATES: &[&str] = &[
     // Quantum gates from ByteMessage::GateType
     "X", "Y", "Z", "H", "CX", "SXX", "SXXdg", "SYY", "SYYdg", "SZZ", "SZZdg", "RZ", "RX", "RY",
-    "RXY1Q", "R1XY", "RZZ", "U",
+    "RXY1Q", "R1XY", "RXYXY2Q", "RZZ", "U",
     // Special operations (these are handled differently but treated as "native")
     "barrier", "reset", "opaque", "measure",
 ];

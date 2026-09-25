@@ -101,6 +101,8 @@ pub enum QuantumOp {
     CPhase(Angle64),
     /// ZZ rotation
     RZZ(Angle64),
+    /// Two-qubit XY-plane rotation (theta, phi).
+    RXYXY2Q(Angle64, Angle64),
 
     // Multi-qubit gates
     /// Multi-controlled NOT
@@ -557,6 +559,7 @@ impl QuantumOp {
             QuantumOp::SZZdg => "szzdg",
             QuantumOp::CPhase(_) => "cp",
             QuantumOp::RZZ(_) => "rzz",
+            QuantumOp::RXYXY2Q(_, _) => "rxyxy2q",
             QuantumOp::MCX(_) => "mcx",
             QuantumOp::MCZ(_) => "mcz",
             QuantumOp::Toffoli => "ccx",
@@ -612,7 +615,8 @@ impl QuantumOp {
             | QuantumOp::SZZ
             | QuantumOp::SZZdg
             | QuantumOp::CPhase(_)
-            | QuantumOp::RZZ(_) => Some(2),
+            | QuantumOp::RZZ(_)
+            | QuantumOp::RXYXY2Q(_, _) => Some(2),
             QuantumOp::Toffoli | QuantumOp::Fredkin => Some(3),
 
             // Multi-qubit gates (variable)

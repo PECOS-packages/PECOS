@@ -1713,6 +1713,13 @@ impl<S: CliffordGateable> CircuitRunner<S> {
                 };
                 sim.try_ry(*angle, qubits).map(|_| ())
             }
+            GateType::RXYXY2Q => {
+                let [theta, phi] = angles else {
+                    return Err(arity_error());
+                };
+                sim.try_rxyxy2q(*theta, *phi, &flat_to_pairs(qubits))
+                    .map(|_| ())
+            }
             GateType::RXY1Q => {
                 let [theta, phi] = angles else {
                     return Err(arity_error());
@@ -2514,6 +2521,11 @@ where
                     return false;
                 };
                 sim.u(*theta, *phi, *lambda, qubits);
+                true
+            }
+            GateType::RXYXY2Q => {
+                let [theta, phi] = angles else { return false };
+                sim.rxyxy2q(*theta, *phi, &flat_to_pairs(qubits));
                 true
             }
             GateType::RXY1Q => {
@@ -3407,6 +3419,38 @@ mod tests {
     }
 
     #[test]
+    fn rxyxy2q_builder_runner_matches_ryy() {
+        use crate::CommandBuilder;
+        let mut actual = SparseStab::with_seed(2, 42);
+        let mut expected = SparseStab::with_seed(2, 42);
+        let mut runner = CircuitRunner::<SparseStab>::new();
+        let commands = CommandBuilder::new()
+            .rxyxy2q(&[(0, 1)], Angle64::QUARTER_TURN, Angle64::QUARTER_TURN)
+            .build();
+        runner.apply_circuit(&mut actual, &commands).unwrap();
+        runner
+            .apply_circuit(
+                &mut expected,
+                &CommandBuilder::new()
+                    .ryy(&[(0, 1)], Angle64::QUARTER_TURN)
+                    .build(),
+            )
+            .unwrap();
+        assert_eq!(actual.stab_tableau(), expected.stab_tableau());
+        assert_eq!(actual.destab_tableau(), expected.destab_tableau());
+        for (theta, phi) in [
+            (Angle64::from_radians(0.3), Angle64::ZERO),
+            (Angle64::QUARTER_TURN, Angle64::from_radians(0.123)),
+        ] {
+            let commands = CommandBuilder::new().rxyxy2q(&[(0, 1)], theta, phi).build();
+            assert!(matches!(
+                runner.apply_circuit(&mut actual, &commands),
+                Err(ExecutionError::NonCliffordAngle { .. })
+            ));
+        }
+    }
+
+    #[test]
     fn multi_angle_clifford_rotations_use_fallback() {
         let commands = [
             GateCommand::with_angles(
@@ -3469,6 +3513,7 @@ mod tests {
             GateType::RXX,
             GateType::RYY,
             GateType::RZZ,
+            GateType::RXYXY2Q,
             GateType::RXY1Q,
             GateType::U,
         ] {

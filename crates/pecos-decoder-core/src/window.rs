@@ -13,7 +13,9 @@
 //! Structured detector-error-model windows shared by streaming decoders.
 
 use crate::dem::dimension_count;
-use crate::dem::grammar::{Kind, parse_line, target_indices};
+use crate::dem::grammar::{
+    Instruction, Kind, Target, parse_line, target_indices, validate_error_components, xor_indices,
+};
 use crate::errors::DecoderError;
 use std::fmt::Write as _;
 
@@ -36,6 +38,42 @@ pub struct StructuredDemError {
     pub probability: f64,
     /// Components separated by `^` in Stim DEM syntax.
     pub components: Vec<StructuredDemComponent>,
+}
+
+impl StructuredDemError {
+    fn instruction(&self) -> Instruction {
+        let mut targets = Vec::new();
+        for (index, component) in self.components.iter().enumerate() {
+            if index > 0 {
+                targets.push(Target::Separator);
+            }
+            targets.extend(
+                component
+                    .detectors
+                    .iter()
+                    .map(|&id| Target::Detector(u64::from(id))),
+            );
+            targets.extend(
+                component
+                    .observables
+                    .iter()
+                    .map(|&id| Target::Observable(u64::from(id))),
+            );
+        }
+        Instruction {
+            kind: Kind::Error,
+            tag: None,
+            args: vec![self.probability],
+            targets,
+            payload: None,
+            empty_repeat: false,
+        }
+    }
+
+    fn validate_components(&self) -> Result<(), DecoderError> {
+        let instruction = self.instruction();
+        validate_error_components(&instruction.targets, &instruction.to_string())
+    }
 }
 
 /// A flattened DEM retaining component structure and detector coordinates.
@@ -162,6 +200,7 @@ impl StructuredDem {
             return Err(invalid("detector coordinates must be finite"));
         }
         for error in &errors {
+            error.validate_components()?;
             if !error.probability.is_finite() || !(0.0..=1.0).contains(&error.probability) {
                 return Err(invalid("DEM probability must be finite and in [0, 1]"));
             }
@@ -251,6 +290,7 @@ impl StructuredDem {
 
         let mut errors = Vec::new();
         for error in &self.errors {
+            error.validate_components()?;
             let has_inside = error
                 .components
                 .iter()
@@ -273,21 +313,26 @@ impl StructuredDem {
             if !has_inside {
                 continue;
             }
-            let components = error
-                .components
-                .iter()
-                .filter_map(|component| {
-                    let detectors = component
-                        .detectors
-                        .iter()
-                        .filter_map(|&id| global_to_local.get(id as usize).copied().flatten())
-                        .collect::<Vec<_>>();
-                    (!detectors.is_empty()).then(|| StructuredDemComponent {
-                        detectors,
-                        observables: component.observables.clone(),
-                    })
-                })
-                .collect();
+            let components = xor_indices(error.components.iter().filter_map(|component| {
+                let mut detectors = component
+                    .detectors
+                    .iter()
+                    .filter_map(|&id| global_to_local.get(id as usize).copied().flatten())
+                    .collect::<Vec<_>>();
+                detectors.sort_unstable();
+                let mut observables = component.observables.clone();
+                observables.sort_unstable();
+                (!detectors.is_empty()).then_some((detectors, observables))
+            }))
+            .into_iter()
+            .map(|(detectors, observables)| StructuredDemComponent {
+                detectors,
+                observables,
+            })
+            .collect::<Vec<_>>();
+            if components.is_empty() {
+                continue;
+            }
             errors.push(StructuredDemError {
                 probability: error.probability,
                 components,
@@ -314,19 +359,7 @@ impl StructuredDem {
     pub fn to_dem_string(&self) -> String {
         let mut out = String::new();
         for error in &self.errors {
-            let _ = write!(out, "error({})", error.probability);
-            for (index, component) in error.components.iter().enumerate() {
-                if index > 0 {
-                    out.push_str(" ^");
-                }
-                for detector in &component.detectors {
-                    let _ = write!(out, " D{detector}");
-                }
-                for observable in &component.observables {
-                    let _ = write!(out, " L{observable}");
-                }
-            }
-            out.push('\n');
+            let _ = writeln!(out, "{}", error.instruction());
         }
         for (detector, coords) in self.detector_coords.iter().enumerate() {
             if let Some(coords) = coords {
@@ -378,6 +411,92 @@ logical_observable L2\n";
         assert_eq!(window.model.errors[0].components.len(), 2);
         assert_eq!(window.model.errors[1].components[0].detectors, [0, 1, 2]);
         assert_eq!(window.model.detector_coords[0], Some(vec![5.0, 0.0, 1.0]));
+    }
+
+    #[test]
+    fn soft_window_cancels_identical_projected_components_as_sets() {
+        for (targets, expected) in [
+            ("D0 D1 D2 L0 ^ D1 D0 D3 L0", vec![]),
+            (
+                "D0 D1 D2 L0 ^ D1 D0 D3 L0 ^ D0 D1 L0",
+                vec![(vec![0, 1], vec![0])],
+            ),
+            (
+                "D0 D1 D2 L0 ^ D1 D0 D3 L1",
+                vec![(vec![0, 1], vec![0]), (vec![0, 1], vec![1])],
+            ),
+        ] {
+            let model = StructuredDem::from_dem_str(&format!(
+                "error(0.1) {targets}\ndetector(0,0,0) D0\ndetector(0,0,0) D1\ndetector(0,0,1) D2\ndetector(0,0,1) D3"
+            )).unwrap();
+            let window = model
+                .window_by_time(0.0, 1.0, DemBoundaryKind::Soft)
+                .unwrap();
+            let components: Vec<_> = window
+                .model
+                .errors
+                .iter()
+                .flat_map(|error| &error.components)
+                .map(|component| (component.detectors.clone(), component.observables.clone()))
+                .collect();
+            assert_eq!(components, expected, "{targets}");
+            assert_eq!(window.model.errors.len(), usize::from(!expected.is_empty()));
+            assert_eq!(
+                StructuredDem::from_dem_str(&window.model.to_dem_string()).unwrap(),
+                window.model
+            );
+        }
+    }
+
+    #[test]
+    fn structural_construction_and_windows_reject_duplicate_targets_and_components() {
+        for components in [
+            vec![StructuredDemComponent {
+                detectors: vec![0, 0],
+                observables: vec![],
+            }],
+            vec![StructuredDemComponent {
+                detectors: vec![0],
+                observables: vec![0, 0],
+            }],
+            vec![
+                StructuredDemComponent {
+                    detectors: vec![0, 1],
+                    observables: vec![0],
+                },
+                StructuredDemComponent {
+                    detectors: vec![1, 0],
+                    observables: vec![0],
+                },
+            ],
+        ] {
+            let error = StructuredDemError {
+                probability: 0.1,
+                components,
+            };
+            let expected = parse_line(&error.instruction().to_string())
+                .unwrap_err()
+                .to_string();
+            let coords = vec![Some(vec![0.0, 0.0, 0.0]); 2];
+            let rejected =
+                StructuredDem::try_new(vec![error.clone()], coords.clone(), 2, 1).unwrap_err();
+            assert!(matches!(rejected, DecoderError::InvalidDemSyntax(_)));
+            assert_eq!(rejected.to_string(), expected);
+            let model = StructuredDem {
+                errors: vec![error],
+                detector_coords: coords,
+                num_detectors: 2,
+                num_observables: 1,
+            };
+            assert_eq!(model.commit_columns().unwrap_err().to_string(), expected);
+            assert_eq!(
+                model
+                    .window_by_time(0.0, 1.0, DemBoundaryKind::Soft)
+                    .unwrap_err()
+                    .to_string(),
+                expected
+            );
+        }
     }
 
     #[test]

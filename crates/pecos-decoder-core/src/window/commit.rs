@@ -13,7 +13,6 @@
 //! Component provenance and checked graphs for whole-component window commits.
 
 use super::{StructuredDem, StructuredDemComponent, StructuredDemError, invalid};
-use crate::dem::grammar::xor_indices;
 use crate::{DecoderError, DemMatchingGraph, MatchingEdge};
 use std::collections::BTreeMap;
 use std::ops::Range;
@@ -120,14 +119,17 @@ impl StructuredDem {
         let times = self.commit_detector_times()?;
         let mut columns = Vec::new();
         for (error_index, error) in self.errors.iter().enumerate() {
+            error.validate_components()?;
             if !error.probability.is_finite() || !(0.0..=1.0).contains(&error.probability) {
                 return Err(invalid(format!(
                     "error {error_index} has an invalid probability"
                 )));
             }
             for (component_index, part) in error.components.iter().enumerate() {
-                let detectors = xor_indices(part.detectors.iter().copied());
-                let observables = xor_indices(part.observables.iter().copied());
+                let mut detectors = part.detectors.clone();
+                detectors.sort_unstable();
+                let mut observables = part.observables.clone();
+                observables.sort_unstable();
                 if detectors.len() > 2 {
                     return Err(invalid(format!(
                         "error {error_index} component {component_index} has {} detectors; commit windows require graphlike columns",
@@ -243,12 +245,14 @@ impl StructuredDem {
                 column: index,
                 projected: local.len() != column.detectors.len(),
             });
+        }
+        for edge in &graph_edges {
             groups
-                .entry(column.error_index)
+                .entry(edge.fault_id)
                 .or_default()
                 .push(StructuredDemComponent {
-                    detectors: local,
-                    observables: column.observables.clone(),
+                    detectors: std::iter::once(edge.node1).chain(edge.node2).collect(),
+                    observables: edge.observables.clone(),
                 });
         }
         let graph_edges = DemMatchingGraph::merge_independent_edges(graph_edges);
@@ -414,6 +418,22 @@ mod tests {
             "drop old columns individually, preserving their surviving sibling"
         );
         assert_eq!(later.edges[1].rep_nonprojected, Some(2));
+    }
+
+    #[test]
+    fn odd_projected_components_render_one_component_with_all_members() {
+        let dem = StructuredDem::from_dem_str(
+            "error(0.1) D0 D1 L0 ^ D0 D2 L0 ^ D0 D3 L0\ndetector(0,0,1) D0\ndetector(0,0,2) D1\ndetector(0,0,2) D2\ndetector(0,0,2) D3\n",
+        ).unwrap();
+        let window = dem.commit_window(0..2, 0..1).unwrap();
+        assert_eq!(window.model.errors[0].components.len(), 1);
+        assert_eq!(window.edges[0].members.len(), 3);
+        assert_eq!(window.model.errors[0].components[0].observables, [0]);
+        let graph = DemMatchingGraph::from_dem_str(&window.model.to_dem_string()).unwrap();
+        assert_eq!(graph.edges.len(), 1);
+        assert_eq!(graph.edges[0].node1, 0);
+        assert_eq!(graph.edges[0].node2, None);
+        assert!((graph.edges[0].probability - 0.1).abs() < f64::EPSILON);
     }
 
     #[test]

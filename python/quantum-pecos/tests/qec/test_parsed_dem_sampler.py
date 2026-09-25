@@ -94,10 +94,10 @@ class TestParsedDemDecomposedSemantics:
         assert exactly_one < 0.01, "Exactly one should almost never fire"
 
     def test_xor_cancellation(self) -> None:
-        """error(p) D0 ^ D0 should result in no effect (XOR cancellation)."""
+        """A cycle of distinct components has no net detector effect."""
         from pecos_rslib.qec import ParsedDem
 
-        dem_str = "error(0.5) D0 ^ D0"
+        dem_str = "error(0.5) D0 D1 ^ D1 D2 ^ D2 D0"
         parsed = ParsedDem.from_string(dem_str)
 
         # Sample - D0 should never fire due to XOR cancellation

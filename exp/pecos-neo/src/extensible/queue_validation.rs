@@ -143,7 +143,8 @@ pub fn is_clifford_circuit(commands: &CommandQueue) -> bool {
 
         // For parameterized gates, check if angles are Clifford angles
         if expected > 0 {
-            return cmd.angles().iter().all(|a| is_clifford_angle(*a));
+            return super::canonicalizer::lower_rotation(cmd.gate_type.to_gate_id(), cmd.angles())
+                .is_some();
         }
 
         true
@@ -153,44 +154,40 @@ pub fn is_clifford_circuit(commands: &CommandQueue) -> bool {
 /// Check if a gate type is a Clifford gate.
 #[must_use]
 pub fn is_clifford_gate_type(gate_type: GateType) -> bool {
-    matches!(
-        gate_type,
-        GateType::I
-            | GateType::X
-            | GateType::Y
-            | GateType::Z
-            | GateType::H
-            | GateType::F
-            | GateType::Fdg
-            | GateType::SX
-            | GateType::SXdg
-            | GateType::SY
-            | GateType::SYdg
-            | GateType::SZ
-            | GateType::SZdg
-            | GateType::CX
-            | GateType::CY
-            | GateType::CZ
-            | GateType::SZZ
-            | GateType::SZZdg
-            | GateType::SXX
-            | GateType::SXXdg
-            | GateType::SYY
-            | GateType::SYYdg
-            | GateType::SWAP
-            | GateType::MZ
-            | GateType::MeasureLeaked
-            | GateType::MeasureFree
-            | GateType::PZ
-            | GateType::QAlloc
-            | GateType::QFree
-            | GateType::Idle
-            // Parameterized gates are Clifford only at specific angles
-            | GateType::RX
-            | GateType::RY
-            | GateType::RZ
-            | GateType::RZZ
-    )
+    pecos_core::is_lowerable_rotation(gate_type.into())
+        || matches!(
+            gate_type,
+            GateType::I
+                | GateType::X
+                | GateType::Y
+                | GateType::Z
+                | GateType::H
+                | GateType::F
+                | GateType::Fdg
+                | GateType::SX
+                | GateType::SXdg
+                | GateType::SY
+                | GateType::SYdg
+                | GateType::SZ
+                | GateType::SZdg
+                | GateType::CX
+                | GateType::CY
+                | GateType::CZ
+                | GateType::SZZ
+                | GateType::SZZdg
+                | GateType::SXX
+                | GateType::SXXdg
+                | GateType::SYY
+                | GateType::SYYdg
+                | GateType::SWAP
+                | GateType::MZ
+                | GateType::MeasureLeaked
+                | GateType::MeasureFree
+                | GateType::PZ
+                | GateType::QAlloc
+                | GateType::QFree
+                | GateType::Idle
+        )
 }
 
 /// Check if an angle is a Clifford angle (multiple of pi/2).

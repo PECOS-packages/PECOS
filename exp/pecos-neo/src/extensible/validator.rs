@@ -144,6 +144,8 @@ pub struct CliffordValidator {
     allowed_gates: GateSupportSet,
     /// For parameterized gates, allowed exact angles
     allowed_angles: Vec<Angle64>,
+    /// Clifford+T additionally permits single-axis eighth-turn rotations.
+    allow_t_rotations: bool,
 }
 
 impl Default for CliffordValidator {
@@ -194,10 +196,11 @@ impl CliffordValidator {
         allowed_gates.insert(gates::PZ);
 
         // Parameterized gates are allowed only at Clifford angles
-        allowed_gates.insert(gates::RX);
-        allowed_gates.insert(gates::RY);
-        allowed_gates.insert(gates::RZ);
-        allowed_gates.insert(gates::RZZ);
+        for &gate in crate::GateType::ALL {
+            if pecos_core::is_lowerable_rotation(gate.into()) {
+                allowed_gates.insert(gate.to_gate_id());
+            }
+        }
         let allowed_angles = vec![
             A::ZERO,
             A::QUARTER_TURN,        // pi/2
@@ -208,7 +211,15 @@ impl CliffordValidator {
         Self {
             allowed_gates,
             allowed_angles,
+            allow_t_rotations: false,
         }
+    }
+
+    fn allows_rotation(&self, gate_id: GateId, angles: &[Angle64]) -> bool {
+        super::canonicalizer::lower_rotation(gate_id, angles).is_some()
+            || (self.allow_t_rotations
+                && matches!(angles, &[angle] if angle == Angle64::HALF_TURN / 4
+                    || angle == Angle64::ZERO - Angle64::HALF_TURN / 4))
     }
 
     /// Check if an angle is a Clifford angle.
@@ -253,19 +264,14 @@ impl CircuitValidator for CliffordValidator {
                 });
             }
 
-            // For parameterized gates, check angles
-            if spec.angle_arity > 0 {
-                for angle in &gate.angles {
-                    if !self.is_clifford_angle(*angle) {
-                        return Err(ValidationError::ForbiddenAngle {
-                            gate_id: gate.gate_id,
-                            gate_name: spec.name.to_string(),
-                            angle: *angle,
-                            position: idx,
-                            allowed: self.allowed_angles.clone(),
-                        });
-                    }
-                }
+            if spec.angle_arity > 0 && !self.allows_rotation(gate.gate_id, &gate.angles) {
+                return Err(ValidationError::ForbiddenAngle {
+                    gate_id: gate.gate_id,
+                    gate_name: spec.name.to_string(),
+                    angle: gate.angles[0],
+                    position: idx,
+                    allowed: self.allowed_angles.clone(),
+                });
             }
         }
 
@@ -287,7 +293,7 @@ impl CircuitValidator for CliffordValidator {
                 return false;
             }
             if spec.angle_arity > 0 {
-                return angles.iter().all(|a| self.is_clifford_angle(*a));
+                return self.allows_rotation(gate_id, angles);
             }
         }
 
@@ -318,6 +324,8 @@ impl CliffordTValidator {
         // Add T gates
         inner.allowed_gates.insert(gates::T);
         inner.allowed_gates.insert(gates::Tdg);
+
+        inner.allow_t_rotations = true;
 
         // Add T angle (pi/4)
         inner.allowed_angles.push(A::HALF_TURN / 4); // pi/4
@@ -401,8 +409,8 @@ impl CircuitValidator for ExactAngleValidator {
                 });
             }
 
-            // For single-angle gates, check if canonicalizable
-            if gate.angles.len() == 1
+            // Check parameterized gates through the canonicalizer.
+            if !gate.angles.is_empty()
                 && self
                     .canonicalizer
                     .canonicalize(gate.gate_id, &gate.angles)
@@ -435,14 +443,14 @@ impl CircuitValidator for ExactAngleValidator {
         if angles.len() != usize::from(spec.angle_arity) {
             return false;
         }
-        if angles.len() == 1 {
+        if !angles.is_empty() {
             // If this gate can be canonicalized, check if this angle works
             if self.canonicalizer.can_canonicalize(gate_id) {
                 return self.canonicalizer.canonicalize(gate_id, angles).is_some();
             }
         }
 
-        // For multi-angle gates or non-canonicalizable gates, allow
+        // Gates without canonicalization rules remain allowed.
         true
     }
 }

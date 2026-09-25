@@ -42,6 +42,7 @@ pub fn is_lowerable_rotation(gate_type: GateType) -> bool {
             | GateType::RYY
             | GateType::RZZ
             | GateType::RXY1Q
+            | GateType::RXYXY2Q
             | GateType::U
     )
 }
@@ -49,7 +50,8 @@ pub fn is_lowerable_rotation(gate_type: GateType) -> bool {
 /// Lower a rotation gate to named Cliffords under the shared policy.
 ///
 /// Phase-shaped `U` gates match the exact named I, Z, SZ, or `SZdg` matrix.
-/// Axis rotations match exactly. `RXY1Q` snaps both angles within `1e-9`
+/// Axis rotations and `RXYXY2Q` match the exact Clifford grid.
+/// `RXY1Q` snaps both angles within `1e-9`
 /// turns of the Clifford grid, as documented by [`try_simplify_rxy1q`].
 ///
 /// Returns `None` when the gate is not a rotation, its angle arity is wrong,
@@ -68,6 +70,20 @@ pub fn try_lower_rotation_to_clifford(gate: &crate::Gate) -> Option<CliffordLowe
                 .or_else(|| {
                     half_turn_decomposition(gate.gate_type, angle).map(CliffordLowering::PerQubit)
                 })
+        }
+        (GateType::RXYXY2Q, &[theta, phi]) => {
+            if theta == A64::ZERO {
+                return Some(CliffordLowering::Named(GateType::I));
+            }
+            // Negating both axes leaves their tensor product unchanged.
+            let axis = match phi {
+                A64::ZERO | A64::HALF_TURN => GateType::RXX,
+                A64::QUARTER_TURN | A64::THREE_QUARTERS_TURN => GateType::RYY,
+                _ => return None,
+            };
+            try_simplify_rotation(axis, theta)
+                .map(CliffordLowering::Named)
+                .or_else(|| half_turn_decomposition(axis, theta).map(CliffordLowering::PerQubit))
         }
         (GateType::RXY1Q, &[theta, phi]) => {
             try_simplify_rxy1q(theta, phi).map(CliffordLowering::Named)
@@ -326,6 +342,50 @@ mod tests {
     use crate::Angle64;
 
     #[test]
+    fn rxyxy2q_shared_lowering_exact_grid() {
+        use crate::Gate;
+        let grid = [
+            Angle64::ZERO,
+            Angle64::QUARTER_TURN,
+            Angle64::HALF_TURN,
+            Angle64::THREE_QUARTERS_TURN,
+        ];
+        assert!(is_lowerable_rotation(GateType::RXYXY2Q));
+        for theta in grid {
+            for (index, phi) in grid.into_iter().enumerate() {
+                let axis = if index % 2 == 0 {
+                    Gate::rxx(theta, &[(0, 1)])
+                } else {
+                    Gate::ryy(theta, &[(0, 1)])
+                };
+                assert_eq!(
+                    try_lower_rotation_to_clifford(&Gate::rxyxy2q(theta, phi, &[(0, 1)])),
+                    try_lower_rotation_to_clifford(&axis)
+                );
+            }
+        }
+        assert_eq!(
+            try_lower_rotation_to_clifford(&Gate::rxyxy2q(
+                Angle64::ZERO,
+                Angle64::from_radians(0.123),
+                &[(0, 1)]
+            )),
+            Some(CliffordLowering::Named(GateType::I))
+        );
+        for (theta, phi) in [
+            (Angle64::QUARTER_TURN, Angle64::from_radians(0.123)),
+            (Angle64::from_radians(0.3), Angle64::ZERO),
+            (Angle64::from_turns(0.25 + 1e-12), Angle64::ZERO),
+            (Angle64::QUARTER_TURN, Angle64::from_turns(0.25 + 1e-12)),
+        ] {
+            assert_eq!(
+                try_lower_rotation_to_clifford(&Gate::rxyxy2q(theta, phi, &[(0, 1)])),
+                None
+            );
+        }
+    }
+
+    #[test]
     fn shared_lowering_covers_clifford_tables() {
         // RXY1Q pi and 3pi/2 rows are covered by the delegate's
         // rxy1q_half_turn_* and rxy1q_three_quarter_turn_* tests.
@@ -400,7 +460,11 @@ mod tests {
         ] {
             assert_eq!(try_lower_rotation_to_clifford(&gate), None);
         }
-        for (gate_type, arities) in [(GateType::RZ, [0, 2]), (GateType::RXY1Q, [1, 3])] {
+        for (gate_type, arities) in [
+            (GateType::RZ, [0, 2]),
+            (GateType::RXY1Q, [1, 3]),
+            (GateType::RXYXY2Q, [1, 3]),
+        ] {
             for arity in arities {
                 let mut gate = Gate::rz(Angle64::ZERO, &[0]);
                 gate.gate_type = gate_type;

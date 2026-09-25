@@ -14,7 +14,7 @@ module attaches a Python :meth:`from_guppy` classmethod to the Rust-backed
 rotations first, so gate-rate keys name the lowered gates, such as ``SZZ``;
 an ``RZZ`` key matches nothing after lowering. ``DetectorErrorModel.from_circuit``
 and ``DemSampler.from_circuit`` do not lower raw traces, so key by the scheduled
-rotations, such as ``RZZ`` and ``RXY1Q``, or lower the circuit first. A nonzero
+rotations, such as ``RZZ``, ``RXYXY2Q``, and ``RXY1Q``, or lower the circuit first. A nonzero
 key naming the Clifford action of a different scheduled gate is rejected,
 even when the key also matches another scheduled gate.
 

@@ -101,6 +101,7 @@ pub mod gates {
     pub const RXX: GateId = GateId(71);
     pub const RYY: GateId = GateId(72);
     pub const RZZ: GateId = GateId(73);
+    pub const RXYXY2Q: GateId = GateId(74);
 
     // Three-qubit gates
     pub const CCX: GateId = GateId(80);

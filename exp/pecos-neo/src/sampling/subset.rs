@@ -123,17 +123,21 @@ pub(crate) fn supports(command: &GateCommand) -> bool {
     ) {
         return true;
     }
-    matches!(
-        command.gate_type,
-        GateType::RX
-            | GateType::RY
-            | GateType::RZ
-            | GateType::RXX
-            | GateType::RYY
-            | GateType::RZZ
-            | GateType::RXY1Q
-            | GateType::U
-    ) && command.angles().iter().copied().all(is_clifford_angle)
+    // The executor handles general U as RZ/RY/RZ, beyond the shared
+    // rewriting policy's phase-shaped U. Preserve that backend capability.
+    if command.gate_type == GateType::U {
+        return command.angles().iter().copied().all(is_clifford_angle);
+    }
+    let gate = pecos_core::Gate::with_angles(
+        command.gate_type.into(),
+        command
+            .angles()
+            .iter()
+            .copied()
+            .collect::<pecos_core::GateAngles>(),
+        command.qubits.clone(),
+    );
+    pecos_core::try_lower_rotation_to_clifford(&gate).is_some()
 }
 
 /// Configuration for subset simulation.
@@ -2379,6 +2383,21 @@ pub fn phase_flip_syndrome_circuit() -> CommandQueue {
 #[cfg(test)]
 #[allow(clippy::float_cmp, clippy::cast_precision_loss)]
 mod tests {
+    #[test]
+    fn rxyxy2q_support_uses_shared_policy() {
+        use pecos_core::Angle64;
+        for (theta, phi, expected) in [
+            (Angle64::ZERO, Angle64::from_radians(0.123), true),
+            (Angle64::HALF_TURN, Angle64::QUARTER_TURN, true),
+            (Angle64::QUARTER_TURN, Angle64::from_radians(0.123), false),
+        ] {
+            let commands = crate::CommandBuilder::new()
+                .rxyxy2q(&[(0, 1)], theta, phi)
+                .build();
+            assert_eq!(super::supports(commands.iter().next().unwrap()), expected);
+        }
+    }
+
     use super::*;
 
     fn well_formed_commands(gate_type: GateType) -> Vec<(&'static str, GateCommand)> {

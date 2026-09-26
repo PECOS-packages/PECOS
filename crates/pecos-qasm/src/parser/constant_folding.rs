@@ -4,12 +4,8 @@
 //! improving performance and simplifying the AST.
 
 use crate::ast::Expression;
-use crate::parser::comparison::{
-    ComparisonContext, ComparisonResult, analyze_comparison, is_comparison_op,
-};
 use ::bitvec::prelude::*;
 use pecos_core::bitvec;
-use pecos_core::bitvec::utils::resize_to_same_width;
 use std::f64::consts::PI;
 
 /// Fold constants in an expression tree
@@ -87,24 +83,6 @@ fn fold_binary_op_with_context(
     is_gate_param: bool,
     default_width: usize,
 ) -> Expression {
-    // For comparison operations, check if we can resolve immediately based on signs
-    if is_comparison_op(&op) {
-        let context = ComparisonContext {
-            left_expr: &left,
-            right_expr: &right,
-            register_context: None, // No register context in constant folding
-        };
-
-        match analyze_comparison(&op, &context) {
-            ComparisonResult::Immediate(result) => {
-                return Expression::Integer(boolean_to_bitvec(result));
-            }
-            ComparisonResult::RequiresEvaluation => {
-                // Fall through to normal evaluation
-            }
-        }
-    }
-
     // First recursively fold the operands
     let left = fold_constants_with_context(left, is_gate_param, default_width);
     let right = fold_constants_with_context(right, is_gate_param, default_width);
@@ -116,7 +94,6 @@ fn fold_binary_op_with_context(
 
         // Integer arithmetic and bitwise operations
         (Expression::Integer(l), Expression::Integer(r)) => {
-            // Cross-sign comparisons are handled above; same-sign use unsigned comparison
             fold_integer_binary_op_with_context(&op, l, r, is_gate_param, default_width)
         }
 
@@ -178,9 +155,9 @@ fn fold_integer_binary_op_with_context(
     is_gate_param: bool,
     default_width: usize,
 ) -> Expression {
-    // Resize operands to the same width like runtime evaluation does
+    // Integer operands are non-negative, so widening must preserve their unsigned values.
     // Use the maximum width of operands and default_width for full precision
-    let (l_resized, r_resized) = resize_to_same_width_for_comparison(l, r, default_width);
+    let (l_resized, r_resized) = zero_extend_to_same_width(l, r, default_width);
     match op {
         // Arithmetic operations
         "+" => Expression::Integer(bitvec::add(&l_resized, &r_resized)),
@@ -248,7 +225,7 @@ fn fold_integer_binary_op_with_context(
 
         // Comparison operations (result is 0 or 1)
         // Note: operands are already resized above
-        // Use unsigned comparison for same-sign numbers (cross-sign cases handled above)
+        // Integer nodes carry unsigned values; negations remain unfolded unary nodes.
         "==" => Expression::Integer(boolean_to_bitvec(l_resized == r_resized)),
         "!=" => Expression::Integer(boolean_to_bitvec(l_resized != r_resized)),
         "<" => {
@@ -314,21 +291,8 @@ fn fold_unary_op_with_context(
         ("-", Expression::Float(f)) => Expression::Float(-f),
         ("-", Expression::Pi) => Expression::Float(-PI),
 
-        // Bitwise NOT
-        ("~", Expression::Integer(i)) => {
-            if is_gate_param {
-                // Don't fold bitwise NOT in gate parameters
-                Expression::UnaryOp {
-                    op,
-                    expr: Box::new(expr),
-                }
-            } else {
-                Expression::Integer(!i.clone()) // BitVec implements Not trait
-            }
-        }
-
         // Cannot fold - return the operation with folded operand
-        // This includes integer negation which we don't fold to preserve sign information
+        // Keep integer negation for sign information and integer NOT for runtime width.
         _ => Expression::UnaryOp {
             op,
             expr: Box::new(expr),
@@ -406,8 +370,8 @@ fn boolean_to_bitvec(b: bool) -> BitVec<u8, Lsb0> {
     bv
 }
 
-/// Resize two `BitVecs` to the same width for comparison in constant folding
-fn resize_to_same_width_for_comparison(
+/// Zero-extend two non-negative integer operands to a common width for constant folding.
+fn zero_extend_to_same_width(
     l: &BitVec<u8, Lsb0>,
     r: &BitVec<u8, Lsb0>,
     default_width: usize,
@@ -420,8 +384,8 @@ fn resize_to_same_width_for_comparison(
     let max_operand_width = l.len().max(r.len());
     let effective_width = max_operand_width.max(default_width);
 
-    // Use the same logic as runtime evaluation
-    resize_to_same_width(&mut l_clone, &mut r_clone, effective_width);
+    l_clone.resize(effective_width, false);
+    r_clone.resize(effective_width, false);
 
     (l_clone, r_clone)
 }
@@ -430,6 +394,74 @@ fn resize_to_same_width_for_comparison(
 mod tests {
     use super::*;
     use crate::parser::expressions::parse_integer_to_bitvec;
+
+    #[test]
+    fn test_unsigned_literals_with_different_widths() {
+        let expr = Expression::BinaryOp {
+            op: "<".to_string(),
+            left: Box::new(Expression::Integer(parse_integer_to_bitvec("8").unwrap())),
+            right: Box::new(Expression::Integer(parse_integer_to_bitvec("16").unwrap())),
+        };
+
+        match fold_constants(expr) {
+            Expression::Integer(value) => assert_eq!(value, boolean_to_bitvec(true)),
+            other => panic!("Expected folded integer, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_unsigned_subtraction_with_different_widths() {
+        let expr = Expression::BinaryOp {
+            op: "-".to_string(),
+            left: Box::new(Expression::Integer(parse_integer_to_bitvec("16").unwrap())),
+            right: Box::new(Expression::Integer(parse_integer_to_bitvec("8").unwrap())),
+        };
+        let Expression::Integer(value) = fold_constants(expr) else {
+            panic!("Expected folded integer");
+        };
+        assert_eq!(bitvec::to_decimal_string(&value), "8");
+    }
+
+    #[test]
+    fn test_negated_literal_comparison_remains_unfolded() {
+        for literal in ["0", "1"] {
+            let expr = Expression::BinaryOp {
+                op: "<".to_string(),
+                left: Box::new(Expression::UnaryOp {
+                    op: "-".to_string(),
+                    expr: Box::new(Expression::Integer(
+                        parse_integer_to_bitvec(literal).unwrap(),
+                    )),
+                }),
+                right: Box::new(Expression::Integer(parse_integer_to_bitvec("8").unwrap())),
+            };
+            let Expression::BinaryOp { op, left, right } = fold_constants(expr) else {
+                panic!("Negated literal comparisons must remain unfolded");
+            };
+            assert_eq!(op, "<");
+            assert!(matches!(*left, Expression::UnaryOp { ref op, .. } if op == "-"));
+            assert!(matches!(*right, Expression::Integer(_)));
+        }
+    }
+
+    #[test]
+    fn test_integer_not_remains_unfolded_at_every_width() {
+        for width in [0, 1, 8] {
+            for is_gate_param in [false, true] {
+                let expr = Expression::UnaryOp {
+                    op: "~".to_string(),
+                    expr: Box::new(Expression::Integer(parse_integer_to_bitvec("1").unwrap())),
+                };
+                let Expression::UnaryOp { op, expr } =
+                    fold_constants_with_context(expr, is_gate_param, width)
+                else {
+                    panic!("Integer NOT requires runtime width");
+                };
+                assert_eq!(op, "~");
+                assert!(matches!(*expr, Expression::Integer(_)));
+            }
+        }
+    }
 
     #[test]
     fn test_float_arithmetic() {

@@ -1,11 +1,8 @@
 // BitVec-based expression evaluation for arbitrary-precision arithmetic
 
 use crate::ast::Expression;
-use crate::parser::comparison::{
-    ComparisonContext, ComparisonResult, analyze_comparison, is_comparison_op,
-};
+use crate::parser::comparison::is_negative_expression;
 use ::bitvec::prelude::*;
-use pecos_core::bitvec::comparison::compare_unsigned;
 use pecos_core::{bitvec, errors::PecosError};
 use std::cmp::Ordering;
 
@@ -157,7 +154,6 @@ pub fn evaluate_expression_bitvec(
 }
 
 /// Evaluate binary operations
-#[allow(clippy::too_many_lines)]
 fn evaluate_binary_op(
     op: &str,
     left: &Expression,
@@ -165,126 +161,132 @@ fn evaluate_binary_op(
     context: &dyn BitVecExpressionContext,
     default_width: usize,
 ) -> Result<ExpressionValue, PecosError> {
-    // For comparison operations, check if we can resolve immediately based on signs
-    if is_comparison_op(op) {
-        let comparison_context = ComparisonContext {
-            left_expr: left,
-            right_expr: right,
-            register_context: Some(context),
-        };
-
-        match analyze_comparison(op, &comparison_context) {
-            ComparisonResult::Immediate(result) => {
-                return Ok(ExpressionValue::Bool(result));
-            }
-            ComparisonResult::RequiresEvaluation => {
-                // Fall through to normal evaluation
-            }
-        }
-    }
-
     let left_val = evaluate_expression_bitvec(left, context, default_width)?;
     let right_val = evaluate_expression_bitvec(right, context, default_width)?;
 
     match op {
         // Arithmetic operations
         "+" => {
-            let (left_bv, right_bv) = to_same_width_bitvecs(left_val, right_val, default_width);
+            let (left_bv, right_bv) = to_same_width_bitvecs(
+                left_val,
+                right_val,
+                is_negative_expression(left),
+                is_negative_expression(right),
+                default_width,
+            );
             Ok(ExpressionValue::BitVec(bitvec::add(&left_bv, &right_bv)))
         }
         "-" => {
-            let (left_bv, right_bv) = to_same_width_bitvecs(left_val, right_val, default_width);
+            let (left_bv, right_bv) = to_same_width_bitvecs(
+                left_val,
+                right_val,
+                is_negative_expression(left),
+                is_negative_expression(right),
+                default_width,
+            );
             Ok(ExpressionValue::BitVec(bitvec::subtract(
                 &left_bv, &right_bv,
             )))
         }
         "*" => {
-            let (left_bv, right_bv) = to_same_width_bitvecs(left_val, right_val, default_width);
+            let (left_bv, right_bv) = to_same_width_bitvecs(
+                left_val,
+                right_val,
+                is_negative_expression(left),
+                is_negative_expression(right),
+                default_width,
+            );
             Ok(ExpressionValue::BitVec(bitvec::multiply(
                 &left_bv, &right_bv,
             )))
         }
         "/" => {
-            let (left_bv, right_bv) = to_same_width_bitvecs(left_val, right_val, default_width);
+            let (left_bv, right_bv) = to_same_width_bitvecs(
+                left_val,
+                right_val,
+                is_negative_expression(left),
+                is_negative_expression(right),
+                default_width,
+            );
             Ok(ExpressionValue::BitVec(bitvec::divide(&left_bv, &right_bv)))
         }
 
         // Bitwise operations
         "&" => {
-            let (left_bv, right_bv) = to_same_width_bitvecs(left_val, right_val, default_width);
+            let (left_bv, right_bv) = to_same_width_bitvecs(
+                left_val,
+                right_val,
+                is_negative_expression(left),
+                is_negative_expression(right),
+                default_width,
+            );
             let mut result = left_bv.clone();
             result &= &right_bv;
             Ok(ExpressionValue::BitVec(result))
         }
         "|" => {
-            let (left_bv, right_bv) = to_same_width_bitvecs(left_val, right_val, default_width);
+            let (left_bv, right_bv) = to_same_width_bitvecs(
+                left_val,
+                right_val,
+                is_negative_expression(left),
+                is_negative_expression(right),
+                default_width,
+            );
             let mut result = left_bv.clone();
             result |= &right_bv;
             Ok(ExpressionValue::BitVec(result))
         }
         "^" => {
-            let (left_bv, right_bv) = to_same_width_bitvecs(left_val, right_val, default_width);
+            let (left_bv, right_bv) = to_same_width_bitvecs(
+                left_val,
+                right_val,
+                is_negative_expression(left),
+                is_negative_expression(right),
+                default_width,
+            );
             let mut result = left_bv.clone();
             result ^= &right_bv;
             Ok(ExpressionValue::BitVec(result))
         }
 
-        // Comparison operations
-        "==" => {
-            let (left_bv, right_bv) = to_same_width_bitvecs(left_val, right_val, default_width);
-            Ok(ExpressionValue::Bool(left_bv == right_bv))
-        }
-        "!=" => {
-            let (left_bv, right_bv) = to_same_width_bitvecs(left_val, right_val, default_width);
-            Ok(ExpressionValue::Bool(left_bv != right_bv))
-        }
-        "<" => {
-            let (left_bv, right_bv) = to_same_width_bitvecs(left_val, right_val, default_width);
-            // Use unsigned comparison for same-sign numbers
-            // (cross-sign cases are handled above)
-            Ok(ExpressionValue::Bool(
-                compare_unsigned(&left_bv, &right_bv) == Ordering::Less,
-            ))
-        }
-        ">" => {
-            let (left_bv, right_bv) = to_same_width_bitvecs(left_val, right_val, default_width);
-            // Use unsigned comparison for same-sign numbers
-            // (cross-sign cases are handled above)
-            Ok(ExpressionValue::Bool(
-                compare_unsigned(&left_bv, &right_bv) == Ordering::Greater,
-            ))
-        }
-        "<=" => {
-            let (left_bv, right_bv) = to_same_width_bitvecs(left_val, right_val, default_width);
-            // Use unsigned comparison for same-sign numbers
-            // (cross-sign cases are handled above)
-            let cmp = compare_unsigned(&left_bv, &right_bv);
-            Ok(ExpressionValue::Bool(
-                cmp == Ordering::Less || cmp == Ordering::Equal,
-            ))
-        }
-        ">=" => {
-            let (left_bv, right_bv) = to_same_width_bitvecs(left_val, right_val, default_width);
-            // Use unsigned comparison for same-sign numbers
-            // (cross-sign cases are handled above)
-            let cmp = compare_unsigned(&left_bv, &right_bv);
-            Ok(ExpressionValue::Bool(
-                cmp == Ordering::Greater || cmp == Ordering::Equal,
-            ))
+        // Preserve an unsigned operand's top bit by adding a separate sign bit.
+        "==" | "!=" | "<" | ">" | "<=" | ">=" => {
+            let left_bv = left_val.into_bitvec();
+            let right_bv = right_val.into_bitvec();
+            let width = left_bv.len().max(right_bv.len()).max(default_width) + 1;
+            let left_bv = resize_expression_value(left_bv, is_negative_expression(left), width);
+            let right_bv = resize_expression_value(right_bv, is_negative_expression(right), width);
+            let result = match op {
+                "==" => left_bv == right_bv,
+                "!=" => left_bv != right_bv,
+                "<" => {
+                    debug_assert_eq!(left_bv.len(), right_bv.len());
+                    bitvec::compare(&left_bv, &right_bv) == Ordering::Less
+                }
+                ">" => {
+                    debug_assert_eq!(left_bv.len(), right_bv.len());
+                    bitvec::compare(&left_bv, &right_bv) == Ordering::Greater
+                }
+                "<=" => {
+                    debug_assert_eq!(left_bv.len(), right_bv.len());
+                    bitvec::compare(&left_bv, &right_bv) != Ordering::Greater
+                }
+                ">=" => {
+                    debug_assert_eq!(left_bv.len(), right_bv.len());
+                    bitvec::compare(&left_bv, &right_bv) != Ordering::Less
+                }
+                _ => unreachable!(),
+            };
+            Ok(ExpressionValue::Bool(result))
         }
 
         // Shift operations
         "<<" => {
             let left_bv = left_val.into_bitvec();
-            let shift_i64 = right_val.as_i64();
-            // Clamp negative shifts to 0, and large shifts to the bit width
-            let shift_amount = if shift_i64 < 0 {
+            let shift_amount = if is_negative_expression(right) {
                 0
-            } else if let Ok(shift_usize) = usize::try_from(shift_i64) {
-                shift_usize.min(left_bv.len())
             } else {
-                // Shift amount is too large, shift all bits out
-                left_bv.len()
+                unsigned_shift_amount(&right_val.into_bitvec(), left_bv.len())
             };
             Ok(ExpressionValue::BitVec(bitvec::shift_left(
                 &left_bv,
@@ -293,15 +295,10 @@ fn evaluate_binary_op(
         }
         ">>" => {
             let left_bv = left_val.into_bitvec();
-            let shift_i64 = right_val.as_i64();
-            // Clamp negative shifts to 0, and large shifts to the bit width
-            let shift_amount = if shift_i64 < 0 {
+            let shift_amount = if is_negative_expression(right) {
                 0
-            } else if let Ok(shift_usize) = usize::try_from(shift_i64) {
-                shift_usize.min(left_bv.len())
             } else {
-                // Shift amount is too large, shift all bits out
-                left_bv.len()
+                unsigned_shift_amount(&right_val.into_bitvec(), left_bv.len())
             };
             Ok(ExpressionValue::BitVec(bitvec::shift_right(
                 &left_bv,
@@ -313,6 +310,19 @@ fn evaluate_binary_op(
             "Unsupported operation: {op}"
         ))),
     }
+}
+
+/// Read an unsigned shift count, saturating at the shifted value's width.
+fn unsigned_shift_amount(count: &BitSlice<u8, Lsb0>, width: usize) -> usize {
+    let mut amount: usize = 0;
+    for bit in count.iter().rev() {
+        // Counts beyond the operand width shift every bit out, even if they exceed usize.
+        amount = amount.saturating_mul(2).saturating_add(usize::from(*bit));
+        if amount >= width {
+            return width;
+        }
+    }
+    amount
 }
 
 /// Evaluate unary operations
@@ -327,6 +337,9 @@ fn evaluate_unary_op(
     match op {
         "-" => {
             let bv = val.into_bitvec();
+            // Reserve a sign bit without changing the operand's signed or unsigned value.
+            let width = bv.len() + 1;
+            let bv = resize_expression_value(bv, is_negative_expression(expr), width);
             let result = bitvec::negate(&bv);
             Ok(ExpressionValue::BitVec(result))
         }
@@ -345,12 +358,303 @@ fn evaluate_unary_op(
 fn to_same_width_bitvecs(
     left: ExpressionValue,
     right: ExpressionValue,
+    left_is_negative: bool,
+    right_is_negative: bool,
     default_width: usize,
 ) -> (BitVec<u8, Lsb0>, BitVec<u8, Lsb0>) {
-    let mut left_bv = left.into_bitvec();
-    let mut right_bv = right.into_bitvec();
+    let left_bv = left.into_bitvec();
+    let right_bv = right.into_bitvec();
+    let width = left_bv.len().max(right_bv.len()).max(default_width);
+    (
+        resize_expression_value(left_bv, left_is_negative, width),
+        resize_expression_value(right_bv, right_is_negative, width),
+    )
+}
 
-    bitvec::resize_to_same_width(&mut left_bv, &mut right_bv, default_width);
+/// Resize an expression value, extending its sign only for a negated expression.
+/// Register values and other non-negative expressions must retain their unsigned value.
+pub(crate) fn resize_expression_value(
+    mut value: BitVec<u8, Lsb0>,
+    is_negative: bool,
+    width: usize,
+) -> BitVec<u8, Lsb0> {
+    let extension = is_negative && value.last().as_deref().copied().unwrap_or(false);
+    value.resize(width, extension);
+    value
+}
 
-    (left_bv, right_bv)
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parser::expressions::parse_integer_to_bitvec;
+
+    struct RegisterContext(BitVec<u8, Lsb0>);
+
+    impl BitVecExpressionContext for RegisterContext {
+        fn get_register(&self, name: &str) -> Option<&BitVec<u8, Lsb0>> {
+            (name == "d").then_some(&self.0)
+        }
+
+        fn get_register_size(&self, name: &str) -> Option<usize> {
+            self.get_register(name).map(BitVec::len)
+        }
+    }
+
+    #[test]
+    fn unsigned_and_negative_widening() {
+        assert_eq!(
+            resize_expression_value(bitvec![u8, Lsb0; 1, 1], false, 5),
+            bitvec![u8, Lsb0; 1, 1, 0, 0, 0],
+        );
+        assert_eq!(
+            resize_expression_value(bitvec![u8, Lsb0; 1, 1, 1, 1], true, 5),
+            bitvec![u8, Lsb0; 1, 1, 1, 1, 1],
+        );
+    }
+
+    fn compare_register(op: &str, literal: &str) -> bool {
+        let context = RegisterContext(bitvec![u8, Lsb0; 1, 1]);
+        let expr = Expression::BinaryOp {
+            op: op.to_string(),
+            left: Box::new(Expression::Variable("d".to_string())),
+            right: Box::new(Expression::Integer(
+                parse_integer_to_bitvec(literal).unwrap(),
+            )),
+        };
+        evaluate_expression_bitvec(&expr, &context, 1)
+            .unwrap()
+            .into_bool()
+    }
+
+    #[test]
+    fn unsigned_register_eq3_with_width1() {
+        assert!(compare_register("==", "3"));
+        assert!(!compare_register("==", "2"));
+    }
+
+    #[test]
+    fn unsigned_register_gt2_with_width1() {
+        assert!(compare_register(">", "2"));
+        assert!(!compare_register(">", "3"));
+    }
+
+    #[test]
+    fn unsigned_registers_at_arbitrary_widths() {
+        for width in [1, 2, 64, 65, 128, 129] {
+            for dense in [false, true] {
+                let mut value = BitVec::repeat(dense, width);
+                value.set(width - 1, true);
+                let context = RegisterContext(value.clone());
+                for (op, right, expected) in [
+                    ("==", value, true),
+                    (">", bitvec![u8, Lsb0; 0], true),
+                    ("<", bitvec![u8, Lsb0; 0], false),
+                ] {
+                    let expr = Expression::BinaryOp {
+                        op: op.to_string(),
+                        left: Box::new(Expression::Variable("d".to_string())),
+                        right: Box::new(Expression::Integer(right)),
+                    };
+                    assert_eq!(
+                        evaluate_expression_bitvec(&expr, &context, 1)
+                            .unwrap()
+                            .into_bool(),
+                        expected,
+                        "width={width}, dense={dense}, op={op}",
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn negative_comparisons_with_different_widths() {
+        let context = RegisterContext(BitVec::new());
+        for (op, expected) in [
+            ("==", false),
+            ("!=", true),
+            ("<", false),
+            (">", true),
+            ("<=", false),
+            (">=", true),
+        ] {
+            let negative = |literal| Expression::UnaryOp {
+                op: "-".to_string(),
+                expr: Box::new(Expression::Integer(
+                    parse_integer_to_bitvec(literal).unwrap(),
+                )),
+            };
+            let expr = Expression::BinaryOp {
+                op: op.to_string(),
+                left: Box::new(negative("1")),
+                right: Box::new(negative("16")),
+            };
+            assert_eq!(
+                evaluate_expression_bitvec(&expr, &context, 1)
+                    .unwrap()
+                    .into_bool(),
+                expected,
+                "op={op}",
+            );
+        }
+    }
+
+    fn integer(literal: &str) -> Expression {
+        Expression::Integer(parse_integer_to_bitvec(literal).unwrap())
+    }
+
+    fn negative(expr: Expression) -> Expression {
+        Expression::UnaryOp {
+            op: "-".to_string(),
+            expr: Box::new(expr),
+        }
+    }
+
+    fn binary(op: &str, left: Expression, right: Expression) -> Expression {
+        Expression::BinaryOp {
+            op: op.to_string(),
+            left: Box::new(left),
+            right: Box::new(right),
+        }
+    }
+
+    macro_rules! negation_comparison_cases {
+        ($($name:ident: ($expr:expr, $expected:expr)),+ $(,)?) => {
+            $(
+                #[test]
+                fn $name() {
+                    let context = RegisterContext(BitVec::new());
+                    assert_eq!(evaluate_expression_bitvec(&$expr, &context, 1).unwrap().into_bool(), $expected);
+                }
+            )+
+        };
+    }
+
+    negation_comparison_cases! {
+        negative_zero_lt_zero: (binary("<", negative(integer("0")), integer("0")), false),
+        negative_zero_ge_zero: (binary(">=", negative(integer("0")), integer("0")), true),
+        negative_zero_eq_zero: (binary("==", negative(integer("0")), integer("0")), true),
+        double_negative_one_gt_zero: (binary(">", negative(negative(integer("1"))), integer("0")), true),
+        negative_one_lt_eight: (binary("<", negative(integer("1")), integer("8")), true),
+        negative_compound_lt_zero: (binary("<", negative(binary("-", integer("1"), integer("3"))), integer("0")), true),
+        negative_compound_ne_two: (binary("==", negative(binary("-", integer("1"), integer("3"))), integer("2")), false),
+        negative_compound_eq_negative_fourteen: (binary("==", negative(binary("-", integer("1"), integer("3"))), negative(integer("14"))), true),
+    }
+
+    #[test]
+    fn negation_preserves_operand_signedness_and_width() {
+        // Compound results are unsigned modular values here; value-carried signedness is #869.
+        let context = RegisterContext(BitVec::new());
+        let evaluate = |expr| {
+            evaluate_expression_bitvec(&expr, &context, 1)
+                .unwrap()
+                .into_bitvec()
+        };
+        assert_eq!(
+            evaluate(binary("-", integer("1"), integer("3"))),
+            bitvec![u8, Lsb0; 0, 1, 1, 1]
+        );
+        assert_eq!(
+            evaluate(negative(binary("-", integer("1"), integer("3")))),
+            bitvec![u8, Lsb0; 0, 1, 0, 0, 1]
+        );
+        assert_eq!(evaluate(negative(integer("1"))), bitvec![u8, Lsb0; 1; 5]);
+        assert_eq!(
+            evaluate(negative(negative(integer("1")))),
+            bitvec![u8, Lsb0; 1, 0, 0, 0, 0, 0]
+        );
+        assert_eq!(evaluate(negative(integer("14"))).len(), 8);
+    }
+
+    #[test]
+    fn double_negative_signed_minimum() {
+        let context = RegisterContext(BitVec::new());
+        let literal = parse_integer_to_bitvec("8").unwrap();
+        assert_eq!(literal.len(), 4);
+        let expr = negative(negative(Expression::Integer(literal)));
+        assert_eq!(
+            evaluate_expression_bitvec(&expr, &context, 1)
+                .unwrap()
+                .into_bitvec(),
+            bitvec![u8, Lsb0; 0, 0, 0, 1, 0, 0],
+        );
+        assert!(
+            evaluate_expression_bitvec(&binary("==", expr, integer("8")), &context, 1)
+                .unwrap()
+                .into_bool()
+        );
+    }
+
+    #[test]
+    fn unsigned_register_shift_count() {
+        let context = RegisterContext(bitvec![u8, Lsb0; 1, 1]);
+        let expr = binary("<<", integer("1"), Expression::Variable("d".to_string()));
+        assert_eq!(
+            evaluate_expression_bitvec(&expr, &context, 1)
+                .unwrap()
+                .into_bitvec(),
+            bitvec![u8, Lsb0; 0, 0, 0, 1],
+        );
+    }
+
+    #[test]
+    fn unsigned_shift_count_saturates() {
+        for index in [2, 3, 64, 128] {
+            let mut count = BitVec::repeat(false, 129);
+            count.set(index, true);
+            let context = RegisterContext(count);
+            for op in ["<<", ">>"] {
+                let expr = binary(op, integer("8"), Expression::Variable("d".to_string()));
+                assert_eq!(
+                    evaluate_expression_bitvec(&expr, &context, 1)
+                        .unwrap()
+                        .into_bitvec(),
+                    bitvec![u8, Lsb0; 0; 4],
+                    "op={op}, count bit={index}",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn unsigned_shift_count_boundaries() {
+        for (literal, count) in [
+            ("0", 0_usize),
+            ("1", 1),
+            ("3", 3),
+            ("4", 4),
+            ("5", 5),
+            ("8", 8),
+        ] {
+            let bits = parse_integer_to_bitvec(literal).unwrap();
+            for width in [0, 1, 3, 4, 5] {
+                assert_eq!(unsigned_shift_amount(&bits, width), count.min(width));
+            }
+        }
+        assert_eq!(unsigned_shift_amount(&BitVec::new(), 4), 0);
+        assert_eq!(
+            unsigned_shift_amount(&BitVec::repeat(true, 129), usize::MAX),
+            usize::MAX
+        );
+    }
+
+    #[test]
+    fn negative_shape_shift_counts_clamp_to_zero() {
+        let context = RegisterContext(BitVec::new());
+        for count in [
+            negative(integer("0")),
+            negative(integer("1")),
+            negative(negative(integer("1"))),
+        ] {
+            for op in ["<<", ">>"] {
+                let expr = binary(op, integer("8"), count.clone());
+                assert_eq!(
+                    evaluate_expression_bitvec(&expr, &context, 1)
+                        .unwrap()
+                        .into_bitvec(),
+                    bitvec![u8, Lsb0; 0, 0, 0, 1],
+                );
+            }
+        }
+    }
 }

@@ -284,16 +284,24 @@ fn test_cond_reset_with_register_comparison() {
 
 /// Run `qasm` noiselessly and return register `d` from every shot.
 fn register_d_values(qasm: &str, shots: usize) -> Vec<u64> {
-    let results = sim_builder()
-        .classical(qasm_engine().program(Qasm::from_string(qasm.to_string())))
-        .run(shots)
-        .unwrap();
+    register_values(qasm, shots, "d", false)
+}
+
+/// Run a program and require one named register result for every requested shot.
+fn register_values(qasm: &str, shots: usize, register: &str, complex: bool) -> Vec<u64> {
+    let mut builder = qasm_engine().program(Qasm::from_string(qasm));
+    if complex {
+        builder = builder.allow_complex_conditionals(true);
+    }
+    let results = sim_builder().classical(builder).run(shots).unwrap();
     assert_eq!(results.len(), shots);
-    results
+    let values = results
         .try_as_shot_map()
         .unwrap()
-        .try_bits_as_u64("d")
-        .unwrap()
+        .try_bits_as_u64(register)
+        .unwrap();
+    assert_eq!(values.len(), shots);
+    values
 }
 
 #[test]
@@ -460,9 +468,8 @@ fn cond_measure_result_is_visible_to_the_next_conditional() {
 
 #[test]
 fn cond_measure_register_result_is_visible_to_the_next_conditional() {
-    // The condition tests a single bit because comparing a multi-bit register
-    // with a literal (`d == 3`) is evaluated wrongly while the register's top
-    // bit is set; see issue #864.
+    // A conditional register measurement must be visible to a subsequent
+    // comparison of the complete register, including its top bit.
     let qasm = r#"
         OPENQASM 2.0;
         include "qelib1.inc";
@@ -476,18 +483,10 @@ fn cond_measure_register_result_is_visible_to_the_next_conditional() {
         x q[1];
         measure q[0] -> c[0];
         if (c == 1) measure q -> d;
-        if (d[1] == 1) x r[0];
+        if (d == 3) x r[0];
         measure r[0] -> e[0];
     "#;
-    let results = sim_builder()
-        .classical(qasm_engine().program(Qasm::from_string(qasm.to_string())))
-        .run(20)
-        .unwrap();
-    let e = results
-        .try_as_shot_map()
-        .unwrap()
-        .try_bits_as_u64("e")
-        .unwrap();
+    let e = register_values(qasm, 20, "e", false);
     assert!(
         e.iter().all(|&v| v == 1),
         "e should be 1 in every shot, got {e:?}"
@@ -515,4 +514,147 @@ fn cond_measure_register_size_mismatch_is_a_parse_error() {
             .contains("Register size mismatch in measure q -> d"),
         "unexpected error: {err}"
     );
+}
+
+// Each row is a separate program and test so failures identify the comparison.
+macro_rules! unsigned_condition_cases {
+    ($($name:ident: ($width:expr, $register:literal, $prepare:literal, $condition:literal, $expected:expr)),+ $(,)?) => {
+        $(
+            #[test]
+            fn $name() {
+                let qasm = format!(
+                    r#"OPENQASM 2.0;
+                    include "qelib1.inc";
+                    qreg q[{}]; qreg r[1];
+                    creg {}[{}]; creg e[1];
+                    {}
+                    measure q -> {};
+                    if ({}) x r[0];
+                    measure r[0] -> e[0];"#,
+                    $width, $register, $width, $prepare, $register, $condition,
+                );
+                assert_eq!(register_values(&qasm, 20, "e", false), vec![$expected; 20]);
+            }
+        )+
+    };
+}
+
+unsigned_condition_cases! {
+    unsigned_d3_eq3: (2, "d", "x q[0]; x q[1];", "d == 3", 1),
+    unsigned_d3_ne0: (2, "d", "x q[0]; x q[1];", "d != 0", 1),
+    unsigned_d3_gt2: (2, "d", "x q[0]; x q[1];", "d > 2", 1),
+    unsigned_d3_ge3: (2, "d", "x q[0]; x q[1];", "d >= 3", 1),
+    unsigned_d3_le3: (2, "d", "x q[0]; x q[1];", "d <= 3", 1),
+    unsigned_d3_eq1: (2, "d", "x q[0]; x q[1];", "d == 1", 0),
+    unsigned_d3_lt3: (2, "d", "x q[0]; x q[1];", "d < 3", 0),
+    unsigned_d3_eq2: (2, "d", "x q[0]; x q[1];", "d == 2", 0),
+    unsigned_d3_eq4: (2, "d", "x q[0]; x q[1];", "d == 4", 0),
+    unsigned_d2_eq2: (2, "d", "x q[1];", "d == 2", 1),
+    unsigned_d2_eq3: (2, "d", "x q[1];", "d == 3", 0),
+    unsigned_c1_gt0: (1, "c", "x q[0];", "c > 0", 1),
+    unsigned_c1_eq1: (1, "c", "x q[0];", "c == 1", 1),
+    unsigned_c1_eq0: (1, "c", "x q[0];", "c == 0", 0),
+    unsigned_c0_eq0: (1, "c", "", "c == 0", 1),
+    unsigned_c0_gt0: (1, "c", "", "c > 0", 0),
+    unsigned_d3_ne3: (2, "d", "x q[0]; x q[1];", "d != 3", 0),
+    unsigned_d3_gt3: (2, "d", "x q[0]; x q[1];", "d > 3", 0),
+    unsigned_d3_ge4: (2, "d", "x q[0]; x q[1];", "d >= 4", 0),
+    unsigned_d3_le2: (2, "d", "x q[0]; x q[1];", "d <= 2", 0),
+    unsigned_d2_lt3: (2, "d", "x q[1];", "d < 3", 1),
+}
+
+macro_rules! unsigned_assignment_cases {
+    (@width) => { 4 };
+    (@width $width:literal) => { $width };
+    ($($name:ident: ($assignment:literal, $register:literal, $expected:expr $(, $width:literal)?)),+ $(,)?) => {
+        $(
+            #[test]
+            fn $name() {
+                let qasm = format!(concat!(
+                    "OPENQASM 2.0; include \"qelib1.inc\"; ",
+                    "qreg r[1]; creg a[2]; creg b[{}]; creg e[1]; ",
+                    $assignment,
+                    " measure r[0] -> e[0];",
+                ), unsigned_assignment_cases!(@width $($width)?));
+                assert_eq!(register_values(&qasm, 20, $register, false), vec![$expected; 20]);
+            }
+        )+
+    };
+}
+
+unsigned_assignment_cases! {
+    unsigned_assignment_copy: ("a = 3; b = a;", "b", 3),
+    unsigned_assignment_negative: ("b = -1;", "b", 15),
+    unsigned_assignment_copy_condition: ("a = 3; b = a; if (b == 3) x r[0];", "e", 1),
+    unsigned_assignment_copy_false_condition: ("a = 3; b = a; if (b == 15) x r[0];", "e", 0),
+    unsigned_assignment_conditional_copy: ("a = 3; if (e == 0) b = a;", "b", 3),
+    unsigned_assignment_conditional_negative: ("if (e == 0) b = -1;", "b", 15),
+    unsigned_assignment_conditional_skipped: ("a = 3; if (e == 1) b = a;", "b", 0),
+    unsigned_assignment_truncation: ("b = 15; a = b;", "a", 3),
+    unsigned_literal_c8_eq8: ("creg c[8]; c = 8; if (c == 8) x r[0];", "e", 1),
+    unsigned_literal_c64_eq64: ("creg c[8]; c = 64; if (c == 64) x r[0];", "e", 1),
+    unsigned_literal_c8_eq9: ("creg c[8]; c = 8; if (c == 9) x r[0];", "e", 0),
+    unsigned_assignment_negate_a1: ("creg w[8]; a = 1; w = -a;", "w", 255),
+    unsigned_assignment_negate_a3: ("creg w[8]; a = 3; w = -a;", "w", 253),
+    unsigned_assignment_conditional_negate_a1: ("creg w[8]; a = 1; if (e == 0) w = -a;", "w", 255),
+    unsigned_assignment_conditional_negate_a3: ("creg w[8]; a = 3; if (e == 0) w = -a;", "w", 253),
+    unsigned_assignment_bit: ("a[1] = 1; b = a[1];", "b", 1),
+    unsigned_assignment_bool: ("a = 3; b = (a == 3);", "b", 1),
+    unsigned_assignment_add: ("a = 3; b = a + 1;", "b", 4),
+    unsigned_assignment_subtract: ("b = 15; a = b - 12;", "a", 3),
+    unsigned_assignment_not_literal_or: ("b = ~1 | 0;", "b", 254, 8),
+    unsigned_assignment_not_literal: ("b = ~1;", "b", 254, 8),
+    // The register evaluates at width 2, so NOT turns 11 into 00 before assignment zero-extends it.
+    unsigned_assignment_not_register: ("a = 3; b = ~a;", "b", 0),
+    unsigned_assignment_bitwise_or: ("a = 3; b = a | 0;", "b", 3),
+    unsigned_shift_not_right: ("b = ~1 >> 8;", "b", 0),
+    unsigned_shift_not_left: ("b = ~1 << 8;", "b", 0),
+    unsigned_shift_literal_left: ("b = 1 << 2;", "b", 4),
+    unsigned_shift_register_count: ("a = 3; b = 1 << a;", "b", 8),
+    unsigned_shift_literal_right: ("b = 8 >> 1;", "b", 4),
+}
+
+macro_rules! unsigned_complex_condition_cases {
+    ($($name:ident: ($condition:literal, $expected:expr $(, $setup:literal)?)),+ $(,)?) => {
+        $(
+            #[test]
+            fn $name() {
+                let qasm = concat!(
+                    "OPENQASM 2.0; include \"qelib1.inc\"; ",
+                    "qreg r[1]; creg b[4]; creg e[1]; ",
+                    $($setup,)?
+                    "b = 15; if (",
+                    $condition,
+                    ") x r[0]; measure r[0] -> e[0];",
+                );
+                assert_eq!(register_values(qasm, 20, "e", true), vec![$expected; 20]);
+            }
+        )+
+    };
+}
+
+unsigned_complex_condition_cases! {
+    unsigned_b15_eq_negative1: ("b == -1", 0),
+    unsigned_b15_gt_negative1: ("b > -1", 1),
+    unsigned_b15_lt0: ("b < 0", 0),
+    unsigned_b15_eq15: ("b == 15", 1),
+    unsigned_b15_gt15: ("b > 15", 0),
+    unsigned_b15_lt16: ("b < 16", 1),
+    unsigned_arithmetic_condition: ("a + 1 == 4", 1, "creg a[2]; a = 3; "),
+    unsigned_negated_register_gt_negative1: ("-a > -1", 0, "creg a[2]; a = 3; "),
+    unsigned_negated_register_lt0: ("-a < 0", 1, "creg a[2]; a = 3; "),
+    unsigned_negated_register_eq_negative3: ("-a == -3", 1, "creg a[2]; a = 3; "),
+    unsigned_not_condition_width: ("~1 == 14", 1),
+    unsigned_not_condition_not_assignment_width: ("~1 == 254", 0),
+}
+
+#[test]
+fn multi_bit_conditional_fixture_flips_the_qubit_back() {
+    // The hardware-validation fixture documents `m = 3, r = 0`: both bits of a
+    // 2-bit register are measured as 1 and `if (m == 3)` must fire. Until
+    // registers compared as unsigned values that condition was false and the
+    // fixture was only ever run through the PHIR converter, never simulated.
+    let qasm = include_str!("fixtures/qasm_validation/multi_bit_conditional.qasm");
+    assert_eq!(register_values(qasm, 20, "m", false), vec![3; 20]);
+    assert_eq!(register_values(qasm, 20, "r", false), vec![0; 20]);
 }

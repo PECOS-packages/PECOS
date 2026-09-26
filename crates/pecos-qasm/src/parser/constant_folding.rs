@@ -173,7 +173,13 @@ fn fold_integer_binary_op_with_context(
                     right: Box::new(Expression::Integer(r_resized)),
                 }
             } else {
-                Expression::Integer(bitvec::divide(&l_resized, &r_resized))
+                let result_width = l_resized.len();
+                // Signed division needs a separate sign bit for non-negative literals.
+                let (l_dividend, r_divisor) =
+                    zero_extend_to_same_width(&l_resized, &r_resized, result_width + 1);
+                let mut quotient = bitvec::divide(&l_dividend, &r_divisor);
+                quotient.truncate(result_width);
+                Expression::Integer(quotient)
             }
         }
 
@@ -394,6 +400,22 @@ fn zero_extend_to_same_width(
 mod tests {
     use super::*;
     use crate::parser::expressions::parse_integer_to_bitvec;
+
+    #[test]
+    fn test_unsigned_division_folds_eight_over_two() {
+        let expr = Expression::BinaryOp {
+            op: "/".to_string(),
+            left: Box::new(Expression::Integer(parse_integer_to_bitvec("8").unwrap())),
+            right: Box::new(Expression::Integer(parse_integer_to_bitvec("2").unwrap())),
+        };
+        for width in [0, 4, 8] {
+            let Expression::Integer(value) = fold_constants_with_width(expr.clone(), width) else {
+                panic!("Expected folded integer");
+            };
+            assert_eq!(value.len(), width.max(4));
+            assert_eq!(bitvec::to_decimal_string(&value), "4");
+        }
+    }
 
     #[test]
     fn test_unsigned_literals_with_different_widths() {

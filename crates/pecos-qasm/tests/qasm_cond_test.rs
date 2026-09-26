@@ -555,27 +555,35 @@ unsigned_condition_cases! {
     unsigned_c1_eq1: (1, "c", "x q[0];", "c == 1", 1),
     unsigned_c1_eq0: (1, "c", "x q[0];", "c == 0", 0),
     unsigned_c0_eq0: (1, "c", "", "c == 0", 1),
+    unsigned_c1_bit_gt0: (1, "c", "x q[0];", "c[0] > 0", 1),
+    unsigned_c0_bit_gt0: (1, "c", "", "c[0] > 0", 0),
     unsigned_c0_gt0: (1, "c", "", "c > 0", 0),
     unsigned_d3_ne3: (2, "d", "x q[0]; x q[1];", "d != 3", 0),
     unsigned_d3_gt3: (2, "d", "x q[0]; x q[1];", "d > 3", 0),
     unsigned_d3_ge4: (2, "d", "x q[0]; x q[1];", "d >= 4", 0),
     unsigned_d3_le2: (2, "d", "x q[0]; x q[1];", "d <= 2", 0),
     unsigned_d2_lt3: (2, "d", "x q[1];", "d < 3", 1),
+    unsigned_bit_ref_c1_gt0: (1, "c", "x q[0];", "c[0] > 0", 1),
+    unsigned_bit_ref_c0_gt0: (1, "c", "", "c[0] > 0", 0),
+    unsigned_bit_ref_c1_eq1: (1, "c", "x q[0];", "c[0] == 1", 1),
 }
 
 macro_rules! unsigned_assignment_cases {
     (@width) => { 4 };
     (@width $width:literal) => { $width };
-    ($($name:ident: ($assignment:literal, $register:literal, $expected:expr $(, $width:literal)?)),+ $(,)?) => {
+    (@operand_width) => { 2 };
+    (@operand_width $width:literal) => { $width };
+    ($($name:ident: ($assignment:literal, $register:literal, $expected:expr $(, $width:literal $(, $operand_width:literal)?)?)),+ $(,)?) => {
         $(
             #[test]
             fn $name() {
                 let qasm = format!(concat!(
                     "OPENQASM 2.0; include \"qelib1.inc\"; ",
-                    "qreg r[1]; creg a[2]; creg b[{}]; creg e[1]; ",
+                    "qreg r[1]; creg a[{}]; creg b[{}]; creg e[1]; ",
                     $assignment,
                     " measure r[0] -> e[0];",
-                ), unsigned_assignment_cases!(@width $($width)?));
+                ), unsigned_assignment_cases!(@operand_width $($($operand_width)?)?),
+                   unsigned_assignment_cases!(@width $($width)?));
                 assert_eq!(register_values(&qasm, 20, $register, false), vec![$expected; 20]);
             }
         )+
@@ -600,17 +608,28 @@ unsigned_assignment_cases! {
     unsigned_assignment_conditional_negate_a3: ("creg w[8]; a = 3; if (e == 0) w = -a;", "w", 253),
     unsigned_assignment_bit: ("a[1] = 1; b = a[1];", "b", 1),
     unsigned_assignment_bool: ("a = 3; b = (a == 3);", "b", 1),
+    unsigned_assignment_multiply: ("a = 3; b = a * 2;", "b", 6),
+    unsigned_assignment_bitwise_and: ("a = 3; b = a & 1;", "b", 1),
+    unsigned_assignment_bitwise_xor: ("a = 3; b = a ^ 1;", "b", 2),
+    unsigned_assignment_negate_width1: ("creg c[1]; creg w[4]; c = 1; w = -c;", "w", 15),
+    unsigned_division_runtime_eight: ("creg c[4]; a = 8; c = a / 2;", "c", 4, 4, 4),
+    unsigned_division_folded_eight: ("creg c[4]; c = 8 / 2;", "c", 4),
+    unsigned_division_folded_fifteen: ("creg c[4]; c = 15 / 2;", "c", 7),
+    unsigned_division_runtime_fifteen: ("creg c[4]; a = 15; c = a / 2;", "c", 7, 4, 4),
+    unsigned_division_control_seven: ("creg c[4]; c = 7 / 2;", "c", 3),
+    unsigned_division_negative_dividend: ("creg c[4]; c = -8 / 2;", "c", 12),
+    unsigned_division_negative_divisor: ("creg c[4]; c = 8 / -2;", "c", 12),
     unsigned_assignment_add: ("a = 3; b = a + 1;", "b", 4),
     unsigned_assignment_subtract: ("b = 15; a = b - 12;", "a", 3),
     unsigned_assignment_not_literal_or: ("b = ~1 | 0;", "b", 254, 8),
     unsigned_assignment_not_literal: ("b = ~1;", "b", 254, 8),
-    // The register evaluates at width 2, so NOT turns 11 into 00 before assignment zero-extends it.
-    unsigned_assignment_not_register: ("a = 3; b = ~a;", "b", 0),
+    unsigned_assignment_not_register: ("a = 3; b = ~a;", "b", 12),
     unsigned_assignment_bitwise_or: ("a = 3; b = a | 0;", "b", 3),
     unsigned_shift_not_right: ("b = ~1 >> 8;", "b", 0),
     unsigned_shift_not_left: ("b = ~1 << 8;", "b", 0),
     unsigned_shift_literal_left: ("b = 1 << 2;", "b", 4),
     unsigned_shift_register_count: ("a = 3; b = 1 << a;", "b", 8),
+    unsigned_shift_register_count_right: ("a = 3; b = 8 >> a;", "b", 1),
     unsigned_shift_literal_right: ("b = 8 >> 1;", "b", 4),
 }
 

@@ -1164,6 +1164,7 @@ impl QASMEngine {
                     debug!("Evaluating if condition: {condition:?}");
                     // Use evaluate_expression_bitvec_with_width to support WASM functions
                     // For conditions, we don't need a specific width - just evaluate as boolean
+                    // This conversion is signed; value-carried signedness is tracked in #869.
                     let condition_value = self
                         .evaluate_expression_bitvec_with_width(condition, 1)?
                         .as_i64();
@@ -1463,6 +1464,7 @@ impl QASMEngine {
         let mut arg_values = Vec::new();
         for arg in args {
             let val = evaluate_expression_bitvec(arg, self, target_width)?;
+            // This conversion is signed; value-carried signedness is tracked in #869.
             arg_values.push(val.as_i64());
         }
         if let Some(ref mut foreign_obj) = self.foreign_object {

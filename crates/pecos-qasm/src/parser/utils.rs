@@ -83,6 +83,21 @@ pub fn expand_gates(program: &mut Program) -> Result<(), PecosError> {
                             });
                         }
                     }
+                    Operation::RegMeasure { q_reg, c_reg } => {
+                        // A conditional register measurement stays whole (its
+                        // condition is evaluated once by the engine), so it skips
+                        // the expansion that would otherwise validate it here.
+                        check_register_measure(
+                            q_reg,
+                            c_reg,
+                            &program.quantum_registers,
+                            &program.classical_registers,
+                        )?;
+                        expanded_operations.push(Operation::If {
+                            condition: condition.clone(),
+                            operation: operation.clone(),
+                        });
+                    }
                     _ => {
                         // For non-gate operations inside If, just clone
                         expanded_operations.push(Operation::If {
@@ -217,13 +232,14 @@ fn expand_gate_operation(
     }
 }
 
-fn expand_register_measure(
+/// Check that `measure q_reg -> c_reg` names two existing registers of equal
+/// size, returning the qubits of `q_reg`.
+fn check_register_measure<'a>(
     q_reg: &str,
     c_reg: &str,
-    quantum_registers: &BTreeMap<String, Vec<usize>>,
+    quantum_registers: &'a BTreeMap<String, Vec<usize>>,
     classical_registers: &BTreeMap<String, usize>,
-    expanded_operations: &mut Vec<Operation>,
-) -> Result<(), PecosError> {
+) -> Result<&'a [usize], PecosError> {
     let q_qubits = quantum_registers
         .get(q_reg)
         .ok_or_else(|| unknown_register("quantum", q_reg))?;
@@ -244,6 +260,17 @@ fn expand_register_measure(
             ),
         ));
     }
+    Ok(q_qubits)
+}
+
+fn expand_register_measure(
+    q_reg: &str,
+    c_reg: &str,
+    quantum_registers: &BTreeMap<String, Vec<usize>>,
+    classical_registers: &BTreeMap<String, usize>,
+    expanded_operations: &mut Vec<Operation>,
+) -> Result<(), PecosError> {
+    let q_qubits = check_register_measure(q_reg, c_reg, quantum_registers, classical_registers)?;
 
     // Expand to individual measurements
     for (i, &qubit) in q_qubits.iter().enumerate() {

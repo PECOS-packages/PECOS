@@ -409,10 +409,32 @@ assert result.predictions == [1, 0]
 assert result.num_errors == 0
 ```
 
-All seven native BP-Trellis configuration options are exposed. The example opts
-into a retry ladder; the default `escalation_ks=None` disables retries. Retries
-occur only after a no-path result, not after a successful but incorrect prediction.
-Each worker prebuilds its own ladder, increasing construction time and memory.
+The ladder uses one engine model and prepares each shot once, including BP.
+Use `escalation=[(32, 50.0), (128, 100.0)]` to choose both pruning parameters;
+`escalation_ks=[32, 128]` remains shorthand for rungs at the base `delta`.
+Pass only one ladder keyword. The default ladder is empty. Rungs need not be
+monotone, and an exact base cannot have a ladder. Rungs run only after a no-path
+attempt that dropped states: never after a successful but wrong prediction,
+and never after a residual or infeasible no-path.
+
+The direct `BpTrellisDecoder.decode_syndrome`, `decode_from_defects`, and
+`decode_batch(shots, workers=1)` methods accept `on_no_path="raise"` (default)
+or `"report"`. Report mode returns a `BpTrellisNoPath` in place for each failed
+shot, preserving batch order. Its `cause` is `"residual"` when a detector's
+residual cannot be changed, `"infeasible"` when an attempt proves there is no
+path without pruning, or `"exhausted"` when all attempts fail after pruning.
+Residual and infeasible outcomes skip remaining rungs. Other errors still raise.
+
+Both outcome classes expose `no_path`, `transitions`, `bp_runs`, and
+`bp_seconds`. Only a decoded result exposes `observable_flips`; a report exposes
+`placeholder_flips` instead, the forced contribution of probability-one
+mechanisms, including wide observables. The names differ on purpose, so code
+written for a correction raises `AttributeError` on a report rather than
+silently consuming a placeholder. The report also exposes `detector` (only for
+residual) and `rungs_tried`.
+BP time is counted once, while transitions sum all attempts.
+The `bp_trellis(...)` spec route remains strict and accepts no `on_no_path`.
+
 `ordering` also accepts `"backward_deadline"`, `"time_order"`, or an explicit
 mechanism permutation. BP-Trellis uses floating-point coset masses and does not
 expose Frontier's integer metric options.

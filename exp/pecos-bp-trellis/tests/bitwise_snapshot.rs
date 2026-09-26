@@ -33,10 +33,10 @@
 //! also preserves the independent retry case. Base success, rung success,
 //! all-rung failure, and untouched-detector failure are frozen.
 //! N-ary and maxlog are unavailable through `BpTrellisConfig` (no runtime cell).
-//! Zero-width ladder rungs are rejected: `escalation_ks[1]: TrellisConfig.k must be at least 1`,
+//! Zero-width ladder rungs are rejected: `escalation[1]: TrellisConfig.k must be at least 1`,
 //! pinned in `rejected_ladder_pins_invalid_configuration_message`.
 
-use pecos_bp_trellis::{BpTrellisConfig, BpTrellisDecoder, TrellisOrdering};
+use pecos_bp_trellis::{BpTrellisConfig, BpTrellisDecoder, EscalationRung, TrellisOrdering};
 
 use pecos_trellis::{DecoderError, SparseDem, TrellisResult, TrellisStatus};
 use serde::{Deserialize, Serialize};
@@ -290,7 +290,10 @@ fn configurations(fixture: &Fixture) -> Vec<(String, BpTrellisConfig)> {
                                 bp_score_iterations: bp,
                                 merge_indistinguishable: merge,
                                 ordering: ordering.clone(),
-                                escalation_ks,
+                                escalation: escalation_ks
+                                    .into_iter()
+                                    .map(|k| EscalationRung { k, delta })
+                                    .collect(),
                             },
                         ));
                     }
@@ -336,13 +339,19 @@ fn rejected_ladder_pins_invalid_configuration_message() {
     let error = BpTrellisDecoder::from_sparse_dem(
         &dem,
         BpTrellisConfig {
-            escalation_ks: vec![16, 0],
+            escalation: vec![
+                EscalationRung {
+                    k: 16,
+                    delta: 100.0,
+                },
+                EscalationRung { k: 0, delta: 100.0 },
+            ],
             ..BpTrellisConfig::default()
         },
     )
     .unwrap_err();
     assert!(
-        matches!(&error, DecoderError::InvalidConfiguration(message) if message == "escalation_ks[1]: TrellisConfig.k must be at least 1"),
+        matches!(&error, DecoderError::InvalidConfiguration(message) if message == "escalation[1]: TrellisConfig.k must be at least 1"),
         "{error}"
     );
 }

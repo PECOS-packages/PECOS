@@ -129,13 +129,17 @@ pub struct TrellisConfig {
     pub int_metric_scale: i32,
 }
 
-impl TrellisConfig {
-    /// Validate configuration rules that do not depend on a detector error model.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DecoderError::InvalidConfiguration`] for invalid pruning or metric options.
-    pub fn validate(&self) -> Result<(), DecoderError> {
+/// Pruning parameters for one attempt, validated against its decoder's model.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PruneParams {
+    /// Maximum retained boundary states; must be at least one.
+    pub k: usize,
+    /// Non-negative log-score window; must be finite for max-log arithmetic.
+    pub delta: f64,
+}
+
+impl PruneParams {
+    fn validate(self, metric_mode: MetricMode) -> Result<(), DecoderError> {
         if self.k == 0 {
             return Err(DecoderError::InvalidConfiguration(
                 "TrellisConfig.k must be at least 1".into(),
@@ -147,12 +151,42 @@ impl TrellisConfig {
                 self.delta
             )));
         }
-        if self.metric_mode == MetricMode::MaxLogInt && !self.delta.is_finite() {
+        if metric_mode == MetricMode::MaxLogInt && !self.delta.is_finite() {
             return Err(DecoderError::InvalidConfiguration(
                 "delta must be finite under maxlog_int; infinite delta would quantize to zero and prune to score-ties"
                     .into(),
             ));
         }
+        Ok(())
+    }
+}
+
+/// Preparation of a shot, before any frontier work.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum TrellisPrepared {
+    /// Precheck and optional BP scoring completed.
+    Ready {
+        /// Whether BP ran for this shot.
+        bp_ran: bool,
+        /// Wall-clock seconds spent on BP scoring.
+        bp_seconds: f64,
+    },
+    /// Lowest detector with a residual no probabilistic mechanism can change.
+    Residual { detector: usize },
+}
+
+impl TrellisConfig {
+    /// Validate configuration rules that do not depend on a detector error model.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DecoderError::InvalidConfiguration`] for invalid pruning or metric options.
+    pub fn validate(&self) -> Result<(), DecoderError> {
+        PruneParams {
+            k: self.k,
+            delta: self.delta,
+        }
+        .validate(self.metric_mode)?;
         if self.metric_mode == MetricMode::MaxLogInt && self.merge_indistinguishable {
             return Err(DecoderError::InvalidConfiguration(
                 "indistinguishable-mechanism merging sums coset mass and is incompatible with the max-log route metric"
@@ -353,9 +387,10 @@ pub struct TrellisResult {
     pub dropped_log_mass: f64,
     /// Wall-clock seconds spent producing BP-informed suffix scores for this
     /// shot. This is zero when BP scoring is disabled or pruning cannot run.
-    /// For an escalated `BpTrellis` result, this is the total across
-    /// the base attempt and every attempted rung.
+    /// Escalation reuses these scores, so this time is attached once.
     pub bp_seconds: f64,
+    /// Number of BP refreshes run for this shot.
+    pub bp_runs: u32,
     /// Number of escalation rungs attempted before success.
     ///
     /// Zero means the base decode succeeded. [`TrellisDecoder`] results and
@@ -761,7 +796,10 @@ pub enum TrellisDecodeAttempt {
         error: DecoderError,
         /// Candidate branch evaluations performed by this attempt.
         transitions: u64,
-        /// Wall-clock seconds spent on BP suffix scoring in this attempt.
+        /// States discarded before the empty column.
+        dropped_states: u64,
+        /// Wall-clock seconds the shot's single BP refresh took, repeated on
+        /// every attempt of that shot; never sum it across attempts.
         bp_seconds: f64,
     },
     /// A non-retryable decoding error.
@@ -786,6 +824,9 @@ pub struct TrellisDecoder {
 
 #[derive(Clone, Debug)]
 struct TrellisScratch {
+    observed: Vec<u64>,
+    prepared: Option<(bool, f64)>,
+    bp_refreshes: u64,
     bp_score: Option<BpScoreState>,
     float_progress: BinaryProgress,
     int_frontier: FrontierScratch<i64>,
@@ -794,6 +835,9 @@ struct TrellisScratch {
 impl TrellisScratch {
     fn new(model: &TrellisModel) -> Self {
         Self {
+            observed: Vec::new(),
+            prepared: None,
+            bp_refreshes: 0,
             bp_score: model.bp_graph.as_ref().map(|graph| {
                 BpScoreState::new(
                     graph,
@@ -1353,7 +1397,107 @@ impl TrellisDecoder {
     /// policies.
     #[must_use]
     pub fn decode_attempt(&mut self, syndrome: &[u8]) -> TrellisDecodeAttempt {
-        self.model.decode_attempt(&mut self.scratch, syndrome)
+        match self.prepare(syndrome) {
+            Ok(TrellisPrepared::Ready { .. }) => self.attempt(PruneParams {
+                k: self.model.config.k,
+                delta: self.model.config.delta,
+            }),
+            Ok(TrellisPrepared::Residual { .. }) => TrellisDecodeAttempt::NoPath {
+                error: unexplainable_error(),
+                transitions: 0,
+                dropped_states: 0,
+                bp_seconds: 0.0,
+            },
+            Err(error) => TrellisDecodeAttempt::Error(error),
+        }
+    }
+
+    /// Check the syndrome and refresh BP once; the DP runs later in `attempt`.
+    ///
+    /// # Errors
+    /// Returns a dimension error or a BP engine error. Any unsuccessful prepare
+    /// invalidates the previous shot, including a residual outcome.
+    pub fn prepare(&mut self, syndrome: &[u8]) -> Result<TrellisPrepared, DecoderError> {
+        self.scratch.prepared = None;
+        if syndrome.len() != self.model.num_detectors {
+            return Err(DecoderError::InvalidDimensions {
+                expected: self.model.num_detectors,
+                actual: syndrome.len(),
+            });
+        }
+        let observed = syndrome_to_words(syndrome, self.model.detector_words);
+        for (word, ((&seen, &forced), &touched)) in observed
+            .iter()
+            .zip(&self.model.forced_syndrome)
+            .zip(&self.model.touched_detectors)
+            .enumerate()
+        {
+            let residual = (seen ^ forced) & !touched;
+            if residual != 0 {
+                return Ok(TrellisPrepared::Residual {
+                    detector: word * WORD_BITS + residual.trailing_zeros() as usize,
+                });
+            }
+        }
+        let seconds = self
+            .model
+            .refresh_bp_suffix_values(&mut self.scratch, &observed)?;
+        let bp_ran = seconds.is_some();
+        let bp_seconds = seconds.unwrap_or(0.0);
+        self.scratch.observed = observed;
+        self.scratch.prepared = Some((bp_ran, bp_seconds));
+        Ok(TrellisPrepared::Ready { bp_ran, bp_seconds })
+    }
+
+    /// Run the DP on the prepared shot with independently chosen pruning parameters.
+    /// Invalid parameters return `Error(InvalidConfiguration)` before checking readiness.
+    ///
+    /// # Panics
+    /// Panics unless the latest prepare completed `Ready`.
+    #[must_use]
+    pub fn attempt(&mut self, params: PruneParams) -> TrellisDecodeAttempt {
+        if let Err(error) = params.validate(self.model.config.metric_mode) {
+            return TrellisDecodeAttempt::Error(error);
+        }
+        if self.model.config.bp_score_iterations > 0
+            && self.model.bp_graph.is_none()
+            && !(params.k == usize::MAX && params.delta.is_infinite())
+        {
+            return TrellisDecodeAttempt::Error(DecoderError::InvalidConfiguration(
+                "non-exact pruning parameters require a BP graph when bp_score_iterations > 0"
+                    .into(),
+            ));
+        }
+        let (bp_ran, _) = self
+            .scratch
+            .prepared
+            .expect("attempt requires a Ready prepare");
+        let mut attempt = self.model.decode_attempt(&mut self.scratch, params);
+        if let TrellisDecodeAttempt::Success(result) = &mut attempt {
+            result.bp_runs = u32::from(bp_ran);
+        }
+        attempt
+    }
+
+    /// Configured pruning parameters used by `decode_attempt`.
+    #[must_use]
+    pub fn prune_params(&self) -> PruneParams {
+        PruneParams {
+            k: self.model.config.k,
+            delta: self.model.config.delta,
+        }
+    }
+
+    /// Initial observable contribution of probability-one mechanisms.
+    #[must_use]
+    pub fn forced_observables(&self) -> ObsMask {
+        ObsMask::from_words(&self.model.forced_logical)
+    }
+
+    /// Lifetime count of BP refreshes run by this decoder's scratch.
+    #[must_use]
+    pub fn bp_refreshes(&self) -> u64 {
+        self.scratch.bp_refreshes
     }
 
     /// Share the immutable model with a decoder owning fresh scratch.
@@ -1384,20 +1528,20 @@ impl TrellisModel {
     fn decode_attempt(
         &self,
         scratch: &mut TrellisScratch,
-        syndrome: &[u8],
+        params: PruneParams,
     ) -> TrellisDecodeAttempt {
         match (self.config.metric_mode, &self.kernel) {
             (MetricMode::LogSumExpFloat, Kernel::Binary(_)) => {
-                self.decode_attempt_binary(scratch, syndrome)
+                self.decode_attempt_binary(scratch, params)
             }
             (MetricMode::LogSumExpFloat, Kernel::Nary(_)) => {
-                self.decode_attempt_nary(scratch, syndrome)
+                self.decode_attempt_nary(scratch, params)
             }
             (MetricMode::MaxLogInt, Kernel::Binary(_)) => {
-                self.decode_attempt_binary_maxlog(scratch, syndrome)
+                self.decode_attempt_binary_maxlog(scratch, params)
             }
             (MetricMode::MaxLogInt, Kernel::Nary(_)) => {
-                self.decode_attempt_nary_maxlog(scratch, syndrome)
+                self.decode_attempt_nary_maxlog(scratch, params)
             }
         }
     }
@@ -1405,34 +1549,10 @@ impl TrellisModel {
     fn decode_attempt_binary(
         &self,
         scratch: &mut TrellisScratch,
-        syndrome: &[u8],
+        params: PruneParams,
     ) -> TrellisDecodeAttempt {
-        if syndrome.len() != self.num_detectors {
-            return TrellisDecodeAttempt::Error(DecoderError::InvalidDimensions {
-                expected: self.num_detectors,
-                actual: syndrome.len(),
-            });
-        }
-
-        let observed = syndrome_to_words(syndrome, self.detector_words);
-        if observed
-            .iter()
-            .zip(&self.forced_syndrome)
-            .zip(&self.touched_detectors)
-            .any(|((&seen, &forced), &touched)| (seen ^ forced) & !touched != 0)
-        {
-            return TrellisDecodeAttempt::NoPath {
-                error: unexplainable_error(),
-                transitions: 0,
-                bp_seconds: 0.0,
-            };
-        }
-
-        let bp_seconds = match self.refresh_bp_suffix_values(scratch, &observed) {
-            Ok(seconds) => seconds.unwrap_or(0.0),
-            Err(error) => return TrellisDecodeAttempt::Error(error),
-        };
-
+        let observed = &scratch.observed;
+        let bp_seconds = scratch.prepared.expect("prepared shot").1;
         let progress = &mut scratch.float_progress;
         progress.reset(self);
         let Kernel::Binary(columns) = &self.kernel else {
@@ -1443,12 +1563,13 @@ impl TrellisModel {
             .as_ref()
             .map_or(&self.suffix_values, |bp| &bp.suffix_values);
         if let Err(failure) =
-            self.process_binary_range(progress, &observed, suffix_values, 0..columns.len())
+            self.process_binary_range(progress, observed, suffix_values, 0..columns.len(), params)
         {
             return match failure {
                 BinaryFailure::NoPath => TrellisDecodeAttempt::NoPath {
                     error: failure.error(),
                     transitions: progress.transitions,
+                    dropped_states: progress.dropped_states,
                     bp_seconds,
                 },
                 BinaryFailure::UnusableScores => TrellisDecodeAttempt::Error(failure.error()),
@@ -1464,6 +1585,7 @@ impl TrellisModel {
         observed: &[u64],
         suffix_values: &SuffixValues,
         range: std::ops::Range<usize>,
+        params: PruneParams,
     ) -> Result<(), BinaryFailure> {
         let BinaryProgress {
             frontier,
@@ -1520,8 +1642,8 @@ impl TrellisModel {
             };
             let pruned = prune(
                 frontier,
-                self.config.k,
-                self.config.delta,
+                params.k,
+                params.delta,
                 self.config.score_alpha,
                 suffix_compatibility,
                 observed,
@@ -1608,6 +1730,7 @@ impl TrellisModel {
             dropped_states,
             dropped_log_mass,
             bp_seconds,
+            bp_runs: 0,
             escalation_rungs_used: 0,
             status,
             logical_masses,
@@ -1617,29 +1740,9 @@ impl TrellisModel {
     fn decode_attempt_nary(
         &self,
         scratch: &mut TrellisScratch,
-        syndrome: &[u8],
+        params: PruneParams,
     ) -> TrellisDecodeAttempt {
-        if syndrome.len() != self.num_detectors {
-            return TrellisDecodeAttempt::Error(DecoderError::InvalidDimensions {
-                expected: self.num_detectors,
-                actual: syndrome.len(),
-            });
-        }
-
-        let observed = syndrome_to_words(syndrome, self.detector_words);
-        if observed
-            .iter()
-            .zip(&self.forced_syndrome)
-            .zip(&self.touched_detectors)
-            .any(|((&seen, &forced), &touched)| (seen ^ forced) & !touched != 0)
-        {
-            return TrellisDecodeAttempt::NoPath {
-                error: unexplainable_error(),
-                transitions: 0,
-                bp_seconds: 0.0,
-            };
-        }
-
+        let observed = &scratch.observed;
         let frontier = &mut scratch.float_progress.frontier;
         frontier.reset(
             &self.forced_syndrome,
@@ -1670,7 +1773,7 @@ impl TrellisModel {
                 detector_words: frontier.detector_words,
                 close_mask: &column.close_mask,
                 active_mask: &column.active_mask,
-                observed: &observed,
+                observed,
             };
             for (index, &log_mass) in frontier.parent.masses.iter().enumerate() {
                 let state = frontier.parent.key(index, frontier.stride);
@@ -1689,19 +1792,20 @@ impl TrellisModel {
                 return TrellisDecodeAttempt::NoPath {
                     error: unexplainable_error(),
                     transitions,
+                    dropped_states,
                     bp_seconds: 0.0,
                 };
             }
             let pruned = prune(
                 frontier,
-                self.config.k,
-                self.config.delta,
+                params.k,
+                params.delta,
                 self.config.score_alpha,
                 SuffixCompatibility {
                     rows: &column.suffix_compatibility,
                     values: &self.suffix_values,
                 },
-                &observed,
+                observed,
             );
             dropped_states += pruned.dropped_states;
             dropped_log_mass = logaddexp(dropped_log_mass, pruned.dropped_log_mass);
@@ -1764,6 +1868,7 @@ impl TrellisModel {
             dropped_states,
             dropped_log_mass,
             bp_seconds: 0.0,
+            bp_runs: 0,
             escalation_rungs_used: 0,
             status,
             logical_masses,
@@ -1773,33 +1878,10 @@ impl TrellisModel {
     fn decode_attempt_binary_maxlog(
         &self,
         scratch: &mut TrellisScratch,
-        syndrome: &[u8],
+        params: PruneParams,
     ) -> TrellisDecodeAttempt {
-        if syndrome.len() != self.num_detectors {
-            return TrellisDecodeAttempt::Error(DecoderError::InvalidDimensions {
-                expected: self.num_detectors,
-                actual: syndrome.len(),
-            });
-        }
-
-        let observed = syndrome_to_words(syndrome, self.detector_words);
-        if observed
-            .iter()
-            .zip(&self.forced_syndrome)
-            .zip(&self.touched_detectors)
-            .any(|((&seen, &forced), &touched)| (seen ^ forced) & !touched != 0)
-        {
-            return TrellisDecodeAttempt::NoPath {
-                error: unexplainable_error(),
-                transitions: 0,
-                bp_seconds: 0.0,
-            };
-        }
-
-        let bp_seconds = match self.refresh_bp_suffix_values(scratch, &observed) {
-            Ok(seconds) => seconds.unwrap_or(0.0),
-            Err(error) => return TrellisDecodeAttempt::Error(error),
-        };
+        let observed = &scratch.observed;
+        let bp_seconds = scratch.prepared.expect("prepared shot").1;
         let frontier = &mut scratch.int_frontier;
         frontier.reset(
             &self.forced_syndrome,
@@ -1814,7 +1896,7 @@ impl TrellisModel {
         let mut k_capped = false;
         let mut delta_pruned = false;
         let scale = self.config.int_metric_scale;
-        let delta_int = quantize_metric(self.config.delta, scale);
+        let delta_int = quantize_metric(params.delta, scale);
         debug_assert!(
             delta_int >= 0,
             "validate_config rejects negative and non-finite delta under maxlog_int"
@@ -1841,7 +1923,7 @@ impl TrellisModel {
                 detector_words: frontier.detector_words,
                 close_mask: &column.close_mask,
                 active_mask: &column.active_mask,
-                observed: &observed,
+                observed,
             };
             for (index, &log_mass) in frontier.parent.masses.iter().enumerate() {
                 let state = frontier.parent.key(index, frontier.stride);
@@ -1866,6 +1948,7 @@ impl TrellisModel {
                 return TrellisDecodeAttempt::NoPath {
                     error: unexplainable_error(),
                     transitions,
+                    dropped_states,
                     bp_seconds,
                 };
             }
@@ -1875,12 +1958,12 @@ impl TrellisModel {
             };
             let pruned = prune_maxlog(
                 frontier,
-                self.config.k,
+                params.k,
                 delta_int,
                 alpha_int,
                 scale,
                 suffix_compatibility,
-                &observed,
+                observed,
             );
             dropped_states += pruned.dropped_states;
             dropped_log_mass = dropped_log_mass.max(pruned.dropped_log_mass);
@@ -1908,29 +1991,9 @@ impl TrellisModel {
     fn decode_attempt_nary_maxlog(
         &self,
         scratch: &mut TrellisScratch,
-        syndrome: &[u8],
+        params: PruneParams,
     ) -> TrellisDecodeAttempt {
-        if syndrome.len() != self.num_detectors {
-            return TrellisDecodeAttempt::Error(DecoderError::InvalidDimensions {
-                expected: self.num_detectors,
-                actual: syndrome.len(),
-            });
-        }
-
-        let observed = syndrome_to_words(syndrome, self.detector_words);
-        if observed
-            .iter()
-            .zip(&self.forced_syndrome)
-            .zip(&self.touched_detectors)
-            .any(|((&seen, &forced), &touched)| (seen ^ forced) & !touched != 0)
-        {
-            return TrellisDecodeAttempt::NoPath {
-                error: unexplainable_error(),
-                transitions: 0,
-                bp_seconds: 0.0,
-            };
-        }
-
+        let observed = &scratch.observed;
         let frontier = &mut scratch.int_frontier;
         frontier.reset(
             &self.forced_syndrome,
@@ -1945,7 +2008,7 @@ impl TrellisModel {
         let mut k_capped = false;
         let mut delta_pruned = false;
         let scale = self.config.int_metric_scale;
-        let delta_int = quantize_metric(self.config.delta, scale);
+        let delta_int = quantize_metric(params.delta, scale);
         debug_assert!(
             delta_int >= 0,
             "validate_config rejects negative and non-finite delta under maxlog_int"
@@ -1968,7 +2031,7 @@ impl TrellisModel {
                 detector_words: frontier.detector_words,
                 close_mask: &column.close_mask,
                 active_mask: &column.active_mask,
-                observed: &observed,
+                observed,
             };
             for (index, &log_mass) in frontier.parent.masses.iter().enumerate() {
                 let state = frontier.parent.key(index, frontier.stride);
@@ -1987,12 +2050,13 @@ impl TrellisModel {
                 return TrellisDecodeAttempt::NoPath {
                     error: unexplainable_error(),
                     transitions,
+                    dropped_states,
                     bp_seconds: 0.0,
                 };
             }
             let pruned = prune_maxlog(
                 frontier,
-                self.config.k,
+                params.k,
                 delta_int,
                 alpha_int,
                 scale,
@@ -2000,7 +2064,7 @@ impl TrellisModel {
                     rows: &column.suffix_compatibility,
                     values: &self.suffix_values,
                 },
-                &observed,
+                observed,
             );
             dropped_states += pruned.dropped_states;
             dropped_log_mass = dropped_log_mass.max(pruned.dropped_log_mass);
@@ -2044,6 +2108,7 @@ impl TrellisModel {
             *residual =
                 u8::from((observed[word_index] ^ self.forced_syndrome[word_index]) & bit_mask != 0);
         }
+        scratch.bp_refreshes += 1;
         min_sum_bp_into(
             self.bp_graph.as_ref().expect("BP scratch has a graph"),
             &bp_score.residual_syndrome,
@@ -2851,6 +2916,7 @@ fn finish_maxlog_decode(
             i64_to_f64(stats.dropped_log_mass) / scale_f64
         },
         bp_seconds: stats.bp_seconds,
+        bp_runs: 0,
         escalation_rungs_used: 0,
         status,
         logical_masses,

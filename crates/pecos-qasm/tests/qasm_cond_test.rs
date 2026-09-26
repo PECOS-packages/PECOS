@@ -1,6 +1,6 @@
 use pecos_engines::sim_builder;
 use pecos_programs::Qasm;
-use pecos_qasm::qasm_engine;
+use pecos_qasm::{QASMEngine, qasm_engine};
 
 #[test]
 fn test_uncond_reset_register() {
@@ -280,4 +280,239 @@ fn test_cond_reset_with_register_comparison() {
     for val in values {
         assert_eq!(val, 3, "Expected qubits to remain |11⟩ since c != 2");
     }
+}
+
+/// Run `qasm` noiselessly and return register `d` from every shot.
+fn register_d_values(qasm: &str, shots: usize) -> Vec<u64> {
+    let results = sim_builder()
+        .classical(qasm_engine().program(Qasm::from_string(qasm.to_string())))
+        .run(shots)
+        .unwrap();
+    assert_eq!(results.len(), shots);
+    results
+        .try_as_shot_map()
+        .unwrap()
+        .try_bits_as_u64("d")
+        .unwrap()
+}
+
+#[test]
+fn cond_measure_single_qubit_runs_when_condition_holds() {
+    // q[0] is |1>, so c[0] = 1 and the conditional measurement must fire and
+    // write d[0] = 1. Before the engine handled measurements inside `if`,
+    // the statement was silently dropped and d stayed 0.
+    let qasm = r#"
+        OPENQASM 2.0;
+        include "qelib1.inc";
+        qreg q[1];
+        creg c[1];
+        creg d[1];
+
+        x q[0];
+        measure q[0] -> c[0];
+        if (c == 1) measure q[0] -> d[0];
+    "#;
+    let d = register_d_values(qasm, 20);
+    assert!(
+        d.iter().all(|&v| v == 1),
+        "d[0] should be 1 in every shot, got {d:?}"
+    );
+}
+
+#[test]
+fn cond_measure_single_qubit_skipped_when_condition_fails() {
+    let qasm = r#"
+        OPENQASM 2.0;
+        include "qelib1.inc";
+        qreg q[1];
+        creg c[1];
+        creg d[1];
+
+        x q[0];
+        measure q[0] -> c[0];
+        if (c == 0) measure q[0] -> d[0];
+    "#;
+    let d = register_d_values(qasm, 20);
+    assert!(
+        d.iter().all(|&v| v == 0),
+        "d should stay 0 in every shot, got {d:?}"
+    );
+}
+
+#[test]
+fn cond_measure_register_runs_when_condition_holds() {
+    // Register-form measurement inside `if` reaches the engine unexpanded, so
+    // the whole register must be measured under one condition evaluation:
+    // q[0] = |1>, q[1] = |0> gives d = 0b01.
+    let qasm = r#"
+        OPENQASM 2.0;
+        include "qelib1.inc";
+        qreg q[2];
+        creg c[1];
+        creg d[2];
+
+        x q[0];
+        measure q[0] -> c[0];
+        if (c == 1) measure q -> d;
+    "#;
+    let d = register_d_values(qasm, 20);
+    assert!(
+        d.iter().all(|&v| v == 0b01),
+        "d should be 0b01 in every shot, got {d:?}"
+    );
+}
+
+#[test]
+fn cond_measure_register_skipped_when_condition_fails() {
+    let qasm = r#"
+        OPENQASM 2.0;
+        include "qelib1.inc";
+        qreg q[2];
+        creg c[1];
+        creg d[2];
+
+        x q[0];
+        measure q[0] -> c[0];
+        if (c == 0) measure q -> d;
+    "#;
+    let d = register_d_values(qasm, 20);
+    assert!(
+        d.iter().all(|&v| v == 0),
+        "d should stay 0 in every shot, got {d:?}"
+    );
+}
+
+#[test]
+fn cond_barrier_is_accepted() {
+    let qasm = r#"
+        OPENQASM 2.0;
+        include "qelib1.inc";
+        qreg q[2];
+        creg c[1];
+        creg d[1];
+
+        x q[0];
+        measure q[0] -> c[0];
+        if (c == 1) barrier q;
+        measure q[0] -> d[0];
+    "#;
+    let d = register_d_values(qasm, 20);
+    assert!(
+        d.iter().all(|&v| v == 1),
+        "barrier must not disturb the run, got {d:?}"
+    );
+}
+
+#[test]
+fn cond_measure_register_evaluates_condition_once() {
+    // Both qubits are |1> and the condition reads the register being written.
+    // Expanding the statement per qubit would re-evaluate `d == 0` after the
+    // first bit lands and skip the second; one evaluation gives d = 0b11.
+    let qasm = r#"
+        OPENQASM 2.0;
+        include "qelib1.inc";
+        qreg q[2];
+        creg d[2];
+
+        x q[0];
+        x q[1];
+        if (d == 0) measure q -> d;
+    "#;
+    let d = register_d_values(qasm, 20);
+    assert!(
+        d.iter().all(|&v| v == 0b11),
+        "d should be 0b11 in every shot, got {d:?}"
+    );
+}
+
+#[test]
+fn cond_measure_result_is_visible_to_the_next_conditional() {
+    // The conditional measurement must end its batch so that the following
+    // `if` reads the freshly written bit: d[0] = 1 drives x on q[1].
+    let qasm = r#"
+        OPENQASM 2.0;
+        include "qelib1.inc";
+        qreg q[2];
+        creg c[1];
+        creg d[1];
+        creg e[1];
+
+        x q[0];
+        measure q[0] -> c[0];
+        if (c == 1) measure q[0] -> d[0];
+        if (d == 1) x q[1];
+        measure q[1] -> e[0];
+    "#;
+    let results = sim_builder()
+        .classical(qasm_engine().program(Qasm::from_string(qasm.to_string())))
+        .run(20)
+        .unwrap();
+    let e = results
+        .try_as_shot_map()
+        .unwrap()
+        .try_bits_as_u64("e")
+        .unwrap();
+    assert!(
+        e.iter().all(|&v| v == 1),
+        "e should be 1 in every shot, got {e:?}"
+    );
+}
+
+#[test]
+fn cond_measure_register_result_is_visible_to_the_next_conditional() {
+    // The condition tests a single bit because comparing a multi-bit register
+    // with a literal (`d == 3`) is evaluated wrongly while the register's top
+    // bit is set; see issue #864.
+    let qasm = r#"
+        OPENQASM 2.0;
+        include "qelib1.inc";
+        qreg q[2];
+        qreg r[1];
+        creg c[1];
+        creg d[2];
+        creg e[1];
+
+        x q[0];
+        x q[1];
+        measure q[0] -> c[0];
+        if (c == 1) measure q -> d;
+        if (d[1] == 1) x r[0];
+        measure r[0] -> e[0];
+    "#;
+    let results = sim_builder()
+        .classical(qasm_engine().program(Qasm::from_string(qasm.to_string())))
+        .run(20)
+        .unwrap();
+    let e = results
+        .try_as_shot_map()
+        .unwrap()
+        .try_bits_as_u64("e")
+        .unwrap();
+    assert!(
+        e.iter().all(|&v| v == 1),
+        "e should be 1 in every shot, got {e:?}"
+    );
+}
+
+#[test]
+fn cond_measure_register_size_mismatch_is_a_parse_error() {
+    // A conditional register measurement is not expanded per qubit, so the
+    // parser must still size-check it there: the error has to be static, not
+    // one that only appears in the shots where the condition holds.
+    let qasm = r#"
+        OPENQASM 2.0;
+        include "qelib1.inc";
+        qreg q[2];
+        creg d[1];
+
+        if (d == 0) measure q -> d;
+    "#;
+    let err = qasm
+        .parse::<QASMEngine>()
+        .expect_err("mismatched register sizes must not parse");
+    assert!(
+        err.to_string()
+            .contains("Register size mismatch in measure q -> d"),
+        "unexpected error: {err}"
+    );
 }

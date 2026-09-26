@@ -990,13 +990,19 @@ impl QASMEngine {
         Ok(())
     }
 
-    /// Process a register measurement operation
+    /// Queue the measurement of every qubit of `q_reg` into `c_reg`.
+    ///
+    /// With `batch_cap = Some(current_operation_count)` the batch is not grown
+    /// past `MAX_BATCH_SIZE`: the qubits that fit are queued and `Ok(None)`
+    /// says the rest must follow in a later batch. With `batch_cap = None` the
+    /// whole register is queued as one statement and, on success, the result
+    /// is always `Some(count)`.
     fn process_register_measurement(
         &mut self,
         q_reg: &str,
         c_reg: &str,
         qasm_program: &QASMProgram,
-        current_operation_count: usize,
+        batch_cap: Option<usize>,
     ) -> Result<Option<usize>, PecosError> {
         let program = qasm_program.program();
         let Some(qubit_ids) = program.quantum_registers.get(q_reg) else {
@@ -1011,13 +1017,23 @@ impl QASMEngine {
             )));
         };
 
-        let measure_count = std::cmp::min(qubit_ids.len(), c_size);
+        // The parser checks this for top-level register measurements; inside an
+        // `if` the statement reaches the engine unexpanded, so check it here too
+        // rather than silently measuring only the shorter register's worth.
+        if qubit_ids.len() != c_size {
+            return Err(PecosError::Input(format!(
+                "Register size mismatch in measure {q_reg} -> {c_reg}: quantum register {q_reg} \
+                 has {} qubits, classical register {c_reg} has {c_size} bits",
+                qubit_ids.len()
+            )));
+        }
+        let measure_count = qubit_ids.len();
 
         debug!("Will measure {measure_count} qubits from {q_reg} to {c_reg}");
 
         let mut measurements_added = 0;
         for (i, &qubit_id) in qubit_ids.iter().enumerate().take(measure_count) {
-            if current_operation_count + measurements_added >= Self::MAX_BATCH_SIZE {
+            if batch_cap.is_some_and(|count| count + measurements_added >= Self::MAX_BATCH_SIZE) {
                 debug!(
                     "Reached maximum batch size during register measurement, will continue in next batch"
                 );
@@ -1108,7 +1124,7 @@ impl QASMEngine {
                         q_reg,
                         c_reg,
                         &qasm_program,
-                        operation_count,
+                        Some(operation_count),
                     )?;
 
                     if let Some(count) = added_count {
@@ -1229,8 +1245,44 @@ impl QASMEngine {
                                 }
                                 operation_count += 1;
                             }
-                            _ => {
-                                debug!("Unsupported operation in if statement");
+                            Operation::MeasureWithMapping {
+                                gate,
+                                c_reg,
+                                c_index,
+                            } => {
+                                if let Some(qubit_id) = gate.qubits.first() {
+                                    self.process_measurement(qubit_id.0, c_reg, *c_index)?;
+                                    self.current_op += 1;
+                                    debug!(
+                                        "Breaking batch after conditional measurement to wait for results"
+                                    );
+                                    return Ok(Some(self.message_builder.build()));
+                                }
+                            }
+                            Operation::RegMeasure { q_reg, c_reg } => {
+                                // The condition was evaluated once for the whole
+                                // statement, so queue the whole register uncapped and
+                                // end the batch, as a single conditional measurement
+                                // does.
+                                self.process_register_measurement(
+                                    q_reg,
+                                    c_reg,
+                                    &qasm_program,
+                                    None,
+                                )?;
+                                self.current_op += 1;
+                                debug!(
+                                    "Breaking batch after conditional register measurement to wait for results"
+                                );
+                                return Ok(Some(self.message_builder.build()));
+                            }
+                            Operation::Barrier { .. } => {
+                                debug!("Skipping conditional barrier");
+                            }
+                            other => {
+                                return Err(PecosError::Processing(format!(
+                                    "Unsupported operation in if statement: {other}"
+                                )));
                             }
                         }
                     } else {

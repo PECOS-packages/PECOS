@@ -17,8 +17,9 @@ use std::sync::Arc;
 
 use crate::ast::{Expression, Operation};
 use crate::bitvec_expression::{
-    BitVecExpressionContext, ExpressionValue, evaluate_expression_bitvec,
+    BitVecExpressionContext, ExpressionValue, evaluate_expression_bitvec, resize_expression_value,
 };
+use crate::parser::comparison::is_negative_expression;
 use crate::program::QASMProgram;
 
 /// Gate handler function type
@@ -1163,6 +1164,7 @@ impl QASMEngine {
                     debug!("Evaluating if condition: {condition:?}");
                     // Use evaluate_expression_bitvec_with_width to support WASM functions
                     // For conditions, we don't need a specific width - just evaluate as boolean
+                    // This conversion is signed; value-carried signedness is tracked in #869.
                     let condition_value = self
                         .evaluate_expression_bitvec_with_width(condition, 1)?
                         .as_i64();
@@ -1222,17 +1224,11 @@ impl QASMEngine {
                                 } else if let Some(register_size) =
                                     program.classical_registers.get(target.as_str())
                                 {
-                                    let mut result_bitvec = value_expr.into_bitvec();
-
-                                    // Sign extend when resizing (use the MSB as the sign bit)
-                                    let sign_bit = if result_bitvec.is_empty() {
-                                        false
-                                    } else {
-                                        result_bitvec[result_bitvec.len() - 1]
-                                    };
-
-                                    // Resize to the exact register size with sign extension
-                                    result_bitvec.resize(*register_size, sign_bit);
+                                    let result_bitvec = resize_expression_value(
+                                        value_expr.into_bitvec(),
+                                        is_negative_expression(expression),
+                                        *register_size,
+                                    );
 
                                     debug!(
                                         "Setting register {} with BitVec of length {}",
@@ -1319,17 +1315,11 @@ impl QASMEngine {
                     } else if let Some(register_size) =
                         program.classical_registers.get(target.as_str())
                     {
-                        let mut result_bitvec = value_expr.into_bitvec();
-
-                        // Sign extend when resizing (use the MSB as the sign bit)
-                        let sign_bit = if result_bitvec.is_empty() {
-                            false
-                        } else {
-                            result_bitvec[result_bitvec.len() - 1]
-                        };
-
-                        // Resize to the exact register size with sign extension
-                        result_bitvec.resize(*register_size, sign_bit);
+                        let result_bitvec = resize_expression_value(
+                            value_expr.into_bitvec(),
+                            is_negative_expression(expression),
+                            *register_size,
+                        );
 
                         debug!(
                             "Setting register {} with BitVec of length {}",
@@ -1474,6 +1464,7 @@ impl QASMEngine {
         let mut arg_values = Vec::new();
         for arg in args {
             let val = evaluate_expression_bitvec(arg, self, target_width)?;
+            // This conversion is signed; value-carried signedness is tracked in #869.
             arg_values.push(val.as_i64());
         }
         if let Some(ref mut foreign_obj) = self.foreign_object {

@@ -72,6 +72,16 @@ impl StructuredDemError {
 
     fn validate_components(&self) -> Result<(), DecoderError> {
         let instruction = self.instruction();
+        // An empty component would render as a bare separator, which no reader accepts.
+        if self
+            .components
+            .iter()
+            .any(|component| component.detectors.is_empty() && component.observables.is_empty())
+        {
+            return Err(DecoderError::InvalidDemSyntax(format!(
+                "empty component in {instruction}; every component needs at least one target"
+            )));
+        }
         validate_error_components(&instruction.targets, &instruction.to_string())
     }
 }

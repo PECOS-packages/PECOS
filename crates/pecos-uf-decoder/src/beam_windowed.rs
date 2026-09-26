@@ -403,7 +403,9 @@ mod tests {
 
     #[test]
     fn beamsearch_accepts_components_that_coincide_after_projection() {
-        let dem = "error(0.1) D0 D2 ^ D0 D3\nerror(0.01) D0\nerror(0.01) D1\nerror(0.01) D2\nerror(0.01) D3\ndetector(0,0,0) D0\ndetector(0,0,1) D1\ndetector(0,0,2) D2\ndetector(0,0,3) D3";
+        // The split mechanism carries the only observable, so a wrong projection
+        // of it shows up in the predictions rather than only in construction.
+        let dem = "error(0.1) D0 D2 L0 ^ D0 D3\nerror(0.01) D0\nerror(0.01) D1\nerror(0.01) D2\nerror(0.01) D3\ndetector(0,0,0) D0\ndetector(0,0,1) D1\ndetector(0,0,2) D2\ndetector(0,0,3) D3";
         for buffer_size in [0, 1, 2] {
             let config = BeamSearchConfig {
                 window: BeamWindowConfig {
@@ -423,9 +425,20 @@ mod tests {
             let mut decoder =
                 BeamSearchWindowedDecoder::from_dem(dem, config, factory, Some(full_factory))
                     .unwrap();
+            // A window that does not see D0 treats the projected component as a
+            // boundary edge carrying L0, so only the buffer wide enough to hold
+            // the whole mechanism is expected to agree with the full decoder.
+            let mut reference = UfDecoder::from_dem(dem, UfDecoderConfig::fast()).unwrap();
             for bits in 0_u8..16 {
                 let syndrome: Vec<_> = (0..4).map(|bit| (bits >> bit) & 1).collect();
-                assert_eq!(decoder.decode_to_observables(&syndrome).unwrap(), 0);
+                let predicted = decoder.decode_to_observables(&syndrome).unwrap();
+                if buffer_size == 2 {
+                    assert_eq!(
+                        predicted,
+                        reference.decode_to_observables(&syndrome).unwrap(),
+                        "syndrome {syndrome:?}"
+                    );
+                }
             }
         }
     }

@@ -423,12 +423,13 @@ mod tests {
     #[test]
     fn odd_projected_components_render_one_component_with_all_members() {
         let dem = StructuredDem::from_dem_str(
-            "error(0.1) D0 D1 L0 ^ D0 D2 L0 ^ D0 D3 L0\ndetector(0,0,1) D0\ndetector(0,0,2) D1\ndetector(0,0,2) D2\ndetector(0,0,2) D3\n",
+            "error(0.1) D0 D1 L0 ^ D0 D2 L0 ^ D0 D3 L1\ndetector(0,0,1) D0\ndetector(0,0,2) D1\ndetector(0,0,2) D2\ndetector(0,0,2) D3\n",
         ).unwrap();
         let window = dem.commit_window(0..2, 0..1).unwrap();
         assert_eq!(window.model.errors[0].components.len(), 1);
         assert_eq!(window.edges[0].members.len(), 3);
-        assert_eq!(window.model.errors[0].components[0].observables, [0]);
+        // L0 appears twice and cancels; the surviving component carries only L1.
+        assert_eq!(window.model.errors[0].components[0].observables, [1]);
         let graph = DemMatchingGraph::from_dem_str(&window.model.to_dem_string()).unwrap();
         assert_eq!(graph.edges.len(), 1);
         assert_eq!(graph.edges[0].node1, 0);

@@ -684,7 +684,6 @@ fn test_stim_dem_batch_processing() {
 fn test_stim_specific_dem_features() {
     // Test DEM with Stim-specific features
     let stim_dem = r"
-        # Observable targets cancel across distinct components
         error(0.1) D0 L0 ^ D1 L0
         error(0.1) D1 L1 ^ D2 L1
 

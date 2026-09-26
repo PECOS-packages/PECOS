@@ -995,8 +995,8 @@ impl QASMEngine {
     /// With `batch_cap = Some(current_operation_count)` the batch is not grown
     /// past `MAX_BATCH_SIZE`: the qubits that fit are queued and `Ok(None)`
     /// says the rest must follow in a later batch. With `batch_cap = None` the
-    /// whole register is queued as one statement and the result is always
-    /// `Ok(Some(count))`.
+    /// whole register is queued as one statement and, on success, the result
+    /// is always `Some(count)`.
     fn process_register_measurement(
         &mut self,
         q_reg: &str,

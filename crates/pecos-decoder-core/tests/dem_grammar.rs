@@ -16,11 +16,22 @@ const DENSE_INDEX_THRESHOLD: u64 = 1 << 24;
 
 const FIXTURE: &str = include_str!("fixtures/stim_dem_grammar.tsv");
 
-fn tokenize(text: &str) -> Result<Vec<Instruction>, String> {
+const STIM_EXCEPTIONS: &[(&str, &str)] = &[
+    (
+        "error(0.1) D0 D0",
+        "a target may appear at most once per component",
+    ),
+    ("error(0.1) D0 ^ D0", "component D0 is repeated"),
+];
+
+fn pecos_accepts(input: &str, verdict: &str) -> bool {
+    verdict == "accept" && !STIM_EXCEPTIONS.iter().any(|(text, _)| *text == input)
+}
+
+fn tokenize(text: &str) -> Result<Vec<Instruction>, pecos_decoder_core::DecoderError> {
     text.lines()
         .filter_map(|line| parse_line(line).transpose())
         .collect::<Result<_, _>>()
-        .map_err(|error| error.to_string())
 }
 
 #[test]
@@ -31,10 +42,19 @@ fn tokenizer_matches_stim_oracle() {
         let result = tokenize(&input);
         assert_eq!(
             result.is_ok(),
-            fields[1] == "accept",
+            pecos_accepts(&input, fields[1]),
             "{input:?}: {result:?}"
         );
-        if fields[1] == "accept" {
+        if let Some((_, reason)) = STIM_EXCEPTIONS.iter().find(|(text, _)| *text == input) {
+            assert!(result.as_ref().unwrap_err().to_string().contains(reason));
+        }
+        if let Err(error) = &result {
+            assert!(matches!(
+                error,
+                pecos_decoder_core::DecoderError::InvalidDemSyntax(_)
+            ));
+        }
+        if pecos_accepts(&input, fields[1]) {
             assert_eq!(
                 result.unwrap(),
                 tokenize(&unescape(fields.get(2).copied().unwrap_or_default())).unwrap(),
@@ -49,7 +69,7 @@ fn flat_consumers_match_grammar_verdicts_dimensions_and_effects() {
     for row in FIXTURE.lines().skip(1) {
         let fields: Vec<_> = row.split('\t').collect();
         let input = unescape(fields[0]);
-        let accepted = fields[1] == "accept";
+        let accepted = pecos_accepts(&input, fields[1]);
         let expected = if accepted {
             utils::parse_dem_metadata(&unescape(fields.get(2).copied().unwrap_or_default())).ok()
         } else {
@@ -137,6 +157,12 @@ fn flat_consumers_match_grammar_verdicts_dimensions_and_effects() {
             assert_mechanism_effects(&input, DENSE_INDEX_THRESHOLD);
         }
         for (consumer, result) in outcomes {
+            if let Some((_, reason)) = STIM_EXCEPTIONS.iter().find(|(text, _)| *text == input) {
+                assert!(
+                    result.as_ref().unwrap_err().to_string().contains(reason),
+                    "{consumer}: {input}"
+                );
+            }
             if accepted
                 && tokenize(&input).unwrap().iter().any(|instruction| {
                     matches!(
@@ -285,24 +311,14 @@ fn perturbation_cannot_render_non_finite_probabilities() {
 }
 
 #[test]
-fn effect_models_cancel_duplicate_targets() {
+fn effect_models_cancel_targets_shared_across_components() {
     for (targets, detectors, observables, dimensions) in [
-        ("D0 D0", vec![], vec![], (1, 0)),
-        ("D0 ^ D0", vec![], vec![], (1, 0)),
         ("D0 D1 ^ D1 D2", vec![0, 2], vec![], (3, 0)),
-        ("D0 L0 L0", vec![0], vec![], (1, 1)),
-        ("D0 D0 L0", vec![], vec![0], (1, 1)),
-        ("L0 ^ L0", vec![], vec![], (0, 1)),
         ("D2 D0 L2 L0", vec![0, 2], vec![0, 2], (3, 3)),
         ("D0 L0 ^ D0 L1 ^ D0 L2", vec![0], vec![0, 1, 2], (1, 3)),
         ("D0 D1 ^ D1 D2 ^ D2 D0", vec![], vec![], (3, 0)),
-        ("D0 D1 ^ D0 D1 ^ D2 D3", vec![2, 3], vec![], (4, 0)),
     ] {
-        let probability = if targets == "D0 D1 ^ D0 D1 ^ D2 D3" {
-            0.1
-        } else {
-            0.5
-        };
+        let probability = 0.5;
         let text = format!("error({probability}) {targets}");
         let sparse = SparseDem::from_dem_str(&text).unwrap();
         assert_eq!((sparse.num_detectors, sparse.num_observables), dimensions);
@@ -337,9 +353,6 @@ fn effect_models_cancel_duplicate_targets() {
         let graph = DemMatchingGraph::from_dem_str(&text).unwrap();
         assert_eq!((graph.num_detectors, graph.num_observables), dimensions);
         assert_eq!(graph.skipped_hyperedges, 0);
-        if targets == "D0 D1 ^ D0 D1 ^ D2 D3" {
-            assert_eq!(graph.edges.len(), 1);
-        }
         let mut graph_detectors = vec![0; dimensions.0];
         let mut graph_observables = vec![0; dimensions.1];
         for edge in &graph.edges {
@@ -382,15 +395,17 @@ fn matching_graph_retains_graphlike_decomposition() {
 
 #[test]
 fn matching_fault_ids_count_zero_probability_and_empty_effect_mechanisms() {
-    let graph =
-        DemMatchingGraph::from_dem_str("error(0) D0\nerror(0.1) D0 D0\nerror(0.1) D0").unwrap();
+    let graph = DemMatchingGraph::from_dem_str(
+        "error(0) D0\nerror(0.1) D0 D1 ^ D1 D2 ^ D2 D0\nerror(0.1) D0",
+    )
+    .unwrap();
     assert_eq!(graph.edges.len(), 1);
     assert_eq!(graph.edges[0].fault_id, 2);
 }
 
 #[test]
 fn detector_free_observable_mechanism_keeps_zero_column() {
-    let text = "error(0.1) D0 D0 L0\nerror(0.2) D0 L0";
+    let text = "error(0.1) L0\nerror(0.2) D0 L0";
     let sparse = SparseDem::from_dem_str(text).unwrap();
     let matrix = DemCheckMatrix::from_dem_str(text).unwrap();
     let mut checks = ndarray::Array2::<u8>::zeros((sparse.num_detectors, sparse.mechanisms.len()));
@@ -461,4 +476,31 @@ fn all_tokenizer_errors_have_the_syntax_discriminant() {
         );
     }
     assert!(parse_line("@bad").unwrap_err().to_string().contains("@bad"));
+}
+
+#[test]
+fn effect_readers_reject_repeated_targets_and_components() {
+    for (targets, message) in [
+        ("D0 D0", "detector D0 is listed twice in one component"),
+        ("D0 ^ D0", "component D0 is repeated"),
+        ("D0 L0 L0", "observable L0 is listed twice in one component"),
+        ("D0 D0 L0", "detector D0 is listed twice in one component"),
+        ("L0 ^ L0", "component L0 is repeated"),
+        ("D0 D1 ^ D0 D1 ^ D2 D3", "component D0 D1 is repeated"),
+    ] {
+        let text = format!("error(0.1) {targets}");
+        for error in [
+            SparseDem::from_dem_str(&text).unwrap_err(),
+            DemCheckMatrix::from_dem_str(&text).unwrap_err(),
+            DemMatchingGraph::from_dem_str(&text).unwrap_err(),
+            StructuredDem::from_dem_str(&text).unwrap_err(),
+        ] {
+            assert!(matches!(
+                error,
+                pecos_decoder_core::DecoderError::InvalidDemSyntax(_)
+            ));
+            assert!(error.to_string().contains(message));
+            assert!(error.to_string().contains(&text));
+        }
+    }
 }

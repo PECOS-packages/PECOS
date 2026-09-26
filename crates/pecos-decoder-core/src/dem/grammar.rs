@@ -1,6 +1,7 @@
 //! Tokenization and validation of individual Stim DEM instruction lines.
 
 use crate::errors::DecoderError;
+use std::collections::BTreeSet;
 use std::fmt::{self, Write};
 
 /// A recognized DEM instruction.
@@ -25,7 +26,7 @@ pub enum Kind {
 }
 
 /// A target, retaining component separators and full-width indices.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Target {
     /// A detector index.
     Detector(u64),
@@ -90,7 +91,7 @@ impl Instruction {
 
     /// Return sorted detector and observable effects, XOR-combining all components.
     ///
-    /// Effect models fold duplicate targets; structural readers preserve written targets and components.
+    /// Targets shared across components cancel; structural readers preserve the components.
     ///
     /// # Errors
     /// Returns an error if any written index exceeds the 32-bit representation.
@@ -171,6 +172,19 @@ fn integer(value: &str) -> Result<u64, DecoderError> {
 /// Returns an error for malformed or unknown instructions.
 pub fn parse_line(line: &str) -> Result<Option<Instruction>, DecoderError> {
     parse_line_with_options(line, Options::default())
+}
+
+/// Validate DEM instructions without requiring flattening or changing the text.
+///
+/// Block balance and loop expansion are left to the backend.
+///
+/// # Errors
+/// Returns an error for any instruction rejected by the tokenizer.
+pub fn validate_dem_text(text: &str) -> Result<(), DecoderError> {
+    for line in text.lines() {
+        parse_line(line)?;
+    }
+    Ok(())
 }
 
 /// Parse one line, with explicit permission for PECOS extensions.
@@ -316,6 +330,7 @@ pub fn parse_line_with_options(
                     "DEM separators must have targets on both sides and must not be adjacent",
                 ));
             }
+            validate_error_components(&targets, line)?;
         }
         Kind::Detector if !matches!(targets.as_slice(), [Target::Detector(_)]) => {
             return Err(invalid("detector requires exactly one D target"));
@@ -345,6 +360,51 @@ pub fn parse_line_with_options(
         payload: None,
         empty_repeat,
     }))
+}
+
+pub(crate) fn validate_error_components(
+    targets: &[Target],
+    line: &str,
+) -> Result<(), DecoderError> {
+    let mut components = BTreeSet::new();
+    for component in targets.split(|target| *target == Target::Separator) {
+        let mut seen = BTreeSet::new();
+        for target in component {
+            if !seen.insert(target) {
+                let kind = match target {
+                    Target::Detector(_) => "detector",
+                    Target::Observable(_) => "observable",
+                    Target::TrackedPauli(_) => "tracked Pauli",
+                    _ => "target",
+                };
+                let name = target_name(target);
+                return Err(invalid(format!(
+                    "{kind} {name} is listed twice in one component of {line}; a target may appear at most once per component"
+                )));
+            }
+        }
+        if !components.insert(seen) {
+            let component = component
+                .iter()
+                .map(target_name)
+                .collect::<Vec<_>>()
+                .join(" ");
+            return Err(invalid(format!(
+                "component {component} is repeated in {line}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn target_name(target: &Target) -> String {
+    match target {
+        Target::Detector(id) => format!("D{id}"),
+        Target::Observable(id) => format!("L{id}"),
+        Target::TrackedPauli(id) => format!("TP{id}"),
+        Target::Separator => "^".to_string(),
+        Target::Integer(id) => id.to_string(),
+    }
 }
 
 impl fmt::Display for Instruction {
@@ -459,6 +519,69 @@ fn metadata_payload(text: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn repeated_targets_and_components_are_syntax_errors() {
+        for (targets, offending) in [
+            ("D0 D0", "detector D0"),
+            ("D0 L0 L0", "observable L0"),
+            ("D0 D0 L0", "detector D0"),
+            ("D0 ^ D1 D1", "detector D1"),
+            ("TP0 TP0", "tracked Pauli TP0"),
+        ] {
+            let text = format!("error(0.1) {targets}");
+            let error = parse_line_with_options(
+                &text,
+                Options {
+                    pecos_extensions: true,
+                },
+            )
+            .unwrap_err();
+            assert!(matches!(error, DecoderError::InvalidDemSyntax(_)));
+            assert_eq!(
+                error.to_string(),
+                format!(
+                    "Invalid DEM syntax: {offending} is listed twice in one component of {text}; a target may appear at most once per component"
+                )
+            );
+        }
+        for (targets, component) in [
+            ("D0 D1 ^ D0 D1 ^ D2 D3", "D0 D1"),
+            ("D0 ^ D0", "D0"),
+            ("L0 ^ L0", "L0"),
+            ("D0 D1 ^ D1 D0", "D1 D0"),
+            ("TP0 ^ TP0", "TP0"),
+        ] {
+            let text = format!("error(0.1) {targets}");
+            let error = parse_line_with_options(
+                &text,
+                Options {
+                    pecos_extensions: true,
+                },
+            )
+            .unwrap_err();
+            assert!(matches!(error, DecoderError::InvalidDemSyntax(_)));
+            assert_eq!(
+                error.to_string(),
+                format!("Invalid DEM syntax: component {component} is repeated in {text}")
+            );
+        }
+        assert!(parse_line("error(0.1) D0 D1 ^ D1 D2").is_ok());
+        assert!(parse_line("error(0.1) D0 L0").is_ok());
+    }
+
+    #[test]
+    fn text_validation_checks_repeat_bodies_without_requiring_flattening() {
+        assert!(
+            validate_dem_text("repeat 2 {\nerror(0.1) D0 D1 ^ D1 D2\nshift_detectors 3\n}").is_ok()
+        );
+        let error = validate_dem_text("repeat 2 {\nerror(0.1) D0 D0\n}").unwrap_err();
+        assert!(matches!(error, DecoderError::InvalidDemSyntax(_)));
+        assert_eq!(
+            error.to_string(),
+            parse_line("error(0.1) D0 D0").unwrap_err().to_string()
+        );
+    }
 
     #[test]
     fn tag_escapes_decode_and_render() {

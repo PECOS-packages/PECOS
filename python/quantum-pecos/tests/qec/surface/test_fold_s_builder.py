@@ -4,6 +4,7 @@
 """Fold builder parity-space oracles and the known X-sector distance reduction."""
 
 import json
+import re
 from dataclasses import replace
 
 import pytest
@@ -18,7 +19,8 @@ from pecos.qec.surface.logical_circuit import (
     _CircuitGenerator,
     _logical_readout_flow,
 )
-from pecos.testing import deterministic_parity_basis, simulate_tick_circuit
+from pecos.qec.surface.patch import PatchOrientation
+from pecos.testing import deterministic_parity_basis, group_contains, simulate_tick_circuit, stabilizer_generators_after
 
 
 class FoldMapProbe(_CircuitGenerator):
@@ -357,3 +359,234 @@ def test_fold_reference_parity(shape, raw_parity):
 def test_fold_op_variant_assertion(fold):
     with pytest.raises(AssertionError, match="Fold variant must be S or SDG"):
         LogicalOp(LogicalGateType.FOLD_S, ["A"], rounds=1, fold=fold)
+
+
+Y_ROUND_PAIRS = [(3, before, after) for before in range(3) for after in range(3)] + [(5, 0, 0), (5, 1, 1)]
+EMPTY_COMMIT = "a DEM window commit region cannot be empty"
+
+
+def y_builder(patch, before, after, *, explicit=False, swapped=False, shared=False, cx=False):
+    """Build the user program or its public-API composition oracle."""
+    builder = LogicalCircuitBuilder()
+    builder.add_patch(patch, "A")
+    if shared:
+        builder.add_patch(patch, "B", qubit_offset=patch.geometry.num_qubits)
+    labels = ["A", "B"] if shared else "A"
+    if before is not None:
+        builder.add_memory(labels, before, {"A": "Z" if swapped else "X", "B": "Z"})
+        if swapped:
+            builder.add_transversal_h("A")
+        builder.add_logical_s("A")
+        if cx:
+            builder.add_transversal_cx("B", "A")
+    if explicit:
+        if before is None:
+            builder.add_memory("A", 0, "Y")
+        builder.add_logical_sdg("A")
+    builder.add_memory(labels, after, {"A": "X" if explicit else "Y", "B": "Z"})
+    return builder
+
+
+def assert_y_composition(builder, explicit, *, empty_commit):
+    """Compare all compilation products, including repeated calls on one builder."""
+    expected = explicit.to_tick_circuit()
+    expected_dem = explicit.build_dem()
+    if empty_commit:
+        with pytest.raises(ValueError, match=EMPTY_COMMIT):
+            explicit.build_algorithm_descriptor()
+    else:
+        expected_descriptor = explicit.build_algorithm_descriptor()
+    for _ in range(2):
+        actual = builder.to_tick_circuit()
+        assert tick_circuit_to_stim(actual) == tick_circuit_to_stim(expected)
+        for key in ("detectors", "observables", "num_measurements", "measurement_keys", "injection_readouts"):
+            assert actual.get_meta(key) == expected.get_meta(key), key
+        assert builder.build_dem() == expected_dem
+        if empty_commit:
+            with pytest.raises(ValueError, match=EMPTY_COMMIT):
+                builder.build_algorithm_descriptor()
+        else:
+            assert builder.build_algorithm_descriptor() == expected_descriptor
+
+
+@pytest.mark.parametrize("orientation", list(PatchOrientation))
+@pytest.mark.parametrize("distance", [3, 5])
+@pytest.mark.parametrize("rounds", [0, 1, 2])
+@pytest.mark.parametrize("first", [False, True])
+def test_y_readout_composition(distance, orientation, rounds, first):
+    patch = SurfacePatch.create(distance, orientation=orientation)
+    before = None if first else 1
+    builder = y_builder(patch, before, rounds)
+    explicit = y_builder(patch, before, rounds, explicit=True)
+    assert_y_composition(builder, explicit, empty_commit=first)
+
+
+@pytest.mark.parametrize("rounds", [0, 1, 2])
+def test_y_product_readout(rounds):
+    builder = LogicalCircuitBuilder()
+    builder.add_patch(SurfacePatch.create(3), "A")
+    builder.add_memory("A", rounds, "Y")
+    tc = builder.to_tick_circuit()
+    assert json.loads(tc.get_meta("observables")) == []
+    assert len(json.loads(tc.get_meta("detectors"))) == 4 + 8 * rounds
+    assert builder.build_dem()
+    with pytest.raises(ValueError, match=EMPTY_COMMIT):
+        builder.build_algorithm_descriptor()
+    for seed in range(8):
+        _, fired, observables = simulate_tick_circuit(tc, seed)
+        assert fired == 0
+        assert observables == {}
+
+
+@pytest.mark.parametrize(("distance", "before", "after"), Y_ROUND_PAIRS)
+def test_y_readout_grid_composition(distance, before, after):
+    patch = SurfacePatch.create(distance)
+    assert_y_composition(
+        y_builder(patch, before, after),
+        y_builder(patch, before, after, explicit=True),
+        empty_commit=before == 0,
+    )
+
+
+@pytest.mark.parametrize(("distance", "before", "after"), Y_ROUND_PAIRS)
+def test_y_readout_support_and_parity(distance, before, after):
+    patch = SurfacePatch.create(distance)
+    builder = y_builder(patch, before, after)
+    tc = builder.to_tick_circuit()
+    observables = json.loads(tc.get_meta("observables"))
+    assert len(observables) == 1
+    keys = json.loads(tc.get_meta("measurement_keys"))
+    fold_z = {
+        ordinal for _, family, _, segment, _, ordinal in keys["stabilizer"] if family == "Z" and segment in {1, 2}
+    }
+    final_x = {ordinal for _, qubit, ordinal in keys["data"] if qubit in patch.geometry.logical_x.data_qubits}
+    assert set(observables[0]["meas_ids"]) == final_x | fold_z
+    assert len(fold_z) == distance**2 - 1
+    for seed in range(8):
+        _, fired, values = simulate_tick_circuit(tc, seed)
+        assert fired == 0
+        assert values == {0: 0}
+
+
+@pytest.mark.parametrize("orientation", list(PatchOrientation))
+@pytest.mark.parametrize("distance", [3, 5])
+@pytest.mark.parametrize("rounds", [0, 1, 2])
+def test_y_shared_first_readout(distance, orientation, rounds):
+    patch = SurfacePatch.create(distance, orientation=orientation)
+    builder = y_builder(patch, None, rounds, shared=True)
+    assert_y_composition(builder, y_builder(patch, None, rounds, shared=True, explicit=True), empty_commit=True)
+    tc = builder.to_tick_circuit()
+    # A consumes ID 0 even though its product-Y preparation cannot close the walk.
+    assert [obs["id"] for obs in json.loads(tc.get_meta("observables"))] == [1]
+    for seed in range(8):
+        _, fired, values = simulate_tick_circuit(tc, seed)
+        assert fired == 0
+        assert values == {1: 0}
+
+
+@pytest.mark.parametrize("orientation", list(PatchOrientation))
+@pytest.mark.parametrize("distance", [3, 5])
+def test_y_shared_cx_readout(distance, orientation):
+    patch = SurfacePatch.create(distance, orientation=orientation)
+    builder = y_builder(patch, 1, 1, shared=True, cx=True)
+    explicit = y_builder(patch, 1, 1, shared=True, cx=True, explicit=True)
+    assert_y_composition(builder, explicit, empty_commit=False)
+    tc = builder.to_tick_circuit()
+    assert [obs["id"] for obs in json.loads(tc.get_meta("observables"))] == [0, 1]
+    for seed in range(8):
+        _, fired, values = simulate_tick_circuit(tc, seed)
+        assert fired == 0
+        assert values == {0: 0, 1: 0}
+
+
+def test_y_readout_stabilizer_oracle():
+    patch = SurfacePatch.create(3)
+    tc = y_builder(patch, 1, 1).to_tick_circuit()
+    assert tc.num_measurements() == 41
+    keys = json.loads(tc.get_meta("measurement_keys"))
+    fold_z = [ordinal for _, family, _, segment, _, ordinal in keys["stabilizer"] if family == "Z" and segment == 1]
+    ancillas = set(range(patch.geometry.num_data, patch.geometry.num_qubits))
+    readouts = [
+        tick
+        for tick in range(tc.num_ticks())
+        if any(g.gate_type.name == "MZ" and ancillas.intersection(g.qubits) for g in tc.get_tick(tick).gate_batches())
+    ]
+    lx, lz = set(patch.geometry.logical_x.data_qubits), set(patch.geometry.logical_z.data_qubits)
+    body = "".join(
+        "Y" if q in lx & lz else "X" if q in lx else "Z" if q in lz else "I" for q in range(patch.geometry.num_qubits)
+    )
+    parities = set()
+    for seed in range(8):
+        measurements, fired, observables = simulate_tick_circuit(tc, seed)
+        parity = sum(measurements[index] for index in fold_z) % 2
+        parities.add(parity)
+        generators = stabilizer_generators_after(tc, readouts[1] + 1, seed=seed)
+        assert group_contains(generators, ("-" if parity else "+") + body)
+        assert not group_contains(generators, ("+" if parity else "-") + body)
+        assert fired == 0
+        assert observables == {0: 0}
+    assert parities == {0, 1}
+
+
+@pytest.mark.parametrize("distance", [3, 5])
+@pytest.mark.parametrize("swapped", [False, True])
+def test_y_readout_parity_space(distance, swapped):
+    tc = y_builder(SurfacePatch.create(distance), 1, 1, swapped=swapped).to_tick_circuit()
+    assert len(json.loads(tc.get_meta("observables"))) == 1
+    circuit = stim.Circuit(tick_circuit_to_stim(tc))
+    space = deterministic_parity_basis(circuit.compile_sampler(seed=0).sample(2048))
+    emitted = [
+        _mask(entry["meas_ids"]) for key in ("detectors", "observables") for entry in json.loads(tc.get_meta(key))
+    ]
+    assert _rank([*space, *emitted]) == len(space)
+    assert _rank(emitted) == len(space) == circuit.count_determined_measurements()
+    for seed in range(8):
+        _, fired, values = simulate_tick_circuit(tc, seed)
+        assert fired == 0
+        assert values == {0: 0}
+
+
+@pytest.mark.parametrize(("distance", "after", "expected"), [(3, 0, 2), (3, 1, 2), (5, 0, 3), (5, 1, 4)])
+def test_y_readout_fault_distance(distance, after, expected):
+    tc = y_builder(SurfacePatch.create(distance), 1, after).to_tick_circuit()
+    dem = DetectorErrorModel.from_circuit(tc, p1=0.001, p2=0.001, p_meas=0.001, p_prep=0.001)
+    distances = dem.per_observable_fault_distances(distance)
+    assert len(distances) == 1
+    assert distances[0] is not None
+    assert distances[0].distance == expected
+
+
+@pytest.mark.parametrize(
+    ("dimensions", "message"),
+    [
+        ({"dx": 3, "dz": 5}, "Fold-transversal S requires a square patch (dx=dz), got dx=3, dz=5"),
+        ({"distance": 3, "rotated": False}, "Fold-transversal S requires a rotated patch"),
+        ({"distance": 1}, "Fold-transversal S requires distance at least 2"),
+    ],
+)
+def test_y_readout_geometry_rejections(dimensions, message):
+    builder = LogicalCircuitBuilder()
+    builder.add_patch(SurfacePatch.create(**dimensions), "A")
+    builder.add_memory("A", 1, "Y")
+    for build in (builder.to_tick_circuit, builder.build_dem, builder.build_algorithm_descriptor):
+        with pytest.raises(ValueError, match=re.escape(message)) as error:
+            build()
+        assert str(error.value) == message
+
+
+@pytest.mark.parametrize("distance", [2, 4])
+def test_y_readout_even_distance(distance):
+    assert y_builder(SurfacePatch.create(distance), 1, 1).to_tick_circuit().num_measurements() > 0
+
+
+def test_y_readout_append_after_compile():
+    patch = SurfacePatch.create(3)
+    builder = y_builder(patch, None, 1)
+    builder.to_tick_circuit()
+    builder.build_dem()
+    builder.add_memory("A", 2, "X")
+    explicit = LogicalCircuitBuilder()
+    explicit.add_patch(patch, "A")
+    explicit.add_memory("A", 1, "Y")
+    explicit.add_memory("A", 2, "X")
+    assert_y_composition(builder, explicit, empty_commit=False)

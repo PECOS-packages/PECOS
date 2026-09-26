@@ -23,11 +23,15 @@
 //! bitwise parity contract with an external reference implementation of the
 //! same algorithm class; that contract is maintained by a separate crate and
 //! is not a constraint this crate imposes on its callers.
+//!
+//! The [`bp_trellis`] module provides PECOS's BP-guided configuration and decoder.
 
 pub mod batch;
+pub mod bp_trellis;
 pub mod factor;
 pub mod streaming;
 
+pub use bp_trellis::{BpTrellisConfig, BpTrellisDecoder};
 pub use streaming::{StreamingProgress, TrellisStreamingDecoder};
 
 use factor::{FactorModel, NormalizedFactor, Outcome};

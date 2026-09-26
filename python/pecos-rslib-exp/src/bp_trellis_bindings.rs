@@ -13,7 +13,7 @@
 use crate::decoder_specs::{
     decoder_error_to_py, indexed_decoder_error_to_py, validate_batch_workers,
 };
-use pecos_bp_trellis::{
+use pecos_trellis::bp_trellis::{
     BpTrellisConfig as RustBpTrellisConfig, BpTrellisDecoder as RustBpTrellisDecoder,
     TrellisOrdering as RustTrellisOrdering,
 };

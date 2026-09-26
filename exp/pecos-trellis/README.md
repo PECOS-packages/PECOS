@@ -1,4 +1,9 @@
-# PECOS BP Trellis Decoder
+# PECOS Trellis Decoder
+
+Trellis dynamic-programming engine for logical coset-mass decoding.
+The `bp_trellis` module provides PECOS's BP-guided preset.
+
+## PECOS BP Trellis Decoder
 
 PECOS's degeneracy-aware BP-guided trellis decoder is an approximate logical
 maximum-likelihood decoder that is exact in the unpruned limit. Its optimality
@@ -9,9 +14,8 @@ probabilities or mass arithmetic. This is not a wrap or port of an external
 project.
 
 **Experimental** (`exp/`): the defaults and optional no-path escalation ladder
-remain provisional pending broader validation. The shared trellis engine lives
-in `pecos-trellis`; this crate contains PECOS's configuration and decoder
-facade.
+remain provisional pending broader validation. The `bp_trellis` module holds
+PECOS's configuration and decoder facade on the engine in this crate.
 
 The optional `pecos-rslib-exp` package provides `pecos_rslib_exp.bp_trellis(...)`
 for `SampleBatch.decode` and `DemSampler.decode`, including parallel Rust workers.

@@ -26,7 +26,6 @@ extension-module = [
 
 [dependencies]
 pecos-decoder-core.workspace = true
-pecos-bp-trellis.workspace = true
 pecos-core.workspace = true
 pecos-eeg.workspace = true
 pecos-frontier.workspace = true

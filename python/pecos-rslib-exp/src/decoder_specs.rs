@@ -1,9 +1,9 @@
 //! Optional experimental decoder factories and native workers for batch decoding.
 use crate::bp_trellis_bindings::{TrellisOrderArgument, parse_ordering};
 use crate::frontier_bindings::{ColumnOrderArgument, parse_column_order, parse_metric_mode};
-use pecos_bp_trellis::BpTrellisConfig;
 use pecos_decoder_core::{DecoderError, ObservableDecoder};
 use pecos_frontier::{FrontierConfig, SparseDem, TrellisOrdering};
+use pecos_trellis::bp_trellis::BpTrellisConfig;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
@@ -114,7 +114,7 @@ impl PyExperimentalDecoderSpec {
                     )?)
                 }
                 ExperimentalSpec::BpTrellis(c) => Box::new(
-                    pecos_bp_trellis::BpTrellisDecoder::from_sparse_dem(&dem, c.clone())?,
+                    pecos_trellis::bp_trellis::BpTrellisDecoder::from_sparse_dem(&dem, c.clone())?,
                 ),
             };
             Ok::<_, DecoderError>(PyExperimentalWorker {

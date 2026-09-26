@@ -241,14 +241,14 @@ impl QASMEngine {
     /// than `&mut self` so callers can hold a borrow of another field (the
     /// measurement mappings) across the call.
     fn set_register_bit(
-        program: Option<&QASMProgram>,
+        loaded_program: Option<&QASMProgram>,
         classical_registers: &mut BTreeMap<String, BitVec<u8, Lsb0>>,
         register_name: &str,
         bit_index: usize,
         value: u8,
     ) -> Result<(), PecosError> {
         // Validate bounds if we have a program loaded
-        if let Some(qasm_program) = program {
+        if let Some(qasm_program) = loaded_program {
             let program = qasm_program.program();
             if let Some(size) = program.classical_registers.get(register_name) {
                 if bit_index >= *size {

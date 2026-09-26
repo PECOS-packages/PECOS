@@ -128,6 +128,7 @@ fn convert_operation(
 ) -> Result<(), QasmBridgeError> {
     match op {
         Operation::NativeGate(gate) => {
+            gate.validate().map_err(QasmBridgeError::ParameterError)?;
             dag.add_gate_auto_wire(gate.clone());
             Ok(())
         }
@@ -359,6 +360,18 @@ fn resolve_gate(
                 ));
             }
         }
+        "rxyxy2q" => {
+            if parameters.len() != 2 || qubits.len() != 2 {
+                return Err(QasmBridgeError::ParameterError(
+                    "RXYXY2Q gate requires 2 parameters and 2 qubits".into(),
+                ));
+            }
+            Gate::rxyxy2q(
+                Angle64::from_radians(parameters[0]),
+                Angle64::from_radians(parameters[1]),
+                &[(qubits[0], qubits[1])],
+            )
+        }
         "rzz" => {
             if parameters.len() == 1 && qubits.len() == 2 {
                 Gate::with_angles(
@@ -522,6 +535,7 @@ fn gate_type_to_qasm_name(gate_type: GateType) -> &'static str {
         GateType::RZ => "rz",
         GateType::U => "u",
         GateType::RXY1Q => "rxy1q",
+        GateType::RXYXY2Q => "RXYXY2Q",
         GateType::CX => "cx",
         GateType::CY => "cy",
         GateType::CZ => "cz",
@@ -727,5 +741,33 @@ mod tests {
 
         let dag = qasm_to_dag(&program).unwrap();
         assert_eq!(dag.gate_count(), 2); // Barrier is skipped
+    }
+    #[test]
+    fn rxyxy2q_dag_qasm_roundtrip() {
+        use pecos_engines::ClassicalEngine;
+        use std::str::FromStr;
+        let qasm = "OPENQASM 2.0; qreg q[3]; RXYXY2Q(-0.73, 0.41) q[2], q[0];";
+        let program = crate::parser::QASMParser::parse_str(qasm).unwrap();
+        let dag = qasm_to_dag(&program).unwrap();
+        let output = dag_to_qasm(&dag);
+        let mut engine = crate::QASMEngine::from_str(&output).unwrap();
+        let mut original = crate::QASMEngine::from_str(qasm).unwrap();
+        assert_eq!(
+            engine.generate_commands().unwrap().quantum_ops().unwrap(),
+            original.generate_commands().unwrap().quantum_ops().unwrap()
+        );
+        let gate = resolve_gate("rxyxy2q", &[-0.73, 0.41], &[QubitId(2), QubitId(0)]).unwrap();
+        assert_eq!(
+            gate,
+            Gate::rxyxy2q(
+                Angle64::from_radians(-0.73),
+                Angle64::from_radians(0.41),
+                &[(2, 0)]
+            )
+        );
+        for angles in [vec![], vec![-0.73], vec![-0.73, 0.41, 0.2]] {
+            assert!(resolve_gate("rxyxy2q", &angles, &[QubitId(2), QubitId(0)]).is_err());
+        }
+        assert!(resolve_gate("rxyxy2q", &[-0.73, 0.41], &[QubitId(2)]).is_err());
     }
 }

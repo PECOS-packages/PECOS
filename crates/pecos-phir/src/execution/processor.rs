@@ -253,6 +253,11 @@ impl PhirProcessor {
                 message_builder.rzz(*angle, &[(q1, q2)]);
                 Ok(true)
             }
+            QuantumOp::RXYXY2Q(theta, phi) => {
+                let (q1, q2) = self.extract_two_qubits(instruction, "RXYXY2Q")?;
+                message_builder.rxyxy2q(*theta, *phi, &[(q1, q2)]);
+                Ok(true)
+            }
             QuantumOp::CPhase(angle) => {
                 let (q1, q2) = self.extract_two_qubits(instruction, "CPhase")?;
                 let gates = pecos_core::controlled_rotations::lower_cphase(

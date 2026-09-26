@@ -159,7 +159,24 @@ impl ImprovedConverter {
             }
 
             if let Some(instruction) = self.convert_operation(op)? {
-                instructions.push(instruction);
+                if matches!(
+                    instruction.operation,
+                    Operation::Quantum(QuantumOp::RXYXY2Q(..))
+                ) {
+                    for pair in instruction.operands.as_chunks::<2>().0 {
+                        let mut paired = instruction.clone();
+                        paired.operands = pair.to_vec();
+                        // Each pair defines its own SSA results, not the batch's results.
+                        paired.results = instruction
+                            .results
+                            .iter()
+                            .map(|_| SSAValue::new(self.new_ssa_id()))
+                            .collect();
+                        instructions.push(paired);
+                    }
+                } else {
+                    instructions.push(instruction);
+                }
             }
         }
 
@@ -415,6 +432,22 @@ impl ImprovedConverter {
             "SYYdg" => QuantumOp::SYYdg,
             "SZZ" | "ZZ" => QuantumOp::SZZ,
             "SZZdg" => QuantumOp::SZZdg,
+            "RXYXY2Q" => {
+                let ast: crate::v0_1::ast::Operation =
+                    serde_json::from_value(Value::Object(obj.clone()))
+                        .map_err(|error| PecosError::Input(error.to_string()))?;
+                let crate::v0_1::ast::Operation::QuantumOp {
+                    angles: Some(angles),
+                    ..
+                } = ast
+                else {
+                    return Err(PecosError::Input("RXYXY2Q requires two angles".to_string()));
+                };
+                QuantumOp::RXYXY2Q(
+                    Angle64::from_radians(angles[0]),
+                    Angle64::from_radians(angles[1]),
+                )
+            }
             "CPhase" => {
                 let angles = obj.get("angles").and_then(Value::as_array).ok_or_else(|| {
                     PecosError::Input("CPhase requires an angles field".to_string())

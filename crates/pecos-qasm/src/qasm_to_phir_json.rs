@@ -121,6 +121,9 @@ fn convert_op(
             qubits,
         } => {
             let phir_name = qasm_gate_to_phir(name)?;
+            if phir_name == "RXYXY2Q" && parameters.len() != 2 {
+                return Err("RXYXY2Q requires exactly two angles".to_string());
+            }
             let num_qubits_per_gate = gate_arity(&phir_name);
             let args = qubit_args(qubits, qubit_map, num_qubits_per_gate)?;
 
@@ -144,6 +147,14 @@ fn convert_op(
                 return Ok(());
             }
 
+            if gate.angles.len() != gate.gate_type.angle_arity() {
+                return Err(format!(
+                    "Gate {} requires {} angles, got {}",
+                    gate.gate_type,
+                    gate.gate_type.angle_arity(),
+                    gate.angles.len()
+                ));
+            }
             let phir_name = gate_type_to_phir(gate.gate_type)?;
             let num_qubits_per_gate = gate_arity(&phir_name);
             let global_ids: Vec<usize> = gate.qubits.iter().map(|q| q.0).collect();
@@ -314,6 +325,7 @@ fn qasm_gate_to_phir(name: &str) -> Result<String, String> {
         "ry" => "RY",
         "rz" => "RZ",
         "rzz" | "zzphase" => "RZZ",
+        "rxyxy2q" => "RXYXY2Q",
         "rxy1q" | "r1xy" | "u1q" => "R1XY",
         "u" | "u3" => "U",
         "reset" => "Init",
@@ -344,6 +356,7 @@ fn gate_type_to_phir(gt: GateType) -> Result<String, String> {
         GateType::RY => "RY",
         GateType::RZ => "RZ",
         GateType::RXY1Q => "R1XY",
+        GateType::RXYXY2Q => "RXYXY2Q",
         GateType::U => "U",
         GateType::CX => "CX",
         GateType::CY => "CY",
@@ -369,7 +382,7 @@ fn gate_type_to_phir(gt: GateType) -> Result<String, String> {
 fn gate_arity(phir_name: &str) -> usize {
     match phir_name {
         "CX" | "CY" | "CZ" | "SWAP" | "SXX" | "SXXdg" | "SYY" | "SYYdg" | "SZZ" | "SZZdg"
-        | "RXX" | "RYY" | "RZZ" | "R2XXYYZZ" | "RXXYYZZ" => 2,
+        | "RXX" | "RYY" | "RZZ" | "RXYXY2Q" | "R2XXYYZZ" | "RXXYYZZ" => 2,
         "CCX" => 3,
         _ => 1,
     }
@@ -396,6 +409,12 @@ fn qubit_args(
         })
         .collect::<Result<_, String>>()?;
 
+    if global_ids.is_empty() || !global_ids.len().is_multiple_of(qubits_per_gate) {
+        return Err(format!(
+            "Gate requires groups of {qubits_per_gate} qubits, got {}",
+            global_ids.len()
+        ));
+    }
     if qubits_per_gate == 1 {
         Ok(Value::Array(refs))
     } else {

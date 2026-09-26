@@ -414,6 +414,11 @@ impl PhirClassicalInterpreter {
         returns: &[(String, usize)],
         metadata: &Option<BTreeMap<String, serde_json::Value>>,
     ) -> Result<YieldedQOp, PecosError> {
+        if qop_name == "RXYXY2Q" {
+            crate::v0_1::ast::validate_rxyxy2q_args(angles.as_deref(), args)
+                .map_err(PecosError::ValidationInvalidGateParameters)?;
+        }
+
         // Resolve qubit args to integer IDs
         let mut is_multi = false;
         for arg in args {

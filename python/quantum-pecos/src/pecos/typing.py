@@ -68,6 +68,9 @@ from phir.model import (
 from phir.model import (
     SeqBlock as _SeqBlock,
 )
+from phir.model import (
+    TQOp as _TQOp,
+)
 from pydantic import model_validator
 
 
@@ -121,7 +124,29 @@ class ResultCOp(_Op):
     returns: list[str]
 
 
-_PecosOpType: TypeAlias = _FFCall | _COp | ResultCOp | _QOp | _MOpType | _Barrier
+class RXYXY2QOp(_TQOp):
+    """PECOS-specific two-qubit XY-plane rotation with angles theta and phi.
+
+    This operation is a PECOS extension, not part of the upstream PHIR
+    specification. Qubit pairs and angle units follow the upstream TQOp model.
+    """
+
+    qop: Literal["RXYXY2Q"]
+
+    @model_validator(mode="after")
+    def check_angles(self) -> RXYXY2QOp:
+        """Require exactly two angles and at least one qubit pair."""
+        match self.angles:
+            case ([_, _], _):
+                if self.args:
+                    return self
+                msg = "RXYXY2Q requires at least one qubit pair."
+            case _:
+                msg = "RXYXY2Q requires exactly two angles (theta, phi)."
+        raise ValueError(msg)
+
+
+_PecosOpType: TypeAlias = _FFCall | _COp | ResultCOp | RXYXY2QOp | _QOp | _MOpType | _Barrier
 
 
 class _PecosSeqBlock(_SeqBlock):
@@ -137,16 +162,23 @@ class _PecosIfBlock(_IfBlock):
     false_branch: list[_PecosOpType | _PecosBlockType] | None = None  # type: ignore[assignment]
 
 
-_PecosBlockType: TypeAlias = _PecosSeqBlock | _QParBlock | _PecosIfBlock
+class _PecosQParBlock(_QParBlock):
+    """QParBlock extended with PECOS-specific quantum operations."""
+
+    ops: list[_QOp | RXYXY2QOp]
+
+
+_PecosBlockType: TypeAlias = _PecosSeqBlock | _PecosQParBlock | _PecosIfBlock
 _PecosCmd: TypeAlias = _PecosDataMgmt | _PecosOpType | _PecosBlockType | _Comment
 
 
 class PhirModel(_PHIRModel):
-    """PHIR model extended with PECOS-specific classical operations.
+    """PHIR model extended with PECOS-specific classical and quantum operations.
 
     Adds support for the ``Result`` cop used by PECOS ``HybridEngine`` to
     map internal measurement registers to external result variables. Fully
-    backwards-compatible with upstream PHIR programs.
+    backwards-compatible with upstream PHIR programs. Also supports the
+    two-angle, two-qubit ``RXYXY2Q`` quantum operation.
 
     The upstream ``phir.model.PHIRModel`` rejects programs containing
     ``Result`` cops because ``Result`` is not in the PHIR specification.

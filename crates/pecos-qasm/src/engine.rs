@@ -646,6 +646,11 @@ impl QASMEngine {
                 }
             }
             GateType::RXYXY2Q => {
+                if qubits.is_empty() || !qubits.len().is_multiple_of(gate_type.quantum_arity()) {
+                    return Err(PecosError::Processing(
+                        "RXYXY2Q requires complete qubit pairs".to_string(),
+                    ));
+                }
                 let theta = params[0];
                 let phi = params[1];
                 for chunk in qubits.chunks(2) {

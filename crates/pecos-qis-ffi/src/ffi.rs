@@ -753,6 +753,19 @@ pub unsafe extern "C-unwind" fn ___rzz(qubit1: i64, qubit2: i64, theta: f64) {
     unsafe { __quantum__qis__rzz__body(theta, qubit1, qubit2) };
 }
 
+/// RXYXY2Q two-qubit rotation (Selene-style).
+///
+/// # Safety
+/// Called from C/LLVM code. Qubits must be valid non-negative IDs that fit in usize.
+#[unsafe(no_mangle)]
+pub unsafe extern "C-unwind" fn ___rpp(qubit1: i64, qubit2: i64, theta: f64, phi: f64) {
+    let q1 = checked_ffi_id!("___rpp", qubit1, usize);
+    let q2 = checked_ffi_id!("___rpp", qubit2, usize);
+    with_interface(|interface| {
+        interface.queue_operation(QuantumOp::RXYXY2Q(theta, phi, q1, q2).into());
+    });
+}
+
 /// Qubit allocation (Selene-style)
 ///
 /// # Safety
@@ -2568,6 +2581,17 @@ mod tests {
             assert_eq!(
                 iface.operations[7],
                 Operation::Quantum(QuantumOp::Measure(1, 1))
+            );
+        });
+    }
+    #[test]
+    fn test_selene_rpp() {
+        setup_test();
+        unsafe { ___rpp(2, 0, -0.73, 0.41) };
+        with_interface(|iface| {
+            assert_eq!(
+                iface.operations[0],
+                Operation::Quantum(QuantumOp::RXYXY2Q(-0.73, 0.41, 2, 0))
             );
         });
     }

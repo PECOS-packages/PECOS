@@ -1829,3 +1829,41 @@ fn test_dynamic_zero_engine_rejected_without_explicit_qubits() {
         "explicit .qubits(n) must bypass the inferred-zero guard"
     );
 }
+
+#[test]
+fn test_processor_rxyxy2q_gate() {
+    let theta = Angle64::from_radians(-0.73);
+    let phi = Angle64::from_radians(0.41);
+    let mut processor = PhirProcessor::new();
+    let mut builder = pecos_engines::ByteMessage::quantum_operations_builder();
+    let instruction = instr(
+        Operation::Quantum(QuantumOp::RXYXY2Q(theta, phi)),
+        vec![2, 0],
+        vec![],
+        vec![],
+    );
+    processor
+        .process_instruction(&instruction, &mut builder)
+        .unwrap();
+    let gates = builder.build().quantum_ops().unwrap();
+    assert_eq!(
+        gates,
+        vec![pecos_core::Gate::rxyxy2q(theta, phi, &[(2, 0)])]
+    );
+    for qubits in [vec![], vec![2], vec![2, 0, 1]] {
+        let invalid = instr(
+            Operation::Quantum(QuantumOp::RXYXY2Q(theta, phi)),
+            qubits,
+            vec![],
+            vec![],
+        );
+        assert!(
+            processor
+                .process_instruction(
+                    &invalid,
+                    &mut pecos_engines::ByteMessage::quantum_operations_builder()
+                )
+                .is_err()
+        );
+    }
+}

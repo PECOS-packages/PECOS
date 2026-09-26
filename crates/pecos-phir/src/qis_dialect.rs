@@ -130,6 +130,18 @@ impl Dialect for QisDialect {
             },
         )?;
 
+        registry.register_operation(
+            self.namespace(),
+            OperationDef {
+                name: "rpp".to_string(),
+                description: "RXYXY2Q two-qubit rotation gate (___rpp)".to_string(),
+                num_operands: 4, // qubit1, qubit2, theta, phi
+                num_results: 0,
+                num_regions: 0,
+                traits: vec![OpTrait::NoSideEffect],
+            },
+        )?;
+
         // Measurement operations
         registry.register_operation(
             self.namespace(),
@@ -199,6 +211,10 @@ impl Dialect for QisDialect {
                 // RZZ requires exactly 3 operands: qubit1, qubit2, angle
                 Ok(())
             }
+            "rpp" => {
+                // RPP requires exactly 4 operands: qubit1, qubit2, theta, phi
+                Ok(())
+            }
             _ => Ok(()),
         }
     }
@@ -206,7 +222,7 @@ impl Dialect for QisDialect {
     fn get_operation_traits(&self, op_name: &str) -> Vec<OpTrait> {
         match op_name {
             "h" | "x" | "y" | "z" | "s" | "sdg" | "t" | "tdg" | "sx" | "sxdg" | "cx" | "rxy"
-            | "rz" | "rzz" => {
+            | "rz" | "rzz" | "rpp" => {
                 vec![OpTrait::NoSideEffect]
             }
             _ => vec![],

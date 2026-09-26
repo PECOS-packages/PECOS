@@ -117,8 +117,9 @@ impl QASMParser {
         // Preprocess the source
         let preprocessed_source = preprocessor.preprocess_str(source)?;
 
-        // Parse the preprocessed source
-        let mut program = Self::parse_str_raw(&preprocessed_source)?;
+        // Parse the preprocessed source without expanding, so the flag below
+        // decides whether expansion happens at all.
+        let mut program = Self::parse_program(&preprocessed_source)?;
 
         // Expand gates if requested
         if config.expand_gates {
@@ -319,16 +320,19 @@ impl QASMParser {
     ///
     /// Returns an error if parsing fails.
     pub fn parse_str_raw(source: &str) -> Result<Program, PecosError> {
-        // Parse with Pest
-        let mut pairs = Self::parse_pest(Rule::program, source)?;
-        let program_pair = pairs.next().ok_or_else(|| Self::error("Empty program"))?;
-
-        // Build program using recursive descent style
-        let mut program = Self::build_program(program_pair)?;
+        let mut program = Self::parse_program(source)?;
 
         // Post-processing: expand gates
         expand_gates(&mut program)?;
         Ok(program)
+    }
+
+    /// Parse source that has already been preprocessed into a `Program`,
+    /// without expanding gates.
+    fn parse_program(source: &str) -> Result<Program, PecosError> {
+        let mut pairs = Self::parse_pest(Rule::program, source)?;
+        let program_pair = pairs.next().ok_or_else(|| Self::error("Empty program"))?;
+        Self::build_program(program_pair)
     }
 
     /// Parse using Pest and convert errors

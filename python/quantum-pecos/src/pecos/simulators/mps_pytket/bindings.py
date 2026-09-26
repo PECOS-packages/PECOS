@@ -71,6 +71,7 @@ gate_dict = {
     "CRZ": two_q.CRZ,
     "RXX": two_q.RXX,
     "RYY": two_q.RYY,
+    "RXYXY2Q": two_q.RXYXY2Q,
     "RZZ": two_q.RZZ,
     "RXXRYYRZZ": two_q.RXXRYYRZZ,
     "R2XXYYZZ": two_q.RXXRYYRZZ,

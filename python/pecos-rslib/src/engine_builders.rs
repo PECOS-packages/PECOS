@@ -942,6 +942,7 @@ impl PyGeneralNoiseModelBuilder {
             "SZZ" => GateType::SZZ,
             "SZZDG" => GateType::SZZdg,
             "RZZ" => GateType::RZZ,
+            "RXYXY2Q" => GateType::RXYXY2Q,
             "MEASURE" => GateType::MZ,
             "PREP" => GateType::PZ,
             "IDLE" => GateType::Idle,

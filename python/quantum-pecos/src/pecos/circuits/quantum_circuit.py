@@ -81,6 +81,7 @@ _GATETYPE_TO_SYMBOL = {
     "RXX": "RXX",
     "RYY": "RYY",
     "RZZ": "RZZ",
+    "RXYXY2Q": "RXYXY2Q",
     "CRZ": "CRZ",
     "CH": "CH",
     "CCX": "CCX",
@@ -457,15 +458,9 @@ class QuantumCircuit(MutableSequence):
                     if len(angles) == 1:
                         # Single angle gates (RX, RY, RZ, RXX, RYY, RZZ)
                         params["angle"] = angles[0]
-                    elif len(angles) == 2:
-                        # Two angle gates (RXY1Q)
-                        params["theta"] = angles[0]
-                        params["phi"] = angles[1]
-                    elif len(angles) == 3:
-                        # Three angle gates (U)
-                        params["theta"] = angles[0]
-                        params["phi"] = angles[1]
-                        params["lambda"] = angles[2]
+                    elif len(angles) in (2, 3):
+                        # Multi-angle simulator dispatch consumes an angles tuple.
+                        params["angles"] = tuple(angles)
 
             # Create a hashable key from symbol and params
             # Sort params keys for consistent hashing

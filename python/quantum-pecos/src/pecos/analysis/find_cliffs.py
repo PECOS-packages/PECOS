@@ -28,6 +28,8 @@ __all__ = [
     "rxy1q2cliff",
     "rxy1q_ang2str",
     "rxy1q_matrix",
+    "rxyxy2q2cliff",
+    "rxyxy2q_matrix",
     "rz2cliff",
     "rz_ang2str",
     "rz_matrix",
@@ -121,6 +123,42 @@ def rxy1q_matrix(theta: float, phi: float) -> Array:
         ],
         dtype=dtype,
     )
+
+
+def rxyxy2q_matrix(theta: float, phi: float) -> Array:
+    """Create the phase-exact RXYXY2Q matrix in computational basis order."""
+    c = pc.cos(theta / 2)
+    s = -1j * pc.sin(theta / 2)
+    return pc.array(
+        [
+            [c, 0, 0, s * pc.exp(-2j * phi)],
+            [0, c, s, 0],
+            [0, s, c, 0],
+            [s * pc.exp(2j * phi), 0, 0, c],
+        ],
+        dtype=dtype,
+    )
+
+
+def rxyxy2q2cliff(theta: float, phi: float, *, atol: float = 1e-12) -> str | bool:
+    """Identify RXYXY2Q Cliffords up to global phase, as for ``rxy1q2cliff``.
+
+    Product Cliffords are labelled ``A tensor A``. Like ``rxy1q2cliff``,
+    this classifies the matrix, including half-turns about diagonal axes;
+    stabilizer simulation deliberately accepts the narrower quarter-turn grid.
+    """
+    if _is_identity_angle(theta, atol=atol):
+        return "II"
+    if _is_identity_angle(theta - pc.f64.pi, atol=atol):
+        single = rxy1q2cliff(pc.f64.pi, phi, atol=atol)
+        return f"{single} tensor {single}" if single else False
+    for angle, suffix in ((pc.f64.frac_pi_2, ""), (-pc.f64.frac_pi_2, "dg")):
+        if _is_identity_angle(theta - angle, atol=atol):
+            if _is_identity_angle(2 * phi, atol=2 * atol):
+                return f"SXX{suffix}"
+            if _is_identity_angle(2 * phi - pc.f64.pi, atol=2 * atol):
+                return f"SYY{suffix}"
+    return False
 
 
 def rz_matrix(theta: float) -> Array:

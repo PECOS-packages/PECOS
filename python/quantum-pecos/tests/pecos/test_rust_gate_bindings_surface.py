@@ -92,7 +92,7 @@ def test_mapping_membership_and_unsupported_override(
 def test_table_and_dispatch_surface_agree(simulator_name: str, factory: SimulatorFactory) -> None:
     """Every table entry agrees with membership and the simulator's dispatcher."""
     entries = _gate_bindings_symbols()
-    assert len(entries) == 134
+    assert len(entries) == 135
     assert len({spelling for spelling, _, _, _ in entries}) == len(entries)
 
     for spelling, _, parameter_mode, qubit_count in entries:

@@ -79,6 +79,11 @@ impl PyByteMessageBuilder {
         self.inner.rzz(theta.0, &pairs);
     }
 
+    /// Add RXYXY2Q gate(s): `rxyxy2q(theta, phi, [(q0, q1)])`
+    fn rxyxy2q(&mut self, theta: AngleParam, phi: AngleParam, pairs: Vec<(usize, usize)>) {
+        self.inner.rxyxy2q(theta.0, phi.0, &pairs);
+    }
+
     /// Add CY gate(s): `cy([(c0, t0), (c1, t1)])`
     fn cy(&mut self, pairs: Vec<(usize, usize)>) {
         self.inner.cy(&pairs);

@@ -990,13 +990,19 @@ impl QASMEngine {
         Ok(())
     }
 
-    /// Process a register measurement operation
+    /// Queue the measurement of every qubit of `q_reg` into `c_reg`.
+    ///
+    /// With `batch_cap = Some(current_operation_count)` the batch is not grown
+    /// past `MAX_BATCH_SIZE`: the qubits that fit are queued and `Ok(None)`
+    /// says the rest must follow in a later batch. With `batch_cap = None` the
+    /// whole register is queued as one statement and the result is always
+    /// `Ok(Some(count))`.
     fn process_register_measurement(
         &mut self,
         q_reg: &str,
         c_reg: &str,
         qasm_program: &QASMProgram,
-        current_operation_count: usize,
+        batch_cap: Option<usize>,
     ) -> Result<Option<usize>, PecosError> {
         let program = qasm_program.program();
         let Some(qubit_ids) = program.quantum_registers.get(q_reg) else {
@@ -1027,7 +1033,7 @@ impl QASMEngine {
 
         let mut measurements_added = 0;
         for (i, &qubit_id) in qubit_ids.iter().enumerate().take(measure_count) {
-            if current_operation_count + measurements_added >= Self::MAX_BATCH_SIZE {
+            if batch_cap.is_some_and(|count| count + measurements_added >= Self::MAX_BATCH_SIZE) {
                 debug!(
                     "Reached maximum batch size during register measurement, will continue in next batch"
                 );
@@ -1118,7 +1124,7 @@ impl QASMEngine {
                         q_reg,
                         c_reg,
                         &qasm_program,
-                        operation_count,
+                        Some(operation_count),
                     )?;
 
                     if let Some(count) = added_count {
@@ -1255,38 +1261,27 @@ impl QASMEngine {
                             }
                             Operation::RegMeasure { q_reg, c_reg } => {
                                 // The condition was evaluated once for the whole
-                                // statement, so measure the whole register now and end
-                                // the batch, as a single conditional measurement does.
-                                let added = self.process_register_measurement(
+                                // statement, so queue the whole register uncapped and
+                                // end the batch, as a single conditional measurement
+                                // does.
+                                self.process_register_measurement(
                                     q_reg,
                                     c_reg,
                                     &qasm_program,
-                                    0,
+                                    None,
                                 )?;
-                                if added.is_none() {
-                                    return Err(PecosError::Processing(format!(
-                                        "Conditional measurement of register {q_reg} exceeds the \
-                                         batch size of {} operations",
-                                        Self::MAX_BATCH_SIZE
-                                    )));
-                                }
                                 self.current_op += 1;
                                 debug!(
                                     "Breaking batch after conditional register measurement to wait for results"
                                 );
                                 return Ok(Some(self.message_builder.build()));
                             }
-                            Operation::VoidFunctionCall { expression } => {
-                                let _ =
-                                    self.evaluate_expression_bitvec_with_width(expression, 1)?;
-                                operation_count += 1;
-                            }
                             Operation::Barrier { .. } => {
                                 debug!("Skipping conditional barrier");
                             }
                             other => {
                                 return Err(PecosError::Processing(format!(
-                                    "Unsupported operation in if statement: {other:?}"
+                                    "Unsupported operation in if statement: {other}"
                                 )));
                             }
                         }

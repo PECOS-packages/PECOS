@@ -1,4 +1,3 @@
-use pecos_engines::ClassicalEngine;
 use pecos_engines::sim_builder;
 use pecos_programs::Qasm;
 use pecos_qasm::{QASMEngine, qasm_engine};
@@ -461,9 +460,9 @@ fn cond_measure_result_is_visible_to_the_next_conditional() {
 
 #[test]
 fn cond_measure_register_result_is_visible_to_the_next_conditional() {
-    // The condition tests a single bit: comparing a multi-bit register with a
-    // literal (`d == 3`) is currently evaluated wrongly, see the issue linked
-    // from the PR that added this test.
+    // The condition tests a single bit because comparing a multi-bit register
+    // with a literal (`d == 3`) is evaluated wrongly while the register's top
+    // bit is set; see issue #864.
     let qasm = r#"
         OPENQASM 2.0;
         include "qelib1.inc";
@@ -496,10 +495,10 @@ fn cond_measure_register_result_is_visible_to_the_next_conditional() {
 }
 
 #[test]
-fn cond_measure_register_size_mismatch_is_an_error() {
-    // Top-level register measurements are size-checked by the parser; the
-    // conditional form reaches the engine unexpanded and must be checked
-    // there instead of silently measuring the shorter register's worth.
+fn cond_measure_register_size_mismatch_is_a_parse_error() {
+    // A conditional register measurement is not expanded per qubit, so the
+    // parser must still size-check it there: the error has to be static, not
+    // one that only appears in the shots where the condition holds.
     let qasm = r#"
         OPENQASM 2.0;
         include "qelib1.inc";
@@ -508,12 +507,12 @@ fn cond_measure_register_size_mismatch_is_an_error() {
 
         if (d == 0) measure q -> d;
     "#;
-    let mut engine = qasm.parse::<QASMEngine>().unwrap();
-    let Err(err) = engine.generate_commands() else {
-        panic!("mismatched register sizes must not be measured");
-    };
+    let err = qasm
+        .parse::<QASMEngine>()
+        .expect_err("mismatched register sizes must not parse");
     assert!(
-        err.to_string().contains("size mismatch"),
+        err.to_string()
+            .contains("Register size mismatch in measure q -> d"),
         "unexpected error: {err}"
     );
 }

@@ -402,7 +402,7 @@ spec = bp_trellis(
     bp_score_iterations=5,
     merge_indistinguishable=True,
     ordering="deadline",
-    escalation_ks=[32, 128],
+    escalation=[(64, 100.0)],
 )
 result = batch.decode(dem, spec, workers=2, predictions=True)
 assert result.predictions == [1, 0]
@@ -410,12 +410,27 @@ assert result.num_errors == 0
 ```
 
 The ladder uses one engine model and prepares each shot once, including BP.
-Use `escalation=[(32, 50.0), (128, 100.0)]` to choose both pruning parameters;
-`escalation_ks=[32, 128]` remains shorthand for rungs at the base `delta`.
-Pass only one ladder keyword. The default ladder is empty. Rungs need not be
-monotone, and an exact base cannot have a ladder. Rungs run only after a no-path
-attempt that dropped states: never after a successful but wrong prediction,
-and never after a residual or infeasible no-path.
+`escalation=[(k, delta), ...]` chooses both pruning parameters per rung;
+`escalation_ks=[k, ...]` is shorthand for rungs at the base `delta`. Pass only
+one ladder keyword. The default ladder is empty. Rungs need not be monotone,
+and an exact base cannot have a ladder. Rungs run only after a no-path attempt
+that dropped states: never after a successful but wrong prediction, and never
+after a residual or infeasible no-path.
+
+### Recommended ladder
+
+The default ladder is empty so that the per-shot cost of a configuration is
+exactly what it says. When a no-path shot should be retried rather than
+reported, the evidence-backed setting is one rung at `k = 64` with the base
+`delta`, as in the example above. On the bivariate-bicycle 144 corpus at
+physical error rate 0.003, a `4 -> 64` ladder reached 8 failures per 1000 shots
+at 49 ms per shot, against 10 failures at 101 ms for a single `k = 16`; an
+`8 -> 64` ladder reached 0 failures per 1000 at 72 ms per shot at rate 0.002.
+On the rotated surface code at distance 5 no shot ever escalated, so the rung
+costs nothing there. A ladder never rescues a confidently wrong prediction,
+only a no-path, and a fully exact configuration (`k` unbounded, `delta`
+infinite) exhausted memory on that corpus, so the last rung should stay
+finite.
 
 The direct `BpTrellisDecoder.decode_syndrome`, `decode_from_defects`, and
 `decode_batch(shots, workers=1)` methods accept `on_no_path="raise"` (default)

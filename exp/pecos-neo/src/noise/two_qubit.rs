@@ -399,7 +399,9 @@ impl TwoQubitChannel {
 
         // Only scale for parameterized two-qubit gates
         let scale = match gate_type {
-            GateType::RZZ | GateType::RXX | GateType::RYY => self.angle_scaling.scale(angles[0]),
+            GateType::RZZ | GateType::RXX | GateType::RYY | GateType::RXYXY2Q => {
+                self.angle_scaling.scale(angles[0])
+            }
             _ => 1.0,
         };
 
@@ -840,6 +842,15 @@ mod tests {
         // For angle pi/2, scaling = 0.5
         let p = channel.effective_probability(GateType::RZZ, &[Angle64::QUARTER_TURN]);
         assert!((p - 0.05).abs() < 1e-10);
+    }
+
+    #[test]
+    fn rxyxy2q_noise_scaling_uses_theta() {
+        let channel = TwoQubitChannel::depolarizing(0.1).with_angle_scaling(AngleScaling::linear());
+        for phi in [Angle64::ZERO, Angle64::HALF_TURN] {
+            let p = channel.effective_probability(GateType::RXYXY2Q, &[Angle64::QUARTER_TURN, phi]);
+            assert!((p - 0.05).abs() < 1e-10);
+        }
     }
 
     #[test]

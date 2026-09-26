@@ -329,6 +329,14 @@ fn apply_gate_to_density_matrix(
             );
             Ok(Vec::new())
         }
+        GateType::RXYXY2Q => {
+            sim.rxyxy2q(
+                gate_angle(gate, 0)?,
+                gate_angle(gate, 1)?,
+                &qubit_pairs(qubits, gate.gate_type)?,
+            );
+            Ok(Vec::new())
+        }
         GateType::RXY1Q => {
             sim.rxy1q(gate_angle(gate, 0)?, gate_angle(gate, 1)?, qubits);
             Ok(Vec::new())

@@ -295,7 +295,12 @@ fn rzz_pi_equiv_z_tensor_z() {
 fn rxx_zero_equiv_identity() {
     let rxx = RXX(Angle64::ZERO, 0, 1);
     let id = I(0) & I(1);
-    assert_residual_phase(&id, &rxx, 0.0, "RXX(0) should equal I x I");
+    assert_residual_phase(
+        &id,
+        &rxx,
+        two_qubit_rotation_phase(Angle64::ZERO),
+        "RXX(0) should equal I x I",
+    );
 }
 
 #[test]
@@ -305,7 +310,7 @@ fn rxx_quarter_equiv_sxx() {
     assert_residual_phase(
         &sxx,
         &rxx,
-        FRAC_PI_4,
+        two_qubit_rotation_phase(Angle64::QUARTER_TURN),
         "RXX(pi/2) should equal SXX up to global phase",
     );
 }
@@ -317,7 +322,7 @@ fn rxx_three_quarters_equiv_sxxdg() {
     assert_residual_phase(
         &sxxdg,
         &rxx,
-        -FRAC_PI_4,
+        two_qubit_rotation_phase(Angle64::THREE_QUARTERS_TURN),
         "RXX(3pi/2) should equal SXXdg up to global phase",
     );
 }
@@ -329,7 +334,7 @@ fn rxx_pi_equiv_x_tensor_x() {
     assert_residual_phase(
         &xx,
         &rxx,
-        FRAC_PI_2,
+        two_qubit_rotation_phase(Angle64::HALF_TURN),
         "RXX(pi) should equal X x X up to global phase",
     );
 }
@@ -342,7 +347,12 @@ fn rxx_pi_equiv_x_tensor_x() {
 fn ryy_zero_equiv_identity() {
     let ryy = RYY(Angle64::ZERO, 0, 1);
     let id = I(0) & I(1);
-    assert_residual_phase(&id, &ryy, 0.0, "RYY(0) should equal I x I");
+    assert_residual_phase(
+        &id,
+        &ryy,
+        two_qubit_rotation_phase(Angle64::ZERO),
+        "RYY(0) should equal I x I",
+    );
 }
 
 #[test]
@@ -352,7 +362,7 @@ fn ryy_quarter_equiv_syy() {
     assert_residual_phase(
         &syy,
         &ryy,
-        FRAC_PI_4,
+        two_qubit_rotation_phase(Angle64::QUARTER_TURN),
         "RYY(pi/2) should equal SYY up to global phase",
     );
 }
@@ -364,7 +374,7 @@ fn ryy_three_quarters_equiv_syydg() {
     assert_residual_phase(
         &syydg,
         &ryy,
-        -FRAC_PI_4,
+        two_qubit_rotation_phase(Angle64::THREE_QUARTERS_TURN),
         "RYY(3pi/2) should equal SYYdg up to global phase",
     );
 }
@@ -376,9 +386,123 @@ fn ryy_pi_equiv_y_tensor_y() {
     assert_residual_phase(
         &yy,
         &ryy,
-        FRAC_PI_2,
+        two_qubit_rotation_phase(Angle64::HALF_TURN),
         "RYY(pi) should equal Y x Y up to global phase",
     );
+}
+
+// The axis-rotation phase convention is shared by the matrix and dense-state oracles.
+fn two_qubit_rotation_phase(theta: Angle64) -> f64 {
+    match theta {
+        Angle64::ZERO => 0.0,
+        Angle64::QUARTER_TURN => FRAC_PI_4,
+        Angle64::HALF_TURN => FRAC_PI_2,
+        Angle64::THREE_QUARTERS_TURN => -FRAC_PI_4,
+        _ => panic!("expected Clifford grid angle"),
+    }
+}
+
+fn dense_two_qubit_matrix(
+    apply: impl Fn(&mut pecos_simulators::DenseStateVec),
+) -> nalgebra::DMatrix<num_complex::Complex64> {
+    use pecos_core::QubitId;
+    use pecos_simulators::CliffordGateable;
+    let mut columns = Vec::new();
+    for basis in 0..4 {
+        let mut sim = pecos_simulators::DenseStateVec::new(2);
+        for qubit in 0..2 {
+            if basis & (1 << qubit) != 0 {
+                sim.x(&[QubitId(qubit)]);
+            }
+        }
+        apply(&mut sim);
+        columns.extend(sim.state());
+    }
+    nalgebra::DMatrix::from_column_slice(4, 4, &columns)
+}
+
+#[test]
+fn rxyxy2q_dense_exact_axis_identities() {
+    use pecos_core::QubitId;
+    use pecos_simulators::ArbitraryRotationGateable;
+    let grid = [
+        Angle64::ZERO,
+        Angle64::QUARTER_TURN,
+        Angle64::HALF_TURN,
+        Angle64::THREE_QUARTERS_TURN,
+    ];
+    let pairs = [(QubitId(0), QubitId(1))];
+    for theta in grid.into_iter().chain([Angle64::from_radians(0.73)]) {
+        for (axis, phi) in grid.into_iter().enumerate() {
+            let actual = dense_two_qubit_matrix(|sim| {
+                sim.rxyxy2q(theta, phi, &pairs);
+            });
+            let expected = dense_two_qubit_matrix(|sim| {
+                if axis % 2 == 0 {
+                    sim.rxx(theta, &pairs);
+                } else {
+                    sim.ryy(theta, &pairs);
+                }
+            });
+            for (actual, expected) in actual.iter().zip(expected.iter()) {
+                assert!(
+                    (actual - expected).norm() < 1e-12,
+                    "theta={theta:?}, phi={phi:?}: {actual} != {expected}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn rxyxy2q_dense_lowering_residual_phase() {
+    use pecos_core::{CliffordLowering, Gate, QubitId, gate_type::GateType};
+    use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable};
+    let grid = [
+        Angle64::ZERO,
+        Angle64::QUARTER_TURN,
+        Angle64::HALF_TURN,
+        Angle64::THREE_QUARTERS_TURN,
+    ];
+    let pairs = [(QubitId(0), QubitId(1))];
+    for theta in grid {
+        for phi in grid {
+            let lowering =
+                pecos_core::try_lower_rotation_to_clifford(&Gate::rxyxy2q(theta, phi, &[(0, 1)]))
+                    .unwrap();
+            let actual = dense_two_qubit_matrix(|sim| {
+                sim.rxyxy2q(theta, phi, &pairs);
+            });
+            let lowered = dense_two_qubit_matrix(|sim| match lowering {
+                CliffordLowering::Named(GateType::I) => {}
+                CliffordLowering::Named(GateType::SXX) => {
+                    sim.sxx(&pairs);
+                }
+                CliffordLowering::Named(GateType::SXXdg) => {
+                    sim.sxxdg(&pairs);
+                }
+                CliffordLowering::Named(GateType::SYY) => {
+                    sim.syy(&pairs);
+                }
+                CliffordLowering::Named(GateType::SYYdg) => {
+                    sim.syydg(&pairs);
+                }
+                CliffordLowering::PerQubit(GateType::X) => {
+                    sim.x(&[QubitId(0), QubitId(1)]);
+                }
+                CliffordLowering::PerQubit(GateType::Y) => {
+                    sim.y(&[QubitId(0), QubitId(1)]);
+                }
+                _ => panic!("unexpected lowering {lowering:?}"),
+            });
+            common::assert_matrix_residual_phase(
+                &lowered,
+                &actual,
+                two_qubit_rotation_phase(theta),
+                &format!("RXYXY2Q({theta:?}, {phi:?})"),
+            );
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

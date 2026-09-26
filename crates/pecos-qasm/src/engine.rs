@@ -1011,7 +1011,17 @@ impl QASMEngine {
             )));
         };
 
-        let measure_count = std::cmp::min(qubit_ids.len(), c_size);
+        // The parser checks this for top-level register measurements; inside an
+        // `if` the statement reaches the engine unexpanded, so check it here too
+        // rather than silently measuring only the shorter register's worth.
+        if qubit_ids.len() != c_size {
+            return Err(PecosError::Input(format!(
+                "Register size mismatch in measure {q_reg} -> {c_reg}: quantum register {q_reg} \
+                 has {} qubits, classical register {c_reg} has {c_size} bits",
+                qubit_ids.len()
+            )));
+        }
+        let measure_count = qubit_ids.len();
 
         debug!("Will measure {measure_count} qubits from {q_reg} to {c_reg}");
 
@@ -1229,8 +1239,55 @@ impl QASMEngine {
                                 }
                                 operation_count += 1;
                             }
-                            _ => {
-                                debug!("Unsupported operation in if statement");
+                            Operation::MeasureWithMapping {
+                                gate,
+                                c_reg,
+                                c_index,
+                            } => {
+                                if let Some(qubit_id) = gate.qubits.first() {
+                                    self.process_measurement(qubit_id.0, c_reg, *c_index)?;
+                                    self.current_op += 1;
+                                    debug!(
+                                        "Breaking batch after conditional measurement to wait for results"
+                                    );
+                                    return Ok(Some(self.message_builder.build()));
+                                }
+                            }
+                            Operation::RegMeasure { q_reg, c_reg } => {
+                                // The condition was evaluated once for the whole
+                                // statement, so measure the whole register now and end
+                                // the batch, as a single conditional measurement does.
+                                let added = self.process_register_measurement(
+                                    q_reg,
+                                    c_reg,
+                                    &qasm_program,
+                                    0,
+                                )?;
+                                if added.is_none() {
+                                    return Err(PecosError::Processing(format!(
+                                        "Conditional measurement of register {q_reg} exceeds the \
+                                         batch size of {} operations",
+                                        Self::MAX_BATCH_SIZE
+                                    )));
+                                }
+                                self.current_op += 1;
+                                debug!(
+                                    "Breaking batch after conditional register measurement to wait for results"
+                                );
+                                return Ok(Some(self.message_builder.build()));
+                            }
+                            Operation::VoidFunctionCall { expression } => {
+                                let _ =
+                                    self.evaluate_expression_bitvec_with_width(expression, 1)?;
+                                operation_count += 1;
+                            }
+                            Operation::Barrier { .. } => {
+                                debug!("Skipping conditional barrier");
+                            }
+                            other => {
+                                return Err(PecosError::Processing(format!(
+                                    "Unsupported operation in if statement: {other:?}"
+                                )));
                             }
                         }
                     } else {

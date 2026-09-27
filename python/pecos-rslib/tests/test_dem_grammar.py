@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import importlib.util
+from functools import partial
 from pathlib import Path
 
 import pytest
@@ -25,6 +26,11 @@ SPEC.loader.exec_module(CONTRACT)
 DENSE_INDEX_THRESHOLD = 1 << 24
 
 FIXTURE = ROOT / "crates/pecos-decoder-core/tests/fixtures/stim_dem_grammar.tsv"
+
+STIM_EXCEPTIONS = {
+    "error(0.1) D0 D0": "a target may appear at most once per component",
+    "error(0.1) D0 ^ D0": "component D0 is repeated",
+}
 
 
 def _unescape(text: str) -> str:
@@ -57,7 +63,7 @@ ROWS = [line.split("\t") for line in FIXTURE.read_text().splitlines()[1:]]
 )
 def test_public_dem_grammar(row: list[str], consumer: str) -> None:
     text = _unescape(row[0])
-    accepted = row[1] == "accept"
+    accepted = row[1] == "accept" and text not in STIM_EXCEPTIONS
     expected = None
     needs_flattening = False
     if accepted:
@@ -100,6 +106,9 @@ def test_public_dem_grammar(row: list[str], consumer: str) -> None:
     if needs_flattening and consumer != "PyMatchingDecoder":
         assert error is not None
         assert "requires a flattened DEM:" in error
+    if text in STIM_EXCEPTIONS:
+        assert error is not None
+        assert STIM_EXCEPTIONS[text] in error
     CONTRACT.assert_outcome(text, accepted, consumer, counts, expected, error)
 
 
@@ -124,9 +133,9 @@ def test_zero_probability_mechanism_is_not_registered() -> None:
 
 @pytest.mark.parametrize(
     "targets",
-    ["D0 D0", "D0 ^ D0", "D0 D1 ^ D1 D2", "D0 L0 L0", "D0 D0 L0", "L0 ^ L0"],
+    ["D0 D1 ^ D1 D2", "D0 L0 ^ D1 L0", "D0 D1 ^ D1 D2 ^ D2 D0"],
 )
-def test_duplicate_target_effects_match_stim(targets: str) -> None:
+def test_cross_component_effects_match_stim(targets: str) -> None:
     text = f"error(1) {targets}"
     sampler = DemSampler.from_dem_string(text)
     assert sampler.num_mechanisms == 1
@@ -136,13 +145,10 @@ def test_duplicate_target_effects_match_stim(targets: str) -> None:
 
 
 def test_detector_free_observable_mechanism_keeps_zero_column() -> None:
-    """Readers agree on the folded matrix; LDPC rejects its semantically empty column.
-
-    The remaining rejection is the backend's own constraint, not a reader disagreement.
-    """
-    text = "error(0.1) D0 D0 L0\nerror(0.2) D0 L0"
+    text = "error(0.1) L0\nerror(0.2) D0 L0"
     decoder = decoders.BpOsdDecoder.from_dem(text)
     assert decoder.num_mechanisms == 2
+    assert decoder.num_detectors == 1
     with pytest.raises(RuntimeError, match=r"Column weight is zero"):
         decoders.UnionFindDecoder.from_dem(text)
 
@@ -189,9 +195,27 @@ DECODER_CLASSES = [
 
 @pytest.mark.parametrize("decoder", DECODER_CLASSES, ids=lambda decoder: decoder.__name__)
 def test_exported_decoder_constructors_classify_dem_syntax(decoder: type) -> None:
-    if decoder.__name__ in {"PyMatchingDecoder", "TesseractDecoder", "TesseractTrellisDecoder", "ChromobiusDecoder"}:
-        with pytest.raises(RuntimeError, match="Unrecognized instruction name:"):
-            decoder.from_dem("@bad")
+    with pytest.raises(ValueError, match="Invalid DEM syntax:"):
+        decoder.from_dem("@bad")
+
+
+@pytest.mark.parametrize(
+    "consumer",
+    ["DemSampler", "ParsedDem", "DemAwareDecoder", "bp_osd", "pymatching", "PyMatchingDecoder", "TesseractDecoder"],
+)
+def test_duplicate_target_is_a_syntax_error(consumer: str) -> None:
+    text = "error(0.1) D0 D0"
+    if consumer == "DemSampler":
+        construct = partial(DemSampler.from_dem_string, text)
+    elif consumer == "ParsedDem":
+        construct = partial(ParsedDem.from_string, text)
+    elif consumer in {"bp_osd", "pymatching"}:
+        construct = partial(
+            SampleBatch([[0]], [0], num_observables=0).decode,
+            text,
+            bp_osd() if consumer == "bp_osd" else pymatching(correlated=False),
+        )
     else:
-        with pytest.raises(ValueError, match="Invalid DEM syntax:"):
-            decoder.from_dem("@bad")
+        construct = partial(getattr(decoders, consumer).from_dem, text)
+    with pytest.raises(ValueError, match=r"Invalid DEM syntax: detector D0 is listed twice"):
+        construct()

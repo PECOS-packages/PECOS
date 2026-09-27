@@ -10,6 +10,8 @@ use std::fmt;
 /// Error types for Tesseract operations
 #[derive(Debug)]
 pub enum TesseractError {
+    /// DEM validation failed
+    Dem(pecos_decoder_core::DecoderError),
     /// Invalid configuration parameter
     InvalidConfig(String),
     /// Decoder initialization failed
@@ -23,6 +25,7 @@ pub enum TesseractError {
 impl fmt::Display for TesseractError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            TesseractError::Dem(error) => error.fmt(f),
             TesseractError::InvalidConfig(msg) => write!(f, "Invalid configuration: {msg}"),
             TesseractError::InitializationFailed(msg) => {
                 write!(f, "Initialization failed: {msg}")
@@ -33,7 +36,23 @@ impl fmt::Display for TesseractError {
     }
 }
 
-impl Error for TesseractError {}
+impl Error for TesseractError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Dem(error) => Some(error),
+            _ => None,
+        }
+    }
+}
+
+impl From<TesseractError> for pecos_decoder_core::DecoderError {
+    fn from(error: TesseractError) -> Self {
+        match error {
+            TesseractError::Dem(error) => error,
+            error => Self::InternalError(error.to_string()),
+        }
+    }
+}
 
 /// Configuration for Tesseract decoder
 #[derive(Debug, Clone)]
@@ -216,11 +235,14 @@ impl TesseractDecoder {
     ///
     /// # Errors
     ///
+    /// Returns [`TesseractError::Dem`] for tokenizer errors.
     /// Returns [`TesseractError::InitializationFailed`] if:
-    /// - The DEM string is malformed
+    /// - The backend rejects the DEM structure
     /// - The DEM contains unsupported error mechanisms
     /// - Memory allocation fails
     pub fn new(dem_string: &str, config: TesseractConfig) -> Result<Self, TesseractError> {
+        pecos_decoder_core::dem::grammar::validate_dem_text(dem_string)
+            .map_err(TesseractError::Dem)?;
         config.validate()?;
         let config_repr = config.to_ffi_repr();
 
@@ -507,6 +529,26 @@ pub struct ErrorInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dem_validation_precedes_backend_parsing() {
+        for text in [
+            "error(0.1) D0 D0",
+            "error(0.1) D0 D1 ^ D1 D0",
+            "repeat 2 {\nerror(0.1) D0 D0\n}",
+            "@bad",
+        ] {
+            let expected = pecos_decoder_core::dem::grammar::validate_dem_text(text).unwrap_err();
+            let error = TesseractDecoder::new(text, TesseractConfig::default())
+                .err()
+                .unwrap();
+            assert!(matches!(
+                error,
+                TesseractError::Dem(pecos_decoder_core::DecoderError::InvalidDemSyntax(_))
+            ));
+            assert_eq!(error.to_string(), expected.to_string());
+        }
+    }
 
     #[test]
     fn test_tesseract_config_default() {

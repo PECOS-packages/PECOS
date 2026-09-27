@@ -112,7 +112,8 @@ fn negate(value: &BitUInt) -> BitUInt {
 fn signed_cmp(a: &BitUInt, b: &BitUInt) -> Ordering {
     // Both helpers read each operand's own top bit as its sign, so unequal
     // widths would compare different bit positions and return quiet nonsense.
-    // `widen_pair` is the only caller and guarantees equal widths.
+    // Every caller passes a pair straight from `widen_pair`, which returns two
+    // operands of the same width.
     debug_assert_eq!(a.size(), b.size(), "signed comparison needs equal widths");
     match (negative(a), negative(b)) {
         (true, false) => Ordering::Less,
@@ -197,10 +198,15 @@ pub fn eval_unary_op(op: &str, value: ExprValue) -> Result<ExprValue, PecosError
 ///
 /// The rejection depends on the count's width, not on its tag: a signed count
 /// narrower than 64 bits is read at face value, so a signed eight-bit `0xFF`
-/// shifts by 255 rather than erroring as negative one. The count is also read
-/// before the operands widen, which is what keeps a 64-bit signed negative
-/// count erroring instead of sign-extending into a large positive one. #879
-/// covers whether to replace this family of rules.
+/// shifts by 255 rather than erroring as negative one.
+///
+/// The count is also read before the operands widen, and both directions of
+/// that matter. Widening a narrow signed count would sign-extend it, so the
+/// eight-bit `0xFF` above would become negative one and error instead of
+/// shifting. Widening a negative count past 64 bits would set a word above the
+/// first, and the lossy accessor reports zero for that, so the count would
+/// silently become a shift by nothing rather than an error. #879 covers
+/// whether to replace this family of rules.
 ///
 /// # Errors
 /// Returns an error for division by zero, a negative shift count, or an

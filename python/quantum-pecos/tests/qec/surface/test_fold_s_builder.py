@@ -21,6 +21,7 @@ from pecos.qec.surface.logical_circuit import (
 )
 from pecos.qec.surface.patch import PatchOrientation
 from pecos.testing import deterministic_parity_basis, group_contains, simulate_tick_circuit, stabilizer_generators_after
+from pecos_rslib.qec import LogicalCircuitDecoder
 
 
 class FoldMapProbe(_CircuitGenerator):
@@ -362,7 +363,9 @@ def test_fold_op_variant_assertion(fold):
 
 
 Y_ROUND_PAIRS = [(3, before, after) for before in range(3) for after in range(3)] + [(5, 0, 0), (5, 1, 1)]
-EMPTY_COMMIT = r"segment 0 \(patch 'A'\) has no detectors: .*; non-final descriptor segments need at least one detector"
+EMPTY_COMMIT = (
+    r"segment 0 \(patch 'A'\) has an empty commit region: .*; descriptor commit regions need at least one round"
+)
 
 
 def y_builder(patch, before, after, *, explicit=False, swapped=False, shared=False, cx=False):
@@ -614,7 +617,7 @@ def test_y_readout_append_after_compile():
     explicit.add_patch(patch, "A")
     explicit.add_memory("A", 1, "Y")
     explicit.add_memory("A", 2, "X")
-    assert_y_composition(builder, explicit, empty_commit=True)
+    assert_y_composition(builder, explicit, empty_commit=False)
 
 
 class YReadoutProbe(LogicalCircuitBuilder):
@@ -679,7 +682,7 @@ def test_y_readout_h_composition(shared):
 
 
 @pytest.mark.parametrize("basis", ["X", "Y"])
-@pytest.mark.parametrize("buffer", [None, 0, 1])
+@pytest.mark.parametrize("buffer", [None, 0, 1, 2])
 def test_descriptor_empty_preparation_message(basis, buffer):
     builder = LogicalCircuitBuilder()
     builder.add_patch(SurfacePatch.create(3), "A")
@@ -688,23 +691,69 @@ def test_descriptor_empty_preparation_message(basis, buffer):
     builder.add_memory("A", 2, "X")
     cause = "a zero-round Y preparation before the Y-readout fold" if basis == "Y" else "a zero-round memory segment"
     message = (
-        f"segment 0 (patch 'A') has no detectors: {cause}; non-final descriptor segments need at least one detector"
+        f"segment 0 (patch 'A') has an empty commit region: {cause}; descriptor commit regions need at least one round"
     )
     with pytest.raises(ValueError, match=re.escape(message)) as error:
         builder.build_algorithm_descriptor(buffer=buffer)
     assert str(error.value) == message
 
 
-def test_descriptor_empty_positive_round_segment():
+@pytest.mark.parametrize("basis", ["X", "Z"])
+def test_descriptor_empty_commit_region(basis):
     builder = LogicalCircuitBuilder()
     builder.add_patch(SurfacePatch.create(3), "A")
-    builder.add_memory("A", 1, "Y")
-    builder.add_memory("A", 2, "Z")
-    with pytest.raises(
-        ValueError,
-        match=r"segment 0 \(patch 'A'\) has no detectors: a segment with no deterministic checks",
-    ):
+    builder.add_memory("A", 2, basis)
+    builder.add_memory("A", 0, basis)
+    builder.add_memory("A", 2, basis)
+    message = (
+        "segment 1 (patch 'A') has an empty commit region: a zero-round memory segment; "
+        "descriptor commit regions need at least one round"
+    )
+    with pytest.raises(ValueError, match=re.escape(message)) as error:
         builder.build_algorithm_descriptor()
+    assert str(error.value) == message
+
+
+@pytest.mark.parametrize(
+    ("shape", "buffer", "counts"),
+    [
+        ("buffered_zero", 1, [12, 0, 20]),
+        ("buffered_zero", 2, [12, 0, 20]),
+        ("no_detectors", None, [0, 20]),
+        ("no_detectors", 1, [0, 20]),
+        ("no_detectors", 2, [0, 20]),
+    ],
+)
+def test_descriptor_non_empty_commit_region_with_zero_detectors(shape, buffer, counts):
+    """A non-empty native window is decodable even when its segment owns no detectors."""
+    builder = LogicalCircuitBuilder()
+    builder.add_patch(SurfacePatch.create(3), "A")
+    if shape == "buffered_zero":
+        builder.add_memory("A", 2, "Z")
+        builder.add_memory("A", 0, "Z")
+        builder.add_memory("A", 2, "Z")
+    else:
+        builder.add_memory("A", 1, "Y")
+        builder.add_memory("A", 2, "X")
+    descriptor = builder.build_algorithm_descriptor(buffer=buffer)
+    assert [segment["num_detectors"] for segment in descriptor["segments"]] == counts
+    decoder = LogicalCircuitDecoder(descriptor, budget="unlimited")
+    assert decoder.decode([0] * sum(counts)) == 0
+
+
+@pytest.mark.parametrize("basis", ["X", "Z"])
+def test_descriptor_buffer_error_precedes_later_empty_commit_region(basis):
+    builder = LogicalCircuitBuilder()
+    builder.add_patch(SurfacePatch.create(3), "A")
+    builder.add_memory("A", 2, basis)
+    builder.add_memory("A", 0, basis)
+    builder.add_memory("A", 2, basis)
+    message = (
+        "buffer=0 is too small for logical segment 0; the source-tracked DEM requires at least 1 look-ahead rounds"
+    )
+    with pytest.raises(ValueError, match=re.escape(message)) as error:
+        builder.build_algorithm_descriptor(buffer=0)
+    assert str(error.value) == message
 
 
 def test_descriptor_validates_buffer_before_lowering():

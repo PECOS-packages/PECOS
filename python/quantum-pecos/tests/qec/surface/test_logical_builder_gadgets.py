@@ -1298,7 +1298,10 @@ def test_disjoint_terminal_bases():
     assert builder.build_dem()
     with pytest.raises(
         ValueError,
-        match=r"segment 0 \(patch 'A'\) has no detectors: a zero-round Y preparation before the Y-readout fold",
+        match=(
+            r"segment 0 \(patch 'A'\) has an empty commit region: "
+            r"a zero-round Y preparation before the Y-readout fold"
+        ),
     ):
         builder.build_algorithm_descriptor()
     builder.operations[0].basis = "X"

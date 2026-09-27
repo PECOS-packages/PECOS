@@ -643,9 +643,12 @@ observable.
 
 `to_tick_circuit()` and `build_dem()` succeed for these programs;
 `build_algorithm_descriptor()` raises
-`ValueError: segment 0 (patch 'A') has no detectors: a zero-round Y preparation before the Y-readout fold; non-final descriptor segments need at least one detector`
-when the patch is named A. Supporting empty non-final descriptor segments is a
-follow-up; the Python pre-check also diagnoses explicit zero-round memories.
+`ValueError: segment 0 (patch 'A') has an empty commit region: a zero-round Y preparation before the Y-readout fold; descriptor commit regions need at least one round`
+when the patch is named A. The pre-check rejects a commit region with zero
+rounds after including the requested look-behind buffer. This also diagnoses
+explicit zero-round memories when their region remains empty; a later
+zero-round memory can be accepted with look-behind, and a non-empty commit
+region may contain zero detectors. Supporting empty commit regions is a follow-up.
 
 No single-patch memory program with only product-basis preparation (X, Y, or Z)
 yields a deterministic Y observable; prepare X and apply a logical S fold to

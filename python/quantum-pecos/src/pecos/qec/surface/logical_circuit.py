@@ -42,6 +42,8 @@ from pecos.qec.surface import gadgets
 from pecos.qec.surface.circuit_builder import OpType, QubitAllocation
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from pecos.qec.surface.circuit_builder import SurfaceCircuitStep
     from pecos.qec.surface.patch import Stabilizer, SurfacePatch
 
@@ -774,30 +776,41 @@ class LogicalOp:
         return self.gate_type in {LogicalGateType.MEMORY, LogicalGateType.FOLD_S}
 
 
-def _validate_descriptor_segment_counts(operations: list[LogicalOp], counts: list[int]) -> None:
-    """Explain empty non-final commit regions before requesting native DEM windows."""
-    segments = [op for op in operations if op.is_segment]
+def _descriptor_commit_regions(
+    segment_ops: list[LogicalOp],
+    segments: list[dict],
+    *,
+    explicit_buffer: int,
+    time_cursor: int,
+) -> Iterator[tuple[int, int, int]]:
+    """Validate regions as reached so earlier window errors keep their precedence."""
     prepared: set[str] = set()
-    for index, (op, count) in enumerate(zip(segments[:-1], counts[:-1], strict=True)):
-        if count == 0:
-            cause = "a segment with no deterministic checks"
+    for index, (op, segment) in enumerate(zip(segment_ops, segments, strict=True)):
+        start_round = max(0, int(segment["time_start"]) - explicit_buffer)
+        is_last = index == len(segments) - 1
+        commit_end = time_cursor + 1 if is_last else int(segment["time_end"])
+        commit_rounds = commit_end - start_round
+        if commit_rounds == 0:
+            cause = "a segment with no commit rounds"
             if op.gate_type == LogicalGateType.MEMORY and op.rounds == 0:
                 cause = "a zero-round memory segment"
                 if (
                     all(
                         label not in prepared and op.per_patch_basis.get(label, op.basis) == "Y" for label in op.patches
                     )
-                    and segments[index + 1].fold == "SDG"
-                    and segments[index + 1].patches == op.patches
+                    and not is_last
+                    and segment_ops[index + 1].fold == "SDG"
+                    and segment_ops[index + 1].patches == op.patches
                 ):
                     cause = "a zero-round Y preparation before the Y-readout fold"
             patch_names = ", ".join(repr(label) for label in op.patches)
             patches = f"patch {patch_names}" if len(op.patches) == 1 else f"patches {patch_names}"
             msg = (
-                f"segment {index} ({patches}) has no detectors: {cause}; "
-                "non-final descriptor segments need at least one detector"
+                f"segment {index} ({patches}) has an empty commit region: {cause}; "
+                "descriptor commit regions need at least one round"
             )
             raise ValueError(msg)
+        yield index, start_round, commit_rounds
         prepared.update(op.patches)
 
 
@@ -2317,9 +2330,10 @@ class LogicalCircuitBuilder:
         Eligible single-patch memories, repeated H, repeated CX, and mixed
         two-patch H/CX algorithms are assembled directly from bounded
         physical fixture caches; other circuits retain full-model fallback.
-        Non-final segments must contain at least one detector; otherwise a
-        ValueError identifies the segment, patches, and cause, including the
-        zero-round Y preparation inserted for a first-segment Y readout.
+        Commit regions, including any requested look-behind, must contain at
+        least one round; otherwise a ValueError identifies the segment, patches,
+        and cause. A non-empty region may contain zero detectors. An initial
+        non-final zero-round preparation has an empty region even with look-behind.
 
         Returns:
             Dict with keys: segments, boundary_gates, num_observables,
@@ -2363,6 +2377,7 @@ class LogicalCircuitBuilder:
         # Each MEMORY op has a number of rounds. Time coordinates are
         # sequential round indices across all segments.
         segments = []
+        segment_ops = []
         boundary_gates = []
         # Gates accumulate between consecutive MEMORY ops.
         pending_gates = []
@@ -2410,6 +2425,7 @@ class LogicalCircuitBuilder:
                     else:
                         seg_sc.append({"X": base["X"], "Z": base["Z"]})
 
+                segment_ops.append(op)
                 segments.append(
                     {
                         "time_start": seg_start,
@@ -2485,7 +2501,6 @@ class LogicalCircuitBuilder:
                 raise ValueError(msg)
             detector_rounds.append(int(coords[2]))
         # Commit counts partition the incoming syndrome, excluding duplicated window halos.
-        # Validate all segments before the Rust slicer can reject an empty commit region.
         segment_detector_counts = [
             sum(
                 int(seg["time_start"])
@@ -2495,13 +2510,14 @@ class LogicalCircuitBuilder:
             )
             for index, seg in enumerate(segments)
         ]
-        _validate_descriptor_segment_counts(operations, segment_detector_counts)
         explicit_buffer = 0 if buffer is None else buffer
-        for segment_index, seg in enumerate(segments):
-            start_round = max(0, int(seg["time_start"]) - explicit_buffer)
+        for segment_index, start_round, commit_rounds in _descriptor_commit_regions(
+            segment_ops,
+            segments,
+            explicit_buffer=explicit_buffer,
+            time_cursor=time_cursor,
+        ):
             is_last = segment_index == len(segments) - 1
-            commit_end = time_cursor + 1 if is_last else int(seg["time_end"])
-            commit_rounds = commit_end - start_round
             forward_buffer = 0 if is_last else buffer
             forward_boundary = "hard" if is_last else "soft"
 

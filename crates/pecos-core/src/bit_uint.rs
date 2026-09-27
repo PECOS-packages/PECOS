@@ -1168,21 +1168,21 @@ mod tests {
     }
 
     #[test]
-    fn w200_quotient_above_bit_127() {
+    fn w200_quotient_from_operands_above_bit_127() {
         let a = with_bits(200, &[0, 1, 75, 170]);
         let b = with_bits(200, &[65]);
         assert_words(&(&a / &b), 200, &[1024, 2_199_023_255_552, 0, 0]);
     }
 
     #[test]
-    fn w200_remainder_above_bit_127() {
+    fn w200_remainder_from_operands_above_bit_127() {
         let a = with_bits(200, &[0, 1, 75, 170]);
         let b = with_bits(200, &[65]);
         assert_words(&(&a % &b), 200, &[3, 0, 0, 0]);
     }
 
     #[test]
-    fn w200_difference_above_bit_127() {
+    fn w200_difference_from_operands_above_bit_127() {
         let a = with_bits(200, &[0, 170]);
         let b = with_bits(200, &[170]);
         assert_words(&(&a - &b), 200, &[1, 0, 0, 0]);
@@ -1465,10 +1465,13 @@ mod tests {
                 assert_eq!(quotient.size(), left_width);
                 assert_eq!(remainder.size(), left_width);
                 assert!(remainder < b);
-                // Reconstruct at a width that cannot wrap: a quotient below
-                // 2^left_width times a divisor below 2^right_width fits in their
-                // sum. Reconstructing at left_width instead would accept wrong
-                // pairs, such as q=127, r=0 for a=255, b=129 at width 8.
+                // Reconstruct twice. At the left width this exercises
+                // multiplication at every width in the loop, including widths no
+                // other test multiplies at, but the wrap would accept wrong pairs
+                // such as q=127, r=0 for a=255, b=129 at width 8. At the sum of
+                // the two widths nothing can wrap, which pins the pair, but it
+                // only ever multiplies at that sum. Both are needed.
+                assert_eq!((&(&quotient * &b) + &remainder).to_words(), a.to_words());
                 let wide = left_width + right_width;
                 let widen =
                     |v: &BitUInt| BitUInt::from_raw_words(wide, v.to_words().into_boxed_slice());

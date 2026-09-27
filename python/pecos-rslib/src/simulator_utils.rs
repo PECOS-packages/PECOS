@@ -96,6 +96,7 @@ pub(crate) enum Symbol {
     Rxx,
     Ryy,
     Rzz,
+    Rxyxy2q,
     RxxRyyRzz,
     Ii,
     Crx,
@@ -162,6 +163,7 @@ impl SymbolEntry {
                 | Symbol::Rxx
                 | Symbol::Ryy
                 | Symbol::Rzz
+                | Symbol::Rxyxy2q
                 | Symbol::RxxRyyRzz
                 | Symbol::Ii
                 | Symbol::Crx
@@ -345,6 +347,7 @@ pub(crate) const SYMBOL_ENTRIES: &[SymbolEntry] = symbol_entries! {
     Rxx, Angle, ["RXX"];
     Ryy, Angle, ["RYY"];
     Rzz, Angle, ["RZZ"];
+    Rxyxy2q, Angles2, ["RXYXY2Q"];
     RxxRyyRzz, Angles3, ["RXXRYYRZZ", "RZZRYYRXX", "R2XXYYZZ", "RXXYYZZ"];
     Ii, None, ["II"];
     // Boundary spellings lowered before simulator dispatch.

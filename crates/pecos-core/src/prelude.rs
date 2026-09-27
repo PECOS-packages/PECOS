@@ -13,6 +13,7 @@
 pub use crate::{
     Angle64, Bit, BitInt, BitUInt, Bits, Set, Signal, TimeScale, TimeUnits, VecSet, bitvec,
     errors::PecosError,
+    expression::{ExprValue, eval_binary_op, eval_unary_op},
     gate_type::GateType,
     gates::Gate,
     pauli::{Pauli, PauliOperator},

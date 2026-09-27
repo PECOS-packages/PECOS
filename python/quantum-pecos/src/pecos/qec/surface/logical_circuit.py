@@ -42,6 +42,8 @@ from pecos.qec.surface import gadgets
 from pecos.qec.surface.circuit_builder import OpType, QubitAllocation
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from pecos.qec.surface.circuit_builder import SurfaceCircuitStep
     from pecos.qec.surface.patch import Stabilizer, SurfacePatch
 
@@ -774,6 +776,44 @@ class LogicalOp:
         return self.gate_type in {LogicalGateType.MEMORY, LogicalGateType.FOLD_S}
 
 
+def _descriptor_commit_regions(
+    segment_ops: list[LogicalOp],
+    segments: list[dict],
+    *,
+    explicit_buffer: int,
+    time_cursor: int,
+) -> Iterator[tuple[int, int, int]]:
+    """Validate regions as reached so earlier window errors keep their precedence."""
+    prepared: set[str] = set()
+    for index, (op, segment) in enumerate(zip(segment_ops, segments, strict=True)):
+        start_round = max(0, int(segment["time_start"]) - explicit_buffer)
+        is_last = index == len(segments) - 1
+        commit_end = time_cursor + 1 if is_last else int(segment["time_end"])
+        commit_rounds = commit_end - start_round
+        if commit_rounds == 0:
+            cause = "a segment with no commit rounds"
+            if op.gate_type == LogicalGateType.MEMORY and op.rounds == 0:
+                cause = "a zero-round memory segment"
+                if (
+                    all(
+                        label not in prepared and op.per_patch_basis.get(label, op.basis) == "Y" for label in op.patches
+                    )
+                    and not is_last
+                    and segment_ops[index + 1].fold == "SDG"
+                    and segment_ops[index + 1].patches == op.patches
+                ):
+                    cause = "a zero-round Y preparation before the Y-readout fold"
+            patch_names = ", ".join(repr(label) for label in op.patches)
+            patches = f"patch {patch_names}" if len(op.patches) == 1 else f"patches {patch_names}"
+            msg = (
+                f"segment {index} ({patches}) has an empty commit region: {cause}; "
+                "descriptor commit regions need at least one round"
+            )
+            raise ValueError(msg)
+        yield index, start_round, commit_rounds
+        prepared.update(op.patches)
+
+
 def _conjugate_pauli(op: LogicalOp, patch: str, pauli: str) -> list[tuple[str, str]]:
     """Return the sign-free Pauli image under a transversal Clifford layer."""
     if patch not in op.patches:
@@ -1100,7 +1140,11 @@ class LogicalCircuitBuilder:
                 their individual basis (e.g., ``{"D": "Z", "Y": "Y"}``).
                 Only used for initialization and final measurement. Y is
                 supported for preparation; terminal Y lowers to a logical S-dagger
-                fold followed by the requested rounds and X readout.
+                fold followed by the requested rounds and X readout in the current logical frame.
+                Product-Y preparation has a deterministic encoded-sign parity of first-round
+                check records, omitted because it is a distance-1 quantity; exposing it is a follow-up.
+                Y-readout folds create hyperedges that build_decoder's matching route
+                (LogicalSubgraphDecoder) skips; see add_logical_s and use a hypergraph decoder.
         """
         if isinstance(patch_labels, str):
             patch_labels = [patch_labels]
@@ -1414,11 +1458,21 @@ class LogicalCircuitBuilder:
             for label in read_y:
                 if label not in prepared:
                     operations.append(LogicalOp(LogicalGateType.MEMORY, [label], rounds=0, basis="Y"))
-                operations.append(self._fold_s_operation(label, dagger=True))
+                try:
+                    operations.append(self._fold_s_operation(label, dagger=True))
+                except ValueError as error:
+                    msg = f"Y readout on patch {label!r} lowers to a fold-transversal S: {error}"
+                    raise ValueError(msg) from error
             memory = op
             if read_y:
                 # Preserve the shared readout segment and its per-patch observable ID order.
-                memory = replace(op, per_patch_basis={**op.per_patch_basis, **dict.fromkeys(read_y, "X")})
+                bases = {**op.per_patch_basis, **dict.fromkeys(read_y, "X")}
+                basis = "X" if all(label in bases for label in op.patches) else op.basis
+                memory = replace(
+                    op,
+                    basis=basis,
+                    per_patch_basis={label: value for label, value in bases.items() if value != basis},
+                )
             operations.append(memory)
             prepared.update(op.patches)
         return operations
@@ -2276,6 +2330,10 @@ class LogicalCircuitBuilder:
         Eligible single-patch memories, repeated H, repeated CX, and mixed
         two-patch H/CX algorithms are assembled directly from bounded
         physical fixture caches; other circuits retain full-model fallback.
+        Commit regions, including any requested look-behind, must contain at
+        least one round; otherwise a ValueError identifies the segment, patches,
+        and cause. A non-empty region may contain zero detectors. An initial
+        non-final zero-round preparation has an empty region even with look-behind.
 
         Returns:
             Dict with keys: segments, boundary_gates, num_observables,
@@ -2286,10 +2344,10 @@ class LogicalCircuitBuilder:
             It is emitted for a future consumer; no decoder applies the
             correction today. T decision-point execution remains unsupported.
         """
-        operations = self._lowered_operations()
         if buffer is not None and buffer < 0:
             msg = "buffer must be non-negative or None"
             raise ValueError(msg)
+        operations = self._lowered_operations()
 
         # Eligible memory, repeated-H, repeated-CX, and mixed two-patch H/CX
         # algorithms are assembled entirely from bounded physical fixture
@@ -2319,6 +2377,7 @@ class LogicalCircuitBuilder:
         # Each MEMORY op has a number of rounds. Time coordinates are
         # sequential round indices across all segments.
         segments = []
+        segment_ops = []
         boundary_gates = []
         # Gates accumulate between consecutive MEMORY ops.
         pending_gates = []
@@ -2366,6 +2425,7 @@ class LogicalCircuitBuilder:
                     else:
                         seg_sc.append({"X": base["X"], "Z": base["Z"]})
 
+                segment_ops.append(op)
                 segments.append(
                     {
                         "time_start": seg_start,
@@ -2430,7 +2490,6 @@ class LogicalCircuitBuilder:
         # independent source contributions, decomposition metadata, logical
         # outputs, hyperedges, and cross-round correlations intact.
         seg_dems = []
-        segment_detector_counts = []
         segment_window_detector_counts = []
         detector_rounds = []
         for detector_id, coords in structured_dem.detector_coordinates():
@@ -2441,12 +2500,24 @@ class LogicalCircuitBuilder:
                 )
                 raise ValueError(msg)
             detector_rounds.append(int(coords[2]))
+        # Commit counts partition the incoming syndrome, excluding duplicated window halos.
+        segment_detector_counts = [
+            sum(
+                int(seg["time_start"])
+                <= round_
+                < (time_cursor + 1 if index == len(segments) - 1 else int(seg["time_end"]))
+                for round_ in detector_rounds
+            )
+            for index, seg in enumerate(segments)
+        ]
         explicit_buffer = 0 if buffer is None else buffer
-        for segment_index, seg in enumerate(segments):
-            start_round = max(0, int(seg["time_start"]) - explicit_buffer)
+        for segment_index, start_round, commit_rounds in _descriptor_commit_regions(
+            segment_ops,
+            segments,
+            explicit_buffer=explicit_buffer,
+            time_cursor=time_cursor,
+        ):
             is_last = segment_index == len(segments) - 1
-            commit_end = time_cursor + 1 if is_last else int(seg["time_end"])
-            commit_rounds = commit_end - start_round
             forward_buffer = 0 if is_last else buffer
             forward_boundary = "hard" if is_last else "soft"
 
@@ -2470,12 +2541,6 @@ class LogicalCircuitBuilder:
             )
             seg_dems.append(str(segment_dem))
             segment_window_detector_counts.append(segment_dem.num_detectors)
-            # Segment metadata partitions the incoming full-circuit syndrome;
-            # it therefore counts only this segment's commit detectors, not the
-            # look-behind/look-ahead detectors duplicated in its local DEM.
-            segment_detector_counts.append(
-                sum(int(seg["time_start"]) <= round_ < commit_end for round_ in detector_rounds),
-            )
 
         # Physical code distance for latency/windowing decisions. With multiple
         # patches use the minimum (the weakest bound governs latency). This is the

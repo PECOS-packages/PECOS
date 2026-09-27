@@ -622,21 +622,39 @@ A terminal `add_memory(label, rounds, "Y")` compiles as
 `add_logical_sdg(label)` followed by `add_memory(label, rounds, "X")`:
 the fold precedes the requested rounds. If this is also the patch's first
 segment, a zero-round Y preparation precedes the fold. Surface-code logical Y
-cannot be read out by transversal Y measurements: no X or Z check is a
+cannot be read out fault-tolerantly by transversal Y measurements: no X or Z check is a
 product of single-qubit Y operators, so per-qubit Y outcomes reveal no check
 value and errors cannot be corrected; see
 [Gidney, arXiv:2302.07395](https://arxiv.org/abs/2302.07395).
 PECOS's S-dagger fold followed by X readout measures logical Y with the fold's
-Z-check records included in the parity.
+Z-check records included in the parity. Terminal Y is measured in the patch's
+current logical frame, like terminal X and Z; after a transversal H, the
+reported value refers to the swapped frame.
 
-Product-Y preparation followed by Y readout emits no deterministic observable,
-just as product-Y preparation followed by X readout emits none. At distance 3,
-zero, one, and two requested rounds give 4, 12, and 20 deterministic detectors.
+Product-Y preparation followed by Y readout emits no observable. Its encoded
+Y sign is a deterministic parity of first-round check records, but the builder
+deliberately omits this distance-1 quantity: a single first-round measurement
+error flips it. Exposing that sign with injection semantics is a follow-up.
+At distance 3, zero, one, and two requested rounds give 4, 12, and 20
+deterministic detectors. For one and two rounds, the emitted masks have ranks
+12 and 20, while the full deterministic parity spaces have ranks 13 and 21.
+`surface_memory_dem_spec` has no Y form because product-Y memory has no emitted
+observable.
+
 `to_tick_circuit()` and `build_dem()` succeed for these programs;
-`build_algorithm_descriptor()` still raises
-`ValueError: a DEM window commit region cannot be empty` because the initial
-zero-round segment has no detectors. Supporting empty non-final descriptor
-segments is a follow-up.
+`build_algorithm_descriptor()` raises
+`ValueError: segment 0 (patch 'A') has an empty commit region: a zero-round Y preparation before the Y-readout fold; descriptor commit regions need at least one round`
+when the patch is named A. The pre-check rejects a commit region with zero
+rounds after including the requested look-behind buffer. This also diagnoses
+explicit zero-round memories when their region remains empty; a later
+zero-round memory can be accepted with look-behind, and a non-empty commit
+region may contain zero detectors. Supporting empty commit regions is a follow-up.
+
+No single-patch memory program with only product-basis preparation (X, Y, or Z)
+yields a deterministic Y observable; prepare X and apply a logical S fold to
+reach a supported deterministic Y readout. Y-readout folds create hyperedges
+that `build_decoder`'s matching route (`LogicalSubgraphDecoder`) skips; see the
+[fold section's decoder warning](#fold-transversal-s) and use a hypergraph decoder.
 
 X preparation followed by a logical S fold and terminal Y memory emits one
 observable: the final X string plus the Z records of **both** folds. Its
@@ -673,19 +691,25 @@ No fold restrictions surfaced for square rotated patches in the tested round
 grid. The usual fold geometry guards apply; even distances also compile in
 the builder. For shared memory operations, only terminal-Y patches receive
 folds, and all patches retain their shared readout segment. Observable IDs
-advance in the operation's `patches` order, even for an omitted nondeterministic
+advance in the operation's `patches` order, even when a patch emits no
 observable: a first `add_memory(["A", "B"], r, {"A": "Y", "B": "Z"})`
 emits only B's observable, at ID 1. With an initial shared X/Z memory, S on A,
 and CX from B to A before that final shared memory, both observables appear
 at IDs 0 (A) and 1 (B), each with noiseless parity zero.
 
-The Guppy protocol module's `make_logical_y_readout(num_rounds)` renders the
+With N terminal-Y patches in a shared memory operation, lowering inserts N
+serialized single-patch fold rounds, so each patch idles through the other
+patches' folds. First-segment patches also receive their individual zero-round
+Y preparations before their folds. A multi-patch fold is a follow-up.
+
+The Guppy protocol module's `make_logical_y_readout_experiment(num_rounds)` renders the
 same X preparation, rounds, S fold, S-dagger fold, rounds, and X readout.
 
 ### Measure-out
 
 `basis="Z"` directly measures data; `basis="X"` applies H first. Both
-consume the patch and return data bits. Y readout is unsupported. At distance 3,
+consume the patch and return data bits. Y readout is unsupported by this gadget;
+use the builder's [Y readout composition](#y-readout). At distance 3,
 X readout takes two ticks and Z readout takes one; each makes nine measurements.
 
 ```python

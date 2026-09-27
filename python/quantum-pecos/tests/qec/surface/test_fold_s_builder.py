@@ -21,6 +21,7 @@ from pecos.qec.surface.logical_circuit import (
 )
 from pecos.qec.surface.patch import PatchOrientation
 from pecos.testing import deterministic_parity_basis, group_contains, simulate_tick_circuit, stabilizer_generators_after
+from pecos_rslib.qec import LogicalCircuitDecoder
 
 
 class FoldMapProbe(_CircuitGenerator):
@@ -362,7 +363,9 @@ def test_fold_op_variant_assertion(fold):
 
 
 Y_ROUND_PAIRS = [(3, before, after) for before in range(3) for after in range(3)] + [(5, 0, 0), (5, 1, 1)]
-EMPTY_COMMIT = "a DEM window commit region cannot be empty"
+EMPTY_COMMIT = (
+    r"segment 0 \(patch 'A'\) has an empty commit region: .*; descriptor commit regions need at least one round"
+)
 
 
 def y_builder(patch, before, after, *, explicit=False, swapped=False, shared=False, cx=False):
@@ -392,7 +395,7 @@ def assert_y_composition(builder, explicit, *, empty_commit):
     expected = explicit.to_tick_circuit()
     expected_dem = explicit.build_dem()
     if empty_commit:
-        with pytest.raises(ValueError, match=EMPTY_COMMIT):
+        with pytest.raises(ValueError, match=EMPTY_COMMIT) as expected_error:
             explicit.build_algorithm_descriptor()
     else:
         expected_descriptor = explicit.build_algorithm_descriptor()
@@ -403,8 +406,9 @@ def assert_y_composition(builder, explicit, *, empty_commit):
             assert actual.get_meta(key) == expected.get_meta(key), key
         assert builder.build_dem() == expected_dem
         if empty_commit:
-            with pytest.raises(ValueError, match=EMPTY_COMMIT):
+            with pytest.raises(ValueError, match=EMPTY_COMMIT) as actual_error:
                 builder.build_algorithm_descriptor()
+            assert str(actual_error.value) == str(expected_error.value)
         else:
             assert builder.build_algorithm_descriptor() == expected_descriptor
 
@@ -429,6 +433,15 @@ def test_y_product_readout(rounds):
     tc = builder.to_tick_circuit()
     assert json.loads(tc.get_meta("observables")) == []
     assert len(json.loads(tc.get_meta("detectors"))) == 4 + 8 * rounds
+    if rounds:
+        circuit = stim.Circuit(tick_circuit_to_stim(tc))
+        space = deterministic_parity_basis(circuit.compile_sampler(seed=0).sample(2048))
+        emitted = [
+            _mask(entry["meas_ids"]) for key in ("detectors", "observables") for entry in json.loads(tc.get_meta(key))
+        ]
+        assert _rank([*space, *emitted]) == len(space)
+        assert _rank(emitted) == 4 + 8 * rounds
+        assert len(space) == _rank(emitted) + 1 == circuit.count_determined_measurements()
     assert builder.build_dem()
     with pytest.raises(ValueError, match=EMPTY_COMMIT):
         builder.build_algorithm_descriptor()
@@ -571,12 +584,27 @@ def test_y_readout_geometry_rejections(dimensions, message):
     for build in (builder.to_tick_circuit, builder.build_dem, builder.build_algorithm_descriptor):
         with pytest.raises(ValueError, match=re.escape(message)) as error:
             build()
-        assert str(error.value) == message
+        assert str(error.value) == f"Y readout on patch 'A' lowers to a fold-transversal S: {message}"
+        assert isinstance(error.value.__cause__, ValueError)
+        assert str(error.value.__cause__) == message
 
 
-@pytest.mark.parametrize("distance", [2, 4])
-def test_y_readout_even_distance(distance):
-    assert y_builder(SurfacePatch.create(distance), 1, 1).to_tick_circuit().num_measurements() > 0
+@pytest.mark.parametrize(("distance", "expected_distance"), [(2, 2), (4, 3)])
+def test_y_readout_even_distance(distance, expected_distance):
+    patch = SurfacePatch.create(distance)
+    builder = y_builder(patch, 1, 1)
+    assert_y_composition(builder, y_builder(patch, 1, 1, explicit=True), empty_commit=False)
+    tc = builder.to_tick_circuit()
+    assert len(json.loads(tc.get_meta("observables"))) == 1
+    for seed in range(8):
+        _, fired, values = simulate_tick_circuit(tc, seed)
+        assert fired == 0
+        assert values == {0: 0}
+    dem = DetectorErrorModel.from_circuit(tc, p1=0.001, p2=0.001, p_meas=0.001, p_prep=0.001)
+    distances = dem.per_observable_fault_distances(distance)
+    assert len(distances) == 1
+    assert distances[0] is not None
+    assert distances[0].distance == expected_distance
 
 
 def test_y_readout_append_after_compile():
@@ -590,3 +618,147 @@ def test_y_readout_append_after_compile():
     explicit.add_memory("A", 1, "Y")
     explicit.add_memory("A", 2, "X")
     assert_y_composition(builder, explicit, empty_commit=False)
+
+
+class YReadoutProbe(LogicalCircuitBuilder):
+    """Expose the lowered operation list to pin serialization and basis normalization."""
+
+    def lowered_operations(self):
+        return self._lowered_operations()
+
+
+@pytest.mark.parametrize("labels", [["A"], ["A", "B"]])
+def test_y_shared_serialized_folds(labels):
+    patch = SurfacePatch.create(3)
+    builder = YReadoutProbe()
+    explicit = LogicalCircuitBuilder()
+    for index, label in enumerate(labels):
+        for program in (builder, explicit):
+            program.add_patch(patch, label, qubit_offset=index * patch.geometry.num_qubits)
+        explicit.add_memory(label, 0, "Y")
+        explicit.add_logical_sdg(label)
+    builder.add_memory(labels, 1, "Y")
+    explicit.add_memory(labels, 1, "X")
+    expected = []
+    for label in labels:
+        expected.extend(
+            [
+                LogicalOp(LogicalGateType.MEMORY, [label], rounds=0, basis="Y"),
+                LogicalOp(LogicalGateType.FOLD_S, [label], rounds=1, fold="SDG"),
+            ],
+        )
+    expected.append(LogicalOp(LogicalGateType.MEMORY, labels, rounds=1, basis="X"))
+    assert builder.lowered_operations() == expected
+    assert json.loads(builder.to_tick_circuit().get_meta("observables")) == []
+    assert_y_composition(builder, explicit, empty_commit=True)
+
+
+@pytest.mark.parametrize("shared", [False, True], ids=["h", "mixed"])
+def test_y_readout_h_composition(shared):
+    patch = SurfacePatch.create(3)
+    programs = []
+    for explicit in (False, True):
+        builder = LogicalCircuitBuilder()
+        builder.add_patch(patch, "A")
+        if shared:
+            builder.add_patch(patch, "B", qubit_offset=patch.geometry.num_qubits)
+        labels = ["A", "B"] if shared else "A"
+        builder.add_memory(labels, 2, "Z" if shared else "X")
+        builder.add_transversal_h("A")
+        if explicit:
+            builder.add_logical_sdg("A")
+        builder.add_memory(labels, 2, {"A": "X" if explicit else "Y", "B": "Z"})
+        programs.append(builder)
+    assert_y_composition(*programs, empty_commit=False)
+    for builder in programs:
+        dem = DetectorErrorModel.from_circuit(
+            builder.to_tick_circuit(),
+            p1=0.001,
+            p2=0.001,
+            p_meas=0.001,
+            p_prep=0.0,
+        )
+        assert builder.build_dem() == dem.to_string()
+
+
+@pytest.mark.parametrize("basis", ["X", "Y"])
+@pytest.mark.parametrize("buffer", [None, 0, 1, 2])
+def test_descriptor_empty_preparation_message(basis, buffer):
+    builder = LogicalCircuitBuilder()
+    builder.add_patch(SurfacePatch.create(3), "A")
+    builder.add_memory("A", 0, basis)
+    builder.add_logical_s("A", dagger=basis == "Y")
+    builder.add_memory("A", 2, "X")
+    cause = "a zero-round Y preparation before the Y-readout fold" if basis == "Y" else "a zero-round memory segment"
+    message = (
+        f"segment 0 (patch 'A') has an empty commit region: {cause}; descriptor commit regions need at least one round"
+    )
+    with pytest.raises(ValueError, match=re.escape(message)) as error:
+        builder.build_algorithm_descriptor(buffer=buffer)
+    assert str(error.value) == message
+
+
+@pytest.mark.parametrize("basis", ["X", "Z"])
+def test_descriptor_empty_commit_region(basis):
+    builder = LogicalCircuitBuilder()
+    builder.add_patch(SurfacePatch.create(3), "A")
+    builder.add_memory("A", 2, basis)
+    builder.add_memory("A", 0, basis)
+    builder.add_memory("A", 2, basis)
+    message = (
+        "segment 1 (patch 'A') has an empty commit region: a zero-round memory segment; "
+        "descriptor commit regions need at least one round"
+    )
+    with pytest.raises(ValueError, match=re.escape(message)) as error:
+        builder.build_algorithm_descriptor()
+    assert str(error.value) == message
+
+
+@pytest.mark.parametrize(
+    ("shape", "buffer", "counts"),
+    [
+        ("buffered_zero", 1, [12, 0, 20]),
+        ("buffered_zero", 2, [12, 0, 20]),
+        ("no_detectors", None, [0, 20]),
+        ("no_detectors", 1, [0, 20]),
+        ("no_detectors", 2, [0, 20]),
+    ],
+)
+def test_descriptor_non_empty_commit_region_with_zero_detectors(shape, buffer, counts):
+    """A non-empty native window is decodable even when its segment owns no detectors."""
+    builder = LogicalCircuitBuilder()
+    builder.add_patch(SurfacePatch.create(3), "A")
+    if shape == "buffered_zero":
+        builder.add_memory("A", 2, "Z")
+        builder.add_memory("A", 0, "Z")
+        builder.add_memory("A", 2, "Z")
+    else:
+        builder.add_memory("A", 1, "Y")
+        builder.add_memory("A", 2, "X")
+    descriptor = builder.build_algorithm_descriptor(buffer=buffer)
+    assert [segment["num_detectors"] for segment in descriptor["segments"]] == counts
+    decoder = LogicalCircuitDecoder(descriptor, budget="unlimited")
+    assert decoder.decode([0] * sum(counts)) == 0
+
+
+@pytest.mark.parametrize("basis", ["X", "Z"])
+def test_descriptor_buffer_error_precedes_later_empty_commit_region(basis):
+    builder = LogicalCircuitBuilder()
+    builder.add_patch(SurfacePatch.create(3), "A")
+    builder.add_memory("A", 2, basis)
+    builder.add_memory("A", 0, basis)
+    builder.add_memory("A", 2, basis)
+    message = (
+        "buffer=0 is too small for logical segment 0; the source-tracked DEM requires at least 1 look-ahead rounds"
+    )
+    with pytest.raises(ValueError, match=re.escape(message)) as error:
+        builder.build_algorithm_descriptor(buffer=0)
+    assert str(error.value) == message
+
+
+def test_descriptor_validates_buffer_before_lowering():
+    builder = LogicalCircuitBuilder()
+    builder.add_patch(SurfacePatch.create(dx=3, dz=5), "A")
+    builder.add_memory("A", 1, "Y")
+    with pytest.raises(ValueError, match="buffer must be non-negative or None"):
+        builder.build_algorithm_descriptor(buffer=-1)

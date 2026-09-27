@@ -184,7 +184,7 @@ def render_surface_protocol_module(patch: SurfacePatch) -> str:
             "    return guppy(variant_scoped(logical_s_experiment, rounds_before, rounds_after, dagger))",
             "",
             "",
-            "def make_logical_y_readout(num_rounds: int):",
+            "def make_logical_y_readout_experiment(num_rounds: int):",
             '    """Prepare X, apply logical S, then read Y through S-dagger and X readout."""',
             "    if num_rounds < 0:",
             '        raise ValueError("Logical Y readout requires nonnegative round counts")',

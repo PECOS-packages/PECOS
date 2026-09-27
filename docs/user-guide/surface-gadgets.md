@@ -616,6 +616,72 @@ def syndrome_extraction_fold_s(surf: SurfaceCode_3x3) -> Syndrome_3x3:
     return Syndrome_3x3(synx, synz)
 ```
 
+#### Y readout
+
+A terminal `add_memory(label, rounds, "Y")` compiles as
+`add_logical_sdg(label)` followed by `add_memory(label, rounds, "X")`:
+the fold precedes the requested rounds. If this is also the patch's first
+segment, a zero-round Y preparation precedes the fold. Surface-code logical Y
+cannot be read out by transversal Y measurements: no X or Z check is a
+product of single-qubit Y operators, so per-qubit Y outcomes reveal no check
+value and errors cannot be corrected; see
+[Gidney, arXiv:2302.07395](https://arxiv.org/abs/2302.07395).
+PECOS's S-dagger fold followed by X readout measures logical Y with the fold's
+Z-check records included in the parity.
+
+Product-Y preparation followed by Y readout emits no deterministic observable,
+just as product-Y preparation followed by X readout emits none. At distance 3,
+zero, one, and two requested rounds give 4, 12, and 20 deterministic detectors.
+`to_tick_circuit()` and `build_dem()` succeed for these programs;
+`build_algorithm_descriptor()` still raises
+`ValueError: a DEM window commit region cannot be empty` because the initial
+zero-round segment has no detectors. Supporting empty non-final descriptor
+segments is a follow-up.
+
+X preparation followed by a logical S fold and terminal Y memory emits one
+observable: the final X string plus the Z records of **both** folds. Its
+noiseless parity is zero, reporting the prepared +X logical eigenvalue. After
+the first fold, the logical Y sign depends on that fold's Z-record parity.
+
+<!--test-name: logical_y_readout-->
+```python
+import json
+from pecos.testing import simulate_tick_circuit
+
+builder = LogicalCircuitBuilder()
+builder.add_patch(patch, "A")
+builder.add_memory("A", 1, "X")
+builder.add_logical_s("A")
+builder.add_memory("A", 1, "Y")
+tc = builder.to_tick_circuit()
+assert len(json.loads(tc.get_meta("observables"))) == 1
+for seed in range(8):
+    _, fired, observables = simulate_tick_circuit(tc, seed)
+    assert fired == 0
+    assert observables == {0: 0}
+```
+
+For this program with one initial memory round and circuit noise
+`p1=p2=p_meas=p_prep=0.001`, measured observable fault distances are:
+
+| Patch distance | Zero rounds after the readout fold | One round after the readout fold |
+| --- | --- | --- |
+| 3 | 2 | 2 |
+| 5 | 3 | 4 |
+
+No fold restrictions surfaced for square rotated patches in the tested round
+grid. The usual fold geometry guards apply; even distances also compile in
+the builder. For shared memory operations, only terminal-Y patches receive
+folds, and all patches retain their shared readout segment. Observable IDs
+advance in the operation's `patches` order, even for an omitted nondeterministic
+observable: a first `add_memory(["A", "B"], r, {"A": "Y", "B": "Z"})`
+emits only B's observable, at ID 1. With an initial shared X/Z memory, S on A,
+and CX from B to A before that final shared memory, both observables appear
+at IDs 0 (A) and 1 (B), each with noiseless parity zero.
+
+The Guppy protocol module's `make_logical_y_readout(num_rounds)` renders the
+same X preparation, rounds, S fold, S-dagger fold, rounds, and X readout.
+
 ### Measure-out
 
 `basis="Z"` directly measures data; `basis="X"` applies H first. Both
@@ -1092,9 +1158,10 @@ assert sum(step.op_type == OpType.CX for step in round_gadget.steps) == 24
 assert sum(step.op_type == OpType.MEASURE for step in round_gadget.steps) == 8
 ```
 
-A Y memory segment cannot be a patch's final segment: generation raises
-`NotImplementedError: Y readout is unsupported`. The oracle example follows Y
-with a Z segment for that reason, then stops after the first full syndrome round.
+A terminal Y memory segment uses the fold composition described in
+[Y readout](#y-readout). The oracle example below follows Y preparation with
+a Z segment and stops after the first full syndrome round to inspect the
+projected state before readout.
 The product of the geometry's logical X and Z supports gives logical Y up to
 phase. Check both signs because projection outcomes determine the encoded sign.
 

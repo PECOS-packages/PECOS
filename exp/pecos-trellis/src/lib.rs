@@ -39,7 +39,33 @@ pub use pecos_decoder_core::obs_mask::ObsMask;
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::sync::Arc;
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 use std::time::Instant;
+
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+type TimerStart = Instant;
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+struct TimerStart;
+
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+fn timer_start() -> TimerStart {
+    Instant::now()
+}
+
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+fn timer_start() -> TimerStart {
+    TimerStart
+}
+
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+fn timer_seconds(start: TimerStart) -> f64 {
+    start.elapsed().as_secs_f64()
+}
+
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+fn timer_seconds(_: TimerStart) -> f64 {
+    0.0
+}
 
 const WORD_BITS: usize = u64::BITS as usize;
 const BP_MIN_SUM_SCALE: f64 = 0.625;
@@ -906,7 +932,7 @@ impl TrellisDecoder {
     ///
     /// Panics if the internal post-filter BP graph and DP column counts differ.
     pub fn from_sparse_dem(dem: &SparseDem, config: TrellisConfig) -> Result<Self, DecoderError> {
-        let build_started = Instant::now();
+        let build_started = timer_start();
         validate_config(&config, dem.mechanisms.len())?;
 
         let detector_words = checked_detector_words(dem.num_detectors)? as usize;
@@ -1097,7 +1123,7 @@ impl TrellisDecoder {
             build_seconds: 0.0,
         };
         let scratch = TrellisScratch::new(&model);
-        model.build_seconds = build_started.elapsed().as_secs_f64();
+        model.build_seconds = timer_seconds(build_started);
         Ok(Self {
             scratch,
             model: Arc::new(model),
@@ -1162,7 +1188,7 @@ impl TrellisDecoder {
         }
         validate_config(&config, model.factors().len())?;
 
-        let build_started = Instant::now();
+        let build_started = timer_start();
         let detector_words = checked_detector_words(model.num_detectors())? as usize;
         let logical_words = words_for(model.num_observables());
         let order = config
@@ -1295,7 +1321,7 @@ impl TrellisDecoder {
             build_seconds: 0.0,
         };
         let scratch = TrellisScratch::new(&model);
-        model.build_seconds = build_started.elapsed().as_secs_f64();
+        model.build_seconds = timer_seconds(build_started);
         Ok(Self {
             scratch,
             model: Arc::new(model),
@@ -2037,7 +2063,7 @@ impl TrellisModel {
             return Ok(None);
         };
 
-        let started = Instant::now();
+        let started = timer_start();
         for (detector, residual) in bp_score.residual_syndrome.iter_mut().enumerate() {
             let word_index = detector / WORD_BITS;
             let bit_mask = 1 << (detector % WORD_BITS);
@@ -2070,7 +2096,7 @@ impl TrellisModel {
             &mut bp_score.row_moments,
             |column, _| bp_score.column_moments[column],
         );
-        Ok(Some(started.elapsed().as_secs_f64()))
+        Ok(Some(timer_seconds(started)))
     }
 }
 

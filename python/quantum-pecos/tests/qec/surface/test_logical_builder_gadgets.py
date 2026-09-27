@@ -193,17 +193,17 @@ def make_builder(name: str) -> LogicalCircuitBuilder:
         if shape == "h_fold":
             builder.add_memory("A", 2, "X")
             builder.add_transversal_h("A")
-            builder.add_logical_s("A")
+            builder.add_logical_sz("A")
             builder.add_memory("A", 2, "Z")
         elif shape == "fold_pair_x":
             builder.add_memory("A", 1, "X")
-            builder.add_logical_s("A")
-            builder.add_logical_sdg("A")
+            builder.add_logical_sz("A")
+            builder.add_logical_szdg("A")
             builder.add_memory("A", 1, "X")
         else:
             before, after = {"fold_s_first": (0, 2), "fold_s_mid": (1, 1), "fold_s_last": (2, 0)}[shape]
             builder.add_memory("A", before, "Z")
-            builder.add_logical_s("A")
+            builder.add_logical_sz("A")
             builder.add_memory("A", after, "Z")
     elif shape in {"h", "h_z_to_x", "h_x_to_z", "hh"}:
         before, after = ("X", "Z") if shape == "h_x_to_z" else ("Z", "X")
@@ -301,7 +301,7 @@ def test_gadget_dependencies(shape, monkeypatch):
     names = (
         "prep_gadget",
         "syndrome_round_gadget",
-        "fold_s_round_gadget",
+        "fold_sz_round_gadget",
         "measure_out_gadget",
         "transversal_layer_gadget",
         "transversal_cx_gadget",
@@ -329,7 +329,7 @@ def test_gadget_dependencies(shape, monkeypatch):
                 expected["syndrome_round_gadget", allocation] += op.rounds
         elif op.fold:
             allocation = tuple(GeneratorProbe(builder.patches, []).allocation(op.patches[0]).data_qubits)
-            expected["fold_s_round_gadget", allocation] += 1
+            expected["fold_sz_round_gadget", allocation] += 1
         else:
             allocation = tuple(GeneratorProbe(builder.patches, []).allocation(op.patches[0]).data_qubits)
             name = (
@@ -835,7 +835,7 @@ def test_sz_layers_rule_out_logical_readout(shape):
     """A physical S layer is not a logical gate, so no X readout crosses it.
 
     The logical-readout walk conservatively emits no observable for these
-    shapes even where the layers cancel; the fold-transversal S replaces the
+    shapes even where the layers cancel; the fold-transversal SZ replaces the
     layer and its readout rule together. Detectors are still built and are
     deterministic (see the noiseless tests for the same shapes).
     """
@@ -1178,7 +1178,7 @@ def test_y_readout_composes_fold_and_x():
     builder = make_builder("d3_mem_Z")
     builder.add_memory("A", 2, "Y")
     explicit = make_builder("d3_mem_Z")
-    explicit.add_logical_sdg("A")
+    explicit.add_logical_szdg("A")
     explicit.add_memory("A", 2, "X")
     assert tick_circuit_to_stim(builder.to_tick_circuit()) == tick_circuit_to_stim(explicit.to_tick_circuit())
 
@@ -2090,8 +2090,8 @@ def test_cxcx_detector_count_equals_memory():
     ("method", "labels", "name"),
     [
         ("add_transversal_h", ["A"], "Hadamard"),
-        ("add_transversal_sz", ["A"], "SGate"),
-        ("add_transversal_szdg", ["A"], "SdgGate"),
+        ("add_transversal_sz", ["A"], "Transversal SZ"),
+        ("add_transversal_szdg", ["A"], "Transversal SZdg"),
         ("add_transversal_cx", ["A", "B"], "Cnot"),
     ],
 )

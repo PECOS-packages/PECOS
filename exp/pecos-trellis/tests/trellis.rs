@@ -638,11 +638,26 @@ fn rejects_duplicate_detector_and_observable_indices() {
 }
 
 #[test]
-fn parsed_duplicate_targets_have_an_empty_effect() {
-    let mut decoder = TrellisDecoder::from_dem_str("error(0.1) D0 D0\n", exact_config()).unwrap();
-    let result = decoder.decode(&[0]).unwrap();
+fn parsed_duplicate_targets_are_rejected() {
+    let error = TrellisDecoder::from_dem_str("error(0.1) D0 D0\n", exact_config()).unwrap_err();
+    assert!(matches!(
+        error,
+        pecos_decoder_core::DecoderError::InvalidDemSyntax(_)
+    ));
+    assert_eq!(
+        error.to_string(),
+        "Invalid DEM syntax: detector D0 is listed twice in one component of error(0.1) D0 D0; a target may appear at most once per component"
+    );
+}
+
+#[test]
+fn parsed_empty_effect_retains_written_detector_dimensions() {
+    let mut decoder =
+        TrellisDecoder::from_dem_str("error(0.1) D0 D1 ^ D1 D2 ^ D2 D0", exact_config()).unwrap();
+    let result = decoder.decode(&[0, 0, 0]).unwrap();
     assert!(result.predicted.is_zero());
     assert!(result.log_evidence.abs() < 1e-12);
+    assert!(decoder.decode(&[1, 0, 0]).is_err());
     assert!(decoder.decode(&[1]).is_err());
 }
 

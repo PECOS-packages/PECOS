@@ -374,10 +374,10 @@ def test_tesseract_argument_errors_are_value_errors_on_both_paths() -> None:
 
 
 def test_tesseract_trellis_surfaces_observable_limit() -> None:
-    """Upstream construction errors retain the A* exception mapping."""
-    with pytest.raises(RuntimeError) as bad_dem:
+    """Syntax errors use ValueError; upstream observable limits use RuntimeError."""
+    with pytest.raises(ValueError, match="Invalid DEM syntax:"):
         TesseractDecoder.from_dem("not a detector error model")
-    with pytest.raises(type(bad_dem.value), match="at most one observable"):
+    with pytest.raises(RuntimeError, match="at most one observable"):
         TesseractTrellisDecoder.from_dem("error(0.1) D0 L0\nerror(0.2) D1 L1\n")
 
 

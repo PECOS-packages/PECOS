@@ -4,6 +4,16 @@ use pecos_core::{bitvec, errors::PecosError};
 use std::collections::BTreeMap;
 use std::fmt;
 
+/// A native gate's printable parameters: its angles in radians, then the rest,
+/// which is the order `split_parameters` consumes them in when parsing.
+fn native_gate_parameters(gate: &Gate) -> Vec<f64> {
+    gate.angles
+        .iter()
+        .map(pecos_core::Angle64::to_radians)
+        .chain(gate.params.iter().copied())
+        .collect()
+}
+
 // Helper function for formatting parameters
 fn format_params<T: fmt::Display>(f: &mut fmt::Formatter<'_>, params: &[T]) -> fmt::Result {
     if !params.is_empty() {
@@ -123,7 +133,7 @@ impl fmt::Display for Operation {
             }
             Operation::NativeGate(gate) => {
                 write!(f, "{}", gate.gate_type)?;
-                format_params(f, &gate.params)?;
+                format_params(f, &native_gate_parameters(gate))?;
                 for (i, qubit) in gate.qubits.iter().enumerate() {
                     write!(f, "{} gid[{}]", if i == 0 { " " } else { ", " }, qubit.0)?;
                 }
@@ -215,16 +225,16 @@ impl fmt::Display for OperationDisplay<'_> {
                 Ok(())
             }
             Operation::NativeGate(gate) => {
-                // Display gate type in QASM format
-                let gate_name = if gate.gate_type == GateType::PZ {
-                    "reset".to_string() // PECOS Prep -> QASM reset
+                // Emit the canonical native name, which the parser accepts without
+                // any include, so expanded QASM stays executable. Angles print in
+                // radians ahead of the remaining parameters, the order the parser
+                // splits them in.
+                if gate.gate_type == GateType::PZ {
+                    write!(f, "reset")?;
                 } else {
-                    // Use lowercase for QASM display
-                    let name = format!("{}", gate.gate_type);
-                    name.to_lowercase()
-                };
-                write!(f, "{gate_name}")?;
-                format_params(f, &gate.params)?;
+                    write!(f, "{}", gate.gate_type)?;
+                }
+                format_params(f, &native_gate_parameters(gate))?;
 
                 for (i, qubit) in gate.qubits.iter().enumerate() {
                     if i == 0 {
@@ -274,6 +284,17 @@ impl fmt::Display for OperationDisplay<'_> {
                 }
                 Ok(())
             }
+            Operation::If {
+                condition,
+                operation,
+            } => write!(
+                f,
+                "if ({condition}) {}",
+                OperationDisplay {
+                    operation,
+                    qubit_map: self.qubit_map,
+                }
+            ),
             _ => self.operation.fmt(f),
         }
     }

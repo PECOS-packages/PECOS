@@ -179,6 +179,8 @@ pub fn extract_ghost_edges_from_dem(
             }
         }
 
+        let dets = crate::dem::grammar::xor_indices(dets);
+
         if dets.len() != 3 {
             continue;
         }
@@ -301,6 +303,41 @@ mod tests {
 
         // Weight should be ln((1 - 0.01) / 0.01) ≈ 4.595
         assert!((e.weight - 4.595).abs() < 0.01);
+    }
+
+    #[test]
+    fn ghost_edges_use_the_combined_detector_effect() {
+        use crate::logical_subgraph::QubitStabCoords;
+
+        let stab_coords = vec![
+            QubitStabCoords {
+                x_positions: vec![(1.0, 1.0)],
+                z_positions: vec![(3.0, 1.0)],
+            },
+            QubitStabCoords {
+                x_positions: vec![(7.0, 1.0)],
+                z_positions: vec![],
+            },
+        ];
+        let coords = "detector(1, 1, 0) D0\ndetector(3, 1, 0) D1\ndetector(7, 1, 0) D2\n";
+        for targets in ["D0 D0 D2", "D0 ^ D0 D2", "D0 D1 D2 ^ D0 D1 D2"] {
+            let dem = format!("{coords}error(0.1) {targets}");
+            assert!(
+                extract_ghost_edges_from_dem(&dem, &stab_coords)
+                    .unwrap()
+                    .is_empty()
+            );
+        }
+        // Ghost endpoints are an unordered pair; sorting preserves the edge and its owner.
+        for targets in ["D1 D0 D2", "D2 D0 D1 D2 D2", "D2 D0 ^ D1 D2 D2"] {
+            let dem = format!("{coords}error(0.1) {targets}");
+            let edges = extract_ghost_edges_from_dem(&dem, &stab_coords).unwrap();
+            assert_eq!(edges.len(), 1);
+            assert_eq!(
+                (edges[0].det_a, edges[0].det_b, edges[0].partner_det),
+                (0, 1, 2)
+            );
+        }
     }
 
     #[test]

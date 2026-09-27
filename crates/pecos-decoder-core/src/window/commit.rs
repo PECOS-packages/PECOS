@@ -13,6 +13,7 @@
 //! Component provenance and checked graphs for whole-component window commits.
 
 use super::{StructuredDem, StructuredDemComponent, StructuredDemError, invalid};
+use crate::dem::grammar::xor_indices;
 use crate::{DecoderError, DemMatchingGraph, MatchingEdge};
 use std::collections::BTreeMap;
 use std::ops::Range;
@@ -125,8 +126,8 @@ impl StructuredDem {
                 )));
             }
             for (component_index, part) in error.components.iter().enumerate() {
-                let detectors = parity_targets(&part.detectors);
-                let observables = parity_targets(&part.observables);
+                let detectors = xor_indices(part.detectors.iter().copied());
+                let observables = xor_indices(part.observables.iter().copied());
                 if detectors.len() > 2 {
                     return Err(invalid(format!(
                         "error {error_index} component {component_index} has {} detectors; commit windows require graphlike columns",
@@ -192,8 +193,7 @@ impl StructuredDem {
                     .push(u32::try_from(global).map_err(|_| invalid("too many global detectors"))?);
             }
         }
-        let mut groups: BTreeMap<usize, Vec<StructuredDemComponent>> = BTreeMap::new();
-        let mut members: BTreeMap<(u32, Option<u32>), Vec<CommitMember>> = BTreeMap::new();
+        let mut projected_columns = Vec::new();
         let mut graph_edges = Vec::new();
         for (index, column) in columns.iter().enumerate() {
             let Some(owner) = column.owner else { continue };
@@ -212,17 +212,7 @@ impl StructuredDem {
                 .filter_map(|&d| global_to_local[d as usize])
                 .collect();
             let key = (local[0], local.get(1).copied());
-            members.entry(key).or_default().push(CommitMember {
-                column: index,
-                projected: local.len() != column.detectors.len(),
-            });
-            groups
-                .entry(column.error_index)
-                .or_default()
-                .push(StructuredDemComponent {
-                    detectors: local,
-                    observables: column.observables.clone(),
-                });
+            projected_columns.push((index, local));
             graph_edges.push(MatchingEdge {
                 node1: key.0,
                 node2: key.1,
@@ -236,7 +226,32 @@ impl StructuredDem {
                 fault_id: column.error_index,
             });
         }
-        let graph_edges = DemMatchingGraph::merge_parallel_edges(graph_edges);
+        let graph_edges = DemMatchingGraph::fold_correlated_edges(graph_edges);
+        let surviving: std::collections::BTreeSet<_> = graph_edges
+            .iter()
+            .map(|edge| (edge.fault_id, edge.node1, edge.node2))
+            .collect();
+        let mut groups: BTreeMap<usize, Vec<StructuredDemComponent>> = BTreeMap::new();
+        let mut members: BTreeMap<(u32, Option<u32>), Vec<CommitMember>> = BTreeMap::new();
+        for (index, local) in projected_columns {
+            let column = &columns[index];
+            let key = (local[0], local.get(1).copied());
+            if !surviving.contains(&(column.error_index, key.0, key.1)) {
+                continue;
+            }
+            members.entry(key).or_default().push(CommitMember {
+                column: index,
+                projected: local.len() != column.detectors.len(),
+            });
+            groups
+                .entry(column.error_index)
+                .or_default()
+                .push(StructuredDemComponent {
+                    detectors: local,
+                    observables: column.observables.clone(),
+                });
+        }
+        let graph_edges = DemMatchingGraph::merge_independent_edges(graph_edges);
         let edges = graph_edges
             .iter()
             .map(|edge| {
@@ -327,16 +342,6 @@ pub fn min_buffer_rounds(dem: &StructuredDem) -> Result<u32, DecoderError> {
         .unwrap_or(0))
 }
 
-fn parity_targets(targets: &[u32]) -> Vec<u32> {
-    let mut parity = std::collections::BTreeSet::new();
-    for &target in targets {
-        if !parity.insert(target) {
-            parity.remove(&target);
-        }
-    }
-    parity.into_iter().collect()
-}
-
 fn check_solvable(rows: usize, edges: &[CommitEdge]) -> Result<(), DecoderError> {
     let mut adjacency = vec![Vec::new(); rows];
     let mut reachable = vec![false; rows];
@@ -409,6 +414,60 @@ mod tests {
             "drop old columns individually, preserving their surviving sibling"
         );
         assert_eq!(later.edges[1].rep_nonprojected, Some(2));
+    }
+
+    #[test]
+    fn cancelled_projected_columns_leave_neither_groups_nor_members() {
+        for targets in ["D2 D5 ^ D2 D6", "D2 D3 ^ D3 D4 ^ D2 D4"] {
+            let dem = StructuredDem::from_dem_str(&format!(
+                "error(0.4) {targets}\nerror(0.1) D2\nerror(0.1) D3\nerror(0.1) D4\n\
+                 detector(0,0,2) D0\ndetector(0,0,2) D1\ndetector(0,0,1) D2\n\
+                 detector(0,0,1) D3\ndetector(0,0,1) D4\ndetector(0,0,2) D5\n\
+                 detector(0,0,2) D6\n"
+            ))
+            .unwrap();
+            let window = dem.commit_window(0..2, 0..1).unwrap();
+            assert_eq!(window.local_to_global_detector, [2, 3, 4]);
+            assert_eq!(
+                window.model.errors,
+                dem.errors[1..]
+                    .iter()
+                    .enumerate()
+                    .map(|(local, error)| {
+                        StructuredDemError {
+                            probability: error.probability,
+                            components: vec![StructuredDemComponent {
+                                detectors: vec![u32::try_from(local).unwrap()],
+                                observables: vec![],
+                            }],
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            );
+            assert_eq!(window.edges.len(), 3);
+            let first_survivor = dem.errors[0].components.len();
+            for (index, edge) in window.edges.iter().enumerate() {
+                assert_eq!(
+                    (edge.node1, edge.node2),
+                    (u32::try_from(index).unwrap(), None)
+                );
+                assert_eq!(edge.members.len(), 1);
+                assert_eq!(edge.members[0].column, first_survivor + index);
+                assert!(!edge.future);
+                assert_eq!(edge.rep_any, first_survivor + index);
+                assert_eq!(edge.rep_nonprojected, Some(first_survivor + index));
+            }
+            let reparsed = DemMatchingGraph::from_dem_str(&window.model.to_dem_string()).unwrap();
+            assert_eq!(reparsed.edges.len(), window.graph.edges.len());
+            for (actual, expected) in reparsed.edges.iter().zip(&window.graph.edges) {
+                assert_eq!(
+                    (actual.node1, actual.node2),
+                    (expected.node1, expected.node2)
+                );
+                assert!((actual.probability - expected.probability).abs() < f64::EPSILON);
+                assert_eq!(actual.observables, expected.observables);
+            }
+        }
     }
 
     #[test]

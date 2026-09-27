@@ -100,15 +100,6 @@ def test_public_dem_grammar(row: list[str], consumer: str) -> None:
     if needs_flattening and consumer != "PyMatchingDecoder":
         assert error is not None
         assert "requires a flattened DEM:" in error
-    if (
-        accepted
-        and consumer == "pymatching"
-        and expected is not None
-        and expected[1] == 0
-        and error
-        == "decoder failed on shot 0: Decoding failed: native batch decoder returned 0 predictions for 1 shots"
-    ):
-        pytest.xfail("PECOS issue #799: PyMatching batch decoding returns no predictions for zero observables")
     CONTRACT.assert_outcome(text, accepted, consumer, counts, expected, error)
 
 
@@ -129,6 +120,31 @@ def test_zero_probability_mechanism_is_not_registered() -> None:
     sampler = DemSampler.from_dem_string("error(0) D0\nerror(1) D1")
     assert sampler.num_mechanisms == 1
     assert sampler.sample(seed=7) == ([False, True], [])
+
+
+@pytest.mark.parametrize(
+    "targets",
+    ["D0 D0", "D0 ^ D0", "D0 D1 ^ D1 D2", "D0 L0 L0", "D0 D0 L0", "L0 ^ L0"],
+)
+def test_duplicate_target_effects_match_stim(targets: str) -> None:
+    text = f"error(1) {targets}"
+    sampler = DemSampler.from_dem_string(text)
+    assert sampler.num_mechanisms == 1
+    detectors, observables, _ = stim.DetectorErrorModel(text).compile_sampler().sample(4)
+    for seed, (dets, obs) in enumerate(zip(detectors, observables, strict=True)):
+        assert sampler.sample(seed=seed) == (dets.tolist(), obs.tolist())
+
+
+def test_detector_free_observable_mechanism_keeps_zero_column() -> None:
+    """Readers agree on the folded matrix; LDPC rejects its semantically empty column.
+
+    The remaining rejection is the backend's own constraint, not a reader disagreement.
+    """
+    text = "error(0.1) D0 D0 L0\nerror(0.2) D0 L0"
+    decoder = decoders.BpOsdDecoder.from_dem(text)
+    assert decoder.num_mechanisms == 2
+    with pytest.raises(RuntimeError, match=r"Column weight is zero"):
+        decoders.UnionFindDecoder.from_dem(text)
 
 
 @pytest.mark.parametrize(

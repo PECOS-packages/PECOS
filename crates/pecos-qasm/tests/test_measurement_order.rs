@@ -135,3 +135,32 @@ fn test_measurement_order_with_batches() -> Result<(), PecosError> {
 
     Ok(())
 }
+
+#[test]
+fn surplus_outcomes_are_rejected_instead_of_desyncing() -> Result<(), PecosError> {
+    // The first batch measures one qubit. Handing back two outcomes used to
+    // drop the second at debug level while still advancing the measurement
+    // counter, so every later measurement landed at the wrong index.
+    let qasm = r#"
+        OPENQASM 2.0;
+        include "qelib1.inc";
+        qreg q[2];
+        creg c[2];
+        x q[0];
+        measure q[0] -> c[0];
+        measure q[1] -> c[1];
+    "#;
+    let mut engine = qasm.parse::<QASMEngine>()?;
+    let _first_batch = engine.generate_commands()?;
+
+    let mut results_builder = ByteMessage::outcomes_builder();
+    results_builder.add_outcomes(&[1, 0]);
+    let err = engine
+        .handle_measurements(results_builder.build())
+        .expect_err("two outcomes for a one-measurement batch must be rejected");
+    assert!(
+        err.to_string().contains("only 1 measurements are pending"),
+        "unexpected error: {err}"
+    );
+    Ok(())
+}

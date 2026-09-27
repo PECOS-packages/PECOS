@@ -262,9 +262,15 @@ fn convert_op(
 fn convert_expr(expr: &Expression) -> Result<Value, String> {
     match expr {
         Expression::Integer(bv) => {
-            // QASM integers are non-negative, but we output as i64
-            // for PHIR-JSON compatibility
-            let val = bitvec::to_i64(bv);
+            // Preserve non-negative QASM literals within PHIR's signed i64 range.
+            let val = bitvec::to_u64(bv)
+                .and_then(|value| i64::try_from(value).ok())
+                .ok_or_else(|| {
+                    format!(
+                        "Integer literal {} cannot be represented as a PHIR-JSON i64",
+                        bitvec::to_decimal_string(bv)
+                    )
+                })?;
             Ok(json!(val))
         }
         Expression::Float(f) => Ok(json!(f)),
@@ -428,6 +434,48 @@ mod tests {
 
     fn get_ops(phir: &Value) -> &Vec<Value> {
         phir["ops"].as_array().expect("ops should be an array")
+    }
+
+    macro_rules! unsigned_literal_exports {
+        ($($name:ident: ($literal:literal, $expected:expr)),+ $(,)?) => {
+            $(
+                #[test]
+                fn $name() {
+                    let expr = Expression::Integer(
+                        crate::parser::expressions::parse_integer_to_bitvec($literal).unwrap(),
+                    );
+                    assert_eq!(convert_expr(&expr).unwrap(), json!($expected));
+                    let phir = convert(&format!(
+                        "OPENQASM 2.0; creg c[64]; c = {};", $literal,
+                    ));
+                    let assignment = get_ops(&phir).iter().find(|op| op["cop"] == "=").unwrap();
+                    assert_eq!(assignment["args"][0], json!($expected));
+                }
+            )+
+        };
+    }
+
+    unsigned_literal_exports! {
+        unsigned_literal_8_export: ("8", 8),
+        unsigned_literal_9_export: ("9", 9),
+        unsigned_literal_1_export: ("1", 1),
+        unsigned_literal_i64_max_export: ("9223372036854775807", i64::MAX),
+    }
+
+    #[test]
+    fn unsigned_literal_export_out_of_range() {
+        for literal in [
+            "18446744073709551615",
+            "9223372036854775808",
+            "18446744073709551616",
+        ] {
+            let expr = Expression::Integer(
+                crate::parser::expressions::parse_integer_to_bitvec(literal).unwrap(),
+            );
+            assert!(convert_expr(&expr).unwrap_err().contains(literal));
+            let qasm = format!("OPENQASM 2.0; creg c[64]; c = {literal};");
+            assert!(qasm_to_phir_json(&qasm).unwrap_err().contains(literal));
+        }
     }
 
     #[test]

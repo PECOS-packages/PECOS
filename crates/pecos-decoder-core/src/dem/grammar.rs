@@ -87,6 +87,36 @@ impl Instruction {
     pub fn components(&self) -> impl Iterator<Item = &[Target]> {
         self.targets.split(|target| *target == Target::Separator)
     }
+
+    /// Return sorted detector and observable effects, XOR-combining all components.
+    ///
+    /// Effect models fold duplicate targets; structural readers preserve written targets and components.
+    ///
+    /// # Errors
+    /// Returns an error if any written index exceeds the 32-bit representation.
+    pub fn effect(&self) -> Result<(Vec<u32>, Vec<u32>), DecoderError> {
+        target_effect(&self.targets)
+    }
+}
+
+/// Return the sorted indices that occur an odd number of times.
+pub fn xor_indices<T: Ord>(indices: impl IntoIterator<Item = T>) -> Vec<T> {
+    let mut parity = std::collections::BTreeSet::new();
+    for id in indices {
+        if !parity.remove(&id) {
+            parity.insert(id);
+        }
+    }
+    parity.into_iter().collect()
+}
+
+/// Return sorted detector and observable effects for a sequence of targets.
+///
+/// # Errors
+/// Returns an error if any written index exceeds the 32-bit representation.
+pub fn target_effect(targets: &[Target]) -> Result<(Vec<u32>, Vec<u32>), DecoderError> {
+    let (detectors, observables) = target_indices(targets)?;
+    Ok((xor_indices(detectors), xor_indices(observables)))
 }
 
 /// Convert a target index for consumers using 32-bit indices.

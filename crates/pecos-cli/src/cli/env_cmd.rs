@@ -151,9 +151,27 @@ fn add_llvm_runtime_library_path(env: &mut BTreeMap<String, String>, libdir: &Pa
 fn add_llvm_runtime_library_path(env: &mut BTreeMap<String, String>, libdir: &Path) {
     // DYLD_LIBRARY_PATH overrides even resolved @rpath dependencies: Homebrew's
     // libLLVM.dylib can replace rustc's bundled LLVM with an incompatible major
-    // version before compilation starts. A fallback keeps existing install
-    // names/rpaths authoritative while allowing PECOS to find its shared LLVM.
+    // version before compilation starts. Keep install names/rpaths authoritative.
     prepend_path_env(env, "DYLD_FALLBACK_LIBRARY_PATH", libdir);
+
+    // rust-objcopy can have an rpath to a directory without libLLVM.dylib.
+    // Maturin invokes rustc directly, bypassing rustup's library-path setup;
+    // in that case even a fallback to Homebrew loads the wrong LLVM. Put the
+    // active compiler's libraries first, without changing PECOS's LLVM prefix.
+    let rustc = std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
+    if let Ok(output) = std::process::Command::new(rustc)
+        .args(["--print", "sysroot"])
+        .env_remove("DYLD_LIBRARY_PATH")
+        .env_remove("DYLD_FALLBACK_LIBRARY_PATH")
+        .output()
+        && output.status.success()
+    {
+        let sysroot = String::from_utf8_lossy(&output.stdout);
+        let rust_libdir = Path::new(sysroot.trim()).join("lib");
+        if rust_libdir.join("libLLVM.dylib").is_file() {
+            prepend_path_env(env, "DYLD_FALLBACK_LIBRARY_PATH", &rust_libdir);
+        }
+    }
 }
 
 #[cfg(target_os = "windows")]

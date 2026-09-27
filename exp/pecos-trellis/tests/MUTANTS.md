@@ -5,12 +5,10 @@ run the named killer test(s), and restore the source before trying the next
 row. "Equivalent" rows document mutations that intentionally have no killer.
 
 Every edit below targets `exp/pecos-trellis/src/lib.rs`, and every killer named
-below lives in this crate. Killers that lived in the parity-port crate
-(`decode_outputs_match_bitwise_snapshot`,
-`unpruned_and_pruned_results_match_upstream_golden_fixtures`) are deliberately
-NOT cited here: those suites ship with the port, so a reader of this crate
-alone could not run them. `score_fold_restore`'s killers were re-derived by
-executing the mutant against this crate's suite rather than assumed.
+below lives in this crate. The local `bitwise_snapshot` integration test freezes
+every semantic result field except wall-clock timing, which is recorded only
+as a ran/did-not-run bit, independently of the parity-port crate. `score_fold_restore`'s killers were re-derived by executing the mutant
+against this crate's suite rather than assumed.
 
 | Mutant | Exact edit (quoted old → new) | Expected killer test(s) or disposition |
 |---|---|---|
@@ -40,3 +38,7 @@ executing the mutant against this crate's suite rather than assumed.
 | `maxlog_zero_alpha_scores_suffix` | Remove the `alpha_int == 0` short-circuit in `prune_maxlog`. | `maxlog_zero_alpha_skips_negative_infinite_suffix_scores` |
 | `allow_maxlog_indistinguishable_merge` | Delete the `MetricMode::MaxLogInt` plus `merge_indistinguishable` rejection from `validate_config`. | `validates_probabilities_indices_order_and_pruning_configuration` |
 | `maxlog_score_tie_ignores_log_mass` | Delete the log-mass comparator from `prune_maxlog`'s candidate ordering. | `maxlog_score_ties_prefer_the_higher_mass_state` |
+| `terminal_evidence_fold_reversed` | In `exp/pecos-trellis/src/lib.rs`, in the binary float arm only, replace `terminal.iter().fold(f64::NEG_INFINITY, \|total, candidate\| {` with `terminal.iter().rev().fold(f64::NEG_INFINITY, \|total, candidate\| {`. | `bitwise_snapshot::decode_outputs_match_bitwise_snapshot`; verified failure in `binary/random_seed11/float/unpruned/bp=0/merge=false/order=input/syndrome=0x2`, field `log_evidence` (one bit). Applied and restored in an isolated workspace copy to preserve the source oracle. |
+| `binary_branch_order_swapped` | In `process_binary_range`, swap the two `branch_context.emit(...)` calls inside the `for (index, &log_mass) in frontier.parent.masses.iter().enumerate()` loop, so the taken branch (`Some((&column.detector_toggle, &column.logical_toggle))`, `branch_base + column.log_odds`) is emitted before the not-taken branch (`None`, `branch_base`). | EQUIVALENT (verified 2026-09-24 on the post-#829 engine: `bitwise_snapshot` passes in both crates with the swap applied). Each merged state receives at most one taken and one not-taken route, and `frontier.merge(logaddexp)` combines two routes to the same bits in either order. |
+| `bp_residual_ignores_forced` | In `bp_suffix_compatibility`, replace `(observed[word_index] ^ self.forced_syndrome[word_index]) & bit_mask` with `(observed[word_index] & bit_mask)`. | `bitwise_snapshot::decode_outputs_match_bitwise_snapshot`; verified `binary/forced_duplicate/float/k+delta/bp=5/merge=false/order=input/syndrome=0x43`, field `transitions`. |
+| `nary_outcomes_reversed` | In the N-ary float DP, replace `for outcome in &column.outcomes {` with `for outcome in column.outcomes.iter().rev() {`. | `bitwise_snapshot::decode_outputs_match_bitwise_snapshot`; verified `nary/three_route_collision/float/unpruned/bp=0/merge=false/order=rotate/syndrome=0x0`, field `log_evidence`. |

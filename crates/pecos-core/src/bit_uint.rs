@@ -1272,6 +1272,22 @@ mod tests {
     }
 
     #[test]
+    fn narrow_left_with_a_wide_divisor_whose_value_fits() {
+        // The divisor is declared wider than the dividend but holds a value the
+        // dividend's width can express, so the early return for an oversized
+        // divisor does not fire and the divisor is resized down instead.
+        let a = BitUInt::new(8, 255);
+        let b = BitUInt::from_raw_words(128, Box::new([3, 0]));
+        assert_words(&(&a / &b), 8, &[85]);
+        assert_words(&(&a % &b), 8, &[0]);
+
+        let c = BitUInt::new(64, u64::MAX);
+        let d = BitUInt::from_raw_words(200, Box::new([7, 0, 0, 0]));
+        assert_words(&(&c / &d), 64, &[u64::MAX / 7]);
+        assert_words(&(&c % &d), 64, &[u64::MAX % 7]);
+    }
+
+    #[test]
     fn mixed_wide_left_narrow_high_bit() {
         assert_words(&(BitUInt::new(128, 3) * with_bits(65, &[64])), 128, &[0, 3]);
     }

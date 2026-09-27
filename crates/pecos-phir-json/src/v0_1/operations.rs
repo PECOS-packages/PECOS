@@ -1505,6 +1505,11 @@ impl OperationProcessor {
             )));
         }
 
+        if qop == "RXYXY2Q" {
+            crate::v0_1::ast::validate_rxyxy2q_args(angles.map(Vec::as_slice), args)
+                .map_err(PecosError::ValidationInvalidGateParameters)?;
+        }
+
         // Validate and extract qubit arguments
         let mut qubit_args = Vec::new();
 
@@ -1567,6 +1572,15 @@ impl OperationProcessor {
                 let theta = angles_ref[0];
                 let phi = angles_ref[1];
                 Ok((qop.to_string(), qubit_args, vec![theta, phi]))
+            }
+
+            "RXYXY2Q" => {
+                let angles = angles.ok_or_else(|| {
+                    PecosError::ValidationInvalidGateParameters(
+                        "RXYXY2Q requires two angles".to_string(),
+                    )
+                })?;
+                Ok((qop.to_string(), qubit_args, angles.clone()))
             }
 
             // Two-qubit rotation gate: RXXRYYRZZ (3 angles)
@@ -1683,6 +1697,15 @@ impl OperationProcessor {
                     Angle64::from_radians(angle_args[0]),
                     Angle64::from_radians(angle_args[1]),
                     &[qubit_args[0]],
+                );
+            }
+            "RXYXY2Q" => {
+                crate::v0_1::ast::validate_rxyxy2q(Some(angle_args), qubit_args.len())
+                    .map_err(PecosError::ValidationInvalidGateParameters)?;
+                builder.rxyxy2q(
+                    Angle64::from_radians(angle_args[0]),
+                    Angle64::from_radians(angle_args[1]),
+                    &pairs()?,
                 );
             }
             "RXXRYYRZZ" => {

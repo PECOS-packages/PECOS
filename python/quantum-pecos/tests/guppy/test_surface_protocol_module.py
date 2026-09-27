@@ -657,3 +657,38 @@ def test_logical_s_factory_ordered_body(patch):
         _expected_rounds("rounds_after", "a"),
         *_expected_readout("a"),
     ]
+
+
+@pytest.mark.parametrize("rounds", [0, 1, 2])
+def test_logical_y_readout_factory(patch, module, rounds):
+    program = module["make_logical_y_readout"](rounds)
+    assert program.compile() is not None
+    builder = LogicalCircuitBuilder()
+    builder.add_patch(patch, "D")
+    builder.add_memory("D", rounds, "X")
+    builder.add_logical_s("D")
+    builder.add_memory("D", rounds, "Y")
+    assert_same_measurement_partition(
+        measurement_partition_from_trace(program, patch.geometry.num_qubits, {"a": "D"}),
+        measurement_partition_from_builder(builder),
+    )
+
+
+def test_logical_y_readout_factory_rejects_negative_rounds(module):
+    with pytest.raises(ValueError, match="Logical Y readout requires nonnegative round counts"):
+        module["make_logical_y_readout"](-1)
+
+
+def test_logical_y_readout_factory_ordered_body(patch):
+    assert _factory_structure(render_surface_protocol_module(patch), "make_logical_y_readout") == [
+        "a = prep_x_basis()",
+        _expected_rounds("num_rounds", "a"),
+        "syn = syndrome_extraction_fold_s_a(a)",
+        "output('synx_a', syn.synx)",
+        "output('synz_a', syn.synz)",
+        "syn = syndrome_extraction_fold_sdg_a(a)",
+        "output('synx_a', syn.synx)",
+        "output('synz_a', syn.synz)",
+        _expected_rounds("num_rounds", "a"),
+        *_expected_readout("a", "x"),
+    ]

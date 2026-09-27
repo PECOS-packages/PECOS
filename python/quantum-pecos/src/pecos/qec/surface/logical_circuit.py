@@ -42,8 +42,6 @@ from pecos.qec.surface import gadgets
 from pecos.qec.surface.circuit_builder import OpType, QubitAllocation
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
-
     from pecos.qec.surface.circuit_builder import SurfaceCircuitStep
     from pecos.qec.surface.patch import Stabilizer, SurfacePatch
 
@@ -776,42 +774,38 @@ class LogicalOp:
         return self.gate_type in {LogicalGateType.MEMORY, LogicalGateType.FOLD_S}
 
 
-def _descriptor_commit_regions(
+def _require_commit_rounds(
     segment_ops: list[LogicalOp],
-    segments: list[dict],
-    *,
-    explicit_buffer: int,
-    time_cursor: int,
-) -> Iterator[tuple[int, int, int]]:
-    """Validate regions as reached so earlier window errors keep their precedence."""
-    prepared: set[str] = set()
-    for index, (op, segment) in enumerate(zip(segment_ops, segments, strict=True)):
-        start_round = max(0, int(segment["time_start"]) - explicit_buffer)
-        is_last = index == len(segments) - 1
-        commit_end = time_cursor + 1 if is_last else int(segment["time_end"])
-        commit_rounds = commit_end - start_round
-        if commit_rounds == 0:
-            cause = "a segment with no commit rounds"
-            if op.gate_type == LogicalGateType.MEMORY and op.rounds == 0:
-                cause = "a zero-round memory segment"
-                if (
-                    all(
-                        label not in prepared and op.per_patch_basis.get(label, op.basis) == "Y" for label in op.patches
-                    )
-                    and not is_last
-                    and segment_ops[index + 1].fold == "SDG"
-                    and segment_ops[index + 1].patches == op.patches
-                ):
-                    cause = "a zero-round Y preparation before the Y-readout fold"
-            patch_names = ", ".join(repr(label) for label in op.patches)
-            patches = f"patch {patch_names}" if len(op.patches) == 1 else f"patches {patch_names}"
-            msg = (
-                f"segment {index} ({patches}) has an empty commit region: {cause}; "
-                "descriptor commit regions need at least one round"
-            )
-            raise ValueError(msg)
-        yield index, start_round, commit_rounds
-        prepared.update(op.patches)
+    index: int,
+    commit_rounds: int,
+    prepared: set[str],
+) -> None:
+    """Name an empty commit region before the native window slicer rejects it.
+
+    Called per segment as the descriptor loop reaches it, so an earlier
+    segment's look-ahead error keeps its precedence.
+    """
+    if commit_rounds != 0:
+        return
+    op = segment_ops[index]
+    cause = "a segment with no commit rounds"
+    if op.gate_type == LogicalGateType.MEMORY and op.rounds == 0:
+        cause = "a zero-round memory segment"
+        follower = segment_ops[index + 1] if index + 1 < len(segment_ops) else None
+        if (
+            all(label not in prepared and op.per_patch_basis.get(label, op.basis) == "Y" for label in op.patches)
+            and follower is not None
+            and follower.fold == "SDG"
+            and follower.patches == op.patches
+        ):
+            cause = "a zero-round Y preparation before the Y-readout fold"
+    patch_names = ", ".join(repr(label) for label in op.patches)
+    patches = f"patch {patch_names}" if len(op.patches) == 1 else f"patches {patch_names}"
+    msg = (
+        f"segment {index} ({patches}) has an empty commit region: {cause}; "
+        "descriptor commit regions need at least one round"
+    )
+    raise ValueError(msg)
 
 
 def _conjugate_pauli(op: LogicalOp, patch: str, pauli: str) -> list[tuple[str, str]]:
@@ -2511,13 +2505,17 @@ class LogicalCircuitBuilder:
             for index, seg in enumerate(segments)
         ]
         explicit_buffer = 0 if buffer is None else buffer
-        for segment_index, start_round, commit_rounds in _descriptor_commit_regions(
-            segment_ops,
-            segments,
-            explicit_buffer=explicit_buffer,
-            time_cursor=time_cursor,
-        ):
+        if len(segment_ops) != len(segments):
+            msg = f"{len(segment_ops)} segment operations for {len(segments)} descriptor segments"
+            raise ValueError(msg)
+        prepared_patches: set[str] = set()
+        for segment_index, seg in enumerate(segments):
             is_last = segment_index == len(segments) - 1
+            start_round = max(0, int(seg["time_start"]) - explicit_buffer)
+            commit_end = time_cursor + 1 if is_last else int(seg["time_end"])
+            commit_rounds = commit_end - start_round
+            _require_commit_rounds(segment_ops, segment_index, commit_rounds, prepared_patches)
+            prepared_patches.update(segment_ops[segment_index].patches)
             forward_buffer = 0 if is_last else buffer
             forward_boundary = "hard" if is_last else "soft"
 

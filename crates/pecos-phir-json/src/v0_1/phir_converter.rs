@@ -202,8 +202,8 @@ impl ImprovedConverter {
                         paired.results = instruction
                             .results
                             .iter()
-                            .map(|_| SSAValue::new(self.new_ssa_id()))
-                            .collect();
+                            .map(|_| self.new_ssa_id().map(SSAValue::new))
+                            .collect::<Result<Vec<_>, PecosError>>()?;
                         instructions.push(paired);
                     }
                 } else {

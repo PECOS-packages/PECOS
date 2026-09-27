@@ -15,7 +15,7 @@ import stim
 from pecos.guppy_gen.gadget_render import render_gadget_function
 from pecos.qec import DetectorErrorModel
 from pecos.qec.surface import LogicalCircuitBuilder, SurfacePatch, gadgets, logical_circuit
-from pecos.qec.surface.circuit_builder import OpType, QubitAllocation, SurfaceCircuitStep
+from pecos.qec.surface.circuit_builder import OpType, QubitAllocation, SurfaceCircuitStep, tick_circuit_to_stim
 from pecos.qec.surface.logical_circuit import (
     LogicalGateType,
     LogicalOp,
@@ -1174,11 +1174,13 @@ def test_gate_renderer(variant, renamed):
     assert actual == expected
 
 
-def test_y_readout_unsupported():
+def test_y_readout_composes_fold_and_x():
     builder = make_builder("d3_mem_Z")
     builder.add_memory("A", 2, "Y")
-    with pytest.raises(NotImplementedError, match="Y readout"):
-        builder.to_tick_circuit()
+    explicit = make_builder("d3_mem_Z")
+    explicit.add_logical_sdg("A")
+    explicit.add_memory("A", 2, "X")
+    assert tick_circuit_to_stim(builder.to_tick_circuit()) == tick_circuit_to_stim(explicit.to_tick_circuit())
 
 
 @pytest.mark.parametrize("method", ["add_transversal_cx", "add_sz_via_teleportation", "add_t_via_injection"])
@@ -1287,8 +1289,17 @@ def test_disjoint_terminal_bases():
         == 2
     )
     builder.operations[0].basis = "Y"
-    with pytest.raises(NotImplementedError, match="Y readout"):
-        builder.to_tick_circuit()
+    lowered = builder.to_tick_circuit()
+    assert [obs["id"] for obs in json.loads(lowered.get_meta("observables"))] == [1]
+    assert simulate_tick_circuit(lowered)[1:] == (0, {1: 0})
+    assert len(builder.operations) == 2
+    assert builder.operations[0].basis == "Y"
+    assert tick_circuit_to_stim(builder.to_tick_circuit()) == tick_circuit_to_stim(lowered)
+    assert builder.build_dem()
+    with pytest.raises(ValueError, match="a DEM window commit region cannot be empty"):
+        builder.build_algorithm_descriptor()
+    builder.operations[0].basis = "X"
+    assert tick_circuit_to_stim(builder.to_tick_circuit()) == tick_circuit_to_stim(tc)
 
 
 def test_split_zip_padding_and_measurement_labels():

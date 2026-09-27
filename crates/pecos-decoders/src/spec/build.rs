@@ -334,7 +334,7 @@ fn build_pymatching(
     } else {
         crate::PyMatchingDecoder::from_dem(dem)
     }
-    .map_err(internal)?;
+    .map_err(DecoderError::from)?;
     if let Some(error_probability) = config.error_probability {
         decoder
             .set_all_error_probabilities(error_probability)
@@ -376,7 +376,7 @@ fn build_tesseract_trellis(
 ) -> Result<Box<dyn ObservableDecoder>, DecoderError> {
     Ok(Box::new(
         crate::TesseractTrellisDecoder::new(dem, trellis_engine_config(config))
-            .map_err(internal)?,
+            .map_err(DecoderError::from)?,
     ))
 }
 
@@ -420,7 +420,7 @@ fn build_tesseract(
         engine_config.det_penalty = det_penalty;
     }
     Ok(Box::new(
-        crate::TesseractDecoder::new(dem, engine_config).map_err(internal)?,
+        crate::TesseractDecoder::new(dem, engine_config).map_err(DecoderError::from)?,
     ))
 }
 

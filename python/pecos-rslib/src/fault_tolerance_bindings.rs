@@ -5059,12 +5059,15 @@ impl PyParsedDem {
 
     /// Aggregate mechanisms by their effect.
     ///
-    /// Returns a dictionary mapping (`detector_tuple`, `observable_tuple`) to
-    /// combined probability. Probabilities are combined using the independent
+    /// Returns a dictionary mapping (detectors, observables, `tracked_paulis`) to
+    /// combined probability. Each field is a sorted tuple of integer IDs, with an
+    /// empty `tracked_paulis` tuple for mechanisms without tracked Paulis, so the
+    /// key matches the Rust effect key field for field.
+    /// Probabilities are combined using the independent
     /// error formula: p1*(1-p2) + p2*(1-p1).
     ///
     /// Returns:
-    ///     Dictionary of {(detectors, observables): probability}.
+    ///     Dictionary of {(detectors, observables, tracked_paulis): probability}.
     fn aggregate(&self, py: Python<'_>) -> PyResult<Py<pyo3::types::PyDict>> {
         let agg = self.inner.aggregate();
         let dict = pyo3::types::PyDict::new(py);
@@ -5072,8 +5075,15 @@ impl PyParsedDem {
         for (key, prob) in agg {
             let det_tuple = pyo3::types::PyTuple::new(py, key.detectors.iter())?;
             let obs_tuple = pyo3::types::PyTuple::new(py, key.observables.iter())?;
-            let key_tuple =
-                pyo3::types::PyTuple::new(py, [det_tuple.as_any(), obs_tuple.as_any()])?;
+            let tracked_pauli_tuple = pyo3::types::PyTuple::new(py, key.tracked_paulis.iter())?;
+            let key_tuple = pyo3::types::PyTuple::new(
+                py,
+                [
+                    det_tuple.as_any(),
+                    obs_tuple.as_any(),
+                    tracked_pauli_tuple.as_any(),
+                ],
+            )?;
             dict.set_item(key_tuple, prob)?;
         }
 

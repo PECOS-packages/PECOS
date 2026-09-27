@@ -10,6 +10,8 @@ use std::fmt;
 /// Error types for Chromobius operations
 #[derive(Debug)]
 pub enum ChromobiusError {
+    /// DEM validation failed
+    Dem(pecos_decoder_core::DecoderError),
     /// Invalid configuration parameter
     InvalidConfig(String),
     /// Decoder initialization failed
@@ -23,6 +25,7 @@ pub enum ChromobiusError {
 impl fmt::Display for ChromobiusError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            ChromobiusError::Dem(error) => error.fmt(f),
             ChromobiusError::InvalidConfig(msg) => write!(f, "Invalid configuration: {msg}"),
             ChromobiusError::InitializationFailed(msg) => {
                 write!(f, "Initialization failed: {msg}")
@@ -33,7 +36,14 @@ impl fmt::Display for ChromobiusError {
     }
 }
 
-impl Error for ChromobiusError {}
+impl Error for ChromobiusError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Dem(error) => Some(error),
+            _ => None,
+        }
+    }
+}
 
 /// Configuration for Chromobius decoder
 #[derive(Debug, Clone, Copy)]
@@ -122,11 +132,14 @@ impl ChromobiusDecoder {
     ///
     /// # Errors
     ///
+    /// Returns [`ChromobiusError::Dem`] for tokenizer errors.
     /// Returns [`ChromobiusError::InitializationFailed`] if:
-    /// - The DEM string is malformed
+    /// - The backend rejects the DEM structure
     /// - The DEM contains unsupported error mechanisms
     /// - Memory allocation fails
     pub fn new(dem_string: &str, config: ChromobiusConfig) -> Result<Self, ChromobiusError> {
+        pecos_decoder_core::dem::grammar::validate_dem_text(dem_string)
+            .map_err(ChromobiusError::Dem)?;
         let inner = ffi::create_chromobius_decoder(
             dem_string,
             config.drop_mobius_errors_involving_remnant_errors,
@@ -238,6 +251,26 @@ impl Decoder for ChromobiusDecoder {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dem_validation_precedes_backend_parsing() {
+        for text in [
+            "error(0.1) D0 D0",
+            "error(0.1) D0 D1 ^ D1 D0",
+            "repeat 2 {\nerror(0.1) D0 D0\n}",
+            "@bad",
+        ] {
+            let expected = pecos_decoder_core::dem::grammar::validate_dem_text(text).unwrap_err();
+            let error = ChromobiusDecoder::new(text, ChromobiusConfig::default())
+                .err()
+                .unwrap();
+            assert!(matches!(
+                error,
+                ChromobiusError::Dem(pecos_decoder_core::DecoderError::InvalidDemSyntax(_))
+            ));
+            assert_eq!(error.to_string(), expected.to_string());
+        }
+    }
 
     #[test]
     fn test_chromobius_config_default() {

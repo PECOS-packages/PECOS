@@ -320,7 +320,7 @@ mod tests {
             },
         ];
         let coords = "detector(1, 1, 0) D0\ndetector(3, 1, 0) D1\ndetector(7, 1, 0) D2\n";
-        for targets in ["D0 D0 D2", "D0 ^ D0 D2", "D0 D1 D2 ^ D0 D1 D2"] {
+        for targets in ["D0 ^ D0 D2", "D0 D1 ^ D1 D2 ^ D2 D0"] {
             let dem = format!("{coords}error(0.1) {targets}");
             assert!(
                 extract_ghost_edges_from_dem(&dem, &stab_coords)
@@ -329,7 +329,7 @@ mod tests {
             );
         }
         // Ghost endpoints are an unordered pair; sorting preserves the edge and its owner.
-        for targets in ["D1 D0 D2", "D2 D0 D1 D2 D2", "D2 D0 ^ D1 D2 D2"] {
+        for targets in ["D1 D0 D2", "D2 D0 ^ D1 D2 ^ D2"] {
             let dem = format!("{coords}error(0.1) {targets}");
             let edges = extract_ghost_edges_from_dem(&dem, &stab_coords).unwrap();
             assert_eq!(edges.len(), 1);

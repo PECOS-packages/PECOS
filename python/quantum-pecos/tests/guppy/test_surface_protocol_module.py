@@ -128,7 +128,7 @@ def test_factory_preparations_and_readouts(patch, factory, preparations, readout
     """Check source structure because current physical readouts cannot distinguish Y from X ancilla prep.
 
     Measurement partitions and logical Z outcomes are unchanged by that substitution;
-    a physical check of the phase would require a Y readout that is not available yet.
+    a physical check of the phase would require the fold-based Y readout, which these factories do not use.
     """
     source = ast.parse(render_surface_protocol_module(patch))
     factory_node = next(node for node in source.body if isinstance(node, ast.FunctionDef) and node.name == factory)
@@ -656,4 +656,39 @@ def test_logical_s_factory_ordered_body(patch):
         "output('synz_a', syn.synz)",
         _expected_rounds("rounds_after", "a"),
         *_expected_readout("a"),
+    ]
+
+
+@pytest.mark.parametrize("rounds", [0, 1, 2])
+def test_logical_y_readout_factory(patch, module, rounds):
+    program = module["make_logical_y_readout_experiment"](rounds)
+    assert program.compile() is not None
+    builder = LogicalCircuitBuilder()
+    builder.add_patch(patch, "D")
+    builder.add_memory("D", rounds, "X")
+    builder.add_logical_s("D")
+    builder.add_memory("D", rounds, "Y")
+    assert_same_measurement_partition(
+        measurement_partition_from_trace(program, patch.geometry.num_qubits, {"a": "D"}),
+        measurement_partition_from_builder(builder),
+    )
+
+
+def test_logical_y_readout_factory_rejects_negative_rounds(module):
+    with pytest.raises(ValueError, match="Logical Y readout requires nonnegative round counts"):
+        module["make_logical_y_readout_experiment"](-1)
+
+
+def test_logical_y_readout_factory_ordered_body(patch):
+    assert _factory_structure(render_surface_protocol_module(patch), "make_logical_y_readout_experiment") == [
+        "a = prep_x_basis()",
+        _expected_rounds("num_rounds", "a"),
+        "syn = syndrome_extraction_fold_s_a(a)",
+        "output('synx_a', syn.synx)",
+        "output('synz_a', syn.synz)",
+        "syn = syndrome_extraction_fold_sdg_a(a)",
+        "output('synx_a', syn.synx)",
+        "output('synz_a', syn.synz)",
+        _expected_rounds("num_rounds", "a"),
+        *_expected_readout("a", "x"),
     ]

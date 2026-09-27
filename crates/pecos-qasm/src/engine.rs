@@ -1609,6 +1609,19 @@ impl ClassicalEngine for QASMEngine {
                 );
 
                 let num_results = outcomes.len();
+                // Every outcome must correspond to a measurement this engine has
+                // already queued; a longer message is a protocol violation and would
+                // misalign every later measurement if it were accepted.
+                let pending = self
+                    .register_result_mappings
+                    .len()
+                    .saturating_sub(self.measurements_processed);
+                if num_results > pending {
+                    return Err(PecosError::Input(format!(
+                        "Received {num_results} measurement outcomes but only {pending} \
+                         measurements are pending"
+                    )));
+                }
                 for (local_index, value) in outcomes.into_iter().enumerate() {
                     // Calculate the global index for this measurement
                     let global_index = self.measurements_processed + local_index;

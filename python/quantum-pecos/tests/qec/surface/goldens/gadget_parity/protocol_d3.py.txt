@@ -900,3 +900,29 @@ def make_logical_s_experiment(rounds_before: int, rounds_after: int, *, dagger: 
         final = measure_z_basis(a)
         output("final_a", final)
     return guppy(variant_scoped(logical_s_experiment, rounds_before, rounds_after, dagger))
+
+
+def make_logical_y_readout_experiment(num_rounds: int):
+    """Prepare X, apply logical S, then read Y through S-dagger and X readout."""
+    if num_rounds < 0:
+        raise ValueError("Logical Y readout requires nonnegative round counts")
+    def logical_y_readout() -> None:
+        """Logical Y readout experiment."""
+        a = prep_x_basis()
+        for _ in range(comptime(num_rounds)):
+            syn = syndrome_extraction_a(a)
+            output("synx_a", syn.synx)
+            output("synz_a", syn.synz)
+        syn = syndrome_extraction_fold_s_a(a)
+        output("synx_a", syn.synx)
+        output("synz_a", syn.synz)
+        syn = syndrome_extraction_fold_sdg_a(a)
+        output("synx_a", syn.synx)
+        output("synz_a", syn.synz)
+        for _ in range(comptime(num_rounds)):
+            syn = syndrome_extraction_a(a)
+            output("synx_a", syn.synx)
+            output("synz_a", syn.synz)
+        final = measure_x_basis(a)
+        output("final_a", final)
+    return guppy(variant_scoped(logical_y_readout, num_rounds))

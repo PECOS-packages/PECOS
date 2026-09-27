@@ -28,15 +28,16 @@ The decoder system in PECOS is designed around modularity and performance:
 
 ## DEM text grammar
 
-PECOS reads flat Stim detector-error-model text using Stim's grammar:
+PECOS reads flat Stim detector-error-model text using a strict subset of Stim's grammar:
 
 - Instruction names and detector/observable target prefixes are case-insensitive; tags and inline `#` comments are supported.
 - Targets and `^` separators require spacing; separators cannot be first, last, or adjacent.
+- PECOS rejects a detector or observable repeated within one component of an error instruction, and an identical component repeated within one instruction, even though Stim accepts them, because it almost always indicates a mistake. Extension `TP` targets follow the same rule. Components are identical when they contain the same set of targets regardless of order: `D0 D1 ^ D1 D0` is rejected, while `D0 D1 L0 ^ D0 D1 L1` contains two distinct components. A target may appear in several components of a decomposed mechanism.
 - Parenthesized arguments immediately follow the name or tag. `error` requires one probability in `[0, 1]`, with `error()` meaning zero; detector and logical-observable declarations require exactly one target of the appropriate kind.
-- Grammar is validated per instruction; block balance is not checked. `repeat`, `shift_detectors`, and closing braces require flattening, including stray braces and unclosed repeat blocks.
+- Grammar is validated per instruction; block balance is not checked by the tokenizer. PECOS readers requiring flat DEMs reject `repeat`, `shift_detectors`, and closing braces with a flattening error, including stray braces and unclosed repeat blocks.
 - PECOS extension targets and metadata statements require an explicit opt-in: `ParsedDem` and `DetectorErrorModel::with_pecos_dem_metadata` enable the whole PECOS superset, including `TP` targets and JSON metadata statements.
 
-PECOS-parsed Python constructors report grammar errors as `ValueError` with the `Invalid DEM syntax:` prefix; Stim-backed constructors such as `PyMatchingDecoder` and `TesseractDecoder` retain their native parser errors and exception types.
+Python constructors report tokenizer errors as `ValueError` with the `Invalid DEM syntax:` prefix. Stim-backed constructors such as `PyMatchingDecoder` and `TesseractDecoder` validate the original text before passing it to their backend, which supports loop expansion and retains its native errors for backend-specific constraints.
 
 ## Available Decoders
 

@@ -102,7 +102,8 @@ fn get_quantum_traits(q_op: &QuantumOp) -> BTreeSet<OpTrait> {
         | QuantumOp::SZZ
         | QuantumOp::SZZdg
         | QuantumOp::CPhase(_)
-        | QuantumOp::RZZ(_) => {
+        | QuantumOp::RZZ(_)
+        | QuantumOp::RXYXY2Q(_, _) => {
             traits.insert(PureQuantum);
             traits.insert(NoSideEffect);
         }

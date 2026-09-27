@@ -115,6 +115,7 @@ fn convert_gate_type(core_type: CoreGateType) -> Option<NeoGateType> {
         CoreGateType::RXX => NeoGateType::RXX,
         CoreGateType::RYY => NeoGateType::RYY,
         CoreGateType::RZZ => NeoGateType::RZZ,
+        CoreGateType::RXYXY2Q => NeoGateType::RXYXY2Q,
 
         // Three-qubit gates
         CoreGateType::CCX => NeoGateType::CCX,
@@ -489,6 +490,19 @@ pub fn command_queue_to_gates(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn rxyxy2q_core_command_preserves_angles_and_pairs() {
+        let gate = pecos_core::Gate::rxyxy2q(
+            pecos_core::Angle64::QUARTER_TURN,
+            pecos_core::Angle64::HALF_TURN,
+            &[(0, 1), (3, 2)],
+        );
+        let command = super::convert_gate(&gate).unwrap();
+        assert_eq!(command.gate_type, crate::GateType::RXYXY2Q);
+        assert_eq!(command.qubits, gate.qubits);
+        assert_eq!(command.angles(), gate.angles.as_slice());
+    }
+
     use super::*;
     use crate::command::GateCommandError;
     use crate::program::StaticProgram;

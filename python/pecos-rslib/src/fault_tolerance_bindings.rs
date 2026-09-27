@@ -2349,7 +2349,7 @@ impl PyDetectorErrorModel {
     ///     >>> sampler = dem.to_sampler()
     ///
     /// `p1_gate_rates` and `p2_gate_rates` keys name the gate as scheduled;
-    /// runtime-traced circuits schedule rotations such as `RZZ` and `RXY1Q`,
+    /// runtime-traced circuits schedule rotations such as `RZZ`, `RXYXY2Q`, and `RXY1Q`,
     /// so key by those or lower the circuit first. Nonzero keys naming the
     /// Clifford action of a different scheduled gate are rejected, even if
     /// another scheduled gate matches the key.
@@ -2972,7 +2972,7 @@ impl PyDemBuilder {
     ///     Self for method chaining.
     ///
     /// `p1_gate_rates` and `p2_gate_rates` keys name the gate as scheduled;
-    /// runtime-traced circuits schedule rotations such as `RZZ` and `RXY1Q`,
+    /// runtime-traced circuits schedule rotations such as `RZZ`, `RXYXY2Q`, and `RXY1Q`,
     /// so key by those or lower the circuit first. Nonzero keys naming the
     /// Clifford action of a different scheduled gate are rejected, even if
     /// another scheduled gate matches the key.
@@ -3982,7 +3982,7 @@ impl PyDemSampler {
     ///     >>> sampler = DemSampler.from_circuit(tc, p2=0.01)  # TickCircuit also works
     ///
     /// `p1_gate_rates` and `p2_gate_rates` keys name the gate as scheduled;
-    /// runtime-traced circuits schedule rotations such as `RZZ` and `RXY1Q`,
+    /// runtime-traced circuits schedule rotations such as `RZZ`, `RXYXY2Q`, and `RXY1Q`,
     /// so key by those or lower the circuit first. Nonzero keys naming the
     /// Clifford action of a different scheduled gate are rejected, even if
     /// another scheduled gate matches the key.
@@ -4146,7 +4146,7 @@ impl PyDemSampler {
     /// The `observables` argument defines observables.
     ///
     /// `p1_gate_rates` and `p2_gate_rates` keys name the gate as scheduled;
-    /// runtime-traced circuits schedule rotations such as `RZZ` and `RXY1Q`,
+    /// runtime-traced circuits schedule rotations such as `RZZ`, `RXYXY2Q`, and `RXY1Q`,
     /// so key by those or lower the circuit first. Nonzero keys naming the
     /// Clifford action of a different scheduled gate are rejected, even if
     /// another scheduled gate matches the key.
@@ -4714,7 +4714,7 @@ impl PyDemSamplerBuilder {
     /// Set noise parameters.
     ///
     /// `p1_gate_rates` and `p2_gate_rates` keys name the gate as scheduled;
-    /// runtime-traced circuits schedule rotations such as `RZZ` and `RXY1Q`,
+    /// runtime-traced circuits schedule rotations such as `RZZ`, `RXYXY2Q`, and `RXY1Q`,
     /// so key by those or lower the circuit first. Nonzero keys naming the
     /// Clifford action of a different scheduled gate are rejected, even if
     /// another scheduled gate matches the key.

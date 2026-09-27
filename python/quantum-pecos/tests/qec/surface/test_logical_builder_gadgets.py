@@ -1296,7 +1296,10 @@ def test_disjoint_terminal_bases():
     assert builder.operations[0].basis == "Y"
     assert tick_circuit_to_stim(builder.to_tick_circuit()) == tick_circuit_to_stim(lowered)
     assert builder.build_dem()
-    with pytest.raises(ValueError, match="a DEM window commit region cannot be empty"):
+    with pytest.raises(
+        ValueError,
+        match=r"segment 0 \(patch 'A'\) has no detectors: a zero-round Y preparation before the Y-readout fold",
+    ):
         builder.build_algorithm_descriptor()
     builder.operations[0].basis = "X"
     assert tick_circuit_to_stim(builder.to_tick_circuit()) == tick_circuit_to_stim(tc)

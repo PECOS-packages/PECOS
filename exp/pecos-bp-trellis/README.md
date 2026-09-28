@@ -15,7 +15,13 @@ facade.
 
 The optional `pecos-rslib-exp` package provides `pecos_rslib_exp.bp_trellis(...)`
 for `SampleBatch.decode` and `DemSampler.decode`, including parallel Rust workers.
-All seven configuration options are exposed. Standard `pecos-rslib` and
+Both ladder forms and all native configuration options are exposed. Standard `pecos-rslib` and
 `pecos-decoders` do not depend on this crate. The direct
 `pecos_rslib_exp.BpTrellisDecoder` API additionally returns detailed per-shot
 confidence and retry telemetry.
+
+Rust callers use `BpTrellisConfig::escalation: Vec<EscalationRung>` with one model
+and `decode_outcome` / `decode_batch_outcomes` for explicit outcomes; `decode`,
+`decode_batch`, and `ObservableDecoder` stay strict. See the
+[BP-Trellis user guide](../../docs/user-guide/decoders.md#rust-backed-bp-trellis-batch-decoding)
+for Python ladder forms, no-path reporting, and telemetry.

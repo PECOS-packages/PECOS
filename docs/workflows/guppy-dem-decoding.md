@@ -362,9 +362,9 @@ width `k`. Frontier remains experimental; pruning can make its answers approxima
 `bp_trellis()` uses PECOS's native BP-guided trellis decoder on the same raw
 DEM. Its defaults are `k=8`, `delta=100.0`, `score_alpha=0.8`,
 `bp_score_iterations=5`, `merge_indistinguishable=True`, `ordering="deadline"`,
-and `escalation_ks=None`. The example opts into retry widths `[32, 128]`: these
-are attempted only if the preceding search finds no path. Each worker prebuilds
-the retry decoders, so enabling a ladder increases construction time and memory.
+`escalation_ks=None`, and `escalation=None`. The example opts into retry widths
+`[32, 128]` at the base delta; see the [BP-Trellis user guide](../user-guide/decoders.md#rust-backed-bp-trellis-batch-decoding)
+for shared preparation, rung selection, and direct no-path reporting.
 BP-Trellis also remains experimental; pruning can make predictions approximate.
 
 With `workers=None`, PECOS automatically selects a native-batch, sequential, or

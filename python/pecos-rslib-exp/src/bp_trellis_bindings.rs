@@ -15,6 +15,7 @@ use crate::decoder_specs::{
 };
 use pecos_bp_trellis::{
     BpTrellisConfig as RustBpTrellisConfig, BpTrellisDecoder as RustBpTrellisDecoder,
+    BpTrellisOutcome, EscalationRung, NoPathCause, NoPathReport,
     TrellisOrdering as RustTrellisOrdering,
 };
 use pecos_trellis::{ObsMask, SparseDem, TrellisResult, TrellisStatus};
@@ -79,6 +80,7 @@ fn parse_dem_and_config(
     merge_indistinguishable: bool,
     ordering: TrellisOrderArgument,
     escalation_ks: Option<Vec<usize>>,
+    escalation: Option<Vec<(usize, f64)>>,
 ) -> PyResult<(SparseDem, RustBpTrellisConfig)> {
     let config = RustBpTrellisConfig {
         k,
@@ -87,13 +89,69 @@ fn parse_dem_and_config(
         bp_score_iterations,
         merge_indistinguishable,
         ordering: parse_ordering(ordering)?,
-        escalation_ks: escalation_ks.unwrap_or_default(),
+        escalation: resolve_escalation(escalation_ks, escalation, delta)?,
     };
     config
         .validate()
         .map_err(|error| PyValueError::new_err(error.to_string()))?;
     let dem = SparseDem::from_dem_str(dem_str).map_err(|error| decoder_error_to_py(&error))?;
     Ok((dem, config))
+}
+
+pub(crate) fn resolve_escalation(
+    escalation_ks: Option<Vec<usize>>,
+    escalation: Option<Vec<(usize, f64)>>,
+    delta: f64,
+) -> PyResult<Vec<EscalationRung>> {
+    match (escalation_ks, escalation) {
+        (Some(_), Some(_)) => Err(PyValueError::new_err(
+            "escalation_ks and escalation cannot both be supplied",
+        )),
+        (Some(ks), None) => Ok(ks
+            .into_iter()
+            .map(|k| EscalationRung { k, delta })
+            .collect()),
+        (None, rungs) => Ok(rungs
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(k, delta)| EscalationRung { k, delta })
+            .collect()),
+    }
+}
+
+fn report_no_path(on_no_path: &str) -> PyResult<bool> {
+    match on_no_path {
+        "raise" => Ok(false),
+        "report" => Ok(true),
+        _ => Err(PyValueError::new_err(
+            "on_no_path must be 'raise' or 'report'",
+        )),
+    }
+}
+
+fn outcome_to_py(
+    py: Python<'_>,
+    outcome: BpTrellisOutcome,
+    num_observables: usize,
+) -> PyResult<Py<PyAny>> {
+    match outcome {
+        BpTrellisOutcome::Decoded(inner) => Ok(Py::new(
+            py,
+            PyBpTrellisResult {
+                inner,
+                num_observables,
+            },
+        )?
+        .into_any()),
+        BpTrellisOutcome::NoPath(inner) => Ok(Py::new(
+            py,
+            PyBpTrellisNoPath {
+                inner,
+                num_observables,
+            },
+        )?
+        .into_any()),
+    }
 }
 
 pub(crate) fn parse_ordering(ordering: TrellisOrderArgument) -> PyResult<RustTrellisOrdering> {
@@ -205,6 +263,18 @@ impl PyBpTrellisResult {
         }
     }
 
+    /// A successful decode is never a no-path placeholder.
+    #[getter]
+    fn no_path(&self) -> bool {
+        false
+    }
+
+    /// Number of BP refreshes run for this shot.
+    #[getter]
+    fn bp_runs(&self) -> u32 {
+        self.inner.bp_runs
+    }
+
     /// Total retained log evidence.
     #[getter]
     fn log_evidence(&self) -> f64 {
@@ -247,8 +317,7 @@ impl PyBpTrellisResult {
         self.inner.dropped_log_mass
     }
 
-    /// Wall-clock seconds spent producing BP-informed pruning scores,
-    /// totalled across all attempted escalation rungs.
+    /// Wall-clock seconds spent preparing BP-informed scores once for this shot.
     #[getter]
     fn bp_seconds(&self) -> f64 {
         self.inner.bp_seconds
@@ -295,6 +364,80 @@ impl PyBpTrellisResult {
     }
 }
 
+/// Explicit no-path outcome with the initial forced observable contribution.
+#[pyclass(name = "BpTrellisNoPath", module = "pecos_rslib_exp")]
+pub struct PyBpTrellisNoPath {
+    inner: NoPathReport,
+    num_observables: usize,
+}
+
+#[pymethods]
+impl PyBpTrellisNoPath {
+    /// Reason no path exists: "residual", "infeasible", or "exhausted".
+    #[getter]
+    fn cause(&self) -> &'static str {
+        match self.inner.cause {
+            NoPathCause::Residual { .. } => "residual",
+            NoPathCause::Infeasible => "infeasible",
+            NoPathCause::Exhausted => "exhausted",
+        }
+    }
+    /// Lowest detector with an unchangeable residual, or None for other causes.
+    #[getter]
+    fn detector(&self) -> Option<usize> {
+        match self.inner.cause {
+            NoPathCause::Residual { detector } => Some(detector),
+            _ => None,
+        }
+    }
+    /// Initial forced observable flips with their intrinsic width. Deliberately
+    /// not named `observable_flips`: this is a placeholder, not a correction, so
+    /// code written for a decoded result cannot pick it up by duck typing.
+    #[getter]
+    fn placeholder_flips(&self) -> PyBpTrellisObservableFlips {
+        PyBpTrellisObservableFlips {
+            mask: self.inner.placeholder.clone(),
+            num_observables: self.num_observables,
+        }
+    }
+    /// Number of escalation rungs attempted after the base attempt.
+    #[getter]
+    fn rungs_tried(&self) -> u32 {
+        self.inner.rungs_tried
+    }
+    /// Number of candidate branch evaluations across the base and all attempted rungs.
+    #[getter]
+    fn transitions(&self) -> u64 {
+        self.inner.transitions
+    }
+    /// Number of BP refreshes run for this shot; zero when the residual precheck fails.
+    #[getter]
+    fn bp_runs(&self) -> u32 {
+        self.inner.bp_runs
+    }
+    /// Wall-clock seconds spent preparing BP-informed scores once for this shot.
+    #[getter]
+    fn bp_seconds(&self) -> f64 {
+        self.inner.bp_seconds
+    }
+    /// Always True: this outcome is a no-path placeholder, not a successful decode.
+    #[getter]
+    fn no_path(&self) -> bool {
+        true
+    }
+    fn __repr__(&self) -> String {
+        let detector = self
+            .detector()
+            .map_or_else(String::new, |detector| format!(", detector={detector}"));
+        format!(
+            "BpTrellisNoPath(cause='{}'{detector}, rungs_tried={}, transitions={})",
+            self.cause(),
+            self.inner.rungs_tried,
+            self.inner.transitions
+        )
+    }
+}
+
 /// PECOS's BP-guided trellis-class decoder.
 #[pyclass(name = "BpTrellisDecoder", module = "pecos_rslib_exp", unsendable)]
 pub struct PyBpTrellisDecoder {
@@ -308,8 +451,8 @@ impl PyBpTrellisDecoder {
     /// Construct a PECOS BP-guided trellis decoder from a Stim-format DEM.
     #[staticmethod]
     #[pyo3(
-        signature = (dem, *, k=8, delta=100.0, score_alpha=0.8, bp_score_iterations=5, merge_indistinguishable=true, ordering=TrellisOrderArgument::default(), escalation_ks=None),
-        text_signature = "(dem, *, k=8, delta=100.0, score_alpha=0.8, bp_score_iterations=5, merge_indistinguishable=True, ordering='deadline', escalation_ks=None)"
+        signature = (dem, *, k=8, delta=100.0, score_alpha=0.8, bp_score_iterations=5, merge_indistinguishable=true, ordering=TrellisOrderArgument::default(), escalation_ks=None, escalation=None),
+        text_signature = "(dem, *, k=8, delta=100.0, score_alpha=0.8, bp_score_iterations=5, merge_indistinguishable=True, ordering='deadline', escalation_ks=None, escalation=None)"
     )]
     fn from_dem(
         dem: &str,
@@ -320,6 +463,7 @@ impl PyBpTrellisDecoder {
         merge_indistinguishable: bool,
         ordering: TrellisOrderArgument,
         escalation_ks: Option<Vec<usize>>,
+        escalation: Option<Vec<(usize, f64)>>,
     ) -> PyResult<Self> {
         let (dem, config) = parse_dem_and_config(
             dem,
@@ -330,6 +474,7 @@ impl PyBpTrellisDecoder {
             merge_indistinguishable,
             ordering,
             escalation_ks,
+            escalation,
         )?;
         let num_detectors = dem.num_detectors;
         let num_observables = dem.num_observables;
@@ -348,36 +493,71 @@ impl PyBpTrellisDecoder {
         self.inner.build_seconds()
     }
 
-    /// Decode sparse fired-detector indices.
-    fn decode_from_defects(&mut self, defects: Vec<u64>) -> PyResult<PyBpTrellisResult> {
+    /// Decode sparse fired-detector indices, optionally reporting no-path outcomes.
+    /// on_no_path="raise" (default) raises for no-path; "report" returns a
+    /// BpTrellisNoPath placeholder. Successful shots return BpTrellisResult.
+    /// Other decoding errors still raise; unknown on_no_path values raise ValueError.
+    #[pyo3(signature = (defects, *, on_no_path="raise"))]
+    fn decode_from_defects(
+        &mut self,
+        py: Python<'_>,
+        defects: Vec<u64>,
+        on_no_path: &str,
+    ) -> PyResult<Py<PyAny>> {
+        report_no_path(on_no_path)?;
         let syndrome = sparse_to_dense(&defects, self.num_detectors)?;
-        self.decode_syndrome(syndrome)
+        self.decode_syndrome(py, syndrome, on_no_path)
     }
 
-    /// Decode one dense detector syndrome.
-    fn decode_syndrome(&mut self, syndrome: Vec<u8>) -> PyResult<PyBpTrellisResult> {
-        self.inner
-            .decode(&syndrome)
-            .map(|inner| PyBpTrellisResult {
-                inner,
-                num_observables: self.num_observables,
-            })
-            .map_err(|error| decoder_error_to_py(&error))
+    /// Decode one dense detector syndrome, optionally reporting a no-path outcome.
+    /// on_no_path="raise" (default) raises for no-path; "report" returns a
+    /// BpTrellisNoPath placeholder. Successful shots return BpTrellisResult.
+    /// Other decoding errors still raise; unknown on_no_path values raise ValueError.
+    #[pyo3(signature = (syndrome, *, on_no_path="raise"))]
+    fn decode_syndrome(
+        &mut self,
+        py: Python<'_>,
+        syndrome: Vec<u8>,
+        on_no_path: &str,
+    ) -> PyResult<Py<PyAny>> {
+        let outcome = if report_no_path(on_no_path)? {
+            self.inner.decode_outcome(&syndrome)
+        } else {
+            self.inner.decode(&syndrome).map(BpTrellisOutcome::Decoded)
+        }
+        .map_err(|error| decoder_error_to_py(&error))?;
+        outcome_to_py(py, outcome, self.num_observables)
     }
 
-    /// Decode dense detector syndromes in input order. Defaults to sequential
-    /// execution; workers > 1 shares the model across workers and releases the GIL.
+    /// Decode dense shots in input order. Defaults to sequential execution.
     /// workers must be positive and is capped at one per shot (one for an empty batch).
-    /// Each worker owns independent decoding scratch.
-    #[pyo3(signature = (shots, *, workers=1))]
+    /// Each worker owns independent scratch; workers > 1 releases the GIL.
+    /// on_no_path="raise" (default) raises on the first no-path with its shot index.
+    /// on_no_path="report" returns a list that can mix BpTrellisResult and
+    /// BpTrellisNoPath objects. Other shot errors still raise with their index.
+    /// Unknown on_no_path values raise ValueError, including for an empty batch.
+    #[pyo3(signature = (shots, *, workers=1, on_no_path="raise"))]
     fn decode_batch(
         &self,
         py: Python<'_>,
         shots: Vec<Vec<u8>>,
         workers: i64,
-    ) -> PyResult<Vec<PyBpTrellisResult>> {
+        on_no_path: &str,
+    ) -> PyResult<Vec<Py<PyAny>>> {
+        let report = report_no_path(on_no_path)?;
         let workers = validate_batch_workers(workers)?;
-        let decode = || self.inner.decode_batch(&shots, workers);
+        let decode = || {
+            if report {
+                self.inner.decode_batch_outcomes(&shots, workers)
+            } else {
+                self.inner.decode_batch(&shots, workers).map(|results| {
+                    results
+                        .into_iter()
+                        .map(|result| result.map(BpTrellisOutcome::Decoded))
+                        .collect()
+                })
+            }
+        };
         let results = if workers > 1 {
             py.detach(decode)
         } else {
@@ -388,12 +568,9 @@ impl PyBpTrellisDecoder {
             .into_iter()
             .enumerate()
             .map(|(shot_index, result)| {
-                result
-                    .map(|inner| PyBpTrellisResult {
-                        inner,
-                        num_observables: self.num_observables,
-                    })
-                    .map_err(|error| indexed_decoder_error_to_py(shot_index, &error))
+                let outcome =
+                    result.map_err(|error| indexed_decoder_error_to_py(shot_index, &error))?;
+                outcome_to_py(py, outcome, self.num_observables)
             })
             .collect()
     }

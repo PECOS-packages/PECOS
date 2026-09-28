@@ -88,6 +88,11 @@ Correction reports include p50, p95, p99, maximum, and the fraction below 50
 ms. Use `--stride` to sample syndromes across a large fixture instead of
 benchmarking only adjacent shots.
 
+For a non-sampled report, omit `--shots` (or set it to the fixture size), use
+`--repeat 1`, and bound startup work independently with `--warmup-shots`. For
+example, `--warmup 1 --warmup-shots 32` warms the JIT on 32 records and then
+times every selected hardware shot exactly once.
+
 ## WebAssembly ABI
 
 - `init() -> ()`: constructs the embedded decoder.

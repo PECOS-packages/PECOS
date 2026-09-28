@@ -9,7 +9,7 @@ import process from "node:process";
 function usage(message) {
   if (message) console.error(message);
   console.error(
-    "Usage: node scripts/benchmark_frontier_wasm.mjs MODULE [--start N] [--shots N] [--stride N] [--warmup N] [--repeat N] [--mode shot|range|stream|correction] [--rounds N] [--json PATH]",
+    "Usage: node scripts/benchmark_frontier_wasm.mjs MODULE [--start N] [--shots N] [--stride N] [--warmup N] [--warmup-shots N] [--repeat N] [--mode shot|range|stream|correction] [--rounds N] [--json PATH]",
   );
   process.exit(2);
 }
@@ -38,6 +38,7 @@ const options = {
   shots: undefined,
   stride: 1,
   warmup: 1,
+  warmupShots: undefined,
   repeat: 1,
   mode: "shot",
   rounds: 21,
@@ -57,6 +58,9 @@ while (argv.length) {
   else if (name === "--shots") options.shots = parseNonnegative(value, name);
   else if (name === "--stride") options.stride = parseNonnegative(value, name);
   else if (name === "--warmup") options.warmup = parseNonnegative(value, name);
+  else if (name === "--warmup-shots") {
+    options.warmupShots = parseNonnegative(value, name);
+  }
   else if (name === "--repeat") options.repeat = parseNonnegative(value, name);
   else if (name === "--rounds") options.rounds = parseNonnegative(value, name);
   else usage(`unknown option: ${name}`);
@@ -119,7 +123,7 @@ function runOnce() {
   return errors;
 }
 
-function runCorrectionOnce() {
+function runCorrectionOnce(selectedCount = shots) {
   for (const name of ["frontier_replay_stream_prepare", "frontier_replay_stream_finish"]) {
     if (typeof wasm[name] !== "function") throw new Error(`missing Wasm export: ${name}`);
   }
@@ -128,7 +132,7 @@ function runCorrectionOnce() {
   let measuredMs = 0;
   const samplesMs = [];
   const sampleRecords = [];
-  for (let position = 0; position < shots; position += 1) {
+  for (let position = 0; position < selectedCount; position += 1) {
     const index = selectedShotIndex(position);
     if (wasm.frontier_replay_stream_prepare(index, options.rounds) !== 0) {
       throw new Error(`stream preparation for shot ${index} failed with status ${wasm.frontier_status()}`);
@@ -146,7 +150,9 @@ function runCorrectionOnce() {
 }
 
 for (let index = 0; index < options.warmup; index += 1) {
-  if (options.mode === "correction") runCorrectionOnce();
+  if (options.mode === "correction") {
+    runCorrectionOnce(Math.min(options.warmupShots ?? shots, shots));
+  }
   else runOnce();
 }
 const elapsed = [];
@@ -200,6 +206,9 @@ console.log(
   `Fixture: ${fixtureShots.toLocaleString()} shots; selected ${shots.toLocaleString()} from ${options.start} with stride ${options.stride}`,
 );
 console.log(`Mode: ${options.mode}; warmup ${options.warmup}; repeats ${options.repeat}`);
+if (options.mode === "correction" && options.warmup > 0) {
+  console.log(`Warmup shots per pass: ${Math.min(options.warmupShots ?? shots, shots)}`);
+}
 if (options.mode === "stream" || options.mode === "correction") {
   console.log(`Detector rounds per shot: ${options.rounds}`);
 }
@@ -239,6 +248,8 @@ if (options.json) {
     selected_final_index: shots === 0 ? null : finalSelectedIndex,
     mode: options.mode,
     warmup_passes: options.warmup,
+    warmup_shots_per_pass:
+      options.mode === "correction" ? Math.min(options.warmupShots ?? shots, shots) : null,
     timed_repeats: options.repeat,
     detector_rounds: options.mode === "stream" || options.mode === "correction" ? options.rounds : null,
     timing_scope: options.mode === "correction" ? "final detector round push through correction result" : "whole shot",

@@ -52,6 +52,35 @@ fn assert_no_path(error: &DecoderError, expected: &DecoderError) {
 }
 
 #[test]
+fn prediction_only_stream_matches_full_stream() {
+    let dem =
+        SparseDem::from_dem_str("error(0.08) D0 L0\nerror(0.12) D0 D1\nerror(0.05) D1 D2 L0\n")
+            .unwrap();
+    let config = TrellisConfig {
+        k: 2,
+        delta: 10.0,
+        ..TrellisConfig::default()
+    };
+    for mask in 0_u8..8 {
+        let syndrome = [mask & 1, (mask >> 1) & 1, (mask >> 2) & 1];
+        let mut full = TrellisStreamingDecoder::from_sparse_dem(&dem, config.clone()).unwrap();
+        let mut prediction =
+            TrellisStreamingDecoder::from_sparse_dem(&dem, config.clone()).unwrap();
+        for block in syndrome.chunks(1) {
+            full.feed_prefix(block).unwrap();
+            full.advance().unwrap();
+            prediction.feed_prefix(block).unwrap();
+            prediction.advance_prediction().unwrap();
+        }
+        match (full.flush(), prediction.flush_prediction()) {
+            (Ok(full), Ok(predicted)) => assert_eq!(predicted, full.predicted),
+            (Err(full), Err(prediction)) => assert_no_path(&prediction, &full),
+            outcomes => panic!("prediction-only/full mismatch: {outcomes:?}"),
+        }
+    }
+}
+
+#[test]
 fn random_rounds_match_batch_for_every_chunk_size_and_reset() {
     let mut rng = Xoshiro256PlusPlus::seed_from_u64(0xdec0_de42);
     let mut saw_early_commitment = false;

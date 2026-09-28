@@ -1491,6 +1491,27 @@ impl TrellisModel {
         suffix_values: &SuffixValues,
         range: std::ops::Range<usize>,
     ) -> Result<(), BinaryFailure> {
+        self.process_binary_range_mode(progress, observed, suffix_values, range, true)
+    }
+
+    fn process_binary_range_prediction(
+        &self,
+        progress: &mut BinaryProgress,
+        observed: &[u64],
+        suffix_values: &SuffixValues,
+        range: std::ops::Range<usize>,
+    ) -> Result<(), BinaryFailure> {
+        self.process_binary_range_mode(progress, observed, suffix_values, range, false)
+    }
+
+    fn process_binary_range_mode(
+        &self,
+        progress: &mut BinaryProgress,
+        observed: &[u64],
+        suffix_values: &SuffixValues,
+        range: std::ops::Range<usize>,
+        collect_telemetry: bool,
+    ) -> Result<(), BinaryFailure> {
         let BinaryProgress {
             frontier,
             transitions,
@@ -1544,16 +1565,29 @@ impl TrellisModel {
                 rows: &column.suffix_compatibility,
                 values: suffix_values,
             };
-            let pruned = prune(
-                frontier,
-                self.config.k,
-                self.config.delta,
-                self.config.score_alpha,
-                suffix_compatibility,
-                observed,
-            );
+            let pruned = if collect_telemetry {
+                prune(
+                    frontier,
+                    self.config.k,
+                    self.config.delta,
+                    self.config.score_alpha,
+                    suffix_compatibility,
+                    observed,
+                )
+            } else {
+                prune_prediction(
+                    frontier,
+                    self.config.k,
+                    self.config.delta,
+                    self.config.score_alpha,
+                    suffix_compatibility,
+                    observed,
+                )
+            };
             *dropped_states += pruned.dropped_states;
-            *dropped_log_mass = logaddexp(*dropped_log_mass, pruned.dropped_log_mass);
+            if collect_telemetry {
+                *dropped_log_mass = logaddexp(*dropped_log_mass, pruned.dropped_log_mass);
+            }
             *k_capped |= pruned.k_capped;
             *delta_pruned |= pruned.delta_pruned;
             if frontier.parent.masses.is_empty() {
@@ -1638,6 +1672,25 @@ impl TrellisModel {
             status,
             logical_masses,
         }
+    }
+
+    fn finish_binary_prediction(progress: &BinaryProgress) -> ObsMask {
+        let frontier = &progress.frontier;
+        let winner = (0..frontier.parent.masses.len())
+            .min_by(|&left, &right| {
+                frontier.parent.masses[right]
+                    .total_cmp(&frontier.parent.masses[left])
+                    .then_with(|| {
+                        compare_state_words(
+                            frontier.parent.key(left, frontier.stride),
+                            frontier.parent.key(right, frontier.stride),
+                            frontier.detector_words,
+                        )
+                    })
+            })
+            .expect("a successful binary decode retains a terminal state");
+        let key = frontier.parent.key(winner, frontier.stride);
+        ObsMask::from_words(&key[frontier.detector_words..])
     }
 
     fn decode_attempt_nary(
@@ -2588,6 +2641,67 @@ fn prune(
         dropped_log_mass,
         k_capped,
         delta_pruned,
+    }
+}
+
+fn prune_prediction(
+    frontier: &mut FrontierScratch<f64>,
+    k: usize,
+    delta: f64,
+    score_alpha: f64,
+    suffix_compatibility: SuffixCompatibility<'_>,
+    observed: &[u64],
+) -> PruneResult<f64> {
+    if k == usize::MAX && delta.is_infinite() {
+        return PruneResult {
+            dropped_states: 0,
+            dropped_log_mass: f64::NEG_INFINITY,
+            k_capped: false,
+            delta_pruned: false,
+        };
+    }
+
+    score_candidates(frontier, score_alpha, suffix_compatibility, observed);
+    let better = |&left: &usize, &right: &usize| {
+        frontier.scores[right]
+            .total_cmp(&frontier.scores[left])
+            .then_with(|| {
+                compare_state_words(
+                    frontier.parent.key(left, frontier.stride),
+                    frontier.parent.key(right, frontier.stride),
+                    frontier.detector_words,
+                )
+            })
+    };
+    let best = (0..frontier.parent.masses.len())
+        .min_by(better)
+        .expect("a nonempty merged frontier must have a score");
+    let cutoff = frontier.scores[best] - delta;
+    frontier.indices.clear();
+    frontier.indices.extend(
+        (0..frontier.parent.masses.len()).filter(|&candidate| frontier.scores[candidate] >= cutoff),
+    );
+    let eligible = frontier.indices.len();
+    if eligible > k {
+        frontier.indices.select_nth_unstable_by(k, better);
+        frontier.indices.truncate(k);
+    }
+
+    frontier.retained.clear();
+    frontier
+        .retained
+        .resize(frontier.parent.masses.len(), false);
+    for &candidate in &frontier.indices {
+        frontier.retained[candidate] = true;
+    }
+    let original_states = frontier.parent.masses.len();
+    let retained_states = frontier.indices.len();
+    frontier.retain();
+    PruneResult {
+        dropped_states: (original_states - retained_states) as u64,
+        dropped_log_mass: f64::NEG_INFINITY,
+        k_capped: original_states > k,
+        delta_pruned: original_states.min(k) > eligible,
     }
 }
 

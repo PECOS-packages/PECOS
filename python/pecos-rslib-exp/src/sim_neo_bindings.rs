@@ -2329,34 +2329,147 @@ impl PyFaultConfigurationIter {
     fn __next__(&mut self, py: Python<'_>) -> Option<PyFaultConfiguration> {
         let config = self.inner.next()?;
 
-        // Build .locations and .faults references
-        let locations: Vec<Py<PyFaultLocation>> = config
-            .location_indices
-            .iter()
-            .map(|&i| self.py_locations[i].clone_ref(py))
-            .collect();
-        let faults: Vec<Py<PyFaultAlternative>> = config
-            .location_indices
-            .iter()
-            .zip(config.alternative_indices.iter())
-            .map(|(&loc_i, &alt_i)| {
-                let loc = self.py_locations[loc_i].borrow(py);
-                loc.faults[alt_i].clone_ref(py)
+        Some(py_fault_configuration(py, config, &self.py_locations))
+    }
+}
+
+fn py_fault_configuration(
+    py: Python<'_>,
+    config: pecos_qec::fault_tolerance::fault_sampler::FaultConfiguration,
+    py_locations: &[Py<PyFaultLocation>],
+) -> PyFaultConfiguration {
+    // Build .locations and .faults references
+    let locations: Vec<Py<PyFaultLocation>> = config
+        .location_indices
+        .iter()
+        .map(|&i| py_locations[i].clone_ref(py))
+        .collect();
+    let faults: Vec<Py<PyFaultAlternative>> = config
+        .location_indices
+        .iter()
+        .zip(config.alternative_indices.iter())
+        .map(|(&loc_i, &alt_i)| {
+            let loc = py_locations[loc_i].borrow(py);
+            loc.faults[alt_i].clone_ref(py)
+        })
+        .collect();
+
+    PyFaultConfiguration {
+        location_indices: config.location_indices,
+        alternative_indices: config.alternative_indices,
+        locations,
+        faults,
+        measurements: config.affected_measurements,
+        detectors: config.affected_detectors,
+        observables: config.affected_observables,
+        tracked_paulis: config.affected_tracked_paulis,
+        selected_probability: config.selected_probability,
+        configuration_probability: config.configuration_probability,
+    }
+}
+
+/// Fault-count masses, their natural logarithms, and omitted-tail bound.
+#[pyclass(name = "FaultCountPmf", module = "pecos_rslib_exp")]
+pub struct PyFaultCountPmf {
+    inner: pecos_qec::fault_tolerance::fault_sampler::FaultCountPmf,
+}
+
+#[pymethods]
+impl PyFaultCountPmf {
+    /// P(K=k), indexed from zero; very small masses may underflow.
+    #[getter]
+    fn masses(&self) -> Vec<f64> {
+        self.inner.masses().to_vec()
+    }
+
+    /// Natural log masses, retained even when masses underflow.
+    #[getter]
+    fn log_masses(&self) -> Vec<f64> {
+        self.inner.log_masses().to_vec()
+    }
+
+    /// Chernoff bound on mass beyond the final represented stratum.
+    #[getter]
+    fn tail_bound(&self) -> f64 {
+        self.inner.tail_bound()
+    }
+
+    /// Combine (k, attempted, survived, failed) tuples with this PMF.
+    ///
+    /// Raises ValueError for zero attempts, failed > survived, survived >
+    /// attempted, duplicate strata, or strata outside this PMF.
+    fn stratified_estimate(
+        &self,
+        counts: Vec<(usize, usize, usize, usize)>,
+    ) -> PyResult<PyStratifiedEstimate> {
+        use pecos_qec::fault_tolerance::fault_sampler::{FaultStratumCounts, StratifiedEstimate};
+        let counts: Vec<_> = counts
+            .into_iter()
+            .map(|(k, attempted, survived, failed)| FaultStratumCounts {
+                k,
+                attempted,
+                survived,
+                failed,
             })
             .collect();
+        StratifiedEstimate::from_counts(&self.inner, &counts)
+            .map(|inner| PyStratifiedEstimate { inner })
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
+    }
+}
 
-        Some(PyFaultConfiguration {
-            location_indices: config.location_indices,
-            alternative_indices: config.alternative_indices,
-            locations,
-            faults,
-            measurements: config.affected_measurements,
-            detectors: config.affected_detectors,
-            observables: config.affected_observables,
-            tracked_paulis: config.affected_tracked_paulis,
-            selected_probability: config.selected_probability,
-            configuration_probability: config.configuration_probability,
-        })
+/// Weighted failure, survival, and conditional failure estimates and standard errors.
+///
+/// Ratio and its standard error are None if estimated survival is zero.
+/// Omitted masses are separate from standard errors. Zero observed failures
+/// contribute no estimated variance to A, so undersampling can understate SE(A).
+/// Their ratio variance term is R^2 b_k (1-b_k), which need not be zero.
+#[pyclass(name = "StratifiedEstimate", module = "pecos_rslib_exp")]
+pub struct PyStratifiedEstimate {
+    inner: pecos_qec::fault_tolerance::fault_sampler::StratifiedEstimate,
+}
+
+#[pymethods]
+impl PyStratifiedEstimate {
+    /// A = sum P_k F_k/N_k.
+    #[getter]
+    fn failure_probability(&self) -> f64 {
+        self.inner.failure_probability
+    }
+    /// B = sum P_k S_k/N_k.
+    #[getter]
+    fn survival_probability(&self) -> f64 {
+        self.inner.survival_probability
+    }
+    /// R = A/B, or None for B = 0.
+    #[getter]
+    fn failure_given_survival(&self) -> Option<f64> {
+        self.inner.failure_given_survival
+    }
+    /// Plug-in standard error of A.
+    #[getter]
+    fn failure_standard_error(&self) -> f64 {
+        self.inner.failure_standard_error
+    }
+    /// Plug-in standard error of B.
+    #[getter]
+    fn survival_standard_error(&self) -> f64 {
+        self.inner.survival_standard_error
+    }
+    /// Delta-method standard error of R, or None for B = 0.
+    #[getter]
+    fn ratio_standard_error(&self) -> Option<f64> {
+        self.inner.ratio_standard_error
+    }
+    /// Sum of represented but unsampled stratum masses.
+    #[getter]
+    fn unsampled_mass(&self) -> f64 {
+        self.inner.unsampled_mass
+    }
+    /// Chernoff bound beyond represented strata.
+    #[getter]
+    fn tail_bound(&self) -> f64 {
+        self.inner.tail_bound
     }
 }
 
@@ -2590,6 +2703,38 @@ impl PyFaultCatalog {
     ) -> PyResult<PyFaultCatalog> {
         let params = stochastic_params_from_inputs(noise, p1, p2, p_meas, p_prep);
         py_fault_catalog_from_rust(py, self.rust_catalog.parameterized(&params))
+    }
+
+    /// Return masses, log masses, and a Chernoff bound beyond max_k.
+    ///
+    /// Raises ValueError for inconsistent probabilities, active p >= 1, or
+    /// max_k exceeding the active location count.
+    fn fault_count_pmf(&self, max_k: usize) -> PyResult<PyFaultCountPmf> {
+        self.rust_catalog
+            .fault_count_pmf(max_k)
+            .map(|inner| PyFaultCountPmf { inner })
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))
+    }
+
+    /// Draw exactly k firing locations per configuration, reproducibly by seed.
+    ///
+    /// Raises ValueError for inconsistent probabilities, active p >= 1, or
+    /// k exceeding the active location count, or an unallocatable batch.
+    fn sample_fault_configurations(
+        &self,
+        py: Python<'_>,
+        k: usize,
+        num_shots: usize,
+        seed: u64,
+    ) -> PyResult<Vec<PyFaultConfiguration>> {
+        let configs = self
+            .rust_catalog
+            .sample_fault_configurations(k, num_shots, seed)
+            .map_err(|error| pyo3::exceptions::PyValueError::new_err(error.to_string()))?;
+        Ok(configs
+            .into_iter()
+            .map(|config| py_fault_configuration(py, config, &self.locations))
+            .collect())
     }
 
     /// Lazily iterate all k-fault configurations.

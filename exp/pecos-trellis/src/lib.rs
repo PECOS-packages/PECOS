@@ -560,6 +560,9 @@ struct FrontierScratch<M> {
     parent: StateBuffer<M>,
     branches: StateBuffer<M>,
     indices: Vec<usize>,
+    merge_keys: Vec<([u64; 4], usize)>,
+    merge_word_masks: Vec<u64>,
+    merge_word_indices: Vec<usize>,
     scores: Vec<M>,
     transposed: Vec<u64>,
     retained: Vec<bool>,
@@ -583,19 +586,11 @@ impl<M: Copy> FrontierScratch<M> {
         );
     }
 
-    /// Stable sorting preserves arrival order within each equal-key run. The
+    /// Sorting preserves arrival order within each equal-key run. The
     /// first arrival is installed verbatim, then each subsequent arrival applies
     /// `fold(accumulated, next)` in arrival order.
     fn merge(&mut self, fold: impl Fn(M, M) -> M) {
-        self.indices.clear();
-        self.indices.extend(0..self.branches.masses.len());
-        self.indices.sort_by(|&left, &right| {
-            compare_state_words(
-                self.branches.key(left, self.stride),
-                self.branches.key(right, self.stride),
-                self.detector_words,
-            )
-        });
+        self.sort_merge_indices();
         self.parent.clear(self.stride);
         for &index in &self.indices {
             let count = self.parent.masses.len();
@@ -608,6 +603,58 @@ impl<M: Copy> FrontierScratch<M> {
                 self.parent.copy_state(&self.branches, index, self.stride);
             }
         }
+    }
+
+    /// Inline a four-word comparison prefix, omitting all-zero words for wide keys.
+    /// Detector words precede logical words, each most-significant word first.
+    /// Words zero in every branch can be omitted without changing key order.
+    fn sort_merge_indices(&mut self) {
+        self.merge_word_indices.clear();
+        if self.stride > 4 {
+            self.merge_word_masks.clear();
+            self.merge_word_masks.resize(self.stride, 0);
+            for key in self.branches.words.chunks_exact(self.stride) {
+                for (mask, &word) in self.merge_word_masks.iter_mut().zip(key) {
+                    *mask |= word;
+                }
+            }
+        }
+        self.merge_word_indices.extend(
+            (0..self.detector_words)
+                .rev()
+                .chain((self.detector_words..self.stride).rev())
+                .filter(|&word| self.stride <= 4 || self.merge_word_masks[word] != 0),
+        );
+        self.merge_keys.clear();
+        for index in 0..self.branches.masses.len() {
+            let source = self.branches.key(index, self.stride);
+            let mut key = [0; 4];
+            for (destination, &word) in key.iter_mut().zip(&self.merge_word_indices) {
+                *destination = source[word];
+            }
+            self.merge_keys.push((key, index));
+        }
+        if self.merge_word_indices.len() <= 4 {
+            // The arrival index reproduces the stable order of equal full keys.
+            self.merge_keys.sort_unstable();
+        } else {
+            // The inline prefix decides most comparisons even for wide keys.
+            // Resolve equal prefixes with the full key before the arrival index.
+            self.merge_keys
+                .sort_unstable_by(|(left_key, left), (right_key, right)| {
+                    left_key.cmp(right_key).then_with(|| {
+                        compare_state_words(
+                            self.branches.key(*left, self.stride),
+                            self.branches.key(*right, self.stride),
+                            self.detector_words,
+                        )
+                        .then_with(|| left.cmp(right))
+                    })
+                });
+        }
+        self.indices.clear();
+        self.indices
+            .extend(self.merge_keys.iter().map(|&(_, index)| index));
     }
 
     /// Transpose the inclusive detector-word span read by the scoring rows.
@@ -2522,7 +2569,7 @@ fn prune(
     score_candidates(frontier, score_alpha, suffix_compatibility, observed);
     frontier.indices.clear();
     frontier.indices.extend(0..frontier.parent.masses.len());
-    frontier.indices.sort_by(|&left, &right| {
+    frontier.indices.sort_unstable_by(|&left, &right| {
         frontier.scores[right]
             .total_cmp(&frontier.scores[left])
             .then_with(|| {
@@ -2532,6 +2579,7 @@ fn prune(
                     frontier.detector_words,
                 )
             })
+            .then_with(|| left.cmp(&right))
     });
     let cutoff = frontier.scores[frontier.indices[0]] - delta;
     frontier.retained.clear();
@@ -2582,7 +2630,7 @@ fn prune_maxlog(
     frontier.indices.clear();
     frontier.indices.extend(0..frontier.parent.masses.len());
     // Preserve the integer score tie-break: mass descending, then key.
-    frontier.indices.sort_by(|&left, &right| {
+    frontier.indices.sort_unstable_by(|&left, &right| {
         frontier.scores[right]
             .cmp(&frontier.scores[left])
             .then_with(|| frontier.parent.masses[right].cmp(&frontier.parent.masses[left]))
@@ -2593,6 +2641,7 @@ fn prune_maxlog(
                     frontier.detector_words,
                 )
             })
+            .then_with(|| left.cmp(&right))
     });
     let cutoff = frontier.scores[frontier.indices[0]].saturating_sub(delta_int);
     frontier.retained.clear();
@@ -3021,6 +3070,91 @@ mod tests {
             right_associated.to_bits()
         );
         assert_ne!(frontier.parent.masses[1].to_bits(), reordered.to_bits());
+    }
+
+    #[test]
+    fn merge_sort_matches_stable_full_key_order() {
+        use rand::{RngExt, SeedableRng};
+        use rand_xoshiro::Xoshiro256PlusPlus;
+
+        let mut rng = Xoshiro256PlusPlus::seed_from_u64(0x534f_5254);
+        let mut frontier = super::FrontierScratch::<f64>::default();
+        for stride in [0, 1, 2, 3, 4, 5, 8, 16, 17, 33] {
+            for detector_words in 0..=stride {
+                for nonzero_words in [0, 1, 4, 5, stride] {
+                    // Sparse keys zero every odd word in every branch, so wide keys
+                    // drop words from the inline prefix and still keep more than four.
+                    for (sparse, count) in [false, true]
+                        .into_iter()
+                        .flat_map(|sparse| [0, 1, 2, 31, 128].map(|count| (sparse, count)))
+                    {
+                        let detectors = vec![0; detector_words];
+                        let logical = vec![0; stride - detector_words];
+                        frontier.reset(&detectors, &logical, &detectors, 0.0);
+                        let mut keys: Vec<Vec<u64>> = Vec::new();
+                        for index in 0..count {
+                            let key = if index % 3 == 2 {
+                                // Equal full keys arrive separated by other keys.
+                                keys[index - 2].clone()
+                            } else if nonzero_words > 4 && stride > 4 && index % 4 == 0 {
+                                // Equal inline prefixes must still compare the tail.
+                                let mut key = vec![1; stride];
+                                key[0] = rng.random();
+                                key
+                            } else {
+                                (0..stride)
+                                    .map(|word| {
+                                        if word < nonzero_words {
+                                            rng.random::<u64>()
+                                        } else {
+                                            0
+                                        }
+                                    })
+                                    .collect()
+                            };
+                            let mut key = key;
+                            if sparse {
+                                key.iter_mut().skip(1).step_by(2).for_each(|word| *word = 0);
+                            }
+                            frontier.branches.words.extend_from_slice(&key);
+                            frontier.branches.masses.push(rng.random_range(-100.0..0.0));
+                            keys.push(key);
+                        }
+                        let mut expected: Vec<_> = (0..count).collect();
+                        expected.sort_by(|&left, &right| {
+                            super::compare_state_words(&keys[left], &keys[right], detector_words)
+                        });
+                        frontier.merge(logaddexp);
+                        assert_eq!(frontier.indices, expected);
+                        let mut merged_keys: Vec<Vec<u64>> = Vec::new();
+                        let mut merged_masses = Vec::new();
+                        for index in expected {
+                            let mass = frontier.branches.masses[index];
+                            if merged_keys.last() == Some(&keys[index]) {
+                                let last = merged_masses.last_mut().unwrap();
+                                *last = logaddexp(*last, mass);
+                            } else {
+                                merged_keys.push(keys[index].clone());
+                                merged_masses.push(mass);
+                            }
+                        }
+                        assert_eq!(frontier.parent.words, merged_keys.concat());
+                        assert_eq!(
+                            frontier
+                                .parent
+                                .masses
+                                .iter()
+                                .map(|v| v.to_bits())
+                                .collect::<Vec<_>>(),
+                            merged_masses
+                                .iter()
+                                .map(|v| v.to_bits())
+                                .collect::<Vec<_>>()
+                        );
+                    }
+                }
+            }
+        }
     }
 
     #[test]

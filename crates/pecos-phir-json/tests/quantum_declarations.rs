@@ -1,3 +1,4 @@
+use pecos_engines::{ClassicalEngine, byte_message::ByteMessage};
 use pecos_phir::ops::Operation as PhirOperation;
 use pecos_phir_json::{
     phir_json_to_module,
@@ -62,6 +63,18 @@ fn declaration_verdicts() {
             "data_type",
         ),
         (
+            "boolean size",
+            json!({"data":"qvar_define","variable":"q","size":true}),
+            false,
+            "size",
+        ),
+        (
+            "fractional size",
+            json!({"data":"qvar_define","variable":"q","size":2.0}),
+            false,
+            "size",
+        ),
+        (
             "negative size",
             json!({"data":"qvar_define","variable":"q","size":-1}),
             false,
@@ -82,6 +95,7 @@ fn declaration_verdicts() {
     ] {
         let input = program(std::slice::from_ref(&declaration));
         let mut interpreter = PhirClassicalInterpreter::new();
+        let engine = PhirJsonEngine::from_json(&input);
         let verdicts = [
             (
                 "converter",
@@ -104,9 +118,7 @@ fn declaration_verdicts() {
             ),
             (
                 "engine",
-                PhirJsonEngine::from_json(&input)
-                    .map(|_| ())
-                    .map_err(|e| e.to_string()),
+                engine.as_ref().map(|_| ()).map_err(ToString::to_string),
             ),
         ];
         for (entry, result) in verdicts {
@@ -125,6 +137,12 @@ fn declaration_verdicts() {
         if accepted {
             let expected = declaration["size"].as_u64().unwrap();
             assert_eq!(interpreter.num_qubits(), usize::try_from(expected).unwrap());
+            let engine = engine.unwrap();
+            assert_eq!(engine.num_qubits(), usize::try_from(expected).unwrap());
+            assert_eq!(
+                engine.processor.environment.resolve_qubit("q", 0).unwrap(),
+                0
+            );
             let ast: PHIRProgram = serde_json::from_str(&input).unwrap();
             assert!(
                 matches!(&ast.ops[0], Operation::VariableDefinition { data_type, size: Some(size), .. }
@@ -144,7 +162,7 @@ fn optional_type_preserves_declaration_order_ids() {
         let input = program(&[
             json!({"data":"qvar_define","variable":"z","size":2}),
             q,
-            json!({"qop":"X","args":[["a",1],["z",1]]}),
+            json!({"qop":"CX","args":[["a",1],["z",1]]}),
         ]);
         let module = phir_json_to_module(&input).unwrap();
         let gate = module.body.blocks[0]
@@ -156,6 +174,21 @@ fn optional_type_preserves_declaration_order_ids() {
             gate.operands.iter().map(|v| v.id).collect::<Vec<_>>(),
             [3, 1]
         );
+        let mut engine = PhirJsonEngine::from_json(&input).unwrap();
+        assert_eq!(
+            engine.num_qubits(),
+            4,
+            "header must register both quantum declarations"
+        );
+        assert_eq!(
+            engine.processor.environment.resolve_qubit("a", 1).unwrap(),
+            3
+        );
+        assert_eq!(
+            engine.processor.environment.resolve_qubit("z", 1).unwrap(),
+            1
+        );
+        assert_eq!(command_qubits(&engine.generate_commands().unwrap()), [3, 1]);
         let ast: PHIRProgram = serde_json::from_str(&input).unwrap();
         let mut executor = BlockExecutor::new();
         for op in &ast.ops[..2] {
@@ -251,4 +284,84 @@ fn quantum_size_conversion_checks_platform_overflow() {
         validate_quantum_declaration("q", None, Some(usize::MAX)).unwrap(),
         ("q", usize::MAX)
     );
+}
+
+fn command_qubits(message: &ByteMessage) -> Vec<usize> {
+    message
+        .quantum_ops()
+        .unwrap()
+        .iter()
+        .flat_map(|gate| gate.qubits.iter().map(|qubit| qubit.0))
+        .collect()
+}
+
+#[test]
+fn processor_rejects_zero_size() {
+    let mut processor = OperationProcessor::new();
+    let result = processor.handle_variable_definition("qvar_define", "qubits", "q", 0);
+    assert!(
+        result.is_err(),
+        "processor must reject zero size, got {result:?}"
+    );
+    let message = result.unwrap_err().to_string();
+    assert!(
+        message.contains("'q'") && message.contains("positive size"),
+        "{message}"
+    );
+    assert_eq!(processor.environment.count_qubits(), 0);
+    assert!(!processor.environment.has_variable("q"));
+}
+
+#[test]
+fn declarations_execute_through_blocks_and_engine_commands() {
+    let input = program(&[
+        json!({"data":"qvar_define","variable":"z","size":2}),
+        json!({"data":"qvar_define","variable":"a","size":2}),
+        json!({"qop":"CX","args":[["a",1],["z",1]]}),
+    ]);
+    let ast: PHIRProgram = serde_json::from_str(&input).unwrap();
+    let mut executor = BlockExecutor::new();
+    executor.execute_program(&ast.ops).unwrap();
+    assert_eq!(executor.processor.environment.count_qubits(), 4);
+    assert_eq!(command_qubits(&executor.get_builder().build()), [3, 1]);
+
+    let mut engine = PhirJsonEngine::from_json(&input).unwrap();
+    // The processor is public; replacing it isolates execution from header registration.
+    engine.processor = OperationProcessor::new();
+    let commands = engine
+        .generate_commands()
+        .expect("runtime declarations must register qubits before executing gates");
+    assert_eq!(engine.num_qubits(), 4);
+    assert_eq!(command_qubits(&commands), [3, 1]);
+
+    let mut engine = PhirJsonEngine::from_json(&input).unwrap();
+    engine.processor = OperationProcessor::new();
+    engine.processor.add_quantum_variable("z", 3).unwrap();
+    let error = engine
+        .generate_commands()
+        .map(|_| ())
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("Conflicting definition for variable 'z'"),
+        "{error}"
+    );
+}
+
+#[test]
+fn empty_quantum_circuit_round_trip() {
+    // The Python producer test checks its entire output against this same fixture.
+    let input = include_str!("fixtures/empty_quantum_circuit.phir.json");
+    let module = phir_json_to_module(input).unwrap();
+    assert!(module.body.blocks[0].operations.is_empty());
+    let ast: PHIRProgram = serde_json::from_str(input).unwrap();
+    assert!(ast.ops.is_empty());
+    let mut interpreter = PhirClassicalInterpreter::new();
+    assert_eq!(interpreter.init(input, None).unwrap(), 0);
+    assert!(interpreter.execute_program().unwrap().is_empty());
+    let mut engine = PhirJsonEngine::from_json(input).unwrap();
+    assert_eq!(engine.num_qubits(), 0);
+    assert!(command_qubits(&engine.generate_commands().unwrap()).is_empty());
+    let engine = PhirJsonEngine::from_program(ast).unwrap();
+    assert_eq!(engine.num_qubits(), 0);
 }

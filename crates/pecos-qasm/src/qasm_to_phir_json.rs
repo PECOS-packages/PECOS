@@ -60,6 +60,9 @@ pub fn program_to_phir_json(program: &Program) -> Result<Value, String> {
 
     // 1) Quantum register definitions
     for (name, qubit_ids) in &program.quantum_registers {
+        if qubit_ids.is_empty() {
+            continue;
+        }
         ops.push(json!({
             "data": "qvar_define",
             "data_type": "qubits",
@@ -74,6 +77,9 @@ pub fn program_to_phir_json(program: &Program) -> Result<Value, String> {
     // a signed register would need size + 1 <= N and could not represent 64
     // bits at all).
     for (name, size) in &program.classical_registers {
+        if *size == 0 {
+            continue;
+        }
         let dtype = classical_register_dtype(*size)?;
         ops.push(json!({
             "data": "cvar_define",
@@ -91,8 +97,9 @@ pub fn program_to_phir_json(program: &Program) -> Result<Value, String> {
     // 4) Export all classical variables
     let cvar_names: Vec<&str> = program
         .classical_registers
-        .keys()
-        .map(String::as_str)
+        .iter()
+        .filter(|(_, size)| **size > 0)
+        .map(|(name, _)| name.as_str())
         .collect();
     if !cvar_names.is_empty() {
         ops.push(json!({
@@ -510,6 +517,19 @@ mod tests {
         assert_eq!(phir["format"], "PHIR/JSON");
         assert_eq!(phir["version"], "0.1.0");
         assert!(phir["ops"].is_array());
+    }
+
+    #[test]
+    fn empty_registers_are_not_declared_or_exported() {
+        let mut program = Program::default();
+        program.quantum_registers.insert("empty_q".into(), vec![]);
+        program.classical_registers.insert("empty_c".into(), 0);
+        assert_eq!(program_to_phir_json(&program).unwrap()["ops"], json!([]));
+        program.quantum_registers.insert("q".into(), vec![0]);
+        program.classical_registers.insert("c".into(), 1);
+        let phir = program_to_phir_json(&program).unwrap();
+        assert_eq!(phir["ops"].as_array().unwrap().len(), 3);
+        assert_eq!(phir["ops"][2]["variables"], json!(["c"]));
     }
 
     #[test]

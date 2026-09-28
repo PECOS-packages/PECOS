@@ -719,7 +719,7 @@ impl PhirJsonCodegen {
         }
 
         // Add quantum variable definitions
-        for alloc in self.allocators.values() {
+        for alloc in self.allocators.values().filter(|alloc| alloc.capacity > 0) {
             phir.ops
                 .push(PhirJsonOp::QvarDefine(PhirJsonQvarDefine::new(
                     &alloc.name,
@@ -773,7 +773,7 @@ impl PhirJsonCodegen {
         let mut phir = PhirJsonProgram::new().with_name(&fn_decl.name);
 
         // Add definitions
-        for alloc in self.allocators.values() {
+        for alloc in self.allocators.values().filter(|alloc| alloc.capacity > 0) {
             phir.ops
                 .push(PhirJsonOp::QvarDefine(PhirJsonQvarDefine::new(
                     &alloc.name,
@@ -1548,6 +1548,22 @@ impl PhirJsonCodegen {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn empty_quantum_allocator_is_not_declared() {
+        let ast = crate::parse("pub fn main() -> unit { q := qalloc(0); return unit; }").unwrap();
+        assert!(PhirJsonCodegen::new().compile(&ast).unwrap().ops.is_empty());
+        let TopLevelDecl::Fn(function) = &ast.declarations[0] else {
+            panic!("expected main function");
+        };
+        assert!(
+            PhirJsonCodegen::new()
+                .compile_function(function)
+                .unwrap()
+                .ops
+                .is_empty()
+        );
+    }
 
     #[test]
     fn test_bell_state() {

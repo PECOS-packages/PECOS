@@ -3,8 +3,8 @@
 //!
 //! This diagnostic Rust path uses the existing `QuantumSystem` and state-vector
 //! engine. It admits an entire extraction result before quantum mutation. It is
-//! not connected to Python or `QisEngine`, and accepts no noise model or custom
-//! events. Timing is checked and retained, but causes no idle noise in this path.
+//! not connected to Python or `QisEngine`. Only the optional idle-Z profile below
+//! consumes timing; arbitrary noise configurations and all custom events reject.
 
 use pecos_core::{Angle64, errors::PecosError};
 use pecos_engines::runtime_frame::ShotContext;
@@ -32,6 +32,26 @@ pub struct ScheduledExecutionOutput {
     pub measurements: BTreeMap<usize, u32>,
 }
 
+/// Narrow timing consumer: Z faults only, no leakage, gate or readout faults.
+/// Linear rate is per second; sine and coherent rates are radians per second.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct IdleZNoise {
+    pub linear: f64,
+    pub sine: f64,
+    pub coherent: f64,
+}
+impl IdleZNoise {
+    fn validate(self, seconds: f64) -> Result<(), PecosError> {
+        if [self.linear, self.sine, self.coherent]
+            .into_iter()
+            .any(|rate| !rate.is_finite() || rate < 0.0 || !(rate * seconds).is_finite())
+        {
+            return Err(error("invalid idle-Z rate or duration product"));
+        }
+        Ok(())
+    }
+}
+
 struct AdmittedSchedule {
     commands: ByteMessage,
     ids: Vec<usize>,
@@ -39,13 +59,13 @@ struct AdmittedSchedule {
     end_times: Vec<u64>,
 }
 
-/// A small noiseless execution path for testing native scheduling and feedback.
+/// Experimental ideal or idle-Z execution for testing native scheduling and feedback.
 ///
 /// Owns runtime and quantum state together; no live cloning or mutable component
 /// access is offered. A failed submission poisons the owner until both components
 /// reset successfully. State-vector capacity is fixed at construction (1–16 qubits).
 /// This consumer rejects all custom events and cannot be used as a device model.
-pub struct NoiselessScheduledExecutor {
+pub struct ScheduledExecutor {
     runtime: Box<dyn QisRuntime>,
     quantum: QuantumSystem,
     capacity: usize,
@@ -55,9 +75,10 @@ pub struct NoiselessScheduledExecutor {
     end_times: Vec<u64>,
     poisoned: bool,
     runtime_ready: bool,
+    idle_noise: Option<IdleZNoise>,
 }
 
-impl NoiselessScheduledExecutor {
+impl ScheduledExecutor {
     /// Construct the fixed-capacity state-vector consumer.
     ///
     /// # Errors
@@ -77,7 +98,32 @@ impl NoiselessScheduledExecutor {
             end_times: vec![0; qubits],
             poisoned: false,
             runtime_ready: false,
+            idle_noise: None,
         })
+    }
+
+    /// Use existing `GeneralNoiseModel` idle channels with native batch lifecycles.
+    /// All other noise channels remain at their zero defaults.
+    pub fn with_idle_z(
+        runtime: Box<dyn QisRuntime>,
+        qubits: usize,
+        noise: IdleZNoise,
+    ) -> Result<Self, PecosError> {
+        noise.validate(1.0)?;
+        let mut executor = Self::new(runtime, qubits)?;
+        let z = BTreeMap::from([("Z".to_owned(), 1.0)]);
+        let rz = BTreeMap::from([("RZ".to_owned(), 1.0)]);
+        let builder = pecos_engines::noise::GeneralNoiseModelBuilder::new()
+            .with_p_idle_linear(noise.linear, &z)
+            .with_p_idle_sin_squared(noise.sine, &z)
+            .with_p_idle_coherent(noise.coherent, &rz);
+        builder.validate_configuration().map_err(error)?;
+        executor.quantum = QuantumSystem::new(
+            Box::new(builder.build()),
+            Box::new(StateVecEngine::new(qubits)),
+        );
+        executor.idle_noise = Some(noise);
+        Ok(executor)
     }
 
     /// Reset both components, abandoning a failed or unfinished shot.
@@ -198,17 +244,36 @@ impl NoiselessScheduledExecutor {
             next_batch,
             end_times,
         } = self.admit(&batches)?;
+        // Admit every original batch before any model/simulator mutation. The
+        // ideal path remains one message; the idle profile completes once per
+        // nonempty native batch, independent of how extraction calls group those batches.
+        let mut inputs = Vec::new();
+        if self.idle_noise.is_some() {
+            let mut cursor = self.next_batch;
+            let mut ends = self.end_times.clone();
+            for batch in &batches {
+                let admitted = self.admit_at(std::slice::from_ref(batch), cursor, ends)?;
+                cursor = admitted.next_batch;
+                ends = admitted.end_times;
+                if !admitted.commands.is_empty()? {
+                    inputs.push((admitted.commands, admitted.ids));
+                }
+            }
+        } else if !batches.is_empty() {
+            inputs.push((commands, ids));
+        }
         let mut measurements = BTreeMap::new();
-        if !batches.is_empty() {
+        for (commands, ids) in inputs {
             let output = self.quantum.process(commands)?;
             let outcomes = output.outcomes().map_err(|e| error(e.to_string()))?;
             if outcomes.len() != ids.len() {
                 return Err(error("scheduled measurement count mismatch"));
             }
-            measurements.extend(ids.into_iter().zip(outcomes));
+            let feedback = ids.into_iter().zip(outcomes).collect::<BTreeMap<_, _>>();
             self.runtime
-                .provide_measurement_outcomes(measurements.clone())
+                .provide_measurement_outcomes(feedback.clone())
                 .map_err(|error| runtime_error(&error))?;
+            measurements.extend(feedback);
         }
         self.next_batch = next_batch;
         self.end_times = end_times;
@@ -220,12 +285,19 @@ impl NoiselessScheduledExecutor {
     }
 
     fn admit(&self, batches: &[ScheduledBatch]) -> Result<AdmittedSchedule, PecosError> {
+        self.admit_at(batches, self.next_batch, self.end_times.clone())
+    }
+
+    fn admit_at(
+        &self,
+        batches: &[ScheduledBatch],
+        mut next_batch: usize,
+        mut end_times: Vec<u64>,
+    ) -> Result<AdmittedSchedule, PecosError> {
         let mut builder = ByteMessage::quantum_operations_builder();
         let mut ids = Vec::new();
         let mut program_ids = BTreeSet::new();
         let mut native_ids = BTreeSet::new();
-        let mut next_batch = self.next_batch;
-        let mut end_times = self.end_times.clone();
         for batch in batches {
             if batch.runtime_shot_id != self.runtime_shot_id || batch.batch_index != next_batch {
                 return Err(error("scheduled shot/batch identity mismatch"));
@@ -271,9 +343,7 @@ impl NoiselessScheduledExecutor {
                     | RuntimeScheduledOp::Measure { qubit_id, .. }
                     | RuntimeScheduledOp::MeasureLeaked { qubit_id, .. } => (&[*qubit_id], &[]),
                     RuntimeScheduledOp::Custom { .. } => {
-                        return Err(error(
-                            "noiseless scheduled consumer does not admit custom events",
-                        ));
+                        return Err(error("scheduled consumer does not admit custom events"));
                     }
                 };
                 if angles.iter().any(|a| !a.is_finite())
@@ -287,7 +357,18 @@ impl NoiselessScheduledExecutor {
                     if q >= self.capacity || batch.start_time_nanos < end_times[q] {
                         return Err(error("scheduled target capacity or overlapping timing"));
                     }
-                    touched.insert(q);
+                    // A repeated target within one indivisible native batch
+                    // has one preceding idle interval, not one per operation.
+                    if touched.insert(q)
+                        && let Some(noise) = self.idle_noise
+                    {
+                        let gap = batch.start_time_nanos - end_times[q];
+                        let seconds = std::time::Duration::from_nanos(gap).as_secs_f64();
+                        noise.validate(seconds)?;
+                        if gap > 0 {
+                            builder.idle(seconds, &[q]);
+                        }
+                    }
                     targets.push(q);
                 }
                 match op {

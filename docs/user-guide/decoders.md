@@ -28,15 +28,16 @@ The decoder system in PECOS is designed around modularity and performance:
 
 ## DEM text grammar
 
-PECOS reads flat Stim detector-error-model text using Stim's grammar:
+PECOS reads flat Stim detector-error-model text using a strict subset of Stim's grammar:
 
 - Instruction names and detector/observable target prefixes are case-insensitive; tags and inline `#` comments are supported.
 - Targets and `^` separators require spacing; separators cannot be first, last, or adjacent.
+- PECOS rejects a detector or observable repeated within one component of an error instruction, and an identical component repeated within one instruction, even though Stim accepts them, because it almost always indicates a mistake. Extension `TP` targets follow the same rule. Components are identical when they contain the same set of targets regardless of order: `D0 D1 ^ D1 D0` is rejected, while `D0 D1 L0 ^ D0 D1 L1` contains two distinct components. A target may appear in several components of a decomposed mechanism.
 - Parenthesized arguments immediately follow the name or tag. `error` requires one probability in `[0, 1]`, with `error()` meaning zero; detector and logical-observable declarations require exactly one target of the appropriate kind.
-- Grammar is validated per instruction; block balance is not checked. `repeat`, `shift_detectors`, and closing braces require flattening, including stray braces and unclosed repeat blocks.
+- Grammar is validated per instruction; block balance is not checked by the tokenizer. PECOS readers requiring flat DEMs reject `repeat`, `shift_detectors`, and closing braces with a flattening error, including stray braces and unclosed repeat blocks.
 - PECOS extension targets and metadata statements require an explicit opt-in: `ParsedDem` and `DetectorErrorModel::with_pecos_dem_metadata` enable the whole PECOS superset, including `TP` targets and JSON metadata statements.
 
-PECOS-parsed Python constructors report grammar errors as `ValueError` with the `Invalid DEM syntax:` prefix; Stim-backed constructors such as `PyMatchingDecoder` and `TesseractDecoder` retain their native parser errors and exception types.
+Python constructors report tokenizer errors as `ValueError` with the `Invalid DEM syntax:` prefix. Stim-backed constructors such as `PyMatchingDecoder` and `TesseractDecoder` validate the original text before passing it to their backend, which supports loop expansion and retains its native errors for backend-specific constraints.
 
 ## Available Decoders
 
@@ -402,17 +403,54 @@ spec = bp_trellis(
     bp_score_iterations=5,
     merge_indistinguishable=True,
     ordering="deadline",
-    escalation_ks=[32, 128],
+    escalation=[(64, 100.0)],
 )
 result = batch.decode(dem, spec, workers=2, predictions=True)
 assert result.predictions == [1, 0]
 assert result.num_errors == 0
 ```
 
-All seven native BP-Trellis configuration options are exposed. The example opts
-into a retry ladder; the default `escalation_ks=None` disables retries. Retries
-occur only after a no-path result, not after a successful but incorrect prediction.
-Each worker prebuilds its own ladder, increasing construction time and memory.
+The ladder uses one engine model and prepares each shot once, including BP.
+`escalation=[(k, delta), ...]` chooses both pruning parameters per rung;
+`escalation_ks=[k, ...]` is shorthand for rungs at the base `delta`. Pass only
+one ladder keyword. The default ladder is empty. Rungs need not be monotone,
+and an exact base cannot have a ladder. Rungs run only after a no-path attempt
+that dropped states: never after a successful but wrong prediction, and never
+after a residual or infeasible no-path.
+
+### Recommended ladder
+
+The default ladder is empty so that the per-shot cost of a configuration is
+exactly what it says. When a no-path shot should be retried rather than
+reported, the evidence-backed setting is one rung at `k = 64` with the base
+`delta`, as in the example above. On the bivariate-bicycle 144 corpus at
+physical error rate 0.003, a `4 -> 64` ladder reached 8 failures per 1000 shots
+at 49 ms per shot, against 10 failures at 101 ms for a single `k = 16`; an
+`8 -> 64` ladder reached 0 failures per 1000 at 72 ms per shot at rate 0.002.
+On the rotated surface code at distance 5 no shot ever escalated, so the rung
+costs nothing there. A ladder never rescues a confidently wrong prediction,
+only a no-path, and a fully exact configuration (`k` unbounded, `delta`
+infinite) exhausted memory on that corpus, so the last rung should stay
+finite.
+
+The direct `BpTrellisDecoder.decode_syndrome`, `decode_from_defects`, and
+`decode_batch(shots, workers=1)` methods accept `on_no_path="raise"` (default)
+or `"report"`. Report mode returns a `BpTrellisNoPath` in place for each failed
+shot, preserving batch order. Its `cause` is `"residual"` when a detector's
+residual cannot be changed, `"infeasible"` when an attempt proves there is no
+path without pruning, or `"exhausted"` when all attempts fail after pruning.
+Residual and infeasible outcomes skip remaining rungs. Other errors still raise.
+
+Both outcome classes expose `no_path`, `transitions`, `bp_runs`, and
+`bp_seconds`. Only a decoded result exposes `observable_flips`; a report exposes
+`placeholder_flips` instead, the forced contribution of probability-one
+mechanisms, including wide observables. The names differ on purpose, so code
+written for a correction raises `AttributeError` on a report rather than
+silently consuming a placeholder. The report also exposes `detector` (only for
+residual) and `rungs_tried`.
+BP time is counted once, while transitions sum all attempts.
+The `bp_trellis(...)` spec route remains strict and accepts no `on_no_path`.
+
 `ordering` also accepts `"backward_deadline"`, `"time_order"`, or an explicit
 mechanism permutation. BP-Trellis uses floating-point coset masses and does not
 expose Frontier's integer metric options.

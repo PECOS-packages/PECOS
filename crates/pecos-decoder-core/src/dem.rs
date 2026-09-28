@@ -6,7 +6,7 @@
 pub mod grammar;
 
 use crate::errors::DecoderError;
-use grammar::{Kind, Target, index_u32, parse_line, target_effect, target_indices, xor_indices};
+use grammar::{Kind, Target, index_u32, parse_line, target_indices, xor_indices};
 
 pub(crate) fn dimension_count(max_index: Option<u32>, kind: &str) -> Result<usize, DecoderError> {
     max_index.map_or(Ok(0), |index| {
@@ -460,7 +460,7 @@ pub struct MatchingEdge {
 /// Parses a DEM into edges suitable for MWPM decoders (`PyMatching`, Fusion
 /// Blossom). Each graphlike error mechanism (1-2 detectors) becomes one edge.
 /// Decomposed mechanisms (`D0 ^ D1`) are split into their components.
-/// Targets and repeated component edges cancel by parity within each mechanism.
+/// Shared detector endpoints cancel by parity within each mechanism.
 /// Hyperedges (3+ detectors after resolution) are silently skipped and only
 /// counted in `skipped_hyperedges`; callers that cannot represent them must
 /// check that count and reject the model.
@@ -541,9 +541,11 @@ impl DemMatchingGraph {
             } else {
                 0.0
             };
-            // Written targets determine dimensions; component effects determine graph edges.
+            // Written targets determine dimensions; components determine graph edges.
             for component in instruction.components() {
-                let (detectors, observables) = target_effect(component)?;
+                let (mut detectors, mut observables) = target_indices(component)?;
+                detectors.sort_unstable();
+                observables.sort_unstable();
 
                 match detectors.len() {
                     0 => {} // Pure observable error, skip
@@ -636,7 +638,8 @@ impl DemMatchingGraph {
 
         type EdgeKey = (u32, Option<u32>);
 
-        // Repeated edges from one mechanism flip together and cancel in pairs.
+        // Distinct components can share endpoints while differing in observables.
+        // Projection can also give distinct global components the same local endpoints.
         let mut per_fault: BTreeMap<(EdgeKey, usize), (bool, MatchingEdge)> = BTreeMap::new();
         let mut fault_detectors: BTreeMap<usize, Vec<u32>> = BTreeMap::new();
 

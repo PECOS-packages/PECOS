@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::fmt;
+use std::ops::Range;
 use std::str::FromStr;
 
 use pecos_core::BitUInt;
@@ -469,6 +470,9 @@ pub struct Environment {
     metadata: Vec<VariableInfo>,
     /// Maps source variable names to destination names for output
     mappings: Vec<(String, String)>,
+    /// Declaration-order global qubit ranges, separate from classical storage.
+    quantum_registers: BTreeMap<String, Range<usize>>,
+    num_qubits: usize,
 }
 
 impl Environment {
@@ -480,6 +484,8 @@ impl Environment {
             name_to_index: BTreeMap::new(),
             metadata: Vec::new(),
             mappings: Vec::new(),
+            quantum_registers: BTreeMap::new(),
+            num_qubits: 0,
         }
     }
 
@@ -546,6 +552,10 @@ impl Environment {
             }
         }
 
+        if data_type == DataType::Qubits {
+            self.add_quantum_register(name, size)?;
+        }
+
         let index = self.values.len();
         self.name_to_index.insert(name.to_string(), index);
 
@@ -560,6 +570,47 @@ impl Environment {
         });
 
         Ok(())
+    }
+
+    /// Define a quantum register without adding classical value storage.
+    /// The interpreter keeps quantum and classical names in separate namespaces.
+    pub(crate) fn add_quantum_register(
+        &mut self,
+        name: &str,
+        size: usize,
+    ) -> Result<(), PecosError> {
+        if self.quantum_registers.contains_key(name) {
+            // Python allocates another block and overwrites the name mapping.
+            // PECOS deliberately rejects duplicates instead of remapping qubits.
+            return Err(PecosError::Input(format!(
+                "Quantum register '{name}' already exists"
+            )));
+        }
+        let end = self.num_qubits.checked_add(size).ok_or_else(|| {
+            PecosError::Input(format!("Qubit count overflow defining register '{name}'"))
+        })?;
+        self.quantum_registers
+            .insert(name.to_string(), self.num_qubits..end);
+        self.num_qubits = end;
+        Ok(())
+    }
+
+    /// Resolve a register-local qubit index to its declaration-order global ID.
+    ///
+    /// # Errors
+    /// Returns an error for an unknown quantum register or an out-of-bounds index.
+    pub fn resolve_qubit(&self, name: &str, index: usize) -> Result<usize, PecosError> {
+        let range = self
+            .quantum_registers
+            .get(name)
+            .ok_or_else(|| PecosError::Input(format!("Unknown quantum register '{name}'")))?;
+        let size = range.end - range.start;
+        if index >= size {
+            return Err(PecosError::Input(format!(
+                "Index {index} out of bounds for quantum register '{name}' of size {size}"
+            )));
+        }
+        Ok(range.start + index)
     }
 
     /// Checks if a variable exists in the environment
@@ -717,10 +768,7 @@ impl Environment {
     /// Gets the total number of qubits in the environment
     #[must_use]
     pub fn count_qubits(&self) -> usize {
-        self.get_variables_of_type(&DataType::Qubits)
-            .iter()
-            .map(|info| info.size)
-            .sum()
+        self.num_qubits
     }
 
     /// Returns the total number of variables in the environment

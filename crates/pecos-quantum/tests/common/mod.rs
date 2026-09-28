@@ -13,6 +13,15 @@ pub fn assert_residual_phase(
 ) {
     let lhs = lhs.to_matrix().into_inner();
     let rhs = rhs.to_matrix().into_inner();
+    assert_matrix_residual_phase(&lhs, &rhs, expected_phase, relationship);
+}
+
+pub fn assert_matrix_residual_phase(
+    lhs: &nalgebra::DMatrix<Complex64>,
+    rhs: &nalgebra::DMatrix<Complex64>,
+    expected_phase: f64,
+    relationship: &str,
+) {
     assert_eq!(
         lhs.shape(),
         rhs.shape(),
@@ -38,8 +47,8 @@ pub fn assert_residual_phase(
         "{relationship}: residual {residual} is not unit modulus"
     );
 
-    let rebuilt = &rhs * residual;
-    let entrywise_error = (&lhs - rebuilt)
+    let rebuilt = rhs * residual;
+    let entrywise_error = (lhs - rebuilt)
         .iter()
         .map(|entry| entry.norm())
         .fold(0.0, f64::max);

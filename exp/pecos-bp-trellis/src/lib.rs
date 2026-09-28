@@ -22,17 +22,81 @@
 //! bitwise parity pinning against an external reference implementation is
 //! maintained elsewhere and is not a constraint on this decoder.
 //!
-//! The facade owns [`TrellisDecoder`] instances configured with PECOS's
+//! The facade owns one [`TrellisDecoder`] configured with PECOS's
 //! defaults, ordering semantics, and optional no-path escalation ladder. The
 //! trellis engine lives in `pecos-trellis`.
 
 use pecos_decoder_core::ObservableDecoder;
 pub use pecos_trellis::TrellisOrdering;
 use pecos_trellis::{
-    DecoderError, MetricMode, ObsMask, SparseDem, TrellisConfig, TrellisDecodeAttempt,
-    TrellisDecoder, TrellisResult,
+    DecoderError, MetricMode, ObsMask, PruneParams, SparseDem, TrellisConfig, TrellisDecodeAttempt,
+    TrellisDecoder, TrellisPrepared, TrellisResult,
 };
 use std::time::Instant;
+
+/// A retry's pruning parameters on the shared model and prepared shot.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct EscalationRung {
+    /// Maximum number of retained boundary states.
+    pub k: usize,
+    /// Non-negative log-score window.
+    pub delta: f64,
+}
+
+/// Why a shot has no retained path.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NoPathCause {
+    /// Lowest detector with a residual no mechanism can change.
+    Residual { detector: usize },
+    /// An attempt found no path without dropping any states.
+    Infeasible,
+    /// Every attempt found no path after dropping states.
+    Exhausted,
+}
+
+/// Per-shot no-path information, including an explicitly marked placeholder.
+#[derive(Clone, Debug, PartialEq)]
+pub struct NoPathReport {
+    /// Reason the shot has no path.
+    pub cause: NoPathCause,
+    /// Initial forced observable contribution, not a decoded correction.
+    pub placeholder: ObsMask,
+    /// Number of attempts after the base attempt.
+    pub rungs_tried: u32,
+    /// Candidate branch evaluations across all attempts.
+    pub transitions: u64,
+    /// BP refreshes actually run for this shot.
+    pub bp_runs: u32,
+    /// Preparation's BP time, counted once.
+    pub bp_seconds: f64,
+}
+
+impl NoPathReport {
+    fn into_error(self) -> DecoderError {
+        DecoderError::DecodingFailed(match self.cause {
+            NoPathCause::Residual { detector } => format!(
+                "syndrome is unexplainable: detector {detector} has a residual no mechanism can change"
+            ),
+            NoPathCause::Infeasible => {
+                "syndrome is unexplainable under the detector error model".into()
+            }
+            NoPathCause::Exhausted => format!(
+                "syndrome is unexplainable at the given pruning parameters after {} escalation rung{}",
+                self.rungs_tried,
+                if self.rungs_tried == 1 { "" } else { "s" }
+            ),
+        })
+    }
+}
+
+/// A decoded correction or an explicit per-shot no-path report.
+#[derive(Clone, Debug, PartialEq)]
+pub enum BpTrellisOutcome {
+    /// At least one terminal state survived.
+    Decoded(TrellisResult),
+    /// No correction was found; the report carries a placeholder.
+    NoPath(NoPathReport),
+}
 
 /// Configuration for PECOS's [`BpTrellisDecoder`].
 ///
@@ -57,12 +121,9 @@ pub struct BpTrellisConfig {
     pub ordering: TrellisOrdering,
     /// Escalation ladder used only after a no-path decode.
     ///
-    /// Each entry pre-builds another decoder with that `k` and otherwise the
-    /// same configuration. Construction cost therefore grows with the number
-    /// of rungs. An empty ladder disables escalation and is the explicit
-    /// default because escalation changes per-shot work; whether a future
-    /// default should enable a ladder is deferred to the evaluation campaign.
-    pub escalation_ks: Vec<usize>,
+    /// Rungs reuse one model and one BP preparation. They need not be monotone.
+    /// An empty ladder disables escalation and is the default.
+    pub escalation: Vec<EscalationRung>,
 }
 
 impl BpTrellisConfig {
@@ -70,20 +131,28 @@ impl BpTrellisConfig {
     ///
     /// # Errors
     ///
-    /// Returns [`DecoderError::InvalidConfiguration`] for an oversized ladder or invalid rung.
+    /// Returns [`DecoderError::InvalidConfiguration`] for an oversized ladder, an invalid
+    /// rung, or a non-empty ladder on an exact base (an exact base never prunes, so no
+    /// rung could help).
     pub fn validate(&self) -> Result<(), DecoderError> {
-        if u32::try_from(self.escalation_ks.len()).is_err() {
+        if u32::try_from(self.escalation.len()).is_err() {
             return Err(DecoderError::InvalidConfiguration(
                 "escalation ladder has more rungs than escalation_rungs_used can represent".into(),
             ));
         }
         let mut config = self.trellis_config();
         config.validate()?;
-        for (rung, &k) in self.escalation_ks.iter().enumerate() {
-            config.k = k;
+        if !self.escalation.is_empty() && self.k == usize::MAX && self.delta.is_infinite() {
+            return Err(DecoderError::InvalidConfiguration(
+                "an exact base never prunes so no rung can help".into(),
+            ));
+        }
+        for (rung, params) in self.escalation.iter().enumerate() {
+            config.k = params.k;
+            config.delta = params.delta;
             config.validate().map_err(|error| match error {
                 DecoderError::InvalidConfiguration(message) => {
-                    DecoderError::InvalidConfiguration(format!("escalation_ks[{rung}]: {message}"))
+                    DecoderError::InvalidConfiguration(format!("escalation[{rung}]: {message}"))
                 }
                 other => other,
             })?;
@@ -115,7 +184,7 @@ impl Default for BpTrellisConfig {
             bp_score_iterations: 5,
             merge_indistinguishable: true,
             ordering: TrellisOrdering::Deadline,
-            escalation_ks: Vec::new(),
+            escalation: Vec::new(),
         }
     }
 }
@@ -134,7 +203,7 @@ impl Default for BpTrellisConfig {
 #[derive(Clone, Debug)]
 pub struct BpTrellisDecoder {
     inner: TrellisDecoder,
-    escalation: Vec<TrellisDecoder>,
+    escalation: Vec<EscalationRung>,
     has_wide_observables: bool,
     build_seconds: f64,
 }
@@ -143,10 +212,8 @@ impl BpTrellisDecoder {
     /// Construct a decoder from a sparse detector error model.
     ///
     /// Unlike [`TrellisDecoder`], the default ordering is the explicitly
-    /// computed [`pecos_trellis::deadline_column_order`], not input order. Every configured
-    /// escalation rung is constructed here as an independent
-    /// [`TrellisDecoder`], so construction cost scales with the full ladder
-    /// and decode-time escalation performs no model building.
+    /// computed [`pecos_trellis::deadline_column_order`], not input order.
+    /// Every escalation rung reuses the same immutable engine model.
     ///
     /// # Errors
     ///
@@ -157,20 +224,8 @@ impl BpTrellisDecoder {
         let build_started = Instant::now();
         let mut trellis_config = config.trellis_config();
         trellis_config.column_order = config.ordering.resolve(dem)?;
-        let inner = TrellisDecoder::from_sparse_dem(dem, trellis_config.clone())?;
-        let escalation = config
-            .escalation_ks
-            .into_iter()
-            .map(|rung_k| {
-                TrellisDecoder::from_sparse_dem(
-                    dem,
-                    TrellisConfig {
-                        k: rung_k,
-                        ..trellis_config.clone()
-                    },
-                )
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        let inner = TrellisDecoder::from_sparse_dem(dem, trellis_config)?;
+        let escalation = config.escalation;
         let build_seconds = build_started.elapsed().as_secs_f64();
         Ok(Self {
             inner,
@@ -203,77 +258,118 @@ impl BpTrellisDecoder {
         shots: &[Vec<u8>],
         workers: usize,
     ) -> Result<Vec<Result<TrellisResult, DecoderError>>, DecoderError> {
+        pecos_trellis::batch::decode_batch(shots, workers, || self.fresh_worker(), Self::decode)
+    }
+
+    fn fresh_worker(&self) -> Self {
+        Self {
+            inner: self.inner.fresh_worker(),
+            escalation: self.escalation.clone(),
+            has_wide_observables: self.has_wide_observables,
+            build_seconds: self.build_seconds,
+        }
+    }
+
+    /// Decode dense shots in input order, retaining no-path reports per shot.
+    ///
+    /// # Errors
+    /// Returns an error for zero workers or pool creation failure. Shot errors
+    /// remain in input order, separately from no-path reports.
+    pub fn decode_batch_outcomes(
+        &self,
+        shots: &[Vec<u8>],
+        workers: usize,
+    ) -> Result<Vec<Result<BpTrellisOutcome, DecoderError>>, DecoderError> {
         pecos_trellis::batch::decode_batch(
             shots,
             workers,
-            || Self {
-                inner: self.inner.fresh_worker(),
-                escalation: self
-                    .escalation
-                    .iter()
-                    .map(TrellisDecoder::fresh_worker)
-                    .collect(),
-                has_wide_observables: self.has_wide_observables,
-                build_seconds: self.build_seconds,
-            },
-            Self::decode,
+            || self.fresh_worker(),
+            Self::decode_outcome,
         )
     }
 
-    /// Decode a dense detector syndrome with the shared trellis engine.
-    ///
-    /// Every nonzero byte is treated as a fired detector. A no-path base
-    /// attempt is retried at each pre-built escalation rung until one
-    /// succeeds. Any returned prediction, including a pruned or incorrect
-    /// prediction, is final because production decoding has no truth oracle.
-    /// Other errors do not escalate. On success, `transitions` and
-    /// `bp_seconds` cover the full attempted sequence; pruning telemetry and
-    /// status come from the successful rung.
+    /// Decode a shot, retrying only no-path attempts that dropped states.
     ///
     /// # Errors
-    ///
-    /// Returns [`DecoderError`] for a dimension mismatch or when the syndrome
-    /// is unexplainable with the retained frontier.
-    pub fn decode(&mut self, syndrome: &[u8]) -> Result<TrellisResult, DecoderError> {
-        let (mut final_error, mut transitions, mut bp_seconds) =
-            match self.inner.decode_attempt(syndrome) {
-                TrellisDecodeAttempt::Success(result) => return Ok(result),
-                TrellisDecodeAttempt::NoPath {
-                    error,
-                    transitions,
-                    bp_seconds,
-                } => (error, transitions, bp_seconds),
-                TrellisDecodeAttempt::Error(error) => return Err(error),
-            };
+    /// Returns dimension and engine errors. A no-path is an outcome, never an error.
+    pub fn decode_outcome(&mut self, syndrome: &[u8]) -> Result<BpTrellisOutcome, DecoderError> {
+        self.decode_with_attempt(syndrome, TrellisDecoder::attempt)
+    }
 
-        let mut escalation_rungs_used = 0_u32;
-        for decoder in &mut self.escalation {
-            escalation_rungs_used = escalation_rungs_used.saturating_add(1);
-            match decoder.decode_attempt(syndrome) {
+    // The callable keeps attempt-count instrumentation in tests, without adding
+    // a counter to either decoder or changing the public result contract.
+    fn decode_with_attempt(
+        &mut self,
+        syndrome: &[u8],
+        mut attempt: impl FnMut(&mut TrellisDecoder, PruneParams) -> TrellisDecodeAttempt,
+    ) -> Result<BpTrellisOutcome, DecoderError> {
+        let refreshes = self.inner.bp_refreshes();
+        let prepared = self.inner.prepare(syndrome)?;
+        let mut report = NoPathReport {
+            cause: NoPathCause::Exhausted,
+            placeholder: self.inner.forced_observables(),
+            rungs_tried: 0,
+            transitions: 0,
+            bp_runs: u32::try_from(self.inner.bp_refreshes() - refreshes)
+                .expect("one shot's BP refreshes fit u32"),
+            bp_seconds: 0.0,
+        };
+        match prepared {
+            TrellisPrepared::Residual { detector } => {
+                report.cause = NoPathCause::Residual { detector };
+                return Ok(BpTrellisOutcome::NoPath(report));
+            }
+            TrellisPrepared::Ready { bp_seconds, .. } => report.bp_seconds = bp_seconds,
+        }
+        let params =
+            std::iter::once(self.inner.prune_params()).chain(self.escalation.iter().map(|rung| {
+                PruneParams {
+                    k: rung.k,
+                    delta: rung.delta,
+                }
+            }));
+        for (index, params) in params.enumerate() {
+            report.rungs_tried = u32::try_from(index).expect("validated ladder length");
+            let outcome = attempt(&mut self.inner, params);
+            report.bp_runs = u32::try_from(self.inner.bp_refreshes() - refreshes)
+                .expect("one shot's BP refreshes fit u32");
+            match outcome {
                 TrellisDecodeAttempt::Success(mut result) => {
-                    result.transitions += transitions;
-                    result.bp_seconds += bp_seconds;
-                    result.escalation_rungs_used = escalation_rungs_used;
-                    return Ok(result);
+                    result.transitions += report.transitions;
+                    result.bp_seconds = report.bp_seconds;
+                    result.bp_runs = report.bp_runs;
+                    result.escalation_rungs_used = report.rungs_tried;
+                    return Ok(BpTrellisOutcome::Decoded(result));
                 }
                 TrellisDecodeAttempt::NoPath {
-                    error,
-                    transitions: rung_transitions,
-                    bp_seconds: rung_bp_seconds,
+                    transitions,
+                    dropped_states,
+                    ..
                 } => {
-                    final_error = error;
-                    transitions += rung_transitions;
-                    bp_seconds += rung_bp_seconds;
+                    report.transitions += transitions;
+                    if dropped_states == 0 {
+                        report.cause = NoPathCause::Infeasible;
+                        break;
+                    }
                 }
                 TrellisDecodeAttempt::Error(error) => return Err(error),
             }
         }
-
-        Err(final_error)
+        Ok(BpTrellisOutcome::NoPath(report))
     }
 
-    /// Total wall-clock seconds spent constructing the base decoder and every
-    /// escalation-rung model.
+    /// Decode a shot, returning an error with its cause when no path exists.
+    ///
+    /// # Errors
+    /// Returns dimension and engine errors, or `DecodingFailed` on no-path.
+    pub fn decode(&mut self, syndrome: &[u8]) -> Result<TrellisResult, DecoderError> {
+        match self.decode_outcome(syndrome)? {
+            BpTrellisOutcome::Decoded(result) => Ok(result),
+            BpTrellisOutcome::NoPath(report) => Err(report.into_error()),
+        }
+    }
+
+    /// Total wall-clock seconds spent constructing the shared model.
     #[must_use]
     pub fn build_seconds(&self) -> f64 {
         self.build_seconds
@@ -295,3 +391,6 @@ impl ObservableDecoder for BpTrellisDecoder {
         Ok(decoded.words().first().copied().unwrap_or(0))
     }
 }
+
+#[cfg(test)]
+mod outcome_tests;

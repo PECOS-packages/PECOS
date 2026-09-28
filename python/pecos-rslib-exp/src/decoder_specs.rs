@@ -1,5 +1,5 @@
 //! Optional experimental decoder factories and native workers for batch decoding.
-use crate::bp_trellis_bindings::{TrellisOrderArgument, parse_ordering};
+use crate::bp_trellis_bindings::{TrellisOrderArgument, parse_ordering, resolve_escalation};
 use crate::frontier_bindings::{ColumnOrderArgument, parse_column_order, parse_metric_mode};
 use pecos_bp_trellis::BpTrellisConfig;
 use pecos_decoder_core::{DecoderError, ObservableDecoder};
@@ -241,12 +241,12 @@ fn frontier_repr(config: &FrontierConfig, ordering: &TrellisOrdering) -> String 
 }
 
 /// Native Rust BP-guided trellis decoder for raw DEMs, including hyperedges.
-/// Batch decoding supports independent Rust workers. Each worker prebuilds the
-/// optional escalation ladder, retried only after a no-path result. Use
+/// Batch decoding supports independent Rust workers sharing one model. Optional
+/// rungs reuse the shot preparation after a no-path with drops. This route stays strict. Use
 /// pecos_rslib_exp.BpTrellisDecoder for per-shot confidence and retry telemetry.
 #[pyfunction]
-#[pyo3(signature = (*, k=8, delta=100.0, score_alpha=0.8, bp_score_iterations=5, merge_indistinguishable=true, ordering=TrellisOrderArgument::default(), escalation_ks=None),
-    text_signature = "(*, k=8, delta=100.0, score_alpha=0.8, bp_score_iterations=5, merge_indistinguishable=True, ordering='deadline', escalation_ks=None)")]
+#[pyo3(signature = (*, k=8, delta=100.0, score_alpha=0.8, bp_score_iterations=5, merge_indistinguishable=true, ordering=TrellisOrderArgument::default(), escalation_ks=None, escalation=None),
+    text_signature = "(*, k=8, delta=100.0, score_alpha=0.8, bp_score_iterations=5, merge_indistinguishable=True, ordering='deadline', escalation_ks=None, escalation=None)")]
 fn bp_trellis(
     k: usize,
     delta: f64,
@@ -255,6 +255,7 @@ fn bp_trellis(
     merge_indistinguishable: bool,
     ordering: TrellisOrderArgument,
     escalation_ks: Option<Vec<usize>>,
+    escalation: Option<Vec<(usize, f64)>>,
 ) -> PyResult<PyExperimentalDecoderSpec> {
     let config = BpTrellisConfig {
         k,
@@ -263,7 +264,7 @@ fn bp_trellis(
         bp_score_iterations,
         merge_indistinguishable,
         ordering: parse_ordering(ordering)?,
-        escalation_ks: escalation_ks.unwrap_or_default(),
+        escalation: resolve_escalation(escalation_ks, escalation, delta)?,
     };
     config
         .validate()
@@ -304,8 +305,30 @@ fn bp_trellis_repr(config: &BpTrellisConfig) -> String {
         TrellisOrdering::BackwardDeadline => args.push("ordering='backward_deadline'".to_owned()),
         TrellisOrdering::Explicit(order) => args.push(format!("ordering={order:?}")),
     }
-    if config.escalation_ks != default.escalation_ks {
-        args.push(format!("escalation_ks={:?}", config.escalation_ks));
+    if !config.escalation.is_empty() {
+        if config
+            .escalation
+            .iter()
+            .all(|rung| rung.delta.partial_cmp(&config.delta) == Some(std::cmp::Ordering::Equal))
+        {
+            let ks: Vec<_> = config.escalation.iter().map(|rung| rung.k).collect();
+            args.push(format!("escalation_ks={ks:?}"));
+        } else {
+            let rungs = config
+                .escalation
+                .iter()
+                .map(|rung| {
+                    let delta = if rung.delta.is_infinite() {
+                        "float('inf')".into()
+                    } else {
+                        format!("{:?}", rung.delta)
+                    };
+                    format!("({}, {delta})", rung.k)
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            args.push(format!("escalation=[{rungs}]"));
+        }
     }
     finish_repr("bp_trellis", args)
 }

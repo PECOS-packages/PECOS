@@ -512,10 +512,8 @@ impl OperationProcessor {
                 // Validate all qubits in the barrier
                 for (var, idx) in args {
                     self.validate_variable_access(var, *idx)?;
+                    self.environment.resolve_qubit(var, *idx)?;
                 }
-
-                // Extract qubit indices for the barrier (just for validation)
-                let _qubit_indices: Vec<usize> = args.iter().map(|(_, idx)| *idx).collect();
 
                 // Return barrier result
                 Ok(MetaInstructionResult::Barrier {
@@ -531,7 +529,7 @@ impl OperationProcessor {
     /// Add a meta instruction to the byte message builder
     ///
     /// # Errors
-    /// Currently never returns an error, but may in future implementations.
+    /// Returns an error if a qubit register is unknown or an index is out of bounds.
     pub fn add_meta_instruction_to_builder(
         &self,
         _builder: &mut ByteMessageBuilder,
@@ -540,7 +538,10 @@ impl OperationProcessor {
         match meta_result {
             MetaInstructionResult::Barrier { qubits } => {
                 // Extract qubit indices for the barrier for debug output
-                let qubit_indices: Vec<usize> = qubits.iter().map(|(_, idx)| *idx).collect();
+                let qubit_indices: Vec<usize> = qubits
+                    .iter()
+                    .map(|(var, idx)| self.environment.resolve_qubit(var, *idx))
+                    .collect::<Result<_, _>>()?;
 
                 // Add barrier operation to the builder (if supported by the ByteMessageBuilder)
                 // For now, we handle it as a "no-op" since barriers are primarily compiler hints
@@ -742,12 +743,14 @@ impl OperationProcessor {
                 QubitArg::SingleQubit((var, idx)) => {
                     // Validate the qubit exists
                     self.validate_variable_access(var, *idx)?;
+                    self.environment.resolve_qubit(var, *idx)?;
                     qubits.push((var.clone(), *idx));
                 }
                 QubitArg::MultipleQubits(qubit_list) => {
                     for (var, idx) in qubit_list {
                         // Validate each qubit exists
                         self.validate_variable_access(var, *idx)?;
+                        self.environment.resolve_qubit(var, *idx)?;
                         qubits.push((var.clone(), *idx));
                     }
                 }
@@ -774,7 +777,7 @@ impl OperationProcessor {
     /// * `Err(PecosError)` - If the operation could not be added
     ///
     /// # Errors
-    /// Currently never returns an error, but may in future implementations.
+    /// Returns an error if a qubit register is unknown or an index is out of bounds.
     ///
     /// # Notes
     ///
@@ -794,7 +797,10 @@ impl OperationProcessor {
                 ..
             } => {
                 // Extract qubit indices for the idle operation
-                let qubit_indices: Vec<usize> = qubits.iter().map(|(_, idx)| *idx).collect();
+                let qubit_indices: Vec<usize> = qubits
+                    .iter()
+                    .map(|(var, idx)| self.environment.resolve_qubit(var, *idx))
+                    .collect::<Result<_, _>>()?;
 
                 // Add idle operation to the builder
                 if !qubit_indices.is_empty() {
@@ -811,7 +817,10 @@ impl OperationProcessor {
                 ..
             } => {
                 // Extract qubit indices for the transport operation
-                let qubit_indices: Vec<usize> = qubits.iter().map(|(_, idx)| *idx).collect();
+                let qubit_indices: Vec<usize> = qubits
+                    .iter()
+                    .map(|(var, idx)| self.environment.resolve_qubit(var, *idx))
+                    .collect::<Result<_, _>>()?;
 
                 // Add transport operation to the builder if supported
                 // For now, we'll treat it as an idle operation
@@ -829,7 +838,10 @@ impl OperationProcessor {
                 ..
             } => {
                 // Extract qubit indices for the delay operation
-                let qubit_indices: Vec<usize> = qubits.iter().map(|(_, idx)| *idx).collect();
+                let qubit_indices: Vec<usize> = qubits
+                    .iter()
+                    .map(|(var, idx)| self.environment.resolve_qubit(var, *idx))
+                    .collect::<Result<_, _>>()?;
 
                 // Add delay operation to the builder if supported
                 // For now, we'll treat it as an idle operation
@@ -848,7 +860,10 @@ impl OperationProcessor {
                 ..
             } => {
                 // Extract qubit indices for the timing operation
-                let qubit_indices: Vec<usize> = qubits.iter().map(|(_, idx)| *idx).collect();
+                let qubit_indices: Vec<usize> = qubits
+                    .iter()
+                    .map(|(var, idx)| self.environment.resolve_qubit(var, *idx))
+                    .collect::<Result<_, _>>()?;
 
                 // Add timing operation to the builder if supported
                 debug!(
@@ -1518,13 +1533,13 @@ impl OperationProcessor {
                 QubitArg::SingleQubit((var, idx)) => {
                     // Validate the qubit
                     self.validate_variable_access(var, *idx)?;
-                    qubit_args.push(*idx);
+                    qubit_args.push(self.environment.resolve_qubit(var, *idx)?);
                 }
                 QubitArg::MultipleQubits(qubits) => {
                     for (var, idx) in qubits {
                         // Validate each qubit
                         self.validate_variable_access(var, *idx)?;
-                        qubit_args.push(*idx);
+                        qubit_args.push(self.environment.resolve_qubit(var, *idx)?);
                     }
                 }
             }

@@ -396,7 +396,7 @@ fn converter_rejects_non_qubit_quantum_declarations() {
         input["ops"][0]["data_type"] = data_type;
         let error = phir_json_to_module(&input.to_string()).unwrap_err();
         assert!(
-            error.to_string().contains("requires data_type 'qubits'"),
+            error.to_string().contains("data_type") && error.to_string().contains("'q'"),
             "{error}"
         );
     }
@@ -478,9 +478,11 @@ fn quantum_declaration_compatibility_differences_are_explicit() {
             .to_string()
             .contains("requires a size")
     );
-    // The interpreter still infers zero for an unsized quantum declaration.
-    assert_eq!(
-        interpreter.init(&missing_size.to_string(), None).unwrap(),
-        0
+    assert!(
+        interpreter
+            .init(&missing_size.to_string(), None)
+            .unwrap_err()
+            .to_string()
+            .contains("requires a size")
     );
 }

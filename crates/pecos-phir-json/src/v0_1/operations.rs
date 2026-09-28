@@ -884,11 +884,6 @@ impl OperationProcessor {
     /// # Errors
     /// Returns an error if the variable already exists or cannot be added.
     pub fn add_quantum_variable(&mut self, variable: &str, size: usize) -> Result<(), PecosError> {
-        // The engine pre-defines variables from the program header and then
-        // re-encounters the same definitions during execution, so an IDENTICAL
-        // re-definition must be a no-op (mirrors `add_classical_variable`). A
-        // CONFLICTING re-definition (different type or size) is a genuine
-        // definition error and must propagate.
         if self.environment.has_variable(variable) {
             let info = self.environment.get_variable_info(variable)?;
             if info.data_type != DataType::Qubits || info.size != size {
@@ -950,7 +945,12 @@ impl OperationProcessor {
         size: usize,
     ) -> Result<(), PecosError> {
         match data {
-            "qvar_define" if data_type == "qubits" => {
+            "qvar_define" => {
+                let (variable, size) = super::ast::validate_quantum_declaration(
+                    variable,
+                    Some(data_type),
+                    Some(size),
+                )?;
                 self.add_quantum_variable(variable, size)?;
             }
             "cvar_define" => {

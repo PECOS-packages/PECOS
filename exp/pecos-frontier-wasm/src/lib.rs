@@ -20,7 +20,7 @@
 //! word `w`, bit `b` represents index `32*w + b`.
 
 use pecos_frontier::{
-    FrontierConfig, ObsMask, SparseDem, TrellisStreamingDecoder, deadline_column_order,
+    deadline_column_order, FrontierConfig, ObsMask, SparseDem, TrellisStreamingDecoder,
 };
 use std::cell::RefCell;
 
@@ -215,6 +215,14 @@ impl State {
             self.status = STATUS_DECODE_ERROR;
             false
         }
+    }
+
+    fn finish_stream_round(&mut self, bit_count: usize, words: [i32; 4]) -> Option<i32> {
+        self.push_stream_round(bit_count, words)?;
+        if !self.finish_stream() {
+            return None;
+        }
+        Some(self.result[0])
     }
 
     fn replay_shot(&mut self, index: usize) -> Option<i32> {
@@ -424,6 +432,28 @@ pub extern "C" fn frontier_stream_finish() {
     STATE.with_borrow_mut(|state| {
         state.finish_stream();
     });
+}
+
+/// Append the final detector round, flush the decoder, and return the first
+/// observable-mask word. This makes the hardware timing boundary exactly one
+/// Wasm call from the last syndrome block to the returned correction.
+/// Returns -1 on an invalid round or decoder failure.
+#[unsafe(no_mangle)]
+pub extern "C" fn frontier_stream_finish_round(
+    bit_count: i32,
+    s0: i32,
+    s1: i32,
+    s2: i32,
+    s3: i32,
+) -> i32 {
+    let Ok(bit_count) = usize::try_from(bit_count) else {
+        return -1;
+    };
+    STATE.with_borrow_mut(|state| {
+        state
+            .finish_stream_round(bit_count, [s0, s1, s2, s3])
+            .unwrap_or(-1)
+    })
 }
 
 /// Return the number of hardware shots compiled into this module.
@@ -637,6 +667,16 @@ mod tests {
         assert!(state.finish_stream());
         assert_eq!(state.status, STATUS_OK);
         assert_eq!(state.result[0] & 1, 1);
+    }
+
+    #[test]
+    fn final_round_returns_correction_in_one_call() {
+        let mut state = State::empty();
+        state.initialize("error(0.1) D0 L0");
+        assert!(state.begin_stream());
+        assert_eq!(state.finish_stream_round(1, [1, 0, 0, 0]), Some(1));
+        assert_eq!(state.status, STATUS_OK);
+        assert_eq!(state.result[0], 1);
     }
 
     #[test]

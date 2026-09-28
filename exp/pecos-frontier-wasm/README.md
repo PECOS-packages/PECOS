@@ -97,6 +97,9 @@ benchmarking only adjacent shots.
   `bit_count` contiguous detector bits packed into four words; returns the
   number of newly processed DEM columns, or -1 on failure.
 - `frontier_stream_finish() -> ()`: flush after all detector bits arrive.
+- `frontier_stream_finish_round(i32, i32, i32, i32, i32) -> i32`: append
+  the final detector block, flush, and return the first correction word in one
+  call; returns -1 on failure. This is the preferred hardware latency boundary.
 - `frontier_result_0..3() -> i32`: four observable-mask words.
 - `frontier_status() -> i32`: 0 success, 1 model error, 2 model too wide,
   3 decode error, 4 replay error.

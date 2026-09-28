@@ -44,12 +44,10 @@ def noise_tq_depolarizing_leakage(
 
     # Don't apply a gate if an input qubit has already leaked
     if leaked:
-        not_leaked = args - leaked
-
         # TODO: precompute, in PyPHIR, a flattened version of args
         new_args = []
         for a, b in op.args:
-            if a not in not_leaked and b not in leaked:
+            if a not in leaked and b not in leaked:
                 new_args.append([a, b])
         op = QOp(name=op.name, args=new_args, metadata=dict(op.metadata))
 

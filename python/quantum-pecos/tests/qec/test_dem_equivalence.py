@@ -145,8 +145,8 @@ error(0.2) D0
         dem = ParsedDem.from_string(dem_str)
         agg = dem.aggregate()
 
-        # Key: ((0,), ())
-        key = ((0,), ())
+        # Key: ((0,), (), ())
+        key = ((0,), (), ())
         assert key in agg
 
         # Combined probability: 0.1*(1-0.2) + 0.2*(1-0.1) = 0.08 + 0.18 = 0.26
@@ -162,8 +162,26 @@ error(0.2) D1
         agg = dem.aggregate()
 
         assert len(agg) == 2
-        assert ((0,), ()) in agg
-        assert ((1,), ()) in agg
+        assert ((0,), (), ()) in agg
+        assert ((1,), (), ()) in agg
+
+    def test_aggregate_different_tracked_paulis(self) -> None:
+        """Mechanisms with different tracked Paulis stay separate."""
+        dem = ParsedDem.from_string("error(0.1) D0 TP0\nerror(0.2) D0 TP1\nerror(0.3) D0")
+
+        assert dem.aggregate() == pytest.approx(
+            {
+                ((0,), (), (0,)): 0.1,
+                ((0,), (), (1,)): 0.2,
+                ((0,), (), ()): 0.3,
+            },
+        )
+
+    def test_aggregate_sorted_effect(self) -> None:
+        """Each field of an aggregated effect is sorted across components."""
+        dem = ParsedDem.from_string("error(0.1) D2 L2 TP2 ^ D0 L0 TP0")
+
+        assert dem.aggregate() == pytest.approx({((0, 2), (0, 2), (0, 2)): 0.1})
 
 
 class TestExactComparison:

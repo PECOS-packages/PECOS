@@ -93,8 +93,8 @@ fn batch(index: usize, operations: Vec<RuntimeScheduledOp>) -> ScheduledBatch {
         measurements: vec![],
     }
 }
-fn fixture_executor(f: Fixture) -> NoiselessScheduledExecutor {
-    let mut executor = NoiselessScheduledExecutor::new(Box::new(f), 4).unwrap();
+fn fixture_executor(f: Fixture) -> ScheduledExecutor {
+    let mut executor = ScheduledExecutor::new(Box::new(f), 4).unwrap();
     executor.start_shot(context(3), 7, 123).unwrap();
     executor
 }
@@ -250,7 +250,7 @@ fn real_native_runtimes_execute_large_schedules_and_deliver_measurements() {
         pecos_qis::selene_simple_runtime().unwrap(),
         pecos_qis::selene_soft_rz_runtime().unwrap(),
     ] {
-        let mut executor = NoiselessScheduledExecutor::new(Box::new(runtime), 4).unwrap();
+        let mut executor = ScheduledExecutor::new(Box::new(runtime), 4).unwrap();
         for shot_id in 0..2 {
             executor
                 .start_shot(context(shot_id), shot_id as u64, 123)
@@ -276,7 +276,7 @@ fn real_native_runtimes_execute_large_schedules_and_deliver_measurements() {
 #[test]
 fn two_qubit_native_rotations_and_leakage_aware_readout_execute() {
     let runtime = pecos_qis::selene_simple_runtime().unwrap();
-    let mut executor = NoiselessScheduledExecutor::new(Box::new(runtime), 2).unwrap();
+    let mut executor = ScheduledExecutor::new(Box::new(runtime), 2).unwrap();
     executor.start_shot(context(0), 10, 123).unwrap();
     let output = executor
         .submit(&[
@@ -301,11 +301,9 @@ fn two_qubit_native_rotations_and_leakage_aware_readout_execute() {
 #[test]
 fn matched_seeded_measurements_are_invariant_to_submission_boundaries() {
     fn execute(split: bool, seed: u64) -> BTreeMap<usize, u32> {
-        let mut executor = NoiselessScheduledExecutor::new(
-            Box::new(pecos_qis::selene_simple_runtime().unwrap()),
-            2,
-        )
-        .unwrap();
+        let mut executor =
+            ScheduledExecutor::new(Box::new(pecos_qis::selene_simple_runtime().unwrap()), 2)
+                .unwrap();
         executor
             .start_shot(context(usize::try_from(seed).unwrap()), seed, seed)
             .unwrap();
@@ -341,11 +339,9 @@ fn matched_seeded_measurements_are_invariant_to_submission_boundaries() {
 #[test]
 fn independent_owners_do_not_share_state_or_host_context() {
     let mut a =
-        NoiselessScheduledExecutor::new(Box::new(pecos_qis::selene_simple_runtime().unwrap()), 2)
-            .unwrap();
+        ScheduledExecutor::new(Box::new(pecos_qis::selene_simple_runtime().unwrap()), 2).unwrap();
     let mut b =
-        NoiselessScheduledExecutor::new(Box::new(pecos_qis::selene_simple_runtime().unwrap()), 2)
-            .unwrap();
+        ScheduledExecutor::new(Box::new(pecos_qis::selene_simple_runtime().unwrap()), 2).unwrap();
     a.start_shot(
         ShotContext {
             run: 1,
@@ -552,4 +548,419 @@ fn clean_shots_reuse_runtime_but_reset_quantum_state() {
     executor.finish_shot().unwrap();
     executor.reset().unwrap();
     assert_eq!(resets.load(Ordering::SeqCst), 2);
+}
+
+// Ramsey experiment: only the idle timestamp changes, not the ideal gates.
+fn ramsey_schedule(gap: u64) -> Vec<ScheduledBatch> {
+    let mut first = batch(
+        0,
+        vec![RuntimeScheduledOp::Rxy {
+            qubit_id: 0,
+            theta: std::f64::consts::FRAC_PI_2,
+            phi: std::f64::consts::FRAC_PI_2,
+        }],
+    );
+    first.duration_nanos = 100;
+    let mut last = batch(
+        1,
+        vec![RuntimeScheduledOp::Rxy {
+            qubit_id: 0,
+            theta: -std::f64::consts::FRAC_PI_2,
+            phi: std::f64::consts::FRAC_PI_2,
+        }],
+    );
+    last.start_time_nanos = 100 + gap;
+    measurement(&mut last, 40);
+    vec![first, last]
+}
+fn run_idle_schedule_state(
+    batches: Vec<ScheduledBatch>,
+    profile: IdleZNoise,
+    split: bool,
+    seed: u64,
+) -> (u32, u64) {
+    let chunks = if split {
+        batches.into_iter().map(|b| vec![b]).collect::<Vec<_>>()
+    } else {
+        vec![batches]
+    };
+    let count = chunks.len();
+    let fixture = Fixture {
+        batches: chunks.into(),
+        ..Default::default()
+    };
+    let mut executor = ScheduledExecutor::with_idle_z(Box::new(fixture), 2, profile).unwrap();
+    executor.start_shot(context(0), 7, seed).unwrap();
+    let mut outcomes = BTreeMap::new();
+    for _ in 0..count {
+        outcomes.extend(executor.submit(&[]).unwrap().measurements);
+    }
+    outcomes.extend(executor.finish_shot().unwrap().0.measurements);
+    let model = executor
+        .quantum
+        .noise_model()
+        .as_any()
+        .downcast_ref::<pecos_engines::noise::GeneralNoiseModel>()
+        .unwrap();
+    let mut rng = pecos_core::RngManageable::rng(model).clone();
+    (outcomes[&40], rng.next_u64())
+}
+fn run_idle_schedule(
+    batches: Vec<ScheduledBatch>,
+    profile: IdleZNoise,
+    split: bool,
+    seed: u64,
+) -> u32 {
+    run_idle_schedule_state(batches, profile, split, seed).0
+}
+
+#[test]
+fn coherent_idle_uses_native_nanoseconds_and_changes_ramsey_outcome() {
+    let profile = IdleZNoise {
+        coherent: std::f64::consts::PI,
+        ..Default::default()
+    };
+    assert_eq!(run_idle_schedule(ramsey_schedule(0), profile, false, 2), 0);
+    assert_eq!(
+        run_idle_schedule(ramsey_schedule(1_000_000_000), profile, false, 2),
+        1
+    );
+    // Two operations on one target within the final batch share ONE idle site.
+    let mut executor =
+        ScheduledExecutor::with_idle_z(Box::new(Fixture::default()), 2, profile).unwrap();
+    executor.start_shot(context(0), 7, 2).unwrap();
+    let message = executor
+        .admit(&ramsey_schedule(1_000_000_000))
+        .unwrap()
+        .commands;
+    let gates = message.quantum_ops().unwrap();
+    let idles = gates
+        .iter()
+        .filter(|g| g.gate_type == pecos_engines::GateType::Idle)
+        .collect::<Vec<_>>();
+    assert_eq!(idles.len(), 1);
+    assert_eq!(idles[0].idle_duration().to_bits(), 1.0_f64.to_bits());
+}
+
+#[test]
+fn empty_batches_and_submissions_do_not_split_nonlinear_idle_intervals() {
+    let profile = IdleZNoise {
+        sine: std::f64::consts::PI,
+        ..Default::default()
+    };
+    let mut batches = ramsey_schedule(1_000_000_000);
+    batches[1].batch_index = 2;
+    let mut empty = batch(1, vec![]);
+    empty.start_time_nanos = 500_000_100;
+    empty.duration_nanos = 0;
+    batches.insert(1, empty);
+    // sin²(pi*1)=0; splitting at the empty batch would introduce two
+    // sin²(pi/2)=1 faults and consume different random draws. Inspect sites too.
+    for split in [false, true] {
+        assert_eq!(run_idle_schedule(batches.clone(), profile, split, 2), 0);
+    }
+    let mut executor =
+        ScheduledExecutor::with_idle_z(Box::new(Fixture::default()), 2, profile).unwrap();
+    executor.start_shot(context(0), 7, 2).unwrap();
+    let gates = executor
+        .admit(&batches)
+        .unwrap()
+        .commands
+        .quantum_ops()
+        .unwrap();
+    let durations = gates
+        .iter()
+        .filter(|g| g.gate_type == pecos_engines::GateType::Idle)
+        .map(pecos_engines::Gate::idle_duration)
+        .collect::<Vec<_>>();
+    assert_eq!(durations, vec![1.0]);
+}
+
+#[test]
+fn stochastic_idle_is_seeded_and_invariant_to_extraction_grouping() {
+    let profile = IdleZNoise {
+        linear: 0.12,
+        sine: 0.71,
+        coherent: 0.1,
+    };
+    let mut values = Vec::new();
+    for seed in 0..16 {
+        let together =
+            run_idle_schedule_state(ramsey_schedule(1_000_000_000), profile, false, seed);
+        let split = run_idle_schedule_state(ramsey_schedule(1_000_000_000), profile, true, seed);
+        assert_eq!(together, split, "seed {seed}");
+        values.push(together.0);
+    }
+    assert!(
+        values.contains(&0) && values.contains(&1),
+        "probe must exercise stochastic outcomes"
+    );
+}
+
+#[test]
+fn idle_profile_rejects_invalid_rates_and_overflow_before_quantum_mutation() {
+    for rate in [f64::NAN, f64::INFINITY, -0.1] {
+        for profile in [
+            IdleZNoise {
+                linear: rate,
+                ..Default::default()
+            },
+            IdleZNoise {
+                sine: rate,
+                ..Default::default()
+            },
+            IdleZNoise {
+                coherent: rate,
+                ..Default::default()
+            },
+        ] {
+            assert!(
+                ScheduledExecutor::with_idle_z(Box::new(Fixture::default()), 2, profile).is_err()
+            );
+        }
+    }
+    let profile = IdleZNoise {
+        coherent: f64::MAX,
+        ..Default::default()
+    };
+    let mut final_batch = batch(1, vec![pulse()]);
+    final_batch.start_time_nanos = 3_000_000_000;
+    let fixture = Fixture {
+        batches: VecDeque::from([vec![batch(0, vec![pulse()]), final_batch]]),
+        ..Default::default()
+    };
+    let mut executor = ScheduledExecutor::with_idle_z(Box::new(fixture), 2, profile).unwrap();
+    executor.start_shot(context(0), 7, 2).unwrap();
+    assert!(
+        executor
+            .submit(&[])
+            .unwrap_err()
+            .to_string()
+            .contains("duration product")
+    );
+    assert!(executor.poisoned);
+    let result = executor
+        .quantum
+        .process(ByteMessage::quantum_operations_builder().mz(&[0]).build())
+        .unwrap();
+    assert_eq!(result.outcomes().unwrap(), vec![0]);
+}
+
+#[test]
+fn idle_profile_rejects_opaque_events_before_earlier_gates_execute() {
+    let fixture = Fixture {
+        batches: VecDeque::from([vec![
+            batch(0, vec![pulse()]),
+            batch(
+                1,
+                vec![RuntimeScheduledOp::Custom {
+                    tag: 7301,
+                    data: vec![],
+                }],
+            ),
+        ]]),
+        ..Default::default()
+    };
+    let mut executor = ScheduledExecutor::with_idle_z(
+        Box::new(fixture),
+        2,
+        IdleZNoise {
+            linear: 0.1,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    executor.start_shot(context(0), 7, 2).unwrap();
+    assert!(executor.submit(&[]).is_err());
+    assert!(executor.finish_shot().is_err());
+    let result = executor
+        .quantum
+        .process(ByteMessage::quantum_operations_builder().mz(&[0]).build())
+        .unwrap();
+    assert_eq!(result.outcomes().unwrap(), vec![0]);
+    executor.reset().unwrap();
+    executor.start_shot(context(1), 8, 2).unwrap();
+    executor.finish_shot().unwrap();
+}
+
+#[derive(Clone, Debug)]
+struct CountQuantum {
+    inner: StateVecEngine,
+    calls: Arc<std::sync::atomic::AtomicUsize>,
+}
+impl Engine for CountQuantum {
+    type Input = ByteMessage;
+    type Output = ByteMessage;
+    fn process(&mut self, input: ByteMessage) -> Result<ByteMessage, PecosError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        self.inner.process(input)
+    }
+    fn reset(&mut self) -> Result<(), PecosError> {
+        self.inner.reset()
+    }
+}
+impl pecos_engines::quantum::QuantumEngine for CountQuantum {
+    fn set_seed(&mut self, seed: u64) {
+        pecos_engines::quantum::QuantumEngine::set_seed(&mut self.inner, seed);
+    }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
+}
+
+#[test]
+fn both_profiles_preserve_native_processing_boundaries() {
+    for idle in [false, true] {
+        let mut batches = ramsey_schedule(1_000_000_000);
+        batches[1].batch_index = 2;
+        let mut empty = batch(1, vec![]);
+        empty.duration_nanos = 0;
+        batches.insert(1, empty);
+        let fixture = Fixture {
+            batches: VecDeque::from([batches]),
+            ..Default::default()
+        };
+        let mut executor = if idle {
+            ScheduledExecutor::with_idle_z(
+                Box::new(fixture),
+                2,
+                IdleZNoise {
+                    coherent: 0.3,
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+        } else {
+            ScheduledExecutor::new(Box::new(fixture), 2).unwrap()
+        };
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        executor.quantum = QuantumSystem::new(
+            dyn_clone::clone_box(executor.quantum.noise_model()),
+            Box::new(CountQuantum {
+                inner: StateVecEngine::new(2),
+                calls: calls.clone(),
+            }),
+        );
+        executor.start_shot(context(0), 7, 2).unwrap();
+        executor.submit(&[]).unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+}
+
+#[cfg(feature = "selene")]
+#[test]
+fn public_runtimes_zero_timing_preserves_ideal_feedback_across_shots() {
+    for runtime in [
+        pecos_qis::selene_simple_runtime().unwrap(),
+        pecos_qis::selene_soft_rz_runtime().unwrap(),
+    ] {
+        let mut executor = ScheduledExecutor::with_idle_z(
+            Box::new(runtime),
+            2,
+            IdleZNoise {
+                linear: 0.1,
+                sine: 0.3,
+                coherent: 0.2,
+            },
+        )
+        .unwrap();
+        let mut results = Vec::new();
+        for shot in 0..2 {
+            executor.start_shot(context(shot), shot as u64, 13).unwrap();
+            let first = executor
+                .submit(&[
+                    Operation::AllocateQubit { id: 7 },
+                    QuantumOp::RXY(std::f64::consts::FRAC_PI_2, 0.0, 7).into(),
+                ])
+                .unwrap();
+            let second = executor
+                .submit(&[QuantumOp::Measure(7, 40).into()])
+                .unwrap();
+            let (last, runtime_shot) = executor.finish_shot().unwrap();
+            // At the pinned public runtime revision these batches carry no
+            // physical timing. This test must not be counted as idle-noise evidence.
+            let batches = first
+                .batches
+                .into_iter()
+                .chain(second.batches)
+                .chain(last.batches)
+                .collect::<Vec<_>>();
+            assert!(!batches.is_empty());
+            assert!(
+                batches
+                    .iter()
+                    .all(|b| b.start_time_nanos == 0 && b.duration_nanos == 0)
+            );
+            let encoded = executor.admit_at(&batches, 0, vec![0; 2]).unwrap().commands;
+            assert!(
+                encoded
+                    .quantum_ops()
+                    .unwrap()
+                    .iter()
+                    .all(|g| g.gate_type != pecos_engines::GateType::Idle)
+            );
+            let measured = first
+                .measurements
+                .into_iter()
+                .chain(second.measurements)
+                .chain(last.measurements)
+                .collect::<BTreeMap<_, _>>();
+            assert_eq!(runtime_shot.measurements[&40], measured[&40] != 0);
+            results.push(measured[&40]);
+        }
+        assert_eq!(results[0], results[1]);
+    }
+}
+
+#[test]
+fn per_batch_execution_still_rejects_cross_batch_duplicate_measurement_ids() {
+    for idle in [false, true] {
+        for duplicate_program in [false, true] {
+            let mut first = batch(0, vec![pulse()]);
+            measurement(&mut first, 40);
+            let mut second = batch(1, vec![]);
+            measurement(&mut second, if duplicate_program { 40 } else { 41 });
+            if duplicate_program {
+                second.operations[0] = RuntimeScheduledOp::Measure {
+                    qubit_id: 0,
+                    result_id: 902,
+                };
+                second.measurements[0].runtime_result = 902;
+            }
+            let fixture = Fixture {
+                batches: VecDeque::from([vec![first, second]]),
+                ..Default::default()
+            };
+            let mut executor = if idle {
+                ScheduledExecutor::with_idle_z(
+                    Box::new(fixture),
+                    2,
+                    IdleZNoise {
+                        coherent: 0.1,
+                        ..Default::default()
+                    },
+                )
+                .unwrap()
+            } else {
+                ScheduledExecutor::new(Box::new(fixture), 2).unwrap()
+            };
+            executor.start_shot(context(0), 7, 2).unwrap();
+            assert!(
+                executor
+                    .submit(&[])
+                    .unwrap_err()
+                    .to_string()
+                    .contains("duplicate scheduled measurement identity")
+            );
+            assert!(executor.poisoned);
+            let result = executor
+                .quantum
+                .process(ByteMessage::quantum_operations_builder().mz(&[0]).build())
+                .unwrap();
+            assert_eq!(result.outcomes().unwrap(), vec![0]);
+        }
+    }
 }

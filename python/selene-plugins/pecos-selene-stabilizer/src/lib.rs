@@ -18,7 +18,8 @@
 
 use anyhow::{Result, anyhow};
 use clap::Parser;
-use pecos_core::QubitId;
+use pecos_core::{Angle64, QubitId};
+use pecos_simulators::clifford_rotation::CliffordRotation;
 use pecos_simulators::{CliffordGateable, Stabilizer};
 use selene_core::error_model::BatchResult;
 use selene_core::export_simulator_plugin;
@@ -285,6 +286,41 @@ impl StabilizerSimulator {
         Ok(())
     }
 
+    fn rxyxy2q(&mut self, qubit1: u64, qubit2: u64, theta: f64, phi: f64) -> Result<()> {
+        if qubit1 >= self.n_qubits || qubit2 >= self.n_qubits || qubit1 == qubit2 {
+            return Err(anyhow!(
+                "RXYXY2Q requires two distinct qubits below {}, got ({qubit1}, {qubit2})",
+                self.n_qubits
+            ));
+        }
+        let snap = |angle| match self.get_approximate_angle(angle) {
+            ApproxAngle::Zero => Ok(Angle64::ZERO),
+            ApproxAngle::FracPi2 => Ok(Angle64::QUARTER_TURN),
+            ApproxAngle::Pi => Ok(Angle64::HALF_TURN),
+            ApproxAngle::Frac3Pi2 => Ok(Angle64::THREE_QUARTERS_TURN),
+            ApproxAngle::NoSuitableApproximation => Err(anyhow!(
+                "RXYXY2Q(theta={theta}, phi={phi}) is not a supported Clifford rotation"
+            )),
+        };
+        let theta = snap(theta)?;
+        let phi = if theta == Angle64::ZERO {
+            Angle64::ZERO
+        } else {
+            snap(phi)?
+        };
+        self.simulator
+            .try_rxyxy2q(
+                theta,
+                phi,
+                &[(
+                    QubitId(Self::to_usize(qubit1)),
+                    QubitId(Self::to_usize(qubit2)),
+                )],
+            )
+            .map_err(|error| anyhow!(error))?;
+        Ok(())
+    }
+
     fn measure(&mut self, qubit: u64) -> Result<bool> {
         if qubit >= self.n_qubits {
             return Err(anyhow!(
@@ -411,8 +447,13 @@ impl SimulatorInterface for StabilizerSimulator {
                     results.set_u64_result(result_id, u64::from(Self::measure(self, qubit_id)?));
                 }
                 Operation::Reset { qubit_id } => Self::reset(self, qubit_id)?,
-                Operation::RPPGate { .. } => {
-                    anyhow::bail!("RPP gates are not supported by Stabilizer")
+                Operation::RPPGate {
+                    qubit_id_1,
+                    qubit_id_2,
+                    theta,
+                    phi,
+                } => {
+                    self.rxyxy2q(qubit_id_1, qubit_id_2, theta, phi)?;
                 }
                 Operation::Custom { .. } => {}
                 _ => anyhow::bail!("Unsupported Selene operation"),
@@ -475,5 +516,101 @@ mod tests {
         let interface = Arc::new(StabilizerSimulatorFactory);
         let args = vec![String::new(), "--angle-threshold=0.001".to_string()];
         run_basic_tests(interface, args);
+    }
+
+    #[test]
+    fn rpp_batch_rotates_both_qubits_and_checks_targets() {
+        use selene_core::operation::{BatchOperation, Operation};
+        use selene_core::simulator::{SimulatorInterface, interface::SimulatorInterfaceFactory};
+
+        let args = vec![String::new(), "--angle-threshold=0.001".to_string()];
+        let mut sim = Arc::new(StabilizerSimulatorFactory).init(3, &args).unwrap();
+        sim.shot_start(0, 17).unwrap();
+        // Two quarter turns give a half turn, so |00> becomes |11> for
+        // any shared axis. Qubit 1 isn't targeted and should stay at zero.
+        for _ in 0..2 {
+            sim.handle_operations(BatchOperation::error_model(vec![Operation::RPPGate {
+                qubit_id_1: 2,
+                qubit_id_2: 0,
+                theta: std::f64::consts::FRAC_PI_2,
+                phi: std::f64::consts::FRAC_PI_2,
+            }]))
+            .unwrap();
+        }
+        let results = sim
+            .handle_operations(BatchOperation::error_model(vec![
+                Operation::Measure {
+                    qubit_id: 0,
+                    result_id: 0,
+                },
+                Operation::Measure {
+                    qubit_id: 1,
+                    result_id: 1,
+                },
+                Operation::Measure {
+                    qubit_id: 2,
+                    result_id: 2,
+                },
+            ]))
+            .unwrap();
+        assert_eq!(
+            results
+                .bool_results
+                .iter()
+                .map(|r| r.value)
+                .collect::<Vec<_>>(),
+            vec![true, false, true]
+        );
+        for (first, second) in [(0, 3), (3, 0), (1, 1)] {
+            assert!(
+                sim.handle_operations(BatchOperation::error_model(vec![Operation::RPPGate {
+                    qubit_id_1: first,
+                    qubit_id_2: second,
+                    theta: 0.0,
+                    phi: 0.0,
+                }]))
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn rpp_rejects_unsupported_angles_before_changing_state() {
+        use super::*;
+        use pecos_simulators::StabilizerTableauSimulator;
+        let mut sim = StabilizerSimulator {
+            simulator: Stabilizer::with_seed(2, 0),
+            n_qubits: 2,
+            angle_threshold: 0.001,
+        };
+        sim.simulator.h(&[QubitId(0)]);
+        let before = (sim.simulator.stab_tableau(), sim.simulator.destab_tableau());
+        for (theta, phi) in [
+            (0.37, std::f64::consts::FRAC_PI_2),
+            (std::f64::consts::FRAC_PI_2, 0.37),
+        ] {
+            assert!(
+                sim.handle_operations(BatchOperation::error_model(vec![Operation::RPPGate {
+                    qubit_id_1: 0,
+                    qubit_id_2: 1,
+                    theta,
+                    phi,
+                }]))
+                .is_err()
+            );
+            assert_eq!(
+                (sim.simulator.stab_tableau(), sim.simulator.destab_tableau()),
+                before
+            );
+        }
+        // A zero rotation is the identity even when phi isn't a Clifford angle.
+        sim.rxyxy2q(0, 1, 0.0, 0.37).unwrap();
+        assert_eq!(
+            (sim.simulator.stab_tableau(), sim.simulator.destab_tableau()),
+            before
+        );
+        // The plugin's configured threshold should also apply to this gate.
+        sim.rxyxy2q(0, 1, std::f64::consts::FRAC_PI_2 + 1e-5, 1e-5)
+            .unwrap();
     }
 }

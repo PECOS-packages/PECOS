@@ -1,36 +1,22 @@
 #!/usr/bin/env python3
-"""Example of using PECOS's execute_llvm module for HUGR->LLVM compilation.
+"""Compile Guppy to LLVM IR through PECOS's Selene compiler boundary."""
 
-PECOS provides an execute_llvm module that compiles HUGR programs to LLVM IR
-using the built-in Selene compiler.
-"""
-
-import pecos as pc
+from guppylang import guppy
+from guppylang.std.quantum import h, measure, qubit
+from pecos.compilation_pipeline import compile_hugr_to_qis
 
 
 def main() -> None:
-    """Demonstrate execute_llvm functionality."""
-    print("PECOS execute_llvm Module Demo")
-    print("=" * 50)
+    """Compile a quantum coin flip to QIS."""
 
-    # In a real scenario, you would get HUGR bytes from compiling a Guppy function
-    # For this demo, we'll use dummy data
-    dummy_hugr_bytes = b"HUGR data would go here"
+    @guppy
+    def coin_flip() -> bool:
+        q = qubit()
+        h(q)
+        return measure(q).read()
 
-    print("\nCompiling HUGR to LLVM IR...")
-    try:
-        # This would normally work with real HUGR data
-        llvm_ir = pc.execute_llvm.compile_module_to_string(dummy_hugr_bytes)
-        print(f"Generated {len(llvm_ir)} characters of LLVM IR")
-
-    except RuntimeError as e:
-        print(f"Compilation failed (expected with dummy data): {e}")
-
-    print("\nThe execute_llvm module provides:")
-    print("  - compile_module_to_string(hugr_bytes) -> str")
-    print("  - compile_module_to_file(hugr_bytes, output_path)")
-    print("  - compile_hugr_file_to_string(hugr_path) -> str")
-    print("  - compile_hugr_file_to_file(hugr_path, output_path)")
+    llvm_ir = compile_hugr_to_qis(coin_flip.compile().to_bytes())
+    print(llvm_ir)
 
 
 if __name__ == "__main__":

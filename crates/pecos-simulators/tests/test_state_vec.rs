@@ -2974,7 +2974,7 @@ mod detailed_tq_gate_cases {
 
     #[test]
     fn test_szz_equivalence() {
-        // Test that SZZ is equivalent to RZZ(π/2)
+        // Test that SZZ is projectively equivalent to RZZ(π/2)
         let mut q1 = StateVec::new(2);
         let mut q2 = StateVec::new(2);
 
@@ -3290,7 +3290,7 @@ mod detailed_tq_gate_cases {
 
     #[test]
     fn test_sxx_squared() {
-        // SXX^2 = XX (the Pauli XX gate, up to global phase)
+        // SXX^2 = XX exactly.
         // XX = X⊗X swaps |00⟩↔|11⟩ and |01⟩↔|10⟩
         let mut q = StateVec::new(2);
         q.h(&qid(0)).h(&qid(1));
@@ -3301,14 +3301,12 @@ mod detailed_tq_gate_cases {
         q_xx.h(&qid(0)).h(&qid(1));
         q_xx.x(&qid(0)).x(&qid(1)); // X⊗X
 
-        // States should match up to global phase
-        // Check that probabilities match
-        let prob_match = q
+        let exact_match = q
             .state()
             .iter()
             .zip(q_xx.state().iter())
-            .all(|(a, b)| (a.norm_sqr() - b.norm_sqr()).abs() < 1e-10);
-        assert!(prob_match, "SXX^2 should give XX (up to global phase)");
+            .all(|(a, b)| (a - b).norm() < 1e-10);
+        assert!(exact_match, "SXX^2 should equal XX exactly");
     }
 
     #[test]
@@ -3400,7 +3398,7 @@ mod detailed_tq_gate_cases {
 
     #[test]
     fn test_syy_squared() {
-        // SYY^2 = YY (the Pauli YY gate, up to global phase)
+        // SYY^2 = YY exactly.
         let mut q = StateVec::new(2);
         q.h(&qid(0)).h(&qid(1));
         q.syy(&[(QubitId(0), QubitId(1))])
@@ -3410,13 +3408,12 @@ mod detailed_tq_gate_cases {
         q_yy.h(&qid(0)).h(&qid(1));
         q_yy.y(&qid(0)).y(&qid(1)); // Y⊗Y
 
-        // States should match up to global phase
-        let prob_match = q
+        let exact_match = q
             .state()
             .iter()
             .zip(q_yy.state().iter())
-            .all(|(a, b)| (a.norm_sqr() - b.norm_sqr()).abs() < 1e-10);
-        assert!(prob_match, "SYY^2 should give YY (up to global phase)");
+            .all(|(a, b)| (a - b).norm() < 1e-10);
+        assert!(exact_match, "SYY^2 should equal YY exactly");
     }
 
     #[test]
@@ -3508,7 +3505,7 @@ mod detailed_tq_gate_cases {
 
     #[test]
     fn test_szz_squared() {
-        // SZZ^2 = ZZ (the Pauli ZZ gate, up to global phase)
+        // SZZ^2 = ZZ exactly.
         let mut q = StateVec::new(2);
         q.h(&qid(0)).h(&qid(1));
         q.szz(&[(QubitId(0), QubitId(1))])
@@ -3518,13 +3515,12 @@ mod detailed_tq_gate_cases {
         q_zz.h(&qid(0)).h(&qid(1));
         q_zz.z(&qid(0)).z(&qid(1)); // Z⊗Z
 
-        // States should match up to global phase
-        let prob_match = q
+        let exact_match = q
             .state()
             .iter()
             .zip(q_zz.state().iter())
-            .all(|(a, b)| (a.norm_sqr() - b.norm_sqr()).abs() < 1e-10);
-        assert!(prob_match, "SZZ^2 should give ZZ (up to global phase)");
+            .all(|(a, b)| (a - b).norm() < 1e-10);
+        assert!(exact_match, "SZZ^2 should equal ZZ exactly");
     }
 
     #[test]

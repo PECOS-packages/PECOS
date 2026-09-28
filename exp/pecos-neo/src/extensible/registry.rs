@@ -235,6 +235,14 @@ impl GateRegistry {
                 .with_category(GateCategory::TwoQubitUnitary),
         );
 
+        self.set_core(
+            gates::RXYXY2Q,
+            &GateSpec::new("RXYXY2Q")
+                .with_quantum_arity(2)
+                .with_angle_arity(core_angle_arity(GateType::RXYXY2Q))
+                .with_category(GateCategory::TwoQubitUnitary),
+        );
+
         // Three-qubit gates
         self.set_core(
             gates::CCX,

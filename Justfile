@@ -235,6 +235,11 @@ build profile="debug": _msvc-bootstrap (validate-profile "build" profile) setup-
         just julia-build "$PROFILE"
     fi
 
+# Build the bare-Wasm Frontier decoder, optionally embedding a flattened Stim DEM
+[group('build')]
+build-frontier-wasm dem="":
+    uv run --frozen python scripts/build_frontier_wasm.py {{quote(dem)}}
+
 # Build PECOS without dependency setup or sync (profile: dev/debug, release, native)
 [group('build')]
 build-lite profile="debug": _msvc-bootstrap (validate-profile "build-lite" profile) (build-selene profile)
@@ -245,19 +250,11 @@ build-lite profile="debug": _msvc-bootstrap (validate-profile "build-lite" profi
 
 # Build PECOS with CUDA Python extras (profile: dev/debug, release, native)
 [group('build')]
-build-cuda profile="debug": _msvc-bootstrap (validate-profile "build-cuda" profile) setup-quiet
+build-cuda profile="debug": _msvc-bootstrap (validate-profile "build-cuda" profile) setup-quiet sync-deps
     #!/usr/bin/env bash
     set -euo pipefail
     PROFILE="{{profile}}"
     {{pecos}} python build --profile "$PROFILE" --cuda
-
-# Build only the Python workspace members needed by the fast CI smoke lanes.
-[group('build')]
-python-ci-build profile="debug": _msvc-bootstrap (validate-profile "python-ci-build" profile) python-ci-sync
-    #!/usr/bin/env bash
-    set -euo pipefail
-    PROFILE="{{profile}}"
-    {{pecos}} python build --profile "$PROFILE" --no-cuda
 
 # Build only the Python packages needed for docs validation.
 [group('build')]
@@ -266,16 +263,14 @@ python-ci-build-docs profile="debug": _msvc-bootstrap (validate-profile "python-
     set -euo pipefail
     PROFILE="{{profile}}"
     PECOS_BUILD_MWPF=0 {{pecos}} python build --profile "$PROFILE" --no-cuda
-    uv run --frozen --package pecos-rslib-exp maturin develop --uv --locked --manifest-path python/pecos-rslib-exp/Cargo.toml
 
-# Build the extra experimental bindings exercised by the fast Python core test lane.
+# Build the Python packages exercised by the fast Python core test lane.
 [group('build')]
 python-ci-build-test profile="debug": _msvc-bootstrap (validate-profile "python-ci-build-test" profile) python-ci-sync-test
     #!/usr/bin/env bash
     set -euo pipefail
     PROFILE="{{profile}}"
     {{pecos}} python build --profile "$PROFILE" --no-cuda
-    uv run --frozen --package pecos-rslib-exp maturin develop --uv --locked --manifest-path python/pecos-rslib-exp/Cargo.toml
 
 # =============================================================================
 # Testing
@@ -309,16 +304,50 @@ pytest-ci-core:
     uv run --frozen pytest -n auto python/quantum-pecos/tests -m "not optional_dependency and not slow"
     uv run --frozen pytest -n auto python/pecos-rslib-exp/tests
 
+# One shard of `pytest-ci-core`, for the pr-core-python matrix. The four shards
+# partition the lane: `qec-surface-harvest` owns one file, `qec-surface` the
+# rest of that directory, `qec-guppy` the rest of qec/ plus guppy/, and `rest`
+# is everything else, ignoring exactly the paths the other shards own. Keep
+# the owned paths and the `--ignore` lists in step so the union stays equal to
+# `pytest-ci-core`; a shard whose path disappears fails (pytest exit 4/5).
+# Balance (CPU-seconds, 2026-09-02): harvest file ~1040, rest of qec/surface
+# ~700, qec-rest + guppy ~1100, rest ~950. The harvest file is split out
+# because its tests are compile-bound and barely parallelize: on CI the whole
+# surface directory took 15 min of a 4-worker run.
+[group('test')]
+pytest-ci-core-shard shard:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    QP=python/quantum-pecos/tests
+    CORE_MARKERS="not optional_dependency and not slow"
+    HARVEST="$QP/qec/surface/test_pauli_mask_harvest.py"
+    case "{{shard}}" in
+      qec-surface-harvest)
+        uv run --frozen pytest -n auto "$HARVEST" -m "$CORE_MARKERS"
+        ;;
+      qec-surface)
+        uv run --frozen pytest -n auto "$QP/qec/surface" --ignore="$HARVEST" -m "$CORE_MARKERS"
+        ;;
+      qec-guppy)
+        uv run --frozen pytest -n auto "$QP/qec" --ignore="$QP/qec/surface" "$QP/guppy" -m "$CORE_MARKERS"
+        ;;
+      rest)
+        uv run --frozen pytest -n auto python/pecos-rslib/tests -m "not performance"
+        uv run --frozen --group numpy-compat pytest -n auto python/pecos-rslib/tests -m "numpy and not performance"
+        uv run --frozen pytest -n auto "$QP" --ignore="$QP/qec" --ignore="$QP/guppy" -m "$CORE_MARKERS"
+        uv run --frozen pytest -n auto python/pecos-rslib-exp/tests
+        ;;
+      *)
+        echo "unknown pytest-ci-core shard: {{shard}} (expected qec-surface-harvest, qec-surface, qec-guppy, or rest)" >&2
+        exit 1
+        ;;
+    esac
+
 # Run the experimental zluppy package's independent Python test project.
 [group('test')]
 pytest-zluppy:
     uv sync --project exp/zluppy --frozen
     uv run --project exp/zluppy --frozen pytest exp/zluppy/tests
-
-# Build and import the core Python packages on a target platform/interpreter.
-[group('test')]
-python-ci-smoke profile="debug": (validate-profile "python-ci-smoke" profile) (python-ci-build profile)
-    uv run --frozen python -c "from importlib.metadata import version; import pecos, pecos_rslib, pecos_rslib_llvm; print({'pecos': pecos.__version__, 'pecos_rslib': pecos_rslib.__version__, 'pecos_rslib_llvm': version('pecos-rslib-llvm')})"
 
 # Run Rust tests (CUDA-aware; mode: dev/debug, release, native)
 [group('test')]
@@ -538,7 +567,7 @@ dev-preflight: _msvc-bootstrap
                 LINK_MODE=$("$LLVM_DIR/bin/llvm-config" --shared-mode 2>/dev/null || echo "unknown")
                 if [ "$LINK_MODE" != "shared" ]; then
                     echo "PECOS dev preflight failed: LLVM at $LLVM_DIR reports '$LINK_MODE' link mode."
-                    echo "Full workspace HUGR tests need shared LLVM 21.1 to avoid high-memory static links."
+                    echo "Full workspace LLVM tests need shared LLVM 21.1 to avoid high-memory static links."
                     print_llvm_hint
                     exit 1
                 fi
@@ -937,18 +966,31 @@ install-build-llvm: _msvc-bootstrap
             ;;
     esac
 
-# Sync Python deps (fast if already installed, skips maturin rebuilds)
+# Sync Python deps if incomplete; the extension crates are left to the CLI build
 [private]
 sync-deps:
     #!/usr/bin/env bash
     set -euo pipefail
-    # Quick check: ensure the packages used by the default dev/test lane are importable.
-    # This catches newly added workspace members that an older .venv may be missing.
-    if uv run --frozen python -c "import importlib.util, sys; required = ('pecos', 'pecos_rslib', 'pecos_selene_stab_vec', 'pecos_selene_stabilizer', 'pecos_selene_statevec', 'pecos_selene_stab_mps', 'pecos_selene_mast'); missing = [name for name in required if importlib.util.find_spec(name) is None]; sys.exit(1 if missing else 0)" 2>/dev/null; then
+    # Quick check: the packages used by the default dev/test lane are importable
+    # (catches newly added workspace members an older .venv lacks) and every
+    # installed package has its dependencies (catches a venv that was never
+    # synced, which is what `pecos python build` refuses at the end).
+    if uv run --frozen python -c "import importlib.util, sys; required = ('pecos', 'pecos_rslib', 'pecos_selene_stab_vec', 'pecos_selene_stabilizer', 'pecos_selene_statevec', 'pecos_selene_stab_mps', 'pecos_selene_mast'); missing = [name for name in required if importlib.util.find_spec(name) is None]; sys.exit(1 if missing else 0)" 2>/dev/null \
+        && uv pip check >/dev/null 2>&1; then
         exit 0
     fi
     echo "Python deps incomplete, running uv sync..."
-    SYNC_ARGS=(--project . --all-packages --locked)
+    # The extension crates that `pecos python build` installs later in `just
+    # build` are excluded here, as the python-ci-sync* recipes do: otherwise uv
+    # builds a release wheel of each one that maturin develop then replaces.
+    # An exact sync also removes any copy already in the venv, so a wheel from
+    # an earlier sync does not survive a `just build`.
+    SYNC_ARGS=(
+      --project . --all-packages --locked
+      --no-install-package pecos-rslib
+      --no-install-package pecos-rslib-exp
+      --no-install-package pecos-rslib-llvm
+    )
     # Include CUDA Python packages (cupy, cuquantum, pytket-cutensornet) when
     # the toolkit is installed AND an NVIDIA GPU is present. Pure Rust users
     # and machines without a GPU skip this -- mirrors `pecos python build`.
@@ -961,17 +1003,12 @@ sync-deps:
     fi
     uv sync "${SYNC_ARGS[@]}"
 
-[group('setup')]
-python-ci-sync:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    uv sync --locked \
-      --group dev \
-      --group test \
-      --package pecos-rslib \
-      --package pecos-rslib-llvm \
-      --package quantum-pecos
-
+# The python-ci-sync* recipes install the pure-Python side of the workspace
+# only. The native packages are listed with `--package` so their dependencies
+# land in the environment, but are excluded from installation with
+# `--no-install-package`: otherwise uv builds release wheels of each one
+# (~20 min on a 4-core runner) that the following `pecos python build`
+# step immediately replaces with a debug build.
 [group('setup')]
 python-ci-sync-test:
     #!/usr/bin/env bash
@@ -982,7 +1019,10 @@ python-ci-sync-test:
       --package pecos-rslib \
       --package pecos-rslib-exp \
       --package pecos-rslib-llvm \
-      --package quantum-pecos
+      --package quantum-pecos \
+      --no-install-package pecos-rslib \
+      --no-install-package pecos-rslib-exp \
+      --no-install-package pecos-rslib-llvm
 
 [group('setup')]
 python-ci-sync-docs:

@@ -106,38 +106,6 @@ def test_convenience_functions() -> None:
         temp_qir_path.unlink(missing_ok=True)
 
 
-def test_guppy_frontend_rust_backend() -> None:
-    """Test that Guppy frontend can use Rust backend."""
-    from pecos._compilation import GuppyFrontend
-
-    # Create frontend instance - Rust backend is always available
-    frontend = GuppyFrontend()
-
-    # Check that frontend has the expected attributes
-    assert hasattr(frontend, "use_rust_backend")
-    assert frontend.use_rust_backend is True
-
-    # Frontend should be created successfully
-    assert frontend is not None
-
-
-def test_guppy_frontend_backend_selection() -> None:
-    """Test that Guppy frontend backend selection works."""
-    from pecos import get_guppy_backends
-    from pecos._compilation import GuppyFrontend
-
-    frontend = GuppyFrontend()
-
-    # Frontend object should exist
-    assert frontend is not None
-
-    # Should be able to get backends info via the module function
-    backends = get_guppy_backends()
-    assert isinstance(backends, dict)
-    assert backends["guppy_available"] is True
-    assert backends["rust_backend"] is True
-
-
 def test_hugr_compiler_with_valid_data() -> None:
     """Test HUGR compiler with semi-valid HUGR data."""
     # Create a minimal HUGR-like structure

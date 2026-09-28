@@ -88,6 +88,16 @@ pub struct Angle<T: Unsigned + Copy> {
     fraction: T, // Fixed-point fractional representation in [0, 2^n) turns
 }
 
+impl<T: Unsigned + Copy + ToPrimitive + Bounded> Angle<T> {
+    /// Fraction units per turn, matching the modulus of the wrapping arithmetic.
+    fn fraction_modulus() -> f64 {
+        T::max_value()
+            .to_f64()
+            .expect("Failed to convert max_value to f64")
+            + 1.0
+    }
+}
+
 impl<T> Angle<T>
 where
     T: Unsigned
@@ -119,14 +129,7 @@ where
     /// # Panics
     /// This function will panic if the conversion of `fraction` or `max_value` to `f64` fails.
     pub fn to_radians(&self) -> f64 {
-        let max_value = T::max_value()
-            .to_f64()
-            .expect("Failed to convert max_value to f64");
-        self.fraction
-            .to_f64()
-            .expect("Failed to convert fraction to f64")
-            / max_value
-            * std::f64::consts::TAU
+        self.to_turns() * std::f64::consts::TAU
     }
 
     /// Converts the angle to radians in `(-π, π]`.
@@ -141,11 +144,50 @@ where
     /// This function will panic if the conversion of `fraction` or `max_value` to `f64` fails.
     pub fn to_radians_signed(&self) -> f64 {
         let r = self.to_radians();
-        if r > std::f64::consts::PI {
+        if self.uses_negative_signed_representative() {
             r - std::f64::consts::TAU
         } else {
             r
         }
+    }
+
+    /// Halves the signed principal-value representative in fixed-point arithmetic.
+    ///
+    /// Unlike scalar division, angles strictly above a half turn are first interpreted
+    /// as negative. Keeping the calculation in the underlying integer width avoids the
+    /// precision loss of a round trip through `f64`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the underlying unsigned integer cannot be converted to or from `u128`.
+    #[inline]
+    #[must_use]
+    pub fn signed_half(&self) -> Self {
+        let bit_count = std::mem::size_of::<T>() * 8;
+        let half_turn = 1_u128 << (bit_count - 1);
+        let fraction = self
+            .fraction
+            .to_u128()
+            .expect("Failed to convert fraction to u128");
+        let signed_half = fraction / 2
+            + if self.uses_negative_signed_representative() {
+                half_turn
+            } else {
+                0
+            };
+        Self::new(
+            T::from_u128(signed_half).expect("Failed to convert signed half to angle fraction"),
+        )
+    }
+
+    /// Whether the stored fraction lies strictly above the positive half-turn boundary.
+    fn uses_negative_signed_representative(&self) -> bool {
+        let bit_count = std::mem::size_of::<T>() * 8;
+        let fraction = self
+            .fraction
+            .to_u128()
+            .expect("Failed to convert fraction to u128");
+        fraction > (1_u128 << (bit_count - 1))
     }
 
     /// Converts the angle to turns in `[0, 1)` (the inverse of `from_turns`).
@@ -153,19 +195,20 @@ where
     /// # Panics
     /// This function will panic if the conversion of `fraction` or `max_value` to `f64` fails.
     pub fn to_turns(&self) -> f64 {
-        let max_value = T::max_value()
-            .to_f64()
-            .expect("Failed to convert max_value to f64");
         self.fraction
             .to_f64()
             .expect("Failed to convert fraction to f64")
-            / max_value
+            / Self::fraction_modulus()
     }
 
     /// Converts the angle to signed turns in `(-0.5, 0.5]`.
     pub fn to_turns_signed(&self) -> f64 {
         let t = self.to_turns();
-        if t > 0.5 { t - 1.0 } else { t }
+        if self.uses_negative_signed_representative() {
+            t - 1.0
+        } else {
+            t
+        }
     }
 
     /// Converts the angle to half-turns in `[0, 2)` (π radians = 1 half-turn).
@@ -197,16 +240,7 @@ where
     pub fn from_radians(radians: f64) -> Self {
         const TAU: f64 = std::f64::consts::TAU;
 
-        // Normalize the input to [0, 2π)
-        let fraction = ((radians.rem_euclid(TAU) / TAU)
-            * T::max_value()
-                .to_f64()
-                .expect("Conversion of max_value to f64 failed"))
-        .round();
-
-        Self {
-            fraction: T::from_f64(fraction).expect("Conversion of fraction to target type failed"),
-        }
+        Self::from_normalized_turns(radians.rem_euclid(TAU) / TAU)
     }
 
     /// Creates an angle from a value in turns.
@@ -216,14 +250,14 @@ where
     #[inline]
     #[must_use]
     pub fn from_turns(turns: f64) -> Self {
-        // Normalize the input to [0, 1) turns
-        let normalized_turns = turns.rem_euclid(1.0);
+        Self::from_normalized_turns(turns.rem_euclid(1.0))
+    }
 
-        let fraction = (normalized_turns
-            * T::max_value()
-                .to_f64()
-                .expect("Conversion of max_value to f64 failed"))
-        .round();
+    fn from_normalized_turns(turns: f64) -> Self {
+        let modulus = Self::fraction_modulus();
+        // Both rem_euclid and rounding can reach a full turn. Wrap after
+        // rounding so that it represents zero, just like integer arithmetic.
+        let fraction = (turns * modulus).round().rem_euclid(modulus);
 
         Self {
             fraction: T::from_f64(fraction).expect("Conversion of fraction to target type failed"),
@@ -344,6 +378,7 @@ where
     }
 
     /// Convert a radians tolerance to the equivalent fraction-unit epsilon.
+    /// Finite tolerances saturate at the largest representable fraction magnitude.
     ///
     /// Useful when you want to precompute the epsilon once and reuse it
     /// across many comparisons, or when passing to the `approx` macros:
@@ -359,14 +394,11 @@ where
     /// Panics if the conversion between `f64` and `T` fails.
     #[must_use]
     pub fn epsilon_from_radians(radians: f64) -> T {
-        let max = T::max_value()
-            .to_f64()
-            .expect("Failed to convert max_value to f64");
-        let frac = (radians.abs() / std::f64::consts::TAU * max).round();
-        T::from_f64(frac.clamp(0.0, max)).expect("Failed to convert tolerance to fraction")
+        Self::epsilon_from_turns(radians.abs() / std::f64::consts::TAU)
     }
 
     /// Convert a turns tolerance to the equivalent fraction-unit epsilon.
+    /// Finite tolerances saturate at the largest representable fraction magnitude.
     ///
     /// Useful when you want to precompute the epsilon once and reuse it
     /// across many comparisons, or when passing to the `approx` macros:
@@ -385,7 +417,15 @@ where
         let max = T::max_value()
             .to_f64()
             .expect("Failed to convert max_value to f64");
-        let frac = (turns.abs() * max).round();
+        let frac = (turns.abs() * Self::fraction_modulus()).round();
+        // MAX rounds up to the modulus in f64 for wide integers. Saturate
+        // directly in T instead of converting that unrepresentable bound.
+        // An infinite tolerance saturates for the same reason a full turn
+        // does: every angle is within it. NaN has no ordering, so it falls
+        // through and still fails the conversion.
+        if frac >= max {
+            return T::max_value();
+        }
         T::from_f64(frac.clamp(0.0, max)).expect("Failed to convert tolerance to fraction")
     }
 }
@@ -694,9 +734,7 @@ impl<T: Unsigned + ToPrimitive + Bounded + Copy> fmt::Display for Angle<T> {
             .fraction
             .to_f64()
             .expect("Failed to convert fraction to f64")
-            / T::max_value()
-                .to_f64()
-                .expect("Failed to convert max_value to f64");
+            / Self::fraction_modulus();
         write!(f, "{fraction:.6} turns")
     }
 }
@@ -721,6 +759,18 @@ mod tests {
         let h = Angle64::HALF_TURN;
         assert!((h.to_turns() - 0.5).abs() < 1e-12);
         assert!((h.to_half_turns() - 1.0).abs() < 1e-12);
+        assert!(!h.to_turns_signed().is_sign_negative());
+        assert!((h.to_turns_signed() - 0.5).abs() < 1e-12);
+        assert!(!h.to_half_turns_signed().is_sign_negative());
+        assert!((h.to_half_turns_signed() - 1.0).abs() < 1e-12);
+
+        // The sign comes from the stored fraction, even when conversion rounds
+        // the fraction one tick above the boundary to the same f64 as 0.5.
+        let just_above_half = Angle64::new(Angle64::HALF_TURN.fraction() + 1);
+        assert!(just_above_half.to_turns_signed().is_sign_negative());
+        assert!((just_above_half.to_turns_signed() + 0.5).abs() < 1e-12);
+        assert!(just_above_half.to_half_turns_signed().is_sign_negative());
+        assert!((just_above_half.to_half_turns_signed() + 1.0).abs() < 1e-12);
 
         // Three-quarter turn: unsigned 0.75 turns; signed wraps to -0.25 turns
         // (-0.5 half-turns), mirroring to_radians_signed.
@@ -735,6 +785,37 @@ mod tests {
         // round-trip turns.
         let b = Angle64::from_turns(0.3);
         assert!((b.to_turns() - 0.3).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_signed_half_uses_the_underlying_integer_width() {
+        macro_rules! check_width {
+            ($angle:ty, $integer:ty) => {{
+                let half_turn: $integer = 1 << (<$integer>::BITS - 1);
+                let positive = <$angle>::new(half_turn / 2 + 2);
+                assert_eq!(positive.signed_half().fraction(), positive.fraction() / 2);
+
+                let negative = <$angle>::new(half_turn + 2);
+                assert_eq!(
+                    negative.signed_half().fraction(),
+                    negative.fraction() / 2 + half_turn
+                );
+
+                // Exactly a half turn is the POSITIVE representative (+pi), so it
+                // halves to +pi/2. This is the boundary the signed rule turns on:
+                // treating it as negative yields -pi/2, the sign flip this helper
+                // exists to prevent. The expectation is stated directly rather than
+                // re-derived from the implementation's own comparison.
+                let boundary = <$angle>::new(half_turn);
+                assert_eq!(boundary.signed_half().fraction(), half_turn / 2);
+            }};
+        }
+
+        check_width!(Angle8, u8);
+        check_width!(Angle16, u16);
+        check_width!(Angle32, u32);
+        check_width!(Angle64, u64);
+        check_width!(Angle128, u128);
     }
 
     // Basic Construction and Properties

@@ -1590,28 +1590,20 @@ fn unitary_matrix_spp_properties() {
         let g_mat = gate.to_matrix();
         let d_mat = dagger.to_matrix();
 
-        // gate * dagger = scalar * I (up to global phase)
-        // Note: RXX(3π/2) differs from RXX(π/2)† by a global phase of -1,
-        // so we check proportionality to identity rather than exact identity.
+        // gate * dagger = I exactly under the signed rotation representative.
         let product = &g_mat * &d_mat;
-        let phase = product[(0, 0)];
-        let diff = (&product - &(&identity * phase)).norm();
+        let diff = (&product - &identity).norm();
         assert!(
             diff < tolerance,
-            "{gate:?} * {dagger:?} should be proportional to identity, diff = {diff}"
-        );
-        assert!(
-            (phase.norm() - 1.0).abs() < tolerance,
-            "{gate:?} * {dagger:?} phase should have unit magnitude"
+            "{gate:?} * {dagger:?} should equal identity, diff = {diff}"
         );
 
-        // dagger * gate = scalar * I
+        // dagger * gate = I exactly.
         let product2 = &d_mat * &g_mat;
-        let phase2 = product2[(0, 0)];
-        let diff2 = (&product2 - &(&identity * phase2)).norm();
+        let diff2 = (&product2 - &identity).norm();
         assert!(
             diff2 < tolerance,
-            "{dagger:?} * {gate:?} should be proportional to identity, diff = {diff2}"
+            "{dagger:?} * {gate:?} should equal identity, diff = {diff2}"
         );
 
         // gate^4 = scalar * I

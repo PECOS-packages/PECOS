@@ -93,6 +93,19 @@ impl ShotMap {
         // Convert Vec<Data> to DataVec for each column
         let mut typed_data = BTreeMap::new();
         for (name, values) in data {
+            // This layer owns register names and shot indices; DataVec's generic
+            // type check alone cannot identify either in its error.
+            if let Some(first) = values.first() {
+                let expected = first.data_type();
+                for (shot_index, value) in values.iter().enumerate() {
+                    let received = value.data_type();
+                    if received != expected {
+                        return Err(PecosError::Processing(format!(
+                            "Register '{name}' at shot {shot_index}: expected {expected:?}, received {received:?}"
+                        )));
+                    }
+                }
+            }
             let data_vec = DataVec::from_data_vec(values)?;
             typed_data.insert(name, data_vec);
         }
@@ -916,6 +929,19 @@ impl<'a> IntoIterator for &'a ShotMap {
 mod tests {
     use super::*;
     use crate::{Shot, ShotVec};
+
+    #[test]
+    fn mixed_column_types_name_register_shot_and_types() {
+        let error = ShotMap::new(BTreeMap::from([(
+            "v".to_string(),
+            vec![Data::U32(1), Data::I64(7)],
+        )]))
+        .expect_err("inconsistent shot types");
+        assert_eq!(
+            error.to_string(),
+            "Processing error: Register 'v' at shot 1: expected U32, received I64"
+        );
+    }
 
     #[test]
     fn test_shot_map_creation() {

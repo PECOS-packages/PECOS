@@ -42,6 +42,16 @@ fn cmul(a: vec2<f32>, b: vec2<f32>) -> vec2<f32> {
     );
 }
 
+// One output component of ((1+i)I + (1-i)P)/2 or its adjoint.
+// p is the signed permutation entry of P and d is +1 for the root, -1 for dg.
+fn named_root_component(a: vec2<f32>, b: vec2<f32>, p: f32, d: f32) -> vec2<f32> {
+    let pb = b * p;
+    return vec2<f32>(
+        a.x + pb.x - d * a.y + d * pb.y,
+        a.y + pb.y + d * a.x - d * pb.x
+    ) * 0.5;
+}
+
 // Complex addition
 fn cadd(a: vec2<f32>, b: vec2<f32>) -> vec2<f32> {
     return a + b;
@@ -248,21 +258,25 @@ fn apply_rxx(
     // to state[idx] / state[partner].
     let partner = idx ^ mask_a ^ mask_b;
     if (idx < partner) {
-        let theta = params.matrix_row0.x;
-        let c = cos(theta / 2.0);
-        let s = sin(theta / 2.0);
-
         let amp0 = state[idx];
         let amp1 = state[partner];
-
-        state[idx] = vec2<f32>(
-            amp0.x * c + amp1.y * s,
-            amp0.y * c - amp1.x * s
-        );
-        state[partner] = vec2<f32>(
-            amp1.x * c + amp0.y * s,
-            amp1.y * c - amp0.x * s
-        );
+        if (params.matrix_row0.z != 0.0) {
+            let d = params.matrix_row0.y;
+            state[idx] = named_root_component(amp0, amp1, 1.0, d);
+            state[partner] = named_root_component(amp1, amp0, 1.0, d);
+        } else {
+            let theta = params.matrix_row0.x;
+            let c = cos(theta / 2.0);
+            let s = sin(theta / 2.0);
+            state[idx] = vec2<f32>(
+                amp0.x * c + amp1.y * s,
+                amp0.y * c - amp1.x * s
+            );
+            state[partner] = vec2<f32>(
+                amp1.x * c + amp0.y * s,
+                amp1.y * c - amp0.x * s
+            );
+        }
     }
 }
 
@@ -292,22 +306,27 @@ fn apply_ryy(
     let bit_b = (idx & mask_b) != 0u;
     let partner = idx ^ mask_a ^ mask_b;
     if (idx < partner) {
-        let theta = params.matrix_row0.x;
-        let c = cos(theta / 2.0);
-        let s_abs = sin(theta / 2.0);
-        let s = select(s_abs, -s_abs, bit_a == bit_b);
-
         let amp0 = state[idx];
         let amp1 = state[partner];
-
-        state[idx] = vec2<f32>(
-            amp0.x * c + amp1.y * s,
-            amp0.y * c - amp1.x * s
-        );
-        state[partner] = vec2<f32>(
-            amp1.x * c + amp0.y * s,
-            amp1.y * c - amp0.x * s
-        );
+        if (params.matrix_row0.z != 0.0) {
+            let d = params.matrix_row0.y;
+            let p = select(1.0, -1.0, bit_a == bit_b);
+            state[idx] = named_root_component(amp0, amp1, p, d);
+            state[partner] = named_root_component(amp1, amp0, p, d);
+        } else {
+            let theta = params.matrix_row0.x;
+            let c = cos(theta / 2.0);
+            let s_abs = sin(theta / 2.0);
+            let s = select(s_abs, -s_abs, bit_a == bit_b);
+            state[idx] = vec2<f32>(
+                amp0.x * c + amp1.y * s,
+                amp0.y * c - amp1.x * s
+            );
+            state[partner] = vec2<f32>(
+                amp1.x * c + amp0.y * s,
+                amp1.y * c - amp0.x * s
+            );
+        }
     }
 }
 
@@ -336,18 +355,26 @@ fn apply_rzz(
     let q1_set = (idx & q1_mask) != 0u;
     let q2_set = (idx & q2_mask) != 0u;
 
-    // Same parity (00 or 11) → phase = -theta/2
-    // Different parity (01 or 10) → phase = +theta/2
-    let theta = params.matrix_row0.x;
-    let half_theta = theta / 2.0;
-    let phase = select(half_theta, -half_theta, q1_set == q2_set);
-
-    // Apply phase rotation: amplitude *= e^{i*phase} = cos(phase) + i*sin(phase)
-    let c = cos(phase);
-    let s = sin(phase);
-    let amp = state[idx];
-    // (a + bi) * (c + si) = (ac - bs) + (as + bc)i
-    state[idx] = vec2<f32>(amp.x * c - amp.y * s, amp.x * s + amp.y * c);
+    if (params.matrix_row0.z != 0.0) {
+        // Conventional SZZ is diag(1,i,i,1), and dg uses -i instead.
+        if (q1_set != q2_set) {
+            let amp = state[idx];
+            state[idx] = select(
+                vec2<f32>(amp.y, -amp.x),
+                vec2<f32>(-amp.y, amp.x),
+                params.matrix_row0.y > 0.0
+            );
+        }
+    } else {
+        // Same parity (00 or 11) → phase = -theta/2; different → +theta/2.
+        let theta = params.matrix_row0.x;
+        let half_theta = theta / 2.0;
+        let phase = select(half_theta, -half_theta, q1_set == q2_set);
+        let c = cos(phase);
+        let s = sin(phase);
+        let amp = state[idx];
+        state[idx] = vec2<f32>(amp.x * c - amp.y * s, amp.x * s + amp.y * c);
+    }
 }
 
 // Collapse state after measurement

@@ -122,6 +122,10 @@ impl CorrelatedNoiseChannel {
 }
 
 impl NoiseChannel for CorrelatedNoiseChannel {
+    fn event_kinds(&self) -> super::EventKinds {
+        super::EventKinds::of(super::NoiseEventKind::AfterGate)
+    }
+
     fn responds_to(&self, event: &NoiseEvent<'_>) -> bool {
         if self.base_error_probability <= 0.0 {
             return false;
@@ -148,15 +152,12 @@ impl NoiseChannel for CorrelatedNoiseChannel {
         ctx: &mut NoiseContext,
         rng: &mut PecosRng,
     ) -> NoiseResponse {
-        let NoiseEvent::AfterGate {
-            gate_type, qubits, ..
-        } = event
-        else {
+        let NoiseEvent::AfterGate { qubits, .. } = event else {
             return NoiseResponse::None;
         };
 
         // Skip noiseless gates
-        if ctx.is_noiseless(*gate_type) {
+        if ctx.is_noiseless_operation(event) {
             return NoiseResponse::None;
         }
 

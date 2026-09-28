@@ -69,20 +69,23 @@ error(0.15) D0 L0
     println!("Number of errors: {}", decoder.num_errors());
     for i in 0..decoder.num_errors() {
         let error_indices = vec![i];
-        let mask = decoder.mask_from_errors(&error_indices);
+        let mask = decoder.mask_from_errors(&error_indices).unwrap();
         println!("Error {i} mask: 0x{mask:x}");
     }
 
     // Test empty errors should have zero mask
     let empty_errors = vec![];
-    let zero_mask = decoder.mask_from_errors(&empty_errors);
+    let zero_mask = decoder.mask_from_errors(&empty_errors).unwrap();
     println!("Empty errors mask: 0x{zero_mask:x}");
     assert_eq!(zero_mask, 0);
 
     // Just test that the functionality works (don't make assumptions about which errors affect observables)
     let all_errors: Vec<usize> = (0..decoder.num_errors()).collect();
-    let _all_mask = decoder.mask_from_errors(&all_errors);
-    // This should work without panic
+    let _all_mask = decoder.mask_from_errors(&all_errors).unwrap();
+
+    // Out-of-range indices are an error, not a process abort.
+    assert!(decoder.mask_from_errors(&[decoder.num_errors()]).is_err());
+    assert!(decoder.cost_from_errors(&[decoder.num_errors()]).is_err());
 }
 
 /// Test `cost_from_errors` functionality
@@ -100,12 +103,12 @@ error(0.25) D1
 
     // Test cost calculation for specific errors
     let error_indices = vec![1]; // Second error (0.375 probability)
-    let cost = decoder.cost_from_errors(&error_indices);
+    let cost = decoder.cost_from_errors(&error_indices).unwrap();
     println!("Cost for error 1: {cost}");
 
     // Test empty errors should have zero cost
     let empty_errors = vec![];
-    let zero_cost = decoder.cost_from_errors(&empty_errors);
+    let zero_cost = decoder.cost_from_errors(&empty_errors).unwrap();
     println!("Cost for empty errors: {zero_cost}");
     assert!(
         zero_cost.abs() < f64::EPSILON,
@@ -115,7 +118,7 @@ error(0.25) D1
     // Test cost calculation for all errors individually
     for i in 0..decoder.num_errors() {
         let single_error = vec![i];
-        let cost = decoder.cost_from_errors(&single_error);
+        let cost = decoder.cost_from_errors(&single_error).unwrap();
         println!("Cost for error {i}: {cost}");
         assert!(cost >= 0.0); // Cost should never be negative
     }
@@ -254,6 +257,7 @@ fn test_configuration_getters() {
         beam_climbing: true,
         no_revisit_dets: false,
         verbose: false,
+        merge_errors: false,
         pqlimit: 5000,
         det_penalty: 0.05,
     };
@@ -265,8 +269,87 @@ fn test_configuration_getters() {
     assert!(decoder.beam_climbing());
     assert!(!decoder.no_revisit_dets());
     assert!(!decoder.verbose());
+    assert!(!decoder.merge_errors());
     assert_eq!(decoder.pqlimit(), 5000);
     assert!((decoder.det_penalty() - 0.05).abs() < 0.001);
+}
+
+/// `merge_errors` folds mechanisms with identical symptoms into one error
+/// while every public index stays in flattened-DEM space.
+#[test]
+fn test_merge_errors_combines_identical_mechanisms() {
+    let dem = "error(0.1) D0 L0\nerror(0.1) D0 L0\nerror(0) D0\nerror(0.2) D0";
+    let merged = TesseractDecoder::new(dem, TesseractConfig::default()).unwrap();
+    let unmerged = TesseractDecoder::new(
+        dem,
+        TesseractConfig {
+            merge_errors: false,
+            ..TesseractConfig::default()
+        },
+    )
+    .unwrap();
+    // The DEM has four mechanisms whichever way the decoder retains them.
+    assert_eq!(merged.num_errors(), 4);
+    assert_eq!(unmerged.num_errors(), 4);
+
+    // Merged probability is p1 + p2 - 2 p1 p2 = 0.18, reachable from either
+    // original index; unmerged keeps the originals apart.
+    for idx in [0, 1] {
+        let info = merged.get_error_info(idx).unwrap();
+        assert!(
+            (info.probability - 0.18).abs() < 1e-12,
+            "{}",
+            info.probability
+        );
+        let info = unmerged.get_error_info(idx).unwrap();
+        assert!(
+            (info.probability - 0.1).abs() < 1e-12,
+            "{}",
+            info.probability
+        );
+    }
+    // Merging folds the zero-probability mechanism into its identical
+    // neighbour (p = 0 + 0.2 - 0 = 0.2), so both indices resolve; without
+    // merging it is removed for zero probability, and the error says so.
+    for idx in [2, 3] {
+        let info = merged.get_error_info(idx).unwrap();
+        assert!(
+            (info.probability - 0.2).abs() < 1e-12,
+            "{}",
+            info.probability
+        );
+    }
+    let error = unmerged.get_error_info(2).err().unwrap().to_string();
+    assert!(error.contains("zero probability"), "{error}");
+    assert!(unmerged.cost_from_errors(&[2]).is_err());
+    let info = unmerged.get_error_info(3).unwrap();
+    assert!(
+        (info.probability - 0.2).abs() < 1e-12,
+        "{}",
+        info.probability
+    );
+
+    // A decode's predicted indices round-trip through the same accessors.
+    let mut merged = merged;
+    let result = merged
+        .decode_detections(&ndarray::Array1::from_vec(vec![0]).view())
+        .unwrap();
+    // The merged D0-only mechanism is reported under its first DEM index.
+    let predicted: Vec<usize> = result.predicted_errors.to_vec();
+    assert_eq!(predicted, vec![2]);
+    assert_eq!(result.observables_mask, 0);
+    let info = merged.get_error_info(predicted[0]).unwrap();
+    assert!(
+        (info.probability - 0.2).abs() < 1e-12,
+        "{}",
+        info.probability
+    );
+    assert_eq!(
+        merged.mask_from_errors(&predicted).unwrap(),
+        result.observables_mask
+    );
+    let cost = merged.cost_from_errors(&predicted).unwrap();
+    assert!((cost - result.cost).abs() < 1e-12);
 }
 
 /// Test edge case: invalid error index
@@ -277,7 +360,7 @@ fn test_invalid_error_index() {
     let decoder = TesseractDecoder::new(dem, config).unwrap();
 
     // Should return None for invalid error index
-    assert!(decoder.get_error_info(999).is_none());
+    assert!(decoder.get_error_info(999).is_err());
 }
 
 /// Test multiple decoding on same decoder

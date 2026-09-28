@@ -118,6 +118,12 @@ fn bell() -> unit {
 }
 ```
 
+### Rotation angle units
+
+Guppy's gate `angle` values are half-turns: `1.0` is π radians and `2.0` is a
+full turn. The compiler converts them once at the Guppy-to-Zlup boundary;
+generated Zlup stores every `a64` angle in turns.
+
 ## Lint Rules
 
 Based on NASA's Power of 10 coding guidelines for safety-critical systems:

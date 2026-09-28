@@ -465,6 +465,10 @@ impl<S: CliffordGateable + MyCapability> CircuitRunner<S> {
 
 ### Free Functions
 
+`sim_neo` accepts command queues and supported program sources. Convert a
+`TickCircuit` or `DagCircuit` explicitly with `CommandQueue::try_from(&circuit)?`
+before calling `sim_neo(commands)`; conversion can fail.
+
 Entry-point builders use lowercase snake_case functions:
 
 ```rust

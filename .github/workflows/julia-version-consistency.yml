@@ -45,6 +45,9 @@ jobs:
       uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
       with:
         version-file: ".github/uv.toml"
+        # Nothing here benefits from a uv cache; the default (auto) would save
+        # a PR-scoped cache on every pull request.
+        enable-cache: false
 
     - name: Check Julia version consistency
       run: uv run --frozen python scripts/check_julia_versions.py

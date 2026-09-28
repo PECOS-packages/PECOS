@@ -519,10 +519,26 @@ impl ErrorModelInterface for GeneralNoiseErrorModel {
                     self.builder.pz(&[qubit]);
                     self.last_operation_end[qubit] = Some(end);
                 }
-                Operation::RPPGate { .. } => {
-                    bail!(
-                        "RPP operations do not yet have a PECOS general-noise gate representation"
+                Operation::RPPGate {
+                    qubit_id_1,
+                    qubit_id_2,
+                    theta,
+                    phi,
+                } => {
+                    let first = self.qubit(qubit_id_1)?;
+                    let second = self.qubit(qubit_id_2)?;
+                    if first == second {
+                        bail!("RXYXY2Q requires two distinct qubits");
+                    }
+                    self.add_idle_before(first, start)?;
+                    self.add_idle_before(second, start)?;
+                    self.builder.rxyxy2q(
+                        Angle64::from_radians(theta),
+                        Angle64::from_radians(phi),
+                        &[(first, second)],
                     );
+                    self.last_operation_end[first] = Some(end);
+                    self.last_operation_end[second] = Some(end);
                 }
                 Operation::Custom { custom_tag, .. } => {
                     bail!(
@@ -1649,20 +1665,19 @@ mod tests {
     /// `RX(t) = [[cos t/2, -i sin t/2], [-i sin t/2, cos t/2]]`, `RXY(t, p) = RZ(p) RX(t)
     /// RZ(-p)`, and `RZZ(a) = diag(e^{-ia/2}, e^{ia/2}, e^{ia/2}, e^{-ia/2})`.
     ///
-    /// Two facts the pinned values record rather than hide:
+    /// Three facts the pinned values record rather than hide:
     ///
-    /// - PECOS's `rotation_to_matrix` halves the unsigned `[0, 2pi)` representative of an
-    ///   angle, so for any angle in `(pi, 2pi)` -- every negative angle -- its dense matrix
-    ///   is `-1` times the signed textbook `exp(-i theta/2 P)`. `SZZdg` is built as
-    ///   `RZZ(3pi/2)` and so carries `pi` here, as does every negative-angle rotation.
-    ///   This is the 4pi-periodicity problem recorded in the CRZ parameter
-    ///   representation note; the bridge cannot fix it and this test does not pretend it
-    ///   is absent.
+    /// - PECOS's dense matrices and simulators both halve the signed angle representative,
+    ///   so negative-angle rotations agree with Selene's signed textbook definitions.
     /// - Selene's Rust `QuEST` simulator at the same revision scales `exp(i a/2)` out of
     ///   `RZZ`, differing from Selene's own reference definition above. Under that one
     ///   simulator the two-qubit arms carry an additional `-a/2` that the reference does
     ///   not. That is Selene-internal, and unobservable on an error-model path where
     ///   nothing is controlled. This test pins the documented reference.
+    /// - PECOS's named two-qubit Pauli roots are conventional phase-fixed matrices, so
+    ///   `SP^2 = P` exactly, while Selene's reference set provides only the rotation
+    ///   representatives. These arms therefore carry the convention phase. It is
+    ///   unobservable here because nothing on this error-model path is controlled.
     ///
     /// Beyond the phase, the test asserts `U_pecos == e^{i phi} U_emitted` entrywise, so
     /// an arm that is wrong by more than a phase (the former `H` arm was wrong by `Z`)
@@ -1856,8 +1871,7 @@ mod tests {
                 named(GateType::Tdg, &q1),
                 -PI / 8.0,
             ),
-            // Parameterised single-qubit rotations, positive and negative angles. The
-            // negative cases carry pi against PECOS's unsigned-halved dense matrix.
+            // Parameterised single-qubit rotations, positive and negative angles.
             arm(
                 "RX(+0.37)",
                 |b| {
@@ -1872,7 +1886,7 @@ mod tests {
                     b.rx(Angle64::from_radians(-0.37), &[0]);
                 },
                 rot(RotationType::RX, -0.37, &q1),
-                PI,
+                0.0,
             ),
             arm(
                 "RY(+0.37)",
@@ -1888,7 +1902,7 @@ mod tests {
                     b.ry(Angle64::from_radians(-0.37), &[0]);
                 },
                 rot(RotationType::RY, -0.37, &q1),
-                PI,
+                0.0,
             ),
             arm(
                 "RZ(+0.37)",
@@ -1904,7 +1918,7 @@ mod tests {
                     b.rz(Angle64::from_radians(-0.37), &[0]);
                 },
                 rot(RotationType::RZ, -0.37, &q1),
-                PI,
+                0.0,
             ),
             arm(
                 "RXY1Q(+0.37, -0.91)",
@@ -1931,7 +1945,7 @@ mod tests {
                     b.szz(&[(0, 1)]);
                 },
                 named(GateType::SZZ, &q2),
-                0.0,
+                PI / 4.0,
             ),
             arm(
                 "SZZdg",
@@ -1939,7 +1953,7 @@ mod tests {
                     b.szzdg(&[(0, 1)]);
                 },
                 named(GateType::SZZdg, &q2),
-                PI,
+                -PI / 4.0,
             ),
             arm(
                 "RZZ(+0.37)",
@@ -1955,7 +1969,7 @@ mod tests {
                     b.rzz(Angle64::from_radians(-0.37), &[(0, 1)]);
                 },
                 rot(RotationType::RZZ, -0.37, &q2),
-                PI,
+                0.0,
             ),
         ];
 
@@ -1984,6 +1998,110 @@ mod tests {
                 "{name}: residual phase {phi:.6} rad, expected {expected:.6} rad (U_pecos = e^{{i phi}} U_emitted)"
             );
         }
+    }
+
+    #[test]
+    fn rpp_round_trip_preserves_one_gate_and_both_qubit_times() {
+        let mut model = build_error_model("{}", 3);
+        let mut sim = ClassicalSimulator::with_qubits(3);
+        model.shot_start(0, 41).unwrap();
+        model
+            .handle_operations(
+                runtime_batch(
+                    vec![Operation::RPPGate {
+                        qubit_id_1: 2,
+                        qubit_id_2: 0,
+                        theta: -0.73,
+                        phi: 0.41,
+                    }],
+                    20,
+                    7,
+                ),
+                &mut sim,
+            )
+            .unwrap();
+        assert_eq!(model.last_operation_end, vec![Some(27), None, Some(27)]);
+        let received = sim.received.concat();
+        assert_eq!(received.len(), 1);
+        let Operation::RPPGate {
+            qubit_id_1,
+            qubit_id_2,
+            theta,
+            phi,
+        } = received[0]
+        else {
+            panic!("expected a single RPP operation, got {received:?}");
+        };
+        assert_eq!((qubit_id_1, qubit_id_2), (2, 0));
+        assert!((theta + 0.73).abs() < 1e-12);
+        assert!((phi - 0.41).abs() < 1e-12);
+        // Either target is busy until 27ns, so a gate starting at 26ns
+        // must fail whichever of the two qubits it uses.
+        for qubit_id in [0, 2] {
+            assert!(
+                model
+                    .handle_operations(
+                        runtime_batch(
+                            vec![Operation::RZGate {
+                                qubit_id,
+                                theta: 0.5,
+                            }],
+                            26,
+                            1
+                        ),
+                        &mut sim
+                    )
+                    .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn rpp_uses_one_two_qubit_noise_channel() {
+        // Force an XI error for each two-qubit gate and Z for every
+        // single-qubit gate. An RPP should produce one XI error and no Z
+        // errors from its internal basis changes.
+        let mut model = build_error_model(
+            r#"{
+            "two_qubit":{"probability":1.0,"pauli_model":{"XI":1.0}},
+            "single_qubit":{"probability":1.0,"pauli_model":{"Z":1.0}}
+        }"#,
+            2,
+        );
+        let mut sim = ClassicalSimulator::with_qubits(2);
+        model.shot_start(0, 41).unwrap();
+        model
+            .handle_operations(
+                runtime_batch(
+                    vec![Operation::RPPGate {
+                        qubit_id_1: 0,
+                        qubit_id_2: 1,
+                        theta: 0.73,
+                        phi: 0.41,
+                    }],
+                    0,
+                    1,
+                ),
+                &mut sim,
+            )
+            .unwrap();
+        let received = sim.received.concat();
+        assert_eq!(received.len(), 2, "{received:?}");
+        assert_eq!(
+            received
+                .iter()
+                .filter(|op| matches!(op, Operation::RPPGate { .. }))
+                .count(),
+            1
+        );
+        assert_eq!(
+            received
+                .iter()
+                .filter(|op| matches!(op, Operation::RXYGate { theta, phi, .. }
+            if (*theta - PI).abs() < 1e-12 && phi.abs() < 1e-12))
+                .count(),
+            1
+        );
     }
 
     #[test]
@@ -2063,8 +2181,8 @@ mod tests {
                 &mut simulator,
             )
             .err()
-            .expect("an RPP operation must fail");
-        assert!(error.to_string().contains("RPP operations do not yet have"));
+            .expect("an RPP operation on the same qubit twice must fail");
+        assert!(error.to_string().contains("requires two distinct qubits"));
 
         let mut error_model = build_error_model("{}", 1);
         let error = error_model

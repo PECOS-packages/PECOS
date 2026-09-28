@@ -13,11 +13,13 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::path::Path;
 use std::str::FromStr;
+use std::sync::Arc;
 
 use crate::ast::{Expression, Operation};
 use crate::bitvec_expression::{
-    BitVecExpressionContext, ExpressionValue, evaluate_expression_bitvec,
+    BitVecExpressionContext, ExpressionValue, evaluate_expression_bitvec, resize_expression_value,
 };
+use crate::parser::comparison::is_negative_expression;
 use crate::program::QASMProgram;
 
 /// Gate handler function type
@@ -33,8 +35,10 @@ struct GateInfo {
 
 /// A QASM Engine that can generate native commands from a QASM program
 pub struct QASMEngine {
-    /// The QASM Program being executed
-    program: Option<QASMProgram>,
+    /// The QASM Program being executed. Immutable once loaded and shared
+    /// through an `Arc` so the batch loop can hold a handle without copying
+    /// the AST.
+    program: Option<Arc<QASMProgram>>,
 
     /// Mapping from measurement order to register names and bit indices
     /// Each entry is (`register_name`, `bit_index`) mapped by the order of measurements
@@ -128,7 +132,7 @@ impl QASMEngine {
         self.raw_measurements.clear();
         self.register_result_mappings.clear();
 
-        self.program = Some(program);
+        self.program = Some(Arc::new(program));
         self.reset_state();
     }
 
@@ -225,8 +229,27 @@ impl QASMEngine {
         bit_index: usize,
         value: u8,
     ) -> Result<(), PecosError> {
+        Self::set_register_bit(
+            self.program.as_deref(),
+            &mut self.classical_registers,
+            register_name,
+            bit_index,
+            value,
+        )
+    }
+
+    /// Set one bit of a classical register. Takes the fields it needs rather
+    /// than `&mut self` so callers can hold a borrow of another field (the
+    /// measurement mappings) across the call.
+    fn set_register_bit(
+        loaded_program: Option<&QASMProgram>,
+        classical_registers: &mut BTreeMap<String, BitVec<u8, Lsb0>>,
+        register_name: &str,
+        bit_index: usize,
+        value: u8,
+    ) -> Result<(), PecosError> {
         // Validate bounds if we have a program loaded
-        if let Some(qasm_program) = &self.program {
+        if let Some(qasm_program) = loaded_program {
             let program = qasm_program.program();
             if let Some(size) = program.classical_registers.get(register_name) {
                 if bit_index >= *size {
@@ -242,12 +265,9 @@ impl QASMEngine {
         }
 
         // Get the register
-        let register = self
-            .classical_registers
-            .get_mut(register_name)
-            .ok_or_else(|| {
-                PecosError::Input(format!("Classical register '{register_name}' not found"))
-            })?;
+        let register = classical_registers.get_mut(register_name).ok_or_else(|| {
+            PecosError::Input(format!("Classical register '{register_name}' not found"))
+        })?;
 
         // Set the bit value
         register.set(bit_index, value != 0);
@@ -443,14 +463,52 @@ impl QASMEngine {
         Ok(())
     }
 
-    #[allow(clippy::unnecessary_wraps)]
     fn handle_szz(
         engine: &mut QASMEngine,
         qubits: &[usize],
         _params: &[f64],
     ) -> Result<(), PecosError> {
-        engine.message_builder.szz(&[(qubits[0], qubits[1])]);
-        Ok(())
+        engine.process_two_qubit_gate(GateType::SZZ, qubits)
+    }
+
+    fn handle_sxx(
+        engine: &mut QASMEngine,
+        qubits: &[usize],
+        _params: &[f64],
+    ) -> Result<(), PecosError> {
+        engine.process_two_qubit_gate(GateType::SXX, qubits)
+    }
+
+    fn handle_sxxdg(
+        engine: &mut QASMEngine,
+        qubits: &[usize],
+        _params: &[f64],
+    ) -> Result<(), PecosError> {
+        engine.process_two_qubit_gate(GateType::SXXdg, qubits)
+    }
+
+    fn handle_syy(
+        engine: &mut QASMEngine,
+        qubits: &[usize],
+        _params: &[f64],
+    ) -> Result<(), PecosError> {
+        engine.process_two_qubit_gate(GateType::SYY, qubits)
+    }
+
+    fn handle_syydg(
+        engine: &mut QASMEngine,
+        qubits: &[usize],
+        _params: &[f64],
+    ) -> Result<(), PecosError> {
+        engine.process_two_qubit_gate(GateType::SYYdg, qubits)
+    }
+
+    fn handle_szzdg(
+        engine: &mut QASMEngine,
+        qubits: &[usize],
+        _params: &[f64],
+    ) -> Result<(), PecosError> {
+        engine.process_two_qubit_gate(GateType::SZZdg, qubits)
     }
 
     #[allow(clippy::unnecessary_wraps)]
@@ -588,6 +646,24 @@ impl QASMEngine {
                     );
                 }
             }
+            GateType::RXYXY2Q => {
+                if qubits.is_empty() || !qubits.len().is_multiple_of(gate_type.quantum_arity()) {
+                    return Err(PecosError::Processing(
+                        "RXYXY2Q requires complete qubit pairs".to_string(),
+                    ));
+                }
+                let theta = params[0];
+                let phi = params[1];
+                for chunk in qubits.chunks(2) {
+                    if chunk.len() == 2 {
+                        self.message_builder.rxyxy2q(
+                            Angle64::from_radians(theta),
+                            Angle64::from_radians(phi),
+                            &[(chunk[0], chunk[1])],
+                        );
+                    }
+                }
+            }
             GateType::U => {
                 let theta = params[0];
                 let phi = params[1];
@@ -663,6 +739,7 @@ impl QASMEngine {
             | GateType::RXX
             | GateType::RYY
             | GateType::RZZ
+            | GateType::RXYXY2Q
             | GateType::RXXRYYRZZ
             | GateType::U2q
             | GateType::RXY1Q
@@ -685,11 +762,10 @@ impl QASMEngine {
         }
     }
 
-    /// Get the gate table for table-driven processing
-    #[allow(clippy::too_many_lines)]
-    fn get_gate_table() -> Vec<GateInfo> {
+    /// Gate table for table-driven processing, searched in order.
+    const GATE_TABLE: &[GateInfo] = {
         use GateInfo as G;
-        vec![
+        &[
             // Single-qubit gates
             G {
                 name: "h",
@@ -789,10 +865,40 @@ impl QASMEngine {
                 handler: Self::handle_rzz,
             },
             G {
+                name: "sxx",
+                gate_type: GateType::SXX,
+                required_qubits: 2,
+                handler: Self::handle_sxx,
+            },
+            G {
+                name: "sxxdg",
+                gate_type: GateType::SXXdg,
+                required_qubits: 2,
+                handler: Self::handle_sxxdg,
+            },
+            G {
+                name: "syy",
+                gate_type: GateType::SYY,
+                required_qubits: 2,
+                handler: Self::handle_syy,
+            },
+            G {
+                name: "syydg",
+                gate_type: GateType::SYYdg,
+                required_qubits: 2,
+                handler: Self::handle_syydg,
+            },
+            G {
                 name: "szz",
                 gate_type: GateType::SZZ,
                 required_qubits: 2,
                 handler: Self::handle_szz,
+            },
+            G {
+                name: "szzdg",
+                gate_type: GateType::SZZdg,
+                required_qubits: 2,
+                handler: Self::handle_szzdg,
             },
             G {
                 name: "swap",
@@ -801,7 +907,7 @@ impl QASMEngine {
                 handler: Self::handle_swap,
             },
         ]
-    }
+    };
 
     /// Process a single gate operation using table-driven approach
     fn process_gate_operation(
@@ -810,12 +916,9 @@ impl QASMEngine {
         qubits: &[usize],
         parameters: &[f64],
     ) -> Result<bool, PecosError> {
-        let gate_table = Self::get_gate_table();
-        let name_lower = name.to_lowercase();
-
-        // Find the gate in the table
-        for gate_info in &gate_table {
-            if gate_info.name == name_lower {
+        // Find the gate in the table; QASM gate names are ASCII identifiers
+        for gate_info in Self::GATE_TABLE {
+            if gate_info.name.eq_ignore_ascii_case(name) {
                 // Validate qubit count
                 if qubits.len() != gate_info.required_qubits {
                     return Err(PecosError::Input(format!(
@@ -893,13 +996,19 @@ impl QASMEngine {
         Ok(())
     }
 
-    /// Process a register measurement operation
+    /// Queue the measurement of every qubit of `q_reg` into `c_reg`.
+    ///
+    /// With `batch_cap = Some(current_operation_count)` the batch is not grown
+    /// past `MAX_BATCH_SIZE`: the qubits that fit are queued and `Ok(None)`
+    /// says the rest must follow in a later batch. With `batch_cap = None` the
+    /// whole register is queued as one statement and, on success, the result
+    /// is always `Some(count)`.
     fn process_register_measurement(
         &mut self,
         q_reg: &str,
         c_reg: &str,
         qasm_program: &QASMProgram,
-        current_operation_count: usize,
+        batch_cap: Option<usize>,
     ) -> Result<Option<usize>, PecosError> {
         let program = qasm_program.program();
         let Some(qubit_ids) = program.quantum_registers.get(q_reg) else {
@@ -914,13 +1023,23 @@ impl QASMEngine {
             )));
         };
 
-        let measure_count = std::cmp::min(qubit_ids.len(), c_size);
+        // The parser checks this for top-level register measurements; inside an
+        // `if` the statement reaches the engine unexpanded, so check it here too
+        // rather than silently measuring only the shorter register's worth.
+        if qubit_ids.len() != c_size {
+            return Err(PecosError::Input(format!(
+                "Register size mismatch in measure {q_reg} -> {c_reg}: quantum register {q_reg} \
+                 has {} qubits, classical register {c_reg} has {c_size} bits",
+                qubit_ids.len()
+            )));
+        }
+        let measure_count = qubit_ids.len();
 
         debug!("Will measure {measure_count} qubits from {q_reg} to {c_reg}");
 
         let mut measurements_added = 0;
         for (i, &qubit_id) in qubit_ids.iter().enumerate().take(measure_count) {
-            if current_operation_count + measurements_added >= Self::MAX_BATCH_SIZE {
+            if batch_cap.is_some_and(|count| count + measurements_added >= Self::MAX_BATCH_SIZE) {
                 debug!(
                     "Reached maximum batch size during register measurement, will continue in next batch"
                 );
@@ -947,12 +1066,14 @@ impl QASMEngine {
         self.message_builder.reset();
         let _ = self.message_builder.for_quantum_operations();
 
-        // Clone to avoid borrow checking issues
+        // The loop below needs `&mut self` while it reads the program, so hold
+        // the program through its own handle. Cloning the `QASMProgram` itself
+        // here copied the whole AST and gate table once per batch, which
+        // dominated the per-shot time of circuit simulations.
         let qasm_program = self
             .program
-            .as_ref()
-            .ok_or_else(|| PecosError::Input("No QASM program loaded".to_string()))?
-            .clone();
+            .clone()
+            .ok_or_else(|| PecosError::Input("No QASM program loaded".to_string()))?;
 
         let program = qasm_program.program();
 
@@ -1009,7 +1130,7 @@ impl QASMEngine {
                         q_reg,
                         c_reg,
                         &qasm_program,
-                        operation_count,
+                        Some(operation_count),
                     )?;
 
                     if let Some(count) = added_count {
@@ -1048,6 +1169,7 @@ impl QASMEngine {
                     debug!("Evaluating if condition: {condition:?}");
                     // Use evaluate_expression_bitvec_with_width to support WASM functions
                     // For conditions, we don't need a specific width - just evaluate as boolean
+                    // This conversion is signed; value-carried signedness is tracked in #869.
                     let condition_value = self
                         .evaluate_expression_bitvec_with_width(condition, 1)?
                         .as_i64();
@@ -1107,17 +1229,11 @@ impl QASMEngine {
                                 } else if let Some(register_size) =
                                     program.classical_registers.get(target.as_str())
                                 {
-                                    let mut result_bitvec = value_expr.into_bitvec();
-
-                                    // Sign extend when resizing (use the MSB as the sign bit)
-                                    let sign_bit = if result_bitvec.is_empty() {
-                                        false
-                                    } else {
-                                        result_bitvec[result_bitvec.len() - 1]
-                                    };
-
-                                    // Resize to the exact register size with sign extension
-                                    result_bitvec.resize(*register_size, sign_bit);
+                                    let result_bitvec = resize_expression_value(
+                                        value_expr.into_bitvec(),
+                                        is_negative_expression(expression),
+                                        *register_size,
+                                    );
 
                                     debug!(
                                         "Setting register {} with BitVec of length {}",
@@ -1130,8 +1246,44 @@ impl QASMEngine {
                                 }
                                 operation_count += 1;
                             }
-                            _ => {
-                                debug!("Unsupported operation in if statement");
+                            Operation::MeasureWithMapping {
+                                gate,
+                                c_reg,
+                                c_index,
+                            } => {
+                                if let Some(qubit_id) = gate.qubits.first() {
+                                    self.process_measurement(qubit_id.0, c_reg, *c_index)?;
+                                    self.current_op += 1;
+                                    debug!(
+                                        "Breaking batch after conditional measurement to wait for results"
+                                    );
+                                    return Ok(Some(self.message_builder.build()));
+                                }
+                            }
+                            Operation::RegMeasure { q_reg, c_reg } => {
+                                // The condition was evaluated once for the whole
+                                // statement, so queue the whole register uncapped and
+                                // end the batch, as a single conditional measurement
+                                // does.
+                                self.process_register_measurement(
+                                    q_reg,
+                                    c_reg,
+                                    &qasm_program,
+                                    None,
+                                )?;
+                                self.current_op += 1;
+                                debug!(
+                                    "Breaking batch after conditional register measurement to wait for results"
+                                );
+                                return Ok(Some(self.message_builder.build()));
+                            }
+                            Operation::Barrier { .. } => {
+                                debug!("Skipping conditional barrier");
+                            }
+                            other => {
+                                return Err(PecosError::Processing(format!(
+                                    "Unsupported operation in if statement: {other}"
+                                )));
                             }
                         }
                     } else {
@@ -1168,17 +1320,11 @@ impl QASMEngine {
                     } else if let Some(register_size) =
                         program.classical_registers.get(target.as_str())
                     {
-                        let mut result_bitvec = value_expr.into_bitvec();
-
-                        // Sign extend when resizing (use the MSB as the sign bit)
-                        let sign_bit = if result_bitvec.is_empty() {
-                            false
-                        } else {
-                            result_bitvec[result_bitvec.len() - 1]
-                        };
-
-                        // Resize to the exact register size with sign extension
-                        result_bitvec.resize(*register_size, sign_bit);
+                        let result_bitvec = resize_expression_value(
+                            value_expr.into_bitvec(),
+                            is_negative_expression(expression),
+                            *register_size,
+                        );
 
                         debug!(
                             "Setting register {} with BitVec of length {}",
@@ -1210,16 +1356,19 @@ impl QASMEngine {
 
         let msg = self.message_builder.build();
 
-        // Debug: Print the actual ByteMessage content
-        debug!("QASMEngine: Generated ByteMessage:");
-        if let Ok(quantum_ops) = msg.quantum_ops() {
-            debug!("  Quantum ops: {} total", quantum_ops.len());
-            for (i, gate) in quantum_ops.iter().enumerate() {
-                debug!("    Gate {i}: {gate:?}");
+        // Decoding the message back into gates is batch-sized work, so only
+        // do it when the debug output it feeds is actually enabled.
+        if log::log_enabled!(log::Level::Debug) {
+            debug!("QASMEngine: Generated ByteMessage:");
+            if let Ok(quantum_ops) = msg.quantum_ops() {
+                debug!("  Quantum ops: {} total", quantum_ops.len());
+                for (i, gate) in quantum_ops.iter().enumerate() {
+                    debug!("    Gate {i}: {gate:?}");
+                }
             }
-        }
-        if let Ok(empty) = msg.is_empty() {
-            debug!("  Is empty: {empty}");
+            if let Ok(empty) = msg.is_empty() {
+                debug!("  Is empty: {empty}");
+            }
         }
 
         Ok(Some(msg))
@@ -1320,6 +1469,7 @@ impl QASMEngine {
         let mut arg_values = Vec::new();
         for arg in args {
             let val = evaluate_expression_bitvec(arg, self, target_width)?;
+            // This conversion is signed; value-carried signedness is tracked in #869.
             arg_values.push(val.as_i64());
         }
         if let Some(ref mut foreign_obj) = self.foreign_object {
@@ -1452,8 +1602,6 @@ impl ClassicalEngine for QASMEngine {
 
         match message.outcomes() {
             Ok(outcomes) => {
-                let mappings = self.register_result_mappings.clone();
-
                 debug!("Processing {} measurement results", outcomes.len());
                 debug!(
                     "Starting from global measurement index {}",
@@ -1461,6 +1609,19 @@ impl ClassicalEngine for QASMEngine {
                 );
 
                 let num_results = outcomes.len();
+                // Every outcome must correspond to a measurement this engine has
+                // already queued; a longer message is a protocol violation and would
+                // misalign every later measurement if it were accepted.
+                let pending = self
+                    .register_result_mappings
+                    .len()
+                    .saturating_sub(self.measurements_processed);
+                if num_results > pending {
+                    return Err(PecosError::Input(format!(
+                        "Received {num_results} measurement outcomes but only {pending} \
+                         measurements are pending"
+                    )));
+                }
                 for (local_index, value) in outcomes.into_iter().enumerate() {
                     // Calculate the global index for this measurement
                     let global_index = self.measurements_processed + local_index;
@@ -1468,11 +1629,17 @@ impl ClassicalEngine for QASMEngine {
                         "Found measurement local_index={local_index} global_index={global_index} value={value}"
                     );
 
-                    if let Some((register, bit)) = mappings.get(global_index) {
+                    if let Some((register, bit)) = self.register_result_mappings.get(global_index) {
                         debug!("Updating register {register}[{bit}] with value {value}");
 
                         let safe_value = u8::try_from(value).unwrap_or(1);
-                        self.update_register_bit(register, *bit, safe_value)?;
+                        Self::set_register_bit(
+                            self.program.as_deref(),
+                            &mut self.classical_registers,
+                            register,
+                            *bit,
+                            safe_value,
+                        )?;
                     } else {
                         debug!(
                             "No register mapping found for measurement global_index={global_index}"
@@ -1590,8 +1757,10 @@ impl ControlEngine for QASMEngine {
     ) -> Result<EngineStage<ByteMessage, Shot>, PecosError> {
         debug!("QASMEngine::continue_processing() called");
 
-        let measurement_count = measurements.outcomes().map_or(0, |outcomes| outcomes.len());
-        debug!("Received {measurement_count} measurements");
+        if log::log_enabled!(log::Level::Debug) {
+            let measurement_count = measurements.outcomes().map_or(0, |outcomes| outcomes.len());
+            debug!("Received {measurement_count} measurements");
+        }
 
         debug!("Processing measurement results");
         self.handle_measurements(measurements)?;
@@ -1751,5 +1920,52 @@ mod tests {
                 .process_gate_operation("cz", &[0, 1], &[])
                 .expect("CZ table dispatch should succeed")
         );
+    }
+
+    #[test]
+    fn qasm_engine_executes_all_named_two_qubit_roots() {
+        let qasm = r"
+            OPENQASM 2.0;
+            qreg q[2];
+            SXX q[0],q[1];
+            SXXDG q[0],q[1];
+            SYY q[0],q[1];
+            SYYDG q[0],q[1];
+            SZZ q[0],q[1];
+            SZZDG q[0],q[1];
+        ";
+        let mut engine = QASMEngine::from_str(qasm).expect("all roots should parse");
+        let stage = <QASMEngine as ControlEngine>::start(&mut engine, ())
+            .expect("all roots should execute");
+        let EngineStage::NeedsProcessing(message) = stage else {
+            panic!("root program should produce quantum commands");
+        };
+        let ops = message.quantum_ops().expect("commands should decode");
+        assert_eq!(
+            ops.iter().map(|op| op.gate_type).collect::<Vec<_>>(),
+            [
+                GateType::SXX,
+                GateType::SXXdg,
+                GateType::SYY,
+                GateType::SYYdg,
+                GateType::SZZ,
+                GateType::SZZdg,
+            ]
+        );
+    }
+
+    #[test]
+    fn gate_table_dispatches_all_named_two_qubit_roots() {
+        let mut engine = QASMEngine::default();
+        for name in ["sxx", "sxxdg", "syy", "syydg", "szz", "szzdg"] {
+            assert!(
+                engine
+                    .process_gate_operation(name, &[0, 1], &[])
+                    .expect("root table dispatch should succeed"),
+                "{name} did not dispatch"
+            );
+        }
+        let ops = engine.message_builder.build().quantum_ops().unwrap();
+        assert_eq!(ops.len(), 6);
     }
 }

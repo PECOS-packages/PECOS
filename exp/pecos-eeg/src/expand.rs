@@ -11,7 +11,7 @@
 use crate::Bm;
 use pecos_core::gate_type::GateType;
 use pecos_core::pauli::pauli_bitmask::BitmaskStorage;
-use pecos_core::{Gate, GateAngles, GateParams, QubitId};
+use pecos_core::{Gate, QubitId};
 
 /// Result of circuit expansion.
 /// Why an EEG DEM could not be built from the circuit.
@@ -366,16 +366,19 @@ impl GateIndex {
     }
 }
 
+/// Construct an unparameterized expansion gate.
+///
+/// # Panics
+/// Panics if the gate type requires angles.
 #[must_use]
 pub fn make_gate(gt: GateType, qubits: &[usize]) -> Gate {
-    Gate {
-        gate_type: gt,
-        qubits: qubits.iter().map(|&q| QubitId(q)).collect(),
-        angles: GateAngles::new(),
-        params: GateParams::new(),
-        meas_ids: pecos_core::GateMeasIds::new(),
-        channel: None,
-    }
+    Gate::simple(
+        gt,
+        qubits
+            .iter()
+            .map(|&q| QubitId(q))
+            .collect::<pecos_core::GateQubits>(),
+    )
 }
 
 impl ExpandedCircuit {
@@ -420,6 +423,12 @@ impl ExpandedCircuit {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    #[should_panic(expected = "Gate RZ expected 1 angle parameters, got 0")]
+    fn make_gate_refuses_rotation_without_angles() {
+        let _ = make_gate(GateType::RZ, &[0]);
+    }
+
     /// `meas_id_rank` records expansion order, keyed by the id the gate holds.
     ///
     /// De-aliased: the ids arrive in descending order (9 before 3), so

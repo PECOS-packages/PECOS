@@ -10,6 +10,8 @@
 // Forward declare the Rust types
 struct TesseractConfigRepr;
 struct DecodingResultRepr;
+struct TesseractTrellisConfigRepr;
+struct TesseractTrellisResultRepr;
 
 // Simple wrapper class for Tesseract decoder
 // CXX bridge requires the complete type definition
@@ -31,6 +33,7 @@ public:
     bool get_beam_climbing() const;
     bool get_no_revisit_dets() const;
     bool get_verbose() const;
+    bool get_merge_errors() const;
     size_t get_pqlimit() const;
     double get_det_penalty() const;
     double get_error_probability(size_t error_idx) const;
@@ -42,6 +45,22 @@ public:
 
 private:
     // We'll use PIMPL pattern to hide the actual Tesseract implementation
+    class Impl;
+    std::unique_ptr<Impl> pimpl_;
+};
+
+// Wrapper for Tesseract's trellis-mode decoder (upstream TesseractTrellisDecoder).
+class TesseractTrellisDecoderWrapper {
+public:
+    TesseractTrellisDecoderWrapper(const std::string& dem_string, const TesseractTrellisConfigRepr& config);
+    ~TesseractTrellisDecoderWrapper();
+
+    TesseractTrellisResultRepr decode_detections(const rust::Slice<const uint64_t> detections);
+    size_t get_num_detectors() const;
+    size_t get_num_errors() const;
+    size_t get_num_observables() const;
+
+private:
     class Impl;
     std::unique_ptr<Impl> pimpl_;
 };
@@ -74,6 +93,7 @@ uint16_t get_det_beam(const TesseractDecoderWrapper& decoder);
 bool get_beam_climbing(const TesseractDecoderWrapper& decoder);
 bool get_no_revisit_dets(const TesseractDecoderWrapper& decoder);
 bool get_verbose(const TesseractDecoderWrapper& decoder);
+bool get_merge_errors(const TesseractDecoderWrapper& decoder);
 size_t get_pqlimit(const TesseractDecoderWrapper& decoder);
 double get_det_penalty(const TesseractDecoderWrapper& decoder);
 
@@ -91,3 +111,17 @@ double cost_from_errors(
     const TesseractDecoderWrapper& decoder,
     const rust::Slice<const size_t> error_indices
 );
+
+std::unique_ptr<TesseractTrellisDecoderWrapper> create_tesseract_trellis_decoder(
+    const rust::Str dem_string,
+    const TesseractTrellisConfigRepr& config
+);
+
+TesseractTrellisResultRepr trellis_decode_detections(
+    TesseractTrellisDecoderWrapper& decoder,
+    const rust::Slice<const uint64_t> detections
+);
+
+size_t trellis_num_detectors(const TesseractTrellisDecoderWrapper& decoder);
+size_t trellis_num_errors(const TesseractTrellisDecoderWrapper& decoder);
+size_t trellis_num_observables(const TesseractTrellisDecoderWrapper& decoder);

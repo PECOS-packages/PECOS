@@ -2,13 +2,15 @@
 
 use super::batch_decode::{BatchExecutionError, BatchExecutionOutput, decode_model};
 use super::decoder_scoring::{DecodeRangeResult, ShotDecodeError};
+use crate::batch_decoder_spec::BatchDecoderSpec as DecoderSpec;
+use crate::batch_decoder_spec::DecoderBuildError;
 use pecos_decoder_core::obs_mask::ObsMask;
 use pecos_decoder_core::{DecoderError, ObservableDecoder};
+use pecos_decoders::DecodeModel;
 use pecos_decoders::batch::{
     ExecutionPath, ExecutionPlan, IndexedChunk, SAMPLING_CHUNK_SHOTS, assemble_indexed_chunks,
     for_each_canonical_sample, sampling_chunks,
 };
-use pecos_decoders::{DecodeModel, DecoderSpec};
 use pecos_qec::fault_tolerance::dem_builder::DemSampler;
 use pecos_random::PecosRng;
 use rayon::prelude::*;
@@ -297,7 +299,7 @@ fn parallel(
         chunks
             .into_par_iter()
             .map_init(
-                || spec.build(model).map_err(|error| error.to_string()),
+                || spec.build(model),
                 |decoder, (chunk_index, range)| {
                     // `map_init` state belongs to one Rayon job, not one OS
                     // worker. That is sufficient: stateless chunk results depend
@@ -312,9 +314,16 @@ fn parallel(
                             seed,
                             options,
                         ),
-                        Err(message) => Err(BatchExecutionError::Runtime(format!(
-                            "parallel decoder construction failed: {message}"
-                        ))),
+                        Err(DecoderBuildError::Decoder(error)) => {
+                            Err(BatchExecutionError::Runtime(format!(
+                                "parallel decoder construction failed: {error}"
+                            )))
+                        }
+                        Err(DecoderBuildError::Python(error)) => {
+                            Err(BatchExecutionError::Build(DecoderBuildError::Python(
+                                pyo3::Python::attach(|py| error.clone_ref(py)),
+                            )))
+                        }
                     };
                     IndexedChunk { chunk_index, value }
                 },

@@ -7,6 +7,86 @@ use pecos_programs::Qasm;
 use pecos_qasm::{Operation, QASMParser, qasm_engine};
 use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, StateVecSoA32};
 
+fn zz_observable_snapshot(qasm: &str) -> ([f64; 4], [usize; 4]) {
+    let program = QASMParser::parse_str(qasm).unwrap();
+    let mut state = StateVecSoA32::new(2);
+    for operation in &program.operations {
+        match operation {
+            Operation::NativeGate(gate) if gate.gate_type == GateType::H => {
+                state.h(&gate.qubits);
+            }
+            Operation::NativeGate(gate) if gate.gate_type == GateType::SZZ => {
+                state.szz(&[(gate.qubits[0], gate.qubits[1])]);
+            }
+            Operation::MeasureWithMapping { .. } => {}
+            other => panic!("unexpected operation in ZZ observable probe: {other:?}"),
+        }
+    }
+    let probabilities =
+        std::array::from_fn(|basis| f64::from(state.get_amplitude(basis).norm_sqr()));
+
+    let results = qasm_engine()
+        .program(Qasm::from_string(qasm))
+        .to_sim()
+        .seed(42)
+        .workers(1)
+        .run(4096)
+        .unwrap();
+    let mut histogram = [0; 4];
+    for shot in &results.shots {
+        let value = shot.data.get("c").unwrap().as_u32().unwrap() as usize;
+        histogram[value] += 1;
+    }
+    (probabilities, histogram)
+}
+
+#[test]
+fn qasm_zz_alias_and_szz_have_identical_observables() {
+    let zz = r#"
+        OPENQASM 2.0;
+        include "hqslib1.inc";
+        qreg q[2];
+        creg c[2];
+        h q[0];
+        h q[1];
+        ZZ q[0], q[1];
+        h q[0];
+        h q[1];
+        measure q -> c;
+    "#;
+    let szz = r#"
+        OPENQASM 2.0;
+        include "pecos.inc";
+        qreg q[2];
+        creg c[2];
+        h q[0];
+        h q[1];
+        SZZ q[0], q[1];
+        h q[0];
+        h q[1];
+        measure q -> c;
+    "#;
+
+    let zz_snapshot = zz_observable_snapshot(zz);
+    let szz_snapshot = zz_observable_snapshot(szz);
+    eprintln!(
+        "ZZ probabilities={:?}, histogram={:?}",
+        zz_snapshot.0, zz_snapshot.1
+    );
+    eprintln!(
+        "SZZ probabilities={:?}, histogram={:?}",
+        szz_snapshot.0, szz_snapshot.1
+    );
+
+    for (actual, expected) in zz_snapshot.0.iter().zip([0.5, 0.0, 0.0, 0.5]) {
+        assert!((actual - expected).abs() < 3e-6);
+    }
+    assert_eq!(zz_snapshot.1, szz_snapshot.1);
+    for (zz_probability, szz_probability) in zz_snapshot.0.iter().zip(szz_snapshot.0) {
+        assert!((zz_probability - szz_probability).abs() < f64::EPSILON);
+    }
+}
+
 #[test]
 fn uppercase_native_swap_executes() {
     let qasm = r"
@@ -545,5 +625,62 @@ fn qasm_u_s_gate() {
     for shot in &results.shots {
         let value = shot.data.get("c").unwrap().as_u32().unwrap();
         assert_eq!(value, 1, "Two u(0,0,pi/2) = Z, H*Z*H = X");
+    }
+}
+
+#[test]
+fn rxyxy2q_spellings_parse_and_execute_identically() {
+    // Uppercase native and the pecos.inc alias. theta = pi about the YY axis
+    // maps |00> to |11>.
+    let programs = [
+        r"
+            OPENQASM 2.0;
+            qreg q[2];
+            creg c[2];
+            RXYXY2Q(pi, pi/2) q[0], q[1];
+            measure q -> c;
+        ",
+        r#"
+            OPENQASM 2.0;
+            include "pecos.inc";
+            qreg q[2];
+            creg c[2];
+            rxyxy2q(pi, pi/2) q[0], q[1];
+            measure q -> c;
+        "#,
+    ];
+
+    for qasm in programs {
+        let results = qasm_engine()
+            .program(Qasm::from_string(qasm))
+            .to_sim()
+            .seed(42)
+            .workers(1)
+            .run(4)
+            .unwrap();
+        for shot in &results.shots {
+            assert_eq!(shot.data.get("c").unwrap().as_u32(), Some(3), "{qasm}");
+        }
+    }
+
+    // Both spellings must reach the engine as the native gate carrying both
+    // angles, in order.
+    for qasm in programs {
+        let program = QASMParser::parse_str(qasm).unwrap();
+        let gate = program
+            .operations
+            .iter()
+            .find_map(|op| match op {
+                Operation::NativeGate(gate) if gate.gate_type == GateType::RXYXY2Q => Some(gate),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(
+            gate.angles.as_slice(),
+            &[
+                pecos_core::Angle64::HALF_TURN,
+                pecos_core::Angle64::QUARTER_TURN
+            ]
+        );
     }
 }

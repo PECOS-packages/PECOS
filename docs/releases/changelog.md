@@ -6,6 +6,62 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ## Unreleased
 
+### Decoder changes
+
+- `windowed` specs with a buffer previously returned the result of a monolithic
+  decode by `sandwich_phase2` (correlated PyMatching by default). Callers who want
+  that result should request the monolithic decoder directly. `windowed` is now
+  a streaming decoder and requires `inner`, `buffer`, and `step`. It commits whole local
+  correction components and carries their full detector incidence. The old
+  modes and their tuning options have been removed.
+- `PyMatchingDecoder`'s edge decode now applies correlations when the decoder
+  was built with them.
+- `DetailedDecoder::decode_to_edges` for `PyMatchingDecoder` now returns the
+  correction edges with their weights and observables. Previously it returned
+  matched detection-event pairs with zero weights and no observables.
+
+
+### Python breaking changes
+
+- `LogicalCircuitBuilder.build_algorithm_descriptor(buffer=0)` now rejects a
+  non-terminal segment when its source-tracked detector model requires forward
+  look-ahead. Omit `buffer` to derive the safe minimum automatically, or pass at
+  least the reported number of rounds. Segment dictionaries now distinguish the
+  backward-compatible commit count (`num_detectors`, also available as
+  `num_commit_detectors`) from the detector count in the halo-bearing segment DEM
+  (`num_window_detectors`).
+- `WindowedLogicalSubgraphDecoder(dem, stab_coords, step, buffer)` now requires
+  `step` and `buffer`; they previously defaulted to 8 and 4.
+
+### Rust breaking changes
+
+- `CliffordGateable::apply_global_phase` replaces the former
+  `ArbitraryRotationGateable::apply_global_phase` hook. This is source-breaking
+  for out-of-tree implementors that override or call the hook through the old
+  trait. Projective backends may retain the no-op default; amplitude-exposing
+  backends must implement it.
+
+### Rust bug fixes
+
+- Dense rotation-family matrices now use the signed `(-pi, pi]` angle
+  representative and agree exactly with the simulators. This changes
+  `ToMatrix` output by a global `-1` for stored negative rotation angles,
+  negative `theta` in `RXY1Q` and `U3`, composites containing those rotations,
+  and the named `SXXdg`, `SYYdg`, and `SZZdg` gates.
+- The `CliffordGateable` default decompositions now deliver their residual
+  global phases through `apply_global_phase`. Amplitude-exposing backends that
+  inherit these defaults therefore change state by the required global phase;
+  projective backends continue to use the no-op hook.
+- `StateVecSoA::g` and `gdg` were the only two-qubit kernels missing the
+  `flush_two_qubit` prologue, so they read stale amplitudes whenever a
+  single-qubit gate was still queued. Because gate fusion is enabled by
+  default, this produced wrong states on the common path.
+- `Angle::to_radians_signed`, `to_turns_signed`, and
+  `to_half_turns_signed` now choose the principal-value sign from the stored
+  fraction instead of a rounded floating-point value. Exactly `HALF_TURN`
+  remains positive and maps to `+pi`, `+0.5`, and `+1.0`, respectively; stored
+  fractions strictly above it map to the negative representative.
+
 ### Python batch decoding
 
 The legacy batch-decode entry points have been removed in favor of the unified

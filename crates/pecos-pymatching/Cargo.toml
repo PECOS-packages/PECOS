@@ -27,6 +27,7 @@ env_logger.workspace = true
 log.workspace = true
 
 [dev-dependencies]
+pecos-uf-decoder.workspace = true
 rand.workspace = true
 pecos-random.workspace = true
 

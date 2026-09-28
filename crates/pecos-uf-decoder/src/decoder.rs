@@ -191,6 +191,18 @@ pub struct UfDecoder {
 }
 
 impl UfDecoder {
+    /// Build in the edge order established alongside commit-window provenance.
+    ///
+    /// # Errors
+    /// Returns an error for unsupported observable widths or negative edge weights.
+    pub fn from_commit_window(
+        window: &pecos_decoder_core::window::CommitWindow,
+        config: UfDecoderConfig,
+    ) -> Result<Self, DecoderError> {
+        Self::check_non_negative_weights(window.matching_graph())?;
+        Self::from_matching_graph(window.matching_graph(), config)
+    }
+
     /// Get the adjacency entries for a node (slice into CSR data).
     #[inline]
     fn adj(&self, node: usize) -> &[(usize, u32)] {
@@ -1122,6 +1134,12 @@ impl UfDecoder {
 
         self.grow_clusters();
         self.peel_correction()
+    }
+}
+
+impl pecos_decoder_core::EdgeDecoder for UfDecoder {
+    fn decode_to_edges(&mut self, syndrome: &[u8]) -> Result<Vec<usize>, DecoderError> {
+        self.decode_full_matching(syndrome).map(|(_, edges)| edges)
     }
 }
 

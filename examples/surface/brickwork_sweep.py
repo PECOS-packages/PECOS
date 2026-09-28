@@ -138,7 +138,7 @@ def build_t_injection_circuit(distance, _seed, patch, rounds_per_layer):
 
     # Memory → T injection → Memory
     rounds = max(rounds_per_layer, distance)
-    b.add_memory(["D", "A"], rounds=rounds, basis="Z")
+    b.add_memory("D", rounds=rounds, basis="Z")
     b.add_t_via_injection("D", "A", rounds_before=rounds, rounds_after=rounds)
     return b
 
@@ -433,8 +433,8 @@ def write_html_report(shard: BrickworkShard, path: Path, coherent_results=None) 
         "<li><code>unlimited</code> &mdash; Full-circuit logical-subgraph decoder. Maximum accuracy. "
         "Appropriate for Clifford circuits or offline analysis.</li>",
         "<li><code>windowed</code> / <code>10ms</code> &mdash; Windowed logical-subgraph decoder with "
-        "overlap buffers inside each per-observable subgraph. Bounded latency, full "
-        "accuracy with sufficient overlap.</li>",
+        "a budget-selected strategy. Inspect effective_windowing and fallback "
+        "diagnostics to determine whether it uses full subgraph decoding.</li>",
         "<li><code>100us</code> / <code>1us</code> &mdash; Tight budget. Windowed "
         "without overlap. Accuracy degrades; requires advanced techniques (ghost "
         "protocol) for improvement.</li>",

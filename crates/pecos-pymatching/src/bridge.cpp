@@ -438,7 +438,12 @@ rust::Vec<MatchedPair> PyMatchingGraph::decode_to_edges(
 
         // Call PyMatching's decode to edges
         std::vector<int64_t> edges;
-        pm::decode_detection_events_to_edges(*pimpl_->mwpm_, detections, edges);
+        if (pimpl_->enable_correlations_) {
+            pm::decode_detection_events_to_edges_with_edge_correlations(
+                *pimpl_->mwpm_, detections, edges);
+        } else {
+            pm::decode_detection_events_to_edges(*pimpl_->mwpm_, detections, edges);
+        }
 
         // Convert to MatchedPair format
         rust::Vec<MatchedPair> edge_pairs;

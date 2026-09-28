@@ -92,6 +92,16 @@ impl SeleneSimulator {
                         phi: angle(1),
                     }));
                 }
+                GateType::RXYXY2Q => {
+                    operations.extend(qubits.as_chunks::<2>().0.iter().map(|pair| {
+                        Operation::RPPGate {
+                            qubit_id_1: pair[0],
+                            qubit_id_2: pair[1],
+                            theta: angle(0),
+                            phi: angle(1),
+                        }
+                    }));
+                }
                 GateType::RZZ => {
                     operations.extend(qubits.as_chunks::<2>().0.iter().map(|pair| {
                         Operation::RZZGate {

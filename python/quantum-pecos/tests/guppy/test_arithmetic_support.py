@@ -2,6 +2,8 @@
 
 import pytest
 from guppylang import guppy
+from guppylang.std.builtins import array
+from guppylang.std.builtins import result as record_result
 from guppylang.std.quantum import h, measure, qubit, x
 from pecos import Guppy, sim
 from pecos_rslib import state_vector
@@ -20,13 +22,13 @@ def test_integer_arithmetic() -> None:
         if result > 3:  # 5 > 3, so H gate applied
             h(q)
 
-        return measure(q).read()
+        output_value = measure(q).read()
+        record_result("outcome", output_value)
+        return output_value
 
     results = sim(Guppy(quantum_add)).qubits(1).quantum(state_vector()).seed(42).run(10).to_dict()
 
-    raw_measurements = results["measurements"]
-    # For single bool return, measurements is [[1], [0], ...]
-    measurements = [m[-1] if isinstance(m, list) else m for m in raw_measurements]
+    measurements = results["outcome"]
     assert len(measurements) == 10
     # H gate should give mix of 0s and 1s
     assert 0 in measurements
@@ -43,12 +45,13 @@ def test_boolean_operations() -> None:
         h(q1)
         m1 = measure(q1).read()
         m2 = measure(q2).read()
-        return m1 and not m2
+        output_value = m1 and not m2
+        record_result("outcome", output_value)
+        return output_value
 
     results = sim(Guppy(quantum_bool_logic)).qubits(2).quantum(state_vector()).seed(42).run(10).to_dict()
 
-    raw_measurements = results["measurements"]
-    measurements = [m[-1] if isinstance(m, list) else m for m in raw_measurements]
+    measurements = results["outcome"]
     assert len(measurements) == 10
 
 
@@ -64,12 +67,13 @@ def test_integer_comparisons() -> None:
         if value > threshold:
             h(q)
 
-        return measure(q).read()
+        output_value = measure(q).read()
+        record_result("outcome", output_value)
+        return output_value
 
     results = sim(Guppy(quantum_compare)).qubits(1).quantum(state_vector()).seed(42).run(10).to_dict()
 
-    raw_measurements = results["measurements"]
-    measurements = [m[-1] if isinstance(m, list) else m for m in raw_measurements]
+    measurements = results["outcome"]
     assert len(measurements) == 10
     assert 0 in measurements
     assert 1 in measurements
@@ -89,12 +93,13 @@ def test_arithmetic_in_loop() -> None:
                 h(q)
             count = count + 1
 
-        return measure(q).read()
+        output_value = measure(q).read()
+        record_result("outcome", output_value)
+        return output_value
 
     results = sim(Guppy(quantum_loop)).qubits(1).quantum(state_vector()).seed(42).run(10).to_dict()
 
-    raw_measurements = results["measurements"]
-    measurements = [m[-1] if isinstance(m, list) else m for m in raw_measurements]
+    measurements = results["outcome"]
     assert len(measurements) == 10
     assert 0 in measurements
     assert 1 in measurements
@@ -113,20 +118,18 @@ def test_chained_comparisons() -> None:
         if a < c and c < b:  # 10 < 15 < 20 is True
             h(q)
 
-        return measure(q).read()
+        output_value = measure(q).read()
+        record_result("outcome", output_value)
+        return output_value
 
     results = sim(Guppy(quantum_chain)).qubits(1).quantum(state_vector()).seed(42).run(10).to_dict()
 
-    raw_measurements = results["measurements"]
-    measurements = [m[-1] if isinstance(m, list) else m for m in raw_measurements]
+    measurements = results["outcome"]
     assert len(measurements) == 10
     assert 0 in measurements
     assert 1 in measurements
 
 
-@pytest.mark.skip(
-    reason="Conditional quantum ops based on measurement results cause register count mismatch",
-)
 def test_arithmetic_with_measurements() -> None:
     """Test using measurement results in arithmetic."""
 
@@ -145,12 +148,13 @@ def test_arithmetic_with_measurements() -> None:
         if m1 or m2:  # At least one is True
             h(q3)
 
-        return measure(q3).read()
+        output_value = measure(q3).read()
+        record_result("outcome", output_value)
+        return output_value
 
     results = sim(Guppy(quantum_measure_math)).qubits(3).quantum(state_vector()).seed(42).run(20).to_dict()
 
-    raw_measurements = results["measurements"]
-    measurements = [m[-1] if isinstance(m, list) else m for m in raw_measurements]
+    measurements = results["outcome"]
     assert len(measurements) == 20
     # Should have mix unless both m1 and m2 are 0 (25% chance)
 
@@ -170,7 +174,9 @@ def test_euclidean_division_semantics() -> None:
         a = -3
         if a % 2 == 1:
             x(q)
-        return measure(q).read()
+        output_value = measure(q).read()
+        record_result("outcome", output_value)
+        return output_value
 
     @guppy
     def euclid_div() -> bool:
@@ -178,12 +184,13 @@ def test_euclidean_division_semantics() -> None:
         a = -3
         if a // 2 == -2:
             x(q)
-        return measure(q).read()
+        output_value = measure(q).read()
+        record_result("outcome", output_value)
+        return output_value
 
     for prog in (euclid_mod, euclid_div):
         results = sim(Guppy(prog)).qubits(1).quantum(state_vector()).seed(1).run(3).to_dict()
-        raw_measurements = results["measurements"]
-        measurements = [m[-1] if isinstance(m, list) else m for m in raw_measurements]
+        measurements = results["outcome"]
         assert measurements == [1, 1, 1], f"Euclidean semantics violated: {measurements}"
 
 
@@ -197,11 +204,12 @@ def test_shift_semantics() -> None:
         b = 16
         if (a << 3) == 8 and (b >> 2) == 4:
             x(q)
-        return measure(q).read()
+        output_value = measure(q).read()
+        record_result("outcome", output_value)
+        return output_value
 
     results = sim(Guppy(shifts)).qubits(1).quantum(state_vector()).seed(1).run(3).to_dict()
-    raw_measurements = results["measurements"]
-    measurements = [m[-1] if isinstance(m, list) else m for m in raw_measurements]
+    measurements = results["outcome"]
     assert measurements == [1, 1, 1], f"shift semantics violated: {measurements}"
 
 
@@ -216,11 +224,12 @@ def test_zero_iteration_loop() -> None:
             count = count + 1
         if count == 0:
             x(q)
-        return measure(q).read()
+        output_value = measure(q).read()
+        record_result("outcome", output_value)
+        return output_value
 
     results = sim(Guppy(zero_iters)).qubits(1).quantum(state_vector()).seed(1).run(3).to_dict()
-    raw_measurements = results["measurements"]
-    measurements = [m[-1] if isinstance(m, list) else m for m in raw_measurements]
+    measurements = results["outcome"]
     assert measurements == [1, 1, 1], f"zero-iteration loop misbehaved: {measurements}"
 
 
@@ -234,28 +243,34 @@ def test_division_by_zero_panics() -> None:
         b = 0
         if a // b == 0:
             x(q)
-        return measure(q).read()
+        output_value = measure(q).read()
+        record_result("outcome", array(output_value))
+        return output_value
 
-    with pytest.raises(RuntimeError, match="division by zero"):
+    with pytest.raises(RuntimeError, match="Attempted division by 0"):
         sim(Guppy(div_zero)).qubits(1).quantum(state_vector()).seed(1).run(1).to_dict()
 
 
-def test_recursion_rejected_loudly() -> None:
-    """Recursive guppy functions must produce a clear engine error, not a
-    hang or silent truncation."""
+def test_recursion_executes() -> None:
+    """Finite recursion computes the sum 1 + 2 + 3 and controls an X gate."""
 
     @guppy
     def recurse(n: int) -> int:
         if n <= 0:
             return 0
-        return recurse(n - 1)
+        return n + recurse(n - 1)
 
     @guppy
     def recursive_main() -> bool:
         q = qubit()
-        if recurse(3) == 0:
+        correct = recurse(3) == 6
+        record_result("correct", correct)
+        if correct:
             x(q)
-        return measure(q).read()
+        output_value = measure(q).read()
+        record_result("outcome", output_value)
+        return output_value
 
-    with pytest.raises(RuntimeError, match="recursion is not supported"):
-        sim(Guppy(recursive_main)).qubits(1).quantum(state_vector()).seed(1).run(1).to_dict()
+    results = sim(Guppy(recursive_main)).qubits(1).quantum(state_vector()).seed(1).run(3).to_dict()
+    assert results["correct"] == [1, 1, 1]
+    assert results["outcome"] == [1, 1, 1]

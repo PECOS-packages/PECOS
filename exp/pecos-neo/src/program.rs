@@ -31,6 +31,7 @@
 //! ```no_run
 //! use pecos_neo::program::{CommandSource, ProgramRunner};
 //! use pecos_neo::prelude::*;
+//! use pecos_core::errors::PecosError;
 //! use pecos_simulators::SparseStab;
 //!
 //! // A simple repeat-until-success program
@@ -41,36 +42,37 @@
 //! }
 //!
 //! impl CommandSource for RepeatUntilSuccess {
-//!     fn next_commands(&mut self, outcomes: Option<&MeasurementOutcomes>) -> Option<CommandQueue> {
+//!     fn next_commands(&mut self, outcomes: Option<&MeasurementOutcomes>) -> Result<Option<CommandQueue>, PecosError> {
 //!         // Check if previous attempt succeeded
 //!         if let Some(outcomes) = outcomes {
 //!             if outcomes.get_bit(QubitId(0)) == Some(true) {
 //!                 self.succeeded = true;
-//!                 return None; // Done!
+//!                 return Ok(None); // Done!
 //!             }
 //!         }
 //!
 //!         if self.current_attempt >= self.max_attempts {
-//!             return None; // Give up
+//!             return Ok(None); // Give up
 //!         }
 //!
 //!         self.current_attempt += 1;
 //!
 //!         // Try again: prep, rotate, measure
-//!         Some(CommandBuilder::new()
+//!         Ok(Some(CommandBuilder::new()
 //!             .pz(&[0])
 //!             .h(&[0])
 //!             .mz(&[0])
-//!             .build())
+//!             .build()))
 //!     }
 //!
 //!     fn is_complete(&self) -> bool {
 //!         self.succeeded || self.current_attempt >= self.max_attempts
 //!     }
 //!
-//!     fn reset(&mut self) {
+//!     fn reset(&mut self) -> Result<(), PecosError> {
 //!         self.current_attempt = 0;
 //!         self.succeeded = false;
+//!         Ok(())
 //!     }
 //!
 //!     fn num_qubits(&self) -> usize { 1 }
@@ -82,6 +84,7 @@ use crate::extensible::GateDefinitions;
 use crate::noise::ComposableNoiseModel;
 use crate::outcome::MeasurementOutcomes;
 use crate::runner::{CircuitRunner, EventHandlers, GateOverrides};
+use pecos_core::errors::PecosError;
 use pecos_core::rng::RngManageable;
 use pecos_random::PecosRng;
 use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable};
@@ -100,13 +103,24 @@ pub trait CommandSource {
     /// # Returns
     /// * `Some(commands)` - The next batch of commands to execute
     /// * `None` - The program is complete
-    fn next_commands(&mut self, outcomes: Option<&MeasurementOutcomes>) -> Option<CommandQueue>;
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the source cannot generate the next command batch.
+    fn next_commands(
+        &mut self,
+        outcomes: Option<&MeasurementOutcomes>,
+    ) -> Result<Option<CommandQueue>, PecosError>;
 
     /// Check if the program is complete.
     fn is_complete(&self) -> bool;
 
     /// Reset the program state for a new shot.
-    fn reset(&mut self);
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the source cannot reset its state.
+    fn reset(&mut self) -> Result<(), PecosError>;
 
     /// Get the number of qubits required.
     fn num_qubits(&self) -> usize;
@@ -119,8 +133,12 @@ pub trait CommandSource {
     /// Sources without register data (static circuits, plain command
     /// queues) return `None`; their per-qubit bits live in
     /// `MeasurementOutcomes` instead.
-    fn shot_results(&self) -> Option<pecos_results::Shot> {
-        None
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the source cannot retrieve its shot results.
+    fn shot_results(&self) -> Result<Option<pecos_results::Shot>, PecosError> {
+        Ok(None)
     }
 }
 
@@ -194,10 +212,15 @@ impl<S: CliffordGateable> ProgramRunner<S> {
     /// The simulator is reset to |0>^n at the start of each shot, ensuring
     /// clean state for programs that don't explicitly prepare qubits.
     ///
-    /// # Panics
-    /// Panics if gate execution fails (e.g., an unsupported gate is encountered).
-    pub fn run_shot<P: CommandSource + ?Sized>(&mut self, program: &mut P) -> ProgramResult {
-        program.reset();
+    /// # Errors
+    ///
+    /// Returns an error if the command source cannot reset or produce commands,
+    /// or if the simulator cannot execute a command batch.
+    pub fn run_shot<P: CommandSource + ?Sized>(
+        &mut self,
+        program: &mut P,
+    ) -> Result<ProgramResult, PecosError> {
+        program.reset()?;
 
         // Reset simulator to |0>^n state at the start of each shot
         self.simulator.reset();
@@ -207,14 +230,11 @@ impl<S: CliffordGateable> ProgramRunner<S> {
         let mut last_outcomes: Option<MeasurementOutcomes> = None;
 
         loop {
-            let commands = program.next_commands(last_outcomes.as_ref());
+            let commands = program.next_commands(last_outcomes.as_ref())?;
 
             match commands {
                 Some(cmds) if !cmds.is_empty() => {
-                    let outcomes = self
-                        .runner
-                        .apply_circuit(&mut self.simulator, &cmds)
-                        .expect("core gates should not fail");
+                    let outcomes = self.runner.apply_circuit(&mut self.simulator, &cmds)?;
                     num_batches += 1;
 
                     for outcome in outcomes.iter() {
@@ -233,10 +253,10 @@ impl<S: CliffordGateable> ProgramRunner<S> {
             }
         }
 
-        ProgramResult {
+        Ok(ProgramResult {
             outcomes: all_outcomes,
             num_batches,
-        }
+        })
     }
 
     /// Get a reference to the underlying circuit runner.
@@ -321,7 +341,11 @@ impl<S: CliffordGateable + ArbitraryRotationGateable> ProgramRunner<S> {
 /// the concrete simulator type at compile time.
 pub trait DynProgramRunner: Send + Sync {
     /// Execute a single shot of the program.
-    fn run_shot(&mut self, source: &mut dyn CommandSource) -> ProgramResult;
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the command source or simulator fails.
+    fn run_shot(&mut self, source: &mut dyn CommandSource) -> Result<ProgramResult, PecosError>;
 
     /// Set the full seed for deterministic execution.
     fn set_full_seed(&mut self, seed: u64);
@@ -331,7 +355,7 @@ impl<S> DynProgramRunner for ProgramRunner<S>
 where
     S: CliffordGateable + RngManageable<Rng = PecosRng> + Send + Sync,
 {
-    fn run_shot(&mut self, source: &mut dyn CommandSource) -> ProgramResult {
+    fn run_shot(&mut self, source: &mut dyn CommandSource) -> Result<ProgramResult, PecosError> {
         ProgramRunner::run_shot(self, source)
     }
 
@@ -367,12 +391,15 @@ impl StaticProgram {
 }
 
 impl CommandSource for StaticProgram {
-    fn next_commands(&mut self, _outcomes: Option<&MeasurementOutcomes>) -> Option<CommandQueue> {
+    fn next_commands(
+        &mut self,
+        _outcomes: Option<&MeasurementOutcomes>,
+    ) -> Result<Option<CommandQueue>, PecosError> {
         if self.executed {
-            None
+            Ok(None)
         } else {
             self.executed = true;
-            Some(self.commands.clone())
+            Ok(Some(self.commands.clone()))
         }
     }
 
@@ -380,8 +407,9 @@ impl CommandSource for StaticProgram {
         self.executed
     }
 
-    fn reset(&mut self) {
+    fn reset(&mut self) -> Result<(), PecosError> {
         self.executed = false;
+        Ok(())
     }
 
     fn num_qubits(&self) -> usize {
@@ -416,21 +444,25 @@ impl RepeatedProgram {
 }
 
 impl CommandSource for RepeatedProgram {
-    fn next_commands(&mut self, _outcomes: Option<&MeasurementOutcomes>) -> Option<CommandQueue> {
+    fn next_commands(
+        &mut self,
+        _outcomes: Option<&MeasurementOutcomes>,
+    ) -> Result<Option<CommandQueue>, PecosError> {
         if self.current_round >= self.num_rounds {
-            return None;
+            return Ok(None);
         }
 
         self.current_round += 1;
-        Some(self.round_commands.clone())
+        Ok(Some(self.round_commands.clone()))
     }
 
     fn is_complete(&self) -> bool {
         self.current_round >= self.num_rounds
     }
 
-    fn reset(&mut self) {
+    fn reset(&mut self) -> Result<(), PecosError> {
         self.current_round = 0;
+        Ok(())
     }
 
     fn num_qubits(&self) -> usize {
@@ -483,8 +515,11 @@ impl<F> CommandSource for ConditionalProgram<F>
 where
     F: Fn(&MeasurementOutcomes) -> Option<CommandQueue>,
 {
-    fn next_commands(&mut self, outcomes: Option<&MeasurementOutcomes>) -> Option<CommandQueue> {
-        match self.state {
+    fn next_commands(
+        &mut self,
+        outcomes: Option<&MeasurementOutcomes>,
+    ) -> Result<Option<CommandQueue>, PecosError> {
+        Ok(match self.state {
             ConditionalState::Initial => {
                 self.state = ConditionalState::Branching;
                 Some(self.initial_commands.clone())
@@ -494,15 +529,16 @@ where
                 outcomes.and_then(|o| (self.branch_fn)(o))
             }
             ConditionalState::Complete => None,
-        }
+        })
     }
 
     fn is_complete(&self) -> bool {
         self.state == ConditionalState::Complete
     }
 
-    fn reset(&mut self) {
+    fn reset(&mut self) -> Result<(), PecosError> {
         self.state = ConditionalState::Initial;
+        Ok(())
     }
 
     fn num_qubits(&self) -> usize {
@@ -524,7 +560,7 @@ mod tests {
         let mut program = StaticProgram::new(commands, 1);
         let mut runner = ProgramRunner::new(SparseStab::with_seed(1, 42)).with_seed(42);
 
-        let result = runner.run_shot(&mut program);
+        let result = runner.run_shot(&mut program).unwrap();
 
         assert_eq!(result.num_batches, 1);
         assert_eq!(result.outcomes.len(), 1);
@@ -538,7 +574,7 @@ mod tests {
         let mut program = RepeatedProgram::new(round_commands, 3, 1);
         let mut runner = ProgramRunner::new(SparseStab::with_seed(1, 42)).with_seed(42);
 
-        let result = runner.run_shot(&mut program);
+        let result = runner.run_shot(&mut program).unwrap();
 
         assert_eq!(result.num_batches, 3);
         // 3 measurements (one per round)
@@ -562,7 +598,7 @@ mod tests {
         let mut program = ConditionalProgram::new(initial, branch, 1);
         let mut runner = ProgramRunner::new(SparseStab::with_seed(1, 42)).with_seed(42);
 
-        let result = runner.run_shot(&mut program);
+        let result = runner.run_shot(&mut program).unwrap();
 
         // Either 1 or 2 batches depending on measurement outcome
         assert!(result.num_batches >= 1 && result.num_batches <= 2);
@@ -575,11 +611,11 @@ mod tests {
         let mut runner = ProgramRunner::new(SparseStab::with_seed(1, 42)).with_seed(42);
 
         // Run first shot
-        let result1 = runner.run_shot(&mut program);
+        let result1 = runner.run_shot(&mut program).unwrap();
         assert_eq!(result1.num_batches, 1);
 
         // Run second shot (program should reset)
-        let result2 = runner.run_shot(&mut program);
+        let result2 = runner.run_shot(&mut program).unwrap();
         assert_eq!(result2.num_batches, 1);
     }
 
@@ -597,7 +633,7 @@ mod tests {
         let mut program = StaticProgram::new(commands, 2);
         let mut runner = ProgramRunner::new(SparseStab::with_seed(2, 42)).with_seed(42);
 
-        let result = runner.run_shot(&mut program);
+        let result = runner.run_shot(&mut program).unwrap();
 
         // Bell state: both measurements should be correlated
         let o0 = result.outcomes.get_bit(QubitId(0));

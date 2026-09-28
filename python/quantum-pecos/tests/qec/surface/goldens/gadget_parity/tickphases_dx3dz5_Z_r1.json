@@ -1,0 +1,92 @@
+[
+ {
+  "phase": "prep_data",
+  "syndrome_round": null,
+  "cx_round": null
+ },
+ {
+  "phase": "init_syndrome_prep",
+  "syndrome_round": -1,
+  "cx_round": null
+ },
+ {
+  "phase": "syndrome_h_pre",
+  "syndrome_round": -1,
+  "cx_round": null
+ },
+ {
+  "phase": "cx_round_1",
+  "syndrome_round": -1,
+  "cx_round": 1
+ },
+ {
+  "phase": "cx_round_2",
+  "syndrome_round": -1,
+  "cx_round": 2
+ },
+ {
+  "phase": "cx_round_3",
+  "syndrome_round": -1,
+  "cx_round": 3
+ },
+ {
+  "phase": "cx_round_4",
+  "syndrome_round": -1,
+  "cx_round": 4
+ },
+ {
+  "phase": "syndrome_h_post",
+  "syndrome_round": -1,
+  "cx_round": 4
+ },
+ {
+  "phase": "measure_ancilla",
+  "syndrome_round": -1,
+  "cx_round": 4
+ },
+ {
+  "phase": "syndrome_prep",
+  "syndrome_round": 0,
+  "cx_round": null
+ },
+ {
+  "phase": "syndrome_h_pre",
+  "syndrome_round": 0,
+  "cx_round": null
+ },
+ {
+  "phase": "cx_round_1",
+  "syndrome_round": 0,
+  "cx_round": 1
+ },
+ {
+  "phase": "cx_round_2",
+  "syndrome_round": 0,
+  "cx_round": 2
+ },
+ {
+  "phase": "cx_round_3",
+  "syndrome_round": 0,
+  "cx_round": 3
+ },
+ {
+  "phase": "cx_round_4",
+  "syndrome_round": 0,
+  "cx_round": 4
+ },
+ {
+  "phase": "syndrome_h_post",
+  "syndrome_round": 0,
+  "cx_round": 4
+ },
+ {
+  "phase": "measure_ancilla",
+  "syndrome_round": 0,
+  "cx_round": 4
+ },
+ {
+  "phase": "measure_data",
+  "syndrome_round": 0,
+  "cx_round": 4
+ }
+]

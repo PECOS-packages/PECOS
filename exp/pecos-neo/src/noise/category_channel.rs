@@ -124,6 +124,10 @@ impl CategoryBasedChannel {
 }
 
 impl NoiseChannel for CategoryBasedChannel {
+    fn event_kinds(&self) -> super::EventKinds {
+        super::EventKinds::of(super::NoiseEventKind::AfterGate)
+    }
+
     fn responds_to(&self, event: &NoiseEvent<'_>) -> bool {
         // We respond to AfterGate events, but we need context to check category.
         // Return true here and do the check in apply().
@@ -137,17 +141,14 @@ impl NoiseChannel for CategoryBasedChannel {
         rng: &mut PecosRng,
     ) -> NoiseResponse {
         let NoiseEvent::AfterGate {
-            gate_type,
-            qubits,
-            gate_id,
-            ..
+            qubits, gate_id, ..
         } = event
         else {
             return NoiseResponse::None;
         };
 
         // Skip noiseless gates
-        if ctx.is_noiseless(*gate_type) {
+        if ctx.is_noiseless_operation(event) {
             return NoiseResponse::None;
         }
 

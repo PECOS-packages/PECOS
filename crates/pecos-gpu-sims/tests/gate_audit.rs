@@ -19,7 +19,9 @@ use pecos_gpu_sims::{GpuStateVec32, GpuStateVec64};
 use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, StateVecSoA};
 
 const TOL_F32: f64 = 1e-3;
-const TOL_F64: f64 = 1e-5;
+// f64 roundoff only. Any f32 value leaking into the f64 path shows up at 1e-8
+// or worse, so a looser bound would hide exactly that defect.
+const TOL_F64: f64 = 1e-10;
 
 // --- CPU reference ---
 

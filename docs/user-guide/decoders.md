@@ -26,6 +26,19 @@ The decoder system in PECOS is designed around modularity and performance:
 - **Unified API**: Consistent interface across different decoder implementations
 - **Cross-Language Support**: Some decoders available in both Python and Rust, others Rust-only
 
+## DEM text grammar
+
+PECOS reads flat Stim detector-error-model text using a strict subset of Stim's grammar:
+
+- Instruction names and detector/observable target prefixes are case-insensitive; tags and inline `#` comments are supported.
+- Targets and `^` separators require spacing; separators cannot be first, last, or adjacent.
+- PECOS rejects a detector or observable repeated within one component of an error instruction, and an identical component repeated within one instruction, even though Stim accepts them, because it almost always indicates a mistake. Extension `TP` targets follow the same rule. Components are identical when they contain the same set of targets regardless of order: `D0 D1 ^ D1 D0` is rejected, while `D0 D1 L0 ^ D0 D1 L1` contains two distinct components. A target may appear in several components of a decomposed mechanism.
+- Parenthesized arguments immediately follow the name or tag. `error` requires one probability in `[0, 1]`, with `error()` meaning zero; detector and logical-observable declarations require exactly one target of the appropriate kind.
+- Grammar is validated per instruction; block balance is not checked by the tokenizer. PECOS readers requiring flat DEMs reject `repeat`, `shift_detectors`, and closing braces with a flattening error, including stray braces and unclosed repeat blocks.
+- PECOS extension targets and metadata statements require an explicit opt-in: `ParsedDem` and `DetectorErrorModel::with_pecos_dem_metadata` enable the whole PECOS superset, including `TP` targets and JSON metadata statements.
+
+Python constructors report tokenizer errors as `ValueError` with the `Invalid DEM syntax:` prefix. Stim-backed constructors such as `PyMatchingDecoder` and `TesseractDecoder` validate the original text before passing it to their backend, which supports loop expansion and retains its native errors for backend-specific constraints.
+
 ## Available Decoders
 
 ### Python Decoders
@@ -40,6 +53,7 @@ The following decoder APIs and supporting types are publicly re-exported from
 | `PyMatchingDecoder` | Graph-like DEM text or `CheckMatrix` | PyMatching minimum-weight perfect matching, with optional correlated decoding. |
 | `FusionBlossomDecoder` | Check matrix, standard-code parameters, or a manual graph | Pure-Rust minimum-weight perfect matching. |
 | `TesseractDecoder` | DEM text | Search-based decoder that accepts raw hyperedges. |
+| `TesseractTrellisDecoder` | DEM text | Sums probability mass over a beam of partial syndromes and reports a per-shot observable probability; accepts at most one observable and a 256-detector active frontier. The probability and `low_confidence` flag come only from this class; the `tesseract_trellis()` spec path yields the observable mask. |
 | `DemAwareDecoder` | DEM text | Maps DEM mechanisms and observables onto BP-OSD and other check-matrix decoders. |
 | `BpOsdBuilder` / `BpOsdDecoder` | `SparseMatrix` check matrix or DEM text | Belief propagation with ordered-statistics post-processing. |
 | `BpLsdBuilder` / `BpLsdDecoder` | `SparseMatrix` check matrix or DEM text | Belief propagation with localized-statistics post-processing. |
@@ -47,7 +61,9 @@ The following decoder APIs and supporting types are publicly re-exported from
 | `RelayBpBuilder` / `RelayBpDecoder` | Dense check matrix and error priors, or DEM text | Relay belief propagation. |
 | `UnionFindBuilder` / `UnionFindDecoder` | `SparseMatrix` check matrix or DEM text | Union-find decoding with inversion or peeling. |
 | `CheckMatrix` / `SparseMatrix` | Dense or coordinate-form matrix data | Matrix containers used by matching and LDPC decoder constructors. |
-| `MwpmResult` / `BpResult` / `TesseractResult` | Decoder output | Result objects for matching, belief-propagation, and Tesseract decoders. |
+| `MwpmResult` / `BpResult` / `TesseractResult` / `TesseractTrellisResult` | Decoder output | Result objects for matching, belief-propagation, and Tesseract decoders. |
+
+The experimental `frontier()` and `bp_trellis()` factories are not part of this table: they import from `pecos.decoders` only when the optional `pecos-rslib-exp` package is installed, and are described in the [Rust-backed Frontier](#rust-backed-frontier-batch-decoding) and [Rust-backed BP-Trellis](#rust-backed-bp-trellis-batch-decoding) sections below.
 
 Python decoder inputs name their encoding explicitly: use
 `decode_syndrome(...)` for a dense detector vector and
@@ -331,6 +347,120 @@ match decoder.decode(&syndrome.view()) {
    - Use multiple threads for batch decoding
    - Consider memory layout for cache efficiency
 
+## Rust-backed Frontier batch decoding
+
+Install the optional `pecos-rslib-exp` package for this section and BP-Trellis
+below. Standard `pecos.decoders` imports do not load the experimental extension.
+The explicit `from pecos.decoders import frontier, bp_trellis` convenience import
+loads it lazily and raises an actionable `ImportError` if it is unavailable.
+Experimental factories are excluded from wildcard imports. Their specifications
+work with `SampleBatch.decode(...)` and `DemSampler.decode(...)`; the standard
+`DecoderSpec.parse` strings and composite-spec factories do not load optional
+providers. The experimental calls cross a Python adapter at each shot, with
+native model construction and decoding releasing the GIL.
+
+```python
+from pecos_rslib_exp import frontier
+from pecos_rslib.qec import SampleBatch
+
+dem = "error(0.1) D0 D1 D2 L0\n"
+batch = SampleBatch([[1, 1, 1], [0, 0, 0]], [1, 0])
+result = batch.decode(dem, frontier(k=64), workers=2, predictions=True)
+assert result.predictions == [1, 0]
+assert result.num_errors == 0
+```
+
+Frontier accepts raw DEMs, including hyperedges. `workers=None` selects the
+worker count automatically; `workers=1` runs sequentially. Parallel execution
+releases the Python GIL and preserves shot order. At most one Rust decoder per
+worker is alive at a time, so more workers and larger `k` increase memory use.
+`SampleBatch.decode(...)` builds exactly one decoder per worker;
+`DemSampler.decode(...)` builds one up front to check dimensions and then one per
+scheduled group of sampling chunks, which can be several times the worker count
+on a long run, so a model that is slow to construct pays that cost more than
+once per worker there.
+
+Options match `pecos_rslib_exp.FrontierDecoder.from_dem`: `k`, `delta`,
+`score_alpha`, `bp_score_iterations`, `column_order`, `merge_indistinguishable`,
+`metric_mode`, and `int_metric_scale`. The default ordering is
+`"deadline_reorder"`; `"time_order"`, `"backward_deadline_reorder"`, and explicit
+column permutations are also accepted. Frontier remains experimental, and
+pruning can make predictions approximate. For per-shot logical masses, pruning
+status, and complementary gaps, use the direct experimental binding.
+
+## Rust-backed BP-Trellis batch decoding
+
+```python
+from pecos_rslib_exp import bp_trellis
+from pecos_rslib.qec import SampleBatch
+
+dem = "error(0.1) D0 D1 D2 L0\n"
+batch = SampleBatch([[1, 1, 1], [0, 0, 0]], [1, 0])
+spec = bp_trellis(
+    k=8,
+    delta=100.0,
+    score_alpha=0.8,
+    bp_score_iterations=5,
+    merge_indistinguishable=True,
+    ordering="deadline",
+    escalation=[(64, 100.0)],
+)
+result = batch.decode(dem, spec, workers=2, predictions=True)
+assert result.predictions == [1, 0]
+assert result.num_errors == 0
+```
+
+The ladder uses one engine model and prepares each shot once, including BP.
+`escalation=[(k, delta), ...]` chooses both pruning parameters per rung;
+`escalation_ks=[k, ...]` is shorthand for rungs at the base `delta`. Pass only
+one ladder keyword. The default ladder is empty. Rungs need not be monotone,
+and an exact base cannot have a ladder. Rungs run only after a no-path attempt
+that dropped states: never after a successful but wrong prediction, and never
+after a residual or infeasible no-path.
+
+### Recommended ladder
+
+The default ladder is empty so that the per-shot cost of a configuration is
+exactly what it says. When a no-path shot should be retried rather than
+reported, the evidence-backed setting is one rung at `k = 64` with the base
+`delta`, as in the example above. On the bivariate-bicycle 144 corpus at
+physical error rate 0.003, a `4 -> 64` ladder reached 8 failures per 1000 shots
+at 49 ms per shot, against 10 failures at 101 ms for a single `k = 16`; an
+`8 -> 64` ladder reached 0 failures per 1000 at 72 ms per shot at rate 0.002.
+On the rotated surface code at distance 5 no shot ever escalated, so the rung
+costs nothing there. A ladder never rescues a confidently wrong prediction,
+only a no-path, and a fully exact configuration (`k` unbounded, `delta`
+infinite) exhausted memory on that corpus, so the last rung should stay
+finite.
+
+The direct `BpTrellisDecoder.decode_syndrome`, `decode_from_defects`, and
+`decode_batch(shots, workers=1)` methods accept `on_no_path="raise"` (default)
+or `"report"`. Report mode returns a `BpTrellisNoPath` in place for each failed
+shot, preserving batch order. Its `cause` is `"residual"` when a detector's
+residual cannot be changed, `"infeasible"` when an attempt proves there is no
+path without pruning, or `"exhausted"` when all attempts fail after pruning.
+Residual and infeasible outcomes skip remaining rungs. Other errors still raise.
+
+Both outcome classes expose `no_path`, `transitions`, `bp_runs`, and
+`bp_seconds`. Only a decoded result exposes `observable_flips`; a report exposes
+`placeholder_flips` instead, the forced contribution of probability-one
+mechanisms, including wide observables. The names differ on purpose, so code
+written for a correction raises `AttributeError` on a report rather than
+silently consuming a placeholder. The report also exposes `detector` (only for
+residual) and `rungs_tried`.
+BP time is counted once, while transitions sum all attempts.
+The `bp_trellis(...)` spec route remains strict and accepts no `on_no_path`.
+
+`ordering` also accepts `"backward_deadline"`, `"time_order"`, or an explicit
+mechanism permutation. BP-Trellis uses floating-point coset masses and does not
+expose Frontier's integer metric options.
+
+Like Frontier, BP-Trellis accepts raw hyperedges and arbitrary-width observables,
+releases the GIL during batch decoding, and supports automatic worker selection
+and `DemSampler.decode(...)`. It remains experimental. Use
+`pecos_rslib_exp.BpTrellisDecoder` for per-shot confidence, pruning status, and
+retry telemetry; the unified batch result returns predictions and aggregate scores.
+
 ## Hyperedge models and matching decoders
 
 Matching-style decoders (PyMatching, Fusion Blossom and its perturbed
@@ -350,8 +480,8 @@ hyperedges such as bp_osd or tesseract.
 ```
 
 Decode such a model with a decoder that represents hyperedges directly --
-`bp_osd()` or `tesseract()` -- or supply a decomposed projection (a model
-written with `^` separators passes: each component is graphlike). See
+`bp_osd()`, `tesseract()`, `tesseract_trellis()`, `frontier()`, or `bp_trellis()` -- or supply a
+decomposed projection (a model written with `^` separators passes: each component is graphlike). See
 [Experimental Decoders](../experimental/decoders.md) for the Frontier and
 BP-Trellis decoders, which additionally report a per-shot complementary gap,
 and for provenance-based decomposition of a hyperedge model into a graphlike

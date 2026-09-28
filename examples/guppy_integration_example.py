@@ -12,15 +12,15 @@ Workflow:
 
 Prerequisites:
 - Install quantum-pecos: pip install quantum-pecos
-- Build hugr-quantum-llvm compiler (or provide path to existing binary).
+- Selene's compiler package is installed with quantum-pecos.
 """
 
 import sys
-from pathlib import Path
 
 from guppylang import guppy
+from guppylang.std.builtins import array, result
 from guppylang.std.quantum import cx, h, measure, qubit
-from pecos._compilation import GuppyFrontend
+from pecos import Guppy, sim
 
 
 def example_bell_state() -> None:
@@ -40,58 +40,19 @@ def example_bell_state() -> None:
         m0 = measure(q0).read()
         m1 = measure(q1).read()
 
+        result("outcome", array(m0, m1))
         return (m0, m1)
 
     print("\n=== Bell State Example ===")
-    print("Guppy function:", bell_state.__name__)
+    print("Guppy function: bell_state")
     print("Expected: Correlated 00 or 11 outcomes")
 
-    # Set up paths to compilation tools
-    # These would need to be updated based on your installation
-    hugr_compiler = Path(
-        "../quantum-compilation-examples/hugr_quantum_llvm/target/release/hugr-to-llvm",
-    )
-    format_converter = Path("../quantum-compilation-examples/convert_hugr_format.py")
-
-    if not hugr_compiler.exists():
-        print(f"[WARNING] HUGR compiler not found at {hugr_compiler}")
-        print("Please build hugr-quantum-llvm or update the path")
-        return
-
-    if not format_converter.exists():
-        print(f"[WARNING] Format converter not found at {format_converter}")
-        print("Using compilation without format conversion")
-        format_converter = None
-
-    try:
-        # Create Guppy frontend
-        frontend = GuppyFrontend(
-            hugr_to_llvm_binary=hugr_compiler,
-            format_converter=format_converter,
-        )
-
-        # Compile and run
-        results = frontend.compile_and_run(bell_state, shots=100)
-
-        print(f"[OK] Executed {results['shots']} shots")
-        print(f"Results: {results['results'][:10]}...")  # Show first 10 results
-
-        # Analyze correlations
-        if results["results"]:
-            correlated = sum(1 for r in results["results"] if r[0] == r[1])
-            correlation_rate = correlated / len(results["results"])
-            print(f"Correlation rate: {correlation_rate:.2%}")
-            print("Expected: ~100% for ideal Bell state")
-
-    except FileNotFoundError as e:
-        print(f"[ERROR] File not found: {e}")
-        print("This is expected if compilation tools are not set up")
-    except RuntimeError as e:
-        print(f"[ERROR] Runtime error: {e}")
-        print("This is expected if compilation tools are not set up")
-    except Exception as e:
-        print(f"[ERROR] Unexpected error: {e}")
-        print("This is expected if compilation tools are not set up")
+    data = sim(Guppy(bell_state)).qubits(2).seed(42).run(100).to_dict()
+    outcomes = data["outcome"]
+    print("[OK] Executed 100 shots")
+    print(f"Results: {outcomes[:10]}...")
+    correlated = sum(left == right for left, right in outcomes)
+    print(f"Correlation rate: {correlated / len(outcomes):.2%}")
 
 
 def example_quantum_adder() -> None:
@@ -123,9 +84,7 @@ def main() -> int:
     print("\n" + "=" * 40)
     print("Examples complete!")
     print("\nFor full integration:")
-    print("1. Build hugr-quantum-llvm compiler")
-    print("2. Update paths in this script")
-    print("3. Run with: python guppy_integration_example.py")
+    print("Run with: python guppy_integration_example.py")
 
     return 0
 

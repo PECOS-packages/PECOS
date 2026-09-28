@@ -970,7 +970,9 @@ impl PySimNeoBuilder {
         }
 
         let mut sim = builder.build();
-        let results = sim.run();
+        let results = sim
+            .run()
+            .map_err(|error| pyo3::exceptions::PyRuntimeError::new_err(error.to_string()))?;
 
         let mut all_shots = Vec::with_capacity(shots);
         for shot_outcomes in &results.outcomes {
@@ -1015,7 +1017,8 @@ impl PySimNeoBuilder {
             .quantum(pecos_neo::tool::sparse_stab())
             .sampling(pecos_neo::tool::path_enumeration(max_measurements))
             .build()
-            .run();
+            .run()
+            .map_err(|error| pyo3::exceptions::PyRuntimeError::new_err(error.to_string()))?;
 
         let rows: Vec<Vec<u8>> = results
             .outcomes
@@ -1458,7 +1461,7 @@ impl PySimNeoBuilder {
             p_prep: noise_config.p_prep,
         };
 
-        let gates = commands_to_gates(&self.commands);
+        let gates = commands_to_gates(&self.commands)?;
         let generator = select_generator(method, noise_config.idle_rz_angle);
 
         let (shots, _) = self.resolved_monte_carlo("meas_sampling")?;
@@ -1476,29 +1479,11 @@ impl PySimNeoBuilder {
 }
 
 /// Convert CommandQueue to Vec<Gate> for EEG analysis.
-fn commands_to_gates(commands: &pecos_neo::command::CommandQueue) -> Vec<pecos_core::Gate> {
-    use pecos_core::{GateAngles, GateMeasIds, GateParams};
-
-    commands
-        .iter()
-        .map(|cmd| {
-            let qubits = cmd.qubits.iter().copied().collect();
-            let mut angles = GateAngles::new();
-            for &a in &cmd.angles {
-                angles.push(a);
-            }
-            // Convert pecos_neo::GateType to pecos_core::GateType
-            let gate_type: pecos_core::gate_type::GateType = cmd.gate_type.into();
-            Gate {
-                gate_type,
-                qubits,
-                angles,
-                params: GateParams::new(),
-                meas_ids: GateMeasIds::new(),
-                channel: None,
-            }
-        })
-        .collect()
+fn commands_to_gates(
+    commands: &pecos_neo::command::CommandQueue,
+) -> PyResult<Vec<pecos_core::Gate>> {
+    pecos_neo::adapter::command_queue_to_gates(commands)
+        .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))
 }
 
 // ============================================================================
@@ -1651,18 +1636,17 @@ fn build_rust_tick_circuit_from_gates(
                         )));
                     }
                     for pair in pairs {
-                        let lowered: Vec<Gate> = match gate_name.as_str() {
+                        let lowered = match gate_name.as_str() {
                             "CRX" => {
                                 pecos_core::controlled_rotations::lower_crx(angle, pair[0], pair[1])
-                                    .into()
                             }
                             "CRY" => {
                                 pecos_core::controlled_rotations::lower_cry(angle, pair[0], pair[1])
-                                    .into()
                             }
                             "CRZ" => {
                                 pecos_core::controlled_rotations::lower_crz(angle, pair[0], pair[1])
-                                    .into()
+                                    .into_iter()
+                                    .collect()
                             }
                             _ => unreachable!(),
                         };
@@ -1892,7 +1876,7 @@ fn build_gate_from_python(
     qubit_ids: &[pecos_core::QubitId],
 ) -> PyResult<pecos_core::Gate> {
     use pecos_core::gate_type::GateType;
-    use pecos_core::{Gate, GateAngles, GateMeasIds, GateParams};
+    use pecos_core::{Gate, GateAngles, GateParams};
 
     if gate_name == "Channel" {
         return Ok(Gate::channel(channel_expr_from_python_gate(gate)?));
@@ -1952,14 +1936,8 @@ fn build_gate_from_python(
         }
     }
 
-    Ok(Gate {
-        gate_type,
-        qubits: qubit_ids.iter().copied().collect(),
-        angles,
-        params: GateParams::new(),
-        meas_ids: GateMeasIds::new(),
-        channel: None,
-    })
+    Gate::try_new(gate_type, angles, GateParams::new(), qubit_ids.to_vec())
+        .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))
 }
 
 // ============================================================================
@@ -1997,6 +1975,7 @@ fn append_lowered_command(mut builder: CommandBuilder, gate: &Gate) -> PyResult<
 
     let qubits: Vec<usize> = gate.qubits.iter().map(pecos_core::QubitId::index).collect();
     builder = match gate.gate_type {
+        GateType::Z => builder.z(&qubits),
         GateType::H => builder.h(&qubits),
         GateType::SX => builder.sx(&qubits),
         GateType::SXdg => builder.sxdg(&qubits),
@@ -2182,25 +2161,24 @@ fn extract_commands(py_tc: &Bound<'_, PyAny>) -> PyResult<pecos_neo::command::Co
                         )));
                     }
                     for pair in pairs {
-                        let lowered: Vec<Gate> = match name.as_str() {
+                        let lowered = match name.as_str() {
                             "CRX" => pecos_core::controlled_rotations::lower_crx(
                                 angle,
                                 QubitId(pair[0]),
                                 QubitId(pair[1]),
-                            )
-                            .into(),
+                            ),
                             "CRY" => pecos_core::controlled_rotations::lower_cry(
                                 angle,
                                 QubitId(pair[0]),
                                 QubitId(pair[1]),
-                            )
-                            .into(),
+                            ),
                             "CRZ" => pecos_core::controlled_rotations::lower_crz(
                                 angle,
                                 QubitId(pair[0]),
                                 QubitId(pair[1]),
                             )
-                            .into(),
+                            .into_iter()
+                            .collect(),
                             _ => unreachable!(),
                         };
                         for lowered_gate in &lowered {

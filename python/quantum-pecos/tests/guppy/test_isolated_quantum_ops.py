@@ -7,6 +7,8 @@ to identify which specific operation causes the segfault.
 import pytest
 from guppylang import guppy
 from guppylang.std.angles import pi
+from guppylang.std.builtins import array
+from guppylang.std.builtins import result as record_result
 from guppylang.std.quantum import (
     ch,
     cx,
@@ -52,10 +54,12 @@ class TestIsolatedOps:
         def test() -> bool:
             q = qubit()
             h(q)
-            return measure(q).read()
+            output_value = measure(q).read()
+            record_result("outcome", output_value)
+            return output_value
 
         results = sim(Guppy(test)).qubits(10).quantum(state_vector()).seed(42).run(10)
-        assert len(results["measurements"]) == 10
+        assert len(results["outcome"]) == 10
 
     def test_single_x_gate(self) -> None:
         """Test just X gate."""
@@ -64,10 +68,12 @@ class TestIsolatedOps:
         def test() -> bool:
             q = qubit()
             x(q)
-            return measure(q).read()
+            output_value = measure(q).read()
+            record_result("outcome", output_value)
+            return output_value
 
         results = sim(Guppy(test)).qubits(10).quantum(state_vector()).seed(42).run(10)
-        assert all(r for r in results["measurements"])
+        assert all(r for r in results["outcome"])
 
     def test_single_y_gate(self) -> None:
         """Test just Y gate."""
@@ -76,10 +82,12 @@ class TestIsolatedOps:
         def test() -> bool:
             q = qubit()
             y(q)
-            return measure(q).read()
+            output_value = measure(q).read()
+            record_result("outcome", output_value)
+            return output_value
 
         results = sim(Guppy(test)).qubits(10).quantum(state_vector()).seed(42).run(10)
-        assert all(r for r in results["measurements"])
+        assert all(r for r in results["outcome"])
 
     def test_single_z_gate(self) -> None:
         """Test just Z gate."""
@@ -88,12 +96,14 @@ class TestIsolatedOps:
         def test() -> bool:
             q = qubit()
             z(q)
-            return measure(q).read()
+            output_value = measure(q).read()
+            record_result("outcome", output_value)
+            return output_value
 
         results = sim(Guppy(test)).qubits(10).quantum(state_vector()).seed(42).run(10)
-        measurements = results["measurements"]
+        measurements = results["outcome"]
         # Z on |0> -> |0>, so all measurements should be 0
-        assert all(m[0] == 0 for m in measurements)
+        assert all(m == 0 for m in measurements)
 
     def test_phase_gates_s_sdg(self) -> None:
         """Test S and S-dagger gates."""
@@ -104,12 +114,14 @@ class TestIsolatedOps:
             x(q)
             s(q)
             sdg(q)
-            return measure(q).read()
+            output_value = measure(q).read()
+            record_result("outcome", output_value)
+            return output_value
 
         results = sim(Guppy(test)).qubits(10).quantum(state_vector()).seed(42).run(10)
-        measurements = results["measurements"]
+        measurements = results["outcome"]
         # X on |0> -> |1>, S-Sdg is identity, so all measurements should be 1
-        assert all(m[0] == 1 for m in measurements)
+        assert all(m == 1 for m in measurements)
 
     def test_phase_gates_t_tdg(self) -> None:
         """Test T and T-dagger gates."""
@@ -120,12 +132,14 @@ class TestIsolatedOps:
             x(q)
             t(q)
             tdg(q)
-            return measure(q).read()
+            output_value = measure(q).read()
+            record_result("outcome", output_value)
+            return output_value
 
         results = sim(Guppy(test)).qubits(10).quantum(state_vector()).seed(42).run(10)
-        measurements = results["measurements"]
+        measurements = results["outcome"]
         # X on |0> -> |1>, T-Tdg is identity, so all measurements should be 1
-        assert all(m[0] == 1 for m in measurements)
+        assert all(m == 1 for m in measurements)
 
     def test_rotation_rx(self) -> None:
         """Test Rx rotation."""
@@ -134,12 +148,14 @@ class TestIsolatedOps:
         def test() -> bool:
             q = qubit()
             rx(q, pi)
-            return measure(q).read()
+            output_value = measure(q).read()
+            record_result("outcome", output_value)
+            return output_value
 
         results = sim(Guppy(test)).qubits(10).quantum(state_vector()).seed(42).run(10)
-        measurements = results["measurements"]
+        measurements = results["outcome"]
         # RX(pi) on |0> -> |1>, so all measurements should be 1
-        assert all(m[0] == 1 for m in measurements)
+        assert all(m == 1 for m in measurements)
 
     def test_rotation_ry(self) -> None:
         """Test Ry rotation."""
@@ -148,12 +164,14 @@ class TestIsolatedOps:
         def test() -> bool:
             q = qubit()
             ry(q, pi)
-            return measure(q).read()
+            output_value = measure(q).read()
+            record_result("outcome", output_value)
+            return output_value
 
         results = sim(Guppy(test)).qubits(10).quantum(state_vector()).seed(42).run(10)
-        measurements = results["measurements"]
+        measurements = results["outcome"]
         # RY(pi) on |0> -> |1>, so all measurements should be 1
-        assert all(m[0] == 1 for m in measurements)
+        assert all(m == 1 for m in measurements)
 
     def test_rotation_rz(self) -> None:
         """Test Rz rotation."""
@@ -162,12 +180,14 @@ class TestIsolatedOps:
         def test() -> bool:
             q = qubit()
             rz(q, pi)
-            return measure(q).read()
+            output_value = measure(q).read()
+            record_result("outcome", output_value)
+            return output_value
 
         results = sim(Guppy(test)).qubits(10).quantum(state_vector()).seed(42).run(10)
-        measurements = results["measurements"]
+        measurements = results["outcome"]
         # RZ on |0> -> |0>, so all measurements should be 0
-        assert all(m[0] == 0 for m in measurements)
+        assert all(m == 0 for m in measurements)
 
     def test_two_qubit_cx(self) -> None:
         """Test CX gate."""
@@ -178,11 +198,13 @@ class TestIsolatedOps:
             q2 = qubit()
             x(q1)
             cx(q1, q2)
-            return measure(q1).read(), measure(q2).read()
+            output_value = measure(q1).read(), measure(q2).read()
+            record_result("outcome", array(output_value[0], output_value[1]))
+            return output_value
 
         results = sim(Guppy(test)).qubits(10).quantum(state_vector()).seed(42).run(10)
         # Should get [1, 1] for both qubits (X on q1, then CX flips q2)
-        measurements = results["measurements"]
+        measurements = results["outcome"]
         assert all(m == [1, 1] for m in measurements)
 
     def test_two_qubit_cy(self) -> None:
@@ -194,11 +216,13 @@ class TestIsolatedOps:
             q2 = qubit()
             x(q1)
             cy(q1, q2)
-            return measure(q1).read(), measure(q2).read()
+            output_value = measure(q1).read(), measure(q2).read()
+            record_result("outcome", array(output_value[0], output_value[1]))
+            return output_value
 
         results = sim(Guppy(test)).qubits(10).quantum(state_vector()).seed(42).run(10)
         # CY with control=1 should flip target
-        measurements = results["measurements"]
+        measurements = results["outcome"]
         assert all(m == [1, 1] for m in measurements)
 
     def test_two_qubit_cz(self) -> None:
@@ -211,11 +235,13 @@ class TestIsolatedOps:
             x(q1)
             x(q2)
             cz(q1, q2)
-            return measure(q1).read(), measure(q2).read()
+            output_value = measure(q1).read(), measure(q2).read()
+            record_result("outcome", array(output_value[0], output_value[1]))
+            return output_value
 
         results = sim(Guppy(test)).qubits(10).quantum(state_vector()).seed(42).run(10)
         # Both qubits should be |1> (CZ only adds phase, no bit flip)
-        measurements = results["measurements"]
+        measurements = results["outcome"]
         assert all(m == [1, 1] for m in measurements)
 
     def test_two_qubit_ch(self) -> None:
@@ -226,11 +252,13 @@ class TestIsolatedOps:
             q1 = qubit()
             q2 = qubit()
             ch(q1, q2)
-            return measure(q1).read(), measure(q2).read()
+            output_value = measure(q1).read(), measure(q2).read()
+            record_result("outcome", array(output_value[0], output_value[1]))
+            return output_value
 
         results = sim(Guppy(test)).qubits(10).quantum(state_vector()).seed(42).run(10)
         # CH with control=0 does nothing, both stay |0>
-        measurements = results["measurements"]
+        measurements = results["outcome"]
         assert all(m == [0, 0] for m in measurements)
 
     def test_toffoli(self) -> None:
@@ -244,11 +272,13 @@ class TestIsolatedOps:
             x(q1)
             x(q2)
             toffoli(q1, q2, q3)
-            return measure(q1).read(), measure(q2).read(), measure(q3).read()
+            output_value = measure(q1).read(), measure(q2).read(), measure(q3).read()
+            record_result("outcome", array(output_value[0], output_value[1], output_value[2]))
+            return output_value
 
         results = sim(Guppy(test)).qubits(10).quantum(state_vector()).seed(42).run(10)
         # Both controls at |1>, target flips to |1>
-        measurements = results["measurements"]
+        measurements = results["outcome"]
         assert all(m == [1, 1, 1] for m in measurements)
 
     def test_reset_operation(self) -> None:
@@ -259,12 +289,14 @@ class TestIsolatedOps:
             q = qubit()
             x(q)
             reset(q)
-            return measure(q).read()
+            output_value = measure(q).read()
+            record_result("outcome", output_value)
+            return output_value
 
         results = sim(Guppy(test)).qubits(10).quantum(state_vector()).seed(42).run(10)
-        measurements = results["measurements"]
+        measurements = results["outcome"]
         # Reset should bring |1> back to |0>
-        assert all(m[0] == 0 for m in measurements)
+        assert all(m == 0 for m in measurements)
 
     def test_discard_operation(self) -> None:
         """Test discard operation."""
@@ -276,12 +308,14 @@ class TestIsolatedOps:
             discard(q1)
             q2 = qubit()
             x(q2)
-            return measure(q2).read()
+            output_value = measure(q2).read()
+            record_result("outcome", output_value)
+            return output_value
 
         results = sim(Guppy(test)).qubits(10).quantum(state_vector()).seed(42).run(10)
-        measurements = results["measurements"]
+        measurements = results["outcome"]
         # After discard, X on q2 gives |1>
-        assert all(m[0] == 1 for m in measurements)
+        assert all(m == 1 for m in measurements)
 
     def test_complex_sequence(self) -> None:
         """Test a more complex sequence of operations."""
@@ -307,10 +341,12 @@ class TestIsolatedOps:
             z(q4)
             result4 = measure(q4).read()
 
-            return result1, result2, result3, result4
+            output_value = result1, result2, result3, result4
+            record_result("outcome", array(output_value[0], output_value[1], output_value[2], output_value[3]))
+            return output_value
 
         results = sim(Guppy(test)).qubits(10).quantum(state_vector()).seed(42).run(10)
-        measurements = results["measurements"]
+        measurements = results["outcome"]
 
         for m in measurements:
             # m is now a list like [r1, r2, r3, r4]

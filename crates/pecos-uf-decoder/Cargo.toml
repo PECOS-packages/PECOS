@@ -12,6 +12,7 @@ categories.workspace = true
 description = "Fast syndrome-graph Union-Find decoder for PECOS"
 
 [dependencies]
+pecos-bp.workspace = true
 pecos-decoder-core.workspace = true
 pecos-random.workspace = true
 rayon.workspace = true

@@ -223,12 +223,20 @@ def workspace_sources(package: Package, errors: list[str]) -> set[str]:
     return names
 
 
-def check_cuda_extra_group(root_data: dict[str, Any], errors: list[str]) -> None:
+def check_cuda_extra_group(
+    root_data: dict[str, Any],
+    quantum_pecos: Package | None,
+    errors: list[str],
+) -> None:
     project = root_data.get("project", {})
     optional = project.get("optional-dependencies", {}) if isinstance(project, dict) else {}
     dependency_groups = root_data.get("dependency-groups", {})
     if not isinstance(optional, dict) or not isinstance(dependency_groups, dict):
         return
+    member_project = quantum_pecos.data.get("project", {}) if quantum_pecos is not None else {}
+    member_optional = member_project.get("optional-dependencies", {}) if isinstance(member_project, dict) else {}
+    if not isinstance(member_optional, dict):
+        member_optional = {}
 
     # The CUDA stack is split by toolkit major; each major must be defined as BOTH a
     # `[project.optional-dependencies]` extra AND a matching `[dependency-groups]`
@@ -237,9 +245,21 @@ def check_cuda_extra_group(root_data: dict[str, Any], errors: list[str]) -> None
     # cuda12 or cuda13 by the detected toolkit (cuda_python_group), so deleting either
     # the extra or the group breaks CUDA setup on the corresponding host -- a missing
     # side is an error, not a silent skip.
+    #
+    # The root lists spell out the packages instead of `quantum-pecos[cudaNN]`: a group
+    # whose entry is a workspace member's extra does not propagate that extra into the
+    # lock, so the group installed nothing (#834). The reference used to keep the root
+    # and quantum-pecos in step automatically; this check does that now.
     for cuda_name in ("cuda12", "cuda13"):
         cuda_extra = optional.get(cuda_name)
         cuda_group = dependency_groups.get(cuda_name)
+        member_extra = member_optional.get(cuda_name)
+        if quantum_pecos is not None and cuda_extra is not None and cuda_extra != member_extra:
+            fail(
+                errors,
+                f"pyproject.toml: [project.optional-dependencies].{cuda_name} must be identical to "
+                f"{rel(quantum_pecos.path)}: [project.optional-dependencies].{cuda_name}",
+            )
         if cuda_extra is None:
             fail(
                 errors,
@@ -416,7 +436,10 @@ def main() -> int:
             f"  found:    {sorted(members)}",
         )
 
-    check_cuda_extra_group(root.data, errors)
+    quantum_pecos = next((pkg for pkg in packages if pkg.normalized_name == "quantum-pecos"), None)
+    if quantum_pecos is None:
+        fail(errors, "python/quantum-pecos/pyproject.toml: not found among workspace packages")
+    check_cuda_extra_group(root.data, quantum_pecos, errors)
 
     for pkg in version_tracked:
         member = pkg in all_packages

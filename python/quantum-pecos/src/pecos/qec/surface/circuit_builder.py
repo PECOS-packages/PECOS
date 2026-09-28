@@ -150,6 +150,7 @@ class OpType(Enum):
 
     # Two-qubit gates
     CX = auto()  # CNOT
+    CZ = auto()  # Controlled Z
     SZZ = auto()  # sqrt ZZ
     SZZDG = auto()  # sqrt ZZ dagger
 
@@ -724,7 +725,7 @@ def _analyze_szz_forward_flow(ops: list[SurfaceCircuitStep]) -> SzzForwardFlowSu
             for q in op.qubits:
                 discharge_for_two_qubit(q, host_index, op)
             continue
-        if op.op_type == OpType.CX:
+        if op.op_type in {OpType.CX, OpType.CZ}:
             msg = "SZZ forward-flow analysis only supports SZZ/SZZdg two-qubit gates"
             raise ValueError(msg)
         if op.op_type == OpType.MEASURE:
@@ -856,7 +857,7 @@ def _lower_szz_forward_flow_ops(ops: list[SurfaceCircuitStep]) -> list[SurfaceCi
             append_prefix_ticks(virtual_steps, physical_steps)
             lowered.append(op)
             continue
-        if op.op_type == OpType.CX:
+        if op.op_type in {OpType.CX, OpType.CZ}:
             msg = "SZZ forward-flow lowering only supports SZZ/SZZdg two-qubit gates"
             raise ValueError(msg)
         if op.op_type == OpType.MEASURE:
@@ -951,6 +952,19 @@ def build_surface_code_circuit(
     if twirl is not None:
         twirl.validate_runtime_supported()
     twirl_site_schedule = None if twirl is None else twirl.site_schedule
+
+    if resolved_plan.interaction_basis == "cx" and twirl is None and clifford_frame_policy is None:
+        from pecos.qec.surface.gadgets import memory_gadgets
+
+        gadgets = memory_gadgets(
+            patch,
+            num_rounds,
+            basis,
+            round_order=cnot_round_order,
+            ancilla_budget=ancilla_budget,
+            ancilla_schedule=ancilla_schedule,
+        )
+        return [step for gadget in gadgets for step in gadget.steps], gadgets[0].allocations[0]
 
     # Qubit allocation layout. Under ancilla reuse, stabilizers map onto a
     # shared ancilla pool and different stabilizers can intentionally share the
@@ -1757,6 +1771,12 @@ class StimRenderer(CircuitRenderer):
         basis: str,
     ) -> str:
         """Render to Stim circuit string."""
+        if self.add_detectors and any(op.op_type == OpType.CZ for op in ops):
+            msg = (
+                "StimRenderer: detector annotation is unsupported for step lists with CZ "
+                "(the fold-transversal SZ layer)"
+            )
+            raise ValueError(msg)
         geom = patch.geometry
         num_x_anc = len(geom.x_stabilizers)
 
@@ -1809,9 +1829,9 @@ class StimRenderer(CircuitRenderer):
                 if self.p1 > 0:
                     lines.append(f"DEPOLARIZE1({self.p1}) {op.qubits[0]}")
 
-            elif op.op_type == OpType.CX:
+            elif op.op_type in {OpType.CX, OpType.CZ}:
                 c, t = op.qubits
-                lines.append(f"CX {c} {t}")
+                lines.append(f"{op.op_type.name} {c} {t}")
                 if self.p2 > 0:
                     lines.append(f"DEPOLARIZE2({self.p2}) {c} {t}")
 
@@ -1954,16 +1974,16 @@ class StimRenderer(CircuitRenderer):
 
 
 class GuppyRenderer(CircuitRenderer):
-    """Render circuit operations to Guppy source code.
+    """Generate a reusable Guppy module for the patch, independent of the input op list.
 
-    This renderer produces the same modular Guppy code structure as
-    pecos.guppy_gen.surface.generate_guppy_source(), ensuring consistency.
+    Default CX functions are rendered from physical gadgets. The module provides
+    both bases and factories accepting the desired number of rounds.
     """
 
     def render(
         self,
         _ops: list[SurfaceCircuitStep],
-        _allocation: QubitAllocation,
+        allocation: QubitAllocation,
         patch: SurfacePatch,
         _num_rounds: int,
         _basis: str,
@@ -1980,9 +2000,18 @@ class GuppyRenderer(CircuitRenderer):
         - Logical operator functions
         - Memory experiment factories (make_memory_z, make_memory_x)
         """
+        from pecos.guppy_gen.gadget_render import render_surface_gadget_module
         from pecos.guppy_gen.surface import generate_guppy_source
 
-        # Use the canonical Guppy generator to ensure identical output
+        ancillas = allocation.x_ancilla_qubits + allocation.z_ancilla_qubits
+        if len(set(ancillas)) < len(ancillas):
+            msg = "GuppyRenderer cannot honour ancilla_budget; use render_surface_gadget_module with ancilla_budget"
+            raise ValueError(msg)
+
+        resolved_plan = resolve_surface_check_plan(interaction_basis=interaction_basis)
+        if resolved_plan.interaction_basis == "cx":
+            return render_surface_gadget_module(patch)
+        # Other interaction configurations migrate to gadgets in a later slice.
         return generate_guppy_source(patch, interaction_basis=interaction_basis)
 
 
@@ -2043,6 +2072,9 @@ class DagCircuitRenderer(CircuitRenderer):
             elif op.op_type == OpType.CX:
                 circuit.cx([(op.qubits[0], op.qubits[1])])
 
+            elif op.op_type == OpType.CZ:
+                circuit.cz([(op.qubits[0], op.qubits[1])])
+
             elif op.op_type == OpType.SZZ:
                 circuit.szz([(op.qubits[0], op.qubits[1])])
 
@@ -2067,6 +2099,10 @@ class DagCircuitRenderer(CircuitRenderer):
                 )
                 raise NotImplementedError(msg)
 
+            else:
+                msg = f"Unsupported DagCircuit operation: {op.op_type.name}"
+                raise ValueError(msg)
+
         return circuit
 
 
@@ -2079,6 +2115,8 @@ class TickCircuitRenderer(CircuitRenderer):
 
     When qubit conflicts occur within a tick (same qubit used twice),
     a new tick is automatically created to maintain valid parallel structure.
+    Unlike logical_circuit._CircuitGenerator._emit_steps, this silent same-type
+    split is retained until the non-rotated schedule is fixed.
 
     Detector annotations (similar to Stim's DETECTOR and OBSERVABLE_INCLUDE)
     are stored as circuit metadata and preserved when converting to DagCircuit.
@@ -2132,6 +2170,9 @@ class TickCircuitRenderer(CircuitRenderer):
         - Tick-level: 'phase', 'syndrome_round', 'cx_round'
         - Gate-level: 'label', 'role'
         """
+        if self.add_detectors and any(op.op_type == OpType.CZ for op in ops):
+            msg = "TickCircuitRenderer: detector annotation is unsupported for step lists with CZ (fold-transversal SZ)"
+            raise ValueError(msg)
         import json
 
         from pecos_rslib.quantum import TickCircuit
@@ -2237,7 +2278,7 @@ class TickCircuitRenderer(CircuitRenderer):
                 metadata["touch_label"] = get_stabilizer_touch_label(
                     stabilizer_by_label[stab_label],
                     patch,
-                    data_qubit,
+                    allocation.data_qubits.index(data_qubit),
                 )
             if current_cx_round > 0:
                 metadata["cx_round_0based"] = current_cx_round - 1
@@ -2334,6 +2375,9 @@ class TickCircuitRenderer(CircuitRenderer):
                 elif "CX round" in op.label:
                     current_cx_round = int(op.label.split()[-1])
                     current_phase = f"cx_round_{current_cx_round}"
+                elif op.label in {"fold-transversal SZ layer", "fold-transversal SZdg layer"}:
+                    current_phase = "fold_sdg" if "SZdg" in op.label else "fold_s"
+                    current_cx_round = 0
                 elif "SZZ round" in op.label:
                     current_cx_round = int(op.label.split()[-1])
                     current_phase = f"szz_round_{current_cx_round}"
@@ -2478,6 +2522,13 @@ class TickCircuitRenderer(CircuitRenderer):
                     meta["label"] = op.label
                 apply_gate_metadata(tick, meta or None)
 
+            elif op.op_type == OpType.CZ:
+                qubits = op.qubits
+                tick = get_tick_for_qubits(qubits).cz([(qubits[0], qubits[1])])
+                mark_qubits_used(qubits)
+                # Fold pairs join data to data or ancilla to ancilla, not check touches.
+                apply_gate_metadata(tick, {"label": op.label} if op.label else None)
+
             elif op.op_type == OpType.SZZ:
                 qubits = op.qubits
                 tick = get_tick_for_qubits(qubits).szz([(qubits[0], qubits[1])])
@@ -2522,8 +2573,8 @@ class TickCircuitRenderer(CircuitRenderer):
                 elif op.label.startswith("final"):
                     if "final[0]" in op.label:
                         final_meas_start = meas_count
-                    # Track all final measurement refs by data qubit
-                    final_meas_refs_by_qubit[q] = meas_refs
+                    # Geometry and typed annotation supports use register indices.
+                    final_meas_refs_by_qubit[allocation.data_qubits.index(q)] = meas_refs
                 meas_count += 1
 
             elif op.op_type == OpType.TICK:
@@ -3134,6 +3185,9 @@ def tick_circuit_to_stim(
             ``"SZ"``, and ``"SZdg"``. The surface SZZ reference path uses
             this to mirror the staged PECOS device model where Z/SZ/SZdg frame
             updates are virtual and p1-free.
+            Keys name the gate as scheduled; runtime-traced circuits schedule
+            rotations such as ``RZZ`` and ``RXY1Q``, so key by those or lower
+            the circuit first.
         p2: Two-qubit error rate
         p_meas: Measurement error rate
         p_prep: Initialization error rate
@@ -3143,6 +3197,8 @@ def tick_circuit_to_stim(
     """
     import json
     import math
+
+    from pecos_rslib import is_supported_noop_or_metadata_gate
 
     lines = []
 
@@ -3255,7 +3311,32 @@ def tick_circuit_to_stim(
             msg = f"Unsupported traced Clifford RXY1Q angles: theta={theta!r}, phi={phi!r}"
             raise ValueError(msg)
 
-        return [], None
+        if gate_name == "RXYXY2Q":
+            if len(gate.angles) < 2:
+                return [], None
+            theta = float(gate.angles[0])
+            phi = float(gate.angles[1])
+            if _is_close_turn(theta, 0.0):
+                return [], None
+            axis = None
+            if _is_close_turn(phi, 0.0) or _is_close_turn(phi, math.pi):
+                axis = "X"
+            elif _is_close_turn(phi, math.pi / 2) or _is_close_turn(phi, 3 * math.pi / 2):
+                axis = "Y"
+            if axis is not None:
+                if _is_close_turn(theta, math.pi / 2):
+                    return [(f"SQRT_{axis}{axis}", qubits)], "two"
+                if _is_close_turn(theta, 3 * math.pi / 2):
+                    return [(f"SQRT_{axis}{axis}_DAG", qubits)], "two"
+                if _is_close_turn(theta, math.pi):
+                    return [(axis, qubits)], "two"
+            msg = f"Unsupported traced Clifford RXYXY2Q angles: theta={theta!r}, phi={phi!r}"
+            raise ValueError(msg)
+
+        if is_supported_noop_or_metadata_gate(gate.gate_type):
+            return [], None
+        msg = f"Unsupported gate for Stim export: {gate_name}"
+        raise ValueError(msg)
 
     for tick_idx in range(tc.num_ticks()):
         tick = tc.get_tick(tick_idx)
@@ -3349,7 +3430,7 @@ def generate_dem_from_patch(
         p_prep=p,
     )
     circuit = stim.Circuit(circuit_str)
-    return str(circuit.detector_error_model())
+    return str(circuit.detector_error_model().flattened())
 
 
 def generate_dem_from_tick_circuit_via_pauli_frame(
@@ -3672,6 +3753,9 @@ def generate_dem_from_tick_circuit_via_stim(
             depolarizing rates. Gate names are PECOS ``GateType`` names. The
             surface SZZ reference path uses this to mirror the staged PECOS
             device model where Z/SZ/SZdg frame updates are virtual and p1-free.
+            Keys name the gate as scheduled; runtime-traced circuits schedule
+            rotations such as ``RZZ`` and ``RXY1Q``, so key by those or lower
+            the circuit first.
         p2: Two-qubit depolarizing error rate
         p_meas: Measurement error rate
         p_prep: Initialization (prep) error rate
@@ -3700,7 +3784,7 @@ def generate_dem_from_tick_circuit_via_stim(
         p_prep=p_prep,
     )
     circuit = stim.Circuit(stim_str)
-    dem = circuit.detector_error_model(decompose_errors=decompose_errors or maximal_decomposition)
+    dem = circuit.detector_error_model(decompose_errors=decompose_errors or maximal_decomposition).flattened()
     if maximal_decomposition:
         return _maximally_decompose_graphlike_dem(str(dem))
     return str(dem)

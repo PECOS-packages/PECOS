@@ -198,6 +198,25 @@ fn convert_qis_op(
             }))
         }
 
+        "rpp" => {
+            if instr.operands.len() != 4 {
+                return Err(PhirError::internal(
+                    "rpp requires exactly 4 operands: qubit1, qubit2, theta, phi",
+                ));
+            }
+            let theta = resolve_angle(&instr.operands, 2, const_map, "rpp theta")?;
+            let phi = resolve_angle(&instr.operands, 3, const_map, "rpp phi")?;
+            Ok(Some(Instruction {
+                results: vec![],
+                operation: Operation::Quantum(QuantumOp::RXYXY2Q(theta, phi)),
+                operands: instr.operands[..2].to_vec(),
+                result_types: vec![],
+                regions: vec![],
+                attributes: BTreeMap::new(),
+                location: instr.location.clone(),
+            }))
+        }
+
         "cz" => {
             let q1 = instr.operands[0];
             let q2 = instr.operands[1];
@@ -879,5 +898,52 @@ entry:
             module.body.blocks[0].operations[0].operation,
             Operation::Classical(ClassicalOp::ConstFloat(_))
         ));
+    }
+    #[test]
+    fn test_rpp_conversion() {
+        let mut module = make_module(vec![
+            emit_const_float(SSAValue::new(3), -0.73),
+            emit_const_float(SSAValue::new(4), 0.41),
+            Instruction::new(
+                Operation::Custom(CustomOp::new("qis", "rpp", vec![], BTreeMap::new())),
+                vec![
+                    SSAValue::new(2),
+                    SSAValue::new(0),
+                    SSAValue::new(3),
+                    SSAValue::new(4),
+                ],
+                vec![],
+                vec![],
+            ),
+        ]);
+        convert_qis_to_quantum(&mut module).unwrap();
+        let instruction = &module.body.blocks[0].operations[2];
+        assert_eq!(
+            instruction.operation,
+            Operation::Quantum(QuantumOp::RXYXY2Q(
+                Angle64::from_radians(-0.73),
+                Angle64::from_radians(0.41)
+            ))
+        );
+        assert_eq!(
+            instruction.operands,
+            vec![SSAValue::new(2), SSAValue::new(0)]
+        );
+        let ron = crate::to_ron(&module).unwrap();
+        assert!(ron.contains("RXYXY2Q("));
+        assert_eq!(crate::from_ron(&ron).unwrap(), module);
+    }
+
+    #[test]
+    fn test_rpp_rejects_invalid_operands() {
+        for count in [0, 1, 2, 3, 5] {
+            let mut module = make_module(vec![Instruction::new(
+                Operation::Custom(CustomOp::new("qis", "rpp", vec![], BTreeMap::new())),
+                (0..count).map(SSAValue::new).collect(),
+                vec![],
+                vec![],
+            )]);
+            assert!(convert_qis_to_quantum(&mut module).is_err());
+        }
     }
 }

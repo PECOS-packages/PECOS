@@ -18,7 +18,9 @@ use rand::rngs::StdRng;
 use rand::{RngExt, SeedableRng};
 
 const TOL_F32: f64 = 5e-3;
-const TOL_F64: f64 = 5e-5;
+// f64 roundoff only. Any f32 value leaking into the f64 path shows up at 1e-8
+// or worse, so a looser bound would hide exactly that defect.
+const TOL_F64: f64 = 1e-10;
 
 // --- RNG-driven gate emission applied to a generic simulator ---
 
@@ -512,7 +514,7 @@ fn angle_edge_cases() {
                 let gs = g.state();
                 let d = max_diff(&gs, &cpu_s);
                 assert!(
-                    d < 1e-4,
+                    d < TOL_F64,
                     "angle {theta} gate {gate} ({gi},{ai}): f64 diff={d:.3e}"
                 );
             }

@@ -19,13 +19,16 @@
 //! where mechanism order IS the processing order and `fired` lists the indices
 //! of the detectors that fired.
 //!
-//! Usage: `bridge_ab <model.json> <k> <delta> <score_alpha> [bp_score_iterations]`
+//! Usage: `bridge_ab <model.json> <k> <delta> <score_alpha> [bp_score_iterations] [workers] [stream=<chunk>]`
 //! Prints one `shot,predicted,truth,status,gap,log_evidence,seconds` line per
 //! shot (no-path rows leave the gap and evidence fields empty) plus a summary
-//! line.
+//! line. Streaming reports the zero-based index of the last processed column
+//! at first non-reset commitment; NaN means no such commitment occurred.
+//! Both `committed_before_flush` and `early_committed_bits` exclude bits that never toggle.
+//! Lookahead includes logical-only columns, whose own detector index is -1.
 
 use pecos_decoder_core::dem::SparseDem;
-use pecos_frontier::{FrontierConfig, FrontierDecoder};
+use pecos_frontier::{FrontierConfig, FrontierDecoder, TrellisStreamingDecoder};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 
@@ -60,6 +63,28 @@ fn main() {
         .next()
         .map_or(0, |raw| raw.parse().expect("bp_score_iterations"));
 
+    let mut workers = None;
+    let mut stream_chunk = None;
+    for raw in args {
+        if let Some(chunk) = raw.strip_prefix("stream=") {
+            let chunk: usize = chunk.parse().expect("stream chunk size");
+            assert!(chunk > 0, "stream chunk size must be positive");
+            assert!(
+                stream_chunk.replace(chunk).is_none(),
+                "duplicate stream argument"
+            );
+        } else {
+            assert!(
+                workers.replace(raw.parse().expect("workers")).is_none(),
+                "duplicate workers argument"
+            );
+        }
+    }
+    assert!(
+        workers.is_none() || stream_chunk.is_none(),
+        "workers and stream modes are exclusive"
+    );
+
     let model: BridgeModel =
         serde_json::from_str(&std::fs::read_to_string(&path).expect("read model json"))
             .expect("parse model json");
@@ -79,7 +104,17 @@ fn main() {
         metric_mode: pecos_frontier::MetricMode::default(),
         int_metric_scale: 1024,
     };
-    let mut decoder = FrontierDecoder::from_sparse_dem(&dem, config).expect("build decoder");
+    let mut stream = stream_chunk.map(|_| {
+        TrellisStreamingDecoder::from_sparse_dem(&dem, config.clone())
+            .expect("build streaming decoder")
+    });
+    let mut decoder = stream_chunk
+        .is_none()
+        .then(|| FrontierDecoder::from_sparse_dem(&dem, config).expect("build decoder"));
+    let mut committed_before_flush = 0_u64;
+    let mut early_committed_bits = 0_u64;
+    let mut first_commit_columns = 0.0;
+    let mut shots_with_commitments = 0_u32;
 
     let mut failures = 0_u32;
     let mut no_path = 0_u32;
@@ -88,6 +123,25 @@ fn main() {
         model.num_observables <= 128,
         "bridge truth_logical is u128; wider observables need a format change"
     );
+    let mut batch = workers.map(|workers| {
+        let shots: Vec<_> = model
+            .shots
+            .iter()
+            .map(|entry| {
+                let mut syndrome = vec![0; model.num_detectors];
+                for &fired in &entry.fired {
+                    syndrome[fired as usize] = 1;
+                }
+                syndrome
+            })
+            .collect();
+        decoder
+            .as_ref()
+            .expect("batch mode has a decoder")
+            .decode_batch(&shots, workers)
+            .expect("decode batch")
+            .into_iter()
+    });
     let mut syndrome = vec![0_u8; model.num_detectors];
     for (shot, entry) in model.shots.iter().enumerate() {
         syndrome.fill(0);
@@ -95,8 +149,57 @@ fn main() {
             syndrome[fired as usize] = 1;
         }
         let shot_started = std::time::Instant::now();
-        let outcome = decoder.decode(&syndrome);
-        let shot_seconds = shot_started.elapsed().as_secs_f64();
+        let outcome = if let Some(stream) = &mut stream {
+            stream.reset();
+            let reset_mask = stream.committed().1;
+            let mut first_commit = None;
+            let outcome = (|| {
+                for chunk in syndrome.chunks(stream_chunk.expect("stream mode has a chunk size")) {
+                    stream.feed_prefix(chunk)?;
+                    let progress = stream.advance()?;
+                    let count = u64::try_from(
+                        progress
+                            .newly_committed
+                            .iter()
+                            .filter(|(logical, _)| !reset_mask.get(*logical))
+                            .count(),
+                    )
+                    .expect("commit count fits u64");
+                    if progress.columns_processed < stream.column_lookahead().len() {
+                        early_committed_bits += count;
+                    }
+                    if count != 0 {
+                        first_commit.get_or_insert(progress.columns_processed);
+                    }
+                }
+                committed_before_flush +=
+                    u64::from(stream.committed().1.count_ones() - reset_mask.count_ones());
+                stream.flush()
+            })();
+            if let Some(column) = first_commit {
+                first_commit_columns +=
+                    f64::from(u32::try_from(column).expect("column count fits u32")) - 1.0;
+                shots_with_commitments += 1;
+            }
+            outcome
+        } else if let Some(batch) = &mut batch {
+            match batch.next().expect("one result per shot") {
+                pecos_frontier::FrontierDecodeAttempt::Success(result) => Ok(result),
+                pecos_frontier::FrontierDecodeAttempt::NoPath { error, .. }
+                | pecos_frontier::FrontierDecodeAttempt::Error(error) => Err(error),
+            }
+        } else {
+            decoder
+                .as_mut()
+                .expect("sequential mode has a decoder")
+                .decode(&syndrome)
+        };
+        // Batch mode has no per-shot wall-clock measurement.
+        let shot_seconds = if workers.is_some() {
+            f64::NAN
+        } else {
+            shot_started.elapsed().as_secs_f64()
+        };
         if let Err(error) = &outcome {
             // Only a genuine no-path is a shot outcome. Anything else is an
             // engine fault, and recording it as no_path would silently skew
@@ -135,8 +238,34 @@ fn main() {
     }
     let elapsed = started.elapsed().as_secs_f64();
     let trials = u32::try_from(model.shots.len()).expect("shot count fits u32");
+    let streaming_summary = stream.as_ref().map_or_else(String::new, |stream| {
+        let lookahead = stream.column_lookahead();
+        let maximum = lookahead.iter().copied().max().unwrap_or(0);
+        let total: f64 = lookahead
+            .iter()
+            .map(|&value| f64::from(u32::try_from(value).expect("lookahead fits u32")))
+            .sum();
+        let mean = total
+            / f64::from(
+                u32::try_from(lookahead.len())
+                    .expect("column count fits u32")
+                    .max(1),
+            );
+        let first_mean = if shots_with_commitments == 0 {
+            f64::NAN
+        } else {
+            first_commit_columns / f64::from(shots_with_commitments)
+        };
+        format!(
+            " committed_before_flush={committed_before_flush} \
+             early_committed_bits={early_committed_bits} \
+             shots_with_commitments={shots_with_commitments} \
+             first_commit_column_mean={first_mean} \
+             lookahead_max={maximum} lookahead_mean={mean}"
+        )
+    });
     println!(
-        "SUMMARY trials={trials} fail={failures} no_path={no_path} fer={} k={k} delta={delta} alpha={score_alpha} decode_s_mean={}",
+        "SUMMARY trials={trials} fail={failures} no_path={no_path} fer={} k={k} delta={delta} alpha={score_alpha} decode_s_mean={}{streaming_summary}",
         f64::from(failures) / f64::from(trials),
         elapsed / f64::from(trials),
     );

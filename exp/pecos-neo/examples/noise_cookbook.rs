@@ -91,7 +91,8 @@ fn recipe_sim_neo_integration() {
         .sampling(monte_carlo(1000))
         .seed(42)
         .build()
-        .run();
+        .run()
+        .expect("simulation should succeed");
 
     let error_rate = results
         .outcomes
@@ -108,7 +109,8 @@ fn recipe_sim_neo_integration() {
         .sampling(monte_carlo(1000))
         .seed(42)
         .build()
-        .run();
+        .run()
+        .expect("simulation should succeed");
 
     let error_rate = results
         .outcomes
@@ -133,7 +135,8 @@ fn recipe_sim_neo_integration() {
         .sampling(monte_carlo(1000))
         .seed(42)
         .build()
-        .run();
+        .run()
+        .expect("simulation should succeed");
 
     let error_rate = results
         .outcomes
@@ -156,8 +159,8 @@ fn recipe_sim_neo_integration() {
         .build();
 
     // Run multiple times with different seeds
-    let results1 = sim.seed(100).run();
-    let results2 = sim.seed(200).run();
+    let results1 = sim.seed(100).run().expect("simulation should succeed");
+    let results2 = sim.seed(200).run().expect("simulation should succeed");
 
     let err1 = results1
         .outcomes

@@ -1,9 +1,10 @@
 """Test suite for project_z operation."""
 
-import pecos_rslib
-import pecos_rslib_llvm
+import pecos as pc
 from guppylang import guppy
-from guppylang.std.quantum import h, project_z, qubit, x
+from guppylang.std.builtins import result
+from guppylang.std.quantum import h, measure, project_z, qubit, x
+from pecos import compilation_pipeline
 
 
 class TestProjectZOperation:
@@ -20,7 +21,7 @@ class TestProjectZOperation:
             return q, result
 
         hugr = test_project_z.compile()
-        output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
+        output = compilation_pipeline.compile_hugr_to_qis(hugr.to_bytes())
 
         # project_z should compile to a measurement operation
         # Since it doesn't consume the qubit, it should work like measure
@@ -37,7 +38,7 @@ class TestProjectZOperation:
             return q, result
 
         hugr = test_project_z_x.compile()
-        output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
+        output = compilation_pipeline.compile_hugr_to_qis(hugr.to_bytes())
 
         # Should have both X gate operations and measurement
         assert "___rxy" in output  # X gate uses RXY
@@ -53,35 +54,35 @@ class TestProjectZOperation:
             return q, result
 
         hugr = simple_project_z.compile()
-        pecos_out = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
+        pecos_out = compilation_pipeline.compile_hugr_to_qis(hugr.to_bytes())
 
         # Should compile successfully and have measurement
         assert len(pecos_out) > 100  # Non-empty compilation
         assert "qmain" in pecos_out
         assert "___qalloc" in pecos_out
 
-    def test_project_z_selene_compatibility(self) -> None:
-        """Test project_z compatibility with Selene."""
+    def test_project_z_preserves_qubit_for_reuse_on_selene(self) -> None:
+        """Projection reports the state and leaves the qubit usable."""
 
         @guppy
-        def test_project_z_compat() -> tuple[qubit, bool]:
+        def project_and_reuse() -> None:
             q = qubit()
-            h(q)
-            result = project_z(q).read()
-            return q, result
+            x(q)
+            result("projected", project_z(q).read())
+            x(q)
+            result("final", measure(q).read())
 
-        hugr = test_project_z_compat.compile()
-        try:
-            pecos_out = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
-            selene_out = pecos_rslib_llvm.compile_hugr_to_qis_selene(hugr.to_bytes())
-
-            # Both should compile successfully
-            assert len(pecos_out) > 100
-            assert len(selene_out) > 100
-        except Exception as e:
-            # If project_z isn't fully supported yet, that's ok for now
-            print(f"project_z compilation failed: {e}")
-            assert True  # Don't fail the test
+        results = (
+            pc.sim(project_and_reuse)
+            .classical(pc.selene_engine())
+            .quantum(pc.state_vector())
+            .qubits(1)
+            .seed(42)
+            .run(8)
+            .to_dict()
+        )
+        assert results["projected"] == [1] * 8
+        assert results["final"] == [0] * 8
 
     def test_project_z_with_other_gates(self) -> None:
         """Test project_z in combination with other gates."""
@@ -97,7 +98,7 @@ class TestProjectZOperation:
             return q1, q2, result1, result2
 
         hugr = project_z_circuit.compile()
-        output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
+        output = compilation_pipeline.compile_hugr_to_qis(hugr.to_bytes())
 
         # Should have multiple allocations and measurements
         assert "___qalloc" in output

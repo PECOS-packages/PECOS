@@ -529,6 +529,47 @@ fn test_processor_named_phase_sensitive_gates() {
     assert!(ops.iter().all(|op| op.angles.is_empty()));
 }
 
+#[test]
+fn test_processor_all_named_two_qubit_roots() {
+    let mut processor = PhirProcessor::new();
+    let mut builder = ByteMessageBuilder::new();
+    let _ = builder.for_quantum_operations();
+
+    for op in [
+        QuantumOp::SXX,
+        QuantumOp::SXXdg,
+        QuantumOp::SYY,
+        QuantumOp::SYYdg,
+        QuantumOp::SZZ,
+        QuantumOp::SZZdg,
+    ] {
+        let gate_instr = instr(
+            Operation::Quantum(op),
+            vec![0, 1],
+            vec![10],
+            vec![Type::Qubit],
+        );
+        assert!(
+            processor
+                .process_instruction(&gate_instr, &mut builder)
+                .expect("named root should execute")
+        );
+    }
+
+    let ops = builder.build().quantum_ops().unwrap();
+    assert_eq!(
+        ops.iter().map(|op| op.gate_type).collect::<Vec<_>>(),
+        [
+            pecos_core::gate_type::GateType::SXX,
+            pecos_core::gate_type::GateType::SXXdg,
+            pecos_core::gate_type::GateType::SYY,
+            pecos_core::gate_type::GateType::SYYdg,
+            pecos_core::gate_type::GateType::SZZ,
+            pecos_core::gate_type::GateType::SZZdg,
+        ]
+    );
+}
+
 // ──────────────────────────────────────────────────────────────────────
 // Resource management tests (Alloc, Dealloc, Reset, InitZero)
 // ──────────────────────────────────────────────────────────────────────
@@ -1787,4 +1828,42 @@ fn test_dynamic_zero_engine_rejected_without_explicit_qubits() {
         sim_builder().classical(engine).qubits(1).build().is_ok(),
         "explicit .qubits(n) must bypass the inferred-zero guard"
     );
+}
+
+#[test]
+fn test_processor_rxyxy2q_gate() {
+    let theta = Angle64::from_radians(-0.73);
+    let phi = Angle64::from_radians(0.41);
+    let mut processor = PhirProcessor::new();
+    let mut builder = pecos_engines::ByteMessage::quantum_operations_builder();
+    let instruction = instr(
+        Operation::Quantum(QuantumOp::RXYXY2Q(theta, phi)),
+        vec![2, 0],
+        vec![],
+        vec![],
+    );
+    processor
+        .process_instruction(&instruction, &mut builder)
+        .unwrap();
+    let gates = builder.build().quantum_ops().unwrap();
+    assert_eq!(
+        gates,
+        vec![pecos_core::Gate::rxyxy2q(theta, phi, &[(2, 0)])]
+    );
+    for qubits in [vec![], vec![2], vec![2, 0, 1]] {
+        let invalid = instr(
+            Operation::Quantum(QuantumOp::RXYXY2Q(theta, phi)),
+            qubits,
+            vec![],
+            vec![],
+        );
+        assert!(
+            processor
+                .process_instruction(
+                    &invalid,
+                    &mut pecos_engines::ByteMessage::quantum_operations_builder()
+                )
+                .is_err()
+        );
+    }
 }

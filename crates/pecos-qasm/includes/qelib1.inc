@@ -76,14 +76,21 @@ gate swap a,b {
 // ZZ rotation (native)
 gate rzz(theta) a,b { RZZ(theta) a,b; }
 
-// Strong ZZ interaction (native)
+// Phase-exact Pauli-root interactions (native)
+gate sxx a,b { SXX a,b; }
+gate sxxdg a,b { SXXDG a,b; }
+gate syy a,b { SYY a,b; }
+gate syydg a,b { SYYDG a,b; }
 gate szz a,b { SZZ a,b; }
+gate szzdg a,b { SZZDG a,b; }
 
 // Controlled RZ
+// Phase gates are 2*pi-periodic, so opposite half angles cancel exactly even
+// when Angle64 identifies +pi and -pi. Symmetric RZ halves would leave -I there.
 gate crz(theta) a,b {
-  rz(theta/2) b;
+  p(theta/2) b;
   cx a,b;
-  rz(-theta/2) b;
+  p(-theta/2) b;
   cx a,b;
 }
 
@@ -96,11 +103,11 @@ gate crx(theta) a,b {
 }
 
 // Controlled RY
+// SXdg · RZ(theta) · SX = RY(theta) on the target
 gate cry(theta) a,b {
-  ry(theta/2) b;
-  cx a,b;
-  ry(-theta/2) b;
-  cx a,b;
+  sx b;
+  crz(theta) a,b;
+  sxdg b;
 }
 
 // Controlled phase

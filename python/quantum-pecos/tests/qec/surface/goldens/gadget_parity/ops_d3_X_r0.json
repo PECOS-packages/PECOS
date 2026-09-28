@@ -1,0 +1,508 @@
+{
+ "allocation": {
+  "data": [
+   0,
+   1,
+   2,
+   3,
+   4,
+   5,
+   6,
+   7,
+   8
+  ],
+  "x_anc": [
+   9,
+   10,
+   11,
+   12
+  ],
+  "z_anc": [
+   13,
+   14,
+   15,
+   16
+  ]
+ },
+ "ops": [
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "prep_x_basis"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    0
+   ],
+   "label": "data[0]"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    1
+   ],
+   "label": "data[1]"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    2
+   ],
+   "label": "data[2]"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    3
+   ],
+   "label": "data[3]"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    4
+   ],
+   "label": "data[4]"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    5
+   ],
+   "label": "data[5]"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    6
+   ],
+   "label": "data[6]"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    7
+   ],
+   "label": "data[7]"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    8
+   ],
+   "label": "data[8]"
+  },
+  {
+   "op": "H",
+   "qubits": [
+    0
+   ],
+   "label": ""
+  },
+  {
+   "op": "H",
+   "qubits": [
+    1
+   ],
+   "label": ""
+  },
+  {
+   "op": "H",
+   "qubits": [
+    2
+   ],
+   "label": ""
+  },
+  {
+   "op": "H",
+   "qubits": [
+    3
+   ],
+   "label": ""
+  },
+  {
+   "op": "H",
+   "qubits": [
+    4
+   ],
+   "label": ""
+  },
+  {
+   "op": "H",
+   "qubits": [
+    5
+   ],
+   "label": ""
+  },
+  {
+   "op": "H",
+   "qubits": [
+    6
+   ],
+   "label": ""
+  },
+  {
+   "op": "H",
+   "qubits": [
+    7
+   ],
+   "label": ""
+  },
+  {
+   "op": "H",
+   "qubits": [
+    8
+   ],
+   "label": ""
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "init_z_syndrome"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    13
+   ],
+   "label": "az0"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    14
+   ],
+   "label": "az1"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    15
+   ],
+   "label": "az2"
+  },
+  {
+   "op": "ALLOC",
+   "qubits": [
+    16
+   ],
+   "label": "az3"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "CX round 1"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    3,
+    13
+   ],
+   "label": "Z0"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    1,
+    14
+   ],
+   "label": "Z1"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    5,
+    15
+   ],
+   "label": "Z2"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "CX round 2"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    6,
+    13
+   ],
+   "label": "Z0"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    4,
+    14
+   ],
+   "label": "Z1"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    8,
+    15
+   ],
+   "label": "Z2"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "CX round 3"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    0,
+    14
+   ],
+   "label": "Z1"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    4,
+    15
+   ],
+   "label": "Z2"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    2,
+    16
+   ],
+   "label": "Z3"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "CX round 4"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    3,
+    14
+   ],
+   "label": "Z1"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    7,
+    15
+   ],
+   "label": "Z2"
+  },
+  {
+   "op": "CX",
+   "qubits": [
+    5,
+    16
+   ],
+   "label": "Z3"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "Measure ancillas"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    13
+   ],
+   "label": "sz0"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    14
+   ],
+   "label": "sz1"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    15
+   ],
+   "label": "sz2"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    16
+   ],
+   "label": "sz3"
+  },
+  {
+   "op": "TICK",
+   "qubits": [],
+   "label": ""
+  },
+  {
+   "op": "COMMENT",
+   "qubits": [],
+   "label": "measure_x_basis"
+  },
+  {
+   "op": "H",
+   "qubits": [
+    0
+   ],
+   "label": ""
+  },
+  {
+   "op": "H",
+   "qubits": [
+    1
+   ],
+   "label": ""
+  },
+  {
+   "op": "H",
+   "qubits": [
+    2
+   ],
+   "label": ""
+  },
+  {
+   "op": "H",
+   "qubits": [
+    3
+   ],
+   "label": ""
+  },
+  {
+   "op": "H",
+   "qubits": [
+    4
+   ],
+   "label": ""
+  },
+  {
+   "op": "H",
+   "qubits": [
+    5
+   ],
+   "label": ""
+  },
+  {
+   "op": "H",
+   "qubits": [
+    6
+   ],
+   "label": ""
+  },
+  {
+   "op": "H",
+   "qubits": [
+    7
+   ],
+   "label": ""
+  },
+  {
+   "op": "H",
+   "qubits": [
+    8
+   ],
+   "label": ""
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    0
+   ],
+   "label": "final[0]"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    1
+   ],
+   "label": "final[1]"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    2
+   ],
+   "label": "final[2]"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    3
+   ],
+   "label": "final[3]"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    4
+   ],
+   "label": "final[4]"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    5
+   ],
+   "label": "final[5]"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    6
+   ],
+   "label": "final[6]"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    7
+   ],
+   "label": "final[7]"
+  },
+  {
+   "op": "MEASURE",
+   "qubits": [
+    8
+   ],
+   "label": "final[8]"
+  }
+ ]
+}

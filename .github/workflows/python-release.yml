@@ -155,9 +155,8 @@ jobs:
           cache-bin: false
           prefix-key: v1-rust-no-bin
           save-if: ${{ github.event_name == 'push' && contains(fromJSON('["main", "master", "development", "dev"]'), github.ref_name) }}
-          workspaces: |
-            python/pecos-rslib
-            python/pecos-rslib-llvm
+          # The rslib crates build into the top-level target/; cache the root
+          # workspace (the default).
 
       - name: Cache LLVM
         id: cache-llvm
@@ -170,7 +169,7 @@ jobs:
         run: just ci-env
 
       - name: Install Python build tooling
-        run: uv pip install --system build maturin
+        run: uv pip install --system maturin
 
       - name: Build pecos-rslib wheel
         run: |
@@ -186,7 +185,7 @@ jobs:
         run: |
           mkdir -p dist/quantum-pecos
           cd python/quantum-pecos
-          python -m build --wheel --outdir ../../dist/quantum-pecos
+          uv build --wheel --out-dir ../../dist/quantum-pecos
 
       - name: Upload PR smoke artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -231,6 +230,9 @@ jobs:
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version-file: ".github/uv.toml"
+          # Nothing here benefits from a uv cache; the default (auto) would save
+          # a PR-scoped cache on every pull request.
+          enable-cache: false
 
       - name: Download PR smoke artifacts
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7

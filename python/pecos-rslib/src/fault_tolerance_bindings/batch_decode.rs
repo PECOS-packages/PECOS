@@ -2,10 +2,11 @@
 
 use super::decoder_scoring::{DecodeRangeResult, ShotDecodeError, decode_and_score_range};
 use super::{PyDecodeStats, PySampleBatch, decoder_build_error_to_py};
-use pecos_decoder_core::DecoderError;
-use pecos_decoder_core::obs_mask::ObsMask;
+use crate::batch_decoder_spec::BatchDecoderSpec as DecoderSpec;
+use crate::batch_decoder_spec::DecoderBuildError;
+use pecos_decoder_core::{DecoderError, obs_mask::ObsMask};
+use pecos_decoders::DecodeModel;
 use pecos_decoders::batch::{ExecutionPath, ExecutionPlan, IndexedChunk, native_sub_batches};
-use pecos_decoders::{DecodeModel, DecoderSpec};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use rayon::prelude::*;
@@ -18,7 +19,7 @@ pub(super) struct BatchExecutionOutput {
 }
 
 pub(super) enum BatchExecutionError {
-    Build(DecoderError),
+    Build(DecoderBuildError),
     Dimension {
         batch_detectors: usize,
         decoder_detectors: usize,
@@ -34,7 +35,8 @@ pub(super) enum BatchExecutionError {
 impl BatchExecutionError {
     pub(super) fn into_pyerr(self) -> PyErr {
         match self {
-            Self::Build(error) => decoder_build_error_to_py(error),
+            Self::Build(DecoderBuildError::Decoder(error)) => decoder_build_error_to_py(error),
+            Self::Build(DecoderBuildError::Python(error)) => error,
             Self::Dimension {
                 batch_detectors,
                 decoder_detectors,
@@ -133,7 +135,7 @@ fn parallel(
             (0..workers)
                 .into_par_iter()
                 .map(|_| {
-                    // Build even when this worker wins no chunk: an explicit
+                    // Build even when this worker wins no chunk: the planned
                     // worker count means exactly that many decoder instances.
                     let mut decoder = spec.build(model).map_err(BatchExecutionError::Build)?;
                     preflight_dimensions(batch, decoder.as_ref())?;

@@ -13,6 +13,12 @@ struct TransformContext {
     qalloc_sizes: BTreeMap<String, i128>,
     /// Set of variable names that have been declared (for distinguishing new vars from reassignments).
     declared_vars: std::collections::BTreeSet<String>,
+    /// Guppy values that need a converted Zlup angle binding.
+    angle_vars: std::collections::BTreeSet<String>,
+    /// Maps Guppy values to fresh `a64` bindings containing turns.
+    angle_bindings: BTreeMap<String, String>,
+    /// Guppy values whose source and converted bindings may be reassigned.
+    mutable_vars: std::collections::BTreeSet<String>,
     /// Track which allocators have been used in gates (for invariant checking).
     #[cfg(debug_assertions)]
     used_allocators: std::collections::BTreeSet<String>,
@@ -88,6 +94,8 @@ pub fn transform(ir: &GuppyIR) -> Result<zlup_ast::Program, TransformError> {
 }
 
 fn transform_function(func: &Function) -> Result<zlup_ast::FnDecl, TransformError> {
+    let angle_vars = infer_angle_variables(&func.body);
+    let (angle_bindings, mutable_vars) = make_angle_binding_names(func, &angle_vars);
     let params = func
         .params
         .iter()
@@ -96,12 +104,23 @@ fn transform_function(func: &Function) -> Result<zlup_ast::FnDecl, TransformErro
 
     let return_type = func.return_type.as_ref().map(transform_type);
 
-    let mut ctx = TransformContext::default();
+    let mut ctx = TransformContext {
+        angle_vars,
+        angle_bindings,
+        mutable_vars,
+        ..TransformContext::default()
+    };
     // Add function parameters to declared_vars
     for param in &func.params {
         ctx.declare_var(&param.name);
     }
     let mut body = transform_block_with_ctx(&func.body, &mut ctx)?;
+    let parameter_angles = func
+        .params
+        .iter()
+        .filter_map(|param| converted_angle_binding(&param.name, &ctx))
+        .collect::<Vec<_>>();
+    body.statements.splice(0..0, parameter_angles);
 
     // Check if the function returns unit and needs an explicit return statement.
     // Zlup requires explicit `return unit;` for functions that return unit.
@@ -315,7 +334,11 @@ fn transform_stmt_with_ctx(
                 .map(transform_slot_ref)
                 .collect::<Result<Vec<_>, _>>()?;
 
-            let params: Vec<zlup_ast::Expr> = stmt.params.iter().map(transform_expr).collect();
+            let params: Vec<zlup_ast::Expr> = stmt
+                .params
+                .iter()
+                .map(|expr| transform_angle_expr(expr, ctx))
+                .collect();
 
             Ok(vec![zlup_ast::Stmt::Gate(zlup_ast::GateOp {
                 kind: zlup_gate,
@@ -617,24 +640,32 @@ fn transform_stmt_with_ctx(
                     .ok_or(TransformError::MissingField("name"))?;
                 if ctx.is_declared(name) {
                     // Reassignment to existing variable
-                    Ok(vec![zlup_ast::Stmt::Assign(zlup_ast::AssignStmt {
+                    let mut statements = vec![zlup_ast::Stmt::Assign(zlup_ast::AssignStmt {
                         target: transform_expr(target),
                         op: zlup_ast::AssignOp::Assign,
                         value: transform_expr(value),
                         location: None,
-                    })])
+                    })];
+                    if let Some(refresh) = converted_angle_assignment(name, ctx) {
+                        statements.push(refresh);
+                    }
+                    Ok(statements)
                 } else {
                     // New variable declaration
                     ctx.declare_var(name);
-                    Ok(vec![zlup_ast::Stmt::Binding(zlup_ast::Binding {
+                    let mut statements = vec![zlup_ast::Stmt::Binding(zlup_ast::Binding {
                         name: name.clone(),
                         ty: None,
                         value: Some(transform_expr(value)),
-                        is_mutable: false,
+                        is_mutable: ctx.mutable_vars.contains(name),
                         is_pub: false,
                         doc_comment: None,
                         location: None,
-                    })])
+                    })];
+                    if let Some(binding) = converted_angle_binding(name, ctx) {
+                        statements.push(binding);
+                    }
+                    Ok(statements)
                 }
             } else {
                 Ok(vec![zlup_ast::Stmt::Assign(zlup_ast::AssignStmt {
@@ -679,7 +710,7 @@ fn transform_stmt_with_ctx(
             // Register the variable as declared
             ctx.declare_var(name);
 
-            Ok(vec![zlup_ast::Stmt::Binding(zlup_ast::Binding {
+            let mut statements = vec![zlup_ast::Stmt::Binding(zlup_ast::Binding {
                 name: name.clone(),
                 ty,
                 value,
@@ -687,7 +718,11 @@ fn transform_stmt_with_ctx(
                 is_pub: false,
                 doc_comment: None,
                 location: None,
-            })])
+            })];
+            if let Some(binding) = converted_angle_binding(name, ctx) {
+                statements.push(binding);
+            }
+            Ok(statements)
         }
 
         StmtKind::Barrier => Ok(vec![zlup_ast::Stmt::Barrier(zlup_ast::BarrierOp {
@@ -716,6 +751,361 @@ fn transform_stmt_with_ctx(
                 location: None,
             })])
         }
+    }
+}
+
+fn transform_angle_expr(expr: &Expr, ctx: &TransformContext) -> zlup_ast::Expr {
+    if expr.kind == ExprKind::Ident
+        && let Some(name) = expr.name.as_deref()
+        && let Some(angle_name) = ctx.angle_bindings.get(name)
+    {
+        return ident_expr(angle_name);
+    }
+
+    if expr.kind == ExprKind::Binary {
+        let left = expr.left.as_deref();
+        let right = expr.right.as_deref();
+        if let (Some(left), Some(right), Some(op)) = (left, right, expr.op.as_deref()) {
+            let left_is_angle = expr_references_angle(left, &ctx.angle_vars);
+            let right_is_angle = expr_references_angle(right, &ctx.angle_vars);
+            let (left, right) = match op {
+                "add" | "sub" => (
+                    transform_angle_expr(left, ctx),
+                    transform_angle_expr(right, ctx),
+                ),
+                "mul" if left_is_angle && !right_is_angle => {
+                    (transform_angle_expr(left, ctx), transform_expr(right))
+                }
+                "mul" if right_is_angle && !left_is_angle => {
+                    (transform_expr(left), transform_angle_expr(right, ctx))
+                }
+                "div" | "floordiv" if left_is_angle && !right_is_angle => {
+                    (transform_angle_expr(left, ctx), transform_expr(right))
+                }
+                _ => return transform_angle_origin(expr),
+            };
+            return zlup_ast::Expr::Binary(Box::new(zlup_ast::BinaryExpr {
+                op: transform_binary_op(op)
+                    .unwrap_or_else(|_| panic!("IR contains unknown binary operator: {op}")),
+                left,
+                right,
+                location: None,
+            }));
+        }
+    }
+
+    if expr.kind == ExprKind::Unary
+        && let (Some(operand), Some(op)) = (expr.operand.as_deref(), expr.op.as_deref())
+        && expr_references_angle(operand, &ctx.angle_vars)
+    {
+        return zlup_ast::Expr::Unary(Box::new(zlup_ast::UnaryExpr {
+            op: transform_unary_op(op)
+                .unwrap_or_else(|_| panic!("IR contains unknown unary operator: {op}")),
+            operand: transform_angle_expr(operand, ctx),
+            location: None,
+        }));
+    }
+
+    transform_angle_origin(expr)
+}
+
+fn transform_angle_origin(expr: &Expr) -> zlup_ast::Expr {
+    angle_from_half_turn_expr(transform_expr(expr))
+}
+
+fn angle_from_half_turn_expr(expr: zlup_ast::Expr) -> zlup_ast::Expr {
+    // Guppy's `angle` uses half-turns (`crates/pecos-core/src/angle.rs:173`),
+    // while Zlup's native angle unit is turns.
+    zlup_ast::Expr::AngleLit(Box::new(zlup_ast::AngleLit {
+        value: divide_by_two(expr),
+        unit: zlup_ast::AngleUnit::Turns,
+        location: None,
+    }))
+}
+
+fn converted_angle_binding(name: &str, ctx: &TransformContext) -> Option<zlup_ast::Stmt> {
+    let angle_name = ctx.angle_bindings.get(name)?;
+    Some(zlup_ast::Stmt::Binding(zlup_ast::Binding {
+        name: angle_name.clone(),
+        ty: Some(zlup_ast::TypeExpr::Primitive(zlup_ast::PrimitiveType::A64)),
+        value: Some(angle_from_half_turn_expr(ident_expr(name))),
+        is_mutable: ctx.mutable_vars.contains(name),
+        is_pub: false,
+        doc_comment: None,
+        location: None,
+    }))
+}
+
+fn converted_angle_assignment(name: &str, ctx: &TransformContext) -> Option<zlup_ast::Stmt> {
+    let angle_name = ctx.angle_bindings.get(name)?;
+    Some(zlup_ast::Stmt::Assign(zlup_ast::AssignStmt {
+        target: ident_expr(angle_name),
+        op: zlup_ast::AssignOp::Assign,
+        value: angle_from_half_turn_expr(ident_expr(name)),
+        location: None,
+    }))
+}
+
+fn ident_expr(name: &str) -> zlup_ast::Expr {
+    zlup_ast::Expr::Ident(zlup_ast::Ident {
+        name: name.to_string(),
+        location: None,
+    })
+}
+
+fn divide_by_two(expr: zlup_ast::Expr) -> zlup_ast::Expr {
+    zlup_ast::Expr::Binary(Box::new(zlup_ast::BinaryExpr {
+        op: zlup_ast::BinaryOp::Div,
+        left: expr,
+        right: zlup_ast::Expr::IntLit(zlup_ast::IntLit {
+            value: 2,
+            suffix: None,
+            location: None,
+        }),
+        location: None,
+    }))
+}
+
+fn make_angle_binding_names(
+    func: &Function,
+    angle_vars: &std::collections::BTreeSet<String>,
+) -> (BTreeMap<String, String>, std::collections::BTreeSet<String>) {
+    let mut used_names = func
+        .params
+        .iter()
+        .map(|param| param.name.clone())
+        .collect::<std::collections::BTreeSet<_>>();
+    collect_bound_names(&func.body, &mut used_names);
+
+    let mut declared_names = func
+        .params
+        .iter()
+        .map(|param| param.name.clone())
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut binding_origins = declared_names.clone();
+    let mut mutable_vars = std::collections::BTreeSet::new();
+    collect_binding_origins(
+        &func.body,
+        &mut declared_names,
+        &mut binding_origins,
+        &mut mutable_vars,
+    );
+
+    let bindings = angle_vars
+        .iter()
+        .filter(|name| binding_origins.contains(*name))
+        .map(|name| {
+            let base = format!("__zlup_angle_{name}");
+            let mut fresh = base.clone();
+            let mut suffix = 2;
+            while !used_names.insert(fresh.clone()) {
+                fresh = format!("{base}_{suffix}");
+                suffix += 1;
+            }
+            (name.clone(), fresh)
+        })
+        .collect();
+
+    (bindings, mutable_vars)
+}
+
+fn collect_binding_origins(
+    stmts: &[Stmt],
+    declared_names: &mut std::collections::BTreeSet<String>,
+    binding_origins: &mut std::collections::BTreeSet<String>,
+    mutable_vars: &mut std::collections::BTreeSet<String>,
+) {
+    for stmt in stmts {
+        match stmt.kind {
+            StmtKind::Qalloc => {
+                if let Some(name) = &stmt.name {
+                    declared_names.insert(name.clone());
+                }
+            }
+            StmtKind::Measure => {
+                declared_names.extend(stmt.results.iter().cloned());
+            }
+            StmtKind::For => {
+                if let Some(var) = &stmt.var {
+                    declared_names.insert(var.clone());
+                }
+            }
+            StmtKind::Binding => {
+                if let Some(name) = &stmt.name {
+                    declared_names.insert(name.clone());
+                    binding_origins.insert(name.clone());
+                    if stmt.is_mutable.unwrap_or(false) {
+                        mutable_vars.insert(name.clone());
+                    }
+                }
+            }
+            StmtKind::Assign => {
+                if let Some(target) = &stmt.target
+                    && target.kind == ExprKind::Ident
+                    && let Some(name) = &target.name
+                {
+                    if declared_names.insert(name.clone()) {
+                        binding_origins.insert(name.clone());
+                    } else {
+                        mutable_vars.insert(name.clone());
+                    }
+                }
+            }
+            _ => {}
+        }
+        collect_binding_origins(&stmt.body, declared_names, binding_origins, mutable_vars);
+        collect_binding_origins(
+            &stmt.then_body,
+            declared_names,
+            binding_origins,
+            mutable_vars,
+        );
+        collect_binding_origins(
+            &stmt.else_body,
+            declared_names,
+            binding_origins,
+            mutable_vars,
+        );
+    }
+}
+
+fn collect_bound_names(stmts: &[Stmt], names: &mut std::collections::BTreeSet<String>) {
+    for stmt in stmts {
+        if let Some(name) = &stmt.name {
+            names.insert(name.clone());
+        }
+        if let Some(var) = &stmt.var {
+            names.insert(var.clone());
+        }
+        names.extend(stmt.results.iter().cloned());
+        if let Some(target) = &stmt.target
+            && target.kind == ExprKind::Ident
+            && let Some(name) = &target.name
+        {
+            names.insert(name.clone());
+        }
+        collect_bound_names(&stmt.body, names);
+        collect_bound_names(&stmt.then_body, names);
+        collect_bound_names(&stmt.else_body, names);
+    }
+}
+
+fn infer_angle_variables(stmts: &[Stmt]) -> std::collections::BTreeSet<String> {
+    let mut names = std::collections::BTreeSet::new();
+    collect_gate_angle_origins(stmts, &mut names);
+
+    loop {
+        let previous_len = names.len();
+        propagate_angle_bindings(stmts, &mut names);
+        if names.len() == previous_len {
+            break;
+        }
+    }
+    names
+}
+
+fn collect_gate_angle_origins(stmts: &[Stmt], names: &mut std::collections::BTreeSet<String>) {
+    for stmt in stmts {
+        if stmt.kind == StmtKind::Gate {
+            for param in &stmt.params {
+                collect_angle_origin_names(param, names);
+            }
+        }
+        collect_gate_angle_origins(&stmt.body, names);
+        collect_gate_angle_origins(&stmt.then_body, names);
+        collect_gate_angle_origins(&stmt.else_body, names);
+    }
+}
+
+fn collect_angle_origin_names(expr: &Expr, names: &mut std::collections::BTreeSet<String>) {
+    match expr.kind {
+        ExprKind::Ident => {
+            if let Some(name) = &expr.name {
+                names.insert(name.clone());
+            }
+        }
+        ExprKind::Binary => {
+            let left = expr.left.as_deref();
+            let right = expr.right.as_deref();
+            match expr.op.as_deref() {
+                Some("add") | Some("sub") => {
+                    if let Some(left) = left {
+                        collect_angle_origin_names(left, names);
+                    }
+                    if let Some(right) = right {
+                        collect_angle_origin_names(right, names);
+                    }
+                }
+                Some("mul") => {
+                    if left.is_some_and(|side| side.kind == ExprKind::Literal) {
+                        if let Some(right) = right {
+                            collect_angle_origin_names(right, names);
+                        }
+                    } else if right.is_some_and(|side| side.kind == ExprKind::Literal)
+                        && let Some(left) = left
+                    {
+                        collect_angle_origin_names(left, names);
+                    }
+                }
+                Some("div") | Some("floordiv") => {
+                    if let Some(left) = left {
+                        collect_angle_origin_names(left, names);
+                    }
+                }
+                _ => {}
+            }
+        }
+        ExprKind::Unary => {
+            if let Some(operand) = expr.operand.as_deref() {
+                collect_angle_origin_names(operand, names);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn propagate_angle_bindings(stmts: &[Stmt], names: &mut std::collections::BTreeSet<String>) {
+    for stmt in stmts {
+        let target_name = match stmt.kind {
+            StmtKind::Binding => stmt.name.as_deref(),
+            StmtKind::Assign => stmt
+                .target
+                .as_ref()
+                .filter(|target| target.kind == ExprKind::Ident)
+                .and_then(|target| target.name.as_deref()),
+            _ => None,
+        };
+        if let (Some(name), Some(value)) = (target_name, stmt.value.as_ref())
+            && expr_references_angle(value, names)
+        {
+            names.insert(name.to_string());
+        }
+        propagate_angle_bindings(&stmt.body, names);
+        propagate_angle_bindings(&stmt.then_body, names);
+        propagate_angle_bindings(&stmt.else_body, names);
+    }
+}
+
+fn expr_references_angle(expr: &Expr, angle_vars: &std::collections::BTreeSet<String>) -> bool {
+    match expr.kind {
+        ExprKind::Ident => expr
+            .name
+            .as_ref()
+            .is_some_and(|name| angle_vars.contains(name)),
+        ExprKind::Binary => {
+            expr.left
+                .as_deref()
+                .is_some_and(|left| expr_references_angle(left, angle_vars))
+                || expr
+                    .right
+                    .as_deref()
+                    .is_some_and(|right| expr_references_angle(right, angle_vars))
+        }
+        ExprKind::Unary => expr
+            .operand
+            .as_deref()
+            .is_some_and(|operand| expr_references_angle(operand, angle_vars)),
+        _ => false,
     }
 }
 

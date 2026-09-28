@@ -316,19 +316,21 @@ pub trait DynamicSyncHandle: Send + Sync {
 
     /// Get named results from the execution context
     ///
-    /// Returns a map of result names to their boolean values.
-    /// Named results are stored by `print_bool` and `print_bool_arr` FFI calls.
+    /// Returns a map of result names to their typed values.
+    /// Named results are stored by the scalar and array `print_*` FFI calls.
     ///
     /// # Errors
     /// Returns an error if the FFI call fails or JSON parsing fails.
     fn get_named_results(
         &self,
-    ) -> Result<std::collections::BTreeMap<String, Vec<bool>>, InterfaceError>;
+    ) -> Result<std::collections::BTreeMap<String, pecos_qis_ffi_types::NamedResult>, InterfaceError>;
 
     /// Get named result provenance from the execution context.
     ///
-    /// Returns one record per `result(...)` output call, including the runtime
-    /// measurement result IDs read to produce that output.
+    /// Returns one record per bool output or scalar integer 0/1 call.
+    /// Integer arrays never produce traces.
+    /// Only real bool calls attach runtime measurement result IDs; integer
+    /// detector traces have empty IDs and leave pending reads for bool calls.
     ///
     /// # Errors
     /// Returns an error if the FFI call fails or JSON parsing fails.

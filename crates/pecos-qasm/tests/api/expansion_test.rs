@@ -1,3 +1,5 @@
+use pecos_core::prelude::{Angle64, GateType};
+use pecos_qasm::Operation;
 use pecos_qasm::parser::QASMParser;
 
 #[test]
@@ -52,7 +54,64 @@ fn test_expansion_details() {
     println!("Expanded QASM:");
     println!("{expanded}");
 
-    // Named s and h gates expand to their distinct native operations.
+    // The user gate is gone and its body is emitted under the canonical native
+    // names the parser accepts without an include.
+    assert!(!expanded.contains("my_gate q"));
     assert!(expanded.contains("H q"));
-    assert!(expanded.contains("S q"));
+    assert!(expanded.contains("SZ q"));
+}
+
+#[test]
+fn expanded_qasm_keeps_rotation_angles_and_re_parses() {
+    // A rotation inside a gate body must come out with its angle, in a form the
+    // parser accepts again; the value is compared as an `Angle64`, not as text.
+    let qasm = r"
+        OPENQASM 2.0;
+        qreg q[1];
+        gate g(t) a { RZ(t) a; }
+        g(0.5) q[0];
+    ";
+    let expanded = QASMParser::preprocess_and_expand(qasm).unwrap();
+    assert!(expanded.contains("RZ("), "angle missing from: {expanded}");
+
+    let reparsed = QASMParser::parse_str(&expanded).unwrap();
+    assert_eq!(reparsed.operations.len(), 1);
+    let Operation::NativeGate(gate) = &reparsed.operations[0] else {
+        panic!("expected a native gate, got {:?}", reparsed.operations[0]);
+    };
+    assert_eq!(gate.gate_type, GateType::RZ);
+    assert_eq!(gate.angles.len(), 1);
+    assert_eq!(gate.angles[0], Angle64::from_radians(0.5));
+}
+
+#[test]
+fn expanded_conditional_qasm_keeps_registers_and_angles() {
+    // The mapped renderer used to hand conditional bodies to the plain
+    // `Display`, which prints `gid[..]` and drops angles.
+    let qasm = r"
+        OPENQASM 2.0;
+        qreg q[1];
+        creg c[1];
+        gate g(t) a { RZ(t) a; }
+        if (c == 1) g(0.5) q[0];
+    ";
+    let expanded = QASMParser::preprocess_and_expand(qasm).unwrap();
+    // The condition prints through `Expression`'s own `Display`, so its exact
+    // bracketing is not asserted; the operation, its angle and its register are.
+    assert!(
+        expanded.contains("if (") && expanded.contains("RZ(0.5) q[0]"),
+        "conditional lost: {expanded}"
+    );
+    assert!(!expanded.contains("gid["), "register lost: {expanded}");
+
+    let reparsed = QASMParser::parse_str(&expanded).unwrap();
+    assert_eq!(reparsed.operations.len(), 1);
+    let Operation::If { operation, .. } = &reparsed.operations[0] else {
+        panic!("expected a conditional, got {:?}", reparsed.operations[0]);
+    };
+    let Operation::NativeGate(gate) = operation.as_ref() else {
+        panic!("expected a native gate body, got {operation:?}");
+    };
+    assert_eq!(gate.gate_type, GateType::RZ);
+    assert_eq!(gate.angles[0], Angle64::from_radians(0.5));
 }

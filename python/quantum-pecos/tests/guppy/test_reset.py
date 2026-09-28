@@ -1,9 +1,9 @@
 """Test suite for Reset operation."""
 
 import pecos_rslib
-import pecos_rslib_llvm
 from guppylang import guppy
 from guppylang.std.quantum import h, measure, qubit, reset, x
+from pecos import compilation_pipeline
 
 
 class TestResetOperation:
@@ -20,7 +20,7 @@ class TestResetOperation:
             return measure(q).read()
 
         hugr = test_reset.compile()
-        output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
+        output = compilation_pipeline.compile_hugr_to_qis(hugr.to_bytes())
 
         # Should have reset operation
         assert "___reset" in output
@@ -37,7 +37,7 @@ class TestResetOperation:
             return measure(q).read()
 
         hugr = test_reset_x.compile()
-        output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
+        output = compilation_pipeline.compile_hugr_to_qis(hugr.to_bytes())
 
         # Should have both X gate operations and reset
         assert "___rxy" in output  # X gate uses RXY
@@ -56,7 +56,7 @@ class TestResetOperation:
             return measure(q).read()
 
         hugr = test_multi_reset.compile()
-        output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
+        output = compilation_pipeline.compile_hugr_to_qis(hugr.to_bytes())
 
         # Should have two reset calls (plus potentially one from QAlloc)
         reset_calls = output.count("tail call void @___reset")
@@ -76,7 +76,7 @@ class TestResetOperation:
             return measure(q1).read(), measure(q2).read()
 
         hugr = test_reset_two.compile()
-        output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
+        output = compilation_pipeline.compile_hugr_to_qis(hugr.to_bytes())
 
         # Should have multiple reset calls
         assert "___reset" in output
@@ -95,7 +95,7 @@ class TestResetOperation:
             return measure(q).read()
 
         hugr = simple_reset.compile()
-        output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
+        output = compilation_pipeline.compile_hugr_to_qis(hugr.to_bytes())
 
         # Should declare and use reset
         assert "declare" in output
@@ -121,7 +121,7 @@ class TestResetOperation:
             return measure(q1).read(), measure(q2).read()
 
         hugr = reset_circuit.compile()
-        output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
+        output = compilation_pipeline.compile_hugr_to_qis(hugr.to_bytes())
 
         # Should have all operations
         assert "___rxy" in output  # From H and CX

@@ -1,0 +1,603 @@
+"""Surface code patch (dx=5, dz=5) implementation in Guppy.
+
+Auto-generated from SurfacePatch geometry.
+
+Data qubits: 25
+X stabilizers: 12
+Z stabilizers: 12
+Ancilla qubits: 24 (one per stabilizer)
+Interaction basis: cx
+Check plan: cx_standard_v1
+"""
+
+from __future__ import annotations
+
+from guppylang import guppy
+from guppylang.std.builtins import array, owned, output
+from guppylang.std.quantum import cx, discard, h, qubit, x, z
+from guppylang.std.quantum import collect_measurements, measure, measure_array
+
+
+@guppy.struct
+class SurfaceCode_5x5:
+    """Surface code patch with dx=5, dz=5 (25 data qubits)."""
+
+    data: array[qubit, 25]
+
+
+@guppy.struct
+class Syndrome_5x5:
+    """Syndrome for dx=5, dz=5 patch."""
+
+    synx: array[bool, 12]
+    synz: array[bool, 12]
+
+
+# === State Preparation ===
+
+@guppy
+def prep_z_basis() -> SurfaceCode_5x5:
+    """Prepare logical |0_L> state."""
+    data = array(qubit() for _ in range(25))
+    return SurfaceCode_5x5(data)
+
+
+@guppy
+def prep_x_basis() -> SurfaceCode_5x5:
+    """Prepare logical |+_L> state."""
+    data = array(qubit() for _ in range(25))
+    for i in range(25):
+        h(data[i])
+    return SurfaceCode_5x5(data)
+
+
+# === Syndrome Extraction ===
+
+@guppy
+def syndrome_extraction(surf: SurfaceCode_5x5) -> Syndrome_5x5:
+    """Extract full syndrome using 4-round parallel CNOT schedule."""
+    # Allocate ancilla qubits (one per stabilizer)
+    ax0 = qubit()
+    ax1 = qubit()
+    ax2 = qubit()
+    ax3 = qubit()
+    ax4 = qubit()
+    ax5 = qubit()
+    ax6 = qubit()
+    ax7 = qubit()
+    ax8 = qubit()
+    ax9 = qubit()
+    ax10 = qubit()
+    ax11 = qubit()
+    az0 = qubit()
+    az1 = qubit()
+    az2 = qubit()
+    az3 = qubit()
+    az4 = qubit()
+    az5 = qubit()
+    az6 = qubit()
+    az7 = qubit()
+    az8 = qubit()
+    az9 = qubit()
+    az10 = qubit()
+    az11 = qubit()
+
+    # Hadamard on X ancillas
+    h(ax0)
+    h(ax1)
+    h(ax2)
+    h(ax3)
+    h(ax4)
+    h(ax5)
+    h(ax6)
+    h(ax7)
+    h(ax8)
+    h(ax9)
+    h(ax10)
+    h(ax11)
+
+    # Round 1
+    cx(surf.data[15], az0)
+    cx(surf.data[5], az1)
+    cx(ax2, surf.data[2])
+    cx(surf.data[11], az2)
+    cx(ax3, surf.data[4])
+    cx(surf.data[1], az3)
+    cx(ax4, surf.data[6])
+    cx(surf.data[17], az4)
+    cx(ax5, surf.data[8])
+    cx(surf.data[7], az5)
+    cx(ax6, surf.data[12])
+    cx(surf.data[13], az6)
+    cx(ax7, surf.data[14])
+    cx(surf.data[3], az7)
+    cx(ax8, surf.data[16])
+    cx(surf.data[19], az8)
+    cx(ax9, surf.data[18])
+    cx(surf.data[9], az9)
+    cx(ax10, surf.data[22])
+    cx(ax11, surf.data[24])
+
+    # Round 2
+    cx(surf.data[20], az0)
+    cx(surf.data[10], az1)
+    cx(ax2, surf.data[1])
+    cx(surf.data[16], az2)
+    cx(ax3, surf.data[3])
+    cx(surf.data[6], az3)
+    cx(ax4, surf.data[5])
+    cx(surf.data[22], az4)
+    cx(ax5, surf.data[7])
+    cx(surf.data[12], az5)
+    cx(ax6, surf.data[11])
+    cx(surf.data[18], az6)
+    cx(ax7, surf.data[13])
+    cx(surf.data[8], az7)
+    cx(ax8, surf.data[15])
+    cx(surf.data[24], az8)
+    cx(ax9, surf.data[17])
+    cx(surf.data[14], az9)
+    cx(ax10, surf.data[21])
+    cx(ax11, surf.data[23])
+
+    # Round 3
+    cx(ax0, surf.data[1])
+    cx(ax1, surf.data[3])
+    cx(ax2, surf.data[7])
+    cx(surf.data[10], az2)
+    cx(ax3, surf.data[9])
+    cx(surf.data[0], az3)
+    cx(ax4, surf.data[11])
+    cx(surf.data[16], az4)
+    cx(ax5, surf.data[13])
+    cx(surf.data[6], az5)
+    cx(ax6, surf.data[17])
+    cx(surf.data[12], az6)
+    cx(ax7, surf.data[19])
+    cx(surf.data[2], az7)
+    cx(ax8, surf.data[21])
+    cx(surf.data[18], az8)
+    cx(ax9, surf.data[23])
+    cx(surf.data[8], az9)
+    cx(surf.data[14], az10)
+    cx(surf.data[4], az11)
+
+    # Round 4
+    cx(ax0, surf.data[0])
+    cx(ax1, surf.data[2])
+    cx(ax2, surf.data[6])
+    cx(surf.data[15], az2)
+    cx(ax3, surf.data[8])
+    cx(surf.data[5], az3)
+    cx(ax4, surf.data[10])
+    cx(surf.data[21], az4)
+    cx(ax5, surf.data[12])
+    cx(surf.data[11], az5)
+    cx(ax6, surf.data[16])
+    cx(surf.data[17], az6)
+    cx(ax7, surf.data[18])
+    cx(surf.data[7], az7)
+    cx(ax8, surf.data[20])
+    cx(surf.data[23], az8)
+    cx(ax9, surf.data[22])
+    cx(surf.data[13], az9)
+    cx(surf.data[19], az10)
+    cx(surf.data[9], az11)
+
+    # Hadamard on X ancillas
+    h(ax0)
+    h(ax1)
+    h(ax2)
+    h(ax3)
+    h(ax4)
+    h(ax5)
+    h(ax6)
+    h(ax7)
+    h(ax8)
+    h(ax9)
+    h(ax10)
+    h(ax11)
+
+    # Measure ancillas
+    sx0 = measure(ax0).read()
+    output("sx0:meas:0", sx0)
+    sx1 = measure(ax1).read()
+    output("sx1:meas:1", sx1)
+    sx2 = measure(ax2).read()
+    output("sx2:meas:2", sx2)
+    sx3 = measure(ax3).read()
+    output("sx3:meas:3", sx3)
+    sx4 = measure(ax4).read()
+    output("sx4:meas:4", sx4)
+    sx5 = measure(ax5).read()
+    output("sx5:meas:5", sx5)
+    sx6 = measure(ax6).read()
+    output("sx6:meas:6", sx6)
+    sx7 = measure(ax7).read()
+    output("sx7:meas:7", sx7)
+    sx8 = measure(ax8).read()
+    output("sx8:meas:8", sx8)
+    sx9 = measure(ax9).read()
+    output("sx9:meas:9", sx9)
+    sx10 = measure(ax10).read()
+    output("sx10:meas:10", sx10)
+    sx11 = measure(ax11).read()
+    output("sx11:meas:11", sx11)
+    sz0 = measure(az0).read()
+    output("sz0:meas:12", sz0)
+    sz1 = measure(az1).read()
+    output("sz1:meas:13", sz1)
+    sz2 = measure(az2).read()
+    output("sz2:meas:14", sz2)
+    sz3 = measure(az3).read()
+    output("sz3:meas:15", sz3)
+    sz4 = measure(az4).read()
+    output("sz4:meas:16", sz4)
+    sz5 = measure(az5).read()
+    output("sz5:meas:17", sz5)
+    sz6 = measure(az6).read()
+    output("sz6:meas:18", sz6)
+    sz7 = measure(az7).read()
+    output("sz7:meas:19", sz7)
+    sz8 = measure(az8).read()
+    output("sz8:meas:20", sz8)
+    sz9 = measure(az9).read()
+    output("sz9:meas:21", sz9)
+    sz10 = measure(az10).read()
+    output("sz10:meas:22", sz10)
+    sz11 = measure(az11).read()
+    output("sz11:meas:23", sz11)
+
+    synx = array(sx0, sx1, sx2, sx3, sx4, sx5, sx6, sx7, sx8, sx9, sx10, sx11)
+    synz = array(sz0, sz1, sz2, sz3, sz4, sz5, sz6, sz7, sz8, sz9, sz10, sz11)
+
+    return Syndrome_5x5(synx, synz)
+
+
+
+
+@guppy
+def init_z_basis(surf: SurfaceCode_5x5) -> array[bool, 12]:
+    """Establish initial X stabilizer signs after Z-basis data prep."""
+    ax0 = qubit()
+    ax1 = qubit()
+    ax2 = qubit()
+    ax3 = qubit()
+    ax4 = qubit()
+    ax5 = qubit()
+    ax6 = qubit()
+    ax7 = qubit()
+    ax8 = qubit()
+    ax9 = qubit()
+    ax10 = qubit()
+    ax11 = qubit()
+
+    # Hadamard on X ancillas
+    h(ax0)
+    h(ax1)
+    h(ax2)
+    h(ax3)
+    h(ax4)
+    h(ax5)
+    h(ax6)
+    h(ax7)
+    h(ax8)
+    h(ax9)
+    h(ax10)
+    h(ax11)
+
+    # Round 1
+    cx(ax2, surf.data[2])
+    cx(ax3, surf.data[4])
+    cx(ax4, surf.data[6])
+    cx(ax5, surf.data[8])
+    cx(ax6, surf.data[12])
+    cx(ax7, surf.data[14])
+    cx(ax8, surf.data[16])
+    cx(ax9, surf.data[18])
+    cx(ax10, surf.data[22])
+    cx(ax11, surf.data[24])
+
+    # Round 2
+    cx(ax2, surf.data[1])
+    cx(ax3, surf.data[3])
+    cx(ax4, surf.data[5])
+    cx(ax5, surf.data[7])
+    cx(ax6, surf.data[11])
+    cx(ax7, surf.data[13])
+    cx(ax8, surf.data[15])
+    cx(ax9, surf.data[17])
+    cx(ax10, surf.data[21])
+    cx(ax11, surf.data[23])
+
+    # Round 3
+    cx(ax0, surf.data[1])
+    cx(ax1, surf.data[3])
+    cx(ax2, surf.data[7])
+    cx(ax3, surf.data[9])
+    cx(ax4, surf.data[11])
+    cx(ax5, surf.data[13])
+    cx(ax6, surf.data[17])
+    cx(ax7, surf.data[19])
+    cx(ax8, surf.data[21])
+    cx(ax9, surf.data[23])
+
+    # Round 4
+    cx(ax0, surf.data[0])
+    cx(ax1, surf.data[2])
+    cx(ax2, surf.data[6])
+    cx(ax3, surf.data[8])
+    cx(ax4, surf.data[10])
+    cx(ax5, surf.data[12])
+    cx(ax6, surf.data[16])
+    cx(ax7, surf.data[18])
+    cx(ax8, surf.data[20])
+    cx(ax9, surf.data[22])
+
+    # Hadamard on X ancillas
+    h(ax0)
+    h(ax1)
+    h(ax2)
+    h(ax3)
+    h(ax4)
+    h(ax5)
+    h(ax6)
+    h(ax7)
+    h(ax8)
+    h(ax9)
+    h(ax10)
+    h(ax11)
+
+    # Measure init ancillas
+    sx0 = measure(ax0).read()
+    output("sx0:init:meas:0", sx0)
+    sx1 = measure(ax1).read()
+    output("sx1:init:meas:1", sx1)
+    sx2 = measure(ax2).read()
+    output("sx2:init:meas:2", sx2)
+    sx3 = measure(ax3).read()
+    output("sx3:init:meas:3", sx3)
+    sx4 = measure(ax4).read()
+    output("sx4:init:meas:4", sx4)
+    sx5 = measure(ax5).read()
+    output("sx5:init:meas:5", sx5)
+    sx6 = measure(ax6).read()
+    output("sx6:init:meas:6", sx6)
+    sx7 = measure(ax7).read()
+    output("sx7:init:meas:7", sx7)
+    sx8 = measure(ax8).read()
+    output("sx8:init:meas:8", sx8)
+    sx9 = measure(ax9).read()
+    output("sx9:init:meas:9", sx9)
+    sx10 = measure(ax10).read()
+    output("sx10:init:meas:10", sx10)
+    sx11 = measure(ax11).read()
+    output("sx11:init:meas:11", sx11)
+
+    return array(sx0, sx1, sx2, sx3, sx4, sx5, sx6, sx7, sx8, sx9, sx10, sx11)
+
+
+@guppy
+def init_x_basis(surf: SurfaceCode_5x5) -> array[bool, 12]:
+    """Establish initial Z stabilizer signs after X-basis data prep."""
+    az0 = qubit()
+    az1 = qubit()
+    az2 = qubit()
+    az3 = qubit()
+    az4 = qubit()
+    az5 = qubit()
+    az6 = qubit()
+    az7 = qubit()
+    az8 = qubit()
+    az9 = qubit()
+    az10 = qubit()
+    az11 = qubit()
+
+    # Round 1
+    cx(surf.data[15], az0)
+    cx(surf.data[5], az1)
+    cx(surf.data[11], az2)
+    cx(surf.data[1], az3)
+    cx(surf.data[17], az4)
+    cx(surf.data[7], az5)
+    cx(surf.data[13], az6)
+    cx(surf.data[3], az7)
+    cx(surf.data[19], az8)
+    cx(surf.data[9], az9)
+
+    # Round 2
+    cx(surf.data[20], az0)
+    cx(surf.data[10], az1)
+    cx(surf.data[16], az2)
+    cx(surf.data[6], az3)
+    cx(surf.data[22], az4)
+    cx(surf.data[12], az5)
+    cx(surf.data[18], az6)
+    cx(surf.data[8], az7)
+    cx(surf.data[24], az8)
+    cx(surf.data[14], az9)
+
+    # Round 3
+    cx(surf.data[10], az2)
+    cx(surf.data[0], az3)
+    cx(surf.data[16], az4)
+    cx(surf.data[6], az5)
+    cx(surf.data[12], az6)
+    cx(surf.data[2], az7)
+    cx(surf.data[18], az8)
+    cx(surf.data[8], az9)
+    cx(surf.data[14], az10)
+    cx(surf.data[4], az11)
+
+    # Round 4
+    cx(surf.data[15], az2)
+    cx(surf.data[5], az3)
+    cx(surf.data[21], az4)
+    cx(surf.data[11], az5)
+    cx(surf.data[17], az6)
+    cx(surf.data[7], az7)
+    cx(surf.data[23], az8)
+    cx(surf.data[13], az9)
+    cx(surf.data[19], az10)
+    cx(surf.data[9], az11)
+
+    # Measure init ancillas
+    sz0 = measure(az0).read()
+    output("sz0:init:meas:0", sz0)
+    sz1 = measure(az1).read()
+    output("sz1:init:meas:1", sz1)
+    sz2 = measure(az2).read()
+    output("sz2:init:meas:2", sz2)
+    sz3 = measure(az3).read()
+    output("sz3:init:meas:3", sz3)
+    sz4 = measure(az4).read()
+    output("sz4:init:meas:4", sz4)
+    sz5 = measure(az5).read()
+    output("sz5:init:meas:5", sz5)
+    sz6 = measure(az6).read()
+    output("sz6:init:meas:6", sz6)
+    sz7 = measure(az7).read()
+    output("sz7:init:meas:7", sz7)
+    sz8 = measure(az8).read()
+    output("sz8:init:meas:8", sz8)
+    sz9 = measure(az9).read()
+    output("sz9:init:meas:9", sz9)
+    sz10 = measure(az10).read()
+    output("sz10:init:meas:10", sz10)
+    sz11 = measure(az11).read()
+    output("sz11:init:meas:11", sz11)
+
+    return array(sz0, sz1, sz2, sz3, sz4, sz5, sz6, sz7, sz8, sz9, sz10, sz11)
+# === Measurement ===
+
+@guppy
+def measure_z_basis(surf: SurfaceCode_5x5 @ owned) -> array[bool, 25]:
+    """Destructively measure in Z basis."""
+    return collect_measurements(measure_array(surf.data))
+
+
+@guppy
+def measure_x_basis(surf: SurfaceCode_5x5 @ owned) -> array[bool, 25]:
+    """Destructively measure in X basis."""
+    for i in range(25):
+        h(surf.data[i])
+    return collect_measurements(measure_array(surf.data))
+
+
+# === Logical Operators ===
+
+@guppy
+def apply_logical_x(surf: SurfaceCode_5x5) -> None:
+    """Apply logical X (string along left edge)."""
+    x(surf.data[0])
+    x(surf.data[5])
+    x(surf.data[10])
+    x(surf.data[15])
+    x(surf.data[20])
+
+
+@guppy
+def apply_logical_z(surf: SurfaceCode_5x5) -> None:
+    """Apply logical Z (string along top edge)."""
+    z(surf.data[0])
+    z(surf.data[1])
+    z(surf.data[2])
+    z(surf.data[3])
+    z(surf.data[4])
+
+
+# === Memory Experiments ===
+
+def make_memory_z(num_rounds: int):
+    """Create Z-basis memory experiment."""
+    from guppylang.std.builtins import comptime
+
+    @guppy
+    def memory_z() -> None:
+        """Z-basis memory experiment for dx=5, dz=5."""
+        surf = prep_z_basis()
+        init_syn = init_z_basis(surf)
+        output("init_synx", init_syn)
+
+        for _t in range(comptime(num_rounds)):
+            syn = syndrome_extraction(surf)
+            output("synx", syn.synx)
+            output("synz", syn.synz)
+
+        final = measure_z_basis(surf)
+        output("final", final)
+        output("final:meas:0", final[0])
+        output("final:meas:1", final[1])
+        output("final:meas:2", final[2])
+        output("final:meas:3", final[3])
+        output("final:meas:4", final[4])
+        output("final:meas:5", final[5])
+        output("final:meas:6", final[6])
+        output("final:meas:7", final[7])
+        output("final:meas:8", final[8])
+        output("final:meas:9", final[9])
+        output("final:meas:10", final[10])
+        output("final:meas:11", final[11])
+        output("final:meas:12", final[12])
+        output("final:meas:13", final[13])
+        output("final:meas:14", final[14])
+        output("final:meas:15", final[15])
+        output("final:meas:16", final[16])
+        output("final:meas:17", final[17])
+        output("final:meas:18", final[18])
+        output("final:meas:19", final[19])
+        output("final:meas:20", final[20])
+        output("final:meas:21", final[21])
+        output("final:meas:22", final[22])
+        output("final:meas:23", final[23])
+        output("final:meas:24", final[24])
+
+    return memory_z
+
+
+def make_memory_x(num_rounds: int):
+    """Create X-basis memory experiment."""
+    from guppylang.std.builtins import comptime
+
+    @guppy
+    def memory_x() -> None:
+        """X-basis memory experiment for dx=5, dz=5."""
+        surf = prep_x_basis()
+        init_syn = init_x_basis(surf)
+        output("init_synz", init_syn)
+
+        for _t in range(comptime(num_rounds)):
+            syn = syndrome_extraction(surf)
+            output("synx", syn.synx)
+            output("synz", syn.synz)
+
+        final = measure_x_basis(surf)
+        output("final", final)
+        output("final:meas:0", final[0])
+        output("final:meas:1", final[1])
+        output("final:meas:2", final[2])
+        output("final:meas:3", final[3])
+        output("final:meas:4", final[4])
+        output("final:meas:5", final[5])
+        output("final:meas:6", final[6])
+        output("final:meas:7", final[7])
+        output("final:meas:8", final[8])
+        output("final:meas:9", final[9])
+        output("final:meas:10", final[10])
+        output("final:meas:11", final[11])
+        output("final:meas:12", final[12])
+        output("final:meas:13", final[13])
+        output("final:meas:14", final[14])
+        output("final:meas:15", final[15])
+        output("final:meas:16", final[16])
+        output("final:meas:17", final[17])
+        output("final:meas:18", final[18])
+        output("final:meas:19", final[19])
+        output("final:meas:20", final[20])
+        output("final:meas:21", final[21])
+        output("final:meas:22", final[22])
+        output("final:meas:23", final[23])
+        output("final:meas:24", final[24])
+
+    return memory_x
+

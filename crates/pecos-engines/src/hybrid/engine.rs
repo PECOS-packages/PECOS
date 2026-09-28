@@ -107,9 +107,11 @@ impl HybridEngine {
     /// - Resetting the engine fails.
     pub fn reset(&mut self) -> Result<(), PecosError> {
         debug!("HybridEngine::reset() being called!");
-        // Use the fully qualified path to disambiguate which reset to call
+        self.quantum_system.block_host();
         ClassicalEngine::reset(&mut *self.classical_engine)?;
-        self.quantum_system.reset()
+        self.quantum_system.reset()?;
+        self.quantum_system.finish_host_reset();
+        Ok(())
     }
 
     /// Executes a single quantum circuit shot and returns the result.
@@ -121,6 +123,51 @@ impl HybridEngine {
     /// - Processing commands through the quantum engine fails.
     /// - Handling measurements through the classical engine fails.
     pub fn run_shot(&mut self) -> Result<Shot, PecosError> {
+        if !self.quantum_system.uses_runtime_frames() {
+            return self.run_shot_inner();
+        }
+        let context = crate::runtime_frame::ShotContext {
+            run: crate::runtime_frame::next_run().inspect_err(|_| {
+                self.quantum_system.block_host();
+            })?,
+            worker: 0,
+            shot: 0,
+        };
+        self.run_shot_with_context(context)
+    }
+
+    /// Execute one shot with scheduler-provided identity. Reset before reuse.
+    ///
+    /// # Errors
+    /// Propagates admission/execution errors; failures block reuse until reset.
+    pub fn run_shot_with_context(
+        &mut self,
+        context: crate::runtime_frame::ShotContext,
+    ) -> Result<Shot, PecosError> {
+        struct Guard<'a> {
+            engine: &'a mut HybridEngine,
+            complete: bool,
+        }
+        impl Drop for Guard<'_> {
+            fn drop(&mut self) {
+                if !self.complete {
+                    self.engine.quantum_system.block_host();
+                }
+            }
+        }
+        let mut guard = Guard {
+            engine: self,
+            complete: false,
+        };
+        if guard.engine.quantum_system.uses_runtime_frames() {
+            guard.engine.quantum_system.begin_shot(context)?;
+        }
+        let result = guard.engine.run_shot_inner();
+        guard.complete = result.is_ok();
+        result
+    }
+
+    fn run_shot_inner(&mut self) -> Result<Shot, PecosError> {
         debug!(
             "HybridEngine::run_shot() starting - Thread {:?}",
             std::thread::current().id()
@@ -182,14 +229,12 @@ impl Engine for HybridEngine {
     type Output = Shot;
 
     fn process(&mut self, input: Self::Input) -> Result<Self::Output, PecosError> {
-        // Delegate to process_as_system for standard implementation
-        self.process_as_system(input)
+        let () = input;
+        self.run_shot()
     }
 
     fn reset(&mut self) -> Result<(), PecosError> {
-        // Reset both controller and engine components by using fully qualified path
-        ClassicalEngine::reset(&mut *self.classical_engine)?;
-        self.quantum_system.reset()
+        HybridEngine::reset(self)
     }
 }
 
@@ -198,6 +243,10 @@ impl EngineSystem for HybridEngine {
     type ControlledEngine = QuantumSystem;
     type EngineInput = ByteMessage;
     type EngineOutput = ByteMessage;
+
+    fn process_as_system(&mut self, (): ()) -> Result<Shot, PecosError> {
+        self.run_shot()
+    }
 
     fn controller(&self) -> &Self::Controller {
         &self.classical_engine

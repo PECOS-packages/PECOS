@@ -236,6 +236,12 @@ impl PhirProcessor {
             // Two-qubit gates
             QuantumOp::CX => self.process_two_qubit_gate("CX", instruction, message_builder),
             QuantumOp::CZ => self.process_two_qubit_gate("CZ", instruction, message_builder),
+            QuantumOp::SXX => self.process_two_qubit_gate("SXX", instruction, message_builder),
+            QuantumOp::SXXdg => self.process_two_qubit_gate("SXXdg", instruction, message_builder),
+            QuantumOp::SYY => self.process_two_qubit_gate("SYY", instruction, message_builder),
+            QuantumOp::SYYdg => self.process_two_qubit_gate("SYYdg", instruction, message_builder),
+            QuantumOp::SZZ => self.process_two_qubit_gate("SZZ", instruction, message_builder),
+            QuantumOp::SZZdg => self.process_two_qubit_gate("SZZdg", instruction, message_builder),
             QuantumOp::SWAP => {
                 let (q1, q2) = self.extract_two_qubits(instruction, "SWAP")?;
                 let gate = Gate::swap(&[(q1, q2)]);
@@ -245,6 +251,11 @@ impl PhirProcessor {
             QuantumOp::RZZ(angle) => {
                 let (q1, q2) = self.extract_two_qubits(instruction, "RZZ")?;
                 message_builder.rzz(*angle, &[(q1, q2)]);
+                Ok(true)
+            }
+            QuantumOp::RXYXY2Q(theta, phi) => {
+                let (q1, q2) = self.extract_two_qubits(instruction, "RXYXY2Q")?;
+                message_builder.rxyxy2q(*theta, *phi, &[(q1, q2)]);
                 Ok(true)
             }
             QuantumOp::CPhase(angle) => {
@@ -405,6 +416,24 @@ impl PhirProcessor {
             }
             "CZ" => {
                 message_builder.cz(&[(q1, q2)]);
+            }
+            "SXX" => {
+                message_builder.sxx(&[(q1, q2)]);
+            }
+            "SXXdg" => {
+                message_builder.sxxdg(&[(q1, q2)]);
+            }
+            "SYY" => {
+                message_builder.syy(&[(q1, q2)]);
+            }
+            "SYYdg" => {
+                message_builder.syydg(&[(q1, q2)]);
+            }
+            "SZZ" => {
+                message_builder.szz(&[(q1, q2)]);
+            }
+            "SZZdg" => {
+                message_builder.szzdg(&[(q1, q2)]);
             }
             _ => {
                 return Err(PhirError::internal(format!(

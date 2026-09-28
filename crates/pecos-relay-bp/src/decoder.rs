@@ -38,7 +38,9 @@ impl RelayBpDecoder {
     ///
     /// # Errors
     ///
-    /// Returns [`RelayBpError::InvalidMatrix`] if the check matrix is invalid.
+    /// Returns [`RelayBpError::InvalidMatrix`] if the check matrix is invalid
+    /// or an explicit gamma row is malformed. Returns
+    /// [`RelayBpError::Configuration`] if the gamma interval is invalid.
     pub fn new(
         check_matrix: &ArrayView2<u8>,
         min_sum_config: &MinSumConfig,
@@ -50,7 +52,7 @@ impl RelayBpDecoder {
 
         let sparse_matrix = convert::check_matrix_to_relay(check_matrix)?;
         let ms_config = min_sum_config.to_min_sum_config();
-        let relay_cfg = relay_config.to_relay_config();
+        let relay_cfg = relay_config.to_relay_config(num_bits)?;
 
         let inner = relay_bp::bp::relay::RelayDecoder::new(
             sparse_matrix,

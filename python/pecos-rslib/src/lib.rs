@@ -32,6 +32,7 @@
 mod prelude;
 
 mod array_buffer;
+mod batch_decoder_spec;
 mod bit_conversion;
 mod bit_int_bindings;
 mod bit_uint_bindings;

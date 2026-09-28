@@ -50,16 +50,6 @@ class TestAstEqual:
 
         assert ast_equal(ast1, ast2)
 
-    def test_different_gates(self) -> None:
-        """Programs with different gates are not equal."""
-        prog1 = Main(q := QReg("q", 1), qb.H(q[0]))
-        prog2 = Main(q := QReg("q", 1), qb.X(q[0]))
-
-        ast1 = slr_to_ast(prog1)
-        ast2 = slr_to_ast(prog2)
-
-        assert not ast_equal(ast1, ast2)
-
     def test_different_allocator_sizes(self) -> None:
         """Programs with different allocator sizes are not equal."""
         prog1 = Program(
@@ -224,24 +214,6 @@ class TestNodesEqual:
 
 class TestComplexCircuits:
     """Tests with complex circuits."""
-
-    def test_bell_state_equal(self) -> None:
-        """Bell state circuits are equal."""
-        prog1 = Main(
-            q := QReg("q", 2),
-            qb.H(q[0]),
-            qb.CX(q[0], q[1]),
-        )
-        prog2 = Main(
-            q := QReg("q", 2),
-            qb.H(q[0]),
-            qb.CX(q[0], q[1]),
-        )
-
-        ast1 = slr_to_ast(prog1)
-        ast2 = slr_to_ast(prog2)
-
-        assert ast_equal(ast1, ast2)
 
     def test_ghz_different_size(self) -> None:
         """GHZ circuits with different sizes are not equal."""

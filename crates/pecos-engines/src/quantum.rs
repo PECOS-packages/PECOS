@@ -294,6 +294,13 @@ fn process_clifford_message<S: CliffordGateable + CliffordRotation + QuantumSimu
                 };
                 result.map_err(PecosError::Processing)?;
             }
+            GateType::RXYXY2Q => {
+                with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
+                    sim.try_rxyxy2q(cmd.angles[0], cmd.angles[1], pairs)
+                        .map(|_| ())
+                })
+                .map_err(PecosError::Processing)?;
+            }
             GateType::RXY1Q => {
                 sim.try_rxy1q(cmd.angles[0], cmd.angles[1], &cmd.qubits)
                     .map_err(PecosError::Processing)?;
@@ -528,6 +535,11 @@ fn process_general_message<
             GateType::RYY => {
                 with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
                     sim.ryy(cmd.angles[0], pairs);
+                });
+            }
+            GateType::RXYXY2Q => {
+                with_flat_pairs(&cmd.qubits, &mut pair_scratch, |pairs| {
+                    sim.rxyxy2q(cmd.angles[0], cmd.angles[1], pairs);
                 });
             }
             GateType::RXY1Q => {
@@ -1111,6 +1123,16 @@ where
                         cmd.qubits
                     );
                     self.simulator.rz(angle, &cmd.qubits);
+                }
+                GateType::RXYXY2Q => {
+                    if cmd.qubits.len() % 2 != 0 {
+                        return Err(quantum_error(format!(
+                            "RXYXY2Q gate requires even number of qubits, got {}",
+                            cmd.qubits.len()
+                        )));
+                    }
+                    let pairs = flat_to_pairs(&cmd.qubits);
+                    self.simulator.rxyxy2q(cmd.angles[0], cmd.angles[1], &pairs);
                 }
                 GateType::RXY1Q => {
                     let theta = cmd.angles[0];
@@ -1821,24 +1843,16 @@ mod tests {
 
     #[test]
     fn dispatch_validation_uses_exact_core_angle_arity() {
-        let missing = Gate::new(
-            GateType::RZ,
-            Vec::<Angle64>::new(),
-            Vec::<f64>::new(),
-            vec![QubitId(0)],
-        );
+        let mut missing = Gate::rz(Angle64::ZERO, &[QubitId(0)]);
+        missing.angles.clear();
         let err = validate_dispatch_gate(&missing).expect_err("missing angle must fail");
         assert!(
             err.to_string()
                 .contains("Gate RZ expected 1 angle parameters, got 0")
         );
 
-        let surplus = Gate::new(
-            GateType::RZ,
-            vec![Angle64::ZERO, Angle64::ZERO],
-            Vec::<f64>::new(),
-            vec![QubitId(0)],
-        );
+        let mut surplus = Gate::rz(Angle64::ZERO, &[QubitId(0)]);
+        surplus.angles.push(Angle64::ZERO);
         let err = validate_dispatch_gate(&surplus).expect_err("surplus angle must fail");
         assert!(
             err.to_string()

@@ -346,7 +346,7 @@ def generate_circuit_level_dem(
 
     # Parse and generate DEM
     circuit = stim.Circuit(circuit_str)
-    dem = circuit.detector_error_model()
+    dem = circuit.detector_error_model().flattened()
 
     return str(dem)
 

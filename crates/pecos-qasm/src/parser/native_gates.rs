@@ -33,6 +33,7 @@ pub fn parse_native_gate(name: &str) -> Option<CoreGateType> {
         "RX" => Some(CoreGateType::RX),
         "RY" => Some(CoreGateType::RY),
         "RZZ" => Some(CoreGateType::RZZ),
+        "RXYXY2Q" => Some(CoreGateType::RXYXY2Q),
         "RXY1Q" | "R1XY" => Some(CoreGateType::RXY1Q),
         "U" => Some(CoreGateType::U),
         _ => None,
@@ -89,6 +90,7 @@ mod tests {
             | CoreGateType::Tdg
             | CoreGateType::U
             | CoreGateType::RXY1Q
+            | CoreGateType::RXYXY2Q
             | CoreGateType::CX
             | CoreGateType::CY
             | CoreGateType::CZ
@@ -134,6 +136,10 @@ mod tests {
             };
             if is_qasm_native_gate(gate) {
                 assert_eq!(parse_native_gate(&gate.to_string()), Some(gate));
+            } else {
+                // A gate the engine cannot run must not parse as native either,
+                // or a program is accepted at parse time and rejected at run time.
+                assert_eq!(parse_native_gate(&gate.to_string()), None, "{gate}");
             }
         }
     }

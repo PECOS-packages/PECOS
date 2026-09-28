@@ -71,6 +71,7 @@ RZ(θ) = exp(-iθ/2) p(θ)
 | RY(θ) | Rotation around Y-axis by θ |
 | RZ(θ) | Rotation around Z-axis by θ |
 | RXY1Q(θ, φ) | Single-qubit rotation by θ around the XY-plane axis at angle φ |
+| RXYXY2Q(θ, φ) | Two-qubit rotation by θ about XY_φ ⊗ XY_φ, the same XY-plane axis on both qubits |
 | RXX(θ) | Two-qubit XX rotation by θ |
 | RYY(θ) | Two-qubit YY rotation by θ |
 | RZZ(θ) | Two-qubit ZZ rotation by θ |

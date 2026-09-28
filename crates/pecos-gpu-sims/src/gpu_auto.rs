@@ -81,6 +81,10 @@ impl QuantumSimulator for GpuStateVecAuto {
 }
 
 impl CliffordGateable for GpuStateVecAuto {
+    fn apply_global_phase(&mut self, phase: Angle64, qubits: &[QubitId]) -> &mut Self {
+        dispatch_mut!(self, apply_global_phase(phase, qubits))
+    }
+
     fn h(&mut self, qubits: &[QubitId]) -> &mut Self {
         dispatch_mut!(self, h(qubits))
     }
@@ -138,6 +142,24 @@ impl CliffordGateable for GpuStateVecAuto {
     fn cx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
         dispatch_mut!(self, cx(pairs))
     }
+    fn sxx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        dispatch_mut!(self, sxx(pairs))
+    }
+    fn sxxdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        dispatch_mut!(self, sxxdg(pairs))
+    }
+    fn syy(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        dispatch_mut!(self, syy(pairs))
+    }
+    fn syydg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        dispatch_mut!(self, syydg(pairs))
+    }
+    fn szz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        dispatch_mut!(self, szz(pairs))
+    }
+    fn szzdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
+        dispatch_mut!(self, szzdg(pairs))
+    }
     fn mz(&mut self, qubits: &[QubitId]) -> Vec<MeasurementResult> {
         match self {
             Self::F64(s) => s.mz(qubits),
@@ -152,9 +174,6 @@ impl ArbitraryRotationGateable for GpuStateVecAuto {
     }
     fn rz(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
         dispatch_mut!(self, rz(theta, qubits))
-    }
-    fn apply_global_phase(&mut self, phase: Angle64, qubits: &[QubitId]) -> &mut Self {
-        dispatch_mut!(self, apply_global_phase(phase, qubits))
     }
     fn t(&mut self, qubits: &[QubitId]) -> &mut Self {
         dispatch_mut!(self, t(qubits))

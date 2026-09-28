@@ -5,6 +5,7 @@
 use anyhow::{Result, anyhow};
 use pecos_core::{Angle64, QubitId};
 use pecos_selene_core::{SeleneAdapter, SeleneSimBehavior, to_usize};
+use pecos_simulators::clifford_rotation::CliffordRotation;
 use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, Stabilizer, StateVec};
 use selene_core::simulator::conformance_testing::run_basic_tests;
 use selene_core::simulator::interface::SimulatorInterfaceFactory;
@@ -44,6 +45,15 @@ impl SeleneSimBehavior for StateVecBehavior {
 
     fn apply_rzz(&mut self, q1: QubitId, q2: QubitId, theta: f64) -> Result<()> {
         self.sim.rzz(Angle64::from_radians(theta), &[(q1, q2)]);
+        Ok(())
+    }
+
+    fn apply_rxyxy2q(&mut self, q1: QubitId, q2: QubitId, theta: f64, phi: f64) -> Result<()> {
+        self.sim.rxyxy2q(
+            Angle64::from_radians(theta),
+            Angle64::from_radians(phi),
+            &[(q1, q2)],
+        );
         Ok(())
     }
 
@@ -213,6 +223,17 @@ impl SeleneSimBehavior for StabilizerBehavior {
         Ok(())
     }
 
+    fn apply_rxyxy2q(&mut self, q1: QubitId, q2: QubitId, theta: f64, phi: f64) -> Result<()> {
+        self.sim
+            .try_rxyxy2q(
+                Angle64::from_radians(theta),
+                Angle64::from_radians(phi),
+                &[(q1, q2)],
+            )
+            .map_err(|error| anyhow!(error))?;
+        Ok(())
+    }
+
     fn reset_qubit(&mut self, qubit: QubitId) -> Result<()> {
         self.sim.mpz(&[qubit]);
         Ok(())
@@ -274,4 +295,38 @@ fn selene_conformance_stabilizer() {
     let factory = Arc::new(StabilizerAdapterFactory);
     let args = vec![String::new(), "--angle-threshold=0.001".to_string()];
     run_basic_tests(factory, args);
+}
+
+#[test]
+fn adapter_dispatches_rpp_and_checks_targets() {
+    use selene_core::operation::{BatchOperation, Operation};
+    use selene_core::simulator::SimulatorInterface;
+
+    let mut adapter = SeleneAdapter {
+        behavior: StateVecBehavior {
+            sim: StateVec::with_seed(2, 0),
+        },
+        num_qubits: 2,
+    };
+    adapter
+        .handle_operations(BatchOperation::error_model(vec![Operation::RPPGate {
+            qubit_id_1: 1,
+            qubit_id_2: 0,
+            theta: std::f64::consts::PI,
+            phi: 0.37,
+        }]))
+        .unwrap();
+    assert!((adapter.behavior.sim.get_amplitude(3).norm_sqr() - 1.0).abs() < 1e-12);
+    for (qubit_id_1, qubit_id_2) in [(0, 2), (2, 0), (1, 1)] {
+        assert!(
+            adapter
+                .handle_operations(BatchOperation::error_model(vec![Operation::RPPGate {
+                    qubit_id_1,
+                    qubit_id_2,
+                    theta: 0.0,
+                    phi: 0.0,
+                }]))
+                .is_err()
+        );
+    }
 }

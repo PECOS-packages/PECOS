@@ -1,0 +1,7 @@
+{
+ "detectors": "[{\"id\": 0, \"coords\": [0, 0, 0], \"records\": [-5, -7]}, {\"id\": 1, \"coords\": [1, 0, 0], \"records\": [-4, -6]}]",
+ "observables": "[{\"id\": 0, \"records\": [-3, -2, -1]}]",
+ "num_measurements": "7",
+ "num_detectors": "2",
+ "basis": "Z"
+}

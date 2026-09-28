@@ -57,5 +57,8 @@ jobs:
       - name: Set up Rust
         run: rustup show
 
+      - name: Test the cache-gate parser the integrity check relies on
+        run: uv run --frozen pytest -q scripts/ci/test_cache_guard.py
+
       - name: Run dependency integrity checks
         run: ./scripts/dependency-integrity-check.sh

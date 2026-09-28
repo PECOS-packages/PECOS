@@ -121,6 +121,9 @@ class TestQuantumPecosPatterns:
         n_qubits = 1000
         error_rate = 0.01
 
+        # A fixed seed keeps the 3-sigma bound below from failing on the
+        # roughly one draw in 370 that legitimately falls outside it.
+        pc.random.seed(7)
         random_vals = pc.random.random(n_qubits)
         errors = random_vals < error_rate
 
@@ -148,6 +151,8 @@ class TestQuantumPecosPatterns:
         # Simulate: outcomes = np.random.randint(0, 2, n_measurements)
         n_measurements = 1000
 
+        # Use a fixed seed for deterministic test behavior
+        pc.random.seed(11)
         outcomes = pc.random.randint(0, 2, n_measurements)
 
         assert len(outcomes) == n_measurements

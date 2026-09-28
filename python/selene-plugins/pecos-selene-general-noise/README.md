@@ -49,12 +49,10 @@ Idle rates use seconds because the adapter converts Selene's nanosecond schedule
 to the units expected by PECOS. Local crosstalk is described with neutral qubit
 groups rather than a hard-coded device layout.
 
-The adapter supports Selene's RXY, RZ, RZZ, reset, Boolean measurement, and
-leakage-valued measurement operations. Selene `RPP` operations are rejected
-until PECOS defines a device-neutral general-noise representation for them;
-silently decomposing them would change which primitive gate-error channels are
-applied. Device-specific `Custom` operations are likewise outside this generic
-adapter.
+The adapter supports Selene's RXY, RZ, RZZ, RPP, reset, Boolean measurement, and
+leakage-valued measurement operations. Selene `RPP` operations map to PECOS's
+`RXYXY2Q` gate, so the noise model applies one two-qubit gate-error channel.
+Device-specific `Custom` operations are outside this generic adapter.
 
 ## Development
 

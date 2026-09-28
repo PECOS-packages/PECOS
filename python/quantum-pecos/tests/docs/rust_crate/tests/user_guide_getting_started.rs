@@ -14,18 +14,30 @@ fn test_user_guide_getting_started_rust_1() {
 
 #[test]
 fn test_user_guide_getting_started_rust_2() -> Result<(), Box<dyn std::error::Error>> {
-    use pecos_hugr::hugr_sim;
-    use std::path::PathBuf;
-    let mut hugr_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    hugr_path.push("../../../../../crates/pecos/tests/test_data/hugr/bell_state.hugr");
+    use pecos::prelude::*;
 
-
-// Load and run a pre-compiled HUGR circuit
-let results = hugr_sim(&hugr_path)
+let program = Qasm::from_string(r#"
+    OPENQASM 2.0;
+    include "qelib1.inc";
+    qreg d[3];
+    qreg s[2];
+    creg syndrome[2];
+    creg data[3];
+    cx d[0], s[0];
+    cx d[1], s[0];
+    cx d[1], s[1];
+    cx d[2], s[1];
+    measure s -> syndrome;
+    measure d -> data;
+"#);
+let results = sim(program)
+    .noise(DepolarizingNoiseModel::builder().with_uniform_probability(0.1))
     .seed(42)
-    .run(10)?;
+    .shots(10)
+    .run()?;
 
-println!("Got {} shots", results.shots.len());
+let shot_map = results.try_as_shot_map()?;
+println!("Syndromes: {:?}", shot_map.try_bits_as_u64("syndrome")?);
 
     Ok(())
 }

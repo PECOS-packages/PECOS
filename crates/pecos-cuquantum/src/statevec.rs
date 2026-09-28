@@ -571,6 +571,15 @@ impl QuantumSimulator for CuStateVec {
 }
 
 impl CliffordGateable for CuStateVec {
+    fn apply_global_phase(&mut self, phase: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let (sin, cos) = phase.to_radians_signed().sin_cos();
+        let matrix = [[cos, sin], [0.0, 0.0], [0.0, 0.0], [cos, sin]];
+        for &q in qubits {
+            self.apply_matrix_1q(q.0, &matrix);
+        }
+        self
+    }
+
     fn sz(&mut self, qubits: &[QubitId]) -> &mut Self {
         let matrix = canonical_single_qubit_matrix(GateType::SZ);
         for &q in qubits {
@@ -813,15 +822,6 @@ impl ArbitraryRotationGateable for CuStateVec {
         let c = (theta / 2.0).cos();
         let s = (theta / 2.0).sin();
         let matrix = [[c, -s], [0.0, 0.0], [0.0, 0.0], [c, s]];
-        for &q in qubits {
-            self.apply_matrix_1q(q.0, &matrix);
-        }
-        self
-    }
-
-    fn apply_global_phase(&mut self, phase: Angle64, qubits: &[QubitId]) -> &mut Self {
-        let (sin, cos) = phase.to_radians_signed().sin_cos();
-        let matrix = [[cos, sin], [0.0, 0.0], [0.0, 0.0], [cos, sin]];
         for &q in qubits {
             self.apply_matrix_1q(q.0, &matrix);
         }

@@ -1,9 +1,12 @@
 """Test suite for advanced type support (futures, collections, etc)."""
 
-import pecos_rslib
-import pecos_rslib_llvm
+import re
+
+import pecos as pc
 from guppylang import guppy
-from guppylang.std.quantum import h, measure, qubit
+from guppylang.std.builtins import result
+from guppylang.std.quantum import h, measure, qubit, x
+from pecos import compilation_pipeline
 
 
 class TestAdvancedTypes:
@@ -20,7 +23,7 @@ class TestAdvancedTypes:
             return measure(q).read()
 
         hugr = test_measure_future.compile()
-        output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
+        output = compilation_pipeline.compile_hugr_to_qis(hugr.to_bytes())
 
         # Should compile successfully
         assert "___lazy_measure" in output
@@ -40,11 +43,11 @@ class TestAdvancedTypes:
             return result1, result2
 
         hugr = test_multi_measure.compile()
-        output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
+        output = compilation_pipeline.compile_hugr_to_qis(hugr.to_bytes())
 
         # Should handle multiple futures correctly
-        measure_calls = output.count("___lazy_measure")
-        assert measure_calls >= 2, f"Expected at least 2 measurements, got {measure_calls}"
+        measure_calls = re.findall(r"\bcall\b[^\n]*@___lazy_measure\(", output)
+        assert len(measure_calls) == 2, f"Expected 2 measurement calls, got {len(measure_calls)}"
 
     def test_advanced_types_compilation(self) -> None:
         """Test that advanced types don't break compilation."""
@@ -57,33 +60,37 @@ class TestAdvancedTypes:
             return measure(q).read()
 
         hugr = test_advanced.compile()
-        pecos_out = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
+        pecos_out = compilation_pipeline.compile_hugr_to_qis(hugr.to_bytes())
 
         # Should compile successfully
         assert len(pecos_out) > 100
         # The return type could be i32 (for bool) or i64 depending on compiler version
         assert "define i32 @qmain" in pecos_out or "define i64 @qmain" in pecos_out
 
-    def test_advanced_types_selene_compatibility(self) -> None:
-        """Test advanced types work with both compilers."""
+    def test_measurement_futures_read_out_of_order_on_selene(self) -> None:
+        """Delayed reads retain the outcome of their own measurement."""
 
         @guppy
-        def test_compat() -> bool:
-            q = qubit()
-            return measure(q).read()
+        def delayed_reads() -> None:
+            q0 = qubit()
+            q1 = qubit()
+            x(q1)
+            first = measure(q0)
+            second = measure(q1)
+            result("second", second.read())
+            result("first", first.read())
 
-        hugr = test_compat.compile()
-        try:
-            pecos_out = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
-            selene_out = pecos_rslib_llvm.compile_hugr_to_qis_selene(hugr.to_bytes())
-
-            # Both should handle advanced types
-            assert "___lazy_measure" in pecos_out or "measure" in pecos_out.lower()
-            assert "___lazy_measure" in selene_out or "measure" in selene_out.lower()
-        except Exception as e:
-            # If there are compatibility issues, that's expected for advanced features
-            print(f"Advanced types compatibility test info: {e}")
-            assert True  # Don't fail
+        results = (
+            pc.sim(delayed_reads)
+            .classical(pc.selene_engine())
+            .quantum(pc.state_vector())
+            .qubits(2)
+            .seed(42)
+            .run(8)
+            .to_dict()
+        )
+        assert results["first"] == [0] * 8
+        assert results["second"] == [1] * 8
 
     def test_complex_quantum_program(self) -> None:
         """Test complex program that might use advanced types."""
@@ -107,7 +114,7 @@ class TestAdvancedTypes:
             return r1, r2, r3
 
         hugr = test_complex.compile()
-        output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
+        output = compilation_pipeline.compile_hugr_to_qis(hugr.to_bytes())
 
         # Should handle the complex program correctly
         assert "___qalloc" in output

@@ -1202,6 +1202,32 @@ impl GpuStateVec32 {
         }
     }
 
+    /// Queue a conventional named Pauli root through the corresponding rotation
+    /// pipeline. `matrix_row0.z` selects the exact named-root shader branch and
+    /// `matrix_row0.y` is +1 for the root or -1 for its adjoint.
+    fn queue_named_pauli_root(
+        &mut self,
+        pipeline: GatePipeline,
+        qubit0: u32,
+        qubit1: u32,
+        dagger: bool,
+    ) {
+        self.gate_queue.push(QueuedGate {
+            pipeline,
+            params: GateParams {
+                target_qubit: qubit1,
+                control_qubit: qubit0,
+                num_qubits: self.num_qubits,
+                _padding: 0,
+                matrix_row0: [0.0, if dagger { -1.0 } else { 1.0 }, 1.0, 0.0],
+                matrix_row1: [0.0; 4],
+            },
+        });
+        if self.gate_queue.len() >= MAX_BATCH_SIZE {
+            self.flush_gates();
+        }
+    }
+
     /// Apply an arbitrary single-qubit gate
     pub fn apply_single_gate(&mut self, qubit: u32, matrix: [f32; 8]) {
         let params = GateParams {
@@ -1561,6 +1587,17 @@ impl QuantumSimulator for GpuStateVec32 {
 // Trait implementations queue gates for batched dispatch.
 #[allow(clippy::cast_possible_truncation)] // Qubit indices from QubitId fit in u32
 impl CliffordGateable for GpuStateVec32 {
+    fn apply_global_phase(&mut self, phase: Angle64, qubits: &[QubitId]) -> &mut Self {
+        let (sin, cos) = phase.to_radians_signed().sin_cos();
+        let matrix = [
+            cos as f32, sin as f32, 0.0, 0.0, 0.0, 0.0, cos as f32, sin as f32,
+        ];
+        for &q in qubits {
+            self.queue_single_gate(q.index() as u32, matrix);
+        }
+        self
+    }
+
     fn h(&mut self, qubits: &[QubitId]) -> &mut Self {
         for &q in qubits {
             self.queue_single_gate(q.index() as u32, gates::H);
@@ -1751,52 +1788,73 @@ impl CliffordGateable for GpuStateVec32 {
     }
 
     fn szz(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
-        // SZZ = RZZ(pi/2) -- reuse the existing RZZ shader
-        let theta = std::f32::consts::FRAC_PI_2;
         for &(q0, q1) in pairs {
-            self.queue_rzz(q0.index() as u32, q1.index() as u32, theta);
+            self.queue_named_pauli_root(
+                GatePipeline::Rzz,
+                q0.index() as u32,
+                q1.index() as u32,
+                false,
+            );
         }
         self
     }
 
     fn szzdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
-        // SZZdg = RZZ(-pi/2)
-        let theta = -std::f32::consts::FRAC_PI_2;
         for &(q0, q1) in pairs {
-            self.queue_rzz(q0.index() as u32, q1.index() as u32, theta);
+            self.queue_named_pauli_root(
+                GatePipeline::Rzz,
+                q0.index() as u32,
+                q1.index() as u32,
+                true,
+            );
         }
         self
     }
 
     fn sxx(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
-        // SXX = RXX(pi/2) -- 1 dispatch instead of 5
-        let theta = std::f32::consts::FRAC_PI_2;
         for &(q0, q1) in pairs {
-            self.queue_rxx(q0.index() as u32, q1.index() as u32, theta);
+            self.queue_named_pauli_root(
+                GatePipeline::Rxx,
+                q0.index() as u32,
+                q1.index() as u32,
+                false,
+            );
         }
         self
     }
 
     fn sxxdg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
-        let theta = -std::f32::consts::FRAC_PI_2;
         for &(q0, q1) in pairs {
-            self.queue_rxx(q0.index() as u32, q1.index() as u32, theta);
+            self.queue_named_pauli_root(
+                GatePipeline::Rxx,
+                q0.index() as u32,
+                q1.index() as u32,
+                true,
+            );
         }
         self
     }
 
     fn syy(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
-        let theta = std::f32::consts::FRAC_PI_2;
         for &(q0, q1) in pairs {
-            self.queue_ryy(q0.index() as u32, q1.index() as u32, theta);
+            self.queue_named_pauli_root(
+                GatePipeline::Ryy,
+                q0.index() as u32,
+                q1.index() as u32,
+                false,
+            );
         }
         self
     }
 
     fn syydg(&mut self, pairs: &[(QubitId, QubitId)]) -> &mut Self {
-        let theta = -std::f32::consts::FRAC_PI_2;
         for &(q0, q1) in pairs {
-            self.queue_ryy(q0.index() as u32, q1.index() as u32, theta);
+            self.queue_named_pauli_root(
+                GatePipeline::Ryy,
+                q0.index() as u32,
+                q1.index() as u32,
+                true,
+            );
         }
         self
     }
@@ -1922,17 +1980,6 @@ impl ArbitraryRotationGateable for GpuStateVec32 {
     fn rz(&mut self, theta: Angle64, qubits: &[QubitId]) -> &mut Self {
         let theta = theta.to_radians_signed();
         let matrix = gates::rz(theta);
-        for &q in qubits {
-            self.queue_single_gate(q.index() as u32, matrix);
-        }
-        self
-    }
-
-    fn apply_global_phase(&mut self, phase: Angle64, qubits: &[QubitId]) -> &mut Self {
-        let (sin, cos) = phase.to_radians_signed().sin_cos();
-        let matrix = [
-            cos as f32, sin as f32, 0.0, 0.0, 0.0, 0.0, cos as f32, sin as f32,
-        ];
         for &q in qubits {
             self.queue_single_gate(q.index() as u32, matrix);
         }

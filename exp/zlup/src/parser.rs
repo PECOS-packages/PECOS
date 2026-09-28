@@ -2043,7 +2043,7 @@ impl<'a> ParserState<'a> {
                 op: BinaryOp::Or,
                 left,
                 right,
-                location: None,
+                location: Some(loc.clone()),
             }));
         }
 
@@ -2117,7 +2117,7 @@ impl<'a> ParserState<'a> {
                 op: BinaryOp::Orelse,
                 left,
                 right,
-                location: None,
+                location: Some(loc.clone()),
             }));
         }
 
@@ -2143,7 +2143,7 @@ impl<'a> ParserState<'a> {
                 op: BinaryOp::And,
                 left,
                 right,
-                location: None,
+                location: Some(loc.clone()),
             }));
         }
 
@@ -2172,7 +2172,7 @@ impl<'a> ParserState<'a> {
                 op,
                 left,
                 right,
-                location: None,
+                location: Some(loc.clone()),
             }));
         }
 
@@ -2218,7 +2218,7 @@ impl<'a> ParserState<'a> {
                 op,
                 left,
                 right,
-                location: None,
+                location: Some(loc),
             })))
         } else {
             Ok(left)
@@ -2273,7 +2273,7 @@ impl<'a> ParserState<'a> {
                 op,
                 left,
                 right,
-                location: None,
+                location: Some(loc.clone()),
             }));
         }
 
@@ -2305,7 +2305,7 @@ impl<'a> ParserState<'a> {
                 op,
                 left,
                 right,
-                location: None,
+                location: Some(loc.clone()),
             }));
         }
 
@@ -2338,7 +2338,7 @@ impl<'a> ParserState<'a> {
                 op,
                 left,
                 right,
-                location: None,
+                location: Some(loc.clone()),
             }));
         }
 
@@ -4034,6 +4034,25 @@ pub fn parse_file(source: &str, filename: impl Into<String>) -> ParseResult<Prog
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn generated_import_paths_round_trip() {
+        for path in [
+            r"\\?\D:\a\PECOS\PECOS\exp\zlup\std\std.zlp",
+            r"\\server\share\std.zlp",
+            "/tmp/a\"quoted\"/std.zlp",
+            "/tmp/line\nbreak\tand\rcarriage/std.zlp",
+        ] {
+            let escaped = crate::tests::escape_source_string(path);
+            let source = format!("std := @import(\"{escaped}\");");
+            super::parse(&source).expect("generated import must parse on every host");
+            let literal = format!("\"{escaped}\"");
+            assert_eq!(
+                super::ParserState::new("").parse_string_content(&literal),
+                path
+            );
+        }
+    }
 
     #[test]
     fn test_parse_empty() {

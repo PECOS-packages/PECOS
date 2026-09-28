@@ -336,7 +336,7 @@ def test_windowed_logical_subgraph_single_window_matches_nonwindowed():
     below."""
     p, n, rounds = 0.001, 40000, 18
     for d in (3, 5):
-        win, nwin = _windowed_mem_ler(d, rounds, p, n, seed=7, step=10_000, buffer=0)
+        win, nwin = _windowed_mem_ler(d, rounds, p, n, seed=7, step=10_000, buffer=d)
         non = _nonwindowed_mem_ler(d, rounds, p, n, seed=7, inner="pecos_uf:fast")
         assert nwin == 1, f"expected a single window, got {nwin}"
         # Same decode up to negligible tie-breaking differences.
@@ -346,53 +346,34 @@ def test_windowed_logical_subgraph_single_window_matches_nonwindowed():
         ), f"single-window windowed != non-windowed at d={d}: win={win:.5f} non={non:.5f}"
 
 
-def test_windowed_logical_subgraph_known_limitation_no_full_suppression():
-    """KNOWN LIMITATION (separately tracked): the windowed logical-subgraph
-    decoder does not yet achieve full distance suppression on memory.
+def test_windowed_logical_subgraph_known_limitation_suppresses_3_to_5_not_5_to_7():
+    """Windowed logical-observable matching still fails to suppress beyond d=5.
 
-    The decoder was rewritten to do proper sliding-window core-commit (each
-    per-observable subgraph is wrapped in an ``OverlappingWindowedDecoder``, which
-    commits only correction edges whose both endpoints lie in a window's core).
-    That removed the old double-counting bug -- a single window now reproduces the
-    non-windowed decoder exactly (see the test above), and multi-window LER is no
-    longer catastrophic (the old naive-XOR decoder anti-suppressed to ~10-25%).
-
-    What remains is the *windowed logical-observable-matching* limitation
-    identified in Serra-Peralta et al. (arXiv:2505.13599, Sec. V): per-observable
-    windowing admits "time-like snake" error patterns that scale sublinearly in
-    d, so LER does not fully suppress without their additional machinery
-    (synchronized resets every Omega(d) and/or a two-step decoder with short-cut
-    edges). Standard *full-DEM* sliding-window decoding does not have this issue
-    (PECOS's ``windowed:`` decoder suppresses on a graphlike/Stim-decomposed DEM
-    -- it is not exercised here because the native PECOS DEM has undecomposed
-    hyperedges that the full-DEM windowed path's matching inner rejects). For a
-    single-observable memory prefer either the non-windowed
-    ``LogicalSubgraphDecoder`` or full-DEM windowing on a decomposed DEM. This
-    pins the limitation; implementing the anti-snake machinery is the remaining
-    work.
-    See pecos-docs/design/logical-subgraph-backprop-region-builder.md."""
+    Whole-component commit improves d=3 to d=5, but the time-like-snake
+    limitation persists from d=5 to d=7 (Serra-Peralta et al., arXiv:2505.13599,
+    Sec. V). Measured rates at the pinned settings are 0.004075, 0.001950,
+    and 0.002000 for d=3, 5, and 7, with 6, 3, and 2 windows respectively.
+    When anti-snake machinery lands and d=5 to d=7 starts suppressing, flip
+    that limitation assertion to require suppression.
+    """
     p, n, rounds = 0.001, 40000, 18
-    ler_d3, nwin = _windowed_mem_ler(3, rounds, p, n, seed=7, step=3, buffer=3)
-    ler_d5, _ = _windowed_mem_ler(5, rounds, p, n, seed=7, step=5, buffer=5)
-    ler_d7, _ = _windowed_mem_ler(7, rounds, p, n, seed=7, step=7, buffer=7)
-    # The circuit is deep enough to actually exercise windowing.
-    assert nwin > 1, f"probe degenerated to a single window (nwin={nwin})"
-    # Still does not fully suppress (the paper's windowed-LOM limitation): LER does
-    # not fall with distance (it in fact grows). When the anti-snake machinery
-    # lands and this suppresses, flip the assertions and update the test.
-    suppression_note = (
-        f"windowed logical-subgraph now suppresses (d3={ler_d3:.5f} "
-        f"d5={ler_d5:.5f} d7={ler_d7:.5f}) -- anti-snake machinery appears to "
-        "have landed; update this test."
-    )
-    assert ler_d5 >= ler_d3 * 0.7, suppression_note
-    assert ler_d7 >= ler_d5 * 0.7, suppression_note
-    # Guard against regressing to the old catastrophic anti-suppression (the
-    # naive-XOR decoder reached ~0.1-0.25 here); the core-commit rewrite keeps it
-    # well below that across distances.
-    assert (
-        max(ler_d3, ler_d5, ler_d7) < 0.1
-    ), f"windowed LER regressed toward catastrophic: d3={ler_d3:.5f} d5={ler_d5:.5f} d7={ler_d7:.5f}"
+    rates = []
+    for distance in (3, 5, 7):
+        rate, windows = _windowed_mem_ler(
+            distance,
+            rounds,
+            p,
+            n,
+            seed=7,
+            step=distance,
+            buffer=distance,
+        )
+        assert windows > 1, f"probe degenerated to a single window at d={distance}"
+        rates.append(rate)
+    assert rates[1] < 0.7 * rates[0], f"whole-component d=3 to d=5 improvement regressed: {rates}"
+    assert rates[2] >= 0.7 * rates[1], f"d=5 to d=7 now suppresses; flip the limitation assertion: {rates}"
+    # Retain the previous guard against the old naive-XOR decoder's 10-25% LER.
+    assert max(rates) < 0.1, f"windowed LER regressed toward catastrophic: {rates}"
 
 
 def test_python_scored_predictions_match_the_rust_error_count():

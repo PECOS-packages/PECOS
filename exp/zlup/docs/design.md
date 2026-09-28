@@ -1447,7 +1447,7 @@ pub fn main() -> unit {
     // Prepare initial state
     mut psi := base.child(1);
     pz psi;
-    ry(0.7) psi[0];   // Some arbitrary state
+    ry(0.7 rad) psi[0];   // Some arbitrary state
 
     // Create EPR pair
     mut epr := base.child(2);

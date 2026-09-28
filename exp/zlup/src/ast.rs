@@ -829,7 +829,7 @@ pub enum Expr {
     Set(Box<SetExpr>),                   // {a, b, c} set literal
     Range(Box<RangeExpr>),
     Measure(Box<MeasureExpr>), // mz(T) targets - measurement
-    Gate(Box<GateExpr>),       // h q[0], rx(0.123) q[0] - quantum gate
+    Gate(Box<GateExpr>),       // h q[0], rx(0.123 turns) q[0] - quantum gate
 
     // Error/fault handling
     ErrorValue(Box<ErrorValueExpr>), // error.Name literal
@@ -1139,11 +1139,11 @@ pub struct CallExpr {
     pub location: Option<SourceLocation>,
 }
 
-/// Batch apply expression: h { q[0], q[1] } or rz(pi/4) { q[0], q[1] }
+/// Batch apply expression: h { q[0], q[1] } or rz((pi / 4) rad) { q[0], q[1] }
 /// For gates where application order doesn't matter (set semantics).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BatchApplyExpr {
-    /// The gate/operation being applied (may include params, e.g., rz(pi/4))
+    /// The gate/operation being applied (may include params, e.g., rz((pi / 4) rad))
     pub operation: Expr,
     /// The targets (qubits or qubit pairs) to apply to
     pub targets: Vec<Expr>,
@@ -1171,7 +1171,7 @@ pub struct MeasureExpr {
 /// Examples:
 /// - `h q[0]` - single qubit gate
 /// - `cx (q[0], q[1])` - two-qubit gate with tuple
-/// - `rx(0.123) q[0]` - parameterized gate
+/// - `rx(0.123 turns) q[0]` - parameterized gate
 /// - `h {q[0], q[1]}` - batch apply (set semantics)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GateExpr {

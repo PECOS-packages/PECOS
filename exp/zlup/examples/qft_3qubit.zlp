@@ -5,8 +5,8 @@
 /// QFT transforms computational basis states to frequency basis.
 
 // Angle constants
-pi_2: a64 = 1.5707963267948966;
-pi_4: a64 = 0.7853981633974483;
+pi_2: a64 = 0.25 turns;
+pi_4: a64 = 0.125 turns;
 
 pub fn main() -> unit {
     q := qalloc(3);

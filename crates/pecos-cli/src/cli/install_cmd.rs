@@ -150,7 +150,7 @@ fn confirm_managed_llvm_install(yes: bool) -> Result<()> {
     );
     println!("Expect a large download and several GB of extracted files.");
     println!("The managed install is shared-first; static LLVM is not accepted for");
-    println!("the full workspace HUGR test lane because LLVM 21.1 static links can");
+    println!("the full workspace LLVM test lane because LLVM 21.1 static links can");
     println!("use substantial memory.");
     println!();
     println!("To use your own LLVM instead, run:");

@@ -5,7 +5,7 @@
 ///
 /// Usage:
 ///   std := @import("std");
-///   rz(std.a64.quarter_turn turns) q[0];
+///   rz(std.a64.quarter_turn) q[0];
 ///
 /// Common quantum gate angles:
 ///   - T-gate:  1/8 turn = pi/4 rad = 45 deg

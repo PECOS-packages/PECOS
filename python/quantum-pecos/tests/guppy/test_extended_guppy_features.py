@@ -5,6 +5,8 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from guppylang import guppy
 from guppylang.std.angles import pi
+from guppylang.std.builtins import array
+from guppylang.std.builtins import result as record_result
 from guppylang.std.quantum import array as qubit_array
 from guppylang.std.quantum import (
     cx,
@@ -54,10 +56,7 @@ class ExtendedGuppyTester:
         **kwargs: object,
     ) -> dict[str, Any]:
         """Test a Guppy function and return results."""
-        if not self.backends.get("rust_backend", False):
-            # Skipping is honest; returning success=False used to
-            # green-pass every assertion gated behind `if success`.
-            pytest.skip("Rust backend not available")
+        assert self.backends["rust_backend"], "Rust backend not available"
 
         try:
             # Use sim() API
@@ -68,16 +67,9 @@ class ExtendedGuppyTester:
             result_dict = builder.run(shots).to_dict()
 
             # Format results - measurements is [[m0], [m0], ...] or [[m0, m1], ...]
-            raw_measurements = result_dict["measurements"]
-            if raw_measurements and isinstance(raw_measurements[0], list):
-                if len(raw_measurements[0]) == 1:
-                    # Single measurement - [[1], [0], ...] -> [1, 0, ...]
-                    measurements = [m[-1] for m in raw_measurements]
-                else:
-                    # Tuple return - [[1, 0], [1, 1], ...] -> [(1, 0), (1, 1), ...]
-                    measurements = [tuple(m) for m in raw_measurements]
-            else:
-                measurements = raw_measurements
+            # Scalars remain scalars; array tags become measurement tuples.
+            measurements = [tuple(value) if isinstance(value, list) else value for value in result_dict["outcome"]]
+
             result = {"results": measurements, "shots": shots}
             return {
                 "success": True,
@@ -125,7 +117,9 @@ class TestPhaseAndRotationGates:
             h(q2)
             r2 = measure(q2).read()
 
-            return r1, r2
+            output_value = r1, r2
+            record_result("outcome", array(output_value[0], output_value[1]))
+            return output_value
 
         result = tester.test_function(phase_gate_test, shots=100)
         rows = result["result"]["results"]
@@ -154,7 +148,9 @@ class TestPhaseAndRotationGates:
             tdg(q)
 
             h(q)  # Should return to |0⟩
-            return measure(q).read()
+            output_value = measure(q).read()
+            record_result("outcome", output_value)
+            return output_value
 
         result = tester.test_function(inverse_phase_test, shots=100)
         if result["success"]:
@@ -179,7 +175,9 @@ class TestPhaseAndRotationGates:
             h(q2)  # Back to computational basis
             r2 = measure(q2).read()
 
-            return r1, r2
+            output_value = r1, r2
+            record_result("outcome", array(output_value[0], output_value[1]))
+            return output_value
 
         result = tester.test_function(rotation_test, shots=100)
         rows = result["result"]["results"]
@@ -226,7 +224,9 @@ class TestMultiQubitGates:
             r2 = measure(q3).read()
             r3 = measure(q4).read()
 
-            return r1, r2, r3
+            output_value = r1, r2, r3
+            record_result("outcome", array(output_value[0], output_value[1], output_value[2]))
+            return output_value
 
         result = tester.test_function(cy_cz_test, shots=100)
         if result["success"]:
@@ -260,7 +260,9 @@ class TestQubitArrays:
             # Measure all (elements cannot move out of a subscript;
             # measure the array and index the copyable bits)
             bits = collect_measurements(measure_array(qubits))
-            return bits[0], bits[1], bits[2], bits[3]
+            output_value = bits[0], bits[1], bits[2], bits[3]
+            record_result("outcome", array(output_value[0], output_value[1], output_value[2], output_value[3]))
+            return output_value
 
         result = tester.test_function(array_test, shots=100)
         if result["success"]:
@@ -284,11 +286,14 @@ class TestQubitArrays:
 
             # Count how many measure to |1⟩
             bits = collect_measurements(measure_array(qubits))
+            record_result("outcome", bits)
             count = 0
             for i in range(5):
                 if bits[i]:
                     count += 1
-            return count
+            output_value = count
+            record_result("value", output_value)
+            return output_value
 
         result = tester.test_function(array_loop_test, shots=100)
         if result["success"]:
@@ -323,7 +328,9 @@ class TestClassicalDataTypes:
             # Unpack tuple
             a, b = results
 
-            return a, b
+            output_value = a, b
+            record_result("outcome", array(output_value[0], output_value[1]))
+            return output_value
 
         result = tester.test_function(tuple_test, shots=100)
         if result["success"]:
@@ -343,14 +350,16 @@ class TestClassicalDataTypes:
             c = True
 
             # Complex boolean expression
-            return (a and b) or (not b and c) or (a and not c)
+            output_value = (a and b) or (not b and c) or (a and not c)
+            record_result("outcome", output_value)
+            return output_value
 
         from pecos import Guppy, sim
         from pecos_rslib import state_vector
 
         results = sim(Guppy(boolean_expr_test)).qubits(1).quantum(state_vector()).seed(1).run(10).to_dict()
         # (True and False) or (True and True) or (True and False) = True
-        values = [bool(v) for v in results["return"]]
+        values = [bool(v) for v in results["outcome"]]
         assert values == [True] * 10, f"Boolean expression failed: {values}"
 
 
@@ -375,10 +384,14 @@ class TestControlFlow:
                     q = qubit()
                     if i > j:  # Only true for some iterations
                         x(q)
-                    if measure(q).read():
+                    bit = measure(q).read()
+                    record_result("outcome", bit)
+                    if bit:
                         count += 1
 
-            return count
+            output_value = count
+            record_result("value", output_value)
+            return output_value
 
         result = tester.test_function(nested_loop_test, shots=100)
         if result["success"]:
@@ -435,10 +448,16 @@ class TestControlFlow:
             for i in range(5):
                 q = qubit()
                 x(q)
-                if measure(q).read():  # Always True
-                    return i  # Return early
+                bit = measure(q).read()
+                record_result("outcome", bit)
+                if bit:  # Always True
+                    output_value = i
+                    record_result("value", output_value)
+                    return output_value
 
-            return -1  # Should never reach here
+            output_value = -1
+            record_result("value", output_value)
+            return output_value
 
         result = tester.test_function(early_return_test, shots=100)
         if result["success"]:
@@ -478,7 +497,9 @@ class TestQuantumAlgorithms:
             cx(qubits[1], qubits[2])
 
             bits = collect_measurements(measure_array(qubits))
-            return bits[0], bits[1], bits[2]
+            output_value = bits[0], bits[1], bits[2]
+            record_result("outcome", array(output_value[0], output_value[1], output_value[2]))
+            return output_value
 
         result = tester.test_function(create_ghz3, shots=100)
         if result["success"]:
@@ -510,7 +531,9 @@ class TestQuantumAlgorithms:
 
             r = measure(control).read()
             discard(target)  # linearity: target is no longer needed
-            return r
+            output_value = r
+            record_result("outcome", output_value)
+            return output_value
 
         result = tester.test_function(phase_kickback_test, shots=100)
         if result["success"]:
@@ -538,7 +561,9 @@ class TestQuantumAlgorithms:
             cx(q1, q2)
 
             # Both should measure the same due to entanglement
-            return measure(q1).read(), measure(q2).read()
+            output_value = measure(q1).read(), measure(q2).read()
+            record_result("outcome", array(output_value[0], output_value[1]))
+            return output_value
 
         @guppy
         def state_comparison_different() -> tuple[bool, bool, bool]:
@@ -563,7 +588,9 @@ class TestQuantumAlgorithms:
             m2 = measure(q2).read()
             m3 = measure(q3).read()
 
-            return m1, m2, m3
+            output_value = m1, m2, m3
+            record_result("outcome", array(output_value[0], output_value[1], output_value[2]))
+            return output_value
 
         @guppy
         def quantum_interference_test() -> bool:
@@ -576,7 +603,9 @@ class TestQuantumAlgorithms:
             s(q)  # Add phase
             h(q)  # Interfere
 
-            return measure(q).read()
+            output_value = measure(q).read()
+            record_result("outcome", output_value)
+            return output_value
 
         # Test simple state comparison
         result_simple = tester.test_function(state_comparison_simple, shots=1000)
@@ -649,7 +678,9 @@ class TestErrorHandling:
             q = qubit()
             x(q)  # Put qubit in |1⟩
             reset(q)  # Reset to |0⟩
-            return measure(q).read()  # Should always be False
+            output_value = measure(q).read()
+            record_result("outcome", output_value)
+            return output_value
 
         result = tester.test_function(reset_test, shots=100)
         if result["success"]:
@@ -666,7 +697,9 @@ class TestErrorHandling:
             q2 = qubit()
             x(q1)  # Put q1 in |1⟩
             discard(q1)  # Discard q1
-            return measure(q2).read()  # Measure q2, should be |0⟩
+            output_value = measure(q2).read()
+            record_result("outcome", output_value)
+            return output_value
 
         result = tester.test_function(discard_test, shots=100)
         if result["success"]:
@@ -681,7 +714,9 @@ class TestErrorHandling:
         def empty_circuit() -> bool:
             # Just allocate and measure
             q = qubit()
-            return measure(q).read()
+            output_value = measure(q).read()
+            record_result("outcome", output_value)
+            return output_value
 
         result = tester.test_function(empty_circuit, shots=100)
         if result["success"]:
@@ -714,11 +749,14 @@ class TestPerformance:
 
             # Count ones
             bits = collect_measurements(measure_array(qubits))
+            record_result("outcome", bits)
             count = 0
             for i in range(10):
                 if bits[i]:
                     count += 1
-            return count
+            output_value = count
+            record_result("value", output_value)
+            return output_value
 
         result = tester.test_function(many_qubits_test, shots=50)
         if result["success"]:
@@ -742,7 +780,9 @@ class TestPerformance:
                 sdg(q)
                 h(q)
 
-            return measure(q).read()
+            output_value = measure(q).read()
+            record_result("outcome", output_value)
+            return output_value
 
         result = tester.test_function(deep_circuit_test, shots=100)
         if result["success"]:
@@ -765,7 +805,9 @@ def generate_extended_feature_report() -> None:
     def simple_test() -> bool:
         q = qubit()
         h(q)
-        return measure(q).read()
+        output_value = measure(q).read()
+        record_result("outcome", output_value)
+        return output_value
 
     result = tester.test_function(simple_test, shots=10)
 

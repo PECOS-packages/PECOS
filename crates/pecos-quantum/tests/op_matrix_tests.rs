@@ -18,7 +18,7 @@
 
 use pecos_core::Angle64;
 use pecos_core::op;
-use pecos_quantum::unitary_matrix::{ToMatrix, UnitaryMatrix, unitaries_equiv};
+use pecos_quantum::unitary_matrix::{ToMatrix, UnitaryMatrix};
 
 /// Verify a 1-qubit Clifford Op's `UnitaryRep` matches a reference `UnitaryRep`.
 fn check_1q_clifford(gate: pecos_core::Op, reference: &pecos_core::UnitaryRep, name: &str) {
@@ -47,13 +47,30 @@ fn check_1q_clifford(gate: pecos_core::Op, reference: &pecos_core::UnitaryRep, n
     );
 }
 
-/// Verify a 2-qubit Clifford Op's `UnitaryRep` by checking unitarity and
-/// that the matrix matches a reference.
+/// Verify a 2-qubit Clifford Op's `UnitaryRep` against a phase-fixed reference.
 fn check_2q_clifford(gate: pecos_core::Op, reference: &pecos_core::UnitaryRep, name: &str) {
     let ur = gate.into_unitary().unwrap();
+    let actual = ur.to_matrix().into_inner();
+    let expected = reference.to_matrix().into_inner();
+    let error = actual
+        .iter()
+        .zip(expected.iter())
+        .map(|(lhs, rhs)| (lhs - rhs).norm())
+        .fold(0.0, f64::max);
     assert!(
-        unitaries_equiv(&ur, reference),
-        "{name}: UnitaryRep decomposition does not match reference"
+        error < 1e-12,
+        "{name}: phase-fixed UnitaryRep differs from reference by {error:e}"
+    );
+
+    let phase = num_complex::Complex64::from_polar(1.0, std::f64::consts::FRAC_PI_4);
+    let mutant_error = actual
+        .iter()
+        .zip(expected.iter())
+        .map(|(lhs, rhs)| (*lhs * phase - rhs).norm())
+        .fold(0.0, f64::max);
+    assert!(
+        mutant_error > 1e-12,
+        "{name}: exp(i*pi/4) phase mutation escaped exact two-qubit guard"
     );
 }
 
@@ -233,37 +250,29 @@ fn op_swap_matches_unitary_rep() {
 }
 
 #[test]
-fn op_sxx_matches_rxx_quarter() {
-    check_2q_clifford(
-        op::SXX(0, 1),
-        &pecos_core::unitary_rep::RXX(Angle64::QUARTER_TURN, 0, 1),
-        "SXX",
-    );
+fn op_sxx_matches_named_convention() {
+    check_2q_clifford(op::SXX(0, 1), &pecos_core::unitary_rep::SXX(0, 1), "SXX");
 }
 
 #[test]
-fn op_sxxdg_matches_rxx_three_quarters() {
+fn op_sxxdg_matches_named_convention() {
     check_2q_clifford(
         op::SXXdg(0, 1),
-        &pecos_core::unitary_rep::RXX(Angle64::THREE_QUARTERS_TURN, 0, 1),
+        &pecos_core::unitary_rep::SXX(0, 1).dg(),
         "SXXdg",
     );
 }
 
 #[test]
-fn op_syy_matches_ryy_quarter() {
-    check_2q_clifford(
-        op::SYY(0, 1),
-        &pecos_core::unitary_rep::RYY(Angle64::QUARTER_TURN, 0, 1),
-        "SYY",
-    );
+fn op_syy_matches_named_convention() {
+    check_2q_clifford(op::SYY(0, 1), &pecos_core::unitary_rep::SYY(0, 1), "SYY");
 }
 
 #[test]
-fn op_syydg_matches_ryy_three_quarters() {
+fn op_syydg_matches_named_convention() {
     check_2q_clifford(
         op::SYYdg(0, 1),
-        &pecos_core::unitary_rep::RYY(Angle64::THREE_QUARTERS_TURN, 0, 1),
+        &pecos_core::unitary_rep::SYY(0, 1).dg(),
         "SYYdg",
     );
 }

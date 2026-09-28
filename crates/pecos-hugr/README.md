@@ -1,31 +1,17 @@
 # pecos-hugr
 
-Direct HUGR interpreter for PECOS.
+Static HUGR loading and result-tag analysis for PECOS.
 
-## Purpose
+The loader validates HUGR envelopes. The result-tag helpers recover structural
+measurement provenance and detect nontrivial control flow for the Guppy detector
+error model bindings. HUGR execution belongs to Selene and Guppy.
 
-Executes HUGR (Hierarchical Unified Graph Representation) programs directly without compilation to LLVM IR. Provides a classical control engine that interprets HUGR operations.
+## Public helpers
 
-## Key Types
-
-- `HugrEngine` - Classical control engine for HUGR programs
-- `HugrEngineBuilder` - Builder pattern for engine construction
-- `hugr_engine()` - Convenience function to start building
-
-## Relationship to pecos-hugr-qis
-
-- **pecos-hugr**: Direct interpretation of HUGR (this crate)
-- **pecos-hugr-qis**: Compiles HUGR to LLVM IR for execution via QIS pipeline
-
-## Usage
-
-```rust
-use pecos_hugr::{hugr_engine, hugr_sim};
-use pecos_programs::Hugr;
-
-let hugr = Hugr::from_file("program.hugr")?;
-let results = hugr_sim(hugr).seed(42).run(100)?;
-```
+- `load_hugr_from_bytes` and `load_hugr_from_file`
+- `extract_result_tag_measurements`
+- `measurement_op_count`
+- `has_nontrivial_control_flow`
 
 ## Acknowledgements
 

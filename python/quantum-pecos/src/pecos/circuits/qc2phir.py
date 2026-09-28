@@ -241,6 +241,8 @@ def to_phir_dict(qc: pecos.QuantumCircuit) -> dict:
     ops = prog["ops"]
 
     for sym, size in qc.metadata.get("qvar_spec", {}).items():
+        if size == 0:
+            continue
         ops.append(
             {
                 "data": "qvar_define",
@@ -251,6 +253,8 @@ def to_phir_dict(qc: pecos.QuantumCircuit) -> dict:
         )
 
     for sym, size in qc.metadata.get("cvar_spec", {}).items():
+        if size == 0:
+            continue
         ops.append(
             {
                 "data": "cvar_define",
@@ -320,13 +324,21 @@ def to_phir_dict(qc: pecos.QuantumCircuit) -> dict:
             )
 
             angles = None
-            if "angle" in metadata:
+            if "angles" in metadata:
+                angles = list(metadata["angles"])
+            elif "angle" in metadata:
                 angles = [metadata["angle"]]
-            elif "angles" in metadata:
-                angles = metadata["angles"]
+            elif "theta" in metadata:
+                angles = [metadata["theta"]]
+                if "phi" in metadata:
+                    angles.append(metadata["phi"])
+                if "lambda" in metadata:
+                    angles.append(metadata["lambda"])
+                elif "lambda_" in metadata:
+                    angles.append(metadata["lambda_"])
 
             if angles:
-                op["angles"] = angles
+                op["angles"] = [angles, "rad"]
 
             if sym.startswith("measure"):
                 # Getting return values:
@@ -378,7 +390,7 @@ def to_phir_dict(qc: pecos.QuantumCircuit) -> dict:
     num_qubits = len(qid2qsym)
     prog["metadata"]["num_qubits"] = num_qubits
 
-    if "qvar_spec" not in qc.metadata:
+    if "qvar_spec" not in qc.metadata and num_qubits > 0:
         op = {
             "data": "qvar_define",
             "data_type": "qubits",

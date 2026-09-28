@@ -118,18 +118,20 @@ impl NoiseSpec for UniformNoise {
             | GateType::SXXdg
             | GateType::SYY
             | GateType::SYYdg => {
-                if self.idle_rz.abs() > 0.0 && qubits.len() >= 2 {
-                    for &q in &qubits[..2] {
-                        injections.push(NoiseInjection {
-                            eeg_type: EegType::H,
-                            label: Bm::z(q),
-                            label2: None,
-                            rate: self.idle_rz / 2.0,
-                        });
+                for qubits in qubits.as_chunks::<2>().0 {
+                    if self.idle_rz.abs() > 0.0 {
+                        for &q in qubits {
+                            injections.push(NoiseInjection {
+                                eeg_type: EegType::H,
+                                label: Bm::z(q),
+                                label2: None,
+                                rate: self.idle_rz / 2.0,
+                            });
+                        }
                     }
-                }
-                if self.p2 > 0.0 && qubits.len() >= 2 {
-                    inject_depol_2q(qubits[0], qubits[1], self.p2, &mut injections);
+                    if self.p2 > 0.0 {
+                        inject_depol_2q(qubits[0], qubits[1], self.p2, &mut injections);
+                    }
                 }
             }
 
@@ -215,6 +217,29 @@ fn inject_depol_2q(qa: usize, qb: usize, prob: f64, out: &mut Vec<NoiseInjection
                 label2: None,
                 rate,
             });
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_batched_two_qubit_injections() {
+        let noise = UniformNoise::depolarizing(1.0).with_idle_rz(0.1);
+        let batched = noise.noise_after_gate(0, GateType::CX, &[0, 1, 2, 3]);
+        let separate: Vec<_> = [[0, 1], [2, 3]]
+            .iter()
+            .flat_map(|pair| noise.noise_after_gate(0, GateType::CX, pair))
+            .collect();
+        assert_eq!(batched.len(), 34);
+        assert_eq!(batched.len(), separate.len());
+        for (actual, expected) in batched.iter().zip(&separate) {
+            assert_eq!(actual.eeg_type, expected.eeg_type);
+            assert_eq!(actual.label, expected.label);
+            assert_eq!(actual.label2, expected.label2);
+            assert_eq!(actual.rate.to_bits(), expected.rate.to_bits());
         }
     }
 }

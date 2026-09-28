@@ -94,6 +94,7 @@ fn supports(entry: &SymbolEntry) -> bool {
         Rxx => ["RXX"];
         Ryy => ["RYY"];
         Rzz => ["RZZ"];
+        Rxyxy2q => ["RXYXY2Q"];
         RxxRyyRzz => ["RXXRYYRZZ", "RZZRYYRXX", "R2XXYYZZ", "RXXYYZZ"];
         Ii => ["II"];
         Crx => ["CRX"];
@@ -410,6 +411,11 @@ impl PyStateVec {
                 self.inner.ryy(angle, pair);
                 Ok(None)
             }
+            "RXYXY2Q" => {
+                let angles = extract_angles(params, "RXYXY2Q", GateType::RXYXY2Q.angle_arity())?;
+                self.inner.rxyxy2q(angles[0], angles[1], pair);
+                Ok(None)
+            }
             "RZZ" => {
                 let angle = extract_angle(params, "RZZ")?;
                 self.inner.rzz(angle, pair);
@@ -435,23 +441,25 @@ impl PyStateVec {
                     }
                     Err(err) => return Err(err),
                 };
-                let gates: Vec<Gate> = match symbol {
+                let gates = match symbol {
                     "CRX" => {
                         pecos_core::controlled_rotations::lower_crx(angle, pair[0].0, pair[0].1)
-                            .into()
                     }
                     "CRY" => {
                         pecos_core::controlled_rotations::lower_cry(angle, pair[0].0, pair[0].1)
-                            .into()
                     }
                     "CRZ" => {
                         pecos_core::controlled_rotations::lower_crz(angle, pair[0].0, pair[0].1)
-                            .into()
+                            .into_iter()
+                            .collect()
                     }
                     _ => unreachable!(),
                 };
                 for gate in gates {
                     match gate.gate_type {
+                        GateType::Z => {
+                            self.inner.z(&gate.qubits);
+                        }
                         GateType::H => {
                             self.inner.h(&gate.qubits);
                         }

@@ -161,6 +161,63 @@ macro_rules! full_state_vector_test_suite {
 
 const TOLERANCE: f64 = 1e-9;
 
+/// Compare every complex amplitude directly, without removing global phase.
+///
+/// # Panics
+///
+/// Panics if the states have different lengths or any complex amplitude differs
+/// by more than `tolerance`.
+pub fn assert_phase_exact_state_matches(
+    actual: &[Complex64],
+    expected: &[Complex64],
+    tolerance: f64,
+    label: &str,
+) {
+    assert_eq!(
+        actual.len(),
+        expected.len(),
+        "{label}: state-vector lengths differ"
+    );
+    for (index, (actual, expected)) in actual.iter().zip(expected).enumerate() {
+        let error = (actual - expected).norm();
+        assert!(
+            error <= tolerance,
+            "{label}: amplitude[{index}] differs by {error:e}: \
+             actual={actual:?}, expected={expected:?}"
+        );
+    }
+}
+
+/// Return the normalized Z projection of a dense reference state.
+///
+/// # Panics
+///
+/// Panics if the selected outcome has zero probability.
+#[must_use]
+pub fn normalized_z_projection(
+    input: &[Complex64],
+    measured_qubit: usize,
+    outcome: bool,
+    label: &str,
+) -> Vec<Complex64> {
+    let mut projected = input.to_vec();
+    for (basis, amplitude) in projected.iter_mut().enumerate() {
+        if (((basis >> measured_qubit) & 1) != 0) != outcome {
+            *amplitude = Complex64::new(0.0, 0.0);
+        }
+    }
+    let norm = projected
+        .iter()
+        .map(Complex64::norm_sqr)
+        .sum::<f64>()
+        .sqrt();
+    assert!(norm > 0.0, "{label}: selected an impossible projection");
+    for amplitude in &mut projected {
+        *amplitude /= norm;
+    }
+    projected
+}
+
 fn qid(n: usize) -> [QubitId; 1] {
     [QubitId(n)]
 }

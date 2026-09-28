@@ -1,0 +1,13 @@
+name: PECOS CodeQL config
+
+# Rust extraction runs against the whole checkout in build-mode "none". Skip
+# directories whose only Rust content is standalone helper crates that are not
+# workspace members: the extractor finds their Cargo.toml, tries to load each
+# as its own workspace, and extracts code nobody ships.
+paths-ignore:
+  # Doc-test crate that only exercises documentation examples.
+  - python/quantum-pecos/tests/docs/rust_crate
+  # Native benchmark driver.
+  - scripts/native_bench
+  # Fuzz targets.
+  - exp/zlup/fuzz

@@ -52,8 +52,6 @@ INDEPENDENT_MEMBERS = {
 # without this, dropping a crate from `[workspace].members` (or adding it to `exclude`)
 # would hide it from `cargo metadata` and silently take it off the train.
 STANDALONE_MANIFESTS = {
-    "crates/pecos-pymatching/tests/pymatching/crates/pecos-chromobius",
-    "crates/pecos-pymatching/tests/pymatching/crates/pecos-tesseract",
     "exp/zlup/ffi/zlup-ffi",
     "exp/zlup/fuzz",
     "python/quantum-pecos/tests/docs/rust_crate",

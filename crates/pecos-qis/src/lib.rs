@@ -78,6 +78,7 @@ pub mod prelude;
 
 pub mod qis_interface;
 pub mod runtime;
+pub mod scheduled;
 
 pub use qis_interface::{
     BoxedInterface, DynamicSyncHandle, InterfaceError, ProgramFormat, QisInterface,
@@ -125,7 +126,9 @@ pub use executor::{HeliosSyncHandle, QisHeliosInterface};
 #[cfg(feature = "selene")]
 pub use selene_builder::{HeliosInterfaceBuilder, helios_interface_builder};
 #[cfg(feature = "selene")]
-pub use selene_runtime::SeleneRuntime;
+pub use selene_runtime::{
+    RuntimeCustomEvent, RuntimeCustomEventDisposition, RuntimeCustomEventPolicy, SeleneRuntime,
+};
 #[cfg(feature = "selene")]
 pub use selene_runtimes::{
     RuntimeFetchError, find_selene_runtime, selene_runtime_auto, selene_simple_runtime,

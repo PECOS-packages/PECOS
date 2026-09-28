@@ -1,7 +1,7 @@
 # LLVM Setup Guide
 
 !!! note "Python Users"
-    **Python users can skip this guide entirely.** Pre-built Python wheels already include LLVM support, so no additional setup is required.
+    **Python users can skip this guide entirely.** Python HUGR-to-QIS lowering uses `selene-hugr-qis-compiler`, installed with `quantum-pecos`. The `pecos-rslib-llvm` wheel provides QIR generation. Neither requires a separate LLVM installation for Python users.
 
 This guide is for **Rust users building PECOS from source** who need LLVM support for QIS (Quantum Instruction Set) with LLVM IR/QIR execution.
 

@@ -240,12 +240,10 @@ impl DemStabSimBuilder {
         builder = if let Some(cfg) = self.per_gate_noise {
             builder.with_per_gate_noise(cfg)
         } else {
-            builder.with_noise(
-                self.noise.p1,
-                self.noise.p2,
-                self.noise.p_meas,
-                self.noise.p_prep,
-            )
+            // Forward the whole configuration: `with_noise` takes the four
+            // scalars and clears the gate-rate tables, so unpacking here would
+            // discard the caller's per-gate rates without reporting it.
+            builder.with_noise_config(self.noise)
         };
         builder = builder
             .with_detector_records(detector_records)

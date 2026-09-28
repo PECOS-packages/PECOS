@@ -30,6 +30,7 @@
 )]
 
 pub mod astar;
+pub mod beam_windowed;
 pub mod bp_uf;
 pub mod css_decoder;
 pub mod decoder;
@@ -47,6 +48,6 @@ pub use css_decoder::{CssUfDecoder, QubitEdgeMapping};
 pub use decoder::{UfDecoder, UfDecoderConfig};
 pub use logical_subgraph_windowed::WindowedLogicalSubgraphDecoder;
 pub use windowed::{
-    BeamSearchConfig, BeamSearchWindowedDecoder, OverlappingWindowedDecoder,
-    SandwichWindowedDecoder, StreamingWindowedDecoder, WindowedConfig, WindowedDecoder,
+    BeamSearchConfig, BeamSearchWindowedDecoder, BeamWindowConfig, StreamingWindowedDecoder,
+    WindowDiagnostics, WindowedConfig,
 };

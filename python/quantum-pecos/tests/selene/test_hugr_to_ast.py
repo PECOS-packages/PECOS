@@ -18,7 +18,8 @@ import pytest
 # Check if guppylang is available
 try:
     from guppylang import guppy
-    from guppylang.std.quantum import cx, cz, h, measure, qubit, s, t, x, y, z
+    from guppylang.std.angles import pi
+    from guppylang.std.quantum import cx, cz, h, measure, qubit, rz, s, t, x, y, z
 
     HAS_GUPPYLANG = True
 except ImportError:
@@ -36,11 +37,11 @@ try:
         GateKind,
         GateOp,
         IfStmt,
+        LiteralExpr,
         MeasureOp,
         PrepareOp,
         Program,
         RegisterDecl,
-        WhileStmt,
     )
 
     HAS_HUGR_TO_AST = True
@@ -445,8 +446,14 @@ class TestConditionalCircuits:
 class TestLoopCircuits:
     """Tests for loop circuit conversion."""
 
-    def test_simple_loop(self) -> None:
-        """Test conversion of a simple loop circuit."""
+    def test_simple_loop_condition_is_rejected(self) -> None:
+        """A counter-driven loop predicate cannot be represented (issue #493).
+
+        The CFG shape is recognized, but the predicate is
+        ``arithmetic.int.ilt_s`` on a loop counter.  The converter used to
+        emit ``WHILE m0``, naming the measurement that follows the loop -- a
+        condition that reads a future result and loses the trip count.
+        """
 
         @guppy
         def simple_loop() -> bool:
@@ -459,31 +466,8 @@ class TestLoopCircuits:
             z(q)
             return measure(q).read()
 
-        ast = guppy_to_ast(simple_loop)
-
-        # Should have 1 qubit
-        alloc_decls = [d for d in ast.declarations if isinstance(d, AllocatorDecl)]
-        assert len(alloc_decls) == 1
-        assert alloc_decls[0].capacity == 1
-
-        # Should have a WhileStmt in the body
-        while_stmts = [s for s in ast.body if isinstance(s, WhileStmt)]
-        assert len(while_stmts) == 1
-
-        # The loop body should have an X gate
-        while_stmt = while_stmts[0]
-        body_gates = [s for s in while_stmt.body if isinstance(s, GateOp)]
-        assert len(body_gates) == 1
-        assert body_gates[0].gate == GateKind.X
-
-        # X gate should target qubit 0
-        assert body_gates[0].targets[0].index == 0
-
-        # Operations after the loop remain after the structured WhileStmt,
-        # followed by the function-level return measurement.
-        assert isinstance(ast.body[-2], GateOp)
-        assert ast.body[-2].gate == GateKind.Z
-        assert isinstance(ast.body[-1], MeasureOp)
+        with pytest.raises(UnsupportedHugrStructureError, match="not the direct read of a measurement"):
+            guppy_to_ast(simple_loop)
 
 
 class TestUnsupportedConditionalCircuits:
@@ -531,3 +515,112 @@ class TestUnsupportedConditionalCircuits:
 
         with pytest.raises(UnsupportedHugrStructureError, match="sequential or nested conditionals"):
             guppy_to_ast(nested_conditional)
+
+
+class TestBranchConditionProvenance:
+    """The branch predicate must come from the HUGR wire, not from guesswork."""
+
+    def test_condition_names_the_measurement_the_predicate_reads(self) -> None:
+        """The IfStmt conditions on ``a``, not on the most recent measurement.
+
+        Regression for issue #493: the condition was taken from the last
+        measurement recorded so far, so this program applied ``X`` under
+        ``b`` instead of under ``a``.
+        """
+
+        @guppy
+        def branch_on_first() -> bool:
+            q = qubit()
+            a = measure(qubit()).read()
+            _b = measure(qubit()).read()
+            if a:
+                x(q)
+            return measure(q).read()
+
+        ast = guppy_to_ast(branch_on_first)
+        if_stmts = [stmt for stmt in ast.body if isinstance(stmt, IfStmt)]
+        assert len(if_stmts) == 1
+
+        # `a` is the first measurement the converter emits, so its result
+        # register is m0.  The old behaviour produced m1.
+        measurements = [stmt for stmt in ast.body if isinstance(stmt, MeasureOp)]
+        first_result = measurements[0].results[0].register
+        assert if_stmts[0].condition.name == first_result
+        assert if_stmts[0].condition.name == "m0"
+
+    def test_negated_predicate_is_rejected(self) -> None:
+        """``if s`` where ``s = not r`` is a negation, not a measurement read."""
+
+        @guppy
+        def negated() -> bool:
+            q = qubit()
+            r = measure(qubit()).read()
+            s_ = not r
+            if s_:
+                x(q)
+            return measure(q).read()
+
+        with pytest.raises(UnsupportedHugrStructureError, match=r"logic\.Not"):
+            guppy_to_ast(negated)
+
+    def test_classical_condition_is_rejected(self) -> None:
+        """A purely classical predicate no longer invents a forward reference.
+
+        This program previously converted to ``IF m0: H ELSE: X`` followed by
+        ``M q[0] -> m0`` -- QASM that reads an uninitialised creg -- and
+        ``validate()`` accepted it.
+        """
+
+        @guppy
+        def classical_cond() -> bool:
+            q = qubit()
+            n = 3
+            if n > 2:
+                h(q)
+            else:
+                x(q)
+            return measure(q).read()
+
+        with pytest.raises(UnsupportedHugrStructureError, match="not the direct read of a measurement"):
+            guppy_to_ast(classical_cond)
+
+
+class TestRotationParameters:
+    """Rotation gates keep their angle instead of emitting a bare gate."""
+
+    def test_rotation_angle_is_preserved(self) -> None:
+        """Regression for issue #493: ``params`` was always empty."""
+
+        @guppy
+        def rot_param() -> bool:
+            q = qubit()
+            h(q)
+            rz(q, pi / 4)
+            return measure(q).read()
+
+        ast = guppy_to_ast(rot_param)
+        rz_gates = [stmt for stmt in ast.body if isinstance(stmt, GateOp) and stmt.gate == GateKind.RZ]
+        assert len(rz_gates) == 1
+
+        (param,) = rz_gates[0].params
+        assert isinstance(param, LiteralExpr)
+        # Guppy carries the angle as half turns (0.25); PECOS counts turns.
+        assert param.value.value.to_turns_signed() == pytest.approx(0.125)
+
+    def test_rotation_qasm_carries_the_angle(self) -> None:
+        """The emitted QASM is a valid parameterized gate, not ``rz q[0];``."""
+        import math
+
+        from pecos.slr.ast.codegen import generate
+
+        @guppy
+        def rot_param() -> bool:
+            q = qubit()
+            rz(q, pi / 4)
+            return measure(q).read()
+
+        qasm = generate(guppy_to_ast(rot_param), "qasm")
+        rz_lines = [line for line in qasm.splitlines() if line.strip().startswith("rz")]
+        assert len(rz_lines) == 1
+        angle_text = rz_lines[0].split("(", 1)[1].split(")", 1)[0]
+        assert float(angle_text) == pytest.approx(math.pi / 4, abs=1e-9)

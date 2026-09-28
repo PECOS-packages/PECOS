@@ -1,32 +1,13 @@
 """Test suite for advanced quantum gates (Toffoli, CRz, etc.)."""
 
-import pecos_rslib
-import pecos_rslib_llvm
-import pytest
 from guppylang import guppy
-from guppylang.std.quantum import h, measure, pi, qubit
-
-# Check if gates are available
-try:
-    from guppylang.std.quantum import crz, toffoli
-
-    HAVE_ADVANCED_GATES = True
-except ImportError:
-    HAVE_ADVANCED_GATES = False
-
-    # Define dummy functions for testing (never actually called - tests are skipped)
-    # Type annotations match the actual guppylang function signatures
-    def toffoli(q0: "qubit", q1: "qubit", q2: "qubit") -> None:  # type: ignore[name-defined]
-        """Dummy toffoli gate for when advanced gates are not available."""
-
-    def crz(q0: "qubit", q1: "qubit", angle: float) -> None:  # type: ignore[name-defined]
-        """Dummy CRz gate for when advanced gates are not available."""
+from guppylang.std.quantum import crz, h, measure, pi, qubit, toffoli
+from pecos import compilation_pipeline
 
 
 class TestThreeQubitGates:
     """Test three-qubit gates."""
 
-    @pytest.mark.skipif(not HAVE_ADVANCED_GATES, reason="Advanced gates not available")
     def test_toffoli_gate(self) -> None:
         """Test Toffoli (CCX) gate."""
 
@@ -41,7 +22,7 @@ class TestThreeQubitGates:
             return measure(q0).read(), measure(q1).read(), measure(q2).read()
 
         hugr = test_toffoli.compile()
-        output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
+        output = compilation_pipeline.compile_hugr_to_qis(hugr.to_bytes())
 
         # Toffoli should decompose into multiple gates
         assert "___rxy" in output
@@ -56,7 +37,6 @@ class TestThreeQubitGates:
 class TestControlledRotations:
     """Test controlled rotation gates."""
 
-    @pytest.mark.skipif(not HAVE_ADVANCED_GATES, reason="Advanced gates not available")
     def test_crz_gate(self) -> None:
         """Test CRz gate with angle."""
 
@@ -69,7 +49,7 @@ class TestControlledRotations:
             return measure(q0).read(), measure(q1).read()
 
         hugr = test_crz.compile()
-        output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
+        output = compilation_pipeline.compile_hugr_to_qis(hugr.to_bytes())
 
         # CRz should use RZZ and RZ gates
         assert "___rzz" in output
@@ -89,7 +69,7 @@ class TestCompilerFeatures:
             return measure(q).read()
 
         hugr = simple.compile()
-        output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
+        output = compilation_pipeline.compile_hugr_to_qis(hugr.to_bytes())
 
         # Should compile successfully
         assert "qmain" in output
@@ -115,7 +95,7 @@ class TestCompilerFeatures:
             return measure(q0).read(), measure(q1).read(), measure(q2).read()
 
         hugr = complex_circuit.compile()
-        output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
+        output = compilation_pipeline.compile_hugr_to_qis(hugr.to_bytes())
 
         # Should have all operation types
         assert "___rxy" in output
@@ -137,7 +117,7 @@ class TestCompilerFeatures:
             return measure(q0).read(), measure(q1).read()
 
         hugr = only_cnot.compile()
-        output = pecos_rslib_llvm.compile_hugr_to_qis(hugr.to_bytes())
+        output = compilation_pipeline.compile_hugr_to_qis(hugr.to_bytes())
 
         # Should declare the operations we use
         assert "declare" in output
@@ -149,27 +129,3 @@ class TestCompilerFeatures:
         declare_count = output.count("declare")
         # Should have reasonable number of declarations
         assert declare_count < 15, f"Too many declarations: {declare_count}"
-
-
-# Test fallback for when advanced gates are not available
-def test_advanced_gates_availability() -> None:
-    """Check if advanced gates are available in guppylang."""
-    import importlib.util
-
-    # Check for Toffoli gate
-    if importlib.util.find_spec("guppylang.std.quantum") is not None:
-        try:
-            from guppylang.std.quantum import toffoli
-
-            assert True, "Toffoli gate is available"
-        except (ImportError, AttributeError):
-            pass  # Gate not available in this version
-
-    # Check for CRz gate
-    if importlib.util.find_spec("guppylang.std.quantum") is not None:
-        try:
-            from guppylang.std.quantum import crz
-
-            assert True, "CRz gate is available"
-        except (ImportError, AttributeError):
-            pass  # Gate not available in this version

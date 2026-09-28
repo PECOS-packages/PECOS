@@ -84,6 +84,12 @@ impl LeakageChannel {
 }
 
 impl NoiseChannel for LeakageChannel {
+    fn event_kinds(&self) -> super::EventKinds {
+        super::EventKinds::of(super::NoiseEventKind::BeforeGate)
+            .with(super::NoiseEventKind::AfterGate)
+            .with(super::NoiseEventKind::BeforeMeasurement)
+    }
+
     fn responds_to(&self, event: &NoiseEvent<'_>) -> bool {
         // Always respond to gate and measurement events - we need to check for leakage
         matches!(

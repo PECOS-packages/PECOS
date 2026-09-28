@@ -302,3 +302,46 @@ fn capacity_changes_reject_before_recreating_native_state() {
     runtime.lower_scheduled_operations(&[]).unwrap();
     assert_eq!(runtime.initialized_num_qubits, Some(5));
 }
+
+#[test]
+fn legacy_execution_must_not_bypass_scheduled_mode() {
+    let mut runtime = synthetic();
+    let mut interface = OperationCollector::default();
+    interface.operations.push(QuantumOp::X(0).into());
+    runtime.load_interface(interface).unwrap();
+    runtime.collect_scheduled(|_| Ok(vec![])).unwrap();
+    assert!(
+        runtime.execute_until_quantum().is_err(),
+        "flat legacy execution was allowed inside a scheduled shot"
+    );
+}
+
+#[test]
+fn scheduled_mode_must_not_follow_legacy_execution() {
+    let mut runtime = synthetic();
+    let mut interface = OperationCollector::default();
+    interface.operations.push(QuantumOp::X(0).into());
+    runtime.load_interface(interface).unwrap();
+    assert_eq!(
+        runtime.execute_until_quantum().unwrap(),
+        Some(vec![QuantumOp::X(0)])
+    );
+    assert!(
+        runtime.collect_scheduled(|_| Ok(vec![])).is_err(),
+        "scheduled extraction was allowed after flat legacy execution"
+    );
+}
+
+#[test]
+fn legacy_terminal_drain_cannot_enter_a_scheduled_session() {
+    let mut runtime = synthetic();
+    runtime.collect_scheduled(|_| Ok(vec![])).unwrap();
+    assert!(
+        runtime
+            .drain_pending_operations()
+            .unwrap_err()
+            .to_string()
+            .contains("cannot mix")
+    );
+    assert!(runtime.drain_pending_scheduled_operations().is_ok());
+}

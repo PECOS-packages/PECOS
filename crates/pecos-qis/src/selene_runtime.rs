@@ -510,6 +510,29 @@ impl SeleneRuntime {
         Ok(lowered_ops)
     }
 
+    fn drain_native_pending_operations(&mut self) -> Result<Vec<QuantumOp>> {
+        self.check_batch_failure()?;
+        if self.instance.is_none() {
+            // Nothing was ever submitted; do not load the plugin just to drain.
+            return Ok(Vec::new());
+        }
+        // Force the scheduler to release held work before collecting: a plain
+        // poll only returns operations the plugin already considers ready, so
+        // without the terminal barrier a lazily scheduling runtime could hold
+        // a tail batch straight past this check. A plugin without the barrier
+        // symbol cannot prove it released held work, so this fails closed
+        // (both PECOS-built runtimes export `selene_runtime_global_barrier`).
+        if !self.call_runtime_global_barrier(0)? {
+            return Err(RuntimeError::ExecutionError(
+                "runtime plugin does not export selene_runtime_global_barrier; \
+                 cannot force the terminal flush required to verify the \
+                 scheduler is drained"
+                    .to_string(),
+            ));
+        }
+        self.drain_runtime_operations()
+    }
+
     fn select_output_mode(&mut self, scheduled: bool) -> Result<()> {
         self.check_batch_failure()?;
         if self
@@ -605,7 +628,7 @@ impl SeleneRuntime {
     /// Fails if a terminal flush is unsupported or extraction fails. Post-submission
     /// failures remain latched until reset.
     pub fn drain_pending_scheduled_operations(&mut self) -> Result<Vec<ScheduledBatch>> {
-        self.collect_scheduled(QisRuntime::drain_pending_operations)
+        self.collect_scheduled(Self::drain_native_pending_operations)
     }
 
     fn collect_scheduled(
@@ -2389,7 +2412,7 @@ impl QisRuntime for SeleneRuntime {
     }
 
     fn execute_until_quantum(&mut self) -> Result<Option<Vec<QuantumOp>>> {
-        self.check_batch_failure()?;
+        self.select_output_mode(false)?;
         // For now, we'll use the simple approach of processing from the interface
         // In a full implementation, we'd call into the Selene runtime's
         // get_next_operations function
@@ -2401,26 +2424,8 @@ impl QisRuntime for SeleneRuntime {
     }
 
     fn drain_pending_operations(&mut self) -> Result<Vec<QuantumOp>> {
-        self.check_batch_failure()?;
-        if self.instance.is_none() {
-            // Nothing was ever submitted; do not load the plugin just to drain.
-            return Ok(Vec::new());
-        }
-        // Force the scheduler to release held work before collecting: a plain
-        // poll only returns operations the plugin already considers ready, so
-        // without the terminal barrier a lazily scheduling runtime could hold
-        // a tail batch straight past this check. A plugin without the barrier
-        // symbol cannot prove it released held work, so this fails closed
-        // (both PECOS-built runtimes export `selene_runtime_global_barrier`).
-        if !self.call_runtime_global_barrier(0)? {
-            return Err(RuntimeError::ExecutionError(
-                "runtime plugin does not export selene_runtime_global_barrier; \
-                 cannot force the terminal flush required to verify the \
-                 scheduler is drained"
-                    .to_string(),
-            ));
-        }
-        self.drain_runtime_operations()
+        self.select_output_mode(false)?;
+        self.drain_native_pending_operations()
     }
 
     fn lower_scheduled_operations(

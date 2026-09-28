@@ -158,7 +158,7 @@ impl PhirJsonEngine {
                     data,
                     data_type,
                     variable,
-                    infer_size(data_type, *size),
+                    super::ast::declaration_size(data, data_type, variable, *size)?,
                 )?;
             }
         }
@@ -197,7 +197,7 @@ impl PhirJsonEngine {
                     data,
                     data_type,
                     variable,
-                    infer_size(data_type, *size),
+                    super::ast::declaration_size(data, data_type, variable, *size)?,
                 )?;
             }
         }
@@ -285,7 +285,7 @@ impl PhirJsonEngine {
                         data,
                         data_type,
                         variable,
-                        infer_size(data_type, *size),
+                        super::ast::declaration_size(data, data_type, variable, *size)?,
                     )?;
                     self.advance_cursor();
                 }
@@ -541,32 +541,7 @@ impl ClassicalEngine for PhirJsonEngine {
     }
 
     fn num_qubits(&self) -> usize {
-        // First check if environment has quantum variables
-        let sum = self.processor.environment.count_qubits();
-        if sum > 0 {
-            return sum;
-        }
-
-        // If no quantum variables in environment, directly scan the program ops
-        if let Some(program) = &self.program {
-            let mut total = 0;
-            for op in &program.ops {
-                if let Operation::VariableDefinition {
-                    data,
-                    data_type,
-                    variable: _,
-                    size,
-                } = op
-                    && data == "qvar_define"
-                    && data_type == "qubits"
-                {
-                    total += infer_size(data_type, *size);
-                }
-            }
-            return total;
-        }
-
-        0 // If no program is loaded, return 0
+        self.processor.environment.count_qubits()
     }
 
     fn handle_measurements(&mut self, message: ByteMessage) -> Result<(), PecosError> {
@@ -829,12 +804,12 @@ impl Engine for PhirJsonEngine {
                                 log::debug!(
                                     "Processing variable definition: {data_type} {variable}"
                                 );
-                                let _ = self.processor.handle_variable_definition(
+                                self.processor.handle_variable_definition(
                                     data,
                                     data_type,
                                     variable,
-                                    infer_size(data_type, *size),
-                                );
+                                    super::ast::declaration_size(data, data_type, variable, *size)?,
+                                )?;
                             }
                             Operation::ClassicalOp {
                                 cop,

@@ -68,22 +68,8 @@ use std::hash::{Hash, Hasher};
 use crate::fault_tolerance::propagator::{DemOutputKind, DemOutputMetadata, Pauli};
 
 pub(crate) fn is_two_qubit_noise_gate(gate_type: GateType) -> bool {
-    matches!(
-        gate_type,
-        GateType::CX
-            | GateType::CZ
-            | GateType::CY
-            | GateType::SZZ
-            | GateType::SZZdg
-            | GateType::SXX
-            | GateType::SXXdg
-            | GateType::SYY
-            | GateType::SYYdg
-            | GateType::SWAP
-            | GateType::RXX
-            | GateType::RYY
-            | GateType::RZZ
-    )
+    use crate::fault_tolerance::propagator::{GateNoiseKind, gate_noise_kind};
+    gate_noise_kind(gate_type) == GateNoiseKind::Two
 }
 
 // ============================================================================
@@ -4856,6 +4842,7 @@ fn core_gate_to_neo(gate: GateType) -> pecos_neo::GateType {
         GateType::RXX => pecos_neo::GateType::RXX,
         GateType::RYY => pecos_neo::GateType::RYY,
         GateType::RZZ => pecos_neo::GateType::RZZ,
+        GateType::RXYXY2Q => pecos_neo::GateType::RXYXY2Q,
         GateType::CCX => pecos_neo::GateType::CCX,
         GateType::MZ => pecos_neo::GateType::MZ,
         GateType::MeasureLeaked => pecos_neo::GateType::MeasureLeaked,
@@ -7781,9 +7768,13 @@ mod tests {
                 GateType::SZZ,
                 GateType::SZZdg,
                 GateType::SWAP,
+                GateType::CH,
                 GateType::RXX,
                 GateType::RYY,
                 GateType::RZZ,
+                GateType::RXXRYYRZZ,
+                GateType::U2q,
+                GateType::RXYXY2Q,
             ]
         );
     }

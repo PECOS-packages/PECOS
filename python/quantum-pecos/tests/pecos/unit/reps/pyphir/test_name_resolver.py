@@ -66,3 +66,26 @@ def test_rxy1q_non_clifford_uses_canonical_simulator_name() -> None:
     """A non-Clifford XY-plane rotation resolves to the canonical PECOS name, not the PHIR spelling."""
     qop = QOp(name="R1XY", angles=(0.123, 0.456), args=[])
     assert sim_name_resolver(qop) == "RXY1Q"
+
+
+@pytest.mark.parametrize("angles", [(-0.73, 0.41), (0.0, 0.0), (pc.f64.pi, 0.0)])
+def test_rxyxy2q_passes_through(angles) -> None:
+    """Two-qubit XY rotations preserve their name, angles, and ordered pairs."""
+    qop = QOp(name="RXYXY2Q", angles=angles, args=[(2, 0)])
+    assert sim_name_resolver(qop) == "RXYXY2Q"
+    assert qop.angles == angles
+    assert qop.args == [(2, 0)]
+
+
+@pytest.mark.parametrize("angles", [None, (), (-0.73,), (-0.73, 0.41, 0.2)])
+def test_rxyxy2q_rejects_wrong_angles(angles) -> None:
+    """The resolver rejects missing and extra angles."""
+    with pytest.raises(ValueError, match="exactly two angles"):
+        sim_name_resolver(QOp(name="RXYXY2Q", angles=angles, args=[(2, 0)]))
+
+
+@pytest.mark.parametrize("args", [[], [2], [(2,)], [(2, 0, 1)]])
+def test_rxyxy2q_rejects_wrong_qubits(args) -> None:
+    """The resolver rejects incomplete qubit pairs."""
+    with pytest.raises(ValueError, match="complete qubit pairs"):
+        sim_name_resolver(QOp(name="RXYXY2Q", angles=(-0.73, 0.41), args=args))

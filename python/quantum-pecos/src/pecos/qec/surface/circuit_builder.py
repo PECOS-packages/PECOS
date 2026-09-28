@@ -1773,7 +1773,8 @@ class StimRenderer(CircuitRenderer):
         """Render to Stim circuit string."""
         if self.add_detectors and any(op.op_type == OpType.CZ for op in ops):
             msg = (
-                "StimRenderer: detector annotation is unsupported for step lists with CZ (the fold-transversal S layer)"
+                "StimRenderer: detector annotation is unsupported for step lists with CZ "
+                "(the fold-transversal SZ layer)"
             )
             raise ValueError(msg)
         geom = patch.geometry
@@ -2170,7 +2171,7 @@ class TickCircuitRenderer(CircuitRenderer):
         - Gate-level: 'label', 'role'
         """
         if self.add_detectors and any(op.op_type == OpType.CZ for op in ops):
-            msg = "TickCircuitRenderer: detector annotation is unsupported for step lists with CZ (fold-transversal S)"
+            msg = "TickCircuitRenderer: detector annotation is unsupported for step lists with CZ (fold-transversal SZ)"
             raise ValueError(msg)
         import json
 
@@ -2374,8 +2375,8 @@ class TickCircuitRenderer(CircuitRenderer):
                 elif "CX round" in op.label:
                     current_cx_round = int(op.label.split()[-1])
                     current_phase = f"cx_round_{current_cx_round}"
-                elif op.label in {"fold-transversal S layer", "fold-transversal S-dagger layer"}:
-                    current_phase = "fold_sdg" if "S-dagger" in op.label else "fold_s"
+                elif op.label in {"fold-transversal SZ layer", "fold-transversal SZdg layer"}:
+                    current_phase = "fold_sdg" if "SZdg" in op.label else "fold_s"
                     current_cx_round = 0
                 elif "SZZ round" in op.label:
                     current_cx_round = int(op.label.split()[-1])

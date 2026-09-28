@@ -6051,7 +6051,7 @@ fn parse_algorithm_descriptor<'py>(
                     tgt_x_bit: req_bit(gate, "tgt_x_bit", &gate_type)?,
                     tgt_z_bit: req_bit(gate, "tgt_z_bit", &gate_type)?,
                 },
-                "SGate" => BoundaryGate::SGate {
+                "SZGate" => BoundaryGate::SZGate {
                     x_obs_bit: req_bit(gate, "x_obs_bit", &gate_type)?,
                     z_obs_bit: req_bit(gate, "z_obs_bit", &gate_type)?,
                 },

@@ -45,40 +45,40 @@ def fold_builder(shape: str, distance: int = 3) -> LogicalCircuitBuilder:
         builder.add_patch(patch, "B", qubit_offset=patch.geometry.num_qubits)
         builder.add_memory("A", 1, "X")
         builder.add_memory("B", 1, "Z")
-        builder.add_logical_sdg("A")
+        builder.add_logical_szdg("A")
         builder.add_transversal_cx("A", "B")
-        builder.add_logical_sdg("B")
+        builder.add_logical_szdg("B")
         builder.add_transversal_cx("A", "B")
-        builder.add_logical_sdg("B")
+        builder.add_logical_szdg("B")
         builder.add_memory(["A", "B"], 1, "X")
     elif shape.startswith("cx_"):
         builder.add_patch(patch, "B", qubit_offset=patch.geometry.num_qubits)
         builder.add_memory(["A", "B"], 2, "Z")
         if shape == "cx_before":
-            builder.add_logical_s("A")
+            builder.add_logical_sz("A")
         builder.add_transversal_cx("A", "B")
         if shape == "cx_after":
-            builder.add_logical_s("A")
+            builder.add_logical_sz("A")
         builder.add_memory(["A", "B"], 2, "Z")
     elif shape == "h_fold":
         builder.add_memory("A", 2, "X")
         builder.add_transversal_h("A")
-        builder.add_logical_s("A")
+        builder.add_logical_sz("A")
         builder.add_memory("A", 2, "Z")
     elif shape.startswith("pair"):
         builder.add_memory("A", 1, "X")
-        builder.add_logical_s("A")
+        builder.add_logical_sz("A")
         if shape == "pair_separated":
             builder.add_memory("A", 2, "X")
-        builder.add_logical_s("A", dagger=shape not in {"pair_s_s", "pair_s_s_h"})
-        if shape == "pair_s_s_h":
+        builder.add_logical_sz("A", dagger=shape not in {"pair_sz_sz", "pair_sz_sz_h"})
+        if shape == "pair_sz_sz_h":
             builder.add_transversal_h("A")
-        builder.add_memory("A", 1, "Z" if shape == "pair_s_s_h" else "X")
+        builder.add_memory("A", 1, "Z" if shape == "pair_sz_sz_h" else "X")
     else:
         before, after = {"first": (0, 2), "mid": (1, 1), "last": (2, 0), "single_x": (1, 1)}[shape]
         basis = "X" if shape == "single_x" else "Z"
         builder.add_memory("A", before, basis)
-        builder.add_logical_s("A")
+        builder.add_logical_sz("A")
         builder.add_memory("A", after, basis)
     return builder
 
@@ -172,7 +172,7 @@ def test_fold_observables(shape, count):
     ],
 )
 def test_fold_fault_distance(shape, distance, expected):
-    """Pin the known reduction to d-1 for adjacent X-prepared S/S-dagger rounds."""
+    """Pin the known reduction to d-1 for adjacent X-prepared SZ/SZdg rounds."""
     tc = fold_builder(shape, distance).to_tick_circuit()
     dem = DetectorErrorModel.from_circuit(tc, p1=0.001, p2=0.001, p_meas=0.001, p_prep=0.001)
     distances = dem.per_observable_fault_distances(distance)
@@ -183,7 +183,7 @@ def test_fold_fault_distance(shape, distance, expected):
 
 def test_fold_descriptor():
     descriptor = fold_builder("mid").build_algorithm_descriptor()
-    assert descriptor["boundary_gates"] == [[{"type": "SGate", "x_obs_bit": 0, "z_obs_bit": 1}], []]
+    assert descriptor["boundary_gates"] == [[{"type": "SZGate", "x_obs_bit": 0, "z_obs_bit": 1}], []]
     assert len(descriptor["segments"]) == len(descriptor["boundary_gates"]) + 1 == 3
     assert descriptor["num_frame_slots"] == 2
     assert descriptor["num_observables"] == 1
@@ -195,9 +195,9 @@ def test_fold_descriptor():
 
 
 def test_fold_dagger_descriptor_matches_s():
-    """Sign-free Pauli frame updates and DEMs agree for S/S and S/S-dagger."""
+    """Sign-free Pauli frame updates and DEMs agree for SZ/SZ and SZ/SZdg."""
     dagger = fold_builder("pair_adjacent")
-    phase = fold_builder("pair_s_s")
+    phase = fold_builder("pair_sz_sz")
     assert dagger.to_tick_circuit().num_measurements() == 41
     dem = stim.DetectorErrorModel(dagger.build_dem())
     assert dem.num_detectors == 32
@@ -217,8 +217,8 @@ def test_fold_geometry_rejections(dimensions, message):
     builder = LogicalCircuitBuilder()
     builder.add_patch(SurfacePatch.create(**dimensions), "A")
     builder.add_memory("A", 1)
-    with pytest.raises(ValueError, match=f"Fold-transversal S requires.*{message}"):
-        builder.add_logical_s("A")
+    with pytest.raises(ValueError, match=f"Fold-transversal SZ requires.*{message}"):
+        builder.add_logical_sz("A")
 
 
 @pytest.mark.parametrize("before_preparation", [False, True])
@@ -226,11 +226,11 @@ def test_fold_lifetime_rejections(before_preparation):
     builder = LogicalCircuitBuilder()
     builder.add_patch(SurfacePatch.create(3), "A")
     if before_preparation:
-        builder.add_logical_s("A")
+        builder.add_logical_sz("A")
         builder.add_memory("A", 1)
     else:
         builder.add_memory("A", 1)
-        builder.add_logical_s("A")
+        builder.add_logical_sz("A")
     message = "precedes.*first MEMORY preparation" if before_preparation else "executes after final data measurement"
     with pytest.raises(ValueError, match=message):
         builder.to_tick_circuit()
@@ -247,13 +247,13 @@ def test_parity_space_known_samples():
 
 @pytest.mark.parametrize("physical_s", [False, True])
 def test_fold_readout_y_guards(physical_s):
-    """A Y term cannot cross physical S or close at product Y preparation."""
+    """A Y term cannot cross physical SZ or close at product Y preparation."""
     builder = LogicalCircuitBuilder()
     builder.add_patch(SurfacePatch.create(3), "A")
     builder.add_memory("A", 1, "X" if physical_s else "Y")
     if physical_s:
         builder.add_transversal_sz("A")
-    builder.add_logical_s("A")
+    builder.add_logical_sz("A")
     builder.add_memory("A", 1, "X")
     tc = builder.to_tick_circuit()
     assert json.loads(tc.get_meta("observables")) == []
@@ -263,25 +263,25 @@ def test_fold_readout_y_guards(physical_s):
         assert observables == {}
 
 
-@pytest.mark.parametrize(("gate", "fold"), [(LogicalGateType.FOLD_S, None), (LogicalGateType.MEMORY, "S")])
+@pytest.mark.parametrize(("gate", "fold"), [(LogicalGateType.FOLD_SZ, None), (LogicalGateType.MEMORY, "SZ")])
 def test_fold_op_identity_assertion(gate, fold):
-    with pytest.raises(AssertionError, match="Fold identity must match FOLD_S"):
+    with pytest.raises(AssertionError, match="Fold identity must match FOLD_SZ"):
         LogicalOp(gate, ["A"], rounds=1, fold=fold)
 
 
 @pytest.mark.parametrize("rounds", [0, 2])
 def test_fold_op_round_assertion(rounds):
     with pytest.raises(AssertionError, match="Fold segments require exactly one round"):
-        LogicalOp(LogicalGateType.FOLD_S, ["A"], rounds=rounds, fold="S")
+        LogicalOp(LogicalGateType.FOLD_SZ, ["A"], rounds=rounds, fold="SZ")
 
 
 def test_logical_readout_combines_x_z_on_same_patch():
     """The middle CX maps X_A Y_B to Y_A Z_B; the earlier fold maps Y_A to X_A."""
     operations = [
         LogicalOp(LogicalGateType.MEMORY, ["A", "B"], rounds=1, per_patch_basis={"A": "X", "B": "Z"}),
-        LogicalOp(LogicalGateType.FOLD_S, ["A"], rounds=1, fold="S"),
+        LogicalOp(LogicalGateType.FOLD_SZ, ["A"], rounds=1, fold="SZ"),
         LogicalOp(LogicalGateType.TRANSVERSAL_CX, ["A", "B"]),
-        LogicalOp(LogicalGateType.FOLD_S, ["B"], rounds=1, fold="S"),
+        LogicalOp(LogicalGateType.FOLD_SZ, ["B"], rounds=1, fold="SZ"),
         LogicalOp(LogicalGateType.TRANSVERSAL_CX, ["A", "B"]),
         LogicalOp(LogicalGateType.MEMORY, ["A", "B"], rounds=1, basis="X"),
     ]
@@ -322,7 +322,7 @@ def test_fold_matching_skips_hyperedges():
         builder.add_patch(SurfacePatch.create(3), "A")
         builder.add_memory("A", 1, "Z")
         if fold:
-            builder.add_logical_s("A")
+            builder.add_logical_sz("A")
         else:
             builder.add_memory("A", 1, "Z")
         builder.add_memory("A", 1, "Z")
@@ -337,7 +337,7 @@ def test_fold_matching_skips_hyperedges():
 
 @pytest.mark.parametrize(
     ("shape", "raw_parity"),
-    [("pair_s_s", 1), ("pair_adjacent", 0), ("pair_s_s_h", 1), ("sign_cx", 1)],
+    [("pair_sz_sz", 1), ("pair_adjacent", 0), ("pair_sz_sz_h", 1), ("sign_cx", 1)],
 )
 def test_fold_reference_parity(shape, raw_parity):
     """Raw parity retains the logical sign; Stim reports flips from its reference."""
@@ -356,10 +356,10 @@ def test_fold_reference_parity(shape, raw_parity):
         assert not flips.any()
 
 
-@pytest.mark.parametrize("fold", ["", "T", "Sdg"])
+@pytest.mark.parametrize("fold", ["", "T", "SZDG"])
 def test_fold_op_variant_assertion(fold):
-    with pytest.raises(AssertionError, match="Fold variant must be S or SDG"):
-        LogicalOp(LogicalGateType.FOLD_S, ["A"], rounds=1, fold=fold)
+    with pytest.raises(AssertionError, match="Fold variant must be SZ or SZdg"):
+        LogicalOp(LogicalGateType.FOLD_SZ, ["A"], rounds=1, fold=fold)
 
 
 Y_ROUND_PAIRS = [(3, before, after) for before in range(3) for after in range(3)] + [(5, 0, 0), (5, 1, 1)]
@@ -379,13 +379,13 @@ def y_builder(patch, before, after, *, explicit=False, swapped=False, shared=Fal
         builder.add_memory(labels, before, {"A": "Z" if swapped else "X", "B": "Z"})
         if swapped:
             builder.add_transversal_h("A")
-        builder.add_logical_s("A")
+        builder.add_logical_sz("A")
         if cx:
             builder.add_transversal_cx("B", "A")
     if explicit:
         if before is None:
             builder.add_memory("A", 0, "Y")
-        builder.add_logical_sdg("A")
+        builder.add_logical_szdg("A")
     builder.add_memory(labels, after, {"A": "X" if explicit else "Y", "B": "Z"})
     return builder
 
@@ -572,9 +572,9 @@ def test_y_readout_fault_distance(distance, after, expected):
 @pytest.mark.parametrize(
     ("dimensions", "message"),
     [
-        ({"dx": 3, "dz": 5}, "Fold-transversal S requires a square patch (dx=dz), got dx=3, dz=5"),
-        ({"distance": 3, "rotated": False}, "Fold-transversal S requires a rotated patch"),
-        ({"distance": 1}, "Fold-transversal S requires distance at least 2"),
+        ({"dx": 3, "dz": 5}, "Fold-transversal SZ requires a square patch (dx=dz), got dx=3, dz=5"),
+        ({"distance": 3, "rotated": False}, "Fold-transversal SZ requires a rotated patch"),
+        ({"distance": 1}, "Fold-transversal SZ requires distance at least 2"),
     ],
 )
 def test_y_readout_geometry_rejections(dimensions, message):
@@ -584,7 +584,7 @@ def test_y_readout_geometry_rejections(dimensions, message):
     for build in (builder.to_tick_circuit, builder.build_dem, builder.build_algorithm_descriptor):
         with pytest.raises(ValueError, match=re.escape(message)) as error:
             build()
-        assert str(error.value) == f"Y readout on patch 'A' lowers to a fold-transversal S: {message}"
+        assert str(error.value) == f"Y readout on patch 'A' lowers to a fold-transversal SZ: {message}"
         assert isinstance(error.value.__cause__, ValueError)
         assert str(error.value.__cause__) == message
 
@@ -636,7 +636,7 @@ def test_y_shared_serialized_folds(labels):
         for program in (builder, explicit):
             program.add_patch(patch, label, qubit_offset=index * patch.geometry.num_qubits)
         explicit.add_memory(label, 0, "Y")
-        explicit.add_logical_sdg(label)
+        explicit.add_logical_szdg(label)
     builder.add_memory(labels, 1, "Y")
     explicit.add_memory(labels, 1, "X")
     expected = []
@@ -644,7 +644,7 @@ def test_y_shared_serialized_folds(labels):
         expected.extend(
             [
                 LogicalOp(LogicalGateType.MEMORY, [label], rounds=0, basis="Y"),
-                LogicalOp(LogicalGateType.FOLD_S, [label], rounds=1, fold="SDG"),
+                LogicalOp(LogicalGateType.FOLD_SZ, [label], rounds=1, fold="SZdg"),
             ],
         )
     expected.append(LogicalOp(LogicalGateType.MEMORY, labels, rounds=1, basis="X"))
@@ -666,7 +666,7 @@ def test_y_readout_h_composition(shared):
         builder.add_memory(labels, 2, "Z" if shared else "X")
         builder.add_transversal_h("A")
         if explicit:
-            builder.add_logical_sdg("A")
+            builder.add_logical_szdg("A")
         builder.add_memory(labels, 2, {"A": "X" if explicit else "Y", "B": "Z"})
         programs.append(builder)
     assert_y_composition(*programs, empty_commit=False)
@@ -687,7 +687,7 @@ def test_descriptor_empty_preparation_message(basis, buffer):
     builder = LogicalCircuitBuilder()
     builder.add_patch(SurfacePatch.create(3), "A")
     builder.add_memory("A", 0, basis)
-    builder.add_logical_s("A", dagger=basis == "Y")
+    builder.add_logical_sz("A", dagger=basis == "Y")
     builder.add_memory("A", 2, "X")
     cause = "a zero-round Y preparation before the Y-readout fold" if basis == "Y" else "a zero-round memory segment"
     message = (

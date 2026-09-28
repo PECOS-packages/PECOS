@@ -90,7 +90,7 @@ def render_surface_protocol_module(patch: SurfacePatch) -> str:
         lines.extend(render_gadget_function(gadget, tag_scope=scope))
         lines.extend(["", ""])
     for dagger in (False, True):
-        fold = gadgets.fold_s_round_gadget(patch, allocation, round_index=0, dagger=dagger)
+        fold = gadgets.fold_sz_round_gadget(patch, allocation, round_index=0, dagger=dagger)
         lines.extend(render_gadget_function(fold, tag_scope="a"))
         lines.extend(["", ""])
     swapped = gadgets.syndrome_round_gadget(patch, allocation, round_index=0, x_z_swapped=True)
@@ -161,41 +161,41 @@ def render_surface_protocol_module(patch: SurfacePatch) -> str:
     lines.extend(
         [
             "",
-            "def make_logical_s_experiment(rounds_before: int, rounds_after: int, *, dagger: bool = False):",
-            '    """Z memory with one fold-transversal logical S or S-dagger round.',
+            "def make_logical_sz_experiment(rounds_before: int, rounds_after: int, *, dagger: bool = False):",
+            '    """Z memory with one fold-transversal logical SZ or SZdg round.',
             "",
             "    The fold round's synx_a records are not bare X syndromes. Combine",
-            "    them with partner Z records as specified by fold_s_round_gadget.",
+            "    them with partner Z records as specified by fold_sz_round_gadget.",
             '    """',
             "    if rounds_before < 0 or rounds_after < 0:",
-            '        raise ValueError("Logical S experiment requires nonnegative round counts")',
-            "    def logical_s_experiment() -> None:",
+            '        raise ValueError("Logical SZ experiment requires nonnegative round counts")',
+            "    def logical_sz_experiment() -> None:",
             '        """Fold-transversal logical phase experiment."""',
             "        a = prep_z_basis()",
             *_rounds("rounds_before", ("a",)),
             "        if comptime(dagger):",
-            "            syn = syndrome_extraction_fold_sdg_a(a)",
+            "            syn = syndrome_extraction_fold_szdg_a(a)",
             "        else:",
-            "            syn = syndrome_extraction_fold_s_a(a)",
+            "            syn = syndrome_extraction_fold_sz_a(a)",
             '        output("synx_a", syn.synx)',
             '        output("synz_a", syn.synz)',
             *_rounds("rounds_after", ("a",)),
             *_readout("a"),
-            "    return guppy(variant_scoped(logical_s_experiment, rounds_before, rounds_after, dagger))",
+            "    return guppy(variant_scoped(logical_sz_experiment, rounds_before, rounds_after, dagger))",
             "",
             "",
             "def make_logical_y_readout_experiment(num_rounds: int):",
-            '    """Prepare X, apply logical S, then read Y through S-dagger and X readout."""',
+            '    """Prepare X, apply logical SZ, then read Y through SZdg and X readout."""',
             "    if num_rounds < 0:",
             '        raise ValueError("Logical Y readout requires nonnegative round counts")',
             "    def logical_y_readout() -> None:",
             '        """Logical Y readout experiment."""',
             "        a = prep_x_basis()",
             *_rounds("num_rounds", ("a",)),
-            "        syn = syndrome_extraction_fold_s_a(a)",
+            "        syn = syndrome_extraction_fold_sz_a(a)",
             '        output("synx_a", syn.synx)',
             '        output("synz_a", syn.synz)',
-            "        syn = syndrome_extraction_fold_sdg_a(a)",
+            "        syn = syndrome_extraction_fold_szdg_a(a)",
             '        output("synx_a", syn.synx)',
             '        output("synz_a", syn.synz)',
             *_rounds("num_rounds", ("a",)),

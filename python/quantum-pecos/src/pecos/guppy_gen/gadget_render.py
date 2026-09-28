@@ -147,10 +147,10 @@ def render_gadget_function(gadget: Gadget, *, tag_scope: str | None = None) -> l
     elif kind == GadgetKind.SYNDROME_ROUND:
         result = syndrome
         doc = "Extract full syndrome using 4-round parallel CNOT schedule."
-        if gadget.fold == "SDG":
-            doc = "Extract full syndrome with the fold-transversal logical S-dagger between CX layers 2 and 3."
-        elif gadget.fold == "S":
-            doc = "Extract full syndrome with the fold-transversal logical S between CX layers 2 and 3."
+        if gadget.fold == "SZdg":
+            doc = "Extract full syndrome with the fold-transversal logical SZdg between CX layers 2 and 3."
+        elif gadget.fold == "SZ":
+            doc = "Extract full syndrome with the fold-transversal logical SZ between CX layers 2 and 3."
     elif kind == GadgetKind.MEASURE_OUT:
         argument += " @ owned"
         result = f"array[bool, {n}]"
@@ -189,8 +189,8 @@ def render_gadget_function(gadget: Gadget, *, tag_scope: str | None = None) -> l
             elif comment in {
                 "Hadamard on X ancillas",
                 "Hadamard on Z ancillas",
-                "fold-transversal S layer",
-                "fold-transversal S-dagger layer",
+                "fold-transversal SZ layer",
+                "fold-transversal SZdg layer",
             }:
                 lines.extend(["", f"    # {comment}"])
             elif comment == "Measure ancillas":

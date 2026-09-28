@@ -5,8 +5,8 @@
 
 use crate::runtime::{ClassicalState, QisRuntime, Result, RuntimeError, Shot};
 use crate::scheduled::{
-    MAX_BATCHES, MAX_OPERATIONS, MAX_PAYLOAD_BYTES, RuntimeScheduledOp, ScheduledBatch,
-    ScheduledMeasurement, ScheduledOutput,
+    MAX_OPERATIONS, MAX_PAYLOAD_BYTES, RuntimeScheduledOp, ScheduledBatch, ScheduledMeasurement,
+    ScheduledOutput,
 };
 use log::{debug, trace};
 use pecos_qis_ffi_types::{
@@ -389,6 +389,7 @@ pub struct SeleneRuntime {
     custom_event_handler: Option<CustomEventHandler>,
     batch_failure: Option<RuntimeError>,
     scheduled_mode: Option<bool>,
+    scheduled_terminal_drained: bool,
     scheduled_output: Option<ScheduledOutput>,
 }
 
@@ -482,6 +483,7 @@ impl SeleneRuntime {
             custom_event_handler: None,
             batch_failure: None,
             scheduled_mode: None,
+            scheduled_terminal_drained: false,
             scheduled_output: None,
         }
     }
@@ -547,90 +549,6 @@ impl SeleneRuntime {
         Ok(())
     }
 
-    /// Extract native batches without flattening, inserting idles, invoking event
-    /// handlers, or simulating noise. This API is not connected to `QisEngine` or
-    /// Python `sim()`. Every opaque event must be admitted by a future consumer;
-    /// returning it here never acknowledges metadata or physical effects.
-    ///
-    /// Requires `shot_start` and explicit `set_num_qubits` capacity. Only native RXY/RZ/RZZ/RXYXY2Q, reset, measurements,
-    /// allocation/release and barriers are accepted. Source trace metadata is
-    /// rejected rather than silently lost. Flat and scheduled lowering cannot
-    /// be mixed within a shot. Each call retains at most 64 batches, 4096
-    /// operations and 256 KiB of opaque payload. No history is kept after return.
-    ///
-    /// # Errors
-    /// Rejects unsupported inputs before submission. Extraction failures after
-    /// submission poison the runtime until successful reset. This is not rollback
-    /// of native scheduler state. Runtime-local shot IDs are not host worker IDs.
-    pub fn lower_scheduled_operations(
-        &mut self,
-        operations: &[Operation],
-    ) -> Result<Vec<ScheduledBatch>> {
-        self.check_batch_failure()?;
-        if self.active_shot.is_none() && self.pending_shot_start.is_none() {
-            return Err(RuntimeError::ExecutionError(
-                "scheduled extraction requires shot_start".into(),
-            ));
-        }
-        if operations.len() > MAX_OPERATIONS {
-            return Err(RuntimeError::ExecutionError(
-                "scheduled input operation budget exceeded".into(),
-            ));
-        }
-        for op in operations {
-            let ids: &[usize] = match op {
-                Operation::AllocateQubit { id }
-                | Operation::AllocateResult { id }
-                | Operation::ReleaseQubit { id } => &[*id],
-                Operation::Quantum(
-                    QuantumOp::RXY(_, _, q) | QuantumOp::RZ(_, q) | QuantumOp::Reset(q),
-                ) => &[*q],
-                Operation::Quantum(
-                    QuantumOp::RZZ(_, a, b)
-                    | QuantumOp::RXYXY2Q(_, _, a, b)
-                    | QuantumOp::Measure(a, b)
-                    | QuantumOp::MeasureLeaked(a, b),
-                ) => &[*a, *b],
-                _ => &[],
-            };
-            if ids.iter().any(|id| id.checked_add(1).is_none()) {
-                return Err(RuntimeError::ExecutionError(
-                    "scheduled source identifier overflow".into(),
-                ));
-            }
-            match op {
-                Operation::Quantum(QuantumOp::RXY(a, b, _) | QuantumOp::RXYXY2Q(a, b, _, _))
-                    if a.is_finite() && b.is_finite() => {}
-                Operation::Quantum(QuantumOp::RZ(a, _) | QuantumOp::RZZ(a, _, _))
-                    if a.is_finite() => {}
-                Operation::Quantum(
-                    QuantumOp::Reset(_) | QuantumOp::Measure(_, _) | QuantumOp::MeasureLeaked(_, _),
-                )
-                | Operation::AllocateQubit { .. }
-                | Operation::AllocateResult { .. }
-                | Operation::ReleaseQubit { .. }
-                | Operation::Barrier => {}
-                _ => {
-                    return Err(RuntimeError::ExecutionError(
-                        "unsupported scheduled extraction input".into(),
-                    ));
-                }
-            }
-        }
-        self.collect_scheduled(|runtime| runtime.lower_native_operations(operations))
-    }
-
-    /// Force the native terminal barrier and return any remaining scheduled batches.
-    /// Call before shot completion and consume all returned work. This does not
-    /// execute it or certify a physics consumer. Same budgets as extraction.
-    ///
-    /// # Errors
-    /// Fails if a terminal flush is unsupported or extraction fails. Post-submission
-    /// failures remain latched until reset.
-    pub fn drain_pending_scheduled_operations(&mut self) -> Result<Vec<ScheduledBatch>> {
-        self.collect_scheduled(Self::drain_native_pending_operations)
-    }
-
     fn collect_scheduled(
         &mut self,
         collect: impl FnOnce(&mut Self) -> Result<Vec<QuantumOp>>,
@@ -642,7 +560,6 @@ impl SeleneRuntime {
             ));
         }
         let Some(capacity) = self.num_qubits_hint.filter(|capacity| *capacity > 0) else {
-            self.scheduled_output = None;
             return Err(RuntimeError::ExecutionError(
                 "scheduled extraction requires explicit nonzero qubit capacity".into(),
             ));
@@ -651,7 +568,6 @@ impl SeleneRuntime {
             .initialized_num_qubits
             .is_some_and(|initialized| initialized != capacity)
         {
-            self.scheduled_output = None;
             return Err(RuntimeError::ExecutionError(
                 "scheduled capacity changed; reset required".into(),
             ));
@@ -692,19 +608,18 @@ impl SeleneRuntime {
             .ok_or_else(|| fail("scheduled end time overflow"))?;
         let shot = self
             .active_shot
-            .or(self
-                .pending_shot_start
-                .map(|(id, seed)| (id, seed.unwrap_or(0))))
-            .ok_or_else(|| fail("scheduled extraction requires shot_start"))?
-            .0;
+            .map(|(id, _)| id)
+            .or(self.pending_shot_start.map(|(id, _)| id))
+            .ok_or_else(|| fail("scheduled extraction requires shot_start"))?;
+        let capacity = self
+            .num_qubits_hint
+            .ok_or_else(|| fail("scheduled extraction requires explicit capacity"))?;
         let output = self
             .scheduled_output
             .as_mut()
             .ok_or_else(|| fail("no scheduled extraction active"))?;
-        if output.batches.len() >= MAX_BATCHES
-            || batch.operations.len() > MAX_OPERATIONS - output.operations
-        {
-            return Err(fail("scheduled batch/operation budget exceeded"));
+        if batch.operations.len() > MAX_OPERATIONS {
+            return Err(fail("scheduled per-batch operation budget exceeded"));
         }
         let mut bytes = 0usize;
         let mut measurements = Vec::new();
@@ -760,16 +675,14 @@ impl SeleneRuntime {
                 }
             };
             if angles.iter().any(|a| !a.is_finite())
-                || qubits.iter().any(|q| {
-                    usize::try_from(*q).map_or(true, |q| {
-                        q >= self.initialized_num_qubits.unwrap_or(self.num_qubits)
-                    })
-                })
+                || qubits
+                    .iter()
+                    .any(|q| usize::try_from(*q).map_or(true, |q| q >= capacity))
             {
                 return Err(fail("invalid scheduled angle or qubit"));
             }
         }
-        if bytes > MAX_PAYLOAD_BYTES - output.payload_bytes {
+        if bytes > MAX_PAYLOAD_BYTES {
             return Err(fail("scheduled payload budget exceeded"));
         }
         let next_index = self
@@ -780,8 +693,6 @@ impl SeleneRuntime {
             .batches
             .try_reserve(1)
             .map_err(|_| fail("scheduled batch allocation failed"))?;
-        output.operations += batch.operations.len();
-        output.payload_bytes += bytes;
         output.batches.push(ScheduledBatch {
             runtime_shot_id: shot,
             batch_index: self.runtime_batch_index,
@@ -1594,11 +1505,8 @@ impl SeleneRuntime {
                 ));
             }
             let mut batch = RuntimeOperationBatch::default();
-            if let Some(output) = &self.scheduled_output {
-                batch.extraction_budget = Some((
-                    MAX_OPERATIONS - output.operations,
-                    MAX_PAYLOAD_BYTES - output.payload_bytes,
-                ));
+            if self.scheduled_output.is_some() {
+                batch.extraction_budget = Some((MAX_OPERATIONS, MAX_PAYLOAD_BYTES));
             }
             let errno = {
                 let lib = self.library.as_ref().ok_or_else(|| {
@@ -2254,6 +2162,7 @@ impl Clone for SeleneRuntime {
                 (self.scheduled_mode == Some(true)).then(|| RuntimeError::ExecutionError("cloned scheduled runtime requires reset; live native snapshots are unsupported".into()))
             }),
             scheduled_mode: self.scheduled_mode,
+            scheduled_terminal_drained: false,
             scheduled_output: None,
         }
     }
@@ -2428,15 +2337,99 @@ impl QisRuntime for SeleneRuntime {
         self.drain_native_pending_operations()
     }
 
+    /// Extract native batches without flattening, idle insertion or event handling.
+    /// See [`crate::scheduled`] for the extraction-only contract.
+    ///
+    /// Requires `shot_start` and explicit `set_num_qubits` capacity. Only native
+    /// RXY/RZ/RZZ/RXYXY2Q, reset, measurements,
+    /// allocation/release and barriers are accepted. Source trace metadata is
+    /// rejected rather than silently lost. Flat and scheduled lowering cannot
+    /// be mixed within a shot. Each native batch admits at most 4096 operations
+    /// and 256 KiB of opaque payload. Returned batch counts are not capped;
+    /// aggregate memory grows with the native schedule. No history is kept after return.
+    ///
+    /// # Errors
+    /// Rejects unsupported inputs before submission. Extraction failures after
+    /// submission poison the runtime until successful reset. This is not rollback
+    /// of native scheduler state. Runtime-local shot IDs are not host worker IDs.
     fn lower_scheduled_operations(
         &mut self,
         operations: &[Operation],
     ) -> Result<Vec<ScheduledBatch>> {
-        SeleneRuntime::lower_scheduled_operations(self, operations)
+        self.check_batch_failure()?;
+        for op in operations {
+            let ids: &[usize] = match op {
+                Operation::AllocateQubit { id }
+                | Operation::AllocateResult { id }
+                | Operation::ReleaseQubit { id } => &[*id],
+                Operation::Quantum(
+                    QuantumOp::RXY(_, _, q) | QuantumOp::RZ(_, q) | QuantumOp::Reset(q),
+                ) => &[*q],
+                Operation::Quantum(
+                    QuantumOp::RZZ(_, a, b)
+                    | QuantumOp::RXYXY2Q(_, _, a, b)
+                    | QuantumOp::Measure(a, b)
+                    | QuantumOp::MeasureLeaked(a, b),
+                ) => &[*a, *b],
+                _ => &[],
+            };
+            if ids.iter().any(|id| id.checked_add(1).is_none()) {
+                return Err(RuntimeError::ExecutionError(
+                    "scheduled source identifier overflow".into(),
+                ));
+            }
+            let angles: &[f64] = match op {
+                Operation::Quantum(QuantumOp::RXY(a, b, _) | QuantumOp::RXYXY2Q(a, b, _, _)) => {
+                    &[*a, *b]
+                }
+                Operation::Quantum(QuantumOp::RZ(a, _) | QuantumOp::RZZ(a, _, _)) => &[*a],
+                _ => &[],
+            };
+            if angles.iter().any(|angle| !angle.is_finite()) {
+                return Err(RuntimeError::ExecutionError(
+                    "non-finite scheduled source angle".into(),
+                ));
+            }
+            match op {
+                Operation::Quantum(
+                    QuantumOp::RXY(..)
+                    | QuantumOp::RXYXY2Q(..)
+                    | QuantumOp::RZ(..)
+                    | QuantumOp::RZZ(..)
+                    | QuantumOp::Reset(_)
+                    | QuantumOp::Measure(_, _)
+                    | QuantumOp::MeasureLeaked(_, _),
+                )
+                | Operation::AllocateQubit { .. }
+                | Operation::AllocateResult { .. }
+                | Operation::ReleaseQubit { .. }
+                | Operation::Barrier => {}
+                _ => {
+                    return Err(RuntimeError::ExecutionError(
+                        "unsupported scheduled extraction input".into(),
+                    ));
+                }
+            }
+        }
+        self.collect_scheduled(|runtime| {
+            if !operations.is_empty() {
+                runtime.scheduled_terminal_drained = false;
+            }
+            runtime.lower_native_operations(operations)
+        })
     }
 
+    /// Force the native terminal barrier and return any remaining scheduled batches.
+    /// Call before shot completion and consume all returned work. This does not
+    /// execute it or certify a physics consumer. Same per-batch budgets as extraction.
+    ///
+    /// # Errors
+    /// Fails if a terminal flush is unsupported or extraction fails. Post-submission
+    /// failures remain latched until reset.
     fn drain_pending_scheduled_operations(&mut self) -> Result<Vec<ScheduledBatch>> {
-        SeleneRuntime::drain_pending_scheduled_operations(self)
+        let batches = self.collect_scheduled(Self::drain_native_pending_operations)?;
+        self.scheduled_terminal_drained = true;
+        Ok(batches)
     }
 
     fn lower_operations(&mut self, operations: &[Operation]) -> Result<Vec<QuantumOp>> {
@@ -2449,7 +2442,6 @@ impl QisRuntime for SeleneRuntime {
         operations: &[Operation],
     ) -> Result<Vec<LoweredQuantumOp>> {
         self.select_output_mode(false)?;
-        self.check_batch_failure()?;
         if has_explicit_qubit_allocations(operations) {
             self.uses_explicit_qubit_allocation = true;
         }
@@ -2686,6 +2678,11 @@ impl QisRuntime for SeleneRuntime {
 
     fn shot_start(&mut self, shot_id: u64, seed: Option<u64>) -> Result<()> {
         self.check_batch_failure()?;
+        if self.scheduled_mode == Some(true) && !self.scheduled_terminal_drained {
+            return Err(RuntimeError::ExecutionError(
+                "drain the scheduled shot or reset before starting another shot".into(),
+            ));
+        }
         // Reset state for new shot
         self.state = ClassicalState::default();
         self.current_op_index = 0;
@@ -2698,6 +2695,7 @@ impl QisRuntime for SeleneRuntime {
         self.last_gate_time_end_nanos.clear();
         self.custom_events.clear();
         self.scheduled_mode = None;
+        self.scheduled_terminal_drained = false;
         self.scheduled_output = None;
         self.runtime_batch_index = 0;
         self.pending_shot_start = Some((shot_id, seed));
@@ -2708,6 +2706,11 @@ impl QisRuntime for SeleneRuntime {
 
     fn shot_end(&mut self) -> Result<Shot> {
         self.check_batch_failure()?;
+        if self.scheduled_mode == Some(true) && !self.scheduled_terminal_drained {
+            return Err(RuntimeError::ExecutionError(
+                "scheduled shot requires a successful terminal drain before shot_end".into(),
+            ));
+        }
         // Only end a shot the plugin actually started; the pinned Selene ABI
         // is `selene_runtime_shot_end(instance, shot_id, seed)`, mirroring
         // shot_start, so the delivered identity pair is replayed here.
@@ -2755,6 +2758,7 @@ impl QisRuntime for SeleneRuntime {
         self.last_gate_time_end_nanos.clear();
         self.custom_events.clear();
         self.scheduled_mode = None;
+        self.scheduled_terminal_drained = false;
         self.scheduled_output = None;
         self.runtime_batch_index = 0;
         self.pending_shot_start = None;

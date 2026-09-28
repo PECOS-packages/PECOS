@@ -150,28 +150,15 @@ fn callback_budgets_reject_before_reading_oversize_payload_and_stop_appends() {
 }
 
 #[test]
-fn retention_limits_apply_across_batches() {
-    let mut runtime = synthetic();
-    assert!(
-        runtime
-            .collect_scheduled(|runtime| {
-                for _ in 0..=MAX_BATCHES {
-                    runtime.retain_scheduled_batch(RuntimeOperationBatch::default())?;
-                }
-                Ok(vec![])
-            })
-            .is_err()
-    );
-    assert!(runtime.scheduled_output.is_none());
+fn operation_limit_applies_to_one_native_batch() {
     let mut runtime = synthetic();
     assert!(
         runtime
             .collect_scheduled(|runtime| {
                 runtime.retain_scheduled_batch(RuntimeOperationBatch {
-                    operations: vec![RuntimeScheduledOp::Reset { qubit_id: 0 }; MAX_OPERATIONS],
+                    operations: vec![RuntimeScheduledOp::Reset { qubit_id: 0 }; MAX_OPERATIONS + 1],
                     ..Default::default()
                 })?;
-                runtime.retain_scheduled_batch(batch())?;
                 Ok(vec![])
             })
             .is_err()
@@ -204,11 +191,18 @@ fn mode_and_clone_isolation_prevent_false_live_snapshots() {
     assert!(runtime.lower_operations(&[]).is_err());
     assert!(runtime.lower_operations_with_metadata(&[]).is_err());
     let mut cloned = runtime.clone();
-    assert!(cloned.lower_scheduled_operations(&[]).is_err());
+    assert!(
+        cloned
+            .lower_scheduled_operations(&[])
+            .unwrap_err()
+            .to_string()
+            .contains("cloned scheduled runtime requires reset")
+    );
     cloned.reset().unwrap();
     cloned.shot_start(90, None).unwrap();
     assert!(cloned.scheduled_mode.is_none());
     assert_eq!(runtime.pending_shot_start.unwrap().0, 17);
+    runtime.drain_pending_scheduled_operations().unwrap();
     runtime.shot_start(18, None).unwrap();
     assert!(runtime.scheduled_mode.is_none());
     assert_eq!(runtime.runtime_batch_index, 0);
@@ -344,4 +338,134 @@ fn legacy_terminal_drain_cannot_enter_a_scheduled_session() {
             .contains("cannot mix")
     );
     assert!(runtime.drain_pending_scheduled_operations().is_ok());
+}
+
+#[test]
+fn review_large_simple_schedule_is_not_limited_by_batch_count() {
+    let mut runtime = crate::selene_runtimes::selene_simple_runtime().unwrap();
+    runtime.set_num_qubits(4);
+    runtime.shot_start(31, None).unwrap();
+    let operations = (0..200)
+        .map(|i| QuantumOp::RXY(0.25, 0.5, i % 4).into())
+        .collect::<Vec<_>>();
+    let batches = runtime.lower_scheduled_operations(&operations).unwrap();
+    assert_eq!(
+        batches
+            .iter()
+            .flat_map(|b| &b.operations)
+            .filter(|op| matches!(op, RuntimeScheduledOp::Rxy { .. }))
+            .count(),
+        200
+    );
+}
+
+#[test]
+fn review_deferred_schedule_drains_without_inserting_barriers() {
+    let mut runtime = crate::selene_runtimes::selene_soft_rz_runtime().unwrap();
+    runtime.set_num_qubits(4);
+    runtime.shot_start(32, None).unwrap();
+    let mut batches = Vec::new();
+    for i in 0..200 {
+        batches.extend(
+            runtime
+                .lower_scheduled_operations(&[QuantumOp::RXY(0.25, 0.5, i % 4).into()])
+                .unwrap(),
+        );
+    }
+    assert!(
+        batches.is_empty(),
+        "expected native scheduling to defer until terminal barrier"
+    );
+    batches.extend(runtime.drain_pending_scheduled_operations().unwrap());
+    assert_eq!(
+        batches
+            .iter()
+            .flat_map(|b| &b.operations)
+            .filter(|op| matches!(op, RuntimeScheduledOp::Rxy { .. }))
+            .count(),
+        200
+    );
+    runtime.shot_end().unwrap();
+}
+
+#[test]
+fn review_shot_end_requires_a_successful_terminal_drain() {
+    let mut runtime = crate::selene_runtimes::selene_soft_rz_runtime().unwrap();
+    runtime.set_num_qubits(4);
+    runtime.shot_start(33, None).unwrap();
+    assert!(
+        runtime
+            .lower_scheduled_operations(&[QuantumOp::RXY(0.25, 0.5, 0).into()])
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        runtime.shot_end().is_err(),
+        "shot_end discarded pending native work"
+    );
+    let batches = runtime.drain_pending_scheduled_operations().unwrap();
+    assert!(batches.iter().any(|b| !b.operations.is_empty()));
+    runtime.shot_end().unwrap();
+}
+
+#[test]
+fn review_clone_guard_rejects_before_loading_a_valid_runtime() {
+    let mut runtime = crate::selene_runtimes::selene_simple_runtime().unwrap();
+    runtime.set_num_qubits(4);
+    runtime.shot_start(34, None).unwrap();
+    runtime
+        .lower_scheduled_operations(&[QuantumOp::RZ(0.25, 0).into()])
+        .unwrap();
+    let mut cloned = runtime.clone();
+    let error = cloned
+        .lower_scheduled_operations(&[])
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("cloned scheduled runtime requires reset"),
+        "{error}"
+    );
+    assert!(cloned.instance.is_none());
+    cloned.reset().unwrap();
+    cloned.shot_start(35, None).unwrap();
+    cloned
+        .lower_scheduled_operations(&[QuantumOp::RZ(0.25, 0).into()])
+        .unwrap();
+    assert!(cloned.instance.is_some());
+}
+
+#[test]
+fn new_submission_invalidates_terminal_drain_and_prevents_shot_replacement() {
+    let mut runtime = crate::selene_runtimes::selene_soft_rz_runtime().unwrap();
+    runtime.set_num_qubits(4);
+    runtime.shot_start(40, None).unwrap();
+    runtime
+        .lower_scheduled_operations(&[QuantumOp::RXY(0.25, 0.5, 0).into()])
+        .unwrap();
+    runtime.drain_pending_scheduled_operations().unwrap();
+    runtime
+        .lower_scheduled_operations(&[QuantumOp::RXY(0.25, 0.5, 1).into()])
+        .unwrap();
+    assert!(runtime.shot_end().is_err());
+    assert!(runtime.shot_start(41, None).is_err());
+    assert!(
+        !runtime
+            .drain_pending_scheduled_operations()
+            .unwrap()
+            .is_empty()
+    );
+    runtime.shot_end().unwrap();
+    runtime.shot_start(41, None).unwrap();
+}
+
+#[test]
+fn non_finite_source_angles_have_a_specific_diagnostic() {
+    let mut runtime = synthetic();
+    assert!(
+        runtime
+            .lower_scheduled_operations(&[QuantumOp::RZ(f64::INFINITY, 0).into()])
+            .unwrap_err()
+            .to_string()
+            .contains("non-finite scheduled source angle")
+    );
 }

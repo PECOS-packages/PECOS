@@ -4,42 +4,68 @@
 //! event is data, never acknowledgement that its physical effect was simulated.
 
 /// One operation in native emission order. Qubit IDs are runtime physical IDs.
-#[allow(missing_docs)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum RuntimeScheduledOp {
+    /// Rotation about an axis in the XY plane.
     Rxy {
+        /// Runtime physical qubit.
         qubit_id: u64,
+        /// Rotation angle in radians.
         theta: f64,
+        /// XY-plane axis angle in radians.
         phi: f64,
     },
+    /// Rotation about the Z axis.
     Rz {
+        /// Runtime physical qubit.
         qubit_id: u64,
+        /// Rotation angle in radians.
         theta: f64,
     },
+    /// Two-qubit ZZ rotation.
     Rzz {
+        /// First runtime physical qubit.
         qubit_id_1: u64,
+        /// Second runtime physical qubit.
         qubit_id_2: u64,
+        /// Rotation angle in radians.
         theta: f64,
     },
+    /// Boolean measurement into a native future.
     Measure {
+        /// Runtime physical qubit.
         qubit_id: u64,
+        /// Native future identifier.
         result_id: u64,
     },
+    /// Leakage-aware measurement into a native future.
     MeasureLeaked {
+        /// Runtime physical qubit.
         qubit_id: u64,
+        /// Native future identifier.
         result_id: u64,
     },
+    /// Reset a physical qubit.
     Reset {
+        /// Runtime physical qubit.
         qubit_id: u64,
     },
+    /// Two-qubit rotation about a shared axis in the XY plane.
     Rpp {
+        /// First runtime physical qubit.
         qubit_id_1: u64,
+        /// Second runtime physical qubit.
         qubit_id_2: u64,
+        /// Rotation angle in radians.
         theta: f64,
+        /// XY-plane axis angle in radians.
         phi: f64,
     },
+    /// Uninterpreted native event.
     Custom {
+        /// Plugin-defined native event tag.
         tag: usize,
+        /// Owned bytes copied from the callback.
         data: Vec<u8>,
     },
 }
@@ -75,10 +101,8 @@ pub struct ScheduledBatch {
     pub measurements: Vec<ScheduledMeasurement>,
 }
 
-// Fixed extraction budgets per API call. Bound allocations inside callbacks as
-// well as retention across batches; callers own returned data after extraction.
-#[cfg(feature = "selene")]
-pub(crate) const MAX_BATCHES: usize = 64;
+// Bounds on each indivisible native callback batch, not the entire drain.
+// Returned output has no aggregate cap; callers own it after extraction.
 #[cfg(feature = "selene")]
 pub(crate) const MAX_OPERATIONS: usize = 4096;
 #[cfg(feature = "selene")]
@@ -88,6 +112,4 @@ pub(crate) const MAX_PAYLOAD_BYTES: usize = 262_144;
 #[derive(Default)]
 pub(crate) struct ScheduledOutput {
     pub batches: Vec<ScheduledBatch>,
-    pub operations: usize,
-    pub payload_bytes: usize,
 }

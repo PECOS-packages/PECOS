@@ -341,7 +341,7 @@ fn legacy_terminal_drain_cannot_enter_a_scheduled_session() {
 }
 
 #[test]
-fn review_large_simple_schedule_is_not_limited_by_batch_count() {
+fn large_simple_schedule_is_not_limited_by_batch_count() {
     let mut runtime = crate::selene_runtimes::selene_simple_runtime().unwrap();
     runtime.set_num_qubits(4);
     runtime.shot_start(31, None).unwrap();
@@ -360,7 +360,7 @@ fn review_large_simple_schedule_is_not_limited_by_batch_count() {
 }
 
 #[test]
-fn review_deferred_schedule_drains_without_inserting_barriers() {
+fn deferred_schedule_drains_without_inserting_barriers() {
     let mut runtime = crate::selene_runtimes::selene_soft_rz_runtime().unwrap();
     runtime.set_num_qubits(4);
     runtime.shot_start(32, None).unwrap();
@@ -389,7 +389,7 @@ fn review_deferred_schedule_drains_without_inserting_barriers() {
 }
 
 #[test]
-fn review_shot_end_requires_a_successful_terminal_drain() {
+fn shot_end_requires_a_successful_terminal_drain() {
     let mut runtime = crate::selene_runtimes::selene_soft_rz_runtime().unwrap();
     runtime.set_num_qubits(4);
     runtime.shot_start(33, None).unwrap();
@@ -409,7 +409,7 @@ fn review_shot_end_requires_a_successful_terminal_drain() {
 }
 
 #[test]
-fn review_clone_guard_rejects_before_loading_a_valid_runtime() {
+fn clone_guard_rejects_before_loading_a_valid_runtime() {
     let mut runtime = crate::selene_runtimes::selene_simple_runtime().unwrap();
     runtime.set_num_qubits(4);
     runtime.shot_start(34, None).unwrap();

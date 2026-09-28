@@ -324,7 +324,7 @@ frontier_result = batch.decode(
 )
 bp_trellis_result = batch.decode(
     raw_text,
-    bp_trellis(k=8, escalation_ks=[32, 128]),
+    bp_trellis(k=8, escalation=[(64, 100.0)]),
     workers=4,
     predictions=True,
 )
@@ -362,9 +362,10 @@ width `k`. Frontier remains experimental; pruning can make its answers approxima
 `bp_trellis()` uses PECOS's native BP-guided trellis decoder on the same raw
 DEM. Its defaults are `k=8`, `delta=100.0`, `score_alpha=0.8`,
 `bp_score_iterations=5`, `merge_indistinguishable=True`, `ordering="deadline"`,
-`escalation_ks=None`, and `escalation=None`. The example opts into retry widths
-`[32, 128]` at the base delta; see the [BP-Trellis user guide](../user-guide/decoders.md#rust-backed-bp-trellis-batch-decoding)
-for shared preparation, rung selection, and direct no-path reporting.
+`escalation_ks=None`, and `escalation=None`. The example opts into the
+recommended single rung `(64, 100.0)`; see the [BP-Trellis user guide](../user-guide/decoders.md#rust-backed-bp-trellis-batch-decoding)
+for the evidence behind it, shared preparation, rung selection, and direct
+no-path reporting.
 BP-Trellis also remains experimental; pruning can make predictions approximate.
 
 With `workers=None`, PECOS automatically selects a native-batch, sequential, or
@@ -396,7 +397,7 @@ sim_results = {
     "tesseract": sim_batch.decode(source_graphlike_text, tesseract(preset="fast", pqlimit=50_000)),
     "bp_osd": sim_batch.decode(raw_text, bp_osd(max_iter=10, osd_order=1)),
     "frontier": sim_batch.decode(raw_text, frontier(k=64), workers=4),
-    "bp_trellis": sim_batch.decode(raw_text, bp_trellis(k=8, escalation_ks=[32, 128]), workers=4),
+    "bp_trellis": sim_batch.decode(raw_text, bp_trellis(k=8, escalation=[(64, 100.0)]), workers=4),
 }
 
 print("simulated shots")

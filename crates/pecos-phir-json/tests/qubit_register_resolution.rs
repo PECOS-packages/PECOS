@@ -374,7 +374,7 @@ fn ssa_exhaustion_at_measurement_combining_emission() {
         json!({"data":"cvar_define", "data_type":"u32", "variable":"m", "size":2}),
         json!({"qop":"Measure", "args":[["q",0]], "returns":[["m",0]]}),
     ];
-    // Two declarations and one measurement fit, but its cast does not.
+    // Two declarations and one measurement fit, but the combining zero constant does not.
     assert_ssa_exhausted(&program(&[("q", max - 3)], single));
 
     let multiple = vec![

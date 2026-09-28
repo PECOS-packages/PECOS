@@ -215,38 +215,11 @@ impl ImprovedConverter {
         // Second pass: generate bit-combining operations for variables with bit-indexed writes
         let bit_indexed_writes = self.bit_indexed_writes.clone();
         for (var_name, writes) in &bit_indexed_writes {
-            if writes.len() > 1 {
-                // Multiple bit writes to the same variable - generate combining operations
-                let mut combining_instructions = Vec::new();
-                let combined_ssa = self.generate_bit_combining_operations(
-                    var_name,
-                    writes,
-                    &mut combining_instructions,
-                )?;
+            let combined_ssa =
+                self.generate_bit_combining_operations(var_name, writes, &mut instructions)?;
 
-                // Add the combining instructions
-                instructions.extend(combining_instructions);
-
-                // Update the variable's SSA mapping to point to the combined value
-                self.variable_map.insert(var_name.clone(), combined_ssa.id);
-            } else if writes.len() == 1 {
-                // Single bit write - cast the measurement Bool to int and update mapping
-                let bit_as_int = SSAValue {
-                    id: self.new_ssa_id()?,
-                    version: 0,
-                };
-                let cast_instruction = Instruction {
-                    operation: Operation::Classical(ClassicalOp::Bitcast),
-                    operands: vec![writes[0].ssa_value],
-                    results: vec![bit_as_int],
-                    result_types: vec![Type::UInt(IntWidth::I32)],
-                    regions: vec![],
-                    attributes: BTreeMap::new(),
-                    location: None,
-                };
-                instructions.push(cast_instruction);
-                self.variable_map.insert(var_name.clone(), bit_as_int.id);
-            }
+            // Update the variable's SSA mapping to point to the combined value
+            self.variable_map.insert(var_name.clone(), combined_ssa.id);
         }
 
         // Third pass: now process Result operations with updated variable mappings

@@ -36,7 +36,9 @@
 //! Zero-width ladder rungs are rejected: `escalation[1]: TrellisConfig.k must be at least 1`,
 //! pinned in `rejected_ladder_pins_invalid_configuration_message`.
 
-use pecos_bp_trellis::{BpTrellisConfig, BpTrellisDecoder, EscalationRung, TrellisOrdering};
+use pecos_trellis::bp_trellis::{
+    BpTrellisConfig, BpTrellisDecoder, EscalationRung, TrellisOrdering,
+};
 
 use pecos_trellis::{DecoderError, SparseDem, TrellisResult, TrellisStatus};
 use serde::{Deserialize, Serialize};
@@ -167,7 +169,8 @@ fn snapshot_outcome(result: Result<TrellisResult, DecoderError>) -> SnapshotOutc
 }
 
 fn snapshot_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/bitwise_snapshot.json")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/bp_trellis/bitwise_snapshot.json")
 }
 
 #[test]
@@ -306,7 +309,8 @@ fn configurations(fixture: &Fixture) -> Vec<(String, BpTrellisConfig)> {
 
 fn collect_snapshot() -> SnapshotFile {
     let fixtures: FixtureFile =
-        serde_json::from_str(include_str!("fixtures/models.json")).expect("fixtures must parse");
+        serde_json::from_str(include_str!("fixtures/bp_trellis/models.json"))
+            .expect("fixtures must parse");
     let mut scenarios = Vec::new();
     for fixture in fixtures.fixtures {
         let configs = configurations(&fixture);

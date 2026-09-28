@@ -9,7 +9,7 @@ derived via ``tick_circuit_to_stim()``. Supports:
 - Memory experiments (syndrome extraction rounds)
 - Transversal Hadamard (H on all data qubits, swaps X<->Z stabilizers)
 - Transversal CNOT (CX between corresponding data qubits of two patches)
-- Fold-transversal logical S and S-dagger inside a syndrome round
+- Fold-transversal logical SZ and SZdg inside a syndrome round
 - Transversal SZ via gate teleportation (CX + |+Y> ancilla consumption)
 
 Output formats:
@@ -700,7 +700,7 @@ class LogicalGateType(Enum):
     """Types of logical operations in a surface code circuit."""
 
     MEMORY = auto()
-    FOLD_S = auto()
+    FOLD_SZ = auto()
     TRANSVERSAL_H = auto()
     TRANSVERSAL_SZ = auto()
     TRANSVERSAL_SZdg = auto()
@@ -754,15 +754,15 @@ class LogicalOp:
     # Used by build_algorithm_descriptor() to emit the correct boundary gate.
     injection_type: str | None = None
     # Phase variant of a one-round fold segment; absent on every other operation.
-    fold: Literal["S", "SDG"] | None = None
+    fold: Literal["SZ", "SZdg"] | None = None
 
     def __post_init__(self) -> None:
         """Keep fold identity and its one-round record contract consistent."""
-        if (self.gate_type is LogicalGateType.FOLD_S) != (self.fold is not None):
-            msg = "Fold identity must match FOLD_S"
+        if (self.gate_type is LogicalGateType.FOLD_SZ) != (self.fold is not None):
+            msg = "Fold identity must match FOLD_SZ"
             raise AssertionError(msg)
-        if self.fold is not None and self.fold not in {"S", "SDG"}:
-            msg = "Fold variant must be S or SDG"
+        if self.fold is not None and self.fold not in {"SZ", "SZdg"}:
+            msg = "Fold variant must be SZ or SZdg"
             raise AssertionError(msg)
         if self.fold is not None and self.rounds != 1:
             msg = "Fold segments require exactly one round"
@@ -771,7 +771,7 @@ class LogicalOp:
     @property
     def is_segment(self) -> bool:
         """Memory and fold rounds both carry syndrome records."""
-        return self.gate_type in {LogicalGateType.MEMORY, LogicalGateType.FOLD_S}
+        return self.gate_type in {LogicalGateType.MEMORY, LogicalGateType.FOLD_SZ}
 
 
 def _require_commit_rounds(
@@ -795,7 +795,7 @@ def _require_commit_rounds(
         if (
             all(label not in prepared and op.per_patch_basis.get(label, op.basis) == "Y" for label in op.patches)
             and follower is not None
-            and follower.fold == "SDG"
+            and follower.fold == "SZdg"
             and follower.patches == op.patches
         ):
             cause = "a zero-round Y preparation before the Y-readout fold"
@@ -950,11 +950,11 @@ def _logical_readout_flow(
 
     ``logical_type`` is X or Z in the readout's current orientation (its
     measurement basis). Each crossed H swaps the type during the walk; callers
-    must not also swap the initial type. Fold S/S-dagger exchanges X and Y;
+    must not also swap the initial type. Fold SZ/SZdg exchanges X and Y;
     the returned folds tuple contains each (patch, segment) crossed as X or Y
     so the caller can include that round's Z records in the logical parity. Y cannot
     close at product preparation because its logical sign depends on syndrome.
-    Physical S/S-dagger preserves Z but has no supported logical X or Y image,
+    Physical SZ/SZdg preserves Z but has no supported logical X or Y image,
     including the unmodelled distance-1 case.
     A bit accumulator combines Pauli products per patch, including X times Z as Y.
     Terms involving a patch consumed before a crossed gate are unreliable.
@@ -965,7 +965,7 @@ def _logical_readout_flow(
     Terms without preparation raise ValueError naming the terms. A false result means
     the readout is not supported as deterministic; unlike the check walk,
     which returns None exactly for an unmeasured (physically random) Pauli,
-    this also includes the unsupported logical X/Y image under physical S.
+    this also includes the unsupported logical X/Y image under physical SZ.
     """
     if logical_type not in {"X", "Z"}:
         msg = f"Unsupported logical readout type {logical_type!r}; expected X or Z"
@@ -1012,7 +1012,7 @@ def _logical_readout_flow(
                 and label in op.patches
                 and kind in {"X", "Y"}
             ):
-                # Physical S is not logical S: its X/Y image leaves the code.
+                # Physical SZ is not logical SZ: its X/Y image leaves the code.
                 # A fold has a supported Y_L image with measured Z-check parity.
                 return False, ()
             if op.fold and label in op.patches and kind in {"X", "Y"}:
@@ -1082,7 +1082,7 @@ class LogicalCircuitBuilder:
         if label in self._patches:
             msg = f"Patch '{label}' already registered"
             raise ValueError(msg)
-        # S maps Y to -X, S-dagger maps X to -Y, H maps Y to -Y, each a -1
+        # SZ maps Y to -X, SZdg maps X to -Y, H maps Y to -Y, each a -1
         # per qubit, so over even weight the check-level sign is (-1)^w = +1,
         # which is what lets the term model drop signs; odd weight would need signed terms.
         geometry = patch.geometry
@@ -1133,12 +1133,12 @@ class LogicalCircuitBuilder:
                 applied to all patches, or a dict mapping patch labels to
                 their individual basis (e.g., ``{"D": "Z", "Y": "Y"}``).
                 Only used for initialization and final measurement. Y is
-                supported for preparation; terminal Y lowers to a logical S-dagger
+                supported for preparation; terminal Y lowers to a logical SZdg
                 fold followed by the requested rounds and X readout in the current logical frame.
                 Product-Y preparation has a deterministic encoded-sign parity of first-round
                 check records, omitted because it is a distance-1 quantity; exposing it is a follow-up.
                 Y-readout folds create hyperedges that build_decoder's matching route
-                (LogicalSubgraphDecoder) skips; see add_logical_s and use a hypergraph decoder.
+                (LogicalSubgraphDecoder) skips; see add_logical_sz and use a hypergraph decoder.
         """
         if isinstance(patch_labels, str):
             patch_labels = [patch_labels]
@@ -1182,13 +1182,13 @@ class LogicalCircuitBuilder:
             msg = f"{gate_name} requires a square patch (dx=dz), got dx={patch.geometry.dx}, dz={patch.geometry.dz}"
             raise ValueError(msg)
 
-    def add_logical_s(self, label: str, *, dagger: bool = False) -> None:
-        """Add one fold-transversal S (or S-dagger) syndrome round.
+    def add_logical_sz(self, label: str, *, dagger: bool = False) -> None:
+        """Add one fold-transversal SZ (or SZdg) syndrome round.
 
         Requires a square rotated patch of distance at least two, a preceding
         preparation memory, and a following memory specifying final readout.
-        That final memory may have zero rounds. Unlike a physical S layer,
-        this preserves the code and applies logical S in the current frame.
+        That final memory may have zero rounds. Unlike a physical SZ layer,
+        this preserves the code and applies logical SZ in the current frame.
 
         Fold rounds create hyperedges that build_decoder's matching route
         (LogicalSubgraphDecoder) skips. Use a hypergraph decoder such as the
@@ -1198,31 +1198,31 @@ class LogicalCircuitBuilder:
         Stim. Raw parity encodes the sign with which the program's net logical
         Clifford maps the readout Pauli back onto the prepared eigenstate:
         positive gives zero, negative gives one. With folds it can be one
-        noiselessly, including S/S before X readout, S/S/H before Z readout,
-        and S-dagger pairs through a CX. The metadata has no sign field;
+        noiselessly, including SZ/SZ before X readout, SZ/SZ/H before Z readout,
+        and SZdg pairs through a CX. The metadata has no sign field;
         raw-parity consumers pecos.testing.simulate_tick_circuit and
         pecos.qec.surface.extract_detection_events_and_observables must
         account for that reference. A readout with no supported logical
-        image, as under a physical S layer, produces no observable at all.
+        image, as under a physical SZ layer, produces no observable at all.
         """
         self._require_available_patch(label)
-        self._operations.append(self._fold_s_operation(label, dagger=dagger))
+        self._operations.append(self._fold_sz_operation(label, dagger=dagger))
 
-    def _fold_s_operation(self, label: str, *, dagger: bool) -> LogicalOp:
+    def _fold_sz_operation(self, label: str, *, dagger: bool) -> LogicalOp:
         """Share geometry validation between explicit folds and Y readout lowering."""
-        self._require_square(label, "Fold-transversal S")
+        self._require_square(label, "Fold-transversal SZ")
         patch = self._patches[label].patch
         if not patch.rotated:
-            msg = "Fold-transversal S requires a rotated patch"
+            msg = "Fold-transversal SZ requires a rotated patch"
             raise ValueError(msg)
         if patch.dx < 2:
-            msg = "Fold-transversal S requires distance at least 2"
+            msg = "Fold-transversal SZ requires distance at least 2"
             raise ValueError(msg)
-        return LogicalOp(LogicalGateType.FOLD_S, [label], rounds=1, fold="SDG" if dagger else "S")
+        return LogicalOp(LogicalGateType.FOLD_SZ, [label], rounds=1, fold="SZdg" if dagger else "SZ")
 
-    def add_logical_sdg(self, label: str) -> None:
-        """Add one fold-transversal S-dagger syndrome round."""
-        self.add_logical_s(label, dagger=True)
+    def add_logical_szdg(self, label: str) -> None:
+        """Add one fold-transversal SZdg syndrome round."""
+        self.add_logical_sz(label, dagger=True)
 
     def add_transversal_h(self, patch_label: str) -> None:
         """Add a transversal Hadamard gate on a patch.
@@ -1249,9 +1249,9 @@ class LogicalCircuitBuilder:
     def add_transversal_sz(self, patch_label: str) -> None:
         """Apply physical SZ = diag(1, i) to every data qubit of a square patch.
 
-        This layer is not a logical S gate on this code. The future
-        fold-transversal construction follows Chen, Chen, Lu, Pan
-        (arXiv:2412.01391) and requires additional operations.
+        This layer is not a logical SZ gate on this code. Use add_logical_sz
+        for the fold-transversal construction of Chen, Chen, Lu, Pan
+        (arXiv:2412.01391).
         """
         self._require_available_patch(patch_label)
         self._require_square(patch_label, "Transversal SZ")
@@ -1265,9 +1265,9 @@ class LogicalCircuitBuilder:
     def add_transversal_szdg(self, patch_label: str) -> None:
         """Apply physical SZdg to every data qubit of a square patch.
 
-        This inverse physical layer is not a logical S-dagger on this code.
-        The future fold-transversal construction follows Chen, Chen, Lu, Pan
-        (arXiv:2412.01391) and requires additional operations.
+        This inverse physical layer is not a logical SZdg on this code.
+        Use add_logical_szdg for the fold-transversal construction of Chen,
+        Chen, Lu, Pan (arXiv:2412.01391).
         """
         self._require_available_patch(patch_label)
         self._require_square(patch_label, "Transversal SZdg")
@@ -1453,9 +1453,9 @@ class LogicalCircuitBuilder:
                 if label not in prepared:
                     operations.append(LogicalOp(LogicalGateType.MEMORY, [label], rounds=0, basis="Y"))
                 try:
-                    operations.append(self._fold_s_operation(label, dagger=True))
+                    operations.append(self._fold_sz_operation(label, dagger=True))
                 except ValueError as error:
-                    msg = f"Y readout on patch {label!r} lowers to a fold-transversal S: {error}"
+                    msg = f"Y readout on patch {label!r} lowers to a fold-transversal SZ: {error}"
                     raise ValueError(msg) from error
             memory = op
             if read_y:
@@ -1496,11 +1496,11 @@ class LogicalCircuitBuilder:
                 prepared.update(op.patches)
             else:
                 gate_name = {
-                    LogicalGateType.FOLD_S: "Fold-transversal S",
+                    LogicalGateType.FOLD_SZ: "Fold-transversal SZ",
                     LogicalGateType.TRANSVERSAL_H: "Hadamard",
                     LogicalGateType.TRANSVERSAL_CX: "Cnot",
-                    LogicalGateType.TRANSVERSAL_SZ: "SGate",
-                    LogicalGateType.TRANSVERSAL_SZdg: "SdgGate",
+                    LogicalGateType.TRANSVERSAL_SZ: "Transversal SZ",
+                    LogicalGateType.TRANSVERSAL_SZdg: "Transversal SZdg",
                 }[op.gate_type]
                 for label in op.patches:
                     if label not in prepared:
@@ -2385,12 +2385,12 @@ class LogicalCircuitBuilder:
 
         for op in operations:
             if op.fold:
-                # The descriptor tracks sign-free Pauli frames: S and S-dagger
+                # The descriptor tracks sign-free Pauli frames: SZ and SZdg
                 # both propagate an X frame bit into X and Z.
                 label = op.patches[0]
                 pending_gates.append(
                     {
-                        "type": "SGate",
+                        "type": "SZGate",
                         "x_obs_bit": patch_labels.index(label) * 2,
                         "z_obs_bit": self._z_frame_slot(label),
                     },
@@ -2468,7 +2468,7 @@ class LogicalCircuitBuilder:
                 idx = patch_labels.index(label)
                 pending_gates.append(
                     {
-                        "type": "SGate",
+                        "type": "SZGate",
                         "x_obs_bit": idx * 2,
                         "z_obs_bit": self._z_frame_slot(label),
                     },
@@ -2933,12 +2933,12 @@ class _CircuitGenerator:
             for label in op.patches:
                 ps = self.patches[label]
                 if op.fold:
-                    gadget = gadgets.fold_s_round_gadget(
+                    gadget = gadgets.fold_sz_round_gadget(
                         ps.patch,
                         allocations[label],
                         round_index=rnd,
                         x_z_swapped=ps.x_z_swapped,
-                        dagger=op.fold == "SDG",
+                        dagger=op.fold == "SZdg",
                     )
                 else:
                     gadget = gadgets.syndrome_round_gadget(
@@ -3052,7 +3052,7 @@ class _CircuitGenerator:
         self._add_detector(patch_label, stab_type, stab_index, records)
 
     def _fold_check_maps(self, label: str) -> tuple[dict[int, int], dict[int, int]]:
-        """Locate partners using the contract in gadgets.fold_s_round_gadget.
+        """Locate partners using the contract in gadgets.fold_sz_round_gadget.
 
         The before map is restricted to y == 2 because only that bottom row
         carries the input-side X-record correction in the gadget's contract.

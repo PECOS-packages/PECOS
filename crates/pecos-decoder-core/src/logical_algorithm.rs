@@ -102,8 +102,8 @@ pub enum BoundaryGate {
         tgt_x_bit: u32,
         tgt_z_bit: u32,
     },
-    /// Transversal S gate: X corrections induce Z corrections.
-    SGate { x_obs_bit: u32, z_obs_bit: u32 },
+    /// SZ is the phase gate diag(1, i), commonly written S in the literature; X corrections induce Z corrections.
+    SZGate { x_obs_bit: u32, z_obs_bit: u32 },
     /// T-gate via magic state injection (decision point).
     ///
     /// At this boundary, the decoder MUST produce a correction before
@@ -142,7 +142,7 @@ impl BoundaryGate {
                 x_obs_bit,
                 z_obs_bit,
             }
-            | Self::SGate {
+            | Self::SZGate {
                 x_obs_bit,
                 z_obs_bit,
             } => vec![*x_obs_bit, *z_obs_bit],
@@ -385,7 +385,7 @@ impl LogicalAlgorithmDecoder {
                 frame.set(*tgt_x_bit as usize, target_x);
                 frame.set(*tgt_z_bit as usize, target_z);
             }
-            BoundaryGate::SGate {
+            BoundaryGate::SZGate {
                 x_obs_bit,
                 z_obs_bit,
             } => {
@@ -1307,7 +1307,7 @@ mod tests {
             vec![1, 2, 3, 4]
         );
         assert_eq!(
-            BoundaryGate::SGate {
+            BoundaryGate::SZGate {
                 x_obs_bit: 7,
                 z_obs_bit: 9
             }
@@ -1403,12 +1403,12 @@ mod tests {
     }
 
     #[test]
-    fn test_sgate_frame_x_induces_z() {
-        // S gate: X correction induces Z correction (X -> XZ = Y)
+    fn test_szgate_frame_x_induces_z() {
+        // SZ gate: X correction induces Z correction (X -> XZ = Y)
         let mut frame = frame_from_u64(0b01, 2); // X correction on bit 0
         LogicalAlgorithmDecoder::apply_boundary_gate(
             &mut frame,
-            &BoundaryGate::SGate {
+            &BoundaryGate::SZGate {
                 x_obs_bit: 0,
                 z_obs_bit: 1,
             },
@@ -1417,12 +1417,12 @@ mod tests {
     }
 
     #[test]
-    fn test_sgate_frame_z_unchanged() {
-        // S gate: Z correction is unchanged (S commutes with Z)
+    fn test_szgate_frame_z_unchanged() {
+        // SZ gate: Z correction is unchanged (SZ commutes with Z)
         let mut frame = frame_from_u64(0b10, 2); // Z correction on bit 1
         LogicalAlgorithmDecoder::apply_boundary_gate(
             &mut frame,
-            &BoundaryGate::SGate {
+            &BoundaryGate::SZGate {
                 x_obs_bit: 0,
                 z_obs_bit: 1,
             },
@@ -1431,11 +1431,11 @@ mod tests {
     }
 
     #[test]
-    fn test_sgate_frame_no_correction() {
+    fn test_szgate_frame_no_correction() {
         let mut frame = FrameBits::new(2);
         LogicalAlgorithmDecoder::apply_boundary_gate(
             &mut frame,
-            &BoundaryGate::SGate {
+            &BoundaryGate::SZGate {
                 x_obs_bit: 0,
                 z_obs_bit: 1,
             },
@@ -1541,7 +1541,7 @@ mod tests {
         );
 
         assert!(
-            !BoundaryGate::SGate {
+            !BoundaryGate::SZGate {
                 x_obs_bit: 0,
                 z_obs_bit: 1,
             }

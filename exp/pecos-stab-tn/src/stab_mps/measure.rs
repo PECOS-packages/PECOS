@@ -56,6 +56,7 @@ std::thread_local! {
     static INJECTED_PROJECTION_VANISHES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(super) static RECOMPUTE_Z_PROPERTIES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     pub(super) static Z_EXPECTATION_EVALUATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(super) static TRIVIAL_MPS_NORM_EVALUATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(super) static TRIVIAL_MPS_EVALUATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
@@ -141,8 +142,22 @@ pub(super) struct LiveMeasurementResult {
 /// endpoint snap below.
 pub(super) const TRIVIAL_MPS_BLOCK_NORM_TOLERANCE: f64 = 1e-12;
 
+/// Normalization precondition for reading coefficient-basis probabilities from the tableau.
+pub(super) const TRIVIAL_MPS_NORMALIZATION_TOLERANCE: f64 = 1e-8;
+
+/// Bond-one environments are scalars, so the norm factors into local squared norms.
+pub(super) fn trivial_mps_norm_squared(mps: &Mps) -> f64 {
+    debug_assert_eq!(mps.max_bond_dim(), 1);
+    #[cfg(test)]
+    TRIVIAL_MPS_NORM_EVALUATIONS.set(TRIVIAL_MPS_NORM_EVALUATIONS.get() + 1);
+    mps.tensors()
+        .iter()
+        .map(|tensor| tensor.iter().map(Complex64::norm_sqr).sum::<f64>())
+        .product()
+}
+
 /// Check if the MPS is trivial (all sites in a computational basis state).
-fn is_mps_trivial(mps: &Mps) -> bool {
+pub(super) fn is_mps_trivial(mps: &Mps) -> bool {
     #[cfg(test)]
     TRIVIAL_MPS_EVALUATIONS.set(TRIVIAL_MPS_EVALUATIONS.get() + 1);
     mps.max_bond_dim() == 1
@@ -169,16 +184,22 @@ fn canonicalize_trivial_mps_basis(
     tableau: &mut SparseStabY,
     mps: &mut Mps,
     mut phase_accumulator: Option<&mut crate::stab_mps::canonical_ket::CanonicalPhaseTracker>,
-    norm_squared: f64,
+    #[cfg(debug_assertions)] norm_squared: f64,
 ) -> Vec<usize> {
-    #[cfg(test)]
+    #[cfg(all(test, debug_assertions))]
     let norm_squared = if RECOMPUTE_Z_PROPERTIES.get() {
         mps.norm_squared()
     } else {
         norm_squared
     };
+    #[cfg(debug_assertions)]
     debug_assert!(
-        (norm_squared - 1.0).abs() < 1e-8,
+        norm_squared.is_finite() && norm_squared > 0.0,
+        "trivial-basis canonicalization requires a finite nonzero MPS norm"
+    );
+    #[cfg(debug_assertions)]
+    debug_assert!(
+        (norm_squared - 1.0).abs() < TRIVIAL_MPS_NORMALIZATION_TOLERANCE,
         "trivial-basis canonicalization requires a normalized MPS, got norm²={norm_squared}"
     );
     let x_gate = DMatrix::from_row_slice(
@@ -226,8 +247,15 @@ fn measure_trivial_mps_with_update(
     q_idx: usize,
 ) -> LiveMeasurementResult {
     debug_assert!(is_mps_trivial(mps));
+    #[cfg(debug_assertions)]
     let norm_squared = mps.norm_squared();
-    let modified_sites = canonicalize_trivial_mps_basis(tableau, mps, None, norm_squared);
+    let modified_sites = canonicalize_trivial_mps_basis(
+        tableau,
+        mps,
+        None,
+        #[cfg(debug_assertions)]
+        norm_squared,
+    );
     let measurement = tableau
         .mz(&[pecos_core::QubitId(q_idx)])
         .into_iter()
@@ -1409,6 +1437,106 @@ fn reduce_exact_projection_bonds_profiled(
     )
 }
 
+/// Absorb the coefficient basis word before reading a tableau probability.
+fn prepare_trivial_z_projection(
+    tableau: &mut SparseStabY,
+    mps: &mut Mps,
+    q_idx: usize,
+    phase_accumulator: Option<&mut crate::stab_mps::canonical_ket::CanonicalPhaseTracker>,
+    telemetry: &mut Option<&mut super::QueryDepthTelemetry>,
+    #[cfg(debug_assertions)] norm_squared: f64,
+) -> (f64, Vec<usize>) {
+    let modified_sites =
+        profile_query_phase(mps, telemetry, super::QueryPhase::PreReduction, |mps| {
+            canonicalize_trivial_mps_basis(
+                tableau,
+                mps,
+                phase_accumulator,
+                #[cfg(debug_assertions)]
+                norm_squared,
+            )
+        });
+    let decomp = profile_query_phase(mps, telemetry, super::QueryPhase::Decomposition, |_| {
+        decompose_z(tableau.stabs(), tableau.destabs(), q_idx)
+    });
+    let probability_one = match decomp {
+        ZDecomposition::Stabilizer { phase, .. } => f64::from(phase.re < 0.0),
+        ZDecomposition::DestabilizerFlip { .. } => 0.5,
+    };
+    (probability_one, modified_sites)
+}
+
+fn apply_trivial_z_projection(
+    tableau: &mut SparseStabY,
+    q_idx: usize,
+    outcome: bool,
+    probability: f64,
+    phase_accumulator: Option<&mut crate::stab_mps::canonical_ket::CanonicalPhaseTracker>,
+) {
+    if probability > 0.0 {
+        let before_measurement = phase_accumulator.as_ref().map(|_| tableau.clone());
+        tableau.mz_forced(q_idx, outcome);
+        if let (Some(accumulator), Some(before_measurement)) =
+            (phase_accumulator, before_measurement.as_ref())
+        {
+            accumulator.forced_measurement(
+                before_measurement,
+                tableau,
+                q_idx,
+                outcome,
+                probability,
+            );
+        }
+    }
+}
+
+/// Basis flips and forced tableau measurement cannot truncate a trivial MPS.
+pub(super) fn measure_trivial_mps_exact_with_update(
+    tableau: &mut SparseStabY,
+    mps: &mut Mps,
+    rng: &mut PecosRng,
+    q_idx: usize,
+) -> LiveMeasurementResult {
+    #[cfg(debug_assertions)]
+    let norm_squared = mps.norm_squared();
+    let (probability_one, modified_sites) = prepare_trivial_z_projection(
+        tableau,
+        mps,
+        q_idx,
+        None,
+        &mut None,
+        #[cfg(debug_assertions)]
+        norm_squared,
+    );
+    let is_probability_zero = probability_one <= 0.0;
+    let is_probability_one = probability_one >= 1.0;
+    let outcome = if is_probability_zero {
+        false
+    } else if is_probability_one {
+        true
+    } else {
+        rng.random_bool(probability_one)
+    };
+    let probability = if outcome {
+        probability_one
+    } else {
+        1.0 - probability_one
+    };
+    apply_trivial_z_projection(tableau, q_idx, outcome, probability, None);
+    // Normalization can change tensor bits even for a normalized basis state.
+    mps.normalize();
+    LiveMeasurementResult {
+        measurement: MeasurementResult {
+            outcome,
+            is_deterministic: is_probability_zero || is_probability_one,
+        },
+        update: ProjectionUpdate {
+            collapsed_site: None,
+            modified_sites,
+        },
+    }
+}
+
 /// Shared implementation for tracked and phase-insensitive forced projection.
 fn project_forced_z_with_update_impl(
     tableau: &mut SparseStabY,
@@ -1459,56 +1587,29 @@ fn project_forced_z_with_update_impl(
             properties.is_trivial
         });
     if is_trivial {
-        // A trivial coefficient MPS represents a pure stabilizer state. First
-        // absorb a possible nonzero virtual basis word into the tableau; only
-        // then can its forced update supply the exact probability and state.
-        let modified_sites = profile_query_phase(
+        let (probability_one, modified_sites) = prepare_trivial_z_projection(
+            tableau,
             mps,
+            q_idx,
+            phase_accumulator.as_deref_mut(),
             &mut telemetry,
-            super::QueryPhase::PreReduction,
-            |mps| {
-                canonicalize_trivial_mps_basis(
-                    tableau,
-                    mps,
-                    phase_accumulator.as_deref_mut(),
-                    pre_projection_norm_squared,
-                )
-            },
+            #[cfg(debug_assertions)]
+            pre_projection_norm_squared,
         );
-        let decomp = profile_query_phase(
-            mps,
-            &mut telemetry,
-            super::QueryPhase::Decomposition,
-            |_| decompose_z(tableau.stabs(), tableau.destabs(), q_idx),
-        );
+        let tableau_probability = if outcome {
+            probability_one
+        } else {
+            1.0 - probability_one
+        };
+        debug_assert_eq!(probability.to_bits(), tableau_probability.to_bits());
         profile_query_phase(mps, &mut telemetry, super::QueryPhase::Projection, |_| {
-            let tableau_probability: f64 = match decomp {
-                ZDecomposition::Stabilizer { phase, .. } => {
-                    if (phase.re < 0.0) == outcome {
-                        1.0
-                    } else {
-                        0.0
-                    }
-                }
-                ZDecomposition::DestabilizerFlip { .. } => 0.5,
-            };
-            debug_assert_eq!(probability.to_bits(), tableau_probability.to_bits());
-            if probability > 0.0 {
-                let before_measurement = phase_accumulator.as_ref().map(|_| tableau.clone());
-                tableau.mz_forced(q_idx, outcome);
-                if let (Some(accumulator), Some(before_measurement)) = (
-                    phase_accumulator.as_deref_mut(),
-                    before_measurement.as_ref(),
-                ) {
-                    accumulator.forced_measurement(
-                        before_measurement,
-                        tableau,
-                        q_idx,
-                        outcome,
-                        probability,
-                    );
-                }
-            }
+            apply_trivial_z_projection(
+                tableau,
+                q_idx,
+                outcome,
+                probability,
+                phase_accumulator.as_deref_mut(),
+            );
         });
         let survival_ratio =
             profile_query_phase(mps, &mut telemetry, super::QueryPhase::Survival, |mps| {

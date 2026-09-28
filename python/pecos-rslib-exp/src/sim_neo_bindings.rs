@@ -2420,7 +2420,8 @@ impl PyFaultCountPmf {
 
 /// Weighted failure, survival, and conditional failure estimates and standard errors.
 ///
-/// Ratio and its standard error are None if estimated survival is zero.
+/// Ratio and its standard error are None only if no sampled shot survives.
+/// They are computed in log space even when returned probabilities underflow to zero.
 /// Omitted masses are separate from standard errors. Zero observed failures
 /// contribute no estimated variance to A, so undersampling can understate SE(A).
 /// Their ratio variance term is R^2 b_k (1-b_k), which need not be zero.
@@ -2441,7 +2442,7 @@ impl PyStratifiedEstimate {
     fn survival_probability(&self) -> f64 {
         self.inner.survival_probability
     }
-    /// R = A/B, or None for B = 0.
+    /// R = A/B from log probabilities, or None if no sampled shot survives.
     #[getter]
     fn failure_given_survival(&self) -> Option<f64> {
         self.inner.failure_given_survival
@@ -2456,7 +2457,7 @@ impl PyStratifiedEstimate {
     fn survival_standard_error(&self) -> f64 {
         self.inner.survival_standard_error
     }
-    /// Delta-method standard error of R, or None for B = 0.
+    /// Delta-method standard error of R, or None if no sampled shot survives.
     #[getter]
     fn ratio_standard_error(&self) -> Option<f64> {
         self.inner.ratio_standard_error

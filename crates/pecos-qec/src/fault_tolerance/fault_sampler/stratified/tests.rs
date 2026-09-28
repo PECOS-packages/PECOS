@@ -742,3 +742,194 @@ fn tail_bound_never_exceeds_one() {
     let bound = c.fault_count_pmf(active - 1).unwrap().tail_bound();
     assert!(bound <= 1.0, "bound={bound}");
 }
+
+fn measurement_catalog(locations: usize, probability: f64) -> FaultCatalog {
+    let mut circuit = TickCircuit::new();
+    circuit.tick().mz(&[QubitId(0)]);
+    circuit.set_meta("num_measurements", Attribute::String("1".into()));
+    circuit.set_meta("detectors", Attribute::String("[]".into()));
+    circuit.set_meta("observables", Attribute::String("[]".into()));
+    let mut catalog =
+        FaultCatalog::from_circuit(&circuit)
+            .unwrap()
+            .parameterized(&StochasticNoiseParams {
+                p1: 0.0,
+                p2: 0.0,
+                p_meas: probability,
+                p_prep: 0.0,
+            });
+    assert_eq!(catalog.locations.len(), 1);
+    catalog
+        .locations
+        .resize(locations, catalog.locations[0].clone());
+    catalog
+}
+
+#[test]
+fn log_estimator_preserves_tiny_variance_beside_unit_mass() {
+    let p = 1e-170;
+    let pmf = measurement_catalog(1, p).fault_count_pmf(1).unwrap();
+    let counts = [
+        FaultStratumCounts {
+            k: 0,
+            attempted: 100,
+            survived: 0,
+            failed: 0,
+        },
+        FaultStratumCounts {
+            k: 1,
+            attempted: 100,
+            survived: 50,
+            failed: 10,
+        },
+    ];
+    let estimate = StratifiedEstimate::from_counts(&pmf, &counts).unwrap();
+    close(estimate.failure_probability, p * 0.1, 1e-12);
+    close(estimate.survival_probability, p * 0.5, 1e-12);
+    close(
+        estimate.failure_standard_error,
+        p * (0.1_f64 * 0.9 / 100.0).sqrt(),
+        1e-12,
+    );
+    close(
+        estimate.survival_standard_error,
+        p * (0.5_f64 * 0.5 / 100.0).sqrt(),
+        1e-12,
+    );
+    close(estimate.failure_given_survival.unwrap(), 0.2, 1e-12);
+    close(
+        estimate.ratio_standard_error.unwrap(),
+        (0.2_f64 * 0.8 / 50.0).sqrt(),
+        1e-12,
+    );
+}
+
+fn check_subnormal_ratio(attempted: usize) {
+    let pmf = measurement_catalog(1, 1e-322).fault_count_pmf(1).unwrap();
+    assert!(pmf.masses()[1].is_subnormal());
+    let counts = [FaultStratumCounts {
+        k: 1,
+        attempted,
+        survived: attempted / 2,
+        failed: attempted / 10,
+    }];
+    let estimate = StratifiedEstimate::from_counts(&pmf, &counts).unwrap();
+    // With a single sampled stratum its mass cancels: a binomial proportion
+    // among the surviving shots has variance R(1-R)/S.
+    close(estimate.failure_given_survival.unwrap(), 0.2, 1e-12);
+    close(
+        estimate.ratio_standard_error.unwrap(),
+        (0.2 * 0.8 / count_f64(attempted / 2)).sqrt(),
+        1e-12,
+    );
+}
+
+#[test]
+fn log_estimator_preserves_ratio_se_with_subnormal_mass_100_shots() {
+    check_subnormal_ratio(100);
+}
+
+#[test]
+fn log_estimator_preserves_ratio_se_with_subnormal_mass_10000_shots() {
+    check_subnormal_ratio(10_000);
+}
+
+#[test]
+fn log_estimator_defines_ratio_when_sampled_masses_underflow() {
+    let pmf = measurement_catalog(2, 1e-200).fault_count_pmf(2).unwrap();
+    let mut counts = [FaultStratumCounts {
+        k: 2,
+        attempted: 100,
+        survived: 50,
+        failed: 10,
+    }];
+    assert_eq!(pmf.masses()[2].to_bits(), 0.0_f64.to_bits());
+    assert!(pmf.log_masses()[2].is_finite());
+    let estimate = StratifiedEstimate::from_counts(&pmf, &counts).unwrap();
+    assert_eq!(estimate.failure_probability.to_bits(), 0.0_f64.to_bits());
+    assert_eq!(estimate.survival_probability.to_bits(), 0.0_f64.to_bits());
+    close(estimate.failure_given_survival.unwrap(), 0.2, 1e-12);
+    close(
+        estimate.ratio_standard_error.unwrap(),
+        (0.2_f64 * 0.8 / 50.0).sqrt(),
+        1e-12,
+    );
+    // Observing no failures still gives a defined zero ratio and plug-in SE
+    // when there are survivors, even if their total mass underflows.
+    counts[0].failed = 0;
+    let no_failures = StratifiedEstimate::from_counts(&pmf, &counts).unwrap();
+    assert_eq!(
+        no_failures.failure_given_survival.unwrap().to_bits(),
+        0.0_f64.to_bits()
+    );
+    assert_eq!(
+        no_failures.ratio_standard_error.unwrap().to_bits(),
+        0.0_f64.to_bits()
+    );
+}
+
+fn check_nearly_deterministic_tail(n: usize) {
+    let p = 1.0_f64.next_down();
+    let bound = measurement_catalog(n, p)
+        .fault_count_pmf(n - 1)
+        .unwrap()
+        .tail_bound();
+    // K > n-1 means every location fires, independently: P(K=n) = p^n.
+    let exact = (count_f64(n) * p.ln()).exp();
+    assert!(
+        bound >= exact,
+        "n={n}: bound={bound:.17e}, exact={exact:.17e}"
+    );
+    assert!(bound <= 1.0, "n={n}: bound={bound:.17e}");
+}
+
+#[test]
+fn tail_bound_covers_nearly_deterministic_181_locations() {
+    check_nearly_deterministic_tail(181);
+}
+
+#[test]
+fn tail_bound_covers_nearly_deterministic_sweep() {
+    for n in [10, 100, 181, 1000, 10_000] {
+        check_nearly_deterministic_tail(n);
+    }
+}
+
+#[test]
+fn tail_bound_covers_far_regime_small_means() {
+    for p in [1e-20, 1e-170] {
+        let bound = measurement_catalog(1, p)
+            .fault_count_pmf(0)
+            .unwrap()
+            .tail_bound();
+        let chernoff = (-p).exp() * std::f64::consts::E * p;
+        assert!(bound >= p, "bound={bound:e}, exact tail={p:e}");
+        close(bound, chernoff, 1e-12);
+    }
+}
+
+#[test]
+fn tail_bound_is_continuous_across_regime_switch() {
+    let mut p = 0.5_f64;
+    for _ in 0..4 {
+        p = p.next_down();
+    }
+    let mut previous: Option<f64> = None;
+    for _ in 0..9 {
+        // One location and a=1 put the switch exactly at p=1/2;
+        // the exact tail is p and the Chernoff value is p * exp(1-p).
+        let bound = measurement_catalog(1, p)
+            .fault_count_pmf(0)
+            .unwrap()
+            .tail_bound();
+        let chernoff = p * (1.0 - p).exp();
+        assert!(bound >= p);
+        assert!(bound <= 1.0);
+        close(bound, chernoff, 4.0 * f64::EPSILON);
+        if let Some(previous) = previous {
+            close(bound, previous, 4.0 * f64::EPSILON);
+        }
+        previous = Some(bound);
+        p = p.next_up();
+    }
+}

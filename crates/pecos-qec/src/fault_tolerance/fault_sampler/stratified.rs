@@ -87,10 +87,10 @@ pub enum FaultCountError {
 
 /// `P(K=k)` and its logarithm for `k=0..=max_k`, plus a Chernoff tail bound.
 ///
-/// The tail bound is exact mathematics evaluated in floating point: when `K`
-/// is nearly deterministic (every `p` close to one, `max_k + 1` just above the
-/// mean) rounding can place it slightly below the true tail (relative gap near 1e-11
-/// observed in that regime).
+/// The Chernoff expression uses separate logarithm evaluations near and far
+/// from the mean to avoid cancellation. Positive bounds remain nonzero on
+/// underflow and are capped at one. Intermediate arithmetic still has ordinary
+/// floating-point rounding; this is not an interval-arithmetic enclosure.
 /// Masses may underflow to zero; log masses remain finite. Values are computed
 /// from validated catalog probabilities, to floating-point accuracy.
 #[derive(Clone, Debug)]
@@ -141,11 +141,15 @@ pub struct FaultStratumCounts {
 /// ratio variance is `sum P_k^2 v_k/N_k / B^2`, where
 /// `v_k=[F_k(1-R)^2+(S_k-F_k)R^2]/N_k-(a_k-R b_k)^2`.
 ///
+/// Probabilities and variances are accumulated in log space. Returned
+/// probabilities and standard errors may underflow to zero, but ratios use the
+/// log probabilities and remain defined whenever any sampled shot survives.
+///
 /// V1 limitation: a stratum whose observed failure count is zero by chance
 /// contributes nothing to the estimated variance of A, so SE(A) can be
 /// understated when strata are undersampled. Its contribution to `v_k` for
-/// Var(R) is `R^2 b_k(1-b_k)`, not zero. If no sampled stratum has a failure,
-/// R is zero and every standard error of A and R is exactly zero; that reflects
+/// Var(R) is `R^2 b_k(1-b_k)`, not zero. If some sampled shots survive but none
+/// fail, R and the standard errors of A and R are exactly zero; that reflects
 /// the sample, not certainty.
 #[derive(Clone, Debug)]
 pub struct StratifiedEstimate {
@@ -153,13 +157,13 @@ pub struct StratifiedEstimate {
     pub failure_probability: f64,
     /// Estimated survival probability B.
     pub survival_probability: f64,
-    /// Estimated conditional failure probability R; None when B is zero.
+    /// Estimated conditional failure probability R; None only when no sampled shot survives.
     pub failure_given_survival: Option<f64>,
     /// Plug-in standard error of A.
     pub failure_standard_error: f64,
     /// Plug-in standard error of B.
     pub survival_standard_error: f64,
-    /// Delta-method standard error of R; None when B is zero.
+    /// Delta-method standard error of R; None only when no sampled shot survives.
     pub ratio_standard_error: Option<f64>,
     /// Sum of PMF masses for unsampled strata within the supplied PMF.
     pub unsampled_mass: f64,
@@ -178,7 +182,8 @@ impl StratifiedEstimate {
         counts: &[FaultStratumCounts],
     ) -> Result<Self, FaultCountError> {
         let mut seen = BTreeSet::new();
-        let (mut failure, mut survival, mut scale) = (0.0, 0.0, 0.0_f64);
+        let (mut log_failure, mut log_survival) = (f64::NEG_INFINITY, f64::NEG_INFINITY);
+        let (mut log_var_a, mut log_var_b) = (f64::NEG_INFINITY, f64::NEG_INFINITY);
         for count in counts {
             if count.attempted == 0
                 || count.failed > count.survived
@@ -186,7 +191,7 @@ impl StratifiedEstimate {
             {
                 return Err(FaultCountError::InvalidCounts { k: count.k });
             }
-            let Some(&p) = pmf.masses.get(count.k) else {
+            let Some(&log_p) = pmf.log_masses.get(count.k) else {
                 return Err(FaultCountError::StratumOutsidePmf { k: count.k });
             };
             if !seen.insert(count.k) {
@@ -195,31 +200,18 @@ impl StratifiedEstimate {
             let n = count_f64(count.attempted);
             let a = count_f64(count.failed) / n;
             let b = count_f64(count.survived) / n;
-            failure += p * a;
-            survival += p * b;
-            scale = scale.max(p);
+            // ln(0) is -infinity, so zero counts or variances drop out.
+            log_failure = log_add(log_failure, log_p + a.ln());
+            log_survival = log_add(log_survival, log_p + b.ln());
+            log_var_a = log_add(log_var_a, 2.0 * log_p + (a * (1.0 - a) / n).ln());
+            log_var_b = log_add(log_var_b, 2.0 * log_p + (b * (1.0 - b) / n).ln());
         }
-        // Variances are accumulated with the largest sampled mass factored out,
-        // so squaring masses below ~1e-154 does not underflow the standard errors.
-        let weight = |k: usize| {
-            if scale > 0.0 {
-                pmf.masses[k] / scale
-            } else {
-                0.0
-            }
-        };
-        let (mut var_a, mut var_b) = (0.0, 0.0);
-        for count in counts {
-            let n = count_f64(count.attempted);
-            let a = count_f64(count.failed) / n;
-            let b = count_f64(count.survived) / n;
-            let w = weight(count.k);
-            var_a += w * w * a * (1.0 - a) / n;
-            var_b += w * w * b * (1.0 - b) / n;
-        }
-        let ratio = (survival > 0.0).then(|| failure / survival);
+        let ratio = counts
+            .iter()
+            .any(|count| count.survived > 0)
+            .then(|| (log_failure - log_survival).exp());
         let ratio_se = ratio.map(|r| {
-            let variance: f64 = counts
+            let log_variance = counts
                 .iter()
                 .map(|count| {
                     let n = count_f64(count.attempted);
@@ -231,17 +223,17 @@ impl StratifiedEstimate {
                     let v = a * (1.0 - r - mean).powi(2)
                         + (b - a) * (-r - mean).powi(2)
                         + (1.0 - b) * mean.powi(2);
-                    weight(count.k).powi(2) * v / n
+                    2.0 * pmf.log_masses[count.k] + (v / n).ln()
                 })
-                .sum();
-            scale * variance.sqrt() / survival
+                .fold(f64::NEG_INFINITY, log_add);
+            (0.5 * log_variance - log_survival).exp()
         });
         Ok(Self {
-            failure_probability: failure,
-            survival_probability: survival,
+            failure_probability: log_failure.exp(),
+            survival_probability: log_survival.exp(),
             failure_given_survival: ratio,
-            failure_standard_error: scale * var_a.sqrt(),
-            survival_standard_error: scale * var_b.sqrt(),
+            failure_standard_error: (0.5 * log_var_a).exp(),
+            survival_standard_error: (0.5 * log_var_b).exp(),
             ratio_standard_error: ratio_se,
             unsampled_mass: pmf
                 .masses
@@ -398,12 +390,16 @@ impl FaultCountTable {
         } else if a <= self.mean {
             1.0
         } else {
+            // Use log1p for mu >= a/2 (Sterbenz makes mu-a exact); otherwise
+            // subtract separated logs to retain small mu without cancellation.
+            let log_ratio = if self.mean >= a / 2.0 {
+                ((self.mean - a) / a).ln_1p()
+            } else {
+                self.mean.ln() - a.ln()
+            };
             // Round upward so a positive bound never becomes zero on underflow;
             // a probability bound above one is replaced by the trivial bound.
-            (-self.mean + a * (1.0 + self.mean.ln() - a.ln()))
-                .exp()
-                .next_up()
-                .min(1.0)
+            ((a - self.mean) + a * log_ratio).exp().next_up().min(1.0)
         };
         FaultCountPmf {
             masses: log_masses.iter().map(|p| p.exp()).collect(),

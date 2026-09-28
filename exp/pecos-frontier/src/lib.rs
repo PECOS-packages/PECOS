@@ -428,6 +428,7 @@ mod tests {
             ),
             transitions: 0,
             bp_seconds: 0.0,
+            dropped_states: 0,
         }
     }
 
@@ -614,6 +615,7 @@ mod tests {
             dropped_states: 0,
             dropped_log_mass: f64::NEG_INFINITY,
             bp_seconds: 0.0,
+            bp_runs: 0,
             escalation_rungs_used: 0,
             status: FrontierStatus::Exact,
             logical_masses: vec![FrontierLogicalMass {

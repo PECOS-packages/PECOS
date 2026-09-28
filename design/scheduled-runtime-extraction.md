@@ -27,8 +27,8 @@ remain unimplemented.
   native measurement IDs within one extraction result reject. Preserve operation
   emission order within each batch, including repeated targets.
 - Translate ordinary gates and inferred idles into the existing ByteMessage format
-  after whole-input admission. Ideal execution makes one QuantumSystem process call
-  per extraction result. Idle-Z execution makes one per nonempty original native batch,
+  after whole-input admission. Both profiles make one QuantumSystem process call
+  per nonempty original native batch,
   including all its continuations, and returns feedback after each batch. Host
   submission boundaries do not add or remove native noise-controller boundaries.
   Return the original batches alongside outcomes.
@@ -55,7 +55,11 @@ end to the current batch start, once before that qubit's first operation in the
 batch. Repeated targets within the batch share that idle site. Do not insert idle
 sites at empty batches or host submission boundaries, split nonlinear intervals,
 or invent trailing idle after the final operation. Initial per-qubit end time is
-zero. These are this profile's explicit semantics, not a claim about device physics.
+zero. Counting idle before a qubit's first operation is safe here only because the
+admitted noise is Z-diagonal and the simulator initializes qubits in |0>. Before
+admitting population-changing noise (such as amplitude damping or leakage), define
+allocation/preparation lifetimes explicitly; do not inherit this convention blindly.
+These are this profile's explicit semantics, not a claim about device physics.
 
 A nonempty original native batch is a semantic controller boundary. An artificial
 split inside that batch is not: supporting events must not restart the controller at
@@ -64,8 +68,15 @@ All opaque events still reject, including possible metadata; metadata insertion
 invariance is not claimed for an unsupported input. Empty native batches are tested.
 
 The harness currently preflights the complete extraction result and then prepares
-individual messages for the idle profile before executing any of them. This extra
-encoding is intentional scaffolding, not a performance-oriented production API.
+individual messages for both profiles before executing any of them. The whole-result
+pass enforces cross-batch measurement-ID uniqueness. This extra encoding is
+intentional scaffolding, not a performance-oriented production API.
+
+Idle-product validation here checks rate * seconds, matching the current
+GeneralNoiseModel coherent rotation formula. The separate runtime-frame admission
+helper currently checks TAU * rate * seconds. That stricter check is not shared or
+changed by this experimental consumer; reconcile admission with the actual channel
+formula before consolidating the profiles.
 
 ## Memory and native lifecycle
 
@@ -95,8 +106,14 @@ leakage flags, distinct targets, outcome counts and encoded measurement kinds.
 These are software checks, not statistical simulator parity or performance
 benchmarks.
 
-The CLI is a native-runtime smoke test. Timing sensitivity is verified separately
-by a Ramsey test: two inverse pulses with no gap return zero, while a one-second
+At the pinned Selene revision `458d640dc4cf84a7a7988ea65ce5a9f7bcb8c511`, the
+simple and soft-RZ runtimes report zero start times and durations in the exercised
+circuits. The native regression asserts those zero timestamps and the absence of
+encoded idle sites. The CLI and native tests therefore demonstrate feedback and
+shot reuse only; their ideal results are not evidence of native idle noise.
+
+Timing sensitivity is demonstrated only with synthetic timestamped batches in a
+Ramsey test: two inverse pulses with no gap return zero, while a one-second
 gap at coherent rate pi radians/second returns one. Further tests inspect the
 single encoded idle site, exercise nonlinear and stochastic noise, compare seeded
 outcomes and the subsequent underlying noise-RNG draw across extraction groupings,

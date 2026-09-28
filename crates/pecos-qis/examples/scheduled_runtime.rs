@@ -48,6 +48,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         first.measurements.len() + last.measurements.len(),
         shot.measurements.get(&91)
     );
+    if first
+        .batches
+        .iter()
+        .chain(&last.batches)
+        .all(|batch| batch.start_time_nanos == 0 && batch.duration_nanos == 0)
+    {
+        println!("Zero runtime timing: this run exercises feedback, not idle noise.");
+    }
     if shot.measurements.get(&91) != Some(&true) {
         return Err("unexpected Z-idle smoke-test result".into());
     }

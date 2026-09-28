@@ -104,6 +104,9 @@ impl ScheduledExecutor {
 
     /// Use existing `GeneralNoiseModel` idle channels with native batch lifecycles.
     /// All other noise channels remain at their zero defaults.
+    ///
+    /// # Errors
+    /// Rejects invalid rates, model configuration, or qubit capacity.
     pub fn with_idle_z(
         runtime: Box<dyn QisRuntime>,
         qubits: usize,
@@ -239,28 +242,22 @@ impl ScheduledExecutor {
         // Prepare the entire extraction result first. No simulator/noise call is
         // made until every batch and measurement mapping has been admitted.
         let AdmittedSchedule {
-            commands,
-            ids,
             next_batch,
             end_times,
+            ..
         } = self.admit(&batches)?;
-        // Admit every original batch before any model/simulator mutation. The
-        // ideal path remains one message; the idle profile completes once per
-        // nonempty native batch, independent of how extraction calls group those batches.
+        // Keep the whole-result pass for cross-batch measurement-ID uniqueness.
+        // Both profiles then use the same original native batch boundaries.
         let mut inputs = Vec::new();
-        if self.idle_noise.is_some() {
-            let mut cursor = self.next_batch;
-            let mut ends = self.end_times.clone();
-            for batch in &batches {
-                let admitted = self.admit_at(std::slice::from_ref(batch), cursor, ends)?;
-                cursor = admitted.next_batch;
-                ends = admitted.end_times;
-                if !admitted.commands.is_empty()? {
-                    inputs.push((admitted.commands, admitted.ids));
-                }
+        let mut cursor = self.next_batch;
+        let mut ends = self.end_times.clone();
+        for batch in &batches {
+            let admitted = self.admit_at(std::slice::from_ref(batch), cursor, ends)?;
+            cursor = admitted.next_batch;
+            ends = admitted.end_times;
+            if !admitted.commands.is_empty()? {
+                inputs.push((admitted.commands, admitted.ids));
             }
-        } else if !batches.is_empty() {
-            inputs.push((commands, ids));
         }
         let mut measurements = BTreeMap::new();
         for (commands, ids) in inputs {

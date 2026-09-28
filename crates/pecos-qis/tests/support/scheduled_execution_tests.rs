@@ -626,9 +626,8 @@ fn coherent_idle_uses_native_nanoseconds_and_changes_ramsey_outcome() {
         1
     );
     // Two operations on one target within the final batch share ONE idle site.
-    let executor =
+    let mut executor =
         ScheduledExecutor::with_idle_z(Box::new(Fixture::default()), 2, profile).unwrap();
-    let mut executor = executor;
     executor.start_shot(context(0), 7, 2).unwrap();
     let message = executor
         .admit(&ramsey_schedule(1_000_000_000))
@@ -813,41 +812,47 @@ impl pecos_engines::quantum::QuantumEngine for CountQuantum {
 }
 
 #[test]
-fn idle_consumer_preserves_native_processing_boundaries() {
-    let mut batches = ramsey_schedule(1_000_000_000);
-    batches[1].batch_index = 2;
-    let mut empty = batch(1, vec![]);
-    empty.duration_nanos = 0;
-    batches.insert(1, empty);
-    let fixture = Fixture {
-        batches: VecDeque::from([batches]),
-        ..Default::default()
-    };
-    let mut executor = ScheduledExecutor::with_idle_z(
-        Box::new(fixture),
-        2,
-        IdleZNoise {
-            coherent: 0.3,
+fn both_profiles_preserve_native_processing_boundaries() {
+    for idle in [false, true] {
+        let mut batches = ramsey_schedule(1_000_000_000);
+        batches[1].batch_index = 2;
+        let mut empty = batch(1, vec![]);
+        empty.duration_nanos = 0;
+        batches.insert(1, empty);
+        let fixture = Fixture {
+            batches: VecDeque::from([batches]),
             ..Default::default()
-        },
-    )
-    .unwrap();
-    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    executor.quantum = QuantumSystem::new(
-        dyn_clone::clone_box(executor.quantum.noise_model()),
-        Box::new(CountQuantum {
-            inner: StateVecEngine::new(2),
-            calls: calls.clone(),
-        }),
-    );
-    executor.start_shot(context(0), 7, 2).unwrap();
-    executor.submit(&[]).unwrap();
-    assert_eq!(calls.load(Ordering::SeqCst), 2);
+        };
+        let mut executor = if idle {
+            ScheduledExecutor::with_idle_z(
+                Box::new(fixture),
+                2,
+                IdleZNoise {
+                    coherent: 0.3,
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+        } else {
+            ScheduledExecutor::new(Box::new(fixture), 2).unwrap()
+        };
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        executor.quantum = QuantumSystem::new(
+            dyn_clone::clone_box(executor.quantum.noise_model()),
+            Box::new(CountQuantum {
+                inner: StateVecEngine::new(2),
+                calls: calls.clone(),
+            }),
+        );
+        executor.start_shot(context(0), 7, 2).unwrap();
+        executor.submit(&[]).unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
 }
 
 #[cfg(feature = "selene")]
 #[test]
-fn native_idle_consumer_reuses_shots_and_handles_deferred_feedback() {
+fn public_runtimes_zero_timing_preserves_ideal_feedback_across_shots() {
     for runtime in [
         pecos_qis::selene_simple_runtime().unwrap(),
         pecos_qis::selene_soft_rz_runtime().unwrap(),
@@ -875,6 +880,28 @@ fn native_idle_consumer_reuses_shots_and_handles_deferred_feedback() {
                 .submit(&[QuantumOp::Measure(7, 40).into()])
                 .unwrap();
             let (last, runtime_shot) = executor.finish_shot().unwrap();
+            // At the pinned public runtime revision these batches carry no
+            // physical timing. This test must not be counted as idle-noise evidence.
+            let batches = first
+                .batches
+                .into_iter()
+                .chain(second.batches)
+                .chain(last.batches)
+                .collect::<Vec<_>>();
+            assert!(!batches.is_empty());
+            assert!(
+                batches
+                    .iter()
+                    .all(|b| b.start_time_nanos == 0 && b.duration_nanos == 0)
+            );
+            let encoded = executor.admit_at(&batches, 0, vec![0; 2]).unwrap().commands;
+            assert!(
+                encoded
+                    .quantum_ops()
+                    .unwrap()
+                    .iter()
+                    .all(|g| g.gate_type != pecos_engines::GateType::Idle)
+            );
             let measured = first
                 .measurements
                 .into_iter()
@@ -885,5 +912,55 @@ fn native_idle_consumer_reuses_shots_and_handles_deferred_feedback() {
             results.push(measured[&40]);
         }
         assert_eq!(results[0], results[1]);
+    }
+}
+
+#[test]
+fn per_batch_execution_still_rejects_cross_batch_duplicate_measurement_ids() {
+    for idle in [false, true] {
+        for duplicate_program in [false, true] {
+            let mut first = batch(0, vec![pulse()]);
+            measurement(&mut first, 40);
+            let mut second = batch(1, vec![]);
+            measurement(&mut second, if duplicate_program { 40 } else { 41 });
+            if duplicate_program {
+                second.operations[0] = RuntimeScheduledOp::Measure {
+                    qubit_id: 0,
+                    result_id: 902,
+                };
+                second.measurements[0].runtime_result = 902;
+            }
+            let fixture = Fixture {
+                batches: VecDeque::from([vec![first, second]]),
+                ..Default::default()
+            };
+            let mut executor = if idle {
+                ScheduledExecutor::with_idle_z(
+                    Box::new(fixture),
+                    2,
+                    IdleZNoise {
+                        coherent: 0.1,
+                        ..Default::default()
+                    },
+                )
+                .unwrap()
+            } else {
+                ScheduledExecutor::new(Box::new(fixture), 2).unwrap()
+            };
+            executor.start_shot(context(0), 7, 2).unwrap();
+            assert!(
+                executor
+                    .submit(&[])
+                    .unwrap_err()
+                    .to_string()
+                    .contains("duplicate scheduled measurement identity")
+            );
+            assert!(executor.poisoned);
+            let result = executor
+                .quantum
+                .process(ByteMessage::quantum_operations_builder().mz(&[0]).build())
+                .unwrap();
+            assert_eq!(result.outcomes().unwrap(), vec![0]);
+        }
     }
 }

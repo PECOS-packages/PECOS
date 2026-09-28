@@ -1,11 +1,13 @@
-# Native schedule extraction and its noiseless consumer
+# Native schedule extraction and its diagnostic harness
 
-`QisRuntime` can return original native batches before idle insertion. The first
-execution consumer is `NoiselessScheduledExecutor` in pecos-qis, used by the runnable
-`scheduled_noiseless` example. It uses the existing QuantumSystem, pass-through
-noise controller and state-vector engine. It is a diagnostic Rust path, not the
-QisEngine/SimBuilder/Python path or a device-noise adapter. The consumer/API design
-still requires review before landing PR #896.
+`QisRuntime` can return original native batches before idle insertion. The experimental
+`NoiselessScheduledExecutor` lives in `tests/support`, shared by integration tests
+and the runnable `scheduled_noiseless` example. It is not a supported library API.
+It uses the existing QuantumSystem, pass-through noise controller and state-vector
+engine. It is a diagnostic Rust path, not the QisEngine/SimBuilder/Python path or a
+device-noise adapter. The extraction API still needs
+validation by a consumer that uses batch timing and events for noise physics; this
+harness demonstrates ideal execution and feedback only.
 
 ## Consumer contract
 
@@ -28,7 +30,10 @@ still requires review before landing PR #896.
   outcomes, and deliver outcomes through the runtime's existing feedback API.
 - Any submission/feedback/finalization failure or caught panic poisons the owner.
   Both runtime and quantum state must reset successfully before another shot.
-  Finish drains and executes deferred work before ending the runtime shot.
+  Finish drains and executes deferred work before ending the runtime shot. After
+  clean completion, the next shot reuses the native instance while resetting
+  quantum state and host bookkeeping. First use and explicit abandonment/recovery
+  perform a full runtime reset.
 
 No opaque event is put into an ignorable legacy message. A mandatory scheduled
 execution envelope is still needed before a general noise consumer can receive
@@ -58,5 +63,8 @@ cargo run -p pecos-qis --example scheduled_noiseless -- soft-rz
 
 Both prepare and measure a flipped qubit, with nontrivial program identifiers.
 Tests also exercise two-qubit gates, repeated shots and inputs, deferred schedules,
-whole-input admission, feedback failures/panics and unsuccessful reset. These are
-software checks, not statistical simulator parity or performance benchmarks.
+whole-input admission, feedback failures/panics, unsuccessful reset and native
+instance reuse. Admission regressions check duplicate/mismatched measurement IDs,
+leakage flags, distinct targets, outcome counts and encoded measurement kinds.
+These are software checks, not statistical simulator parity or performance
+benchmarks.

@@ -1,22 +1,23 @@
-//! Noiseless execution consumer for original native schedules.
+//! Experimental example/test harness for original native schedules.
+//! Not a supported library API.
 //!
 //! This diagnostic Rust path uses the existing `QuantumSystem` and state-vector
 //! engine. It admits an entire extraction result before quantum mutation. It is
 //! not connected to Python or `QisEngine`, and accepts no noise model or custom
 //! events. Timing is checked and retained, but causes no idle noise in this path.
 
-use crate::runtime::{QisRuntime, Shot};
-use crate::scheduled::{RuntimeScheduledOp, ScheduledBatch};
 use pecos_core::{Angle64, errors::PecosError};
 use pecos_engines::runtime_frame::ShotContext;
 use pecos_engines::{ByteMessage, Engine, quantum::StateVecEngine, quantum_system::QuantumSystem};
+use pecos_qis::runtime::{QisRuntime, Shot};
+use pecos_qis::scheduled::{RuntimeScheduledOp, ScheduledBatch};
 use pecos_qis_ffi_types::Operation;
 use std::collections::{BTreeMap, BTreeSet};
 
 fn error(message: impl Into<String>) -> PecosError {
     PecosError::Input(message.into())
 }
-fn runtime_error(error: &crate::runtime::RuntimeError) -> PecosError {
+fn runtime_error(error: &pecos_qis::runtime::RuntimeError) -> PecosError {
     PecosError::Processing(error.to_string())
 }
 
@@ -29,6 +30,13 @@ pub struct ScheduledExecutionOutput {
     pub batches: Vec<ScheduledBatch>,
     /// Processed measurements keyed by source-program result ID.
     pub measurements: BTreeMap<usize, u32>,
+}
+
+struct AdmittedSchedule {
+    commands: ByteMessage,
+    ids: Vec<usize>,
+    next_batch: usize,
+    end_times: Vec<u64>,
 }
 
 /// A small noiseless execution path for testing native scheduling and feedback.
@@ -46,6 +54,7 @@ pub struct NoiselessScheduledExecutor {
     next_batch: usize,
     end_times: Vec<u64>,
     poisoned: bool,
+    runtime_ready: bool,
 }
 
 impl NoiselessScheduledExecutor {
@@ -67,6 +76,7 @@ impl NoiselessScheduledExecutor {
             next_batch: 0,
             end_times: vec![0; qubits],
             poisoned: false,
+            runtime_ready: false,
         })
     }
 
@@ -83,11 +93,13 @@ impl NoiselessScheduledExecutor {
         self.quantum.reset()?;
         self.next_batch = 0;
         self.end_times.fill(0);
+        self.runtime_ready = true;
         self.poisoned = false;
         Ok(())
     }
 
-    /// Reset and begin a shot with explicit host and native identities.
+    /// Begin a shot with explicit host and native identities. After clean completion,
+    /// reuse the native instance and reset only quantum state and host bookkeeping.
     /// Callers must assign distinct host contexts to independent shots/workers.
     /// The seed is supplied to the runtime and to the existing quantum seed setup.
     ///
@@ -102,8 +114,13 @@ impl NoiselessScheduledExecutor {
         if self.poisoned || self.context.is_some() {
             return Err(error("finish or reset the current scheduled shot"));
         }
-        self.reset()?;
+        if !self.runtime_ready {
+            self.reset()?;
+        }
         self.poisoned = true;
+        self.quantum.reset()?;
+        self.next_batch = 0;
+        self.end_times.fill(0);
         self.quantum.set_seed(seed);
         self.quantum.begin_shot(context)?;
         self.runtime
@@ -175,7 +192,12 @@ impl NoiselessScheduledExecutor {
     ) -> Result<ScheduledExecutionOutput, PecosError> {
         // Prepare the entire extraction result first. No simulator/noise call is
         // made until every batch and measurement mapping has been admitted.
-        let (commands, ids, next_batch, end_times) = self.admit(&batches)?;
+        let AdmittedSchedule {
+            commands,
+            ids,
+            next_batch,
+            end_times,
+        } = self.admit(&batches)?;
         let mut measurements = BTreeMap::new();
         if !batches.is_empty() {
             let output = self.quantum.process(commands)?;
@@ -197,10 +219,7 @@ impl NoiselessScheduledExecutor {
         })
     }
 
-    fn admit(
-        &self,
-        batches: &[ScheduledBatch],
-    ) -> Result<(ByteMessage, Vec<usize>, usize, Vec<u64>), PecosError> {
+    fn admit(&self, batches: &[ScheduledBatch]) -> Result<AdmittedSchedule, PecosError> {
         let mut builder = ByteMessage::quantum_operations_builder();
         let mut ids = Vec::new();
         let mut program_ids = BTreeSet::new();
@@ -327,7 +346,12 @@ impl NoiselessScheduledExecutor {
                 end_times[q] = end;
             }
         }
-        Ok((builder.build(), ids, next_batch, end_times))
+        Ok(AdmittedSchedule {
+            commands: builder.build(),
+            ids,
+            next_batch,
+            end_times,
+        })
     }
 }
 

@@ -1,11 +1,13 @@
 //! Run with `cargo run -p pecos-qis --example scheduled_noiseless -- soft-rz`.
 #[cfg(feature = "selene")]
+#[path = "../tests/support/scheduled_execution.rs"]
+mod scheduled_execution;
+
+#[cfg(feature = "selene")]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     use pecos_engines::runtime_frame::ShotContext;
-    use pecos_qis::{
-        pecos_qis_ffi_types::{Operation, QuantumOp},
-        scheduled_execution::NoiselessScheduledExecutor,
-    };
+    use pecos_qis::pecos_qis_ffi_types::{Operation, QuantumOp};
+    use scheduled_execution::NoiselessScheduledExecutor;
     let runtime = match std::env::args().nth(1).as_deref() {
         None | Some("simple") => pecos_qis::selene_simple_runtime()?,
         Some("soft-rz") => pecos_qis::selene_soft_rz_runtime()?,
@@ -28,8 +30,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ])?;
     let (last, shot) = executor.finish_shot()?;
     println!(
-        "Executed {} native batches; result 91 = {:?}",
+        "Host {:?}: executed {} native batches, {} feedback results; result 91 = {:?}",
+        first.context,
         first.batches.len() + last.batches.len(),
+        first.measurements.len() + last.measurements.len(),
         shot.measurements.get(&91)
     );
     if shot.measurements.get(&91) != Some(&true) {

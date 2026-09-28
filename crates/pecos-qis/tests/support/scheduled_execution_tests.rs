@@ -1,6 +1,6 @@
 use super::*;
-use crate::runtime::{ClassicalState, Result as RuntimeResult, RuntimeError};
-use crate::scheduled::ScheduledMeasurement;
+use pecos_qis::runtime::{ClassicalState, Result as RuntimeResult, RuntimeError};
+use pecos_qis::scheduled::ScheduledMeasurement;
 use pecos_qis_ffi_types::{OperationCollector, QuantumOp};
 use std::collections::VecDeque;
 use std::sync::{
@@ -15,6 +15,7 @@ struct Fixture {
     fail_feedback: bool,
     panic_feedback: bool,
     fail_reset: Arc<AtomicBool>,
+    reset_count: Arc<std::sync::atomic::AtomicUsize>,
 }
 impl QisRuntime for Fixture {
     fn load_interface(&mut self, _: OperationCollector) -> RuntimeResult<()> {
@@ -49,6 +50,7 @@ impl QisRuntime for Fixture {
         4
     }
     fn reset(&mut self) -> RuntimeResult<()> {
+        self.reset_count.fetch_add(1, Ordering::SeqCst);
         if self.fail_reset.load(Ordering::SeqCst) {
             return Err(RuntimeError::ExecutionError(
                 "synthetic reset failure".into(),
@@ -245,8 +247,8 @@ fn persistent_state_and_batch_order_survive_multiple_inputs() {
 #[test]
 fn real_native_runtimes_execute_large_schedules_and_deliver_measurements() {
     for runtime in [
-        crate::selene_simple_runtime().unwrap(),
-        crate::selene_soft_rz_runtime().unwrap(),
+        pecos_qis::selene_simple_runtime().unwrap(),
+        pecos_qis::selene_soft_rz_runtime().unwrap(),
     ] {
         let mut executor = NoiselessScheduledExecutor::new(Box::new(runtime), 4).unwrap();
         for shot_id in 0..2 {
@@ -273,7 +275,7 @@ fn real_native_runtimes_execute_large_schedules_and_deliver_measurements() {
 #[cfg(feature = "selene")]
 #[test]
 fn two_qubit_native_rotations_and_leakage_aware_readout_execute() {
-    let runtime = crate::selene_simple_runtime().unwrap();
+    let runtime = pecos_qis::selene_simple_runtime().unwrap();
     let mut executor = NoiselessScheduledExecutor::new(Box::new(runtime), 2).unwrap();
     executor.start_shot(context(0), 10, 123).unwrap();
     let output = executor
@@ -299,9 +301,11 @@ fn two_qubit_native_rotations_and_leakage_aware_readout_execute() {
 #[test]
 fn matched_seeded_measurements_are_invariant_to_submission_boundaries() {
     fn execute(split: bool, seed: u64) -> BTreeMap<usize, u32> {
-        let mut executor =
-            NoiselessScheduledExecutor::new(Box::new(crate::selene_simple_runtime().unwrap()), 2)
-                .unwrap();
+        let mut executor = NoiselessScheduledExecutor::new(
+            Box::new(pecos_qis::selene_simple_runtime().unwrap()),
+            2,
+        )
+        .unwrap();
         executor
             .start_shot(context(usize::try_from(seed).unwrap()), seed, seed)
             .unwrap();
@@ -337,10 +341,10 @@ fn matched_seeded_measurements_are_invariant_to_submission_boundaries() {
 #[test]
 fn independent_owners_do_not_share_state_or_host_context() {
     let mut a =
-        NoiselessScheduledExecutor::new(Box::new(crate::selene_simple_runtime().unwrap()), 2)
+        NoiselessScheduledExecutor::new(Box::new(pecos_qis::selene_simple_runtime().unwrap()), 2)
             .unwrap();
     let mut b =
-        NoiselessScheduledExecutor::new(Box::new(crate::selene_simple_runtime().unwrap()), 2)
+        NoiselessScheduledExecutor::new(Box::new(pecos_qis::selene_simple_runtime().unwrap()), 2)
             .unwrap();
     a.start_shot(
         ShotContext {
@@ -371,4 +375,181 @@ fn independent_owners_do_not_share_state_or_host_context() {
     assert_ne!(ao.context, bo.context);
     a.finish_shot().unwrap();
     b.finish_shot().unwrap();
+}
+
+#[test]
+fn measurement_identity_guards_reject_each_malformed_mapping() {
+    for case in 0..4 {
+        let mut b = batch(0, vec![]);
+        measurement(&mut b, 40);
+        b.operations.push(RuntimeScheduledOp::Measure {
+            qubit_id: 1,
+            result_id: 902,
+        });
+        b.measurements.push(ScheduledMeasurement {
+            operation_index: 1,
+            runtime_result: 902,
+            program_result: 41,
+            leakage_aware: false,
+        });
+        match case {
+            0 => b.measurements[1].program_result = 40,
+            1 => {
+                b.operations[1] = RuntimeScheduledOp::Measure {
+                    qubit_id: 1,
+                    result_id: 901,
+                };
+                b.measurements[1].runtime_result = 901;
+            }
+            2 => b.measurements[1].runtime_result = 999,
+            _ => {
+                b.operations[1] = RuntimeScheduledOp::MeasureLeaked {
+                    qubit_id: 1,
+                    result_id: 902,
+                }
+            }
+        }
+        let mut executor = fixture_executor(Fixture {
+            batches: VecDeque::from([vec![b]]),
+            ..Default::default()
+        });
+        assert!(
+            executor
+                .submit(&[])
+                .unwrap_err()
+                .to_string()
+                .contains("invalid or duplicate scheduled measurement identity"),
+            "case {case}"
+        );
+        assert!(executor.poisoned);
+    }
+}
+
+#[test]
+fn two_qubit_rotations_require_distinct_targets() {
+    for op in [
+        RuntimeScheduledOp::Rzz {
+            qubit_id_1: 0,
+            qubit_id_2: 0,
+            theta: 0.5,
+        },
+        RuntimeScheduledOp::Rpp {
+            qubit_id_1: 1,
+            qubit_id_2: 1,
+            theta: 0.5,
+            phi: 0.25,
+        },
+    ] {
+        let executor = fixture_executor(Fixture::default());
+        assert!(
+            executor
+                .admit(&[batch(0, vec![op])])
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("invalid scheduled gate")
+        );
+    }
+}
+
+#[test]
+fn leakage_aware_metadata_selects_the_encoded_measurement_command() {
+    use pecos_engines::GateType;
+    for raw_leaked in [false, true] {
+        let executor = fixture_executor(Fixture::default());
+        let mut b = batch(0, vec![]);
+        measurement(&mut b, 40);
+        b.measurements[0].leakage_aware = true;
+        if raw_leaked {
+            b.operations[0] = RuntimeScheduledOp::MeasureLeaked {
+                qubit_id: 0,
+                result_id: 901,
+            };
+        }
+        let AdmittedSchedule { commands, .. } = executor.admit(&[b]).unwrap();
+        let gates = commands.quantum_ops().unwrap();
+        assert_eq!(gates.len(), 1);
+        assert_eq!(gates[0].gate_type, GateType::MeasureLeaked);
+    }
+    let executor = fixture_executor(Fixture::default());
+    let mut b = batch(0, vec![]);
+    measurement(&mut b, 40);
+    let AdmittedSchedule { commands, .. } = executor.admit(&[b]).unwrap();
+    assert_eq!(commands.quantum_ops().unwrap()[0].gate_type, GateType::MZ);
+}
+
+#[derive(Clone, Debug)]
+struct WrongOutcomes(Vec<usize>);
+impl Engine for WrongOutcomes {
+    type Input = ByteMessage;
+    type Output = ByteMessage;
+    fn process(&mut self, _: ByteMessage) -> Result<ByteMessage, PecosError> {
+        Ok(ByteMessage::outcomes_builder()
+            .add_outcomes(&self.0)
+            .build())
+    }
+    fn reset(&mut self) -> Result<(), PecosError> {
+        Ok(())
+    }
+}
+impl pecos_engines::quantum::QuantumEngine for WrongOutcomes {
+    fn set_seed(&mut self, _: u64) {}
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
+}
+
+#[test]
+fn missing_and_extra_quantum_outcomes_fail_before_feedback() {
+    for outcomes in [vec![], vec![0, 1]] {
+        let mut b = batch(0, vec![]);
+        measurement(&mut b, 40);
+        let mut executor = fixture_executor(Fixture {
+            batches: VecDeque::from([vec![b]]),
+            ..Default::default()
+        });
+        executor.quantum = QuantumSystem::new_without_noise(Box::new(WrongOutcomes(outcomes)));
+        assert!(
+            executor
+                .submit(&[])
+                .unwrap_err()
+                .to_string()
+                .contains("measurement count mismatch")
+        );
+        assert!(
+            executor
+                .runtime
+                .get_classical_state()
+                .measurements
+                .is_empty()
+        );
+        assert!(executor.finish_shot().is_err());
+    }
+}
+
+#[test]
+fn clean_shots_reuse_runtime_but_reset_quantum_state() {
+    let mut first = batch(0, vec![pulse()]);
+    measurement(&mut first, 40);
+    let mut second = batch(0, vec![]);
+    measurement(&mut second, 41);
+    second.runtime_shot_id = 8;
+    let f = Fixture {
+        batches: VecDeque::from([vec![first], vec![], vec![second], vec![]]),
+        ..Default::default()
+    };
+    let resets = f.reset_count.clone();
+    let mut executor = fixture_executor(f);
+    assert_eq!(resets.load(Ordering::SeqCst), 1);
+    assert_eq!(executor.submit(&[]).unwrap().measurements[&40], 1);
+    executor.finish_shot().unwrap();
+    executor.start_shot(context(4), 8, 123).unwrap();
+    assert_eq!(resets.load(Ordering::SeqCst), 1);
+    assert_eq!(executor.submit(&[]).unwrap().measurements[&41], 0);
+    executor.finish_shot().unwrap();
+    executor.reset().unwrap();
+    assert_eq!(resets.load(Ordering::SeqCst), 2);
 }

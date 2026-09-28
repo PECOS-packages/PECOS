@@ -23,8 +23,8 @@
 //! maintained elsewhere and is not a constraint on this decoder.
 //!
 //! The facade owns one [`TrellisDecoder`] configured with PECOS's
-//! defaults, ordering semantics, and optional no-path escalation ladder. The
-//! trellis engine lives in `pecos-trellis`.
+//! defaults, ordering semantics, and optional no-path escalation ladder, on
+//! the engine in this crate.
 
 pub use crate::TrellisOrdering;
 use crate::{
@@ -32,7 +32,6 @@ use crate::{
     TrellisDecoder, TrellisPrepared, TrellisResult,
 };
 use pecos_decoder_core::ObservableDecoder;
-use std::time::Instant;
 
 /// A retry's pruning parameters on the shared model and prepared shot.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -221,12 +220,12 @@ impl BpTrellisDecoder {
     /// configuration fails validation.
     pub fn from_sparse_dem(dem: &SparseDem, config: BpTrellisConfig) -> Result<Self, DecoderError> {
         config.validate()?;
-        let build_started = Instant::now();
+        let build_started = crate::timer_start();
         let mut trellis_config = config.trellis_config();
         trellis_config.column_order = config.ordering.resolve(dem)?;
         let inner = TrellisDecoder::from_sparse_dem(dem, trellis_config)?;
         let escalation = config.escalation;
-        let build_seconds = build_started.elapsed().as_secs_f64();
+        let build_seconds = crate::timer_seconds(build_started);
         Ok(Self {
             inner,
             escalation,

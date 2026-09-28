@@ -299,7 +299,9 @@ class PyPHIR:
                     p.cvar_dtype_list.append(data.data_type)
 
                 if name == "qvar_define":
-                    if o["data_type"] != "qubits":
+                    # Rust ast::validate_quantum_declaration is the normative statement of these rules.
+                    data_type = o.get("data_type", "qubits")
+                    if data_type != "qubits":
                         msg = f"Do not know handle qvar type: {o['data_type']}"
                         raise Exception(msg)
 
@@ -309,7 +311,7 @@ class PyPHIR:
                         next_qvar_int += 1
 
                     data = d.QVarDefine(
-                        data_type=o["data_type"],
+                        data_type=data_type,
                         variable=o["variable"],
                         size=o["size"],
                         qubit_ids=qubit_ids,

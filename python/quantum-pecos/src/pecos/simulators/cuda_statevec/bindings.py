@@ -399,6 +399,19 @@ def RYY(
     state.backend.ryy(angles[0], list(qubits))
 
 
+def RXYXY2Q(
+    state: CudaStateVec,
+    qubits: tuple[int, int],
+    angles: tuple[float, float],
+    **_params: SimulatorGateParams,
+) -> None:
+    """Apply the shared XY-axis two-qubit rotation."""
+    if len(angles) != 2:
+        msg = "RXYXY2Q gate requires exactly 2 angle parameters."
+        raise ValueError(msg)
+    state.backend.rxyxy2q(angles[0], angles[1], list(qubits))
+
+
 def RZZ(
     state: CudaStateVec,
     qubits: tuple[int, int],
@@ -551,4 +564,5 @@ gate_dict = {
     "RXX": RXX,
     "RYY": RYY,
     "RZZ": RZZ,
+    "RXYXY2Q": RXYXY2Q,
 }

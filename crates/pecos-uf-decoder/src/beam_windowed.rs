@@ -402,6 +402,48 @@ mod tests {
     use crate::{UfDecoder, UfDecoderConfig};
 
     #[test]
+    fn beamsearch_accepts_components_that_coincide_after_projection() {
+        // The split mechanism carries the only observable, so a wrong projection
+        // of it shows up in the predictions rather than only in construction.
+        let dem = "error(0.1) D0 D2 L0 ^ D0 D3\nerror(0.01) D0\nerror(0.01) D1\nerror(0.01) D2\nerror(0.01) D3\ndetector(0,0,0) D0\ndetector(0,0,1) D1\ndetector(0,0,2) D2\ndetector(0,0,3) D3";
+        for buffer_size in [0, 1, 2] {
+            let config = BeamSearchConfig {
+                window: BeamWindowConfig {
+                    step_size: 1,
+                    buffer_size,
+                    ..BeamWindowConfig::default()
+                },
+                ..BeamSearchConfig::default()
+            };
+            let factory = |text: &str| UfDecoder::from_dem(text, UfDecoderConfig::windowed());
+            let full_factory = |text: &str| -> Result<Box<dyn ObservableDecoder>, DecoderError> {
+                Ok(Box::new(UfDecoder::from_dem(
+                    text,
+                    UfDecoderConfig::fast(),
+                )?))
+            };
+            let mut decoder =
+                BeamSearchWindowedDecoder::from_dem(dem, config, factory, Some(full_factory))
+                    .unwrap();
+            // A window that does not see D0 treats the projected component as a
+            // boundary edge carrying L0, so only the buffer wide enough to hold
+            // the whole mechanism is expected to agree with the full decoder.
+            let mut reference = UfDecoder::from_dem(dem, UfDecoderConfig::fast()).unwrap();
+            for bits in 0_u8..16 {
+                let syndrome: Vec<_> = (0..4).map(|bit| (bits >> bit) & 1).collect();
+                let predicted = decoder.decode_to_observables(&syndrome).unwrap();
+                if buffer_size == 2 {
+                    assert_eq!(
+                        predicted,
+                        reference.decode_to_observables(&syndrome).unwrap(),
+                        "syndrome {syndrome:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn beam_residual_and_constructor_contracts() {
         let dem =
             include_str!("../../../examples/surface_code_circuits/surface_code_d3_z_stim.dem");

@@ -82,6 +82,24 @@ impl BitUInt {
         result
     }
 
+    /// Resize a two's-complement pattern, sign-extending when growing.
+    ///
+    /// An equal target width preserves every bit. A narrower target discards
+    /// high bits (wrapping truncation), without preserving the original sign.
+    ///
+    /// # Panics
+    /// Panics if `size` is zero, as with the other constructors.
+    #[must_use]
+    pub fn resize_sign_extend(&self, size: u16) -> Self {
+        let mut result = Self::from_raw_words(size, self.to_words().into_boxed_slice());
+        if self.get_bit(self.size - 1) {
+            for bit in self.size..size {
+                result.set_bit(bit, true);
+            }
+        }
+        result
+    }
+
     /// Create a `BitUInt` from raw word data (LSB first).
     ///
     /// Words are in little-endian order (least significant word first).

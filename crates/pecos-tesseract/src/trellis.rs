@@ -166,11 +166,14 @@ impl TesseractTrellisDecoder {
     ///
     /// # Errors
     ///
-    /// Returns [`TesseractError::InvalidConfig`] for an out-of-range tuning
+    /// Returns [`TesseractError::Dem`] for tokenizer errors,
+    /// [`TesseractError::InvalidConfig`] for an out-of-range tuning
     /// parameter and [`TesseractError::InitializationFailed`] when the DEM is
     /// malformed or outside upstream's supported shape (more than one
     /// observable, or a frontier wider than the compiled kernel).
     pub fn new(dem_string: &str, config: TesseractTrellisConfig) -> Result<Self, TesseractError> {
+        pecos_decoder_core::dem::grammar::validate_dem_text(dem_string)
+            .map_err(TesseractError::Dem)?;
         config.validate()?;
         let inner = ffi::create_tesseract_trellis_decoder(dem_string, &config.to_ffi_repr())
             .map_err(|e| TesseractError::InitializationFailed(e.what().to_string()))?;
@@ -288,6 +291,26 @@ impl Decoder for TesseractTrellisDecoder {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dem_validation_precedes_backend_parsing() {
+        for text in [
+            "error(0.1) D0 D0",
+            "error(0.1) D0 D1 ^ D1 D0",
+            "repeat 2 {\nerror(0.1) D0 D0\n}",
+            "@bad",
+        ] {
+            let expected = pecos_decoder_core::dem::grammar::validate_dem_text(text).unwrap_err();
+            let error = TesseractTrellisDecoder::new(text, TesseractTrellisConfig::default())
+                .err()
+                .unwrap();
+            assert!(matches!(
+                error,
+                TesseractError::Dem(pecos_decoder_core::DecoderError::InvalidDemSyntax(_))
+            ));
+            assert_eq!(error.to_string(), expected.to_string());
+        }
+    }
 
     #[test]
     fn default_matches_upstream_trellis_config() {

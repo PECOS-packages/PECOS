@@ -71,6 +71,7 @@ alt_symbols = {
     # 'G2': q2.G2,
     # 'II': q2.II,
     "ZZPhase": "RZZ",
+    "RXYXY2Q": "RXYXY2Q",
     "RXXYYZZ": "RXXRYYRZZ",
     "R2XXYYZZ": "RXXRYYRZZ",
     "ZZ": "SZZ",

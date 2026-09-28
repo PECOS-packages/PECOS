@@ -7,6 +7,10 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum PyMatchingError {
+    /// DEM validation failed
+    #[error("{0}")]
+    Dem(#[from] DecoderError),
+
     /// FFI-related errors from the C++ library
     #[error("FFI error: {0}")]
     Ffi(#[from] cxx::Exception),
@@ -42,6 +46,7 @@ pub enum CheckMatrixError {
 impl From<PyMatchingError> for DecoderError {
     fn from(e: PyMatchingError) -> Self {
         match e {
+            PyMatchingError::Dem(error) => error,
             PyMatchingError::Configuration(msg) => DecoderError::InvalidConfiguration(msg),
             PyMatchingError::InvalidCheckMatrix(check_err) => {
                 DecoderError::MatrixError(check_err.to_string())

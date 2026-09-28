@@ -276,6 +276,33 @@ pub trait QisRuntime: Send + Sync + dyn_clone::DynClone {
         ))
     }
 
+    /// Extract original scheduler batches before idle insertion or physical effects.
+    /// This opt-in Rust API is not used by the ordinary QIS engine. Opaque events
+    /// are unhandled data, not metadata acknowledgements. See [`crate::scheduled`].
+    ///
+    /// # Errors
+    /// Defaults to rejection for runtimes without scheduled extraction support.
+    fn lower_scheduled_operations(
+        &mut self,
+        _operations: &[Operation],
+    ) -> Result<Vec<crate::scheduled::ScheduledBatch>> {
+        Err(RuntimeError::ExecutionError(
+            "runtime does not support scheduled extraction".into(),
+        ))
+    }
+
+    /// Force terminal release of remaining native scheduled work, without execution.
+    ///
+    /// # Errors
+    /// Defaults to rejection; implementors must guarantee a terminal flush.
+    fn drain_pending_scheduled_operations(
+        &mut self,
+    ) -> Result<Vec<crate::scheduled::ScheduledBatch>> {
+        Err(RuntimeError::ExecutionError(
+            "runtime does not support scheduled terminal drain".into(),
+        ))
+    }
+
     /// Lower freshly collected program operations through the runtime with provenance.
     ///
     /// Runtimes that can preserve source/scheduler metadata should override this

@@ -210,17 +210,17 @@ def make_builder(name: str) -> LogicalCircuitBuilder:
         if shape == "h_fold":
             builder.add_memory("A", 2, "X")
             builder.add_transversal_h("A")
-            builder.add_logical_s("A")
+            builder.add_logical_sz("A")
             builder.add_memory("A", 2, "Z")
         elif shape == "fold_pair_x":
             builder.add_memory("A", 1, "X")
-            builder.add_logical_s("A")
-            builder.add_logical_sdg("A")
+            builder.add_logical_sz("A")
+            builder.add_logical_szdg("A")
             builder.add_memory("A", 1, "X")
         else:
             before, after = {"fold_s_first": (0, 2), "fold_s_mid": (1, 1), "fold_s_last": (2, 0)}[shape]
             builder.add_memory("A", before, "Z")
-            builder.add_logical_s("A")
+            builder.add_logical_sz("A")
             builder.add_memory("A", after, "Z")
     elif shape in {"h", "h_z_to_x", "h_x_to_z", "hh"}:
         before, after = ("X", "Z") if shape == "h_x_to_z" else ("Z", "X")

@@ -53,7 +53,10 @@ pub trait GateAdaptor: Send + Sync {
     /// Check if this adaptor can decompose the given gate.
     fn can_adapt(&self, gate_id: GateId) -> bool;
 
-    /// Decompose a gate into a sequence of other gates.
+    /// Decompose a gate command into a sequence of other gates.
+    ///
+    /// Qubits are forwarded unchanged by adaptor wrappers; implementations must
+    /// handle every instance in a batch or reject the command, never truncate it.
     ///
     /// The adaptor receives the gate ID, qubits, and angles, and returns
     /// a sequence of gates that is exactly equivalent to the original, including
@@ -69,6 +72,13 @@ pub trait GateAdaptor: Send + Sync {
 /// Standard adaptor with common gate decompositions.
 ///
 /// Decomposes gates into Clifford+RZ gate set.
+/// Commands may batch multiple gate instances with shared angles. Two-qubit
+/// instances occupy consecutive pairs in the qubit slice.
+///
+/// # Panics
+///
+/// Adaptation panics for unsupported gates, empty or incomplete qubit groups,
+/// or an incorrect angle count. The adaptor API has no error return type.
 pub struct StandardAdaptor {
     /// Gates that can be adapted
     can_adapt_bits: GateSupportSet,
@@ -93,6 +103,7 @@ impl StandardAdaptor {
         bits.insert(gates::RZZ);
         bits.insert(gates::RXX);
         bits.insert(gates::RYY);
+        bits.insert(gates::RXYXY2Q);
 
         Self {
             can_adapt_bits: bits,
@@ -118,6 +129,44 @@ impl GateAdaptor for StandardAdaptor {
     }
 
     fn adapt(&self, gate_id: GateId, qubits: &[QubitId], angles: &[Angle64]) -> Vec<AdaptedGate> {
+        let gate_type = gate_id
+            .try_to_gate_type()
+            .expect("StandardAdaptor requires a built-in gate");
+        assert!(
+            !qubits.is_empty(),
+            "StandardAdaptor requires nonempty qubits"
+        );
+        assert_eq!(
+            angles.len(),
+            gate_type.angle_arity(),
+            "StandardAdaptor received an incorrect angle count for {gate_type:?}"
+        );
+        match gate_type.quantum_arity() {
+            1 => qubits
+                .iter()
+                .flat_map(|qubit| {
+                    Self::adapt_instance(gate_id, std::slice::from_ref(qubit), angles)
+                })
+                .collect(),
+            2 => {
+                let (pairs, remainder) = qubits.as_chunks::<2>();
+                assert!(
+                    remainder.is_empty(),
+                    "StandardAdaptor requires complete qubit pairs for {gate_type:?}"
+                );
+                pairs
+                    .iter()
+                    .flat_map(|pair| Self::adapt_instance(gate_id, pair, angles))
+                    .collect()
+            }
+            _ => Self::adapt_instance(gate_id, qubits, angles),
+        }
+    }
+}
+
+impl StandardAdaptor {
+    // Only the batch dispatcher and pair-local decomposition call this helper.
+    fn adapt_instance(gate_id: GateId, qubits: &[QubitId], angles: &[Angle64]) -> Vec<AdaptedGate> {
         match gate_id {
             id if id == gates::RX => {
                 // RX(θ) = H RZ(θ) H
@@ -167,6 +216,18 @@ impl GateAdaptor for StandardAdaptor {
                 ]
             }
 
+            id if id == gates::RXYXY2Q => {
+                let (theta, phi) = (angles[0], angles[1]);
+                let (q0, q1) = (qubits[0], qubits[1]);
+                let mut sequence = vec![
+                    AdaptedGate::rotation(gates::RZ, q0, -phi),
+                    AdaptedGate::rotation(gates::RZ, q1, -phi),
+                ];
+                sequence.extend(Self::adapt_instance(gates::RXX, qubits, &[theta]));
+                sequence.push(AdaptedGate::rotation(gates::RZ, q0, phi));
+                sequence.push(AdaptedGate::rotation(gates::RZ, q1, phi));
+                sequence
+            }
             id if id == gates::RXX => {
                 // RXX(θ) = H⊗H RZZ(θ) H⊗H
                 let theta = angles[0];

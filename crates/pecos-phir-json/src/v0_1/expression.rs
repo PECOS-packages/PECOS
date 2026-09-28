@@ -1,114 +1,24 @@
 use crate::v0_1::ast::{ArgItem, Expression};
 use crate::v0_1::environment::{BitValue, DataType, Environment};
-use pecos_core::BitUInt;
+pub use pecos_core::ExprValue;
 use pecos_core::errors::PecosError;
-use std::fmt;
+use pecos_core::{BitUInt, MIN_EVAL_WIDTH, eval_binary_op, eval_unary_op};
 
-/// Minimum evaluation width -- matches the hardware model where
-/// everything is i64 under the hood.
-const MIN_EVAL_WIDTH: u16 = 64;
-
-/// Widen a `BitUInt` to a target width by zero-extending.
-/// If already at or wider than target, returns as-is.
-fn widen_to(v: BitUInt, target: u16) -> BitUInt {
-    if v.size() >= target {
-        return v;
-    }
-    // Create wider value from raw words (handles >64 bit)
-    let words = v.to_words();
-    BitUInt::from_raw_words(target, words.into_boxed_slice())
-}
-
-/// Expression value using arbitrary-width integers.
+/// Converts a `BitValue` to an `ExprValue`, widening to evaluation width.
 ///
-/// All values use `BitUInt` internally (matching the hardware model where
-/// everything is unsigned bits). Sign interpretation happens at the API
-/// boundary via `as_i64()`. The `Signed` variant tracks that the value
-/// should be treated as signed for operations like comparison and shift.
-///
-/// All values are widened to at least [`MIN_EVAL_WIDTH`] bits during
-/// evaluation, matching the hardware model.
-#[derive(Debug, Clone, PartialEq)]
-pub enum ExprValue {
-    /// Signed value (stored as unsigned bits, sign-interpreted on read)
-    Signed(BitUInt),
-    /// Unsigned value
-    Unsigned(BitUInt),
-    /// Boolean value
-    Boolean(bool),
-}
-
-impl ExprValue {
-    /// Converts the expression value to i64 (sign-extending for Signed).
-    #[must_use]
-    #[allow(clippy::cast_possible_wrap)]
-    pub fn as_i64(&self) -> i64 {
-        match self {
-            ExprValue::Signed(v) | ExprValue::Unsigned(v) => v.to_u64().unwrap_or(0) as i64,
-            ExprValue::Boolean(v) => i64::from(*v),
-        }
-    }
-
-    /// Converts the expression value to u64.
-    #[must_use]
-    pub fn as_u64(&self) -> u64 {
-        match self {
-            ExprValue::Signed(v) | ExprValue::Unsigned(v) => v.to_u64().unwrap_or(0),
-            ExprValue::Boolean(v) => u64::from(*v),
-        }
-    }
-
-    /// Converts the expression value to boolean.
-    #[must_use]
-    pub fn as_bool(&self) -> bool {
-        match self {
-            ExprValue::Signed(v) | ExprValue::Unsigned(v) => !v.is_zero(),
-            ExprValue::Boolean(v) => *v,
-        }
-    }
-
-    /// Converts a `BitValue` to an `ExprValue`, widening to evaluation width.
-    ///
-    /// For signed values, sign-extends from the type width (not zero-extends).
-    /// For example, i8(-1) stored as 0xFF is widened to 0xFFFFFFFFFFFFFFFF.
-    #[must_use]
-    #[allow(clippy::cast_sign_loss)]
-    pub fn from_bit_value(value: &BitValue) -> Self {
-        if value.is_signed() {
-            // Sign-extend via as_i64(), then store at eval width
-            let signed_val = value.as_i64();
-            ExprValue::Signed(BitUInt::new(MIN_EVAL_WIDTH, signed_val as u64))
-        } else {
-            let eval_width = MIN_EVAL_WIDTH.max(value.size());
-            let raw = value.to_bituint();
-            let widened = widen_to(raw, eval_width);
-            ExprValue::Unsigned(widened)
-        }
-    }
-
-    /// Create a signed value at evaluation width from i64.
-    #[must_use]
-    #[allow(clippy::cast_sign_loss)]
-    fn signed(val: i64) -> Self {
-        ExprValue::Signed(BitUInt::new(MIN_EVAL_WIDTH, val as u64))
-    }
-
-    /// Create an unsigned value at evaluation width from u64.
-    #[must_use]
-    fn unsigned(val: u64) -> Self {
-        ExprValue::Unsigned(BitUInt::new(MIN_EVAL_WIDTH, val))
-    }
-}
-
-impl PartialEq<i64> for ExprValue {
-    fn eq(&self, other: &i64) -> bool {
-        self.as_i64() == *other
-    }
-}
-
-impl PartialEq<u64> for ExprValue {
-    fn eq(&self, other: &u64) -> bool {
-        self.as_u64() == *other
+/// For signed values, sign-extends from the type width (not zero-extends).
+/// For example, i8(-1) stored as 0xFF is widened to 0xFFFFFFFFFFFFFFFF.
+#[must_use]
+fn from_bit_value(value: &BitValue) -> ExprValue {
+    if value.is_signed() {
+        // Sign-extend via as_i64(), then store at eval width
+        let signed_val = value.as_i64();
+        ExprValue::signed(signed_val)
+    } else {
+        let eval_width = MIN_EVAL_WIDTH.max(value.size());
+        let raw = value.to_bituint();
+        let widened = BitUInt::from_raw_words(eval_width, raw.to_words().into_boxed_slice());
+        ExprValue::Unsigned(widened)
     }
 }
 
@@ -141,7 +51,7 @@ impl<'a> ExpressionEvaluator<'a> {
                     return Ok(if is_bool {
                         ExprValue::Boolean(value.as_bool())
                     } else {
-                        ExprValue::from_bit_value(value)
+                        from_bit_value(value)
                     });
                 }
                 return Err(PecosError::RuntimeUndefinedVariable { name: name.clone() });
@@ -158,7 +68,7 @@ impl<'a> ExpressionEvaluator<'a> {
                             "Unary operation '{cop}' requires exactly 1 argument"
                         )));
                     }
-                    self.eval_unary_op(cop, &args[0])
+                    eval_unary_op(cop, self.eval_arg(&args[0])?)
                 }
                 // Short-circuit logical operations
                 "&&" => {
@@ -194,7 +104,7 @@ impl<'a> ExpressionEvaluator<'a> {
                             "Binary operation '{cop}' requires exactly 2 arguments"
                         )));
                     }
-                    self.eval_binary_op(cop, &args[0], &args[1])
+                    eval_binary_op(cop, self.eval_arg(&args[0])?, self.eval_arg(&args[1])?)
                 }
             },
             _ => unreachable!("handled above"),
@@ -218,7 +128,7 @@ impl<'a> ExpressionEvaluator<'a> {
                     Ok(if is_bool {
                         ExprValue::Boolean(value.as_bool())
                     } else {
-                        ExprValue::from_bit_value(value)
+                        from_bit_value(value)
                     })
                 } else {
                     Err(PecosError::RuntimeUndefinedVariable { name: name.clone() })
@@ -235,176 +145,6 @@ impl<'a> ExpressionEvaluator<'a> {
             ArgItem::UInteger(val) => Ok(ExprValue::unsigned(*val)),
             ArgItem::Expression(expr) => self.eval_expr(expr),
         }
-    }
-
-    /// Evaluates a unary operation.
-    fn eval_unary_op(&mut self, op: &str, arg: &ArgItem) -> Result<ExprValue, PecosError> {
-        let val = self.eval_arg(arg)?;
-
-        match op {
-            "~" => {
-                // Bitwise NOT -- flips all bits at evaluation width
-                match val {
-                    ExprValue::Signed(v) => Ok(ExprValue::Signed(!&v)),
-                    ExprValue::Unsigned(v) => Ok(ExprValue::Unsigned(!&v)),
-                    ExprValue::Boolean(v) => Ok(ExprValue::Boolean(!v)),
-                }
-            }
-            "!" => Ok(ExprValue::Boolean(!val.as_bool())),
-            _ => Err(PecosError::Input(format!(
-                "Unsupported unary operation: {op}"
-            ))),
-        }
-    }
-
-    /// Evaluates a binary operation using `BitUInt` arithmetic directly.
-    ///
-    /// Both operands are widened to the same evaluation width before
-    /// the operation. This works for any bit width -- not just <= 64.
-    #[allow(clippy::too_many_lines)]
-    fn eval_binary_op(
-        &mut self,
-        op: &str,
-        lhs: &ArgItem,
-        rhs: &ArgItem,
-    ) -> Result<ExprValue, PecosError> {
-        let lhs_val = self.eval_arg(lhs)?;
-        let rhs_val = self.eval_arg(rhs)?;
-
-        // Determine signedness of result
-        let lhs_signed = matches!(lhs_val, ExprValue::Signed(_));
-        let rhs_signed = matches!(rhs_val, ExprValue::Signed(_));
-        let result_signed = lhs_signed && rhs_signed;
-
-        // Extract inner BitUInt from both operands and widen to same width
-        let (l, r) = Self::widen_pair(&lhs_val, &rhs_val);
-
-        // Helper to wrap result in the right variant
-        let wrap = |v: BitUInt| -> ExprValue {
-            if result_signed {
-                ExprValue::Signed(v)
-            } else {
-                ExprValue::Unsigned(v)
-            }
-        };
-
-        // For signed operations we use i64 arithmetic (matching C/Rust behavior).
-        // This is correct for values <= 64 bits, which covers all practical PHIR types.
-        let li = lhs_val.as_i64();
-        let ri = rhs_val.as_i64();
-
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        match op {
-            // Arithmetic (BitUInt ops automatically wrap at the width)
-            "+" => Ok(wrap(&l + &r)),
-            "-" => Ok(wrap(&l - &r)),
-            "*" => Ok(wrap(&l * &r)),
-            "/" => {
-                if r.is_zero() {
-                    return Err(PecosError::RuntimeDivisionByZero);
-                }
-                if result_signed {
-                    // Signed division truncates toward zero (C/Rust behavior)
-                    let result = li.wrapping_div(ri);
-                    Ok(ExprValue::signed(result))
-                } else {
-                    Ok(wrap(&l / &r))
-                }
-            }
-            "%" => {
-                if r.is_zero() {
-                    return Err(PecosError::RuntimeDivisionByZero);
-                }
-                if result_signed {
-                    // Signed remainder (C/Rust behavior: sign follows dividend)
-                    let result = li.wrapping_rem(ri);
-                    Ok(ExprValue::signed(result))
-                } else {
-                    Ok(wrap(&l % &r))
-                }
-            }
-
-            // Bitwise
-            "&" => Ok(wrap(&l & &r)),
-            "|" => Ok(wrap(&l | &r)),
-            "^" => Ok(wrap(&l ^ &r)),
-
-            // Shifts -- RHS is the shift amount (must be non-negative)
-            ">>" => {
-                if ri < 0 {
-                    return Err(PecosError::Input(format!("Negative shift amount: {ri}")));
-                }
-                if lhs_signed {
-                    // Arithmetic right shift: sign-extends (C/Rust behavior for signed)
-                    let result = li.wrapping_shr(ri as u32);
-                    Ok(ExprValue::signed(result))
-                } else {
-                    let shift = r.to_u64().unwrap_or(0) as u16;
-                    Ok(wrap(&l >> shift))
-                }
-            }
-            "<<" => {
-                if ri < 0 {
-                    return Err(PecosError::Input(format!("Negative shift amount: {ri}")));
-                }
-                let shift = r.to_u64().unwrap_or(0) as u16;
-                Ok(wrap(&l << shift))
-            }
-
-            // Comparisons -- signed when both operands are signed
-            "==" => Ok(ExprValue::unsigned(u64::from(l == r))),
-            "!=" => Ok(ExprValue::unsigned(u64::from(l != r))),
-            "<" => {
-                let result = if result_signed { li < ri } else { l < r };
-                Ok(ExprValue::unsigned(u64::from(result)))
-            }
-            ">" => {
-                let result = if result_signed { li > ri } else { l > r };
-                Ok(ExprValue::unsigned(u64::from(result)))
-            }
-            "<=" => {
-                let result = if result_signed { li <= ri } else { l <= r };
-                Ok(ExprValue::unsigned(u64::from(result)))
-            }
-            ">=" => {
-                let result = if result_signed { li >= ri } else { l >= r };
-                Ok(ExprValue::unsigned(u64::from(result)))
-            }
-
-            // Logical
-            "&&" => Ok(ExprValue::Boolean(lhs_val.as_bool() && rhs_val.as_bool())),
-            "||" => Ok(ExprValue::Boolean(lhs_val.as_bool() || rhs_val.as_bool())),
-
-            _ => Err(PecosError::Input(format!(
-                "Unsupported binary operation: {op}"
-            ))),
-        }
-    }
-
-    /// Extract inner `BitUInt` from an `ExprValue`, widening both to the same width.
-    fn widen_pair(a: &ExprValue, b: &ExprValue) -> (BitUInt, BitUInt) {
-        let (a_bits, b_bits) = match (a, b) {
-            (
-                ExprValue::Signed(va) | ExprValue::Unsigned(va),
-                ExprValue::Signed(vb) | ExprValue::Unsigned(vb),
-            ) => (va.clone(), vb.clone()),
-            (ExprValue::Boolean(v), ExprValue::Signed(vb) | ExprValue::Unsigned(vb)) => {
-                (BitUInt::new(vb.size(), u64::from(*v)), vb.clone())
-            }
-            (ExprValue::Signed(va) | ExprValue::Unsigned(va), ExprValue::Boolean(v)) => {
-                (va.clone(), BitUInt::new(va.size(), u64::from(*v)))
-            }
-            (ExprValue::Boolean(va), ExprValue::Boolean(vb)) => (
-                BitUInt::new(MIN_EVAL_WIDTH, u64::from(*va)),
-                BitUInt::new(MIN_EVAL_WIDTH, u64::from(*vb)),
-            ),
-        };
-
-        // Widen to same width (max of the two)
-        let target = a_bits.size().max(b_bits.size());
-        let a_wide = widen_to(a_bits, target);
-        let b_wide = widen_to(b_bits, target);
-        (a_wide, b_wide)
     }
 
     /// Gets multiple bit values from a variable.
@@ -426,19 +166,75 @@ impl<'a> ExpressionEvaluator<'a> {
     }
 }
 
-impl fmt::Display for ExprValue {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ExprValue::Signed(v) => write!(f, "{}", v.to_i64().unwrap_or(0)),
-            ExprValue::Unsigned(v) => write!(f, "{}", v.to_u64().unwrap_or(0)),
-            ExprValue::Boolean(v) => write!(f, "{v}"),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wide_qubits_classical_variable_now_sign_extends_signed_operands() {
+        use crate::v0_1::operations::OperationProcessor;
+
+        let mut processor = OperationProcessor::new();
+        processor
+            .handle_variable_definition("cvar_define", "qubits", "wide", 100)
+            .unwrap();
+        let mut evaluator = ExpressionEvaluator::new(&processor.environment);
+        let result = evaluator
+            .eval_expr(&Expression::Variable("wide".into()))
+            .unwrap();
+        let ExprValue::Unsigned(bits) = result else {
+            panic!("expected unsigned");
+        };
+        assert_eq!(bits.size(), 100);
+        assert_eq!(bits.to_words(), [0, 0]);
+
+        let result = evaluator
+            .eval_expr(&Expression::Operation {
+                cop: "+".into(),
+                args: vec![ArgItem::Integer(-1), ArgItem::Simple("wide".into())],
+            })
+            .unwrap();
+        let ExprValue::Unsigned(bits) = result else {
+            panic!("expected unsigned");
+        };
+        assert_eq!(bits.size(), 100);
+        assert_eq!(
+            bits.to_words(),
+            [18_446_744_073_709_551_615, 68_719_476_735]
+        );
+
+        processor.environment.set_raw("wide", 1).unwrap();
+        let mut evaluator = ExpressionEvaluator::new(&processor.environment);
+        let shift = |value| Expression::Operation {
+            cop: ">>".into(),
+            args: vec![ArgItem::Integer(value), ArgItem::Simple("wide".into())],
+        };
+        let result = evaluator.eval_expr(&shift(-8)).unwrap();
+        let ExprValue::Signed(bits) = result else {
+            panic!("expected signed");
+        };
+        assert_eq!(bits.size(), 100);
+        assert_eq!(
+            bits.to_words(),
+            [18_446_744_073_709_551_612, 68_719_476_735]
+        );
+        let quotient = Expression::Operation {
+            cop: "/".into(),
+            args: vec![
+                ArgItem::Expression(Box::new(shift(-8))),
+                ArgItem::Expression(Box::new(shift(-1))),
+            ],
+        };
+        let result = evaluator.eval_expr(&quotient).unwrap();
+        let ExprValue::Signed(bits) = result else {
+            panic!("expected signed");
+        };
+        assert_eq!(bits.size(), 100);
+        assert_eq!(bits.to_words(), [4, 0]);
+
+        // The PHIR boundary still uses its lossy accessor for scalar results.
+        assert_eq!(processor.evaluate_expression(&shift(-8)).unwrap(), 0);
+    }
 
     fn setup_environment() -> Environment {
         let mut env = Environment::new();

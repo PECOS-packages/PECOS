@@ -17,7 +17,9 @@
 //! classical operations inline, and yields batches of quantum/machine operations
 //! at measurement boundaries.
 
-use crate::v0_1::ast::{ArgItem, Expression, Operation, PHIRProgram, QubitArg, infer_size};
+use crate::v0_1::ast::{
+    ArgItem, Expression, Operation, PHIRProgram, QubitArg, infer_size, validate_quantum_declaration,
+};
 use crate::v0_1::environment::{DataType, Environment};
 use crate::v0_1::expression::ExpressionEvaluator;
 use crate::v0_1::foreign_objects::ForeignObject;
@@ -69,13 +71,6 @@ pub enum YieldedOp {
     MOp(YieldedMOp),
 }
 
-/// Metadata about a quantum variable (for resolving qubit args to IDs).
-#[derive(Debug, Clone)]
-struct QVarMeta {
-    /// Starting global qubit ID for this variable
-    start_id: usize,
-}
-
 /// Classical interpreter for PHIR programs.
 ///
 /// Walks the PHIR AST, executes classical operations (assignment, Result mapping,
@@ -84,12 +79,8 @@ struct QVarMeta {
 pub struct PhirClassicalInterpreter {
     /// The parsed PHIR program
     program: Option<PHIRProgram>,
-    /// Classical variable environment
+    /// Variable environment and declaration-order qubit IDs
     environment: Environment,
-    /// Quantum variable metadata (name -> `QVarMeta`)
-    qvar_meta: BTreeMap<String, QVarMeta>,
-    /// Total number of qubits
-    num_qubits: usize,
     /// Foreign object for `FFCalls`
     foreign_object: Option<Box<dyn ForeignObject>>,
 }
@@ -101,8 +92,6 @@ impl PhirClassicalInterpreter {
         Self {
             program: None,
             environment: Environment::new(),
-            qvar_meta: BTreeMap::new(),
-            num_qubits: 0,
             foreign_object: None,
         }
     }
@@ -147,8 +136,6 @@ impl PhirClassicalInterpreter {
 
         self.foreign_object = foreign_object;
         self.environment = Environment::new();
-        self.qvar_meta.clear();
-        self.num_qubits = 0;
 
         // Process variable definitions from the ops
         for op in &program.ops {
@@ -159,18 +146,15 @@ impl PhirClassicalInterpreter {
                 size,
             } = op
             {
-                let resolved_size = infer_size(data_type, *size);
                 match data.as_str() {
-                    "qvar_define" if data_type == "qubits" => {
-                        let start_id = self.num_qubits;
-                        self.qvar_meta
-                            .insert(variable.clone(), QVarMeta { start_id });
-                        self.num_qubits += resolved_size;
-                        // Don't add quantum vars to the classical environment --
-                        // they live in qvar_meta only, matching Python behavior
-                        // where qvar_meta and csym2id are separate namespaces.
+                    "qvar_define" => {
+                        let (variable, resolved_size) =
+                            validate_quantum_declaration(variable, Some(data_type), *size)?;
+                        self.environment
+                            .add_quantum_register(variable, resolved_size)?;
                     }
                     "cvar_define" => {
+                        let resolved_size = infer_size(data_type, *size);
                         let dt = data_type.parse::<DataType>()?;
                         if !self.environment.has_variable(variable) {
                             self.environment.add_variable(variable, dt, resolved_size)?;
@@ -182,7 +166,7 @@ impl PhirClassicalInterpreter {
         }
 
         self.program = Some(program);
-        Ok(self.num_qubits)
+        Ok(self.num_qubits())
     }
 
     /// Reset variable values for a new shot (keeps definitions).
@@ -375,26 +359,19 @@ impl PhirClassicalInterpreter {
     /// Get the number of qubits.
     #[must_use]
     pub fn num_qubits(&self) -> usize {
-        self.num_qubits
+        self.environment.count_qubits()
     }
 
     /// Resolve a `QubitArg` to integer qubit IDs.
     fn resolve_qubit_arg(&self, arg: &QubitArg) -> Result<Vec<usize>, PecosError> {
         match arg {
             QubitArg::SingleQubit((var, idx)) => {
-                let meta = self
-                    .qvar_meta
-                    .get(var)
-                    .ok_or_else(|| PecosError::Input(format!("Unknown quantum variable: {var}")))?;
-                Ok(vec![meta.start_id + idx])
+                Ok(vec![self.environment.resolve_qubit(var, *idx)?])
             }
             QubitArg::MultipleQubits(qubits) => {
                 let mut ids = Vec::new();
                 for (var, idx) in qubits {
-                    let meta = self.qvar_meta.get(var).ok_or_else(|| {
-                        PecosError::Input(format!("Unknown quantum variable: {var}"))
-                    })?;
-                    ids.push(meta.start_id + idx);
+                    ids.push(self.environment.resolve_qubit(var, *idx)?);
                 }
                 Ok(ids)
             }
@@ -405,7 +382,7 @@ impl PhirClassicalInterpreter {
     ///
     /// # Errors
     ///
-    /// Returns `PecosError` if qubit args reference unknown quantum variables.
+    /// Returns `PecosError` for unknown quantum variables or out-of-bounds qubit indices.
     pub fn make_qop(
         &self,
         qop_name: &str,
@@ -414,6 +391,11 @@ impl PhirClassicalInterpreter {
         returns: &[(String, usize)],
         metadata: &Option<BTreeMap<String, serde_json::Value>>,
     ) -> Result<YieldedQOp, PecosError> {
+        if qop_name == "RXYXY2Q" {
+            crate::v0_1::ast::validate_rxyxy2q_args(angles.as_deref(), args)
+                .map_err(PecosError::ValidationInvalidGateParameters)?;
+        }
+
         // Resolve qubit args to integer IDs
         let mut is_multi = false;
         for arg in args {
@@ -485,7 +467,7 @@ impl PhirClassicalInterpreter {
     ///
     /// # Errors
     ///
-    /// Returns `PecosError` if qubit args reference unknown quantum variables.
+    /// Returns `PecosError` for unknown quantum variables or out-of-bounds qubit indices.
     pub fn make_mop(
         &self,
         mop_name: &str,

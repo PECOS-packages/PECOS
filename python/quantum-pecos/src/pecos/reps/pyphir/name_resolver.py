@@ -25,6 +25,15 @@ def sim_name_resolver(qop: QOp) -> str:
     # TODO: Support conversion of all SQ gates.
     # TODO: Try to support as many TQ gates... but at least all the allowed ones to standard TQ Cliffords
 
+    if qop.name == "RXYXY2Q":
+        if qop.angles is None or len(qop.angles) != 2:
+            msg = "RXYXY2Q requires exactly two angles (theta, phi)"
+            raise ValueError(msg)
+        if not qop.args or any(not isinstance(pair, (tuple, list)) or len(pair) != 2 for pair in qop.args):
+            msg = "RXYXY2Q requires complete qubit pairs"
+            raise ValueError(msg)
+        return qop.name
+
     if qop.name == "RZZ" and qop.angles == (0.0,):
         return "I"
 

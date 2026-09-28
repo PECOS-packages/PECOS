@@ -91,8 +91,8 @@ def test_all_gadget_functions_compile(module, patch):
         "transversal_cx",
         "apply_logical_x",
         "syndrome_extraction_swapped_a",
-        "syndrome_extraction_fold_s_a",
-        "syndrome_extraction_fold_sdg_a",
+        "syndrome_extraction_fold_sz_a",
+        "syndrome_extraction_fold_szdg_a",
         *(f"syndrome_extraction_{scope}" for scope in ("a", "ctrl", "tgt", "data", "anc")),
     }
     rendered = {
@@ -128,7 +128,7 @@ def test_factory_preparations_and_readouts(patch, factory, preparations, readout
     """Check source structure because current physical readouts cannot distinguish Y from X ancilla prep.
 
     Measurement partitions and logical Z outcomes are unchanged by that substitution;
-    a physical check of the phase would require a Y readout that is not available yet.
+    a physical check of the phase would require the fold-based Y readout, which these factories do not use.
     """
     source = ast.parse(render_surface_protocol_module(patch))
     factory_node = next(node for node in source.body if isinstance(node, ast.FunctionDef) and node.name == factory)
@@ -619,14 +619,14 @@ def test_shared_module_directory():
 
 @pytest.mark.parametrize("dagger", [False, True])
 @pytest.mark.parametrize(("before", "after"), [(0, 2), (1, 1), (2, 0), (0, 0)])
-def test_logical_s_factory(patch, module, before, after, dagger):
+def test_logical_sz_factory(patch, module, before, after, dagger):
     """Compile either phase and certify scoped measurement ordinals against the builder."""
-    program = module["make_logical_s_experiment"](before, after, dagger=dagger)
+    program = module["make_logical_sz_experiment"](before, after, dagger=dagger)
     assert program.compile() is not None
     builder = LogicalCircuitBuilder()
     builder.add_patch(patch, "D")
     builder.add_memory("D", before, "Z")
-    builder.add_logical_s("D", dagger=dagger)
+    builder.add_logical_sz("D", dagger=dagger)
     builder.add_memory("D", after, "Z")
     assert_same_measurement_partition(
         measurement_partition_from_trace(program, patch.geometry.num_qubits, {"a": "D"}),
@@ -639,21 +639,56 @@ def test_logical_s_factory(patch, module, before, after, dagger):
 
 
 @pytest.mark.parametrize(("before", "after"), [(-1, 1), (1, -1)])
-def test_logical_s_factory_rejects_negative_rounds(module, before, after):
-    with pytest.raises(ValueError, match="Logical S experiment requires nonnegative round counts"):
-        module["make_logical_s_experiment"](before, after)
+def test_logical_sz_factory_rejects_negative_rounds(module, before, after):
+    with pytest.raises(ValueError, match="Logical SZ experiment requires nonnegative round counts"):
+        module["make_logical_sz_experiment"](before, after)
 
 
-def test_logical_s_factory_ordered_body(patch):
-    assert _factory_structure(render_surface_protocol_module(patch), "make_logical_s_experiment") == [
+def test_logical_sz_factory_ordered_body(patch):
+    assert _factory_structure(render_surface_protocol_module(patch), "make_logical_sz_experiment") == [
         "a = prep_z_basis()",
         _expected_rounds("rounds_before", "a"),
         (
-            "if comptime(dagger):\n    syn = syndrome_extraction_fold_sdg_a(a)\n"
-            "else:\n    syn = syndrome_extraction_fold_s_a(a)"
+            "if comptime(dagger):\n    syn = syndrome_extraction_fold_szdg_a(a)\n"
+            "else:\n    syn = syndrome_extraction_fold_sz_a(a)"
         ),
         "output('synx_a', syn.synx)",
         "output('synz_a', syn.synz)",
         _expected_rounds("rounds_after", "a"),
         *_expected_readout("a"),
+    ]
+
+
+@pytest.mark.parametrize("rounds", [0, 1, 2])
+def test_logical_y_readout_factory(patch, module, rounds):
+    program = module["make_logical_y_readout_experiment"](rounds)
+    assert program.compile() is not None
+    builder = LogicalCircuitBuilder()
+    builder.add_patch(patch, "D")
+    builder.add_memory("D", rounds, "X")
+    builder.add_logical_sz("D")
+    builder.add_memory("D", rounds, "Y")
+    assert_same_measurement_partition(
+        measurement_partition_from_trace(program, patch.geometry.num_qubits, {"a": "D"}),
+        measurement_partition_from_builder(builder),
+    )
+
+
+def test_logical_y_readout_factory_rejects_negative_rounds(module):
+    with pytest.raises(ValueError, match="Logical Y readout requires nonnegative round counts"):
+        module["make_logical_y_readout_experiment"](-1)
+
+
+def test_logical_y_readout_factory_ordered_body(patch):
+    assert _factory_structure(render_surface_protocol_module(patch), "make_logical_y_readout_experiment") == [
+        "a = prep_x_basis()",
+        _expected_rounds("num_rounds", "a"),
+        "syn = syndrome_extraction_fold_sz_a(a)",
+        "output('synx_a', syn.synx)",
+        "output('synz_a', syn.synz)",
+        "syn = syndrome_extraction_fold_szdg_a(a)",
+        "output('synx_a', syn.synx)",
+        "output('synz_a', syn.synz)",
+        _expected_rounds("num_rounds", "a"),
+        *_expected_readout("a", "x"),
     ]

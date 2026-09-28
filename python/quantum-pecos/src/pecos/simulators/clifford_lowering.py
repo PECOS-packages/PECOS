@@ -34,9 +34,9 @@ def _rotation_binding(
     symbol: str,
 ) -> Callable[..., None]:
     def apply_rotation(state: _BindingState, location: int | tuple[int, ...], **params: object) -> None:
-        if symbol in {"RXY1Q", "R1XY"}:
+        if symbol in {"RXY1Q", "R1XY", "RXYXY2Q"}:
             if "angles" not in params:
-                msg = "RXY1Q requires an 'angles' parameter"
+                msg = f"{symbol} requires an 'angles' parameter"
                 raise ValueError(msg)
             angles = params["angles"]
         else:
@@ -59,7 +59,11 @@ def _rotation_binding(
     return apply_rotation
 
 
-def install_clifford_rotation_bindings(bindings: dict[str, Callable[..., object]]) -> None:
+def install_clifford_rotation_bindings(
+    bindings: dict[str, Callable[..., object]],
+    *,
+    symbols: tuple[str, ...] = (*_ONE_ANGLE_ROTATIONS, "RXY1Q", "R1XY", "RXYXY2Q"),
+) -> None:
     """Install projective rotation lowerings for stabilizer/tableau consumers.
 
     Results are equivalent only up to global phase and are unsuitable for
@@ -67,5 +71,5 @@ def install_clifford_rotation_bindings(bindings: dict[str, Callable[..., object]
     ``RX(pi)`` applies ``-i*X`` while the lowering installs ``X``, so the
     lowered result is ``+i`` times the direct result.
     """
-    for symbol in (*_ONE_ANGLE_ROTATIONS, "RXY1Q", "R1XY"):
+    for symbol in symbols:
         bindings[symbol] = _rotation_binding(symbol)

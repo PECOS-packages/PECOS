@@ -55,5 +55,4 @@ def assert_outcome(
             "semantic error instead of grammar error",
             error,
         )
-        if consumer != "PyMatchingDecoder":
-            assert "Invalid DEM syntax: " in error, (consumer, error)
+        assert "Invalid DEM syntax: " in error, (consumer, error)

@@ -154,20 +154,21 @@ impl ImprovedConverter {
                 let name = op.get("variable").and_then(Value::as_str).ok_or_else(|| {
                     PecosError::Input("Quantum register requires a variable name".to_string())
                 })?;
-                if op
+                let data_type = op
                     .get("data_type")
-                    .is_some_and(|data_type| data_type.as_str() != Some("qubits"))
-                {
-                    return Err(PecosError::Input(format!(
-                        "Quantum register '{name}' requires data_type 'qubits'"
-                    )));
-                }
-                let size = op.get("size").and_then(Value::as_u64).ok_or_else(|| {
-                    PecosError::Input(format!("Quantum register '{name}' requires a size"))
-                })?;
-                let size = usize::try_from(size).map_err(|_| {
-                    PecosError::Input(format!("Quantum register '{name}' size is too large"))
-                })?;
+                    .map(|value| {
+                        value.as_str().ok_or_else(|| {
+                            PecosError::Input(format!(
+                                "Register '{name}' has invalid data_type {value}"
+                            ))
+                        })
+                    })
+                    .transpose()?;
+                let (name, size) = super::ast::validate_quantum_declaration(
+                    name,
+                    data_type,
+                    op.get("size").and_then(Value::as_u64),
+                )?;
                 self.environment.add_quantum_register(name, size)?;
             }
         }
@@ -363,16 +364,34 @@ impl ImprovedConverter {
         obj: &serde_json::Map<String, Value>,
         data: &str,
     ) -> Result<Option<Instruction>, PecosError> {
+        if data != "qvar_define" && data != "cvar_define" {
+            return Ok(None);
+        }
+        let variable = obj.get("variable").and_then(Value::as_str).unwrap_or("");
         let data_type = obj
             .get("data_type")
-            .and_then(|v| v.as_str())
-            .unwrap_or(if data == "qvar_define" { "qubits" } else { "" });
-        let variable = obj.get("variable").and_then(|v| v.as_str()).unwrap_or("");
-        let size = obj
-            .get("size")
-            .and_then(serde_json::Value::as_u64)
-            .and_then(|v| usize::try_from(v).ok())
-            .unwrap_or(0);
+            .map(|value| {
+                value.as_str().ok_or_else(|| {
+                    PecosError::Input(format!(
+                        "Register '{variable}' has invalid data_type {value}"
+                    ))
+                })
+            })
+            .transpose()?;
+        let raw_size = obj.get("size").and_then(Value::as_u64);
+        let (data_type, size) = if data == "qvar_define" {
+            let (_, size) =
+                super::ast::validate_quantum_declaration(variable, data_type, raw_size)?;
+            ("qubits", size)
+        } else {
+            let data_type = data_type.ok_or_else(|| {
+                PecosError::Input(format!("Register '{variable}' requires data_type"))
+            })?;
+            (
+                data_type,
+                raw_size.and_then(|n| usize::try_from(n).ok()).unwrap_or(0),
+            )
+        };
 
         match data {
             "qvar_define" | "cvar_define" => {

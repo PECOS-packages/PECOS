@@ -148,7 +148,7 @@ impl BlockExecutor {
                     data,
                     data_type,
                     variable,
-                    crate::v0_1::ast::infer_size(data_type, *size),
+                    super::ast::declaration_size(data, data_type, variable, *size)?,
                 )?;
             }
             Operation::QuantumOp {

@@ -17,7 +17,9 @@
 //! classical operations inline, and yields batches of quantum/machine operations
 //! at measurement boundaries.
 
-use crate::v0_1::ast::{ArgItem, Expression, Operation, PHIRProgram, QubitArg, infer_size};
+use crate::v0_1::ast::{
+    ArgItem, Expression, Operation, PHIRProgram, QubitArg, infer_size, validate_quantum_declaration,
+};
 use crate::v0_1::environment::{DataType, Environment};
 use crate::v0_1::expression::ExpressionEvaluator;
 use crate::v0_1::foreign_objects::ForeignObject;
@@ -144,13 +146,15 @@ impl PhirClassicalInterpreter {
                 size,
             } = op
             {
-                let resolved_size = infer_size(data_type, *size);
                 match data.as_str() {
-                    "qvar_define" if data_type == "qubits" => {
+                    "qvar_define" => {
+                        let (variable, resolved_size) =
+                            validate_quantum_declaration(variable, Some(data_type), *size)?;
                         self.environment
                             .add_quantum_register(variable, resolved_size)?;
                     }
                     "cvar_define" => {
+                        let resolved_size = infer_size(data_type, *size);
                         let dt = data_type.parse::<DataType>()?;
                         if !self.environment.has_variable(variable) {
                             self.environment.add_variable(variable, dt, resolved_size)?;

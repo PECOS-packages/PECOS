@@ -55,7 +55,9 @@ def noise_meas_bitflip_leakage(
 
     if leaked or error_indices:
         noisy_op = copy(op)
-        noisy_op.metadata = dict(op.metadata)
+        # metadata defaults to None on QOp, and the leakage-only case now reaches this copy
+        # where it previously returned early. The simulator treats None and {} alike.
+        noisy_op.metadata = dict(op.metadata or {})
         if error_indices:
             bitflips = [op.args[idx] for idx in error_indices]
             noisy_op.metadata["bitflips"] = bitflips

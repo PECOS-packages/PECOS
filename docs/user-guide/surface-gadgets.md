@@ -632,9 +632,9 @@ current logical frame, like terminal X and Z; after a transversal H, the
 reported value refers to the swapped frame.
 
 Product-Y preparation followed by Y readout emits no observable. Its encoded
-Y sign is a deterministic parity of first-round check records, but the builder
-deliberately omits this distance-1 quantity: a single first-round measurement
-error flips it. Exposing that sign with injection semantics is a follow-up.
+Y sign is a deterministic parity of first-round check records. SZ teleportation
+exposes this sign in its injection metadata. It remains a distance-1 quantity:
+a single first-round measurement error flips it.
 At distance 3, zero, one, and two requested rounds give 4, 12, and 20
 deterministic detectors. For one and two rounds, the emitted masks have ranks
 12 and 20, while the full deterministic parity spaces have ranks 13 and 21.
@@ -1031,12 +1031,17 @@ Here the resource is a projected logical-Y state whose sign depends on the
 syndrome projection outcomes. It is prepared by H followed by a physical SZ
 layer on every ancilla data qubit, then syndrome projection. Both forms prepare
 the data in |0_L>, an S eigenstate, so this experiment cannot distinguish S
-from identity. The builder records the readout the correction depends on
-(the ancilla's final logical-Z bits, in `injection_readouts` in the circuit
-metadata and in `build_algorithm_descriptor()`) and nothing applies the
-correction: with parity 1 (for the +Y resource sign) a logical Z on the data
-patch would be required.
-Neither the resource sign nor this correction is processed by any decoder.
+from identity. The projected resource is (-1)^r times logical Y, where r is
+the parity of selected round-0 checks in the ancilla's first projection segment.
+`rounds_before` must be at least one so these checks precede the CX.
+The builder records both the ancilla's final logical-Z readout (`meas_ids`,
+`records`) and the resource sign (`resource_sign_meas_ids`,
+`resource_sign_records`) in `injection_readouts`, in the circuit metadata and
+in `build_algorithm_descriptor()`. IDs are absolute measurement indices;
+records are offsets relative to the end of the measurement stream.
+A logical Z correction on the data is required when the logical readout parity
+and resource sign parity disagree: XOR the two parities to decide.
+No decoder applies the correction today.
 
 ```python
 program = module["make_sz_teleportation"](2, 2, 2)
@@ -1061,6 +1066,11 @@ ancilla_data_ids = {
 }
 assert set(readout["meas_ids"]) <= ancilla_data_ids
 descriptor = builder.build_algorithm_descriptor()
+assert len(readout["resource_sign_meas_ids"]) == 4
+assert readout["resource_sign_records"] == [
+    meas_id - tc.num_measurements() for meas_id in readout["resource_sign_meas_ids"]
+]
+assert descriptor["injection_readouts"][0]["resource_sign_records"] == readout["resource_sign_records"]
 assert descriptor["injection_readouts"][0]["meas_ids"] == readout["meas_ids"]
 ```
 

@@ -1136,7 +1136,7 @@ class LogicalCircuitBuilder:
                 supported for preparation; terminal Y lowers to a logical SZdg
                 fold followed by the requested rounds and X readout in the current logical frame.
                 Product-Y preparation has a deterministic encoded-sign parity of first-round
-                check records, omitted because it is a distance-1 quantity; exposing it is a follow-up.
+                check records. SZ teleportation exposes this distance-1 quantity in injection metadata.
                 Y-readout folds create hyperedges that build_decoder's matching route
                 (LogicalSubgraphDecoder) skips; see add_logical_sz and use a hypergraph decoder.
         """
@@ -1294,7 +1294,13 @@ class LogicalCircuitBuilder:
         4. Syndrome rounds
         5. Ancilla measured in Z-basis (final round)
 
-        After CX, data has S|psi> (up to Z correction from ancilla outcome).
+        After ancilla readout, data has S|psi> up to a Z correction when the
+        ancilla logical readout parity and resource sign parity disagree.
+        The projected resource is (-1)^r times logical Y, where r is the parity
+        of round-0 checks in the ancilla's first projection segment.
+        ``injection_readouts`` exposes these as ``resource_sign_meas_ids``
+        (absolute measurement IDs) and ``resource_sign_records`` (relative
+        records), alongside the logical readout's ``meas_ids`` and ``records``.
         The ancilla must have odd dx and dz for encoded logical-Y content.
         ``injection_readouts`` is emitted for a future consumer; no decoder
         applies the correction today.
@@ -1306,9 +1312,12 @@ class LogicalCircuitBuilder:
         Args:
             data_label: Label of the data patch (receives the SZ gate).
             ancilla_label: Label of the ancilla patch (consumed).
-            rounds_before: Syndrome rounds before CX.
+            rounds_before: Syndrome rounds before CX; at least one to record the resource sign.
             rounds_after: Syndrome rounds after CX.
         """
+        if rounds_before < 1:
+            msg = "SZ teleportation requires rounds_before >= 1 to record the resource sign before CX"
+            raise ValueError(msg)
         self._require_fresh_injection_ancilla(data_label, ancilla_label)
         ancilla = self._patches[ancilla_label].patch
         if ancilla.dx % 2 == 0 or ancilla.dz % 2 == 0:
@@ -1333,7 +1342,7 @@ class LogicalCircuitBuilder:
             ),
         )
         # Step 3: Post-CX extraction. Ancilla measured in Z-basis at final round.
-        # If ancilla measures logical -1, apply Z correction (Pauli frame update).
+        # A Z correction is needed when logical readout and resource sign parities disagree.
         self.add_memory([data_label, ancilla_label], rounds=rounds_after, basis="Z")
         self._consumed_injection_ancillas.add(ancilla_label)
 
@@ -2333,8 +2342,9 @@ class LogicalCircuitBuilder:
             Dict with keys: segments, boundary_gates, num_observables,
             num_frame_slots, full_dem. ``num_observables`` is the full DEM's
             declared observable count; ``num_frame_slots`` is two per patch
-            (X then Z). ``injection_readouts`` carries raw ancilla parity
-            records separately from deterministic observables and frame slots.
+            (X then Z). ``injection_readouts`` carries ancilla logical readout
+            records and, for SZ, resource sign records, each with absolute
+            measurement IDs, separately from deterministic observables and frame slots.
             It is emitted for a future consumer; no decoder applies the
             correction today. T decision-point execution remains unsupported.
         """
@@ -2616,6 +2626,49 @@ class LogicalCircuitBuilder:
         return circuit, decoder
 
 
+def _resource_sign_checks(patch: SurfacePatch) -> list[tuple[str, int]]:
+    """Solve all-Y times logical Y as a product of geometry checks over GF(2).
+
+    X and Z supports can be solved independently for this CSS code. Tracking
+    each elimination row's check combination recovers measurement provenance.
+    The signed identity is positive for odd square patches, so no reference
+    parity is needed in addition to the selected measurement outcomes.
+    """
+    geometry = patch.geometry
+    selected = []
+    for family, checks, logical in (
+        ("X", geometry.x_stabilizers, geometry.logical_x),
+        ("Z", geometry.z_stabilizers, geometry.logical_z),
+    ):
+        if logical is None:
+            msg = f"Resource sign requires a logical {family} operator"
+            raise ValueError(msg)
+        pivots: dict[int, tuple[int, int]] = {}
+        for position, check in enumerate(checks):
+            row = sum(1 << q for q in check.data_qubits)
+            combination = 1 << position
+            while row:
+                pivot = row.bit_length() - 1
+                if pivot not in pivots:
+                    pivots[pivot] = row, combination
+                    break
+                other, provenance = pivots[pivot]
+                row ^= other
+                combination ^= provenance
+        target = ((1 << geometry.num_data) - 1) ^ sum(1 << q for q in logical.data_qubits)
+        solution = 0
+        while target:
+            pivot = target.bit_length() - 1
+            if pivot not in pivots:
+                msg = f"Resource sign has no {family}-check solution in patch geometry"
+                raise ValueError(msg)
+            row, combination = pivots[pivot]
+            target ^= row
+            solution ^= combination
+        selected.extend((family, check.index) for position, check in enumerate(checks) if solution & (1 << position))
+    return selected
+
+
 class _CircuitGenerator:
     """Internal: generates a PECOS TickCircuit for logical circuits.
 
@@ -2754,6 +2807,20 @@ class _CircuitGenerator:
             if label not in self._injection_readouts:
                 msg = f"Injection ancilla '{label}' has no logical operator for its readout"
                 raise ValueError(msg)
+
+        for op in self._injection_ops:
+            if op.injection_type == "SZ":
+                label = op.patches[1]
+                checks = _resource_sign_checks(self.patches[label].patch)
+                meas_ids = []
+                if checks:
+                    # Freshness and the pre-CX round guard make this the resource projection.
+                    segment = min(key[3] for key in self.stab_meas if key[0] == label)
+                    meas_ids = [self.stab_meas[label, family, index, segment, 0] for family, index in checks]
+                self._injection_readouts[label].update(
+                    resource_sign_meas_ids=meas_ids,
+                    resource_sign_records=[idx - total for idx in meas_ids],
+                )
 
         self.tc.set_meta("detectors", json.dumps(det_out))
         self.tc.set_meta("observables", json.dumps(obs_out))

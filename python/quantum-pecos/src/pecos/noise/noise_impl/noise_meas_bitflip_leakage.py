@@ -18,13 +18,14 @@ error modeling for measurement processes.
 
 from __future__ import annotations
 
+from copy import copy
 from typing import TYPE_CHECKING
 
 import pecos as pc
-from pecos.reps.pyphir.op_types import QOp
 
 if TYPE_CHECKING:
     from pecos.protocols import MachineProtocol
+    from pecos.reps.pyphir.op_types import QOp
 
 
 def noise_meas_bitflip_leakage(
@@ -47,25 +48,19 @@ def noise_meas_bitflip_leakage(
 
     noise = []
 
-    leakded = machine.leaked_qubits & set(op.args)
-    if leakded:
-        noisy_ops = machine.meas_leaked(leakded)
+    leaked = machine.leaked_qubits & set(op.args)
+    if leaked:
+        noisy_ops = machine.meas_leaked(leaked)
         noise.extend(noisy_ops)
 
-    if error_indices:
-        bitflips = [op.args[idx] for idx in error_indices]
-
-        noisy_op = QOp(
-            name="Measure",
-            args=list(op.args),
-            returns=list(op.returns),
-            metadata=dict(op.metadata),
-        )
-        noisy_op.metadata["bitflips"] = bitflips
+    if leaked or error_indices:
+        noisy_op = copy(op)
+        noisy_op.metadata = dict(op.metadata)
+        if error_indices:
+            bitflips = [op.args[idx] for idx in error_indices]
+            noisy_op.metadata["bitflips"] = bitflips
         noise.append(noisy_op)
 
         return noise
 
-    if noise:
-        return noise
     return None

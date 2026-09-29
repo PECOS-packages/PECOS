@@ -323,6 +323,8 @@ pub struct QisEngine {
 
     /// Scratch builder reused when materializing command batches.
     command_builder: ByteMessageBuilder,
+    pub(crate) scheduled_batches: bool,
+    scheduled_drained: bool,
 }
 
 impl QisEngine {
@@ -406,6 +408,8 @@ impl QisEngine {
             trace_shot_index: 0,
             trace_chunk_index: 0,
             command_builder: ByteMessageBuilder::new(),
+            scheduled_batches: false,
+            scheduled_drained: false,
         }
     }
 
@@ -499,6 +503,8 @@ impl QisEngine {
             trace_shot_index: 0,
             trace_chunk_index: 0,
             command_builder: ByteMessageBuilder::new(),
+            scheduled_batches: false,
+            scheduled_drained: false,
         }
     }
 
@@ -798,6 +804,20 @@ impl QisEngine {
         &mut self,
         ops: &[Operation],
     ) -> Result<LoweredCommandBatch, PecosError> {
+        if self.scheduled_batches {
+            self.scheduled_drained = false;
+            let batches = self
+                .runtime
+                .lower_scheduled_operations(ops)
+                .map_err(|e| PecosError::Generic(format!("scheduled extraction failed: {e}")))?;
+            let (commands, ids) =
+                crate::scheduled_transport::encode(batches, self.trace_shot_index as u64)?;
+            self.measurement_mapping = ids;
+            return Ok(LoweredCommandBatch {
+                commands,
+                gate_metadata: Vec::new(),
+            });
+        }
         if self.runtime.supports_operation_lowering() {
             let lowered_ops = self
                 .runtime
@@ -1007,6 +1027,8 @@ impl Clone for QisEngine {
             trace_shot_index: 0,
             trace_chunk_index: 0,
             command_builder: ByteMessageBuilder::new(),
+            scheduled_batches: self.scheduled_batches,
+            scheduled_drained: false,
         }
     }
 }
@@ -1462,6 +1484,31 @@ impl QisEngine {
         PecosError::Generic(message)
     }
 
+    fn drain_scheduled_commands(&mut self) -> Result<Option<ByteMessage>, PecosError> {
+        if !self.scheduled_batches || self.scheduled_drained {
+            return Ok(None);
+        }
+        let result: Result<ByteMessage, PecosError> = (|| {
+            let batches = self
+                .runtime
+                .drain_pending_scheduled_operations()
+                .map_err(|e| {
+                    PecosError::Generic(format!("scheduled terminal drain failed: {e}"))
+                })?;
+            let (commands, ids) =
+                crate::scheduled_transport::encode(batches, self.trace_shot_index as u64)?;
+            self.measurement_mapping = ids;
+            Ok(commands)
+        })();
+        match result {
+            Ok(commands) => {
+                self.scheduled_drained = true;
+                Ok(Some(commands))
+            }
+            Err(e) => Err(self.latch_terminal_error(format!("scheduled drain failed: {e}"))),
+        }
+    }
+
     /// Refuse to certify a complete trace while the runtime scheduler still
     /// holds operations. Per-batch lowering drains the runtime until it stops
     /// producing, but a scheduling runtime may defer operations past the final
@@ -1471,6 +1518,13 @@ impl QisEngine {
     /// because the verification itself consumes the late operations (a retry
     /// would otherwise find an innocently empty scheduler and certify).
     fn verify_runtime_drained(&mut self) -> Result<(), PecosError> {
+        if self.scheduled_batches {
+            return if self.scheduled_drained {
+                Ok(())
+            } else {
+                Err(self.latch_terminal_error("scheduled terminal drain required".into()))
+            };
+        }
         if !self.runtime.supports_operation_lowering() {
             return Ok(());
         }
@@ -1812,6 +1866,14 @@ impl ControlEngine for QisEngine {
             ));
         }
 
+        if self.scheduled_batches
+            && (self.operation_trace_dir.is_some() || self.operation_trace_collector.is_some())
+        {
+            return Err(PecosError::Input(
+                "scheduled transport does not yet support operation tracing".into(),
+            ));
+        }
+        self.scheduled_drained = false;
         // Clear previous shot's measurement state
         self.measurement_results.clear();
         self.measurement_mapping.clear();
@@ -1883,6 +1945,9 @@ impl ControlEngine for QisEngine {
                     return Ok(EngineStage::NeedsProcessing(lowered.commands));
                 }
             }
+            if let Some(commands) = self.drain_scheduled_commands()? {
+                return Ok(EngineStage::NeedsProcessing(commands));
+            }
             self.finalize_shot_for_certification()?;
             let shot = self.get_results()?;
             return Ok(EngineStage::Complete(shot));
@@ -1928,6 +1993,9 @@ impl ControlEngine for QisEngine {
                     self.trace_operations_chunk("pending_final", &final_ops, None, Some(&lowered));
                     return Ok(EngineStage::NeedsProcessing(lowered.commands));
                 }
+            }
+            if let Some(commands) = self.drain_scheduled_commands()? {
+                return Ok(EngineStage::NeedsProcessing(commands));
             }
             self.finalize_shot_for_certification()?;
             let shot = self.get_results()?;
@@ -1996,6 +2064,9 @@ impl ControlEngine for QisEngine {
                     self.trace_operations_chunk("pending_final", &final_ops, None, Some(&lowered));
                     return Ok(EngineStage::NeedsProcessing(lowered.commands));
                 }
+            }
+            if let Some(commands) = self.drain_scheduled_commands()? {
+                return Ok(EngineStage::NeedsProcessing(commands));
             }
             self.finalize_shot_for_certification()?;
             let shot = self.get_results()?;

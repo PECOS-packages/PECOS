@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 /// Builder for creating `QisEngine` instances
 pub struct QisEngineBuilder {
     runtime: Option<Box<dyn crate::runtime::QisRuntime>>,
+    scheduled_batches: bool,
     interface: Option<OperationCollector>,
     interface_builder: Option<Box<dyn crate::program::QisInterfaceBuilder>>,
     program_source: Option<String>, // Store original program source for loading
@@ -22,6 +23,7 @@ pub struct QisEngineBuilder {
 impl Clone for QisEngineBuilder {
     fn clone(&self) -> Self {
         Self {
+            scheduled_batches: self.scheduled_batches,
             runtime: self.runtime.as_ref().map(|r| dyn_clone::clone_box(&**r)),
             interface: self.interface.clone(),
             // Clone the interface builder if present
@@ -44,6 +46,7 @@ impl QisEngineBuilder {
     pub fn new() -> Self {
         Self {
             runtime: None,
+            scheduled_batches: false,
             interface: None,
             interface_builder: None,
             program_source: None,
@@ -286,6 +289,14 @@ impl QisEngineBuilder {
         Ok(self)
     }
 
+    /// Preserve original native batches in mandatory transport. Requires the
+    /// matching `ScheduledIdleZ` noise capability and a state-vector simulator.
+    #[must_use]
+    pub fn scheduled_batches(mut self, enabled: bool) -> Self {
+        self.scheduled_batches = enabled;
+        self
+    }
+
     /// Set the runtime to use
     ///
     /// This allows you to specify any runtime implementation.
@@ -342,6 +353,7 @@ impl ClassicalControlEngineBuilder for QisEngineBuilder {
             log::debug!("Dynamic interface created successfully");
 
             let mut engine = QisEngine::new(dynamic_interface, runtime);
+            engine.scheduled_batches = self.scheduled_batches;
             if let Some(trace_dir) = self.operation_trace_dir {
                 engine.set_operation_trace_dir(trace_dir);
             }

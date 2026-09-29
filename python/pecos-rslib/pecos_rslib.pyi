@@ -1120,6 +1120,7 @@ class QasmEngineBuilder:
 class QisEngineBuilder:
     """Builder for QIS engines."""
 
+    def scheduled_batches(self, enabled: bool = True) -> QisEngineBuilder: ...
     def selene_runtime(
         self,
         runtime_name: str | None = None,
@@ -3895,3 +3896,14 @@ def adjust_tableau_string(tableau: str) -> str:
 # Version
 # =============================================================================
 __version__: str
+
+class ScheduledIdleZ:
+    """Checked idle-Z profile for mandatory scheduled transport."""
+
+def scheduled_idle_z(
+    qubits: int,
+    *,
+    linear: float = 0.0,
+    sine: float = 0.0,
+    coherent: float = 0.0,
+) -> ScheduledIdleZ: ...

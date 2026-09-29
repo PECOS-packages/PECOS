@@ -92,6 +92,74 @@ impl QuantumSystem {
         Ok(())
     }
 
+    fn process_scheduled(&mut self, input: &ByteMessage) -> Result<ByteMessage, PecosError> {
+        use crate::scheduled_frame::ScheduledIdleModel;
+        if self.frame_poisoned || self.host_blocked || self.shot_context.is_none() {
+            return Err(runtime_frame::processing_error(
+                "scheduled shot requires successful reset and host context",
+            ));
+        }
+        let model = self
+            .noise_model
+            .as_any()
+            .downcast_ref::<ScheduledIdleModel>()
+            .ok_or_else(|| runtime_frame::error("scheduled idle capability required"))?;
+        let sim = self
+            .quantum_engine
+            .as_any()
+            .downcast_ref::<crate::StateVecEngine>()
+            .ok_or_else(|| runtime_frame::error("scheduled idle requires state vector"))?;
+        if sim.simulator().num_qubits() < model.qubits() {
+            return Err(runtime_frame::error(
+                "simulator capacity below scheduled profile",
+            ));
+        }
+        // The classical engine can yield an empty wait message. No other legacy
+        // input may bypass this capability's timing/capacity admission.
+        if input.as_bytes() == ByteMessage::builder().build().as_bytes() {
+            return Ok(ByteMessage::outcomes_builder().build());
+        }
+        let mut prepared = model.prepare(input)?;
+        self.frame_poisoned = true;
+        let mut outcomes = Vec::new();
+        for message in std::mem::take(&mut prepared.messages) {
+            let expected = message
+                .quantum_ops()?
+                .iter()
+                .filter(|g| {
+                    matches!(
+                        g.gate_type,
+                        crate::GateType::MZ | crate::GateType::MeasureLeaked
+                    )
+                })
+                .map(|g| g.qubits.len())
+                .sum::<usize>();
+            let stage = self
+                .noise_model
+                .as_any_mut()
+                .downcast_mut::<ScheduledIdleModel>()
+                .expect("checked scheduled capability")
+                .start_admitted(message)?;
+            let reply = self.drive_stage(stage)?;
+            let values = reply.outcomes()?;
+            if values.len() != expected {
+                return Err(runtime_frame::processing_error(
+                    "scheduled outcome count mismatch",
+                ));
+            }
+            outcomes.extend(values.into_iter().map(|v| v as usize));
+        }
+        self.noise_model
+            .as_any_mut()
+            .downcast_mut::<ScheduledIdleModel>()
+            .expect("checked scheduled capability")
+            .commit(prepared);
+        self.frame_poisoned = false;
+        Ok(ByteMessage::outcomes_builder()
+            .add_outcomes(&outcomes)
+            .build())
+    }
+
     /// Current explicit host identity, if established.
     #[must_use]
     pub fn shot_context(&self) -> Option<ShotContext> {
@@ -100,6 +168,10 @@ impl QuantumSystem {
 
     pub(crate) fn uses_runtime_frames(&self) -> bool {
         self.noise_model.as_any().is::<RuntimeGeneralNoise>()
+            || self
+                .noise_model
+                .as_any()
+                .is::<crate::scheduled_frame::ScheduledIdleModel>()
     }
     pub(crate) fn block_host(&mut self) {
         self.host_blocked = true;
@@ -205,6 +277,17 @@ impl Engine for QuantumSystem {
     type Output = ByteMessage;
 
     fn process(&mut self, input: Self::Input) -> Result<Self::Output, PecosError> {
+        let scheduled = input.as_bytes().get(4) == Some(&3);
+        if self
+            .noise_model
+            .as_any()
+            .is::<crate::scheduled_frame::ScheduledIdleModel>()
+        {
+            return self.process_scheduled(&input);
+        }
+        if scheduled {
+            return Err(runtime_frame::error("scheduled idle capability required"));
+        }
         let framed = input.as_bytes().get(4) == Some(&2);
         if !self.uses_runtime_frames() {
             // Ordinary consumers reject v2 through their existing parser.
@@ -326,7 +409,12 @@ impl Clone for QuantumSystem {
             noise_model: dyn_clone::clone_box(&*self.noise_model),
             quantum_engine: dyn_clone::clone_box(&*self.quantum_engine),
             shot_context: None,
-            frame_poisoned: self.frame_poisoned,
+            frame_poisoned: self.frame_poisoned
+                || (self.shot_context.is_some()
+                    && self
+                        .noise_model
+                        .as_any()
+                        .is::<crate::scheduled_frame::ScheduledIdleModel>()),
             host_blocked: self.host_blocked,
         }
     }

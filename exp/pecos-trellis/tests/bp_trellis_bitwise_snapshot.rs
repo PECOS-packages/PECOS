@@ -361,3 +361,43 @@ fn rejected_ladder_pins_invalid_configuration_message() {
 }
 
 const SCENARIO_COUNT: usize = 658;
+
+#[path = "support/prediction_only.rs"]
+mod prediction_only;
+
+#[test]
+fn prediction_only_matches_detailed_and_preserves_next_call() {
+    let fixtures: FixtureFile =
+        serde_json::from_str(include_str!("fixtures/bp_trellis/models.json")).unwrap();
+    let mut max_rungs = 0;
+    for fixture in fixtures.fixtures {
+        let configs = configurations(&fixture);
+        let dem = sparse_dem(
+            fixture.mechanisms,
+            fixture.num_detectors,
+            fixture.num_observables,
+        );
+        for (_, config) in configs {
+            let mut decoder = BpTrellisDecoder::from_sparse_dem(&dem, config.clone()).unwrap();
+            for syndrome in fixture
+                .syndromes
+                .iter()
+                .map(|&mask| dense_syndrome(mask, fixture.num_detectors))
+                .chain([vec![0; fixture.num_detectors + 1]])
+            {
+                let mut fresh = BpTrellisDecoder::from_sparse_dem(&dem, config.clone()).unwrap();
+                max_rungs = max_rungs.max(prediction_only::check(
+                    &mut decoder,
+                    &mut fresh,
+                    &syndrome,
+                    BpTrellisDecoder::decode,
+                    fixture.num_observables > 64,
+                ));
+            }
+        }
+    }
+    assert!(
+        max_rungs >= 3,
+        "fixture must actually exercise the escalation ladder"
+    );
+}

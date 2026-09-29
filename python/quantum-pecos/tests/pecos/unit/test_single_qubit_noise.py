@@ -121,6 +121,40 @@ def test_model_emits_batched_gate_once(model_cls: type) -> None:
     # so the assertion below would hold vacuously.
     assert len(faults) > 1, f"seed drew only {faults}; the case under test needs several"
     assert len(gates) == 1
+    assert gates[0].args == [0, 1, 2, 3]
+    assert result[0] is gates[0], "the gate precedes its faults"
+
+
+def test_model_replaces_fully_leaked_batch_with_nothing() -> None:
+    """A batch whose every qubit is already leaked reaches the simulator as nothing."""
+    model = GenericErrorModel(
+        error_params={"p1": 0.6, "p2": 0.0, "p_meas": 0.0, "p_init": 0.0, "p_prep": 0.0},
+    )
+    model.init(4, machine=FakeMachine(pre=(0, 1, 2, 3)))
+    pc.random.seed(7)
+    result = model.process([QOp(name="H", args=[0, 1, 2, 3], metadata={})])
+    assert result == []
+
+
+def test_narrowed_gate_keeps_executable_fields() -> None:
+    """Narrowing around a leaked qubit preserves what the simulator needs to run it."""
+    op = QOp(
+        name="RXY1Q",
+        args=[0, 1, 2, 3],
+        metadata={"key": 1},
+        angles=(3.14159, 0.0),
+        sim_name="X",
+    )
+    result = noise_sq_depolarizing_leakage(op, 0.0, {"X": 1.0}, FakeMachine(pre=(0,)))
+
+    (narrowed,) = result
+    assert sorted(narrowed.args) == [1, 2, 3]
+    assert narrowed.angles == (3.14159, 0.0)
+    assert narrowed.sim_name == "X"
+    assert narrowed.metadata == {"key": 1}
+    # The narrowed operation must not share mutable state with, or disturb, the original.
+    assert narrowed.metadata is not op.metadata
+    assert op.args == [0, 1, 2, 3]
 
 
 @pytest.mark.parametrize("with_leakage", [False, True])

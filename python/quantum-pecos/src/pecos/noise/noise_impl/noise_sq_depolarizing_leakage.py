@@ -18,6 +18,7 @@ providing more realistic error modeling for quantum systems.
 
 from __future__ import annotations
 
+from copy import copy
 from typing import TYPE_CHECKING
 
 import pecos as pc
@@ -58,7 +59,12 @@ def noise_sq_depolarizing_leakage(
 
     if leaked:
         not_leaked = args - leaked
-        noisy_op = QOp(name=op.name, args=list(not_leaked), metadata=dict(op.metadata))
+        # Copy and replace the arguments, as surviving_two_qubit_op does: rebuilding
+        # the operation from its name alone drops angles, sim_name and returns, which
+        # a rotation or a measurement needs in order to execute.
+        noisy_op = copy(op)
+        noisy_op.args = list(not_leaked)
+        noisy_op.metadata = dict(op.metadata)
     else:
         noisy_op = op
 

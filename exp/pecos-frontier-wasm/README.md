@@ -88,6 +88,13 @@ node scripts/benchmark_frontier_wasm.mjs dist/hardware_frontier.wasm \
   --shots 16 --mode range
 ```
 
+The native example lives in the adapter crate alongside the FWR1 reader:
+
+```console
+cargo run --release -p pecos-frontier-wasm --example replay_fwr -- \
+  /path/to/model.dem /path/to/hardware_shots.fwr
+```
+
 Use `scripts/validate_frontier_wasm_predictions.mjs` to record the full
 prediction SHA-256 and logical-error count. Passing `--fixture` also validates
 older modules that expose `frontier_decode` but do not embed replay data.
@@ -157,6 +164,11 @@ syndrome. Revalidate archived predictions before upgrading a deployed module.
 `init` now accepts models wider than 128 detectors for streaming/replay;
 `frontier_decode` reports status 2 when called on such a model. The 128-observable
 limit still applies at initialization.
+
+Replay operations return -1 and set status 4 on invalid inputs or replay
+failure, clearing correction words and any prepared shot. Successful replay
+operations set status 0. `frontier_reset` also discards prepared replay work;
+calling `frontier_replay_stream_finish` after reset requires a new preparation.
 
 Call `frontier_reset` at the end of each shot when the host persists module
 state between shots. Quantinuum requires this reset for in-memory Wasm state.

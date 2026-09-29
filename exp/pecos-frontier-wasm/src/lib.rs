@@ -256,10 +256,7 @@ impl State {
 
     #[cfg(any(feature = "replay", test))]
     fn prepare_replay_stream(&mut self, index: usize, rounds: usize) -> bool {
-        #[cfg(any(feature = "replay", test))]
-        {
-            self.prepared_replay = None;
-        }
+        self.prepared_replay = None;
         if rounds == 0 {
             return false;
         }
@@ -431,21 +428,30 @@ pub extern "C" fn frontier_detector_count() -> i32 {
     STATE.with_borrow(|state| state.detector_count.try_into().unwrap_or(i32::MAX))
 }
 
+/// Apply the same status and stale-state policy at every replay call boundary.
+#[cfg(any(feature = "replay", test))]
+fn with_replay_call(call: impl FnOnce(&mut State) -> Option<i32>) -> i32 {
+    STATE.with_borrow_mut(|state| {
+        if let Some(result) = call(state) {
+            state.status = STATUS_OK;
+            result
+        } else {
+            state.status = STATUS_REPLAY_ERROR;
+            state.result = [0; 4];
+            state.prepared_replay = None;
+            -1
+        }
+    })
+}
+
 /// Decode one compiled-in hardware shot and return 0/1 for correct/incorrect.
 #[cfg(any(feature = "replay", test))]
 #[unsafe(no_mangle)]
 pub extern "C" fn frontier_replay_shot(index: i32) -> i32 {
-    let Ok(index) = usize::try_from(index) else {
-        return -1;
-    };
-    STATE.with_borrow_mut(|state| {
-        if let Some(mismatch) = state.replay_shot(index) {
-            state.replay_errors = mismatch;
-            mismatch
-        } else {
-            state.status = STATUS_REPLAY_ERROR;
-            -1
-        }
+    with_replay_call(|state| {
+        let mismatch = state.replay_shot(usize::try_from(index).ok()?)?;
+        state.replay_errors = mismatch;
+        Some(mismatch)
     })
 }
 
@@ -453,17 +459,11 @@ pub extern "C" fn frontier_replay_shot(index: i32) -> i32 {
 #[cfg(any(feature = "replay", test))]
 #[unsafe(no_mangle)]
 pub extern "C" fn frontier_replay_stream_shot(index: i32, rounds: i32) -> i32 {
-    let (Ok(index), Ok(rounds)) = (usize::try_from(index), usize::try_from(rounds)) else {
-        return -1;
-    };
-    STATE.with_borrow_mut(|state| {
-        if let Some(mismatch) = state.replay_stream_shot(index, rounds) {
-            state.replay_errors = mismatch;
-            mismatch
-        } else {
-            state.status = STATUS_REPLAY_ERROR;
-            -1
-        }
+    with_replay_call(|state| {
+        let mismatch = state
+            .replay_stream_shot(usize::try_from(index).ok()?, usize::try_from(rounds).ok()?)?;
+        state.replay_errors = mismatch;
+        Some(mismatch)
     })
 }
 
@@ -471,24 +471,21 @@ pub extern "C" fn frontier_replay_stream_shot(index: i32, rounds: i32) -> i32 {
 #[cfg(any(feature = "replay", test))]
 #[unsafe(no_mangle)]
 pub extern "C" fn frontier_replay_stream_prepare(index: i32, rounds: i32) -> i32 {
-    let (Ok(index), Ok(rounds)) = (usize::try_from(index), usize::try_from(rounds)) else {
-        return -1;
-    };
-    STATE.with_borrow_mut(|state| -i32::from(!state.prepare_replay_stream(index, rounds)))
+    with_replay_call(|state| {
+        state
+            .prepare_replay_stream(usize::try_from(index).ok()?, usize::try_from(rounds).ok()?)
+            .then_some(0)
+    })
 }
 
 /// Process the prepared final round and return the correction's mismatch bit.
 #[cfg(any(feature = "replay", test))]
 #[unsafe(no_mangle)]
 pub extern "C" fn frontier_replay_stream_finish() -> i32 {
-    STATE.with_borrow_mut(|state| {
-        if let Some(mismatch) = state.finish_prepared_replay_stream() {
-            state.replay_errors = mismatch;
-            mismatch
-        } else {
-            state.status = STATUS_REPLAY_ERROR;
-            -1
-        }
+    with_replay_call(|state| {
+        let mismatch = state.finish_prepared_replay_stream()?;
+        state.replay_errors = mismatch;
+        Some(mismatch)
     })
 }
 
@@ -496,32 +493,20 @@ pub extern "C" fn frontier_replay_stream_finish() -> i32 {
 #[cfg(any(feature = "replay", test))]
 #[unsafe(no_mangle)]
 pub extern "C" fn frontier_replay_range(start: i32, count: i32) -> i32 {
-    let (Ok(start), Ok(count)) = (usize::try_from(start), usize::try_from(count)) else {
-        return -1;
-    };
-    let Some(end) = start.checked_add(count) else {
-        return -1;
-    };
-    if end > replay_shot_count() {
-        STATE.with_borrow_mut(|state| state.status = STATUS_REPLAY_ERROR);
-        return -1;
-    }
-
-    STATE.with_borrow_mut(|state| {
+    with_replay_call(|state| {
+        let (start, count) = (usize::try_from(start).ok()?, usize::try_from(count).ok()?);
+        let end = start.checked_add(count)?;
+        if end > replay_shot_count() {
+            return None;
+        }
+        state.result = [0; 4];
         state.replay_errors = 0;
         state.replay_checksum = 0;
-        #[cfg(any(feature = "replay", test))]
-        {
-            state.prepared_replay = None;
-        }
+        state.prepared_replay = None;
         for index in start..end {
-            let Some(mismatch) = state.replay_shot(index) else {
-                state.status = STATUS_REPLAY_ERROR;
-                return -1;
-            };
-            state.replay_errors += mismatch;
+            state.replay_errors += state.replay_shot(index)?;
         }
-        state.replay_errors
+        Some(state.replay_errors)
     })
 }
 
@@ -568,6 +553,10 @@ pub extern "C" fn frontier_reset() {
         state.result = [0; 4];
         state.replay_errors = 0;
         state.replay_checksum = 0;
+        #[cfg(any(feature = "replay", test))]
+        {
+            state.prepared_replay = None;
+        }
         state.status = if state.decoder.is_some() {
             STATUS_OK
         } else {
@@ -668,6 +657,60 @@ mod tests {
         assert_eq!(state.replay_checksum, checksum.rotate_left(20));
         assert!(!state.prepare_replay_stream(2, 2));
         assert!(!state.prepare_replay_stream(0, 0));
+    }
+
+    #[test]
+    fn replay_failures_set_status_and_discard_stale_preparations() {
+        let invalid_calls: &[fn() -> i32] = &[
+            || frontier_replay_shot(-1),
+            || frontier_replay_shot(2),
+            || frontier_replay_stream_shot(-1, 2),
+            || frontier_replay_stream_shot(0, -1),
+            || frontier_replay_stream_shot(0, 0),
+            || frontier_replay_stream_shot(2, 2),
+            || frontier_replay_stream_prepare(-1, 2),
+            || frontier_replay_stream_prepare(0, -1),
+            || frontier_replay_stream_prepare(0, 0),
+            || frontier_replay_stream_prepare(2, 2),
+            || frontier_replay_range(-1, 1),
+            || frontier_replay_range(0, -1),
+            || frontier_replay_range(0, 3),
+            || frontier_replay_range(i32::MAX, i32::MAX),
+        ];
+        for call in invalid_calls {
+            init();
+            assert_eq!(frontier_replay_shot(0), 0);
+            assert_eq!(frontier_result_0(), 1);
+            assert_eq!(call(), -1);
+            assert_eq!(frontier_status(), STATUS_REPLAY_ERROR);
+            assert_eq!(frontier_result_0(), 0);
+
+            assert_eq!(frontier_replay_stream_prepare(0, 2), 0);
+            assert_eq!(frontier_status(), STATUS_OK);
+            assert_eq!(call(), -1);
+            assert_eq!(frontier_status(), STATUS_REPLAY_ERROR);
+            assert_eq!(frontier_replay_stream_finish(), -1);
+            assert_eq!(frontier_status(), STATUS_REPLAY_ERROR);
+            assert_eq!(frontier_replay_range(0, 0), 0);
+            assert_eq!(frontier_status(), STATUS_OK);
+        }
+    }
+
+    #[test]
+    fn reset_cancels_prepared_replay_and_allows_a_fresh_shot() {
+        init();
+        assert_eq!(frontier_replay_stream_prepare(0, 2), 0);
+        frontier_reset();
+        assert_eq!(frontier_status(), STATUS_OK);
+        assert_eq!(frontier_replay_stream_finish(), -1);
+        assert_eq!(frontier_status(), STATUS_REPLAY_ERROR);
+        assert_eq!(frontier_result_0(), 0);
+        assert_eq!(frontier_replay_checksum(), 0);
+        assert_eq!(frontier_replay_last_errors(), 0);
+        assert_eq!(frontier_replay_stream_prepare(0, 2), 0);
+        assert_eq!(frontier_replay_stream_finish(), 0);
+        assert_eq!(frontier_status(), STATUS_OK);
+        assert_eq!(frontier_result_0(), 1);
     }
 
     #[test]

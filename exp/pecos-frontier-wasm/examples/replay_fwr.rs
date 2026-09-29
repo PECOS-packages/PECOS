@@ -4,10 +4,11 @@
 //! Replay an FWR1 hardware fixture through the native Frontier decoder.
 
 use pecos_frontier::{FrontierConfig, FrontierDecoder, SparseDem, TrellisOrdering};
-#[path = "../../pecos-frontier-wasm/src/replay.rs"]
-mod replay;
 use std::env;
 use std::fs;
+
+#[path = "../src/replay.rs"]
+mod replay;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = env::args_os().skip(1);

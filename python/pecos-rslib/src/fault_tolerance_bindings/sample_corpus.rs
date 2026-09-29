@@ -490,7 +490,12 @@ mod tests {
     }
 
     fn with_valid_content_sha(mut bytes: Vec<u8>) -> Vec<u8> {
-        let digest = sha256(&bytes[PREFIX_LEN..]);
+        // Hash the same region the writer and loader do: the declared header
+        // length sits ahead of the digest but is inside the checked region,
+        // so omitting it here forges a file no loader would accept.
+        let mut content = Vec::from(&bytes[MAGIC.len()..HEADER_LEN_END]);
+        content.extend_from_slice(&bytes[PREFIX_LEN..]);
+        let digest = sha256(&content);
         bytes[HEADER_LEN_END..PREFIX_LEN].copy_from_slice(&digest);
         bytes
     }

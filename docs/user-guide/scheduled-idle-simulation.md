@@ -2,10 +2,13 @@
 
 The opt-in QIS scheduled route carries original native batch timestamps into
 `sim()` and applies a narrow idle-Z profile using `GeneralNoiseModel`. It supports
-state-vector simulation with a fixed capacity of 1–16 physical qubits. This is an
+state-vector simulation with a fixed admitted profile of 1–16 physical qubits.
+The simulator must have at least that capacity; any extra qubits are inaccessible
+to scheduled input. This is an
 experimental integration API; it does not enable an arbitrary general noise
 configuration or establish agreement with a device model.
 
+<!--skip: API template requires caller-supplied runtime and LLVM program; covered by integration tests.-->
 ```python
 import pecos
 import pecos_rslib as pr

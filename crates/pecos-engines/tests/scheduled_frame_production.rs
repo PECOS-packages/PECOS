@@ -261,3 +261,75 @@ fn stochastic_profile_keeps_rng_and_whole_idle_across_inputs() {
     }
     assert_eq!(observed, [true, true]);
 }
+
+#[test]
+fn production_idle_families_have_independent_physical_predictions() {
+    // Linear p=clamp(rate*t) and sine p=sin²(rate*t). Testing each in
+    // isolation rejects both disabling a channel and folding it into another.
+    for (linear, sine, gap, expected) in [
+        (1.0, 0.0, 1_000_000_000, 1),
+        (1.0, 0.0, 0, 0),
+        (0.0, std::f64::consts::FRAC_PI_2, 1_000_000_000, 1),
+        (0.0, std::f64::consts::PI, 1_000_000_000, 0),
+    ] {
+        for seed in 0..32 {
+            let mut s = QuantumSystem::new(
+                ScheduledIdleZ::new(2, linear, sine, 0.0)
+                    .unwrap()
+                    .into_noise_model(),
+                Box::new(StateVecEngine::new(2)),
+            );
+            s.set_seed(seed);
+            s.begin_shot(ShotContext {
+                run: 1,
+                worker: 0,
+                shot: 0,
+            })
+            .unwrap();
+            assert_eq!(
+                s.process(encode_timed_batches(&ramsey(gap)).unwrap())
+                    .unwrap()
+                    .outcomes()
+                    .unwrap(),
+                vec![expected]
+            );
+        }
+    }
+}
+
+#[test]
+fn reserved_and_unused_wire_fields_reject_before_execution() {
+    let original = encode_timed_batches(&ramsey(0)).unwrap();
+    // Header reserved bytes, first one-target gate's unused second target,
+    // then the final measurement's unused theta/phi fields.
+    for offset in [5, 6, 7, 72, 200, 208] {
+        let mut bytes = original.as_bytes().to_vec();
+        bytes[offset] = 1;
+        assert!(
+            system(0.0).process(ByteMessage::new(&bytes)).is_err(),
+            "offset {offset}"
+        );
+    }
+}
+
+#[test]
+fn host_wait_message_preserves_active_scheduled_state() {
+    let mut s = system(std::f64::consts::PI);
+    let batches = ramsey(1_000_000_000);
+    s.process(encode_timed_batches(&batches[..1]).unwrap())
+        .unwrap();
+    assert!(
+        s.process(ByteMessage::builder().build())
+            .unwrap()
+            .outcomes()
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        s.process(encode_timed_batches(&batches[1..]).unwrap())
+            .unwrap()
+            .outcomes()
+            .unwrap(),
+        vec![1]
+    );
+}

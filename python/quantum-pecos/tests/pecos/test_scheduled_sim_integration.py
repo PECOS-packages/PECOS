@@ -37,16 +37,16 @@ def timed_runtime(request: pytest.FixtureRequest, tmp_path: Path) -> tuple[Path,
     """Add explicitly synthetic timing to the public runtime's native callbacks."""
     from selene_simple_runtime_plugin import SimpleRuntimePlugin
 
-    if platform.system() == "Windows" or shutil.which("cc") is None:
-        pytest.skip("Synthetic dlopen proxy requires a POSIX C compiler")
+    if platform.system() == "Windows":
+        pytest.skip("Synthetic dlopen proxy is POSIX-only")
+    assert shutil.which("cc") is not None, "Nonzero timing integration requires a C compiler"
     repo = Path(__file__).resolve().parents[4]
     lock = tomllib.loads((repo / "Cargo.lock").read_text())
     source = next(p["source"] for p in lock["package"] if p["name"] == "selene-core")
     revision = source.rsplit("#", 1)[1]
     cargo_home = Path(os.environ.get("CARGO_HOME", Path.home() / ".cargo"))
     includes = list((cargo_home / "git/checkouts").glob(f"selene-*/{revision[:7]}/selene-core/c/include"))
-    if len(includes) != 1:
-        pytest.skip("Pinned Selene headers unavailable")
+    assert len(includes) == 1, f"Expected exactly one pinned Selene header directory, got {includes}"
     library = tmp_path / ("timing_proxy.dylib" if platform.system() == "Darwin" else "timing_proxy.so")
     args = [
         shutil.which("cc"),

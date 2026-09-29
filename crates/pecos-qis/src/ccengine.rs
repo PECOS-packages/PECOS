@@ -324,7 +324,6 @@ pub struct QisEngine {
     /// Scratch builder reused when materializing command batches.
     command_builder: ByteMessageBuilder,
     pub(crate) scheduled_batches: bool,
-    scheduled_drained: bool,
 }
 
 impl QisEngine {
@@ -409,7 +408,6 @@ impl QisEngine {
             trace_chunk_index: 0,
             command_builder: ByteMessageBuilder::new(),
             scheduled_batches: false,
-            scheduled_drained: false,
         }
     }
 
@@ -504,7 +502,6 @@ impl QisEngine {
             trace_chunk_index: 0,
             command_builder: ByteMessageBuilder::new(),
             scheduled_batches: false,
-            scheduled_drained: false,
         }
     }
 
@@ -805,13 +802,13 @@ impl QisEngine {
         ops: &[Operation],
     ) -> Result<LoweredCommandBatch, PecosError> {
         if self.scheduled_batches {
-            self.scheduled_drained = false;
             let batches = self
                 .runtime
                 .lower_scheduled_operations(ops)
                 .map_err(|e| PecosError::Generic(format!("scheduled extraction failed: {e}")))?;
-            let (commands, ids) =
-                crate::scheduled_transport::encode(batches, self.trace_shot_index as u64)?;
+            let shot = u64::try_from(self.trace_shot_index)
+                .map_err(|_| PecosError::Generic("shot index exceeds u64".into()))?;
+            let (commands, ids) = crate::scheduled_transport::encode(batches, shot)?;
             self.measurement_mapping = ids;
             return Ok(LoweredCommandBatch {
                 commands,
@@ -1028,7 +1025,6 @@ impl Clone for QisEngine {
             trace_chunk_index: 0,
             command_builder: ByteMessageBuilder::new(),
             scheduled_batches: self.scheduled_batches,
-            scheduled_drained: false,
         }
     }
 }
@@ -1485,31 +1481,28 @@ impl QisEngine {
     }
 
     fn drain_scheduled_commands(&mut self) -> Result<Option<ByteMessage>, PecosError> {
-        if !self.scheduled_batches || self.scheduled_drained {
+        if !self.scheduled_batches || self.dynamic_state.as_ref().is_some_and(|s| s.finalized) {
             return Ok(None);
         }
-        let result: Result<(ByteMessage, bool), PecosError> = (|| {
+        let result = (|| {
             let batches = self
                 .runtime
                 .drain_pending_scheduled_operations()
                 .map_err(|e| {
                     PecosError::Generic(format!("scheduled terminal drain failed: {e}"))
                 })?;
-            let drained = batches.is_empty();
-            let (commands, ids) =
-                crate::scheduled_transport::encode(batches, self.trace_shot_index as u64)?;
-            self.measurement_mapping = ids;
-            Ok((commands, drained))
-        })();
-        match result {
-            Ok((commands, drained)) => {
-                // A nonempty drain is work to execute, not proof of completion.
-                // Its measurements can release further scheduler work.
-                self.scheduled_drained = drained;
-                Ok(Some(commands))
+            if batches.is_empty() {
+                return Ok(None);
             }
-            Err(e) => Err(self.latch_terminal_error(format!("scheduled drain failed: {e}"))),
-        }
+            let shot = u64::try_from(self.trace_shot_index)
+                .map_err(|_| PecosError::Generic("shot index exceeds u64".into()))?;
+            let (commands, ids) = crate::scheduled_transport::encode(batches, shot)?;
+            self.measurement_mapping = ids;
+            Ok(Some(commands))
+        })();
+        result.map_err(|e: PecosError| {
+            self.latch_terminal_error(format!("scheduled drain failed: {e}"))
+        })
     }
 
     /// Refuse to certify a complete trace while the runtime scheduler still
@@ -1522,11 +1515,8 @@ impl QisEngine {
     /// would otherwise find an innocently empty scheduler and certify).
     fn verify_runtime_drained(&mut self) -> Result<(), PecosError> {
         if self.scheduled_batches {
-            return if self.scheduled_drained {
-                Ok(())
-            } else {
-                Err(self.latch_terminal_error("scheduled terminal drain required".into()))
-            };
+            // Each completion branch just observed an empty scheduled drain.
+            return Ok(());
         }
         if !self.runtime.supports_operation_lowering() {
             return Ok(());
@@ -1569,9 +1559,6 @@ impl QisEngine {
         &mut self,
         updates: &[(usize, u32)],
     ) -> Result<(), PecosError> {
-        if self.scheduled_batches && !updates.is_empty() {
-            self.scheduled_drained = false;
-        }
         match self.provide_measurement_updates_to_runtime(updates) {
             Ok(()) => Ok(()),
             Err(e) => Err(self.latch_terminal_error(format!(
@@ -1879,7 +1866,6 @@ impl ControlEngine for QisEngine {
                 "scheduled transport does not yet support operation tracing".into(),
             ));
         }
-        self.scheduled_drained = false;
         // Clear previous shot's measurement state
         self.measurement_results.clear();
         self.measurement_mapping.clear();
@@ -3318,12 +3304,15 @@ mod scheduled_completion_tests {
             panic!("newly ready native tail was silently skipped");
         };
         let reply = quantum.process(commands).unwrap();
-        let EngineStage::NeedsProcessing(empty) = engine.continue_processing(reply).unwrap() else {
-            panic!("must verify an empty drain after executing the tail");
-        };
-        let reply = quantum.process(empty).unwrap();
         assert!(matches!(
             engine.continue_processing(reply).unwrap(),
+            EngineStage::Complete(_)
+        ));
+        // A repeated completion poll must not touch an already-ended runtime.
+        assert!(matches!(
+            engine
+                .continue_processing(ByteMessage::outcomes_builder().build())
+                .unwrap(),
             EngineStage::Complete(_)
         ));
     }

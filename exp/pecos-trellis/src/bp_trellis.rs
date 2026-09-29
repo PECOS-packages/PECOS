@@ -18,9 +18,8 @@
 //! physics. Pruned results have no certified bound on discarded posterior
 //! mass. Belief propagation (BP) guides only which states pruning retains and
 //! never changes branch probabilities or mass arithmetic. It is not a wrap or
-//! port of an external project. The shared engine is PECOS-native; its
-//! bitwise parity pinning against an external reference implementation is
-//! maintained elsewhere and is not a constraint on this decoder.
+//! port of an external project. The shared engine is PECOS-native; see the
+//! crate documentation for how it is checked against an external reference.
 //!
 //! The facade owns one [`TrellisDecoder`] configured with PECOS's
 //! defaults, ordering semantics, and optional no-path escalation ladder, on
@@ -28,8 +27,8 @@
 
 pub use crate::TrellisOrdering;
 use crate::{
-    DecoderError, MetricMode, ObsMask, PruneParams, SparseDem, TrellisConfig, TrellisDecodeAttempt,
-    TrellisDecoder, TrellisPrepared, TrellisResult,
+    DecodeMode, DecoderError, MetricMode, ObsMask, PruneParams, SparseDem, TrellisConfig,
+    TrellisDecodeAttempt, TrellisDecoder, TrellisPrepared, TrellisResult,
 };
 use pecos_decoder_core::ObservableDecoder;
 
@@ -372,7 +371,12 @@ impl BpTrellisDecoder {
 
 impl ObservableDecoder for BpTrellisDecoder {
     fn decode_obs(&mut self, syndrome: &[u8]) -> Result<ObsMask, DecoderError> {
-        Ok(self.decode(syndrome)?.predicted)
+        match self.decode_with_attempt(syndrome, |inner, params| {
+            inner.attempt_with_mode(params, DecodeMode::PredictionOnly)
+        })? {
+            BpTrellisOutcome::Decoded(result) => Ok(result.predicted),
+            BpTrellisOutcome::NoPath(report) => Err(report.into_error()),
+        }
     }
 
     fn decode_to_observables(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
@@ -381,7 +385,7 @@ impl ObservableDecoder for BpTrellisDecoder {
                 "decoder has more than 64 observables; use decode_obs() for the wide mask".into(),
             ));
         }
-        let decoded = self.decode(syndrome)?.predicted;
+        let decoded = self.decode_obs(syndrome)?;
         Ok(decoded.words().first().copied().unwrap_or(0))
     }
 }

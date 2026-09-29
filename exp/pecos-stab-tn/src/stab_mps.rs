@@ -29,6 +29,9 @@
 //! Quantum Simulator on a Basis of Stabilizer States." PRL 133, 230601 (2024).
 //! arXiv:2403.08724.
 
+#[cfg(test)]
+mod trivial_measurement_tests;
+
 mod canonical_ket;
 pub mod compile;
 pub mod disentangle;
@@ -88,7 +91,9 @@ fn reset_tableau_and_rng(
 ///
 /// The stability census exercises this boundary as a regression guard. A
 /// failure here means the numerical state is unrecoverable, not that the
-/// simulator produced a usable partial result. If a fallible simulator API is
+/// simulator produced a usable partial result. A failed projection may leave
+/// the tableau/MPS pair partially mutated; the simulator must not be used
+/// further, even if the caller catches this panic. If a fallible simulator API is
 /// wanted, that framework-wide trait change should be tracked as its own issue.
 #[track_caller]
 pub(super) fn expect_mps_operation<T>(result: Result<T, MpsError>, operation: &str) -> T {
@@ -181,7 +186,7 @@ const PRODUCT_ZERO_PROBABILITY_TOLERANCE: f64 = 1e-15;
 
 // A running bitstring probability below this is reported as exactly zero.
 // The singular and batched query walks MUST share this constant: the batched
-// API's contract is bit-for-bit agreement with per-query singular calls, and
+// API's successful results must agree bit-for-bit with per-query singular calls, and
 // that guarantee is load-bearing on the two paths pruning identically.
 const QUERY_ZERO_PROBABILITY_FLOOR: f64 = 1e-30;
 
@@ -245,10 +250,21 @@ fn repair_disent_flags(
     }
 }
 
-/// Sample and transactionally force one exact Z-measurement branch.
+#[cfg(test)]
+std::thread_local! {
+    static DISABLE_TRIVIAL_EXACT_MEASUREMENT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static FORCE_EXACT_MEASUREMENT_TRANSACTION: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static EXACT_MEASUREMENT_TRANSACTIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Sample and force one exact Z-measurement branch.
 ///
 /// `StabMps` exact measurement and MAST data measurement share this owning
-/// layer so neither can expose a partially mutated tableau/MPS pair.
+/// layer. Normalized trivial coefficient states use the tableau and normalize directly.
+/// Other states retry a vanished branch from the live state when the
+/// configuration can truncate; configurations that cannot truncate project directly.
+/// On error the tableau/MPS pair may be partially mutated and the owning
+/// simulator must not be used further.
 fn measure_qubit_exact_transactional(
     tableau: &mut SparseStabY,
     mps: &mut Mps,
@@ -256,7 +272,18 @@ fn measure_qubit_exact_transactional(
     q_idx: usize,
     operation: &str,
 ) -> Result<measure::LiveMeasurementResult, MpsError> {
-    let probability_one = measure::z_outcome_probability(tableau, mps, q_idx, true, operation);
+    let use_trivial_path = measure::is_mps_trivial(mps)
+        && (measure::trivial_mps_norm_squared(mps) - 1.0).abs()
+            < measure::TRIVIAL_MPS_NORMALIZATION_TOLERANCE;
+    #[cfg(test)]
+    let use_trivial_path = use_trivial_path && !DISABLE_TRIVIAL_EXACT_MEASUREMENT.get();
+    if use_trivial_path {
+        return Ok(measure::measure_trivial_mps_exact_with_update(
+            tableau, mps, rng, q_idx,
+        ));
+    }
+    let properties = measure::ZMeasurementProperties::new(tableau, mps, q_idx, operation);
+    let probability_one = properties.probability(true);
     let is_probability_zero = probability_one <= 0.0;
     let is_probability_one = probability_one >= 1.0;
     let outcome = if is_probability_zero {
@@ -267,52 +294,77 @@ fn measure_qubit_exact_transactional(
         rng.random_bool(probability_one)
     };
 
-    let mut candidate_tableau = tableau.clone();
-    let mut candidate_mps = mps.clone();
-    let first = measure::project_forced_z_with_update(
-        &mut candidate_tableau,
-        &mut candidate_mps,
-        q_idx,
-        outcome,
-    )?;
-    assert!(
-        first.snapped_probability > 0.0,
-        "{operation}: sampled a projector-impossible outcome"
-    );
+    let cannot_truncate = mps.config().cannot_truncate(mps.physical_rank_ceiling());
+    #[cfg(test)]
+    let cannot_truncate = cannot_truncate && !FORCE_EXACT_MEASUREMENT_TRANSACTION.get();
 
-    let projection = if first.survival_ratio < measure::BRANCH_VANISH_SURVIVAL_THRESHOLD {
-        candidate_tableau = tableau.clone();
-        candidate_mps = mps.clone();
-        let original_config = mps.config().clone();
-        let mut retry_config = original_config.clone();
-        retry_config.max_bond_dim = candidate_mps.physical_rank_ceiling();
-        retry_config.svd_cutoff = 0.0;
-        retry_config.max_truncation_error = Some(0.0);
-        candidate_mps.set_config(retry_config);
-        let retry = measure::project_forced_z_with_update(
+    let projection = if cannot_truncate {
+        // Retrying with the same effective configuration cannot restore a
+        // vanished branch, so project directly and treat loss as an invariant failure.
+        let projection =
+            measure::project_forced_z_with_update(tableau, mps, q_idx, outcome, Some(properties))?;
+        assert!(
+            projection.snapped_probability > 0.0,
+            "{operation}: sampled a projector-impossible outcome"
+        );
+        assert!(
+            projection.survival_ratio >= measure::BRANCH_VANISH_SURVIVAL_THRESHOLD,
+            "{operation}: sampled branch vanished on the untruncated projection"
+        );
+        projection
+    } else {
+        #[cfg(test)]
+        EXACT_MEASUREMENT_TRANSACTIONS.set(EXACT_MEASUREMENT_TRANSACTIONS.get() + 1);
+
+        let mut candidate_tableau = tableau.clone();
+        let mut candidate_mps = mps.clone();
+        let first = measure::project_forced_z_with_update(
             &mut candidate_tableau,
             &mut candidate_mps,
             q_idx,
             outcome,
+            Some(properties),
         )?;
-        let retry_vanished = retry.survival_ratio < measure::BRANCH_VANISH_SURVIVAL_THRESHOLD;
-        debug_assert!(
-            !retry_vanished,
-            "{operation}: sampled branch vanished on the untruncated retry"
-        );
         assert!(
-            !retry_vanished,
-            "{operation}: sampled branch vanished on the untruncated retry"
+            first.snapped_probability > 0.0,
+            "{operation}: sampled a projector-impossible outcome"
         );
-        candidate_mps.set_config(original_config);
-        candidate_mps.record_branch_vanish_retry();
-        retry
-    } else {
-        first
+
+        let projection = if first.survival_ratio < measure::BRANCH_VANISH_SURVIVAL_THRESHOLD {
+            candidate_tableau = tableau.clone();
+            candidate_mps = mps.clone();
+            let original_config = mps.config().clone();
+            candidate_mps.set_config(
+                original_config.without_truncation(candidate_mps.physical_rank_ceiling()),
+            );
+            let retry = measure::project_forced_z_with_update(
+                &mut candidate_tableau,
+                &mut candidate_mps,
+                q_idx,
+                outcome,
+                Some(properties),
+            )?;
+            let retry_vanished = retry.survival_ratio < measure::BRANCH_VANISH_SURVIVAL_THRESHOLD;
+            debug_assert!(
+                !retry_vanished,
+                "{operation}: sampled branch vanished on the untruncated retry"
+            );
+            assert!(
+                !retry_vanished,
+                "{operation}: sampled branch vanished on the untruncated retry"
+            );
+            candidate_mps.set_config(original_config);
+            candidate_mps.record_branch_vanish_retry();
+            retry
+        } else {
+            first
+        };
+
+        *tableau = candidate_tableau;
+        *mps = candidate_mps;
+        projection
     };
 
-    *tableau = candidate_tableau;
-    *mps = candidate_mps;
     Ok(measure::LiveMeasurementResult {
         measurement: MeasurementResult {
             outcome,
@@ -375,8 +427,12 @@ pub enum PauliKind {
 /// measuring its qubits with [`CliffordGateable::mz`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum MeasurementMode {
-    /// Sample the normalized Born probability and transactionally force the
-    /// sampled branch, retrying without truncation if that branch vanishes.
+    /// Sample the normalized Born probability and force the sampled branch.
+    /// If the live configuration can truncate, project transactionally and
+    /// retry without truncation if that branch vanishes. Otherwise project
+    /// directly with no transaction; a lost branch is an invariant violation.
+    /// A projection error may leave the tableau/MPS pair partially mutated;
+    /// the simulator must not be used further after such a failure.
     #[default]
     Exact,
     /// Preserve the legacy uncompensated eager pre-reduction path. This is
@@ -1149,7 +1205,9 @@ pub struct ProjectionQrLocalityTelemetry {
 pub struct QueryDepthTelemetry {
     /// Z-expectation and probability evaluation.
     pub expectation: QueryPhaseTelemetry,
-    /// Compensated tableau-generator pre-reduction.
+    /// Compensated tableau-generator pre-reduction or trivial-basis canonicalization.
+    /// Since Z-property threading, the trivial path reuses its norm instead of
+    /// contracting here, so its timing is not comparable to earlier revisions.
     pub pre_reduction: QueryPhaseTelemetry,
     /// Stabilizer/destabilizer decomposition after any pre-reduction.
     pub decomposition: QueryPhaseTelemetry,
@@ -1163,7 +1221,10 @@ pub struct QueryDepthTelemetry {
     pub survival: QueryPhaseTelemetry,
     /// Conditional post-projection normalization.
     pub normalization: QueryPhaseTelemetry,
-    /// Path selection and returned modified-site bookkeeping.
+    /// Cached path selection and returned modified-site bookkeeping.
+    /// Since Z-property threading, path selection reads a boolean instead of
+    /// scanning tensors. Calls still count bucket entries, not triviality scans;
+    /// timings are not comparable to revisions that performed the scan here.
     pub bookkeeping: QueryPhaseTelemetry,
     /// Opt-in event details for every nontrivial projection at this depth.
     pub projection_qr_locality: Vec<ProjectionQrLocalityTelemetry>,
@@ -1184,6 +1245,7 @@ pub struct ProbabilityQueryTelemetry {
 #[derive(Clone, Copy)]
 pub(super) enum QueryPhase {
     Expectation,
+    /// See [`QueryDepthTelemetry::pre_reduction`] for the removed norm contraction.
     PreReduction,
     Decomposition,
     Projection,
@@ -1191,6 +1253,7 @@ pub(super) enum QueryPhase {
     PostProjectionSvd,
     Survival,
     Normalization,
+    /// See [`QueryDepthTelemetry::bookkeeping`] for cached path-selection semantics.
     Bookkeeping,
 }
 
@@ -9577,6 +9640,273 @@ mod tests {
             eager_pragmatic_drift_exercised,
             "eager seed sweep must exercise the pragmatic-drift branch"
         );
+    }
+
+    pub(super) struct RestoreExactMeasurementPolicy;
+
+    impl Drop for RestoreExactMeasurementPolicy {
+        fn drop(&mut self) {
+            FORCE_EXACT_MEASUREMENT_TRANSACTION.set(false);
+            measure::RECOMPUTE_Z_PROPERTIES.set(false);
+        }
+    }
+
+    #[test]
+    fn exact_measurement_counts_state_evaluations() {
+        let _restore = RestoreExactMeasurementPolicy;
+        for recompute in [true, false] {
+            measure::RECOMPUTE_Z_PROPERTIES.set(recompute);
+            for retry in [false, true] {
+                let mut stn = StabMps::builder(4)
+                    .seed(9)
+                    .max_bond_dim(if retry { 1 } else { 4 })
+                    .svd_cutoff(0.0)
+                    .max_truncation_error(0.0)
+                    .build();
+                stn.h(&[QubitId(0)]);
+                for q in 1..4 {
+                    stn.cx(&[(QubitId(0), QubitId(q))]);
+                }
+                stn.rz(Angle64::from_radians(0.37), &[QubitId(0)]);
+                stn.flush();
+                assert!(!measure::is_mps_trivial(&stn.mps));
+                if retry {
+                    measure::inject_projection_vanishes(1);
+                }
+                crate::mps::NORM_SQUARED_EVALUATIONS.set(0);
+                measure::Z_EXPECTATION_EVALUATIONS.set(0);
+                measure::TRIVIAL_MPS_EVALUATIONS.set(0);
+                stn.mz(&[QubitId(0)]);
+                let counts = (
+                    crate::mps::NORM_SQUARED_EVALUATIONS.get(),
+                    measure::Z_EXPECTATION_EVALUATIONS.get(),
+                    measure::TRIVIAL_MPS_EVALUATIONS.get(),
+                );
+                eprintln!(
+                    "recompute={recompute} retry={retry}: evaluations (all norms, Z expectations, trivial scans) = {counts:?}"
+                );
+                // One properties evaluation supplies a norm, expectation, and scan.
+                // The fast-path guard adds a scan. Each projection adds a survival
+                // norm; recomputation adds two norms, one expectation, two scans.
+                // Debug validation adds that same recomputation per projection.
+                // Projection establishes a center, so normalize adds no full norm.
+                let projections = if retry { 2 } else { 1 };
+                let recomputations =
+                    projections * (usize::from(recompute) + usize::from(cfg!(debug_assertions)));
+                let expected = (
+                    1 + projections + 2 * recomputations,
+                    1 + recomputations,
+                    2 + 2 * recomputations,
+                );
+                assert_eq!(counts, expected);
+                assert_eq!(stn.branch_vanish_retry_count(), u64::from(retry));
+            }
+        }
+    }
+
+    #[test]
+    fn successful_exact_measurement_skip_matches_forced_transaction_bit_for_bit() {
+        fn amplitude_bits(stn: &StabMps) -> Vec<(u64, u64)> {
+            stn.state_vector()
+                .iter()
+                .map(|amplitude| (amplitude.re.to_bits(), amplitude.im.to_bits()))
+                .collect()
+        }
+
+        let run = |seed, force_transaction, truncating, recompute| {
+            FORCE_EXACT_MEASUREMENT_TRANSACTION.set(force_transaction);
+            measure::RECOMPUTE_Z_PROPERTIES.set(recompute);
+            let _restore = RestoreExactMeasurementPolicy;
+            let before = EXACT_MEASUREMENT_TRANSACTIONS.get();
+            let mut stn = StabMps::builder(4)
+                .seed(seed)
+                .max_bond_dim(if truncating { 2 } else { 4 })
+                .svd_cutoff(if truncating { 1e-7 } else { 0.0 })
+                .max_truncation_error(0.0)
+                .merge_rz(false)
+                .build();
+            let mut outcomes = Vec::new();
+            let mut amplitudes = Vec::new();
+            let mut saw_entanglement = false;
+            for round in 0..8 {
+                for q in 0..4 {
+                    stn.h(&[QubitId(q)]);
+                    stn.rz(Angle64::from_radians(0.37), &[QubitId(q)]);
+                    stn.cx(&[(QubitId(q), QubitId((q + 1) % 4))]);
+                }
+                saw_entanglement |= stn.max_bond_dim() > 1;
+                outcomes.extend(
+                    stn.mz(&[QubitId(round % 4), QubitId((round + 1) % 4)])
+                        .iter()
+                        .map(|result| (result.outcome, result.is_deterministic)),
+                );
+                amplitudes.push(amplitude_bits(&stn));
+                match round % 3 {
+                    0 => outcomes.push((stn.reset_qubit(QubitId((round + 2) % 4)), false)),
+                    1 => stn.pz(QubitId((round + 2) % 4)),
+                    _ => stn.px(QubitId((round + 2) % 4)),
+                }
+                amplitudes.push(amplitude_bits(&stn));
+            }
+            let transactions = EXACT_MEASUREMENT_TRANSACTIONS.get() - before;
+            assert_eq!(
+                transactions,
+                if force_transaction || truncating {
+                    24
+                } else {
+                    0
+                }
+            );
+            assert!(saw_entanglement);
+            if truncating {
+                assert!(stn.mps.summed_discarded_weight() > 0.0);
+            }
+            assert_eq!(stn.branch_vanish_retry_count(), 0);
+            (stn, outcomes, amplitudes)
+        };
+
+        for (seed, truncating, force_transaction) in (0..8).flat_map(|seed| {
+            [(false, false), (false, true), (true, false)]
+                .map(move |(truncating, force_transaction)| (seed, truncating, force_transaction))
+        }) {
+            let (direct, direct_outcomes, direct_amplitudes) = run(seed, false, truncating, false);
+            let (transaction, transaction_outcomes, transaction_amplitudes) =
+                run(seed, force_transaction, truncating, true);
+            assert_eq!(direct_outcomes, transaction_outcomes);
+            assert_eq!(direct_amplitudes, transaction_amplitudes);
+            assert_eq!(direct.mps.tensors(), transaction.mps.tensors());
+            assert_eq!(direct.mps.bond_dims(), transaction.mps.bond_dims());
+            assert_eq!(direct.mps.config(), transaction.mps.config());
+            assert_eq!(
+                direct.branch_vanish_retry_count(),
+                transaction.branch_vanish_retry_count()
+            );
+            assert_eq!(
+                direct.mps.truncation_error().to_bits(),
+                transaction.mps.truncation_error().to_bits()
+            );
+            assert_eq!(
+                direct.mps.summed_discarded_weight().to_bits(),
+                transaction.mps.summed_discarded_weight().to_bits()
+            );
+            assert_eq!(direct.mps.bond_cap_hits(), transaction.mps.bond_cap_hits());
+            assert_eq!(
+                direct.mps.tracked_center_for_test(),
+                transaction.mps.tracked_center_for_test()
+            );
+            assert_eq!(
+                format!("{:?}", direct.tableau.stabs()),
+                format!("{:?}", transaction.tableau.stabs())
+            );
+            assert_eq!(
+                format!("{:?}", direct.tableau.destabs()),
+                format!("{:?}", transaction.tableau.destabs())
+            );
+        }
+    }
+
+    #[test]
+    fn exact_measurement_retries_for_each_truncation_setting() {
+        let exact = MpsConfig {
+            max_bond_dim: 4,
+            svd_cutoff: 0.0,
+            max_truncation_error: Some(0.0),
+            parallel: false,
+        };
+        for config in [
+            MpsConfig {
+                max_bond_dim: 1,
+                ..exact.clone()
+            },
+            MpsConfig {
+                svd_cutoff: 1e-7,
+                ..exact.clone()
+            },
+            MpsConfig {
+                max_truncation_error: Some(1e-4),
+                ..exact.clone()
+            },
+            MpsConfig {
+                max_truncation_error: None,
+                ..exact
+            },
+        ] {
+            let mut stn = StabMps::builder(4).seed(9).merge_rz(false).build();
+            stn.mps.set_config(config.clone());
+            stn.h(&[QubitId(0)]);
+            stn.rz(Angle64::from_radians(0.37), &[QubitId(0)]);
+            let before = EXACT_MEASUREMENT_TRANSACTIONS.get();
+            measure::inject_projection_vanishes(1);
+            stn.mz(&[QubitId(0)]);
+            assert_eq!(EXACT_MEASUREMENT_TRANSACTIONS.get() - before, 1);
+            assert_eq!(stn.branch_vanish_retry_count(), 1);
+            assert_eq!(stn.mps.config(), &config);
+            assert!((stn.mps.norm_squared() - 1.0).abs() < 1e-12);
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "StabMps::mz: sampled branch vanished on the untruncated projection")]
+    fn exact_measurement_skip_panics_if_branch_vanishes() {
+        let mut stn = StabMps::builder(1)
+            .seed(9)
+            .max_bond_dim(1)
+            .svd_cutoff(0.0)
+            .max_truncation_error(0.0)
+            .build();
+        stn.h(&[QubitId(0)]);
+        stn.rz(Angle64::from_radians(0.37), &[QubitId(0)]);
+        stn.flush();
+        assert!(!measure::is_mps_trivial(&stn.mps));
+        measure::inject_projection_vanishes(1);
+        stn.mz(&[QubitId(0)]);
+    }
+
+    #[cfg(not(debug_assertions))]
+    #[test]
+    #[should_panic(expected = "StabMps::mz: sampled a projector-impossible outcome")]
+    fn exact_measurement_skip_panics_if_projection_reports_impossible_outcome() {
+        let mut stn = StabMps::builder(1)
+            .seed(9)
+            .svd_cutoff(0.0)
+            .max_truncation_error(0.0)
+            .build();
+        stn.h(&[QubitId(0)]);
+        stn.rz(Angle64::from_radians(0.37), &[QubitId(0)]);
+        stn.flush();
+        assert!(!measure::is_mps_trivial(&stn.mps));
+        measure::inject_zero_projection_probabilities(1);
+        stn.mz(&[QubitId(0)]);
+    }
+
+    #[test]
+    fn exact_measurement_rechecks_live_config_after_auto_growth() {
+        let mut stn = StabMps::builder(2)
+            .seed(9)
+            .max_bond_dim(1)
+            .svd_cutoff(0.0)
+            .max_truncation_error(0.0)
+            .auto_grow_bond_dim(1e-15)
+            .auto_grow_max_bond_dim(2)
+            .merge_rz(false)
+            .build();
+        let before = EXACT_MEASUREMENT_TRANSACTIONS.get();
+        stn.mz(&[QubitId(0)]);
+        assert_eq!(EXACT_MEASUREMENT_TRANSACTIONS.get() - before, 0);
+        stn.h(&[QubitId(0)]);
+        stn.rz(Angle64::from_radians(0.37), &[QubitId(0)]);
+        assert!(!measure::is_mps_trivial(&stn.mps));
+        assert_eq!(stn.mps.config().max_bond_dim, 1);
+        stn.mz(&[QubitId(0)]);
+        assert_eq!(EXACT_MEASUREMENT_TRANSACTIONS.get() - before, 1);
+        stn.h(&[QubitId(0), QubitId(1)]);
+        stn.rz(Angle64::from_radians(0.37), &[QubitId(0), QubitId(1)]);
+        stn.cx(&[(QubitId(0), QubitId(1))]);
+        stn.rz(Angle64::from_radians(0.29), &[QubitId(1)]);
+        assert_eq!(stn.mps.config().max_bond_dim, 2);
+        assert!(stn.bond_cap_hits() > 0);
+        stn.mz(&[QubitId(0)]);
+        assert_eq!(EXACT_MEASUREMENT_TRANSACTIONS.get() - before, 1);
     }
 
     #[test]

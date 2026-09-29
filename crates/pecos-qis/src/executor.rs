@@ -1197,6 +1197,12 @@ impl QisHeliosInterface {
             }
         } // Lock released here before slow library loading
 
+        // Compilation and persistent-cache hits load programs before execution
+        // initializes its context. Make their runtime imports available before
+        // eagerly resolving the program, in dependency order.
+        Self::get_qis_ffi_lib_singleton()?;
+        Self::get_shim_lib_singleton()?;
+
         // Load library WITHOUT holding the lock - this is the slow part
         debug!("Loading program library (outside lock): {}", path.display());
         let (lib_global, lib) = Self::load_library(path, "Failed to load program library", false)?;
@@ -1286,6 +1292,8 @@ impl QisHeliosInterface {
 
     /// Load runtime libraries globally and program libraries locally.
     /// Program definitions must not interpose on later programs with the same names.
+    /// Resolve program imports now so missing functions return an error instead
+    /// of terminating the process when the program first calls them.
     #[cfg(unix)]
     fn load_library(
         path: &std::path::Path,
@@ -1295,14 +1303,18 @@ impl QisHeliosInterface {
         let lib_global = unsafe {
             libloading::os::unix::Library::open(
                 Some(path),
-                libloading::os::unix::RTLD_LAZY
-                    | if global {
-                        libloading::os::unix::RTLD_GLOBAL
-                    } else {
-                        libloading::os::unix::RTLD_LOCAL
-                    },
+                if global {
+                    libloading::os::unix::RTLD_LAZY | libloading::os::unix::RTLD_GLOBAL
+                } else {
+                    libloading::os::unix::RTLD_NOW | libloading::os::unix::RTLD_LOCAL
+                },
             )
-            .map_err(|e| InterfaceError::ExecutionError(format!("{error_msg}: {e}")))?
+            .map_err(|e| {
+                // libloading's Display only says "dlopen failed"; its source
+                // contains the loader diagnostic, including the missing symbol.
+                let detail = std::error::Error::source(&e).unwrap_or(&e);
+                InterfaceError::ExecutionError(format!("{error_msg}: {detail}"))
+            })?
         };
 
         let lib = unsafe {
@@ -2820,6 +2832,100 @@ mod tests {
             );
             free(error);
             register(std::ptr::null_mut());
+        }
+    }
+
+    #[test]
+    fn missing_program_import_returns_load_error() {
+        const CHILD_ENV: &str = "PECOS_TEST_MISSING_PROGRAM_IMPORT";
+        if std::env::var_os(CHILD_ENV).is_some() {
+            let mut interface = QisHeliosInterface::new();
+            let error = interface
+                .load_program(
+                    br"
+                        declare i64 @get_current_shot()
+                        define i64 @qmain(i64 %arg) {
+                            %shot = call i64 @get_current_shot()
+                            ret i64 %shot
+                        }
+                    ",
+                    ProgramFormat::LlvmIrText,
+                )
+                .expect_err("an undefined program import must fail at load time");
+            assert!(error.to_string().contains("get_current_shot"), "{error}");
+            return;
+        }
+
+        let cache = tempfile::tempdir().expect("cache directory");
+        for _ in 0..2 {
+            let output = Command::new(std::env::current_exe().expect("test executable"))
+                .args([
+                    "--exact",
+                    "executor::tests::missing_program_import_returns_load_error",
+                    "--nocapture",
+                ])
+                .env(CHILD_ENV, "1")
+                .env("PECOS_CACHE_DIR", cache.path())
+                .output()
+                .expect("run child");
+            assert!(
+                output.status.success(),
+                "child failed: {}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
+
+    #[test]
+    fn program_load_resolves_runtime_imports_in_fresh_process() {
+        const CHILD_ENV: &str = "PECOS_TEST_FRESH_PROGRAM_LOAD";
+        if std::env::var_os(CHILD_ENV).is_some() {
+            assert!(QIS_FFI_LIB_SINGLETON.get().is_none());
+            assert!(SHIM_LIB_SINGLETON.get().is_none());
+            // Both providers are needed before the program is opened, including
+            // compilation and cache paths that run before execute_program().
+            let program = br"
+                declare void @__quantum__qis__h__body(i64)
+                declare i32 @selene_random_seed(ptr, i64)
+                define i64 @qmain(i64 %arg) {
+                    %seeded = call i32 @selene_random_seed(ptr null, i64 42)
+                    call void @__quantum__qis__h__body(i64 0)
+                    ret i64 0
+                }
+            ";
+            for _ in 0..2 {
+                let mut interface = QisHeliosInterface::new();
+                interface
+                    .load_program(program, ProgramFormat::LlvmIrText)
+                    .expect("runtime imports must resolve when loading a program");
+                assert!(QIS_FFI_LIB_SINGLETON.get().is_some());
+                assert!(SHIM_LIB_SINGLETON.get().is_some());
+                interface.collect_operations().expect("execute program");
+            }
+            return;
+        }
+
+        let cache = tempfile::tempdir().expect("cache directory");
+        // The first child compiles; the second loads the persistent cache with
+        // neither runtime initialized. Each also repeats the in-process load.
+        for _ in 0..2 {
+            let output = Command::new(std::env::current_exe().expect("test executable"))
+                .args([
+                    "--exact",
+                    "executor::tests::program_load_resolves_runtime_imports_in_fresh_process",
+                    "--nocapture",
+                ])
+                .env(CHILD_ENV, "1")
+                .env("PECOS_CACHE_DIR", cache.path())
+                .output()
+                .expect("run child");
+            assert!(
+                output.status.success(),
+                "child failed: {}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
     }
 

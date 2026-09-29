@@ -414,6 +414,7 @@ pub struct TrellisResult {
     /// otherwise have branched through later columns.
     /// For an escalated `BpTrellis` result, this covers only the
     /// successful rung.
+    /// Prediction-only decoding skips computing this field.
     pub dropped_log_mass: f64,
     /// Wall-clock seconds spent producing BP-informed suffix scores for this
     /// shot. This is zero when BP scoring is disabled or pruning cannot run.
@@ -1427,11 +1428,22 @@ impl TrellisDecoder {
     /// policies.
     #[must_use]
     pub fn decode_attempt(&mut self, syndrome: &[u8]) -> TrellisDecodeAttempt {
+        self.decode_attempt_with_mode(syndrome, DecodeMode::Full)
+    }
+
+    fn decode_attempt_with_mode(
+        &mut self,
+        syndrome: &[u8],
+        mode: DecodeMode,
+    ) -> TrellisDecodeAttempt {
         match self.prepare(syndrome) {
-            Ok(TrellisPrepared::Ready { .. }) => self.attempt(PruneParams {
-                k: self.model.config.k,
-                delta: self.model.config.delta,
-            }),
+            Ok(TrellisPrepared::Ready { .. }) => self.attempt_with_mode(
+                PruneParams {
+                    k: self.model.config.k,
+                    delta: self.model.config.delta,
+                },
+                mode,
+            ),
             Ok(TrellisPrepared::Residual { .. }) => TrellisDecodeAttempt::NoPath {
                 error: unexplainable_error(),
                 transitions: 0,
@@ -1486,6 +1498,10 @@ impl TrellisDecoder {
     /// Panics unless the latest prepare completed `Ready`.
     #[must_use]
     pub fn attempt(&mut self, params: PruneParams) -> TrellisDecodeAttempt {
+        self.attempt_with_mode(params, DecodeMode::Full)
+    }
+
+    fn attempt_with_mode(&mut self, params: PruneParams, mode: DecodeMode) -> TrellisDecodeAttempt {
         if let Err(error) = params.validate(self.model.config.metric_mode) {
             return TrellisDecodeAttempt::Error(error);
         }
@@ -1502,7 +1518,7 @@ impl TrellisDecoder {
             .scratch
             .prepared
             .expect("attempt requires a Ready prepare");
-        let mut attempt = self.model.decode_attempt(&mut self.scratch, params);
+        let mut attempt = self.model.decode_attempt(&mut self.scratch, params, mode);
         if let TrellisDecodeAttempt::Success(result) = &mut attempt {
             result.bp_runs = u32::from(bp_ran);
         }
@@ -1554,18 +1570,25 @@ impl TrellisDecoder {
     }
 }
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum DecodeMode {
+    Full,
+    PredictionOnly,
+}
+
 impl TrellisModel {
     fn decode_attempt(
         &self,
         scratch: &mut TrellisScratch,
         params: PruneParams,
+        mode: DecodeMode,
     ) -> TrellisDecodeAttempt {
-        match (self.config.metric_mode, &self.kernel) {
+        let mut attempt = match (self.config.metric_mode, &self.kernel) {
             (MetricMode::LogSumExpFloat, Kernel::Binary(_)) => {
-                self.decode_attempt_binary(scratch, params)
+                self.decode_attempt_binary(scratch, params, mode)
             }
             (MetricMode::LogSumExpFloat, Kernel::Nary(_)) => {
-                self.decode_attempt_nary(scratch, params)
+                self.decode_attempt_nary(scratch, params, mode)
             }
             (MetricMode::MaxLogInt, Kernel::Binary(_)) => {
                 self.decode_attempt_binary_maxlog(scratch, params)
@@ -1573,13 +1596,20 @@ impl TrellisModel {
             (MetricMode::MaxLogInt, Kernel::Nary(_)) => {
                 self.decode_attempt_nary_maxlog(scratch, params)
             }
+        };
+        if mode == DecodeMode::PredictionOnly
+            && let TrellisDecodeAttempt::Success(result) = &mut attempt
+        {
+            result.dropped_log_mass = f64::NAN;
         }
+        attempt
     }
 
     fn decode_attempt_binary(
         &self,
         scratch: &mut TrellisScratch,
         params: PruneParams,
+        mode: DecodeMode,
     ) -> TrellisDecodeAttempt {
         let observed = &scratch.observed;
         let bp_seconds = scratch.prepared.expect("prepared shot").1;
@@ -1592,9 +1622,14 @@ impl TrellisModel {
             .bp_score
             .as_ref()
             .map_or(&self.suffix_values, |bp| &bp.suffix_values);
-        if let Err(failure) =
-            self.process_binary_range(progress, observed, suffix_values, 0..columns.len(), params)
-        {
+        if let Err(failure) = self.process_binary_range_with_mode(
+            progress,
+            observed,
+            suffix_values,
+            0..columns.len(),
+            params,
+            mode,
+        ) {
             return match failure {
                 BinaryFailure::NoPath => TrellisDecodeAttempt::NoPath {
                     error: failure.error(),
@@ -1616,6 +1651,25 @@ impl TrellisModel {
         suffix_values: &SuffixValues,
         range: std::ops::Range<usize>,
         params: PruneParams,
+    ) -> Result<(), BinaryFailure> {
+        self.process_binary_range_with_mode(
+            progress,
+            observed,
+            suffix_values,
+            range,
+            params,
+            DecodeMode::Full,
+        )
+    }
+
+    fn process_binary_range_with_mode(
+        &self,
+        progress: &mut BinaryProgress,
+        observed: &[u64],
+        suffix_values: &SuffixValues,
+        range: std::ops::Range<usize>,
+        params: PruneParams,
+        mode: DecodeMode,
     ) -> Result<(), BinaryFailure> {
         let BinaryProgress {
             frontier,
@@ -1677,9 +1731,12 @@ impl TrellisModel {
                 self.config.score_alpha,
                 suffix_compatibility,
                 observed,
+                mode,
             );
             *dropped_states += pruned.dropped_states;
-            *dropped_log_mass = logaddexp(*dropped_log_mass, pruned.dropped_log_mass);
+            if mode == DecodeMode::Full {
+                *dropped_log_mass = logaddexp(*dropped_log_mass, pruned.dropped_log_mass);
+            }
             *k_capped |= pruned.k_capped;
             *delta_pruned |= pruned.delta_pruned;
             if frontier.parent.masses.is_empty() {
@@ -1771,6 +1828,7 @@ impl TrellisModel {
         &self,
         scratch: &mut TrellisScratch,
         params: PruneParams,
+        mode: DecodeMode,
     ) -> TrellisDecodeAttempt {
         let observed = &scratch.observed;
         let frontier = &mut scratch.float_progress.frontier;
@@ -1836,9 +1894,12 @@ impl TrellisModel {
                     values: &self.suffix_values,
                 },
                 observed,
+                mode,
             );
             dropped_states += pruned.dropped_states;
-            dropped_log_mass = logaddexp(dropped_log_mass, pruned.dropped_log_mass);
+            if mode == DecodeMode::Full {
+                dropped_log_mass = logaddexp(dropped_log_mass, pruned.dropped_log_mass);
+            }
             k_capped |= pruned.k_capped;
             delta_pruned |= pruned.delta_pruned;
             if frontier.parent.masses.is_empty() {
@@ -2171,7 +2232,10 @@ impl TrellisModel {
 
 impl ObservableDecoder for TrellisDecoder {
     fn decode_obs(&mut self, syndrome: &[u8]) -> Result<ObsMask, DecoderError> {
-        Ok(self.decode(syndrome)?.predicted)
+        Ok(self
+            .decode_attempt_with_mode(syndrome, DecodeMode::PredictionOnly)
+            .into_result()?
+            .predicted)
     }
 
     fn decode_to_observables(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
@@ -2180,7 +2244,7 @@ impl ObservableDecoder for TrellisDecoder {
                 "decoder has more than 64 observables; use decode_obs() for the wide mask".into(),
             ));
         }
-        let decoded = self.decode(syndrome)?.predicted;
+        let decoded = self.decode_obs(syndrome)?;
         Ok(decoded.words().first().copied().unwrap_or(0))
     }
 }
@@ -2604,6 +2668,7 @@ fn prune(
     score_alpha: f64,
     suffix_compatibility: SuffixCompatibility<'_>,
     observed: &[u64],
+    mode: DecodeMode,
 ) -> PruneResult<f64> {
     if k == usize::MAX && delta.is_infinite() {
         return PruneResult {
@@ -2645,7 +2710,9 @@ fn prune(
             frontier.retained[candidate] = true;
         } else {
             dropped_states += 1;
-            dropped_log_mass = logaddexp(dropped_log_mass, frontier.parent.masses[candidate]);
+            if mode == DecodeMode::Full {
+                dropped_log_mass = logaddexp(dropped_log_mass, frontier.parent.masses[candidate]);
+            }
             k_capped |= !within_k;
             delta_pruned |= within_k && !within_delta;
         }

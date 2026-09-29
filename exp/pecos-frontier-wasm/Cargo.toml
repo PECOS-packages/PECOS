@@ -9,6 +9,10 @@ license.workspace = true
 description = "Bare-WebAssembly adapter for the PECOS Frontier decoder"
 publish = false
 
+[features]
+default = []
+replay = []
+
 [dependencies]
 pecos-frontier.workspace = true
 

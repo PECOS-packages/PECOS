@@ -136,7 +136,9 @@ jobs:
       - name: Check Frontier bare WebAssembly adapter
         env:
           RUSTFLAGS: '--cfg getrandom_backend="unsupported"'
-        run: cargo check --locked --target wasm32-unknown-unknown -p pecos-frontier-wasm
+        run: |
+          cargo check --locked --target wasm32-unknown-unknown -p pecos-frontier-wasm
+          cargo check --locked --target wasm32-unknown-unknown -p pecos-frontier-wasm --features replay
 
   rust-lint-no-llvm:
     if: (github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'ci:full-rust'

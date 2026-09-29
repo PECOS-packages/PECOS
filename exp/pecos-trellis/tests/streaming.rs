@@ -55,6 +55,7 @@ fn assert_no_path(error: &DecoderError, expected: &DecoderError) {
 fn random_rounds_match_batch_for_every_chunk_size_and_reset() {
     let mut rng = Xoshiro256PlusPlus::seed_from_u64(0xdec0_de42);
     let mut saw_early_commitment = false;
+    let mut saw_pruning = false;
     for case in 0..24 {
         let width = [12, 65, 129][case % 3];
         let mut dem = SparseDem {
@@ -125,6 +126,7 @@ fn random_rounds_match_batch_for_every_chunk_size_and_reset() {
                 (
                     chunk,
                     TrellisStreamingDecoder::from_sparse_dem(&dem, config.clone()).unwrap(),
+                    TrellisStreamingDecoder::from_sparse_dem(&dem, config.clone()).unwrap(),
                 )
             })
             .collect();
@@ -134,7 +136,28 @@ fn random_rounds_match_batch_for_every_chunk_size_and_reset() {
                 syndrome[detector * (width - 1) / 11] = if rng.random() { 0 } else { 7 };
             }
             let expected = batch.decode(&syndrome);
-            for (chunk, stream) in &mut streams {
+            for (chunk, stream, prediction) in &mut streams {
+                prediction.reset();
+                let _ = prediction.feed_prefix(&syndrome[..width / 2]);
+                let _ = prediction.advance_prediction();
+                prediction.reset();
+                let predicted = (|| {
+                    for detectors in syndrome.chunks(*chunk) {
+                        prediction.feed_prefix(detectors)?;
+                        prediction.advance_prediction()?;
+                    }
+                    prediction.flush_prediction()
+                })();
+                match (&predicted, &expected) {
+                    (Ok(predicted), Ok(expected)) => {
+                        assert_eq!(predicted, &expected.predicted);
+                        saw_pruning |= expected.dropped_states > 0;
+                        // Mixing fast advances with full flush must retain exact telemetry.
+                        assert_bit_identical(&prediction.flush().unwrap(), expected);
+                    }
+                    (Err(actual), Err(expected)) => assert_no_path(actual, expected),
+                    outcomes => panic!("prediction/batch mismatch: {outcomes:?}"),
+                }
                 stream.reset();
                 let _ = stream.feed_prefix(&syndrome[..width / 2]);
                 let _ = stream.advance();
@@ -176,6 +199,7 @@ fn random_rounds_match_batch_for_every_chunk_size_and_reset() {
             }
         }
     }
+    assert!(saw_pruning, "exercise actual pruning");
     assert!(
         saw_early_commitment,
         "must commit a toggled logical before the last column"

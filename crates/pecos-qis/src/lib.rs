@@ -98,6 +98,8 @@ pub mod ccengine;
 pub mod engine_builder;
 pub mod interface_impl;
 pub mod program;
+#[cfg(any(feature = "selene", test))]
+mod qir_detection;
 
 pub use ccengine::{LoweredQuantumGateTrace, OperationTraceChunk, OperationTraceStore, QisEngine};
 pub use engine_builder::{QisEngineBuilder, qis_engine};

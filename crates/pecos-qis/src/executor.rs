@@ -2351,6 +2351,56 @@ impl Default for QisHeliosInterface {
     }
 }
 
+/// Validate before creating or consulting cached program libraries. QIR shares
+/// symbol names with QIS, but passes pointer handles to different signatures.
+fn validate_qis_dialect(bytes: &[u8], format: ProgramFormat) -> Result<(), InterfaceError> {
+    let disassembled;
+    let ir = if format == ProgramFormat::LlvmIrText {
+        std::str::from_utf8(bytes).map_err(|error| {
+            InterfaceError::InvalidFormat(format!("LLVM IR is not UTF-8: {error}"))
+        })?
+    } else {
+        // Use the same LLVM installation as the compiler, including builds
+        // without the optional inkwell/llvm feature.
+        let mut bitcode = NamedTempFile::with_suffix(".bc").map_err(|error| {
+            InterfaceError::LoadError(format!("Failed to create bitcode validation file: {error}"))
+        })?;
+        bitcode
+            .write_all(bytes)
+            .and_then(|()| bitcode.flush())
+            .map_err(|error| {
+                InterfaceError::LoadError(format!(
+                    "Failed to write bitcode for validation: {error}"
+                ))
+            })?;
+        let output = Command::new(find_llvm_tool("llvm-dis"))
+            .arg(bitcode.path())
+            .args(["-o", "-"])
+            .output()
+            .map_err(|error| {
+                InterfaceError::LoadError(format!(
+                    "Failed to run llvm-dis for QIS validation: {error}"
+                ))
+            })?;
+        if !output.status.success() {
+            return Err(InterfaceError::InvalidFormat(format!(
+                "Failed to disassemble QIS bitcode: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )));
+        }
+        disassembled = String::from_utf8(output.stdout).map_err(|error| {
+            InterfaceError::InvalidFormat(format!("Disassembled LLVM IR is not UTF-8: {error}"))
+        })?;
+        &disassembled
+    };
+    if let Some(reason) = crate::qir_detection::qir_reason(ir) {
+        return Err(InterfaceError::InvalidFormat(format!(
+            "QIS input contains {reason}; convert QIR to QIS first"
+        )));
+    }
+    Ok(())
+}
+
 impl QisInterface for QisHeliosInterface {
     fn load_program(
         &mut self,
@@ -2364,6 +2414,7 @@ impl QisInterface for QisHeliosInterface {
         // Check if Helios can handle this format
         match format {
             ProgramFormat::QisBitcode | ProgramFormat::LlvmBitcode | ProgramFormat::LlvmIrText => {
+                validate_qis_dialect(program_bytes, format)?;
                 debug!("Format is compatible, storing program...");
                 self.program = program_bytes.to_vec();
                 self.format = format;
@@ -2659,6 +2710,59 @@ mod tests {
     use super::*;
     use crate::test_env::{ENV_MUTEX, EnvVarGuard};
     use std::fs::File;
+
+    fn assemble_test_bitcode(ir: &str) -> Vec<u8> {
+        let mut source = NamedTempFile::with_suffix(".ll").unwrap();
+        source.write_all(ir.as_bytes()).unwrap();
+        source.flush().unwrap();
+        let bitcode = NamedTempFile::with_suffix(".bc").unwrap();
+        let assembled = Command::new(find_llvm_tool("llvm-as"))
+            .arg(source.path())
+            .arg("-o")
+            .arg(bitcode.path())
+            .output()
+            .expect("LLVM assembler used by QIS must be installed");
+        assert!(
+            assembled.status.success(),
+            "{}",
+            String::from_utf8_lossy(&assembled.stderr)
+        );
+        std::fs::read(bitcode.path()).unwrap()
+    }
+
+    #[test]
+    fn accepts_qis_in_both_bitcode_formats() {
+        let bytes = assemble_test_bitcode(
+            r#"
+define i64 @qmain(i64 %arg) #0 { ret i64 0 }
+declare void @__quantum__qis__h__body(i64)
+declare i32 @__quantum__qis__mz__body(i64)
+declare i32 @__quantum__qis__m__body(i64, i64)
+declare void @__quantum__rt__result_record_output(ptr, ptr)
+attributes #0 = { "EntryPoint" }
+"#,
+        );
+        for format in [ProgramFormat::QisBitcode, ProgramFormat::LlvmBitcode] {
+            validate_qis_dialect(&bytes, format)
+                .expect("integer-handle QIS bitcode must pass dialect validation");
+        }
+    }
+
+    #[test]
+    fn rejects_qir_in_both_bitcode_formats() {
+        // Signature-only QIR: the bitcode route must not depend on profile
+        // attributes or on the optional LLVM Rust bindings.
+        let bytes = assemble_test_bitcode("declare void @__quantum__qis__mz__body(ptr, ptr)\n");
+        for format in [ProgramFormat::QisBitcode, ProgramFormat::LlvmBitcode] {
+            let error = QisHeliosInterface::new()
+                .load_program(&bytes, format)
+                .expect_err("bitcode must get the same QIR guard as textual IR");
+            assert!(
+                error.to_string().contains("convert QIR to QIS first"),
+                "{error}"
+            );
+        }
+    }
 
     #[test]
     fn interface_drop_preserves_tls_mitigation_and_collection_frees_once() {

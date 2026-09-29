@@ -42,6 +42,9 @@ use pecos_simulators::{BitmaskPauliProp, CliffordGateable};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 
+mod stratified;
+pub use stratified::{FaultCountError, FaultCountPmf, FaultStratumCounts, StratifiedEstimate};
+
 pub use super::propagator::UnsupportedGateError;
 use super::propagator::{
     UnsupportedGateLocation, is_supported_noop_or_metadata_gate, is_supported_prep_gate,
@@ -765,6 +768,66 @@ impl FaultCatalog {
     }
 }
 
+/// Construct effects and stored probabilities for an ascending location selection.
+fn build_fault_configuration(
+    catalog: &FaultCatalog,
+    location_indices: Vec<usize>,
+    alternative_indices: Vec<usize>,
+) -> FaultConfiguration {
+    let mut meas_set = std::collections::BTreeSet::new();
+    let mut det_set = std::collections::BTreeSet::new();
+    let mut obs_set = std::collections::BTreeSet::new();
+    let mut tracked_pauli_set = std::collections::BTreeSet::new();
+    let mut selected_prob = 1.0;
+
+    for (&location_index, &alternative_index) in location_indices.iter().zip(&alternative_indices) {
+        let loc = &catalog.locations[location_index];
+        let alt = &loc.faults[alternative_index];
+        selected_prob *= alt.absolute_probability;
+        for &m in &alt.affected_measurements {
+            if !meas_set.remove(&m) {
+                meas_set.insert(m);
+            }
+        }
+        for &d in &alt.affected_detectors {
+            if !det_set.remove(&d) {
+                det_set.insert(d);
+            }
+        }
+        for &o in &alt.affected_observables {
+            if !obs_set.remove(&o) {
+                obs_set.insert(o);
+            }
+        }
+        for &op in &alt.affected_tracked_paulis {
+            if !tracked_pauli_set.remove(&op) {
+                tracked_pauli_set.insert(op);
+            }
+        }
+    }
+
+    let selected_set: std::collections::BTreeSet<usize> =
+        location_indices.iter().copied().collect();
+    let unselected_no_fault: f64 = catalog
+        .locations
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| !selected_set.contains(i))
+        .map(|(_, loc)| loc.no_fault_probability)
+        .product();
+
+    FaultConfiguration {
+        location_indices,
+        alternative_indices,
+        affected_measurements: meas_set.into_iter().collect(),
+        affected_detectors: det_set.into_iter().collect(),
+        affected_observables: obs_set.into_iter().collect(),
+        affected_tracked_paulis: tracked_pauli_set.into_iter().collect(),
+        selected_probability: selected_prob,
+        configuration_probability: selected_prob * unselected_no_fault,
+    }
+}
+
 /// Internal cursor for k-fault configuration iteration.
 ///
 /// Holds the combination/alternative state machine. Shared by both
@@ -861,90 +924,18 @@ impl FaultConfigCursor {
 
     /// Build a `FaultConfiguration` from the current cursor state + catalog data.
     fn build(&self, catalog: &FaultCatalog) -> FaultConfiguration {
-        if self.k == 0 {
-            let no_fault_prob: f64 = catalog
-                .locations
-                .iter()
-                .map(|l| l.no_fault_probability)
-                .product();
-            return FaultConfiguration {
-                location_indices: Vec::new(),
-                alternative_indices: Vec::new(),
-                affected_measurements: Vec::new(),
-                affected_detectors: Vec::new(),
-                affected_observables: Vec::new(),
-                affected_tracked_paulis: Vec::new(),
-                selected_probability: 1.0,
-                configuration_probability: no_fault_prob,
-            };
-        }
-
-        let mut meas_set = std::collections::BTreeSet::new();
-        let mut det_set = std::collections::BTreeSet::new();
-        let mut obs_set = std::collections::BTreeSet::new();
-        let mut tracked_pauli_set = std::collections::BTreeSet::new();
-        let mut selected_prob = 1.0;
-
-        for i in 0..self.k {
-            let location_index = self.location_indices[self.combo[i]];
-            let alternative_index = self.alternative_indices[self.combo[i]][self.alt_indices[i]];
-            let loc = &catalog.locations[location_index];
-            let alt = &loc.faults[alternative_index];
-            selected_prob *= alt.absolute_probability;
-            for &m in &alt.affected_measurements {
-                if !meas_set.remove(&m) {
-                    meas_set.insert(m);
-                }
-            }
-            for &d in &alt.affected_detectors {
-                if !det_set.remove(&d) {
-                    det_set.insert(d);
-                }
-            }
-            for &o in &alt.affected_observables {
-                if !obs_set.remove(&o) {
-                    obs_set.insert(o);
-                }
-            }
-            for &op in &alt.affected_tracked_paulis {
-                if !tracked_pauli_set.remove(&op) {
-                    tracked_pauli_set.insert(op);
-                }
-            }
-        }
-
-        let selected_set: std::collections::BTreeSet<usize> = self
-            .combo
-            .iter()
-            .map(|&i| self.location_indices[i])
-            .collect();
-        let unselected_no_fault: f64 = catalog
-            .locations
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| !selected_set.contains(i))
-            .map(|(_, loc)| loc.no_fault_probability)
-            .product();
-
-        FaultConfiguration {
-            location_indices: self
-                .combo
+        build_fault_configuration(
+            catalog,
+            self.combo
                 .iter()
                 .map(|&i| self.location_indices[i])
                 .collect(),
-            alternative_indices: self
-                .combo
+            self.combo
                 .iter()
-                .zip(self.alt_indices.iter())
+                .zip(&self.alt_indices)
                 .map(|(&loc_pos, &alt_pos)| self.alternative_indices[loc_pos][alt_pos])
                 .collect(),
-            affected_measurements: meas_set.into_iter().collect(),
-            affected_detectors: det_set.into_iter().collect(),
-            affected_observables: obs_set.into_iter().collect(),
-            affected_tracked_paulis: tracked_pauli_set.into_iter().collect(),
-            selected_probability: selected_prob,
-            configuration_probability: selected_prob * unselected_no_fault,
-        }
+        )
     }
 
     /// Drive the iterator: yield next configuration or None.

@@ -40,8 +40,13 @@ use tensor::{
 // consume that entire budget one boundary-passing gate at a time.
 const ISOMETRY_PRESERVING_UNITARY_TOLERANCE: f64 = 1e-12;
 
+#[cfg(test)]
+std::thread_local! {
+    pub(crate) static NORM_SQUARED_EVALUATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// Configuration for MPS truncation.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct MpsConfig {
     /// Maximum bond dimension (hard cap). Singular values beyond this are discarded.
     pub max_bond_dim: usize,
@@ -62,6 +67,24 @@ pub struct MpsConfig {
     pub max_truncation_error: Option<f64>,
     /// Use rayon for parallelizing independent MPS operations.
     pub parallel: bool,
+}
+
+impl MpsConfig {
+    pub(crate) fn without_truncation(&self, physical_rank_ceiling: usize) -> Self {
+        Self {
+            max_bond_dim: physical_rank_ceiling,
+            svd_cutoff: 0.0,
+            max_truncation_error: Some(0.0),
+            ..self.clone()
+        }
+    }
+
+    pub(crate) fn cannot_truncate(&self, physical_rank_ceiling: usize) -> bool {
+        let mut effective = self.clone();
+        // A cap above the physical Schmidt rank is equivalent to the ceiling.
+        effective.max_bond_dim = effective.max_bond_dim.min(physical_rank_ceiling);
+        effective == self.without_truncation(physical_rank_ceiling)
+    }
 }
 
 impl Default for MpsConfig {
@@ -830,6 +853,8 @@ impl Mps {
     #[must_use]
     pub fn norm_squared(&self) -> f64 {
         // Contract from left to right, building the transfer matrix product.
+        #[cfg(test)]
+        NORM_SQUARED_EVALUATIONS.set(NORM_SQUARED_EVALUATIONS.get() + 1);
         // E[alpha, beta] = sum_{sigma} A*[alpha, sigma] A[beta, sigma]
         // Start with E = 1x1 identity.
         let mut transfer = DMatrix::from_element(1, 1, Complex64::new(1.0, 0.0));
@@ -1710,6 +1735,31 @@ mod tests {
         #[cfg(debug_assertions)]
         assert!(mps.claimed_center_is_valid(2));
         assert_eq!(mps.clone().center, Some(2));
+    }
+
+    #[test]
+    fn non_truncating_config_matches_retry_at_and_above_physical_rank() {
+        let original = MpsConfig {
+            parallel: true,
+            ..MpsConfig::default()
+        };
+        let retry = original.without_truncation(4);
+        assert_eq!(
+            retry,
+            MpsConfig {
+                max_bond_dim: 4,
+                svd_cutoff: 0.0,
+                max_truncation_error: Some(0.0),
+                parallel: true,
+            }
+        );
+        assert!(retry.cannot_truncate(4));
+        let mut larger_cap = retry;
+        larger_cap.max_bond_dim = 8;
+        assert!(larger_cap.cannot_truncate(4));
+        larger_cap.svd_cutoff = -0.0;
+        larger_cap.max_truncation_error = Some(-0.0);
+        assert!(larger_cap.cannot_truncate(4));
     }
 
     #[test]

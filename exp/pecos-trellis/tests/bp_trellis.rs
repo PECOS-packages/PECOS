@@ -10,8 +10,10 @@
 // either express or implied. See the License for the specific language governing permissions and
 // limitations under the License.
 
-use pecos_bp_trellis::{BpTrellisConfig, BpTrellisDecoder, EscalationRung, TrellisOrdering};
 use pecos_decoder_core::ObservableDecoder;
+use pecos_trellis::bp_trellis::{
+    BpTrellisConfig, BpTrellisDecoder, EscalationRung, TrellisOrdering,
+};
 use pecos_trellis::{
     DecoderError, ObsMask, SparseDem, TrellisConfig, TrellisDecoder, TrellisResult,
     backward_deadline_column_order, deadline_column_order,

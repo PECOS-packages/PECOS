@@ -46,8 +46,12 @@ def noise_sq_depolarizing_leakage(
         machine: Machine protocol handling qubit leakage states.
 
     Returns:
-        List of quantum operations including modified operation and noise,
-        or None if no noise or leakage occurs.
+        The operation once on qubits that were not leaked on entry, if any,
+        followed by faults in noise insertion order. Newly leaked qubits still
+        receive the operation before the leak operations. Returns None if no
+        fault fires and no input was already leaked. An empty list when all
+        inputs were already leaked means the operation was replaced by nothing;
+        a zero-argument operation is never emitted.
     """
     args = set(op.args)
     leaked = machine.leaked_qubits & args
@@ -76,19 +80,15 @@ def noise_sq_depolarizing_leakage(
 
     if noise or leaked:
         buffered_ops = []
-
-        if noise:
-            for sym, args in noise.items():
-                if sym == "L":
-                    leak_ops = machine.leak(set(noise["L"]))
-                    buffered_ops.extend(leak_ops)
-                else:
-                    buffered_ops.extend(
-                        (noisy_op, QOp(name=sym, args=args, metadata={})),
-                    )
-
-        else:
+        if noisy_op.args:
             buffered_ops.append(noisy_op)
+
+        for sym, args in noise.items():
+            if sym == "L":
+                leak_ops = machine.leak(set(args))
+                buffered_ops.extend(leak_ops)
+            else:
+                buffered_ops.append(QOp(name=sym, args=args, metadata={}))
 
         return buffered_ops
 

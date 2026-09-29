@@ -865,6 +865,15 @@ fn warn_if_wrong_llvm_version(tool_path: &Path, tool_name: &str) {
     }
 }
 
+fn link_error_message(stdout: &[u8], stderr: &[u8]) -> String {
+    // Clang and its platform linker can report errors on different streams.
+    format!(
+        "Linking failed: {}\n{}",
+        String::from_utf8_lossy(stderr),
+        String::from_utf8_lossy(stdout)
+    )
+}
+
 // FFI function types for dynamic circuit coordination
 // These must be called via the dynamically loaded library to use the same statics
 
@@ -2063,9 +2072,9 @@ entry:
                 }
             }
 
-            return Err(InterfaceError::LoadError(format!(
-                "Linking failed: {}",
-                String::from_utf8_lossy(&output.stderr)
+            return Err(InterfaceError::LoadError(link_error_message(
+                &output.stdout,
+                &output.stderr,
             )));
         }
 
@@ -2671,6 +2680,22 @@ mod tests {
     use super::*;
     use crate::test_env::{ENV_MUTEX, EnvVarGuard};
     use std::fs::File;
+
+    #[test]
+    fn link_error_preserves_diagnostics_from_both_streams() {
+        let symbol = b"program.obj : error LNK2019: unresolved external symbol get_current_shot";
+        let summary = b"clang: error: linker command failed with exit code 1120";
+        // MSVC's linker reports unresolved names on stdout, while clang puts
+        // its exit-code summary on stderr. Other linkers use stderr instead.
+        for (stdout, stderr) in [
+            (symbol.as_slice(), summary.as_slice()),
+            (summary.as_slice(), symbol.as_slice()),
+        ] {
+            let message = link_error_message(stdout, stderr);
+            assert!(message.contains("get_current_shot"), "{message}");
+            assert!(message.contains("exit code 1120"), "{message}");
+        }
+    }
 
     #[test]
     fn interface_drop_preserves_tls_mitigation_and_collection_frees_once() {

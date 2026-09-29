@@ -508,3 +508,69 @@ fn rejected_cells_pin_invalid_configuration_messages() {
 }
 
 const SCENARIO_COUNT: usize = 1242;
+
+#[path = "support/prediction_only.rs"]
+mod prediction_only;
+
+#[test]
+fn prediction_only_matches_detailed_and_preserves_next_call() {
+    let fixtures = fixtures();
+    for fixture in fixtures.binary {
+        let dem = sparse_dem(
+            fixture.mechanisms,
+            fixture.num_detectors,
+            fixture.num_observables,
+        );
+        for (_, config) in configurations(
+            false,
+            dem.mechanisms.len(),
+            fixture.score_alpha,
+            &fixture.name,
+            has_indistinguishable_mechanisms(&dem),
+        ) {
+            let mut decoder = TrellisDecoder::from_sparse_dem(&dem, config).unwrap();
+            for syndrome in fixture
+                .syndromes
+                .iter()
+                .map(|&mask| dense_syndrome(mask, fixture.num_detectors))
+                .chain([vec![0; fixture.num_detectors + 1]])
+            {
+                let mut fresh = decoder.fresh_worker();
+                prediction_only::check(
+                    &mut decoder,
+                    &mut fresh,
+                    &syndrome,
+                    TrellisDecoder::decode,
+                    fixture.num_observables > 64,
+                );
+            }
+        }
+    }
+    for fixture in fixtures.nary {
+        let model = fixture.model();
+        for (_, config) in configurations(
+            true,
+            fixture.factors.len(),
+            fixture.score_alpha,
+            &fixture.name,
+            false,
+        ) {
+            let mut decoder = TrellisDecoder::from_factor_model(&model, config).unwrap();
+            for syndrome in fixture
+                .syndromes
+                .iter()
+                .map(|&mask| dense_syndrome(mask, fixture.num_detectors))
+                .chain([vec![0; fixture.num_detectors + 1]])
+            {
+                let mut fresh = decoder.fresh_worker();
+                prediction_only::check(
+                    &mut decoder,
+                    &mut fresh,
+                    &syndrome,
+                    TrellisDecoder::decode,
+                    fixture.num_observables > 64,
+                );
+            }
+        }
+    }
+}

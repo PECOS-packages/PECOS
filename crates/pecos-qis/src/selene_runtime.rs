@@ -2537,6 +2537,11 @@ impl QisRuntime for SeleneRuntime {
 
     fn provide_measurement_outcomes(&mut self, measurements: BTreeMap<usize, u32>) -> Result<()> {
         self.check_batch_failure()?;
+        // Feedback can make previously blocked native operations ready. A drain
+        // preceding this delivery cannot certify the scheduler is still empty.
+        if self.scheduled_mode == Some(true) && !measurements.is_empty() {
+            self.scheduled_terminal_drained = false;
+        }
         debug!(
             "Received {} measurement results, num_results={}, allocated_results={:?}",
             measurements.len(),

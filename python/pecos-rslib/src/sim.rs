@@ -773,23 +773,26 @@ impl PySimBuilder {
                 }
 
                 if let Some(ref noise_py) = builder.noise_builder {
-                    sim_builder =
-                        if let Ok(general) = noise_py.extract::<PyGeneralNoiseModelBuilder>(py) {
-                            sim_builder.noise(general.validated_inner()?)
-                        } else if let Ok(depolarizing) =
-                            noise_py.extract::<PyDepolarizingNoiseModelBuilder>(py)
-                        {
-                            sim_builder.noise(depolarizing.inner.clone())
-                        } else if let Ok(biased) =
-                            noise_py.extract::<PyBiasedDepolarizingNoiseModelBuilder>(py)
-                        {
-                            sim_builder.noise(biased.inner.clone())
-                        } else {
-                            return Err(PyTypeError::new_err(
-                                "Unrecognized noise builder type; expected depolarizing_noise(), \
-                                 biased_depolarizing_noise(), or general_noise()",
-                            ));
-                        };
+                    sim_builder = if let Ok(scheduled) =
+                        noise_py.extract::<crate::engine_builders::PyScheduledIdleZ>(py)
+                    {
+                        sim_builder.noise(scheduled.inner)
+                    } else if let Ok(general) = noise_py.extract::<PyGeneralNoiseModelBuilder>(py) {
+                        sim_builder.noise(general.validated_inner()?)
+                    } else if let Ok(depolarizing) =
+                        noise_py.extract::<PyDepolarizingNoiseModelBuilder>(py)
+                    {
+                        sim_builder.noise(depolarizing.inner.clone())
+                    } else if let Ok(biased) =
+                        noise_py.extract::<PyBiasedDepolarizingNoiseModelBuilder>(py)
+                    {
+                        sim_builder.noise(biased.inner.clone())
+                    } else {
+                        return Err(PyTypeError::new_err(
+                            "Unrecognized noise builder type; expected depolarizing_noise(), \
+                                 biased_depolarizing_noise(), general_noise(), or scheduled_idle_z()",
+                        ));
+                    };
                 }
 
                 if shots == 0 {
@@ -966,7 +969,13 @@ impl PySimBuilder {
                 // Apply noise builder if present
                 if let Some(ref noise_py) = builder.noise_builder {
                     sim_builder = Python::attach(|py| -> PyResult<_> {
-                        if let Ok(general) = noise_py.extract::<PyGeneralNoiseModelBuilder>(py) {
+                        if let Ok(scheduled) =
+                            noise_py.extract::<crate::engine_builders::PyScheduledIdleZ>(py)
+                        {
+                            Ok(sim_builder.noise(scheduled.inner))
+                        } else if let Ok(general) =
+                            noise_py.extract::<PyGeneralNoiseModelBuilder>(py)
+                        {
                             Ok(sim_builder.noise(general.validated_inner()?))
                         } else if let Ok(depolarizing) =
                             noise_py.extract::<PyDepolarizingNoiseModelBuilder>(py)
@@ -979,7 +988,7 @@ impl PySimBuilder {
                         } else {
                             Err(PyTypeError::new_err(
                                 "Unrecognized noise builder type; expected depolarizing_noise(), \
-                                 biased_depolarizing_noise(), or general_noise()",
+                                 biased_depolarizing_noise(), general_noise(), or scheduled_idle_z()",
                             ))
                         }
                     })?;
@@ -1188,7 +1197,12 @@ impl PySimBuilder {
                     // Apply noise builder if present
                     if let Some(ref noise_py) = builder.noise_builder {
                         sim_builder = Python::attach(|py| -> PyResult<_> {
-                            if let Ok(general) = noise_py.extract::<PyGeneralNoiseModelBuilder>(py)
+                            if let Ok(scheduled) =
+                                noise_py.extract::<crate::engine_builders::PyScheduledIdleZ>(py)
+                            {
+                                Ok(sim_builder.noise(scheduled.inner))
+                            } else if let Ok(general) =
+                                noise_py.extract::<PyGeneralNoiseModelBuilder>(py)
                             {
                                 Ok(sim_builder.noise(general.validated_inner()?))
                             } else if let Ok(depolarizing) =
@@ -1202,7 +1216,7 @@ impl PySimBuilder {
                             } else {
                                 Err(PyTypeError::new_err(
                                     "Unrecognized noise builder type; expected depolarizing_noise(), \
-                                 biased_depolarizing_noise(), or general_noise()",
+                                 biased_depolarizing_noise(), general_noise(), or scheduled_idle_z()",
                                 ))
                             }
                         })?;
@@ -1388,7 +1402,12 @@ impl PySimBuilder {
                     // Apply noise builder if present
                     if let Some(ref noise_py) = builder.noise_builder {
                         sim_builder = Python::attach(|py| -> PyResult<_> {
-                            if let Ok(general) = noise_py.extract::<PyGeneralNoiseModelBuilder>(py)
+                            if let Ok(scheduled) =
+                                noise_py.extract::<crate::engine_builders::PyScheduledIdleZ>(py)
+                            {
+                                Ok(sim_builder.noise(scheduled.inner))
+                            } else if let Ok(general) =
+                                noise_py.extract::<PyGeneralNoiseModelBuilder>(py)
                             {
                                 Ok(sim_builder.noise(general.validated_inner()?))
                             } else if let Ok(depolarizing) =
@@ -1402,7 +1421,7 @@ impl PySimBuilder {
                             } else {
                                 Err(PyTypeError::new_err(
                                     "Unrecognized noise builder type; expected depolarizing_noise(), \
-                                 biased_depolarizing_noise(), or general_noise()",
+                                 biased_depolarizing_noise(), general_noise(), or scheduled_idle_z()",
                                 ))
                             }
                         })?;
@@ -1607,7 +1626,9 @@ fn apply_noise_to_facade(
     };
 
     Python::attach(|py| -> PyResult<_> {
-        if let Ok(general) = noise_py.extract::<PyGeneralNoiseModelBuilder>(py) {
+        if let Ok(scheduled) = noise_py.extract::<crate::engine_builders::PyScheduledIdleZ>(py) {
+            Ok(facade.noise(scheduled.inner))
+        } else if let Ok(general) = noise_py.extract::<PyGeneralNoiseModelBuilder>(py) {
             Ok(facade.noise(general.validated_inner()?))
         } else if let Ok(depolarizing) = noise_py.extract::<PyDepolarizingNoiseModelBuilder>(py) {
             Ok(facade.noise(depolarizing.inner.clone()))
@@ -1616,7 +1637,7 @@ fn apply_noise_to_facade(
         } else {
             Err(PyTypeError::new_err(
                 "Unrecognized noise builder type; expected depolarizing_noise(), \
-                 biased_depolarizing_noise(), or general_noise()",
+                 biased_depolarizing_noise(), general_noise(), or scheduled_idle_z()",
             ))
         }
     })

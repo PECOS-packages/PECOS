@@ -79,6 +79,7 @@ pub mod prelude;
 pub mod qis_interface;
 pub mod runtime;
 pub mod scheduled;
+mod scheduled_transport;
 
 pub use qis_interface::{
     BoxedInterface, DynamicSyncHandle, InterfaceError, ProgramFormat, QisInterface,

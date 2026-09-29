@@ -296,6 +296,29 @@ pytest *args:
 python-ci-core profile="debug": (validate-profile "python-ci-core" profile) (python-ci-build-test profile)
     just pytest-ci-core
 
+# Run pecos-rslib's own Rust unit tests. `pecos rust test` excludes this crate
+# (FFI_CRATES in crates/pecos-cli/src/cli/rust_cmd.rs) for build time, so without
+# this recipe they never run anywhere and a guard written there is decoration --
+# ten of them were failing unnoticed before this was wired up. It lives on the
+# Python lane because that lane already builds the crate, so the marginal cost is
+# the test run itself. The test binary links libpython, so point the loader at the
+# interpreter's library directory.
+[group('test')]
+rslib-rust-test:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # Three separate things are needed, and each fails differently without it:
+    #   PYO3_PYTHON (from `pecos env`) lets the link resolve -lpython;
+    #   LD_LIBRARY_PATH lets the built binary load libpython at startup;
+    #   PYTHONHOME lets the EMBEDDED interpreter find its stdlib -- without it the
+    #     run dies with "Fatal Python error: init_fs_encoding".
+    # `pecos env` overwrites LD_LIBRARY_PATH, so append after evaluating it.
+    eval "$({{pecos}} env)"
+    read -r LIBDIR BASE_PREFIX <<< "$(uv run --frozen python -c 'import sys, sysconfig; print(sysconfig.get_config_var("LIBDIR"), sys.base_prefix)')"
+    PYTHONHOME="$BASE_PREFIX" \
+      LD_LIBRARY_PATH="$LIBDIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+      cargo test --locked -p pecos-rslib --lib
+
 # Fast Python validation for PR CI. Selene plugin coverage stays in its own workflow.
 [group('test')]
 pytest-ci-core:
@@ -332,6 +355,11 @@ pytest-ci-core-shard shard:
         uv run --frozen pytest -n auto "$QP/qec" --ignore="$QP/qec/surface" "$QP/guppy" -m "$CORE_MARKERS"
         ;;
       rest)
+        # pecos-rslib's own Rust unit tests ride this shard: it is a required
+        # check that runs on pull requests and has already built the crate, so
+        # the marginal cost is the test run. `python-ci-core` cannot host them --
+        # its heavy step is post-merge only and skips on a pull request.
+        just rslib-rust-test
         uv run --frozen pytest -n auto python/pecos-rslib/tests -m "not performance"
         uv run --frozen --group numpy-compat pytest -n auto python/pecos-rslib/tests -m "numpy and not performance"
         uv run --frozen pytest -n auto "$QP" --ignore="$QP/qec" --ignore="$QP/guppy" -m "$CORE_MARKERS"

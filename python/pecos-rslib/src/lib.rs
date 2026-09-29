@@ -374,6 +374,8 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(engine_builders::phir_json_engine, m)?)?;
     m.add_function(wrap_pyfunction!(engine_builders::phir_engine, m)?)?;
     m.add_function(wrap_pyfunction!(engine_builders::sim_builder, m)?)?;
+    m.add_class::<engine_builders::PyScheduledIdleZ>()?;
+    m.add_function(wrap_pyfunction!(engine_builders::scheduled_idle_z, m)?)?;
     m.add_function(wrap_pyfunction!(engine_builders::general_noise, m)?)?;
     m.add_function(wrap_pyfunction!(engine_builders::depolarizing_noise, m)?)?;
     m.add_function(wrap_pyfunction!(

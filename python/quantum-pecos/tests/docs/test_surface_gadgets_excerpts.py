@@ -55,14 +55,14 @@ def rendered_sources() -> dict[tuple[str, str], list[str]]:
         **{f"Preparation in {basis}": gadgets.prep_gadget(patch, allocation, basis=basis) for basis in "ZXY"},
         "Initial syndrome projection": gadgets.init_syndrome_gadget(patch, allocation, basis="Z"),
         "Syndrome round": gadgets.syndrome_round_gadget(patch, allocation, round_index=0, x_z_swapped=True),
-        "Fold-transversal S": gadgets.fold_s_round_gadget(patch, allocation, round_index=0),
+        "Fold-transversal SZ": gadgets.fold_sz_round_gadget(patch, allocation, round_index=0),
         "Measure-out": gadgets.measure_out_gadget(patch, allocation, basis="X"),
         "Logical Pauli": gadgets.logical_pauli_gadget(patch, allocation, pauli="X"),
         "Transversal H": gadgets.transversal_layer_gadget(patch, allocation, gate="H"),
         "Transversal CX": gadgets.transversal_cx_gadget(patch, allocation, patch, target),
     }
     sources = {section: render_gadget_function(gadget) for section, gadget in definitions.items()}
-    sources["Physical S and S-dagger layers"] = [
+    sources["Physical SZ and SZdg layers"] = [
         line
         for gate in ("SZ", "SZDG")
         for line in render_gadget_function(gadgets.transversal_layer_gadget(patch, allocation, gate=gate))

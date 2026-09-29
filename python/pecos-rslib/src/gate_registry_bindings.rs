@@ -54,6 +54,7 @@ fn parse_gate_type(name: &str) -> PyResult<GateType> {
         "RXX" => Ok(GateType::RXX),
         "RYY" => Ok(GateType::RYY),
         "RZZ" => Ok(GateType::RZZ),
+        "RXYXY2Q" => Ok(GateType::RXYXY2Q),
         "RXXRYYRZZ" => Ok(GateType::RXXRYYRZZ),
         "CCX" | "Toffoli" => Ok(GateType::CCX),
         "Measure" | "MZ" => Ok(GateType::MZ),
@@ -67,6 +68,19 @@ fn parse_gate_type(name: &str) -> PyResult<GateType> {
         _ => Err(pyo3::exceptions::PyValueError::new_err(format!(
             "Unknown gate type: '{name}'"
         ))),
+    }
+}
+
+fn lower_two_qubit_rotation(gate: GateType, angle: Angle64) -> Option<Vec<(GateType, Vec<usize>)>> {
+    if let Some(named) = try_simplify_rotation_snapped(gate, angle) {
+        if named == GateType::I {
+            Some(vec![(named, vec![0]), (named, vec![1])])
+        } else {
+            Some(vec![(named, vec![0, 1])])
+        }
+    } else {
+        half_turn_decomposition_snapped(gate, angle)
+            .map(|pauli| vec![(pauli, vec![0]), (pauli, vec![1])])
     }
 }
 
@@ -91,7 +105,8 @@ fn lower_clifford_rotation(
         | GateType::RZZ
         | GateType::RXX
         | GateType::RYY
-        | GateType::RXY1Q => {}
+        | GateType::RXY1Q
+        | GateType::RXYXY2Q => {}
         _ => {
             return Err(pyo3::exceptions::PyValueError::new_err(format!(
                 "{symbol} is unsupported by lower_clifford_rotation"
@@ -114,25 +129,28 @@ fn lower_clifford_rotation(
         GateType::RZ | GateType::RX | GateType::RY => {
             try_simplify_rotation_snapped(gate, angles[0]).map(|named| vec![(named, vec![0])])
         }
-        GateType::RZZ | GateType::RXX | GateType::RYY => {
-            if let Some(named) = try_simplify_rotation_snapped(gate, angles[0]) {
-                if named == GateType::I {
-                    Some(vec![(named, vec![0]), (named, vec![1])])
-                } else {
-                    Some(vec![(named, vec![0, 1])])
-                }
+        GateType::RZZ | GateType::RXX | GateType::RYY => lower_two_qubit_rotation(gate, angles[0]),
+        GateType::RXYXY2Q => {
+            if try_simplify_rotation_snapped(GateType::RXX, angles[0]) == Some(GateType::I) {
+                lower_two_qubit_rotation(GateType::RXX, angles[0])
             } else {
-                half_turn_decomposition_snapped(gate, angles[0])
-                    .map(|pauli| vec![(pauli, vec![0]), (pauli, vec![1])])
+                try_simplify_rotation_snapped(GateType::RZ, angles[1]).and_then(|axis| {
+                    let rotation = if matches!(axis, GateType::SZ | GateType::SZdg) {
+                        GateType::RYY
+                    } else {
+                        GateType::RXX
+                    };
+                    lower_two_qubit_rotation(rotation, angles[0])
+                })
             }
         }
         _ => unreachable!(),
     };
 
     let lowered = lowered.ok_or_else(|| {
-        let message = if gate == GateType::RXY1Q {
+        let message = if matches!(gate, GateType::RXY1Q | GateType::RXYXY2Q) {
             format!(
-                "RXY1Q(theta={}, phi={}) is not a Clifford rotation",
+                "{gate}(theta={}, phi={}) is not a Clifford rotation",
                 angles[0], angles[1]
             )
         } else {

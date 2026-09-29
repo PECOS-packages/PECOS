@@ -235,6 +235,11 @@ build profile="debug": _msvc-bootstrap (validate-profile "build" profile) setup-
         just julia-build "$PROFILE"
     fi
 
+# Build the bare-Wasm Frontier decoder, optionally embedding a flattened Stim DEM
+[group('build')]
+build-frontier-wasm dem="":
+    uv run --frozen python scripts/build_frontier_wasm.py {{quote(dem)}}
+
 # Build PECOS without dependency setup or sync (profile: dev/debug, release, native)
 [group('build')]
 build-lite profile="debug": _msvc-bootstrap (validate-profile "build-lite" profile) (build-selene profile)

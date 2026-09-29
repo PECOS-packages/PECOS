@@ -381,7 +381,15 @@ fn internal_step_diagnostics(
     let mut mps = input_mps.clone();
     if is_mps_trivial(&mps) {
         let previous = dense_pair(template, &tableau, &mps);
-        canonicalize_trivial_mps_basis(&mut tableau, &mut mps, None);
+        #[cfg(debug_assertions)]
+        let norm_squared = mps.norm_squared();
+        canonicalize_trivial_mps_basis(
+            &mut tableau,
+            &mut mps,
+            None,
+            #[cfg(debug_assertions)]
+            norm_squared,
+        );
         record_internal(
             &mut records,
             "canonicalize_trivial_mps_basis",
@@ -753,7 +761,15 @@ fn trace_forced_step(
     eprintln!("trace q={qubit} outcome={outcome}");
 
     if is_mps_trivial(&mps) {
-        canonicalize_trivial_mps_basis(&mut tableau, &mut mps, None);
+        #[cfg(debug_assertions)]
+        let norm_squared = mps.norm_squared();
+        canonicalize_trivial_mps_basis(
+            &mut tableau,
+            &mut mps,
+            None,
+            #[cfg(debug_assertions)]
+            norm_squared,
+        );
         print_comparison(
             "canonicalize_trivial_mps_basis",
             &dense_pair(template, &tableau, &mps),

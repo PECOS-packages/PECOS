@@ -26,6 +26,7 @@ if TYPE_CHECKING:
 
 import cupy as cp
 from pytket import Qubit
+from pytket.circuit import Op, OpType
 
 import pecos as pc
 from pecos.simulators.mps_pytket.gates_one_qubit import RZ, SX, H, SXdg
@@ -170,6 +171,22 @@ def RYY(
         ],
         dtype=state.dtype,
     )
+    _apply_two_qubit_matrix(state, qubits, matrix)
+
+
+def RXYXY2Q(
+    state: MPS,
+    qubits: tuple[int, int],
+    angles: tuple[float, float],
+    **_params: SimulatorGateParams,
+) -> None:
+    """Apply pytket's exact PhasedXX equivalent (angles are in half-turns)."""
+    if len(angles) != 2:
+        msg = "RXYXY2Q requires exactly 2 angle parameters."
+        raise ValueError(msg)
+    theta, phi = angles
+    gate = Op.create(OpType.PhasedXX, [theta / pc.f64.pi, phi / pc.f64.pi])
+    matrix = cp.asarray(gate.get_unitary(), dtype=state.dtype)
     _apply_two_qubit_matrix(state, qubits, matrix)
 
 

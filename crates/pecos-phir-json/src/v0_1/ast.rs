@@ -1,3 +1,4 @@
+use pecos_core::errors::PecosError;
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::f64::consts::PI;
@@ -199,6 +200,9 @@ impl<'de> Deserialize<'de> for Operation {
                 .get("returns")
                 .map_or(Ok(vec![]), |v| serde_json::from_value(v.clone()))
                 .map_err(|e| D::Error::custom(format!("returns: {e}")))?;
+            if qop == "RXYXY2Q" {
+                validate_rxyxy2q_args(angles.as_deref(), &args).map_err(D::Error::custom)?;
+            }
             let metadata = extract_metadata(obj);
             Ok(Operation::QuantumOp {
                 qop,
@@ -324,27 +328,41 @@ impl<'de> Deserialize<'de> for Operation {
                 .as_str()
                 .ok_or_else(|| D::Error::custom("data must be a string"))?
                 .to_string();
-            if obj.contains_key("variables") {
+            if obj.contains_key("variables") && data != "qvar_define" && data != "cvar_define" {
                 // DataExport
                 let variables: Vec<String> = serde_json::from_value(obj["variables"].clone())
                     .map_err(|e| D::Error::custom(format!("variables: {e}")))?;
                 Ok(Operation::DataExport { data, variables })
             } else {
                 // VariableDefinition
-                let data_type: String = obj
-                    .get("data_type")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| D::Error::custom("missing data_type"))?
-                    .to_string();
                 let variable: String = obj
                     .get("variable")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| D::Error::custom("missing variable"))?
                     .to_string();
-                let size: Option<usize> = obj
-                    .get("size")
-                    .and_then(serde_json::Value::as_u64)
-                    .and_then(|n| usize::try_from(n).ok());
+                let data_type = obj
+                    .get("data_type")
+                    .map(|value| {
+                        value.as_str().ok_or_else(|| {
+                            D::Error::custom(format!(
+                                "Register '{variable}' has invalid data_type {value}"
+                            ))
+                        })
+                    })
+                    .transpose()?;
+                let raw_size = obj.get("size").and_then(serde_json::Value::as_u64);
+                let (data_type, size) = if data == "qvar_define" {
+                    let (_, size) = validate_quantum_declaration(&variable, data_type, raw_size)
+                        .map_err(D::Error::custom)?;
+                    ("qubits".to_string(), Some(size))
+                } else {
+                    let data_type =
+                        data_type.ok_or_else(|| D::Error::custom("missing data_type"))?;
+                    (
+                        data_type.to_string(),
+                        raw_size.and_then(|n| usize::try_from(n).ok()),
+                    )
+                };
                 Ok(Operation::VariableDefinition {
                     data,
                     data_type,
@@ -402,6 +420,52 @@ pub enum Expression {
 // Constants for internal register naming
 pub const MEASUREMENT_PREFIX: &str = "measurement_";
 
+/// Validate a v0.1 quantum declaration: the type is optional and size must be positive.
+/// Duplicate handling belongs to callers: converter/interpreter reject duplicates;
+/// the processor accepts identical declarations because the engine visits them both
+/// while loading the header and during execution, but rejects conflicting ones.
+///
+/// # Errors
+/// Returns an input error for a non-qubit type, missing or zero size, or size overflow.
+pub fn validate_quantum_declaration<'a, S: TryInto<usize>>(
+    name: &'a str,
+    data_type: Option<&str>,
+    size: Option<S>,
+) -> Result<(&'a str, usize), PecosError> {
+    if let Some(data_type) = data_type
+        && data_type != "qubits"
+    {
+        return Err(PecosError::Input(format!(
+            "Quantum register '{name}' requires data_type 'qubits', found '{data_type}'"
+        )));
+    }
+    let size = size
+        .ok_or_else(|| PecosError::Input(format!("Quantum register '{name}' requires a size")))?;
+    let size = size
+        .try_into()
+        .map_err(|_| PecosError::Input(format!("Quantum register '{name}' size is too large")))?;
+    if size == 0 {
+        return Err(PecosError::Input(format!(
+            "Quantum register '{name}' requires a positive size"
+        )));
+    }
+    Ok((name, size))
+}
+
+/// Resolve declaration sizes without applying classical inference to quantum registers.
+pub(crate) fn declaration_size(
+    data: &str,
+    data_type: &str,
+    name: &str,
+    size: Option<usize>,
+) -> Result<usize, PecosError> {
+    if data == "qvar_define" {
+        validate_quantum_declaration(name, Some(data_type), size).map(|(_, size)| size)
+    } else {
+        Ok(infer_size(data_type, size))
+    }
+}
+
 /// Infer variable size from data type when not explicitly provided.
 ///
 /// For types like "i32", "u64", extracts the bit width from the name. A signed
@@ -422,6 +486,36 @@ pub fn infer_size(data_type: &str, explicit_size: Option<usize>) -> usize {
     } else {
         width
     }
+}
+
+/// Validate a two-angle rotation's PHIR qubit argument grouping.
+pub(crate) fn validate_rxyxy2q_args(
+    angles: Option<&[f64]>,
+    args: &[QubitArg],
+) -> Result<(), String> {
+    let mut count = 0;
+    for arg in args {
+        match arg {
+            QubitArg::MultipleQubits(pair) if pair.len() == 2 => count += 2,
+            _ => {
+                return Err("RXYXY2Q requires exactly two qubits per pair".to_string());
+            }
+        }
+    }
+    validate_rxyxy2q(angles, count)
+}
+
+/// Validate the angles and complete qubit pairs of an RXYXY2Q operation.
+pub(crate) fn validate_rxyxy2q(angles: Option<&[f64]>, qubit_count: usize) -> Result<(), String> {
+    if angles.is_none_or(|angles| angles.len() != 2) {
+        return Err("RXYXY2Q requires exactly two angles (theta, phi)".to_string());
+    }
+    if qubit_count == 0 || !qubit_count.is_multiple_of(2) {
+        return Err(format!(
+            "RXYXY2Q requires complete qubit pairs, got {qubit_count} qubits"
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

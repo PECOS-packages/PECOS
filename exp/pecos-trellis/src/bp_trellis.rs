@@ -18,21 +18,19 @@
 //! physics. Pruned results have no certified bound on discarded posterior
 //! mass. Belief propagation (BP) guides only which states pruning retains and
 //! never changes branch probabilities or mass arithmetic. It is not a wrap or
-//! port of an external project. The shared engine is PECOS-native; its
-//! bitwise parity pinning against an external reference implementation is
-//! maintained elsewhere and is not a constraint on this decoder.
+//! port of an external project. The shared engine is PECOS-native; see the
+//! crate documentation for how it is checked against an external reference.
 //!
 //! The facade owns one [`TrellisDecoder`] configured with PECOS's
-//! defaults, ordering semantics, and optional no-path escalation ladder. The
-//! trellis engine lives in `pecos-trellis`.
+//! defaults, ordering semantics, and optional no-path escalation ladder, on
+//! the engine in this crate.
 
-use pecos_decoder_core::ObservableDecoder;
-pub use pecos_trellis::TrellisOrdering;
-use pecos_trellis::{
-    DecoderError, MetricMode, ObsMask, PruneParams, SparseDem, TrellisConfig, TrellisDecodeAttempt,
-    TrellisDecoder, TrellisPrepared, TrellisResult,
+pub use crate::TrellisOrdering;
+use crate::{
+    DecodeMode, DecoderError, MetricMode, ObsMask, PruneParams, SparseDem, TrellisConfig,
+    TrellisDecodeAttempt, TrellisDecoder, TrellisPrepared, TrellisResult,
 };
-use std::time::Instant;
+use pecos_decoder_core::ObservableDecoder;
 
 /// A retry's pruning parameters on the shared model and prepared shot.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -212,7 +210,7 @@ impl BpTrellisDecoder {
     /// Construct a decoder from a sparse detector error model.
     ///
     /// Unlike [`TrellisDecoder`], the default ordering is the explicitly
-    /// computed [`pecos_trellis::deadline_column_order`], not input order.
+    /// computed [`crate::deadline_column_order`], not input order.
     /// Every escalation rung reuses the same immutable engine model.
     ///
     /// # Errors
@@ -221,12 +219,12 @@ impl BpTrellisDecoder {
     /// configuration fails validation.
     pub fn from_sparse_dem(dem: &SparseDem, config: BpTrellisConfig) -> Result<Self, DecoderError> {
         config.validate()?;
-        let build_started = Instant::now();
+        let build_started = crate::timer_start();
         let mut trellis_config = config.trellis_config();
         trellis_config.column_order = config.ordering.resolve(dem)?;
         let inner = TrellisDecoder::from_sparse_dem(dem, trellis_config)?;
         let escalation = config.escalation;
-        let build_seconds = build_started.elapsed().as_secs_f64();
+        let build_seconds = crate::timer_seconds(build_started);
         Ok(Self {
             inner,
             escalation,
@@ -258,7 +256,7 @@ impl BpTrellisDecoder {
         shots: &[Vec<u8>],
         workers: usize,
     ) -> Result<Vec<Result<TrellisResult, DecoderError>>, DecoderError> {
-        pecos_trellis::batch::decode_batch(shots, workers, || self.fresh_worker(), Self::decode)
+        crate::batch::decode_batch(shots, workers, || self.fresh_worker(), Self::decode)
     }
 
     fn fresh_worker(&self) -> Self {
@@ -280,12 +278,7 @@ impl BpTrellisDecoder {
         shots: &[Vec<u8>],
         workers: usize,
     ) -> Result<Vec<Result<BpTrellisOutcome, DecoderError>>, DecoderError> {
-        pecos_trellis::batch::decode_batch(
-            shots,
-            workers,
-            || self.fresh_worker(),
-            Self::decode_outcome,
-        )
+        crate::batch::decode_batch(shots, workers, || self.fresh_worker(), Self::decode_outcome)
     }
 
     /// Decode a shot, retrying only no-path attempts that dropped states.
@@ -378,7 +371,12 @@ impl BpTrellisDecoder {
 
 impl ObservableDecoder for BpTrellisDecoder {
     fn decode_obs(&mut self, syndrome: &[u8]) -> Result<ObsMask, DecoderError> {
-        Ok(self.decode(syndrome)?.predicted)
+        match self.decode_with_attempt(syndrome, |inner, params| {
+            inner.attempt_with_mode(params, DecodeMode::PredictionOnly)
+        })? {
+            BpTrellisOutcome::Decoded(result) => Ok(result.predicted),
+            BpTrellisOutcome::NoPath(report) => Err(report.into_error()),
+        }
     }
 
     fn decode_to_observables(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
@@ -387,7 +385,7 @@ impl ObservableDecoder for BpTrellisDecoder {
                 "decoder has more than 64 observables; use decode_obs() for the wide mask".into(),
             ));
         }
-        let decoded = self.decode(syndrome)?.predicted;
+        let decoded = self.decode_obs(syndrome)?;
         Ok(decoded.words().first().copied().unwrap_or(0))
     }
 }

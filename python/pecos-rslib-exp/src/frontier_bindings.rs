@@ -700,15 +700,36 @@ impl PyFrontierCommitteeDecoder {
     }
 
     /// Decode sparse fired-detector indices with both committee legs.
-    fn decode_from_defects(&mut self, defects: Vec<u64>) -> PyResult<PyFrontierCommitteeResult> {
+    /// parallel_legs=True runs the backward leg on a second thread with the GIL
+    /// released; the result is identical to the sequential decode.
+    #[pyo3(signature = (defects, *, parallel_legs=false))]
+    fn decode_from_defects(
+        &mut self,
+        py: Python<'_>,
+        defects: Vec<u64>,
+        parallel_legs: bool,
+    ) -> PyResult<PyFrontierCommitteeResult> {
         let syndrome = sparse_to_dense(&defects, self.num_detectors)?;
-        self.decode_syndrome(syndrome)
+        self.decode_syndrome(py, syndrome, parallel_legs)
     }
 
     /// Decode one dense detector syndrome with both committee legs.
-    fn decode_syndrome(&mut self, syndrome: Vec<u8>) -> PyResult<PyFrontierCommitteeResult> {
-        self.inner
-            .decode(&syndrome)
+    /// parallel_legs=True runs the backward leg on a second thread with the GIL
+    /// released; the result is identical to the sequential decode.
+    #[pyo3(signature = (syndrome, *, parallel_legs=false))]
+    fn decode_syndrome(
+        &mut self,
+        py: Python<'_>,
+        syndrome: Vec<u8>,
+        parallel_legs: bool,
+    ) -> PyResult<PyFrontierCommitteeResult> {
+        let decoded = if parallel_legs {
+            let inner = &mut self.inner;
+            py.detach(|| inner.decode_parallel(&syndrome))
+        } else {
+            self.inner.decode(&syndrome)
+        };
+        decoded
             .map(|inner| PyFrontierCommitteeResult {
                 inner,
                 num_observables: self.num_observables,

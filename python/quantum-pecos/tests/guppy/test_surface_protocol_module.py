@@ -692,3 +692,33 @@ def test_logical_y_readout_factory_ordered_body(patch):
         _expected_rounds("num_rounds", "a"),
         *_expected_readout("a", "x"),
     ]
+
+
+@pytest.mark.parametrize("rounds_before", [-1, 0])
+def test_sz_teleportation_factory_requires_projection(module, patch, rounds_before):
+    builder = LogicalCircuitBuilder()
+    builder.add_patch(patch, "D")
+    builder.add_patch(patch, "A", qubit_offset=patch.geometry.num_qubits)
+    message = r"SZ teleportation requires rounds_before.*resource sign before CX"
+    with pytest.raises(ValueError, match=message):
+        module["make_sz_teleportation"](rounds_before, 2, 2)
+    with pytest.raises(ValueError, match=message):
+        builder.add_sz_via_teleportation("D", "A", rounds_before, 2)
+
+
+@pytest.mark.parametrize(("recipe", "rounds_before"), [("sz", 1), ("t", 0)])
+def test_injection_factory_projection_boundary(module, patch, recipe, rounds_before):
+    builder = LogicalCircuitBuilder()
+    builder.add_patch(patch, "D")
+    builder.add_patch(patch, "A", qubit_offset=patch.geometry.num_qubits)
+    if recipe == "sz":
+        program = module["make_sz_teleportation"](rounds_before, 2, 2)
+        builder.add_sz_via_teleportation("D", "A", rounds_before, 2)
+        builder.add_memory("D", 2, "Z")
+    else:
+        program = module["make_t_injection"](rounds_before, 2)
+        builder.add_t_via_injection("D", "A", rounds_before, 2)
+    assert_same_measurement_partition(
+        measurement_partition_from_trace(program, 2 * patch.geometry.num_qubits, {"data": "D", "anc": "A"}),
+        measurement_partition_from_builder(builder),
+    )

@@ -6,8 +6,7 @@ import sys
 import textwrap
 from pathlib import Path
 
-
-QIR = '''
+QIR = """
 define void @main() #0 {
   call void @__quantum__qis__x__body(ptr null)
   call void @__quantum__qis__mz__body(ptr null, ptr inttoptr (i64 1 to ptr))
@@ -18,7 +17,7 @@ declare void @__quantum__qis__x__body(ptr)
 declare void @__quantum__qis__mz__body(ptr, ptr)
 declare void @__quantum__rt__result_record_output(ptr, ptr)
 attributes #0 = { "entry_point" "qir_profiles"="base_profile" "required_num_qubits"="2" "required_num_results"="2" }
-'''
+"""
 
 
 def test_qis_rejects_qir_before_execution(tmp_path: Path) -> None:

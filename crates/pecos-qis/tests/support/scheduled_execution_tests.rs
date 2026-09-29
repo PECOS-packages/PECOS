@@ -964,3 +964,19 @@ fn per_batch_execution_still_rejects_cross_batch_duplicate_measurement_ids() {
         }
     }
 }
+
+#[test]
+fn terminal_measurements_and_later_tail_are_all_executed() {
+    let mut first = batch(0, vec![pulse()]);
+    measurement(&mut first, 71);
+    let mut tail = batch(1, vec![pulse()]);
+    measurement(&mut tail, 72);
+    let mut executor = fixture_executor(Fixture {
+        batches: VecDeque::from([vec![first], vec![tail], vec![]]),
+        ..Default::default()
+    });
+    let (output, shot) = executor.finish_shot().unwrap();
+    assert_eq!(output.batches.len(), 2);
+    assert_eq!(output.measurements, BTreeMap::from([(71, 1), (72, 0)]));
+    assert_eq!(shot.measurements, BTreeMap::from([(71, true), (72, false)]));
+}

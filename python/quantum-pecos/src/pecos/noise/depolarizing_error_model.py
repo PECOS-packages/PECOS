@@ -21,7 +21,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pecos as pc
-from pecos.noise.noise_impl.gate_groups import one_qubits, two_qubits
+from pecos.noise.noise_impl.gate_groups import initializations, measurementsx, one_qubits, timing_ops, two_qubits
 from pecos.noise.noise_impl.noise_initz_bitflip import noise_initz_bitflip
 from pecos.noise.noise_impl.noise_meas_bitflip import noise_meas_bitflip
 from pecos.noise.noise_impl.noise_sq_depolarizing import noise_sq_depolarizing
@@ -147,6 +147,12 @@ class DepolarizingErrorModel:
         noisy_ops = []
 
         for op in qops:
+            if op.name in timing_ops:
+                msg = f"Noise for timing operation {op.name} is not implemented"
+                if op.metadata is not None and "duration" in op.metadata:
+                    msg += f" (duration={op.metadata['duration']})"
+                raise NotImplementedError(msg)
+
             qops_after = None
             qops_before = None
             erroneous_ops = None
@@ -156,7 +162,7 @@ class DepolarizingErrorModel:
             if op.metadata.get("noiseless"):
                 pass
 
-            elif op.name in {"init |0>", "Init", "Init +Z"}:
+            elif op.name in initializations:
                 qops_after = noise_initz_bitflip(
                     op,
                     p=self._eparams["p_prep"],
@@ -195,15 +201,11 @@ class DepolarizingErrorModel:
 
             # ########################################
             # MEASURE X NOISE
-            elif op.name in {"measure Z", "Measure", "Measure +Z"}:
+            elif op.name in measurementsx:
                 erroneous_ops = noise_meas_bitflip(
                     op,
                     p=self._eparams["p_meas"],
                 )
-
-            elif op.name in {"Transport", "Idle"}:
-                # TODO: Add optional noise model for transport and idle
-                erroneous_ops = []
 
             else:
                 msg = f"This error model doesn't handle gate: {op.name}!"

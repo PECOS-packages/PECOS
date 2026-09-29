@@ -50,7 +50,7 @@ def test_two_qubit_marginals_and_correlations_are_categorical(p: float) -> None:
     correlations = {
         tuple(nodes): probability for nodes, probability in exact_correlation_table(circuit, p2=p, prune=0.0)
     }
-    assert correlations[(0, 1)] == pytest.approx(4.0 * p / 15.0, abs=1e-12)
+    assert correlations[("D0", "D1")] == pytest.approx(4.0 * p / 15.0, abs=1e-12)
 
 
 @pytest.mark.parametrize("compress", [False, True])

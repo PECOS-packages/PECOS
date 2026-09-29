@@ -245,6 +245,37 @@ impl FrontierCommittee {
         let backward_attempt = self.backward.decode_attempt(syndrome);
         resolve_committee_attempts(forward_attempt, backward_attempt)
     }
+
+    /// Decode like [`Self::decode`], running the backward leg on a second thread.
+    ///
+    /// The legs share no state, so the result is identical to [`Self::decode`];
+    /// only the wall-clock latency changes. This spawns one scoped thread per
+    /// call, so combining it with multi-worker [`Self::decode_batch`] would use
+    /// two threads per batch worker.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`Self::decode`], plus `InternalError` when
+    /// the second thread cannot be spawned.
+    pub fn decode_parallel(
+        &mut self,
+        syndrome: &[u8],
+    ) -> Result<FrontierCommitteeResult, DecoderError> {
+        let Self {
+            forward, backward, ..
+        } = self;
+        let (forward_attempt, backward_attempt) = std::thread::scope(|scope| {
+            let backward_leg = std::thread::Builder::new()
+                .spawn_scoped(scope, || backward.decode_attempt(syndrome))
+                .map_err(|error| DecoderError::InternalError(error.to_string()))?;
+            let forward_attempt = forward.decode_attempt(syndrome);
+            let backward_attempt = backward_leg
+                .join()
+                .unwrap_or_else(|payload| std::panic::resume_unwind(payload));
+            Ok::<_, DecoderError>((forward_attempt, backward_attempt))
+        })?;
+        resolve_committee_attempts(forward_attempt, backward_attempt)
+    }
 }
 
 impl ObservableDecoder for FrontierCommittee {

@@ -3193,6 +3193,7 @@ mod scheduled_completion_tests {
         state: ClassicalState,
         stage: usize,
         fail_tail: bool,
+        ended: bool,
     }
     impl QisRuntime for FeedbackTail {
         fn load_interface(&mut self, _: OperationList) -> RuntimeResult<()> {
@@ -3217,7 +3218,20 @@ mod scheduled_completion_tests {
         fn num_qubits(&self) -> usize {
             1
         }
+        fn shot_end(&mut self) -> RuntimeResult<crate::runtime::Shot> {
+            if std::mem::replace(&mut self.ended, true) {
+                return Err(crate::runtime::RuntimeError::ExecutionError(
+                    "shot ended twice".into(),
+                ));
+            }
+            Ok(crate::runtime::Shot::default())
+        }
         fn drain_pending_scheduled_operations(&mut self) -> RuntimeResult<Vec<ScheduledBatch>> {
+            if self.ended {
+                return Err(crate::runtime::RuntimeError::ExecutionError(
+                    "drain after shot completion".into(),
+                ));
+            }
             let (ops, measurements, index) = match self.stage {
                 0 => {
                     self.stage = 1;

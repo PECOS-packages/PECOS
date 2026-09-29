@@ -78,7 +78,7 @@ def noise_two_qubit_gates_depolarizing_with_noiseless(
 
     for r, (loc1, loc2) in zip(rand_nums, locations, strict=False):
         if r:
-            if loc1 in noiseless_qubits and loc1 in noiseless_qubits:
+            if loc1 in noiseless_qubits and loc2 in noiseless_qubits:
                 continue
 
             if loc1 in noiseless_qubits:
@@ -90,6 +90,7 @@ def noise_two_qubit_gates_depolarizing_with_noiseless(
                 after.append(err, {loc1})
 
             else:
+                # pc.random.choice rejects an integer; see #889.
                 index = int(pc.random.choice(len(error_two_paulis_collection), 1)[0])
                 err1, err2 = error_two_paulis_collection[index]
 

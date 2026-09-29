@@ -14,7 +14,18 @@ bp_trellis = exp.bp_trellis
 DEM = "error(0.1) D0 D1 D2 L0\nerror(0.03) D0\nerror(0.03) D1\nerror(0.03) D2\n"
 
 
-def test_public_spec_and_configuration():
+@pytest.mark.parametrize("delta", [100.0, math.inf])
+@pytest.mark.parametrize(
+    "ladder",
+    [
+        {"escalation": [(16, 50.0)]},
+        {"escalation": [(16, math.inf)]},
+        {"escalation": []},
+        {"escalation": None},
+        {"escalation_ks": [256, 512]},
+    ],
+)
+def test_public_spec_and_configuration(ladder, delta):
     from pecos.decoders import bp_trellis as public_bp_trellis
 
     assert public_bp_trellis() == bp_trellis()
@@ -24,12 +35,12 @@ def test_public_spec_and_configuration():
     assert repr(bp_trellis()) == "bp_trellis()"
     spec = bp_trellis(
         k=128,
-        delta=math.inf,
+        delta=delta,
         score_alpha=0.5,
         ordering=[3, 2, 1, 0],
         bp_score_iterations=2,
         merge_indistinguishable=False,
-        escalation_ks=[256, 512],
+        **ladder,
     )
     assert eval(repr(spec), {"bp_trellis": bp_trellis}) == spec  # noqa: S307 - trusted local repr
     assert bp_trellis(escalation_ks=None) == bp_trellis(escalation_ks=[])
@@ -56,7 +67,7 @@ def test_invalid_options(options):
         exp.BpTrellisDecoder.from_dem(DEM, **options)
     assert str(factory_error.value) == str(direct_error.value)
     if "escalation_ks" in options:
-        assert f"escalation_ks[{options['escalation_ks'].index(0)}]" in str(factory_error.value)
+        assert f"escalation[{options['escalation_ks'].index(0)}]" in str(factory_error.value)
 
 
 @pytest.mark.parametrize(
@@ -211,3 +222,22 @@ def test_direct_batch_reports_first_failing_shot(workers, shot):
     with pytest.raises(RuntimeError) as batch_error:
         decoder.decode_batch([[0, 0], shot, [1]], workers=workers)
     assert str(batch_error.value) == f"shot 1: {individual_error.value}"
+
+
+def test_resolved_rungs_and_strict_spec_route():
+    assert bp_trellis(escalation_ks=[16]) == bp_trellis(escalation=[(16, 100.0)])
+    assert hash(bp_trellis(escalation_ks=[16])) == hash(bp_trellis(escalation=[(16, 100.0)]))
+    assert "escalation_ks=[16]" in repr(bp_trellis(escalation=[(16, 100.0)]))
+    assert "escalation=[(16, 50.0)]" in repr(bp_trellis(escalation=[(16, 50.0)]))
+    with pytest.raises(TypeError, match="on_no_path"):
+        bp_trellis(on_no_path="report")
+    for options in [
+        {"escalation_ks": [], "escalation": []},
+        {"escalation": [(0, 100.0)]},
+        {"escalation": [(16, -1.0)]},
+        {"escalation": [(16, math.nan)]},
+    ]:
+        with pytest.raises(ValueError, match="escalation"):
+            bp_trellis(**options)
+        with pytest.raises(ValueError, match="escalation"):
+            exp.BpTrellisDecoder.from_dem(DEM, **options)

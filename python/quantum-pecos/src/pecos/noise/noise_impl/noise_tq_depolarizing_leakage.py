@@ -18,6 +18,7 @@ providing comprehensive error modeling for two-qubit quantum gates.
 
 from __future__ import annotations
 
+from copy import copy
 from typing import TYPE_CHECKING
 
 import pecos as pc
@@ -27,32 +28,25 @@ if TYPE_CHECKING:
     from pecos.protocols import MachineProtocol
 
 
+def surviving_two_qubit_op(op: QOp, machine: MachineProtocol) -> QOp | None:
+    """Return the operation restricted to pairs with neither input leaked."""
+    args = [pair for pair in op.args if all(qubit not in machine.leaked_qubits for qubit in pair)]
+    if not args:
+        return None
+    if len(args) == len(op.args):
+        return op
+    surviving = copy(op)
+    surviving.args = args
+    return surviving
+
+
 def noise_tq_depolarizing_leakage(
     op: QOp,
     p: float,
     noise_dict: dict,
     machine: MachineProtocol,
 ) -> list[QOp] | None:
-    """Two-qubit gate depolarizing noise plus leakage."""
-    # TODO: precompute, in PyPHIR, a flattened version of args
-    args = set()
-    for a in op.args:
-        for q in a:
-            args.add(q)
-
-    leaked = machine.leaked_qubits & args
-
-    # Don't apply a gate if an input qubit has already leaked
-    if leaked:
-        not_leaked = args - leaked
-
-        # TODO: precompute, in PyPHIR, a flattened version of args
-        new_args = []
-        for a, b in op.args:
-            if a not in not_leaked and b not in leaked:
-                new_args.append([a, b])
-        op = QOp(name=op.name, args=new_args, metadata=dict(op.metadata))
-
+    """Apply noise to pairs pre-filtered by the caller for existing leakage."""
     # Use fused operation to check and get error indices in one pass
     error_indices = pc.random.compare_indices(len(op.args), p)
 

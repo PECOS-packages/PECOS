@@ -229,4 +229,10 @@ mod tests {
         assert_eq!(resolve_sim_name("CX", None), "CX");
         assert_eq!(resolve_sim_name("Measure", None), "Measure");
     }
+    #[test]
+    fn rxyxy2q_passes_through() {
+        for angles in [[-0.73, 0.41], [0.0, 0.0], [std::f64::consts::PI, 0.0]] {
+            assert_eq!(resolve_sim_name("RXYXY2Q", Some(&angles)), "RXYXY2Q");
+        }
+    }
 }

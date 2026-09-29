@@ -53,6 +53,7 @@ impl GateType {
             Self::RXX => gates::RXX,
             Self::RYY => gates::RYY,
             Self::RZZ => gates::RZZ,
+            Self::RXYXY2Q => gates::RXYXY2Q,
 
             // Three-qubit gates
             Self::CCX => gates::CCX,
@@ -131,6 +132,7 @@ impl GateId {
             71 => GateType::RXX,
             72 => GateType::RYY,
             73 => GateType::RZZ,
+            74 => GateType::RXYXY2Q,
 
             // Three-qubit gates
             80 => GateType::CCX,
@@ -240,6 +242,7 @@ mod tests {
             GateType::RXX,
             GateType::RYY,
             GateType::RZZ,
+            GateType::RXYXY2Q,
             GateType::CCX,
             GateType::MZ,
             GateType::MeasureLeaked,

@@ -112,6 +112,7 @@ fn pecos_rslib_exp(m: &Bound<'_, PyModule>) -> PyResult<()> {
     decoder_specs::register(m)?;
     m.add_class::<bp_trellis_bindings::PyBpTrellisDecoder>()?;
     m.add_class::<bp_trellis_bindings::PyBpTrellisResult>()?;
+    m.add_class::<bp_trellis_bindings::PyBpTrellisNoPath>()?;
     m.add_class::<bp_trellis_bindings::PyBpTrellisObservableFlips>()?;
     m.add_class::<frontier_bindings::PyFrontierDecoder>()?;
     m.add_class::<frontier_bindings::PyFrontierCommitteeDecoder>()?;
@@ -146,6 +147,8 @@ fn pecos_rslib_exp(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<sim_neo_bindings::PyRawMeasurementResult>()?;
     m.add_function(wrap_pyfunction!(sim_neo_bindings::meas_sampling, m)?)?;
     m.add_class::<sim_neo_bindings::PyFaultCatalog>()?;
+    m.add_class::<sim_neo_bindings::PyFaultCountPmf>()?;
+    m.add_class::<sim_neo_bindings::PyStratifiedEstimate>()?;
     m.add_class::<sim_neo_bindings::PyFaultLocation>()?;
     m.add_class::<sim_neo_bindings::PyFaultAlternative>()?;
     m.add_class::<sim_neo_bindings::PyFaultConfiguration>()?;

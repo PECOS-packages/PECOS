@@ -892,6 +892,19 @@ impl QisIrParser {
                 out.push(emit_qis_rzz(q1, q2, angle));
             }
 
+            "rpp" => {
+                if args.len() != 4 {
+                    return Err(crate::PhirError::internal(
+                        "rpp requires exactly 4 operands: qubit1, qubit2, theta, phi",
+                    ));
+                }
+                let operands = args
+                    .iter()
+                    .map(|arg| self.arg_to_ssa(arg, &mut out))
+                    .collect();
+                out.push(make_custom_op("qis", "rpp", operands, vec![]));
+            }
+
             "measure" | "mz" | "m" => {
                 let qubit = self.arg_to_ssa(&args[0], &mut out);
                 let r = result.unwrap_or_else(|| self.fresh_value());

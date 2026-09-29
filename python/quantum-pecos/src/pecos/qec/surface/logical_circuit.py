@@ -9,7 +9,7 @@ derived via ``tick_circuit_to_stim()``. Supports:
 - Memory experiments (syndrome extraction rounds)
 - Transversal Hadamard (H on all data qubits, swaps X<->Z stabilizers)
 - Transversal CNOT (CX between corresponding data qubits of two patches)
-- Fold-transversal logical S and S-dagger inside a syndrome round
+- Fold-transversal logical SZ and SZdg inside a syndrome round
 - Transversal SZ via gate teleportation (CX + |+Y> ancilla consumption)
 
 Output formats:
@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import json
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum, auto
 from functools import cache, lru_cache
 from itertools import zip_longest
@@ -700,7 +700,7 @@ class LogicalGateType(Enum):
     """Types of logical operations in a surface code circuit."""
 
     MEMORY = auto()
-    FOLD_S = auto()
+    FOLD_SZ = auto()
     TRANSVERSAL_H = auto()
     TRANSVERSAL_SZ = auto()
     TRANSVERSAL_SZdg = auto()
@@ -754,15 +754,15 @@ class LogicalOp:
     # Used by build_algorithm_descriptor() to emit the correct boundary gate.
     injection_type: str | None = None
     # Phase variant of a one-round fold segment; absent on every other operation.
-    fold: Literal["S", "SDG"] | None = None
+    fold: Literal["SZ", "SZdg"] | None = None
 
     def __post_init__(self) -> None:
         """Keep fold identity and its one-round record contract consistent."""
-        if (self.gate_type is LogicalGateType.FOLD_S) != (self.fold is not None):
-            msg = "Fold identity must match FOLD_S"
+        if (self.gate_type is LogicalGateType.FOLD_SZ) != (self.fold is not None):
+            msg = "Fold identity must match FOLD_SZ"
             raise AssertionError(msg)
-        if self.fold is not None and self.fold not in {"S", "SDG"}:
-            msg = "Fold variant must be S or SDG"
+        if self.fold is not None and self.fold not in {"SZ", "SZdg"}:
+            msg = "Fold variant must be SZ or SZdg"
             raise AssertionError(msg)
         if self.fold is not None and self.rounds != 1:
             msg = "Fold segments require exactly one round"
@@ -771,7 +771,41 @@ class LogicalOp:
     @property
     def is_segment(self) -> bool:
         """Memory and fold rounds both carry syndrome records."""
-        return self.gate_type in {LogicalGateType.MEMORY, LogicalGateType.FOLD_S}
+        return self.gate_type in {LogicalGateType.MEMORY, LogicalGateType.FOLD_SZ}
+
+
+def _require_commit_rounds(
+    segment_ops: list[LogicalOp],
+    index: int,
+    commit_rounds: int,
+    prepared: set[str],
+) -> None:
+    """Name an empty commit region before the native window slicer rejects it.
+
+    Called per segment as the descriptor loop reaches it, so an earlier
+    segment's look-ahead error keeps its precedence.
+    """
+    if commit_rounds != 0:
+        return
+    op = segment_ops[index]
+    cause = "a segment with no commit rounds"
+    if op.gate_type == LogicalGateType.MEMORY and op.rounds == 0:
+        cause = "a zero-round memory segment"
+        follower = segment_ops[index + 1] if index + 1 < len(segment_ops) else None
+        if (
+            all(label not in prepared and op.per_patch_basis.get(label, op.basis) == "Y" for label in op.patches)
+            and follower is not None
+            and follower.fold == "SZdg"
+            and follower.patches == op.patches
+        ):
+            cause = "a zero-round Y preparation before the Y-readout fold"
+    patch_names = ", ".join(repr(label) for label in op.patches)
+    patches = f"patch {patch_names}" if len(op.patches) == 1 else f"patches {patch_names}"
+    msg = (
+        f"segment {index} ({patches}) has an empty commit region: {cause}; "
+        "descriptor commit regions need at least one round"
+    )
+    raise ValueError(msg)
 
 
 def _conjugate_pauli(op: LogicalOp, patch: str, pauli: str) -> list[tuple[str, str]]:
@@ -916,11 +950,11 @@ def _logical_readout_flow(
 
     ``logical_type`` is X or Z in the readout's current orientation (its
     measurement basis). Each crossed H swaps the type during the walk; callers
-    must not also swap the initial type. Fold S/S-dagger exchanges X and Y;
+    must not also swap the initial type. Fold SZ/SZdg exchanges X and Y;
     the returned folds tuple contains each (patch, segment) crossed as X or Y
     so the caller can include that round's Z records in the logical parity. Y cannot
     close at product preparation because its logical sign depends on syndrome.
-    Physical S/S-dagger preserves Z but has no supported logical X or Y image,
+    Physical SZ/SZdg preserves Z but has no supported logical X or Y image,
     including the unmodelled distance-1 case.
     A bit accumulator combines Pauli products per patch, including X times Z as Y.
     Terms involving a patch consumed before a crossed gate are unreliable.
@@ -931,7 +965,7 @@ def _logical_readout_flow(
     Terms without preparation raise ValueError naming the terms. A false result means
     the readout is not supported as deterministic; unlike the check walk,
     which returns None exactly for an unmeasured (physically random) Pauli,
-    this also includes the unsupported logical X/Y image under physical S.
+    this also includes the unsupported logical X/Y image under physical SZ.
     """
     if logical_type not in {"X", "Z"}:
         msg = f"Unsupported logical readout type {logical_type!r}; expected X or Z"
@@ -978,7 +1012,7 @@ def _logical_readout_flow(
                 and label in op.patches
                 and kind in {"X", "Y"}
             ):
-                # Physical S is not logical S: its X/Y image leaves the code.
+                # Physical SZ is not logical SZ: its X/Y image leaves the code.
                 # A fold has a supported Y_L image with measured Z-check parity.
                 return False, ()
             if op.fold and label in op.patches and kind in {"X", "Y"}:
@@ -1048,7 +1082,7 @@ class LogicalCircuitBuilder:
         if label in self._patches:
             msg = f"Patch '{label}' already registered"
             raise ValueError(msg)
-        # S maps Y to -X, S-dagger maps X to -Y, H maps Y to -Y, each a -1
+        # SZ maps Y to -X, SZdg maps X to -Y, H maps Y to -Y, each a -1
         # per qubit, so over even weight the check-level sign is (-1)^w = +1,
         # which is what lets the term model drop signs; odd weight would need signed terms.
         geometry = patch.geometry
@@ -1099,8 +1133,12 @@ class LogicalCircuitBuilder:
                 applied to all patches, or a dict mapping patch labels to
                 their individual basis (e.g., ``{"D": "Z", "Y": "Y"}``).
                 Only used for initialization and final measurement. Y is
-                supported for preparation, but the final readout of a patch
-                must be X or Z.
+                supported for preparation; terminal Y lowers to a logical SZdg
+                fold followed by the requested rounds and X readout in the current logical frame.
+                Product-Y preparation has a deterministic encoded-sign parity of first-round
+                check records, omitted because it is a distance-1 quantity; exposing it is a follow-up.
+                Y-readout folds create hyperedges that build_decoder's matching route
+                (LogicalSubgraphDecoder) skips; see add_logical_sz and use a hypergraph decoder.
         """
         if isinstance(patch_labels, str):
             patch_labels = [patch_labels]
@@ -1144,13 +1182,13 @@ class LogicalCircuitBuilder:
             msg = f"{gate_name} requires a square patch (dx=dz), got dx={patch.geometry.dx}, dz={patch.geometry.dz}"
             raise ValueError(msg)
 
-    def add_logical_s(self, label: str, *, dagger: bool = False) -> None:
-        """Add one fold-transversal S (or S-dagger) syndrome round.
+    def add_logical_sz(self, label: str, *, dagger: bool = False) -> None:
+        """Add one fold-transversal SZ (or SZdg) syndrome round.
 
         Requires a square rotated patch of distance at least two, a preceding
         preparation memory, and a following memory specifying final readout.
-        That final memory may have zero rounds. Unlike a physical S layer,
-        this preserves the code and applies logical S in the current frame.
+        That final memory may have zero rounds. Unlike a physical SZ layer,
+        this preserves the code and applies logical SZ in the current frame.
 
         Fold rounds create hyperedges that build_decoder's matching route
         (LogicalSubgraphDecoder) skips. Use a hypergraph decoder such as the
@@ -1160,29 +1198,31 @@ class LogicalCircuitBuilder:
         Stim. Raw parity encodes the sign with which the program's net logical
         Clifford maps the readout Pauli back onto the prepared eigenstate:
         positive gives zero, negative gives one. With folds it can be one
-        noiselessly, including S/S before X readout, S/S/H before Z readout,
-        and S-dagger pairs through a CX. The metadata has no sign field;
+        noiselessly, including SZ/SZ before X readout, SZ/SZ/H before Z readout,
+        and SZdg pairs through a CX. The metadata has no sign field;
         raw-parity consumers pecos.testing.simulate_tick_circuit and
         pecos.qec.surface.extract_detection_events_and_observables must
         account for that reference. A readout with no supported logical
-        image, as under a physical S layer, produces no observable at all.
+        image, as under a physical SZ layer, produces no observable at all.
         """
         self._require_available_patch(label)
-        self._require_square(label, "Fold-transversal S")
+        self._operations.append(self._fold_sz_operation(label, dagger=dagger))
+
+    def _fold_sz_operation(self, label: str, *, dagger: bool) -> LogicalOp:
+        """Share geometry validation between explicit folds and Y readout lowering."""
+        self._require_square(label, "Fold-transversal SZ")
         patch = self._patches[label].patch
         if not patch.rotated:
-            msg = "Fold-transversal S requires a rotated patch"
+            msg = "Fold-transversal SZ requires a rotated patch"
             raise ValueError(msg)
         if patch.dx < 2:
-            msg = "Fold-transversal S requires distance at least 2"
+            msg = "Fold-transversal SZ requires distance at least 2"
             raise ValueError(msg)
-        self._operations.append(
-            LogicalOp(LogicalGateType.FOLD_S, [label], rounds=1, fold="SDG" if dagger else "S"),
-        )
+        return LogicalOp(LogicalGateType.FOLD_SZ, [label], rounds=1, fold="SZdg" if dagger else "SZ")
 
-    def add_logical_sdg(self, label: str) -> None:
-        """Add one fold-transversal S-dagger syndrome round."""
-        self.add_logical_s(label, dagger=True)
+    def add_logical_szdg(self, label: str) -> None:
+        """Add one fold-transversal SZdg syndrome round."""
+        self.add_logical_sz(label, dagger=True)
 
     def add_transversal_h(self, patch_label: str) -> None:
         """Add a transversal Hadamard gate on a patch.
@@ -1209,9 +1249,9 @@ class LogicalCircuitBuilder:
     def add_transversal_sz(self, patch_label: str) -> None:
         """Apply physical SZ = diag(1, i) to every data qubit of a square patch.
 
-        This layer is not a logical S gate on this code. The future
-        fold-transversal construction follows Chen, Chen, Lu, Pan
-        (arXiv:2412.01391) and requires additional operations.
+        This layer is not a logical SZ gate on this code. Use add_logical_sz
+        for the fold-transversal construction of Chen, Chen, Lu, Pan
+        (arXiv:2412.01391).
         """
         self._require_available_patch(patch_label)
         self._require_square(patch_label, "Transversal SZ")
@@ -1225,9 +1265,9 @@ class LogicalCircuitBuilder:
     def add_transversal_szdg(self, patch_label: str) -> None:
         """Apply physical SZdg to every data qubit of a square patch.
 
-        This inverse physical layer is not a logical S-dagger on this code.
-        The future fold-transversal construction follows Chen, Chen, Lu, Pan
-        (arXiv:2412.01391) and requires additional operations.
+        This inverse physical layer is not a logical SZdg on this code.
+        Use add_logical_szdg for the fold-transversal construction of Chen,
+        Chen, Lu, Pan (arXiv:2412.01391).
         """
         self._require_available_patch(patch_label)
         self._require_square(patch_label, "Transversal SZdg")
@@ -1390,6 +1430,47 @@ class LogicalCircuitBuilder:
         for label, swapped in saved.items():
             self._patches[label].x_z_swapped = swapped
 
+    def _lowered_operations(self) -> list[LogicalOp]:
+        """Expand terminal Y once without changing the user's appendable program."""
+        last_memory = {
+            label: index
+            for index, op in enumerate(self._operations)
+            if op.gate_type == LogicalGateType.MEMORY
+            for label in op.patches
+        }
+        prepared: set[str] = set()
+        operations = []
+        for index, op in enumerate(self._operations):
+            if op.gate_type != LogicalGateType.MEMORY:
+                operations.append(op)
+                continue
+            read_y = [
+                label
+                for label in op.patches
+                if last_memory[label] == index and op.per_patch_basis.get(label, op.basis) == "Y"
+            ]
+            for label in read_y:
+                if label not in prepared:
+                    operations.append(LogicalOp(LogicalGateType.MEMORY, [label], rounds=0, basis="Y"))
+                try:
+                    operations.append(self._fold_sz_operation(label, dagger=True))
+                except ValueError as error:
+                    msg = f"Y readout on patch {label!r} lowers to a fold-transversal SZ: {error}"
+                    raise ValueError(msg) from error
+            memory = op
+            if read_y:
+                # Preserve the shared readout segment and its per-patch observable ID order.
+                bases = {**op.per_patch_basis, **dict.fromkeys(read_y, "X")}
+                basis = "X" if all(label in bases for label in op.patches) else op.basis
+                memory = replace(
+                    op,
+                    basis=basis,
+                    per_patch_basis={label: value for label, value in bases.items() if value != basis},
+                )
+            operations.append(memory)
+            prepared.update(op.patches)
+        return operations
+
     def to_tick_circuit(self) -> object:
         """Generate a PECOS TickCircuit with detector and observable annotations.
 
@@ -1400,25 +1481,26 @@ class LogicalCircuitBuilder:
         Returns:
             TickCircuit with gates, detectors, and observables as metadata.
         """
+        operations = self._lowered_operations()
         # Validate the expanded protocol: teleportation helpers insert their
         # own preparation memories before their transversal operations.
         last_memory = {
             label: index
-            for index, op in enumerate(self._operations)
+            for index, op in enumerate(operations)
             if op.gate_type == LogicalGateType.MEMORY
             for label in op.patches
         }
         prepared: set[str] = set()
-        for index, op in enumerate(self._operations):
+        for index, op in enumerate(operations):
             if op.gate_type == LogicalGateType.MEMORY:
                 prepared.update(op.patches)
             else:
                 gate_name = {
-                    LogicalGateType.FOLD_S: "Fold-transversal S",
+                    LogicalGateType.FOLD_SZ: "Fold-transversal SZ",
                     LogicalGateType.TRANSVERSAL_H: "Hadamard",
                     LogicalGateType.TRANSVERSAL_CX: "Cnot",
-                    LogicalGateType.TRANSVERSAL_SZ: "SGate",
-                    LogicalGateType.TRANSVERSAL_SZdg: "SdgGate",
+                    LogicalGateType.TRANSVERSAL_SZ: "Transversal SZ",
+                    LogicalGateType.TRANSVERSAL_SZdg: "Transversal SZdg",
                 }[op.gate_type]
                 for label in op.patches:
                     if label not in prepared:
@@ -1434,7 +1516,7 @@ class LogicalCircuitBuilder:
         saved = self._snapshot_and_reset()
         gen = _CircuitGenerator(
             patches=self._patches,
-            operations=self._operations,
+            operations=operations,
         )
         try:
             return gen.generate()
@@ -1451,18 +1533,19 @@ class LogicalCircuitBuilder:
         slice path stays free of physical-circuit emission without duplicating
         frontend policy.
         """
+        operations = self._lowered_operations()
         last_memory_index: dict[str, int] = {}
-        for operation_index, operation in enumerate(self._operations):
+        for operation_index, operation in enumerate(operations):
             if operation.gate_type == LogicalGateType.MEMORY:
                 for label in operation.patches:
                     last_memory_index[label] = operation_index
 
-        injection_ancillas = {operation.patches[1] for operation in self._operations if operation.teleportation}
+        injection_ancillas = {operation.patches[1] for operation in operations if operation.teleportation}
 
         output_ids = []
         next_output = 0
         segment_idx = 0
-        for operation_index, operation in enumerate(self._operations):
+        for operation_index, operation in enumerate(operations):
             # Fold rounds carry syndrome records, so they advance the walk's
             # segment index even though they declare no terminal readout.
             if not operation.is_segment:
@@ -1475,7 +1558,7 @@ class LogicalCircuitBuilder:
                         continue
                     basis = operation.per_patch_basis.get(label, operation.basis)
                     deterministic, _crossed_folds = _logical_readout_flow(
-                        self._operations,
+                        operations,
                         segment_idx,
                         label,
                         basis,
@@ -1495,6 +1578,7 @@ class LogicalCircuitBuilder:
         This routing changes declaration order only; it does not relabel the
         streams used by relative targets.
         """
+        operations = self._lowered_operations()
         stream_layout = {}
         stream_start = 0
         for label, state in self._patches.items():
@@ -1506,7 +1590,7 @@ class LogicalCircuitBuilder:
         swapped = dict.fromkeys(self._patches, False)
         round_time = 0
         routings = {}
-        for operation in self._operations:
+        for operation in operations:
             if operation.gate_type == LogicalGateType.TRANSVERSAL_H:
                 label = operation.patches[0]
                 swapped[label] = not swapped[label]
@@ -1645,6 +1729,7 @@ class LogicalCircuitBuilder:
         p_prep: float,
     ) -> tuple[object, object] | None:
         """Assemble an eligible surface DEM from bounded slice caches."""
+        operations = self._lowered_operations()
         cached_multi_memory = self._build_structured_multi_memory_dem_from_cached_slices(
             p1=p1,
             p2=p2,
@@ -1653,7 +1738,7 @@ class LogicalCircuitBuilder:
         )
         if cached_multi_memory is not None:
             return cached_multi_memory
-        if len(self._patches) == 1 and len(self._operations) >= 3:
+        if len(self._patches) == 1 and len(operations) >= 3:
             cached_h = self._build_structured_h_dem_from_cached_slices(
                 p1=p1,
                 p2=p2,
@@ -1662,7 +1747,7 @@ class LogicalCircuitBuilder:
             )
             if cached_h is not None:
                 return cached_h
-        if len(self._patches) == 2 and len(self._operations) >= 3:
+        if len(self._patches) == 2 and len(operations) >= 3:
             cached_mixed = self._build_structured_mixed_dem_from_cached_slices(
                 p1=p1,
                 p2=p2,
@@ -1679,10 +1764,10 @@ class LogicalCircuitBuilder:
             )
             if cached_cx is not None:
                 return cached_cx
-        if len(self._patches) != 1 or len(self._operations) != 1:
+        if len(self._patches) != 1 or len(operations) != 1:
             return None
 
-        operation = self._operations[0]
+        operation = operations[0]
         if operation.gate_type != LogicalGateType.MEMORY or len(operation.patches) != 1 or operation.rounds < 1:
             return None
 
@@ -1751,9 +1836,10 @@ class LogicalCircuitBuilder:
         p_prep: float,
     ) -> tuple[object, object] | None:
         """Assemble simultaneous independent patch memories from one family."""
-        if len(self._patches) < 2 or len(self._operations) != 1:
+        operations = self._lowered_operations()
+        if len(self._patches) < 2 or len(operations) != 1:
             return None
-        operation = self._operations[0]
+        operation = operations[0]
         patch_order = list(self._patches)
         if operation.gate_type != LogicalGateType.MEMORY or operation.patches != patch_order or operation.rounds < 1:
             return None
@@ -1870,11 +1956,12 @@ class LogicalCircuitBuilder:
         p_prep: float,
     ) -> tuple[object, object] | None:
         """Assemble two-patch schedules mixing H and CX boundary families."""
-        if len(self._patches) != 2 or len(self._operations) < 3 or len(self._operations) % 2 == 0:
+        operations = self._lowered_operations()
+        if len(self._patches) != 2 or len(operations) < 3 or len(operations) % 2 == 0:
             return None
 
-        memories = self._operations[::2]
-        gates = self._operations[1::2]
+        memories = operations[::2]
+        gates = operations[1::2]
         patch_order = list(self._patches)
         control_label, target_label = patch_order
         if any(
@@ -2006,11 +2093,12 @@ class LogicalCircuitBuilder:
         p_prep: float,
     ) -> tuple[object, object] | None:
         """Assemble alternating memory/CX operations from bounded families."""
-        if len(self._patches) != 2 or len(self._operations) < 3 or len(self._operations) % 2 == 0:
+        operations = self._lowered_operations()
+        if len(self._patches) != 2 or len(operations) < 3 or len(operations) % 2 == 0:
             return None
 
-        memories = self._operations[::2]
-        gates = self._operations[1::2]
+        memories = operations[::2]
+        gates = operations[1::2]
         patch_order = list(self._patches)
         control_label, target_label = patch_order
         if any(
@@ -2089,11 +2177,12 @@ class LogicalCircuitBuilder:
         p_prep: float,
     ) -> tuple[object, object] | None:
         """Assemble alternating memory/H operations from bounded families."""
-        if len(self._patches) != 1 or len(self._operations) < 3 or len(self._operations) % 2 == 0:
+        operations = self._lowered_operations()
+        if len(self._patches) != 1 or len(operations) < 3 or len(operations) % 2 == 0:
             return None
 
-        memories = self._operations[::2]
-        gates = self._operations[1::2]
+        memories = operations[::2]
+        gates = operations[1::2]
         patch_label = next(iter(self._patches))
         if any(
             memory.gate_type != LogicalGateType.MEMORY or memory.rounds < 2 or memory.patches != [patch_label]
@@ -2235,6 +2324,10 @@ class LogicalCircuitBuilder:
         Eligible single-patch memories, repeated H, repeated CX, and mixed
         two-patch H/CX algorithms are assembled directly from bounded
         physical fixture caches; other circuits retain full-model fallback.
+        Commit regions, including any requested look-behind, must contain at
+        least one round; otherwise a ValueError identifies the segment, patches,
+        and cause. A non-empty region may contain zero detectors. An initial
+        non-final zero-round preparation has an empty region even with look-behind.
 
         Returns:
             Dict with keys: segments, boundary_gates, num_observables,
@@ -2248,6 +2341,7 @@ class LogicalCircuitBuilder:
         if buffer is not None and buffer < 0:
             msg = "buffer must be non-negative or None"
             raise ValueError(msg)
+        operations = self._lowered_operations()
 
         # Eligible memory, repeated-H, repeated-CX, and mixed two-patch H/CX
         # algorithms are assembled entirely from bounded physical fixture
@@ -2277,6 +2371,7 @@ class LogicalCircuitBuilder:
         # Each MEMORY op has a number of rounds. Time coordinates are
         # sequential round indices across all segments.
         segments = []
+        segment_ops = []
         boundary_gates = []
         # Gates accumulate between consecutive MEMORY ops.
         pending_gates = []
@@ -2288,14 +2383,14 @@ class LogicalCircuitBuilder:
         # After transversal H, the X and Z stabilizer types swap.
         x_z_swapped = dict.fromkeys(patch_labels, False)
 
-        for op in self._operations:
+        for op in operations:
             if op.fold:
-                # The descriptor tracks sign-free Pauli frames: S and S-dagger
+                # The descriptor tracks sign-free Pauli frames: SZ and SZdg
                 # both propagate an X frame bit into X and Z.
                 label = op.patches[0]
                 pending_gates.append(
                     {
-                        "type": "SGate",
+                        "type": "SZGate",
                         "x_obs_bit": patch_labels.index(label) * 2,
                         "z_obs_bit": self._z_frame_slot(label),
                     },
@@ -2324,6 +2419,7 @@ class LogicalCircuitBuilder:
                     else:
                         seg_sc.append({"X": base["X"], "Z": base["Z"]})
 
+                segment_ops.append(op)
                 segments.append(
                     {
                         "time_start": seg_start,
@@ -2372,7 +2468,7 @@ class LogicalCircuitBuilder:
                 idx = patch_labels.index(label)
                 pending_gates.append(
                     {
-                        "type": "SGate",
+                        "type": "SZGate",
                         "x_obs_bit": idx * 2,
                         "z_obs_bit": self._z_frame_slot(label),
                     },
@@ -2388,7 +2484,6 @@ class LogicalCircuitBuilder:
         # independent source contributions, decomposition metadata, logical
         # outputs, hyperedges, and cross-round correlations intact.
         seg_dems = []
-        segment_detector_counts = []
         segment_window_detector_counts = []
         detector_rounds = []
         for detector_id, coords in structured_dem.detector_coordinates():
@@ -2399,12 +2494,28 @@ class LogicalCircuitBuilder:
                 )
                 raise ValueError(msg)
             detector_rounds.append(int(coords[2]))
+        # Commit counts partition the incoming syndrome, excluding duplicated window halos.
+        segment_detector_counts = [
+            sum(
+                int(seg["time_start"])
+                <= round_
+                < (time_cursor + 1 if index == len(segments) - 1 else int(seg["time_end"]))
+                for round_ in detector_rounds
+            )
+            for index, seg in enumerate(segments)
+        ]
         explicit_buffer = 0 if buffer is None else buffer
+        if len(segment_ops) != len(segments):
+            msg = f"{len(segment_ops)} segment operations for {len(segments)} descriptor segments"
+            raise ValueError(msg)
+        prepared_patches: set[str] = set()
         for segment_index, seg in enumerate(segments):
-            start_round = max(0, int(seg["time_start"]) - explicit_buffer)
             is_last = segment_index == len(segments) - 1
+            start_round = max(0, int(seg["time_start"]) - explicit_buffer)
             commit_end = time_cursor + 1 if is_last else int(seg["time_end"])
             commit_rounds = commit_end - start_round
+            _require_commit_rounds(segment_ops, segment_index, commit_rounds, prepared_patches)
+            prepared_patches.update(segment_ops[segment_index].patches)
             forward_buffer = 0 if is_last else buffer
             forward_boundary = "hard" if is_last else "soft"
 
@@ -2428,12 +2539,6 @@ class LogicalCircuitBuilder:
             )
             seg_dems.append(str(segment_dem))
             segment_window_detector_counts.append(segment_dem.num_detectors)
-            # Segment metadata partitions the incoming full-circuit syndrome;
-            # it therefore counts only this segment's commit detectors, not the
-            # look-behind/look-ahead detectors duplicated in its local DEM.
-            segment_detector_counts.append(
-                sum(int(seg["time_start"]) <= round_ < commit_end for round_ in detector_rounds),
-            )
 
         # Physical code distance for latency/windowing decisions. With multiple
         # patches use the minimum (the weakest bound governs latency). This is the
@@ -2828,12 +2933,12 @@ class _CircuitGenerator:
             for label in op.patches:
                 ps = self.patches[label]
                 if op.fold:
-                    gadget = gadgets.fold_s_round_gadget(
+                    gadget = gadgets.fold_sz_round_gadget(
                         ps.patch,
                         allocations[label],
                         round_index=rnd,
                         x_z_swapped=ps.x_z_swapped,
-                        dagger=op.fold == "SDG",
+                        dagger=op.fold == "SZdg",
                     )
                 else:
                     gadget = gadgets.syndrome_round_gadget(
@@ -2947,7 +3052,7 @@ class _CircuitGenerator:
         self._add_detector(patch_label, stab_type, stab_index, records)
 
     def _fold_check_maps(self, label: str) -> tuple[dict[int, int], dict[int, int]]:
-        """Locate partners using the contract in gadgets.fold_s_round_gadget.
+        """Locate partners using the contract in gadgets.fold_sz_round_gadget.
 
         The before map is restricted to y == 2 because only that bottom row
         carries the input-side X-record correction in the gadget's contract.

@@ -137,6 +137,12 @@ impl Converter {
                 qubits,
             } => {
                 let quantum_op = gate_name_to_quantum_op(name, parameters)?;
+                if quantum_op
+                    .operand_count()
+                    .is_some_and(|arity| qubits.len() != arity)
+                {
+                    return Err(pecos_phir::PhirError::internal("Invalid gate qubit count"));
+                }
                 let operands: Vec<SSAValue> = qubits.iter().map(|&q| qubit_ssa[q]).collect();
                 let results: Vec<SSAValue> = operands.iter().map(|_| self.new_ssa()).collect();
                 let result_types = vec![Type::Qubit; results.len()];
@@ -151,6 +157,12 @@ impl Converter {
 
             QasmOp::NativeGate(gate) => {
                 let quantum_op = gate_type_to_quantum_op(gate.gate_type, &gate.angles)?;
+                if quantum_op
+                    .operand_count()
+                    .is_some_and(|arity| gate.qubits.len() != arity)
+                {
+                    return Err(pecos_phir::PhirError::internal("Invalid gate qubit count"));
+                }
                 let operands: Vec<SSAValue> = gate.qubits.iter().map(|q| qubit_ssa[q.0]).collect();
                 let results: Vec<SSAValue> = operands.iter().map(|_| self.new_ssa()).collect();
                 let result_types = vec![Type::Qubit; results.len()];
@@ -348,6 +360,10 @@ fn gate_name_to_quantum_op(name: &str, params: &[f64]) -> Result<QuantumOp> {
             angle_param(params, 0, GateType::RXY1Q)?,
             angle_param(params, 1, GateType::RXY1Q)?,
         )),
+        "rxyxy2q" => Ok(QuantumOp::RXYXY2Q(
+            angle_param(params, 0, GateType::RXYXY2Q)?,
+            angle_param(params, 1, GateType::RXYXY2Q)?,
+        )),
         "u" | "u3" => Ok(QuantumOp::U3(
             angle_param(params, 0, GateType::U)?,
             angle_param(params, 1, GateType::U)?,
@@ -394,6 +410,7 @@ fn gate_type_to_quantum_op(gate_type: GateType, angles: &[Angle64]) -> Result<Qu
         GateType::RZ => Ok(QuantumOp::RZ(angles[0])),
         GateType::RZZ => Ok(QuantumOp::RZZ(angles[0])),
         GateType::RXY1Q => Ok(QuantumOp::RXY1Q(angles[0], angles[1])),
+        GateType::RXYXY2Q => Ok(QuantumOp::RXYXY2Q(angles[0], angles[1])),
         GateType::U => Ok(QuantumOp::U3(angles[0], angles[1], angles[2])),
         GateType::MZ => Ok(QuantumOp::Measure),
         GateType::PZ => Ok(QuantumOp::Reset),

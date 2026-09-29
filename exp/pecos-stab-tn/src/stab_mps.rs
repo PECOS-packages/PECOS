@@ -29,6 +29,9 @@
 //! Quantum Simulator on a Basis of Stabilizer States." PRL 133, 230601 (2024).
 //! arXiv:2403.08724.
 
+#[cfg(test)]
+mod trivial_measurement_tests;
+
 mod canonical_ket;
 pub mod compile;
 pub mod disentangle;
@@ -249,6 +252,7 @@ fn repair_disent_flags(
 
 #[cfg(test)]
 std::thread_local! {
+    static DISABLE_TRIVIAL_EXACT_MEASUREMENT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static FORCE_EXACT_MEASUREMENT_TRANSACTION: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static EXACT_MEASUREMENT_TRANSACTIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
@@ -256,8 +260,9 @@ std::thread_local! {
 /// Sample and force one exact Z-measurement branch.
 ///
 /// `StabMps` exact measurement and MAST data measurement share this owning
-/// layer. Truncating configurations retry a vanished branch from the live
-/// state; configurations that cannot truncate project directly.
+/// layer. Normalized trivial coefficient states use the tableau and normalize directly.
+/// Other states retry a vanished branch from the live state when the
+/// configuration can truncate; configurations that cannot truncate project directly.
 /// On error the tableau/MPS pair may be partially mutated and the owning
 /// simulator must not be used further.
 fn measure_qubit_exact_transactional(
@@ -267,6 +272,16 @@ fn measure_qubit_exact_transactional(
     q_idx: usize,
     operation: &str,
 ) -> Result<measure::LiveMeasurementResult, MpsError> {
+    let use_trivial_path = measure::is_mps_trivial(mps)
+        && (measure::trivial_mps_norm_squared(mps) - 1.0).abs()
+            < measure::TRIVIAL_MPS_NORMALIZATION_TOLERANCE;
+    #[cfg(test)]
+    let use_trivial_path = use_trivial_path && !DISABLE_TRIVIAL_EXACT_MEASUREMENT.get();
+    if use_trivial_path {
+        return Ok(measure::measure_trivial_mps_exact_with_update(
+            tableau, mps, rng, q_idx,
+        ));
+    }
     let properties = measure::ZMeasurementProperties::new(tableau, mps, q_idx, operation);
     let probability_one = properties.probability(true);
     let is_probability_zero = probability_one <= 0.0;
@@ -9652,6 +9667,9 @@ mod tests {
                 for q in 1..4 {
                     stn.cx(&[(QubitId(0), QubitId(q))]);
                 }
+                stn.rz(Angle64::from_radians(0.37), &[QubitId(0)]);
+                stn.flush();
+                assert!(!measure::is_mps_trivial(&stn.mps));
                 if retry {
                     measure::inject_projection_vanishes(1);
                 }
@@ -9667,21 +9685,19 @@ mod tests {
                 eprintln!(
                     "recompute={recompute} retry={retry}: evaluations (all norms, Z expectations, trivial scans) = {counts:?}"
                 );
-                let expected = if retry {
-                    if recompute { (9, 3, 5) } else { (3, 1, 1) }
-                } else {
-                    // The surviving norm evaluation follows projection and must stay fresh.
-                    if recompute { (5, 2, 3) } else { (2, 1, 1) }
-                };
-                #[cfg(debug_assertions)]
-                let expected = {
-                    let projections = if retry { 2 } else { 1 };
-                    (
-                        expected.0 + 2 * projections,
-                        expected.1 + projections,
-                        expected.2 + 2 * projections,
-                    )
-                };
+                // One properties evaluation supplies a norm, expectation, and scan.
+                // The fast-path guard adds a scan. Each projection adds a survival
+                // norm; recomputation adds two norms, one expectation, two scans.
+                // Debug validation adds that same recomputation per projection.
+                // Projection establishes a center, so normalize adds no full norm.
+                let projections = if retry { 2 } else { 1 };
+                let recomputations =
+                    projections * (usize::from(recompute) + usize::from(cfg!(debug_assertions)));
+                let expected = (
+                    1 + projections + 2 * recomputations,
+                    1 + recomputations,
+                    2 + 2 * recomputations,
+                );
                 assert_eq!(counts, expected);
                 assert_eq!(stn.branch_vanish_retry_count(), u64::from(retry));
             }
@@ -9839,6 +9855,9 @@ mod tests {
             .max_truncation_error(0.0)
             .build();
         stn.h(&[QubitId(0)]);
+        stn.rz(Angle64::from_radians(0.37), &[QubitId(0)]);
+        stn.flush();
+        assert!(!measure::is_mps_trivial(&stn.mps));
         measure::inject_projection_vanishes(1);
         stn.mz(&[QubitId(0)]);
     }
@@ -9853,6 +9872,9 @@ mod tests {
             .max_truncation_error(0.0)
             .build();
         stn.h(&[QubitId(0)]);
+        stn.rz(Angle64::from_radians(0.37), &[QubitId(0)]);
+        stn.flush();
+        assert!(!measure::is_mps_trivial(&stn.mps));
         measure::inject_zero_projection_probabilities(1);
         stn.mz(&[QubitId(0)]);
     }
@@ -9869,6 +9891,12 @@ mod tests {
             .merge_rz(false)
             .build();
         let before = EXACT_MEASUREMENT_TRANSACTIONS.get();
+        stn.mz(&[QubitId(0)]);
+        assert_eq!(EXACT_MEASUREMENT_TRANSACTIONS.get() - before, 0);
+        stn.h(&[QubitId(0)]);
+        stn.rz(Angle64::from_radians(0.37), &[QubitId(0)]);
+        assert!(!measure::is_mps_trivial(&stn.mps));
+        assert_eq!(stn.mps.config().max_bond_dim, 1);
         stn.mz(&[QubitId(0)]);
         assert_eq!(EXACT_MEASUREMENT_TRANSACTIONS.get() - before, 1);
         stn.h(&[QubitId(0), QubitId(1)]);

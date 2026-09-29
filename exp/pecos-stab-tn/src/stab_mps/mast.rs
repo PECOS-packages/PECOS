@@ -1025,6 +1025,42 @@ mod tests {
     }
 
     #[test]
+    fn trivial_exact_mast_matches_general_path_bitwise() {
+        use crate::stab_mps::trivial_measurement_tests::{assert_pair_bits, with_fast_path};
+
+        for seed in 0..32 {
+            for truncating in [false, true] {
+                let config = MpsConfig {
+                    max_bond_dim: if truncating { 1 } else { 4 },
+                    svd_cutoff: if truncating { 1e-7 } else { 0.0 },
+                    max_truncation_error: Some(0.0),
+                    parallel: false,
+                };
+                let mut fast = Mast::with_seed(2, 2, seed).with_mps_config(config.clone());
+                let mut slow = Mast::with_seed(2, 2, seed).with_mps_config(config);
+                for round in 0..4 {
+                    for simulator in [&mut fast, &mut slow] {
+                        simulator.h(&[QubitId(0)]);
+                        simulator.cx(&[(QubitId(0), QubitId(1))]);
+                        if round == 1 {
+                            simulator.rz(Angle64::from_radians(0.37), &[QubitId(0)]);
+                        }
+                    }
+                    for q in [0, 1, 1] {
+                        let a = with_fast_path(true, || fast.mz(&[QubitId(q)]));
+                        let b = with_fast_path(false, || slow.mz(&[QubitId(q)]));
+                        assert_eq!(a[0].outcome, b[0].outcome);
+                        assert_eq!(a[0].is_deterministic, b[0].is_deterministic);
+                        assert_pair_bits(&fast.tableau, &fast.mps, &slow.tableau, &slow.mps);
+                        assert_eq!(fast.rng.clone().next_u64(), slow.rng.clone().next_u64());
+                        assert_eq!(fast.disent_flags, slow.disent_flags);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn u_phase_family_is_exact() {
         for (lambda, expected_high, label) in [
             (Angle64::ZERO, Complex64::new(1.0, 0.0), "I"),

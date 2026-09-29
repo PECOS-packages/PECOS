@@ -215,14 +215,26 @@ fn rng_setter_scalar_boundaries() {
         ("RNGbound", "4294967295", "4294967296"),
     ] {
         let mut engine = QASMEngine::default();
-        // set_index advances iteratively. Put the generator at the requested index
-        // to test this boundary without generating 2^64-1 random numbers.
+        // set_index advances iteratively. Put the generator one short of the
+        // requested index so the boundary is tested with a real transition
+        // rather than a no-op, without generating 2^64-1 random numbers.
         if name == "RNGindex" {
-            engine.rng_model.count = u64::MAX;
+            engine.rng_model.count = u64::MAX - 1;
         }
         engine
             .evaluate_rng_models(name, &[integer(limit)], 1)
             .unwrap();
+        // Acceptance is not delivery: check the value actually reached the
+        // generator, so a setter that accepted and discarded its argument fails.
+        match name {
+            "RNGindex" => assert_eq!(engine.rng_model.count, u64::MAX),
+            "RNGbound" => assert_eq!(engine.rng_model.curr_bound, u32::MAX),
+            _ => {
+                let mut reference = QASMEngine::default();
+                reference.rng_model.set_seed(u64::MAX);
+                assert_eq!(engine.rng_model.rng_num(), reference.rng_model.rng_num());
+            }
+        }
         let error = engine
             .evaluate_rng_models(name, &[integer(above)], 1)
             .unwrap_err()
@@ -389,4 +401,29 @@ mod wasm {
             }
         }
     }
+}
+
+/// The default configuration, without complex conditionals, so this test can see
+/// what the shared helper above would hide.
+fn run_standard(source: &str) -> Result<QASMEngine, PecosError> {
+    let program = QASMProgram::from_str(&format!("OPENQASM 2.0; {source}"))?;
+    let mut engine = QASMEngine::new(program);
+    engine.process_program_impl()?;
+    Ok(engine)
+}
+
+#[test]
+fn standard_conditional_accepts_an_unfolded_constant_operand() {
+    // The inner comparison is no longer folded, because a comparison's unsigned
+    // result cannot be written back as a literal. The gate must still accept it:
+    // whether a program is accepted cannot depend on what the folder folds.
+    let engine =
+        run_standard("qreg q[1]; creg c[1]; creg out[1]; c = 1; if (c == (1 == 1)) out = 1;")
+            .expect("a constant right operand must be accepted without complex conditionals");
+    assert_eq!(engine.classical_registers["out"], bitvec![u8, Lsb0; 1]);
+
+    // A register on the right is still refused, which is what the gate is for.
+    assert!(
+        run_standard("qreg q[1]; creg c[1]; creg d[1]; creg out[1]; if (c == d) out = 1;").is_err()
+    );
 }

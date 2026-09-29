@@ -27,18 +27,6 @@ pub fn fold_constants_gate_param(expr: Expression) -> Expression {
     fold_constants_with_context(expr, true)
 }
 
-/// Fold constants. The legacy destination-width argument no longer affects arithmetic.
-#[must_use]
-pub fn fold_constants_with_width(expr: Expression, _default_width: usize) -> Expression {
-    fold_constants_with_context(expr, false)
-}
-
-/// Fold gate parameter constants. The legacy destination-width argument is ignored.
-#[must_use]
-pub fn fold_constants_gate_param_with_width(expr: Expression, _default_width: usize) -> Expression {
-    fold_constants_with_context(expr, true)
-}
-
 /// Internal function that handles context-aware constant folding
 fn fold_constants_with_context(expr: Expression, is_gate_param: bool) -> Expression {
     match expr {
@@ -253,13 +241,13 @@ mod tests {
             left: Box::new(Expression::Integer(parse_integer_to_bitvec("8").unwrap())),
             right: Box::new(Expression::Integer(parse_integer_to_bitvec("2").unwrap())),
         };
-        for width in [0, 4, 8] {
-            let Expression::Integer(value) = fold_constants_with_width(expr.clone(), width) else {
-                panic!("Expected folded integer");
-            };
-            assert_eq!(value.len(), 64);
-            assert_eq!(bitvec::to_decimal_string(&value), "4");
-        }
+        // The destination width no longer reaches folding, so there is nothing
+        // left to sweep here: the result is 64 bits whatever it is assigned to.
+        let Expression::Integer(value) = fold_constants(expr) else {
+            panic!("Expected folded integer");
+        };
+        assert_eq!(value.len(), 64);
+        assert_eq!(bitvec::to_decimal_string(&value), "4");
     }
 
     #[test]
@@ -309,23 +297,23 @@ mod tests {
     }
 
     #[test]
-    fn test_integer_not_remains_unfolded_at_every_width() {
-        for width in [0, 1, 8] {
-            for is_gate_param in [false, true] {
-                let expr = Expression::UnaryOp {
-                    op: "~".to_string(),
-                    expr: Box::new(Expression::Integer(parse_integer_to_bitvec("1").unwrap())),
-                };
-                let Expression::UnaryOp { op, expr } = (if is_gate_param {
-                    fold_constants_gate_param_with_width(expr, width)
-                } else {
-                    fold_constants_with_width(expr, width)
-                }) else {
-                    panic!("Signed negative complement must remain unfolded");
-                };
-                assert_eq!(op, "~");
-                assert!(matches!(*expr, Expression::Integer(_)));
-            }
+    fn test_integer_not_remains_unfolded() {
+        // The complement of a small literal is a negative signed value, which
+        // cannot be written back as a literal without changing its tag, so it
+        // stays unfolded on both the ordinary and the gate-parameter path.
+        for fold in [
+            fold_constants as fn(Expression) -> Expression,
+            fold_constants_gate_param as fn(Expression) -> Expression,
+        ] {
+            let expr = Expression::UnaryOp {
+                op: "~".to_string(),
+                expr: Box::new(Expression::Integer(parse_integer_to_bitvec("1").unwrap())),
+            };
+            let Expression::UnaryOp { op, expr } = fold(expr) else {
+                panic!("Signed negative complement must remain unfolded");
+            };
+            assert_eq!(op, "~");
+            assert!(matches!(*expr, Expression::Integer(_)));
         }
     }
 

@@ -68,6 +68,29 @@ pub struct QASMEngine {
     rng_model: RNGModel,
 }
 
+/// Whether an expression is a constant the evaluator can fold or evaluate without
+/// reading a register.
+///
+/// The standard conditional form is a register or bit compared against a
+/// constant. Asking whether the right operand is constant, rather than whether
+/// it is an already-folded literal, keeps that gate independent of what the
+/// constant folder chooses to fold. Folding is an optimisation and must not
+/// decide whether a program is accepted.
+fn is_integer_constant(expr: &Expression) -> bool {
+    match expr {
+        Expression::Integer(_) => true,
+        Expression::UnaryOp { expr, .. } => is_integer_constant(expr),
+        Expression::BinaryOp { left, right, .. } => {
+            is_integer_constant(left) && is_integer_constant(right)
+        }
+        Expression::Float(_)
+        | Expression::Pi
+        | Expression::Variable(_)
+        | Expression::BitId(_, _)
+        | Expression::FunctionCall { .. } => false,
+    }
+}
+
 impl QASMEngine {
     // Maximum batch size for quantum operations
     const MAX_BATCH_SIZE: usize = 100;
@@ -1143,12 +1166,9 @@ impl QASMEngine {
                     if !self.allow_complex_conditionals {
                         if let Expression::BinaryOp { op: _, left, right } = condition {
                             let is_valid = matches!(
-                                (left.as_ref(), right.as_ref()),
-                                (
-                                    Expression::Variable(_) | Expression::BitId(_, _),
-                                    Expression::Integer(_)
-                                )
-                            );
+                                left.as_ref(),
+                                Expression::Variable(_) | Expression::BitId(_, _)
+                            ) && is_integer_constant(right);
 
                             if !is_valid {
                                 return Err(PecosError::Processing(

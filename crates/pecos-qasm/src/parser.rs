@@ -234,7 +234,7 @@ impl QASMParser {
                                 }
                             }
                             Rule::classical_op => {
-                                if let Some(op) = parse_classical_operation(inner_pair, &program)? {
+                                if let Some(op) = parse_classical_operation(inner_pair)? {
                                     program.operations.push(op);
                                 }
                             }

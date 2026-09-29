@@ -2461,3 +2461,45 @@ def test_resource_sign_rejects_non_real_phase_in_invalid_geometry():
     geometry.logical_x = replace(geometry.logical_x, data_qubits=tuple(range(1, geometry.num_data)))
     with pytest.raises(ValueError, match=r"Resource sign.*non-real Pauli phase.*odd"):
         _resource_sign_checks(patch)
+
+
+@pytest.mark.parametrize(("dx", "dz", "family", "reference"), [(1, 1, None, 0), (1, 3, "X", 1), (3, 1, "Z", 1)])
+def test_resource_sign_degenerate_ancilla(dx, dz, family, reference):
+    _, patch, tc = _resource_program(dx, dz)
+    readout = json.loads(tc.get_meta("injection_readouts"))[0]
+    ids = readout["resource_sign_meas_ids"]
+    assert len(ids) == int(family is not None)
+    assert readout["resource_sign_records"] == [mid - tc.num_measurements() for mid in ids]
+    assert readout["resource_sign_reference"] == reference
+    rows = [row for row in json.loads(tc.get_meta("measurement_keys"))["stabilizer"] if row[0] == "A"]
+    if family is None:
+        assert rows == []
+    else:
+        assert {row[1] for row in rows} == {family}
+        selected = [row for row in rows if row[-1] in ids]
+        assert len(selected) == 1
+        assert {(row[3], row[4]) for row in selected} == {(min(row[3] for row in rows), 0)}
+    tick = _first_measurement_tick(tc, set(range(patch.geometry.num_data)))
+    logical_y = _logical_y_pauli(patch, 2 * patch.geometry.num_qubits)
+    for seed in range(16):
+        positive, negative = _signed_membership(tc, tick, logical_y, seed)
+        assert positive != negative
+        measurements = simulate_tick_circuit(tc, seed)[0]
+        m = sum(measurements[record] for record in readout["records"]) % 2
+        r = sum(measurements[record] for record in readout["resource_sign_records"]) % 2
+        r ^= reference
+        assert int(negative) ^ m ^ r == 0, seed
+
+
+@pytest.mark.parametrize("distance", [1, 3])
+def test_resource_sign_rejects_swapped_ancilla_at_emission(distance):
+    builder = BuilderProbe()
+    patch = SurfacePatch.create(distance)
+    builder.add_patch(patch, "D")
+    builder.add_patch(patch, "A", qubit_offset=patch.geometry.num_qubits)
+    builder.add_sz_via_teleportation("D", "A", 2, 2)
+    # Bypass public validation to protect the generator if a future builder admits a swapped ancilla.
+    operations = [*builder.operations, LogicalOp(LogicalGateType.TRANSVERSAL_H, ["A"])]
+    generator = GeneratorProbe(builder.patches, operations)
+    with pytest.raises(ValueError, match=r"Resource sign.*ancilla 'A'.*unswapped patch state"):
+        generator.generate()

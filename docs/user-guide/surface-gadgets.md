@@ -632,9 +632,10 @@ current logical frame, like terminal X and Z; after a transversal H, the
 reported value refers to the swapped frame.
 
 Product-Y preparation followed by Y readout emits no observable. Its encoded
-Y sign is the parity of first-round check records XOR a reference bit derived
-from the logical representatives. SZ teleportation exposes both in its injection
-metadata. It remains a distance-1 quantity:
+Y sign is the parity of a solved subset of first-round check records XOR a
+reference bit derived from the logical representatives. SZ teleportation exposes
+that selected subset as `resource_sign_records` and the reference as
+`resource_sign_reference` in its injection metadata. It remains a distance-1 quantity:
 a single first-round measurement error flips it.
 At distance 3, zero, one, and two requested rounds give 4, 12, and 20
 deterministic detectors. For one and two rounds, the emitted masks have ranks
@@ -1042,9 +1043,12 @@ The builder records both the ancilla's final logical-Z readout (`meas_ids`,
 `injection_readouts`, in the circuit metadata and in `build_algorithm_descriptor()`. IDs are absolute measurement indices;
 records are offsets relative to the end of the measurement stream.
 The reference is the sign of the Pauli identity relating the selected checks,
-logical Y, and all-Y: if the logical X and Z supports overlap on k qubits and
-there are n data qubits, the phase is i^(k-n). Its exponent must be even;
-`resource_sign_reference` is `(k-n) % 4 // 2`. It depends on the representatives,
+logical Y, and all-Y. If logical X has weight w, the logical X and Z supports
+overlap on k qubits, and there are n data qubits, the exact phase is `i^(2w-n-k)`.
+For supported patches, w and k have the same parity: odd dimensions give odd
+logical X weight, preserved by even-weight checks, and logical X/Z
+anticommutation makes k odd. Therefore the phase reduces to `i^(k-n)`.
+Its exponent must be even; `resource_sign_reference` is `(k-n) % 4 // 2`. It depends on the representatives,
 so it can be one for rectangular patches or non-canonical square representatives.
 A logical Z correction on the data is required when the logical readout parity
 and resource sign parity disagree: XOR the two parities to decide.

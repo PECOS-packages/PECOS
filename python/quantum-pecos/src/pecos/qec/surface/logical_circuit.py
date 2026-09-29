@@ -1135,9 +1135,10 @@ class LogicalCircuitBuilder:
                 Only used for initialization and final measurement. Y is
                 supported for preparation; terminal Y lowers to a logical SZdg
                 fold followed by the requested rounds and X readout in the current logical frame.
-                Product-Y preparation has a deterministic encoded-sign parity of first-round
-                check records XOR a reference from the logical representatives. SZ teleportation
-                exposes both in injection metadata; the resulting sign is a distance-1 quantity.
+                Product-Y preparation has an encoded sign given by the parity of a solved subset
+                of first-round check records XOR a reference from the logical representatives.
+                SZ teleportation exposes that subset as ``resource_sign_records`` and the reference
+                as ``resource_sign_reference`` in injection metadata; the sign is a distance-1 quantity.
                 Y-readout folds create hyperedges that build_decoder's matching route
                 (LogicalSubgraphDecoder) skips; see add_logical_sz and use a hypergraph decoder.
         """
@@ -1298,8 +1299,9 @@ class LogicalCircuitBuilder:
         After ancilla readout, data has S|psi> up to a Z correction when the
         ancilla logical readout parity and resource sign parity disagree.
         The projected resource is (-1)^r times logical Y, where r is the parity
-        of round-0 checks in the ancilla's first projection segment XOR
-        ``resource_sign_reference`` (a 0/1 bit from the logical representatives).
+        of the selected round-0 check records in ``resource_sign_records`` from
+        the ancilla's first projection segment XOR ``resource_sign_reference``
+        (a 0/1 bit from the logical representatives).
         ``injection_readouts`` exposes these as ``resource_sign_meas_ids``
         (absolute measurement IDs) and ``resource_sign_records`` (relative
         records), alongside the logical readout's ``meas_ids`` and ``records``.
@@ -2636,10 +2638,14 @@ def _resource_sign_checks(patch: SurfacePatch) -> tuple[list[tuple[str, int]], i
     X and Z supports can be solved independently for this CSS code. Tracking
     each elimination row's check combination recovers measurement provenance.
     The product of the positive selected checks and the positive logical Y
-    equals i**(overlap - num_data) times all-Y, where overlap belongs to the
-    logical representatives used in this solve. Solvability requires an even
-    phase exponent. Return the checks and the resulting 0/1 reference bit;
-    XOR that bit with the check parity to obtain the resource sign.
+    equals ``i**(2 * x_weight - num_data - overlap)`` times all-Y, using the
+    logical representatives consumed by this solve. For supported patches,
+    x_weight and overlap have the same parity: odd dimensions give odd logical
+    X weight, preserved by even-weight checks, and logical X/Z anticommutation
+    makes overlap odd. Thus the exponent reduces modulo four to
+    ``overlap - num_data``. Solvability requires an even phase exponent.
+    Return the checks and the resulting 0/1 reference bit; XOR that bit with
+    the selected check parity to obtain the resource sign.
     """
     geometry = patch.geometry
     selected = []
@@ -2826,7 +2832,11 @@ class _CircuitGenerator:
         for op in self._injection_ops:
             if op.injection_type == "SZ":
                 label = op.patches[1]
-                checks, reference = _resource_sign_checks(self.patches[label].patch)
+                ps = self.patches[label]
+                if ps.x_z_swapped:
+                    msg = f"Resource sign for injection ancilla '{label}' requires an unswapped patch state"
+                    raise ValueError(msg)
+                checks, reference = _resource_sign_checks(ps.patch)
                 meas_ids = []
                 if checks:
                     # Freshness and the pre-CX round guard make this the resource projection.

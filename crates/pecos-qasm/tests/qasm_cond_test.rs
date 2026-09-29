@@ -625,7 +625,7 @@ unsigned_assignment_cases! {
     unsigned_assignment_not_literal: ("b = ~1;", "b", 254, 8),
     unsigned_assignment_not_register: ("a = 3; b = ~a;", "b", 12),
     unsigned_assignment_bitwise_or: ("a = 3; b = a | 0;", "b", 3),
-    unsigned_shift_not_right: ("b = ~1 >> 8;", "b", 0),
+    unsigned_shift_not_right: ("b = ~1 >> 8;", "b", 15),
     unsigned_shift_not_left: ("b = ~1 << 8;", "b", 0),
     unsigned_shift_literal_left: ("b = 1 << 2;", "b", 4),
     unsigned_shift_register_count: ("a = 3; b = 1 << a;", "b", 8),
@@ -654,7 +654,7 @@ macro_rules! unsigned_complex_condition_cases {
 
 unsigned_complex_condition_cases! {
     unsigned_b15_eq_negative1: ("b == -1", 0),
-    unsigned_b15_gt_negative1: ("b > -1", 1),
+    unsigned_b15_gt_negative1: ("b > -1", 0),
     unsigned_b15_lt0: ("b < 0", 0),
     unsigned_b15_eq15: ("b == 15", 1),
     unsigned_b15_gt15: ("b > 15", 0),
@@ -663,7 +663,7 @@ unsigned_complex_condition_cases! {
     unsigned_negated_register_gt_negative1: ("-a > -1", 0, "creg a[2]; a = 3; "),
     unsigned_negated_register_lt0: ("-a < 0", 1, "creg a[2]; a = 3; "),
     unsigned_negated_register_eq_negative3: ("-a == -3", 1, "creg a[2]; a = 3; "),
-    unsigned_not_condition_width: ("~1 == 14", 1),
+    unsigned_not_condition_width: ("~1 == 14", 0),
     unsigned_not_condition_not_assignment_width: ("~1 == 254", 0),
 }
 

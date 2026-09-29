@@ -1,4 +1,3 @@
-pub mod comparison;
 pub mod config;
 pub mod constant_folding;
 pub mod errors;

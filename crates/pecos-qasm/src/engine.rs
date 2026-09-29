@@ -2,9 +2,9 @@
 
 use bitvec::prelude::*;
 use log::debug;
-use pecos_core::Angle64;
 use pecos_core::errors::PecosError;
 use pecos_core::gate_type::GateType;
+use pecos_core::{Angle64, BitUInt, ExprValue};
 use pecos_engines::byte_message::ByteMessageBuilder;
 use pecos_engines::prelude::*;
 use pecos_random::rng_pcg::RNGModel;
@@ -16,10 +16,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use crate::ast::{Expression, Operation};
-use crate::bitvec_expression::{
-    BitVecExpressionContext, ExpressionValue, evaluate_expression_bitvec, resize_expression_value,
-};
-use crate::parser::comparison::is_negative_expression;
+use crate::bitvec_expression::{BitVecExpressionContext, evaluate_expression_bitvec};
 use crate::program::QASMProgram;
 
 /// Gate handler function type
@@ -1169,13 +1166,12 @@ impl QASMEngine {
                     debug!("Evaluating if condition: {condition:?}");
                     // Use evaluate_expression_bitvec_with_width to support WASM functions
                     // For conditions, we don't need a specific width - just evaluate as boolean
-                    // This conversion is signed; value-carried signedness is tracked in #869.
                     let condition_value = self
                         .evaluate_expression_bitvec_with_width(condition, 1)?
-                        .as_i64();
+                        .as_bool();
                     debug!("Condition value: {condition_value}");
 
-                    if condition_value != 0 {
+                    if condition_value {
                         debug!(
                             "If condition evaluated to true, executing operation: {operation:?}"
                         );
@@ -1205,7 +1201,7 @@ impl QASMEngine {
                                 index,
                                 expression,
                             } => {
-                                // Get target register size for width hint
+                                // Get the destination width for function results and missing registers
                                 let target_width = if *is_indexed {
                                     1 // Single bit assignment
                                 } else {
@@ -1223,17 +1219,16 @@ impl QASMEngine {
 
                                 if *is_indexed {
                                     if let Some(idx) = *index {
-                                        let bit_value = value_expr.into_bool();
+                                        let bit_value = value_expr.as_bool();
                                         self.update_register_bit(target, idx, u8::from(bit_value))?;
                                     }
                                 } else if let Some(register_size) =
                                     program.classical_registers.get(target.as_str())
                                 {
-                                    let result_bitvec = resize_expression_value(
-                                        value_expr.into_bitvec(),
-                                        is_negative_expression(expression),
+                                    let result_bitvec = pecos_core::bitvec::from_expr_value(
+                                        &value_expr,
                                         *register_size,
-                                    );
+                                    )?;
 
                                     debug!(
                                         "Setting register {} with BitVec of length {}",
@@ -1298,7 +1293,7 @@ impl QASMEngine {
                 } => {
                     debug!("Processing classical assignment: {target} = {expression:?}");
 
-                    // Get target register size for width hint
+                    // Get the destination width for function results and missing registers
                     let target_width = if *is_indexed {
                         1 // Single bit assignment
                     } else {
@@ -1314,17 +1309,14 @@ impl QASMEngine {
 
                     if *is_indexed {
                         if let Some(idx) = *index {
-                            let bit_value = value_expr.into_bool();
+                            let bit_value = value_expr.as_bool();
                             self.update_register_bit(target, idx, u8::from(bit_value))?;
                         }
                     } else if let Some(register_size) =
                         program.classical_registers.get(target.as_str())
                     {
-                        let result_bitvec = resize_expression_value(
-                            value_expr.into_bitvec(),
-                            is_negative_expression(expression),
-                            *register_size,
-                        );
+                        let result_bitvec =
+                            pecos_core::bitvec::from_expr_value(&value_expr, *register_size)?;
 
                         debug!(
                             "Setting register {} with BitVec of length {}",
@@ -1374,12 +1366,65 @@ impl QASMEngine {
         Ok(Some(msg))
     }
 
+    /// Function results carry unsigned scalar patterns, including negative WASM returns.
+    fn function_result(value: u64, width: usize) -> Result<ExprValue, PecosError> {
+        let size = u16::try_from(width)
+            .ok()
+            .filter(|&size| size != 0)
+            .ok_or_else(|| {
+                PecosError::Input(format!(
+                    "Expression width must be in 1..=65535, got {width}"
+                ))
+            })?;
+        Ok(ExprValue::Unsigned(BitUInt::new(size, value)))
+    }
+
+    fn rng_argument(
+        &self,
+        name: &str,
+        arg: &Expression,
+        scalar_width: u16,
+    ) -> Result<u64, PecosError> {
+        let value = evaluate_expression_bitvec(arg, self, 64)?;
+        match &value {
+            ExprValue::Boolean(value) => Ok(u64::from(*value)),
+            ExprValue::Signed(bits) if bits.get_bit(bits.size() - 1) => {
+                // Display on ExprValue is lossy above 64 bits. Format the full magnitude.
+                let magnitude = &BitUInt::zero(bits.size()) - bits;
+                let magnitude = pecos_core::bitvec::from_expr_value(
+                    &ExprValue::Unsigned(magnitude),
+                    usize::from(bits.size()),
+                )?;
+                let magnitude = if magnitude.len() <= 128 {
+                    pecos_core::bitvec::to_decimal_string(&magnitude)
+                } else {
+                    pecos_core::bitvec::to_hex_string(&magnitude)
+                };
+                Err(PecosError::Input(format!(
+                    "{name} requires a non-negative argument, got -{magnitude}"
+                )))
+            }
+            ExprValue::Signed(bits) | ExprValue::Unsigned(bits) => {
+                if (scalar_width..bits.size()).any(|bit| bits.get_bit(bit)) {
+                    return Err(PecosError::Input(format!(
+                        "{name} argument does not fit in {scalar_width} bits"
+                    )));
+                }
+                bits.to_u64().ok_or_else(|| {
+                    PecosError::Input(format!(
+                        "{name} argument does not fit in {scalar_width} bits"
+                    ))
+                })
+            }
+        }
+    }
+
     fn evaluate_rng_models(
         &mut self,
         name: &str,
         args: &[Expression],
         target_width: usize,
-    ) -> Result<ExpressionValue, PecosError> {
+    ) -> Result<ExprValue, PecosError> {
         match name {
             "RNGseed" => {
                 if args.len() != 1 {
@@ -1388,17 +1433,10 @@ impl QASMEngine {
                         args.len()
                     )));
                 }
-                let seed: u64 = match &args[0] {
-                    Expression::Integer(bit_vec) => bit_vec.load(),
-                    _ => {
-                        return Err(PecosError::ParseInvalidExpression(
-                            "RNGseed expects a u64 as its argument".to_string(),
-                        ));
-                    }
-                };
+                let seed = self.rng_argument(name, &args[0], 64)?;
                 self.rng_model.set_seed(seed);
                 // Void function - return 0
-                Ok(ExpressionValue::BitVec(BitVec::repeat(false, target_width)))
+                Self::function_result(0, target_width)
             }
             "RNGindex" => {
                 if args.len() != 1 {
@@ -1407,16 +1445,9 @@ impl QASMEngine {
                         args.len()
                     )));
                 }
-                let idx: u64 = match &args[0] {
-                    Expression::Integer(bit_vec) => bit_vec.load(),
-                    _ => {
-                        return Err(PecosError::ParseInvalidExpression(
-                            "RNGindex expects a u64 as its argument".to_string(),
-                        ));
-                    }
-                };
+                let idx = self.rng_argument(name, &args[0], 64)?;
                 self.rng_model.set_index(idx);
-                Ok(ExpressionValue::BitVec(BitVec::repeat(false, target_width)))
+                Self::function_result(0, target_width)
             }
             "RNGbound" => {
                 if args.len() != 1 {
@@ -1425,16 +1456,10 @@ impl QASMEngine {
                         args.len()
                     )));
                 }
-                let ubound: u32 = match &args[0] {
-                    Expression::Integer(bit_vec) => bit_vec.load(),
-                    _ => {
-                        return Err(PecosError::ParseInvalidExpression(
-                            "RNGbound expects a u32 as its argument".to_string(),
-                        ));
-                    }
-                };
+                let ubound = u32::try_from(self.rng_argument(name, &args[0], 32)?)
+                    .map_err(|error| PecosError::Input(error.to_string()))?;
                 self.rng_model.set_bound(ubound);
-                Ok(ExpressionValue::BitVec(BitVec::repeat(false, target_width)))
+                Self::function_result(0, target_width)
             }
             "RNGnum" => {
                 if !args.is_empty() {
@@ -1446,12 +1471,7 @@ impl QASMEngine {
 
                 let rng_num = self.rng_model.rng_num();
 
-                // convert random number to bitvec
-                let mut bitvec = BitVec::<u8, Lsb0>::with_capacity(target_width);
-                for i in 0..target_width {
-                    bitvec.push((rng_num >> i) & 1 != 0);
-                }
-                Ok(ExpressionValue::BitVec(bitvec))
+                Self::function_result(u64::from(rng_num), target_width)
             }
             _ => Err(PecosError::ParseInvalidExpression(format!(
                 "Unknown RNG function '{name}'"
@@ -1465,11 +1485,19 @@ impl QASMEngine {
         name: &str,
         args: &[Expression],
         target_width: usize,
-    ) -> Result<ExpressionValue, PecosError> {
+    ) -> Result<ExprValue, PecosError> {
         let mut arg_values = Vec::new();
-        for arg in args {
+        for (position, arg) in args.iter().enumerate() {
             let val = evaluate_expression_bitvec(arg, self, target_width)?;
-            // This conversion is signed; value-carried signedness is tracked in #869.
+            if let ExprValue::Signed(bits) | ExprValue::Unsigned(bits) = &val
+                && bits.size() > 64
+            {
+                return Err(PecosError::Input(format!(
+                    "WASM function '{name}' argument {} has width {}; maximum is 64",
+                    position + 1,
+                    bits.size()
+                )));
+            }
             arg_values.push(val.as_i64());
         }
         if let Some(ref mut foreign_obj) = self.foreign_object {
@@ -1477,15 +1505,9 @@ impl QASMEngine {
             // Convert result back to BitVec
             if results.is_empty() {
                 // Void function - return 0
-                return Ok(ExpressionValue::BitVec(BitVec::repeat(false, target_width)));
+                return Self::function_result(0, target_width);
             } else if results.len() == 1 {
-                // Single return value - convert to BitVec
-                let value = results[0];
-                let mut bitvec = BitVec::<u8, Lsb0>::with_capacity(target_width);
-                for i in 0..target_width {
-                    bitvec.push((value >> i) & 1 != 0);
-                }
-                return Ok(ExpressionValue::BitVec(bitvec));
+                return Self::function_result(results[0].cast_unsigned(), target_width);
             }
             return Err(PecosError::ParseInvalidExpression(format!(
                 "WASM function '{name}' returned {} values, but only single return values are supported in QASM expressions",
@@ -1501,7 +1523,7 @@ impl QASMEngine {
         &mut self,
         expr: &Expression,
         target_width: usize,
-    ) -> Result<ExpressionValue, PecosError> {
+    ) -> Result<ExprValue, PecosError> {
         log::debug!("evaluate_expression_bitvec_with_width called with expr: {expr:?}");
 
         // Check if this is a platform fn call (RNG functions) or WASM function call
@@ -1520,7 +1542,7 @@ impl QASMEngine {
                 return self.evaluate_wasm_expr(name, args, target_width);
             }
         }
-        // Use target width as hint for expression evaluation
+        // The target width only sizes function results and undeclared missing registers
         debug!("Falling back to regular evaluate_expression_bitvec for expr: {expr:?}");
 
         // If this is a function call and we reached here, it means:
@@ -1969,3 +1991,7 @@ mod tests {
         assert_eq!(ops.len(), 6);
     }
 }
+
+#[cfg(test)]
+#[path = "engine/expression_tests.rs"]
+mod expression_tests;

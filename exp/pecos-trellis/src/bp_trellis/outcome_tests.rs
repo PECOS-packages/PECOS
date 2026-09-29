@@ -188,7 +188,7 @@ fn bp_refresh_is_reused_across_the_ladder() {
         num_observables: usize,
     }
     let fixtures: BTreeMap<String, Vec<Fixture>> =
-        serde_json::from_str(include_str!("../tests/fixtures/models.json")).unwrap();
+        serde_json::from_str(include_str!("../../tests/fixtures/bp_trellis/models.json")).unwrap();
     let f = fixtures
         .values()
         .flatten()

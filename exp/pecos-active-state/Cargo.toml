@@ -1,0 +1,26 @@
+[package]
+name = "pecos-active-state"
+version.workspace = true
+edition.workspace = true
+readme = "README.md"
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Experimental exact simulation with dense active stabilizer coordinates"
+publish = false
+
+[dependencies]
+pecos-stab-tn.workspace = true
+pecos-simulators.workspace = true
+pecos-core.workspace = true
+pecos-random.workspace = true
+num-complex.workspace = true
+
+[dev-dependencies]
+paste.workspace = true
+
+[lints]
+workspace = true

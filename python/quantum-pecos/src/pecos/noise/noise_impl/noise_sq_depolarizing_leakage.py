@@ -64,7 +64,8 @@ def noise_sq_depolarizing_leakage(
         # a rotation or a measurement needs in order to execute.
         noisy_op = copy(op)
         noisy_op.args = list(not_leaked)
-        noisy_op.metadata = dict(op.metadata)
+        # metadata defaults to None on QOp; the simulator treats None and {} alike.
+        noisy_op.metadata = dict(op.metadata or {})
     else:
         noisy_op = op
 

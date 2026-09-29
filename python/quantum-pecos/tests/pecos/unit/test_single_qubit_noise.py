@@ -136,6 +136,17 @@ def test_model_replaces_fully_leaked_batch_with_nothing() -> None:
     assert result == []
 
 
+def test_narrowing_accepts_absent_metadata() -> None:
+    """QOp defaults metadata to None; narrowing must not choke on it."""
+    op = QOp(name="H", args=[0, 1, 2, 3])
+    assert op.metadata is None
+    result = noise_sq_depolarizing_leakage(op, 0.0, {"X": 1.0}, FakeMachine(pre=(0,)))
+
+    (narrowed,) = result
+    assert sorted(narrowed.args) == [1, 2, 3]
+    assert narrowed.metadata == {}
+
+
 def test_narrowed_gate_keeps_executable_fields() -> None:
     """Narrowing around a leaked qubit preserves what the simulator needs to run it."""
     op = QOp(

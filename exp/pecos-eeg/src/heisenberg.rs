@@ -928,7 +928,7 @@ pub fn heisenberg_with_noise_map(
                             let has_z_in_noise = inj.label.z_bits.highest_set_bit().is_some();
                             for term in &mut terms {
                                 let anti = (has_z_in_noise && term.pauli.has_x(q))
-                                    || (has_x_in_noise && term.pauli.has_z(q));
+                                    != (has_x_in_noise && term.pauli.has_z(q));
                                 if anti {
                                     term.coeff_re *= scale;
                                     term.coeff_im *= scale;
@@ -1268,9 +1268,9 @@ pub fn heisenberg_windowed(
                             let has_x_in_noise = inj.label.x_bits.highest_set_bit().is_some();
                             let has_z_in_noise = inj.label.z_bits.highest_set_bit().is_some();
                             for term in &mut terms {
-                                // Anticommutes if noise X overlaps term Z or noise Z overlaps term X
+                                // Anticommutes when exactly one symplectic overlap is present
                                 let anti = (has_z_in_noise && term.pauli.has_x(q))
-                                    || (has_x_in_noise && term.pauli.has_z(q));
+                                    != (has_x_in_noise && term.pauli.has_z(q));
                                 if anti {
                                     term.coeff_re *= scale;
                                     term.coeff_im *= scale;
@@ -1605,7 +1605,7 @@ pub fn heisenberg_sparse(
                             let has_z_in_noise = inj.label.z_bits.highest_set_bit().is_some();
                             for term in &mut terms {
                                 let anti = (has_z_in_noise && term.pauli.has_x(q))
-                                    || (has_x_in_noise && term.pauli.has_z(q));
+                                    != (has_x_in_noise && term.pauli.has_z(q));
                                 if anti {
                                     term.coeff_re *= scale;
                                     term.coeff_im *= scale;
@@ -2048,6 +2048,130 @@ mod tests {
             meas_ids: pecos_core::GateMeasIds::new(),
             channel: None,
         }
+    }
+
+    struct PauliAfterGate {
+        gate_index: usize,
+        label: Bm,
+        probability: f64,
+    }
+
+    impl NoiseSpec for PauliAfterGate {
+        fn noise_after_gate(
+            &self,
+            gate_index: usize,
+            _gate_type: GateType,
+            _qubits: &[usize],
+        ) -> Vec<crate::noise::NoiseInjection> {
+            if gate_index == self.gate_index {
+                vec![crate::noise::NoiseInjection {
+                    eeg_type: crate::eeg::EegType::S,
+                    label: self.label.clone(),
+                    label2: None,
+                    rate: -self.probability,
+                }]
+            } else {
+                Vec::new()
+            }
+        }
+    }
+
+    #[test]
+    fn test_s_injection_y_eigenstate() {
+        // Issue #942: Y noise on the Y eigenstate prepared by SX changes
+        // only its global phase, so undoing SX must always measure zero.
+        let gates = vec![
+            gate(GateType::PZ, &[0]),
+            gate(GateType::SX, &[0]),
+            gate(GateType::SXdg, &[0]),
+            gate(GateType::MZ, &[0]),
+        ];
+        let stab = StabilizerGroup::from_circuit(&gates[..1], 1);
+        for probability in [0.01, 0.2] {
+            let noise = PauliAfterGate {
+                gate_index: 1,
+                label: Bm::y(0),
+                probability,
+            };
+            let actual = heisenberg_detection_probability(&gates, &Bm::z(0), &noise, &stab, 0.0);
+            assert!(actual.abs() < 1e-12, "p={probability}: got {actual}");
+        }
+    }
+
+    fn check_s_injection_pauli_matrix(walk: &str) {
+        // Prepare an eigenstate of X, Y, or Z, inject a Pauli, then undo
+        // the preparation. The independent analytic oracle is Pauli algebra:
+        // equal nonidentity Paulis commute (zero detection probability),
+        // while distinct ones anticommute (detection probability p).
+        let bases = [
+            ("X", GateType::H, GateType::H),
+            ("Y", GateType::SX, GateType::SXdg),
+            ("Z", GateType::Z, GateType::Z),
+        ];
+        for (term, prepare, undo) in bases {
+            let gates = vec![
+                gate(GateType::PZ, &[0]),
+                gate(prepare, &[0]),
+                gate(undo, &[0]),
+                gate(GateType::MZ, &[0]),
+            ];
+            let stab = StabilizerGroup::from_circuit(&gates[..1], 1);
+            let gate_index = crate::expand::GateIndex::build(&gates, 1);
+            for (injection, label) in [("X", Bm::x(0)), ("Y", Bm::y(0)), ("Z", Bm::z(0))] {
+                for probability in [0.0, 0.01, 0.2, 0.5, 0.75, 1.0] {
+                    let noise = PauliAfterGate {
+                        gate_index: 1,
+                        label: label.clone(),
+                        probability,
+                    };
+                    let noise_map = build_noise_map(&gates, &noise, &gate_index.expansion_gates);
+                    let actual = match walk {
+                        "windowed" => {
+                            heisenberg_detection_probability(&gates, &Bm::z(0), &noise, &stab, 0.0)
+                        }
+                        "noise_map" => {
+                            heisenberg_with_noise_map(&gates, &Bm::z(0), &noise_map, &stab, 0.0)
+                        }
+                        "sparse" | "sparse_noise_map" => heisenberg_sparse(
+                            &gates,
+                            &Bm::z(0),
+                            &noise,
+                            &stab,
+                            0.0,
+                            &gate_index,
+                            (walk == "sparse_noise_map").then_some(noise_map.as_slice()),
+                        ),
+                        _ => unreachable!(),
+                    };
+                    let expected = if injection == term { 0.0 } else { probability };
+                    assert!(
+                        (actual - expected).abs() < 1e-12,
+                        "{walk}: injection={injection}, term={term}, p={probability}: \
+                         expected {expected}, got {actual}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_s_injection_pauli_matrix_windowed() {
+        check_s_injection_pauli_matrix("windowed");
+    }
+
+    #[test]
+    fn test_s_injection_pauli_matrix_noise_map() {
+        check_s_injection_pauli_matrix("noise_map");
+    }
+
+    #[test]
+    fn test_s_injection_pauli_matrix_sparse() {
+        check_s_injection_pauli_matrix("sparse");
+    }
+
+    #[test]
+    fn test_s_injection_pauli_matrix_sparse_noise_map() {
+        check_s_injection_pauli_matrix("sparse_noise_map");
     }
 
     #[test]

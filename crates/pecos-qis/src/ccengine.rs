@@ -1488,21 +1488,24 @@ impl QisEngine {
         if !self.scheduled_batches || self.scheduled_drained {
             return Ok(None);
         }
-        let result: Result<ByteMessage, PecosError> = (|| {
+        let result: Result<(ByteMessage, bool), PecosError> = (|| {
             let batches = self
                 .runtime
                 .drain_pending_scheduled_operations()
                 .map_err(|e| {
                     PecosError::Generic(format!("scheduled terminal drain failed: {e}"))
                 })?;
+            let drained = batches.is_empty();
             let (commands, ids) =
                 crate::scheduled_transport::encode(batches, self.trace_shot_index as u64)?;
             self.measurement_mapping = ids;
-            Ok(commands)
+            Ok((commands, drained))
         })();
         match result {
-            Ok(commands) => {
-                self.scheduled_drained = true;
+            Ok((commands, drained)) => {
+                // A nonempty drain is work to execute, not proof of completion.
+                // Its measurements can release further scheduler work.
+                self.scheduled_drained = drained;
                 Ok(Some(commands))
             }
             Err(e) => Err(self.latch_terminal_error(format!("scheduled drain failed: {e}"))),
@@ -1566,6 +1569,9 @@ impl QisEngine {
         &mut self,
         updates: &[(usize, u32)],
     ) -> Result<(), PecosError> {
+        if self.scheduled_batches && !updates.is_empty() {
+            self.scheduled_drained = false;
+        }
         match self.provide_measurement_updates_to_runtime(updates) {
             Ok(()) => Ok(()),
             Err(e) => Err(self.latch_terminal_error(format!(
@@ -3188,5 +3194,166 @@ mod tests {
             err.to_string().contains("more than the configured 1"),
             "unexpected error: {err}"
         );
+    }
+}
+
+#[cfg(test)]
+mod scheduled_completion_tests {
+    use super::*;
+    use crate::runtime::{ClassicalState, Result as RuntimeResult};
+    use crate::scheduled::{RuntimeScheduledOp as Op, ScheduledBatch, ScheduledMeasurement};
+    #[derive(Clone, Default)]
+    struct FeedbackTail {
+        state: ClassicalState,
+        stage: usize,
+        fail_tail: bool,
+    }
+    impl QisRuntime for FeedbackTail {
+        fn load_interface(&mut self, _: OperationList) -> RuntimeResult<()> {
+            Ok(())
+        }
+        fn execute_until_quantum(&mut self) -> RuntimeResult<Option<Vec<QuantumOp>>> {
+            Ok(None)
+        }
+        fn provide_measurements(&mut self, _: BTreeMap<usize, bool>) -> RuntimeResult<()> {
+            self.stage = 2;
+            Ok(())
+        }
+        fn get_classical_state(&self) -> &ClassicalState {
+            &self.state
+        }
+        fn get_classical_state_mut(&mut self) -> &mut ClassicalState {
+            &mut self.state
+        }
+        fn is_complete(&self) -> bool {
+            true
+        }
+        fn num_qubits(&self) -> usize {
+            1
+        }
+        fn drain_pending_scheduled_operations(&mut self) -> RuntimeResult<Vec<ScheduledBatch>> {
+            let (ops, measurements, index) = match self.stage {
+                0 => {
+                    self.stage = 1;
+                    (
+                        vec![Op::Measure {
+                            qubit_id: 0,
+                            result_id: 0,
+                        }],
+                        vec![ScheduledMeasurement {
+                            operation_index: 0,
+                            runtime_result: 0,
+                            program_result: 0,
+                            leakage_aware: false,
+                        }],
+                        0,
+                    )
+                }
+                2 => {
+                    if self.fail_tail {
+                        return Err(crate::runtime::RuntimeError::ExecutionError(
+                            "tail drain failed".into(),
+                        ));
+                    }
+                    self.stage = 3;
+                    (
+                        vec![Op::Rz {
+                            qubit_id: 0,
+                            theta: 1.0,
+                        }],
+                        vec![],
+                        1,
+                    )
+                }
+                _ => return Ok(vec![]),
+            };
+            Ok(vec![ScheduledBatch {
+                runtime_shot_id: 0,
+                batch_index: index,
+                start_time_nanos: 0,
+                duration_nanos: 0,
+                operations: ops,
+                measurements,
+            }])
+        }
+    }
+    #[test]
+    fn terminal_feedback_must_drain_newly_ready_tail() {
+        use pecos_engines::noise::IntoNoiseModel;
+        use pecos_engines::runtime_frame::ShotContext;
+        use pecos_engines::scheduled_frame::ScheduledIdleZ;
+        use pecos_engines::{StateVecEngine, quantum_system::QuantumSystem};
+        let mut engine = QisEngine::with_runtime(Box::new(FeedbackTail::default()));
+        engine.scheduled_batches = true;
+        engine.dynamic_state = Some(DynamicExecutionState {
+            sync_handle: None,
+            execution_complete: true,
+            terminal_error: None,
+            finalized: false,
+        });
+        // Execute the terminal measurement and feedback-triggered tail in a real owner.
+        let mut quantum = QuantumSystem::new(
+            ScheduledIdleZ::new(1, 0.0, 0.0, 0.0)
+                .unwrap()
+                .into_noise_model(),
+            Box::new(StateVecEngine::new(1)),
+        );
+        quantum
+            .begin_shot(ShotContext {
+                run: 1,
+                worker: 0,
+                shot: 0,
+            })
+            .unwrap();
+        let EngineStage::NeedsProcessing(initial) = engine
+            .continue_processing(ByteMessage::outcomes_builder().build())
+            .unwrap()
+        else {
+            panic!("terminal drain must emit its measurement");
+        };
+        let measured = quantum.process(initial).unwrap();
+        assert_eq!(measured.outcomes().unwrap(), vec![0]);
+        let EngineStage::NeedsProcessing(commands) = engine.continue_processing(measured).unwrap()
+        else {
+            panic!("newly ready native tail was silently skipped");
+        };
+        let reply = quantum.process(commands).unwrap();
+        let EngineStage::NeedsProcessing(empty) = engine.continue_processing(reply).unwrap() else {
+            panic!("must verify an empty drain after executing the tail");
+        };
+        let reply = quantum.process(empty).unwrap();
+        assert!(matches!(
+            engine.continue_processing(reply).unwrap(),
+            EngineStage::Complete(_)
+        ));
+    }
+
+    #[test]
+    fn terminal_feedback_drain_failure_stays_latched() {
+        let mut engine = QisEngine::with_runtime(Box::new(FeedbackTail {
+            fail_tail: true,
+            ..FeedbackTail::default()
+        }));
+        engine.scheduled_batches = true;
+        engine.dynamic_state = Some(DynamicExecutionState {
+            sync_handle: None,
+            execution_complete: true,
+            terminal_error: None,
+            finalized: false,
+        });
+        engine
+            .continue_processing(ByteMessage::outcomes_builder().build())
+            .unwrap();
+        let error = engine
+            .continue_processing(ByteMessage::outcomes_builder().add_outcomes(&[0]).build())
+            .err()
+            .expect("tail drain must fail");
+        assert!(error.to_string().contains("tail drain failed"));
+        assert!(
+            engine
+                .continue_processing(ByteMessage::outcomes_builder().build())
+                .is_err()
+        );
+        assert!(!engine.dynamic_state.as_ref().unwrap().finalized);
     }
 }

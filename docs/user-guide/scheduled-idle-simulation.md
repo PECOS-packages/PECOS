@@ -63,7 +63,9 @@ Every input is fully admitted before any of its gates execute. Invalid inputs
 leave the quantum state and schedule cursor unchanged. Failures after execution
 begins poison the quantum owner; successful whole-host reset is required before
 reuse. Cloning a live scheduled owner also requires reset and a new shot context.
-A terminal scheduled drain executes before the shot is finalized.
+Terminal scheduled batches execute before the shot is finalized. Measurement
+feedback invalidates earlier drain certification; completion requires a fresh
+empty drain after the final feedback and execution.
 
 The mandatory wire envelope is version 3: a 16-byte little-endian header (PECS
 magic, version byte and three zero reserved bytes, u32 batch count, u32 total

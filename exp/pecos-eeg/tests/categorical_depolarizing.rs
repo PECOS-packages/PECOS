@@ -127,7 +127,7 @@ fn two_qubit_depolarizing_has_categorical_eigenvalue() {
     }
 }
 
-/// Place UniformNoise's channels at an identity gate so every Pauli can be
+/// Place `UniformNoise`'s channels at an identity gate so every Pauli can be
 /// tested without depending on a Clifford conjugation or measurement basis.
 struct NoiseAtIdentity {
     noise: UniformNoise,

@@ -220,11 +220,23 @@ impl ScheduledExecutor {
     pub fn finish_shot(&mut self) -> Result<(ScheduledExecutionOutput, Shot), PecosError> {
         let context = self.require_active()?;
         self.poisoned = true;
-        let batches = self
-            .runtime
-            .drain_pending_scheduled_operations()
-            .map_err(|error| runtime_error(&error))?;
-        let output = self.execute(context, batches)?;
+        let mut output = ScheduledExecutionOutput {
+            context,
+            batches: Vec::new(),
+            measurements: BTreeMap::new(),
+        };
+        loop {
+            let batches = self
+                .runtime
+                .drain_pending_scheduled_operations()
+                .map_err(|error| runtime_error(&error))?;
+            if batches.is_empty() {
+                break;
+            }
+            let next = self.execute(context, batches)?;
+            output.batches.extend(next.batches);
+            output.measurements.extend(next.measurements);
+        }
         let shot = self
             .runtime
             .shot_end()

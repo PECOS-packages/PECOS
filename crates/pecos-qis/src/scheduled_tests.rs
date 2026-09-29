@@ -469,3 +469,30 @@ fn non_finite_source_angles_have_a_specific_diagnostic() {
             .contains("non-finite scheduled source angle")
     );
 }
+
+#[test]
+fn measurement_feedback_invalidates_terminal_drain() {
+    let mut runtime = crate::selene_runtimes::selene_simple_runtime().unwrap();
+    runtime.set_num_qubits(1);
+    runtime.shot_start(42, None).unwrap();
+    runtime
+        .lower_scheduled_operations(&[
+            Operation::AllocateQubit { id: 0 },
+            QuantumOp::Measure(0, 0).into(),
+        ])
+        .unwrap();
+    runtime.drain_pending_scheduled_operations().unwrap();
+    runtime
+        .provide_measurement_outcomes(BTreeMap::from([(0, 0)]))
+        .unwrap();
+    assert!(
+        runtime.shot_end().is_err(),
+        "feedback must invalidate terminal drain"
+    );
+    assert!(runtime.shot_start(43, None).is_err());
+    runtime.drain_pending_scheduled_operations().unwrap();
+    runtime
+        .provide_measurement_outcomes(BTreeMap::new())
+        .unwrap();
+    runtime.shot_end().unwrap();
+}

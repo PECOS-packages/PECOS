@@ -148,6 +148,13 @@ impl PyQisEngineBuilder {
         Ok(self.clone())
     }
 
+    /// Opt into mandatory scheduled transport; pair with scheduled_idle_z().
+    #[pyo3(signature = (enabled = true))]
+    fn scheduled_batches(&mut self, enabled: bool) -> Self {
+        self.inner = self.inner.clone().scheduled_batches(enabled);
+        self.clone()
+    }
+
     /// Use a Selene runtime built into the current PECOS/Cargo target.
     #[pyo3(signature = (runtime_name = None, *, custom_event_policy = "capture"))]
     fn selene_runtime(
@@ -755,6 +762,27 @@ pub fn depolarizing_noise() -> PyDepolarizingNoiseModelBuilder {
 #[pyfunction]
 pub fn biased_depolarizing_noise() -> PyBiasedDepolarizingNoiseModelBuilder {
     PyBiasedDepolarizingNoiseModelBuilder::new()
+}
+
+/// Checked narrow scheduled idle profile.
+#[pyclass(name = "ScheduledIdleZ", from_py_object)]
+#[derive(Clone)]
+pub struct PyScheduledIdleZ {
+    pub(crate) inner: pecos_engines::scheduled_frame::ScheduledIdleZ,
+}
+/// Construct the scheduled idle-Z capability; rates use seconds and radians.
+#[pyfunction]
+#[pyo3(signature = (qubits, *, linear = 0.0, sine = 0.0, coherent = 0.0))]
+pub fn scheduled_idle_z(
+    qubits: usize,
+    linear: f64,
+    sine: f64,
+    coherent: f64,
+) -> PyResult<PyScheduledIdleZ> {
+    Ok(PyScheduledIdleZ {
+        inner: pecos_engines::scheduled_frame::ScheduledIdleZ::new(qubits, linear, sine, coherent)
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?,
+    })
 }
 
 /// Python wrapper for `GeneralNoiseModelBuilder`

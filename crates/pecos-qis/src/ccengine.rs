@@ -323,6 +323,7 @@ pub struct QisEngine {
 
     /// Scratch builder reused when materializing command batches.
     command_builder: ByteMessageBuilder,
+    pub(crate) scheduled_batches: bool,
 }
 
 impl QisEngine {
@@ -406,6 +407,7 @@ impl QisEngine {
             trace_shot_index: 0,
             trace_chunk_index: 0,
             command_builder: ByteMessageBuilder::new(),
+            scheduled_batches: false,
         }
     }
 
@@ -499,6 +501,7 @@ impl QisEngine {
             trace_shot_index: 0,
             trace_chunk_index: 0,
             command_builder: ByteMessageBuilder::new(),
+            scheduled_batches: false,
         }
     }
 
@@ -798,6 +801,20 @@ impl QisEngine {
         &mut self,
         ops: &[Operation],
     ) -> Result<LoweredCommandBatch, PecosError> {
+        if self.scheduled_batches {
+            let batches = self
+                .runtime
+                .lower_scheduled_operations(ops)
+                .map_err(|e| PecosError::Generic(format!("scheduled extraction failed: {e}")))?;
+            let shot = u64::try_from(self.trace_shot_index)
+                .map_err(|_| PecosError::Generic("shot index exceeds u64".into()))?;
+            let (commands, ids) = crate::scheduled_transport::encode(batches, shot)?;
+            self.measurement_mapping = ids;
+            return Ok(LoweredCommandBatch {
+                commands,
+                gate_metadata: Vec::new(),
+            });
+        }
         if self.runtime.supports_operation_lowering() {
             let lowered_ops = self
                 .runtime
@@ -1007,6 +1024,7 @@ impl Clone for QisEngine {
             trace_shot_index: 0,
             trace_chunk_index: 0,
             command_builder: ByteMessageBuilder::new(),
+            scheduled_batches: self.scheduled_batches,
         }
     }
 }
@@ -1462,6 +1480,31 @@ impl QisEngine {
         PecosError::Generic(message)
     }
 
+    fn drain_scheduled_commands(&mut self) -> Result<Option<ByteMessage>, PecosError> {
+        if !self.scheduled_batches || self.dynamic_state.as_ref().is_some_and(|s| s.finalized) {
+            return Ok(None);
+        }
+        let result = (|| {
+            let batches = self
+                .runtime
+                .drain_pending_scheduled_operations()
+                .map_err(|e| {
+                    PecosError::Generic(format!("scheduled terminal drain failed: {e}"))
+                })?;
+            if batches.is_empty() {
+                return Ok(None);
+            }
+            let shot = u64::try_from(self.trace_shot_index)
+                .map_err(|_| PecosError::Generic("shot index exceeds u64".into()))?;
+            let (commands, ids) = crate::scheduled_transport::encode(batches, shot)?;
+            self.measurement_mapping = ids;
+            Ok(Some(commands))
+        })();
+        result.map_err(|e: PecosError| {
+            self.latch_terminal_error(format!("scheduled drain failed: {e}"))
+        })
+    }
+
     /// Refuse to certify a complete trace while the runtime scheduler still
     /// holds operations. Per-batch lowering drains the runtime until it stops
     /// producing, but a scheduling runtime may defer operations past the final
@@ -1471,6 +1514,10 @@ impl QisEngine {
     /// because the verification itself consumes the late operations (a retry
     /// would otherwise find an innocently empty scheduler and certify).
     fn verify_runtime_drained(&mut self) -> Result<(), PecosError> {
+        if self.scheduled_batches {
+            // Each completion branch just observed an empty scheduled drain.
+            return Ok(());
+        }
         if !self.runtime.supports_operation_lowering() {
             return Ok(());
         }
@@ -1812,6 +1859,13 @@ impl ControlEngine for QisEngine {
             ));
         }
 
+        if self.scheduled_batches
+            && (self.operation_trace_dir.is_some() || self.operation_trace_collector.is_some())
+        {
+            return Err(PecosError::Input(
+                "scheduled transport does not yet support operation tracing".into(),
+            ));
+        }
         // Clear previous shot's measurement state
         self.measurement_results.clear();
         self.measurement_mapping.clear();
@@ -1883,6 +1937,9 @@ impl ControlEngine for QisEngine {
                     return Ok(EngineStage::NeedsProcessing(lowered.commands));
                 }
             }
+            if let Some(commands) = self.drain_scheduled_commands()? {
+                return Ok(EngineStage::NeedsProcessing(commands));
+            }
             self.finalize_shot_for_certification()?;
             let shot = self.get_results()?;
             return Ok(EngineStage::Complete(shot));
@@ -1928,6 +1985,9 @@ impl ControlEngine for QisEngine {
                     self.trace_operations_chunk("pending_final", &final_ops, None, Some(&lowered));
                     return Ok(EngineStage::NeedsProcessing(lowered.commands));
                 }
+            }
+            if let Some(commands) = self.drain_scheduled_commands()? {
+                return Ok(EngineStage::NeedsProcessing(commands));
             }
             self.finalize_shot_for_certification()?;
             let shot = self.get_results()?;
@@ -1996,6 +2056,9 @@ impl ControlEngine for QisEngine {
                     self.trace_operations_chunk("pending_final", &final_ops, None, Some(&lowered));
                     return Ok(EngineStage::NeedsProcessing(lowered.commands));
                 }
+            }
+            if let Some(commands) = self.drain_scheduled_commands()? {
+                return Ok(EngineStage::NeedsProcessing(commands));
             }
             self.finalize_shot_for_certification()?;
             let shot = self.get_results()?;
@@ -3117,5 +3180,183 @@ mod tests {
             err.to_string().contains("more than the configured 1"),
             "unexpected error: {err}"
         );
+    }
+}
+
+#[cfg(test)]
+mod scheduled_completion_tests {
+    use super::*;
+    use crate::runtime::{ClassicalState, Result as RuntimeResult};
+    use crate::scheduled::{RuntimeScheduledOp as Op, ScheduledBatch, ScheduledMeasurement};
+    #[derive(Clone, Default)]
+    struct FeedbackTail {
+        state: ClassicalState,
+        stage: usize,
+        fail_tail: bool,
+        ended: bool,
+    }
+    impl QisRuntime for FeedbackTail {
+        fn load_interface(&mut self, _: OperationList) -> RuntimeResult<()> {
+            Ok(())
+        }
+        fn execute_until_quantum(&mut self) -> RuntimeResult<Option<Vec<QuantumOp>>> {
+            Ok(None)
+        }
+        fn provide_measurements(&mut self, _: BTreeMap<usize, bool>) -> RuntimeResult<()> {
+            self.stage = 2;
+            Ok(())
+        }
+        fn get_classical_state(&self) -> &ClassicalState {
+            &self.state
+        }
+        fn get_classical_state_mut(&mut self) -> &mut ClassicalState {
+            &mut self.state
+        }
+        fn is_complete(&self) -> bool {
+            true
+        }
+        fn num_qubits(&self) -> usize {
+            1
+        }
+        fn shot_end(&mut self) -> RuntimeResult<crate::runtime::Shot> {
+            if std::mem::replace(&mut self.ended, true) {
+                return Err(crate::runtime::RuntimeError::ExecutionError(
+                    "shot ended twice".into(),
+                ));
+            }
+            Ok(crate::runtime::Shot::default())
+        }
+        fn drain_pending_scheduled_operations(&mut self) -> RuntimeResult<Vec<ScheduledBatch>> {
+            if self.ended {
+                return Err(crate::runtime::RuntimeError::ExecutionError(
+                    "drain after shot completion".into(),
+                ));
+            }
+            let (ops, measurements, index) = match self.stage {
+                0 => {
+                    self.stage = 1;
+                    (
+                        vec![Op::Measure {
+                            qubit_id: 0,
+                            result_id: 0,
+                        }],
+                        vec![ScheduledMeasurement {
+                            operation_index: 0,
+                            runtime_result: 0,
+                            program_result: 0,
+                            leakage_aware: false,
+                        }],
+                        0,
+                    )
+                }
+                2 => {
+                    if self.fail_tail {
+                        return Err(crate::runtime::RuntimeError::ExecutionError(
+                            "tail drain failed".into(),
+                        ));
+                    }
+                    self.stage = 3;
+                    (
+                        vec![Op::Rz {
+                            qubit_id: 0,
+                            theta: 1.0,
+                        }],
+                        vec![],
+                        1,
+                    )
+                }
+                _ => return Ok(vec![]),
+            };
+            Ok(vec![ScheduledBatch {
+                runtime_shot_id: 0,
+                batch_index: index,
+                start_time_nanos: 0,
+                duration_nanos: 0,
+                operations: ops,
+                measurements,
+            }])
+        }
+    }
+    #[test]
+    fn terminal_feedback_must_drain_newly_ready_tail() {
+        use pecos_engines::noise::IntoNoiseModel;
+        use pecos_engines::runtime_frame::ShotContext;
+        use pecos_engines::scheduled_frame::ScheduledIdleZ;
+        use pecos_engines::{StateVecEngine, quantum_system::QuantumSystem};
+        let mut engine = QisEngine::with_runtime(Box::new(FeedbackTail::default()));
+        engine.scheduled_batches = true;
+        engine.dynamic_state = Some(DynamicExecutionState {
+            sync_handle: None,
+            execution_complete: true,
+            terminal_error: None,
+            finalized: false,
+        });
+        // Execute the terminal measurement and feedback-triggered tail in a real owner.
+        let mut quantum = QuantumSystem::new(
+            ScheduledIdleZ::new(1, 0.0, 0.0, 0.0)
+                .unwrap()
+                .into_noise_model(),
+            Box::new(StateVecEngine::new(1)),
+        );
+        quantum
+            .begin_shot(ShotContext {
+                run: 1,
+                worker: 0,
+                shot: 0,
+            })
+            .unwrap();
+        let EngineStage::NeedsProcessing(initial) = engine
+            .continue_processing(ByteMessage::outcomes_builder().build())
+            .unwrap()
+        else {
+            panic!("terminal drain must emit its measurement");
+        };
+        let measured = quantum.process(initial).unwrap();
+        assert_eq!(measured.outcomes().unwrap(), vec![0]);
+        let EngineStage::NeedsProcessing(commands) = engine.continue_processing(measured).unwrap()
+        else {
+            panic!("newly ready native tail was silently skipped");
+        };
+        let reply = quantum.process(commands).unwrap();
+        assert!(matches!(
+            engine.continue_processing(reply).unwrap(),
+            EngineStage::Complete(_)
+        ));
+        // A repeated completion poll must not touch an already-ended runtime.
+        assert!(matches!(
+            engine
+                .continue_processing(ByteMessage::outcomes_builder().build())
+                .unwrap(),
+            EngineStage::Complete(_)
+        ));
+    }
+
+    #[test]
+    fn terminal_feedback_drain_failure_stays_latched() {
+        let mut engine = QisEngine::with_runtime(Box::new(FeedbackTail {
+            fail_tail: true,
+            ..FeedbackTail::default()
+        }));
+        engine.scheduled_batches = true;
+        engine.dynamic_state = Some(DynamicExecutionState {
+            sync_handle: None,
+            execution_complete: true,
+            terminal_error: None,
+            finalized: false,
+        });
+        engine
+            .continue_processing(ByteMessage::outcomes_builder().build())
+            .unwrap();
+        let error = engine
+            .continue_processing(ByteMessage::outcomes_builder().add_outcomes(&[0]).build())
+            .err()
+            .expect("tail drain must fail");
+        assert!(error.to_string().contains("tail drain failed"));
+        assert!(
+            engine
+                .continue_processing(ByteMessage::outcomes_builder().build())
+                .is_err()
+        );
+        assert!(!engine.dynamic_state.as_ref().unwrap().finalized);
     }
 }

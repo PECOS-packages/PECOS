@@ -650,6 +650,11 @@ impl Mast {
         // The branch correction was applied at injection time. Try the
         // predetermined branch transactionally so a vanished attempt cannot
         // mutate the live tableau/MPS pair.
+        let properties = super::measure::ZMeasurementProperties::for_projection(
+            &self.tableau,
+            &self.mps,
+            dm.ancilla,
+        );
         let mut candidate_tableau = self.tableau.clone();
         let mut candidate_mps = self.mps.clone();
         let mut projection = super::measure::project_forced_z_with_update(
@@ -657,7 +662,10 @@ impl Mast {
             &mut candidate_mps,
             dm.ancilla,
             dm.predetermined_outcome,
+            Some(properties),
         )?;
+        #[cfg(all(test, not(debug_assertions)))]
+        tests::record_deferred_projection(&projection);
         let branch_lost = projection.snapped_probability == 0.0
             || projection.survival_ratio < super::measure::BRANCH_VANISH_SURVIVAL_THRESHOLD;
         debug_assert!(
@@ -668,17 +676,18 @@ impl Mast {
             candidate_tableau = self.tableau.clone();
             candidate_mps = self.mps.clone();
             let original_config = self.mps.config().clone();
-            let mut retry_config = original_config.clone();
-            retry_config.max_bond_dim = candidate_mps.physical_rank_ceiling();
-            retry_config.svd_cutoff = 0.0;
-            retry_config.max_truncation_error = Some(0.0);
-            candidate_mps.set_config(retry_config);
+            candidate_mps.set_config(
+                original_config.without_truncation(candidate_mps.physical_rank_ceiling()),
+            );
             projection = super::measure::project_forced_z_with_update(
                 &mut candidate_tableau,
                 &mut candidate_mps,
                 dm.ancilla,
                 !dm.predetermined_outcome,
+                Some(properties),
             )?;
+            #[cfg(all(test, not(debug_assertions)))]
+            tests::record_deferred_projection(&projection);
             let complement_lost = projection.snapped_probability == 0.0
                 || projection.survival_ratio < super::measure::BRANCH_VANISH_SURVIVAL_THRESHOLD;
             debug_assert!(
@@ -971,6 +980,36 @@ mod tests {
     use crate::stab_mps::StabMps;
     use approx::assert_relative_eq;
     use pecos_core::Clifford;
+
+    #[cfg(not(debug_assertions))]
+    #[derive(Debug, PartialEq)]
+    struct DeferredProjectionSnapshot {
+        probability_bits: u64,
+        survival_ratio_bits: u64,
+        collapsed_site: Option<usize>,
+        modified_sites: Vec<usize>,
+    }
+
+    #[cfg(not(debug_assertions))]
+    std::thread_local! {
+        static DEFERRED_PROJECTIONS: std::cell::RefCell<Option<Vec<DeferredProjectionSnapshot>>> = const { std::cell::RefCell::new(None) };
+    }
+
+    #[cfg(not(debug_assertions))]
+    pub(super) fn record_deferred_projection(
+        projection: &super::super::measure::ForcedProjectionResult,
+    ) {
+        DEFERRED_PROJECTIONS.with_borrow_mut(|trace| {
+            if let Some(trace) = trace {
+                trace.push(DeferredProjectionSnapshot {
+                    probability_bits: projection.snapped_probability.to_bits(),
+                    survival_ratio_bits: projection.survival_ratio.to_bits(),
+                    collapsed_site: projection.update.collapsed_site,
+                    modified_sites: projection.update.modified_sites.clone(),
+                });
+            }
+        });
+    }
 
     fn assert_mast_disent_flags_sound(mast: &Mast, context: &str) {
         super::super::assert_disent_flags_match_stored_mps(&mast.mps, &mast.disent_flags, context);
@@ -2194,6 +2233,48 @@ mod tests {
         );
     }
 
+    #[test]
+    fn mast_data_measurement_skips_transaction_with_non_truncating_config() {
+        let config = MpsConfig {
+            max_bond_dim: 2,
+            svd_cutoff: 0.0,
+            max_truncation_error: Some(0.0),
+            parallel: false,
+        };
+        let mut mast = Mast::with_seed(2, 1, 17).with_mps_config(config);
+        mast.h(&[QubitId(0), QubitId(1)]);
+        mast.cx(&[(QubitId(0), QubitId(1))]);
+        mast.rz(Angle64::from_radians(0.37), &[QubitId(0)]);
+        let before = super::super::EXACT_MEASUREMENT_TRANSACTIONS.get();
+        mast.mz(&[QubitId(0)]);
+        assert_eq!(super::super::EXACT_MEASUREMENT_TRANSACTIONS.get(), before);
+        assert!((mast.mps.norm_squared() - 1.0).abs() < 1e-12);
+        mast.mps.set_max_bond_dim(1);
+        mast.mz(&[QubitId(1)]);
+        assert_eq!(
+            super::super::EXACT_MEASUREMENT_TRANSACTIONS.get(),
+            before + 1
+        );
+    }
+
+    #[test]
+    fn mast_deferred_projection_evaluates_properties_once() {
+        let mut mast = Mast::with_seed(1, 1, 17);
+        mast.h(&[QubitId(0)]);
+        mast.rz(Angle64::QUARTER_TURN / 2_u64, &[QubitId(0)]);
+        super::super::measure::Z_EXPECTATION_EVALUATIONS.set(0);
+        super::super::measure::TRIVIAL_MPS_EVALUATIONS.set(0);
+        mast.project_all();
+        assert_eq!(
+            super::super::measure::Z_EXPECTATION_EVALUATIONS.get(),
+            1 + usize::from(cfg!(debug_assertions))
+        );
+        assert_eq!(
+            super::super::measure::TRIVIAL_MPS_EVALUATIONS.get(),
+            1 + 2 * usize::from(cfg!(debug_assertions))
+        );
+    }
+
     #[cfg(debug_assertions)]
     #[test]
     #[should_panic(expected = "Mast::project_all predetermined deferred branch was lost")]
@@ -2232,7 +2313,11 @@ mod tests {
         mast.rz(Angle64::QUARTER_TURN / 2_u64, &[QubitId(0)]);
         let deferred = mast.deferred[0];
         crate::stab_mps::measure::inject_projection_vanishes(1);
+        super::super::measure::Z_EXPECTATION_EVALUATIONS.set(0);
+        super::super::measure::TRIVIAL_MPS_EVALUATIONS.set(0);
         mast.project_all();
+        assert_eq!(super::super::measure::Z_EXPECTATION_EVALUATIONS.get(), 1);
+        assert_eq!(super::super::measure::TRIVIAL_MPS_EVALUATIONS.get(), 1);
         assert_eq!(mast.deferred_branch_lost_count(), 1);
         assert_deferred_ancilla_outcome(&mast, deferred.ancilla, !deferred.predetermined_outcome);
         assert!((mast.mps.norm_squared() - 1.0).abs() < 1e-12);
@@ -2245,6 +2330,161 @@ mod tests {
             mast.mps.config().max_truncation_error,
             configured.max_truncation_error
         );
+    }
+
+    #[cfg(not(debug_assertions))]
+    #[test]
+    fn mast_genuine_deferred_loss_retry_matches_recomputed_properties_in_release() {
+        use super::super::measure;
+
+        struct StopRecording;
+        impl Drop for StopRecording {
+            fn drop(&mut self) {
+                DEFERRED_PROJECTIONS.set(None);
+            }
+        }
+
+        let run = |truncate_before_projection, recompute| {
+            let _restore = super::super::tests::RestoreExactMeasurementPolicy;
+            let _recording = StopRecording;
+            let config = MpsConfig {
+                max_bond_dim: 1,
+                svd_cutoff: 0.0,
+                max_truncation_error: Some(0.0),
+                parallel: false,
+            };
+            let mut mast = Mast::with_seed(1, 1, 17).with_mps_config(config.clone());
+            mast.tableau.h(&[QubitId(0), QubitId(1)]);
+            mast.tableau.cx(&[(QubitId(0), QubitId(1))]);
+            // Z_ancilla pulls back to X_0 X_1. Rank-one compensation keeps
+            // the dominant |++> Schmidt term and erases the negative branch.
+            for (site, probability_one) in [(0, 0.1_f64), (1, 0.5)] {
+                let preparation = nalgebra::DMatrix::from_row_slice(
+                    2,
+                    2,
+                    &[
+                        Complex64::new((1.0 - probability_one).sqrt(), 0.0),
+                        Complex64::new(-probability_one.sqrt(), 0.0),
+                        Complex64::new(probability_one.sqrt(), 0.0),
+                        Complex64::new((1.0 - probability_one).sqrt(), 0.0),
+                    ],
+                );
+                mast.mps.apply_one_site_gate(site, &preparation).unwrap();
+            }
+            mast.disent_flags.fill(None);
+            mast.next_ancilla = 2;
+            mast.deferred.push(DeferredMeasurement {
+                ancilla: 1,
+                predetermined_outcome: true,
+                injection_index: 0,
+            });
+            let before =
+                measure::ZMeasurementProperties::for_projection(&mast.tableau, &mast.mps, 1);
+            assert!((before.probability(true) - 0.2).abs() < 1e-14);
+            assert!((before.probability(false) - 0.8).abs() < 1e-14);
+            if truncate_before_projection {
+                measure::pre_reduce_for_measurement_pub(&mut mast.tableau, &mut mast.mps, 1)
+                    .unwrap();
+                mast.mps.normalize();
+                assert!(mast.mps.summed_discarded_weight() > 0.1);
+            }
+            let before =
+                measure::ZMeasurementProperties::for_projection(&mast.tableau, &mast.mps, 1);
+            let predetermined_probability = before.probability(true);
+            let complement_probability = before.probability(false);
+            if truncate_before_projection {
+                assert_eq!(predetermined_probability.to_bits(), 0.0_f64.to_bits());
+                assert_eq!(complement_probability.to_bits(), 1.0_f64.to_bits());
+            }
+
+            measure::RECOMPUTE_Z_PROPERTIES.set(recompute);
+            DEFERRED_PROJECTIONS.set(Some(Vec::new()));
+            mast.project_all();
+            let trace = DEFERRED_PROJECTIONS
+                .take()
+                .expect("recorded deferred projections");
+            assert_eq!(trace.len(), 2);
+            assert_eq!(
+                trace[0].probability_bits,
+                predetermined_probability.to_bits()
+            );
+            if !truncate_before_projection {
+                assert!(
+                    f64::from_bits(trace[0].survival_ratio_bits)
+                        < measure::BRANCH_VANISH_SURVIVAL_THRESHOLD
+                );
+            }
+            assert_eq!(trace[1].probability_bits, complement_probability.to_bits());
+            assert!(
+                f64::from_bits(trace[1].survival_ratio_bits)
+                    >= measure::BRANCH_VANISH_SURVIVAL_THRESHOLD
+            );
+            assert_eq!(mast.deferred_branch_lost_count(), 1);
+            assert_eq!(mast.branch_vanish_retry_count(), 0);
+            assert!(mast.deferred.is_empty());
+            assert_eq!(mast.projection_records.len(), 1);
+            assert_eq!(mast.mps.config(), &config);
+            (mast, trace)
+        };
+
+        for truncate_before_projection in [false, true] {
+            let (threaded, threaded_trace) = run(truncate_before_projection, false);
+            let (recomputed, recomputed_trace) = run(truncate_before_projection, true);
+            assert_eq!(threaded_trace, recomputed_trace);
+            for (left, right) in threaded.mps.tensors().iter().zip(recomputed.mps.tensors()) {
+                assert_eq!(left.shape(), right.shape());
+                for (left, right) in left.iter().zip(right.iter()) {
+                    assert_eq!(left.re.to_bits(), right.re.to_bits());
+                    assert_eq!(left.im.to_bits(), right.im.to_bits());
+                }
+            }
+            assert_eq!(threaded.mps.tensors().len(), recomputed.mps.tensors().len());
+            assert_eq!(threaded.mps.bond_dims(), recomputed.mps.bond_dims());
+            assert_eq!(
+                format!("{:?}", threaded.tableau),
+                format!("{:?}", recomputed.tableau)
+            );
+            assert_eq!(threaded.disent_flags, recomputed.disent_flags);
+            assert_eq!(threaded.projection_records, recomputed.projection_records);
+            assert_eq!(
+                threaded.projection_peak_bond,
+                recomputed.projection_peak_bond
+            );
+            assert_eq!(threaded.mps.config(), recomputed.mps.config());
+            assert_eq!(threaded.config, recomputed.config);
+            assert_eq!(
+                threaded.mps.tracked_center_for_test(),
+                recomputed.mps.tracked_center_for_test()
+            );
+            assert_eq!(
+                threaded.mps.truncation_error().to_bits(),
+                recomputed.mps.truncation_error().to_bits()
+            );
+            assert_eq!(
+                threaded.mps.summed_discarded_weight().to_bits(),
+                recomputed.mps.summed_discarded_weight().to_bits()
+            );
+            assert_eq!(threaded.mps.bond_cap_hits(), recomputed.mps.bond_cap_hits());
+            assert_eq!(
+                threaded.mps.lifetime_peak_bond(),
+                recomputed.mps.lifetime_peak_bond()
+            );
+            assert_eq!(
+                threaded.mps.full_canonical_sweep_count(),
+                recomputed.mps.full_canonical_sweep_count()
+            );
+            assert_eq!(
+                threaded.mps.center_reuse_count(),
+                recomputed.mps.center_reuse_count()
+            );
+            assert_eq!(
+                threaded.mps.clone().take_phase_svd_operations(),
+                recomputed.mps.clone().take_phase_svd_operations()
+            );
+            eprintln!(
+                "truncate_before_projection={truncate_before_projection}: threaded and recomputed deferred retry match bit-for-bit: {threaded_trace:?}"
+            );
+        }
     }
 
     #[cfg(not(debug_assertions))]

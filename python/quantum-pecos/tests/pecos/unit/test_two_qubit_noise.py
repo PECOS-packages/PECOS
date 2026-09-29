@@ -9,7 +9,11 @@ from pecos.noise.noise_impl.noise_tq_depolarizing_leakage import (
     noise_tq_depolarizing_leakage,
     surviving_two_qubit_op,
 )
-from pecos.noise.noise_impl_old.tq_noise import noise_two_qubit_gates_depolarizing_with_noiseless
+from pecos.noise.noise_impl_old.tq_noise import (
+    noise_depolarizing_two_qubit_gates,
+    noise_two_qubit_gates_depolarizing_with_noiseless,
+)
+from pecos.noise.parent_class_error_gen import Generator
 from pecos.reps.pyphir.op_types import QOp
 
 
@@ -66,7 +70,6 @@ def test_leakage_noise_targets_healthy_pairs(
             set(),
             {0, 1},
             id="neither-qubit-noiseless",
-            marks=pytest.mark.xfail(strict=True, reason="pc.random.choice rejects an integer; see #889"),
         ),
     ],
 )
@@ -88,7 +91,7 @@ def test_depolarizing_noise_targets_noisy_qubits(
     errors = list(after.items())
     assert {qubit for _, locations, _ in errors for qubit in locations} == expected_targets
     assert len(errors) == len(expected_targets)
-    assert all(symbol in {"X", "Y", "Z"} for symbol, _, _ in errors)
+    assert all(symbol in {"I", "X", "Y", "Z"} for symbol, _, _ in errors)
 
 
 @pytest.mark.parametrize("model_type", [GenericErrorModel, DepolarizingErrorModel])
@@ -211,3 +214,30 @@ def test_seeded_gate_leakage_excludes_memory(seed: int, leaked: set[int], p2: fl
     assert actual == expected
     assert machine.leaked_qubits == legacy_machine.leaked_qubits
     assert next_random == list(pc.random.random(4))
+
+
+@pytest.mark.parametrize("with_noiseless", [False, True])
+def test_integer_choice_legacy_two_qubit_entry_points(with_noiseless: bool) -> None:
+    """Both legacy helpers sample the Pauli population through integer choice."""
+    pc.random.seed(42)
+    after = pc.QuantumCircuit()
+    if with_noiseless:
+        noise_two_qubit_gates_depolarizing_with_noiseless({(0, 1)}, after, 1, set())
+    else:
+        noise_depolarizing_two_qubit_gates({(0, 1)}, after, 1)
+    assert [(symbol, locations) for symbol, locations, _ in after.items()] == [("I", {0}), ("X", {1})]
+
+
+@pytest.mark.parametrize("after_gate", [False, True])
+def test_integer_choice_multi_qudit_entry_points(after_gate: bool) -> None:
+    """The configured error function samples before and after multi-qudit gates."""
+    error = Generator.ErrorSetMultiQuditGate(
+        [(pc.Pauli.X, pc.Pauli.Z), (pc.Pauli.Y, pc.Pauli.X)],
+        after=after_gate,
+    )
+    after, before = pc.QuantumCircuit(), pc.QuantumCircuit()
+    pc.random.seed(42)
+    error.error_func(after, before, set(), (0, 1), {})
+    actual = [[(symbol, locations) for symbol, locations, _ in circuit.items()] for circuit in (before, after)]
+    expected = [("X", {0}), ("Z", {1})]
+    assert actual == ([[], expected] if after_gate else [expected, []])

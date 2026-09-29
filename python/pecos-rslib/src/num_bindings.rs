@@ -971,10 +971,14 @@ fn seed(seed_value: u64) {
 
 /// Generate a random sample from a given array.
 ///
-/// This is a drop-in replacement for `numpy.random.choice(a, size, replace=True)`.
+/// `choice(a, size=None, replace=True)` samples uniformly from a population.
+/// Integer populations contain `0..a`; sequences and arrays supply their elements.
+/// Only a scalar sample count is supported, and probability weights are not supported.
+/// Unlike NumPy, integer populations are materialized in memory, so very large
+/// populations can fail allocation. Empty populations are rejected even for size zero.
 ///
 /// Args:
-///     a: list | ndarray - Array to sample from
+///     a: int | sequence | Array | ndarray - Population to sample from
 ///     size: Optional[int] - Number of samples to draw. If None, returns a single sample.
 ///     replace: bool - Whether to sample with replacement (default: True)
 ///
@@ -1002,6 +1006,29 @@ fn choice(py: Python<'_>, a: Py<PyAny>, size: Option<usize>, replace: bool) -> P
     // Convert Python array/list to Vec<Py<PyAny>>
     let array = Python::attach(|py| {
         let obj = a.bind(py);
+
+        // Convert integer populations before attempting array or sequence conversion.
+        // PyInt includes bool; floats must never be truncated to an integer.
+        if obj.is_instance_of::<pyo3::types::PyInt>() {
+            let stop = obj.extract::<i64>().map_err(|_| {
+                pyo3::exceptions::PyValueError::new_err("population is out of bounds for int64")
+            })?;
+            let len = usize::try_from(stop.max(0))
+                .map_err(|err| pyo3::exceptions::PyMemoryError::new_err(err.to_string()))?;
+            let mut items = Vec::new();
+            items
+                .try_reserve_exact(len)
+                .map_err(|err| pyo3::exceptions::PyMemoryError::new_err(err.to_string()))?;
+            for i in 0..stop {
+                items.push(i.into_py_any(py)?);
+            }
+            return Ok::<Vec<Py<PyAny>>, PyErr>(items);
+        }
+        if obj.is_instance_of::<pyo3::types::PyFloat>() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "a must be a sequence or an integer",
+            ));
+        }
 
         // First try to handle Array objects
         if let Ok(arr) = obj.cast::<crate::pecos_array::Array>() {

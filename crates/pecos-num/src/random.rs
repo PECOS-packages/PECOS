@@ -335,7 +335,7 @@ where
 
 /// Generate a random sample from a given array.
 ///
-/// This is a drop-in replacement for `numpy.random.choice(a, size, replace=True)`.
+/// `choice(array, size, replace)` samples uniformly from a nonempty Rust slice.
 ///
 /// # Arguments
 ///

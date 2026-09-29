@@ -245,5 +245,35 @@ class TestNumpyCompatibilityExtended:
         assert all(isinstance(x, (float, np.floating)) for x in float_result)
 
 
+@pytest.mark.parametrize("population", [0, -3, False, 5.0, 5.5])
+def test_choice_invalid_scalar_population(population) -> None:
+    """Nonpositive integers and floats raise ValueError, as in NumPy 2.5.1."""
+    with pytest.raises(ValueError, match="a must be"):
+        np.random.choice(population)
+    with pytest.raises(ValueError, match="a must be|empty array"):
+        pc.random.choice(population)
+
+
+def test_choice_boolean_population() -> None:
+    """True is the integer population containing only zero."""
+    assert pc.random.choice(True) == np.random.choice(True) == 0
+
+
+def test_choice_integer_oversampling_with_replacement() -> None:
+    """Replacement permits more samples than population elements."""
+    for random in (np.random, pc.random):
+        random.seed(456)
+        samples = list(random.choice(3, 5))
+        assert len(samples) == 5
+        assert set(samples) <= {0, 1, 2}
+
+
+def test_choice_integer_oversampling_without_replacement() -> None:
+    """Both implementations reject oversampling without replacement."""
+    for random in (np.random, pc.random):
+        with pytest.raises(ValueError, match="larger sample"):
+            random.choice(3, 5, replace=False)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "-s"])

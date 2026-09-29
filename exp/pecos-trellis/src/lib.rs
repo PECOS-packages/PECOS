@@ -17,17 +17,23 @@
 //! identical active detector boundary and logical labels are merged by the
 //! configured metric: log-sum-exp preserves degeneracy mass by default, while
 //! integer max-log retains the best route. The configured frontier width and
-//! log-mass window provide deterministic pruning for a fixed build and
-//! platform; underlying `ln`/`exp` implementations may differ across platforms.
-//! This engine is PECOS-native code. Its numerics are additionally held to a
-//! bitwise parity contract with an external reference implementation of the
-//! same algorithm class; that contract is maintained by a separate crate and
-//! is not a constraint this crate imposes on its callers.
+//! log-mass window provide deterministic pruning. Transcendentals come from
+//! `libm`, so decode outputs are bit-identical across platforms.
+//! This engine is PECOS-native code. `pecos-frontier` checks it against an
+//! external reference implementation of the same algorithm class: logical
+//! labels and success or no-path agree exactly, while log evidence, per-label
+//! masses and the max-log runner-up gap agree within `1e-9`. Separately,
+//! committed bitwise snapshots of PECOS's own outputs guard against unintended
+//! numeric changes; they are regression pins, not an external contract.
+//!
+//! The [`bp_trellis`] module provides PECOS's BP-guided configuration and decoder.
 
 pub mod batch;
+pub mod bp_trellis;
 pub mod factor;
 pub mod streaming;
 
+pub use bp_trellis::{BpTrellisConfig, BpTrellisDecoder};
 pub use streaming::{StreamingProgress, TrellisStreamingDecoder};
 
 use factor::{FactorModel, NormalizedFactor, Outcome};
@@ -130,7 +136,8 @@ pub struct TrellisConfig {
     /// Log-mass window below the best boundary state retained after each column.
     pub delta: f64,
     /// Weight applied to the suffix-compatibility score during pruning.
-    /// Defaults to `0.8`, chosen to match the parity contract.
+    /// Defaults to `0.8`, the value the external-reference fixtures in
+    /// `pecos-frontier` are checked with.
     pub score_alpha: f64,
     /// Optional permutation of the DEM mechanism or factor indices.
     pub column_order: Option<Vec<usize>>,
@@ -138,9 +145,9 @@ pub struct TrellisConfig {
     /// sets using their XOR-combined probability.
     ///
     /// This merge is mathematically exact under the default float metric and is
-    /// rejected under `maxlog_int`. It takes a different floating-point path and
-    /// the external parity contract on this engine is bitwise, so it is disabled
-    /// by default.
+    /// rejected under `maxlog_int`. It takes a different floating-point path from
+    /// the unmerged model, so it is disabled by default to keep outputs
+    /// bit-identical to the unmerged decode.
     /// Zero-probability mechanisms are already discarded, while probability-one
     /// mechanisms remain separate in the forced layer and are not merged with
     /// otherwise identical probabilistic mechanisms.
@@ -155,13 +162,17 @@ pub struct TrellisConfig {
     pub int_metric_scale: i32,
 }
 
-impl TrellisConfig {
-    /// Validate configuration rules that do not depend on a detector error model.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DecoderError::InvalidConfiguration`] for invalid pruning or metric options.
-    pub fn validate(&self) -> Result<(), DecoderError> {
+/// Pruning parameters for one attempt, validated against its decoder's model.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PruneParams {
+    /// Maximum retained boundary states; must be at least one.
+    pub k: usize,
+    /// Non-negative log-score window; must be finite for max-log arithmetic.
+    pub delta: f64,
+}
+
+impl PruneParams {
+    fn validate(self, metric_mode: MetricMode) -> Result<(), DecoderError> {
         if self.k == 0 {
             return Err(DecoderError::InvalidConfiguration(
                 "TrellisConfig.k must be at least 1".into(),
@@ -173,12 +184,42 @@ impl TrellisConfig {
                 self.delta
             )));
         }
-        if self.metric_mode == MetricMode::MaxLogInt && !self.delta.is_finite() {
+        if metric_mode == MetricMode::MaxLogInt && !self.delta.is_finite() {
             return Err(DecoderError::InvalidConfiguration(
                 "delta must be finite under maxlog_int; infinite delta would quantize to zero and prune to score-ties"
                     .into(),
             ));
         }
+        Ok(())
+    }
+}
+
+/// Preparation of a shot, before any frontier work.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum TrellisPrepared {
+    /// Precheck and optional BP scoring completed.
+    Ready {
+        /// Whether BP ran for this shot.
+        bp_ran: bool,
+        /// Wall-clock seconds spent on BP scoring.
+        bp_seconds: f64,
+    },
+    /// Lowest detector with a residual no probabilistic mechanism can change.
+    Residual { detector: usize },
+}
+
+impl TrellisConfig {
+    /// Validate configuration rules that do not depend on a detector error model.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DecoderError::InvalidConfiguration`] for invalid pruning or metric options.
+    pub fn validate(&self) -> Result<(), DecoderError> {
+        PruneParams {
+            k: self.k,
+            delta: self.delta,
+        }
+        .validate(self.metric_mode)?;
         if self.metric_mode == MetricMode::MaxLogInt && self.merge_indistinguishable {
             return Err(DecoderError::InvalidConfiguration(
                 "indistinguishable-mechanism merging sums coset mass and is incompatible with the max-log route metric"
@@ -376,12 +417,14 @@ pub struct TrellisResult {
     /// otherwise have branched through later columns.
     /// For an escalated `BpTrellis` result, this covers only the
     /// successful rung.
+    /// Prediction-only decoding skips computing this field.
     pub dropped_log_mass: f64,
     /// Wall-clock seconds spent producing BP-informed suffix scores for this
     /// shot. This is zero when BP scoring is disabled or pruning cannot run.
-    /// For an escalated `BpTrellis` result, this is the total across
-    /// the base attempt and every attempted rung.
+    /// Escalation reuses these scores, so this time is attached once.
     pub bp_seconds: f64,
+    /// Number of BP refreshes run for this shot.
+    pub bp_runs: u32,
     /// Number of escalation rungs attempted before success.
     ///
     /// Zero means the base decode succeeded. [`TrellisDecoder`] results and
@@ -586,6 +629,9 @@ struct FrontierScratch<M> {
     parent: StateBuffer<M>,
     branches: StateBuffer<M>,
     indices: Vec<usize>,
+    merge_keys: Vec<([u64; 4], usize)>,
+    merge_word_masks: Vec<u64>,
+    merge_word_indices: Vec<usize>,
     scores: Vec<M>,
     transposed: Vec<u64>,
     retained: Vec<bool>,
@@ -609,19 +655,11 @@ impl<M: Copy> FrontierScratch<M> {
         );
     }
 
-    /// Stable sorting preserves arrival order within each equal-key run. The
+    /// Sorting preserves arrival order within each equal-key run. The
     /// first arrival is installed verbatim, then each subsequent arrival applies
     /// `fold(accumulated, next)` in arrival order.
     fn merge(&mut self, fold: impl Fn(M, M) -> M) {
-        self.indices.clear();
-        self.indices.extend(0..self.branches.masses.len());
-        self.indices.sort_by(|&left, &right| {
-            compare_state_words(
-                self.branches.key(left, self.stride),
-                self.branches.key(right, self.stride),
-                self.detector_words,
-            )
-        });
+        self.sort_merge_indices();
         self.parent.clear(self.stride);
         for &index in &self.indices {
             let count = self.parent.masses.len();
@@ -634,6 +672,58 @@ impl<M: Copy> FrontierScratch<M> {
                 self.parent.copy_state(&self.branches, index, self.stride);
             }
         }
+    }
+
+    /// Inline a four-word comparison prefix, omitting all-zero words for wide keys.
+    /// Detector words precede logical words, each most-significant word first.
+    /// Words zero in every branch can be omitted without changing key order.
+    fn sort_merge_indices(&mut self) {
+        self.merge_word_indices.clear();
+        if self.stride > 4 {
+            self.merge_word_masks.clear();
+            self.merge_word_masks.resize(self.stride, 0);
+            for key in self.branches.words.chunks_exact(self.stride) {
+                for (mask, &word) in self.merge_word_masks.iter_mut().zip(key) {
+                    *mask |= word;
+                }
+            }
+        }
+        self.merge_word_indices.extend(
+            (0..self.detector_words)
+                .rev()
+                .chain((self.detector_words..self.stride).rev())
+                .filter(|&word| self.stride <= 4 || self.merge_word_masks[word] != 0),
+        );
+        self.merge_keys.clear();
+        for index in 0..self.branches.masses.len() {
+            let source = self.branches.key(index, self.stride);
+            let mut key = [0; 4];
+            for (destination, &word) in key.iter_mut().zip(&self.merge_word_indices) {
+                *destination = source[word];
+            }
+            self.merge_keys.push((key, index));
+        }
+        if self.merge_word_indices.len() <= 4 {
+            // The arrival index reproduces the stable order of equal full keys.
+            self.merge_keys.sort_unstable();
+        } else {
+            // The inline prefix decides most comparisons even for wide keys.
+            // Resolve equal prefixes with the full key before the arrival index.
+            self.merge_keys
+                .sort_unstable_by(|(left_key, left), (right_key, right)| {
+                    left_key.cmp(right_key).then_with(|| {
+                        compare_state_words(
+                            self.branches.key(*left, self.stride),
+                            self.branches.key(*right, self.stride),
+                            self.detector_words,
+                        )
+                        .then_with(|| left.cmp(right))
+                    })
+                });
+        }
+        self.indices.clear();
+        self.indices
+            .extend(self.merge_keys.iter().map(|&(_, index)| index));
     }
 
     /// Transpose the inclusive detector-word span read by the scoring rows.
@@ -787,7 +877,10 @@ pub enum TrellisDecodeAttempt {
         error: DecoderError,
         /// Candidate branch evaluations performed by this attempt.
         transitions: u64,
-        /// Wall-clock seconds spent on BP suffix scoring in this attempt.
+        /// States discarded before the empty column.
+        dropped_states: u64,
+        /// Wall-clock seconds the shot's single BP refresh took, repeated on
+        /// every attempt of that shot; never sum it across attempts.
         bp_seconds: f64,
     },
     /// A non-retryable decoding error.
@@ -812,6 +905,9 @@ pub struct TrellisDecoder {
 
 #[derive(Clone, Debug)]
 struct TrellisScratch {
+    observed: Vec<u64>,
+    prepared: Option<(bool, f64)>,
+    bp_refreshes: u64,
     bp_score: Option<BpScoreState>,
     float_progress: BinaryProgress,
     int_frontier: FrontierScratch<i64>,
@@ -820,6 +916,9 @@ struct TrellisScratch {
 impl TrellisScratch {
     fn new(model: &TrellisModel) -> Self {
         Self {
+            observed: Vec::new(),
+            prepared: None,
+            bp_refreshes: 0,
             bp_score: model.bp_graph.as_ref().map(|graph| {
                 BpScoreState::new(
                     graph,
@@ -1379,7 +1478,122 @@ impl TrellisDecoder {
     /// policies.
     #[must_use]
     pub fn decode_attempt(&mut self, syndrome: &[u8]) -> TrellisDecodeAttempt {
-        self.model.decode_attempt(&mut self.scratch, syndrome)
+        self.decode_attempt_with_mode(syndrome, DecodeMode::Full)
+    }
+
+    fn decode_attempt_with_mode(
+        &mut self,
+        syndrome: &[u8],
+        mode: DecodeMode,
+    ) -> TrellisDecodeAttempt {
+        match self.prepare(syndrome) {
+            Ok(TrellisPrepared::Ready { .. }) => self.attempt_with_mode(
+                PruneParams {
+                    k: self.model.config.k,
+                    delta: self.model.config.delta,
+                },
+                mode,
+            ),
+            Ok(TrellisPrepared::Residual { .. }) => TrellisDecodeAttempt::NoPath {
+                error: unexplainable_error(),
+                transitions: 0,
+                dropped_states: 0,
+                bp_seconds: 0.0,
+            },
+            Err(error) => TrellisDecodeAttempt::Error(error),
+        }
+    }
+
+    /// Check the syndrome and refresh BP once; the DP runs later in `attempt`.
+    ///
+    /// # Errors
+    /// Returns a dimension error or a BP engine error. Any unsuccessful prepare
+    /// invalidates the previous shot, including a residual outcome.
+    pub fn prepare(&mut self, syndrome: &[u8]) -> Result<TrellisPrepared, DecoderError> {
+        self.scratch.prepared = None;
+        if syndrome.len() != self.model.num_detectors {
+            return Err(DecoderError::InvalidDimensions {
+                expected: self.model.num_detectors,
+                actual: syndrome.len(),
+            });
+        }
+        let observed = syndrome_to_words(syndrome, self.model.detector_words);
+        for (word, ((&seen, &forced), &touched)) in observed
+            .iter()
+            .zip(&self.model.forced_syndrome)
+            .zip(&self.model.touched_detectors)
+            .enumerate()
+        {
+            let residual = (seen ^ forced) & !touched;
+            if residual != 0 {
+                return Ok(TrellisPrepared::Residual {
+                    detector: word * WORD_BITS + residual.trailing_zeros() as usize,
+                });
+            }
+        }
+        let seconds = self
+            .model
+            .refresh_bp_suffix_values(&mut self.scratch, &observed)?;
+        let bp_ran = seconds.is_some();
+        let bp_seconds = seconds.unwrap_or(0.0);
+        self.scratch.observed = observed;
+        self.scratch.prepared = Some((bp_ran, bp_seconds));
+        Ok(TrellisPrepared::Ready { bp_ran, bp_seconds })
+    }
+
+    /// Run the DP on the prepared shot with independently chosen pruning parameters.
+    /// Invalid parameters return `Error(InvalidConfiguration)` before checking readiness.
+    ///
+    /// # Panics
+    /// Panics unless the latest prepare completed `Ready`.
+    #[must_use]
+    pub fn attempt(&mut self, params: PruneParams) -> TrellisDecodeAttempt {
+        self.attempt_with_mode(params, DecodeMode::Full)
+    }
+
+    fn attempt_with_mode(&mut self, params: PruneParams, mode: DecodeMode) -> TrellisDecodeAttempt {
+        if let Err(error) = params.validate(self.model.config.metric_mode) {
+            return TrellisDecodeAttempt::Error(error);
+        }
+        if self.model.config.bp_score_iterations > 0
+            && self.model.bp_graph.is_none()
+            && !(params.k == usize::MAX && params.delta.is_infinite())
+        {
+            return TrellisDecodeAttempt::Error(DecoderError::InvalidConfiguration(
+                "non-exact pruning parameters require a BP graph when bp_score_iterations > 0"
+                    .into(),
+            ));
+        }
+        let (bp_ran, _) = self
+            .scratch
+            .prepared
+            .expect("attempt requires a Ready prepare");
+        let mut attempt = self.model.decode_attempt(&mut self.scratch, params, mode);
+        if let TrellisDecodeAttempt::Success(result) = &mut attempt {
+            result.bp_runs = u32::from(bp_ran);
+        }
+        attempt
+    }
+
+    /// Configured pruning parameters used by `decode_attempt`.
+    #[must_use]
+    pub fn prune_params(&self) -> PruneParams {
+        PruneParams {
+            k: self.model.config.k,
+            delta: self.model.config.delta,
+        }
+    }
+
+    /// Initial observable contribution of probability-one mechanisms.
+    #[must_use]
+    pub fn forced_observables(&self) -> ObsMask {
+        ObsMask::from_words(&self.model.forced_logical)
+    }
+
+    /// Lifetime count of BP refreshes run by this decoder's scratch.
+    #[must_use]
+    pub fn bp_refreshes(&self) -> u64 {
+        self.scratch.bp_refreshes
     }
 
     /// Share the immutable model with a decoder owning fresh scratch.
@@ -1406,59 +1620,49 @@ impl TrellisDecoder {
     }
 }
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum DecodeMode {
+    Full,
+    PredictionOnly,
+}
+
 impl TrellisModel {
     fn decode_attempt(
         &self,
         scratch: &mut TrellisScratch,
-        syndrome: &[u8],
+        params: PruneParams,
+        mode: DecodeMode,
     ) -> TrellisDecodeAttempt {
-        match (self.config.metric_mode, &self.kernel) {
+        let mut attempt = match (self.config.metric_mode, &self.kernel) {
             (MetricMode::LogSumExpFloat, Kernel::Binary(_)) => {
-                self.decode_attempt_binary(scratch, syndrome)
+                self.decode_attempt_binary(scratch, params, mode)
             }
             (MetricMode::LogSumExpFloat, Kernel::Nary(_)) => {
-                self.decode_attempt_nary(scratch, syndrome)
+                self.decode_attempt_nary(scratch, params, mode)
             }
             (MetricMode::MaxLogInt, Kernel::Binary(_)) => {
-                self.decode_attempt_binary_maxlog(scratch, syndrome)
+                self.decode_attempt_binary_maxlog(scratch, params)
             }
             (MetricMode::MaxLogInt, Kernel::Nary(_)) => {
-                self.decode_attempt_nary_maxlog(scratch, syndrome)
+                self.decode_attempt_nary_maxlog(scratch, params)
             }
+        };
+        if mode == DecodeMode::PredictionOnly
+            && let TrellisDecodeAttempt::Success(result) = &mut attempt
+        {
+            result.dropped_log_mass = f64::NAN;
         }
+        attempt
     }
 
     fn decode_attempt_binary(
         &self,
         scratch: &mut TrellisScratch,
-        syndrome: &[u8],
+        params: PruneParams,
+        mode: DecodeMode,
     ) -> TrellisDecodeAttempt {
-        if syndrome.len() != self.num_detectors {
-            return TrellisDecodeAttempt::Error(DecoderError::InvalidDimensions {
-                expected: self.num_detectors,
-                actual: syndrome.len(),
-            });
-        }
-
-        let observed = syndrome_to_words(syndrome, self.detector_words);
-        if observed
-            .iter()
-            .zip(&self.forced_syndrome)
-            .zip(&self.touched_detectors)
-            .any(|((&seen, &forced), &touched)| (seen ^ forced) & !touched != 0)
-        {
-            return TrellisDecodeAttempt::NoPath {
-                error: unexplainable_error(),
-                transitions: 0,
-                bp_seconds: 0.0,
-            };
-        }
-
-        let bp_seconds = match self.refresh_bp_suffix_values(scratch, &observed) {
-            Ok(seconds) => seconds.unwrap_or(0.0),
-            Err(error) => return TrellisDecodeAttempt::Error(error),
-        };
-
+        let observed = &scratch.observed;
+        let bp_seconds = scratch.prepared.expect("prepared shot").1;
         let progress = &mut scratch.float_progress;
         progress.reset(self);
         let Kernel::Binary(columns) = &self.kernel else {
@@ -1468,13 +1672,19 @@ impl TrellisModel {
             .bp_score
             .as_ref()
             .map_or(&self.suffix_values, |bp| &bp.suffix_values);
-        if let Err(failure) =
-            self.process_binary_range(progress, &observed, suffix_values, 0..columns.len())
-        {
+        if let Err(failure) = self.process_binary_range_with_mode(
+            progress,
+            observed,
+            suffix_values,
+            0..columns.len(),
+            params,
+            mode,
+        ) {
             return match failure {
                 BinaryFailure::NoPath => TrellisDecodeAttempt::NoPath {
                     error: failure.error(),
                     transitions: progress.transitions,
+                    dropped_states: progress.dropped_states,
                     bp_seconds,
                 },
                 BinaryFailure::UnusableScores => TrellisDecodeAttempt::Error(failure.error()),
@@ -1490,27 +1700,26 @@ impl TrellisModel {
         observed: &[u64],
         suffix_values: &SuffixValues,
         range: std::ops::Range<usize>,
+        params: PruneParams,
     ) -> Result<(), BinaryFailure> {
-        self.process_binary_range_mode(progress, observed, suffix_values, range, true)
+        self.process_binary_range_with_mode(
+            progress,
+            observed,
+            suffix_values,
+            range,
+            params,
+            DecodeMode::Full,
+        )
     }
 
-    fn process_binary_range_prediction(
+    fn process_binary_range_with_mode(
         &self,
         progress: &mut BinaryProgress,
         observed: &[u64],
         suffix_values: &SuffixValues,
         range: std::ops::Range<usize>,
-    ) -> Result<(), BinaryFailure> {
-        self.process_binary_range_mode(progress, observed, suffix_values, range, false)
-    }
-
-    fn process_binary_range_mode(
-        &self,
-        progress: &mut BinaryProgress,
-        observed: &[u64],
-        suffix_values: &SuffixValues,
-        range: std::ops::Range<usize>,
-        collect_telemetry: bool,
+        params: PruneParams,
+        mode: DecodeMode,
     ) -> Result<(), BinaryFailure> {
         let BinaryProgress {
             frontier,
@@ -1565,27 +1774,17 @@ impl TrellisModel {
                 rows: &column.suffix_compatibility,
                 values: suffix_values,
             };
-            let pruned = if collect_telemetry {
-                prune(
-                    frontier,
-                    self.config.k,
-                    self.config.delta,
-                    self.config.score_alpha,
-                    suffix_compatibility,
-                    observed,
-                )
-            } else {
-                prune_prediction(
-                    frontier,
-                    self.config.k,
-                    self.config.delta,
-                    self.config.score_alpha,
-                    suffix_compatibility,
-                    observed,
-                )
-            };
+            let pruned = prune(
+                frontier,
+                params.k,
+                params.delta,
+                self.config.score_alpha,
+                suffix_compatibility,
+                observed,
+                mode,
+            );
             *dropped_states += pruned.dropped_states;
-            if collect_telemetry {
+            if mode == DecodeMode::Full {
                 *dropped_log_mass = logaddexp(*dropped_log_mass, pruned.dropped_log_mass);
             }
             *k_capped |= pruned.k_capped;
@@ -1668,6 +1867,7 @@ impl TrellisModel {
             dropped_states,
             dropped_log_mass,
             bp_seconds,
+            bp_runs: 0,
             escalation_rungs_used: 0,
             status,
             logical_masses,
@@ -1696,29 +1896,10 @@ impl TrellisModel {
     fn decode_attempt_nary(
         &self,
         scratch: &mut TrellisScratch,
-        syndrome: &[u8],
+        params: PruneParams,
+        mode: DecodeMode,
     ) -> TrellisDecodeAttempt {
-        if syndrome.len() != self.num_detectors {
-            return TrellisDecodeAttempt::Error(DecoderError::InvalidDimensions {
-                expected: self.num_detectors,
-                actual: syndrome.len(),
-            });
-        }
-
-        let observed = syndrome_to_words(syndrome, self.detector_words);
-        if observed
-            .iter()
-            .zip(&self.forced_syndrome)
-            .zip(&self.touched_detectors)
-            .any(|((&seen, &forced), &touched)| (seen ^ forced) & !touched != 0)
-        {
-            return TrellisDecodeAttempt::NoPath {
-                error: unexplainable_error(),
-                transitions: 0,
-                bp_seconds: 0.0,
-            };
-        }
-
+        let observed = &scratch.observed;
         let frontier = &mut scratch.float_progress.frontier;
         frontier.reset(
             &self.forced_syndrome,
@@ -1749,7 +1930,7 @@ impl TrellisModel {
                 detector_words: frontier.detector_words,
                 close_mask: &column.close_mask,
                 active_mask: &column.active_mask,
-                observed: &observed,
+                observed,
             };
             for (index, &log_mass) in frontier.parent.masses.iter().enumerate() {
                 let state = frontier.parent.key(index, frontier.stride);
@@ -1768,22 +1949,26 @@ impl TrellisModel {
                 return TrellisDecodeAttempt::NoPath {
                     error: unexplainable_error(),
                     transitions,
+                    dropped_states,
                     bp_seconds: 0.0,
                 };
             }
             let pruned = prune(
                 frontier,
-                self.config.k,
-                self.config.delta,
+                params.k,
+                params.delta,
                 self.config.score_alpha,
                 SuffixCompatibility {
                     rows: &column.suffix_compatibility,
                     values: &self.suffix_values,
                 },
-                &observed,
+                observed,
+                mode,
             );
             dropped_states += pruned.dropped_states;
-            dropped_log_mass = logaddexp(dropped_log_mass, pruned.dropped_log_mass);
+            if mode == DecodeMode::Full {
+                dropped_log_mass = logaddexp(dropped_log_mass, pruned.dropped_log_mass);
+            }
             k_capped |= pruned.k_capped;
             delta_pruned |= pruned.delta_pruned;
             if frontier.parent.masses.is_empty() {
@@ -1843,6 +2028,7 @@ impl TrellisModel {
             dropped_states,
             dropped_log_mass,
             bp_seconds: 0.0,
+            bp_runs: 0,
             escalation_rungs_used: 0,
             status,
             logical_masses,
@@ -1852,33 +2038,10 @@ impl TrellisModel {
     fn decode_attempt_binary_maxlog(
         &self,
         scratch: &mut TrellisScratch,
-        syndrome: &[u8],
+        params: PruneParams,
     ) -> TrellisDecodeAttempt {
-        if syndrome.len() != self.num_detectors {
-            return TrellisDecodeAttempt::Error(DecoderError::InvalidDimensions {
-                expected: self.num_detectors,
-                actual: syndrome.len(),
-            });
-        }
-
-        let observed = syndrome_to_words(syndrome, self.detector_words);
-        if observed
-            .iter()
-            .zip(&self.forced_syndrome)
-            .zip(&self.touched_detectors)
-            .any(|((&seen, &forced), &touched)| (seen ^ forced) & !touched != 0)
-        {
-            return TrellisDecodeAttempt::NoPath {
-                error: unexplainable_error(),
-                transitions: 0,
-                bp_seconds: 0.0,
-            };
-        }
-
-        let bp_seconds = match self.refresh_bp_suffix_values(scratch, &observed) {
-            Ok(seconds) => seconds.unwrap_or(0.0),
-            Err(error) => return TrellisDecodeAttempt::Error(error),
-        };
+        let observed = &scratch.observed;
+        let bp_seconds = scratch.prepared.expect("prepared shot").1;
         let frontier = &mut scratch.int_frontier;
         frontier.reset(
             &self.forced_syndrome,
@@ -1893,7 +2056,7 @@ impl TrellisModel {
         let mut k_capped = false;
         let mut delta_pruned = false;
         let scale = self.config.int_metric_scale;
-        let delta_int = quantize_metric(self.config.delta, scale);
+        let delta_int = quantize_metric(params.delta, scale);
         debug_assert!(
             delta_int >= 0,
             "validate_config rejects negative and non-finite delta under maxlog_int"
@@ -1920,7 +2083,7 @@ impl TrellisModel {
                 detector_words: frontier.detector_words,
                 close_mask: &column.close_mask,
                 active_mask: &column.active_mask,
-                observed: &observed,
+                observed,
             };
             for (index, &log_mass) in frontier.parent.masses.iter().enumerate() {
                 let state = frontier.parent.key(index, frontier.stride);
@@ -1945,6 +2108,7 @@ impl TrellisModel {
                 return TrellisDecodeAttempt::NoPath {
                     error: unexplainable_error(),
                     transitions,
+                    dropped_states,
                     bp_seconds,
                 };
             }
@@ -1954,12 +2118,12 @@ impl TrellisModel {
             };
             let pruned = prune_maxlog(
                 frontier,
-                self.config.k,
+                params.k,
                 delta_int,
                 alpha_int,
                 scale,
                 suffix_compatibility,
-                &observed,
+                observed,
             );
             dropped_states += pruned.dropped_states;
             dropped_log_mass = dropped_log_mass.max(pruned.dropped_log_mass);
@@ -1987,29 +2151,9 @@ impl TrellisModel {
     fn decode_attempt_nary_maxlog(
         &self,
         scratch: &mut TrellisScratch,
-        syndrome: &[u8],
+        params: PruneParams,
     ) -> TrellisDecodeAttempt {
-        if syndrome.len() != self.num_detectors {
-            return TrellisDecodeAttempt::Error(DecoderError::InvalidDimensions {
-                expected: self.num_detectors,
-                actual: syndrome.len(),
-            });
-        }
-
-        let observed = syndrome_to_words(syndrome, self.detector_words);
-        if observed
-            .iter()
-            .zip(&self.forced_syndrome)
-            .zip(&self.touched_detectors)
-            .any(|((&seen, &forced), &touched)| (seen ^ forced) & !touched != 0)
-        {
-            return TrellisDecodeAttempt::NoPath {
-                error: unexplainable_error(),
-                transitions: 0,
-                bp_seconds: 0.0,
-            };
-        }
-
+        let observed = &scratch.observed;
         let frontier = &mut scratch.int_frontier;
         frontier.reset(
             &self.forced_syndrome,
@@ -2024,7 +2168,7 @@ impl TrellisModel {
         let mut k_capped = false;
         let mut delta_pruned = false;
         let scale = self.config.int_metric_scale;
-        let delta_int = quantize_metric(self.config.delta, scale);
+        let delta_int = quantize_metric(params.delta, scale);
         debug_assert!(
             delta_int >= 0,
             "validate_config rejects negative and non-finite delta under maxlog_int"
@@ -2047,7 +2191,7 @@ impl TrellisModel {
                 detector_words: frontier.detector_words,
                 close_mask: &column.close_mask,
                 active_mask: &column.active_mask,
-                observed: &observed,
+                observed,
             };
             for (index, &log_mass) in frontier.parent.masses.iter().enumerate() {
                 let state = frontier.parent.key(index, frontier.stride);
@@ -2066,12 +2210,13 @@ impl TrellisModel {
                 return TrellisDecodeAttempt::NoPath {
                     error: unexplainable_error(),
                     transitions,
+                    dropped_states,
                     bp_seconds: 0.0,
                 };
             }
             let pruned = prune_maxlog(
                 frontier,
-                self.config.k,
+                params.k,
                 delta_int,
                 alpha_int,
                 scale,
@@ -2079,7 +2224,7 @@ impl TrellisModel {
                     rows: &column.suffix_compatibility,
                     values: &self.suffix_values,
                 },
-                &observed,
+                observed,
             );
             dropped_states += pruned.dropped_states;
             dropped_log_mass = dropped_log_mass.max(pruned.dropped_log_mass);
@@ -2123,6 +2268,7 @@ impl TrellisModel {
             *residual =
                 u8::from((observed[word_index] ^ self.forced_syndrome[word_index]) & bit_mask != 0);
         }
+        scratch.bp_refreshes += 1;
         min_sum_bp_into(
             self.bp_graph.as_ref().expect("BP scratch has a graph"),
             &bp_score.residual_syndrome,
@@ -2155,7 +2301,10 @@ impl TrellisModel {
 
 impl ObservableDecoder for TrellisDecoder {
     fn decode_obs(&mut self, syndrome: &[u8]) -> Result<ObsMask, DecoderError> {
-        Ok(self.decode(syndrome)?.predicted)
+        Ok(self
+            .decode_attempt_with_mode(syndrome, DecodeMode::PredictionOnly)
+            .into_result()?
+            .predicted)
     }
 
     fn decode_to_observables(&mut self, syndrome: &[u8]) -> Result<u64, DecoderError> {
@@ -2164,7 +2313,7 @@ impl ObservableDecoder for TrellisDecoder {
                 "decoder has more than 64 observables; use decode_obs() for the wide mask".into(),
             ));
         }
-        let decoded = self.decode(syndrome)?.predicted;
+        let decoded = self.decode_obs(syndrome)?;
         Ok(decoded.words().first().copied().unwrap_or(0))
     }
 }
@@ -2588,69 +2737,7 @@ fn prune(
     score_alpha: f64,
     suffix_compatibility: SuffixCompatibility<'_>,
     observed: &[u64],
-) -> PruneResult<f64> {
-    if k == usize::MAX && delta.is_infinite() {
-        return PruneResult {
-            dropped_states: 0,
-            dropped_log_mass: f64::NEG_INFINITY,
-            k_capped: false,
-            delta_pruned: false,
-        };
-    }
-
-    score_candidates(frontier, score_alpha, suffix_compatibility, observed);
-    frontier.indices.clear();
-    frontier.indices.extend(0..frontier.parent.masses.len());
-    frontier.indices.sort_by(|&left, &right| {
-        frontier.scores[right]
-            .total_cmp(&frontier.scores[left])
-            .then_with(|| {
-                compare_state_words(
-                    frontier.parent.key(left, frontier.stride),
-                    frontier.parent.key(right, frontier.stride),
-                    frontier.detector_words,
-                )
-            })
-    });
-    let cutoff = frontier.scores[frontier.indices[0]] - delta;
-    frontier.retained.clear();
-    frontier
-        .retained
-        .resize(frontier.parent.masses.len(), false);
-    let mut dropped_states = 0;
-    let mut dropped_log_mass = f64::NEG_INFINITY;
-    let mut k_capped = false;
-    let mut delta_pruned = false;
-
-    for (index, &candidate) in frontier.indices.iter().enumerate() {
-        let within_k = index < k;
-        let within_delta = frontier.scores[candidate] >= cutoff;
-        if within_k && within_delta {
-            frontier.retained[candidate] = true;
-        } else {
-            dropped_states += 1;
-            dropped_log_mass = logaddexp(dropped_log_mass, frontier.parent.masses[candidate]);
-            k_capped |= !within_k;
-            delta_pruned |= within_k && !within_delta;
-        }
-    }
-
-    frontier.retain();
-    PruneResult {
-        dropped_states,
-        dropped_log_mass,
-        k_capped,
-        delta_pruned,
-    }
-}
-
-fn prune_prediction(
-    frontier: &mut FrontierScratch<f64>,
-    k: usize,
-    delta: f64,
-    score_alpha: f64,
-    suffix_compatibility: SuffixCompatibility<'_>,
-    observed: &[u64],
+    mode: DecodeMode,
 ) -> PruneResult<f64> {
     if k == usize::MAX && delta.is_infinite() {
         return PruneResult {
@@ -2696,10 +2783,22 @@ fn prune_prediction(
     }
     let original_states = frontier.parent.masses.len();
     let retained_states = frontier.indices.len();
+    let mut dropped_log_mass = f64::NEG_INFINITY;
+    if mode == DecodeMode::Full {
+        // Keep the existing score-ordered summation for bitwise telemetry stability.
+        frontier.indices.clear();
+        frontier
+            .indices
+            .extend((0..original_states).filter(|&i| !frontier.retained[i]));
+        frontier.indices.sort_unstable_by(better);
+        for &candidate in &frontier.indices {
+            dropped_log_mass = logaddexp(dropped_log_mass, frontier.parent.masses[candidate]);
+        }
+    }
     frontier.retain();
     PruneResult {
         dropped_states: (original_states - retained_states) as u64,
-        dropped_log_mass: f64::NEG_INFINITY,
+        dropped_log_mass,
         k_capped: original_states > k,
         delta_pruned: original_states.min(k) > eligible,
     }
@@ -2722,7 +2821,7 @@ fn prune_maxlog(
     frontier.indices.clear();
     frontier.indices.extend(0..frontier.parent.masses.len());
     // Preserve the integer score tie-break: mass descending, then key.
-    frontier.indices.sort_by(|&left, &right| {
+    frontier.indices.sort_unstable_by(|&left, &right| {
         frontier.scores[right]
             .cmp(&frontier.scores[left])
             .then_with(|| frontier.parent.masses[right].cmp(&frontier.parent.masses[left]))
@@ -2733,6 +2832,7 @@ fn prune_maxlog(
                     frontier.detector_words,
                 )
             })
+            .then_with(|| left.cmp(&right))
     });
     let cutoff = frontier.scores[frontier.indices[0]].saturating_sub(delta_int);
     frontier.retained.clear();
@@ -2991,6 +3091,7 @@ fn finish_maxlog_decode(
             i64_to_f64(stats.dropped_log_mass) / scale_f64
         },
         bp_seconds: stats.bp_seconds,
+        bp_runs: 0,
         escalation_rungs_used: 0,
         status,
         logical_masses,
@@ -3053,7 +3154,7 @@ fn set_bit(words: &mut [u64], index: usize) {
 
 fn set_bits(words: &[u64]) -> impl Iterator<Item = usize> + '_ {
     // Ascending visit order is load-bearing: downstream float reductions sum in
-    // this order and the bitwise parity contract pins it. Skipping zero words
+    // this order and the bitwise snapshots pin it. Skipping zero words
     // and clearing lowest set bits preserves that order exactly.
     words.iter().enumerate().flat_map(|(word_index, &word)| {
         let mut remaining = word;
@@ -3161,6 +3262,91 @@ mod tests {
             right_associated.to_bits()
         );
         assert_ne!(frontier.parent.masses[1].to_bits(), reordered.to_bits());
+    }
+
+    #[test]
+    fn merge_sort_matches_stable_full_key_order() {
+        use rand::{RngExt, SeedableRng};
+        use rand_xoshiro::Xoshiro256PlusPlus;
+
+        let mut rng = Xoshiro256PlusPlus::seed_from_u64(0x534f_5254);
+        let mut frontier = super::FrontierScratch::<f64>::default();
+        for stride in [0, 1, 2, 3, 4, 5, 8, 16, 17, 33] {
+            for detector_words in 0..=stride {
+                for nonzero_words in [0, 1, 4, 5, stride] {
+                    // Sparse keys zero every odd word in every branch, so wide keys
+                    // drop words from the inline prefix and still keep more than four.
+                    for (sparse, count) in [false, true]
+                        .into_iter()
+                        .flat_map(|sparse| [0, 1, 2, 31, 128].map(|count| (sparse, count)))
+                    {
+                        let detectors = vec![0; detector_words];
+                        let logical = vec![0; stride - detector_words];
+                        frontier.reset(&detectors, &logical, &detectors, 0.0);
+                        let mut keys: Vec<Vec<u64>> = Vec::new();
+                        for index in 0..count {
+                            let key = if index % 3 == 2 {
+                                // Equal full keys arrive separated by other keys.
+                                keys[index - 2].clone()
+                            } else if nonzero_words > 4 && stride > 4 && index % 4 == 0 {
+                                // Equal inline prefixes must still compare the tail.
+                                let mut key = vec![1; stride];
+                                key[0] = rng.random();
+                                key
+                            } else {
+                                (0..stride)
+                                    .map(|word| {
+                                        if word < nonzero_words {
+                                            rng.random::<u64>()
+                                        } else {
+                                            0
+                                        }
+                                    })
+                                    .collect()
+                            };
+                            let mut key = key;
+                            if sparse {
+                                key.iter_mut().skip(1).step_by(2).for_each(|word| *word = 0);
+                            }
+                            frontier.branches.words.extend_from_slice(&key);
+                            frontier.branches.masses.push(rng.random_range(-100.0..0.0));
+                            keys.push(key);
+                        }
+                        let mut expected: Vec<_> = (0..count).collect();
+                        expected.sort_by(|&left, &right| {
+                            super::compare_state_words(&keys[left], &keys[right], detector_words)
+                        });
+                        frontier.merge(logaddexp);
+                        assert_eq!(frontier.indices, expected);
+                        let mut merged_keys: Vec<Vec<u64>> = Vec::new();
+                        let mut merged_masses = Vec::new();
+                        for index in expected {
+                            let mass = frontier.branches.masses[index];
+                            if merged_keys.last() == Some(&keys[index]) {
+                                let last = merged_masses.last_mut().unwrap();
+                                *last = logaddexp(*last, mass);
+                            } else {
+                                merged_keys.push(keys[index].clone());
+                                merged_masses.push(mass);
+                            }
+                        }
+                        assert_eq!(frontier.parent.words, merged_keys.concat());
+                        assert_eq!(
+                            frontier
+                                .parent
+                                .masses
+                                .iter()
+                                .map(|v| v.to_bits())
+                                .collect::<Vec<_>>(),
+                            merged_masses
+                                .iter()
+                                .map(|v| v.to_bits())
+                                .collect::<Vec<_>>()
+                        );
+                    }
+                }
+            }
+        }
     }
 
     #[test]

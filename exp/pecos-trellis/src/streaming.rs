@@ -215,22 +215,7 @@ impl TrellisStreamingDecoder {
     /// # Errors
     /// Returns the same no-path or internal error as the batch column walk.
     pub fn advance(&mut self) -> Result<StreamingProgress, DecoderError> {
-        if let Some(failure) = self.failure {
-            return Err(failure.error());
-        }
-        let end = self
-            .ready
-            .partition_point(|required| required.is_none_or(|d| d < self.arrived_count));
-        if let Err(failure) = self.model.process_binary_range(
-            &mut self.progress,
-            &self.observed,
-            &self.model.suffix_values,
-            self.next_column..end,
-        ) {
-            self.failure = Some(failure);
-            return Err(failure.error());
-        }
-        self.next_column = end;
+        self.advance_prediction()?;
         self.check_commitments();
         let newly_committed = self.pending_commitments.clone();
         self.pending_commitments.clear();
@@ -242,10 +227,11 @@ impl TrellisStreamingDecoder {
         })
     }
 
-    /// Process ready columns without constructing commitment or dropped-mass telemetry.
+    /// Process ready columns without constructing commitment snapshots.
     ///
     /// This path retains the same candidate set and correction as [`Self::advance`],
-    /// while using partial selection when the frontier exceeds `k`. It is intended
+    /// including dropped-mass telemetry, so it can safely be mixed with `flush`.
+    /// It is intended
     /// for latency-sensitive runtimes that need only the final prediction.
     ///
     /// # Errors
@@ -257,11 +243,15 @@ impl TrellisStreamingDecoder {
         let end = self
             .ready
             .partition_point(|required| required.is_none_or(|d| d < self.arrived_count));
-        if let Err(failure) = self.model.process_binary_range_prediction(
+        if let Err(failure) = self.model.process_binary_range(
             &mut self.progress,
             &self.observed,
             &self.model.suffix_values,
             self.next_column..end,
+            crate::PruneParams {
+                k: self.model.config.k,
+                delta: self.model.config.delta,
+            },
         ) {
             self.failure = Some(failure);
             return Err(failure.error());

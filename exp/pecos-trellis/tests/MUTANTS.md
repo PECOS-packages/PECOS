@@ -1,4 +1,6 @@
-# Trellis engine manual mutant checklist
+# Trellis manual mutant checklists
+
+## Engine
 
 The repository has no mutation runner. Apply each compiling edit separately,
 run the named killer test(s), and restore the source before trying the next
@@ -39,6 +41,152 @@ against this crate's suite rather than assumed.
 | `allow_maxlog_indistinguishable_merge` | Delete the `MetricMode::MaxLogInt` plus `merge_indistinguishable` rejection from `validate_config`. | `validates_probabilities_indices_order_and_pruning_configuration` |
 | `maxlog_score_tie_ignores_log_mass` | Delete the log-mass comparator from `prune_maxlog`'s candidate ordering. | `maxlog_score_ties_prefer_the_higher_mass_state` |
 | `terminal_evidence_fold_reversed` | In `exp/pecos-trellis/src/lib.rs`, in the binary float arm only, replace `terminal.iter().fold(f64::NEG_INFINITY, \|total, candidate\| {` with `terminal.iter().rev().fold(f64::NEG_INFINITY, \|total, candidate\| {`. | `bitwise_snapshot::decode_outputs_match_bitwise_snapshot`; verified failure in `binary/random_seed11/float/unpruned/bp=0/merge=false/order=input/syndrome=0x2`, field `log_evidence` (one bit). Applied and restored in an isolated workspace copy to preserve the source oracle. |
-| `binary_branch_order_swapped` | In `process_binary_range`, swap the two `branch_context.emit(...)` calls inside the `for (index, &log_mass) in frontier.parent.masses.iter().enumerate()` loop, so the taken branch (`Some((&column.detector_toggle, &column.logical_toggle))`, `branch_base + column.log_odds`) is emitted before the not-taken branch (`None`, `branch_base`). | EQUIVALENT (verified 2026-09-24 on the post-#829 engine: `bitwise_snapshot` passes in both crates with the swap applied). Each merged state receives at most one taken and one not-taken route, and `frontier.merge(logaddexp)` combines two routes to the same bits in either order. |
+| `binary_branch_order_swapped` | In `process_binary_range`, swap the two `branch_context.emit(...)` calls inside the `for (index, &log_mass) in frontier.parent.masses.iter().enumerate()` loop, so the taken branch (`Some((&column.detector_toggle, &column.logical_toggle))`, `branch_base + column.log_odds`) is emitted before the not-taken branch (`None`, `branch_base`). | EQUIVALENT (verified 2026-09-24 on the post-#829 engine: `bitwise_snapshot` and `bp_trellis_bitwise_snapshot` both pass with the swap applied). Each merged state receives at most one taken and one not-taken route, and `frontier.merge(logaddexp)` combines two routes to the same bits in either order. |
 | `bp_residual_ignores_forced` | In `bp_suffix_compatibility`, replace `(observed[word_index] ^ self.forced_syndrome[word_index]) & bit_mask` with `(observed[word_index] & bit_mask)`. | `bitwise_snapshot::decode_outputs_match_bitwise_snapshot`; verified `binary/forced_duplicate/float/k+delta/bp=5/merge=false/order=input/syndrome=0x43`, field `transitions`. |
 | `nary_outcomes_reversed` | In the N-ary float DP, replace `for outcome in &column.outcomes {` with `for outcome in column.outcomes.iter().rev() {`. | `bitwise_snapshot::decode_outputs_match_bitwise_snapshot`; verified `nary/three_route_collision/float/unpruned/bp=0/merge=false/order=rotate/syndrome=0x0`, field `log_evidence`. |
+
+### Prepared-shot and outcome guards
+
+Verified with compiling mutations in an isolated workspace copy with a
+separate Cargo target directory, restoring the source before the next row.
+Each killer exits 101. Frozen fixtures were never regenerated. The first
+failure column quotes the test output, including panic messages for readiness
+guards; a test that expects a panic instead fails with "did not panic".
+
+Killers run with `cargo test --locked -p pecos-trellis --test prepared NAME`.
+Facade and Python guards for the same change are under BP Trellis below.
+
+| Mutant | Exact compiling edit | Killer | First failing line verbatim |
+|---|---|---|---|
+| `binary_float_ignores_k` | In `exp/pecos-trellis/src/lib.rs within fn process_binary_range(`, replace `params.k,` with `self.config.k,`. | `binary_float_k_override` | ``assertion `left != right` failed: override must change outcome or telemetry`` |
+| `binary_float_ignores_delta` | In `exp/pecos-trellis/src/lib.rs within fn process_binary_range(`, replace `params.delta,` with `self.config.delta,`. | `binary_float_delta_override` | ``assertion `left != right` failed: override must change outcome or telemetry`` |
+| `binary_float_zero_no_path_drops` | In `exp/pecos-trellis/src/lib.rs within fn decode_attempt_binary(`, replace `dropped_states: progress.dropped_states,` with `dropped_states: 0,`. | `no_path_drops_in_all_four_arms` | `positive drops, nary=false, integer=false` |
+| `nary_float_ignores_k` | In `exp/pecos-trellis/src/lib.rs within fn decode_attempt_nary(`, replace `params.k,` with `self.config.k,`. | `nary_float_k_override` | ``assertion `left != right` failed: override must change outcome or telemetry`` |
+| `nary_float_ignores_delta` | In `exp/pecos-trellis/src/lib.rs within fn decode_attempt_nary(`, replace `params.delta,` with `self.config.delta,`. | `nary_float_delta_override` | ``assertion `left != right` failed: override must change outcome or telemetry`` |
+| `nary_float_zero_no_path_drops` | In `exp/pecos-trellis/src/lib.rs within fn decode_attempt_nary(`, replace `                    dropped_states,\n                    bp_seconds` with `                    dropped_states: 0,\n                    bp_seconds`. | `no_path_drops_in_all_four_arms` | `positive drops, nary=true, integer=false` |
+| `binary_maxlog_ignores_k` | In `exp/pecos-trellis/src/lib.rs within fn decode_attempt_binary_maxlog(`, replace `params.k,` with `self.config.k,`. | `binary_maxlog_k_override` | ``assertion `left != right` failed: override must change outcome or telemetry`` |
+| `binary_maxlog_ignores_delta` | In `exp/pecos-trellis/src/lib.rs within fn decode_attempt_binary_maxlog(`, replace `params.delta,` with `self.config.delta,`. | `binary_maxlog_delta_override` | ``assertion `left != right` failed: override must change outcome or telemetry`` |
+| `binary_maxlog_zero_no_path_drops` | In `exp/pecos-trellis/src/lib.rs within fn decode_attempt_binary_maxlog(`, replace `                    dropped_states,\n                    bp_seconds` with `                    dropped_states: 0,\n                    bp_seconds`. | `no_path_drops_in_all_four_arms` | `positive drops, nary=false, integer=true` |
+| `nary_maxlog_ignores_k` | In `exp/pecos-trellis/src/lib.rs within fn decode_attempt_nary_maxlog(`, replace `params.k,` with `self.config.k,`. | `nary_maxlog_k_override` | ``assertion `left != right` failed: override must change outcome or telemetry`` |
+| `nary_maxlog_ignores_delta` | In `exp/pecos-trellis/src/lib.rs within fn decode_attempt_nary_maxlog(`, replace `params.delta,` with `self.config.delta,`. | `nary_maxlog_delta_override` | ``assertion `left != right` failed: override must change outcome or telemetry`` |
+| `nary_maxlog_zero_no_path_drops` | In `exp/pecos-trellis/src/lib.rs within fn decode_attempt_nary_maxlog(`, replace `                    dropped_states,\n                    bp_seconds` with `                    dropped_states: 0,\n                    bp_seconds`. | `no_path_drops_in_all_four_arms` | `positive drops, nary=true, integer=true` |
+| `attempt_skips_validation` | In `exp/pecos-trellis/src/lib.rs within pub fn attempt(`, replace `if let Err(error) = params.validate(self.model.config.metric_mode)` with `if let Err(error) = Ok::<(), DecoderError>(())`. | `parameter_rejection_matrix_precedes_readiness` | `attempt requires a Ready prepare` |
+| `accept_zero_k` | In `exp/pecos-trellis/src/lib.rs within impl PruneParams {`, replace `if self.k == 0` with `if false`. | `parameter_rejection_matrix_precedes_readiness` | `attempt requires a Ready prepare` |
+| `accept_nan_delta` | In `exp/pecos-trellis/src/lib.rs within impl PruneParams {`, replace `self.delta.is_nan() \|\| self.delta < 0.0` with `self.delta < 0.0`. | `parameter_rejection_matrix_precedes_readiness` | `attempt requires a Ready prepare` |
+| `accept_negative_delta` | In `exp/pecos-trellis/src/lib.rs within impl PruneParams {`, replace `self.delta.is_nan() \|\| self.delta < 0.0` with `self.delta.is_nan()`. | `parameter_rejection_matrix_precedes_readiness` | `attempt requires a Ready prepare` |
+| `accept_maxlog_infinity` | In `exp/pecos-trellis/src/lib.rs within impl PruneParams {`, replace `metric_mode == MetricMode::MaxLogInt && !self.delta.is_finite()` with `false && metric_mode == MetricMode::MaxLogInt && !self.delta.is_finite()`. | `parameter_rejection_matrix_precedes_readiness` | `attempt requires a Ready prepare` |
+| `skip_bp_capability_rule` | In `exp/pecos-trellis/src/lib.rs within pub fn attempt(`, replace `if self.model.config.bp_score_iterations > 0` with `if false && self.model.config.bp_score_iterations > 0`. | `bp_capabilities_and_refresh_count` | `attempt requires a Ready prepare` |
+| `attempt_accepts_unprepared` | In `exp/pecos-trellis/src/lib.rs within pub fn attempt(`, replace `.expect("attempt requires a Ready prepare")` with `.unwrap_or((false, 0.0))`. | `unprepared_attempt_panics` | `prepared shot` |
+| `keep_ready_after_error` | In `exp/pecos-trellis/src/lib.rs within pub fn prepare(`, replace `self.scratch.prepared = None;` with `// readiness incorrectly retained`. | `dimension_error_invalidates_ready` | `note: test did not panic as expected at exp/pecos-trellis/tests/prepared.rs:341:4` |
+| `keep_ready_after_residual` | In `exp/pecos-trellis/src/lib.rs within pub fn prepare(`, replace `self.scratch.prepared = None;` with `// readiness incorrectly retained`. | `residual_invalidates_ready` | `note: test did not panic as expected at exp/pecos-trellis/tests/prepared.rs:350:4` |
+| `fresh_worker_copies_ready` | In `exp/pecos-trellis/src/lib.rs within pub fn fresh_worker(`, replace `scratch: TrellisScratch::new(&self.model),` with `scratch: self.scratch.clone(),`. | `fresh_worker_starts_unprepared` | `note: test did not panic as expected at exp/pecos-trellis/tests/prepared.rs:333:4` |
+| `attempt_consumes_ready` | In `exp/pecos-trellis/src/lib.rs within pub fn attempt(`, replace `        attempt\n    }` with `        self.scratch.prepared = None;\n        attempt\n    }`. | `repeated_attempts_and_next_shot_match_fresh_decoders` | `attempt requires a Ready prepare` |
+| `attempt_keeps_frontier` | In `exp/pecos-trellis/src/lib.rs within fn decode_attempt_binary(`, replace `        progress.reset(self);` with `        if progress.frontier.parent.masses.is_empty() { progress.reset(self); }`. | `repeated_attempts_and_next_shot_match_fresh_decoders` | ``assertion `left == right` failed`` |
+| `forced_observables_zero` | In `exp/pecos-trellis/src/lib.rs within pub fn forced_observables(`, replace `ObsMask::from_words(&self.model.forced_logical)` with `ObsMask::from_words(&[])`. | `forced_observables_and_lowest_residual` | ``assertion `left == right` failed`` |
+| `lowest_residual_wrong` | In `exp/pecos-trellis/src/lib.rs within pub fn prepare(`, replace `residual.trailing_zeros() as usize` with `0`. | `forced_observables_and_lowest_residual` | ``assertion `left == right` failed`` |
+| `bp_refresh_counter_missing` | In `exp/pecos-trellis/src/lib.rs within fn refresh_bp_suffix_values(`, replace `scratch.bp_refreshes += 1;` with `// no count`. | `bp_capabilities_and_refresh_count` | ``assertion `left == right` failed`` |
+| `bp_runs_zero` | In `exp/pecos-trellis/src/lib.rs within pub fn attempt(`, replace `result.bp_runs = u32::from(bp_ran);` with `result.bp_runs = u32::from(bp_ran) * 0;`. | `bp_capabilities_and_refresh_count` | ``assertion `left == right` failed`` |
+
+### Review-round guards
+
+Each edit below was compiled and run in an isolated workspace copy with a
+separate Cargo target directory, then restored. Every killer exited 101.
+
+| Mutant | Exact compiling edit | Killer | First failing line verbatim |
+|---|---|---|---|
+| `capability_half_exact_exempt` | In `exp/pecos-trellis/src/lib.rs`, replace `params.k == usize::MAX && params.delta.is_infinite()` with `params.k == usize::MAX \|\| params.delta.is_infinite()`. Restrict the edit to `TrellisDecoder::attempt`. | `bp_capabilities_and_refresh_count` | `expected InvalidConfiguration naming require a BP graph` |
+| `residual_runs_bp` | In `exp/pecos-trellis/src/lib.rs`, replace `            if residual != 0 {` with `            if residual != 0 {\n                self.model.refresh_bp_suffix_values(&mut self.scratch, &observed)?;`. Restrict the edit to `TrellisDecoder::prepare`. | `residual_precheck_skips_bp_refresh` | ``assertion `left == right` failed: residual preparation must skip BP`` |
+| `residual_reports_highest_bit` | In `TrellisDecoder::prepare`, replace `residual.trailing_zeros() as usize` with `(63 - residual.leading_zeros()) as usize`. | `residual_reports_the_lowest_detector_within_and_across_words` | ``assertion `left == right` failed`` |
+| `residual_scans_words_reversed` | In `TrellisDecoder::prepare`, replace `.enumerate()` on the observed/forced/touched zip with `.enumerate().rev()`. | `residual_reports_the_lowest_detector_within_and_across_words` | ``assertion `left == right` failed`` |
+
+## BP Trellis
+
+The repository has no mutation runner. Apply each compiling edit separately,
+run the named killer test(s), and restore the source before trying the next
+row. “Equivalent” rows document mutations that intentionally have no killer.
+
+| Mutant | Exact edit (quoted old → new) | Expected killer test(s) or disposition |
+|---|---|---|
+| `bptrellis_default_bp_off` | In `BpTrellisConfig::default`, replace `"bp_score_iterations: 5"` with `"bp_score_iterations: 0"`. | `bptrellis_defaults_enable_bp_merge_and_deadline_order` (including its `bp_seconds > 0.0` assertions) |
+| `bptrellis_default_merge_off` | In `BpTrellisConfig::default`, replace `"merge_indistinguishable: true"` with `"merge_indistinguishable: false"`. | `bptrellis_defaults_enable_bp_merge_and_deadline_order` (including its `processed_columns` assertion for the planted duplicate pair) |
+| `ladder_skips_accumulation` | In `decode_with_attempt`, delete `result.transitions += report.transitions;`. | `no_path_escalates_to_k16_and_accumulates_transitions`; executed below as `skip_success_transitions` |
+| `terminal_evidence_fold_reversed` | In `exp/pecos-trellis/src/lib.rs`, in the binary float arm only, replace `terminal.iter().fold(f64::NEG_INFINITY, \|total, candidate\| {` with `terminal.iter().rev().fold(f64::NEG_INFINITY, \|total, candidate\| {`. | `bp_trellis_bitwise_snapshot::decode_outputs_match_bitwise_snapshot`; verified failure in `binary/float/ordering_duplicates/unpruned/order=deadline/bp=0/merge=false/ladder=empty/syndrome=0x2`, field `log_evidence` (one bit). Applied and restored in an isolated workspace copy to preserve the source oracle. |
+| `bp_residual_ignores_forced` | In the engine's `refresh_bp_suffix_values`, replace `(observed[word_index] ^ self.forced_syndrome[word_index]) & bit_mask` with `(observed[word_index] & bit_mask)`. | `bp_trellis_bitwise_snapshot::decode_outputs_match_bitwise_snapshot`; verified `binary/float/forced_duplicate/default/order=deadline/bp=5/merge=true/ladder=empty/syndrome=0x41`, field `dropped_log_mass`. |
+
+### Prepared-shot and outcome guards
+
+Verified with compiling mutations in an isolated workspace copy, restoring each
+source file before the next row. The final rerun uses a separate Cargo target
+directory and loads Python mutants from a temporary module directory; it does
+not install them into the working tree's environment. Each Rust killer exits
+101 and each Python killer exits 1. Frozen fixtures were never regenerated.
+The first failure column quotes the test output, including panic messages for
+readiness guards. A test that expects a panic instead fails with “did not panic”.
+
+Rust engine killers run with `cargo test --locked -p pecos-trellis --test prepared NAME`.
+Facade killers run with `cargo test --locked -p pecos-trellis --lib bp_trellis::outcome_tests::NAME`,
+except the integration killers `no_path_escalates_to_k16_and_accumulates_transitions`,
+`bptrellis_defaults_enable_bp_merge_and_deadline_order`,
+`successful_base_decode_is_bit_identical_with_a_configured_ladder`, and
+`exhausted_ladder_reports_the_attempted_rung_count`, which use
+`--test bp_trellis`. Python killers run with `python -m pytest -n 0 FILE::NAME`
+against the rebuilt mutant extension.
+
+The old per-rung `rungs_skip_bp` mutation no longer has a construction site;
+BP sharing is guarded by `prepare_again_each_rung` and the refresh counter.
+Attempt counts use the private callable in `decode_with_attempt`, not decoder
+counters or inferred telemetry.
+
+| Mutant | Exact compiling edit | Killer | First failing line verbatim |
+|---|---|---|---|
+| `residual_attempt_anyway` | In `exp/pecos-trellis/src/bp_trellis.rs`, replace `                report.cause = NoPathCause::Residual { detector };` with `                let params = self.inner.prune_params();\n                let _ = attempt(&mut self.inner, params);\n                report.cause = NoPathCause::Residual { detector };`. | `residual_skips_all_attempts_and_preserves_forced_mask` | `unexpected attempt call` |
+| `zero_drops_are_exhausted` | In `exp/pecos-trellis/src/bp_trellis.rs`, replace `if dropped_states == 0 {` with `if false && dropped_states == 0 {`. | `infeasible_base_skips_ladder` | `unexpected attempt call` |
+| `classify_only_at_base` | In `exp/pecos-trellis/src/bp_trellis.rs`, replace `if dropped_states == 0 {` with `if index == 0 && dropped_states == 0 {`. | `infeasible_rung_skips_remaining_rungs` | `unexpected attempt call` |
+| `non_dominating_rungs_rejected` | In `exp/pecos-trellis/src/bp_trellis.rs`, replace `            config.k = params.k;` with `            if params.k < self.k \|\| params.delta < self.delta { return Err(DecoderError::InvalidConfiguration("rung must dominate".into())); }\n            config.k = params.k;`. | `narrower_rung_recovers` | ``called `Result::unwrap()` on an `Err` value: InvalidConfiguration("rung must dominate")`` |
+| `ladder_reuses_base_delta` | In `exp/pecos-trellis/src/bp_trellis.rs within fn decode_with_attempt(`, insert `let base = self.inner.prune_params();` before `let params =`; replace `delta: rung.delta,` with `delta: base.delta,`. | `rung_delta_is_applied` | `rung must recover` |
+| `ladder_reuses_base_k` | In `exp/pecos-trellis/src/bp_trellis.rs within fn decode_with_attempt(`, insert `let base = self.inner.prune_params();` before `let params =`; replace `k: rung.k,` with `k: base.k,`. | `no_path_escalates_to_k16_and_accumulates_transitions` | ``called `Result::unwrap()` on an `Err` value: DecodingFailed("syndrome is unexplainable at the given pruning parameters after 1 escalation rung")`` |
+| `prepare_again_each_rung` | In `exp/pecos-trellis/src/bp_trellis.rs`, replace `            let outcome = attempt(&mut self.inner, params);` with `            if index > 0 { self.inner.prepare(syndrome)?; }\n            let outcome = attempt(&mut self.inner, params);`. | `bp_refresh_is_reused_across_the_ladder` | ``assertion `left == right` failed`` |
+| `sum_bp_seconds_per_rung` | In `exp/pecos-trellis/src/bp_trellis.rs`, replace `result.bp_seconds = report.bp_seconds;` with `result.bp_seconds += report.bp_seconds;`. | `bp_refresh_is_reused_across_the_ladder` | ``assertion `left == right` failed`` |
+| `skip_no_path_transitions` | In `exp/pecos-trellis/src/bp_trellis.rs`, replace `report.transitions += transitions;` with `report.transitions = transitions;`. | `exhausted_sums_every_attempt_exactly` | ``assertion `left == right` failed`` |
+| `skip_success_transitions` | In `exp/pecos-trellis/src/bp_trellis.rs`, replace `result.transitions += report.transitions;` with `result.transitions += 0;`. | `no_path_escalates_to_k16_and_accumulates_transitions` | `assertion failed: result.transitions > bare_result.transitions` |
+| `accept_exact_base_ladder` | In `exp/pecos-trellis/src/bp_trellis.rs`, replace `if !self.escalation.is_empty() && self.k == usize::MAX && self.delta.is_infinite()` with `if false && !self.escalation.is_empty() && self.k == usize::MAX && self.delta.is_infinite()`. | `rung_validation_has_no_dominance_rule` | ``called `Result::unwrap_err()` on an `Ok` value: ()`` |
+| `skip_rung_validation` | In `exp/pecos-trellis/src/bp_trellis.rs`, replace `config.k = params.k;` with `config.k = params.k.max(1);`. | `rung_validation_has_no_dominance_rule` | ``called `Result::unwrap_err()` on an `Ok` value: ()`` |
+| `engine_error_becomes_no_path` | In `exp/pecos-trellis/src/bp_trellis.rs`, replace `TrellisDecodeAttempt::Error(error) => return Err(error),` with `TrellisDecodeAttempt::Error(_) => return Ok(BpTrellisOutcome::NoPath(report)),`. | `attempt_errors_stay_errors_with_ladder` | `assertion failed: matches!(outcome, Err(DecoderError::InvalidConfiguration(_)))` |
+| `prepare_error_becomes_no_path` | In `exp/pecos-trellis/src/bp_trellis.rs`, replace `let prepared = self.inner.prepare(syndrome)?;` with `let prepared = self.inner.prepare(syndrome).unwrap_or(TrellisPrepared::Residual { detector: 0 });`. | `errors_stay_errors_with_ladder` | `assertion failed: matches!(decoder.decode_outcome(&[]),` |
+| `placeholder_zero` | In `exp/pecos-trellis/src/bp_trellis.rs`, replace `placeholder: self.inner.forced_observables(),` with `placeholder: ObsMask::from_words(&[]),`. | `residual_skips_all_attempts_and_preserves_forced_mask` | ``assertion `left == right` failed`` |
+| `batch_outcomes_reversed` | In `exp/pecos-trellis/src/bp_trellis.rs within pub fn decode_batch_outcomes(`, replace `            Self::decode_outcome,\n        )` with `            Self::decode_outcome,\n        ).map(\|mut outcomes\| { outcomes.reverse(); outcomes })`. | `mixed_batch_outcomes_and_strict_results_preserve_order` | `assertion failed: matches!(sequential[0], Ok(BpTrellisOutcome::Decoded(_)))` |
+| `no_path_bp_runs_zero` | In `exp/pecos-trellis/src/bp_trellis.rs`, replace `report.bp_runs = u32::try_from` with `report.bp_runs = 0 * u32::try_from`. | `no_path_bp_telemetry_counts_prepare_once` | ``assertion `left == right` failed`` |
+| `infeasible_message_wrong` | In `exp/pecos-trellis/src/bp_trellis.rs`, replace `syndrome is unexplainable under the detector error model` with `syndrome is unexplainable`. | `infeasible_base_skips_ladder` | ``assertion `left == right` failed`` |
+| `residual_message_wrong` | In `exp/pecos-trellis/src/bp_trellis.rs`, replace `has a residual no mechanism can change` with `is untouched`. | `residual_skips_all_attempts_and_preserves_forced_mask` | ``assertion `left == right` failed`` |
+| `exhausted_message_wrong` | In `exp/pecos-trellis/src/bp_trellis.rs`, replace `after {} escalation rung{}` with `after {} attempt{}`. | `exhausted_sums_every_attempt_exactly` | ``assertion `left == right` failed`` |
+| `exhausted_message_always_plural` | In `exp/pecos-trellis/src/bp_trellis.rs`, replace `if self.rungs_tried == 1 { "" } else { "s" }` with `"s"`. | `exhausted_ladder_reports_the_attempted_rung_count` (`--test bp_trellis`); `python/quantum-pecos/tests/qec/test_bp_trellis_decoder.py::test_no_path_reports_across_direct_methods` | ``assertion `left == right` failed``; `E   AssertionError: Regex pattern did not match.` |
+| `bptrellis_deadline_ignored` | In `exp/pecos-trellis/src/bp_trellis.rs`, replace `trellis_config.column_order = config.ordering.resolve(dem)?;` with `trellis_config.column_order = None;`. | `bptrellis_defaults_enable_bp_merge_and_deadline_order` | ``assertion `left == right` failed`` |
+| `escalate_on_any_failure` | In `exp/pecos-trellis/src/bp_trellis.rs`, replace `return Ok(BpTrellisOutcome::Decoded(result));` with `if matches!(result.status, crate::TrellisStatus::Exact) { return Ok(BpTrellisOutcome::Decoded(result)); }`. | `successful_base_decode_is_bit_identical_with_a_configured_ladder` | ``called `Result::unwrap()` on an `Err` value: DecodingFailed("syndrome is unexplainable at the given pruning parameters after 0 escalation rungs")`` |
+| `python_ladder_alias_wrong_delta` | In `python/pecos-rslib-exp/src/bp_trellis_bindings.rs within pub(crate) fn resolve_escalation(`, replace `EscalationRung { k, delta }` with `EscalationRung { k, delta: 50.0 }`. | `python/pecos-rslib-exp/tests/test_bp_trellis_batch_decode.py::test_resolved_rungs_and_strict_spec_route` | `E   assert bp_trellis(escalation=[(16, 50.0)]) == bp_trellis(escalation_ks=[16])` |
+| `python_accept_both_ladders` | In `python/pecos-rslib-exp/src/bp_trellis_bindings.rs`, replace `Err(PyValueError::new_err(\n            "escalation_ks and escalation cannot both be supplied",\n        ))` with `Ok(Vec::new())`. | `python/pecos-rslib-exp/tests/test_bp_trellis_batch_decode.py::test_resolved_rungs_and_strict_spec_route` | `E   Failed: DID NOT RAISE <class 'ValueError'>` |
+| `python_repr_infinite_rung_invalid` | In `python/pecos-rslib-exp/src/decoder_specs.rs within if !config.escalation.is_empty()`, replace `"float('inf')".into()` with `"inf".into()`. | `python/pecos-rslib-exp/tests/test_bp_trellis_batch_decode.py::test_public_spec_and_configuration` | `E   NameError: name 'inf' is not defined` |
+| `python_invalid_policy_accepted` | In `python/pecos-rslib-exp/src/bp_trellis_bindings.rs`, replace `Err(PyValueError::new_err(\n            "on_no_path must be 'raise' or 'report'",\n        ))` with `Ok(true)`. | `python/quantum-pecos/tests/qec/test_bp_trellis_decoder.py::test_no_path_reports_across_direct_methods` | `E   Failed: DID NOT RAISE <class 'ValueError'>` |
+| `python_wrong_residual` | In `python/pecos-rslib-exp/src/bp_trellis_bindings.rs within impl PyBpTrellisNoPath`, replace `=> "residual",` with `=> "unknown",`. | `python/quantum-pecos/tests/qec/test_bp_trellis_decoder.py::test_no_path_reports_across_direct_methods` | `E   AssertionError: assert 'unknown' == 'residual'` |
+| `python_wrong_infeasible` | In `python/pecos-rslib-exp/src/bp_trellis_bindings.rs within impl PyBpTrellisNoPath`, replace `=> "infeasible",` with `=> "unknown",`. | `python/quantum-pecos/tests/qec/test_bp_trellis_decoder.py::test_no_path_reports_across_direct_methods` | `E   AssertionError: assert 'unknown' == 'infeasible'` |
+| `python_wrong_exhausted` | In `python/pecos-rslib-exp/src/bp_trellis_bindings.rs within impl PyBpTrellisNoPath`, replace `=> "exhausted",` with `=> "unknown",`. | `python/quantum-pecos/tests/qec/test_bp_trellis_decoder.py::test_no_path_reports_across_direct_methods` | `E   AssertionError: assert 'unknown' == 'exhausted'` |
+| `python_placeholder_zero` | In `python/pecos-rslib-exp/src/bp_trellis_bindings.rs`, replace `mask: self.inner.placeholder.clone(),` with `mask: ObsMask::from_words(&[]),`. | `python/quantum-pecos/tests/qec/test_bp_trellis_decoder.py::test_no_path_reports_across_direct_methods` | `E   assert 0 == (1 << 0)` |
+| `python_no_path_aliases_observable_flips` | In `python/pecos-rslib-exp/src/bp_trellis_bindings.rs` within `impl PyBpTrellisNoPath`, insert `    #[getter]\n    fn observable_flips(&self) -> PyBpTrellisObservableFlips {\n        self.placeholder_flips()\n    }\n` after the `placeholder_flips` getter. | `python/quantum-pecos/tests/qec/test_bp_trellis_decoder.py::test_no_path_reports_across_direct_methods` | `E   AssertionError: assert not True` |
+| `python_no_path_flag_false` | In `python/pecos-rslib-exp/src/bp_trellis_bindings.rs within impl PyBpTrellisNoPath`, replace `        true\n` with `        false\n`. | `python/quantum-pecos/tests/qec/test_bp_trellis_decoder.py::test_no_path_reports_across_direct_methods` | `E   AssertionError: assert False == (1 != 0)` |
+| `python_result_flag_true` | In `python/pecos-rslib-exp/src/bp_trellis_bindings.rs within impl PyBpTrellisResult`, replace `        false\n` with `        true\n`. | `python/quantum-pecos/tests/qec/test_bp_trellis_decoder.py::test_no_path_reports_across_direct_methods` | `E   assert True == (0 != 0)` |
+| `python_bp_runs_zero` | In `python/pecos-rslib-exp/src/bp_trellis_bindings.rs within impl PyBpTrellisResult`, replace `        self.inner.bp_runs\n` with `        0\n`. | `python/quantum-pecos/tests/qec/test_bp_trellis_decoder.py::test_bptrellis_defaults_and_decode_shapes` | `E   assert 0 == 1` |
+| `python_batch_reports_reversed` | In `python/pecos-rslib-exp/src/bp_trellis_bindings.rs within fn decode_batch(`, replace `        results\n            .into_iter()` with `        results\n            .into_iter().rev()`. | `python/quantum-pecos/tests/qec/test_bp_trellis_decoder.py::test_no_path_reports_across_direct_methods` | `E   AssertionError: assert True == (0 != 0)` |
+| `python_report_calls_strict_decode` | In `python/pecos-rslib-exp/src/bp_trellis_bindings.rs`, replace `self.inner.decode_outcome(&syndrome)` with `self.inner.decode(&syndrome).map(BpTrellisOutcome::Decoded)`. | `python/quantum-pecos/tests/qec/test_bp_trellis_decoder.py::test_no_path_reports_across_direct_methods` | `E   RuntimeError: Decoding failed: syndrome is unexplainable: detector 5 has a residual no mechanism can change` |
+| `python_batch_report_calls_strict_decode` | In `python/pecos-rslib-exp/src/bp_trellis_bindings.rs`, replace `self.inner.decode_batch_outcomes(&shots, workers)` with `self.inner.decode_batch(&shots, workers).map(\|results\| results.into_iter().map(\|result\| result.map(BpTrellisOutcome::Decoded)).collect::<Vec<_>>())`. | `python/quantum-pecos/tests/qec/test_bp_trellis_decoder.py::test_no_path_reports_across_direct_methods` | `E   RuntimeError: shot 1: Decoding failed: syndrome is unexplainable: detector 5 has a residual no mechanism can change` |
+
+### Review-round guards
+
+Each edit below was compiled and run in an isolated workspace copy with a
+separate Cargo target directory, then restored. Rust killers exited 101;
+Python killers exited 1. The three Python telemetry getter edits were tested
+independently, so zeroing one getter cannot be hidden by another failing getter.
+
+| Mutant | Exact compiling edit | Killer | First failing line verbatim |
+|---|---|---|---|
+| `residual_runs_bp` | In `exp/pecos-trellis/src/lib.rs`, replace `            if residual != 0 {` with `            if residual != 0 {\n                self.model.refresh_bp_suffix_values(&mut self.scratch, &observed)?;`. Restrict the edit to `TrellisDecoder::prepare`. | `residual_report_has_no_bp_work_when_bp_enabled` | ``assertion `left == right` failed`` |
+| `python_no_path_getters_zero` | In `impl PyBpTrellisNoPath` in `python/pecos-rslib-exp/src/bp_trellis_bindings.rs`, independently replace `self.inner.transitions` with `0`, `self.inner.bp_runs` with `0`, and `self.inner.bp_seconds` with `0.0`, restoring between variants. | `python/quantum-pecos/tests/qec/test_bp_trellis_decoder.py::test_no_path_exhausted_absolute_telemetry` | `transitions`: `E   AssertionError: assert 0 == 22`; `bp_runs`: `E   AssertionError: assert 0 == 1`; `bp_seconds`: `E   AssertionError: assert 0.0 > 0.0` |
+| `python_no_path_repr_omits_detector` | In `python/pecos-rslib-exp/src/bp_trellis_bindings.rs`, replace `\|detector\| format!(", detector={detector}")` with `\|_\| String::new()`. | `python/quantum-pecos/tests/qec/test_bp_trellis_decoder.py::test_no_path_reports_across_direct_methods` | `E   assert 'detector=5' in "BpTrellisNoPath(cause='residual', rungs_tried=0, transitions=0)"` |

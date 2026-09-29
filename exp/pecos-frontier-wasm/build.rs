@@ -13,54 +13,11 @@
 use pecos_decoder_core::dem::SparseDem;
 use std::{env, fs, path::PathBuf};
 
-const REPLAY_HEADER_BYTES: usize = 20;
+#[cfg(feature = "replay")]
+#[path = "src/replay.rs"]
+#[allow(dead_code)]
+mod replay;
 const MAX_OBSERVABLES: u32 = 128;
-
-fn read_u32(bytes: &[u8], offset: usize) -> u32 {
-    u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap())
-}
-
-fn validate_replay(bytes: &[u8], source: &str) {
-    assert!(
-        bytes.len() >= REPLAY_HEADER_BYTES && &bytes[..4] == b"FWR1",
-        "invalid Frontier replay fixture header in {source}"
-    );
-    let version = read_u32(bytes, 4);
-    let shots = read_u32(bytes, 8) as usize;
-    let detectors = read_u32(bytes, 12);
-    let observables = read_u32(bytes, 16);
-    assert!(
-        version == 1 || version == 2,
-        "unsupported Frontier replay fixture version {version} in {source}"
-    );
-    assert!(
-        observables <= MAX_OBSERVABLES,
-        "Frontier replay fixture in {source} exceeds the 128-observable result ABI"
-    );
-    let record_bytes = if version == 1 {
-        assert!(
-            detectors <= 128,
-            "version-1 replay fixture in {source} exceeds its 128-detector limit"
-        );
-        32
-    } else {
-        let detector_words = usize::try_from(detectors.div_ceil(32)).unwrap();
-        let observable_words = usize::try_from(observables.div_ceil(32)).unwrap();
-        (detector_words + observable_words) * 4
-    };
-    let expected = REPLAY_HEADER_BYTES
-        .checked_add(
-            shots
-                .checked_mul(record_bytes)
-                .expect("replay fixture is too large"),
-        )
-        .expect("replay fixture is too large");
-    assert_eq!(
-        bytes.len(),
-        expected,
-        "invalid Frontier replay fixture length in {source}"
-    );
-}
 
 fn main() {
     println!("cargo:rerun-if-env-changed=FRONTIER_DEM_PATH");
@@ -75,15 +32,6 @@ fn main() {
 
     let dem = fs::read_to_string(&source)
         .unwrap_or_else(|error| panic!("failed to read DEM {}: {error}", source.display()));
-    if dem.lines().any(|line| {
-        let line = line.trim_start();
-        line.starts_with("repeat") || line.starts_with("shift_detectors")
-    }) {
-        panic!(
-            "{} is not flattened; flatten it first (for example with stim.DetectorErrorModel.flattened())",
-            source.display()
-        );
-    }
     let parsed = SparseDem::from_dem_str(&dem)
         .unwrap_or_else(|error| panic!("invalid flattened DEM {}: {error}", source.display()));
     assert!(
@@ -93,6 +41,12 @@ fn main() {
     );
     fs::write(output, dem).expect("failed to stage embedded DEM");
 
+    #[cfg(feature = "replay")]
+    stage_replay(&parsed);
+}
+
+#[cfg(feature = "replay")]
+fn stage_replay(parsed: &SparseDem) {
     let replay = if let Some(path) = env::var_os("FRONTIER_REPLAY_PATH") {
         let path = PathBuf::from(path);
         println!("cargo:rerun-if-changed={}", path.display());
@@ -105,19 +59,15 @@ fn main() {
         empty.extend_from_slice(&[0_u8; 12]);
         empty
     };
-    validate_replay(&replay, "FRONTIER_REPLAY_PATH");
-    if read_u32(&replay, 8) > 0 {
+    let fixture = replay::Replay::parse(&replay).expect("invalid FRONTIER_REPLAY_PATH");
+    if fixture.shots > 0 {
         assert_eq!(
-            read_u32(&replay, 12) as usize,
-            parsed.num_detectors,
-            "replay detector width does not match DEM {}",
-            source.display()
+            fixture.detectors, parsed.num_detectors,
+            "replay detector width does not match DEM"
         );
         assert_eq!(
-            read_u32(&replay, 16) as usize,
-            parsed.num_observables,
-            "replay observable width does not match DEM {}",
-            source.display()
+            fixture.observables, parsed.num_observables,
+            "replay observable width does not match DEM"
         );
     }
     let replay_output = PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("replay.fwr");

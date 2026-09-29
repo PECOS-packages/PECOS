@@ -52,38 +52,10 @@ fn assert_no_path(error: &DecoderError, expected: &DecoderError) {
 }
 
 #[test]
-fn prediction_only_stream_matches_full_stream() {
-    let dem =
-        SparseDem::from_dem_str("error(0.08) D0 L0\nerror(0.12) D0 D1\nerror(0.05) D1 D2 L0\n")
-            .unwrap();
-    let config = TrellisConfig {
-        k: 2,
-        delta: 10.0,
-        ..TrellisConfig::default()
-    };
-    for mask in 0_u8..8 {
-        let syndrome = [mask & 1, (mask >> 1) & 1, (mask >> 2) & 1];
-        let mut full = TrellisStreamingDecoder::from_sparse_dem(&dem, config.clone()).unwrap();
-        let mut prediction =
-            TrellisStreamingDecoder::from_sparse_dem(&dem, config.clone()).unwrap();
-        for block in syndrome.chunks(1) {
-            full.feed_prefix(block).unwrap();
-            full.advance().unwrap();
-            prediction.feed_prefix(block).unwrap();
-            prediction.advance_prediction().unwrap();
-        }
-        match (full.flush(), prediction.flush_prediction()) {
-            (Ok(full), Ok(predicted)) => assert_eq!(predicted, full.predicted),
-            (Err(full), Err(prediction)) => assert_no_path(&prediction, &full),
-            outcomes => panic!("prediction-only/full mismatch: {outcomes:?}"),
-        }
-    }
-}
-
-#[test]
 fn random_rounds_match_batch_for_every_chunk_size_and_reset() {
     let mut rng = Xoshiro256PlusPlus::seed_from_u64(0xdec0_de42);
     let mut saw_early_commitment = false;
+    let mut saw_pruning = false;
     for case in 0..24 {
         let width = [12, 65, 129][case % 3];
         let mut dem = SparseDem {
@@ -154,6 +126,7 @@ fn random_rounds_match_batch_for_every_chunk_size_and_reset() {
                 (
                     chunk,
                     TrellisStreamingDecoder::from_sparse_dem(&dem, config.clone()).unwrap(),
+                    TrellisStreamingDecoder::from_sparse_dem(&dem, config.clone()).unwrap(),
                 )
             })
             .collect();
@@ -163,7 +136,28 @@ fn random_rounds_match_batch_for_every_chunk_size_and_reset() {
                 syndrome[detector * (width - 1) / 11] = if rng.random() { 0 } else { 7 };
             }
             let expected = batch.decode(&syndrome);
-            for (chunk, stream) in &mut streams {
+            for (chunk, stream, prediction) in &mut streams {
+                prediction.reset();
+                let _ = prediction.feed_prefix(&syndrome[..width / 2]);
+                let _ = prediction.advance_prediction();
+                prediction.reset();
+                let predicted = (|| {
+                    for detectors in syndrome.chunks(*chunk) {
+                        prediction.feed_prefix(detectors)?;
+                        prediction.advance_prediction()?;
+                    }
+                    prediction.flush_prediction()
+                })();
+                match (&predicted, &expected) {
+                    (Ok(predicted), Ok(expected)) => {
+                        assert_eq!(predicted, &expected.predicted);
+                        saw_pruning |= expected.dropped_states > 0;
+                        // Mixing fast advances with full flush must retain exact telemetry.
+                        assert_bit_identical(&prediction.flush().unwrap(), expected);
+                    }
+                    (Err(actual), Err(expected)) => assert_no_path(actual, expected),
+                    outcomes => panic!("prediction/batch mismatch: {outcomes:?}"),
+                }
                 stream.reset();
                 let _ = stream.feed_prefix(&syndrome[..width / 2]);
                 let _ = stream.advance();
@@ -205,6 +199,7 @@ fn random_rounds_match_batch_for_every_chunk_size_and_reset() {
             }
         }
     }
+    assert!(saw_pruning, "exercise actual pruning");
     assert!(
         saw_early_commitment,
         "must commit a toggled logical before the last column"

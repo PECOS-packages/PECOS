@@ -45,72 +45,50 @@ def target_directory(cargo: str) -> Path:
     return Path(json.loads(result.stdout)["target_directory"])
 
 
-def pack_replay(npz_path: Path, destination: Path, max_shots: int | None = None) -> dict[str, int]:
-    """Pack detector and observable bits from an NPZ into a Wasm fixture."""
-    try:
-        import numpy as np  # noqa: TID251 - NPZ fixture ingestion is a build-time compatibility boundary.
-    except ImportError as error:
-        message = "embedding NPZ shots requires NumPy; rerun with `uv run --group numpy-compat`"
-        raise RuntimeError(message) from error
+def pack_replay(
+    corpus_path: Path,
+    destination: Path,
+    dem: str,
+    max_shots: int | None = None,
+) -> dict[str, int]:
+    """Validate a PECOS corpus and pack its shots into an FWR1 v2 fixture."""
+    from pecos.qec import SampleBatch
 
-    resolved = npz_path.resolve(strict=True)
-    with np.load(resolved, allow_pickle=False) as arrays:
-        try:
-            detectors = np.asarray(arrays["detection_events"], dtype=np.uint8)
-            observables = np.asarray(arrays["observable_flips"], dtype=np.uint8)
-        except KeyError as error:
-            message = f"{resolved} must contain detection_events and observable_flips"
-            raise ValueError(message) from error
-
-    if detectors.ndim != 2 or observables.ndim != 2:
-        message = "detection_events and observable_flips must both be two-dimensional"
+    batch = SampleBatch.load(corpus_path.resolve(strict=True))
+    if batch.dem != dem:
+        message = "corpus DEM does not exactly match the model being compiled"
         raise ValueError(message)
-    if detectors.shape[0] != observables.shape[0]:
-        message = "detection_events and observable_flips must have the same number of shots"
+    if max_shots is not None and max_shots <= 0:
+        message = "max_shots must be positive"
         raise ValueError(message)
-    if observables.shape[1] > MAX_OBSERVABLES:
-        message = (
-            f"fixture has {observables.shape[1]} observables; "
-            f"the Wasm result ABI supports at most {MAX_OBSERVABLES}"
-        )
+    if batch.num_observables > MAX_OBSERVABLES:
+        message = f"fixture exceeds the {MAX_OBSERVABLES}-observable result ABI"
         raise ValueError(message)
-    if not np.all((detectors == 0) | (detectors == 1)) or not np.all((observables == 0) | (observables == 1)):
-        message = "fixture arrays must contain only binary values"
+    # SampleBatch exposes detector width through each syndrome. Empty corpora
+    # contain no useful replay work and cannot provide this through the API.
+    if batch.num_shots == 0:
+        message = "replay corpus must contain at least one shot"
         raise ValueError(message)
-
-    shot_count = detectors.shape[0] if max_shots is None else min(detectors.shape[0], max_shots)
-    detectors = detectors[:shot_count]
-    observables = observables[:shot_count]
-
-    def pack_words(bits: object) -> object:
-        values = np.asarray(bits, dtype=np.uint8)
-        words = np.zeros((shot_count, (values.shape[1] + 31) // 32), dtype="<u4")
-        for bit in range(values.shape[1]):
-            words[:, bit // 32] |= values[:, bit].astype(np.uint32) << np.uint32(bit % 32)
-        return words
-
-    records = np.concatenate((pack_words(detectors), pack_words(observables)), axis=1).astype("<u4", copy=False)
-    header = struct.pack(
-        "<4sIIII",
-        REPLAY_MAGIC,
-        REPLAY_VERSION,
-        shot_count,
-        detectors.shape[1],
-        observables.shape[1],
-    )
+    detectors = len(batch.get_syndrome(0))
+    observables = batch.num_observables
+    shots = batch.num_shots if max_shots is None else min(batch.num_shots, max_shots)
+    detector_bytes = ((detectors + 31) // 32) * 4
+    observable_bytes = ((observables + 31) // 32) * 4
     destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_bytes(header + records.tobytes(order="C"))
-    return {
-        "shots": shot_count,
-        "detectors": detectors.shape[1],
-        "observables": observables.shape[1],
-    }
+    with destination.open("wb") as output:
+        output.write(struct.pack("<4sIIII", REPLAY_MAGIC, REPLAY_VERSION, shots, detectors, observables))
+        for shot in range(shots):
+            syndrome = batch.get_syndrome(shot)
+            mask = sum(int(bit) << index for index, bit in enumerate(syndrome))
+            output.write(mask.to_bytes(detector_bytes, "little"))
+            output.write(batch.get_observable_flips(shot).mask.to_bytes(observable_bytes, "little"))
+    return {"shots": shots, "detectors": detectors, "observables": observables}
 
 
 def build(
     dem_path: Path | None,
     replay_path: Path | None = None,
-    syndromes_path: Path | None = None,
+    corpus_path: Path | None = None,
     max_shots: int | None = None,
     replay_output: Path | None = None,
     output_path: Path | None = None,
@@ -120,6 +98,7 @@ def build(
     target_dir = target_directory(cargo)
     environment = os.environ.copy()
     environment["RUSTFLAGS"] = " ".join(value for value in (environment.get("RUSTFLAGS"), GETRANDOM_CFG) if value)
+    resolved_dem = dem_path or REPO_ROOT / "exp" / PACKAGE / "model.dem"
     if dem_path is None:
         environment.pop("FRONTIER_DEM_PATH", None)
     else:
@@ -137,9 +116,14 @@ def build(
                 message = f"replay fixture is not a file: {resolved_replay}"
                 raise ValueError(message)
             environment["FRONTIER_REPLAY_PATH"] = str(resolved_replay)
-        elif syndromes_path is not None:
+        elif corpus_path is not None:
             packed_replay = Path(temporary_directory) / "replay.fwr"
-            replay_metadata = pack_replay(syndromes_path, packed_replay, max_shots)
+            replay_metadata = pack_replay(
+                corpus_path,
+                packed_replay,
+                resolved_dem.read_text(encoding="utf-8"),
+                max_shots,
+            )
             environment["FRONTIER_REPLAY_PATH"] = str(packed_replay)
             if replay_output is not None:
                 resolved_output = replay_output.resolve()
@@ -148,8 +132,9 @@ def build(
         else:
             environment.pop("FRONTIER_REPLAY_PATH", None)
 
+        features = ["--features", "replay"] if replay_path is not None or corpus_path is not None else []
         subprocess.run(
-            [cargo, "build", "--release", "--target", TARGET, "-p", PACKAGE],
+            [cargo, "build", "--release", "--target", TARGET, "-p", PACKAGE, *features],
             cwd=REPO_ROOT,
             env=environment,
             check=True,
@@ -171,20 +156,26 @@ def main() -> None:
     )
     replay_group = parser.add_mutually_exclusive_group()
     replay_group.add_argument("--replay", type=Path, help="prepacked .fwr hardware-shot fixture to embed")
-    replay_group.add_argument("--syndromes", type=Path, help="NPZ containing detection_events and observable_flips")
-    parser.add_argument("--max-shots", type=int, help="embed at most this many NPZ shots")
+    replay_group.add_argument(
+        "--corpus",
+        type=Path,
+        help="PECOS SampleBatch corpus containing the embedded DEM and shots",
+    )
+    parser.add_argument("--max-shots", type=int, help="embed at most this many corpus shots")
     parser.add_argument("--replay-output", type=Path, help="also save the generated .fwr fixture here")
     parser.add_argument("--output", type=Path, help="Wasm output path (default: dist/pecos_frontier_wasm.wasm)")
     args = parser.parse_args()
     if args.max_shots is not None and args.max_shots <= 0:
         parser.error("--max-shots must be positive")
-    if args.replay_output is not None and args.syndromes is None:
-        parser.error("--replay-output requires --syndromes")
+    if args.max_shots is not None and args.corpus is None:
+        parser.error("--max-shots requires --corpus")
+    if args.replay_output is not None and args.corpus is None:
+        parser.error("--replay-output requires --corpus")
     dem_path = Path(args.dem) if args.dem else None
     output, replay_metadata = build(
         dem_path,
         replay_path=args.replay,
-        syndromes_path=args.syndromes,
+        corpus_path=args.corpus,
         max_shots=args.max_shots,
         replay_output=args.replay_output,
         output_path=args.output,

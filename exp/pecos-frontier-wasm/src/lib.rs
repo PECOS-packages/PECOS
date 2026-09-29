@@ -15,20 +15,28 @@
 //! The module has no imports. All exported parameters and results are WebAssembly
 //! `i32` values, with at most one result per function. This lowest-common-denominator
 //! ABI runs on Quantinuum hardware, which requires those integer-only signatures.
-//! The live-call adapter supports at most 128 detectors and 128 observables.
-//! Embedded replay fixtures may contain more detectors. Bits are packed little-endian:
+//! Each live call carries at most 128 detector bits; streaming and replay support
+//! wider models. Corrections contain at most 128 observables. Bits are packed little-endian:
 //! word `w`, bit `b` represents index `32*w + b`.
 
 use pecos_frontier::{
-    deadline_column_order, FrontierConfig, ObsMask, SparseDem, TrellisStreamingDecoder,
+    FrontierConfig, ObsMask, SparseDem, TrellisOrdering, TrellisStreamingDecoder,
 };
 use std::cell::RefCell;
 
 const MODEL_DEM: &str = include_str!(concat!(env!("OUT_DIR"), "/model.dem"));
+#[cfg(all(feature = "replay", not(test)))]
 const REPLAY: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/replay.fwr"));
 const LIVE_MAX_DETECTORS: usize = 128;
 const MAX_OBSERVABLES: usize = 128;
-const REPLAY_HEADER_BYTES: usize = 20;
+#[cfg(any(feature = "replay", test))]
+mod replay;
+// Deterministic records for the two-detector model: D0 -> L0, D1 -> no flip.
+#[cfg(test)]
+const REPLAY: &[u8] = &[
+    70, 87, 82, 49, 2, 0, 0, 0, 2, 0, 0, 0, 2, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 2, 0,
+    0, 0, 0, 0, 0, 0,
+];
 
 pub const STATUS_OK: i32 = 0;
 pub const STATUS_MODEL_ERROR: i32 = 1;
@@ -44,9 +52,11 @@ struct State {
     status: i32,
     replay_errors: i32,
     replay_checksum: u32,
+    #[cfg(any(feature = "replay", test))]
     prepared_replay: Option<PreparedReplay>,
 }
 
+#[cfg(any(feature = "replay", test))]
 struct PreparedReplay {
     bit_count: usize,
     words: [i32; 4],
@@ -63,6 +73,7 @@ impl State {
             status: STATUS_MODEL_ERROR,
             replay_errors: 0,
             replay_checksum: 0,
+            #[cfg(any(feature = "replay", test))]
             prepared_replay: None,
         }
     }
@@ -74,7 +85,10 @@ impl State {
         self.result = [0; 4];
         self.replay_errors = 0;
         self.replay_checksum = 0;
-        self.prepared_replay = None;
+        #[cfg(any(feature = "replay", test))]
+        {
+            self.prepared_replay = None;
+        }
 
         let Ok(dem) = SparseDem::from_dem_str(dem_source) else {
             self.status = STATUS_MODEL_ERROR;
@@ -84,20 +98,13 @@ impl State {
             self.status = STATUS_MODEL_TOO_WIDE;
             return;
         }
-        if replay_shot_count() > 0
-            && (replay_u32(12) as usize != dem.num_detectors
-                || replay_u32(16) as usize != dem.num_observables)
-        {
-            self.status = STATUS_REPLAY_ERROR;
-            return;
-        }
         self.detector_count = dem.num_detectors;
-        let Ok(column_order) = deadline_column_order(&dem) else {
+        let Ok(column_order) = TrellisOrdering::Deadline.resolve(&dem) else {
             self.status = STATUS_MODEL_ERROR;
             return;
         };
         let config = FrontierConfig {
-            column_order: Some(column_order),
+            column_order,
             ..FrontierConfig::default()
         };
         match TrellisStreamingDecoder::from_sparse_dem(&dem, config) {
@@ -110,6 +117,7 @@ impl State {
     }
 
     fn decode(&mut self, words: [i32; 4]) -> bool {
+        self.result = [0; 4];
         if self.detector_count > LIVE_MAX_DETECTORS {
             self.status = STATUS_MODEL_TOO_WIDE;
             return false;
@@ -118,13 +126,8 @@ impl State {
             self.status = STATUS_DECODE_ERROR;
             return false;
         }
-        let syndrome = (0..self.detector_count)
-            .map(|detector| {
-                let word = words[detector / 32].cast_unsigned();
-                ((word >> (detector % 32)) & 1) as u8
-            })
-            .collect::<Vec<_>>();
-        self.decode_syndrome(&syndrome)
+        let bits = unpack_words(words);
+        self.decode_syndrome(&bits[..self.detector_count])
     }
 
     fn decode_syndrome(&mut self, syndrome: &[u8]) -> bool {
@@ -173,21 +176,21 @@ impl State {
     }
 
     fn push_stream_round(&mut self, bit_count: usize, words: [i32; 4]) -> Option<usize> {
+        self.result = [0; 4];
         if bit_count > LIVE_MAX_DETECTORS {
             self.status = STATUS_MODEL_TOO_WIDE;
             return None;
         }
-        let bits = (0..bit_count)
-            .map(|detector| {
-                let word = words[detector / 32].cast_unsigned();
-                ((word >> (detector % 32)) & 1) as u8
-            })
-            .collect::<Vec<_>>();
+        if has_bits_at_or_above(words, bit_count) {
+            self.status = STATUS_DECODE_ERROR;
+            return None;
+        }
+        let bits = unpack_words(words);
         let Some(decoder) = self.decoder.as_mut() else {
             self.status = STATUS_MODEL_ERROR;
             return None;
         };
-        if decoder.feed_prefix(&bits).is_err() {
+        if decoder.feed_prefix(&bits[..bit_count]).is_err() {
             self.status = STATUS_DECODE_ERROR;
             return None;
         }
@@ -203,6 +206,7 @@ impl State {
     }
 
     fn finish_stream(&mut self) -> bool {
+        self.result = [0; 4];
         let Some(decoder) = self.decoder.as_mut() else {
             self.status = STATUS_MODEL_ERROR;
             return false;
@@ -225,54 +229,37 @@ impl State {
         Some(self.result[0])
     }
 
+    #[cfg(any(feature = "replay", test))]
+    fn replay_mismatch(&mut self, expected: [i32; 4]) -> i32 {
+        for word in self.result {
+            self.replay_checksum = self.replay_checksum.rotate_left(5) ^ word.cast_unsigned();
+        }
+        i32::from(self.result != expected)
+    }
+
+    #[cfg(any(feature = "replay", test))]
     fn replay_shot(&mut self, index: usize) -> Option<i32> {
         let (syndrome, expected) = replay_record(index)?;
         if !self.decode_syndrome(&syndrome) {
             return None;
         }
-        let mismatch = i32::from(self.result != expected);
-        for word in self.result {
-            self.replay_checksum = self.replay_checksum.rotate_left(5) ^ word.cast_unsigned();
-        }
-        Some(mismatch)
+        Some(self.replay_mismatch(expected))
     }
 
+    #[cfg(any(feature = "replay", test))]
     fn replay_stream_shot(&mut self, index: usize, rounds: usize) -> Option<i32> {
-        if rounds == 0 {
+        if !self.prepare_replay_stream(index, rounds) {
             return None;
         }
-        let (syndrome, expected) = replay_record(index)?;
-        if !self.begin_stream() {
-            return None;
-        }
-        for round in 0..rounds {
-            let start = round * syndrome.len() / rounds;
-            let end = (round + 1) * syndrome.len() / rounds;
-            let bit_count = end - start;
-            if bit_count > LIVE_MAX_DETECTORS {
-                self.status = STATUS_MODEL_TOO_WIDE;
-                return None;
-            }
-            let mut words = [0_i32; 4];
-            for (bit, &value) in syndrome[start..end].iter().enumerate() {
-                if value != 0 {
-                    words[bit / 32] |= (1_u32 << (bit % 32)).cast_signed();
-                }
-            }
-            self.push_stream_round(bit_count, words)?;
-        }
-        if !self.finish_stream() {
-            return None;
-        }
-        let mismatch = i32::from(self.result != expected);
-        for word in self.result {
-            self.replay_checksum = self.replay_checksum.rotate_left(5) ^ word.cast_unsigned();
-        }
-        Some(mismatch)
+        self.finish_prepared_replay_stream()
     }
 
+    #[cfg(any(feature = "replay", test))]
     fn prepare_replay_stream(&mut self, index: usize, rounds: usize) -> bool {
-        self.prepared_replay = None;
+        #[cfg(any(feature = "replay", test))]
+        {
+            self.prepared_replay = None;
+        }
         if rounds == 0 {
             return false;
         }
@@ -309,17 +296,14 @@ impl State {
         self.prepared_replay.is_some()
     }
 
+    #[cfg(any(feature = "replay", test))]
     fn finish_prepared_replay_stream(&mut self) -> Option<i32> {
         let prepared = self.prepared_replay.take()?;
         self.push_stream_round(prepared.bit_count, prepared.words)?;
         if !self.finish_stream() {
             return None;
         }
-        let mismatch = i32::from(self.result != prepared.expected);
-        for word in self.result {
-            self.replay_checksum = self.replay_checksum.rotate_left(5) ^ word.cast_unsigned();
-        }
-        Some(mismatch)
+        Some(self.replay_mismatch(prepared.expected))
     }
 }
 
@@ -338,55 +322,23 @@ fn has_bits_at_or_above(words: [i32; 4], detector_count: usize) -> bool {
     words[first_padding_word..].iter().any(|word| *word != 0)
 }
 
-fn replay_u32(offset: usize) -> u32 {
-    u32::from_le_bytes(REPLAY[offset..offset + 4].try_into().unwrap())
+fn unpack_words(words: [i32; 4]) -> [u8; LIVE_MAX_DETECTORS] {
+    std::array::from_fn(|bit| ((words[bit / 32].cast_unsigned() >> (bit % 32)) & 1) as u8)
 }
 
+#[cfg(any(feature = "replay", test))]
 fn replay_shot_count() -> usize {
-    replay_u32(8) as usize
+    REPLAY_FIXTURE.with(|fixture| fixture.shots)
 }
 
-fn replay_detector_count() -> usize {
-    replay_u32(12) as usize
-}
-
-fn replay_observable_count() -> usize {
-    replay_u32(16) as usize
-}
-
-fn replay_record_bytes() -> usize {
-    if replay_u32(4) == 1 {
-        32
-    } else {
-        (replay_detector_count().div_ceil(32) + replay_observable_count().div_ceil(32)) * 4
-    }
-}
-
+#[cfg(any(feature = "replay", test))]
 fn replay_record(index: usize) -> Option<(Vec<u8>, [i32; 4])> {
-    if index >= replay_shot_count() {
-        return None;
-    }
-    let offset = REPLAY_HEADER_BYTES + index * replay_record_bytes();
-    let detector_words = if replay_u32(4) == 1 {
-        4
-    } else {
-        replay_detector_count().div_ceil(32)
-    };
-    let observable_offset = offset + detector_words * 4;
-    let mut syndrome = vec![0_u8; replay_detector_count()];
-    let mut expected = [0_i32; 4];
-    for (detector, value) in syndrome.iter_mut().enumerate() {
-        let word = replay_u32(offset + (detector / 32) * 4);
-        *value = ((word >> (detector % 32)) & 1) as u8;
-    }
-    for (word, value) in expected
-        .iter_mut()
-        .enumerate()
-        .take(replay_observable_count().div_ceil(32))
-    {
-        *value = replay_u32(observable_offset + word * 4).cast_signed();
-    }
-    Some((syndrome, expected))
+    REPLAY_FIXTURE.with(|fixture| fixture.record(index))
+}
+
+#[cfg(any(feature = "replay", test))]
+thread_local! {
+    static REPLAY_FIXTURE: replay::Replay<'static> = replay::Replay::parse(REPLAY).expect("build-validated fixture");
 }
 
 thread_local! {
@@ -395,6 +347,8 @@ thread_local! {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn init() {
+    #[cfg(any(feature = "replay", test))]
+    let _ = replay_shot_count();
     STATE.with_borrow_mut(|state| state.initialize(MODEL_DEM));
 }
 
@@ -416,6 +370,10 @@ pub extern "C" fn frontier_stream_begin() {
 #[unsafe(no_mangle)]
 pub extern "C" fn frontier_stream_push(bit_count: i32, s0: i32, s1: i32, s2: i32, s3: i32) -> i32 {
     let Ok(bit_count) = usize::try_from(bit_count) else {
+        STATE.with_borrow_mut(|state| {
+            state.status = STATUS_DECODE_ERROR;
+            state.result = [0; 4];
+        });
         return -1;
     };
     STATE.with_borrow_mut(|state| {
@@ -437,7 +395,8 @@ pub extern "C" fn frontier_stream_finish() {
 /// Append the final detector round, flush the decoder, and return the first
 /// observable-mask word. This makes the hardware timing boundary exactly one
 /// Wasm call from the last syndrome block to the returned correction.
-/// Returns -1 on an invalid round or decoder failure.
+/// Returns -1 on failure, but -1 is also a valid correction. Always check
+/// `frontier_status()` to distinguish success from failure.
 #[unsafe(no_mangle)]
 pub extern "C" fn frontier_stream_finish_round(
     bit_count: i32,
@@ -447,6 +406,10 @@ pub extern "C" fn frontier_stream_finish_round(
     s3: i32,
 ) -> i32 {
     let Ok(bit_count) = usize::try_from(bit_count) else {
+        STATE.with_borrow_mut(|state| {
+            state.status = STATUS_DECODE_ERROR;
+            state.result = [0; 4];
+        });
         return -1;
     };
     STATE.with_borrow_mut(|state| {
@@ -457,6 +420,7 @@ pub extern "C" fn frontier_stream_finish_round(
 }
 
 /// Return the number of hardware shots compiled into this module.
+#[cfg(any(feature = "replay", test))]
 #[unsafe(no_mangle)]
 pub extern "C" fn frontier_replay_shot_count() -> i32 {
     replay_shot_count().try_into().unwrap_or(i32::MAX)
@@ -468,6 +432,7 @@ pub extern "C" fn frontier_detector_count() -> i32 {
 }
 
 /// Decode one compiled-in hardware shot and return 0/1 for correct/incorrect.
+#[cfg(any(feature = "replay", test))]
 #[unsafe(no_mangle)]
 pub extern "C" fn frontier_replay_shot(index: i32) -> i32 {
     let Ok(index) = usize::try_from(index) else {
@@ -485,6 +450,7 @@ pub extern "C" fn frontier_replay_shot(index: i32) -> i32 {
 }
 
 /// Stream one compiled-in shot through evenly divided detector rounds.
+#[cfg(any(feature = "replay", test))]
 #[unsafe(no_mangle)]
 pub extern "C" fn frontier_replay_stream_shot(index: i32, rounds: i32) -> i32 {
     let (Ok(index), Ok(rounds)) = (usize::try_from(index), usize::try_from(rounds)) else {
@@ -502,6 +468,7 @@ pub extern "C" fn frontier_replay_stream_shot(index: i32, rounds: i32) -> i32 {
 }
 
 /// Process all but the final detector round of an embedded shot.
+#[cfg(any(feature = "replay", test))]
 #[unsafe(no_mangle)]
 pub extern "C" fn frontier_replay_stream_prepare(index: i32, rounds: i32) -> i32 {
     let (Ok(index), Ok(rounds)) = (usize::try_from(index), usize::try_from(rounds)) else {
@@ -511,6 +478,7 @@ pub extern "C" fn frontier_replay_stream_prepare(index: i32, rounds: i32) -> i32
 }
 
 /// Process the prepared final round and return the correction's mismatch bit.
+#[cfg(any(feature = "replay", test))]
 #[unsafe(no_mangle)]
 pub extern "C" fn frontier_replay_stream_finish() -> i32 {
     STATE.with_borrow_mut(|state| {
@@ -525,6 +493,7 @@ pub extern "C" fn frontier_replay_stream_finish() -> i32 {
 }
 
 /// Decode a contiguous range of compiled-in shots and return its error count.
+#[cfg(any(feature = "replay", test))]
 #[unsafe(no_mangle)]
 pub extern "C" fn frontier_replay_range(start: i32, count: i32) -> i32 {
     let (Ok(start), Ok(count)) = (usize::try_from(start), usize::try_from(count)) else {
@@ -541,7 +510,10 @@ pub extern "C" fn frontier_replay_range(start: i32, count: i32) -> i32 {
     STATE.with_borrow_mut(|state| {
         state.replay_errors = 0;
         state.replay_checksum = 0;
-        state.prepared_replay = None;
+        #[cfg(any(feature = "replay", test))]
+        {
+            state.prepared_replay = None;
+        }
         for index in start..end {
             let Some(mismatch) = state.replay_shot(index) else {
                 state.status = STATUS_REPLAY_ERROR;
@@ -553,11 +525,13 @@ pub extern "C" fn frontier_replay_range(start: i32, count: i32) -> i32 {
     })
 }
 
+#[cfg(any(feature = "replay", test))]
 #[unsafe(no_mangle)]
 pub extern "C" fn frontier_replay_last_errors() -> i32 {
     STATE.with_borrow(|state| state.replay_errors)
 }
 
+#[cfg(any(feature = "replay", test))]
 #[unsafe(no_mangle)]
 pub extern "C" fn frontier_replay_checksum() -> i32 {
     STATE.with_borrow(|state| state.replay_checksum.cast_signed())
@@ -682,43 +656,84 @@ mod tests {
     #[test]
     fn prepared_replay_separates_prior_rounds_from_correction_latency() {
         let mut state = State::empty();
-        state.initialize("error(0.1) D0 L0");
-        assert!(state.begin_stream());
-        state.prepared_replay = Some(PreparedReplay {
-            bit_count: 1,
-            words: [1, 0, 0, 0],
-            expected: [1, 0, 0, 0],
-        });
+        state.initialize("error(0.1) D0 L0\nerror(0.2) D1");
+        assert!(state.prepare_replay_stream(0, 2));
+        assert_eq!(state.prepared_replay.as_ref().unwrap().bit_count, 1);
         assert_eq!(state.finish_prepared_replay_stream(), Some(0));
-        assert_eq!(state.status, STATUS_OK);
-    }
-
-    #[test]
-    fn empty_embedded_replay_is_well_formed() {
-        if frontier_replay_shot_count() != 0 {
-            return;
-        }
-        assert_eq!(frontier_replay_shot_count(), 0);
-        init();
-        assert_eq!(frontier_replay_range(0, 0), 0);
-        assert_eq!(frontier_replay_shot(0), -1);
-        assert_eq!(frontier_status(), STATUS_REPLAY_ERROR);
+        assert_eq!(state.result, [1, 0, 0, 0]);
+        let checksum = state.replay_checksum;
+        assert!(state.finish_prepared_replay_stream().is_none());
+        assert_eq!(state.replay_stream_shot(1, 2), Some(0));
+        assert_eq!(state.result, [0; 4]);
+        assert_eq!(state.replay_checksum, checksum.rotate_left(20));
+        assert!(!state.prepare_replay_stream(2, 2));
+        assert!(!state.prepare_replay_stream(0, 0));
     }
 
     #[test]
     fn embedded_replay_summary() {
-        let shots = frontier_replay_shot_count();
-        if shots == 0 {
-            return;
-        }
-        init();
-        assert_eq!(frontier_status(), STATUS_OK);
-        let selected = shots.min(32);
-        let errors = frontier_replay_range(0, selected);
-        assert!(errors >= 0);
-        eprintln!(
-            "native replay: fixture_shots={shots}, selected={selected}, errors={errors}, checksum={}",
-            frontier_replay_checksum().cast_unsigned()
+        STATE.with_borrow_mut(|state| state.initialize("error(0.1) D0 L0\nerror(0.2) D1"));
+        assert_eq!(frontier_replay_shot_count(), 2);
+        assert_eq!(frontier_replay_range(0, 2), 0);
+        assert_eq!(
+            frontier_replay_checksum().cast_unsigned(),
+            1_u32.rotate_left(3)
         );
+        assert_eq!(frontier_replay_shot(2), -1);
+        assert_eq!(frontier_status(), STATUS_REPLAY_ERROR);
+    }
+
+    #[test]
+    fn invalid_live_calls_clear_results_and_reject_padding() {
+        let mut state = State::empty();
+        state.initialize("error(0.1) D0 L0");
+        assert!(state.decode([1, 0, 0, 0]));
+        assert!(!state.decode([3, 0, 0, 0]));
+        assert_eq!(state.result, [0; 4]);
+        for (bits, words) in [
+            (0, [1, 0, 0, 0]),
+            (1, [3, 0, 0, 0]),
+            (32, [0, 1, 0, 0]),
+            (127, [0, 0, 0, i32::MIN]),
+        ] {
+            assert!(state.begin_stream());
+            assert!(state.push_stream_round(bits, words).is_none());
+            assert_eq!(state.status, STATUS_DECODE_ERROR);
+            assert_eq!(state.result, [0; 4]);
+        }
+        assert!(state.begin_stream());
+        assert_eq!(state.finish_stream_round(1, [1, 0, 0, 0]), Some(1));
+    }
+
+    #[test]
+    fn wide_models_stream_across_calls_but_reject_single_call_decode() {
+        let mut state = State::empty();
+        state.initialize("error(0.1) D128 L69");
+        assert_eq!(state.status, STATUS_OK);
+        assert!(state.begin_stream());
+        assert!(state.push_stream_round(128, [0; 4]).is_some());
+        assert_eq!(state.finish_stream_round(1, [1, 0, 0, 0]), Some(0));
+        assert_eq!(state.result, [0, 0, 32, 0]);
+        assert!(!state.decode([0; 4]));
+        assert_eq!(state.status, STATUS_MODEL_TOO_WIDE);
+        assert_eq!(state.result, [0; 4]);
+    }
+
+    #[test]
+    fn all_ones_correction_is_success_not_error_sentinel() {
+        let dem = format!(
+            "error(0.1) D0 {}",
+            (0..32)
+                .map(|i| format!("L{i}"))
+                .collect::<Vec<_>>()
+                .join(" ")
+        );
+        STATE.with_borrow_mut(|state| state.initialize(&dem));
+        frontier_stream_begin();
+        assert_eq!(frontier_stream_finish_round(1, 1, 0, 0, 0), -1);
+        assert_eq!(frontier_status(), STATUS_OK);
+        assert_eq!(frontier_stream_finish_round(-1, 0, 0, 0, 0), -1);
+        assert_eq!(frontier_status(), STATUS_DECODE_ERROR);
+        assert_eq!(frontier_result_0(), 0);
     }
 }

@@ -187,8 +187,11 @@ class DepolarizingErrorModel:
                         noise_dict=self._eparams["p2_mem_error_model"],
                     )
 
-                    if qops_after:
-                        qops_after = qops_after.extend(qops_mem)
+                    if qops_mem:
+                        if qops_after:
+                            qops_after.extend(qops_mem)
+                        else:
+                            qops_after = qops_mem
 
             # ########################################
             # MEASURE X NOISE

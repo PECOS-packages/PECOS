@@ -258,6 +258,49 @@ def test_committee_easy_tie_selects_forward() -> None:
     assert not hasattr(committee, "decode")
 
 
+CHAIN_DEM = """\
+error(0.1) D0 L0
+error(0.1) D0 D1
+error(0.1) D1 D2
+error(0.1) D2 D3
+error(0.1) D3
+error(0.05) D1 L0
+"""
+
+COMMITTEE_RESULT_FIELDS = (
+    "log_evidence",
+    "runner_up_gap",
+    "peak_retained_states",
+    "processed_columns",
+    "transitions",
+    "dropped_states",
+    "dropped_log_mass",
+    "status",
+    "logical_masses",
+    "direction",
+    "forward_log_evidence",
+    "backward_log_evidence",
+)
+
+
+def test_committee_parallel_legs_match_sequential_decode() -> None:
+    committee = FrontierCommitteeDecoder.from_dem(CHAIN_DEM, k=2, delta=float("inf"))
+
+    for bits in range(16):
+        syndrome = [(bits >> detector) & 1 for detector in range(4)]
+        sequential = committee.decode_syndrome(syndrome)
+        parallel = committee.decode_syndrome(syndrome, parallel_legs=True)
+        sparse = committee.decode_from_defects(
+            [detector for detector in range(4) if syndrome[detector]],
+            parallel_legs=True,
+        )
+
+        for result in (parallel, sparse):
+            assert result.observable_flips.mask == sequential.observable_flips.mask
+            for field in COMMITTEE_RESULT_FIELDS:
+                assert getattr(result, field) == getattr(sequential, field), field
+
+
 def test_bp_score_iterations_and_telemetry_are_exposed() -> None:
     decoder = FrontierDecoder.from_dem(
         SMALL_DEM,

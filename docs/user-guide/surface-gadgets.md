@@ -632,8 +632,9 @@ current logical frame, like terminal X and Z; after a transversal H, the
 reported value refers to the swapped frame.
 
 Product-Y preparation followed by Y readout emits no observable. Its encoded
-Y sign is a deterministic parity of first-round check records. SZ teleportation
-exposes this sign in its injection metadata. It remains a distance-1 quantity:
+Y sign is the parity of first-round check records XOR a reference bit derived
+from the logical representatives. SZ teleportation exposes both in its injection
+metadata. It remains a distance-1 quantity:
 a single first-round measurement error flips it.
 At distance 3, zero, one, and two requested rounds give 4, 12, and 20
 deterministic detectors. For one and two rounds, the emitted masks have ranks
@@ -1032,13 +1033,19 @@ syndrome projection outcomes. It is prepared by H followed by a physical SZ
 layer on every ancilla data qubit, then syndrome projection. Both forms prepare
 the data in |0_L>, an S eigenstate, so this experiment cannot distinguish S
 from identity. The projected resource is (-1)^r times logical Y, where r is
-the parity of selected round-0 checks in the ancilla's first projection segment.
+the parity of selected round-0 checks in the ancilla's first projection segment
+XOR `resource_sign_reference`.
 `rounds_before` must be at least one so these checks precede the CX.
 The builder records both the ancilla's final logical-Z readout (`meas_ids`,
 `records`) and the resource sign (`resource_sign_meas_ids`,
-`resource_sign_records`) in `injection_readouts`, in the circuit metadata and
-in `build_algorithm_descriptor()`. IDs are absolute measurement indices;
+`resource_sign_records`, and the 0/1 bit `resource_sign_reference`) in
+`injection_readouts`, in the circuit metadata and in `build_algorithm_descriptor()`. IDs are absolute measurement indices;
 records are offsets relative to the end of the measurement stream.
+The reference is the sign of the Pauli identity relating the selected checks,
+logical Y, and all-Y: if the logical X and Z supports overlap on k qubits and
+there are n data qubits, the phase is i^(k-n). Its exponent must be even;
+`resource_sign_reference` is `(k-n) % 4 // 2`. It depends on the representatives,
+so it can be one for rectangular patches or non-canonical square representatives.
 A logical Z correction on the data is required when the logical readout parity
 and resource sign parity disagree: XOR the two parities to decide.
 No decoder applies the correction today.
@@ -1067,10 +1074,12 @@ ancilla_data_ids = {
 assert set(readout["meas_ids"]) <= ancilla_data_ids
 descriptor = builder.build_algorithm_descriptor()
 assert len(readout["resource_sign_meas_ids"]) == 4
+assert readout["resource_sign_reference"] == 0
 assert readout["resource_sign_records"] == [
     meas_id - tc.num_measurements() for meas_id in readout["resource_sign_meas_ids"]
 ]
 assert descriptor["injection_readouts"][0]["resource_sign_records"] == readout["resource_sign_records"]
+assert descriptor["injection_readouts"][0]["resource_sign_reference"] == readout["resource_sign_reference"]
 assert descriptor["injection_readouts"][0]["meas_ids"] == readout["meas_ids"]
 ```
 

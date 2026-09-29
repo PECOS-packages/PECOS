@@ -373,11 +373,7 @@ def test_golden_parity(shape):
         )
         assert tc.get_meta("measurement_keys").encode() == baseline["measurement_keys"].encode()
         assert [
-            {
-                key: value
-                for key, value in entry.items()
-                if key not in {"resource_sign_meas_ids", "resource_sign_records"}
-            }
+            {key: value for key, value in entry.items() if not key.startswith("resource_sign_")}
             for entry in json.loads(tc.get_meta("injection_readouts"))
         ] == baseline["injection_readouts"]
 
@@ -1606,6 +1602,7 @@ def test_injection_readout_is_separate_from_data_observable(shape):
     assert descriptor["num_observables"] == 1
     assert descriptor["num_frame_slots"] == 4
     if "inject" in shape:
+        assert not any(key.startswith("resource_sign_") for key in readout)
         decision = next(
             g for boundary in descriptor["boundary_gates"] for g in boundary if g["type"] == "TGateInjection"
         )
@@ -2251,8 +2248,32 @@ def test_orientation_prepass_handles_each_h_patch():
     assert _propagate_stabilizer_terms(context, 1, ("B", "Z", "X")) == []
 
 
-def _resource_program(distance, gate="teleportation"):
-    patch = SurfacePatch.create(distance)
+RESOURCE_GEOMETRIES = [(3, 3, False), (5, 5, False), (7, 7, False), (3, 5, False), (5, 3, False), (3, 3, True)]
+
+
+def _resource_patch(dx, dz, *, alternate_x=False):
+    patch = SurfacePatch.create(dx=dx, dz=dz)
+    if alternate_x:
+        geometry = patch.geometry
+        x = set(geometry.logical_x.data_qubits)
+        z = set(geometry.logical_z.data_qubits)
+        # Multiplication by a positive X check preserves the logical class but can change the Y phase.
+        check = next(
+            check
+            for check in geometry.x_stabilizers
+            if (len(x.symmetric_difference(check.data_qubits) & z) - len(x & z)) % 4 == 2
+        )
+        support = tuple(sorted(x.symmetric_difference(check.data_qubits)))
+        assert group_contains(
+            (_pauli(geometry.num_qubits, ("X", x)), _pauli(geometry.num_qubits, ("X", check.data_qubits))),
+            _pauli(geometry.num_qubits, ("X", support)),
+        )
+        geometry.logical_x = replace(geometry.logical_x, data_qubits=support)
+    return patch
+
+
+def _resource_program(dx, dz, gate="teleportation", *, alternate_x=False):
+    patch = _resource_patch(dx, dz, alternate_x=alternate_x)
     builder = BuilderProbe()
     builder.add_patch(patch, "D")
     builder.add_memory("D", 1, "X")
@@ -2285,58 +2306,69 @@ def _signed_membership(tc, tick, pauli, seed):
     return group_contains(group, pauli), group_contains(group, "-" + pauli[1:])
 
 
-@pytest.mark.parametrize("distance", [3, 5])
-def test_sz_resource_sign_correction(distance):
-    _, patch, tc = _resource_program(distance)
+@pytest.mark.parametrize(("dx", "dz", "alternate_x"), RESOURCE_GEOMETRIES)
+def test_sz_resource_sign_correction(dx, dz, alternate_x):
+    _, patch, tc = _resource_program(dx, dz, alternate_x=alternate_x)
     readout = json.loads(tc.get_meta("injection_readouts"))[0]
     tick = _first_measurement_tick(tc, set(range(patch.geometry.num_data)))
     logical_y = _logical_y_pauli(patch, 2 * patch.geometry.num_qubits)
     assert json.loads(tc.get_meta("observables")) == []
-    _, _, fold = _resource_program(distance, "fold")
-    fold_tick = _first_measurement_tick(fold, set(range(patch.geometry.num_data)))
-    fold_y = _logical_y_pauli(patch, patch.geometry.num_qubits)
-    fold_rows = json.loads(fold.get_meta("measurement_keys"))["stabilizer"]
-    fold_records = [
-        mid for label, family, _, segment, rnd, mid in fold_rows if family == "Z" and segment == 1 and rnd == 0
-    ]
-    _, _, identity = _resource_program(distance, "identity")
+    _, _, identity = _resource_program(dx, dz, "identity", alternate_x=alternate_x)
     identity_tick = _first_measurement_tick(identity, set(range(patch.geometry.num_data)))
-    uncorrected_agreements = resource_positive = corrected_agreements = fold_agreements = identity_eigenstates = 0
+    identity_y = _logical_y_pauli(patch, patch.geometry.num_qubits)
+    uncorrected_agreements = resource_positive = corrected_agreements = identity_eigenstates = 0
+    without_reference_agreements = 0
     for seed in range(32):
         positive, negative = _signed_membership(tc, tick, logical_y, seed)
         assert positive != negative
         s = int(negative)
         measurements = simulate_tick_circuit(tc, seed)[0]
         m = sum(measurements[record] for record in readout["records"]) % 2
-        r = sum(measurements[record] for record in readout["resource_sign_records"]) % 2
+        check_parity = sum(measurements[record] for record in readout["resource_sign_records"]) % 2
+        r = check_parity ^ readout["resource_sign_reference"]
         assert s ^ m ^ r == 0, seed
         corrected_agreements += (s ^ m ^ r) == 0
+        without_reference_agreements += (s ^ m ^ check_parity) == 0
         uncorrected_agreements += (s ^ m) == 0
         resource_positive += r == 0
         # Equality binds every disagreement to the resource, not merely to a plausible split.
         assert ((s ^ m) == 0) == (r == 0), seed
-        positive, negative = _signed_membership(fold, fold_tick, fold_y, seed)
-        assert positive != negative
-        fold_measurements = simulate_tick_circuit(fold, seed)[0]
-        frame = sum(fold_measurements[mid] for mid in fold_records) % 2
-        assert int(negative) ^ frame == 0, seed
-        fold_agreements += (int(negative) ^ frame) == 0
-        signs = _signed_membership(identity, identity_tick, fold_y, seed)
+        signs = _signed_membership(identity, identity_tick, identity_y, seed)
         assert signs == (False, False), seed
         identity_eigenstates += any(signs)
     assert 1 < uncorrected_agreements < 31
     assert uncorrected_agreements == resource_positive
+    assert without_reference_agreements == 32 * (1 - readout["resource_sign_reference"])
     print(
-        f"d={distance}: corrected={corrected_agreements}/32, without_resource={uncorrected_agreements}/32, "
-        f"resource_positive={resource_positive}/32, fold_corrected={fold_agreements}/32, "
+        f"{dx}x{dz}, alternate_x={alternate_x}: reference={readout['resource_sign_reference']}, "
+        f"corrected={corrected_agreements}/32, without_reference={without_reference_agreements}/32, "
+        f"without_resource={uncorrected_agreements}/32, resource_positive={resource_positive}/32, "
         f"identity_Y_eigenstates={identity_eigenstates}/32",
     )
 
 
-@pytest.mark.parametrize("distance", [3, 5, 7])
-def test_resource_sign_positive_identity(distance):
-    patch = SurfacePatch.create(distance)
-    selected = set(_resource_sign_checks(patch))
+@pytest.mark.parametrize("distance", [3, 5])
+def test_sz_resource_sign_fold_control(distance):
+    _, patch, fold = _resource_program(distance, distance, "fold")
+    fold_tick = _first_measurement_tick(fold, set(range(patch.geometry.num_data)))
+    fold_y = _logical_y_pauli(patch, patch.geometry.num_qubits)
+    fold_rows = json.loads(fold.get_meta("measurement_keys"))["stabilizer"]
+    fold_records = [
+        mid for label, family, _, segment, rnd, mid in fold_rows if family == "Z" and segment == 1 and rnd == 0
+    ]
+    for seed in range(32):
+        positive, negative = _signed_membership(fold, fold_tick, fold_y, seed)
+        assert positive != negative
+        measurements = simulate_tick_circuit(fold, seed)[0]
+        frame = sum(measurements[mid] for mid in fold_records) % 2
+        assert int(negative) ^ frame == 0, seed
+
+
+@pytest.mark.parametrize(("dx", "dz", "alternate_x"), RESOURCE_GEOMETRIES)
+def test_resource_sign_signed_identity(dx, dz, alternate_x):
+    patch = _resource_patch(dx, dz, alternate_x=alternate_x)
+    checks, reference = _resource_sign_checks(patch)
+    selected = set(checks)
     width = patch.geometry.num_qubits
     generators = [
         _pauli(width, (family, check.data_qubits))
@@ -2347,13 +2379,15 @@ def test_resource_sign_positive_identity(distance):
     generators.append(_logical_y_pauli(patch, width))
     generators = tuple(generators)
     all_y = _pauli(width, ("Y", range(patch.geometry.num_data)))
-    assert group_contains(generators, all_y)
-    assert not group_contains(generators, "-" + all_y[1:])
+    positive = group_contains(generators, all_y)
+    negative = group_contains(generators, "-" + all_y[1:])
+    assert positive != negative
+    assert reference == int(negative)
 
 
-@pytest.mark.parametrize("distance", [3, 5, 7])
-def test_resource_sign_matches_projected_state(distance):
-    builder, patch, tc = _resource_program(distance)
+@pytest.mark.parametrize(("dx", "dz", "alternate_x"), RESOURCE_GEOMETRIES)
+def test_resource_sign_matches_projected_state(dx, dz, alternate_x):
+    builder, patch, tc = _resource_program(dx, dz, alternate_x=alternate_x)
     allocation = GeneratorProbe(builder.patches, []).allocation("A")
     projection_tick = _first_measurement_tick(tc, set(allocation.x_ancilla_qubits + allocation.z_ancilla_qubits))
     logical_y = _logical_y_pauli(patch, 2 * patch.geometry.num_qubits, patch.geometry.num_qubits)
@@ -2364,15 +2398,16 @@ def test_resource_sign_matches_projected_state(distance):
         assert positive != negative
         measurements = simulate_tick_circuit(tc, seed)[0]
         r = sum(measurements[record] for record in readout["resource_sign_records"]) % 2
+        r ^= readout["resource_sign_reference"]
         assert r == int(negative), seed
         signs.add(r)
     assert signs == {0, 1}
 
 
-@pytest.mark.parametrize("distance", [3, 5, 7])
+@pytest.mark.parametrize(("dx", "dz"), [(3, 3), (5, 5), (7, 7), (3, 5), (5, 3)])
 @pytest.mark.parametrize("preceding_rounds", [0, 1, 3])
-def test_resource_sign_metadata(distance, preceding_rounds):
-    patch = SurfacePatch.create(distance)
+def test_resource_sign_metadata(dx, dz, preceding_rounds):
+    patch = SurfacePatch.create(dx=dx, dz=dz)
     builder = BuilderProbe()
     for label, offset in (("D", 0), ("A", patch.geometry.num_qubits)):
         builder.add_patch(patch, label, qubit_offset=offset)
@@ -2390,16 +2425,20 @@ def test_resource_sign_metadata(distance, preceding_rounds):
         "records",
         "resource_sign_meas_ids",
         "resource_sign_records",
+        "resource_sign_reference",
     }
     total = int(tc.get_meta("num_measurements"))
     for prefix in ("", "resource_sign_"):
         assert readout[prefix + "records"] == [mid - total for mid in readout[prefix + "meas_ids"]]
     rows = json.loads(tc.get_meta("measurement_keys"))["stabilizer"]
     selected = [row for row in rows if row[-1] in readout["resource_sign_meas_ids"]]
-    assert len(selected) == len(readout["resource_sign_meas_ids"]) == (distance**2 - 1) // 2
-    assert Counter(row[1] for row in selected) == {"X": (distance**2 - 1) // 4, "Z": (distance**2 - 1) // 4}
+    num_data = dx * dz
+    assert len(selected) == len(readout["resource_sign_meas_ids"]) == (num_data - 1) // 2
+    assert sorted(Counter(row[1] for row in selected).values()) == [(num_data - 1) // 4, (num_data + 1) // 4]
     assert {(row[0], row[3], row[4]) for row in selected} == {("A", preceding_rounds, 0)}
-    assert {(row[1], row[2]) for row in selected} == set(_resource_sign_checks(patch))
+    checks, reference = _resource_sign_checks(patch)
+    assert {(row[1], row[2]) for row in selected} == set(checks)
+    assert readout["resource_sign_reference"] == reference
     descriptor_readout = builder.build_algorithm_descriptor()["injection_readouts"][0]
     assert {key: descriptor_readout[key] for key in readout} == readout
 
@@ -2412,3 +2451,13 @@ def test_sz_resource_sign_requires_projection(rounds_before):
     with pytest.raises(ValueError, match=r"rounds_before.*resource sign.*before CX"):
         builder.add_sz_via_teleportation("D", "A", rounds_before, 2)
     assert builder.operations == []
+
+
+def test_resource_sign_rejects_non_real_phase_in_invalid_geometry():
+    patch = SurfacePatch.create(3)
+    geometry = patch.geometry
+    # This invalid X check anticommutes with logical Z, violating the real-phase invariant.
+    geometry.x_stabilizers[0] = replace(geometry.x_stabilizers[0], data_qubits=(0,))
+    geometry.logical_x = replace(geometry.logical_x, data_qubits=tuple(range(1, geometry.num_data)))
+    with pytest.raises(ValueError, match=r"Resource sign.*non-real Pauli phase.*odd"):
+        _resource_sign_checks(patch)

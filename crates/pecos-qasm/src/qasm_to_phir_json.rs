@@ -60,6 +60,9 @@ pub fn program_to_phir_json(program: &Program) -> Result<Value, String> {
 
     // 1) Quantum register definitions
     for (name, qubit_ids) in &program.quantum_registers {
+        if qubit_ids.is_empty() {
+            continue;
+        }
         ops.push(json!({
             "data": "qvar_define",
             "data_type": "qubits",
@@ -74,6 +77,9 @@ pub fn program_to_phir_json(program: &Program) -> Result<Value, String> {
     // a signed register would need size + 1 <= N and could not represent 64
     // bits at all).
     for (name, size) in &program.classical_registers {
+        if *size == 0 {
+            continue;
+        }
         let dtype = classical_register_dtype(*size)?;
         ops.push(json!({
             "data": "cvar_define",
@@ -91,8 +97,9 @@ pub fn program_to_phir_json(program: &Program) -> Result<Value, String> {
     // 4) Export all classical variables
     let cvar_names: Vec<&str> = program
         .classical_registers
-        .keys()
-        .map(String::as_str)
+        .iter()
+        .filter(|(_, size)| **size > 0)
+        .map(|(name, _)| name.as_str())
         .collect();
     if !cvar_names.is_empty() {
         ops.push(json!({
@@ -121,6 +128,9 @@ fn convert_op(
             qubits,
         } => {
             let phir_name = qasm_gate_to_phir(name)?;
+            if phir_name == "RXYXY2Q" && parameters.len() != 2 {
+                return Err("RXYXY2Q requires exactly two angles".to_string());
+            }
             let num_qubits_per_gate = gate_arity(&phir_name);
             let args = qubit_args(qubits, qubit_map, num_qubits_per_gate)?;
 
@@ -144,6 +154,14 @@ fn convert_op(
                 return Ok(());
             }
 
+            if gate.angles.len() != gate.gate_type.angle_arity() {
+                return Err(format!(
+                    "Gate {} requires {} angles, got {}",
+                    gate.gate_type,
+                    gate.gate_type.angle_arity(),
+                    gate.angles.len()
+                ));
+            }
             let phir_name = gate_type_to_phir(gate.gate_type)?;
             let num_qubits_per_gate = gate_arity(&phir_name);
             let global_ids: Vec<usize> = gate.qubits.iter().map(|q| q.0).collect();
@@ -262,9 +280,15 @@ fn convert_op(
 fn convert_expr(expr: &Expression) -> Result<Value, String> {
     match expr {
         Expression::Integer(bv) => {
-            // QASM integers are non-negative, but we output as i64
-            // for PHIR-JSON compatibility
-            let val = bitvec::to_i64(bv);
+            // Preserve non-negative QASM literals within PHIR's signed i64 range.
+            let val = bitvec::to_u64(bv)
+                .and_then(|value| i64::try_from(value).ok())
+                .ok_or_else(|| {
+                    format!(
+                        "Integer literal {} cannot be represented as a PHIR-JSON i64",
+                        bitvec::to_decimal_string(bv)
+                    )
+                })?;
             Ok(json!(val))
         }
         Expression::Float(f) => Ok(json!(f)),
@@ -314,6 +338,7 @@ fn qasm_gate_to_phir(name: &str) -> Result<String, String> {
         "ry" => "RY",
         "rz" => "RZ",
         "rzz" | "zzphase" => "RZZ",
+        "rxyxy2q" => "RXYXY2Q",
         "rxy1q" | "r1xy" | "u1q" => "R1XY",
         "u" | "u3" => "U",
         "reset" => "Init",
@@ -344,6 +369,7 @@ fn gate_type_to_phir(gt: GateType) -> Result<String, String> {
         GateType::RY => "RY",
         GateType::RZ => "RZ",
         GateType::RXY1Q => "R1XY",
+        GateType::RXYXY2Q => "RXYXY2Q",
         GateType::U => "U",
         GateType::CX => "CX",
         GateType::CY => "CY",
@@ -369,7 +395,7 @@ fn gate_type_to_phir(gt: GateType) -> Result<String, String> {
 fn gate_arity(phir_name: &str) -> usize {
     match phir_name {
         "CX" | "CY" | "CZ" | "SWAP" | "SXX" | "SXXdg" | "SYY" | "SYYdg" | "SZZ" | "SZZdg"
-        | "RXX" | "RYY" | "RZZ" | "R2XXYYZZ" | "RXXYYZZ" => 2,
+        | "RXX" | "RYY" | "RZZ" | "RXYXY2Q" | "R2XXYYZZ" | "RXXYYZZ" => 2,
         "CCX" => 3,
         _ => 1,
     }
@@ -396,6 +422,12 @@ fn qubit_args(
         })
         .collect::<Result<_, String>>()?;
 
+    if global_ids.is_empty() || !global_ids.len().is_multiple_of(qubits_per_gate) {
+        return Err(format!(
+            "Gate requires groups of {qubits_per_gate} qubits, got {}",
+            global_ids.len()
+        ));
+    }
     if qubits_per_gate == 1 {
         Ok(Value::Array(refs))
     } else {
@@ -430,6 +462,48 @@ mod tests {
         phir["ops"].as_array().expect("ops should be an array")
     }
 
+    macro_rules! unsigned_literal_exports {
+        ($($name:ident: ($literal:literal, $expected:expr)),+ $(,)?) => {
+            $(
+                #[test]
+                fn $name() {
+                    let expr = Expression::Integer(
+                        crate::parser::expressions::parse_integer_to_bitvec($literal).unwrap(),
+                    );
+                    assert_eq!(convert_expr(&expr).unwrap(), json!($expected));
+                    let phir = convert(&format!(
+                        "OPENQASM 2.0; creg c[64]; c = {};", $literal,
+                    ));
+                    let assignment = get_ops(&phir).iter().find(|op| op["cop"] == "=").unwrap();
+                    assert_eq!(assignment["args"][0], json!($expected));
+                }
+            )+
+        };
+    }
+
+    unsigned_literal_exports! {
+        unsigned_literal_8_export: ("8", 8),
+        unsigned_literal_9_export: ("9", 9),
+        unsigned_literal_1_export: ("1", 1),
+        unsigned_literal_i64_max_export: ("9223372036854775807", i64::MAX),
+    }
+
+    #[test]
+    fn unsigned_literal_export_out_of_range() {
+        for literal in [
+            "18446744073709551615",
+            "9223372036854775808",
+            "18446744073709551616",
+        ] {
+            let expr = Expression::Integer(
+                crate::parser::expressions::parse_integer_to_bitvec(literal).unwrap(),
+            );
+            assert!(convert_expr(&expr).unwrap_err().contains(literal));
+            let qasm = format!("OPENQASM 2.0; creg c[64]; c = {literal};");
+            assert!(qasm_to_phir_json(&qasm).unwrap_err().contains(literal));
+        }
+    }
+
     #[test]
     fn basic_structure() {
         let phir = convert(
@@ -443,6 +517,19 @@ mod tests {
         assert_eq!(phir["format"], "PHIR/JSON");
         assert_eq!(phir["version"], "0.1.0");
         assert!(phir["ops"].is_array());
+    }
+
+    #[test]
+    fn empty_registers_are_not_declared_or_exported() {
+        let mut program = Program::default();
+        program.quantum_registers.insert("empty_q".into(), vec![]);
+        program.classical_registers.insert("empty_c".into(), 0);
+        assert_eq!(program_to_phir_json(&program).unwrap()["ops"], json!([]));
+        program.quantum_registers.insert("q".into(), vec![0]);
+        program.classical_registers.insert("c".into(), 1);
+        let phir = program_to_phir_json(&program).unwrap();
+        assert_eq!(phir["ops"].as_array().unwrap().len(), 3);
+        assert_eq!(phir["ops"][2]["variables"], json!(["c"]));
     }
 
     #[test]

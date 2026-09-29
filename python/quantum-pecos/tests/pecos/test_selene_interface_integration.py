@@ -163,7 +163,8 @@ def test_selene_engine_accepts_generic_runtime_plugin_shape() -> None:
     assert isinstance(engine_builder, pecos.QisEngineBuilder)
 
 
-def test_default_runtime_falls_back_to_installed_plugin_package() -> None:
+@pytest.mark.parametrize("policy", ["capture", "reject_unhandled"])
+def test_default_runtime_falls_back_to_installed_plugin_package(policy: str) -> None:
     """A failed Cargo lookup configures the real builder from the installed plugin."""
     import pecos_rslib
     from pecos._engine_builders import _configure_selene_runtime
@@ -174,7 +175,8 @@ def test_default_runtime_falls_back_to_installed_plugin_package() -> None:
             self.builder = pecos_rslib.qis_engine()
             self.plugin_call: tuple[str, list[str], list[str]] | None = None
 
-        def selene_runtime(self) -> object:
+        def selene_runtime(self, *, custom_event_policy: str) -> object:
+            assert custom_event_policy == policy
             msg = "forced Cargo runtime discovery failure"
             raise RuntimeError(msg)
 
@@ -183,28 +185,33 @@ def test_default_runtime_falls_back_to_installed_plugin_package() -> None:
             library_file: str,
             init_args: list[str],
             library_search_dirs: list[str],
+            *,
+            custom_event_policy: str,
         ) -> object:
+            assert custom_event_policy == policy
             self.plugin_call = (library_file, init_args, library_search_dirs)
             return self.builder.selene_runtime_plugin(
                 library_file,
                 init_args,
                 library_search_dirs,
+                custom_event_policy=custom_event_policy,
             )
 
     builder = FailingCargoRuntimeBuilder()
-    _configure_selene_runtime(builder, None)
+    _configure_selene_runtime(builder, None, custom_event_policy=policy)
 
     assert builder.plugin_call is not None
     assert Path(builder.plugin_call[0]) == SimpleRuntimePlugin().library_file
 
 
-def test_sim_guppy_can_use_selene_engine_via_qis_path() -> None:
+@pytest.mark.parametrize("policy", ["capture", "reject_unhandled"])
+def test_sim_guppy_can_use_selene_engine_via_qis_path(policy: str) -> None:
     """Test that sim(Guppy(...)).classical(selene_engine()) routes HUGR through the QIS path."""
     import pecos
     from guppylang import guppy
     from guppylang.std.quantum import h, measure, qubit
 
-    selene = pecos.selene_engine()
+    selene = pecos.selene_engine(custom_event_policy=policy)
 
     @guppy
     def coin() -> bool:
@@ -394,3 +401,101 @@ def test_sim_guppy_reuses_physical_slot_after_measurement() -> None:
     assert len(results["measurement_1"]) == 10
     assert all(results["measurement_0"])
     assert not any(results["measurement_1"])
+
+
+@pytest.mark.parametrize("selector", [None, "missing_runtime", Path("missing_runtime.so")])
+def test_invalid_custom_event_policy_fails_before_runtime_lookup(selector: object) -> None:
+    import pecos
+    import pecos_rslib
+
+    with pytest.raises(ValueError, match="custom_event_policy"):
+        pecos.selene_engine(selector, custom_event_policy="reject_unhandeld")
+    with pytest.raises(ValueError, match="custom_event_policy"):
+        pecos_rslib.qis_engine().selene_runtime("missing_runtime", custom_event_policy="invalid")
+    with pytest.raises(ValueError, match="custom_event_policy"):
+        pecos_rslib.qis_engine().selene_runtime_plugin("missing_runtime.so", custom_event_policy="invalid")
+
+
+@pytest.fixture
+def event_runtime_proxy(tmp_path: Path) -> Path:
+    """Compile a public synthetic event producer against the pinned Selene ABI."""
+    import json
+    import shutil
+    import tomllib
+
+    from selene_simple_runtime_plugin import SimpleRuntimePlugin
+
+    if platform.system() == "Windows":
+        pytest.skip("Synthetic dlopen proxy requires a POSIX C compiler")
+    compiler = shutil.which("cc")
+    if compiler is None:
+        pytest.skip("Synthetic runtime proxy requires a C compiler")
+    repo = Path(__file__).resolve().parents[4]
+    lock = tomllib.loads((repo / "Cargo.lock").read_text())
+    source = next(p["source"] for p in lock["package"] if p["name"] == "selene-core")
+    revision = source.rsplit("#", 1)[1]
+    cargo_home = Path(os.environ.get("CARGO_HOME", Path.home() / ".cargo"))
+    includes = list((cargo_home / "git/checkouts").glob(f"selene-*/{revision[:7]}/selene-core/c/include"))
+    if len(includes) != 1:
+        pytest.skip("Pinned Selene C headers unavailable; fetch Rust dependencies first")
+    library = tmp_path / ("event_proxy.dylib" if platform.system() == "Darwin" else "event_proxy.so")
+    args = [
+        compiler,
+        "-std=c11",
+        "-shared",
+        "-fPIC",
+        "-I",
+        str(includes[0]),
+        "-DBASE_LIBRARY=" + json.dumps(str(SimpleRuntimePlugin().library_file)),
+        str(Path(__file__).with_name("fixtures") / "runtime_event_proxy.c"),
+        "-o",
+        str(library),
+    ]
+    if platform.system() != "Darwin":
+        args.append("-ldl")
+    subprocess.run(args, check=True, capture_output=True, text=True)
+    return library
+
+
+@pytest.mark.parametrize("selector_kind", ["path", "plugin"])
+@pytest.mark.parametrize("policy", ["capture", "reject_unhandled"])
+def test_custom_event_policy_reaches_sim_execution(
+    event_runtime_proxy: Path,
+    selector_kind: str,
+    policy: str,
+) -> None:
+    import pecos
+    from guppylang import guppy
+    from guppylang.std.quantum import measure, qubit
+    from selene_simple_runtime_plugin import SimpleRuntimePlugin
+
+    class EventPlugin:
+        library_file = event_runtime_proxy
+
+        def get_init_args(self) -> list[str]:
+            return SimpleRuntimePlugin().get_init_args()
+
+    @guppy
+    def prepare_zero() -> bool:
+        return measure(qubit()).read()
+
+    # The direct path route supplies the public runtime's required init args
+    # through the native builder, while the plugin route uses the Python adapter.
+    if selector_kind == "path":
+        import pecos_rslib
+
+        builder = pecos_rslib.qis_engine().selene_runtime_plugin(
+            str(event_runtime_proxy),
+            SimpleRuntimePlugin().get_init_args(),
+            custom_event_policy=policy,
+        )
+        builder = builder.interface(pecos_rslib.qis_helios_interface())
+    else:
+        builder = pecos.selene_engine(EventPlugin(), custom_event_policy=policy)
+    simulation = pecos.sim(pecos.Guppy(prepare_zero)).classical(builder).qubits(1).seed(42).workers(1)
+    if policy == "reject_unhandled":
+        with pytest.raises(RuntimeError, match="unsupported runtime custom event tag 424242"):
+            simulation.run(2)
+    else:
+        data = simulation.run(2).to_dict()
+        assert data["measurement_0"] == [0, 0]

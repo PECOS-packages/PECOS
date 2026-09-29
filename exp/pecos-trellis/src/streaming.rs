@@ -226,6 +226,10 @@ impl TrellisStreamingDecoder {
             &self.observed,
             &self.model.suffix_values,
             self.next_column..end,
+            crate::PruneParams {
+                k: self.model.config.k,
+                delta: self.model.config.delta,
+            },
         ) {
             self.failure = Some(failure);
             return Err(failure.error());

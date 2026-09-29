@@ -112,6 +112,7 @@ fn pecos_rslib_exp(m: &Bound<'_, PyModule>) -> PyResult<()> {
     decoder_specs::register(m)?;
     m.add_class::<bp_trellis_bindings::PyBpTrellisDecoder>()?;
     m.add_class::<bp_trellis_bindings::PyBpTrellisResult>()?;
+    m.add_class::<bp_trellis_bindings::PyBpTrellisNoPath>()?;
     m.add_class::<bp_trellis_bindings::PyBpTrellisObservableFlips>()?;
     m.add_class::<frontier_bindings::PyFrontierDecoder>()?;
     m.add_class::<frontier_bindings::PyFrontierCommitteeDecoder>()?;

@@ -44,7 +44,7 @@ class Gadget:
     dimensions: tuple[int, int]
     basis: str | None
     x_z_swapped: bool = False
-    fold: Literal["S", "SDG"] | None = None
+    fold: Literal["SZ", "SZdg"] | None = None
 
 
 def default_allocation(
@@ -357,7 +357,7 @@ def _syndrome_round(
     round_index: int,
     x_z_swapped: bool,
     name: str = "syndrome_extraction",
-    fold: Literal["S", "SDG"] | None = None,
+    fold: Literal["SZ", "SZdg"] | None = None,
 ) -> Gadget:
     steps = [SurfaceCircuitStep(OpType.COMMENT, label=f"syndrome_extraction round {round_index + 1}")]
     families = ("Z", "X") if x_z_swapped else ("X", "Z")
@@ -383,7 +383,7 @@ def _syndrome_round(
     )
 
 
-def fold_s_round_gadget(
+def fold_sz_round_gadget(
     patch: SurfacePatch,
     allocation: QubitAllocation,
     *,
@@ -391,12 +391,12 @@ def fold_s_round_gadget(
     x_z_swapped: bool = False,
     dagger: bool = False,
 ) -> Gadget:
-    """Apply logical S inside a default syndrome round on a square rotated patch.
+    """Apply logical SZ inside a default syndrome round on a square rotated patch.
 
     After CX layer 2, transpose (x, y) -> (y, x) exchanges the entangled
     block's code X/Z subgroups. Apply CZ to every exchanged pair of data
     or bulk ancillas. Diagonal data sites have odd coordinates and bulk
-    ancilla sites even, so S on data and S-dagger on ancillas alternate
+    ancilla sites even, so SZ on data and SZdg on ancillas alternate
     along the diagonal. Exterior weight-2 check ancillas are disentangled
     and untouched. Distance must be at least 2 to have syndrome checks.
     The same coordinate rule applies in the current X/Z orientation.
@@ -404,7 +404,7 @@ def fold_s_round_gadget(
     The exact round flow is X_L -> +Y_L * product(current Z checks) and
     Z_L -> Z_L, with +Y_L = i X_L Z_L, SparseStab's Y = iXZ convention,
     and PECOS SZ = diag(1, i). For an X-prepared patch the output logical
-    Y sign is (-1)**parity(round Z outcomes). With dagger=True all fixed
+    Y sign is (-1)**parity(round Z outcomes). With dagger=True, SZ becomes SZdg and all fixed
     point phases reverse, giving -Y_L and the opposite frame sign.
 
     X records are not bare X checks: on input, bottom-row bulk X ancillas
@@ -427,13 +427,13 @@ def fold_s_round_gadget(
             or a CX schedule that does not have four layers.
     """
     if not patch.rotated:
-        msg = "fold_s_round_gadget requires a rotated patch"
+        msg = "fold_sz_round_gadget requires a rotated patch"
         raise ValueError(msg)
     if patch.dx != patch.dz:
-        msg = "fold_s_round_gadget requires a square patch (dx=dz)"
+        msg = "fold_sz_round_gadget requires a square patch (dx=dz)"
         raise ValueError(msg)
     if patch.dx < 2:
-        msg = "fold_s_round_gadget requires distance at least 2 to have syndrome checks"
+        msg = "fold_sz_round_gadget requires distance at least 2 to have syndrome checks"
         raise ValueError(msg)
 
     positions = {i: rotated_id_to_position(i, patch.dx) for i in range(patch.geometry.num_data)}
@@ -446,19 +446,19 @@ def fold_s_round_gadget(
                 x_sum = sum(positions[q][0] for q in stabilizer.data_qubits)
                 y_sum = sum(positions[q][1] for q in stabilizer.data_qubits)
                 if x_sum % 4 or y_sum % 4:
-                    msg = "fold_s_round_gadget requires bulk-centre coordinate sums divisible by 4"
+                    msg = "fold_sz_round_gadget requires bulk-centre coordinate sums divisible by 4"
                     raise ValueError(msg)
                 by_position[x_sum // 4, y_sum // 4] = ancillas[stabilizer.index]
 
     if len(by_position) != patch.dx**2 + (patch.dx - 1) ** 2:
-        msg = "fold_s_round_gadget requires d*d + (d-1)**2 distinct data and bulk-ancilla sites"
+        msg = "fold_sz_round_gadget requires d*d + (d-1)**2 distinct data and bulk-ancilla sites"
         raise ValueError(msg)
 
-    label = "fold-transversal S-dagger layer" if dagger else "fold-transversal S layer"
+    label = "fold-transversal SZdg layer" if dagger else "fold-transversal SZ layer"
     fold = [SurfaceCircuitStep(OpType.COMMENT, label=label)]
     for (x, y), qubit in sorted(by_position.items()):
         if (y, x) not in by_position:
-            msg = f"fold_s_round_gadget missing transpose partner for site {(x, y)}"
+            msg = f"fold_sz_round_gadget missing transpose partner for site {(x, y)}"
             raise ValueError(msg)
         if x < y:
             fold.append(SurfaceCircuitStep(OpType.CZ, [qubit, by_position[y, x]]))
@@ -468,7 +468,7 @@ def fold_s_round_gadget(
     fold.append(SurfaceCircuitStep(OpType.TICK))
     layers = _cx_layers(patch, allocation, x_z_swapped=x_z_swapped)
     if len(layers) != 4:
-        msg = "fold_s_round_gadget requires four CX layers in the default schedule"
+        msg = "fold_sz_round_gadget requires four CX layers in the default schedule"
         raise ValueError(msg)
     # Between CX layers 2 and 3 the half-cycle state is the unrotated code;
     # round_order is deliberately absent because the fold depends on the default order.
@@ -479,8 +479,8 @@ def fold_s_round_gadget(
         layers,
         round_index=round_index,
         x_z_swapped=x_z_swapped,
-        name="syndrome_extraction_fold_sdg" if dagger else "syndrome_extraction_fold_s",
-        fold="SDG" if dagger else "S",
+        name="syndrome_extraction_fold_szdg" if dagger else "syndrome_extraction_fold_sz",
+        fold="SZdg" if dagger else "SZ",
     )
 
 
@@ -532,7 +532,7 @@ def transversal_layer_gadget(patch: SurfacePatch, allocation: QubitAllocation, *
     """Apply H, SZ, or SZDG to every data qubit.
 
     H exchanges X and Z checks, the textbook transversal CSS construction.
-    The physical SZ layers are not logical S gates on this surface code.
+    The physical SZ layers are not logical SZ gates on this surface code.
     """
     names = {"H": "transversal_h", "SZ": "physical_sz_layer", "SZDG": "physical_szdg_layer"}
     if gate not in names:

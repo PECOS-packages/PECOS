@@ -299,19 +299,26 @@ class PyPHIR:
                     p.cvar_dtype_list.append(data.data_type)
 
                 if name == "qvar_define":
-                    if o["data_type"] != "qubits":
+                    # Rust ast::validate_quantum_declaration is the normative statement of these rules.
+                    data_type = o.get("data_type", "qubits")
+                    if data_type != "qubits":
                         msg = f"Do not know handle qvar type: {o['data_type']}"
                         raise Exception(msg)
 
+                    size = o.get("size")
+                    if not isinstance(size, int) or isinstance(size, bool) or size <= 0:
+                        msg = f"Quantum register '{o['variable']}' requires a positive integer size; got {size!r}"
+                        raise ValueError(msg)
+
                     qubit_ids = []
-                    for _i in range(o["size"]):
+                    for _i in range(size):
                         qubit_ids.append(next_qvar_int)
                         next_qvar_int += 1
 
                     data = d.QVarDefine(
-                        data_type=o["data_type"],
+                        data_type=data_type,
                         variable=o["variable"],
-                        size=o["size"],
+                        size=size,
                         qubit_ids=qubit_ids,
                         metadata=o.get("metadata"),
                     )

@@ -512,10 +512,8 @@ impl OperationProcessor {
                 // Validate all qubits in the barrier
                 for (var, idx) in args {
                     self.validate_variable_access(var, *idx)?;
+                    self.environment.resolve_qubit(var, *idx)?;
                 }
-
-                // Extract qubit indices for the barrier (just for validation)
-                let _qubit_indices: Vec<usize> = args.iter().map(|(_, idx)| *idx).collect();
 
                 // Return barrier result
                 Ok(MetaInstructionResult::Barrier {
@@ -531,7 +529,7 @@ impl OperationProcessor {
     /// Add a meta instruction to the byte message builder
     ///
     /// # Errors
-    /// Currently never returns an error, but may in future implementations.
+    /// Returns an error if a qubit register is unknown or an index is out of bounds.
     pub fn add_meta_instruction_to_builder(
         &self,
         _builder: &mut ByteMessageBuilder,
@@ -540,7 +538,10 @@ impl OperationProcessor {
         match meta_result {
             MetaInstructionResult::Barrier { qubits } => {
                 // Extract qubit indices for the barrier for debug output
-                let qubit_indices: Vec<usize> = qubits.iter().map(|(_, idx)| *idx).collect();
+                let qubit_indices: Vec<usize> = qubits
+                    .iter()
+                    .map(|(var, idx)| self.environment.resolve_qubit(var, *idx))
+                    .collect::<Result<_, _>>()?;
 
                 // Add barrier operation to the builder (if supported by the ByteMessageBuilder)
                 // For now, we handle it as a "no-op" since barriers are primarily compiler hints
@@ -742,12 +743,14 @@ impl OperationProcessor {
                 QubitArg::SingleQubit((var, idx)) => {
                     // Validate the qubit exists
                     self.validate_variable_access(var, *idx)?;
+                    self.environment.resolve_qubit(var, *idx)?;
                     qubits.push((var.clone(), *idx));
                 }
                 QubitArg::MultipleQubits(qubit_list) => {
                     for (var, idx) in qubit_list {
                         // Validate each qubit exists
                         self.validate_variable_access(var, *idx)?;
+                        self.environment.resolve_qubit(var, *idx)?;
                         qubits.push((var.clone(), *idx));
                     }
                 }
@@ -774,7 +777,7 @@ impl OperationProcessor {
     /// * `Err(PecosError)` - If the operation could not be added
     ///
     /// # Errors
-    /// Currently never returns an error, but may in future implementations.
+    /// Returns an error if a qubit register is unknown or an index is out of bounds.
     ///
     /// # Notes
     ///
@@ -794,7 +797,10 @@ impl OperationProcessor {
                 ..
             } => {
                 // Extract qubit indices for the idle operation
-                let qubit_indices: Vec<usize> = qubits.iter().map(|(_, idx)| *idx).collect();
+                let qubit_indices: Vec<usize> = qubits
+                    .iter()
+                    .map(|(var, idx)| self.environment.resolve_qubit(var, *idx))
+                    .collect::<Result<_, _>>()?;
 
                 // Add idle operation to the builder
                 if !qubit_indices.is_empty() {
@@ -811,7 +817,10 @@ impl OperationProcessor {
                 ..
             } => {
                 // Extract qubit indices for the transport operation
-                let qubit_indices: Vec<usize> = qubits.iter().map(|(_, idx)| *idx).collect();
+                let qubit_indices: Vec<usize> = qubits
+                    .iter()
+                    .map(|(var, idx)| self.environment.resolve_qubit(var, *idx))
+                    .collect::<Result<_, _>>()?;
 
                 // Add transport operation to the builder if supported
                 // For now, we'll treat it as an idle operation
@@ -829,7 +838,10 @@ impl OperationProcessor {
                 ..
             } => {
                 // Extract qubit indices for the delay operation
-                let qubit_indices: Vec<usize> = qubits.iter().map(|(_, idx)| *idx).collect();
+                let qubit_indices: Vec<usize> = qubits
+                    .iter()
+                    .map(|(var, idx)| self.environment.resolve_qubit(var, *idx))
+                    .collect::<Result<_, _>>()?;
 
                 // Add delay operation to the builder if supported
                 // For now, we'll treat it as an idle operation
@@ -848,7 +860,10 @@ impl OperationProcessor {
                 ..
             } => {
                 // Extract qubit indices for the timing operation
-                let qubit_indices: Vec<usize> = qubits.iter().map(|(_, idx)| *idx).collect();
+                let qubit_indices: Vec<usize> = qubits
+                    .iter()
+                    .map(|(var, idx)| self.environment.resolve_qubit(var, *idx))
+                    .collect::<Result<_, _>>()?;
 
                 // Add timing operation to the builder if supported
                 debug!(
@@ -869,11 +884,6 @@ impl OperationProcessor {
     /// # Errors
     /// Returns an error if the variable already exists or cannot be added.
     pub fn add_quantum_variable(&mut self, variable: &str, size: usize) -> Result<(), PecosError> {
-        // The engine pre-defines variables from the program header and then
-        // re-encounters the same definitions during execution, so an IDENTICAL
-        // re-definition must be a no-op (mirrors `add_classical_variable`). A
-        // CONFLICTING re-definition (different type or size) is a genuine
-        // definition error and must propagate.
         if self.environment.has_variable(variable) {
             let info = self.environment.get_variable_info(variable)?;
             if info.data_type != DataType::Qubits || info.size != size {
@@ -935,7 +945,12 @@ impl OperationProcessor {
         size: usize,
     ) -> Result<(), PecosError> {
         match data {
-            "qvar_define" if data_type == "qubits" => {
+            "qvar_define" => {
+                let (variable, size) = super::ast::validate_quantum_declaration(
+                    variable,
+                    Some(data_type),
+                    Some(size),
+                )?;
                 self.add_quantum_variable(variable, size)?;
             }
             "cvar_define" => {
@@ -1505,6 +1520,11 @@ impl OperationProcessor {
             )));
         }
 
+        if qop == "RXYXY2Q" {
+            crate::v0_1::ast::validate_rxyxy2q_args(angles.map(Vec::as_slice), args)
+                .map_err(PecosError::ValidationInvalidGateParameters)?;
+        }
+
         // Validate and extract qubit arguments
         let mut qubit_args = Vec::new();
 
@@ -1513,13 +1533,13 @@ impl OperationProcessor {
                 QubitArg::SingleQubit((var, idx)) => {
                     // Validate the qubit
                     self.validate_variable_access(var, *idx)?;
-                    qubit_args.push(*idx);
+                    qubit_args.push(self.environment.resolve_qubit(var, *idx)?);
                 }
                 QubitArg::MultipleQubits(qubits) => {
                     for (var, idx) in qubits {
                         // Validate each qubit
                         self.validate_variable_access(var, *idx)?;
-                        qubit_args.push(*idx);
+                        qubit_args.push(self.environment.resolve_qubit(var, *idx)?);
                     }
                 }
             }
@@ -1567,6 +1587,15 @@ impl OperationProcessor {
                 let theta = angles_ref[0];
                 let phi = angles_ref[1];
                 Ok((qop.to_string(), qubit_args, vec![theta, phi]))
+            }
+
+            "RXYXY2Q" => {
+                let angles = angles.ok_or_else(|| {
+                    PecosError::ValidationInvalidGateParameters(
+                        "RXYXY2Q requires two angles".to_string(),
+                    )
+                })?;
+                Ok((qop.to_string(), qubit_args, angles.clone()))
             }
 
             // Two-qubit rotation gate: RXXRYYRZZ (3 angles)
@@ -1683,6 +1712,15 @@ impl OperationProcessor {
                     Angle64::from_radians(angle_args[0]),
                     Angle64::from_radians(angle_args[1]),
                     &[qubit_args[0]],
+                );
+            }
+            "RXYXY2Q" => {
+                crate::v0_1::ast::validate_rxyxy2q(Some(angle_args), qubit_args.len())
+                    .map_err(PecosError::ValidationInvalidGateParameters)?;
+                builder.rxyxy2q(
+                    Angle64::from_radians(angle_args[0]),
+                    Angle64::from_radians(angle_args[1]),
+                    &pairs()?,
                 );
             }
             "RXXRYYRZZ" => {

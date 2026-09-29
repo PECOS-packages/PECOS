@@ -19,6 +19,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from pecos.simulators.clifford_lowering import install_clifford_rotation_bindings
+
 if TYPE_CHECKING:
     from pecos.simulators.cuda_stabilizer.state import CudaStabilizer
     from pecos.typing import SimulatorGateParams
@@ -381,3 +383,5 @@ gate_dict = {
     "SqrtZZ": SZZ,
     "SZZdg": SZZdg,
 }
+
+install_clifford_rotation_bindings(gate_dict, symbols=("RXYXY2Q",))

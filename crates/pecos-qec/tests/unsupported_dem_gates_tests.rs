@@ -1671,3 +1671,111 @@ fn gate_rate_mem_builder_allows_zero_tables() {
         .build()
         .unwrap();
 }
+
+fn rxyxy2q_circuit(gate: Gate) -> DagCircuit {
+    let mut circuit = DagCircuit::new();
+    circuit.pz(&[0, 1]);
+    circuit.add_gate_auto_wire(gate.clone());
+    circuit.add_gate_auto_wire(gate);
+    circuit.mz(&[0]);
+    circuit.mz(&[1]);
+    circuit.set_attr(
+        "detectors",
+        pecos_quantum::Attribute::String(
+            r#"[{"id":0,"records":[-2]},{"id":1,"records":[-1]}]"#.to_string(),
+        ),
+    );
+    circuit
+}
+
+#[test]
+fn rxyxy2q_dem_mem_and_noise_locations_match_ryy() {
+    use pecos_qec::fault_tolerance::fault_sampler::{FaultCatalog, FaultChannel};
+    let theta = Angle64::QUARTER_TURN;
+    let actual = rxyxy2q_circuit(Gate::rxyxy2q(theta, theta, &[(0, 1)]));
+    let expected = rxyxy2q_circuit(Gate::ryy(theta, &[(0, 1)]));
+    assert_all_dem_entry_points_build(&actual);
+    let catalog = FaultCatalog::from_circuit(&TickCircuit::from(&actual)).unwrap();
+    let expected_catalog = FaultCatalog::from_circuit(&TickCircuit::from(&expected)).unwrap();
+    let effects = |catalog: &FaultCatalog| {
+        catalog
+            .locations
+            .iter()
+            .filter(|loc| loc.channel == FaultChannel::P2)
+            .map(|loc| {
+                (
+                    loc.tick,
+                    loc.qubits.clone(),
+                    loc.faults
+                        .iter()
+                        .map(|fault| fault.affected_measurements.clone())
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(effects(&catalog), effects(&expected_catalog));
+    assert_eq!(effects(&catalog).len(), 2);
+
+    let map = DagFaultAnalyzer::new(&actual).build_influence_map();
+    let reference = DagFaultAnalyzer::new(&expected).build_influence_map();
+    let locations = |map: &pecos_qec::fault_tolerance::propagator::DagFaultInfluenceMap| {
+        map.locations
+            .iter()
+            .filter(|loc| loc.gate_type.is_two_qubit() && !loc.before)
+            .map(|loc| (loc.node, loc.qubits.clone(), loc.clifford))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(locations(&map), locations(&reference));
+    assert_eq!(locations(&map).len(), 4);
+    let noise = NoiseConfig::new(0.0, 0.03, 0.0, 0.0);
+    let dem = |map| {
+        DemBuilder::new(map)
+            .with_noise_config(noise.clone())
+            .build()
+            .unwrap()
+            .to_string()
+    };
+    let mem = |map| {
+        MemBuilder::new(map)
+            .with_noise_config(noise.clone())
+            .build()
+            .unwrap()
+            .mechanisms
+    };
+    assert_eq!(dem(&map), dem(&reference));
+    assert_eq!(mem(&map), mem(&reference));
+    assert!(!mem(&map).is_empty());
+}
+
+#[test]
+fn rxyxy2q_non_clifford_dem_preflight_is_structured() {
+    let non_clifford = Angle64::from_radians(0.123);
+    for gate in [
+        Gate::rxyxy2q(Angle64::QUARTER_TURN, non_clifford, &[(0, 1)]),
+        Gate::rxyxy2q(non_clifford, Angle64::ZERO, &[(0, 1)]),
+        Gate::rxxryyrzz(non_clifford, Angle64::ZERO, Angle64::ZERO, &[(0, 1)]),
+        Gate::u2q(
+            [[Angle64::ZERO; 3]; 2],
+            [non_clifford, Angle64::ZERO, Angle64::ZERO],
+            [[Angle64::ZERO; 3]; 2],
+            &[(0, 1)],
+        ),
+        Gate::ch(&[(0, 1)]),
+    ] {
+        let circuit = rxyxy2q_circuit(gate.clone());
+        let map = DagFaultAnalyzer::new(&circuit).build_influence_map();
+        for error in [
+            DemBuilder::new(&map).build().unwrap_err(),
+            MemBuilder::new(&map).build().unwrap_err(),
+        ] {
+            let DemBuilderError::UnsupportedGate(error) = error else {
+                panic!("expected unsupported gate: {error:?}")
+            };
+            assert_eq!(error.gate_type, gate.gate_type);
+            assert_eq!(error.qubits, [0, 1]);
+            assert_eq!(error.angles, gate.angles.as_slice());
+            assert_eq!(error.location, UnsupportedGateLocation::DagNode { node: 2 });
+        }
+    }
+}

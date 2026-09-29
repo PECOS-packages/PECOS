@@ -70,6 +70,7 @@ pub enum GateType {
     RXX,
     RYY,
     RZZ,
+    RXYXY2Q,
 
     // Three-qubit gates
     CCX,
@@ -139,6 +140,7 @@ declare_all_gate_types!(
     RXX,
     RYY,
     RZZ,
+    RXYXY2Q,
     CCX,
     MZ,
     MeasureLeaked,
@@ -194,7 +196,8 @@ impl GateType {
             | Self::SWAP
             | Self::RXX
             | Self::RYY
-            | Self::RZZ => 2,
+            | Self::RZZ
+            | Self::RXYXY2Q => 2,
 
             Self::CCX => 3,
         }
@@ -404,7 +407,7 @@ impl GateCommand {
     ///
     /// Rotation inverses use the standard conventions
     /// (`RX/RY/RZ(theta)` and `RXX/RYY/RZZ(theta)` -> negate `theta`;
-    /// `RXY1Q(theta, phi)` -> `RXY1Q(-theta, phi)`; `U(theta, phi, lambda)` ->
+    /// `RXY1Q` / `RXYXY2Q(theta, phi)` -> the same gate at `(-theta, phi)`; `U(theta, phi, lambda)` ->
     /// `U(-theta, -lambda, -phi)`).
     #[must_use]
     pub fn dagger(&self) -> Option<GateCommand> {
@@ -450,12 +453,12 @@ impl GateCommand {
             | GateType::RXX
             | GateType::RYY
             | GateType::RZZ => neg_first(self.gate_type),
-            // RXY1Q(theta, phi) dagger = RXY1Q(-theta, phi).
-            GateType::RXY1Q => {
+            // XY-axis rotations invert theta and preserve phi.
+            GateType::RXY1Q | GateType::RXYXY2Q => {
                 let theta = *self.angles().first()?;
                 let phi = *self.angles().get(1)?;
                 Some(Self::with_angles(
-                    GateType::RXY1Q,
+                    self.gate_type,
                     q,
                     smallvec::smallvec![-theta, phi],
                 ))

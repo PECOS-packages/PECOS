@@ -76,7 +76,7 @@ tket = { version = "0.21", default-features = false }
 tket-qsystem = { version = "0.27", default-features = false }
 
 # --- WebAssembly ---
-wasmtime = { version = "46", default-features = false, features = [
+wasmtime = { version = "48.0.3", default-features = false, features = [
   "cranelift",
   "runtime",
   "wat",

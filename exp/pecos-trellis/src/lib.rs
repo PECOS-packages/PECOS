@@ -17,12 +17,14 @@
 //! identical active detector boundary and logical labels are merged by the
 //! configured metric: log-sum-exp preserves degeneracy mass by default, while
 //! integer max-log retains the best route. The configured frontier width and
-//! log-mass window provide deterministic pruning for a fixed build and
-//! platform; underlying `ln`/`exp` implementations may differ across platforms.
-//! This engine is PECOS-native code. Its numerics are additionally held to a
-//! bitwise parity contract with an external reference implementation of the
-//! same algorithm class; that contract is maintained by a separate crate and
-//! is not a constraint this crate imposes on its callers.
+//! log-mass window provide deterministic pruning. Transcendentals come from
+//! `libm`, so decode outputs are bit-identical across platforms.
+//! This engine is PECOS-native code. `pecos-frontier` checks it against an
+//! external reference implementation of the same algorithm class: logical
+//! labels and success or no-path agree exactly, while log evidence, per-label
+//! masses and the max-log runner-up gap agree within `1e-9`. Separately,
+//! committed bitwise snapshots of PECOS's own outputs guard against unintended
+//! numeric changes; they are regression pins, not an external contract.
 //!
 //! The [`bp_trellis`] module provides PECOS's BP-guided configuration and decoder.
 
@@ -134,7 +136,8 @@ pub struct TrellisConfig {
     /// Log-mass window below the best boundary state retained after each column.
     pub delta: f64,
     /// Weight applied to the suffix-compatibility score during pruning.
-    /// Defaults to `0.8`, chosen to match the parity contract.
+    /// Defaults to `0.8`, the value the external-reference fixtures in
+    /// `pecos-frontier` are checked with.
     pub score_alpha: f64,
     /// Optional permutation of the DEM mechanism or factor indices.
     pub column_order: Option<Vec<usize>>,
@@ -142,9 +145,9 @@ pub struct TrellisConfig {
     /// sets using their XOR-combined probability.
     ///
     /// This merge is mathematically exact under the default float metric and is
-    /// rejected under `maxlog_int`. It takes a different floating-point path and
-    /// the external parity contract on this engine is bitwise, so it is disabled
-    /// by default.
+    /// rejected under `maxlog_int`. It takes a different floating-point path from
+    /// the unmerged model, so it is disabled by default to keep outputs
+    /// bit-identical to the unmerged decode.
     /// Zero-probability mechanisms are already discarded, while probability-one
     /// mechanisms remain separate in the forced layer and are not merged with
     /// otherwise identical probabilistic mechanisms.
@@ -3058,7 +3061,7 @@ fn set_bit(words: &mut [u64], index: usize) {
 
 fn set_bits(words: &[u64]) -> impl Iterator<Item = usize> + '_ {
     // Ascending visit order is load-bearing: downstream float reductions sum in
-    // this order and the bitwise parity contract pins it. Skipping zero words
+    // this order and the bitwise snapshots pin it. Skipping zero words
     // and clearing lowest set bits preserves that order exactly.
     words.iter().enumerate().flat_map(|(word_index, &word)| {
         let mut remaining = word;

@@ -15,9 +15,9 @@
 //! The decoder performs ordered dynamic programming over independent binary
 //! fault mechanisms. Prefixes with identical active detector boundary and
 //! logical labels are merged by log-sum-exp, preserving degeneracy mass. The
-//! configured frontier width and log-mass window provide deterministic pruning
-//! for a fixed build and platform; underlying `ln`/`exp` implementations may
-//! differ across platforms.
+//! configured frontier width and log-mass window provide deterministic pruning,
+//! and the engine's `libm` transcendentals make outputs bit-identical across
+//! platforms.
 //! [`FrontierDecoder`] is the parity port of Leverrier and Urbanke's Frontier
 //! decoder. Its input-order defaults remain those of that port.
 

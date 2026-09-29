@@ -18,9 +18,8 @@
 //! physics. Pruned results have no certified bound on discarded posterior
 //! mass. Belief propagation (BP) guides only which states pruning retains and
 //! never changes branch probabilities or mass arithmetic. It is not a wrap or
-//! port of an external project. The shared engine is PECOS-native; its
-//! bitwise parity pinning against an external reference implementation is
-//! maintained elsewhere and is not a constraint on this decoder.
+//! port of an external project. The shared engine is PECOS-native; see the
+//! crate documentation for how it is checked against an external reference.
 //!
 //! The facade owns one [`TrellisDecoder`] configured with PECOS's
 //! defaults, ordering semantics, and optional no-path escalation ladder, on

@@ -277,6 +277,61 @@ fn decode_outputs_match_bitwise_snapshot() {
 }
 
 #[test]
+fn parallel_committee_matches_sequential_committee_bitwise() {
+    let order_fixtures: FixtureFile<OrderFixture> =
+        serde_json::from_str(ORDER_FIXTURES_JSON).expect("order fixtures must parse");
+    assert!(!order_fixtures.fixtures.is_empty(), "need order fixtures");
+
+    for fixture in order_fixtures.fixtures {
+        let dem = sparse_dem(
+            fixture.mechanisms,
+            fixture.num_detectors,
+            fixture.num_observables,
+        );
+        let mut committee = FrontierCommittee::from_sparse_dem(
+            &dem,
+            FrontierConfig {
+                k: fixture.pruned.k,
+                delta: fixture.pruned.delta,
+                score_alpha: 0.8,
+                column_order: Some(fixture.forward_ordering),
+                merge_indistinguishable: false,
+                bp_score_iterations: 0,
+                metric_mode: pecos_frontier::MetricMode::default(),
+                int_metric_scale: 1024,
+            },
+        )
+        .expect("fixture committee construction must succeed");
+        for syndrome_mask in fixture.syndromes {
+            let syndrome = dense_syndrome(syndrome_mask, fixture.num_detectors);
+            match (
+                committee.decode(&syndrome),
+                committee.decode_parallel(&syndrome),
+            ) {
+                (Ok(sequential), Ok(parallel)) => {
+                    assert_results_bitwise_equal(&sequential.selected, &parallel.selected);
+                    assert_eq!(sequential.direction, parallel.direction);
+                    for (left, right) in [
+                        (sequential.forward, parallel.forward),
+                        (sequential.backward, parallel.backward),
+                    ] {
+                        assert_eq!(left.status, right.status);
+                        assert_eq!(left.log_evidence.to_bits(), right.log_evidence.to_bits());
+                    }
+                }
+                (Err(sequential), Err(parallel)) => {
+                    assert_eq!(sequential.to_string(), parallel.to_string());
+                }
+                (sequential, parallel) => panic!(
+                    "{} syndrome {syndrome_mask}: sequential={sequential:?}, parallel={parallel:?}",
+                    fixture.name
+                ),
+            }
+        }
+    }
+}
+
+#[test]
 fn bp_flag_is_bitwise_inert_on_the_unpruned_fast_path() {
     let fixtures: FixtureFile<Fixture> =
         serde_json::from_str(UPSTREAM_FIXTURES_JSON).expect("upstream fixtures must parse");

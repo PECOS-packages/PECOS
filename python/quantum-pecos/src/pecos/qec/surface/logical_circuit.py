@@ -2637,13 +2637,16 @@ def _resource_sign_checks(patch: SurfacePatch) -> tuple[list[tuple[str, int]], i
 
     X and Z supports can be solved independently for this CSS code. Tracking
     each elimination row's check combination recovers measurement provenance.
-    The product of the positive selected checks and the positive logical Y
-    equals ``i**(2 * x_weight - num_data - overlap)`` times all-Y, using the
-    logical representatives consumed by this solve. For supported patches,
+    Logical Y means the signed operator ``i * X_L * Z_L``. The product of
+    the positive selected checks and the positive positional Y string equals
+    ``i**(2 * x_weight - num_data - overlap)`` times all-Y, using the logical
+    representatives consumed by this solve. For supported patches,
     x_weight and overlap have the same parity: odd dimensions give odd logical
     X weight, preserved by even-weight checks, and logical X/Z anticommutation
     makes overlap odd. Thus the exponent reduces modulo four to
-    ``overlap - num_data``. Solvability requires an even phase exponent.
+    ``overlap - num_data``. Signed logical Y contributes the additional factor
+    ``(-1)**((overlap - 1) // 2)`` relative to that positional string. Both
+    phase exponents must be even for the identity to have a real sign.
     Return the checks and the resulting 0/1 reference bit; XOR that bit with
     the selected check parity to obtain the resource sign.
     """
@@ -2683,10 +2686,13 @@ def _resource_sign_checks(patch: SurfacePatch) -> tuple[list[tuple[str, int]], i
             target ^= row
             solution ^= combination
         selected.extend((family, check.index) for position, check in enumerate(checks) if solution & (1 << position))
-    phase += logical_overlap.bit_count()
-    if phase % 2:
-        msg = "Resource sign has a non-real Pauli phase: logical overlap minus data count is odd"
+    overlap = logical_overlap.bit_count()
+    phase += overlap
+    logical_y_phase = overlap - 1
+    if phase % 2 or logical_y_phase % 2:
+        msg = "Resource sign has a non-real Pauli phase: positional or logical Y phase exponent is odd"
         raise ValueError(msg)
+    phase += logical_y_phase
     return selected, (phase % 4) // 2
 
 

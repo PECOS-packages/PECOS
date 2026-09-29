@@ -1755,23 +1755,16 @@ def test_sz_ancilla_encoded_y_after_first_syndrome(seed):
     )
     group = stabilizer_generators_after(tc, first_readout + 1, seed=seed)
     assert len(allocation.data_qubits) == 9
-    logical_y = _pauli(2 * builder.patches["Y"].patch.geometry.num_qubits, ("Y", allocation.data_qubits))
-    assert group_contains(group, logical_y) or group_contains(group, "-" + logical_y[1:])
+    all_y = _pauli(2 * builder.patches["Y"].patch.geometry.num_qubits, ("Y", allocation.data_qubits))
+    assert group_contains(group, all_y) or group_contains(group, "-" + all_y[1:])
     patch = builder.patches["Y"].patch
     num_qubits = 2 * patch.geometry.num_qubits
     for family, checks in (("X", patch.geometry.x_stabilizers), ("Z", patch.geometry.z_stabilizers)):
         for check in checks:
             pauli = _pauli(num_qubits, (family, [allocation.data_qubits[q] for q in check.data_qubits]))
             assert group_contains(group, pauli) or group_contains(group, "-" + pauli[1:]), (family, check.index)
-    logical_x = {allocation.data_qubits[q] for q in patch.geometry.logical_x.data_qubits}
-    logical_z = {allocation.data_qubits[q] for q in patch.geometry.logical_z.data_qubits}
-    logical_y = _pauli(
-        num_qubits,
-        ("Y", logical_x & logical_z),
-        ("X", logical_x - logical_z),
-        ("Z", logical_z - logical_x),
-    )
-    assert group_contains(group, logical_y) or group_contains(group, "-" + logical_y[1:])
+    logical_y = _logical_y_pauli(patch, num_qubits, builder.patches["Y"].qubit_offset)
+    assert any(_signed_membership(tc, first_readout + 1, logical_y, seed))
 
 
 @pytest.mark.parametrize(("dx", "dz"), [(2, 2), (2, 3), (3, 2)])
@@ -2248,7 +2241,14 @@ def test_orientation_prepass_handles_each_h_patch():
     assert _propagate_stabilizer_terms(context, 1, ("B", "Z", "X")) == []
 
 
-RESOURCE_GEOMETRIES = [(3, 3, False), (5, 5, False), (7, 7, False), (3, 5, False), (5, 3, False), (3, 3, True)]
+RESOURCE_GEOMETRIES = [
+    (3, 3, False, 0),
+    (5, 5, False, 0),
+    (7, 7, False, 0),
+    (3, 5, False, 1),
+    (5, 3, False, 1),
+    (3, 3, True, 0),
+]
 
 
 def _resource_patch(dx, dz, *, alternate_x=False):
@@ -2257,7 +2257,7 @@ def _resource_patch(dx, dz, *, alternate_x=False):
         geometry = patch.geometry
         x = set(geometry.logical_x.data_qubits)
         z = set(geometry.logical_z.data_qubits)
-        # Multiplication by a positive X check preserves the logical class but can change the Y phase.
+        # A positive X check preserves the logical class but changes the positional Y phase.
         check = next(
             check
             for check in geometry.x_stabilizers
@@ -2289,7 +2289,9 @@ def _resource_program(dx, dz, gate="teleportation", *, alternate_x=False):
 def _logical_y_pauli(patch, width, offset=0):
     x = {offset + q for q in patch.geometry.logical_x.data_qubits}
     z = {offset + q for q in patch.geometry.logical_z.data_qubits}
-    return _pauli(width, ("X", x - z), ("Z", z - x), ("Y", x & z))
+    logical_x = stim.PauliString(_pauli(width, ("X", x)))
+    logical_z = stim.PauliString(_pauli(width, ("Z", z)))
+    return str(1j * logical_x * logical_z).replace("_", "I")
 
 
 def _first_measurement_tick(tc, qubits):
@@ -2303,11 +2305,12 @@ def _first_measurement_tick(tc, qubits):
 
 def _signed_membership(tc, tick, pauli, seed):
     group = stabilizer_generators_after(tc, tick, seed=seed)
-    return group_contains(group, pauli), group_contains(group, "-" + pauli[1:])
+    opposite = str(-stim.PauliString(pauli)).replace("_", "I")
+    return group_contains(group, pauli), group_contains(group, opposite)
 
 
-@pytest.mark.parametrize(("dx", "dz", "alternate_x"), RESOURCE_GEOMETRIES)
-def test_sz_resource_sign_correction(dx, dz, alternate_x):
+@pytest.mark.parametrize(("dx", "dz", "alternate_x", "expected_reference"), RESOURCE_GEOMETRIES)
+def test_sz_resource_sign_correction(dx, dz, alternate_x, expected_reference):
     _, patch, tc = _resource_program(dx, dz, alternate_x=alternate_x)
     readout = json.loads(tc.get_meta("injection_readouts"))[0]
     tick = _first_measurement_tick(tc, set(range(patch.geometry.num_data)))
@@ -2339,6 +2342,7 @@ def test_sz_resource_sign_correction(dx, dz, alternate_x):
     assert 1 < uncorrected_agreements < 31
     assert uncorrected_agreements == resource_positive
     assert without_reference_agreements == 32 * (1 - readout["resource_sign_reference"])
+    assert readout["resource_sign_reference"] == expected_reference
     print(
         f"{dx}x{dz}, alternate_x={alternate_x}: reference={readout['resource_sign_reference']}, "
         f"corrected={corrected_agreements}/32, without_reference={without_reference_agreements}/32, "
@@ -2364,8 +2368,8 @@ def test_sz_resource_sign_fold_control(distance):
         assert int(negative) ^ frame == 0, seed
 
 
-@pytest.mark.parametrize(("dx", "dz", "alternate_x"), RESOURCE_GEOMETRIES)
-def test_resource_sign_signed_identity(dx, dz, alternate_x):
+@pytest.mark.parametrize(("dx", "dz", "alternate_x", "expected_reference"), RESOURCE_GEOMETRIES)
+def test_resource_sign_signed_identity(dx, dz, alternate_x, expected_reference):
     patch = _resource_patch(dx, dz, alternate_x=alternate_x)
     checks, reference = _resource_sign_checks(patch)
     selected = set(checks)
@@ -2382,11 +2386,11 @@ def test_resource_sign_signed_identity(dx, dz, alternate_x):
     positive = group_contains(generators, all_y)
     negative = group_contains(generators, "-" + all_y[1:])
     assert positive != negative
-    assert reference == int(negative)
+    assert reference == int(negative) == expected_reference
 
 
-@pytest.mark.parametrize(("dx", "dz", "alternate_x"), RESOURCE_GEOMETRIES)
-def test_resource_sign_matches_projected_state(dx, dz, alternate_x):
+@pytest.mark.parametrize(("dx", "dz", "alternate_x", "expected_reference"), RESOURCE_GEOMETRIES)
+def test_resource_sign_matches_projected_state(dx, dz, alternate_x, expected_reference):
     builder, patch, tc = _resource_program(dx, dz, alternate_x=alternate_x)
     allocation = GeneratorProbe(builder.patches, []).allocation("A")
     projection_tick = _first_measurement_tick(tc, set(allocation.x_ancilla_qubits + allocation.z_ancilla_qubits))
@@ -2402,6 +2406,7 @@ def test_resource_sign_matches_projected_state(dx, dz, alternate_x):
         assert r == int(negative), seed
         signs.add(r)
     assert signs == {0, 1}
+    assert readout["resource_sign_reference"] == expected_reference
 
 
 @pytest.mark.parametrize(("dx", "dz"), [(3, 3), (5, 5), (7, 7), (3, 5), (5, 3)])

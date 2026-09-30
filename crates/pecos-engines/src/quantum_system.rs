@@ -149,6 +149,7 @@ impl QuantumSystem {
         if input.as_bytes() == ByteMessage::builder().build().as_bytes() {
             return Ok(ByteMessage::outcomes_builder().build());
         }
+        let mut source_timeline = None;
         let mut prepared = if self
             .noise_model
             .as_any()
@@ -175,7 +176,17 @@ impl QuantumSystem {
                         .collect(),
                 })
                 .collect();
-            model.prepare_batches(source)?;
+            let event_model = self
+                .noise_model
+                .as_any()
+                .downcast_ref::<crate::scheduled_events::ScheduledEventModel>()
+                .expect("checked event model");
+            source_timeline = Some(
+                event_model
+                    .source_timeline
+                    .prepare(&model.config, source)?
+                    .timeline,
+            );
             // Factories, validation and translation are trusted user code. Latch
             // before invoking any of them, including possible unwinding.
             self.frame_poisoned = true;
@@ -216,6 +227,13 @@ impl QuantumSystem {
             outcomes.extend(values.into_iter().map(|v| v as usize));
         }
         self.scheduled_model_mut().commit(prepared);
+        if let Some(timeline) = source_timeline {
+            self.noise_model
+                .as_any_mut()
+                .downcast_mut::<crate::scheduled_events::ScheduledEventModel>()
+                .expect("checked event model")
+                .source_timeline = timeline;
+        }
         self.frame_poisoned = false;
         Ok(ByteMessage::outcomes_builder()
             .add_outcomes(&outcomes)

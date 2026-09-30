@@ -239,7 +239,7 @@ mod tests {
             fn translate(
                 &mut self,
                 b: &ScheduledEventBatch,
-                out: &mut ScheduledGateBuffer,
+                out: &mut ScheduledGateBuffer<'_>,
             ) -> Result<(), PecosError> {
                 for op in &b.operations {
                     out.push(match op {

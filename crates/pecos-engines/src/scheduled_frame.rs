@@ -72,11 +72,9 @@ impl ScheduledIdleZ {
             .with_p_idle_coherent(self.coherent, &rz)
             .build();
         ScheduledIdleModel {
-            ends: vec![0; self.qubits],
+            timeline: ScheduleTimeline::new(self.qubits),
             config: self,
             inner,
-            native_shot: None,
-            next_batch: 0,
         }
     }
 }
@@ -246,15 +244,18 @@ pub(crate) fn decode(input: &ByteMessage) -> Result<Vec<TimedBatch>, PecosError>
 pub(crate) struct ScheduledIdleModel {
     pub(crate) config: ScheduledIdleZ,
     inner: GeneralNoiseModel,
+    timeline: ScheduleTimeline,
+}
+/// Admission history is independent of gate output and noise controller state.
+#[derive(Clone)]
+pub(crate) struct ScheduleTimeline {
     native_shot: Option<u64>,
     next_batch: u64,
     ends: Vec<u64>,
 }
 pub(crate) struct PreparedSchedule {
     pub(crate) messages: Vec<ByteMessage>,
-    native_shot: Option<u64>,
-    next_batch: u64,
-    ends: Vec<u64>,
+    pub(crate) timeline: ScheduleTimeline,
 }
 impl ScheduledIdleModel {
     pub(crate) fn qubits(&self) -> usize {
@@ -267,22 +268,47 @@ impl ScheduledIdleModel {
         &self,
         batches: Vec<TimedBatch>,
     ) -> Result<PreparedSchedule, PecosError> {
+        self.timeline.prepare(&self.config, batches)
+    }
+    pub(crate) fn commit(&mut self, prepared: PreparedSchedule) {
+        self.timeline = prepared.timeline;
+    }
+    pub(crate) fn start_admitted(
+        &mut self,
+        message: ByteMessage,
+    ) -> Result<EngineStage<ByteMessage, ByteMessage>, PecosError> {
+        self.inner.start(message)
+    }
+}
+impl ScheduleTimeline {
+    pub(crate) fn new(qubits: usize) -> Self {
+        Self {
+            native_shot: None,
+            next_batch: 0,
+            ends: vec![0; qubits],
+        }
+    }
+    pub(crate) fn prepare(
+        &self,
+        config: &ScheduledIdleZ,
+        batches: Vec<TimedBatch>,
+    ) -> Result<PreparedSchedule, PecosError> {
         let mut prepared = PreparedSchedule {
             messages: Vec::new(),
-            native_shot: self.native_shot,
-            next_batch: self.next_batch,
-            ends: self.ends.clone(),
+            timeline: self.clone(),
         };
         for batch in batches {
             if prepared
+                .timeline
                 .native_shot
                 .is_some_and(|id| id != batch.runtime_shot_id)
-                || batch.batch_index != prepared.next_batch
+                || batch.batch_index != prepared.timeline.next_batch
             {
                 return Err(error("scheduled identity mismatch"));
             }
-            prepared.native_shot = Some(batch.runtime_shot_id);
-            prepared.next_batch = prepared
+            prepared.timeline.native_shot = Some(batch.runtime_shot_id);
+            prepared.timeline.next_batch = prepared
+                .timeline
                 .next_batch
                 .checked_add(1)
                 .ok_or_else(|| error("batch ordinal overflow"))?;
@@ -290,18 +316,18 @@ impl ScheduledIdleModel {
                 .start_nanos
                 .checked_add(batch.duration_nanos)
                 .ok_or_else(|| error("schedule time overflow"))?;
-            let mut touched = vec![false; self.config.qubits];
+            let mut touched = vec![false; config.qubits];
             let mut builder = ByteMessage::quantum_operations_builder();
             for gate in batch.gates {
                 for q in &gate.qubits {
                     let q = q.0;
-                    if q >= touched.len() || batch.start_nanos < prepared.ends[q] {
+                    if q >= touched.len() || batch.start_nanos < prepared.timeline.ends[q] {
                         return Err(error("scheduled capacity or timing overlap"));
                     }
                     if !touched[q] {
-                        let gap = batch.start_nanos - prepared.ends[q];
+                        let gap = batch.start_nanos - prepared.timeline.ends[q];
                         let seconds = std::time::Duration::from_nanos(gap).as_secs_f64();
-                        self.config.validate_idle(seconds)?;
+                        config.validate_idle(seconds)?;
                         if gap != 0 {
                             builder.idle(seconds, &[q]);
                         }
@@ -312,7 +338,7 @@ impl ScheduledIdleModel {
             }
             for (q, touched) in touched.into_iter().enumerate() {
                 if touched {
-                    prepared.ends[q] = end;
+                    prepared.timeline.ends[q] = end;
                 }
             }
             let msg = builder.build();
@@ -321,17 +347,6 @@ impl ScheduledIdleModel {
             }
         }
         Ok(prepared)
-    }
-    pub(crate) fn commit(&mut self, prepared: PreparedSchedule) {
-        self.native_shot = prepared.native_shot;
-        self.next_batch = prepared.next_batch;
-        self.ends = prepared.ends;
-    }
-    pub(crate) fn start_admitted(
-        &mut self,
-        message: ByteMessage,
-    ) -> Result<EngineStage<ByteMessage, ByteMessage>, PecosError> {
-        self.inner.start(message)
     }
 }
 impl ControlEngine for ScheduledIdleModel {
@@ -355,9 +370,7 @@ impl ControlEngine for ScheduledIdleModel {
     }
     fn reset(&mut self) -> Result<(), PecosError> {
         self.inner.reset()?;
-        self.native_shot = None;
-        self.next_batch = 0;
-        self.ends.fill(0);
+        self.timeline = ScheduleTimeline::new(self.config.qubits);
         Ok(())
     }
 }

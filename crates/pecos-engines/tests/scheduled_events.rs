@@ -76,7 +76,7 @@ impl ScheduledBatchAdapter for Synthetic {
     fn translate(
         &mut self,
         b: &ScheduledEventBatch,
-        out: &mut ScheduledGateBuffer,
+        out: &mut ScheduledGateBuffer<'_>,
     ) -> Result<(), PecosError> {
         for op in &b.operations {
             match op {
@@ -192,7 +192,7 @@ fn unsupported_late_event_rejects_before_translation_and_poison_is_latched() {
         fn translate(
             &mut self,
             _: &ScheduledEventBatch,
-            _: &mut ScheduledGateBuffer,
+            _: &mut ScheduledGateBuffer<'_>,
         ) -> Result<(), PecosError> {
             self.0.fetch_add(1, Ordering::Relaxed);
             Ok(())
@@ -394,7 +394,7 @@ fn invalid_expansion_and_changed_measurements_poison_before_quantum_execution() 
         fn translate(
             &mut self,
             _: &ScheduledEventBatch,
-            out: &mut ScheduledGateBuffer,
+            out: &mut ScheduledGateBuffer<'_>,
         ) -> Result<(), PecosError> {
             if self.0 {
                 for _ in 0..=MAX_BATCH_OPERATIONS {
@@ -444,9 +444,10 @@ fn caught_output_rejection_stays_latched() {
         fn translate(
             &mut self,
             _: &ScheduledEventBatch,
-            out: &mut ScheduledGateBuffer,
+            out: &mut ScheduledGateBuffer<'_>,
         ) -> Result<(), PecosError> {
             assert!(out.push(Gate::x(&[0])).is_err());
+            assert!(out.push(Gate::pz(&[0])).is_err());
             Ok(())
         }
     }
@@ -509,4 +510,90 @@ fn factory_sessions_receive_distinct_worker_context_and_never_share_state() {
     assert_eq!(seen.len(), 2);
     assert_eq!(seen[0].worker, 0);
     assert_eq!(seen[1].worker, 1);
+}
+
+#[test]
+fn removed_gates_still_reserve_source_timing_across_inputs() {
+    struct DropRz(Arc<AtomicUsize>);
+    impl ScheduledBatchAdapter for DropRz {
+        fn validate(&self, _: &ScheduledEventBatch) -> Result<(), PecosError> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+        fn translate(
+            &mut self,
+            b: &ScheduledEventBatch,
+            out: &mut ScheduledGateBuffer<'_>,
+        ) -> Result<(), PecosError> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            for op in &b.operations {
+                match op {
+                    ScheduledEventOp::Gate(g) if g.gate_type != pecos_engines::GateType::RZ => {
+                        out.push(g.as_ref().clone())?;
+                    }
+                    ScheduledEventOp::Custom { .. } => out.push(Gate::pz(&[0]))?,
+                    ScheduledEventOp::Gate(_) => {}
+                }
+            }
+            Ok(())
+        }
+    }
+    let calls = Arc::new(AtomicUsize::new(0));
+    let seen = calls.clone();
+    let mut q = QuantumSystem::new(
+        ScheduledEventIdleZ::new(ScheduledIdleZ::new(1, 0.0, 0.0, 0.0).unwrap(), move |_| {
+            Ok(Box::new(DropRz(seen.clone())))
+        })
+        .into_noise_model(),
+        Box::new(StateVecEngine::new(1)),
+    );
+    let mut first = batch(0, vec![gate(Gate::rz(Angle64::ZERO, &[0]))]);
+    first.duration_nanos = 10;
+    let mut overlap = batch(1, vec![gate(Gate::pz(&[0]))]);
+    overlap.start_nanos = 5;
+    begin(&mut q);
+    assert!(
+        q.process(encode_event_batches(&[first.clone(), overlap.clone()]).unwrap())
+            .is_err()
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    run(&mut q, &[first]);
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    assert!(
+        q.process(encode_event_batches(&[overlap.clone()]).unwrap())
+            .is_err()
+    );
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        2,
+        "overlap must reject before callbacks"
+    );
+    // Rejection must not commit the ordinal. The corrected input can still run.
+    overlap.start_nanos = 10;
+    run(&mut q, &[overlap]);
+    let mut clone = q.clone();
+    for host in [&mut q, &mut clone] {
+        begin(host);
+        let mut restarted = batch(0, vec![gate(Gate::pz(&[0]))]);
+        restarted.start_nanos = 5;
+        run(host, &[restarted]);
+    }
+    // Expanded gates reserve the normalized timeline, not the source timeline.
+    begin(&mut q);
+    let mut generated = batch(0, vec![event(0)]);
+    generated.duration_nanos = 10;
+    run(&mut q, &[generated]);
+    let mut removed = batch(1, vec![gate(Gate::rz(Angle64::ZERO, &[0]))]);
+    removed.start_nanos = 5;
+    run(&mut q, &[removed]);
+    let mut normalized_overlap = batch(2, vec![gate(Gate::pz(&[0]))]);
+    normalized_overlap.start_nanos = 5;
+    assert!(
+        q.process(encode_event_batches(&[normalized_overlap]).unwrap())
+            .is_err()
+    );
+    assert!(
+        q.process(encode_event_batches(&[batch(2, vec![])]).unwrap())
+            .is_err()
+    );
 }

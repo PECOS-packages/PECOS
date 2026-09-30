@@ -6,7 +6,7 @@
 use crate::noise::{IntoNoiseModel, NoiseModel};
 use crate::runtime_frame::{ShotContext, error};
 use crate::scheduled_frame::{
-    self, MAX_SCHEDULE_BYTES, ScheduledIdleModel, ScheduledIdleZ, TimedBatch,
+    self, MAX_SCHEDULE_BYTES, ScheduleTimeline, ScheduledIdleModel, ScheduledIdleZ, TimedBatch,
 };
 use crate::{ByteMessage, ControlEngine, EngineStage, Gate, GateType};
 use pecos_core::{RngManageable, errors::PecosError};
@@ -290,31 +290,43 @@ pub fn decode_event_batches(input: &ByteMessage) -> Result<Vec<ScheduledEventBat
 
 /// Bounded gate output for one original batch; no nested events or measurements
 /// beyond those in the source are permitted by the execution owner.
+/// This writer borrows owner-held state; adapters cannot construct replacements.
+///
+/// ```compile_fail
+/// use pecos_engines::{Gate, scheduled_events::ScheduledGateBuffer};
+/// fn replace(out: &mut ScheduledGateBuffer<'_>) {
+///     assert!(out.push(Gate::x(&[0])).is_err());
+///     *out = ScheduledGateBuffer::default();
+/// }
+/// ```
+pub struct ScheduledGateBuffer<'a> {
+    state: &'a mut GateOutput,
+}
 #[derive(Default)]
-pub struct ScheduledGateBuffer {
+struct GateOutput {
     gates: Vec<Gate>,
     failure: Option<String>,
 }
-impl ScheduledGateBuffer {
+impl ScheduledGateBuffer<'_> {
     /// Append an admitted ordinary gate.
     /// # Errors
     /// Rejects unsupported fields/gates and expansion above the per-batch bound.
     pub fn push(&mut self, gate: Gate) -> Result<(), PecosError> {
-        if let Some(message) = &self.failure {
+        if let Some(message) = &self.state.failure {
             return Err(error(message));
         }
         let admitted = scheduled_frame::fields(&gate).map(|_| ()).and_then(|()| {
-            if self.gates.len() == MAX_BATCH_OPERATIONS {
+            if self.state.gates.len() == MAX_BATCH_OPERATIONS {
                 Err(error("event expansion limit"))
             } else {
                 Ok(())
             }
         });
         if let Err(failure) = admitted {
-            self.failure = Some(failure.to_string());
+            self.state.failure = Some(failure.to_string());
             return Err(failure);
         }
-        self.gates.push(gate);
+        self.state.gates.push(gate);
         Ok(())
     }
 }
@@ -336,7 +348,7 @@ pub trait ScheduledBatchAdapter: Send + Sync {
     fn translate(
         &mut self,
         batch: &ScheduledEventBatch,
-        output: &mut ScheduledGateBuffer,
+        output: &mut ScheduledGateBuffer<'_>,
     ) -> Result<(), PecosError>;
 }
 type Factory =
@@ -365,8 +377,10 @@ impl ScheduledEventIdleZ {
 }
 impl IntoNoiseModel for ScheduledEventIdleZ {
     fn into_noise_model(self) -> Box<dyn NoiseModel> {
+        let inner = self.profile.build_model();
         Box::new(ScheduledEventModel {
-            inner: self.profile.build_model(),
+            source_timeline: ScheduleTimeline::new(inner.qubits()),
+            inner,
             factory: self.factory,
             adapter: None,
         })
@@ -374,6 +388,7 @@ impl IntoNoiseModel for ScheduledEventIdleZ {
 }
 pub(crate) struct ScheduledEventModel {
     pub(crate) inner: ScheduledIdleModel,
+    pub(crate) source_timeline: ScheduleTimeline,
     factory: Factory,
     adapter: Option<Box<dyn ScheduledBatchAdapter>>,
 }
@@ -381,6 +396,7 @@ impl Clone for ScheduledEventModel {
     fn clone(&self) -> Self {
         Self {
             inner: self.inner.clone(),
+            source_timeline: self.source_timeline.clone(),
             factory: self.factory.clone(),
             adapter: None,
         }
@@ -402,8 +418,8 @@ impl ScheduledEventModel {
         let mut translated = Vec::new();
         let mut size = 16usize;
         for batch in batches {
-            let mut output = ScheduledGateBuffer::default();
-            adapter.translate(batch, &mut output)?;
+            let mut output = GateOutput::default();
+            adapter.translate(batch, &mut ScheduledGateBuffer { state: &mut output })?;
             if let Some(message) = output.failure {
                 return Err(error(&message));
             }
@@ -459,7 +475,9 @@ impl ControlEngine for ScheduledEventModel {
     }
     fn reset(&mut self) -> Result<(), PecosError> {
         self.adapter = None;
-        self.inner.reset()
+        self.inner.reset()?;
+        self.source_timeline = ScheduleTimeline::new(self.inner.qubits());
+        Ok(())
     }
 }
 impl NoiseModel for ScheduledEventModel {

@@ -24,7 +24,9 @@ change state. `translate` receives one original batch and a `ScheduledGateBuffer
 Emit supported ordinary gates through its checked `push` method, including all source
 measurements in their original order, kind and target. Events can update classical
 adapter state or expand to gates; unknown events must return an error. A rejected
-buffer append stays latched even if the adapter catches its error.
+buffer append stays latched even if the adapter catches its error. The buffer is a
+borrowed writer over owner-held output and failure state; adapters cannot construct
+a replacement or clear that state.
 
 The handler is trusted Rust code. Signature/type checks do not prove that its physics
 are correct, that it avoids interior mutation during validation, or that its factory
@@ -46,7 +48,10 @@ Do not use this API for effects that depend on results within the current input.
    Custom-only batches remain in ordinal/identity accounting. An event that emits no
    gates does not create a noise-model invocation or an extra idle site.
 
-State persists across inputs in a shot. Reset discards the adapter, and the next
+Source and normalized timing histories persist separately across inputs and commit
+only after successful execution. Removing a gate does not erase its source interval;
+adding a gate affects the normalized timeline without rewriting source history.
+Reset clears both histories and discards the adapter, and the next
 input creates a fresh session. Callback errors and caught panics keep the execution
 owner poisoned until a successful whole-host reset. Malformed wire input rejects
 before callbacks or quantum/noise mutation. Measurement results retain the source

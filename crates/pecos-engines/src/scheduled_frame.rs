@@ -85,6 +85,8 @@ pub(crate) fn fields(g: &Gate) -> Result<(u64, u64, u64, f64, f64), PecosError> 
         GateType::RZ => (2, 1, 1),
         GateType::RZZ => (3, 2, 1),
         GateType::RXYXY2Q => (4, 2, 2),
+        // PZ is the only admitted preparation. If adding another (such as PX),
+        // revisit the idle-omission rule in ScheduleTimeline::prepare.
         GateType::PZ => (5, 1, 0),
         GateType::MZ => (6, 1, 0),
         GateType::MeasureLeaked => (7, 1, 0),

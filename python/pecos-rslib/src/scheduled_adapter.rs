@@ -159,21 +159,26 @@ pub struct PyScheduledEventIdleZ {
     pub(crate) inner: ScheduledEventIdleZ,
 }
 /// Factory receives (run, worker, shot), returns a fresh validate/translate object.
+/// Set `idle_before_preparation=False` to omit idle noise when preparation is the
+/// first normalized operation on a qubit in a batch. Timing admission is unchanged.
+/// Defaults to true; changing the policy can change seeded noise trajectories.
 #[pyfunction]
-#[pyo3(signature = (qubits, adapter_factory, *, linear = 0.0, sine = 0.0, coherent = 0.0))]
+#[pyo3(signature = (qubits, adapter_factory, *, linear = 0.0, sine = 0.0, coherent = 0.0, idle_before_preparation = true))]
 pub fn scheduled_event_idle_z(
     qubits: usize,
     adapter_factory: Py<PyAny>,
     linear: f64,
     sine: f64,
     coherent: f64,
+    idle_before_preparation: bool,
     py: Python<'_>,
 ) -> PyResult<PyScheduledEventIdleZ> {
     if !adapter_factory.bind(py).is_callable() {
         return Err(PyTypeError::new_err("adapter_factory must be callable"));
     }
     let profile = ScheduledIdleZ::new(qubits, linear, sine, coherent)
-        .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        .map_err(|e| PyValueError::new_err(e.to_string()))?
+        .with_idle_before_preparation(idle_before_preparation);
     Ok(PyScheduledEventIdleZ {
         inner: ScheduledEventIdleZ::new(profile, move |context| {
             let _scope = CallbackScope::enter();

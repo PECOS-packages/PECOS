@@ -103,3 +103,50 @@ def test_public_native_route_with_zero_timing(runtime_name: str, scheduled_suppo
         .to_dict()
     )
     assert result["measurement_0"] == [0] * 3
+
+
+def test_preparation_policy_through_both_python_routes(tmp_path, scheduled_support):
+    """A discarded pre-reset noise draw still affects subsequent seeded noise."""
+    import pecos_rslib as pr
+
+    library, _ = scheduled_support.build_runtime(tmp_path, 1_000_000_000, initial_nanos=1_000_000_000)
+
+    class PassThrough:
+        def validate(self, batch):
+            assert all(not isinstance(op, tuple) for op in batch.operations)
+
+        def translate(self, batch):
+            return batch.operations
+
+    # Allocation alone need not emit preparation in a compatible runtime.
+    program = scheduled_support.ramsey.replace(
+        "declare i64 @___qalloc()",
+        "declare i64 @___qalloc()\ndeclare void @___reset(i64)",
+    ).replace("%q = call i64 @___qalloc()", "%q = call i64 @___qalloc()\n  call void @___reset(i64 %q)")
+    results = {}
+    for events in (False, True):
+        for include in (None, True, False):
+            # Select the event route explicitly; it must forward the same policy
+            # to its normalized schedule as the direct v3 route.
+            builder = simulation(library, program)
+            if events:
+                from selene_simple_runtime_plugin import SimpleRuntimePlugin
+
+                classical = (
+                    pr.qis_engine()
+                    .selene_runtime_plugin(str(library), SimpleRuntimePlugin().get_init_args())
+                    .scheduled_event_batches()
+                    .interface(pr.qis_helios_interface())
+                )
+                builder.classical(classical)
+            options = {} if include is None else {"idle_before_preparation": include}
+            profile = (
+                pr.scheduled_event_idle_z(1, lambda _: PassThrough(), linear=0.2, **options)
+                if events
+                else pr.scheduled_idle_z(1, linear=0.2, **options)
+            )
+            results[events, include] = builder.noise(profile).run(64).to_dict()["measurement_0"]
+        assert results[events, None] == results[events, True]
+        assert results[events, False] != results[events, True]
+    for include in (None, True, False):
+        assert results[False, include] == results[True, include]

@@ -136,15 +136,53 @@ def test_model_replaces_fully_leaked_batch_with_nothing() -> None:
     assert result == []
 
 
-def test_narrowing_accepts_absent_metadata() -> None:
-    """QOp defaults metadata to None; narrowing must not choke on it."""
-    op = QOp(name="H", args=[0, 1, 2, 3])
-    assert op.metadata is None
+class FalseyDict(dict):
+    """A valid metadata dict that is falsey, to catch truthiness-based normalisation."""
+
+    def __bool__(self) -> bool:
+        """Report falsey while still holding entries."""
+        return False
+
+
+@pytest.mark.parametrize(
+    ("metadata", "expected"),
+    [
+        pytest.param(None, {}, id="absent"),
+        pytest.param({}, {}, id="empty"),
+        pytest.param({"tag": 1}, {"tag": 1}, id="populated"),
+        # A falsey dict keeps its entries: `op.metadata or {}` would erase them.
+        pytest.param(FalseyDict({"angle": 0.5}), {"angle": 0.5}, id="falsey-dict"),
+    ],
+)
+def test_narrowing_normalises_metadata(metadata: dict | None, expected: dict) -> None:
+    """Narrowing normalises only absent metadata, and never discards dict contents."""
+    op = QOp(name="RXY1Q", args=[0, 1, 2, 3], metadata=metadata, angles=(0.25, 0.0), sim_name="X")
     result = noise_sq_depolarizing_leakage(op, 0.0, {"X": 1.0}, FakeMachine(pre=(0,)))
 
     (narrowed,) = result
+    # Pin the executable identity too: asserting only args and metadata accepts a
+    # helper that rewrites the gate on this path.
+    assert (narrowed.name, narrowed.sim_name, narrowed.angles) == ("RXY1Q", "X", (0.25, 0.0))
     assert sorted(narrowed.args) == [1, 2, 3]
-    assert narrowed.metadata == {}
+    assert narrowed.metadata == expected
+    assert narrowed.metadata is not op.metadata
+    # The input operation is left as it was.
+    assert op.args == [0, 1, 2, 3]
+    assert op.metadata == (metadata if metadata is not None else None)
+
+
+@pytest.mark.parametrize("metadata", [False, 0])
+def test_narrowing_does_not_widen_to_falsey_non_dict_metadata(metadata: object) -> None:
+    """A falsey non-dict still fails rather than being treated as absent metadata.
+
+    `False` and `0` raised before absent metadata was normalised, and must keep doing
+    so: normalising on truthiness rather than on `None` would silently accept them.
+    Empty iterables such as `[]` and `""` are accepted by `dict()` and so were already
+    accepted before this change; validating the metadata type belongs to #925.
+    """
+    op = QOp(name="H", args=[0, 1, 2, 3], metadata=metadata)
+    with pytest.raises(TypeError):
+        noise_sq_depolarizing_leakage(op, 0.0, {"X": 1.0}, FakeMachine(pre=(0,)))
 
 
 def test_narrowed_gate_keeps_executable_fields() -> None:

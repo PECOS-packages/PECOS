@@ -35,6 +35,11 @@ attributes #0 = { "EntryPoint" }
 @pytest.fixture(params=[0, 1_000_000_000])
 def timed_runtime(request: pytest.FixtureRequest, tmp_path: Path) -> tuple[Path, int]:
     """Add explicitly synthetic timing to the public runtime's native callbacks."""
+    return build_timed_runtime(tmp_path, request.param)
+
+
+def build_timed_runtime(tmp_path: Path, gap: int, *, events: bool = False) -> tuple[Path, int]:
+    """Compile the public timing proxy, optionally emitting an invented event."""
     from selene_simple_runtime_plugin import SimpleRuntimePlugin
 
     if platform.system() == "Windows":
@@ -46,7 +51,10 @@ def timed_runtime(request: pytest.FixtureRequest, tmp_path: Path) -> tuple[Path,
     revision = source.rsplit("#", 1)[1]
     cargo_home = Path(os.environ.get("CARGO_HOME", Path.home() / ".cargo"))
     includes = list((cargo_home / "git/checkouts").glob(f"selene-*/{revision[:7]}/selene-core/c/include"))
-    assert len(includes) == 1, f"Expected exactly one pinned Selene header directory, got {includes}"
+    assert includes, "Pinned Selene headers were not found"
+    # SSH and HTTPS checkouts of the same pinned revision may both be cached.
+    assert len({(p / "selene/runtime.h").read_bytes() for p in includes}) == 1
+    includes.sort()
     library = tmp_path / ("timing_proxy.dylib" if platform.system() == "Darwin" else "timing_proxy.so")
     args = [
         shutil.which("cc"),
@@ -56,15 +64,17 @@ def timed_runtime(request: pytest.FixtureRequest, tmp_path: Path) -> tuple[Path,
         "-I",
         str(includes[0]),
         "-DBASE_LIBRARY=" + json.dumps(str(SimpleRuntimePlugin().library_file)),
-        f"-DGAP_NANOS={request.param}ULL",
+        f"-DGAP_NANOS={gap}ULL",
         str(Path(__file__).with_name("fixtures") / "runtime_timing_proxy.c"),
         "-o",
         str(library),
     ]
+    if events:
+        args.append("-DSYNTHETIC_EVENT")
     if platform.system() != "Darwin":
         args.append("-ldl")
     subprocess.run(args, check=True, capture_output=True, text=True)
-    return library, request.param
+    return library, gap
 
 
 def simulation(library: Path, program: str = RAMSEY):

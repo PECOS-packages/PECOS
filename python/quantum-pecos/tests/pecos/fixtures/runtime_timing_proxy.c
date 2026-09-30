@@ -21,6 +21,12 @@ static void rxy(SeleneRuntimeGetOperationInstance instance, uint64_t q, double t
     (void)instance;
     ++rxy_count;
     forwarding.interface.rxy_fn(forwarding.instance, q, theta, phi);
+#ifdef SYNTHETIC_EVENT
+    if (rxy_count == 1) {
+        const uint8_t payload[] = {1};
+        forwarding.interface.custom_fn(forwarding.instance, 4242, payload, sizeof(payload));
+    }
+#endif
 }
 static SeleneErrno next(RuntimeInstance instance, RuntimeGetOperationHandle ops) {
     forwarding = ops;

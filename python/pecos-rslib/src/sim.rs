@@ -871,6 +871,7 @@ impl PySimBuilder {
                 let engine_builder = builder_lock
                     .take()
                     .ok_or_else(|| PyRuntimeError::new_err("Builder already consumed"))?;
+                drop(builder_lock);
                 let engine_builder = if let Some(ref trace_dir) = builder.operation_trace_dir {
                     engine_builder.trace_operations_to(trace_dir)
                 } else {
@@ -969,7 +970,11 @@ impl PySimBuilder {
                 // Apply noise builder if present
                 if let Some(ref noise_py) = builder.noise_builder {
                     sim_builder = Python::attach(|py| -> PyResult<_> {
-                        if let Ok(scheduled) =
+                        if let Ok(events) =
+                            noise_py.extract::<crate::scheduled_adapter::PyScheduledEventIdleZ>(py)
+                        {
+                            Ok(sim_builder.noise(events.inner))
+                        } else if let Ok(scheduled) =
                             noise_py.extract::<crate::engine_builders::PyScheduledIdleZ>(py)
                         {
                             Ok(sim_builder.noise(scheduled.inner))
@@ -994,7 +999,7 @@ impl PySimBuilder {
                     })?;
                 }
 
-                match sim_builder.run(shots) {
+                match Python::attach(|py| py.detach(move || sim_builder.run(shots))) {
                     Ok(shot_vec) => Ok(PyShotVec::new(shot_vec)),
                     Err(e) => Err(PyRuntimeError::new_err(format!("Simulation failed: {e}"))),
                 }
@@ -1402,7 +1407,12 @@ impl PySimBuilder {
                     // Apply noise builder if present
                     if let Some(ref noise_py) = builder.noise_builder {
                         sim_builder = Python::attach(|py| -> PyResult<_> {
-                            if let Ok(scheduled) =
+                            if let Ok(events) =
+                                noise_py
+                                    .extract::<crate::scheduled_adapter::PyScheduledEventIdleZ>(py)
+                            {
+                                Ok(sim_builder.noise(events.inner))
+                            } else if let Ok(scheduled) =
                                 noise_py.extract::<crate::engine_builders::PyScheduledIdleZ>(py)
                             {
                                 Ok(sim_builder.noise(scheduled.inner))

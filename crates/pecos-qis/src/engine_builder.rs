@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 pub struct QisEngineBuilder {
     runtime: Option<Box<dyn crate::runtime::QisRuntime>>,
     scheduled_batches: bool,
+    scheduled_events: bool,
     interface: Option<OperationCollector>,
     interface_builder: Option<Box<dyn crate::program::QisInterfaceBuilder>>,
     program_source: Option<String>, // Store original program source for loading
@@ -24,6 +25,7 @@ impl Clone for QisEngineBuilder {
     fn clone(&self) -> Self {
         Self {
             scheduled_batches: self.scheduled_batches,
+            scheduled_events: self.scheduled_events,
             runtime: self.runtime.as_ref().map(|r| dyn_clone::clone_box(&**r)),
             interface: self.interface.clone(),
             // Clone the interface builder if present
@@ -47,6 +49,7 @@ impl QisEngineBuilder {
         Self {
             runtime: None,
             scheduled_batches: false,
+            scheduled_events: false,
             interface: None,
             interface_builder: None,
             program_source: None,
@@ -294,6 +297,16 @@ impl QisEngineBuilder {
     #[must_use]
     pub fn scheduled_batches(mut self, enabled: bool) -> Self {
         self.scheduled_batches = enabled;
+        self.scheduled_events = false;
+        self
+    }
+
+    /// Preserve opaque events in mandatory v4 batches. Requires an explicitly
+    /// configured `ScheduledEventIdleZ` consumer; existing v3 consumers reject it.
+    #[must_use]
+    pub fn scheduled_event_batches(mut self, enabled: bool) -> Self {
+        self.scheduled_batches = enabled;
+        self.scheduled_events = enabled;
         self
     }
 
@@ -354,6 +367,7 @@ impl ClassicalControlEngineBuilder for QisEngineBuilder {
 
             let mut engine = QisEngine::new(dynamic_interface, runtime);
             engine.scheduled_batches = self.scheduled_batches;
+            engine.scheduled_events = self.scheduled_events;
             if let Some(trace_dir) = self.operation_trace_dir {
                 engine.set_operation_trace_dir(trace_dir);
             }

@@ -324,6 +324,7 @@ pub struct QisEngine {
     /// Scratch builder reused when materializing command batches.
     command_builder: ByteMessageBuilder,
     pub(crate) scheduled_batches: bool,
+    pub(crate) scheduled_events: bool,
 }
 
 impl QisEngine {
@@ -408,6 +409,7 @@ impl QisEngine {
             trace_chunk_index: 0,
             command_builder: ByteMessageBuilder::new(),
             scheduled_batches: false,
+            scheduled_events: false,
         }
     }
 
@@ -502,6 +504,7 @@ impl QisEngine {
             trace_chunk_index: 0,
             command_builder: ByteMessageBuilder::new(),
             scheduled_batches: false,
+            scheduled_events: false,
         }
     }
 
@@ -808,7 +811,8 @@ impl QisEngine {
                 .map_err(|e| PecosError::Generic(format!("scheduled extraction failed: {e}")))?;
             let shot = u64::try_from(self.trace_shot_index)
                 .map_err(|_| PecosError::Generic("shot index exceeds u64".into()))?;
-            let (commands, ids) = crate::scheduled_transport::encode(batches, shot)?;
+            let (commands, ids) =
+                crate::scheduled_transport::encode_mode(batches, shot, self.scheduled_events)?;
             self.measurement_mapping = ids;
             return Ok(LoweredCommandBatch {
                 commands,
@@ -1025,6 +1029,7 @@ impl Clone for QisEngine {
             trace_chunk_index: 0,
             command_builder: ByteMessageBuilder::new(),
             scheduled_batches: self.scheduled_batches,
+            scheduled_events: self.scheduled_events,
         }
     }
 }
@@ -1496,7 +1501,8 @@ impl QisEngine {
             }
             let shot = u64::try_from(self.trace_shot_index)
                 .map_err(|_| PecosError::Generic("shot index exceeds u64".into()))?;
-            let (commands, ids) = crate::scheduled_transport::encode(batches, shot)?;
+            let (commands, ids) =
+                crate::scheduled_transport::encode_mode(batches, shot, self.scheduled_events)?;
             self.measurement_mapping = ids;
             Ok(Some(commands))
         })();
@@ -3193,6 +3199,7 @@ mod scheduled_completion_tests {
         state: ClassicalState,
         stage: usize,
         fail_tail: bool,
+        with_event: bool,
         ended: bool,
     }
     impl QisRuntime for FeedbackTail {
@@ -3202,7 +3209,10 @@ mod scheduled_completion_tests {
         fn execute_until_quantum(&mut self) -> RuntimeResult<Option<Vec<QuantumOp>>> {
             Ok(None)
         }
-        fn provide_measurements(&mut self, _: BTreeMap<usize, bool>) -> RuntimeResult<()> {
+        fn provide_measurements(&mut self, values: BTreeMap<usize, bool>) -> RuntimeResult<()> {
+            if self.with_event {
+                assert_eq!(values.get(&0), Some(&true));
+            }
             self.stage = 2;
             Ok(())
         }
@@ -3232,7 +3242,7 @@ mod scheduled_completion_tests {
                     "drain after shot completion".into(),
                 ));
             }
-            let (ops, measurements, index) = match self.stage {
+            let (mut ops, mut measurements, index) = match self.stage {
                 0 => {
                     self.stage = 1;
                     (
@@ -3267,6 +3277,16 @@ mod scheduled_completion_tests {
                 }
                 _ => return Ok(vec![]),
             };
+            if self.with_event && index == 0 {
+                ops.insert(
+                    0,
+                    Op::Custom {
+                        tag: 901,
+                        data: vec![1],
+                    },
+                );
+                measurements[0].operation_index = 1;
+            }
             Ok(vec![ScheduledBatch {
                 runtime_shot_id: 0,
                 batch_index: index,
@@ -3323,6 +3343,97 @@ mod scheduled_completion_tests {
             EngineStage::Complete(_)
         ));
         // A repeated completion poll must not touch an already-ended runtime.
+        assert!(matches!(
+            engine
+                .continue_processing(ByteMessage::outcomes_builder().build())
+                .unwrap(),
+            EngineStage::Complete(_)
+        ));
+    }
+
+    #[test]
+    fn event_aware_terminal_batches_return_feedback_and_finish_once() {
+        use pecos_core::Angle64;
+        use pecos_engines::noise::IntoNoiseModel;
+        use pecos_engines::runtime_frame::ShotContext;
+        use pecos_engines::scheduled_events::{
+            ScheduledBatchAdapter, ScheduledEventBatch, ScheduledEventIdleZ, ScheduledEventOp,
+            ScheduledGateBuffer,
+        };
+        use pecos_engines::scheduled_frame::ScheduledIdleZ;
+        use pecos_engines::{Gate, StateVecEngine, quantum_system::QuantumSystem};
+        struct Flip;
+        impl ScheduledBatchAdapter for Flip {
+            fn validate(&self, b: &ScheduledEventBatch) -> Result<(), PecosError> {
+                for op in &b.operations {
+                    if let ScheduledEventOp::Custom { tag, payload } = op
+                        && (*tag != 901 || payload.as_slice() != [1])
+                    {
+                        return Err(PecosError::Input("unsupported synthetic event".into()));
+                    }
+                }
+                Ok(())
+            }
+            fn translate(
+                &mut self,
+                b: &ScheduledEventBatch,
+                out: &mut ScheduledGateBuffer,
+            ) -> Result<(), PecosError> {
+                for op in &b.operations {
+                    out.push(match op {
+                        ScheduledEventOp::Gate(g) => g.as_ref().clone(),
+                        ScheduledEventOp::Custom { .. } => Gate::rxy1q(
+                            Angle64::from_radians(std::f64::consts::PI),
+                            Angle64::from_radians(0.0),
+                            &[0],
+                        ),
+                    })?;
+                }
+                Ok(())
+            }
+        }
+        let mut engine = QisEngine::with_runtime(Box::new(FeedbackTail {
+            with_event: true,
+            ..FeedbackTail::default()
+        }));
+        engine.scheduled_batches = true;
+        engine.scheduled_events = true;
+        engine.dynamic_state = Some(DynamicExecutionState {
+            sync_handle: None,
+            execution_complete: true,
+            terminal_error: None,
+            finalized: false,
+        });
+        let mut quantum = QuantumSystem::new(
+            ScheduledEventIdleZ::new(ScheduledIdleZ::new(1, 0.0, 0.0, 0.0).unwrap(), |_| {
+                Ok(Box::new(Flip))
+            })
+            .into_noise_model(),
+            Box::new(StateVecEngine::new(1)),
+        );
+        quantum
+            .begin_shot(ShotContext {
+                run: 1,
+                worker: 0,
+                shot: 0,
+            })
+            .unwrap();
+        let EngineStage::NeedsProcessing(initial) = engine
+            .continue_processing(ByteMessage::outcomes_builder().build())
+            .unwrap()
+        else {
+            panic!("expected initial batch")
+        };
+        let reply = quantum.process(initial).unwrap();
+        assert_eq!(reply.outcomes().unwrap(), vec![1]);
+        let EngineStage::NeedsProcessing(tail) = engine.continue_processing(reply).unwrap() else {
+            panic!("expected feedback tail")
+        };
+        let reply = quantum.process(tail).unwrap();
+        assert!(matches!(
+            engine.continue_processing(reply).unwrap(),
+            EngineStage::Complete(_)
+        ));
         assert!(matches!(
             engine
                 .continue_processing(ByteMessage::outcomes_builder().build())

@@ -92,18 +92,48 @@ impl QuantumSystem {
         Ok(())
     }
 
+    fn scheduled_model(&self) -> Option<&crate::scheduled_frame::ScheduledIdleModel> {
+        if let Some(model) = self
+            .noise_model
+            .as_any()
+            .downcast_ref::<crate::scheduled_events::ScheduledEventModel>()
+        {
+            Some(&model.inner)
+        } else {
+            self.noise_model
+                .as_any()
+                .downcast_ref::<crate::scheduled_frame::ScheduledIdleModel>()
+        }
+    }
+    fn scheduled_model_mut(&mut self) -> &mut crate::scheduled_frame::ScheduledIdleModel {
+        if self
+            .noise_model
+            .as_any()
+            .is::<crate::scheduled_events::ScheduledEventModel>()
+        {
+            &mut self
+                .noise_model
+                .as_any_mut()
+                .downcast_mut::<crate::scheduled_events::ScheduledEventModel>()
+                .expect("checked event model")
+                .inner
+        } else {
+            self.noise_model
+                .as_any_mut()
+                .downcast_mut::<crate::scheduled_frame::ScheduledIdleModel>()
+                .expect("checked scheduled model")
+        }
+    }
+
     fn process_scheduled(&mut self, input: &ByteMessage) -> Result<ByteMessage, PecosError> {
-        use crate::scheduled_frame::ScheduledIdleModel;
         if self.frame_poisoned || self.host_blocked || self.shot_context.is_none() {
             return Err(runtime_frame::processing_error(
                 "scheduled shot requires successful reset and host context",
             ));
         }
         let model = self
-            .noise_model
-            .as_any()
-            .downcast_ref::<ScheduledIdleModel>()
-            .ok_or_else(|| runtime_frame::error("scheduled idle capability required"))?;
+            .scheduled_model()
+            .ok_or_else(|| runtime_frame::error("scheduled capability required"))?;
         let sim = self
             .quantum_engine
             .as_any()
@@ -119,7 +149,48 @@ impl QuantumSystem {
         if input.as_bytes() == ByteMessage::builder().build().as_bytes() {
             return Ok(ByteMessage::outcomes_builder().build());
         }
-        let mut prepared = model.prepare(input)?;
+        let mut prepared = if self
+            .noise_model
+            .as_any()
+            .is::<crate::scheduled_events::ScheduledEventModel>()
+        {
+            let batches = crate::scheduled_events::decode_event_batches(input)?;
+            // Validate source timing, identities and capacity before any user callback.
+            let source: Vec<_> = batches
+                .iter()
+                .map(|b| crate::scheduled_frame::TimedBatch {
+                    runtime_shot_id: b.runtime_shot_id,
+                    batch_index: b.batch_index,
+                    start_nanos: b.start_nanos,
+                    duration_nanos: b.duration_nanos,
+                    gates: b
+                        .operations
+                        .iter()
+                        .filter_map(|o| match o {
+                            crate::scheduled_events::ScheduledEventOp::Gate(g) => {
+                                Some(g.as_ref().clone())
+                            }
+                            crate::scheduled_events::ScheduledEventOp::Custom { .. } => None,
+                        })
+                        .collect(),
+                })
+                .collect();
+            model.prepare_batches(source)?;
+            // Factories, validation and translation are trusted user code. Latch
+            // before invoking any of them, including possible unwinding.
+            self.frame_poisoned = true;
+            let normalized = self
+                .noise_model
+                .as_any_mut()
+                .downcast_mut::<crate::scheduled_events::ScheduledEventModel>()
+                .expect("checked event model")
+                .normalize(&batches, self.shot_context.expect("checked context"))?;
+            self.scheduled_model()
+                .expect("checked model")
+                .prepare_batches(normalized)?
+        } else {
+            model.prepare(input)?
+        };
         self.frame_poisoned = true;
         let mut outcomes = Vec::new();
         for message in std::mem::take(&mut prepared.messages) {
@@ -134,12 +205,7 @@ impl QuantumSystem {
                 })
                 .map(|g| g.qubits.len())
                 .sum::<usize>();
-            let stage = self
-                .noise_model
-                .as_any_mut()
-                .downcast_mut::<ScheduledIdleModel>()
-                .expect("checked scheduled capability")
-                .start_admitted(message)?;
+            let stage = self.scheduled_model_mut().start_admitted(message)?;
             let reply = self.drive_stage(stage)?;
             let values = reply.outcomes()?;
             if values.len() != expected {
@@ -149,11 +215,7 @@ impl QuantumSystem {
             }
             outcomes.extend(values.into_iter().map(|v| v as usize));
         }
-        self.noise_model
-            .as_any_mut()
-            .downcast_mut::<ScheduledIdleModel>()
-            .expect("checked scheduled capability")
-            .commit(prepared);
+        self.scheduled_model_mut().commit(prepared);
         self.frame_poisoned = false;
         Ok(ByteMessage::outcomes_builder()
             .add_outcomes(&outcomes)
@@ -167,11 +229,7 @@ impl QuantumSystem {
     }
 
     pub(crate) fn uses_runtime_frames(&self) -> bool {
-        self.noise_model.as_any().is::<RuntimeGeneralNoise>()
-            || self
-                .noise_model
-                .as_any()
-                .is::<crate::scheduled_frame::ScheduledIdleModel>()
+        self.noise_model.as_any().is::<RuntimeGeneralNoise>() || self.scheduled_model().is_some()
     }
     pub(crate) fn block_host(&mut self) {
         self.host_blocked = true;
@@ -277,12 +335,8 @@ impl Engine for QuantumSystem {
     type Output = ByteMessage;
 
     fn process(&mut self, input: Self::Input) -> Result<Self::Output, PecosError> {
-        let scheduled = input.as_bytes().get(4) == Some(&3);
-        if self
-            .noise_model
-            .as_any()
-            .is::<crate::scheduled_frame::ScheduledIdleModel>()
-        {
+        let scheduled = matches!(input.as_bytes().get(4), Some(3 | 4));
+        if self.scheduled_model().is_some() {
             return self.process_scheduled(&input);
         }
         if scheduled {
@@ -410,11 +464,7 @@ impl Clone for QuantumSystem {
             quantum_engine: dyn_clone::clone_box(&*self.quantum_engine),
             shot_context: None,
             frame_poisoned: self.frame_poisoned
-                || (self.shot_context.is_some()
-                    && self
-                        .noise_model
-                        .as_any()
-                        .is::<crate::scheduled_frame::ScheduledIdleModel>()),
+                || (self.shot_context.is_some() && self.scheduled_model().is_some()),
             host_blocked: self.host_blocked,
         }
     }

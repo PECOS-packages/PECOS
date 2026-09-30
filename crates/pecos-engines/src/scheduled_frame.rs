@@ -59,6 +59,11 @@ impl ScheduledIdleZ {
 }
 impl IntoNoiseModel for ScheduledIdleZ {
     fn into_noise_model(self) -> Box<dyn NoiseModel> {
+        Box::new(self.build_model())
+    }
+}
+impl ScheduledIdleZ {
+    pub(crate) fn build_model(self) -> ScheduledIdleModel {
         let z = BTreeMap::from([("Z".to_owned(), 1.0)]);
         let rz = BTreeMap::from([("RZ".to_owned(), 1.0)]);
         let inner = GeneralNoiseModelBuilder::new()
@@ -66,16 +71,16 @@ impl IntoNoiseModel for ScheduledIdleZ {
             .with_p_idle_sin_squared(self.sine, &z)
             .with_p_idle_coherent(self.coherent, &rz)
             .build();
-        Box::new(ScheduledIdleModel {
+        ScheduledIdleModel {
             ends: vec![0; self.qubits],
             config: self,
             inner,
             native_shot: None,
             next_batch: 0,
-        })
+        }
     }
 }
-fn fields(g: &Gate) -> Result<(u64, u64, u64, f64, f64), PecosError> {
+pub(crate) fn fields(g: &Gate) -> Result<(u64, u64, u64, f64, f64), PecosError> {
     g.validate().map_err(|s| error(&s))?;
     let (code, n, angles) = match g.gate_type {
         GateType::RXY1Q => (1, 1, 2),
@@ -164,7 +169,7 @@ fn word(bytes: &[u8], offset: usize) -> u64 {
             .expect("bounded record"),
     )
 }
-fn decode(input: &ByteMessage) -> Result<Vec<TimedBatch>, PecosError> {
+pub(crate) fn decode(input: &ByteMessage) -> Result<Vec<TimedBatch>, PecosError> {
     let bytes = input.as_bytes();
     if bytes.len() < 16
         || bytes.len() > MAX_SCHEDULE_BYTES
@@ -256,7 +261,12 @@ impl ScheduledIdleModel {
         self.config.qubits
     }
     pub(crate) fn prepare(&self, input: &ByteMessage) -> Result<PreparedSchedule, PecosError> {
-        let batches = decode(input)?;
+        self.prepare_batches(decode(input)?)
+    }
+    pub(crate) fn prepare_batches(
+        &self,
+        batches: Vec<TimedBatch>,
+    ) -> Result<PreparedSchedule, PecosError> {
         let mut prepared = PreparedSchedule {
             messages: Vec::new(),
             native_shot: self.native_shot,

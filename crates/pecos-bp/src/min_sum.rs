@@ -54,12 +54,20 @@ impl BpGraph {
 
     /// Build a Tanner graph from a sparse detector error model.
     ///
+    /// Both CSR orientations are built in `O(checks + mechanisms + edges)`
+    /// while retaining check-major message numbering.
+    ///
     /// # Errors
     ///
     /// Returns [`DecoderError::InvalidConfiguration`] if a probability is not
     /// in `[0, 1]`, or if a mechanism contains an out-of-range or duplicate
-    /// detector index.
+    /// detector index. Check, mechanism, and edge counts must fit in `u32`.
     pub fn from_sparse_dem(dem: &SparseDem) -> Result<Self, DecoderError> {
+        checked_graph_index(dem.num_detectors, "check count")?;
+        checked_graph_index(dem.mechanisms.len(), "mechanism count")?;
+        let mut total_edges = 0usize;
+        let mut last_seen = vec![usize::MAX; dem.num_detectors];
+        let mut check_degrees = vec![0usize; dem.num_detectors];
         for (mechanism, (probability, detectors, _)) in dem.mechanisms.iter().enumerate() {
             if !probability.is_finite() || !(0.0..=1.0).contains(probability) {
                 return Err(DecoderError::InvalidConfiguration(format!(
@@ -67,32 +75,35 @@ impl BpGraph {
                 )));
             }
 
-            let mut seen = std::collections::BTreeSet::new();
             for &detector in detectors {
-                if detector as usize >= dem.num_detectors {
+                let check = detector as usize;
+                if check >= dem.num_detectors {
                     return Err(DecoderError::InvalidConfiguration(format!(
                         "mechanism {mechanism} detector index {detector} is out of range 0..{}",
                         dem.num_detectors
                     )));
                 }
-                if !seen.insert(detector) {
+                if last_seen[check] == mechanism {
                     return Err(DecoderError::InvalidConfiguration(format!(
                         "mechanism {mechanism} repeats detector index {detector}"
                     )));
                 }
+                last_seen[check] = mechanism;
+                check_degrees[check] = check_degrees[check].checked_add(1).ok_or_else(|| {
+                    DecoderError::InvalidConfiguration(
+                        "check degree exceeds the platform index space".into(),
+                    )
+                })?;
             }
+            total_edges = total_edges.checked_add(detectors.len()).ok_or_else(|| {
+                DecoderError::InvalidConfiguration(
+                    "edge count exceeds the platform index space".into(),
+                )
+            })?;
         }
+        checked_graph_index(total_edges, "edge count")?;
 
-        let probabilities: Vec<f64> = dem
-            .mechanisms
-            .iter()
-            .map(|(probability, _, _)| *probability)
-            .collect();
-        Ok(Self::from_connections(
-            dem.num_detectors,
-            &probabilities,
-            |check, mechanism| dem.mechanisms[mechanism].1.contains(&index(check)),
-        ))
+        Self::from_sparse_connections(dem, total_edges, &check_degrees)
     }
 
     /// Number of parity checks in the Tanner graph.
@@ -174,6 +185,70 @@ impl BpGraph {
         }
     }
 
+    fn from_sparse_connections(
+        dem: &SparseDem,
+        total_edges: usize,
+        check_degrees: &[usize],
+    ) -> Result<Self, DecoderError> {
+        let num_checks = dem.num_detectors;
+        let num_vars = dem.mechanisms.len();
+        let prior_llr = dem
+            .mechanisms
+            .iter()
+            .map(|(probability, _, _)| prior_llr(*probability))
+            .collect();
+
+        let variable_degrees: Vec<usize> = dem
+            .mechanisms
+            .iter()
+            .map(|(_, detectors, _)| detectors.len())
+            .collect();
+        let check_offset = csr_offsets(check_degrees, "check CSR offset")?;
+        let var_offset = csr_offsets(&variable_degrees, "variable CSR offset")?;
+
+        let mut check_data = vec![(0, 0); total_edges];
+        let mut check_write: Vec<usize> = check_offset[..num_checks]
+            .iter()
+            .map(|&offset| offset as usize)
+            .collect();
+        for (mechanism, (_, detectors, _)) in dem.mechanisms.iter().enumerate() {
+            let mechanism_index = checked_graph_index(mechanism, "mechanism index")?;
+            for &check in detectors {
+                let position = check_write[check as usize];
+                let message_index = checked_graph_index(position, "message index")?;
+                check_data[position] = (mechanism_index, message_index);
+                check_write[check as usize] += 1;
+            }
+        }
+
+        let mut var_data = vec![(0, 0); total_edges];
+        let mut var_write: Vec<usize> = var_offset[..num_vars]
+            .iter()
+            .map(|&offset| offset as usize)
+            .collect();
+        for check in 0..num_checks {
+            let check_index = checked_graph_index(check, "check index")?;
+            let start = check_offset[check] as usize;
+            let end = check_offset[check + 1] as usize;
+            for &(mechanism, message_index) in &check_data[start..end] {
+                let position = var_write[mechanism as usize];
+                var_data[position] = (check_index, message_index);
+                var_write[mechanism as usize] += 1;
+            }
+        }
+
+        Ok(Self {
+            num_checks,
+            num_vars,
+            prior_llr,
+            check_data,
+            check_offset,
+            var_data,
+            var_offset,
+            total_edges,
+        })
+    }
+
     #[inline]
     pub(crate) fn check_entries(&self, check: usize) -> &[(u32, u32)] {
         let start = self.check_offset[check] as usize;
@@ -196,6 +271,28 @@ impl BpGraph {
 /// size, so the narrowing fails loudly instead of wrapping.
 fn index(value: usize) -> u32 {
     u32::try_from(value).expect("Tanner graph index exceeds the u32 index space")
+}
+
+fn checked_graph_index(value: usize, kind: &str) -> Result<u32, DecoderError> {
+    u32::try_from(value).map_err(|_| {
+        DecoderError::InvalidConfiguration(format!("{kind} {value} exceeds the u32 index space"))
+    })
+}
+
+fn csr_offsets(degrees: &[usize], kind: &str) -> Result<Vec<u32>, DecoderError> {
+    let capacity = degrees.len().checked_add(1).ok_or_else(|| {
+        DecoderError::InvalidConfiguration(format!("{kind} count exceeds the platform index space"))
+    })?;
+    let mut offsets = Vec::with_capacity(capacity);
+    let mut offset = 0usize;
+    for &degree in degrees {
+        offsets.push(checked_graph_index(offset, kind)?);
+        offset = offset.checked_add(degree).ok_or_else(|| {
+            DecoderError::InvalidConfiguration(format!("{kind} exceeds the platform index space"))
+        })?;
+    }
+    offsets.push(checked_graph_index(offset, kind)?);
+    Ok(offsets)
 }
 
 /// Reusable work buffers for [`min_sum_bp_into`].
@@ -446,7 +543,46 @@ fn prior_llr(probability: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::{BpGraph, BpScratch, LLR_SATURATION, min_sum_bp_into, prior_llr};
-    use pecos_decoder_core::dem::DemCheckMatrix;
+    use pecos_decoder_core::dem::{DemCheckMatrix, SparseDem};
+    use pecos_random::PecosRng;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn sparse_csr_builder_matches_dense_connection_ordering() {
+        let num_checks = 13;
+        let mut rng = PecosRng::seed_from_u64(0x5eed);
+        let mechanisms = (0_u32..29)
+            .map(|mechanism| {
+                let detectors: Vec<u32> = (0..num_checks)
+                    .filter(|_| rng.next_u64() % 5 < 2)
+                    .map(|check| u32::try_from(check).unwrap())
+                    .collect();
+                (0.01 + f64::from(mechanism) / 1_000.0, detectors, Vec::new())
+            })
+            .collect::<Vec<_>>();
+        let probabilities = mechanisms
+            .iter()
+            .map(|(probability, _, _)| *probability)
+            .collect::<Vec<_>>();
+        let dense = BpGraph::from_connections(num_checks, &probabilities, |check, mechanism| {
+            mechanisms[mechanism]
+                .1
+                .contains(&u32::try_from(check).unwrap())
+        });
+        let sparse = BpGraph::from_sparse_dem(&SparseDem {
+            mechanisms,
+            detector_coords: BTreeMap::new(),
+            num_detectors: num_checks,
+            num_observables: 0,
+        })
+        .unwrap();
+
+        assert_eq!(sparse.check_data, dense.check_data);
+        assert_eq!(sparse.check_offset, dense.check_offset);
+        assert_eq!(sparse.var_data, dense.var_data);
+        assert_eq!(sparse.var_offset, dense.var_offset);
+        assert_eq!(sparse.total_edges, dense.total_edges);
+    }
 
     /// A subnormal probability overflows `(1 - p) / p` to infinity before the
     /// logarithm; the prior must saturate at the same +-30 the boundary

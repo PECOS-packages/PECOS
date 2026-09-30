@@ -93,7 +93,7 @@ regex = "1"
 libm = "0.2"
 nalgebra = "0.35"
 num = "0.4"
-# Dev-only differential oracle for special-function tests (see design/jeffreys-pecos-num.md)
+# Dev-only differential oracle for special-function tests
 puruspe = "0.4"
 num-complex = "0.4"
 num-traits = "0.2"

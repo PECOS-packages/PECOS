@@ -19,8 +19,7 @@
 //! currently accepts only uniform-depolarizing `NoiseConfig { p1, p2,
 //! p_meas, p_prep }` (4 scalar probabilities). A proper integration requires
 //! generalizing `NoiseConfig` to accept a `PauliLindbladModel` per gate
-//! type; that change is out of scope for the `pecos-lindblad` crate and is
-//! tracked in `design/lindblad_sim_skeleton.md`.
+//! type; that change is out of scope for the `pecos-lindblad` crate.
 //!
 //! What this test proves *today*:
 //! - Lindbladian + duration -> PauliLindbladModel works end-to-end.

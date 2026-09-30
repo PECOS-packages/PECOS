@@ -103,3 +103,49 @@ def test_public_native_route_with_zero_timing(runtime_name: str, scheduled_suppo
         .to_dict()
     )
     assert result["measurement_0"] == [0] * 3
+
+
+def test_preparation_gap_does_not_consume_noise_rng_through_both_routes(tmp_path, scheduled_support):
+    """Moving preparation later preserves outcomes and subsequent seeded noise."""
+    import pecos_rslib as pr
+
+    class PassThrough:
+        def validate(self, batch):
+            assert all(not isinstance(op, tuple) for op in batch.operations)
+
+        def translate(self, batch):
+            return batch.operations
+
+    # Allocation alone need not emit preparation in a compatible runtime.
+    program = scheduled_support.ramsey.replace(
+        "declare i64 @___qalloc()",
+        "declare i64 @___qalloc()\ndeclare void @___reset(i64)",
+    ).replace("%q = call i64 @___qalloc()", "%q = call i64 @___qalloc()\n  call void @___reset(i64 %q)")
+    assert "declare void @___reset(i64)" in program
+    assert "call void @___reset(i64 %q)" in program
+    results = {}
+    for initial_nanos in (0, 1_000_000_000):
+        directory = tmp_path / str(initial_nanos)
+        directory.mkdir()
+        library, _ = scheduled_support.build_runtime(directory, 1_000_000_000, initial_nanos=initial_nanos)
+        for events in (False, True):
+            builder = simulation(library, program)
+            if events:
+                from selene_simple_runtime_plugin import SimpleRuntimePlugin
+
+                classical = (
+                    pr.qis_engine()
+                    .selene_runtime_plugin(str(library), SimpleRuntimePlugin().get_init_args())
+                    .scheduled_event_batches()
+                    .interface(pr.qis_helios_interface())
+                )
+                builder.classical(classical)
+            profile = (
+                pr.scheduled_event_idle_z(1, lambda _: PassThrough(), linear=0.2)
+                if events
+                else pr.scheduled_idle_z(1, linear=0.2)
+            )
+            results[events, initial_nanos] = builder.noise(profile).run(64).to_dict()["measurement_0"]
+    assert len(set(results[False, 0])) == 2  # The retained Ramsey gap still samples noise.
+    for (events, initial_nanos), values in results.items():
+        assert values == results[False, 0], f"Seeded outcomes differ for events={events}, initial_nanos={initial_nanos}"

@@ -85,6 +85,8 @@ pub(crate) fn fields(g: &Gate) -> Result<(u64, u64, u64, f64, f64), PecosError> 
         GateType::RZ => (2, 1, 1),
         GateType::RZZ => (3, 2, 1),
         GateType::RXYXY2Q => (4, 2, 2),
+        // PZ is the only admitted preparation. If adding another (such as PX),
+        // revisit the idle-omission rule in ScheduleTimeline::prepare.
         GateType::PZ => (5, 1, 0),
         GateType::MZ => (6, 1, 0),
         GateType::MeasureLeaked => (7, 1, 0),
@@ -331,7 +333,9 @@ impl ScheduleTimeline {
                         let gap = batch.start_nanos - prepared.timeline.ends[q];
                         let seconds = std::time::Duration::from_nanos(gap).as_secs_f64();
                         config.validate_idle(seconds)?;
-                        if gap != 0 {
+                        // This profile has only local Z/RZ idle channels. PZ
+                        // erases their effect, so do not sample a discarded channel.
+                        if gap != 0 && gate.gate_type != GateType::PZ {
                             builder.idle(seconds, &[q]);
                         }
                         touched[q] = true;
@@ -395,5 +399,66 @@ impl RngManageable for ScheduledIdleModel {
     }
     fn set_rng(&mut self, rng: PecosRng) {
         self.inner.set_rng(rng);
+    }
+}
+
+#[cfg(test)]
+mod timing_tests {
+    use super::*;
+
+    fn batch(index: u64, start: u64, duration: u64, gates: Vec<Gate>) -> TimedBatch {
+        TimedBatch {
+            runtime_shot_id: 9,
+            batch_index: index,
+            start_nanos: start * 1_000_000_000,
+            duration_nanos: duration * 1_000_000_000,
+            gates,
+        }
+    }
+    fn config() -> ScheduledIdleZ {
+        ScheduledIdleZ::new(2, 0.2, 0.3, 0.4).unwrap()
+    }
+    fn ops(prepared: &PreparedSchedule, index: usize) -> Vec<Gate> {
+        prepared.messages[index].quantum_ops().unwrap()
+    }
+    fn idle_qubits_and_seconds(gates: &[Gate]) -> Vec<(usize, f64)> {
+        gates
+            .iter()
+            .filter(|g| g.gate_type == GateType::Idle)
+            .map(|g| (g.qubits[0].0, g.params[0]))
+            .collect()
+    }
+    #[test]
+    fn preparation_omission_is_per_qubit_and_preserves_busy_duration() {
+        let prepared = ScheduleTimeline::new(2)
+            .prepare(
+                &config(),
+                vec![
+                    batch(0, 2, 3, vec![Gate::pz(&[0]), Gate::rz(Angle64::ZERO, &[1])]),
+                    batch(1, 7, 1, vec![Gate::mz(&[0]), Gate::mz(&[1])]),
+                ],
+            )
+            .unwrap();
+        assert_eq!(idle_qubits_and_seconds(&ops(&prepared, 0)), vec![(1, 2.0)]);
+        assert_eq!(
+            idle_qubits_and_seconds(&ops(&prepared, 1)),
+            vec![(0, 2.0), (1, 2.0)]
+        );
+    }
+    #[test]
+    fn only_first_operation_on_each_qubit_controls_preparation_omission() {
+        for prep_first in [false, true] {
+            let mut gates = vec![Gate::pz(&[0]), Gate::rz(Angle64::ZERO, &[0])];
+            if !prep_first {
+                gates.reverse();
+            }
+            let prepared = ScheduleTimeline::new(2)
+                .prepare(&config(), vec![batch(0, 2, 1, gates)])
+                .unwrap();
+            assert_eq!(
+                idle_qubits_and_seconds(&ops(&prepared, 0)),
+                if prep_first { vec![] } else { vec![(0, 2.0)] }
+            );
+        }
     }
 }

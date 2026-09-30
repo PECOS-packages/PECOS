@@ -74,7 +74,11 @@ bitwise. Normalization does not add another angle serialization round trip.
 
 Pair `qis_engine().scheduled_event_batches()` with
 `scheduled_event_idle_z(qubits, adapter_factory, *, linear=0, sine=0, coherent=0)`
-from `pecos_rslib`. Use StateVec and the explicit physical capacity as for v3.
+from `pecos_rslib`. Omission of idle noise before preparation applies to the
+**normalized** gates emitted by the adapter, using the same per-qubit rules as
+[scheduled idle-Z simulation](scheduled-idle-simulation.md#timing-and-noise-contract).
+Source timing admission remains enforced even when a preparation gap is omitted.
+Use StateVec and the explicit physical capacity as for v3.
 The normal `pecos.sim(program).classical(...).noise(...).run(shots)` route and
 QIS `.build()` simulations support this configuration, including HUGR/Guppy
 lowering to QIS. Other stacks and operation tracing do not support this factory.

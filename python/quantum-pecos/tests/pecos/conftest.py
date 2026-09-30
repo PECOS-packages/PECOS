@@ -32,7 +32,13 @@ attributes #0 = { "EntryPoint" }
 """
 
 
-def build_timed_runtime(tmp_path: Path, gap: int, *, events: bool = False) -> tuple[Path, int]:
+def build_timed_runtime(
+    tmp_path: Path,
+    gap: int,
+    *,
+    events: bool = False,
+    initial_nanos: int = 0,
+) -> tuple[Path, int]:
     """Compile the public timing proxy, optionally emitting an invented event."""
     from selene_simple_runtime_plugin import SimpleRuntimePlugin
 
@@ -59,6 +65,7 @@ def build_timed_runtime(tmp_path: Path, gap: int, *, events: bool = False) -> tu
         str(includes[0]),
         "-DBASE_LIBRARY=" + json.dumps(str(SimpleRuntimePlugin().library_file)),
         f"-DGAP_NANOS={gap}ULL",
+        f"-DINITIAL_NANOS={initial_nanos}ULL",
         str(Path(__file__).with_name("fixtures") / "runtime_timing_proxy.c"),
         "-o",
         str(library),

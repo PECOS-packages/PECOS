@@ -21,6 +21,10 @@ use crate::engine_builders::{
 };
 use crate::wasm_foreign_object_bindings::PyWasmForeignObject;
 
+const UNRECOGNIZED_NOISE_BUILDER: &str = "Unrecognized noise builder type; expected \
+    depolarizing_noise(), biased_depolarizing_noise(), general_noise(), or scheduled_idle_z(); \
+    scheduled_event_idle_z() requires QIS/HUGR engines without operation tracing";
+
 fn unwrap_engine_builder_proxy(py: Python, engine_builder: Py<PyAny>) -> PyResult<Py<PyAny>> {
     match engine_builder
         .bind(py)
@@ -815,10 +819,7 @@ impl PySimBuilder {
                     {
                         sim_builder.noise(biased.inner.clone())
                     } else {
-                        return Err(PyTypeError::new_err(
-                            "Unrecognized noise builder type; expected depolarizing_noise(), \
-                                 biased_depolarizing_noise(), general_noise(), or scheduled_idle_z(); scheduled_event_idle_z() requires QIS/HUGR engines without operation tracing",
-                        ));
+                        return Err(PyTypeError::new_err(UNRECOGNIZED_NOISE_BUILDER));
                     };
                 }
 
@@ -1018,10 +1019,7 @@ impl PySimBuilder {
                         {
                             Ok(sim_builder.noise(biased.inner.clone()))
                         } else {
-                            Err(PyTypeError::new_err(
-                                "Unrecognized noise builder type; expected depolarizing_noise(), \
-                                 biased_depolarizing_noise(), general_noise(), or scheduled_idle_z(); scheduled_event_idle_z() requires QIS/HUGR engines without operation tracing",
-                            ))
+                            Err(PyTypeError::new_err(UNRECOGNIZED_NOISE_BUILDER))
                         }
                     })?;
                 }
@@ -1246,10 +1244,7 @@ impl PySimBuilder {
                             {
                                 Ok(sim_builder.noise(biased.inner.clone()))
                             } else {
-                                Err(PyTypeError::new_err(
-                                    "Unrecognized noise builder type; expected depolarizing_noise(), \
-                                 biased_depolarizing_noise(), general_noise(), or scheduled_idle_z(); scheduled_event_idle_z() requires QIS/HUGR engines without operation tracing",
-                                ))
+                                Err(PyTypeError::new_err(UNRECOGNIZED_NOISE_BUILDER))
                             }
                         })?;
                     }
@@ -1456,10 +1451,7 @@ impl PySimBuilder {
                             {
                                 Ok(sim_builder.noise(biased.inner.clone()))
                             } else {
-                                Err(PyTypeError::new_err(
-                                    "Unrecognized noise builder type; expected depolarizing_noise(), \
-                                 biased_depolarizing_noise(), general_noise(), or scheduled_idle_z(); scheduled_event_idle_z() requires QIS/HUGR engines without operation tracing",
-                                ))
+                                Err(PyTypeError::new_err(UNRECOGNIZED_NOISE_BUILDER))
                             }
                         })?;
                     }
@@ -1672,10 +1664,7 @@ fn apply_noise_to_facade(
         } else if let Ok(biased) = noise_py.extract::<PyBiasedDepolarizingNoiseModelBuilder>(py) {
             Ok(facade.noise(biased.inner.clone()))
         } else {
-            Err(PyTypeError::new_err(
-                "Unrecognized noise builder type; expected depolarizing_noise(), \
-                 biased_depolarizing_noise(), general_noise(), or scheduled_idle_z(); scheduled_event_idle_z() requires QIS/HUGR engines without operation tracing",
-            ))
+            Err(PyTypeError::new_err(UNRECOGNIZED_NOISE_BUILDER))
         }
     })
 }

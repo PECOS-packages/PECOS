@@ -180,7 +180,16 @@ simulation = support['simulation']
 PhaseAdapter = support['PhaseAdapter']
 runtime = (Path({str(library)!r}), {program!r})
 """
-    subprocess.run([sys.executable, "-c", prefix + body], check=True, capture_output=True, text=True, timeout=40)
+    completed = subprocess.run(
+        [sys.executable, "-c", prefix + body],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=40,
+    )
+    assert (
+        completed.returncode == 0
+    ), f"Isolated test exited with {completed.returncode}\nstdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
 
 
 @pytest.mark.parametrize("method", ["run", "run_with_workers", "reset"])
@@ -316,26 +325,41 @@ def test_failed_run_does_not_reuse_adapter_state(event_runtime):
     assert len(instances) == 3
 
 
-def test_actual_guppy_program(event_runtime):
+@pytest.mark.parametrize(("apply_phase", "expected"), [(False, 0), (True, 1)])
+def test_actual_guppy_program(event_runtime, apply_phase, expected):
     from guppylang import guppy
-    from guppylang.std.builtins import result
-    from guppylang.std.quantum import measure, qubit, x
+    from guppylang.std.angles import angle
+    from guppylang.std.builtins import owned, result
+    from guppylang.std.quantum import measure, qubit, ry
+
+    @guppy.declare
+    def pecos_qis_runtime_barrier_qubit_hugr(q: qubit @ owned) -> qubit: ...
 
     @guppy
-    def prepare_one() -> None:
+    def ramsey() -> None:
         q = qubit()
-        x(q)
+        ry(q, angle(0.5))
+        # Preserve both pulses across compiler optimization.
+        q = pecos_qis_runtime_barrier_qubit_hugr(q)
+        ry(q, angle(-0.5))
         result("outcome", measure(q).read())
 
     contexts = []
 
+    class GuppyPhaseAdapter(PhaseAdapter):
+        def translate(self, batch):
+            gates = super().translate(batch)
+            if not apply_phase:
+                gates = [gate for op, gate in zip(batch.operations, gates, strict=True) if not isinstance(op, tuple)]
+            return gates
+
     def factory(context):
         contexts.append(context)
-        return PhaseAdapter()
+        return GuppyPhaseAdapter()
 
-    values = simulation(event_runtime, factory, prepare_one).run(4).to_dict()
+    values = simulation(event_runtime, factory, ramsey).run(4).to_dict()
     assert len(contexts) == len(set(contexts)) == 4
-    assert values["outcome"] == [1] * 4
+    assert values["outcome"] == [expected] * 4
 
 
 def test_batch_snapshot_is_read_only_and_lists_are_copies(event_runtime):

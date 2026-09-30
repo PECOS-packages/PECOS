@@ -103,7 +103,9 @@ engine mutex with the GIL released. Calling any of these methods from a schedule
 adapter callback rejects before waiting, including calls to a different built
 simulation. A poisoned mutex is reported separately from callback reentry. Factory isolation,
 determinism, validation purity, callback termination and retained-memory bounds
-remain trusted responsibilities. Capturing and sharing mutable state across shot
+remain trusted responsibilities. The reentry guard is thread-local: callbacks must
+not start another thread that calls into the active simulation and then wait for
+that thread, which would still deadlock. Capturing and sharing mutable state across shot
 objects violates the contract even if the signatures are correct.
 
 Python callbacks incur GIL and data-copy overhead. This API establishes a usable

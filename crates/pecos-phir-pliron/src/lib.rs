@@ -126,7 +126,7 @@ impl From<Angle64Attr> for Angle64 {
     }
 }
 
-// ===================== measurement-SSA registry (measurement-id-system.md, Phase 1) =====================
+// ===================== measurement-SSA registry (Phase 1) =====================
 // A `qec.measure` op produces an SSA `Value` -- that value IS the measurement's identity. Per the
 // design note, all per-measurement metadata (qubit, basis, export label) lives in a side table
 // keyed by that Value, NOT bolted onto the op as attributes: ops stay lightweight, and the hot

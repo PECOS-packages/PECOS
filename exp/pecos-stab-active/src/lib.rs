@@ -38,7 +38,12 @@ use pecos_stab_tn::stab_mps::coordinate_tableau::{
     self, CoordinateDecomposition, CoordinateGate, MeasurementCase,
 };
 use pecos_stab_tn::stab_mps::measure::EXPECTATION_ENDPOINT_TOLERANCE;
-use pecos_stab_tn::stab_mps::pauli_decomp::PauliKindForDecomp;
+pub use pecos_stab_tn::stab_mps::pauli_decomp::PauliKindForDecomp;
+
+pub mod heisenberg;
+pub use heisenberg::{
+    AffineSign, CompileError, HeisenbergOp, HeisenbergProgram, ShotResult, VirtualPauli,
+};
 
 /// A normalized dense vector on an ordered subset of stabilizer coordinates.
 ///
@@ -123,44 +128,34 @@ impl StabActive {
         }
     }
 
-    fn clifford_rotation(&mut self, pauli: &[(usize, PauliKindForDecomp)], turns: usize) {
-        let target = QubitId(pauli[pauli.len() - 1].0);
-        for &(q, kind) in pauli {
-            if kind == PauliKindForDecomp::Y {
-                self.tableau.szdg(&[QubitId(q)]);
-            }
-            if kind != PauliKindForDecomp::Z {
-                self.tableau.h(&[QubitId(q)]);
-            }
-        }
-        for &(q, _) in &pauli[..pauli.len() - 1] {
-            self.tableau.cx(&[(QubitId(q), target)]);
-        }
-        for _ in 0..turns {
-            self.tableau.sz(&[target]);
-        }
-        for &(q, _) in pauli[..pauli.len() - 1].iter().rev() {
-            self.tableau.cx(&[(QubitId(q), target)]);
-        }
-        for &(q, kind) in pauli.iter().rev() {
-            if kind != PauliKindForDecomp::Z {
-                self.tableau.h(&[QubitId(q)]);
-            }
-            if kind == PauliKindForDecomp::Y {
-                self.tableau.sz(&[QubitId(q)]);
-            }
-        }
+    fn pauli_rotation(&mut self, theta: Angle64, pauli: &[(usize, PauliKindForDecomp)]) {
+        self.rotate_pauli(theta, pauli, false);
     }
 
-    fn pauli_rotation(&mut self, theta: Angle64, pauli: &[(usize, PauliKindForDecomp)]) {
-        let cliffords = [
-            Angle64::ZERO,
-            Angle64::QUARTER_TURN,
-            Angle64::HALF_TURN,
-            Angle64::THREE_QUARTERS_TURN,
-        ];
-        if let Some(turns) = cliffords.iter().position(|&angle| theta == angle) {
-            self.clifford_rotation(pauli, turns);
+    /// Apply `exp(-i (-1)^negative theta P / 2)` for a Hermitian Pauli tensor P.
+    /// Empty support denotes identity; its physically irrelevant global phase is omitted.
+    /// Exact quarter-turn angles update only the signed Clifford tableau.
+    ///
+    /// # Panics
+    /// Panics for repeated or invalid qubits, or if promotion exceeds the width limit.
+    pub fn rotate_pauli(
+        &mut self,
+        theta: Angle64,
+        pauli: &[(usize, PauliKindForDecomp)],
+        negative: bool,
+    ) {
+        for (i, &(q, _)) in pauli.iter().enumerate() {
+            assert!(
+                q < self.num_qubits() && !pauli[..i].iter().any(|&(r, _)| r == q),
+                "Pauli factors must name distinct valid qubits"
+            );
+        }
+        if pauli.is_empty() {
+            return;
+        }
+        let theta = if negative { -theta } else { theta };
+        if let Some(turns) = clifford_turns(theta) {
+            rotate_tableau(&mut self.tableau, pauli, turns);
             return;
         }
         let mut parts = self.parts(pauli);
@@ -271,8 +266,29 @@ impl StabActive {
     }
 
     fn measure(&mut self, qubit: usize, forced: Option<bool>) -> MeasurementResult {
-        let pauli = [(qubit, PauliKindForDecomp::Z)];
-        let parts = self.parts(&pauli);
+        self.measure_pauli_inner(&[(qubit, PauliKindForDecomp::Z)], false, forced)
+    }
+
+    /// Measure `(-1)^negative P`, returning its raw signed outcome (one means -1).
+    /// Empty support denotes the signed identity and has a deterministic outcome.
+    ///
+    /// # Panics
+    /// Panics for repeated or invalid qubits.
+    pub fn measure_pauli(
+        &mut self,
+        pauli: &[(usize, PauliKindForDecomp)],
+        negative: bool,
+    ) -> MeasurementResult {
+        self.measure_pauli_inner(pauli, negative, None)
+    }
+
+    fn measure_pauli_inner(
+        &mut self,
+        pauli: &[(usize, PauliKindForDecomp)],
+        negative: bool,
+        forced: Option<bool>,
+    ) -> MeasurementResult {
+        let parts = coordinate_tableau::decompose(&self.tableau, &self.active, pauli, negative);
         let probability = self.probability_one(&parts);
         let is_deterministic = probability <= 0.0 || probability >= 1.0;
         let outcome = if is_deterministic {
@@ -285,8 +301,8 @@ impl StabActive {
                 coordinate_tableau::measure_random(
                     &mut self.tableau,
                     &self.active,
-                    &pauli,
-                    false,
+                    pauli,
+                    negative,
                     outcome,
                 );
             }
@@ -295,8 +311,8 @@ impl StabActive {
                 let basis = coordinate_tableau::measurement_basis(
                     &mut self.tableau,
                     &self.active,
-                    &pauli,
-                    false,
+                    pauli,
+                    negative,
                 );
                 for gate in basis.gates {
                     self.coordinate_gate(gate);
@@ -322,6 +338,46 @@ impl StabActive {
         MeasurementResult {
             outcome,
             is_deterministic,
+        }
+    }
+}
+
+fn clifford_turns(theta: Angle64) -> Option<usize> {
+    [
+        Angle64::ZERO,
+        Angle64::QUARTER_TURN,
+        Angle64::HALF_TURN,
+        Angle64::THREE_QUARTERS_TURN,
+    ]
+    .iter()
+    .position(|&angle| theta == angle)
+}
+
+fn rotate_tableau(tableau: &mut SparseStabY, pauli: &[(usize, PauliKindForDecomp)], turns: usize) {
+    let target = QubitId(pauli[pauli.len() - 1].0);
+    for &(q, kind) in pauli {
+        if kind == PauliKindForDecomp::Y {
+            tableau.szdg(&[QubitId(q)]);
+        }
+        if kind != PauliKindForDecomp::Z {
+            tableau.h(&[QubitId(q)]);
+        }
+    }
+    for &(q, _) in &pauli[..pauli.len() - 1] {
+        tableau.cx(&[(QubitId(q), target)]);
+    }
+    for _ in 0..turns {
+        tableau.sz(&[target]);
+    }
+    for &(q, _) in pauli[..pauli.len() - 1].iter().rev() {
+        tableau.cx(&[(QubitId(q), target)]);
+    }
+    for &(q, kind) in pauli.iter().rev() {
+        if kind != PauliKindForDecomp::Z {
+            tableau.h(&[QubitId(q)]);
+        }
+        if kind == PauliKindForDecomp::Y {
+            tableau.sz(&[QubitId(q)]);
         }
     }
 }
@@ -432,3 +488,6 @@ impl RngManageable for StabActive {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod compatibility_tests;

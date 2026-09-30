@@ -16,8 +16,6 @@ errors in quantum error correction protocols.
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 # specific language governing permissions and limitations under the License.
 
-from copy import copy
-
 import pecos as pc
 from pecos.reps.pyphir.op_types import QOp
 
@@ -38,11 +36,17 @@ def noise_meas_bitflip(op: QOp, p: float) -> list[QOp] | None:
     if error_indices:
         bitflips = [op.args[idx] for idx in error_indices]
 
-        # Copy rather than rebuilding from a hardcoded name, as the leakage sibling does:
-        # rebuilding rewrote "measure Z" and "Measure +Z" to "Measure" and discarded
-        # sim_name, which made this model disagree with GenericErrorModel.
-        noisy_op = copy(op)
-        noisy_op.metadata = {} if op.metadata is None else dict(op.metadata)
+        # The name stays hardcoded here, unlike the leakage sibling which preserves it.
+        # Preserving it emits "Measure +Z", which four simulators reject or silently skip
+        # because only sparsestab and pauliprop expand the shared alias table -- see the
+        # alias-normalisation issue. Metadata is copied so the bitflips write below does
+        # not mutate the input, testing None explicitly rather than falsiness.
+        noisy_op = QOp(
+            name="Measure",
+            args=list(op.args),
+            returns=list(op.returns),
+            metadata={} if op.metadata is None else dict(op.metadata),
+        )
         noisy_op.metadata["bitflips"] = bitflips
         return [noisy_op]
 

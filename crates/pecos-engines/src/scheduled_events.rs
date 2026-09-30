@@ -7,7 +7,7 @@ use crate::noise::{IntoNoiseModel, NoiseModel};
 use crate::runtime_frame::{ShotContext, error, processing_error};
 use crate::scheduled_frame::{
     self, MAX_SCHEDULE_BYTES, PreparedSchedule, ScheduleTimeline, ScheduledIdleModel,
-    ScheduledIdleZ, TimedBatch,
+    ScheduledIdleNoise, TimedBatch,
 };
 use crate::{ByteMessage, ControlEngine, EngineStage, Gate, GateType};
 use pecos_core::{RngManageable, errors::PecosError};
@@ -360,16 +360,18 @@ pub trait ScheduledBatchAdapter: Send + Sync {
 }
 type Factory =
     Arc<dyn Fn(ShotContext) -> Result<Box<dyn ScheduledBatchAdapter>, PecosError> + Send + Sync>;
-/// Explicit opt-in to mandatory v4 with the same bounded idle-Z physics as v3.
+/// Backward-compatible name for the checked scheduled event profile.
+pub type ScheduledEventIdleZ = ScheduledEventIdleNoise;
+/// Explicit opt-in to mandatory v4 with the same bounded local idle physics as v3.
 #[derive(Clone)]
-pub struct ScheduledEventIdleZ {
-    profile: ScheduledIdleZ,
+pub struct ScheduledEventIdleNoise {
+    profile: ScheduledIdleNoise,
     factory: Factory,
 }
-impl ScheduledEventIdleZ {
+impl ScheduledEventIdleNoise {
     /// The factory must return an independent session; captured configuration may
     /// be shared, but mutable adapter state must not be shared between shots.
-    pub fn new<F>(profile: ScheduledIdleZ, factory: F) -> Self
+    pub fn new<F>(profile: impl Into<ScheduledIdleNoise>, factory: F) -> Self
     where
         F: Fn(ShotContext) -> Result<Box<dyn ScheduledBatchAdapter>, PecosError>
             + Send
@@ -377,12 +379,12 @@ impl ScheduledEventIdleZ {
             + 'static,
     {
         Self {
-            profile,
+            profile: profile.into(),
             factory: Arc::new(factory),
         }
     }
 }
-impl IntoNoiseModel for ScheduledEventIdleZ {
+impl IntoNoiseModel for ScheduledEventIdleNoise {
     fn into_noise_model(self) -> Box<dyn NoiseModel> {
         let inner = self.profile.build_model();
         Box::new(ScheduledEventModel {
@@ -580,11 +582,11 @@ mod tests {
         // real 64 MiB arithmetic boundary is covered separately without a huge
         // expanded Gate allocation. Public admission always uses the fixed limit.
         for (limit, accepted) in [(176, true), (175, false)] {
-            let mut noise =
-                ScheduledEventIdleZ::new(ScheduledIdleZ::new(1, 0.0, 0.0, 0.0).unwrap(), |_| {
-                    Ok(Box::new(Expand))
-                })
-                .into_noise_model();
+            let mut noise = ScheduledEventIdleZ::new(
+                crate::scheduled_frame::ScheduledIdleZ::new(1, 0.0, 0.0, 0.0).unwrap(),
+                |_| Ok(Box::new(Expand)),
+            )
+            .into_noise_model();
             let model = noise
                 .as_any_mut()
                 .downcast_mut::<ScheduledEventModel>()

@@ -1,4 +1,4 @@
-//! Mandatory v3 batches for the checked idle-Z profile. Not a custom-event format.
+//! Mandatory v3 batches for checked local idle-noise profiles. Not a custom-event format.
 use crate::noise::{GeneralNoiseModel, GeneralNoiseModelBuilder, IntoNoiseModel, NoiseModel};
 use crate::runtime_frame::{error, processing_error};
 use crate::{ByteMessage, ControlEngine, EngineStage, Gate, GateType};
@@ -22,60 +22,154 @@ pub struct TimedBatch {
     /// Operations in native emission order.
     pub gates: Vec<Gate>,
 }
-/// Checked, immutable profile; gate/readout/leakage/crosstalk noise is disabled.
+/// Checked Z-only convenience profile; other noise channels are disabled.
 #[derive(Clone, Debug)]
-pub struct ScheduledIdleZ {
-    qubits: usize,
-    linear: f64,
-    sine: f64,
-    coherent: f64,
-}
+pub struct ScheduledIdleZ(ScheduledIdleNoise);
 impl ScheduledIdleZ {
     /// Rates are inverse seconds (linear) or radians/second (sine and coherent).
     /// # Errors
     /// Rejects capacity outside 1..=16 or nonfinite/negative rates.
     pub fn new(qubits: usize, linear: f64, sine: f64, coherent: f64) -> Result<Self, PecosError> {
-        let config = Self {
-            qubits,
-            linear,
-            sine,
-            coherent,
-        };
+        let z = BTreeMap::from([("Z".to_owned(), 1.0)]);
+        let rz = BTreeMap::from([("RZ".to_owned(), 1.0)]);
+        Ok(Self(
+            ScheduledIdleNoise::new(qubits)?
+                .with_linear(linear, z.clone())?
+                .with_sine(sine, z)?
+                .with_coherent(coherent, rz)?,
+        ))
+    }
+}
+impl From<ScheduledIdleZ> for ScheduledIdleNoise {
+    fn from(profile: ScheduledIdleZ) -> Self {
+        profile.0
+    }
+}
+impl IntoNoiseModel for ScheduledIdleZ {
+    fn into_noise_model(self) -> Box<dyn NoiseModel> {
+        self.0.into_noise_model()
+    }
+}
+/// Checked local idle channels with ideal gates, preparation and readout.
+/// Uses the existing general-noise sampling and leakage semantics. Capacity is
+/// fixed at 1..=16 and the scheduled host requires a state-vector engine.
+#[derive(Clone, Debug)]
+pub struct ScheduledIdleNoise {
+    qubits: usize,
+    linear: f64,
+    sine: f64,
+    coherent: f64,
+    linear_model: BTreeMap<String, f64>,
+    sine_model: BTreeMap<String, f64>,
+    coherent_model: BTreeMap<String, f64>,
+}
+impl ScheduledIdleNoise {
+    /// Construct a profile with all idle families disabled.
+    /// # Errors
+    /// Rejects capacity outside 1..=16.
+    pub fn new(qubits: usize) -> Result<Self, PecosError> {
         if !(1..=16).contains(&qubits) {
             return Err(error("scheduled capacity must be 1..=16"));
         }
-        config.validate_idle(1.0)?;
-        Ok(config)
+        Ok(Self {
+            qubits,
+            linear: 0.0,
+            sine: 0.0,
+            coherent: 0.0,
+            linear_model: BTreeMap::from([("Z".to_owned(), 1.0)]),
+            sine_model: BTreeMap::from([("Z".to_owned(), 1.0)]),
+            coherent_model: BTreeMap::from([("RZ".to_owned(), 1.0)]),
+        })
+    }
+    fn validate_model(model: &BTreeMap<String, f64>, axes: &[&str]) -> Result<(), PecosError> {
+        if model.iter().any(|(axis, value)| {
+            !axes.contains(&axis.as_str()) || !value.is_finite() || *value < 0.0
+        }) {
+            return Err(error("invalid scheduled idle axis or weight"));
+        }
+        Ok(())
+    }
+    /// Set the linear event rate in inverse seconds and its X/Y/Z/L distribution.
+    /// A single event is drawn with probability min(rate * seconds, 1).
+    /// # Errors
+    /// Rejects invalid rates, axes or weights; weights must sum to one within 1e-10.
+    pub fn with_linear(
+        mut self,
+        rate: f64,
+        model: BTreeMap<String, f64>,
+    ) -> Result<Self, PecosError> {
+        Self::validate_model(&model, &["X", "Y", "Z", "L"])?;
+        let total: f64 = model.values().sum();
+        if !total.is_finite() || (total - 1.0).abs() > 1e-10 {
+            return Err(error("scheduled linear weights must sum to one"));
+        }
+        self.linear = rate;
+        self.linear_model = model;
+        self.validate_idle(1.0)?;
+        Ok(self)
+    }
+    /// Set the sine-squared rate in radians/second and independent X/Y/Z/L multipliers.
+    /// Multipliers are not normalized. Each axis has probability sin(rate * multiplier * seconds)^2.
+    /// # Errors
+    /// Rejects invalid rates, axes, multipliers or overflowing products.
+    pub fn with_sine(
+        mut self,
+        rate: f64,
+        model: BTreeMap<String, f64>,
+    ) -> Result<Self, PecosError> {
+        Self::validate_model(&model, &["X", "Y", "Z", "L"])?;
+        self.sine = rate;
+        self.sine_model = model;
+        self.validate_idle(1.0)?;
+        Ok(self)
+    }
+    /// Set the coherent rate in radians/second and unnormalized RX/RY/RZ multipliers.
+    /// # Errors
+    /// Rejects invalid rates, axes, multipliers or overflowing products.
+    pub fn with_coherent(
+        mut self,
+        rate: f64,
+        model: BTreeMap<String, f64>,
+    ) -> Result<Self, PecosError> {
+        Self::validate_model(&model, &["RX", "RY", "RZ"])?;
+        self.coherent = rate;
+        self.coherent_model = model;
+        self.validate_idle(1.0)?;
+        Ok(self)
     }
     fn validate_idle(&self, seconds: f64) -> Result<(), PecosError> {
         if [self.linear, self.sine, self.coherent]
             .into_iter()
             .any(|rate| !rate.is_finite() || rate < 0.0 || !(rate * seconds).is_finite())
+            || !self
+                .sine_model
+                .values()
+                .all(|m| (self.sine * m * seconds).is_finite())
+            || !self
+                .coherent_model
+                .values()
+                .all(|m| (self.coherent * m * seconds).is_finite())
         {
             return Err(error("invalid scheduled idle rate or duration product"));
         }
         Ok(())
     }
-}
-impl IntoNoiseModel for ScheduledIdleZ {
-    fn into_noise_model(self) -> Box<dyn NoiseModel> {
-        Box::new(self.build_model())
-    }
-}
-impl ScheduledIdleZ {
     pub(crate) fn build_model(self) -> ScheduledIdleModel {
-        let z = BTreeMap::from([("Z".to_owned(), 1.0)]);
-        let rz = BTreeMap::from([("RZ".to_owned(), 1.0)]);
         let inner = GeneralNoiseModelBuilder::new()
-            .with_p_idle_linear(self.linear, &z)
-            .with_p_idle_sin_squared(self.sine, &z)
-            .with_p_idle_coherent(self.coherent, &rz)
+            .with_p_idle_linear(self.linear, &self.linear_model)
+            .with_p_idle_sin_squared(self.sine, &self.sine_model)
+            .with_p_idle_coherent(self.coherent, &self.coherent_model)
             .build();
         ScheduledIdleModel {
             timeline: ScheduleTimeline::new(self.qubits),
             config: self,
             inner,
         }
+    }
+}
+impl IntoNoiseModel for ScheduledIdleNoise {
+    fn into_noise_model(self) -> Box<dyn NoiseModel> {
+        Box::new(self.build_model())
     }
 }
 pub(crate) fn fields(g: &Gate) -> Result<(u64, u64, u64, f64, f64), PecosError> {
@@ -244,7 +338,7 @@ pub(crate) fn decode(input: &ByteMessage) -> Result<Vec<TimedBatch>, PecosError>
 }
 #[derive(Clone)]
 pub(crate) struct ScheduledIdleModel {
-    pub(crate) config: ScheduledIdleZ,
+    pub(crate) config: ScheduledIdleNoise,
     inner: GeneralNoiseModel,
     timeline: ScheduleTimeline,
 }
@@ -295,7 +389,7 @@ impl ScheduleTimeline {
     }
     pub(crate) fn prepare(
         &self,
-        config: &ScheduledIdleZ,
+        config: &ScheduledIdleNoise,
         batches: Vec<TimedBatch>,
     ) -> Result<PreparedSchedule, PecosError> {
         let mut prepared = PreparedSchedule {
@@ -333,8 +427,9 @@ impl ScheduleTimeline {
                         let gap = batch.start_nanos - prepared.timeline.ends[q];
                         let seconds = std::time::Duration::from_nanos(gap).as_secs_f64();
                         config.validate_idle(seconds)?;
-                        // This profile has only local Z/RZ idle channels. PZ
-                        // erases their effect, so do not sample a discarded channel.
+                        // All admitted idle channels are local. Ideal PZ erases
+                        // their effect and clears leakage in GeneralNoiseModel,
+                        // so do not sample a discarded channel.
                         if gap != 0 && gate.gate_type != GateType::PZ {
                             builder.idle(seconds, &[q]);
                         }
@@ -415,8 +510,8 @@ mod timing_tests {
             gates,
         }
     }
-    fn config() -> ScheduledIdleZ {
-        ScheduledIdleZ::new(2, 0.2, 0.3, 0.4).unwrap()
+    fn config() -> ScheduledIdleNoise {
+        ScheduledIdleZ::new(2, 0.2, 0.3, 0.4).unwrap().into()
     }
     fn ops(prepared: &PreparedSchedule, index: usize) -> Vec<Gate> {
         prepared.messages[index].quantum_ops().unwrap()

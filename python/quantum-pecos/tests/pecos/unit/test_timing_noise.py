@@ -93,6 +93,7 @@ def test_measurement_noise_family(model_type: type, name: str) -> None:
     model = model_type({"p1": 0, "p2": 0, "p_meas": 1, "p_prep": 0})
     model.init(2, GenericMachine(num_qubits=2))
     op = QOp(name=name, args=[0], returns=["result"], metadata={"tag": "preserved"})
+    # Both models preserve the measurement alias: neither rewrites it to "Measure".
     assert [(item.name, item.args, item.returns, item.metadata) for item in model.process([op])] == [
-        ("Measure", [0], ["result"], {"tag": "preserved", "bitflips": [0]}),
+        (name, [0], ["result"], {"tag": "preserved", "bitflips": [0]}),
     ]

@@ -91,7 +91,7 @@ struct MeasurementAdmission {
     native: BTreeSet<u64>,
     source: BTreeSet<usize>,
 }
-fn mappings(
+fn measurement_mappings(
     batch: &ScheduledBatch,
     shot: u64,
 ) -> Result<BTreeMap<usize, &crate::scheduled::ScheduledMeasurement>, PecosError> {
@@ -178,7 +178,7 @@ fn encode_v3(
     let mut admission = MeasurementAdmission::default();
     let mut wire = Vec::new();
     for batch in batches {
-        let mut mappings = mappings(&batch, shot)?;
+        let mut mappings = measurement_mappings(&batch, shot)?;
         let mut gates = Vec::new();
         for (index, op) in batch.operations.iter().enumerate() {
             gates.push(admission.gate(op, index, &mut mappings)?);
@@ -204,7 +204,7 @@ fn encode_v4(
     let mut admission = MeasurementAdmission::default();
     let mut wire = Vec::new();
     for batch in batches {
-        let mut mappings = mappings(&batch, shot)?;
+        let mut mappings = measurement_mappings(&batch, shot)?;
         let mut operations = Vec::new();
         let mut measurements = Vec::new();
         for (index, op) in batch.operations.iter().enumerate() {
@@ -246,6 +246,35 @@ fn encode_v4(
 mod tests {
     use super::*;
     use crate::scheduled::ScheduledMeasurement;
+
+    #[test]
+    fn scheduled_v4_rejects_measurement_mapping_on_custom_event() {
+        let mut batch = measured();
+        batch.operations = vec![Op::Custom {
+            tag: 42,
+            data: vec![1],
+        }];
+        let result = encode_mode(vec![batch.clone()], 7, ScheduledTransport::V4);
+        let Err(error) = result else {
+            panic!("mapping on custom event was silently dropped")
+        };
+        assert!(
+            error
+                .to_string()
+                .contains("mapping on scheduled non-measurement")
+        );
+
+        // The custom event itself is valid transport input when it has no mapping.
+        batch.measurements.clear();
+        let (message, ids) = encode_mode(vec![batch], 7, ScheduledTransport::V4).unwrap();
+        assert!(ids.is_empty());
+        let decoded = pecos_engines::scheduled_events::decode_event_batches(&message).unwrap();
+        assert_eq!(decoded.len(), 1);
+        assert!(decoded[0].measurements.is_empty());
+        assert!(
+            matches!(&decoded[0].operations[..], [ScheduledEventOp::Custom { tag: 42, payload }] if payload == &[1])
+        );
+    }
 
     #[test]
     fn scheduled_v4_bounds_precede_gate_conversion() {

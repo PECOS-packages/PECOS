@@ -4,7 +4,7 @@
 //! measurement outcomes or access simulator/RNG state. This is not an arbitrary
 //! execution-time physical-event interface. The admitted noise remains idle-Z.
 use crate::noise::{IntoNoiseModel, NoiseModel};
-use crate::runtime_frame::{ShotContext, error};
+use crate::runtime_frame::{ShotContext, error, processing_error};
 use crate::scheduled_frame::{
     self, MAX_SCHEDULE_BYTES, PreparedSchedule, ScheduleTimeline, ScheduledIdleModel,
     ScheduledIdleZ, TimedBatch,
@@ -417,7 +417,7 @@ impl ScheduledEventModel {
     pub(crate) fn admit(&self, input: &ByteMessage) -> Result<AdmittedEvents, PecosError> {
         // Component-wise clones retain timelines but cannot clone a live adapter.
         if self.adapter.is_none() && self.source_timeline.has_native_shot() {
-            return Err(error("cloned event session requires reset"));
+            return Err(processing_error("cloned event session requires reset"));
         }
         let batches = decode_event_batches(input)?;
         let source = self

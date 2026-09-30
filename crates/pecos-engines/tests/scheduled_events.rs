@@ -591,10 +591,10 @@ fn component_clones_cannot_restart_an_adapter_in_a_live_native_shot() {
     })
     .unwrap();
     let continuation = batch(1, vec![event(3), gate(Gate::mz(&[0]))]);
-    assert!(
-        copy.process(encode_event_batches(std::slice::from_ref(&continuation)).unwrap())
-            .is_err()
-    );
+    assert!(matches!(
+        copy.process(encode_event_batches(std::slice::from_ref(&continuation)).unwrap()),
+        Err(PecosError::Processing(message)) if message.contains("cloned event session requires reset")
+    ));
     assert_eq!(run(&mut original, &[continuation]), vec![1]);
     begin(&mut copy);
     assert_eq!(

@@ -275,5 +275,38 @@ def test_choice_integer_oversampling_without_replacement() -> None:
             random.choice(3, 5, replace=False)
 
 
+class IndexPopulation:
+    """A population bound supplied by Python's integer protocol."""
+
+    def __index__(self) -> int:
+        """Return the population bound without an int subclass."""
+        return 5
+
+
+@pytest.mark.parametrize(
+    "population",
+    [np.int32(5), np.int64(5), np.uint8(5), np.uint64(5), IndexPopulation()],
+    ids=["int32", "int64", "uint8", "uint64", "custom-index"],
+)
+@pytest.mark.parametrize(("size", "replace"), [(None, True), (5, True), (3, False)])
+@pytest.mark.parametrize("check_tail", [False, True], ids=["samples", "rng-tail"])
+def test_choice_index_population_matches_python_int(population, size, replace, check_tail) -> None:
+    """Index populations share the Python-int samples and subsequent RNG stream."""
+    pc.random.seed(456)
+    expected = pc.random.choice(5, size, replace)
+    expected_tail = list(pc.random.random(4))
+    pc.random.seed(456)
+    actual = pc.random.choice(population, size, replace)
+    actual_tail = list(pc.random.random(4))
+    assert (actual_tail if check_tail else actual) == (expected_tail if check_tail else expected)
+
+
+@pytest.mark.parametrize("population", [2**100, np.uint64(2**63)])
+def test_choice_index_population_out_of_int64(population) -> None:
+    """Every integer protocol population is bounded by the same signed int64 range."""
+    with pytest.raises(ValueError, match="population is out of bounds for int64"):
+        pc.random.choice(population)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "-s"])

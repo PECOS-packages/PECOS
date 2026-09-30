@@ -663,7 +663,7 @@ class random:
     ) -> int | Array[ScalarI64]: ...
     @staticmethod
     def choice(
-        a: int | Sequence[_T] | Array[Scalar],
+        a: SupportsIndex | Sequence[_T] | Array[Scalar],
         size: int | None = None,
         replace: bool = True,
     ) -> int | _T | list[int | _T | Scalar] | Scalar: ...

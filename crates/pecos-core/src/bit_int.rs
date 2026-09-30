@@ -37,6 +37,7 @@
 //! ```
 
 use crate::bit_uint::BitUInt;
+use crate::expression::{negative, signed_cmp, signed_div_rem};
 use std::cmp::Ordering;
 use std::fmt;
 use std::ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Not, Rem, Shl, Shr, Sub};
@@ -45,6 +46,11 @@ use std::ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Not, Rem, Shl, Shr, Sub};
 ///
 /// The user-visible size is N bits, but internally N+1 bits are stored
 /// where bit N is the sign bit. This allows `BitInt(1, 1)` to be positive.
+///
+/// Comparisons use mathematical values regardless of width. Binary arithmetic
+/// and bitwise operations sign-extend both operands to the larger internal
+/// width, then wrap the result to the left operand's width. Division truncates
+/// toward zero; the remainder has the dividend's sign.
 #[derive(Clone, Debug)]
 pub struct BitInt {
     /// User-declared bit width (1 to 65534)
@@ -221,29 +227,16 @@ impl BitInt {
         true
     }
 
-    /// Returns the value as an `i64` by sign-extending from N+1-bit two's complement.
+    /// Returns the mathematical value as an `i64` if it fits, regardless of width.
     #[must_use]
     pub fn to_i64(&self) -> Option<i64> {
-        let internal_size = self.inner.size(); // = user_size + 1
-        if internal_size > 64 {
-            return None;
-        }
-        let raw = self.inner.raw_u64();
-
-        if internal_size == 64 {
-            #[allow(clippy::cast_possible_wrap)]
-            return Some(raw as i64);
-        }
-
-        // internal_size < 64: sign extend from bit (internal_size - 1)
-        let sign_bit = 1u64 << (internal_size - 1);
-        if raw & sign_bit != 0 {
-            let mask = !((1u64 << internal_size) - 1);
-            #[allow(clippy::cast_possible_wrap)]
-            Some((raw | mask) as i64)
+        if self.is_negative() {
+            // Complementing a negative pattern gives -value - 1, which fits in
+            // i64 exactly when the original value does (including i64::MIN).
+            let complement = !&self.inner;
+            i64::try_from(complement.to_u64()?).ok().map(|value| !value)
         } else {
-            #[allow(clippy::cast_possible_wrap)]
-            Some(raw as i64)
+            i64::try_from(self.inner.to_u64()?).ok()
         }
     }
 
@@ -303,7 +296,7 @@ impl BitInt {
     /// Returns true if the value is negative (sign bit is set).
     #[must_use]
     pub fn is_negative(&self) -> bool {
-        self.inner.get_bit(self.user_size)
+        negative(&self.inner)
     }
 
     /// Returns a reference to the inner `BitUInt`.
@@ -322,11 +315,25 @@ impl BitInt {
     // Internal helpers
     // ========================================================================
 
-    /// Create a new `BitInt` with the same `user_size`, wrapping the given inner `BitUInt`.
+    /// Sign-extend both operands to their common internal width before any
+    /// binary operation or comparison. Results retain the left operand's width.
+    fn normalized_pair(&self, rhs: &Self) -> (BitUInt, BitUInt) {
+        let width = self.inner.size().max(rhs.inner.size());
+        (
+            self.inner.resize_sign_extend(width),
+            rhs.inner.resize_sign_extend(width),
+        )
+    }
+
+    /// Wrap a result, truncating it to this operand's internal width.
     fn wrap_result(&self, inner: BitUInt) -> Self {
         Self {
             user_size: self.user_size,
-            inner,
+            inner: if inner.size() == self.inner.size() {
+                inner
+            } else {
+                inner.resize_sign_extend(self.inner.size())
+            },
         }
     }
 }
@@ -351,7 +358,7 @@ impl fmt::Display for BitInt {
 
 impl PartialEq for BitInt {
     fn eq(&self, other: &Self) -> bool {
-        self.inner.raw_u64() == other.inner.raw_u64()
+        self.cmp(other) == Ordering::Equal
     }
 }
 
@@ -365,18 +372,8 @@ impl PartialOrd for BitInt {
 
 impl Ord for BitInt {
     fn cmp(&self, other: &Self) -> Ordering {
-        // Signed comparison using the N+1-bit two's complement values
-        let self_neg = self.is_negative();
-        let other_neg = other.is_negative();
-
-        match (self_neg, other_neg) {
-            (true, false) => Ordering::Less,
-            (false, true) => Ordering::Greater,
-            _ => {
-                // Same sign: unsigned comparison of raw values is correct
-                self.inner.raw_u64().cmp(&other.inner.raw_u64())
-            }
-        }
+        let (lhs, rhs) = self.normalized_pair(other);
+        signed_cmp(&lhs, &rhs)
     }
 }
 
@@ -388,7 +385,8 @@ impl BitXor for &BitInt {
     type Output = BitInt;
 
     fn bitxor(self, rhs: Self) -> BitInt {
-        self.wrap_result(&self.inner ^ &rhs.inner)
+        let (lhs, rhs) = self.normalized_pair(rhs);
+        self.wrap_result(&lhs ^ &rhs)
     }
 }
 
@@ -396,7 +394,8 @@ impl BitAnd for &BitInt {
     type Output = BitInt;
 
     fn bitand(self, rhs: Self) -> BitInt {
-        self.wrap_result(&self.inner & &rhs.inner)
+        let (lhs, rhs) = self.normalized_pair(rhs);
+        self.wrap_result(&lhs & &rhs)
     }
 }
 
@@ -404,7 +403,8 @@ impl BitOr for &BitInt {
     type Output = BitInt;
 
     fn bitor(self, rhs: Self) -> BitInt {
-        self.wrap_result(&self.inner | &rhs.inner)
+        let (lhs, rhs) = self.normalized_pair(rhs);
+        self.wrap_result(&lhs | &rhs)
     }
 }
 
@@ -467,7 +467,8 @@ impl Add for &BitInt {
     type Output = BitInt;
 
     fn add(self, rhs: Self) -> BitInt {
-        self.wrap_result(&self.inner + &rhs.inner)
+        let (lhs, rhs) = self.normalized_pair(rhs);
+        self.wrap_result(&lhs + &rhs)
     }
 }
 
@@ -475,7 +476,8 @@ impl Sub for &BitInt {
     type Output = BitInt;
 
     fn sub(self, rhs: Self) -> BitInt {
-        self.wrap_result(&self.inner - &rhs.inner)
+        let (lhs, rhs) = self.normalized_pair(rhs);
+        self.wrap_result(&lhs - &rhs)
     }
 }
 
@@ -483,7 +485,8 @@ impl Mul for &BitInt {
     type Output = BitInt;
 
     fn mul(self, rhs: Self) -> BitInt {
-        self.wrap_result(&self.inner * &rhs.inner)
+        let (lhs, rhs) = self.normalized_pair(rhs);
+        self.wrap_result(&lhs * &rhs)
     }
 }
 
@@ -492,14 +495,9 @@ impl Div for &BitInt {
 
     /// Signed division.
     fn div(self, rhs: Self) -> BitInt {
-        let a = self.to_i64().expect("BitInt too large for division");
-        let b = rhs.to_i64().expect("BitInt too large for division");
-        assert!(b != 0, "Division by zero");
-
-        #[allow(clippy::cast_sign_loss)]
-        let result = (a / b) as u64;
-        let internal_size = self.inner.size();
-        self.wrap_result(BitUInt::new(internal_size, result))
+        assert!(!rhs.is_zero(), "Division by zero");
+        let (lhs, rhs) = self.normalized_pair(rhs);
+        self.wrap_result(signed_div_rem(&lhs, &rhs, false))
     }
 }
 
@@ -508,14 +506,9 @@ impl Rem for &BitInt {
 
     /// Signed remainder.
     fn rem(self, rhs: Self) -> BitInt {
-        let a = self.to_i64().expect("BitInt too large for remainder");
-        let b = rhs.to_i64().expect("BitInt too large for remainder");
-        assert!(b != 0, "Remainder by zero");
-
-        #[allow(clippy::cast_sign_loss)]
-        let result = (a % b) as u64;
-        let internal_size = self.inner.size();
-        self.wrap_result(BitUInt::new(internal_size, result))
+        assert!(!rhs.is_zero(), "Remainder by zero");
+        let (lhs, rhs) = self.normalized_pair(rhs);
+        self.wrap_result(signed_div_rem(&lhs, &rhs, true))
     }
 }
 

@@ -18,13 +18,14 @@ error modeling for measurement processes.
 
 from __future__ import annotations
 
+from copy import copy
 from typing import TYPE_CHECKING
 
 import pecos as pc
-from pecos.reps.pyphir.op_types import QOp
 
 if TYPE_CHECKING:
     from pecos.protocols import MachineProtocol
+    from pecos.reps.pyphir.op_types import QOp
 
 
 def noise_meas_bitflip_leakage(
@@ -47,25 +48,23 @@ def noise_meas_bitflip_leakage(
 
     noise = []
 
-    leakded = machine.leaked_qubits & set(op.args)
-    if leakded:
-        noisy_ops = machine.meas_leaked(leakded)
+    leaked = machine.leaked_qubits & set(op.args)
+    if leaked:
+        noisy_ops = machine.meas_leaked(leaked)
         noise.extend(noisy_ops)
 
-    if error_indices:
-        bitflips = [op.args[idx] for idx in error_indices]
-
-        noisy_op = QOp(
-            name="Measure",
-            args=list(op.args),
-            returns=list(op.returns),
-            metadata=dict(op.metadata),
-        )
-        noisy_op.metadata["bitflips"] = bitflips
+    if leaked or error_indices:
+        noisy_op = copy(op)
+        # metadata defaults to None on QOp, and the leakage-only case now reaches this copy
+        # where it previously returned early. The simulator itself treats None as {}.
+        # Test None explicitly rather than falsiness: `op.metadata or {}` would discard
+        # the contents of a dict subclass whose __bool__ is False.
+        noisy_op.metadata = {} if op.metadata is None else dict(op.metadata)
+        if error_indices:
+            bitflips = [op.args[idx] for idx in error_indices]
+            noisy_op.metadata["bitflips"] = bitflips
         noise.append(noisy_op)
 
         return noise
 
-    if noise:
-        return noise
     return None

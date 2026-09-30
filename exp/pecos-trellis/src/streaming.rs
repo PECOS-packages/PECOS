@@ -215,6 +215,28 @@ impl TrellisStreamingDecoder {
     /// # Errors
     /// Returns the same no-path or internal error as the batch column walk.
     pub fn advance(&mut self) -> Result<StreamingProgress, DecoderError> {
+        self.advance_prediction()?;
+        self.check_commitments();
+        let newly_committed = self.pending_commitments.clone();
+        self.pending_commitments.clear();
+        Ok(StreamingProgress {
+            columns_processed: self.next_column,
+            newly_committed,
+            committed: ObsMask::from_words(&self.committed),
+            committed_mask: ObsMask::from_words(&self.committed_mask),
+        })
+    }
+
+    /// Process ready columns without constructing commitment snapshots.
+    ///
+    /// This path retains the same candidate set and correction as [`Self::advance`],
+    /// including dropped-mass telemetry, so it can safely be mixed with `flush`.
+    /// It is intended
+    /// for latency-sensitive runtimes that need only the final prediction.
+    ///
+    /// # Errors
+    /// Returns the same no-path or internal error as [`Self::advance`].
+    pub fn advance_prediction(&mut self) -> Result<usize, DecoderError> {
         if let Some(failure) = self.failure {
             return Err(failure.error());
         }
@@ -235,15 +257,7 @@ impl TrellisStreamingDecoder {
             return Err(failure.error());
         }
         self.next_column = end;
-        self.check_commitments();
-        let newly_committed = self.pending_commitments.clone();
-        self.pending_commitments.clear();
-        Ok(StreamingProgress {
-            columns_processed: self.next_column,
-            newly_committed,
-            committed: ObsMask::from_words(&self.committed),
-            committed_mask: ObsMask::from_words(&self.committed_mask),
-        })
+        Ok(self.next_column)
     }
 
     /// Current commitment values and mask, including commitments discovered by flush.
@@ -295,6 +309,41 @@ impl TrellisStreamingDecoder {
             );
         }
         Ok(result)
+    }
+
+    /// Finish a fully fed shot and return only the predicted logical mask.
+    ///
+    /// This skips terminal evidence, runner-up, commitment, and logical-mass
+    /// construction. The prediction is identical to [`Self::flush`] on the same
+    /// build and platform.
+    ///
+    /// # Errors
+    /// Returns `InvalidDimensions` until all detectors arrive, or the same
+    /// no-path or internal error as [`Self::advance_prediction`].
+    ///
+    /// # Panics
+    /// Panics if the validated streaming model fails to process every column
+    /// after the complete syndrome has arrived.
+    pub fn flush_prediction(&mut self) -> Result<ObsMask, DecoderError> {
+        if let Some(failure) = self.failure {
+            return Err(failure.error());
+        }
+        if self.arrived_count != self.model.num_detectors {
+            return Err(DecoderError::InvalidDimensions {
+                expected: self.model.num_detectors,
+                actual: self.arrived_count,
+            });
+        }
+        self.advance_prediction()?;
+        let Kernel::Binary(columns) = &self.model.kernel else {
+            unreachable!("streaming constructors validate the binary kernel");
+        };
+        assert_eq!(
+            self.next_column,
+            columns.len(),
+            "flush_prediction must process every column"
+        );
+        Ok(TrellisModel::finish_binary_prediction(&self.progress))
     }
 
     /// Begin another shot, reusing buffers and committing bits that never toggle.

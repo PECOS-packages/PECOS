@@ -4,8 +4,9 @@
 //! improving performance and simplifying the AST.
 
 use crate::ast::Expression;
+use crate::bitvec_expression::integer_value;
 use ::bitvec::prelude::*;
-use pecos_core::bitvec;
+use pecos_core::{ExprValue, bitvec, expression::eval_binary_op};
 use std::f64::consts::PI;
 
 /// Fold constants in an expression tree
@@ -14,7 +15,7 @@ use std::f64::consts::PI;
 /// replacing them with their computed values.
 #[must_use]
 pub fn fold_constants(expr: Expression) -> Expression {
-    fold_constants_with_context(expr, false, 0)
+    fold_constants_with_context(expr, false)
 }
 
 /// Fold constants in a gate parameter expression
@@ -23,41 +24,23 @@ pub fn fold_constants(expr: Expression) -> Expression {
 /// since they're not allowed in gate parameters.
 #[must_use]
 pub fn fold_constants_gate_param(expr: Expression) -> Expression {
-    fold_constants_with_context(expr, true, 0)
-}
-
-/// Fold constants with specified default width for proper comparison
-#[must_use]
-pub fn fold_constants_with_width(expr: Expression, default_width: usize) -> Expression {
-    fold_constants_with_context(expr, false, default_width)
-}
-
-/// Fold constants in a gate parameter expression with specified default width
-#[must_use]
-pub fn fold_constants_gate_param_with_width(expr: Expression, default_width: usize) -> Expression {
-    fold_constants_with_context(expr, true, default_width)
+    fold_constants_with_context(expr, true)
 }
 
 /// Internal function that handles context-aware constant folding
-fn fold_constants_with_context(
-    expr: Expression,
-    is_gate_param: bool,
-    default_width: usize,
-) -> Expression {
+fn fold_constants_with_context(expr: Expression, is_gate_param: bool) -> Expression {
     match expr {
         // Binary operations
         Expression::BinaryOp { op, left, right } => {
-            fold_binary_op_with_context(op, *left, *right, is_gate_param, default_width)
+            fold_binary_op_with_context(op, *left, *right, is_gate_param)
         }
 
         // Unary operations
-        Expression::UnaryOp { op, expr } => {
-            fold_unary_op_with_context(op, *expr, is_gate_param, default_width)
-        }
+        Expression::UnaryOp { op, expr } => fold_unary_op_with_context(op, *expr, is_gate_param),
 
         // Function calls
         Expression::FunctionCall { name, args } => {
-            fold_function_call_with_context(name, args, is_gate_param, default_width)
+            fold_function_call_with_context(name, args, is_gate_param)
         }
 
         // Leaf nodes remain unchanged
@@ -69,23 +52,16 @@ fn fold_constants_with_context(
     }
 }
 
-/// Fold binary operations
-#[allow(dead_code)]
-fn fold_binary_op(op: String, left: Expression, right: Expression) -> Expression {
-    fold_binary_op_with_context(op, left, right, false, 0)
-}
-
 /// Fold binary operations with context awareness
 fn fold_binary_op_with_context(
     op: String,
     left: Expression,
     right: Expression,
     is_gate_param: bool,
-    default_width: usize,
 ) -> Expression {
     // First recursively fold the operands
-    let left = fold_constants_with_context(left, is_gate_param, default_width);
-    let right = fold_constants_with_context(right, is_gate_param, default_width);
+    let left = fold_constants_with_context(left, is_gate_param);
+    let right = fold_constants_with_context(right, is_gate_param);
 
     // Try to evaluate if both operands are constants
     match (&left, &right) {
@@ -94,7 +70,7 @@ fn fold_binary_op_with_context(
 
         // Integer arithmetic and bitwise operations
         (Expression::Integer(l), Expression::Integer(r)) => {
-            fold_integer_binary_op_with_context(&op, l, r, is_gate_param, default_width)
+            fold_integer_binary_op_with_context(&op, l, r, is_gate_param)
         }
 
         // Mixed float/pi operations
@@ -141,156 +117,47 @@ fn fold_float_binary_op(op: &str, l: f64, r: f64) -> Expression {
     }
 }
 
-/// Fold binary operations on integers (`BitVec`)
-#[allow(dead_code)]
-fn fold_integer_binary_op(op: &str, l: &BitVec<u8, Lsb0>, r: &BitVec<u8, Lsb0>) -> Expression {
-    fold_integer_binary_op_with_context(op, l, r, false, 0)
-}
-
 /// Fold binary operations on integers with context awareness
 fn fold_integer_binary_op_with_context(
     op: &str,
     l: &BitVec<u8, Lsb0>,
     r: &BitVec<u8, Lsb0>,
     is_gate_param: bool,
-    default_width: usize,
 ) -> Expression {
-    // Integer operands are non-negative, so widening must preserve their unsigned values.
-    // Use the maximum width of operands and default_width for full precision
-    let (l_resized, r_resized) = zero_extend_to_same_width(l, r, default_width);
-    match op {
-        // Arithmetic operations
-        "+" => Expression::Integer(bitvec::add(&l_resized, &r_resized)),
-        "-" => Expression::Integer(bitvec::subtract(&l_resized, &r_resized)),
-        "*" => Expression::Integer(bitvec::multiply(&l_resized, &r_resized)),
-        "/" => {
-            if r_resized.not_any() {
-                // Check if all bits are zero
-                // Preserve division by zero
-                Expression::BinaryOp {
-                    op: "/".to_string(),
-                    left: Box::new(Expression::Integer(l_resized)),
-                    right: Box::new(Expression::Integer(r_resized)),
-                }
-            } else {
-                let result_width = l_resized.len();
-                // Signed division needs a separate sign bit for non-negative literals.
-                let (l_dividend, r_divisor) =
-                    zero_extend_to_same_width(&l_resized, &r_resized, result_width + 1);
-                let mut quotient = bitvec::divide(&l_dividend, &r_divisor);
-                quotient.truncate(result_width);
-                Expression::Integer(quotient)
-            }
-        }
-
-        // Bitwise operations
-        "&" | "|" | "^" => {
-            if is_gate_param {
-                // Don't fold bitwise operations in gate parameters
-                Expression::BinaryOp {
-                    op: op.to_string(),
-                    left: Box::new(Expression::Integer(l.clone())),
-                    right: Box::new(Expression::Integer(r.clone())),
-                }
-            } else {
-                // Fold for classical register expressions
-                match op {
-                    "&" => Expression::Integer(l_resized.clone() & r_resized.clone()),
-                    "|" => Expression::Integer(l_resized.clone() | r_resized.clone()),
-                    "^" => Expression::Integer(l_resized.clone() ^ r_resized.clone()),
-                    _ => unreachable!(),
-                }
-            }
-        }
-        "<<" | ">>" => {
-            if is_gate_param {
-                // Don't fold shift operations in gate parameters
-                Expression::BinaryOp {
-                    op: op.to_string(),
-                    left: Box::new(Expression::Integer(l.clone())),
-                    right: Box::new(Expression::Integer(r.clone())),
-                }
-            } else {
-                // Convert right operand to usize for shift amount
-                if let Ok(shift_amount) = bitvec::to_decimal_string(&r_resized).parse::<usize>() {
-                    match op {
-                        "<<" => Expression::Integer(bitvec::shift_left(&l_resized, shift_amount)),
-                        ">>" => Expression::Integer(bitvec::shift_right(&l_resized, shift_amount)),
-                        _ => unreachable!(),
-                    }
-                } else {
-                    // Shift amount too large or invalid
-                    Expression::BinaryOp {
-                        op: op.to_string(),
-                        left: Box::new(Expression::Integer(l.clone())),
-                        right: Box::new(Expression::Integer(r.clone())),
-                    }
-                }
-            }
-        }
-
-        // Comparison operations (result is 0 or 1)
-        // Note: operands are already resized above
-        // Integer nodes carry unsigned values; negations remain unfolded unary nodes.
-        "==" => Expression::Integer(boolean_to_bitvec(l_resized == r_resized)),
-        "!=" => Expression::Integer(boolean_to_bitvec(l_resized != r_resized)),
-        "<" => {
-            use pecos_core::bitvec::comparison::compare_unsigned;
-            use std::cmp::Ordering;
-            Expression::Integer(boolean_to_bitvec(
-                compare_unsigned(&l_resized, &r_resized) == Ordering::Less,
-            ))
-        }
-        ">" => {
-            use pecos_core::bitvec::comparison::compare_unsigned;
-            use std::cmp::Ordering;
-            Expression::Integer(boolean_to_bitvec(
-                compare_unsigned(&l_resized, &r_resized) == Ordering::Greater,
-            ))
-        }
-        "<=" => {
-            use pecos_core::bitvec::comparison::compare_unsigned;
-            use std::cmp::Ordering;
-            let cmp = compare_unsigned(&l_resized, &r_resized);
-            Expression::Integer(boolean_to_bitvec(
-                cmp == Ordering::Less || cmp == Ordering::Equal,
-            ))
-        }
-        ">=" => {
-            use pecos_core::bitvec::comparison::compare_unsigned;
-            use std::cmp::Ordering;
-            let cmp = compare_unsigned(&l_resized, &r_resized);
-            Expression::Integer(boolean_to_bitvec(
-                cmp == Ordering::Greater || cmp == Ordering::Equal,
-            ))
-        }
-
-        _ => {
-            // Unsupported operation
-            Expression::BinaryOp {
-                op: op.to_string(),
-                left: Box::new(Expression::Integer(l.clone())),
-                right: Box::new(Expression::Integer(r.clone())),
-            }
-        }
+    let expression = Expression::BinaryOp {
+        op: op.to_string(),
+        left: Box::new(Expression::Integer(l.clone())),
+        right: Box::new(Expression::Integer(r.clone())),
+    };
+    if is_gate_param && matches!(op, "&" | "|" | "^" | "<<" | ">>") {
+        return expression;
     }
+    let result = integer_value(l)
+        .and_then(|left| integer_value(r).and_then(|right| eval_binary_op(op, left, right)));
+    result
+        .as_ref()
+        .ok()
+        .and_then(fold_integer_value)
+        .unwrap_or(expression)
 }
 
-/// Fold unary operations
-#[allow(dead_code)]
-fn fold_unary_op(op: String, expr: Expression) -> Expression {
-    fold_unary_op_with_context(op, expr, false, 0)
+/// Only this subset retains its tag and width when re-read as an AST literal.
+fn fold_integer_value(value: &ExprValue) -> Option<Expression> {
+    if let ExprValue::Signed(bits) = value
+        && bits.size() == 64
+        && !bits.get_bit(bits.size() - 1)
+    {
+        return bitvec::from_expr_value(value, usize::from(bits.size()))
+            .ok()
+            .map(Expression::Integer);
+    }
+    None
 }
 
 /// Fold unary operations with context awareness
-fn fold_unary_op_with_context(
-    op: String,
-    expr: Expression,
-    is_gate_param: bool,
-    default_width: usize,
-) -> Expression {
+fn fold_unary_op_with_context(op: String, expr: Expression, is_gate_param: bool) -> Expression {
     // First recursively fold the operand
-    let expr = fold_constants_with_context(expr, is_gate_param, default_width);
+    let expr = fold_constants_with_context(expr, is_gate_param);
 
     match (&op[..], &expr) {
         // Negation of float
@@ -298,7 +165,7 @@ fn fold_unary_op_with_context(
         ("-", Expression::Pi) => Expression::Float(-PI),
 
         // Cannot fold - return the operation with folded operand
-        // Keep integer negation for sign information and integer NOT for runtime width.
+        // Integer unary nodes remain for runtime evaluation with their tag and width.
         _ => Expression::UnaryOp {
             op,
             expr: Box::new(expr),
@@ -306,23 +173,16 @@ fn fold_unary_op_with_context(
     }
 }
 
-/// Fold function calls
-#[allow(dead_code)]
-fn fold_function_call(name: String, args: Vec<Expression>) -> Expression {
-    fold_function_call_with_context(name, args, false, 0)
-}
-
 /// Fold function calls with context awareness
 fn fold_function_call_with_context(
     name: String,
     args: Vec<Expression>,
     is_gate_param: bool,
-    default_width: usize,
 ) -> Expression {
     // First recursively fold all arguments
     let args: Vec<Expression> = args
         .into_iter()
-        .map(|arg| fold_constants_with_context(arg, is_gate_param, default_width))
+        .map(|arg| fold_constants_with_context(arg, is_gate_param))
         .collect();
 
     // Check if all arguments are constants
@@ -369,33 +229,6 @@ fn fold_function_call_with_context(
     }
 }
 
-/// Convert a boolean to a `BitVec` containing 0 or 1
-fn boolean_to_bitvec(b: bool) -> BitVec<u8, Lsb0> {
-    let mut bv = BitVec::new();
-    bv.push(b);
-    bv
-}
-
-/// Zero-extend two non-negative integer operands to a common width for constant folding.
-fn zero_extend_to_same_width(
-    l: &BitVec<u8, Lsb0>,
-    r: &BitVec<u8, Lsb0>,
-    default_width: usize,
-) -> (BitVec<u8, Lsb0>, BitVec<u8, Lsb0>) {
-    let mut l_clone = l.clone();
-    let mut r_clone = r.clone();
-
-    // For constant folding, use the maximum width of operands and default_width
-    // This ensures comparisons are done with full precision
-    let max_operand_width = l.len().max(r.len());
-    let effective_width = max_operand_width.max(default_width);
-
-    l_clone.resize(effective_width, false);
-    r_clone.resize(effective_width, false);
-
-    (l_clone, r_clone)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -408,13 +241,13 @@ mod tests {
             left: Box::new(Expression::Integer(parse_integer_to_bitvec("8").unwrap())),
             right: Box::new(Expression::Integer(parse_integer_to_bitvec("2").unwrap())),
         };
-        for width in [0, 4, 8] {
-            let Expression::Integer(value) = fold_constants_with_width(expr.clone(), width) else {
-                panic!("Expected folded integer");
-            };
-            assert_eq!(value.len(), width.max(4));
-            assert_eq!(bitvec::to_decimal_string(&value), "4");
-        }
+        // The destination width no longer reaches folding, so there is nothing
+        // left to sweep here: the result is 64 bits whatever it is assigned to.
+        let Expression::Integer(value) = fold_constants(expr) else {
+            panic!("Expected folded integer");
+        };
+        assert_eq!(value.len(), 64);
+        assert_eq!(bitvec::to_decimal_string(&value), "4");
     }
 
     #[test]
@@ -425,10 +258,7 @@ mod tests {
             right: Box::new(Expression::Integer(parse_integer_to_bitvec("16").unwrap())),
         };
 
-        match fold_constants(expr) {
-            Expression::Integer(value) => assert_eq!(value, boolean_to_bitvec(true)),
-            other => panic!("Expected folded integer, got {other:?}"),
-        }
+        assert!(matches!(fold_constants(expr), Expression::BinaryOp { .. }));
     }
 
     #[test]
@@ -467,21 +297,23 @@ mod tests {
     }
 
     #[test]
-    fn test_integer_not_remains_unfolded_at_every_width() {
-        for width in [0, 1, 8] {
-            for is_gate_param in [false, true] {
-                let expr = Expression::UnaryOp {
-                    op: "~".to_string(),
-                    expr: Box::new(Expression::Integer(parse_integer_to_bitvec("1").unwrap())),
-                };
-                let Expression::UnaryOp { op, expr } =
-                    fold_constants_with_context(expr, is_gate_param, width)
-                else {
-                    panic!("Integer NOT requires runtime width");
-                };
-                assert_eq!(op, "~");
-                assert!(matches!(*expr, Expression::Integer(_)));
-            }
+    fn test_integer_not_remains_unfolded() {
+        // The complement of a small literal is a negative signed value, which
+        // cannot be written back as a literal without changing its tag, so it
+        // stays unfolded on both the ordinary and the gate-parameter path.
+        for fold in [
+            fold_constants as fn(Expression) -> Expression,
+            fold_constants_gate_param as fn(Expression) -> Expression,
+        ] {
+            let expr = Expression::UnaryOp {
+                op: "~".to_string(),
+                expr: Box::new(Expression::Integer(parse_integer_to_bitvec("1").unwrap())),
+            };
+            let Expression::UnaryOp { op, expr } = fold(expr) else {
+                panic!("Signed negative complement must remain unfolded");
+            };
+            assert_eq!(op, "~");
+            assert!(matches!(*expr, Expression::Integer(_)));
         }
     }
 
@@ -547,32 +379,13 @@ mod tests {
 
     #[test]
     fn test_boolean_operations() {
-        // Test 5 == 5 -> 1
-        let expr = Expression::BinaryOp {
-            op: "==".to_string(),
-            left: Box::new(Expression::Integer(parse_integer_to_bitvec("5").unwrap())),
-            right: Box::new(Expression::Integer(parse_integer_to_bitvec("5").unwrap())),
-        };
-
-        match fold_constants(expr) {
-            Expression::Integer(bv) => {
-                assert_eq!(bitvec::to_decimal_string(&bv), "1");
-            }
-            _ => panic!("Expected integer result"),
-        }
-
-        // Test 3 > 5 -> 0
-        let expr = Expression::BinaryOp {
-            op: ">".to_string(),
-            left: Box::new(Expression::Integer(parse_integer_to_bitvec("3").unwrap())),
-            right: Box::new(Expression::Integer(parse_integer_to_bitvec("5").unwrap())),
-        };
-
-        match fold_constants(expr) {
-            Expression::Integer(bv) => {
-                assert_eq!(bitvec::to_decimal_string(&bv), "0");
-            }
-            _ => panic!("Expected integer result"),
+        for (op, left, right) in [("==", "5", "5"), (">", "3", "5")] {
+            let expr = Expression::BinaryOp {
+                op: op.to_string(),
+                left: Box::new(Expression::Integer(parse_integer_to_bitvec(left).unwrap())),
+                right: Box::new(Expression::Integer(parse_integer_to_bitvec(right).unwrap())),
+            };
+            assert!(matches!(fold_constants(expr), Expression::BinaryOp { .. }));
         }
     }
 
@@ -610,8 +423,8 @@ mod tests {
 
         match fold_constants(expr) {
             Expression::Integer(bv) => {
-                // Still overflows because 16 needs 5 bits but result is truncated to 4 bits
-                assert_eq!(bitvec::to_decimal_string(&bv), "0");
+                // Shared evaluation uses a minimum of 64 bits.
+                assert_eq!(bitvec::to_decimal_string(&bv), "16");
             }
             _ => panic!("Expected integer result"),
         }
@@ -633,5 +446,35 @@ mod tests {
             }
             _ => panic!("Expected integer result"),
         }
+    }
+    #[test]
+    fn fold_decision_preserves_tag_width_and_sign() {
+        use pecos_core::BitUInt;
+        assert!(fold_integer_value(&ExprValue::Signed(BitUInt::new(65, 1))).is_none());
+        assert!(fold_integer_value(&ExprValue::Signed(BitUInt::new(63, 1))).is_none());
+        assert!(fold_integer_value(&ExprValue::unsigned(1)).is_none());
+        assert!(fold_integer_value(&ExprValue::signed(-1)).is_none());
+        assert!(fold_integer_value(&ExprValue::Boolean(true)).is_none());
+        assert!(matches!(
+            fold_integer_value(&ExprValue::signed(1)),
+            Some(Expression::Integer(_))
+        ));
+    }
+
+    #[test]
+    fn folded_division_is_signed_64_bit_three() {
+        let expr = Expression::BinaryOp {
+            op: "/".to_string(),
+            left: Box::new(Expression::Integer(parse_integer_to_bitvec("7").unwrap())),
+            right: Box::new(Expression::Integer(parse_integer_to_bitvec("2").unwrap())),
+        };
+        let Expression::Integer(bits) = fold_constants(expr) else {
+            panic!("7 / 2 must fold");
+        };
+        let ExprValue::Signed(value) = integer_value(&bits).unwrap() else {
+            panic!("Folded literal must re-read as signed");
+        };
+        assert_eq!(value.size(), 64);
+        assert_eq!(value.to_u64(), Some(3));
     }
 }

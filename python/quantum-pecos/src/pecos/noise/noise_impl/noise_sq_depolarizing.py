@@ -32,7 +32,7 @@ def noise_sq_depolarizing(op: QOp, p: float, noise_dict: dict) -> list[QOp] | No
         noise_dict: Dictionary mapping fault types to their probabilities.
 
     Returns:
-        List of quantum operations including original operation and noise,
+        Original operation once, followed by faults in noise insertion order,
         or None if no noise is applied.
     """
     # Use fused operation to check and get error indices in one pass
@@ -52,15 +52,9 @@ def noise_sq_depolarizing(op: QOp, p: float, noise_dict: dict) -> list[QOp] | No
                     break
 
     if noise:
-        buffered_ops = []
-
-        if noise:
-            for sym, args in noise.items():
-                buffered_ops.extend((op, QOp(name=sym, args=args, metadata={})))
-
-        else:
-            buffered_ops.append(op)
-
+        buffered_ops = [op]
+        for sym, args in noise.items():
+            buffered_ops.append(QOp(name=sym, args=args, metadata={}))
         return buffered_ops
 
     return None

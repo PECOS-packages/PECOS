@@ -1,4 +1,4 @@
-# PECOS ActiveState
+# PECOS StabActive
 
 Experimental per-shot near-Clifford simulation based on ideas from Clifft
 (arXiv:2604.27058) and SymFT (arXiv:2607.28600), implemented from the mathematics
@@ -11,7 +11,7 @@ in the physical qubit count. Clifford gates leave coordinates unchanged.
 Non-Clifford Pauli rotations promote at most one dormant coordinate; measurements
 can remove one active coordinate. Independent commuting rotations can reach `k=n`.
 
-`ActiveState::new(n)` and `ActiveState::with_seed(n, seed)` start at zero active
+`StabActive::new(n)` and `StabActive::with_seed(n, seed)` start at zero active
 width. `with_max_active_width(limit)` configures the default limit of 26;
 rotations panic before promotion if the requested width exceeds the limit.
 `active_width()` and `peak_active_width()` expose width telemetry. `reset()`

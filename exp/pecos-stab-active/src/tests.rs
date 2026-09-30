@@ -63,7 +63,7 @@ fn apply_dense(matrix: &[(usize, Complex64)], vector: &[Complex64]) -> Vec<Compl
 
 // Independent H1 oracle: no simulator methods or decomposition/basis-change
 // helpers are used. The random seed only selects a nonorthogonal projector input.
-fn reconstruct(sim: &ActiveState) -> Vec<Complex64> {
+fn reconstruct(sim: &StabActive) -> Vec<Complex64> {
     let n = sim.tableau.num_qubits();
     let mut rng = PecosRng::seed_from_u64(937);
     let mut phi: Vec<_> = (0..1 << n)
@@ -100,7 +100,7 @@ fn reconstruct(sim: &ActiveState) -> Vec<Complex64> {
     state
 }
 
-fn assert_state(sim: &ActiveState, reference: &[Complex64], label: &str) {
+fn assert_state(sim: &StabActive, reference: &[Complex64], label: &str) {
     let state = reconstruct(sim);
     let norm: f64 = state.iter().map(Complex64::norm_sqr).sum();
     assert!((norm - 1.0).abs() <= 1e-10, "{label}: norm {norm}");
@@ -122,7 +122,7 @@ fn marginal(state: &[Complex64], q: usize) -> f64 {
 }
 
 fn synchronized_measure(
-    sim: &mut ActiveState,
+    sim: &mut StabActive,
     reference: &mut Vec<Complex64>,
     q: usize,
     choice: bool,
@@ -235,7 +235,7 @@ fn dense_random_circuits() {
     let mut peak = 0;
     for n in 1..=10 {
         for circuit in 0..20 {
-            let mut sim = ActiveState::with_seed(n, 91);
+            let mut sim = StabActive::with_seed(n, 91);
             let mut reference = StateVec::new(n).state();
             for depth in 0..60 {
                 let q = index(&mut rng, n);
@@ -273,7 +273,7 @@ fn dense_random_circuits() {
 #[test]
 fn repeated_support_bounds_width() {
     let angle = Angle64::from_radians(0.37);
-    let mut sim = ActiveState::with_seed(10, 12);
+    let mut sim = StabActive::with_seed(10, 12);
     let mut reference = StateVec::new(10).state();
     for step in 0..60 {
         let q = step % 3;
@@ -293,7 +293,7 @@ fn repeated_support_bounds_width() {
 fn active_certain_measurements_ignore_impossible_force() {
     for pair in [false, true] {
         for outcome in [false, true] {
-            let mut sim = ActiveState::with_seed(1, 34);
+            let mut sim = StabActive::with_seed(1, 34);
             let theta = Angle64::from_radians(0.37);
             if pair {
                 let t = Angle64::QUARTER_TURN / 2u64;
@@ -326,7 +326,7 @@ fn exact_angle_boundaries() {
         let exact = Angle64::QUARTER_TURN * quarter;
         for theta in [exact - Angle64::new(1), exact, exact + Angle64::new(1)] {
             for gate in [8, 9, 10] {
-                let mut sim = ActiveState::new(2);
+                let mut sim = StabActive::new(2);
                 if gate != 9 {
                     sim.h(&[QubitId(0)]);
                 }
@@ -345,7 +345,7 @@ fn exact_angle_boundaries() {
 fn smallest_signed_rotations_retain_relative_phase() {
     let unit = Angle64::new(1);
     for theta in [unit, -unit] {
-        let mut sim = ActiveState::new(1);
+        let mut sim = StabActive::new(1);
         sim.rx(theta, &[QubitId(0)]);
         let expected = if theta == unit { -1.0 } else { 1.0 } * unit.to_radians() / 2.0;
         assert!(expected.abs() > 0.0);
@@ -357,7 +357,7 @@ fn smallest_signed_rotations_retain_relative_phase() {
 #[test]
 fn pure_cliffords_never_promote() {
     let mut rng = PecosRng::seed_from_u64(243);
-    let mut sim = ActiveState::with_seed(5, 26);
+    let mut sim = StabActive::with_seed(5, 26);
     let mut reference = StateVec::new(5).state();
     for step in 0..300 {
         let q = index(&mut rng, 5);
@@ -378,15 +378,15 @@ fn pure_cliffords_never_promote() {
 #[test]
 #[should_panic(expected = "active width 2 exceeds limit 1")]
 fn width_limit() {
-    ActiveState::new(2)
+    StabActive::new(2)
         .with_max_active_width(1)
         .rx(Angle64::from_radians(0.37), &[QubitId(0), QubitId(1)]);
 }
 
 #[test]
 fn seed_reset_and_preparation() {
-    let mut first = ActiveState::with_seed(4, 64);
-    let mut second = ActiveState::with_seed(4, 64);
+    let mut first = StabActive::with_seed(4, 64);
+    let mut second = StabActive::with_seed(4, 64);
     for _ in 0..100 {
         for sim in [&mut first, &mut second] {
             sim.h(&[QubitId(0)]).cx(&[(QubitId(0), QubitId(1))]);
@@ -415,13 +415,13 @@ fn seed_reset_and_preparation() {
     assert_state(&first, &StateVec::new(4).state(), "pz");
 }
 
-pecos_simulators::rotation_test_suite!(ActiveState, 4, ActiveState::with_seed(4, 42));
-pecos_simulators::measurement_stress_test_suite!(ActiveState, 4, ActiveState::with_seed(4, 42));
+pecos_simulators::rotation_test_suite!(StabActive, 4, StabActive::with_seed(4, 42));
+pecos_simulators::measurement_stress_test_suite!(StabActive, 4, StabActive::with_seed(4, 42));
 
 #[test]
 fn full_stabilizer_suite() {
     pecos_simulators::stabilizer_test_utils::run_full_stabilizer_test_suite(
-        &mut ActiveState::with_seed(4, 42),
+        &mut StabActive::with_seed(4, 42),
         4,
     );
 }
@@ -430,14 +430,14 @@ fn full_stabilizer_suite() {
 fn mixed_support_and_odd_overlap() {
     let angle = Angle64::from_radians(0.37);
     // X in the S-rotated frame has odd overlap of its D and S factors.
-    let mut sim = ActiveState::new(1);
+    let mut sim = StabActive::new(1);
     let mut reference = StateVec::new(1).state();
     for gate in [9, 1, 9] {
         unitary(&mut sim, gate, 0, 0, angle);
         reference_unitary(&mut reference, gate, 0, 0, angle);
         assert_state(&sim, &reference, "odd D/S overlap");
     }
-    let mut overlap_sim = ActiveState::new(1);
+    let mut overlap_sim = StabActive::new(1);
     overlap_sim.rx(angle, &[QubitId(0)]).sz(&[QubitId(0)]);
     let parts = overlap_sim.parts(&[(0, PauliKindForDecomp::X)]);
     assert_eq!(parts.active_flips, vec![0]);
@@ -447,7 +447,7 @@ fn mixed_support_and_odd_overlap() {
     for negative_dormant in [false, true] {
         for promotion in [false, true] {
             for outcome in [false, true] {
-                let mut sim = ActiveState::new(2);
+                let mut sim = StabActive::new(2);
                 let mut reference = StateVec::new(2).state();
                 let mut circuit = vec![(9, 0, 0)];
                 if negative_dormant {
@@ -484,7 +484,7 @@ fn check_roundoff_endpoint(pair: bool) {
     use pecos_stab_tn::stab_mps::measure::EXPECTATION_ENDPOINT_TOLERANCE;
 
     for outcome in [false, true] {
-        let mut sim = ActiveState::with_seed(1, 34);
+        let mut sim = StabActive::with_seed(1, 34);
         let mut reference = StateVec::new(1);
         let (a, b) = if pair { (0.37, 0.83) } else { (0.79, 2.91) };
         let a = Angle64::from_radians(a);

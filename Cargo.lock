@@ -4068,18 +4068,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pecos-active-state"
-version = "0.2.0-dev.0"
-dependencies = [
- "num-complex 0.4.6",
- "paste",
- "pecos-core",
- "pecos-random",
- "pecos-simulators",
- "pecos-stab-tn",
-]
-
-[[package]]
 name = "pecos-bp"
 version = "0.2.0-dev.0"
 dependencies = [
@@ -4887,6 +4875,18 @@ dependencies = [
  "rayon",
  "smallvec",
  "wide",
+]
+
+[[package]]
+name = "pecos-stab-active"
+version = "0.2.0-dev.0"
+dependencies = [
+ "num-complex 0.4.6",
+ "paste",
+ "pecos-core",
+ "pecos-random",
+ "pecos-simulators",
+ "pecos-stab-tn",
 ]
 
 [[package]]

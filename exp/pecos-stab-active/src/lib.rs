@@ -45,7 +45,7 @@ use pecos_stab_tn::stab_mps::pauli_decomp::PauliKindForDecomp;
 /// The default maximum active width is 26. Physical Cliffords update only the
 /// signed tableau. Global phase is unspecified; relative phases are preserved.
 #[derive(Clone, Debug)]
-pub struct ActiveState {
+pub struct StabActive {
     tableau: SparseStabY,
     active: Vec<usize>,
     amplitudes: Vec<Complex64>,
@@ -54,7 +54,7 @@ pub struct ActiveState {
     max_width: usize,
 }
 
-impl ActiveState {
+impl StabActive {
     /// Construct `|0^n>` with a fresh random seed and no active coordinates.
     #[must_use]
     pub fn new(num_qubits: usize) -> Self {
@@ -337,7 +337,7 @@ fn parity(value: usize) -> f64 {
     }
 }
 
-impl QuantumSimulator for ActiveState {
+impl QuantumSimulator for StabActive {
     fn reset(&mut self) -> &mut Self {
         self.tableau.reset();
         self.active.clear();
@@ -351,7 +351,7 @@ impl QuantumSimulator for ActiveState {
     }
 }
 
-impl CliffordGateable for ActiveState {
+impl CliffordGateable for StabActive {
     fn sz(&mut self, qubits: &[QubitId]) -> &mut Self {
         self.tableau.sz(qubits);
         self
@@ -372,7 +372,7 @@ impl CliffordGateable for ActiveState {
     }
 }
 
-impl ArbitraryRotationGateable for ActiveState {
+impl ArbitraryRotationGateable for StabActive {
     /// Apply `exp(-i theta X/2)` to each qubit.
     ///
     /// # Panics
@@ -411,13 +411,13 @@ impl ArbitraryRotationGateable for ActiveState {
     }
 }
 
-impl ForcedMeasurement for ActiveState {
+impl ForcedMeasurement for StabActive {
     fn mz_forced(&mut self, qubit: usize, forced_outcome: bool) -> MeasurementResult {
         self.measure(qubit, Some(forced_outcome))
     }
 }
 
-impl RngManageable for ActiveState {
+impl RngManageable for StabActive {
     type Rng = PecosRng;
     fn set_rng(&mut self, rng: PecosRng) {
         self.rng = rng;

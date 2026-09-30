@@ -1,5 +1,5 @@
 [package]
-name = "pecos-active-state"
+name = "pecos-stab-active"
 version.workspace = true
 edition.workspace = true
 readme = "README.md"

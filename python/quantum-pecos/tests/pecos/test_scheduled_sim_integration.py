@@ -147,5 +147,5 @@ def test_preparation_gap_does_not_consume_noise_rng_through_both_routes(tmp_path
             )
             results[events, initial_nanos] = builder.noise(profile).run(64).to_dict()["measurement_0"]
     assert len(set(results[False, 0])) == 2  # The retained Ramsey gap still samples noise.
-    for values in results.values():
-        assert values == results[False, 0]
+    for (events, initial_nanos), values in results.items():
+        assert values == results[False, 0], f"Seeded outcomes differ for events={events}, initial_nanos={initial_nanos}"

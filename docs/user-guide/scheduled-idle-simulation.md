@@ -41,9 +41,10 @@ Operation tracing is currently incompatible with this opt-in route.
 
 Batch start and duration remain integer nanoseconds. For each physical qubit,
 its idle interval runs from the end of its previous touching batch to the start
-of its next touching batch. The initial end is zero. A qubit receives one idle
-operation for that whole gap before its first operation in the batch. Operations
-retain emission order, including same-batch measurement boundaries. A batch's
+of its next touching batch. The initial end is zero. Except before preparation
+as described below, a qubit receives one idle operation for that whole gap before
+its first operation in the batch. Operations retain emission order, including
+same-batch measurement boundaries. A batch's
 entire duration counts as busy time for each qubit it touches; no final idle tail
 is invented after the last operation. Backward/overlapping use of a qubit rejects.
 

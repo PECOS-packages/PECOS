@@ -186,9 +186,9 @@ fn monte_carlo_sample(
     p_ref: f64,
     mut histories: impl Write,
 ) -> Result<(usize, Vec<FaultHistory>), Box<dyn std::error::Error>> {
-    let distance = 3;
-    let rounds = 3;
-    let seed = 42;
+    let distance = 7;
+    let rounds = 7;
+    let seed = 43;
     let code = SurfaceCode::rotated(distance)?;
     let (mut monte_carlo, mut decoder, dem, num_measurements) =
         build_mc_engine(&code, rounds, p_ref, seed)?;
@@ -279,11 +279,12 @@ fn monte_carlo_sample(
     Ok((failures, fault_histories))
 }
 
-fn estimate_bridge_ratio(p_initial:f64, p_target:f64, fault_histories: &[FaultHistory]) -> Result<f64, Box<dyn std::error::Error>> {
+fn estimate_bridge_ratio(p_initial:f64, p_target:f64, fault_histories: &[FaultHistory]) -> Result<(f64,f64), Box<dyn std::error::Error>> {
     let mut ratio_sum = 0.0;
-    let distance = 3;
-    let rounds = 3;
-    let seed = 42;
+    let mut ratio_squared_sum = 0.0;
+    let distance = 7;
+    let rounds = 7;
+    let seed = 43;
     let code = SurfaceCode::rotated(distance)?;
     let (mut initial_monte_carlo, _, _, _) =
         build_mc_engine(&code, rounds, p_initial, seed)?;
@@ -292,10 +293,11 @@ fn estimate_bridge_ratio(p_initial:f64, p_target:f64, fault_histories: &[FaultHi
         build_mc_engine(&code, rounds, p_target, seed)?;
     let new_fault_catalog = new_monte_carlo.return_fault_catalog()?;
     for (ind1, history1) in fault_histories.into_iter().enumerate() {
-        ratio_sum += new_fault_catalog.fault_catalog_probability_ratio(&initial_fault_catalog, &history1);
+        let ratio = new_fault_catalog.fault_catalog_probability_ratio(&initial_fault_catalog, &history1);
+        ratio_sum += ratio;
+        ratio_squared_sum += ratio * ratio;
     }
-    let ratio_estimate = ratio_sum / fault_histories.len() as f64;
-    Ok(ratio_estimate)
+    Ok((ratio_sum, ratio_squared_sum))
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -305,8 +307,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(argument) => argument.parse::<usize>()?,
         None => 10_000,
     };
-    if n_shots == 0 {
-        return Err("shot count must be positive".into());
+    if n_shots < 2 {
+        return Err("shot count must be >= 2".into());
     }
     let p_phys_0: f64 = match args.next() {
         Some(argument) => argument.parse::<f64>()?,
@@ -320,12 +322,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(path) => path,
         None => String::from("failing_fault_histories.txt"),
     };
+
     let output_file = File::create(&output)?;
     let history_writer = BufWriter::new(output_file);
     println!("Running Monte Carlo to acquire Z0...\n");
     let (failures, fault_histories) = monte_carlo_sample(n_shots, p_phys_0, history_writer)?;
     let logical_error_rate = failures as f64 / n_shots as f64;
-    let unc_logical_error_rate = logical_error_rate / (n_shots as f64).sqrt();
+    let unc_logical_error_rate = (logical_error_rate * (1.0 - logical_error_rate) / n_shots as f64).sqrt();
     println!(
         "Monte Carlo complete! Logical error rate Z0: {logical_error_rate:.2e} +/- {unc_logical_error_rate:.2e} ({failures}/{n_shots})\n"
     );
@@ -337,13 +340,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Z1 = Z0 * Z1/Z0.
 
     // ratio estimator funciton gets Z1/Z0 for the failure history recorded
-    let ratio_estimate: f64 = estimate_bridge_ratio(p_phys_0, p_phys_1, &fault_histories)?;
+    let (ratio_sum, ratio_squared_sum) = estimate_bridge_ratio(p_phys_0, p_phys_1, &fault_histories)?;
+
+    let n = n_shots as f64;
+    let k = fault_histories.len() as f64;
+
+    // Ratio averages over failures
+    let ratio_estimate = ratio_sum / k;
+
+    let variance =
+    (ratio_squared_sum - ratio_estimate * ratio_estimate / n_shots as f64) / ((n_shots * (n_shots - 1)) as f64);
+
+    let unc_ler = variance.max(0.0).sqrt();
 
     println!("SIS Sampler complete! Estimated Z1/Z0: {ratio_estimate:.2e}\n");
-    let ler = logical_error_rate * ratio_estimate;
+    let ler = ratio_sum / n;
 
-
-    let n_shots_2 = ((100.0/ler).ceil() as usize);
+    // burner variables for the monte-carlo run that compares with the SIS estimate.
+    let n_shots_2 = (100.0/ler).ceil() as usize;
     let output_file_2 = File::create(&output)?;
     let history_writer_2: BufWriter<_> = BufWriter::new(output_file_2);
 
@@ -355,7 +369,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("MC LER @ p = {p_phys_0:.2e}: {logical_error_rate:.2e} +/- {unc_logical_error_rate:.2e}\n");
     println!("MC LER @ p = {p_phys_1:.2e}: {ler_mc_phys_1:.2e} +/- {unc_ler_mc_phys_1:.2e}\n");
-    println!("SIS LER @ p = {p_phys_1:.2e}: {ler:.2e} +/- (?)...\n");
+    println!("SIS LER @ p = {p_phys_1:.2e}: {ler:.2e} +/- {unc_ler:.2e}\n");
     println!("Agreement (SIS/MC) @ p = {p_phys_1:.2e}: {ratio:.2}\n", ratio = ler / ler_mc_phys_1);
     println!("Job complete! Exiting...");
     Ok(())

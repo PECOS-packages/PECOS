@@ -74,7 +74,11 @@ configuration option.
 | Sine-squared | X, Y, Z, L | Independent per-axis probability `sin(sine * multiplier * d)**2` |
 | Coherent | RX, RY, RZ | Rotation angle `coherent * multiplier * d`, in RX/RY/RZ order |
 
-`L` means leakage. Linear weights must sum to one within `1e-10`; sine and
+`L` means leakage. Sine-squared leakage probability is not monotonic in idle
+duration: it can decrease again for longer gaps. Linear leakage instead saturates
+at one. These are the existing general-noise family semantics.
+
+Linear weights must sum to one within `1e-10`; sine and
 coherent multipliers are deliberately unnormalized. Rates and weights must be
 finite and nonnegative, and rate/multiplier/duration products must remain finite.
 Validation applies even to disabled families. Empty sine/coherent maps disable

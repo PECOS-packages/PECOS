@@ -833,17 +833,10 @@ pub fn scheduled_idle_noise(
     coherent_model: Option<std::collections::BTreeMap<String, f64>>,
 ) -> PyResult<PyScheduledIdleNoise> {
     use pecos_engines::scheduled_frame::ScheduledIdleNoise;
-    use std::collections::BTreeMap;
-    let z = || BTreeMap::from([("Z".to_owned(), 1.0)]);
     let result = ScheduledIdleNoise::new(qubits)
-        .and_then(|p| p.with_linear(linear, linear_model.unwrap_or_else(z)))
-        .and_then(|p| p.with_sine(sine, sine_model.unwrap_or_else(z)))
-        .and_then(|p| {
-            p.with_coherent(
-                coherent,
-                coherent_model.unwrap_or_else(|| BTreeMap::from([("RZ".to_owned(), 1.0)])),
-            )
-        });
+        .and_then(|p| p.with_linear(linear, linear_model))
+        .and_then(|p| p.with_sine(sine, sine_model))
+        .and_then(|p| p.with_coherent(coherent, coherent_model));
     Ok(PyScheduledIdleNoise {
         inner: result.map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?,
     })

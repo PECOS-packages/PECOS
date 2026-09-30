@@ -30,13 +30,11 @@ impl ScheduledIdleZ {
     /// # Errors
     /// Rejects capacity outside 1..=16 or nonfinite/negative rates.
     pub fn new(qubits: usize, linear: f64, sine: f64, coherent: f64) -> Result<Self, PecosError> {
-        let z = BTreeMap::from([("Z".to_owned(), 1.0)]);
-        let rz = BTreeMap::from([("RZ".to_owned(), 1.0)]);
         Ok(Self(
             ScheduledIdleNoise::new(qubits)?
-                .with_linear(linear, z.clone())?
-                .with_sine(sine, z)?
-                .with_coherent(coherent, rz)?,
+                .with_linear(linear, None)?
+                .with_sine(sine, None)?
+                .with_coherent(coherent, None)?,
         ))
     }
 }
@@ -82,58 +80,75 @@ impl ScheduledIdleNoise {
         })
     }
     fn validate_model(model: &BTreeMap<String, f64>, axes: &[&str]) -> Result<(), PecosError> {
-        if model.iter().any(|(axis, value)| {
-            !axes.contains(&axis.as_str()) || !value.is_finite() || *value < 0.0
-        }) {
-            return Err(error("invalid scheduled idle axis or weight"));
+        for (axis, value) in model {
+            if !axes.contains(&axis.as_str()) {
+                return Err(error(&format!(
+                    "invalid scheduled idle axis '{axis}'; expected one of {}",
+                    axes.join(", ")
+                )));
+            }
+            if !value.is_finite() || *value < 0.0 {
+                return Err(error(&format!(
+                    "invalid scheduled idle weight for '{axis}': must be finite and nonnegative"
+                )));
+            }
         }
         Ok(())
     }
     /// Set the linear event rate in inverse seconds and its X/Y/Z/L distribution.
+    /// Passing `None` retains the current distribution (initially Z only).
     /// A single event is drawn with probability min(rate * seconds, 1).
     /// # Errors
     /// Rejects invalid rates, axes or weights; weights must sum to one within 1e-10.
     pub fn with_linear(
         mut self,
         rate: f64,
-        model: BTreeMap<String, f64>,
+        model: impl Into<Option<BTreeMap<String, f64>>>,
     ) -> Result<Self, PecosError> {
-        Self::validate_model(&model, &["X", "Y", "Z", "L"])?;
-        let total: f64 = model.values().sum();
-        if !total.is_finite() || (total - 1.0).abs() > 1e-10 {
-            return Err(error("scheduled linear weights must sum to one"));
+        if let Some(model) = model.into() {
+            Self::validate_model(&model, &["X", "Y", "Z", "L"])?;
+            let total: f64 = model.values().sum();
+            if !total.is_finite() || (total - 1.0).abs() > 1e-10 {
+                return Err(error("scheduled linear weights must sum to one"));
+            }
+            self.linear_model = model;
         }
         self.linear = rate;
-        self.linear_model = model;
         self.validate_idle(1.0)?;
         Ok(self)
     }
     /// Set the sine-squared rate in radians/second and independent X/Y/Z/L multipliers.
+    /// Passing `None` retains the current multipliers (initially Z only).
     /// Multipliers are not normalized. Each axis has probability sin(rate * multiplier * seconds)^2.
     /// # Errors
     /// Rejects invalid rates, axes, multipliers or overflowing products.
     pub fn with_sine(
         mut self,
         rate: f64,
-        model: BTreeMap<String, f64>,
+        model: impl Into<Option<BTreeMap<String, f64>>>,
     ) -> Result<Self, PecosError> {
-        Self::validate_model(&model, &["X", "Y", "Z", "L"])?;
+        if let Some(model) = model.into() {
+            Self::validate_model(&model, &["X", "Y", "Z", "L"])?;
+            self.sine_model = model;
+        }
         self.sine = rate;
-        self.sine_model = model;
         self.validate_idle(1.0)?;
         Ok(self)
     }
     /// Set the coherent rate in radians/second and unnormalized RX/RY/RZ multipliers.
+    /// Passing `None` retains the current multipliers (initially RZ only).
     /// # Errors
     /// Rejects invalid rates, axes, multipliers or overflowing products.
     pub fn with_coherent(
         mut self,
         rate: f64,
-        model: BTreeMap<String, f64>,
+        model: impl Into<Option<BTreeMap<String, f64>>>,
     ) -> Result<Self, PecosError> {
-        Self::validate_model(&model, &["RX", "RY", "RZ"])?;
+        if let Some(model) = model.into() {
+            Self::validate_model(&model, &["RX", "RY", "RZ"])?;
+            self.coherent_model = model;
+        }
         self.coherent = rate;
-        self.coherent_model = model;
         self.validate_idle(1.0)?;
         Ok(self)
     }

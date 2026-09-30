@@ -143,3 +143,19 @@ def test_other_engines_reject_general_event_profile(builder_name):
     profile = pr.scheduled_event_idle_noise(pr.scheduled_idle_noise(1), lambda _: PassThrough())
     with pytest.raises(TypeError, match="requires QIS/HUGR"):
         getattr(pr, builder_name)().to_sim().noise(profile)
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"linear_model": {"z": 1.0}}, "axis 'z'; expected one of X, Y, Z, L"),
+        ({"sine_model": {"L": -1.0}}, "weight for 'L': must be finite and nonnegative"),
+        ({"coherent_model": {"rz": 1.0}}, "axis 'rz'; expected one of RX, RY, RZ"),
+        ({"coherent_model": {"RX": math.nan}}, "weight for 'RX': must be finite and nonnegative"),
+    ],
+)
+def test_invalid_model_identifies_the_offending_entry(kwargs, message):
+    import pecos_rslib as pr
+
+    with pytest.raises(ValueError, match=message):
+        pr.scheduled_idle_noise(1, **kwargs)

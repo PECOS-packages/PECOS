@@ -360,7 +360,9 @@ pub trait ScheduledBatchAdapter: Send + Sync {
 }
 type Factory =
     Arc<dyn Fn(ShotContext) -> Result<Box<dyn ScheduledBatchAdapter>, PecosError> + Send + Sync>;
-/// Backward-compatible name for the checked scheduled event profile.
+/// Compatibility alias retaining the original public event-wrapper name.
+/// This wraps a supplied profile; unlike the Z-only `ScheduledIdleZ` constructor,
+/// the alias does not restrict that profile to Z/RZ channels.
 pub type ScheduledEventIdleZ = ScheduledEventIdleNoise;
 /// Explicit opt-in to mandatory v4 with the same bounded local idle physics as v3.
 #[derive(Clone)]
@@ -582,7 +584,7 @@ mod tests {
         // real 64 MiB arithmetic boundary is covered separately without a huge
         // expanded Gate allocation. Public admission always uses the fixed limit.
         for (limit, accepted) in [(176, true), (175, false)] {
-            let mut noise = ScheduledEventIdleZ::new(
+            let mut noise = ScheduledEventIdleNoise::new(
                 crate::scheduled_frame::ScheduledIdleZ::new(1, 0.0, 0.0, 0.0).unwrap(),
                 |_| Ok(Box::new(Expand)),
             )

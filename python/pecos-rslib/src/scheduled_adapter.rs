@@ -2,7 +2,7 @@
 use crate::dag_circuit_bindings::PyGate;
 use pecos_core::errors::PecosError;
 use pecos_engines::scheduled_events::{
-    MAX_BATCH_OPERATIONS, ScheduledBatchAdapter, ScheduledEventBatch, ScheduledEventIdleZ,
+    MAX_BATCH_OPERATIONS, ScheduledBatchAdapter, ScheduledEventBatch, ScheduledEventIdleNoise,
     ScheduledEventOp, ScheduledGateBuffer,
 };
 use pecos_engines::scheduled_frame::{ScheduledIdleNoise, ScheduledIdleZ};
@@ -156,7 +156,7 @@ impl ScheduledBatchAdapter for PythonAdapter {
 #[pyclass(name = "ScheduledEventIdleZ", from_py_object)]
 #[derive(Clone)]
 pub struct PyScheduledEventIdleZ {
-    pub(crate) inner: ScheduledEventIdleZ,
+    pub(crate) inner: ScheduledEventIdleNoise,
 }
 /// Factory receives (run, worker, shot), returns a fresh validate/translate object.
 #[pyfunction]
@@ -179,7 +179,7 @@ pub fn scheduled_event_idle_z(
 #[pyclass(name = "ScheduledEventIdleNoise", from_py_object)]
 #[derive(Clone)]
 pub struct PyScheduledEventIdleNoise {
-    pub(crate) inner: ScheduledEventIdleZ,
+    pub(crate) inner: ScheduledEventIdleNoise,
 }
 /// Attach a per-shot batch adapter to a checked scheduled idle profile.
 #[pyfunction]
@@ -196,11 +196,11 @@ fn event_profile(
     profile: ScheduledIdleNoise,
     adapter_factory: Py<PyAny>,
     py: Python<'_>,
-) -> PyResult<ScheduledEventIdleZ> {
+) -> PyResult<ScheduledEventIdleNoise> {
     if !adapter_factory.bind(py).is_callable() {
         return Err(PyTypeError::new_err("adapter_factory must be callable"));
     }
-    Ok(ScheduledEventIdleZ::new(profile, move |context| {
+    Ok(ScheduledEventIdleNoise::new(profile, move |context| {
         let _scope = CallbackScope::enter();
         Python::attach(|py| -> PyResult<Box<dyn ScheduledBatchAdapter>> {
             let object =
@@ -220,7 +220,7 @@ fn event_profile(
 pub(crate) fn extract_event_noise(
     noise: &Py<PyAny>,
     py: Python<'_>,
-) -> Option<ScheduledEventIdleZ> {
+) -> Option<ScheduledEventIdleNoise> {
     if let Ok(profile) = noise.extract::<PyScheduledEventIdleNoise>(py) {
         Some(profile.inner)
     } else {

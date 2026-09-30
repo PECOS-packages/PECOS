@@ -16,7 +16,9 @@ Outcome-dependent adapters and non-idle noise require separate work.
 
 Use `QisEngineBuilder::scheduled_event_batches(true)` with
 `ScheduledEventIdleNoise::new(profile, factory)` (also available under the
-compatibility name `ScheduledEventIdleZ`). The factory receives `ShotContext` and
+compatibility name `ScheduledEventIdleZ`, retained for existing callers).
+The alias wraps either checked profile; `ScheduledIdleZ` itself remains a Z-only
+convenience constructor. The factory receives `ShotContext` and
 must return an independent `Box<dyn ScheduledBatchAdapter>` for each shot.
 
 The builder has three transport modes: off, v3, v4. Enabling scheduled batches

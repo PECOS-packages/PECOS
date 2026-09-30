@@ -155,6 +155,8 @@ fn leakage_survives_batches_measurement_and_gates_until_preparation() {
                 vec![1, 2]
             );
             s.process(ByteMessage::create_empty()).unwrap();
+            // This observes leakage persistence, not whether the rotation was
+            // suppressed: MeasureLeaked returns 2 in either case.
             assert_eq!(
                 run(
                     &mut s,
@@ -429,5 +431,44 @@ fn overflowing_later_gap_rejects_before_execution_or_rng_mutation() {
             run(&mut s, &[batch(0, 0, 0, vec![Gate::mz(&[0])])], events),
             vec![0]
         );
+    }
+}
+
+#[test]
+fn changing_rates_without_models_retains_existing_channels() {
+    let base = ScheduledIdleNoise::new(2).unwrap();
+    let linear = base
+        .clone()
+        .with_linear(0.0, model(&[("L", 1.0)]))
+        .unwrap()
+        .with_linear(1.0, None)
+        .unwrap();
+    let sine = base
+        .clone()
+        .with_sine(0.0, model(&[("L", 1.0)]))
+        .unwrap()
+        .with_sine(std::f64::consts::FRAC_PI_2, None)
+        .unwrap();
+    let coherent = base
+        .with_coherent(0.0, model(&[("RX", 1.0)]))
+        .unwrap()
+        .with_coherent(std::f64::consts::PI, None)
+        .unwrap();
+    for events in [false, true] {
+        for (profile, expected) in [
+            (linear.clone(), 2),
+            (sine.clone(), 2),
+            (coherent.clone(), 1),
+        ] {
+            let mut s = system(profile, events, 12);
+            assert_eq!(
+                run(
+                    &mut s,
+                    &[batch(0, 1_000_000_000, 0, vec![Gate::measure_leaked(&[0])])],
+                    events
+                ),
+                vec![expected]
+            );
+        }
     }
 }

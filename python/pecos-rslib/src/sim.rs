@@ -434,6 +434,14 @@ impl PySimBuilder {
                 )));
             }
         };
+        if parsed == PySimStack::Neo
+            && let SimBuilderInner::Hugr(b) = &self.inner
+            && b.noise_builder
+                .as_ref()
+                .is_some_and(crate::scheduled_adapter::is_event_noise)
+        {
+            return Err(crate::scheduled_adapter::unsupported_route());
+        }
         match &mut self.inner {
             SimBuilderInner::Qasm(builder) => builder.stack = Some(parsed),
             SimBuilderInner::Hugr(builder) => builder.stack = Some(parsed),
@@ -539,6 +547,16 @@ impl PySimBuilder {
 
     /// Set noise model builder
     fn noise(&mut self, noise_builder: Py<PyAny>) -> PyResult<Self> {
+        if crate::scheduled_adapter::is_event_noise(&noise_builder) {
+            let supported = match &self.inner {
+                SimBuilderInner::QisControl(_) => true,
+                SimBuilderInner::Hugr(b) => b.stack != Some(PySimStack::Neo),
+                _ => false,
+            };
+            if !supported {
+                return Err(crate::scheduled_adapter::unsupported_route());
+            }
+        }
         match &mut self.inner {
             SimBuilderInner::Qasm(builder) => builder.noise_builder = Some(noise_builder),
             SimBuilderInner::QisControl(builder) => builder.noise_builder = Some(noise_builder),
@@ -678,6 +696,15 @@ impl PySimBuilder {
             PyStabVecEngineBuilder, PyStabilizerEngineBuilder, PyStateVectorEngineBuilder,
         };
 
+        let noise = match &self.inner {
+            SimBuilderInner::QisControl(b) => b.noise_builder.as_ref(),
+            SimBuilderInner::Hugr(b) => b.noise_builder.as_ref(),
+            _ => None,
+        };
+        if noise.is_some_and(crate::scheduled_adapter::is_event_noise) {
+            return Err(crate::scheduled_adapter::unsupported_route());
+        }
+
         match &self.inner {
             SimBuilderInner::QisControl(builder) => {
                 let mut builder_lock = builder.engine_builder.lock().expect("lock poisoned");
@@ -790,7 +817,7 @@ impl PySimBuilder {
                     } else {
                         return Err(PyTypeError::new_err(
                             "Unrecognized noise builder type; expected depolarizing_noise(), \
-                                 biased_depolarizing_noise(), general_noise(), or scheduled_idle_z()",
+                                 biased_depolarizing_noise(), general_noise(), or scheduled_idle_z(); scheduled_event_idle_z() requires QIS/HUGR engines without operation tracing",
                         ));
                     };
                 }
@@ -993,7 +1020,7 @@ impl PySimBuilder {
                         } else {
                             Err(PyTypeError::new_err(
                                 "Unrecognized noise builder type; expected depolarizing_noise(), \
-                                 biased_depolarizing_noise(), general_noise(), or scheduled_idle_z()",
+                                 biased_depolarizing_noise(), general_noise(), or scheduled_idle_z(); scheduled_event_idle_z() requires QIS/HUGR engines without operation tracing",
                             ))
                         }
                     })?;
@@ -1221,7 +1248,7 @@ impl PySimBuilder {
                             } else {
                                 Err(PyTypeError::new_err(
                                     "Unrecognized noise builder type; expected depolarizing_noise(), \
-                                 biased_depolarizing_noise(), general_noise(), or scheduled_idle_z()",
+                                 biased_depolarizing_noise(), general_noise(), or scheduled_idle_z(); scheduled_event_idle_z() requires QIS/HUGR engines without operation tracing",
                                 ))
                             }
                         })?;
@@ -1431,7 +1458,7 @@ impl PySimBuilder {
                             } else {
                                 Err(PyTypeError::new_err(
                                     "Unrecognized noise builder type; expected depolarizing_noise(), \
-                                 biased_depolarizing_noise(), general_noise(), or scheduled_idle_z()",
+                                 biased_depolarizing_noise(), general_noise(), or scheduled_idle_z(); scheduled_event_idle_z() requires QIS/HUGR engines without operation tracing",
                                 ))
                             }
                         })?;
@@ -1647,7 +1674,7 @@ fn apply_noise_to_facade(
         } else {
             Err(PyTypeError::new_err(
                 "Unrecognized noise builder type; expected depolarizing_noise(), \
-                 biased_depolarizing_noise(), general_noise(), or scheduled_idle_z()",
+                 biased_depolarizing_noise(), general_noise(), or scheduled_idle_z(); scheduled_event_idle_z() requires QIS/HUGR engines without operation tracing",
             ))
         }
     })

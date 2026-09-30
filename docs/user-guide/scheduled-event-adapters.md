@@ -70,11 +70,10 @@ per-qubit timing and shot/ordinal state after processing.
 V3 angle conversion is reused; arbitrary floating-point encodings are not preserved
 bitwise. Normalization does not add another angle serialization round trip.
 
-
 ## Python factory
 
 Pair `qis_engine().scheduled_event_batches()` with
-`scheduled_event_idle_z(qubits, adapter_factory, linear=0, sine=0, coherent=0)`
+`scheduled_event_idle_z(qubits, adapter_factory, *, linear=0, sine=0, coherent=0)`
 from `pecos_rslib`. Use StateVec and the explicit physical capacity as for v3.
 The normal `pecos.sim(program).classical(...).noise(...).run(shots)` route and
 QIS `.build()` simulations support this configuration, including HUGR/Guppy
@@ -99,8 +98,10 @@ no cross-extension Rust ABI or pointer capsule is required.
 
 Callback errors include their stage and fail the shot through the existing Rust
 poisoning contract. QIS execution releases the GIL while workers run, acquiring it
-for each callback. Concurrent/reentrant calls on one built simulation reject as
-busy, rather than waiting while its callback is running. Factory isolation,
+for each callback. External calls to built `run`, `run_with_workers`, and `reset` serialize on the
+engine mutex with the GIL released. Calling any of these methods from a scheduled
+adapter callback rejects before waiting, including calls to a different built
+simulation. A poisoned mutex is reported separately from callback reentry. Factory isolation,
 determinism, validation purity, callback termination and retained-memory bounds
 remain trusted responsibilities. Capturing and sharing mutable state across shot
 objects violates the contract even if the signatures are correct.

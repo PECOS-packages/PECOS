@@ -9,6 +9,33 @@ use pecos_engines::scheduled_frame::ScheduledIdleZ;
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyList};
+use std::cell::Cell;
+
+thread_local! {
+    static IN_CALLBACK: Cell<bool> = const { Cell::new(false) };
+}
+struct CallbackScope(bool);
+impl CallbackScope {
+    fn enter() -> Self {
+        Self(IN_CALLBACK.replace(true))
+    }
+}
+impl Drop for CallbackScope {
+    fn drop(&mut self) {
+        IN_CALLBACK.set(self.0);
+    }
+}
+/// Waiting for an engine from one of its callbacks would create a worker cycle.
+/// Reject built simulation operations from callbacks; external threads may wait.
+pub(crate) fn reject_callback_reentry() -> PyResult<()> {
+    if IN_CALLBACK.get() {
+        Err(pyo3::exceptions::PyRuntimeError::new_err(
+            "Built simulation run/reset cannot be called from a scheduled adapter callback",
+        ))
+    } else {
+        Ok(())
+    }
+}
 
 /// Owned read-only snapshot of one original batch. No execution state is exposed.
 #[pyclass(name = "ScheduledEventBatch", frozen)]
@@ -69,6 +96,7 @@ struct PythonAdapter {
 }
 impl ScheduledBatchAdapter for PythonAdapter {
     fn validate(&self, batch: &ScheduledEventBatch) -> Result<(), PecosError> {
+        let _scope = CallbackScope::enter();
         Python::attach(|py| -> PyResult<()> {
             let input = Py::new(
                 py,
@@ -89,6 +117,7 @@ impl ScheduledBatchAdapter for PythonAdapter {
         batch: &ScheduledEventBatch,
         output: &mut ScheduledGateBuffer<'_>,
     ) -> Result<(), PecosError> {
+        let _scope = CallbackScope::enter();
         Python::attach(|py| {
             let input = Py::new(
                 py,
@@ -114,7 +143,9 @@ impl ScheduledBatchAdapter for PythonAdapter {
                 let gate = gate
                     .extract::<PyGate>()
                     .map_err(|e| callback_error("output gate", e.into()))?;
-                output.push(gate.into())?;
+                output.push(gate.into()).map_err(|e| {
+                    PecosError::Input(format!("scheduled adapter output gate: {e}"))
+                })?;
             }
             Ok(())
         })
@@ -145,6 +176,7 @@ pub fn scheduled_event_idle_z(
         .map_err(|e| PyValueError::new_err(e.to_string()))?;
     Ok(PyScheduledEventIdleZ {
         inner: ScheduledEventIdleZ::new(profile, move |context| {
+            let _scope = CallbackScope::enter();
             Python::attach(|py| -> PyResult<Box<dyn ScheduledBatchAdapter>> {
                 let object =
                     adapter_factory.call1(py, ((context.run, context.worker, context.shot),))?;
@@ -166,4 +198,13 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyScheduledEventIdleZ>()?;
     m.add_function(wrap_pyfunction!(scheduled_event_idle_z, m)?)?;
     Ok(())
+}
+
+pub(crate) fn is_event_noise(noise: &Py<PyAny>) -> bool {
+    Python::attach(|py| noise.bind(py).is_instance_of::<PyScheduledEventIdleZ>())
+}
+pub(crate) fn unsupported_route() -> PyErr {
+    PyTypeError::new_err(
+        "scheduled_event_idle_z() requires QIS/HUGR on the engines stack without operation tracing",
+    )
 }

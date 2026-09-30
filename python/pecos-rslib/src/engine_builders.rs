@@ -444,35 +444,38 @@ pub struct PyQisControlSimulation {
 
 #[pymethods]
 impl PyQisControlSimulation {
-    /// Run without holding the GIL while workers invoke adapter callbacks.
-    pub fn run(&self, shots: usize) -> PyResult<PyShotVec> {
-        Python::attach(|py| {
-            py.detach(|| {
-                let mut engine = self
-                    .inner
-                    .try_lock()
-                    .map_err(|_| PyRuntimeError::new_err("Simulation is busy or poisoned"))?;
-                engine
-                    .run(shots)
-                    .map(PyShotVec::new)
-                    .map_err(|e| PyRuntimeError::new_err(format!("Simulation failed: {e}")))
-            })
+    /// Serialize external callers without holding the GIL while workers run.
+    pub fn run(&self, shots: usize, py: Python<'_>) -> PyResult<PyShotVec> {
+        crate::scheduled_adapter::reject_callback_reentry()?;
+        py.detach(|| {
+            let mut engine = self
+                .inner
+                .lock()
+                .map_err(|_| PyRuntimeError::new_err("Simulation mutex is poisoned"))?;
+            engine
+                .run(shots)
+                .map(PyShotVec::new)
+                .map_err(|e| PyRuntimeError::new_err(format!("Simulation failed: {e}")))
         })
     }
 
     /// Run with an explicit worker count.
-    fn run_with_workers(&self, shots: usize, workers: usize) -> PyResult<PyShotVec> {
-        Python::attach(|py| {
-            py.detach(|| {
-                let mut engine = self
-                    .inner
-                    .try_lock()
-                    .map_err(|_| PyRuntimeError::new_err("Simulation is busy or poisoned"))?;
-                engine
-                    .run_with_workers(shots, workers)
-                    .map(PyShotVec::new)
-                    .map_err(|e| PyRuntimeError::new_err(format!("Simulation failed: {e}")))
-            })
+    fn run_with_workers(
+        &self,
+        shots: usize,
+        workers: usize,
+        py: Python<'_>,
+    ) -> PyResult<PyShotVec> {
+        crate::scheduled_adapter::reject_callback_reentry()?;
+        py.detach(|| {
+            let mut engine = self
+                .inner
+                .lock()
+                .map_err(|_| PyRuntimeError::new_err("Simulation mutex is poisoned"))?;
+            engine
+                .run_with_workers(shots, workers)
+                .map(PyShotVec::new)
+                .map_err(|e| PyRuntimeError::new_err(format!("Simulation failed: {e}")))
         })
     }
 
@@ -491,13 +494,18 @@ impl PyQisControlSimulation {
     /// Reset the simulation to its initial state (quantum state back to |0⟩).
     ///
     /// Returns the simulation object for method chaining.
-    fn reset(slf: PyRef<'_, Self>) -> PyResult<PyRef<'_, Self>> {
-        {
-            let mut engine = slf.inner.lock().expect("lock poisoned");
+    fn reset<'py>(slf: PyRef<'py, Self>, py: Python<'py>) -> PyResult<PyRef<'py, Self>> {
+        crate::scheduled_adapter::reject_callback_reentry()?;
+        let shared = Arc::clone(&slf.inner);
+        py.detach(move || {
+            let mut engine = shared
+                .lock()
+                .map_err(|_| PyRuntimeError::new_err("Simulation mutex is poisoned"))?;
             engine
                 .reset()
-                .map_err(|e| PyRuntimeError::new_err(format!("Reset failed: {e}")))?;
-        }
+                .map(|_| ())
+                .map_err(|e| PyRuntimeError::new_err(format!("Reset failed: {e}")))
+        })?;
         Ok(slf)
     }
 }

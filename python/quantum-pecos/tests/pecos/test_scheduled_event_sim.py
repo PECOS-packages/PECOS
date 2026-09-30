@@ -1,18 +1,21 @@
 """Python v4 factories through the production QIS/native/Monte Carlo route."""
 
 import math
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
-from test_scheduled_sim_integration import RAMSEY, build_timed_runtime
 
 
 @pytest.fixture
-def event_runtime(tmp_path: Path) -> Path:
-    return build_timed_runtime(tmp_path, 0, events=True)[0]
+def event_runtime(tmp_path: Path, scheduled_support):
+    return scheduled_support.build_runtime(tmp_path, 0, events=True)[0], scheduled_support.ramsey
 
 
-def simulation(library, factory, program=RAMSEY):
+def simulation(runtime, factory, program=None):
+    library, default_program = runtime
+    program = default_program if program is None else program
     import pecos
     import pecos_rslib as pr
     from selene_simple_runtime_plugin import SimpleRuntimePlugin
@@ -114,13 +117,26 @@ def test_callback_errors_are_reported(event_runtime, stage):
         simulation(event_runtime, factory).run(1)
 
 
-@pytest.mark.parametrize("output", ["iterator", "wrong_type", "too_many", "remove_measurement"])
-def test_output_contract_rejects(event_runtime, output):
+@pytest.mark.parametrize(
+    ("output", "message"),
+    [
+        ("iterator", "scheduled adapter output:"),
+        ("wrong_type", "scheduled adapter output gate:"),
+        ("too_many", "scheduled adapter expansion limit"),
+        ("remove_measurement", "adapter changed measurement order, kind or targets"),
+        ("unsupported_gate", "scheduled adapter output gate:.*unsupported scheduled gate"),
+    ],
+)
+def test_output_contract_rejects(event_runtime, output, message):
     class Invalid(PhaseAdapter):
         def translate(self, batch):
             gates = super().translate(batch)
             if output == "iterator":
                 return iter(gates)
+            if output == "unsupported_gate":
+                from pecos_rslib.quantum import Gate, GateType
+
+                return [Gate(GateType.H, qubits=[0])]
             if output == "wrong_type":
                 return [None]
             if output == "too_many" and gates:
@@ -129,7 +145,7 @@ def test_output_contract_rejects(event_runtime, output):
                 return []
             return gates
 
-    with pytest.raises(RuntimeError, match=r"adapter|measurement"):
+    with pytest.raises(RuntimeError, match=message):
         simulation(event_runtime, lambda _: Invalid()).run(1)
 
 
@@ -151,25 +167,115 @@ def test_factory_configuration():
         pr.scheduled_event_idle_z(17, lambda _: PhaseAdapter())
 
 
-def test_reentrant_built_run_rejects_instead_of_deadlocking(event_runtime):
-    holder = {}
+def run_isolated(runtime, body):
+    """A parent-process timeout kills even a child blocked while holding the GIL."""
+    library, program = runtime
+    prefix = f"""
+import sys, runpy
+sys.path = {sys.path!r}
+from pathlib import Path
+import pytest
+support = runpy.run_path({str(Path(__file__).resolve())!r})
+simulation = support['simulation']
+PhaseAdapter = support['PhaseAdapter']
+runtime = (Path({str(library)!r}), {program!r})
+"""
+    subprocess.run([sys.executable, "-c", prefix + body], check=True, capture_output=True, text=True, timeout=40)
 
-    def factory(_context):
-        with pytest.raises(RuntimeError, match="busy"):
-            holder["built"].run(1)
-        return PhaseAdapter()
 
-    holder["built"] = simulation(event_runtime, factory).build()
-    assert holder["built"].run(1).to_dict()["measurement_0"] == [1]
+@pytest.mark.parametrize("method", ["run", "run_with_workers", "reset"])
+@pytest.mark.parametrize("stage", ["factory", "validate", "translate"])
+def test_callback_reentry_rejects_without_deadlock(event_runtime, method, stage):
+    run_isolated(
+        event_runtime,
+        f"""
+holder = {{}}
+def reenter():
+    args = {{'run': (1,), 'run_with_workers': (1, 1), 'reset': ()}}[{method!r}]
+    with pytest.raises(RuntimeError, match='scheduled adapter callback'):
+        getattr(holder['built'], {method!r})(*args)
+class Adapter(PhaseAdapter):
+    def validate(self, batch):
+        if {stage!r} == 'validate': reenter()
+        return super().validate(batch)
+    def translate(self, batch):
+        if {stage!r} == 'translate': reenter()
+        return super().translate(batch)
+def factory(_):
+    if {stage!r} == 'factory': reenter()
+    return Adapter()
+holder['built'] = simulation(runtime, factory).build()
+assert holder['built'].run(1).to_dict()['measurement_0'] == [1]
+holder.clear()
+""",
+    )
+
+
+def test_concurrent_reset_waits_without_holding_gil(event_runtime):
+    run_isolated(
+        event_runtime,
+        """
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event, Timer
+entered, release, reset_started = Event(), Event(), Event()
+def factory(_):
+    entered.set()
+    assert release.wait(10)
+    return PhaseAdapter()
+built = simulation(runtime, factory).build()
+def reset():
+    reset_started.set()
+    return built.reset()
+with ThreadPoolExecutor(max_workers=2) as pool:
+    running = pool.submit(built.run, 1)
+    assert entered.wait(5)
+    timer = Timer(0.2, release.set)
+    timer.start()
+    resetting = pool.submit(reset)
+    assert reset_started.wait(5)
+    assert running.result(10).to_dict()['measurement_0'] == [1]
+    assert resetting.result(10) is built
+    timer.join()
+assert built.run(2).to_dict()['measurement_0'] == [1, 1]
+""",
+    )
+
+
+def test_plain_built_runs_still_serialize(event_runtime):
+    run_isolated(
+        event_runtime,
+        """
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
+import pecos
+import pecos_rslib as pr
+from selene_simple_runtime_plugin import SimpleRuntimePlugin
+plugin = SimpleRuntimePlugin()
+classical = pr.qis_engine().selene_runtime_plugin(str(plugin.library_file), plugin.get_init_args())
+classical = classical.interface(pr.qis_helios_interface())
+built = pecos.sim(pecos.Qis(runtime[1])).classical(classical).qubits(1).quantum(pr.state_vector()).workers(1).build()
+barrier = Barrier(4)
+def run(i):
+    barrier.wait()
+    result = built.run(100) if i % 2 else built.run_with_workers(100, 1)
+    return result.to_dict()['measurement_0']
+with ThreadPoolExecutor(max_workers=4) as pool:
+    values = list(pool.map(run, range(4)))
+assert values == [[0] * 100] * 4
+""",
+    )
 
 
 def test_feedback_through_production_result_mapping(event_runtime):
-    program = RAMSEY.replace(
-        "declare void @setup",
-        "declare i1 @___read_future_bool(i64)\ndeclare void @setup",
-    ).replace(
-        "  call void @___qfree(i64 %q)",
-        """  %value = call i1 @___read_future_bool(i64 %r)
+    program = (
+        event_runtime[1]
+        .replace(
+            "declare void @setup",
+            "declare i1 @___read_future_bool(i64)\ndeclare void @setup",
+        )
+        .replace(
+            "  call void @___qfree(i64 %q)",
+            """  %value = call i1 @___read_future_bool(i64 %r)
   br i1 %value, label %flip, label %done
 flip:
   call void @___rxy(i64 %q, double 0x400921FB54442D18, double 0.0)
@@ -177,6 +283,7 @@ flip:
 done:
   %second = call i64 @___lazy_measure(i64 %q)
   call void @___qfree(i64 %q)""",
+        )
     )
     result = simulation(event_runtime, lambda _: PhaseAdapter(), program).run(4).to_dict()
     assert result["measurement_0"] == [1] * 4
@@ -185,18 +292,28 @@ done:
 
 def test_failed_run_does_not_reuse_adapter_state(event_runtime):
     fail = [True]
+    instances = []
+
+    class FailingAfterProgress(PhaseAdapter):
+        def translate(self, batch):
+            gates = super().translate(batch)
+            if fail[0]:
+                message = "translation failed after state advanced"
+                raise ValueError(message)
+            return gates
 
     def factory(_context):
-        if fail[0]:
-            message = "first run fails"
-            raise ValueError(message)
-        return PhaseAdapter()
+        obj = FailingAfterProgress()
+        instances.append(obj)
+        return obj
 
     built = simulation(event_runtime, factory).build()
-    with pytest.raises(RuntimeError, match="first run fails"):
-        built.run(1)
+    with pytest.raises(RuntimeError, match="translation failed after state advanced"):
+        built.run_with_workers(1, 1)
+    assert instances[0].next_batch > 0
     fail[0] = False
-    assert built.run(2).to_dict()["measurement_0"] == [1, 1]
+    assert built.run_with_workers(2, 1).to_dict()["measurement_0"] == [1, 1]
+    assert len(instances) == 3
 
 
 def test_actual_guppy_program(event_runtime):
@@ -210,7 +327,14 @@ def test_actual_guppy_program(event_runtime):
         x(q)
         result("outcome", measure(q).read())
 
-    values = simulation(event_runtime, lambda _: PhaseAdapter(), prepare_one).run(4).to_dict()
+    contexts = []
+
+    def factory(context):
+        contexts.append(context)
+        return PhaseAdapter()
+
+    values = simulation(event_runtime, factory, prepare_one).run(4).to_dict()
+    assert len(contexts) == len(set(contexts)) == 4
     assert values["outcome"] == [1] * 4
 
 
@@ -229,14 +353,50 @@ def test_batch_snapshot_is_read_only_and_lists_are_copies(event_runtime):
 
 
 @pytest.mark.parametrize(("coherent", "expected"), [(0.0, 1), (math.pi, 0)])
-def test_event_normalization_preserves_nonzero_idle(tmp_path, coherent, expected):
+def test_event_normalization_preserves_nonzero_idle(tmp_path, coherent, expected, scheduled_support):
     import pecos_rslib as pr
 
-    library = build_timed_runtime(tmp_path, 1_000_000_000, events=True)[0]
+    library = scheduled_support.build_runtime(tmp_path, 1_000_000_000, events=True)[0]
     result = (
-        simulation(library, lambda _: PhaseAdapter())
+        simulation((library, scheduled_support.ramsey), lambda _: PhaseAdapter())
         .noise(pr.scheduled_event_idle_z(1, lambda _: PhaseAdapter(), coherent=coherent))
         .run(3)
         .to_dict()
     )
     assert result["measurement_0"] == [expected] * 3
+
+
+@pytest.mark.parametrize("builder_name", ["qasm_engine", "phir_json_engine", "phir_engine"])
+def test_other_engines_reject_event_factory(builder_name):
+    import pecos_rslib as pr
+
+    builder = getattr(pr, builder_name)().to_sim()
+    with pytest.raises(TypeError, match="requires QIS/HUGR"):
+        builder.noise(pr.scheduled_event_idle_z(1, lambda _: PhaseAdapter()))
+
+
+@pytest.mark.parametrize("noise_first", [False, True])
+def test_neo_rejects_event_factory_in_either_order(noise_first):
+    import pecos
+    import pecos_rslib as pr
+    from guppylang import guppy
+
+    @guppy
+    def empty() -> None:
+        pass
+
+    builder = pecos.sim(empty)
+    profile = pr.scheduled_event_idle_z(1, lambda _: PhaseAdapter())
+    if noise_first:
+        builder.noise(profile)
+        with pytest.raises(TypeError, match="requires QIS/HUGR"):
+            builder.stack("neo")
+    else:
+        builder.stack("neo")
+        with pytest.raises(TypeError, match="requires QIS/HUGR"):
+            builder.noise(profile)
+
+
+def test_trace_capture_rejects_event_factory(event_runtime):
+    with pytest.raises(TypeError, match="without operation tracing"):
+        simulation(event_runtime, lambda _: PhaseAdapter()).capture_operation_trace()

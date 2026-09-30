@@ -827,11 +827,12 @@ pub fn heisenberg_with_noise_map(
                         let cos2h = (2.0 * h).cos();
                         let sin2h = (2.0 * h).sin();
 
-                        let single_z_qubit: Option<u16> = if inj.label.x_bits.is_zero() {
-                            inj.label.z_bits.highest_set_bit().map(|q| q as u16)
-                        } else {
-                            None
-                        };
+                        let single_z_qubit: Option<u16> =
+                            if inj.label.x_bits.is_zero() && inj.label.weight() == 1 {
+                                inj.label.z_bits.highest_set_bit().map(|q| q as u16)
+                            } else {
+                                None
+                            };
                         let noise_sparse = if single_z_qubit.is_none() {
                             Some(SparsePauli::from_bm(&inj.label))
                         } else {
@@ -1172,11 +1173,12 @@ pub fn heisenberg_windowed(
                         let cos2h = (2.0 * h).cos();
                         let sin2h = (2.0 * h).sin();
 
-                        let single_z_qubit: Option<u16> = if inj.label.x_bits.is_zero() {
-                            inj.label.z_bits.highest_set_bit().map(|q| q as u16)
-                        } else {
-                            None
-                        };
+                        let single_z_qubit: Option<u16> =
+                            if inj.label.x_bits.is_zero() && inj.label.weight() == 1 {
+                                inj.label.z_bits.highest_set_bit().map(|q| q as u16)
+                            } else {
+                                None
+                            };
                         let noise_sparse = if single_z_qubit.is_none() {
                             Some(SparsePauli::from_bm(&inj.label))
                         } else {
@@ -1491,11 +1493,12 @@ pub fn heisenberg_sparse(
                         let cos2h = (2.0 * h).cos();
                         let sin2h = (2.0 * h).sin();
 
-                        let single_z_qubit: Option<u16> = if inj.label.x_bits.is_zero() {
-                            inj.label.z_bits.highest_set_bit().map(|q| q as u16)
-                        } else {
-                            None
-                        };
+                        let single_z_qubit: Option<u16> =
+                            if inj.label.x_bits.is_zero() && inj.label.weight() == 1 {
+                                inj.label.z_bits.highest_set_bit().map(|q| q as u16)
+                            } else {
+                                None
+                            };
                         let noise_sparse = if single_z_qubit.is_none() {
                             Some(SparsePauli::from_bm(&inj.label))
                         } else {
@@ -2234,6 +2237,108 @@ mod tests {
                     (actual - expected).abs() < 1e-12,
                     "{walk}: label={name}: expected {expected}, got {actual}"
                 );
+            }
+        }
+    }
+
+    struct CoherentAfterGate {
+        gate_index: usize,
+        label: Bm,
+        angle: f64,
+    }
+
+    impl NoiseSpec for CoherentAfterGate {
+        fn noise_after_gate(
+            &self,
+            gate_index: usize,
+            _gate_type: GateType,
+            _qubits: &[usize],
+        ) -> Vec<crate::noise::NoiseInjection> {
+            if gate_index == self.gate_index {
+                vec![crate::noise::NoiseInjection {
+                    eeg_type: crate::eeg::EegType::H,
+                    label: self.label.clone(),
+                    label2: None,
+                    rate: self.angle,
+                }]
+            } else {
+                Vec::new()
+            }
+        }
+    }
+
+    #[test]
+    fn test_h_injection_two_qubit_z_label() {
+        // A Z0Z1 rotation must not take the single-qubit Z fast path.
+        // The rotation follows the first two-qubit gate. With CZs on |++>
+        // the detector Z0 is X0Z1 there, which anticommutes with Z0Z1, so the
+        // detection probability is sin^2(angle). With CXs on the Bell state
+        // it is X0X1, which commutes with Z0Z1, so it is zero.
+        let plus_plus = vec![
+            gate(GateType::PZ, &[0]),
+            gate(GateType::PZ, &[1]),
+            gate(GateType::H, &[0]),
+            gate(GateType::H, &[1]),
+            gate(GateType::CZ, &[0, 1]),
+            gate(GateType::CZ, &[0, 1]),
+            gate(GateType::H, &[0]),
+            gate(GateType::MZ, &[0]),
+        ];
+        let bell = vec![
+            gate(GateType::PZ, &[0]),
+            gate(GateType::PZ, &[1]),
+            gate(GateType::H, &[0]),
+            gate(GateType::CX, &[0, 1]),
+            gate(GateType::CX, &[0, 1]),
+            gate(GateType::H, &[0]),
+            gate(GateType::MZ, &[0]),
+        ];
+        let label = Bm::z(0).multiply(&Bm::z(1));
+        for angle in [0.1_f64, 0.3] {
+            for (state, gates, injection_gate, expected) in [
+                ("plus_plus", &plus_plus, 4, angle.sin().powi(2)),
+                ("bell", &bell, 3, 0.0),
+            ] {
+                let stab = StabilizerGroup::from_circuit(&gates[..2], 2);
+                let gate_index = crate::expand::GateIndex::build(gates, 2);
+                let noise = CoherentAfterGate {
+                    gate_index: injection_gate,
+                    label: label.clone(),
+                    angle,
+                };
+                let noise_map = build_noise_map(gates, &noise, &gate_index.expansion_gates);
+                let results = [
+                    (
+                        "windowed",
+                        heisenberg_detection_probability(gates, &Bm::z(0), &noise, &stab, 0.0),
+                    ),
+                    (
+                        "noise_map",
+                        heisenberg_with_noise_map(gates, &Bm::z(0), &noise_map, &stab, 0.0),
+                    ),
+                    (
+                        "sparse",
+                        heisenberg_sparse(gates, &Bm::z(0), &noise, &stab, 0.0, &gate_index, None),
+                    ),
+                    (
+                        "sparse_noise_map",
+                        heisenberg_sparse(
+                            gates,
+                            &Bm::z(0),
+                            &noise,
+                            &stab,
+                            0.0,
+                            &gate_index,
+                            Some(noise_map.as_slice()),
+                        ),
+                    ),
+                ];
+                for (walk, actual) in results {
+                    assert!(
+                        (actual - expected).abs() < 1e-12,
+                        "{walk}: state={state}, angle={angle}: expected {expected}, got {actual}"
+                    );
+                }
             }
         }
     }

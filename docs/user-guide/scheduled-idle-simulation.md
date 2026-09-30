@@ -41,11 +41,26 @@ Operation tracing is currently incompatible with this opt-in route.
 
 Batch start and duration remain integer nanoseconds. For each physical qubit,
 its idle interval runs from the end of its previous touching batch to the start
-of its next touching batch. The initial end is zero. A qubit receives one idle
-operation for that whole gap before its first operation in the batch. Operations
-retain emission order, including same-batch measurement boundaries. A batch's
+of its next touching batch. The initial end is zero. Except before preparation
+as described below, a qubit receives one idle operation for that whole gap before
+its first operation in the batch. Operations retain emission order, including
+same-batch measurement boundaries. A batch's
 entire duration counts as busy time for each qubit it touches; no final idle tail
 is invented after the last operation. Backward/overlapping use of a qubit rejects.
+
+When preparation (`PZ`, reset-Z) is the first operation on a qubit in a batch,
+its preceding idle channel is omitted: the ideal reset erases the effect of all
+local Z/RZ channels in this restricted profile. Other qubits and gaps before
+non-preparation gates retain their idle noise. Preparation still occupies the
+entire batch and advances the cursor; capacity, overlap and finite-rate checks
+remain enforced. This rule must be reconsidered if the profile admits other
+noise channels or preparation operations.
+
+Earlier versions sampled idle noise before preparation. Omitting those discarded
+channels avoids unnecessary work and changes RNG consumption, so seeded outcomes
+can differ from earlier versions even though the output distribution is unchanged.
+Both scheduled Python factories and the Rust profile use this rule without a
+configuration option.
 
 The profile enables only linear stochastic Z, sine-squared stochastic Z and
 coherent RZ idle effects. Linear rates are inverse seconds; sine and coherent

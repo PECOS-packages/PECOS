@@ -1,9 +1,10 @@
-# Scheduled event adapters (Rust)
+# Scheduled event adapters
 
 Mandatory v4 transport preserves opaque native events for a shot-local adapter.
 The adapter normalizes complete batches into checked gates **before quantum
 execution**. It retains the existing idle-Z profile and 1–16-qubit StateVec limit;
-there is no Python adapter configuration or general execution-time event API.
+Python supports an opt-in adapter factory on the QIS/HUGR engines route. This is
+not a general execution-time event API.
 
 The first intended downstream use is a deterministic adapter that tracks runtime
 bookkeeping and virtual phase conventions across batches, adjusting ordinary gates
@@ -68,3 +69,45 @@ per-qubit timing and shot/ordinal state after processing.
 
 V3 angle conversion is reused; arbitrary floating-point encodings are not preserved
 bitwise. Normalization does not add another angle serialization round trip.
+
+## Python factory
+
+Pair `qis_engine().scheduled_event_batches()` with
+`scheduled_event_idle_z(qubits, adapter_factory, *, linear=0, sine=0, coherent=0)`
+from `pecos_rslib`. Use StateVec and the explicit physical capacity as for v3.
+The normal `pecos.sim(program).classical(...).noise(...).run(shots)` route and
+QIS `.build()` simulations support this configuration, including HUGR/Guppy
+lowering to QIS. Other stacks and operation tracing do not support this factory.
+
+On the first v4 input of each host shot, `adapter_factory((run, worker, shot))`
+must create a fresh object with two methods:
+
+- `validate(batch)` returns `None`, or raises for an unsupported schema/semantics.
+  It must not mutate adapter state. A boolean return is rejected.
+- `translate(batch)` updates deterministic shot-local state and returns a **list**
+  of `pecos_rslib.quantum.Gate` objects, at most 4096. Iterators are not consumed.
+  Gates pass through the existing checked Rust writer and measurement validation.
+
+`batch` is an owned, read-only snapshot with `runtime_shot_id`, `batch_index`,
+`start_nanos`, and `duration_nanos`. Its `operations` property returns a copy of the
+ordered list: ordinary `Gate` objects or `(tag, payload_bytes)` tuples for opaque
+events. `measurements` returns `(original_position, native_id, program_id)` triples.
+Modifying a returned list does not modify native input. No callback receives outcomes,
+RNG or simulator state. A Python extension object may implement the same protocol;
+no cross-extension Rust ABI or pointer capsule is required.
+
+Callback errors include their stage and fail the shot through the existing Rust
+poisoning contract. QIS execution releases the GIL while workers run, acquiring it
+for each callback. External calls to built `run`, `run_with_workers`, and `reset` serialize on the
+engine mutex with the GIL released. Calling any of these methods from a scheduled
+adapter callback rejects before waiting, including calls to a different built
+simulation. A poisoned mutex is reported separately from callback reentry. Factory isolation,
+determinism, validation purity, callback termination and retained-memory bounds
+remain trusted responsibilities. The reentry guard is thread-local: callbacks must
+not start another thread that calls into the active simulation and then wait for
+that thread, which would still deadlock. Capturing and sharing mutable state across shot
+objects violates the contract even if the signatures are correct.
+
+Python callbacks incur GIL and data-copy overhead. This API establishes a usable
+integration path, not a throughput claim. The idle/timing policy and narrow physics
+are unchanged; adding a factory does not admit additional noise channels.

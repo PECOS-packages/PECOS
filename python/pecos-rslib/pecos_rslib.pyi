@@ -24,6 +24,7 @@ from typing import (
     Iterable,
     Iterator,
     Mapping,
+    Protocol,
     Sequence,
     SupportsIndex,
     TypeVar,
@@ -1121,6 +1122,7 @@ class QisEngineBuilder:
     """Builder for QIS engines."""
 
     def scheduled_batches(self, enabled: bool = True) -> QisEngineBuilder: ...
+    def scheduled_event_batches(self, enabled: bool = True) -> QisEngineBuilder: ...
     def selene_runtime(
         self,
         runtime_name: str | None = None,
@@ -3907,3 +3909,39 @@ def scheduled_idle_z(
     sine: float = 0.0,
     coherent: float = 0.0,
 ) -> ScheduledIdleZ: ...
+
+class ScheduledEventBatch:
+    """Read-only original native batch supplied to a scheduled adapter."""
+
+    @property
+    def runtime_shot_id(self) -> int: ...
+    @property
+    def batch_index(self) -> int: ...
+    @property
+    def start_nanos(self) -> int: ...
+    @property
+    def duration_nanos(self) -> int: ...
+    @property
+    def operations(self) -> list[Gate | tuple[int, bytes]]: ...
+    @property
+    def measurements(self) -> list[tuple[int, int, int]]: ...
+
+class _ScheduledBatchAdapter(Protocol):
+    """Structural callback protocol; not a runtime extension class."""
+
+    def validate(self, batch: ScheduledEventBatch) -> None: ...
+    def translate(self, batch: ScheduledEventBatch) -> list[Gate]: ...
+
+class ScheduledEventIdleZ:
+    """Checked v4 profile returned by scheduled_event_idle_z()."""
+
+    ...
+
+def scheduled_event_idle_z(
+    qubits: int,
+    adapter_factory: Callable[[tuple[int, int, int]], _ScheduledBatchAdapter],
+    *,
+    linear: float = 0.0,
+    sine: float = 0.0,
+    coherent: float = 0.0,
+) -> ScheduledEventIdleZ: ...

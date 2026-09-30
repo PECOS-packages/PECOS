@@ -192,7 +192,10 @@ def test_integer_choice_matches_sequence(size, replace, check_tail) -> None:
 
 
 @pytest.mark.parametrize("check_tail", [False, True], ids=["samples", "rng-tail"])
-@pytest.mark.parametrize("population", [list, tuple, array, np.array])
+@pytest.mark.parametrize(
+    "population",
+    [list, tuple, array, np.array, pytest.param(lambda values: range(len(values)), id="range")],
+)
 @pytest.mark.parametrize(
     ("size", "replace", "expected", "tail"),
     [

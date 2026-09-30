@@ -341,7 +341,7 @@ pub fn z_expectation_value(tableau: &SparseStabY, mps: &Mps, q: usize) -> Comple
 /// A cancellation residue this close to a Pauli endpoint would be amplified
 /// by the projector's division by `sqrt(probability)`, so it is classified as
 /// the indistinguishable exact endpoint before any RNG draw.
-pub(super) const EXPECTATION_ENDPOINT_TOLERANCE: f64 = 1e-14;
+pub const EXPECTATION_ENDPOINT_TOLERANCE: f64 = 1e-14;
 
 /// A normalized forced projector divides by `sqrt(probability)`, so a valid
 /// post-projection state has a survival ratio near one regardless of its Born

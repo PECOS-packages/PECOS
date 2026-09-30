@@ -1,4 +1,4 @@
-"""Timing operations must fail before noise bypasses or simulator emission."""
+"""Timing markers are consumed without changing ordinary noise dispatch."""
 
 import re
 
@@ -23,25 +23,25 @@ from pecos.reps.pyphir.op_types import QOp
         pytest.param({"noiseless": True, "duration": [20, "ns"]}, id="noiseless-duration"),
     ],
 )
-def test_timing_rejected(model_type: type, name: str, metadata: dict | None) -> None:
-    """Known timing operations report missing physics, including bypassed/default metadata."""
+def test_timing_consumed(model_type: type, name: str, metadata: dict | None) -> None:
+    """Timing markers disappear, including noiseless/default metadata, without truncating a batch."""
     model = model_type({"p1": 0, "p2": 0, "p_meas": 0, "p_prep": 0})
     model.init(2, GenericMachine(num_qubits=2))
     op = QOp(name=name, args=[0, 1]) if metadata is None else QOp(name=name, args=[0, 1], metadata=metadata)
-    expected = f"Noise for timing operation {name} is not implemented"
-    if metadata is not None and "duration" in metadata:
-        expected += f" (duration={metadata['duration']})"
-    with pytest.raises(NotImplementedError, match=f"^{re.escape(expected)}$"):
-        model.process([op])
+    before = QOp(name="H", args=[0], metadata={})
+    after = QOp(name="X", args=[1], metadata={})
+    assert [(item.name, item.args) for item in model.process([before, op, after])] == [("H", [0]), ("X", [1])]
 
 
 @pytest.mark.parametrize("model_type", [GenericErrorModel, DepolarizingErrorModel])
-def test_unknown_gate_remains_unknown(model_type: type) -> None:
+@pytest.mark.parametrize("name", ["UnknownGate", "Unsupported", "NotAGate"])
+def test_unknown_gate_remains_unknown(model_type: type, name: str) -> None:
     """Unknown names retain the existing exception and diagnostic."""
     model = model_type({"p1": 0, "p2": 0, "p_meas": 0, "p_prep": 0})
     model.init(2, GenericMachine(num_qubits=2))
-    with pytest.raises(Exception, match=r"^This error model doesn't handle gate: UnknownGate!$") as exc:
-        model.process([QOp(name="UnknownGate", args=[0], metadata={})])
+    expected = f"This error model doesn't handle gate: {name}!"
+    with pytest.raises(Exception, match=f"^{re.escape(expected)}$") as exc:
+        model.process([QOp(name=name, args=[0], metadata={})])
     assert type(exc.value) is Exception
 
 
@@ -63,5 +63,36 @@ def test_ordinary_operations_preserved(model_type: type, name: str, args: list) 
     """The shared dispatch groups preserve ordinary gates and all init/measurement aliases."""
     model = model_type({"p1": 0, "p2": 0, "p_meas": 0, "p_prep": 0})
     model.init(2, GenericMachine(num_qubits=2))
-    op = QOp(name=name, args=args, returns=["result"], metadata={})
-    assert [(item.name, item.args) for item in model.process([op])] == [(name, args)]
+    op = QOp(
+        name=name,
+        args=args,
+        returns=["result"],
+        metadata={"tag": "preserved"},
+        angles=(0.5,),
+        sim_name="backend_alias",
+    )
+    assert [
+        (item.name, item.args, item.returns, item.metadata, item.angles, item.sim_name) for item in model.process([op])
+    ] == [(name, args, ["result"], {"tag": "preserved"}, (0.5,), "backend_alias")]
+
+
+@pytest.mark.parametrize("model_type", [GenericErrorModel, DepolarizingErrorModel])
+@pytest.mark.parametrize("name", ["init |0>", "Init", "Init +Z"])
+def test_preparation_noise_family(model_type: type, name: str) -> None:
+    """Preparation aliases apply preparation noise even when gate noise is zero."""
+    model = model_type({"p1": 0, "p2": 0, "p_meas": 0, "p_prep": 1})
+    model.init(2, GenericMachine(num_qubits=2))
+    op = QOp(name=name, args=[0], metadata={})
+    assert [(item.name, item.args) for item in model.process([op])] == [(name, [0]), ("X", [0])]
+
+
+@pytest.mark.parametrize("model_type", [GenericErrorModel, DepolarizingErrorModel])
+@pytest.mark.parametrize("name", ["measure Z", "Measure", "Measure +Z"])
+def test_measurement_noise_family(model_type: type, name: str) -> None:
+    """Measurement aliases flip result bits while preserving their destination and metadata."""
+    model = model_type({"p1": 0, "p2": 0, "p_meas": 1, "p_prep": 0})
+    model.init(2, GenericMachine(num_qubits=2))
+    op = QOp(name=name, args=[0], returns=["result"], metadata={"tag": "preserved"})
+    assert [(item.name, item.args, item.returns, item.metadata) for item in model.process([op])] == [
+        ("Measure", [0], ["result"], {"tag": "preserved", "bitflips": [0]}),
+    ]

@@ -148,10 +148,8 @@ class DepolarizingErrorModel:
 
         for op in qops:
             if op.name in timing_ops:
-                msg = f"Noise for timing operation {op.name} is not implemented"
-                if op.metadata is not None and "duration" in op.metadata:
-                    msg += f" (duration={op.metadata['duration']})"
-                raise NotImplementedError(msg)
+                # Scheduling only: no noise; duration ignored (docs/user-guide/pecos-concepts.md).
+                continue
 
             qops_after = None
             qops_before = None

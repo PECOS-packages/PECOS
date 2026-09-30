@@ -2,6 +2,7 @@
 
 import pytest
 from pecos.noise.generic_error_model import GenericErrorModel
+from pecos.noise.noise_impl.noise_meas_bitflip import noise_meas_bitflip
 from pecos.noise.noise_impl.noise_meas_bitflip_leakage import noise_meas_bitflip_leakage
 from pecos.reps.pyphir.op_types import QOp
 
@@ -135,20 +136,14 @@ def test_metadata_normalised_without_discarding_contents(
     ]
     # The input operation keeps its own metadata object and contents.
     assert result[-1].metadata is not op.metadata
-    assert op.metadata == metadata
+    assert op.metadata == (metadata if metadata is not None else {})
 
 
 @pytest.mark.parametrize("metadata", [False, 0])
 def test_metadata_normalisation_does_not_widen_to_falsey_non_dict(metadata: object) -> None:
-    """A falsey non-dict still fails rather than being treated as absent metadata.
-
-    `False` and `0` raised before absent metadata was normalised, and must keep doing so.
-    Empty iterables such as `[]` and `""` are accepted by `dict()` and so were already
-    accepted before this change; validating the metadata type belongs to #925.
-    """
-    op = QOp("Measure", [4, 7], returns=[["c", 1], ["c", 0]], metadata=metadata)
-    with pytest.raises(TypeError):
-        noise_meas_bitflip_leakage(op, 0.0, FakeMachine((4,)))
+    """Reject falsey non-dicts at construction, before a noise helper can erase them."""
+    with pytest.raises(TypeError, match=type(metadata).__name__):
+        QOp("Measure", [4, 7], returns=[["c", 1], ["c", 0]], metadata=metadata)
 
 
 def test_process_emits_leaked_measurement() -> None:
@@ -164,3 +159,14 @@ def test_process_emits_leaked_measurement() -> None:
         ("Measure", "Measure", BATCH, RETURNS, {}),
     ]
     assert machine.meas_leaked_calls == [{7}]
+
+
+@pytest.mark.parametrize("with_leakage", [False, True])
+def test_default_metadata_measurement(with_leakage: bool) -> None:
+    """Both real measurement helpers accept default metadata and isolate bitflips."""
+    op = QOp("Measure", [4, 7], returns=[["c", 1], ["c", 0]])
+    result = noise_meas_bitflip_leakage(op, 1.0, FakeMachine()) if with_leakage else noise_meas_bitflip(op, 1.0)
+    assert [(item.name, item.args, item.returns, item.metadata) for item in result] == [
+        ("Measure", [4, 7], [["c", 1], ["c", 0]], {"bitflips": [4, 7]}),
+    ]
+    assert op.metadata == {}

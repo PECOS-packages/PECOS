@@ -130,6 +130,11 @@ def render_surface_protocol_module(patch: SurfacePatch) -> str:
             "",
             "def make_sz_teleportation(rounds_before: int, rounds_after: int, trailing_data_rounds: int):",
             '    """Y-ancilla teleportation followed by data-only memory and Z readout."""',
+            "    if rounds_before < 1:",
+            (
+                '        raise ValueError("SZ teleportation requires rounds_before >= 1 '
+                'to record the resource sign before CX")'
+            ),
             "    def sz_teleportation() -> None:",
             '        """SZ teleportation experiment."""',
             "        data = prep_z_basis()",

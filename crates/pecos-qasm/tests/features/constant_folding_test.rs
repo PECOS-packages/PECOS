@@ -82,12 +82,22 @@ fn test_integer_constant_folding() {
                 }
             }
             pecos_qasm::ast::Operation::If {
-                condition: pecos_qasm::ast::Expression::Integer(bv),
+                condition,
                 operation,
             } => {
-                // Check that conditions are folded
-                let value = pecos_core::bitvec::to_decimal_string(bv);
-                if value == "1" {
+                // Comparisons must retain their unsigned result tag at runtime.
+                assert!(matches!(
+                    condition,
+                    pecos_qasm::ast::Expression::BinaryOp { .. }
+                ));
+                let value = pecos_qasm::bitvec_expression::evaluate_expression_bitvec(
+                    condition,
+                    &pecos_qasm::QASMEngine::default(),
+                    1,
+                )
+                .unwrap();
+                assert!(matches!(value, pecos_core::ExprValue::Unsigned(_)));
+                if value.as_bool() {
                     // Condition is true, operation should be X
                     match &**operation {
                         pecos_qasm::ast::Operation::Gate { name, .. } if name == "x" => {

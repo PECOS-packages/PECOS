@@ -1,5 +1,6 @@
 //! Builder for `QisEngine` that integrates with PECOS `sim()` API
 
+use crate::scheduled_transport::ScheduledTransport;
 use crate::{IntoQisInterface, OperationTraceStore, QisEngine};
 use pecos_core::errors::PecosError;
 use pecos_engines::ClassicalControlEngineBuilder;
@@ -9,8 +10,7 @@ use std::path::{Path, PathBuf};
 /// Builder for creating `QisEngine` instances
 pub struct QisEngineBuilder {
     runtime: Option<Box<dyn crate::runtime::QisRuntime>>,
-    scheduled_batches: bool,
-    scheduled_events: bool,
+    scheduled_transport: ScheduledTransport,
     interface: Option<OperationCollector>,
     interface_builder: Option<Box<dyn crate::program::QisInterfaceBuilder>>,
     program_source: Option<String>, // Store original program source for loading
@@ -24,8 +24,7 @@ pub struct QisEngineBuilder {
 impl Clone for QisEngineBuilder {
     fn clone(&self) -> Self {
         Self {
-            scheduled_batches: self.scheduled_batches,
-            scheduled_events: self.scheduled_events,
+            scheduled_transport: self.scheduled_transport,
             runtime: self.runtime.as_ref().map(|r| dyn_clone::clone_box(&**r)),
             interface: self.interface.clone(),
             // Clone the interface builder if present
@@ -48,8 +47,7 @@ impl QisEngineBuilder {
     pub fn new() -> Self {
         Self {
             runtime: None,
-            scheduled_batches: false,
-            scheduled_events: false,
+            scheduled_transport: ScheduledTransport::Off,
             interface: None,
             interface_builder: None,
             program_source: None,
@@ -293,20 +291,32 @@ impl QisEngineBuilder {
     }
 
     /// Preserve original native batches in mandatory transport. Requires the
-    /// matching `ScheduledIdleZ` noise capability and a state-vector simulator.
+    /// matching scheduled noise capability and a state-vector simulator.
+    /// Enabling preserves v4 if selected; disabling turns all scheduled transport off.
     #[must_use]
     pub fn scheduled_batches(mut self, enabled: bool) -> Self {
-        self.scheduled_batches = enabled;
-        self.scheduled_events = false;
+        self.scheduled_transport = if !enabled {
+            ScheduledTransport::Off
+        } else if self.scheduled_transport == ScheduledTransport::V4 {
+            ScheduledTransport::V4
+        } else {
+            ScheduledTransport::V3
+        };
         self
     }
 
     /// Preserve opaque events in mandatory v4 batches. Requires an explicitly
     /// configured `ScheduledEventIdleZ` consumer; existing v3 consumers reject it.
+    /// Disabling events downgrades v4 to v3; an already-disabled transport stays off.
     #[must_use]
     pub fn scheduled_event_batches(mut self, enabled: bool) -> Self {
-        self.scheduled_batches = enabled;
-        self.scheduled_events = enabled;
+        self.scheduled_transport = if enabled {
+            ScheduledTransport::V4
+        } else if self.scheduled_transport.enabled() {
+            ScheduledTransport::V3
+        } else {
+            ScheduledTransport::Off
+        };
         self
     }
 
@@ -366,8 +376,7 @@ impl ClassicalControlEngineBuilder for QisEngineBuilder {
             log::debug!("Dynamic interface created successfully");
 
             let mut engine = QisEngine::new(dynamic_interface, runtime);
-            engine.scheduled_batches = self.scheduled_batches;
-            engine.scheduled_events = self.scheduled_events;
+            engine.scheduled_transport = self.scheduled_transport;
             if let Some(trace_dir) = self.operation_trace_dir {
                 engine.set_operation_trace_dir(trace_dir);
             }
@@ -455,6 +464,54 @@ mod tests {
     fn test_builder_creation() {
         // Basic builder creation - doesn't require a runtime
         let _builder = qis_engine();
+    }
+
+    #[test]
+    fn scheduled_modes_do_not_silently_disable_each_other() {
+        use ScheduledTransport::{Off, V3, V4};
+        let cases = [
+            (
+                qis_engine()
+                    .scheduled_event_batches(true)
+                    .scheduled_batches(true),
+                V4,
+            ),
+            (
+                qis_engine()
+                    .scheduled_batches(true)
+                    .scheduled_event_batches(true),
+                V4,
+            ),
+            (
+                qis_engine()
+                    .scheduled_batches(true)
+                    .scheduled_event_batches(false),
+                V3,
+            ),
+            (
+                qis_engine()
+                    .scheduled_event_batches(false)
+                    .scheduled_batches(true),
+                V3,
+            ),
+            (
+                qis_engine()
+                    .scheduled_event_batches(true)
+                    .scheduled_event_batches(false),
+                V3,
+            ),
+            (
+                qis_engine()
+                    .scheduled_event_batches(true)
+                    .scheduled_batches(false),
+                Off,
+            ),
+            (qis_engine().scheduled_event_batches(false), Off),
+        ];
+        for (builder, expected) in cases {
+            assert_eq!(builder.scheduled_transport, expected);
+            assert_eq!(builder.clone().scheduled_transport, expected);
+        }
     }
 
     // Note: Full builder tests with runtime and interface are in integration tests

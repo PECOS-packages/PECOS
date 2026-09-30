@@ -7,6 +7,18 @@ use pecos_engines::scheduled_events::{
 use pecos_engines::scheduled_frame::{TimedBatch, encode_timed_batches};
 use pecos_engines::{ByteMessage, Gate};
 use std::collections::{BTreeMap, BTreeSet};
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum ScheduledTransport {
+    #[default]
+    Off,
+    V3,
+    V4,
+}
+impl ScheduledTransport {
+    pub(crate) fn enabled(self) -> bool {
+        self != Self::Off
+    }
+}
 fn error(s: &str) -> PecosError {
     PecosError::Input(s.into())
 }
@@ -24,172 +36,210 @@ fn encode(
     batches: Vec<ScheduledBatch>,
     shot: u64,
 ) -> Result<(ByteMessage, Vec<usize>), PecosError> {
-    encode_mode(batches, shot, false)
+    encode_mode(batches, shot, ScheduledTransport::V3)
 }
 pub(crate) fn encode_mode(
     batches: Vec<ScheduledBatch>,
     shot: u64,
-    events: bool,
+    mode: ScheduledTransport,
 ) -> Result<(ByteMessage, Vec<usize>), PecosError> {
-    if events {
-        // Bound conversion allocations even for a custom QisRuntime implementation.
-        let mut size = 16usize;
-        for batch in &batches {
-            if batch.operations.len() > pecos_engines::scheduled_events::MAX_BATCH_OPERATIONS
-                || batch.measurements.len() > batch.operations.len()
-            {
-                return Err(error("scheduled event operation count limit"));
-            }
-            let mut payload = 0usize;
+    match mode {
+        ScheduledTransport::Off => Err(error("scheduled transport disabled")),
+        ScheduledTransport::V3 => encode_v3(batches, shot),
+        ScheduledTransport::V4 => encode_v4(batches, shot),
+    }
+}
+fn check_event_budget(batches: &[ScheduledBatch]) -> Result<(), PecosError> {
+    use pecos_engines::scheduled_events::{MAX_BATCH_OPERATIONS, MAX_BATCH_PAYLOAD};
+    // Before conversion allocations, including for custom QisRuntime implementations.
+    let mut size = 16usize;
+    for batch in batches {
+        if batch.operations.len() > MAX_BATCH_OPERATIONS
+            || batch.measurements.len() > batch.operations.len()
+        {
+            return Err(error("scheduled event operation count limit"));
+        }
+        let mut payload = 0usize;
+        size = size
+            .checked_add(80 + batch.measurements.len() * 24)
+            .ok_or_else(|| error("event transport overflow"))?;
+        for op in &batch.operations {
+            let bytes = if let Op::Custom { data, .. } = op {
+                payload = payload
+                    .checked_add(data.len())
+                    .ok_or_else(|| error("event payload overflow"))?;
+                if payload > MAX_BATCH_PAYLOAD {
+                    return Err(error("event payload limit"));
+                }
+                24 + data.len()
+            } else {
+                40
+            };
             size = size
-                .checked_add(80 + batch.measurements.len() * 24)
+                .checked_add(bytes)
                 .ok_or_else(|| error("event transport overflow"))?;
-            for op in &batch.operations {
-                let bytes = if let Op::Custom { data, .. } = op {
-                    payload = payload
-                        .checked_add(data.len())
-                        .ok_or_else(|| error("event payload overflow"))?;
-                    if payload > pecos_engines::scheduled_events::MAX_BATCH_PAYLOAD {
-                        return Err(error("event payload limit"));
-                    }
-                    24 + data.len()
-                } else {
-                    40
-                };
-                size = size
-                    .checked_add(bytes)
-                    .ok_or_else(|| error("event transport overflow"))?;
-            }
-            if size > pecos_engines::scheduled_frame::MAX_SCHEDULE_BYTES {
-                return Err(error("event transport limit"));
-            }
+        }
+        if size > pecos_engines::scheduled_frame::MAX_SCHEDULE_BYTES {
+            return Err(error("event transport limit"));
         }
     }
-    let mut event_wire = Vec::new();
-    let mut wire = Vec::new();
-    let mut ids = Vec::new();
-    let mut native = BTreeSet::new();
-    let mut source = BTreeSet::new();
-    for batch in batches {
-        if batch.runtime_shot_id != shot {
-            return Err(error("scheduled runtime shot mismatch"));
+    Ok(())
+}
+#[derive(Default)]
+struct MeasurementAdmission {
+    ids: Vec<usize>,
+    native: BTreeSet<u64>,
+    source: BTreeSet<usize>,
+}
+fn mappings(
+    batch: &ScheduledBatch,
+    shot: u64,
+) -> Result<BTreeMap<usize, &crate::scheduled::ScheduledMeasurement>, PecosError> {
+    if batch.runtime_shot_id != shot {
+        return Err(error("scheduled runtime shot mismatch"));
+    }
+    let mut mappings = BTreeMap::new();
+    for m in &batch.measurements {
+        if m.operation_index >= batch.operations.len()
+            || mappings.insert(m.operation_index, m).is_some()
+        {
+            return Err(error("invalid scheduled measurement position"));
         }
-        let mut mappings = BTreeMap::new();
-        for m in &batch.measurements {
-            if m.operation_index >= batch.operations.len()
-                || mappings.insert(m.operation_index, m).is_some()
-            {
-                return Err(error("invalid scheduled measurement position"));
+    }
+    Ok(mappings)
+}
+impl MeasurementAdmission {
+    fn gate(
+        &mut self,
+        op: &Op,
+        index: usize,
+        mappings: &mut BTreeMap<usize, &crate::scheduled::ScheduledMeasurement>,
+    ) -> Result<Gate, PecosError> {
+        Ok(match op {
+            Op::Rxy {
+                qubit_id,
+                theta,
+                phi,
+            } => Gate::rxy1q(angle(*theta)?, angle(*phi)?, &[q(*qubit_id)?]),
+            Op::Rz { qubit_id, theta } => Gate::rz(angle(*theta)?, &[q(*qubit_id)?]),
+            Op::Rzz {
+                qubit_id_1,
+                qubit_id_2,
+                theta,
+            } => Gate::rzz(angle(*theta)?, &[(q(*qubit_id_1)?, q(*qubit_id_2)?)]),
+            Op::Rpp {
+                qubit_id_1,
+                qubit_id_2,
+                theta,
+                phi,
+            } => Gate::rxyxy2q(
+                angle(*theta)?,
+                angle(*phi)?,
+                &[(q(*qubit_id_1)?, q(*qubit_id_2)?)],
+            ),
+            Op::Reset { qubit_id } => Gate::pz(&[q(*qubit_id)?]),
+            Op::Measure {
+                qubit_id,
+                result_id,
             }
-        }
+            | Op::MeasureLeaked {
+                qubit_id,
+                result_id,
+            } => {
+                let m = mappings
+                    .remove(&index)
+                    .ok_or_else(|| error("missing scheduled measurement mapping"))?;
+                if m.runtime_result != *result_id
+                    || !self.native.insert(*result_id)
+                    || !self.source.insert(m.program_result)
+                    || (matches!(op, Op::MeasureLeaked { .. }) && !m.leakage_aware)
+                {
+                    return Err(error("invalid or duplicate scheduled measurement identity"));
+                }
+                self.ids.push(m.program_result);
+                if m.leakage_aware {
+                    Gate::measure_leaked(&[q(*qubit_id)?])
+                } else {
+                    Gate::mz(&[q(*qubit_id)?])
+                }
+            }
+            Op::Custom { .. } => {
+                return Err(error(
+                    "scheduled idle transport does not support custom events",
+                ));
+            }
+        })
+    }
+}
+fn encode_v3(
+    batches: Vec<ScheduledBatch>,
+    shot: u64,
+) -> Result<(ByteMessage, Vec<usize>), PecosError> {
+    let mut admission = MeasurementAdmission::default();
+    let mut wire = Vec::new();
+    for batch in batches {
+        let mut mappings = mappings(&batch, shot)?;
         let mut gates = Vec::new();
-        let mut event_ops = Vec::new();
-        let mut event_measurements = Vec::new();
         for (index, op) in batch.operations.iter().enumerate() {
-            let gate = match op {
-                Op::Rxy {
-                    qubit_id,
-                    theta,
-                    phi,
-                } => Gate::rxy1q(angle(*theta)?, angle(*phi)?, &[q(*qubit_id)?]),
-                Op::Rz { qubit_id, theta } => Gate::rz(angle(*theta)?, &[q(*qubit_id)?]),
-                Op::Rzz {
-                    qubit_id_1,
-                    qubit_id_2,
-                    theta,
-                } => Gate::rzz(angle(*theta)?, &[(q(*qubit_id_1)?, q(*qubit_id_2)?)]),
-                Op::Rpp {
-                    qubit_id_1,
-                    qubit_id_2,
-                    theta,
-                    phi,
-                } => Gate::rxyxy2q(
-                    angle(*theta)?,
-                    angle(*phi)?,
-                    &[(q(*qubit_id_1)?, q(*qubit_id_2)?)],
-                ),
-                Op::Reset { qubit_id } => Gate::pz(&[q(*qubit_id)?]),
-                Op::Measure {
-                    qubit_id,
-                    result_id,
-                }
-                | Op::MeasureLeaked {
-                    qubit_id,
-                    result_id,
-                } => {
-                    let m = mappings
-                        .remove(&index)
-                        .ok_or_else(|| error("missing scheduled measurement mapping"))?;
-                    if m.runtime_result != *result_id
-                        || !native.insert(*result_id)
-                        || !source.insert(m.program_result)
-                        || (matches!(op, Op::MeasureLeaked { .. }) && !m.leakage_aware)
-                    {
-                        return Err(error("invalid or duplicate scheduled measurement identity"));
-                    }
-                    ids.push(m.program_result);
-                    if events {
-                        event_measurements.push(ScheduledResult {
-                            operation_index: index,
-                            runtime_result: m.runtime_result,
-                            program_result: m.program_result as u64,
-                        });
-                    }
-                    if m.leakage_aware {
-                        Gate::measure_leaked(&[q(*qubit_id)?])
-                    } else {
-                        Gate::mz(&[q(*qubit_id)?])
-                    }
-                }
-                Op::Custom { tag, data } if events => {
-                    event_ops.push(ScheduledEventOp::Custom {
-                        tag: *tag as u64,
-                        payload: data.clone(),
-                    });
-                    continue;
-                }
-                Op::Custom { .. } => {
-                    return Err(error(
-                        "scheduled idle transport does not support custom events",
-                    ));
-                }
-            };
-            if events {
-                event_ops.push(ScheduledEventOp::Gate(Box::new(gate)));
+            gates.push(admission.gate(op, index, &mut mappings)?);
+        }
+        if !mappings.is_empty() {
+            return Err(error("mapping on scheduled non-measurement"));
+        }
+        wire.push(TimedBatch {
+            runtime_shot_id: batch.runtime_shot_id,
+            batch_index: batch.batch_index as u64,
+            start_nanos: batch.start_time_nanos,
+            duration_nanos: batch.duration_nanos,
+            gates,
+        });
+    }
+    Ok((encode_timed_batches(&wire)?, admission.ids))
+}
+fn encode_v4(
+    batches: Vec<ScheduledBatch>,
+    shot: u64,
+) -> Result<(ByteMessage, Vec<usize>), PecosError> {
+    check_event_budget(&batches)?;
+    let mut admission = MeasurementAdmission::default();
+    let mut wire = Vec::new();
+    for batch in batches {
+        let mut mappings = mappings(&batch, shot)?;
+        let mut operations = Vec::new();
+        let mut measurements = Vec::new();
+        for (index, op) in batch.operations.iter().enumerate() {
+            if let Op::Custom { tag, data } = op {
+                operations.push(ScheduledEventOp::Custom {
+                    tag: *tag as u64,
+                    payload: data.clone(),
+                });
             } else {
-                gates.push(gate);
+                let mapping = mappings.get(&index).copied();
+                let gate = admission.gate(op, index, &mut mappings)?;
+                if let Some(m) = mapping {
+                    // A mapping on a non-measurement remains in the map and rejects below.
+                    measurements.push(ScheduledResult {
+                        operation_index: index,
+                        runtime_result: m.runtime_result,
+                        program_result: m.program_result as u64,
+                    });
+                }
+                operations.push(ScheduledEventOp::Gate(Box::new(gate)));
             }
         }
         if !mappings.is_empty() {
             return Err(error("mapping on scheduled non-measurement"));
         }
-        if events {
-            event_wire.push(ScheduledEventBatch {
-                runtime_shot_id: batch.runtime_shot_id,
-                batch_index: batch.batch_index as u64,
-                start_nanos: batch.start_time_nanos,
-                duration_nanos: batch.duration_nanos,
-                operations: event_ops,
-                measurements: event_measurements,
-            });
-        } else {
-            wire.push(TimedBatch {
-                runtime_shot_id: batch.runtime_shot_id,
-                batch_index: batch.batch_index as u64,
-                start_nanos: batch.start_time_nanos,
-                duration_nanos: batch.duration_nanos,
-                gates,
-            });
-        }
+        wire.push(ScheduledEventBatch {
+            runtime_shot_id: batch.runtime_shot_id,
+            batch_index: batch.batch_index as u64,
+            start_nanos: batch.start_time_nanos,
+            duration_nanos: batch.duration_nanos,
+            operations,
+            measurements,
+        });
     }
-    Ok((
-        if events {
-            encode_event_batches(&event_wire)?
-        } else {
-            encode_timed_batches(&wire)?
-        },
-        ids,
-    ))
+    Ok((encode_event_batches(&wire)?, admission.ids))
 }
 
 #[cfg(test)]
@@ -197,6 +247,93 @@ mod tests {
     use super::*;
     use crate::scheduled::ScheduledMeasurement;
 
+    #[test]
+    fn scheduled_v4_bounds_precede_gate_conversion() {
+        use pecos_engines::scheduled_events::{MAX_BATCH_OPERATIONS, MAX_BATCH_PAYLOAD};
+        let mut b = measured();
+        b.measurements.clear();
+        b.operations = vec![
+            Op::Rz {
+                qubit_id: 0,
+                theta: f64::NAN,
+            },
+            Op::Custom {
+                tag: 1,
+                data: vec![0; MAX_BATCH_PAYLOAD + 1],
+            },
+        ];
+        assert!(
+            encode_v4(vec![b.clone()], 7)
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("event payload limit")
+        );
+        b.operations = vec![
+            Op::Rz {
+                qubit_id: 0,
+                theta: f64::NAN
+            };
+            MAX_BATCH_OPERATIONS + 1
+        ];
+        assert!(
+            encode_v4(vec![b], 7)
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("operation count limit")
+        );
+        let mut b = measured();
+        b.measurements.push(b.measurements[0].clone());
+        assert!(
+            encode_v4(vec![b], 7)
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("operation count limit")
+        );
+    }
+    #[test]
+    fn scheduled_v4_aggregate_budget_accepts_exactly_64_mib() {
+        use pecos_engines::scheduled_events::MAX_BATCH_PAYLOAD;
+        use pecos_engines::scheduled_frame::MAX_SCHEDULE_BYTES;
+        let mut b = measured();
+        b.measurements.clear();
+        b.operations = vec![Op::Custom {
+            tag: 1,
+            data: vec![0; MAX_BATCH_PAYLOAD],
+        }];
+        let mut batches = vec![b; 256];
+        let tail_payload = MAX_SCHEDULE_BYTES - 16 - 255 * (104 + MAX_BATCH_PAYLOAD) - 104;
+        let Op::Custom { data, .. } = &mut batches[255].operations[0] else {
+            unreachable!()
+        };
+        data.truncate(tail_payload);
+        check_event_budget(&batches).unwrap();
+        let Op::Custom { data, .. } = &mut batches[255].operations[0] else {
+            unreachable!()
+        };
+        data.push(0);
+        assert!(
+            check_event_budget(&batches)
+                .unwrap_err()
+                .to_string()
+                .contains("event transport limit")
+        );
+        // Invalid angle cannot precede rejection of an oversized aggregate.
+        batches[0].operations[0] = Op::Rz {
+            qubit_id: 0,
+            theta: f64::NAN,
+        };
+        batches.push(batches[1].clone());
+        assert!(
+            encode_v4(batches, 7)
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("event transport limit")
+        );
+    }
     fn measured() -> ScheduledBatch {
         ScheduledBatch {
             runtime_shot_id: 7,
@@ -265,7 +402,7 @@ mod tests {
         );
         b.measurements[0].operation_index = 1;
         assert!(encode(vec![b.clone()], 7).is_err());
-        let (commands, ids) = encode_mode(vec![b], 7, true).unwrap();
+        let (commands, ids) = encode_mode(vec![b], 7, ScheduledTransport::V4).unwrap();
         assert_eq!(ids, vec![91]);
         let decoded = decode_event_batches(&commands).unwrap();
         assert_eq!(decoded[0].measurements[0].runtime_result, 23);

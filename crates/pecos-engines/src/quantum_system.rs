@@ -149,58 +149,24 @@ impl QuantumSystem {
         if input.as_bytes() == ByteMessage::builder().build().as_bytes() {
             return Ok(ByteMessage::outcomes_builder().build());
         }
-        let mut source_timeline = None;
-        let mut prepared = if self
-            .noise_model
-            .as_any()
-            .is::<crate::scheduled_events::ScheduledEventModel>()
-        {
-            let batches = crate::scheduled_events::decode_event_batches(input)?;
-            // Validate source timing, identities and capacity before any user callback.
-            let source: Vec<_> = batches
-                .iter()
-                .map(|b| crate::scheduled_frame::TimedBatch {
-                    runtime_shot_id: b.runtime_shot_id,
-                    batch_index: b.batch_index,
-                    start_nanos: b.start_nanos,
-                    duration_nanos: b.duration_nanos,
-                    gates: b
-                        .operations
-                        .iter()
-                        .filter_map(|o| match o {
-                            crate::scheduled_events::ScheduledEventOp::Gate(g) => {
-                                Some(g.as_ref().clone())
-                            }
-                            crate::scheduled_events::ScheduledEventOp::Custom { .. } => None,
-                        })
-                        .collect(),
-                })
-                .collect();
-            let event_model = self
-                .noise_model
-                .as_any()
-                .downcast_ref::<crate::scheduled_events::ScheduledEventModel>()
-                .expect("checked event model");
-            source_timeline = Some(
-                event_model
-                    .source_timeline
-                    .prepare(&model.config, source)?
-                    .timeline,
-            );
-            // Factories, validation and translation are trusted user code. Latch
-            // before invoking any of them, including possible unwinding.
-            self.frame_poisoned = true;
-            let normalized = self
-                .noise_model
+        let (mut prepared, source_timeline) = if let Some(model) =
+            self.noise_model
                 .as_any_mut()
                 .downcast_mut::<crate::scheduled_events::ScheduledEventModel>()
-                .expect("checked event model")
-                .normalize(&batches, self.shot_context.expect("checked context"))?;
-            self.scheduled_model()
-                .expect("checked model")
-                .prepare_batches(normalized)?
+        {
+            let admitted = model.admit(input)?;
+            // Latch before any factory/adapter invocation, including unwinding.
+            self.frame_poisoned = true;
+            let (prepared, source) =
+                model.prepare(admitted, self.shot_context.expect("checked context"))?;
+            (prepared, Some(source))
         } else {
-            model.prepare(input)?
+            (
+                self.scheduled_model()
+                    .expect("checked model")
+                    .prepare(input)?,
+                None,
+            )
         };
         self.frame_poisoned = true;
         let mut outcomes = Vec::new();
@@ -226,13 +192,14 @@ impl QuantumSystem {
             }
             outcomes.extend(values.into_iter().map(|v| v as usize));
         }
-        self.scheduled_model_mut().commit(prepared);
-        if let Some(timeline) = source_timeline {
+        if let Some(source) = source_timeline {
             self.noise_model
                 .as_any_mut()
                 .downcast_mut::<crate::scheduled_events::ScheduledEventModel>()
                 .expect("checked event model")
-                .source_timeline = timeline;
+                .commit(prepared, source);
+        } else {
+            self.scheduled_model_mut().commit(prepared);
         }
         self.frame_poisoned = false;
         Ok(ByteMessage::outcomes_builder()

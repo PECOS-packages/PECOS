@@ -3,7 +3,7 @@ use pecos_engines::EngineSystem;
 use pecos_engines::noise::{IntoNoiseModel, PassThroughNoiseModel};
 use pecos_engines::runtime_frame::ShotContext;
 use pecos_engines::scheduled_events::*;
-use pecos_engines::scheduled_frame::{ScheduledIdleZ, TimedBatch, encode_timed_batches};
+use pecos_engines::scheduled_frame::{ScheduledIdleZ, encode_timed_batches};
 use pecos_engines::{ByteMessage, Engine, Gate, StateVecEngine, quantum_system::QuantumSystem};
 use std::sync::{
     Arc,
@@ -324,20 +324,7 @@ fn metadata_insertion_preserves_seeded_idle_behavior_and_empty_batch_lifecycles(
         ];
         let legacy: Vec<_> = batches
             .iter()
-            .map(|b| TimedBatch {
-                runtime_shot_id: b.runtime_shot_id,
-                batch_index: b.batch_index,
-                start_nanos: b.start_nanos,
-                duration_nanos: b.duration_nanos,
-                gates: b
-                    .operations
-                    .iter()
-                    .filter_map(|op| match op {
-                        ScheduledEventOp::Gate(g) => Some(g.as_ref().clone()),
-                        ScheduledEventOp::Custom { .. } => None,
-                    })
-                    .collect(),
-            })
+            .map(ScheduledEventBatch::source_gates)
             .collect();
         for seed in 0..32 {
             begin(&mut old);
@@ -385,38 +372,31 @@ fn callback_panic_cannot_be_recovered_without_whole_host_reset() {
     q.process(msg).unwrap();
 }
 #[test]
-fn invalid_expansion_and_changed_measurements_poison_before_quantum_execution() {
-    struct Bad(bool);
-    impl ScheduledBatchAdapter for Bad {
+fn dropped_measurements_poison_before_quantum_execution() {
+    struct DropMeasurements;
+    impl ScheduledBatchAdapter for DropMeasurements {
         fn validate(&self, _: &ScheduledEventBatch) -> Result<(), PecosError> {
             Ok(())
         }
         fn translate(
             &mut self,
             _: &ScheduledEventBatch,
-            out: &mut ScheduledGateBuffer<'_>,
+            _: &mut ScheduledGateBuffer<'_>,
         ) -> Result<(), PecosError> {
-            if self.0 {
-                for _ in 0..=MAX_BATCH_OPERATIONS {
-                    out.push(Gate::pz(&[0]))?;
-                }
-            }
             Ok(())
         }
     }
-    for expand in [false, true] {
-        let mut q = QuantumSystem::new(
-            ScheduledEventIdleZ::new(ScheduledIdleZ::new(1, 0.0, 0.0, 0.0).unwrap(), move |_| {
-                Ok(Box::new(Bad(expand)))
-            })
-            .into_noise_model(),
-            Box::new(StateVecEngine::new(1)),
-        );
-        begin(&mut q);
-        let msg = encode_event_batches(&[batch(0, vec![gate(Gate::mz(&[0]))])]).unwrap();
-        assert!(q.process(msg.clone()).is_err());
-        assert!(q.process(msg).is_err());
-    }
+    let mut q = QuantumSystem::new(
+        ScheduledEventIdleZ::new(ScheduledIdleZ::new(1, 0.0, 0.0, 0.0).unwrap(), |_| {
+            Ok(Box::new(DropMeasurements))
+        })
+        .into_noise_model(),
+        Box::new(StateVecEngine::new(1)),
+    );
+    begin(&mut q);
+    let msg = encode_event_batches(&[batch(0, vec![gate(Gate::mz(&[0]))])]).unwrap();
+    assert!(q.process(msg.clone()).is_err());
+    assert!(q.process(msg).is_err());
 }
 
 #[test]
@@ -596,4 +576,214 @@ fn removed_gates_still_reserve_source_timing_across_inputs() {
         q.process(encode_event_batches(&[batch(2, vec![])]).unwrap())
             .is_err()
     );
+}
+
+#[test]
+fn component_clones_cannot_restart_an_adapter_in_a_live_native_shot() {
+    let mut original = system();
+    begin(&mut original);
+    run(&mut original, &[batch(0, vec![event(2)])]);
+    let mut copy = QuantumSystem::new(original.controller().clone(), original.engine().clone());
+    copy.begin_shot(ShotContext {
+        run: 10,
+        worker: 0,
+        shot: 0,
+    })
+    .unwrap();
+    let continuation = batch(1, vec![event(3), gate(Gate::mz(&[0]))]);
+    assert!(
+        copy.process(encode_event_batches(std::slice::from_ref(&continuation)).unwrap())
+            .is_err()
+    );
+    assert_eq!(run(&mut original, &[continuation]), vec![1]);
+    begin(&mut copy);
+    assert_eq!(
+        run(&mut copy, &[batch(0, vec![event(3), gate(Gate::mz(&[0]))])]),
+        vec![0]
+    );
+}
+
+#[test]
+fn changed_measurement_target_or_kind_rejects_and_poisons() {
+    struct Rewrite(Gate);
+    impl ScheduledBatchAdapter for Rewrite {
+        fn validate(&self, _: &ScheduledEventBatch) -> Result<(), PecosError> {
+            Ok(())
+        }
+        fn translate(
+            &mut self,
+            _: &ScheduledEventBatch,
+            out: &mut ScheduledGateBuffer<'_>,
+        ) -> Result<(), PecosError> {
+            out.push(self.0.clone())
+        }
+    }
+    for replacement in [Gate::mz(&[1]), Gate::measure_leaked(&[0])] {
+        let mut q = QuantumSystem::new(
+            ScheduledEventIdleZ::new(ScheduledIdleZ::new(2, 0.0, 0.0, 0.0).unwrap(), move |_| {
+                Ok(Box::new(Rewrite(replacement.clone())))
+            })
+            .into_noise_model(),
+            Box::new(StateVecEngine::new(2)),
+        );
+        begin(&mut q);
+        let error = q
+            .process(encode_event_batches(&[batch(0, vec![gate(Gate::mz(&[0]))])]).unwrap())
+            .err()
+            .expect("expected rejection");
+        assert!(
+            error
+                .to_string()
+                .contains("measurement order, kind or targets")
+        );
+        assert!(
+            q.process(encode_event_batches(&[batch(0, vec![])]).unwrap())
+                .is_err()
+        );
+    }
+}
+
+#[test]
+fn output_operation_bound_accepts_4096_and_rejects_4097_with_measurements_preserved() {
+    struct Expand(usize);
+    impl ScheduledBatchAdapter for Expand {
+        fn validate(&self, _: &ScheduledEventBatch) -> Result<(), PecosError> {
+            Ok(())
+        }
+        fn translate(
+            &mut self,
+            b: &ScheduledEventBatch,
+            out: &mut ScheduledGateBuffer<'_>,
+        ) -> Result<(), PecosError> {
+            for op in &b.operations {
+                if let ScheduledEventOp::Gate(g) = op {
+                    out.push(g.as_ref().clone())?;
+                }
+            }
+            for _ in 1..self.0 {
+                out.push(Gate::pz(&[0]))?;
+            }
+            Ok(())
+        }
+    }
+    for count in [MAX_BATCH_OPERATIONS, MAX_BATCH_OPERATIONS + 1] {
+        let mut q = QuantumSystem::new(
+            ScheduledEventIdleZ::new(ScheduledIdleZ::new(1, 0.0, 0.0, 0.0).unwrap(), move |_| {
+                Ok(Box::new(Expand(count)))
+            })
+            .into_noise_model(),
+            Box::new(StateVecEngine::new(1)),
+        );
+        begin(&mut q);
+        let result =
+            q.process(encode_event_batches(&[batch(0, vec![gate(Gate::mz(&[0]))])]).unwrap());
+        if count == MAX_BATCH_OPERATIONS {
+            assert_eq!(result.unwrap().outcomes().unwrap(), vec![0]);
+        } else {
+            assert!(
+                result
+                    .err()
+                    .expect("expected rejection")
+                    .to_string()
+                    .contains("event expansion limit")
+            );
+        }
+    }
+}
+
+#[test]
+fn wire_measurement_positions_and_each_identity_namespace_are_checked() {
+    let first = batch(0, vec![event(0), gate(Gate::mz(&[0]))]);
+    let second = batch(1, vec![gate(Gate::mz(&[0]))]);
+    let one = encode_event_batches(std::slice::from_ref(&first)).unwrap();
+    let good = encode_event_batches(&[first, second]).unwrap();
+    // The final 24 bytes of each batch hold (position, native ID, program ID).
+    for (offset, value, expected) in [
+        (one.as_bytes().len() - 24, 0, "measurement positions"),
+        (
+            good.as_bytes().len() - 16,
+            1,
+            "duplicate scheduled event measurement identity",
+        ),
+        (
+            good.as_bytes().len() - 8,
+            92,
+            "duplicate scheduled event measurement identity",
+        ),
+    ] {
+        let mut bytes = good.as_bytes().to_vec();
+        bytes[offset..offset + 8].copy_from_slice(&u64::to_le_bytes(value));
+        let mut q = system();
+        begin(&mut q);
+        assert!(
+            q.process(ByteMessage::new(&bytes))
+                .err()
+                .expect("expected rejection")
+                .to_string()
+                .contains(expected)
+        );
+        // Malformed wire has not invoked the adapter or consumed batch 0.
+        assert_eq!(
+            run(&mut q, &decode_event_batches(&good).unwrap()),
+            vec![0, 0]
+        );
+    }
+}
+
+#[test]
+fn wire_counts_and_event_positions_reject_before_record_allocation() {
+    fn patch(bytes: &[u8], offset: usize, value: u64, message: &str) {
+        let mut wire = bytes.to_vec();
+        wire[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
+        assert!(
+            decode_event_batches(&ByteMessage::new(&wire))
+                .expect_err("reject malformed wire")
+                .to_string()
+                .contains(message)
+        );
+    }
+    let good =
+        encode_event_batches(&[batch(0, vec![event(0), event(0), gate(Gate::mz(&[0]))])]).unwrap();
+    let bytes = good.as_bytes();
+    let mut bad_count = bytes.to_vec();
+    bad_count[8..12].copy_from_slice(&100u32.to_le_bytes());
+    assert!(
+        decode_event_batches(&ByteMessage::new(&bad_count))
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("batch count")
+    );
+    let nested_bytes = 56 + 40;
+    let events = 24 + nested_bytes;
+    patch(
+        bytes,
+        16,
+        (56 + MAX_BATCH_OPERATIONS * 40 + 1) as u64,
+        "gate count limit",
+    );
+    patch(
+        bytes,
+        events,
+        (MAX_BATCH_OPERATIONS + 1) as u64,
+        "operation count limit",
+    );
+    patch(bytes, events + 8 + 25, 3, "invalid event position");
+    patch(bytes, events + 8 + 25, 0, "invalid event position");
+    patch(bytes, bytes.len() - 32, 4, "measurement count limit");
+    let max_ops = batch(0, vec![event(0); MAX_BATCH_OPERATIONS]);
+    assert_eq!(
+        decode_event_batches(&encode_event_batches(&[max_ops]).unwrap()).unwrap()[0]
+            .operations
+            .len(),
+        MAX_BATCH_OPERATIONS
+    );
+    let max_payload = batch(
+        0,
+        vec![ScheduledEventOp::Custom {
+            tag: 42,
+            payload: vec![0; MAX_BATCH_PAYLOAD],
+        }],
+    );
+    assert!(decode_event_batches(&encode_event_batches(&[max_payload]).unwrap()).is_ok());
 }

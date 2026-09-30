@@ -281,6 +281,9 @@ impl ScheduledIdleModel {
     }
 }
 impl ScheduleTimeline {
+    pub(crate) fn has_native_shot(&self) -> bool {
+        self.native_shot.is_some()
+    }
     pub(crate) fn new(qubits: usize) -> Self {
         Self {
             native_shot: None,

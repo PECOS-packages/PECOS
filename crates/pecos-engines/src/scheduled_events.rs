@@ -6,7 +6,8 @@
 use crate::noise::{IntoNoiseModel, NoiseModel};
 use crate::runtime_frame::{ShotContext, error};
 use crate::scheduled_frame::{
-    self, MAX_SCHEDULE_BYTES, ScheduleTimeline, ScheduledIdleModel, ScheduledIdleZ, TimedBatch,
+    self, MAX_SCHEDULE_BYTES, PreparedSchedule, ScheduleTimeline, ScheduledIdleModel,
+    ScheduledIdleZ, TimedBatch,
 };
 use crate::{ByteMessage, ControlEngine, EngineStage, Gate, GateType};
 use pecos_core::{RngManageable, errors::PecosError};
@@ -43,10 +44,30 @@ pub struct ScheduledEventBatch {
     pub operations: Vec<ScheduledEventOp>,
     pub measurements: Vec<ScheduledResult>,
 }
+impl ScheduledEventBatch {
+    /// Original timing and ordinary gates, excluding opaque events.
+    #[must_use]
+    pub fn source_gates(&self) -> TimedBatch {
+        TimedBatch {
+            runtime_shot_id: self.runtime_shot_id,
+            batch_index: self.batch_index,
+            start_nanos: self.start_nanos,
+            duration_nanos: self.duration_nanos,
+            gates: self
+                .operations
+                .iter()
+                .filter_map(|op| match op {
+                    ScheduledEventOp::Gate(g) => Some(g.as_ref().clone()),
+                    ScheduledEventOp::Custom { .. } => None,
+                })
+                .collect(),
+        }
+    }
+}
 fn measured(gate: &Gate) -> bool {
     matches!(gate.gate_type, GateType::MZ | GateType::MeasureLeaked)
 }
-fn validate(batch: &ScheduledEventBatch) -> Result<(), PecosError> {
+fn validate_batch(batch: &ScheduledEventBatch) -> Result<(), PecosError> {
     if batch.operations.len() > MAX_BATCH_OPERATIONS
         || batch
             .start_nanos
@@ -84,11 +105,11 @@ fn validate(batch: &ScheduledEventBatch) -> Result<(), PecosError> {
     }
     Ok(())
 }
-fn identities(batches: &[ScheduledEventBatch]) -> Result<(), PecosError> {
+fn validate_batches(batches: &[ScheduledEventBatch]) -> Result<(), PecosError> {
     let mut native = BTreeSet::new();
     let mut source = BTreeSet::new();
     for b in batches {
-        validate(b)?;
+        validate_batch(b)?;
         for m in &b.measurements {
             if !native.insert(m.runtime_result) || !source.insert(m.program_result) {
                 return Err(error("duplicate scheduled event measurement identity"));
@@ -123,25 +144,11 @@ impl Writer {
 /// # Errors
 /// Rejects invalid records, identities, payloads and total size above 64 MiB.
 pub fn encode_event_batches(batches: &[ScheduledEventBatch]) -> Result<ByteMessage, PecosError> {
-    identities(batches)?;
+    validate_batches(batches)?;
     let mut w = Writer(Vec::new());
     w.bytes(&[0; 16])?;
     for b in batches {
-        let gates = b
-            .operations
-            .iter()
-            .filter_map(|o| match o {
-                ScheduledEventOp::Gate(g) => Some(g.as_ref().clone()),
-                ScheduledEventOp::Custom { .. } => None,
-            })
-            .collect();
-        let nested = scheduled_frame::encode_timed_batches(&[TimedBatch {
-            runtime_shot_id: b.runtime_shot_id,
-            batch_index: b.batch_index,
-            start_nanos: b.start_nanos,
-            duration_nanos: b.duration_nanos,
-            gates,
-        }])?;
+        let nested = scheduled_frame::encode_timed_batches(&[b.source_gates()])?;
         w.word(nested.as_bytes().len() as u64)?;
         w.bytes(nested.as_bytes())?;
         w.word(
@@ -214,12 +221,12 @@ pub fn decode_event_batches(input: &ByteMessage) -> Result<Vec<ScheduledEventBat
     let mut r = Reader(&bytes[16..]);
     let mut result = Vec::new();
     for _ in 0..count {
-        let n = r.size()?;
+        let nested_bytes = r.size()?;
         // A nested v3 frame holds exactly one bounded batch, without opaque data.
-        if n > 56 + MAX_BATCH_OPERATIONS * 40 {
+        if nested_bytes > 56 + MAX_BATCH_OPERATIONS * 40 {
             return Err(error("event gate count limit"));
         }
-        let mut nested = scheduled_frame::decode(&ByteMessage::new(r.take(n)?))?;
+        let mut nested = scheduled_frame::decode(&ByteMessage::new(r.take(nested_bytes)?))?;
         if nested.len() != 1 {
             return Err(error("expected one nested scheduled batch"));
         }
@@ -260,12 +267,12 @@ pub fn decode_event_batches(input: &ByteMessage) -> Result<Vec<ScheduledEventBat
                 )));
             }
         }
-        let n = r.size()?;
-        if n > operations.len() {
+        let measurement_count = r.size()?;
+        if measurement_count > operations.len() {
             return Err(error("event measurement count limit"));
         }
         let mut measurements = Vec::new();
-        for _ in 0..n {
+        for _ in 0..measurement_count {
             measurements.push(ScheduledResult {
                 operation_index: r.size()?,
                 runtime_result: r.word()?,
@@ -284,7 +291,7 @@ pub fn decode_event_batches(input: &ByteMessage) -> Result<Vec<ScheduledEventBat
     if !r.0.is_empty() {
         return Err(error("trailing scheduled event data"));
     }
-    identities(&result)?;
+    validate_batches(&result)?;
     Ok(result)
 }
 
@@ -388,7 +395,7 @@ impl IntoNoiseModel for ScheduledEventIdleZ {
 }
 pub(crate) struct ScheduledEventModel {
     pub(crate) inner: ScheduledIdleModel,
-    pub(crate) source_timeline: ScheduleTimeline,
+    source_timeline: ScheduleTimeline,
     factory: Factory,
     adapter: Option<Box<dyn ScheduledBatchAdapter>>,
 }
@@ -402,11 +409,46 @@ impl Clone for ScheduledEventModel {
         }
     }
 }
+pub(crate) struct AdmittedEvents {
+    batches: Vec<ScheduledEventBatch>,
+    source: ScheduleTimeline,
+}
 impl ScheduledEventModel {
-    pub(crate) fn normalize(
+    pub(crate) fn admit(&self, input: &ByteMessage) -> Result<AdmittedEvents, PecosError> {
+        // Component-wise clones retain timelines but cannot clone a live adapter.
+        if self.adapter.is_none() && self.source_timeline.has_native_shot() {
+            return Err(error("cloned event session requires reset"));
+        }
+        let batches = decode_event_batches(input)?;
+        let source = self
+            .source_timeline
+            .prepare(
+                &self.inner.config,
+                batches
+                    .iter()
+                    .map(ScheduledEventBatch::source_gates)
+                    .collect(),
+            )?
+            .timeline;
+        Ok(AdmittedEvents { batches, source })
+    }
+    pub(crate) fn prepare(
+        &mut self,
+        admitted: AdmittedEvents,
+        context: ShotContext,
+    ) -> Result<(PreparedSchedule, ScheduleTimeline), PecosError> {
+        let normalized = self.normalize(&admitted.batches, context, MAX_SCHEDULE_BYTES)?;
+        Ok((self.inner.prepare_batches(normalized)?, admitted.source))
+    }
+    pub(crate) fn commit(&mut self, prepared: PreparedSchedule, source: ScheduleTimeline) {
+        self.inner.commit(prepared);
+        self.source_timeline = source;
+    }
+    fn normalize(
         &mut self,
         batches: &[ScheduledEventBatch],
         context: ShotContext,
+        size_limit: usize,
     ) -> Result<Vec<TimedBatch>, PecosError> {
         if self.adapter.is_none() {
             self.adapter = Some((self.factory)(context)?);
@@ -439,12 +481,7 @@ impl ScheduledEventModel {
             {
                 return Err(error("adapter changed measurement order, kind or targets"));
             }
-            size = size
-                .checked_add(40 + output.gates.len() * 40)
-                .ok_or_else(|| error("expanded schedule overflow"))?;
-            if size > MAX_SCHEDULE_BYTES {
-                return Err(error("expanded schedule limit"));
-            }
+            size = expanded_size(size, output.gates.len(), size_limit)?;
             translated.push(TimedBatch {
                 runtime_shot_id: batch.runtime_shot_id,
                 batch_index: batch.batch_index,
@@ -455,6 +492,17 @@ impl ScheduledEventModel {
         }
         Ok(translated)
     }
+}
+fn expanded_size(current: usize, gates: usize, limit: usize) -> Result<usize, PecosError> {
+    let size = gates
+        .checked_mul(40)
+        .and_then(|bytes| bytes.checked_add(40))
+        .and_then(|bytes| current.checked_add(bytes))
+        .ok_or_else(|| error("expanded schedule overflow"))?;
+    if size > limit {
+        return Err(error("expanded schedule limit"));
+    }
+    Ok(size)
 }
 impl ControlEngine for ScheduledEventModel {
     type Input = ByteMessage;
@@ -498,5 +546,74 @@ impl RngManageable for ScheduledEventModel {
     }
     fn set_rng(&mut self, rng: PecosRng) {
         self.inner.set_rng(rng);
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn normalization_enforces_aggregate_budget_across_batches() {
+        struct Expand;
+        impl ScheduledBatchAdapter for Expand {
+            fn validate(&self, _: &ScheduledEventBatch) -> Result<(), PecosError> {
+                Ok(())
+            }
+            fn translate(
+                &mut self,
+                _: &ScheduledEventBatch,
+                output: &mut ScheduledGateBuffer<'_>,
+            ) -> Result<(), PecosError> {
+                output.push(Gate::pz(&[0]))
+            }
+        }
+        let batches = (0..2)
+            .map(|batch_index| ScheduledEventBatch {
+                runtime_shot_id: 1,
+                batch_index,
+                start_nanos: 0,
+                duration_nanos: 0,
+                operations: vec![],
+                measurements: vec![],
+            })
+            .collect::<Vec<_>>();
+        // Exercise the production normalization loop with a small budget; the
+        // real 64 MiB arithmetic boundary is covered separately without a huge
+        // expanded Gate allocation. Public admission always uses the fixed limit.
+        for (limit, accepted) in [(176, true), (175, false)] {
+            let mut noise =
+                ScheduledEventIdleZ::new(ScheduledIdleZ::new(1, 0.0, 0.0, 0.0).unwrap(), |_| {
+                    Ok(Box::new(Expand))
+                })
+                .into_noise_model();
+            let model = noise
+                .as_any_mut()
+                .downcast_mut::<ScheduledEventModel>()
+                .unwrap();
+            let result = model.normalize(
+                &batches,
+                ShotContext {
+                    run: 0,
+                    worker: 0,
+                    shot: 0,
+                },
+                limit,
+            );
+            assert_eq!(result.is_ok(), accepted);
+        }
+    }
+    #[test]
+    fn expanded_schedule_size_boundary_and_overflow() {
+        assert_eq!(
+            expanded_size(MAX_SCHEDULE_BYTES - 80, 1, MAX_SCHEDULE_BYTES).unwrap(),
+            MAX_SCHEDULE_BYTES
+        );
+        assert!(
+            expanded_size(MAX_SCHEDULE_BYTES - 79, 1, MAX_SCHEDULE_BYTES)
+                .unwrap_err()
+                .to_string()
+                .contains("expanded schedule limit")
+        );
+        assert!(expanded_size(16, usize::MAX, MAX_SCHEDULE_BYTES).is_err());
+        assert!(expanded_size(usize::MAX, 1, MAX_SCHEDULE_BYTES).is_err());
     }
 }

@@ -913,15 +913,14 @@ pub fn heisenberg_with_noise_map(
                         }
                         let p = -s;
                         let scale = 1.0 - 2.0 * p;
-                        let single_q: Option<u16> = {
-                            let xq = inj.label.x_bits.highest_set_bit();
-                            let zq = inj.label.z_bits.highest_set_bit();
-                            match (xq, zq) {
-                                (Some(x), None) => Some(x as u16),
-                                (None, Some(z)) => Some(z as u16),
-                                (Some(x), Some(z)) if x == z => Some(x as u16),
-                                _ => None,
-                            }
+                        let single_q: Option<u16> = if inj.label.weight() == 1 {
+                            inj.label
+                                .x_bits
+                                .highest_set_bit()
+                                .or_else(|| inj.label.z_bits.highest_set_bit())
+                                .map(|q| q as u16)
+                        } else {
+                            None
                         };
                         if let Some(q) = single_q {
                             let has_x_in_noise = inj.label.x_bits.highest_set_bit().is_some();
@@ -1252,15 +1251,14 @@ pub fn heisenberg_windowed(
                         let p = -s;
                         let scale = 1.0 - 2.0 * p;
                         // For S-type, single-qubit specialization
-                        let single_q: Option<u16> = {
-                            let xq = inj.label.x_bits.highest_set_bit();
-                            let zq = inj.label.z_bits.highest_set_bit();
-                            match (xq, zq) {
-                                (Some(x), None) => Some(x as u16),
-                                (None, Some(z)) => Some(z as u16),
-                                (Some(x), Some(z)) if x == z => Some(x as u16),
-                                _ => None,
-                            }
+                        let single_q: Option<u16> = if inj.label.weight() == 1 {
+                            inj.label
+                                .x_bits
+                                .highest_set_bit()
+                                .or_else(|| inj.label.z_bits.highest_set_bit())
+                                .map(|q| q as u16)
+                        } else {
+                            None
                         };
 
                         if let Some(q) = single_q {
@@ -1589,15 +1587,14 @@ pub fn heisenberg_sparse(
                         let p = -s;
                         let scale = 1.0 - 2.0 * p;
 
-                        let single_q: Option<u16> = {
-                            let xq = inj.label.x_bits.highest_set_bit();
-                            let zq = inj.label.z_bits.highest_set_bit();
-                            match (xq, zq) {
-                                (Some(x), None) => Some(x as u16),
-                                (None, Some(z)) => Some(z as u16),
-                                (Some(x), Some(z)) if x == z => Some(x as u16),
-                                _ => None,
-                            }
+                        let single_q: Option<u16> = if inj.label.weight() == 1 {
+                            inj.label
+                                .x_bits
+                                .highest_set_bit()
+                                .or_else(|| inj.label.z_bits.highest_set_bit())
+                                .map(|q| q as u16)
+                        } else {
+                            None
                         };
 
                         if let Some(q) = single_q {
@@ -2172,6 +2169,73 @@ mod tests {
     #[test]
     fn test_s_injection_pauli_matrix_sparse_noise_map() {
         check_s_injection_pauli_matrix("sparse_noise_map");
+    }
+
+    #[test]
+    fn test_s_injection_two_qubit_labels() {
+        // Two-qubit Paulis whose highest X and Z bits share a qubit must not
+        // take the single-qubit fast path. Z0 passes both CXs unchanged, so
+        // the detection probability is p exactly when the injected Pauli
+        // anticommutes with Z0, i.e. has X or Y on qubit 0.
+        let gates = vec![
+            gate(GateType::PZ, &[0]),
+            gate(GateType::PZ, &[1]),
+            gate(GateType::CX, &[0, 1]),
+            gate(GateType::CX, &[0, 1]),
+            gate(GateType::MZ, &[0]),
+        ];
+        let stab = StabilizerGroup::from_circuit(&gates[..2], 2);
+        let gate_index = crate::expand::GateIndex::build(&gates, 2);
+        let labels = [
+            ("X0X1", Bm::x(0).multiply(&Bm::x(1)), true),
+            ("X0Y1", Bm::x(0).multiply(&Bm::y(1)), true),
+            ("Y0X1", Bm::y(0).multiply(&Bm::x(1)), true),
+            ("Y0Y1", Bm::y(0).multiply(&Bm::y(1)), true),
+            ("Z0X1", Bm::z(0).multiply(&Bm::x(1)), false),
+            ("Z0Y1", Bm::z(0).multiply(&Bm::y(1)), false),
+        ];
+        for (name, label, anticommutes) in labels {
+            let probability = 0.1;
+            let noise = PauliAfterGate {
+                gate_index: 2,
+                label,
+                probability,
+            };
+            let noise_map = build_noise_map(&gates, &noise, &gate_index.expansion_gates);
+            let expected = if anticommutes { probability } else { 0.0 };
+            let results = [
+                (
+                    "windowed",
+                    heisenberg_detection_probability(&gates, &Bm::z(0), &noise, &stab, 0.0),
+                ),
+                (
+                    "noise_map",
+                    heisenberg_with_noise_map(&gates, &Bm::z(0), &noise_map, &stab, 0.0),
+                ),
+                (
+                    "sparse",
+                    heisenberg_sparse(&gates, &Bm::z(0), &noise, &stab, 0.0, &gate_index, None),
+                ),
+                (
+                    "sparse_noise_map",
+                    heisenberg_sparse(
+                        &gates,
+                        &Bm::z(0),
+                        &noise,
+                        &stab,
+                        0.0,
+                        &gate_index,
+                        Some(noise_map.as_slice()),
+                    ),
+                ),
+            ];
+            for (walk, actual) in results {
+                assert!(
+                    (actual - expected).abs() < 1e-12,
+                    "{walk}: label={name}: expected {expected}, got {actual}"
+                );
+            }
+        }
     }
 
     #[test]

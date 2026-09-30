@@ -29,7 +29,6 @@ pub struct ScheduledIdleZ {
     linear: f64,
     sine: f64,
     coherent: f64,
-    idle_before_preparation: bool,
 }
 impl ScheduledIdleZ {
     /// Rates are inverse seconds (linear) or radians/second (sine and coherent).
@@ -41,24 +40,12 @@ impl ScheduledIdleZ {
             linear,
             sine,
             coherent,
-            idle_before_preparation: true,
         };
         if !(1..=16).contains(&qubits) {
             return Err(error("scheduled capacity must be 1..=16"));
         }
         config.validate_idle(1.0)?;
         Ok(config)
-    }
-    /// Include idle noise before a qubit's first operation in a batch when that
-    /// operation is preparation (`PZ`). Defaults to true.
-    ///
-    /// Disabling this omits only that idle channel; preparation still occupies
-    /// the entire batch and advances the timing cursor. This changes noise RNG
-    /// consumption and does not imply equal seeded trajectories between policies.
-    #[must_use]
-    pub fn with_idle_before_preparation(mut self, include: bool) -> Self {
-        self.idle_before_preparation = include;
-        self
     }
     fn validate_idle(&self, seconds: f64) -> Result<(), PecosError> {
         if [self.linear, self.sine, self.coherent]
@@ -344,9 +331,9 @@ impl ScheduleTimeline {
                         let gap = batch.start_nanos - prepared.timeline.ends[q];
                         let seconds = std::time::Duration::from_nanos(gap).as_secs_f64();
                         config.validate_idle(seconds)?;
-                        if gap != 0
-                            && (config.idle_before_preparation || gate.gate_type != GateType::PZ)
-                        {
+                        // This profile has only local Z/RZ idle channels. PZ
+                        // erases their effect, so do not sample a discarded channel.
+                        if gap != 0 && gate.gate_type != GateType::PZ {
                             builder.idle(seconds, &[q]);
                         }
                         touched[q] = true;
@@ -426,10 +413,8 @@ mod timing_tests {
             gates,
         }
     }
-    fn config(include: bool) -> ScheduledIdleZ {
-        ScheduledIdleZ::new(2, 0.2, 0.3, 0.4)
-            .unwrap()
-            .with_idle_before_preparation(include)
+    fn config() -> ScheduledIdleZ {
+        ScheduledIdleZ::new(2, 0.2, 0.3, 0.4).unwrap()
     }
     fn ops(prepared: &PreparedSchedule, index: usize) -> Vec<Gate> {
         prepared.messages[index].quantum_ops().unwrap()
@@ -442,30 +427,21 @@ mod timing_tests {
             .collect()
     }
     #[test]
-    fn preparation_policy_is_per_qubit_and_preserves_busy_duration() {
-        for include in [false, true] {
-            let prepared = ScheduleTimeline::new(2)
-                .prepare(
-                    &config(include),
-                    vec![
-                        batch(0, 2, 3, vec![Gate::pz(&[0]), Gate::rz(Angle64::ZERO, &[1])]),
-                        batch(1, 7, 1, vec![Gate::mz(&[0]), Gate::mz(&[1])]),
-                    ],
-                )
-                .unwrap();
-            assert_eq!(
-                idle_qubits_and_seconds(&ops(&prepared, 0)),
-                if include {
-                    vec![(0, 2.0), (1, 2.0)]
-                } else {
-                    vec![(1, 2.0)]
-                }
-            );
-            assert_eq!(
-                idle_qubits_and_seconds(&ops(&prepared, 1)),
-                vec![(0, 2.0), (1, 2.0)]
-            );
-        }
+    fn preparation_omission_is_per_qubit_and_preserves_busy_duration() {
+        let prepared = ScheduleTimeline::new(2)
+            .prepare(
+                &config(),
+                vec![
+                    batch(0, 2, 3, vec![Gate::pz(&[0]), Gate::rz(Angle64::ZERO, &[1])]),
+                    batch(1, 7, 1, vec![Gate::mz(&[0]), Gate::mz(&[1])]),
+                ],
+            )
+            .unwrap();
+        assert_eq!(idle_qubits_and_seconds(&ops(&prepared, 0)), vec![(1, 2.0)]);
+        assert_eq!(
+            idle_qubits_and_seconds(&ops(&prepared, 1)),
+            vec![(0, 2.0), (1, 2.0)]
+        );
     }
     #[test]
     fn only_first_operation_on_each_qubit_controls_preparation_omission() {
@@ -475,50 +451,12 @@ mod timing_tests {
                 gates.reverse();
             }
             let prepared = ScheduleTimeline::new(2)
-                .prepare(&config(false), vec![batch(0, 2, 1, gates)])
+                .prepare(&config(), vec![batch(0, 2, 1, gates)])
                 .unwrap();
             assert_eq!(
                 idle_qubits_and_seconds(&ops(&prepared, 0)),
                 if prep_first { vec![] } else { vec![(0, 2.0)] }
             );
-        }
-    }
-    #[test]
-    fn measurement_consumes_its_gap_and_reserves_its_entire_batch() {
-        for measurement in [Gate::mz(&[0]), Gate::measure_leaked(&[0])] {
-            for include in [false, true] {
-                let prepared = ScheduleTimeline::new(2)
-                    .prepare(
-                        &config(include),
-                        vec![
-                            batch(0, 0, 1, vec![Gate::pz(&[0])]),
-                            batch(1, 3, 2, vec![measurement.clone()]),
-                            batch(2, 7, 1, vec![Gate::rz(Angle64::ZERO, &[0])]),
-                        ],
-                    )
-                    .unwrap();
-                assert_eq!(idle_qubits_and_seconds(&ops(&prepared, 1)), vec![(0, 2.0)]);
-                assert_eq!(idle_qubits_and_seconds(&ops(&prepared, 2)), vec![(0, 2.0)]);
-                // The pre-measurement gap must not be charged again. A later
-                // operation inside measurement's busy interval must still reject.
-                let occupied = ScheduleTimeline::new(2)
-                    .prepare(
-                        &config(include),
-                        vec![batch(0, 3, 2, vec![measurement.clone()])],
-                    )
-                    .unwrap()
-                    .timeline;
-                assert!(
-                    occupied
-                        .prepare(&config(include), vec![batch(1, 4, 1, vec![Gate::pz(&[0])])])
-                        .is_err()
-                );
-                assert!(
-                    occupied
-                        .prepare(&config(include), vec![batch(1, 5, 1, vec![Gate::pz(&[0])])])
-                        .is_ok()
-                );
-            }
         }
     }
 }

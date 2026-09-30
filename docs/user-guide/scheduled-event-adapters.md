@@ -73,9 +73,9 @@ bitwise. Normalization does not add another angle serialization round trip.
 ## Python factory
 
 Pair `qis_engine().scheduled_event_batches()` with
-`scheduled_event_idle_z(qubits, adapter_factory, *, linear=0, sine=0, coherent=0, idle_before_preparation=True)`
-from `pecos_rslib`. The `idle_before_preparation` policy applies to the **normalized**
-gates emitted by the adapter, using the same per-qubit rules as
+`scheduled_event_idle_z(qubits, adapter_factory, *, linear=0, sine=0, coherent=0)`
+from `pecos_rslib`. Omission of idle noise before preparation applies to the
+**normalized** gates emitted by the adapter, using the same per-qubit rules as
 [scheduled idle-Z simulation](scheduled-idle-simulation.md#timing-and-noise-contract).
 Source timing admission remains enforced even when a preparation gap is omitted.
 Use StateVec and the explicit physical capacity as for v3.

@@ -45,19 +45,21 @@ of its next touching batch. The initial end is zero. A qubit receives one idle
 operation for that whole gap before its first operation in the batch. Operations
 retain emission order, including same-batch measurement boundaries. A batch's
 entire duration counts as busy time for each qubit it touches; no final idle tail
-is invented after the last operation. Measurement consumes its preceding idle gap
-and advances the cursor to the end of its batch, so a later operation cannot count
-that earlier gap again. Backward/overlapping use of a qubit rejects.
+is invented after the last operation. Backward/overlapping use of a qubit rejects.
 
-By default, idle noise is included before preparation (`PZ`, reset-Z). Set
-`scheduled_idle_z(..., idle_before_preparation=False)` in Python or call
-`ScheduledIdleZ::with_idle_before_preparation(false)` in Rust to omit that gap's
-noise when preparation is the first operation on that qubit in the batch. This is
-a per-qubit choice: other qubits and gaps before earlier non-preparation gates
-remain unchanged. Preparation still occupies the entire batch and advances the
-cursor; capacity, overlap and finite-rate checks remain enforced. Omitting a
-stochastic idle channel changes RNG consumption even when the reset erases its
-physical effect, so the two policies need not produce identical seeded outcomes.
+When preparation (`PZ`, reset-Z) is the first operation on a qubit in a batch,
+its preceding idle channel is omitted: the ideal reset erases the effect of all
+local Z/RZ channels in this restricted profile. Other qubits and gaps before
+non-preparation gates retain their idle noise. Preparation still occupies the
+entire batch and advances the cursor; capacity, overlap and finite-rate checks
+remain enforced. This rule must be reconsidered if the profile admits other
+noise channels or preparation operations.
+
+Earlier versions sampled idle noise before preparation. Omitting those discarded
+channels avoids unnecessary work and changes RNG consumption, so seeded outcomes
+can differ from earlier versions even though the output distribution is unchanged.
+Both scheduled Python factories and the Rust profile use this rule without a
+configuration option.
 
 The profile enables only linear stochastic Z, sine-squared stochastic Z and
 coherent RZ idle effects. Linear rates are inverse seconds; sine and coherent

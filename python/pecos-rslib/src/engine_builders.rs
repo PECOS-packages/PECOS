@@ -800,22 +800,17 @@ pub struct PyScheduledIdleZ {
     pub(crate) inner: pecos_engines::scheduled_frame::ScheduledIdleZ,
 }
 /// Construct the scheduled idle-Z capability; rates use seconds and radians.
-/// Set `idle_before_preparation=False` to omit idle noise when preparation is the
-/// first normalized operation on a qubit in a batch. Timing admission is unchanged.
-/// Defaults to true; changing the policy can change seeded noise trajectories.
 #[pyfunction]
-#[pyo3(signature = (qubits, *, linear = 0.0, sine = 0.0, coherent = 0.0, idle_before_preparation = true))]
+#[pyo3(signature = (qubits, *, linear = 0.0, sine = 0.0, coherent = 0.0))]
 pub fn scheduled_idle_z(
     qubits: usize,
     linear: f64,
     sine: f64,
     coherent: f64,
-    idle_before_preparation: bool,
 ) -> PyResult<PyScheduledIdleZ> {
     Ok(PyScheduledIdleZ {
         inner: pecos_engines::scheduled_frame::ScheduledIdleZ::new(qubits, linear, sine, coherent)
-            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?
-            .with_idle_before_preparation(idle_before_preparation),
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?,
     })
 }
 

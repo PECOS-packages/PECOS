@@ -5,7 +5,8 @@
 static SeleneRuntimePluginDescriptorV1 original;
 static SeleneRuntimePluginDescriptorV1 proxy;
 /* Deliberately synthetic timing: one second before the second RXY callback.
- * INITIAL_NANOS optionally adds a gap before the initial preparation.
+ * INITIAL_NANOS offsets every batch timestamp equally, adding an initial gap
+ * while preserving the gaps between subsequent batches.
  * This is NOT a calibration or timing model for the public runtime. */
 static _Thread_local unsigned rxy_count;
 static _Thread_local RuntimeGetOperationHandle forwarding;

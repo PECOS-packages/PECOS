@@ -3908,7 +3908,6 @@ def scheduled_idle_z(
     linear: float = 0.0,
     sine: float = 0.0,
     coherent: float = 0.0,
-    idle_before_preparation: bool = True,
 ) -> ScheduledIdleZ: ...
 
 class ScheduledEventBatch:
@@ -3945,5 +3944,4 @@ def scheduled_event_idle_z(
     linear: float = 0.0,
     sine: float = 0.0,
     coherent: float = 0.0,
-    idle_before_preparation: bool = True,
 ) -> ScheduledEventIdleZ: ...

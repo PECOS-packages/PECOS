@@ -5609,9 +5609,9 @@ mod tests {
         let tick = tc.get_tick(0).unwrap();
 
         // No conflict
-        assert!(
-            tick.find_conflicts(&[QubitId::from(3), QubitId::from(4)])
-                .is_empty()
+        assert_eq!(
+            tick.find_conflicts(&[QubitId::from(3), QubitId::from(4)]),
+            []
         );
 
         // Conflict with qubit 0

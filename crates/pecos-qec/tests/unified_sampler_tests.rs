@@ -82,7 +82,11 @@ fn from_influence_map_produces_reasonable_statistics() {
     assert_eq!(sampler.num_observables(), 0);
     assert_eq!(sampler.num_tracked_paulis(), 1);
     assert_eq!(stats.logical_error_count, 0);
-    assert!(stats.dem_output_counts().is_empty());
+    let counts = stats.dem_output_counts();
+    assert!(
+        counts.is_empty(),
+        "expected no DEM output counts, got {counts:?}"
+    );
 }
 
 // ============================================================================

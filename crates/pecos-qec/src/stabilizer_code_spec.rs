@@ -1424,7 +1424,11 @@ mod tests {
 
         // Z errors should have no syndrome (commute with Z-type stabilizers)
         let z0 = pauli_string(&[(Pauli::Z, 0)]);
-        assert!(code.syndrome(&z0).is_empty());
+        let syndrome = code.syndrome(&z0);
+        assert!(
+            syndrome.is_empty(),
+            "expected no syndrome bits, got {syndrome:?}"
+        );
     }
 
     #[test]
@@ -1542,7 +1546,11 @@ mod tests {
 
         // Z errors should have no syndrome
         let z0 = pauli_string(&[(Pauli::Z, 0)]);
-        assert!(code.syndrome_indexed(&z0, &index).is_empty());
+        let syndrome = code.syndrome_indexed(&z0, &index);
+        assert!(
+            syndrome.is_empty(),
+            "expected no syndrome bits, got {syndrome:?}"
+        );
     }
 
     // ========================================================================

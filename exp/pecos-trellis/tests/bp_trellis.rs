@@ -77,7 +77,7 @@ fn bptrellis_defaults_enable_bp_merge_and_deadline_order() {
     assert_eq!(defaults.bp_score_iterations, 5);
     assert!(defaults.merge_indistinguishable);
     assert_eq!(defaults.ordering, TrellisOrdering::Deadline);
-    assert!(defaults.escalation.is_empty());
+    assert_eq!(defaults.escalation, []);
 
     let dem = defaults_identity_dem();
     let deadline_order = deadline_column_order(&dem).unwrap();

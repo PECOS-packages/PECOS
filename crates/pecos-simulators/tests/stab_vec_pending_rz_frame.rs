@@ -446,7 +446,10 @@ where
 
 fn max_amplitude_error(actual: &[Complex64], expected: &[Complex64]) -> f64 {
     assert_eq!(actual.len(), expected.len());
-    assert!(!expected.is_empty());
+    assert!(
+        !expected.is_empty(),
+        "expected amplitudes must contain at least one entry"
+    );
     assert!(
         actual
             .iter()

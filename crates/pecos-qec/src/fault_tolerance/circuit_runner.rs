@@ -1110,7 +1110,7 @@ mod tests {
     fn test_extract_spacetime_locations_empty_circuit() {
         let circuit = TickCircuit::new();
         let locations = extract_spacetime_locations(&circuit, false);
-        assert!(locations.is_empty());
+        assert_eq!(locations, []);
     }
 
     #[test]
@@ -1604,7 +1604,11 @@ mod tests {
         assert!(!checker.has_input_qubits(), "State prep has no inputs");
         assert!(checker.has_output_qubits(), "State prep has outputs");
 
-        assert!(checker.input_qubits().is_empty());
+        let input_qubits = checker.input_qubits();
+        assert!(
+            input_qubits.is_empty(),
+            "expected no input qubits, got {input_qubits:?}"
+        );
         assert_eq!(checker.output_qubits().len(), 3);
     }
 
@@ -1635,7 +1639,11 @@ mod tests {
         );
 
         assert_eq!(checker.input_qubits().len(), 3);
-        assert!(checker.output_qubits().is_empty());
+        let output_qubits = checker.output_qubits();
+        assert!(
+            output_qubits.is_empty(),
+            "expected no output qubits, got {output_qubits:?}"
+        );
     }
 
     // =========================================================================
@@ -1832,7 +1840,11 @@ mod tests {
             !checker.has_input_qubits(),
             "State prep should have no inputs"
         );
-        assert!(checker.input_qubits().is_empty());
+        let input_qubits = checker.input_qubits();
+        assert!(
+            input_qubits.is_empty(),
+            "expected no input qubits, got {input_qubits:?}"
+        );
 
         // All 7 qubits should be outputs
         assert!(
@@ -1855,7 +1867,11 @@ mod tests {
         assert_eq!(checker.ancilla_qubits().len(), 7);
 
         // No measured qubits
-        assert!(checker.measured_qubits().is_empty());
+        let measured_qubits = checker.measured_qubits();
+        assert!(
+            measured_qubits.is_empty(),
+            "expected no measured qubits, got {measured_qubits:?}"
+        );
 
         println!("Steane code state prep:");
         println!("  Circuit type: {}", checker.circuit_type());
@@ -1898,10 +1914,18 @@ mod tests {
             !checker.has_output_qubits(),
             "Final measurement should have no outputs"
         );
-        assert!(checker.output_qubits().is_empty());
+        let output_qubits = checker.output_qubits();
+        assert!(
+            output_qubits.is_empty(),
+            "expected no output qubits, got {output_qubits:?}"
+        );
 
         // No ancillas (nothing is prepared)
-        assert!(checker.ancilla_qubits().is_empty());
+        let ancilla_qubits = checker.ancilla_qubits();
+        assert!(
+            ancilla_qubits.is_empty(),
+            "expected no ancilla qubits, got {ancilla_qubits:?}"
+        );
 
         // All qubits are measured
         assert_eq!(checker.measured_qubits().len(), 7);
@@ -1945,14 +1969,22 @@ mod tests {
             !checker.has_input_qubits(),
             "Complete QEC should have no inputs"
         );
-        assert!(checker.input_qubits().is_empty());
+        let input_qubits = checker.input_qubits();
+        assert!(
+            input_qubits.is_empty(),
+            "expected no input qubits, got {input_qubits:?}"
+        );
 
         // No output qubits (all are measured)
         assert!(
             !checker.has_output_qubits(),
             "Complete QEC should have no outputs"
         );
-        assert!(checker.output_qubits().is_empty());
+        let output_qubits = checker.output_qubits();
+        assert!(
+            output_qubits.is_empty(),
+            "expected no output qubits, got {output_qubits:?}"
+        );
 
         // All 5 qubits should be ancillas (prepared)
         assert_eq!(checker.ancilla_qubits().len(), 5);
@@ -1998,8 +2030,16 @@ mod tests {
         assert_eq!(checker.output_qubits().len(), 6);
 
         // No ancillas or measurements
-        assert!(checker.ancilla_qubits().is_empty());
-        assert!(checker.measured_qubits().is_empty());
+        let ancilla_qubits = checker.ancilla_qubits();
+        assert!(
+            ancilla_qubits.is_empty(),
+            "expected no ancilla qubits, got {ancilla_qubits:?}"
+        );
+        let measured_qubits = checker.measured_qubits();
+        assert!(
+            measured_qubits.is_empty(),
+            "expected no measured qubits, got {measured_qubits:?}"
+        );
 
         println!("Logical CNOT gadget:");
         println!("  Circuit type: {}", checker.circuit_type());

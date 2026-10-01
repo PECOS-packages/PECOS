@@ -218,7 +218,11 @@ fn nonlinear_idle_is_not_split_by_metadata_or_host_input_boundaries() {
         ];
         assert_eq!(run(&mut together, &batches, events), vec![0]);
         for b in &batches[..2] {
-            assert!(run(&mut split, std::slice::from_ref(b), events).is_empty());
+            let outcomes = run(&mut split, std::slice::from_ref(b), events);
+            assert!(
+                outcomes.is_empty(),
+                "expected no measurement outcomes, got {outcomes:?}"
+            );
         }
         split.process(ByteMessage::create_empty()).unwrap();
         assert_eq!(run(&mut split, &batches[2..], events), vec![0]);

@@ -3249,9 +3249,18 @@ mod tests {
         ) = map.export_csr();
 
         assert_eq!(num_dem_outputs, 0);
-        assert!(dem_output_data_x.is_empty());
-        assert!(dem_output_data_y.is_empty());
-        assert!(dem_output_data_z.is_empty());
+        assert!(
+            dem_output_data_x.is_empty(),
+            "expected no DEM output data for X, got {dem_output_data_x:?}"
+        );
+        assert!(
+            dem_output_data_y.is_empty(),
+            "expected no DEM output data for Y, got {dem_output_data_y:?}"
+        );
+        assert!(
+            dem_output_data_z.is_empty(),
+            "expected no DEM output data for Z, got {dem_output_data_z:?}"
+        );
         assert_eq!(dem_output_offsets_x.len(), map.locations.len() + 1);
         assert_eq!(dem_output_offsets_y.len(), map.locations.len() + 1);
         assert_eq!(dem_output_offsets_z.len(), map.locations.len() + 1);
@@ -3597,7 +3606,10 @@ mod tests {
 
         // d=3 has 9 data qubits and 8 ancillas
         assert_eq!(map.detectors.len(), 8, "d=3 should have 8 detectors");
-        assert!(!map.locations.is_empty());
+        assert!(
+            !map.locations.is_empty(),
+            "influence map must contain fault locations"
+        );
     }
 
     #[test]

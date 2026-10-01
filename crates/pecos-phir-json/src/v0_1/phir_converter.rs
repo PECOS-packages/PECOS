@@ -817,7 +817,7 @@ mod tests {
     fn test_empty_ops() {
         let json = r#"{"format": "PHIR/JSON", "version": "0.1.0", "ops": []}"#;
         let module = phir_json_to_module(json).unwrap();
-        assert!(module.body.blocks[0].operations.is_empty());
+        assert_eq!(module.body.blocks[0].operations, []);
     }
 
     #[test]
@@ -847,7 +847,7 @@ mod tests {
         }"#;
         // Unknown data definitions should be skipped
         let module = phir_json_to_module(json).unwrap();
-        assert!(module.body.blocks[0].operations.is_empty());
+        assert_eq!(module.body.blocks[0].operations, []);
     }
 
     #[test]

@@ -553,6 +553,24 @@ fn test_user_guide_gates_rust_33() {
     let theta = Angle64::from_radians(PI / 4.0);
     let phi = Angle64::from_radians(PI / 8.0);
     let lam = Angle64::from_radians(PI / 6.0);
+    sim.rxyxy2q(theta, phi, &[(q1, q2)]);
+
+}
+
+
+#[test]
+fn test_user_guide_gates_rust_34() {
+    use pecos::prelude::*;
+    use pecos::simulators::{ArbitraryRotationGateable, CliffordGateable, StateVec};
+    use std::f64::consts::PI;
+    let mut sim = StateVec::new(5);
+    let q = QubitId(0);
+    let q0 = QubitId(0);
+    let q1 = QubitId(1);
+    let q2 = QubitId(2);
+    let theta = Angle64::from_radians(PI / 4.0);
+    let phi = Angle64::from_radians(PI / 8.0);
+    let lam = Angle64::from_radians(PI / 6.0);
     let results = sim.mz(&[q]);
 // results[0].outcome: true if |1⟩, false if |0⟩
 // results[0].is_deterministic: true if already in eigenstate
@@ -561,7 +579,7 @@ fn test_user_guide_gates_rust_33() {
 
 
 #[test]
-fn test_user_guide_gates_rust_34() {
+fn test_user_guide_gates_rust_35() {
     use pecos::prelude::*;
     use pecos::simulators::{ArbitraryRotationGateable, CliffordGateable, StateVec};
     use std::f64::consts::PI;
@@ -580,7 +598,7 @@ let results = sim.mnx(&[q]);  // Measure -X
 
 
 #[test]
-fn test_user_guide_gates_rust_35() {
+fn test_user_guide_gates_rust_36() {
     use pecos::prelude::*;
     use pecos::simulators::{ArbitraryRotationGateable, CliffordGateable, StateVec};
     use std::f64::consts::PI;
@@ -599,7 +617,7 @@ let results = sim.mny(&[q]);  // Measure -Y
 
 
 #[test]
-fn test_user_guide_gates_rust_36() {
+fn test_user_guide_gates_rust_37() {
     use pecos::prelude::*;
     use pecos::simulators::{ArbitraryRotationGateable, CliffordGateable, StateVec};
     use std::f64::consts::PI;
@@ -618,7 +636,7 @@ sim.pnz(&[q]);  // Prepare |1⟩ (eigenstate of -Z)
 
 
 #[test]
-fn test_user_guide_gates_rust_37() {
+fn test_user_guide_gates_rust_38() {
     use pecos::prelude::*;
     use pecos::simulators::{ArbitraryRotationGateable, CliffordGateable, StateVec};
     use std::f64::consts::PI;
@@ -637,7 +655,7 @@ sim.pnx(&[q]);  // Prepare |-⟩ = (|0⟩ - |1⟩)/√2
 
 
 #[test]
-fn test_user_guide_gates_rust_38() {
+fn test_user_guide_gates_rust_39() {
     use pecos::prelude::*;
     use pecos::simulators::{ArbitraryRotationGateable, CliffordGateable, StateVec};
     use std::f64::consts::PI;
@@ -656,7 +674,7 @@ sim.pny(&[q]);  // Prepare |-i⟩ = (|0⟩ - i|1⟩)/√2
 
 
 #[test]
-fn test_user_guide_gates_rust_39() {
+fn test_user_guide_gates_rust_40() {
     use pecos::prelude::*;
     use pecos::simulators::{ArbitraryRotationGateable, CliffordGateable, StateVec};
     use std::f64::consts::PI;

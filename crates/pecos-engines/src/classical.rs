@@ -192,19 +192,7 @@ impl Engine for Box<dyn ClassicalControlEngine> {
     type Output = Shot;
 
     fn process(&mut self, input: Self::Input) -> Result<Self::Output, PecosError> {
-        let mut stage = self.start(input)?;
-
-        loop {
-            match stage {
-                EngineStage::NeedsProcessing(_engine_input) => {
-                    // In a real system, this would process through a quantum engine
-                    // For now, we'll just return an empty message
-                    let engine_output = ByteMessage::builder().build();
-                    stage = self.continue_processing(engine_output)?;
-                }
-                EngineStage::Complete(output) => return Ok(output),
-            }
-        }
+        (**self).process(input)
     }
 
     fn reset(&mut self) -> Result<(), PecosError> {

@@ -15,20 +15,29 @@ PHIR-JSON is designed to:
 
 ### Basic Example
 
+`PhirJsonEngine` is a classical controller. Standalone `process(())` executes
+programs that generate no quantum commands; it returns an error as soon as a
+non-empty command batch is produced. Quantum programs need
+`start()`/`continue_processing()` with a quantum engine, or the simulation builder:
+
 ```rust
-use pecos_phir_json::PhirJsonEngine;
-use pecos_engines::core::shot_results::OutputFormat;
-use std::path::Path;
+use pecos_engines::{ClassicalControlEngineBuilder, StateVectorEngineBuilder};
+use pecos_phir_json::phir_json_engine;
+use std::collections::BTreeSet;
 
-// Load a PHIR program from a file (v0.1 implementation)
-let engine = PhirJsonEngine::new(Path::new("examples/bell.phir.json"))?;
+// Run from the repository root.
+let results = phir_json_engine()
+    .file("examples/phir/bell.phir.json")?
+    .to_sim()
+    .quantum(StateVectorEngineBuilder::default())
+    .seed(42)
+    .run(100)?;
 
-// Process the program
-let results = engine.process(())?;
-
-// Format the results
-let formatted_results = engine.get_formatted_results(OutputFormat::PrettyJson)?;
-println!("{}", formatted_results);
+let outcomes: BTreeSet<_> = results.shots.iter()
+    .map(|shot| shot.data["c"].as_u32().unwrap())
+    .collect();
+assert_eq!(outcomes, BTreeSet::from([0, 3]));
+println!("{}", results.to_compact_json());
 ```
 
 ### Using with Automatic Version Detection

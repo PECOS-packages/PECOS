@@ -77,6 +77,39 @@ impl QuantumSystem {
         }
     }
 
+    fn drive_scheduled_local(
+        &mut self,
+        stage: crate::EngineStage<ByteMessage, ByteMessage>,
+        budget: usize,
+    ) -> Result<ByteMessage, PecosError> {
+        match stage {
+            crate::EngineStage::Complete(output) => Ok(output),
+            crate::EngineStage::NeedsProcessing(commands) => {
+                // Check bytes before parsing/allocation, then the actual operation
+                // count before executing. Admitted local outputs have <=2 targets.
+                let byte_limit = budget
+                    .checked_mul(128)
+                    .and_then(|n| n.checked_add(16))
+                    .ok_or_else(|| {
+                        runtime_frame::processing_error("scheduled byte budget overflow")
+                    })?;
+                if commands.as_bytes().len() > byte_limit || commands.quantum_ops()?.len() > budget
+                {
+                    return Err(runtime_frame::processing_error(
+                        "scheduled noise expansion limit",
+                    ));
+                }
+                let reply = self.quantum_engine.process(commands)?;
+                match self.noise_model.continue_processing(reply)? {
+                    crate::EngineStage::Complete(output) => Ok(output),
+                    crate::EngineStage::NeedsProcessing(_) => Err(runtime_frame::processing_error(
+                        "scheduled local noise requested an unsupported continuation",
+                    )),
+                }
+            }
+        }
+    }
+
     /// Establish host identity after reset. Identity never changes RNG streams.
     ///
     /// # Errors
@@ -171,8 +204,8 @@ impl QuantumSystem {
         self.frame_poisoned = true;
         let mut outcomes = Vec::new();
         for message in std::mem::take(&mut prepared.messages) {
-            let expected = message
-                .quantum_ops()?
+            let gates = message.quantum_ops()?;
+            let expected = gates
                 .iter()
                 .filter(|g| {
                     matches!(
@@ -182,8 +215,23 @@ impl QuantumSystem {
                 })
                 .map(|g| g.qubits.len())
                 .sum::<usize>();
+            let local = self
+                .scheduled_model()
+                .expect("checked model")
+                .has_local_faults();
+            // At most eight idle commands per target, or an ideal operation plus
+            // two Pauli faults. Sixteen per admitted command is conservative.
+            // Local profiles have no crosstalk and need exactly one simulator call.
+            let budget = gates
+                .len()
+                .checked_mul(16)
+                .ok_or_else(|| runtime_frame::error("scheduled expansion overflow"))?;
             let stage = self.scheduled_model_mut().start_admitted(message)?;
-            let reply = self.drive_stage(stage)?;
+            let reply = if local {
+                self.drive_scheduled_local(stage, budget)?
+            } else {
+                self.drive_stage(stage)?
+            };
             let values = reply.outcomes()?;
             if values.len() != expected {
                 return Err(runtime_frame::processing_error(
@@ -740,5 +788,27 @@ mod tests {
             let reset_result = system.engine_mut().reset();
             assert!(reset_result.is_ok());
         }
+    }
+}
+
+#[cfg(test)]
+mod scheduled_local_limits {
+    use super::*;
+    #[test]
+    fn expanded_commands_reject_before_simulator_mutation() {
+        let mut system = QuantumSystem::new_without_noise(Box::new(crate::StateVecEngine::new(1)));
+        for budget in [0, 2, usize::MAX] {
+            let mut commands = ByteMessage::quantum_operations_builder();
+            commands.x(&[0]).x(&[0]).x(&[0]);
+            let result = system.drive_scheduled_local(
+                crate::EngineStage::NeedsProcessing(commands.build()),
+                budget,
+            );
+            assert!(result.is_err());
+        }
+        let result = system
+            .drive_legacy(ByteMessage::quantum_operations_builder().mz(&[0]).build())
+            .unwrap();
+        assert_eq!(result.outcomes().unwrap(), vec![0]);
     }
 }

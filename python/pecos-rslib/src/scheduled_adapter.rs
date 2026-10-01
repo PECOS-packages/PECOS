@@ -192,6 +192,22 @@ pub fn scheduled_event_idle_noise(
         inner: event_profile(profile.inner, adapter_factory, py)?,
     })
 }
+/// A per-shot adapter with the checked local fault profile.
+#[pyclass(name = "ScheduledEventLocalNoise", from_py_object)]
+#[derive(Clone)]
+pub struct PyScheduledEventLocalNoise {
+    pub(crate) inner: ScheduledEventIdleNoise,
+}
+#[pyfunction]
+pub fn scheduled_event_local_noise(
+    profile: crate::engine_builders::PyScheduledLocalNoise,
+    adapter_factory: Py<PyAny>,
+    py: Python<'_>,
+) -> PyResult<PyScheduledEventLocalNoise> {
+    Ok(PyScheduledEventLocalNoise {
+        inner: event_profile(profile.inner.into(), adapter_factory, py)?,
+    })
+}
 fn event_profile(
     profile: ScheduledIdleNoise,
     adapter_factory: Py<PyAny>,
@@ -221,7 +237,9 @@ pub(crate) fn extract_event_noise(
     noise: &Py<PyAny>,
     py: Python<'_>,
 ) -> Option<ScheduledEventIdleNoise> {
-    if let Ok(profile) = noise.extract::<PyScheduledEventIdleNoise>(py) {
+    if let Ok(profile) = noise.extract::<PyScheduledEventLocalNoise>(py) {
+        Some(profile.inner)
+    } else if let Ok(profile) = noise.extract::<PyScheduledEventIdleNoise>(py) {
         Some(profile.inner)
     } else {
         noise
@@ -234,6 +252,8 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyScheduledEventBatch>()?;
     m.add_class::<PyScheduledEventIdleZ>()?;
     m.add_class::<PyScheduledEventIdleNoise>()?;
+    m.add_class::<PyScheduledEventLocalNoise>()?;
+    m.add_function(wrap_pyfunction!(scheduled_event_local_noise, m)?)?;
     m.add_function(wrap_pyfunction!(scheduled_event_idle_noise, m)?)?;
     m.add_function(wrap_pyfunction!(scheduled_event_idle_z, m)?)?;
     Ok(())
@@ -241,7 +261,10 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
 pub(crate) fn is_event_noise(noise: &Py<PyAny>) -> bool {
     Python::attach(|py| {
-        noise.bind(py).is_instance_of::<PyScheduledEventIdleZ>()
+        noise
+            .bind(py)
+            .is_instance_of::<PyScheduledEventLocalNoise>()
+            || noise.bind(py).is_instance_of::<PyScheduledEventIdleZ>()
             || noise.bind(py).is_instance_of::<PyScheduledEventIdleNoise>()
     })
 }

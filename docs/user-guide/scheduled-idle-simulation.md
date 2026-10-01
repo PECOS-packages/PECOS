@@ -54,8 +54,9 @@ admitted local channels, including leakage. Preparation clears the general-noise
 leakage record as well as resetting the simulator state. Other qubits and gaps before
 non-preparation gates retain their idle noise. Preparation still occupies the
 entire batch and advances the cursor; capacity, overlap and finite-rate checks
-remain enforced. This rule relies on ideal preparation and local noise; it must be revisited
-if preparation faults, correlated channels or other preparation operations are admitted.
+remain enforced. The local fault profile below also emits a real reset before its
+preparation bit flip, so it uses the same omission. This does not justify omission
+for correlated channels or other preparation operations.
 
 Earlier versions sampled idle noise before preparation. Omitting those discarded
 channels avoids unnecessary work and changes RNG consumption, so seeded outcomes
@@ -115,6 +116,60 @@ lifecycle; empty batches do not trigger a lifecycle or split an idle interval.
 In particular, this adapter is not permission to split arbitrary noise controllers.
 The v4 [event adapter](scheduled-event-adapters.md) can use the same profile via
 `scheduled_event_idle_noise(profile, adapter_factory)`.
+
+## Local gate, preparation and readout faults
+
+`scheduled_local_noise(idle, *, p1=0, p2=0, prep=0, meas0=0, meas1=0)` adds a
+checked subset of `GeneralNoiseModel` to an existing `scheduled_idle_noise()` profile:
+
+- `p1`: a uniform X/Y/Z fault after a single-qubit gate.
+- `p2`: a uniform nonidentity two-qubit Pauli fault after a two-qubit gate. This
+  event probability is independent of rotation angle.
+- `prep`: an X fault after preparation resets the qubit and clears leakage.
+- `meas0`, `meas1`: classical readout flips 0→1 and 1→0, respectively.
+
+Preparation faults apply to emitted reset-Z operations. Allocation by itself does
+not imply a reset in the scheduled stream; runtimes that prepare on allocation
+must expose that operation to model its fault. No hidden preparation is inserted.
+
+All probabilities must be finite and in [0, 1]. They are event probabilities,
+not average gate infidelities. Gate-induced emission/leakage, preparation leakage,
+seepage, custom fault maps, angle-dependent rates, crosstalk, repumping and automatic
+post-two-qubit idle injection are not configurable. Unsupported Python keywords
+raise rather than being silently ignored. Existing idle leakage remains supported:
+leakage-aware readout returns 2 without readout flips, whereas ordinary leaked
+readout starts at 1 and is subject to `meas1`.
+
+```python
+import pecos_rslib as pr
+
+idle = pr.scheduled_idle_noise(2, linear=0.02)
+local = pr.scheduled_local_noise(idle, p1=0.01, p2=0.02, prep=0.03, meas0=0.04, meas1=0.05)
+```
+
+Use `local` as `.noise(local)` with v3, or
+`scheduled_event_local_noise(local, adapter_factory)` with v4. These numbers are
+invented examples. Rust exposes `ScheduledLocalNoise::new(idle, p1, p2, prep,
+meas0, meas1)` and `ScheduledEventNoise::new(local, factory)`. Its lossless
+conversion to the legacy `ScheduledIdleNoise` carrier retains local faults and
+admission rules; the conversion does not disable them.
+
+The local profile admits at most 4096 gates per batch. A qubit cannot be used
+again after a measurement within that batch, including repeated measurement.
+This prevents later leakage bookkeeping from changing an earlier readout. Put
+such operations in their original distinct native batches; adapters cannot split
+or retime batches to force admission. This restriction is enforced even with all
+local probabilities zero, on both original and normalized v4 gates. It does not
+change admission for existing idle-only profiles.
+
+Each prepared batch retains one noise-controller lifecycle. Inserted idle commands
+are included in an expansion budget of sixteen output commands per prepared
+command (the admitted channels emit at most eight per idle target and three per
+gate). Output bytes and command counts are checked before simulator execution.
+No second simulator call is allowed for a local-profile batch; an unexpected
+continuation fails and poisons the shot. These limits bound admitted noise
+expansion, not native extraction or arbitrary adapter allocations. Existing
+shot context, clone and whole-host reset requirements still apply.
 
 ## Admission, identity and recovery
 

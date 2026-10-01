@@ -2,7 +2,7 @@
 //!
 //! Adapters normalize complete inputs before quantum execution. They cannot observe
 //! measurement outcomes or access simulator/RNG state. This is not an arbitrary
-//! execution-time physical-event interface. The admitted noise remains idle-Z.
+//! execution-time physical-event interface. The admitted noise is restricted to checked local profiles.
 use crate::noise::{IntoNoiseModel, NoiseModel};
 use crate::runtime_frame::{ShotContext, error, processing_error};
 use crate::scheduled_frame::{
@@ -364,7 +364,9 @@ type Factory =
 /// This wraps a supplied profile; unlike the Z-only `ScheduledIdleZ` constructor,
 /// the alias does not restrict that profile to Z/RZ channels.
 pub type ScheduledEventIdleZ = ScheduledEventIdleNoise;
-/// Explicit opt-in to mandatory v4 with the same bounded local idle physics as v3.
+/// Generic name for the scheduled event wrapper, including checked local faults.
+pub type ScheduledEventNoise = ScheduledEventIdleNoise;
+/// Explicit opt-in to mandatory v4 with the same checked local physics as v3.
 #[derive(Clone)]
 pub struct ScheduledEventIdleNoise {
     profile: ScheduledIdleNoise,

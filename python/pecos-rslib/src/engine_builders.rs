@@ -841,12 +841,39 @@ pub fn scheduled_idle_noise(
         inner: result.map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?,
     })
 }
-/// Extract either scheduled v3 profile without widening other noise capabilities.
+/// Checked local gate, preparation and readout faults with scheduled idle channels.
+#[pyclass(name = "ScheduledLocalNoise", from_py_object)]
+#[derive(Clone)]
+pub struct PyScheduledLocalNoise {
+    pub(crate) inner: pecos_engines::scheduled_frame::ScheduledLocalNoise,
+}
+/// Add uniform Pauli gate faults, preparation bit flips and asymmetric readout.
+/// Probabilities are event probabilities in [0, 1], not average gate infidelities.
+#[pyfunction]
+#[pyo3(signature = (idle, *, p1 = 0.0, p2 = 0.0, prep = 0.0, meas0 = 0.0, meas1 = 0.0))]
+pub fn scheduled_local_noise(
+    idle: PyScheduledIdleNoise,
+    p1: f64,
+    p2: f64,
+    prep: f64,
+    meas0: f64,
+    meas1: f64,
+) -> PyResult<PyScheduledLocalNoise> {
+    Ok(PyScheduledLocalNoise {
+        inner: pecos_engines::scheduled_frame::ScheduledLocalNoise::new(
+            idle.inner, p1, p2, prep, meas0, meas1,
+        )
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?,
+    })
+}
+/// Extract a checked scheduled v3 profile without widening other noise capabilities.
 pub(crate) fn extract_scheduled_idle(
     noise: &Py<PyAny>,
     py: Python<'_>,
 ) -> Option<pecos_engines::scheduled_frame::ScheduledIdleNoise> {
-    if let Ok(profile) = noise.extract::<PyScheduledIdleNoise>(py) {
+    if let Ok(profile) = noise.extract::<PyScheduledLocalNoise>(py) {
+        Some(profile.inner.into())
+    } else if let Ok(profile) = noise.extract::<PyScheduledIdleNoise>(py) {
         Some(profile.inner)
     } else {
         noise

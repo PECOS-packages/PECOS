@@ -1,4 +1,4 @@
-//! Mandatory v3 batches for checked local idle-noise profiles. Not a custom-event format.
+//! Mandatory v3 batches for checked local noise profiles. Not a custom-event format.
 use crate::noise::{GeneralNoiseModel, GeneralNoiseModelBuilder, IntoNoiseModel, NoiseModel};
 use crate::runtime_frame::{error, processing_error};
 use crate::{ByteMessage, ControlEngine, EngineStage, Gate, GateType};
@@ -48,12 +48,15 @@ impl IntoNoiseModel for ScheduledIdleZ {
         self.0.into_noise_model()
     }
 }
-/// Checked local idle channels with ideal gates, preparation and readout.
+/// Checked local idle channels; constructors leave gates, preparation and readout ideal.
+/// Also carries the lossless conversion from [`ScheduledLocalNoise`], retaining
+/// that profile's faults and stricter admission.
 /// Uses the existing general-noise sampling and leakage semantics. Capacity is
 /// fixed at 1..=16 and the scheduled host requires a state-vector engine.
 #[derive(Clone, Debug)]
 pub struct ScheduledIdleNoise {
     qubits: usize,
+    local: Option<LocalFaults>,
     linear: f64,
     sine: f64,
     coherent: f64,
@@ -61,6 +64,66 @@ pub struct ScheduledIdleNoise {
     sine_model: BTreeMap<String, f64>,
     coherent_model: BTreeMap<String, f64>,
 }
+/// Checked local Pauli gate faults, preparation bit flips and asymmetric readout.
+/// Idle channels use the supplied profile. Gate faults are uniform over X/Y/Z or
+/// the fifteen nonidentity Pauli pairs, with angle-independent event probability.
+/// Emission, gate/preparation leakage, seepage and crosstalk are disabled.
+/// Capacity remains 1..=16 with a state-vector engine. A qubit cannot be used
+/// again after measurement within the same batch (including another measurement).
+#[derive(Clone, Debug)]
+pub struct ScheduledLocalNoise(ScheduledIdleNoise);
+#[derive(Clone, Debug)]
+struct LocalFaults {
+    p1: f64,
+    p2: f64,
+    prep: f64,
+    meas0: f64,
+    meas1: f64,
+}
+impl ScheduledLocalNoise {
+    /// Add local fault probabilities to a checked idle profile.
+    /// # Errors
+    /// Every probability must be finite and in [0, 1].
+    pub fn new(
+        idle: ScheduledIdleNoise,
+        p1: f64,
+        p2: f64,
+        prep: f64,
+        meas0: f64,
+        meas1: f64,
+    ) -> Result<Self, PecosError> {
+        if [p1, p2, prep, meas0, meas1]
+            .iter()
+            .any(|p| !p.is_finite() || !(0.0..=1.0).contains(p))
+        {
+            return Err(error(
+                "scheduled local probabilities must be finite and in [0, 1]",
+            ));
+        }
+        let mut profile = idle;
+        profile.local = Some(LocalFaults {
+            p1,
+            p2,
+            prep,
+            meas0,
+            meas1,
+        });
+        Ok(Self(profile))
+    }
+}
+/// Lossless conversion for scheduled transport composition: local faults and
+/// stricter admission remain enabled even though the carrier has its legacy name.
+impl From<ScheduledLocalNoise> for ScheduledIdleNoise {
+    fn from(profile: ScheduledLocalNoise) -> Self {
+        profile.0
+    }
+}
+impl IntoNoiseModel for ScheduledLocalNoise {
+    fn into_noise_model(self) -> Box<dyn NoiseModel> {
+        self.0.into_noise_model()
+    }
+}
+
 impl ScheduledIdleNoise {
     /// Construct a profile with all idle families disabled.
     /// # Errors
@@ -71,6 +134,7 @@ impl ScheduledIdleNoise {
         }
         Ok(Self {
             qubits,
+            local: None,
             linear: 0.0,
             sine: 0.0,
             coherent: 0.0,
@@ -170,11 +234,19 @@ impl ScheduledIdleNoise {
         Ok(())
     }
     pub(crate) fn build_model(self) -> ScheduledIdleModel {
-        let inner = GeneralNoiseModelBuilder::new()
+        let mut builder = GeneralNoiseModelBuilder::new()
             .with_p_idle_linear(self.linear, &self.linear_model)
             .with_p_idle_sin_squared(self.sine, &self.sine_model)
-            .with_p_idle_coherent(self.coherent, &self.coherent_model)
-            .build();
+            .with_p_idle_coherent(self.coherent, &self.coherent_model);
+        if let Some(local) = &self.local {
+            builder = builder
+                .with_p1(local.p1)
+                .with_p2(local.p2)
+                .with_p_prep(local.prep)
+                .with_p_meas_0(local.meas0)
+                .with_p_meas_1(local.meas1);
+        }
+        let inner = builder.build();
         ScheduledIdleModel {
             timeline: ScheduleTimeline::new(self.qubits),
             config: self,
@@ -369,6 +441,9 @@ pub(crate) struct PreparedSchedule {
     pub(crate) timeline: ScheduleTimeline,
 }
 impl ScheduledIdleModel {
+    pub(crate) fn has_local_faults(&self) -> bool {
+        self.config.local.is_some()
+    }
     pub(crate) fn qubits(&self) -> usize {
         self.config.qubits
     }
@@ -430,6 +505,12 @@ impl ScheduleTimeline {
                 .start_nanos
                 .checked_add(batch.duration_nanos)
                 .ok_or_else(|| error("schedule time overflow"))?;
+            if config.local.is_some()
+                && batch.gates.len() > crate::scheduled_events::MAX_BATCH_OPERATIONS
+            {
+                return Err(error("scheduled local batch operation limit"));
+            }
+            let mut measured = vec![false; config.qubits];
             let mut touched = vec![false; config.qubits];
             let mut builder = ByteMessage::quantum_operations_builder();
             for gate in batch.gates {
@@ -438,12 +519,20 @@ impl ScheduleTimeline {
                     if q >= touched.len() || batch.start_nanos < prepared.timeline.ends[q] {
                         return Err(error("scheduled capacity or timing overlap"));
                     }
+                    if config.local.is_some() && measured[q] {
+                        return Err(error(
+                            "scheduled local qubit used after measurement in one batch",
+                        ));
+                    }
+                    if matches!(gate.gate_type, GateType::MZ | GateType::MeasureLeaked) {
+                        measured[q] = true;
+                    }
                     if !touched[q] {
                         let gap = batch.start_nanos - prepared.timeline.ends[q];
                         let seconds = std::time::Duration::from_nanos(gap).as_secs_f64();
                         config.validate_idle(seconds)?;
-                        // All admitted idle channels are local. Ideal PZ erases
-                        // their effect and clears leakage in GeneralNoiseModel,
+                        // All admitted idle channels are local. PZ erases
+                        // their effect and clears leakage before any local prep fault,
                         // so do not sample a discarded channel.
                         if gap != 0 && gate.gate_type != GateType::PZ {
                             builder.idle(seconds, &[q]);

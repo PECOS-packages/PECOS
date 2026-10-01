@@ -25,7 +25,7 @@ fn test_parse_bell_final_ll() {
 
 #[test]
 fn test_parse_hugr_bell_state_ll() {
-    let ir = include_str!("../../../crates/pecos/tests/test_data/hugr/bell_state.ll");
+    let ir = include_str!("fixtures/bell_state.ll");
     let module = parse_qis_llvm_ir(ir).expect("bell_state.ll should parse");
     assert!(!module.body.blocks.is_empty());
 }

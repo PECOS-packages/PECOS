@@ -4878,6 +4878,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "pecos-stab-active"
+version = "0.2.0-dev.0"
+dependencies = [
+ "num-complex 0.4.6",
+ "paste",
+ "pecos-core",
+ "pecos-random",
+ "pecos-simulators",
+ "pecos-stab-tn",
+]
+
+[[package]]
 name = "pecos-stab-tn"
 version = "0.2.0-dev.0"
 dependencies = [

@@ -22,8 +22,8 @@ use crate::engine_builders::{
 use crate::wasm_foreign_object_bindings::PyWasmForeignObject;
 
 const UNRECOGNIZED_NOISE_BUILDER: &str = "Unrecognized noise builder type; expected \
-    depolarizing_noise(), biased_depolarizing_noise(), general_noise(), or scheduled_idle_z(); \
-    scheduled_event_idle_z() requires QIS/HUGR engines without operation tracing";
+    depolarizing_noise(), biased_depolarizing_noise(), general_noise(), scheduled_idle_z(), or scheduled_idle_noise(); \
+    scheduled event noise requires QIS/HUGR engines without operation tracing";
 
 fn unwrap_engine_builder_proxy(py: Python, engine_builder: Py<PyAny>) -> PyResult<Py<PyAny>> {
     match engine_builder
@@ -804,10 +804,10 @@ impl PySimBuilder {
                 }
 
                 if let Some(ref noise_py) = builder.noise_builder {
-                    sim_builder = if let Ok(scheduled) =
-                        noise_py.extract::<crate::engine_builders::PyScheduledIdleZ>(py)
+                    sim_builder = if let Some(scheduled) =
+                        crate::engine_builders::extract_scheduled_idle(noise_py, py)
                     {
-                        sim_builder.noise(scheduled.inner)
+                        sim_builder.noise(scheduled)
                     } else if let Ok(general) = noise_py.extract::<PyGeneralNoiseModelBuilder>(py) {
                         sim_builder.noise(general.validated_inner()?)
                     } else if let Ok(depolarizing) =
@@ -998,14 +998,14 @@ impl PySimBuilder {
                 // Apply noise builder if present
                 if let Some(ref noise_py) = builder.noise_builder {
                     sim_builder = Python::attach(|py| -> PyResult<_> {
-                        if let Ok(events) =
-                            noise_py.extract::<crate::scheduled_adapter::PyScheduledEventIdleZ>(py)
+                        if let Some(events) =
+                            crate::scheduled_adapter::extract_event_noise(noise_py, py)
                         {
-                            Ok(sim_builder.noise(events.inner))
-                        } else if let Ok(scheduled) =
-                            noise_py.extract::<crate::engine_builders::PyScheduledIdleZ>(py)
+                            Ok(sim_builder.noise(events))
+                        } else if let Some(scheduled) =
+                            crate::engine_builders::extract_scheduled_idle(noise_py, py)
                         {
-                            Ok(sim_builder.noise(scheduled.inner))
+                            Ok(sim_builder.noise(scheduled))
                         } else if let Ok(general) =
                             noise_py.extract::<PyGeneralNoiseModelBuilder>(py)
                         {
@@ -1227,10 +1227,10 @@ impl PySimBuilder {
                     // Apply noise builder if present
                     if let Some(ref noise_py) = builder.noise_builder {
                         sim_builder = Python::attach(|py| -> PyResult<_> {
-                            if let Ok(scheduled) =
-                                noise_py.extract::<crate::engine_builders::PyScheduledIdleZ>(py)
+                            if let Some(scheduled) =
+                                crate::engine_builders::extract_scheduled_idle(noise_py, py)
                             {
-                                Ok(sim_builder.noise(scheduled.inner))
+                                Ok(sim_builder.noise(scheduled))
                             } else if let Ok(general) =
                                 noise_py.extract::<PyGeneralNoiseModelBuilder>(py)
                             {
@@ -1429,15 +1429,14 @@ impl PySimBuilder {
                     // Apply noise builder if present
                     if let Some(ref noise_py) = builder.noise_builder {
                         sim_builder = Python::attach(|py| -> PyResult<_> {
-                            if let Ok(events) =
-                                noise_py
-                                    .extract::<crate::scheduled_adapter::PyScheduledEventIdleZ>(py)
+                            if let Some(events) =
+                                crate::scheduled_adapter::extract_event_noise(noise_py, py)
                             {
-                                Ok(sim_builder.noise(events.inner))
-                            } else if let Ok(scheduled) =
-                                noise_py.extract::<crate::engine_builders::PyScheduledIdleZ>(py)
+                                Ok(sim_builder.noise(events))
+                            } else if let Some(scheduled) =
+                                crate::engine_builders::extract_scheduled_idle(noise_py, py)
                             {
-                                Ok(sim_builder.noise(scheduled.inner))
+                                Ok(sim_builder.noise(scheduled))
                             } else if let Ok(general) =
                                 noise_py.extract::<PyGeneralNoiseModelBuilder>(py)
                             {
@@ -1655,8 +1654,8 @@ fn apply_noise_to_facade(
     };
 
     Python::attach(|py| -> PyResult<_> {
-        if let Ok(scheduled) = noise_py.extract::<crate::engine_builders::PyScheduledIdleZ>(py) {
-            Ok(facade.noise(scheduled.inner))
+        if let Some(scheduled) = crate::engine_builders::extract_scheduled_idle(noise_py, py) {
+            Ok(facade.noise(scheduled))
         } else if let Ok(general) = noise_py.extract::<PyGeneralNoiseModelBuilder>(py) {
             Ok(facade.noise(general.validated_inner()?))
         } else if let Ok(depolarizing) = noise_py.extract::<PyDepolarizingNoiseModelBuilder>(py) {

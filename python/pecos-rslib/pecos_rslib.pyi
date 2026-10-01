@@ -3944,3 +3944,25 @@ def scheduled_event_idle_z(
     sine: float = 0.0,
     coherent: float = 0.0,
 ) -> ScheduledEventIdleZ: ...
+
+class ScheduledIdleNoise:
+    """Checked local idle-noise profile for mandatory scheduled transport."""
+
+def scheduled_idle_noise(
+    qubits: int,
+    *,
+    linear: float = 0.0,
+    linear_model: dict[str, float] | None = None,
+    sine: float = 0.0,
+    sine_model: dict[str, float] | None = None,
+    coherent: float = 0.0,
+    coherent_model: dict[str, float] | None = None,
+) -> ScheduledIdleNoise: ...
+
+class ScheduledEventIdleNoise:
+    """Checked v4 local idle-noise profile with a per-shot batch adapter."""
+
+def scheduled_event_idle_noise(
+    profile: ScheduledIdleNoise,
+    adapter_factory: Callable[[tuple[int, int, int]], _ScheduledBatchAdapter],
+) -> ScheduledEventIdleNoise: ...

@@ -86,13 +86,11 @@ mod types_module;
 mod wasm_foreign_object_bindings;
 mod wasm_program_bindings;
 
-// Note: hugr_bindings module is currently disabled - conflicts with pecos-qis-interface due to duplicate symbols
-
 use bit_int_bindings::PyBitInt;
 use bit_uint_bindings::PyBitUInt;
 use byte_message_bindings::{PyByteMessage, PyByteMessageBuilder};
 use coin_toss_bindings::PyCoinToss;
-use engine_builders::{PyHugr, PyPhirJson, PyQasm, PyQis};
+use engine_builders::{PyPhirJson, PyQasm, PyQis};
 use pauli_prop_bindings::PyPauliProp;
 use pecos_array::Array;
 use pecos_random_bindings::RngPcg;
@@ -324,8 +322,6 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Register engine builders (QasmEngineBuilder, etc.)
     engine_builders::register_engine_builders(m)?;
 
-    // Register HUGR compilation functions
-
     // Register numerical computing module (scipy.optimize replacements)
     num_bindings::register_num_module(m)?;
 
@@ -364,7 +360,6 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Register program types
     m.add_class::<PyQasm>()?;
     m.add_class::<PyQis>()?;
-    m.add_class::<PyHugr>()?;
     m.add_class::<PyPhirJson>()?;
     wasm_program_bindings::register_wasm_programs(m)?;
 

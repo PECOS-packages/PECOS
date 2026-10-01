@@ -77,7 +77,7 @@ For developers who want to contribute or modify PECOS:
    `pecos_rslib.hugr_lowering.compile_hugr_to_qis` (re-exported by
    `pecos.compilation_pipeline`), followed by PECOS helper-symbol
    normalization. It does not require a local LLVM installation. The
-   `pecos-rslib-llvm` wheel remains available for QIR generation and its Rust compiler binding.
+   `pecos-rslib-llvm` wheel remains available for QIR generation. Rust accepts the lowered QIS program.
 
    **Quick setup:**
    ```sh

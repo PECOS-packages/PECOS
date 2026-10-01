@@ -299,7 +299,7 @@ mod p2_weight_parser_tests {
         for label in [" ~xx ", " :RePlAcE:xX "] {
             let parsed = parse_p2_weights(BTreeMap::from([(label.to_string(), 1.0)])).unwrap();
 
-            assert!(parsed.entries().is_empty());
+            assert_eq!(parsed.entries(), []);
             assert_eq!(parsed.replacement_entries(), &[(X(0) & X(1), 1.0)]);
         }
     }
@@ -308,7 +308,7 @@ mod p2_weight_parser_tests {
     fn accepts_omission_only_replacement_label() {
         let parsed = parse_p2_weights(BTreeMap::from([("~II".to_string(), 1.0)])).unwrap();
 
-        assert!(parsed.entries().is_empty());
+        assert_eq!(parsed.entries(), []);
         assert_eq!(
             parsed.replacement_entries(),
             &[(pecos_core::PauliString::identity(), 1.0)]

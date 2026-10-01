@@ -16,9 +16,6 @@ pub struct QisEngineBuilder {
     program_source: Option<String>, // Store original program source for loading
     operation_trace_dir: Option<PathBuf>,
     operation_trace_collector: Option<OperationTraceStore>,
-    /// `QSystem` platform used when lowering HUGR programs (defaults to Helios).
-    #[cfg(feature = "hugr")]
-    platform: pecos_hugr_qis::QSystemPlatform,
 }
 
 impl Clone for QisEngineBuilder {
@@ -35,8 +32,6 @@ impl Clone for QisEngineBuilder {
             program_source: self.program_source.clone(),
             operation_trace_dir: self.operation_trace_dir.clone(),
             operation_trace_collector: self.operation_trace_collector.clone(),
-            #[cfg(feature = "hugr")]
-            platform: self.platform,
         }
     }
 }
@@ -53,23 +48,7 @@ impl QisEngineBuilder {
             program_source: None,
             operation_trace_dir: None,
             operation_trace_collector: None,
-            // PECOS targets the Selene Helios QIS runtime by default.
-            #[cfg(feature = "hugr")]
-            platform: pecos_hugr_qis::QSystemPlatform::Helios,
         }
-    }
-
-    /// Select the `QSystem` platform used when lowering HUGR programs.
-    ///
-    /// Defaults to [`pecos_hugr_qis::QSystemPlatform::Helios`]. Selecting another
-    /// supported platform (e.g. `Sol`) lowers both the executed QIS and the
-    /// interface for that platform; a matching Selene runtime is required to
-    /// execute the result.
-    #[cfg(feature = "hugr")]
-    #[must_use]
-    pub fn platform(mut self, platform: pecos_hugr_qis::QSystemPlatform) -> Self {
-        self.platform = platform;
-        self
     }
 
     /// Dump Helios-collected operation chunks to the given directory as JSON.
@@ -125,7 +104,7 @@ impl QisEngineBuilder {
     /// Set the program to use from any supported program type
     ///
     /// This method accepts any type that can be converted to `QisInterface`,
-    /// including `Qis`, `Hugr`, etc. Panics on conversion errors.
+    /// including `Qis`. Panics on conversion errors.
     /// For error handling, use `try_program()` instead.
     ///
     /// # Example
@@ -177,7 +156,7 @@ impl QisEngineBuilder {
     /// Set the program to use from any supported program type (error handling version)
     ///
     /// This method accepts any type that can be converted to `QisInterface`,
-    /// including `Qis`, `Hugr`, etc. Returns a Result because
+    /// including `Qis`. Returns a Result because
     /// some conversions may fail (e.g., compilation errors).
     ///
     /// # Example
@@ -221,7 +200,7 @@ impl QisEngineBuilder {
             // Use the provided interface directly
             self.interface = Some(interface.clone());
         } else {
-            // For other program types (Qis, Hugr), use the builder
+            // For other program types (Qis), use the builder
             // Also store the original program source for loading into interface implementations
             if let Some(qis_prog) = any_program.downcast_ref::<pecos_programs::Qis>() {
                 // Store the LLVM IR source for later loading
@@ -235,27 +214,6 @@ impl QisEngineBuilder {
                         log::warn!("Bitcode programs not yet supported for interface loading");
                     }
                 }
-            } else if let Some(hugr_prog) = any_program.downcast_ref::<pecos_programs::Hugr>() {
-                #[cfg(feature = "hugr")]
-                {
-                    let args = pecos_hugr_qis::CompileArgs {
-                        platform: self.platform,
-                        ..Default::default()
-                    };
-                    self.program_source =
-                        Some(pecos_hugr_qis::compile_hugr_bytes_to_string_with_options(
-                            &hugr_prog.hugr,
-                            &args,
-                        )?);
-                }
-                #[cfg(not(feature = "hugr"))]
-                {
-                    let _ = hugr_prog;
-                    return Err(PecosError::Processing(
-                        "HUGR programs require the 'hugr' feature to enable HUGR-to-QIS lowering"
-                            .to_string(),
-                    ));
-                }
             }
 
             let interface = if let Some(builder) = &self.interface_builder {
@@ -264,16 +222,6 @@ impl QisEngineBuilder {
                 if let Some(qis_prog) = any_program.downcast_ref::<pecos_programs::Qis>() {
                     log::debug!("Building interface from QIS program");
                     builder.build_from_qis_program(qis_prog.clone())?
-                } else if any_program.is::<pecos_programs::Hugr>() {
-                    // `program_source` already holds the QIS lowered with the
-                    // selected platform above; build the interface from it
-                    // instead of re-compiling, so the interface and the executed
-                    // QIS stay on the same platform.
-                    log::debug!("Building interface from compiled HUGR program source");
-                    let source = self.program_source.clone().ok_or_else(|| {
-                        PecosError::Processing("HUGR program produced no QIS source".to_string())
-                    })?;
-                    builder.build_from_qis_program(pecos_programs::Qis::from_string(&source))?
                 } else {
                     // Unknown type, use default conversion with the default backend (Helios)
                     log::debug!("Unknown program type, using into_qis_interface");

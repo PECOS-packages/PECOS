@@ -25,7 +25,7 @@ use tket::hugr::std_extensions::arithmetic::{
 use tket::hugr::std_extensions::{collections, logic, ptr};
 use tket_qsystem::extension::{futures as qsystem_futures, qsystem, result as qsystem_result};
 
-/// Extension registry matching the one used by pecos-hugr-qis and selene.
+/// Extension registry matching the one used by Selene's compiler.
 static REGISTRY: std::sync::LazyLock<ExtensionRegistry> = std::sync::LazyLock::new(|| {
     let mut extensions = vec![
         prelude::PRELUDE.to_owned(),

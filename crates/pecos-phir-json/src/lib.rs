@@ -527,7 +527,10 @@ mod tests {
     #[test]
     fn test_phir_json_to_ron() {
         let ron_string = phir_json_to_ron(SIMPLE_PHIR_JSON).expect("should convert JSON to RON");
-        assert!(!ron_string.is_empty());
+        assert!(
+            !ron_string.is_empty(),
+            "RON serialization must produce text"
+        );
         // RON should contain newlines (pretty-printed)
         assert!(ron_string.contains('\n'));
         // RON should contain the quantum operations from the JSON
@@ -542,7 +545,7 @@ mod tests {
 
         // Deserialize the RON back to a Module
         let module = pecos_phir::from_ron(&ron_string).expect("should deserialize RON");
-        assert!(!module.name.is_empty());
+        assert!(!module.name.is_empty(), "module must have a name");
         // Verify the module has operations (not just a name)
         assert!(!module.body.blocks.is_empty(), "module should have blocks");
         assert!(
@@ -566,11 +569,14 @@ mod tests {
         std::fs::write(&path, SIMPLE_PHIR_JSON).expect("should write file");
 
         let ron_string = convert_phir_json_file_to_ron(&path).expect("should convert file to RON");
-        assert!(!ron_string.is_empty());
+        assert!(
+            !ron_string.is_empty(),
+            "RON serialization must produce text"
+        );
 
         // Verify it round-trips
         let module = pecos_phir::from_ron(&ron_string).expect("should deserialize RON");
-        assert!(!module.name.is_empty());
+        assert!(!module.name.is_empty(), "module must have a name");
     }
 
     #[cfg(feature = "v0_1")]
@@ -589,9 +595,12 @@ mod tests {
 
         let module =
             convert_phir_json_file_to_module(&path).expect("should convert file to module");
-        assert!(!module.name.is_empty());
-        assert!(!module.body.blocks.is_empty());
-        assert!(!module.body.blocks[0].operations.is_empty());
+        assert!(!module.name.is_empty(), "module must have a name");
+        assert!(!module.body.blocks.is_empty(), "module must contain blocks");
+        assert!(
+            !module.body.blocks[0].operations.is_empty(),
+            "module block must contain operations"
+        );
     }
 
     #[cfg(feature = "v0_1")]

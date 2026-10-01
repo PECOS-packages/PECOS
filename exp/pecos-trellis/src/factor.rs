@@ -192,7 +192,10 @@ fn normalize_factor(factor: &Factor) -> NormalizedFactor {
         .filter(|outcome| outcome.probability != 0.0)
         .cloned()
         .collect();
-    debug_assert!(!outcomes.is_empty());
+    debug_assert!(
+        !outcomes.is_empty(),
+        "factor must have an outcome with nonzero probability"
+    );
 
     if outcomes.len() == 1 {
         return NormalizedFactor::Forced(outcomes.into_iter().next().unwrap());

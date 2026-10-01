@@ -12,7 +12,7 @@
 """No-arg `entry()` wrapper for AST-emitted parameterized `main(...)`.
 
 The AST emitter produces `main(q: array[qubit, N] @ owned, ...)`. Downstream
-HUGR consumers (`pecos.Hugr(bytes)`, `pecos_rslib.HugrProgram`, the Selene
+HUGR consumers (`pecos.Hugr(bytes)`, the Selene
 runtime) require a no-arg entrypoint, matching the legacy IR generator's
 shape. This module builds that wrapper by mirroring the same return-shape
 logic the emitter uses, so the wrapper signature matches main's exactly.

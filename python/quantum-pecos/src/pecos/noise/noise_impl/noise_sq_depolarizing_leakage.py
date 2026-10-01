@@ -64,10 +64,8 @@ def noise_sq_depolarizing_leakage(
         # a rotation or a measurement needs in order to execute.
         noisy_op = copy(op)
         noisy_op.args = list(not_leaked)
-        # metadata defaults to None on QOp, which the simulator itself treats as {}.
-        # Test None explicitly rather than falsiness: `op.metadata or {}` would discard
-        # the contents of a dict subclass whose __bool__ is False.
-        noisy_op.metadata = {} if op.metadata is None else dict(op.metadata)
+        # Copy the validated dict so replacement metadata cannot mutate the input.
+        noisy_op.metadata = dict(op.metadata)
     else:
         noisy_op = op
 

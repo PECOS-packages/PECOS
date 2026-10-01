@@ -677,7 +677,7 @@ mod tests {
                 .expect("fault-free circuit has a DEM");
             assert_eq!(dem.num_detectors(), 144);
             assert_eq!(dem.num_observables(), 12);
-            assert!(dem.to_mechanisms().0.is_empty());
+            assert_eq!(dem.to_mechanisms().0, []);
 
             let zero_noise = NoiseConfig::new(0.0, 0.0, 0.0, 0.0);
             let sampler = DemSampler::from_tick_circuit(&circuit, &zero_noise)

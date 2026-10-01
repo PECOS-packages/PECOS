@@ -2613,7 +2613,8 @@ mod tests {
         let prop = propagate_faults(&circuit, &faults);
 
         assert_eq!(prop.get_x_qubits(), vec![0, 1, 2]);
-        assert!(prop.get_z_qubits().is_empty());
+        let qubits = prop.get_z_qubits();
+        assert!(qubits.is_empty(), "expected no Z qubits, got {qubits:?}");
     }
 
     #[test]
@@ -3024,7 +3025,7 @@ mod tests {
 
         let (z_flips, x_flips) = get_syndrome_flips(&prop, &[0, 1], &[]);
         assert_eq!(z_flips, vec![0]);
-        assert!(x_flips.is_empty());
+        assert!(x_flips.is_empty(), "expected no X flips, got {x_flips:?}");
     }
 
     #[test]

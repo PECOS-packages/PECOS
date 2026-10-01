@@ -5,6 +5,7 @@ import pytest
 from pecos.machines.generic_machine import GenericMachine
 from pecos.noise.depolarizing_error_model import DepolarizingErrorModel
 from pecos.noise.generic_error_model import GenericErrorModel
+from pecos.noise.noise_impl.noise_initz_bitflip_leakage import noise_initz_bitflip_leakage
 from pecos.noise.noise_impl.noise_sq_depolarizing import noise_sq_depolarizing
 from pecos.noise.noise_impl.noise_sq_depolarizing_leakage import noise_sq_depolarizing_leakage
 from pecos.reps.pyphir.op_types import QOp
@@ -77,7 +78,7 @@ def test_preexisting_leakage_narrows_gate(p: float) -> None:
     """Only inputs leaked on entry are excluded from both the gate and faults."""
     pc.random.seed(7)
     result = noise_sq_depolarizing_leakage(
-        QOp("H", [0, 1, 2, 3], metadata={}),
+        QOp("H", [0, 1, 2, 3]),
         p,
         {"X": 1.0},
         FakeMachine(pre=(0, 2)),
@@ -168,21 +169,14 @@ def test_narrowing_normalises_metadata(metadata: dict | None, expected: dict) ->
     assert narrowed.metadata is not op.metadata
     # The input operation is left as it was.
     assert op.args == [0, 1, 2, 3]
-    assert op.metadata == (metadata if metadata is not None else None)
+    assert op.metadata == (metadata if metadata is not None else {})
 
 
 @pytest.mark.parametrize("metadata", [False, 0])
 def test_narrowing_does_not_widen_to_falsey_non_dict_metadata(metadata: object) -> None:
-    """A falsey non-dict still fails rather than being treated as absent metadata.
-
-    `False` and `0` raised before absent metadata was normalised, and must keep doing
-    so: normalising on truthiness rather than on `None` would silently accept them.
-    Empty iterables such as `[]` and `""` are accepted by `dict()` and so were already
-    accepted before this change; validating the metadata type belongs to #925.
-    """
-    op = QOp(name="H", args=[0, 1, 2, 3], metadata=metadata)
-    with pytest.raises(TypeError):
-        noise_sq_depolarizing_leakage(op, 0.0, {"X": 1.0}, FakeMachine(pre=(0,)))
+    """Reject falsey non-dicts at construction, before a noise helper can erase them."""
+    with pytest.raises(TypeError, match=type(metadata).__name__):
+        QOp(name="H", args=[0, 1, 2, 3], metadata=metadata)
 
 
 def test_narrowed_gate_keeps_executable_fields() -> None:
@@ -215,3 +209,23 @@ def test_no_fault_returns_none(with_leakage: bool) -> None:
     else:
         result = noise_sq_depolarizing(op, 0.0, {"X": 1.0})
     assert result is None
+
+
+def test_default_metadata_initialization() -> None:
+    """Default metadata reaches the remaining-init copy and downstream bitflip helper."""
+    op = QOp("Init", [0, 1])
+    result = noise_initz_bitflip_leakage(op, 1.0, GenericMachine(num_qubits=2))
+    assert [(item.name, sorted(item.args)) for item in result] == [("X", [0, 1])]
+    assert op.metadata == {}
+
+
+def test_default_metadata_depolarizing_model() -> None:
+    """The real process entry point accepts omitted metadata before checking noiseless."""
+    model = DepolarizingErrorModel({"p1": 0.0, "p2": 0.0, "p_meas": 1.0, "p_prep": 0.0})
+    model.init(1, machine=GenericMachine(num_qubits=1))
+    op = QOp("Measure", [0], returns=[["m", 0]])
+    result = model.process([op])
+    assert [(item.name, item.args, item.metadata) for item in result] == [
+        ("Measure", [0], {"bitflips": [0]}),
+    ]
+    assert op.metadata == {}

@@ -158,7 +158,7 @@ fn fixture_v_future_veto() {
         "fixture V must defer A in window 0 because the merged edge is future"
     );
     assert_eq!(decoder.diagnostics().deferred_components, 1);
-    assert!(decoder.diagnostics().committed_columns.is_empty());
+    assert_eq!(decoder.diagnostics().committed_columns, []);
     decoder.finish().unwrap();
     assert_eq!(
         decoder.accumulated_obs(),
@@ -473,7 +473,7 @@ fn test_13_far_detector_does_not_join_local_components() {
         2,
         "projected far detector must not join the two components"
     );
-    assert!(decoder.diagnostics().committed_columns.is_empty());
+    assert_eq!(decoder.diagnostics().committed_columns, []);
     decoder.finish().unwrap();
     assert_eq!(decoder.accumulated_obs(), expected);
 }

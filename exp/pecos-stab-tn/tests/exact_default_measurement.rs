@@ -1291,7 +1291,7 @@ fn lazy_interleaved_multi_measurement_adversarial_family() {
         invalid_outcomes.len(),
         invalid_outcomes.iter().take(8).collect::<Vec<_>>(),
     );
-    assert!(invalid_outcomes.is_empty());
+    assert_eq!(invalid_outcomes, []);
     assert_eq!(measurements, circuits * MEASUREMENTS_PER_CIRCUIT);
     assert_eq!(fidelity_mismatches, 0);
 }

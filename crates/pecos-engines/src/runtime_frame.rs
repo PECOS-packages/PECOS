@@ -498,7 +498,7 @@ impl FrameExecutor<'_> {
 static NEXT_RUN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 pub(crate) fn next_run() -> Result<u64, PecosError> {
     NEXT_RUN
-        .fetch_update(
+        .try_update(
             std::sync::atomic::Ordering::Relaxed,
             std::sync::atomic::Ordering::Relaxed,
             |v| v.checked_add(1),

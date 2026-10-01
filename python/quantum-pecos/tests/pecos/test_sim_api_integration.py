@@ -5,9 +5,8 @@ import json
 import pytest
 from guppylang import guppy
 from guppylang.std.quantum import h, measure, qubit
-from pecos import sim
+from pecos import Hugr, sim
 from pecos_rslib import (
-    Hugr,
     PhirJson,
     Qasm,
     Qis,
@@ -117,7 +116,7 @@ class TestLLVMSimulation:
     def test_sim_api_with_llvm_simple(self) -> None:
         """Test sim API with simple LLVM IR program."""
         # QIS format LLVM IR - uses i64 for qubit indices and qmain entry point
-        # This matches the format that PECOS HUGR compiler generates
+        # This matches the format that Python HUGR-to-QIS boundary produces
         llvm_ir = """
         ; ModuleID = 'quantum_test'
         source_filename = "quantum_test"
@@ -193,7 +192,7 @@ class TestLLVMSimulation:
     def test_sim_api_with_llvm_bell_state(self) -> None:
         """Test sim API with Bell state in LLVM IR."""
         # QIS format LLVM IR - uses i64 for qubit indices and qmain entry point
-        # This matches the format that PECOS HUGR compiler generates
+        # This matches the format that Python HUGR-to-QIS boundary produces
         llvm_ir = """
         ; ModuleID = 'bell_state'
         source_filename = "bell_state"

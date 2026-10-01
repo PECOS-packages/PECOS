@@ -9,7 +9,8 @@ compiler is imported lazily when compile_hugr_to_qis is called.
 import re
 from dataclasses import dataclass
 
-# The Rust facade still has a matching table in pecos-hugr-qis/src/compiler.rs.
+# These PECOS runtime helper ABIs must match the extern signatures in
+# crates/pecos-qis-ffi/src/ffi.rs.
 PECOS_HELPER_ABIS = {
     "pecos_qis_trace_metadata_hugr": "void (ptr, ptr)",
     "pecos_qis_trace_metadata_qubit_hugr": "i64 (i64, ptr, ptr)",

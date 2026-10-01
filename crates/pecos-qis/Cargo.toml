@@ -19,8 +19,6 @@ crate-type = ["rlib"]
 default = ["selene"]
 # LLVM support for QIS programs
 llvm = ["dep:inkwell"]
-# HUGR compilation requires LLVM - enables compiling HUGR programs to QIS
-hugr = ["llvm", "pecos-hugr-qis", "pecos-hugr-qis?/llvm"]
 # Selene implementation (QisHeliosInterface, SeleneRuntime, etc.)
 selene = ["selene-runtimes"]
 # Selene runtime variants (requires selene feature)
@@ -38,9 +36,6 @@ pecos-random.workspace = true
 # QIS FFI infrastructure
 pecos-qis-ffi-types.workspace = true
 pecos-qis-ffi.workspace = true  # Ensures cdylib gets built for runtime dlopen
-
-# HUGR support (optional)
-pecos-hugr-qis = { workspace = true, optional = true }
 
 # External dependencies
 log.workspace = true

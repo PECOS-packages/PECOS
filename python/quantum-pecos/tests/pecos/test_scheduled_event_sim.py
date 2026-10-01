@@ -400,7 +400,7 @@ def test_other_engines_reject_event_factory(builder_name):
 
 
 @pytest.mark.parametrize("noise_first", [False, True])
-def test_neo_rejects_event_factory_in_either_order(noise_first):
+def test_lowered_guppy_accepts_event_noise_and_rejects_neo_in_either_order(noise_first):
     import pecos
     import pecos_rslib as pr
     from guppylang import guppy
@@ -412,13 +412,12 @@ def test_neo_rejects_event_factory_in_either_order(noise_first):
     builder = pecos.sim(empty)
     profile = pr.scheduled_event_idle_z(1, lambda _: PhaseAdapter())
     if noise_first:
-        builder.noise(profile)
-        with pytest.raises(TypeError, match="requires QIS/HUGR"):
-            builder.stack("neo")
-    else:
+        builder = builder.noise(profile)
+    with pytest.raises(ValueError, match="Only QASM programs are routed to the neo stack"):
         builder.stack("neo")
-        with pytest.raises(TypeError, match="requires QIS/HUGR"):
-            builder.noise(profile)
+    if not noise_first:
+        builder = builder.noise(profile)
+    builder.stack("engines")
 
 
 def test_trace_capture_rejects_event_factory(event_runtime):

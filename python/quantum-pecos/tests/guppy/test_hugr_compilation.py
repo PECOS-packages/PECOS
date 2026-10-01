@@ -1,13 +1,7 @@
-"""Test HUGR compilation and LLVM IR generation.
-
-Rust-side coverage (compilation, unit tests) lives in `cargo test
--p pecos-hugr-qis` and is run by `just rstest` / `pecos rust test
---workspace --features=runtime,hugr`. Don't re-invoke cargo from pytest --
-duplicates work, hides Rust build errors as Python test failures, and
-runs under a different env than the canonical Rust test path.
-"""
+"""Test HUGR compilation and LLVM IR generation."""
 
 import os
+import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -195,8 +189,11 @@ attributes #0 = { "EntryPoint" }
 
         # Binary HUGR envelope (Model format); verify it is a valid, loadable HUGR.
         import pecos_rslib
+        from pecos_rslib.hugr_lowering import compile_hugr_to_qis
 
-        assert pecos_rslib.Hugr.from_bytes(hugr_bytes) is not None, "HUGR bytes should load as a valid HUGR"
+        llvm_ir = compile_hugr_to_qis(hugr_bytes)
+        assert re.search(r"define\b[^\n]*@qmain\(", llvm_ir)
+        pecos_rslib.Qis(llvm_ir)
 
 
 class TestLLVMIRPatterns:

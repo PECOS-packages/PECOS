@@ -19,12 +19,24 @@ from __future__ import annotations
 
 
 class Instr:
-    """Base type for all PyMIR instructions including QOps, Blocks, MOps, etc."""
+    """Base type for all PyMIR instructions including QOps, Blocks, MOps, etc.
+
+    Attributes:
+        metadata: Always-present metadata dictionary.
+    """
 
     def __init__(self, metadata: dict | None = None) -> None:
         """Initialize an instruction.
 
         Args:
-            metadata: Optional metadata dictionary associated with the instruction.
+            metadata: Metadata dictionary stored by identity. None creates a fresh empty dict.
+
+        Raises:
+            TypeError: If metadata is neither a dict nor None.
         """
-        self.metadata = metadata
+        if metadata is None:
+            metadata = {}
+        elif not isinstance(metadata, dict):
+            msg = f"Metadata must be a dict or None, got {type(metadata).__name__}"
+            raise TypeError(msg)
+        self.metadata: dict = metadata

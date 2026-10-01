@@ -155,10 +155,17 @@ idle = pr.scheduled_idle_noise(2, linear=0.02)
 local = pr.scheduled_local_noise(idle, p1=0.01, p2=0.02, prep=0.03, meas0=0.04, meas1=0.05)
 ```
 
+In Python, the `idle` base must be created with `scheduled_idle_noise()`;
+`scheduled_idle_z()` and an existing local profile are not accepted. For a Z-only
+base, use `scheduled_idle_noise()` with its default Z models and the same rates.
+
 Use `local` as `.noise(local)` with v3, or
 `scheduled_event_local_noise(local, adapter_factory)` with v4. These numbers are
 invented examples. Rust exposes `ScheduledLocalNoise::new(idle, p1, p2, prep,
-meas0, meas1)` and `ScheduledEventNoise::new(local, factory)`. The canonical Rust
+meas0, meas1)` and `ScheduledEventNoise::new(local, factory)`. Unlike Python, the
+Rust constructor accepts a carrier that already contains local faults: it replaces
+all five local probabilities while preserving its idle configuration, rather than
+adding or combining the old and new probabilities. The canonical Rust
 carrier is `ScheduledNoise`; `ScheduledIdleNoise` is a compatibility alias that
 retains the entire configuration, including local faults. `ScheduledEventIdleZ`
 and `ScheduledEventIdleNoise` likewise alias `ScheduledEventNoise`. The Python

@@ -86,7 +86,8 @@ struct LocalFaults {
     meas1: f64,
 }
 impl ScheduledLocalNoise {
-    /// Add local fault probabilities to a checked idle profile.
+    /// Set local fault probabilities while preserving the supplied idle channels.
+    /// Replaces all existing local fault probabilities if the profile already has them.
     /// # Errors
     /// Every probability must be finite and in [0, 1].
     pub fn new(

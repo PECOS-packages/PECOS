@@ -22,7 +22,7 @@ use crate::engine_builders::{
 use crate::wasm_foreign_object_bindings::PyWasmForeignObject;
 
 const UNRECOGNIZED_NOISE_BUILDER: &str = "Unrecognized noise builder type; expected \
-    depolarizing_noise(), biased_depolarizing_noise(), general_noise(), scheduled_idle_z(), or scheduled_idle_noise(); \
+    depolarizing_noise(), biased_depolarizing_noise(), general_noise(), scheduled_idle_z(), scheduled_idle_noise(), or scheduled_local_noise(); \
     scheduled event noise requires QIS/HUGR engines without operation tracing";
 
 fn unwrap_engine_builder_proxy(py: Python, engine_builder: Py<PyAny>) -> PyResult<Py<PyAny>> {

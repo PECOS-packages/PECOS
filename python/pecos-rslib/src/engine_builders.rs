@@ -148,7 +148,8 @@ impl PyQisEngineBuilder {
         Ok(self.clone())
     }
 
-    /// Opt into mandatory scheduled transport; pair with scheduled_idle_z() or scheduled_idle_noise().
+    /// Opt into mandatory scheduled transport; pair with scheduled_idle_z(),
+    /// scheduled_idle_noise(), or scheduled_local_noise().
     #[pyo3(signature = (enabled = true))]
     fn scheduled_batches(&mut self, enabled: bool) -> Self {
         self.inner = self.inner.clone().scheduled_batches(enabled);
@@ -818,7 +819,7 @@ pub fn scheduled_idle_z(
 #[pyclass(name = "ScheduledIdleNoise", from_py_object)]
 #[derive(Clone)]
 pub struct PyScheduledIdleNoise {
-    pub(crate) inner: pecos_engines::scheduled_frame::ScheduledIdleNoise,
+    pub(crate) inner: pecos_engines::scheduled_frame::ScheduledNoise,
 }
 /// Construct checked idle channels; rates use seconds and radians, without conversion.
 #[pyfunction]
@@ -832,8 +833,8 @@ pub fn scheduled_idle_noise(
     coherent: f64,
     coherent_model: Option<std::collections::BTreeMap<String, f64>>,
 ) -> PyResult<PyScheduledIdleNoise> {
-    use pecos_engines::scheduled_frame::ScheduledIdleNoise;
-    let result = ScheduledIdleNoise::new(qubits)
+    use pecos_engines::scheduled_frame::ScheduledNoise;
+    let result = ScheduledNoise::new(qubits)
         .and_then(|p| p.with_linear(linear, linear_model))
         .and_then(|p| p.with_sine(sine, sine_model))
         .and_then(|p| p.with_coherent(coherent, coherent_model));
@@ -848,6 +849,8 @@ pub struct PyScheduledLocalNoise {
     pub(crate) inner: pecos_engines::scheduled_frame::ScheduledLocalNoise,
 }
 /// Add uniform Pauli gate faults, preparation bit flips and asymmetric readout.
+/// The idle base must come from scheduled_idle_noise(), not scheduled_idle_z().
+/// For Z-only channels, scheduled_idle_noise() uses Z models by default.
 /// Probabilities are event probabilities in [0, 1], not average gate infidelities.
 #[pyfunction]
 #[pyo3(signature = (idle, *, p1 = 0.0, p2 = 0.0, prep = 0.0, meas0 = 0.0, meas1 = 0.0))]
@@ -870,7 +873,7 @@ pub fn scheduled_local_noise(
 pub(crate) fn extract_scheduled_idle(
     noise: &Py<PyAny>,
     py: Python<'_>,
-) -> Option<pecos_engines::scheduled_frame::ScheduledIdleNoise> {
+) -> Option<pecos_engines::scheduled_frame::ScheduledNoise> {
     if let Ok(profile) = noise.extract::<PyScheduledLocalNoise>(py) {
         Some(profile.inner.into())
     } else if let Ok(profile) = noise.extract::<PyScheduledIdleNoise>(py) {

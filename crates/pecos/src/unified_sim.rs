@@ -36,14 +36,7 @@ pub enum SimStack {
     Engines,
     /// The data-oriented `pecos-neo` stack (experimental).
     ///
-    /// Requires building pecos with the `neo` cargo feature. Routes QASM and
-    /// HUGR programs with the default quantum backend. HUGR runs through the
-    /// PHIR engine, so its results use the same named-register contract as the
-    /// engines/QASM path with no Selene/LLVM dependency -- but only for the
-    /// PHIR converter's STRAIGHT-LINE subset; HUGR with classical control flow
-    /// (loops, conditionals) is rejected (use `SimStack::Engines` for those).
-    /// (Note: the engines stack runs HUGR through QIS/Selene, a different and
-    /// broader HUGR engine -- a consideration for the eventual default flip.)
+    /// Requires the `neo` cargo feature. Routes QASM with the default quantum backend.
     /// The translated noise surface is the depolarizing family
     /// (`PassThroughNoise`, `DepolarizingNoise`, `BiasedDepolarizingNoise`,
     /// and their builders) and the `GeneralNoiseModel` simple-probability
@@ -63,7 +56,6 @@ pub trait SimBuilderExt {
     /// This method inspects the program type and selects:
     /// - QASM programs → QASM engine
     /// - QIS programs → QIS control engine (Selene Helios interface)
-    /// - HUGR programs → QIS control engine (Selene Helios interface)
     /// - WASM/WAT programs → Error (not yet supported)
     /// - PHIR JSON programs → Error (not yet supported)
     ///
@@ -134,20 +126,6 @@ impl ProgrammedSimBuilder {
                     let _ = qis;
                     Err(PecosError::Generic(
                         "QIS programs require Selene and LLVM support. Please rebuild with --features selene,llvm".to_string()
-                    ))
-                }
-            }
-            Program::Hugr(hugr) => {
-                #[cfg(feature = "qis")]
-                {
-                    let engine_builder = build_qis_engine(hugr)?;
-                    Ok(self.base_builder.classical(engine_builder))
-                }
-                #[cfg(not(feature = "qis"))]
-                {
-                    let _ = hugr;
-                    Err(PecosError::Generic(
-                        "HUGR programs require Selene and LLVM support. Please rebuild with --features selene,llvm".to_string()
                     ))
                 }
             }
@@ -267,7 +245,7 @@ impl ProgrammedSimBuilder {
     /// Run the program on the pecos-neo stack.
     #[cfg(feature = "neo")]
     fn run_neo(self, shots: usize) -> Result<pecos_engines::shot_results::ShotVec, PecosError> {
-        use pecos_neo::tool::{monte_carlo, sim_neo, sim_neo_builder};
+        use pecos_neo::tool::{monte_carlo, sim_neo};
 
         if self.override_classical {
             return Err(PecosError::Input(
@@ -296,26 +274,11 @@ impl ProgrammedSimBuilder {
             sampler = sampler.auto_workers();
         }
 
-        // QASM auto-selects the QASM engine. HUGR is routed through the PHIR
-        // engine (HUGR -> PHIR), which emits the program's NAMED classical
-        // register (e.g. "c") -- matching the engines/QASM result contract --
-        // and needs no Selene/LLVM. The PHIR converter is STRAIGHT-LINE only: HUGR with
-        // classical control flow is rejected by `from_hugr_bytes` below (and
-        // any residual empty-result shape is caught by the contract guard after
-        // `run`).
         let configured = match self.program {
             Program::Qasm(qasm) => sim_neo(qasm).auto(),
-            Program::Hugr(hugr) => {
-                let phir_engine = pecos_phir::phir_engine()
-                    .from_hugr_bytes(&hugr.hugr)
-                    .map_err(|e| {
-                        PecosError::Generic(format!("Failed to load HUGR program: {e}"))
-                    })?;
-                sim_neo_builder().with_engine(phir_engine).auto()
-            }
             _ => {
                 return Err(PecosError::Input(
-                    "Only QASM and HUGR programs are routed to the neo stack so far; \
+                    "Only QASM programs are routed to the neo stack so far; \
                      use .stack(SimStack::Engines) for other program types."
                         .to_string(),
                 ));
@@ -342,20 +305,6 @@ impl ProgrammedSimBuilder {
             )
         })?;
 
-        // Result-contract guard. A HUGR shape the straight-line PHIR converter
-        // cannot represent can yield shots with NO register data instead of a
-        // clean load error (e.g. an op silently skipped during conversion).
-        // Surface that as an error rather than returning empty results that
-        // look like a successful run. (QASM always carries its cregs, so this
-        // never trips there.)
-        if !shot_vec.shots.is_empty() && shot_vec.shots.iter().all(|shot| shot.data.is_empty()) {
-            return Err(PecosError::Input(
-                "The neo stack produced empty results (no register data) for this program. \
-                 If it is a HUGR program, it likely uses features the straight-line PHIR \
-                 route does not support; use .stack(SimStack::Engines)."
-                    .to_string(),
-            ));
-        }
         Ok(shot_vec)
     }
 
@@ -615,7 +564,6 @@ impl ProgrammedSimBuilder {
 ///
 /// - QASM programs → QASM engine
 /// - QIS programs → QIS control engine (Selene Helios interface)
-/// - HUGR programs → QIS control engine (Selene Helios interface)
 /// - Other formats → Error (not yet supported)
 ///
 /// # Examples

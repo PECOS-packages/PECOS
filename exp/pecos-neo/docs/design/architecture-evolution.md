@@ -171,7 +171,9 @@ PECOS handles multiple program representations with varying complexity:
 | QASM 2.0 | `if (creg == val) op` only |
 | PhirJson | `if/else` blocks, `sequence`, `qparallel` |
 | PHIR | MLIR-style regions/blocks with terminators |
-| HUGR | Full CFG, Conditional, TailLoop, FuncDefn/Call |
+| Guppy/HUGR (lowered to QIS at the Python boundary) | Full CFG, Conditional, TailLoop, FuncDefn/Call |
+
+Guppy/HUGR execution uses the engines stack as QIS; the neo facade routes QASM only.
 
 The gate system and DOD patterns operate orthogonally to control flow - gates are decomposed and executed regardless of how the program's control flow is structured.
 

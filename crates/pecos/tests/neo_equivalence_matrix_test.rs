@@ -19,8 +19,7 @@
 //! intervals must overlap, and where the rate has an exact analytic
 //! value, each stack's interval must contain it.
 //!
-//! Program-type coverage beyond QASM (HUGR) and exact worker-count
-//! invariance are covered by `neo_routing_test.rs`; surface-code-scale
+//! QASM routing and exact worker-count invariance are covered by `neo_routing_test.rs`; surface-code-scale
 //! decoded equivalence is covered by `neo_surface_ler_test.rs`.
 
 #![cfg(feature = "neo")]

@@ -330,6 +330,30 @@ def test_guppy_wrapped_generator_keeps_its_certificate() -> None:
     assert build.audit["named_result_binding"] == "generator_layout_v2_program_bound"
 
 
+def test_certified_definition_does_not_certify_foreign_bytes() -> None:
+    """A carrier that pairs a certified generator definition with different
+    HUGR bytes must fail the digest check: the certificate binds the bytes
+    that are audited and executed, not the definition it was stamped on."""
+    from pecos._compilation import guppy_to_hugr
+
+    class _MismatchedCarrier:
+        wrapped_function = make_surface_code(3, 1, "Z")
+        hugr_bytes = guppy_to_hugr(_scrambled_tagged_measurements)
+
+    detectors, observables = surface_memory_dem_spec(3, 1, "Z")
+    with pytest.raises(ValueError, match="certificate does not match the program and layout"):
+        build_dem_from_guppy(
+            _MismatchedCarrier(),
+            num_qubits=get_num_qubits(3),
+            detectors=detectors,
+            observables=observables,
+            p1=0.0,
+            p2=0.0,
+            p_meas=0.1,
+            p_prep=0.0,
+        )
+
+
 def test_forged_certificate_on_byte_carrier_does_not_bypass_the_guard() -> None:
     """A self-consistent digest stapled to a pecos.Hugr wrapper must not
     suppress the control-flow guard: certificates are honored only on Guppy

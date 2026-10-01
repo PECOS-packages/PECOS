@@ -8,7 +8,7 @@ Covers:
 1. **Correspondence cross-check (load-bearing):** for a scrambled straight-line
    Guppy program where ``result()`` calls are declared in non-source order, a
    DEM built via ``result_tags`` (which goes through
-   ``pecos_hugr_qis::extract_result_tag_measurements`` to recover the
+   ``pecos_hugr::extract_result_tag_measurements`` to recover the
    reorder-immune tag -> measurement binding from the compiled HUGR) is
    **byte-identical** to the DEM built via the equivalent positional
    ``records``. This is the committed verification of the

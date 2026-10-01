@@ -24,7 +24,7 @@ Wrapper classes (for use with sim()):
     - Wat: WebAssembly text format programs
 
 Low-level program types (from pecos_rslib):
-    - Hugr, Qasm, Qis, PhirJson, Wasm, Wat
+    - Qasm, Qis, PhirJson, Wasm, Wat
 
 Example:
     >>> from pecos import sim, Qasm, Guppy
@@ -61,10 +61,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
 import pecos_rslib
+from pecos_rslib import hugr_lowering
 
 if TYPE_CHECKING:
     from pecos.typing import (
-        CompiledHugr,
         CompiledPhirJson,
         CompiledQasm,
         CompiledQis,
@@ -102,7 +102,7 @@ class HugrPackage(Protocol):
 class Guppy:
     """Wrapper for Guppy functions.
 
-    Converts Guppy-decorated functions to Hugr format for simulation.
+    Compiles Guppy-decorated functions through HUGR to QIS for simulation.
     The conversion is cached, so multiple calls will not recompile.
 
     Example:
@@ -131,13 +131,17 @@ class Guppy:
         """The wrapped ``@guppy`` definition (for compilation/certification)."""
         return self._func
 
-    def _to_program(self) -> "CompiledHugr":
+    @property
+    def hugr_bytes(self) -> bytes:
+        """The compiled HUGR envelope, from the shared Guppy compile cache."""
+        from pecos._compilation import guppy_to_hugr
+
+        return guppy_to_hugr(self._func)
+
+    def _to_program(self) -> "CompiledQis":
         """Convert to the underlying Rust program type."""
         if self._program is None:
-            hugr_package = self._func.compile()
-            # The QIS compiler needs the binary Model envelope, including for CFG loops.
-            hugr_bytes = hugr_package.to_bytes()
-            self._program = pecos_rslib.Hugr.from_bytes(hugr_bytes)
+            self._program = pecos_rslib.Qis(hugr_lowering.compile_hugr_to_qis(self.hugr_bytes))
         return self._program
 
 
@@ -178,15 +182,14 @@ class Hugr:
     def from_bytes(cls, data: bytes) -> "Hugr":
         """Create from HUGR bytes.
 
-        This is an alias for the constructor, provided for API consistency
-        with the Rust Hugr type.
+        This is an alias for the constructor.
         """
         return cls(data)
 
-    def _to_program(self) -> "CompiledHugr":
+    def _to_program(self) -> "CompiledQis":
         """Convert to the underlying Rust program type."""
         if self._program is None:
-            self._program = pecos_rslib.Hugr.from_bytes(self._data)
+            self._program = pecos_rslib.Qis(hugr_lowering.compile_hugr_to_qis(self._data))
         return self._program
 
 

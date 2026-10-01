@@ -17,7 +17,7 @@ This module provides:
 - JSON-like types for gate parameters
 - Protocol definitions for PECOS interfaces
 - Generic Array type for dtype-parameterized arrays
-- Compiled program types (CompiledHugr, CompiledQasm, etc.) for type annotations
+- Compiled program types (CompiledQis, CompiledQasm, etc.) for type annotations
 - PhirModel re-export for PHIR program handling
 """
 
@@ -445,8 +445,6 @@ class GraphProtocol(Protocol):
 if TYPE_CHECKING:
     import pecos_rslib.programs as programs_rs
 
-    #: Compiled HUGR program type from pecos_rslib
-    CompiledHugr: TypeAlias = programs_rs.Hugr
     #: Compiled PHIR JSON program type from pecos_rslib
     CompiledPhirJson: TypeAlias = programs_rs.PhirJson
     #: Compiled QASM program type from pecos_rslib
@@ -459,9 +457,7 @@ if TYPE_CHECKING:
     CompiledWat: TypeAlias = programs_rs.Wat
 
     #: Union type for any compiled program that can be passed to the simulator
-    CompiledProgram: TypeAlias = (
-        CompiledHugr | CompiledQasm | CompiledQis | CompiledPhirJson | CompiledWasm | CompiledWat
-    )
+    CompiledProgram: TypeAlias = CompiledQasm | CompiledQis | CompiledPhirJson | CompiledWasm | CompiledWat
 
 
 # =============================================================================
@@ -530,7 +526,6 @@ __all__ = [
     "SIGNED_INTEGER_TYPES",
     "UNSIGNED_INTEGER_TYPES",
     "Array",
-    "CompiledHugr",
     "CompiledPhirJson",
     "CompiledProgram",
     "CompiledQasm",

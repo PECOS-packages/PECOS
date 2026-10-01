@@ -15,11 +15,11 @@ statements, and phi nodes (converted to MLIR-style block arguments).
 */
 
 use crate::error::{PhirError, Result};
-use crate::hugr_to_qis::{emit_const_float, emit_qis_rxy, emit_qis_rz, emit_qis_rzz};
 use crate::ops::{ClassicalOp, CustomOp, Operation};
 use crate::phir::{
     Block, BlockArgument, BlockRef, Instruction, Module, Region, SSAValue, Terminator,
 };
+use crate::qis_emit::{emit_const_float, emit_qis_rxy, emit_qis_rz, emit_qis_rzz};
 use regex::Regex;
 use std::collections::{BTreeMap, BTreeSet};
 

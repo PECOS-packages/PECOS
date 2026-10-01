@@ -3363,7 +3363,7 @@ fn observable_records_from_annotations(
 ///
 /// `tag_to_ords` is the **sound** Guppy `result(tag, ...)` -> measurement
 /// ordinal binding recovered structurally from the compiled HUGR
-/// (reorder-immune; see `pecos_hugr_qis::result_tags`). Each referenced tag's
+/// (reorder-immune; see `pecos_hugr::extract_result_tag_measurements`). Each referenced tag's
 /// ordinals are mapped through `source_meas_ids` to stable runtime measurement
 /// identities. `result_tags` is an alternative to `records`/`meas_ids` (not
 /// additive): any co-present form must resolve to the same measurements.

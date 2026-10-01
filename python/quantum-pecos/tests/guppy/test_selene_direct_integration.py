@@ -4,6 +4,7 @@ This test helps us understand how Selene works in isolation before integrating
 it with PECOS's ClassicalControlEngine infrastructure.
 """
 
+import re
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -297,8 +298,11 @@ class TestGuppyToHUGRCompilation:
 
         # Binary HUGR envelope (Model format); verify it is a valid, loadable HUGR.
         import pecos_rslib
+        from pecos_rslib.hugr_lowering import compile_hugr_to_qis
 
-        assert pecos_rslib.Hugr.from_bytes(hugr_bytes) is not None, "Should load as a valid HUGR"
+        llvm_ir = compile_hugr_to_qis(hugr_bytes)
+        assert re.search(r"define\b[^\n]*@qmain\(", llvm_ir)
+        pecos_rslib.Qis(llvm_ir)
 
     def test_multi_qubit_compilation(self) -> None:
         """Test compiling a multi-qubit program."""
@@ -318,8 +322,11 @@ class TestGuppyToHUGRCompilation:
 
         # Binary HUGR envelope (Model format); verify it is a valid, loadable HUGR.
         import pecos_rslib
+        from pecos_rslib.hugr_lowering import compile_hugr_to_qis
 
-        assert pecos_rslib.Hugr.from_bytes(hugr_bytes) is not None, "Should load as a valid HUGR"
+        llvm_ir = compile_hugr_to_qis(hugr_bytes)
+        assert re.search(r"define\b[^\n]*@qmain\(", llvm_ir)
+        pecos_rslib.Qis(llvm_ir)
 
     def test_conditional_compilation(self) -> None:
         """Test compiling a program with conditional logic."""
@@ -340,5 +347,8 @@ class TestGuppyToHUGRCompilation:
 
         # Binary HUGR envelope (Model format); verify it is a valid, loadable HUGR.
         import pecos_rslib
+        from pecos_rslib.hugr_lowering import compile_hugr_to_qis
 
-        assert pecos_rslib.Hugr.from_bytes(hugr_bytes) is not None, "Should load as a valid HUGR"
+        llvm_ir = compile_hugr_to_qis(hugr_bytes)
+        assert re.search(r"define\b[^\n]*@qmain\(", llvm_ir)
+        pecos_rslib.Qis(llvm_ir)

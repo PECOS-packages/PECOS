@@ -1090,11 +1090,6 @@ class QisProgram:
 
     ...
 
-class HugrProgram:
-    """HUGR program lowered to QIS for simulation; requires explicit qubits."""
-
-    ...
-
 class PhirJsonProgram:
     """PHIR JSON program representation."""
 

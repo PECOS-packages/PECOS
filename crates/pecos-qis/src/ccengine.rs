@@ -3228,12 +3228,6 @@ mod scheduled_completion_tests {
         ) -> Result<OperationList, PecosError> {
             Ok(OperationList::new())
         }
-        fn build_from_hugr_program(
-            &self,
-            _: pecos_programs::Hugr,
-        ) -> Result<OperationList, PecosError> {
-            unreachable!("QIS only")
-        }
         fn build_from_interface(
             &self,
             interface: OperationList,

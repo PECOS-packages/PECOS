@@ -8,6 +8,11 @@ to scheduled input. This is an
 experimental integration API; it does not enable an arbitrary general noise
 configuration or establish agreement with a device model.
 
+"Scheduled" refers to timing supplied by the running runtime. The program runs
+dynamically: runtime batches enter the noise model and simulator, and measurement
+results return to the program to drive feedback and branches. Validation buffers
+the current input; simulation does not require a precomputed whole-shot trace.
+
 <!--skip: API template requires caller-supplied runtime and LLVM program; covered by integration tests.-->
 ```python
 import pecos
@@ -122,7 +127,10 @@ The v4 [event adapter](scheduled-event-adapters.md) can use the same profile via
 `scheduled_local_noise(idle, *, p1=0, p2=0, prep=0, meas0=0, meas1=0)` adds a
 checked subset of `GeneralNoiseModel` to an existing `scheduled_idle_noise()` profile:
 
-- `p1`: a uniform X/Y/Z fault after a single-qubit gate.
+- `p1`: a uniform X/Y/Z fault after an emitted single-qubit gate, including `RZ`.
+  The profile treats emitted `RZ` as a physical operation. A virtual frame update
+  must be resolved by the runtime/adapter without emitting a physical `RZ`; there
+  is no per-gate noiseless override in this profile.
 - `p2`: a uniform nonidentity two-qubit Pauli fault after a two-qubit gate. This
   event probability is independent of rotation angle.
 - `prep`: an X fault after preparation resets the qubit and clears leakage.
@@ -150,23 +158,32 @@ local = pr.scheduled_local_noise(idle, p1=0.01, p2=0.02, prep=0.03, meas0=0.04, 
 Use `local` as `.noise(local)` with v3, or
 `scheduled_event_local_noise(local, adapter_factory)` with v4. These numbers are
 invented examples. Rust exposes `ScheduledLocalNoise::new(idle, p1, p2, prep,
-meas0, meas1)` and `ScheduledEventNoise::new(local, factory)`. Its lossless
-conversion to the legacy `ScheduledIdleNoise` carrier retains local faults and
-admission rules; the conversion does not disable them.
+meas0, meas1)` and `ScheduledEventNoise::new(local, factory)`. The canonical Rust
+carrier is `ScheduledNoise`; `ScheduledIdleNoise` is a compatibility alias that
+retains the entire configuration, including local faults. `ScheduledEventIdleZ`
+and `ScheduledEventIdleNoise` likewise alias `ScheduledEventNoise`. The Python
+idle and local factories retain their distinct profile classes.
 
-The local profile admits at most 4096 gates per batch. A qubit cannot be used
+## Shared scheduled admission and execution limits
+
+Every scheduled profile admits at most 4096 gates per batch. A qubit cannot be used
 again after a measurement within that batch, including repeated measurement.
 This prevents later leakage bookkeeping from changing an earlier readout. Put
 such operations in their original distinct native batches; adapters cannot split
-or retime batches to force admission. This restriction is enforced even with all
-local probabilities zero, on both original and normalized v4 gates. It does not
-change admission for existing idle-only profiles.
+or retime batches to force admission. This restriction applies even when all rates
+are zero, to both original and normalized v4 gates and to idle-only profiles.
+
+This tightens idle-only admission: older versions accepted measurement followed
+by reset in one batch, allowing the reset's leakage bookkeeping to corrupt the
+earlier readout. Such inputs now fail explicitly before quantum execution.
+Same-qubit repeated measurements within a batch also reject conservatively;
+measurements on distinct qubits and measurement feedback across batches remain supported.
 
 Each prepared batch retains one noise-controller lifecycle. Inserted idle commands
 are included in an expansion budget of sixteen output commands per prepared
 command (the admitted channels emit at most eight per idle target and three per
 gate). Output bytes and command counts are checked before simulator execution.
-No second simulator call is allowed for a local-profile batch; an unexpected
+No second simulator call is allowed for a scheduled batch; an unexpected
 continuation fails and poisons the shot. These limits bound admitted noise
 expansion, not native extraction or arbitrary adapter allocations. Existing
 shot context, clone and whole-host reset requirements still apply.

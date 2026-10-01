@@ -144,12 +144,10 @@ fn leakage_survives_batches_measurement_and_gates_until_preparation() {
             assert_eq!(
                 run(
                     &mut s,
-                    &[batch(
-                        1,
-                        2_000_000_000,
-                        0,
-                        vec![Gate::mz(&[0]), Gate::measure_leaked(&[0])]
-                    )],
+                    &[
+                        batch(1, 2_000_000_000, 0, vec![Gate::mz(&[0])]),
+                        batch(2, 2_000_000_000, 0, vec![Gate::measure_leaked(&[0])]),
+                    ],
                     events
                 ),
                 vec![1, 2]
@@ -161,7 +159,7 @@ fn leakage_survives_batches_measurement_and_gates_until_preparation() {
                 run(
                     &mut s,
                     &[batch(
-                        2,
+                        3,
                         2_000_000_000,
                         0,
                         vec![
@@ -183,13 +181,13 @@ fn leakage_survives_batches_measurement_and_gates_until_preparation() {
                     &mut s,
                     &[
                         batch(
-                            3,
+                            4,
                             4_000_000_000,
                             1_000_000_000,
                             vec![Gate::pz(&[0]), Gate::measure_leaked(&[0])]
                         ),
                         batch(
-                            4,
+                            5,
                             5_000_000_000,
                             0,
                             vec![Gate::measure_leaked(&[0]), Gate::measure_leaked(&[1])]
@@ -471,4 +469,43 @@ fn changing_rates_without_models_retains_existing_channels() {
             );
         }
     }
+}
+
+#[test]
+fn idle_readout_followed_by_reset_rejects_before_losing_leakage() {
+    for events in [false, true] {
+        for (measurement, expected) in [(Gate::mz(&[0]), 1), (Gate::measure_leaked(&[0]), 2)] {
+            let mut sim = system(leakage(false), events, 1);
+            let invalid = [batch(
+                0,
+                1_000_000_000,
+                0,
+                vec![measurement.clone(), Gate::pz(&[0])],
+            )];
+            let rng = sim.controller().rng().clone().next_u64();
+            assert!(sim.process(message(&invalid, events)).is_err());
+            assert_eq!(sim.controller().rng().clone().next_u64(), rng);
+            // Rejection leaves the complete original input unexecuted and the
+            // timeline unchanged, including on the v4 source-admission route.
+            assert_eq!(
+                run(
+                    &mut sim,
+                    &[batch(0, 1_000_000_000, 0, vec![measurement])],
+                    events
+                ),
+                vec![expected]
+            );
+        }
+    }
+}
+
+#[test]
+fn idle_only_batch_limit_matches_local_profiles() {
+    let mut sim = system(ScheduledIdleNoise::new(2).unwrap(), false, 0);
+    let invalid = [batch(0, 0, 0, vec![Gate::pz(&[0]); 4097])];
+    assert!(sim.process(message(&invalid, false)).is_err());
+    assert_eq!(
+        run(&mut sim, &[batch(0, 0, 0, vec![Gate::mz(&[0])])], false),
+        vec![0]
+    );
 }

@@ -175,6 +175,7 @@ fn local_gate_faults_match_explicit_general_noise_and_rng_per_native_batch() {
     let gates = vec![
         Gate::rxy1q(Angle64::from_radians(0.7), Angle64::ZERO, &[0]),
         Gate::rzz(Angle64::from_radians(-0.3), &[(0, 1)]),
+        Gate::rz(Angle64::from_radians(0.4), &[0]),
     ];
     let batches = [
         batch(0, 0, 0, vec![Gate::pz(&[0]), Gate::pz(&[1])]),

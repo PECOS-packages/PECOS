@@ -77,7 +77,7 @@ impl QuantumSystem {
         }
     }
 
-    fn drive_scheduled_local(
+    fn drive_scheduled(
         &mut self,
         stage: crate::EngineStage<ByteMessage, ByteMessage>,
         budget: usize,
@@ -86,7 +86,7 @@ impl QuantumSystem {
             crate::EngineStage::Complete(output) => Ok(output),
             crate::EngineStage::NeedsProcessing(commands) => {
                 // Check bytes before parsing/allocation, then the actual operation
-                // count before executing. Admitted local outputs have <=2 targets.
+                // count before executing. Admitted scheduled outputs have <=2 targets.
                 let byte_limit = budget
                     .checked_mul(128)
                     .and_then(|n| n.checked_add(16))
@@ -103,7 +103,7 @@ impl QuantumSystem {
                 match self.noise_model.continue_processing(reply)? {
                     crate::EngineStage::Complete(output) => Ok(output),
                     crate::EngineStage::NeedsProcessing(_) => Err(runtime_frame::processing_error(
-                        "scheduled local noise requested an unsupported continuation",
+                        "scheduled noise requested an unsupported continuation",
                     )),
                 }
             }
@@ -215,23 +215,15 @@ impl QuantumSystem {
                 })
                 .map(|g| g.qubits.len())
                 .sum::<usize>();
-            let local = self
-                .scheduled_model()
-                .expect("checked model")
-                .has_local_faults();
             // At most eight idle commands per target, or an ideal operation plus
             // two Pauli faults. Sixteen per admitted command is conservative.
-            // Local profiles have no crosstalk and need exactly one simulator call.
+            // Scheduled profiles have no crosstalk and need at most one simulator call.
             let budget = gates
                 .len()
                 .checked_mul(16)
                 .ok_or_else(|| runtime_frame::error("scheduled expansion overflow"))?;
             let stage = self.scheduled_model_mut().start_admitted(message)?;
-            let reply = if local {
-                self.drive_scheduled_local(stage, budget)?
-            } else {
-                self.drive_stage(stage)?
-            };
+            let reply = self.drive_scheduled(stage, budget)?;
             let values = reply.outcomes()?;
             if values.len() != expected {
                 return Err(runtime_frame::processing_error(
@@ -792,15 +784,39 @@ mod tests {
 }
 
 #[cfg(test)]
-mod scheduled_local_limits {
+mod scheduled_limits {
     use super::*;
+    #[test]
+    fn byte_limit_rejects_one_oversized_command_before_execution() {
+        let mut system =
+            QuantumSystem::new_without_noise(Box::new(crate::StabilizerEngine::new(33)));
+        // A valid legacy grouped gate has one command but a large payload. Such
+        // output is outside the checked profiles' <=2-target emission contract.
+        let commands = ByteMessage::quantum_operations_builder()
+            .x(&(0..33).collect::<Vec<_>>())
+            .build();
+        assert_eq!(commands.quantum_ops().unwrap().len(), 1);
+        assert!(commands.as_bytes().len() > 16 + 128);
+        let result = system.drive_scheduled(crate::EngineStage::NeedsProcessing(commands), 1);
+        assert!(
+            result
+                .err()
+                .expect("byte limit must reject")
+                .to_string()
+                .contains("scheduled noise expansion limit")
+        );
+        let output = system
+            .drive_legacy(ByteMessage::quantum_operations_builder().mz(&[0]).build())
+            .unwrap();
+        assert_eq!(output.outcomes().unwrap(), vec![0]);
+    }
     #[test]
     fn expanded_commands_reject_before_simulator_mutation() {
         let mut system = QuantumSystem::new_without_noise(Box::new(crate::StateVecEngine::new(1)));
         for budget in [0, 2, usize::MAX] {
             let mut commands = ByteMessage::quantum_operations_builder();
             commands.x(&[0]).x(&[0]).x(&[0]);
-            let result = system.drive_scheduled_local(
+            let result = system.drive_scheduled(
                 crate::EngineStage::NeedsProcessing(commands.build()),
                 budget,
             );

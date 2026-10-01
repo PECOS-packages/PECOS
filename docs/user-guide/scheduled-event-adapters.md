@@ -15,11 +15,10 @@ Outcome-dependent adapters and broader physical noise require separate work.
 ## Configure and implement
 
 Use `QisEngineBuilder::scheduled_event_batches(true)` with
-`ScheduledEventIdleNoise::new(profile, factory)` (also available under the
-compatibility name `ScheduledEventIdleZ`, retained for existing callers).
-`ScheduledEventNoise` is the generic name for this wrapper, including
-`ScheduledLocalNoise`. The aliases preserve the supplied checked profile; `ScheduledIdleZ` itself remains a Z-only
-convenience constructor. The factory receives `ShotContext` and
+`ScheduledEventNoise::new(profile, factory)`. `ScheduledEventIdleNoise` and
+`ScheduledEventIdleZ` are compatibility aliases for this canonical type.
+The aliases preserve the supplied checked profile; `ScheduledIdleZ` itself remains
+a Z-only convenience constructor. The factory receives `ShotContext` and
 must return an independent `Box<dyn ScheduledBatchAdapter>` for each shot.
 
 The builder has three transport modes: off, v3, v4. Enabling scheduled batches
@@ -83,9 +82,8 @@ from `pecos_rslib` for Z/RZ noise, or
 `scheduled_idle_noise()` for configurable local idle channels including leakage.
 For checked local gate/preparation/readout faults, use
 `scheduled_event_local_noise(local, adapter_factory)` with `scheduled_local_noise()`.
-All factories use the same transport and recovery contracts; the local profile
-also enforces the batch and measurement-order limits described in the
-[local fault profile](scheduled-idle-simulation.md#local-gate-preparation-and-readout-faults). Omission of idle noise before preparation applies to the
+All factories enforce the same transport, recovery, batch and measurement-order
+contracts described under [shared scheduled limits](scheduled-idle-simulation.md#shared-scheduled-admission-and-execution-limits). Omission of idle noise before preparation applies to the
 **normalized** gates emitted by the adapter, using the same per-qubit rules as
 [scheduled idle-noise simulation](scheduled-idle-simulation.md#timing-and-noise-contract).
 Source timing admission remains enforced even when a preparation gap is omitted.

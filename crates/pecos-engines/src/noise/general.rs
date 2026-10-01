@@ -1713,6 +1713,9 @@ mod tests {
         for model in [&mut noise, &mut cloned] {
             assert!(model.start_scheduled(&gates).is_err());
             model.reset().unwrap();
+            assert!(model.scheduled_measurement_leakage.is_none());
+            // Exercise a fresh leaked readout after recovery, not just cleanup.
+            model.mark_as_leaked(0);
             model.start_scheduled(&gates).unwrap();
             let reply = ByteMessage::outcomes_builder()
                 .add_outcomes(&[0, 0])
@@ -1720,7 +1723,7 @@ mod tests {
             let EngineStage::Complete(outcomes) = model.continue_processing(reply).unwrap() else {
                 panic!("scheduled readout must complete without another simulator call");
             };
-            assert_eq!(outcomes.outcomes().unwrap(), vec![0, 0]);
+            assert_eq!(outcomes.outcomes().unwrap(), vec![2, 0]);
             assert!(model.scheduled_measurement_leakage.is_none());
             // A gate-only batch must also close snapshot mode.
             let prep = ByteMessage::quantum_operations_builder().pz(&[0]).build();

@@ -331,19 +331,23 @@ def test_guppy_wrapped_generator_keeps_its_certificate() -> None:
 
 
 def test_certified_definition_does_not_certify_foreign_bytes() -> None:
-    """A carrier that pairs a certified generator definition with different
-    HUGR bytes must fail the digest check: the certificate binds the bytes
+    """A pecos.Guppy whose envelope differs from its certified generator
+    definition must fail the digest check: the certificate binds the bytes
     that are audited and executed, not the definition it was stamped on."""
+    import pecos
     from pecos._compilation import guppy_to_hugr
 
-    class _MismatchedCarrier:
-        wrapped_function = make_surface_code(3, 1, "Z")
-        hugr_bytes = guppy_to_hugr(_scrambled_tagged_measurements)
+    foreign_bytes = guppy_to_hugr(_scrambled_tagged_measurements)
+
+    class _MismatchedGuppy(pecos.Guppy):
+        @property
+        def hugr_bytes(self) -> bytes:
+            return foreign_bytes
 
     detectors, observables = surface_memory_dem_spec(3, 1, "Z")
     with pytest.raises(ValueError, match="certificate does not match the program and layout"):
         build_dem_from_guppy(
-            _MismatchedCarrier(),
+            _MismatchedGuppy(make_surface_code(3, 1, "Z")),
             num_qubits=get_num_qubits(3),
             detectors=detectors,
             observables=observables,
@@ -354,10 +358,11 @@ def test_certified_definition_does_not_certify_foreign_bytes() -> None:
         )
 
 
-def test_forged_certificate_on_byte_carrier_does_not_bypass_the_guard() -> None:
-    """A self-consistent digest stapled to a pecos.Hugr wrapper must not
-    suppress the control-flow guard: certificates are honored only on Guppy
-    definition objects, never on byte carriers."""
+@pytest.mark.parametrize("claimed_definition", ["none", "self", "stamped_object"])
+def test_forged_certificate_on_byte_carrier_does_not_bypass_the_guard(claimed_definition: str) -> None:
+    """A self-consistent digest stapled to a byte carrier must not suppress
+    the control-flow guard: certificates are honored only on Guppy definition
+    objects, never on byte carriers, whatever ``wrapped_function`` they claim."""
     import hashlib as _hashlib
 
     import pecos
@@ -368,6 +373,14 @@ def test_forged_certificate_on_byte_carrier_does_not_bypass_the_guard() -> None:
     digest = _hashlib.sha256(dynamic_bytes + b"\0" + layout_json.encode()).hexdigest()
     forged = pecos.Hugr(dynamic_bytes)
     forged.__pecos_named_measurement_layout_v2__ = (digest, [])
+    if claimed_definition == "self":
+        forged.wrapped_function = forged
+    elif claimed_definition == "stamped_object":
+
+        class _Stamped:
+            __pecos_named_measurement_layout_v2__ = (digest, [])
+
+        forged.wrapped_function = _Stamped()
 
     with pytest.raises(ValueError, match="branching or looping control flow"):
         build_dem_from_guppy(

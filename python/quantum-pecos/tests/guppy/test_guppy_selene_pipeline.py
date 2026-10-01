@@ -27,13 +27,16 @@ def bell_state() -> None:
     result("right", measure(q1).read())
 
 
-@pytest.fixture(params=[pc.selene_engine], ids=["selene"])
+@pytest.fixture(params=[None, pc.selene_engine], ids=["default", "selene"])
 def engine_factory(request):
+    """``None`` runs the lazily built default engine; otherwise ``.classical()`` supplies one."""
     return request.param
 
 
 def _run(program, engine_factory, qubits: int, shots: int, noise=None) -> dict:
-    builder = pc.sim(pc.Guppy(program)).classical(engine_factory())
+    builder = pc.sim(pc.Guppy(program))
+    if engine_factory is not None:
+        builder = builder.classical(engine_factory())
     builder = builder.quantum(pc.state_vector()).qubits(qubits).seed(42)
     if noise is not None:
         builder = builder.noise(noise)

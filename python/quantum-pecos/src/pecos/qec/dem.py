@@ -57,6 +57,7 @@ from pecos._traced_circuit import (
     measurement_ids_in_execution_order,
     normalize_traced_tick_circuit,
 )
+from pecos.programs import Guppy
 from pecos.qec._idle_noise import _translate_structured_idle_noise
 from pecos.qec.dem_spec import (
     GuppyDemBuild,
@@ -218,24 +219,23 @@ def _certificate_carrier(guppy: Any) -> Any | None:
     """Return the object whose generator certificate may be honored, if any.
 
     Certificates are stamped by built-in generators on Guppy *definition*
-    objects only. A wrapper that exposes the definition it wraps
-    (``pecos.Guppy``) is honored through that definition, even though the
-    wrapper also caches the compiled envelope for result tags and analysis.
+    objects only. ``pecos.Guppy`` is honored through the definition it wraps,
+    even though it also exposes the compiled envelope as ``hugr_bytes``: those
+    bytes are compiled from that same definition.
 
-    Pure byte carriers (``pecos.Hugr``, raw HUGR bytes, duck-typed
-    ``hugr_bytes`` holders with no wrapped definition) never carry an honorable
-    certificate: they are opaque data, and honoring an attribute there would let
+    Byte carriers (``pecos.Hugr``, raw HUGR bytes, duck-typed ``hugr_bytes``
+    holders) never carry an honorable certificate, whatever ``wrapped_function``
+    they claim: they are opaque data, and honoring an attribute there would let
     any bytes suppress the control-flow guard by stapling a self-consistent
     digest to themselves.
     """
     if isinstance(guppy, (bytes, bytearray)):
         return None
-    wrapped_function = getattr(guppy, "wrapped_function", None)
-    if wrapped_function is not None:
-        return wrapped_function
+    if isinstance(guppy, Guppy):
+        return guppy.wrapped_function
     if isinstance(getattr(guppy, "hugr_bytes", None), (bytes, bytearray)):
         return None
-    return guppy
+    return getattr(guppy, "wrapped_function", guppy)
 
 
 def _generator_certified_layout(guppy: Any, hugr_bytes: bytes | None = None) -> Sequence[Any] | None:

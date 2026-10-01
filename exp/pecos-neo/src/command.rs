@@ -321,7 +321,7 @@ fn u64_is_exactly_representable_as_f64(value: u64) -> bool {
     if value == 0 {
         return true;
     }
-    let significant_bits = u64::BITS - value.leading_zeros();
+    let significant_bits = value.bit_width();
     significant_bits <= 53 || value.trailing_zeros() >= significant_bits - 53
 }
 
@@ -823,7 +823,7 @@ mod tests {
         let x = GateCommand::x(QubitId(0));
         assert_eq!(x.gate_type, GateType::X);
         assert_eq!(x.qubits.as_slice(), &[QubitId(0)]);
-        assert!(x.angles().is_empty());
+        assert_eq!(x.angles(), []);
 
         let cx = GateCommand::cx(QubitId(0), QubitId(1));
         assert_eq!(cx.gate_type, GateType::CX);

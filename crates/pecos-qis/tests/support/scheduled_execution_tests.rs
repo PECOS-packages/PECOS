@@ -888,7 +888,10 @@ fn public_runtimes_zero_timing_preserves_ideal_feedback_across_shots() {
                 .chain(second.batches)
                 .chain(last.batches)
                 .collect::<Vec<_>>();
-            assert!(!batches.is_empty());
+            assert!(
+                !batches.is_empty(),
+                "scheduled execution must produce batches"
+            );
             assert!(
                 batches
                     .iter()

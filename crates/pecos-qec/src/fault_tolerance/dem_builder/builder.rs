@@ -3363,7 +3363,7 @@ fn observable_records_from_annotations(
 ///
 /// `tag_to_ords` is the **sound** Guppy `result(tag, ...)` -> measurement
 /// ordinal binding recovered structurally from the compiled HUGR
-/// (reorder-immune; see `pecos_hugr_qis::result_tags`). Each referenced tag's
+/// (reorder-immune; see `pecos_hugr::extract_result_tag_measurements`). Each referenced tag's
 /// ordinals are mapped through `source_meas_ids` to stable runtime measurement
 /// identities. `result_tags` is an alternative to `records`/`meas_ids` (not
 /// additive): any co-present form must resolve to the same measurements.
@@ -3621,7 +3621,11 @@ mod tests {
         let (mechanisms, _) = dem.to_mechanisms();
         assert_eq!(mechanisms.len(), 1);
         assert_eq!(mechanisms[0].1, vec![0]);
-        assert!(mechanisms[0].2.is_empty());
+        let observables = &mechanisms[0].2;
+        assert!(
+            observables.is_empty(),
+            "expected no observables, got {observables:?}"
+        );
     }
 
     #[test]
@@ -4118,7 +4122,11 @@ mod tests {
         assert_eq!(detectors[0].id, 0);
         assert_eq!(detectors[0].coords, Some([0.0, 0.0, 0.0]));
         assert_eq!(detectors[0].records, vec![-1, -5]);
-        assert!(detectors[0].meas_ids.is_empty());
+        let meas_ids = &detectors[0].meas_ids;
+        assert!(
+            meas_ids.is_empty(),
+            "expected no measurement IDs, got {meas_ids:?}"
+        );
         assert_eq!(detectors[1].id, 1);
         assert_eq!(detectors[1].records, vec![-2]);
     }
@@ -4132,7 +4140,11 @@ mod tests {
         assert_eq!(observables.len(), 1);
         assert_eq!(observables[0].id, 0);
         assert_eq!(observables[0].records, vec![-1, -3, -5]);
-        assert!(observables[0].meas_ids.is_empty());
+        let meas_ids = &observables[0].meas_ids;
+        assert!(
+            meas_ids.is_empty(),
+            "expected no measurement IDs, got {meas_ids:?}"
+        );
     }
 
     #[test]

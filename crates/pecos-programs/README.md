@@ -8,7 +8,6 @@ This crate provides pure data types for quantum programs that can be used across
 
 - **QASM**: OpenQASM 2.0 quantum circuit descriptions
 - **LLVM**: LLVM IR (both text and bitcode formats)
-- **HUGR**: Hierarchical Unified Graph Representation
 - **WASM**: WebAssembly binary format
 - **WAT**: WebAssembly Text format
 - **PHIR-JSON**: PECOS High-level Intermediate Representation in JSON

@@ -1006,8 +1006,14 @@ mod tests {
         let map = analyzer.build_influence_map();
 
         // Should have locations and detectors
-        assert!(!map.locations.is_empty());
-        assert!(!map.detectors.is_empty());
+        assert!(
+            !map.locations.is_empty(),
+            "influence map must contain fault locations"
+        );
+        assert!(
+            !map.detectors.is_empty(),
+            "influence map must contain detectors"
+        );
     }
 
     // Additional tests for backward vs forward consistency
@@ -1043,7 +1049,10 @@ mod tests {
         let map = analyzer.build_influence_map();
 
         // Check that we have locations
-        assert!(!map.locations.is_empty());
+        assert!(
+            !map.locations.is_empty(),
+            "influence map must contain fault locations"
+        );
     }
 
     #[test]
@@ -1064,8 +1073,14 @@ mod tests {
         let map = analyzer.build_influence_map();
 
         // Should have locations and detectors
-        assert!(!map.locations.is_empty());
-        assert!(!map.detectors.is_empty());
+        assert!(
+            !map.locations.is_empty(),
+            "influence map must contain fault locations"
+        );
+        assert!(
+            !map.detectors.is_empty(),
+            "influence map must contain detectors"
+        );
     }
 
     #[test]

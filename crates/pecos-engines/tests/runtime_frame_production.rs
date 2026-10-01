@@ -1173,13 +1173,14 @@ fn empty_and_adjacent_event_segments_complete_without_extra_sampling() {
             target: 0,
         }],
     ] {
+        let outcomes = system
+            .process(encode_frame(&records).unwrap())
+            .unwrap()
+            .outcomes()
+            .unwrap();
         assert!(
-            system
-                .process(encode_frame(&records).unwrap())
-                .unwrap()
-                .outcomes()
-                .unwrap()
-                .is_empty()
+            outcomes.is_empty(),
+            "expected no measurement outcomes, got {outcomes:?}"
         );
         assert_rng_equal(&system, &before);
     }
@@ -1200,13 +1201,14 @@ fn empty_and_adjacent_event_segments_complete_without_extra_sampling() {
             target: 0,
         },
     ];
+    let outcomes = system
+        .process(encode_frame(&records).unwrap())
+        .unwrap()
+        .outcomes()
+        .unwrap();
     assert!(
-        system
-            .process(encode_frame(&records).unwrap())
-            .unwrap()
-            .outcomes()
-            .unwrap()
-            .is_empty()
+        outcomes.is_empty(),
+        "expected no measurement outcomes, got {outcomes:?}"
     );
     assert_rng_equal(&system, &before);
     assert_eq!(

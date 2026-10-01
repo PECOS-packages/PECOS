@@ -1076,7 +1076,10 @@ mod tests {
         let cutoff = f64::from_bits(read_u64());
         let max_trunc_error = f64::from_bits(read_u64());
         let (value_bytes, remainder) = bytes[offset..].as_chunks::<16>();
-        assert!(remainder.is_empty());
+        assert!(
+            remainder.is_empty(),
+            "expected no trailing value bytes, got {remainder:?}"
+        );
         let values = value_bytes
             .iter()
             .map(|chunk| {

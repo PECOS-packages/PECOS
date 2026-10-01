@@ -9,7 +9,7 @@ PHIR (PECOS High-level IR) provides an MLIR-inspired SSA representation for quan
 ## Key Features
 
 - Hierarchical structure: Operations contain Regions contain Blocks contain Operations
-- Dialect system: builtin, HUGR, and QIS dialects
+- Dialect system: builtin and QIS dialects
 - Progressive lowering: parsing ops -> high-level ops -> low-level ops -> execution
 - Multiple execution strategies: interpreter, MLIR lowering to LLVM
 
@@ -18,7 +18,6 @@ PHIR (PECOS High-level IR) provides an MLIR-inspired SSA representation for quan
 - `Module` - Top-level container
 - `Operation` - SSA operations across dialects
 - `PhirEngine` - Execution engine
-- `Pipeline` - Compilation pipeline
 
 ## Relationship to pecos-phir-json
 

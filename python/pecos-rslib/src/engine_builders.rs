@@ -102,7 +102,7 @@ fn runtime_custom_event_policy(value: &str) -> PyResult<pecos_qis::RuntimeCustom
     }
 }
 
-/// Python wrapper for QIS Engine builder (unified QIS/HUGR engine)
+/// Python wrapper for QIS Engine builder (accepts QIS lowered from Guppy/HUGR at the Python boundary)
 #[pyclass(name = "QisEngineBuilder", from_py_object)]
 #[derive(Clone)]
 pub struct PyQisEngineBuilder {
@@ -135,14 +135,9 @@ impl PyQisEngineBuilder {
                         "Failed to load QIS program: {e}"
                     ))
                 })?;
-        }
-        // Check if it's a Hugr
-        else if let Ok(hugr_prog) = program.extract::<PyHugr>(py) {
-            self.inner =
-                crate::sim::load_hugr_into_qis(py, &hugr_prog.inner.hugr, self.inner.clone())?.0;
         } else {
             return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
-                "program must be either a Qis or Hugr instance",
+                "program must be a Qis instance",
             ));
         }
         Ok(self.clone())
@@ -260,8 +255,7 @@ impl PyQisEngineBuilder {
                 noise_builder: None,
                 explicit_num_qubits: None,
                 keep_intermediate_files: false,
-                hugr_bytes: None,
-                qis_source: None,
+                qis_program: None,
                 operation_trace_dir: None,
             }),
         })
@@ -426,11 +420,70 @@ pub struct PyQisControlSimBuilder {
     pub(crate) noise_builder: Option<Py<PyAny>>,
     pub(crate) explicit_num_qubits: Option<usize>,
     pub(crate) keep_intermediate_files: bool,
-    pub(crate) hugr_bytes: Option<Vec<u8>>,
-    /// The QIS IR source, kept so classical() can re-attach the program
-    /// when a fresh engine builder replaces the program-loaded one.
-    pub(crate) qis_source: Option<String>,
+    /// The QIS program, retained for lazy default construction and re-attachment.
+    pub(crate) qis_program: Option<Qis>,
     pub(crate) operation_trace_dir: Option<String>,
+}
+
+/// Construct the default QIS engine.
+fn default_qis_engine() -> PyResult<pecos_qis::QisEngineBuilder> {
+    // Get Selene simple runtime
+    log::debug!("Getting Selene simple runtime...");
+    let selene_runtime = selene_simple_runtime().map_err(|e| {
+        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+            "Selene simple runtime not available: {e}\n\
+                    \n\
+                    The default runtime for QIS programs is Selene simple.\n\
+                    Please ensure Selene is built:\n\
+                    cd ../selene && cargo build --release"
+        ))
+    })?;
+
+    log::debug!("Creating QIS engine with Helios interface...");
+    let helios_builder = helios_interface_builder();
+    let builder = pecos_qis::qis_engine();
+    let builder = builder.runtime(selene_runtime);
+    let builder = builder.interface(helios_builder);
+
+    Ok(builder)
+}
+
+impl PyQisControlSimBuilder {
+    /// Clone the supplied engine, or initialize and cache the default first.
+    /// Execution uses a clone so repeated runs do not consume the builder.
+    pub(crate) fn engine_builder(&self) -> PyResult<RustQisEngineBuilder> {
+        if let Some(builder) = self.engine_builder.lock().expect("lock poisoned").as_ref() {
+            return Ok(builder.clone());
+        }
+
+        // Build outside the lock so a failure while loading cannot poison it.
+        let program = self
+            .qis_program
+            .as_ref()
+            .ok_or_else(|| PyRuntimeError::new_err("No QIS program or engine is configured"))?;
+        let builder = default_qis_engine()?
+            .try_program(program.clone())
+            .map_err(|e| {
+                log::error!("Failed to load QIS program: {e}");
+                PyRuntimeError::new_err(format!(
+                    "Failed to load QIS program with Selene runtime and Helios interface: {e}"
+                ))
+            })?;
+        log::info!("QIS program loaded successfully");
+        Ok(self
+            .engine_builder
+            .lock()
+            .expect("lock poisoned")
+            .get_or_insert(builder)
+            .clone())
+    }
+
+    pub(crate) fn qis_source(&self) -> Option<&str> {
+        match &self.qis_program.as_ref()?.content {
+            pecos_programs::QisContent::Ir(ir) => Some(ir),
+            pecos_programs::QisContent::Bitcode(_) => None,
+        }
+    }
 }
 
 /// Python wrapper for built QIS control simulation
@@ -615,20 +668,6 @@ impl PyPhirSimulation {
     }
 }
 
-/// Internal HUGR simulation builder state.
-/// The holder can run repeatedly, lowering anew each time; lowered builders are single-use.
-pub struct PyHugrSimBuilder {
-    pub(crate) seed: Option<u64>,
-    pub(crate) workers: Option<usize>,
-    pub(crate) shots: Option<usize>,
-    pub(crate) quantum_engine_builder: Option<Py<PyAny>>,
-    pub(crate) noise_builder: Option<Py<PyAny>>,
-    pub(crate) explicit_num_qubits: Option<usize>,
-    pub(crate) keep_intermediate_files: bool,
-    pub(crate) hugr_bytes: Vec<u8>,
-    pub(crate) stack: Option<crate::sim::PySimStack>,
-}
-
 /// Python wrapper for program types
 #[pyclass(name = "Qasm", from_py_object)]
 #[derive(Clone)]
@@ -678,27 +717,6 @@ impl PyQis {
     }
 }
 
-#[pyclass(name = "Hugr", from_py_object)]
-#[derive(Clone)]
-pub struct PyHugr {
-    pub(crate) inner: Hugr,
-}
-
-#[pymethods]
-impl PyHugr {
-    #[staticmethod]
-    fn from_bytes(bytes: Vec<u8>) -> Self {
-        PyHugr {
-            inner: Hugr::from_bytes(bytes),
-        }
-    }
-
-    /// Get the HUGR bytes
-    fn to_bytes(&self) -> Vec<u8> {
-        self.inner.hugr.clone()
-    }
-}
-
 #[pyclass(name = "PhirJson", from_py_object)]
 #[derive(Clone)]
 pub struct PyPhirJson {
@@ -730,7 +748,7 @@ pub fn qasm_engine() -> PyQasmEngineBuilder {
     }
 }
 
-/// Create a QIS Engine builder (unified QIS/HUGR engine)
+/// Create a QIS Engine builder (accepts QIS lowered from Guppy/HUGR at the Python boundary)
 #[pyfunction]
 pub fn qis_engine() -> PyQisEngineBuilder {
     PyQisEngineBuilder {
@@ -1775,7 +1793,6 @@ pub fn register_engine_builders(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Program types
     m.add_class::<PyQasm>()?;
-    m.add_class::<PyHugr>()?;
     m.add_class::<PyPhirJson>()?;
 
     // Noise builders

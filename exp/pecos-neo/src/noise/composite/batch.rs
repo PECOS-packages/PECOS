@@ -454,7 +454,7 @@ mod tests {
         let mut rng = PecosRng::seed_from_u64(42);
 
         let result = filter_by_probability(&qubits, 0.0, &mut rng);
-        assert!(result.is_empty());
+        assert_eq!(result, []);
     }
 
     #[test]

@@ -4,7 +4,7 @@ QIS (Quantum Instruction Set) infrastructure for PECOS.
 
 ## Purpose
 
-Provides the complete QIS execution pipeline: compiling quantum programs (LLVM IR, HUGR) and executing them via Selene's quantum simulator.
+Provides the complete QIS execution pipeline: compiling QIS programs (LLVM IR) and executing them via Selene's quantum simulator.
 
 ## Architecture
 
@@ -28,7 +28,6 @@ QisEngine
 
 - `selene` (default): Selene-based implementation
 - `llvm`: LLVM IR program support
-- `hugr`: HUGR program compilation
 
 ## Usage
 

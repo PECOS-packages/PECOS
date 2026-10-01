@@ -1,7 +1,7 @@
-# Scheduled idle-Z simulation
+# Scheduled idle-noise simulation
 
 The opt-in QIS scheduled route carries original native batch timestamps into
-`sim()` and applies a narrow idle-Z profile using `GeneralNoiseModel`. It supports
+`sim()` and applies checked local idle channels using `GeneralNoiseModel`. It supports
 state-vector simulation with a fixed admitted profile of 1–16 physical qubits.
 The simulator must have at least that capacity; any extra qubits are inaccessible
 to scheduled input. This is an
@@ -41,19 +41,80 @@ Operation tracing is currently incompatible with this opt-in route.
 
 Batch start and duration remain integer nanoseconds. For each physical qubit,
 its idle interval runs from the end of its previous touching batch to the start
-of its next touching batch. The initial end is zero. A qubit receives one idle
-operation for that whole gap before its first operation in the batch. Operations
-retain emission order, including same-batch measurement boundaries. A batch's
+of its next touching batch. The initial end is zero. Except before preparation
+as described below, a qubit receives one idle operation for that whole gap before
+its first operation in the batch. Operations retain emission order, including
+same-batch measurement boundaries. A batch's
 entire duration counts as busy time for each qubit it touches; no final idle tail
 is invented after the last operation. Backward/overlapping use of a qubit rejects.
 
-The profile enables only linear stochastic Z, sine-squared stochastic Z and
-coherent RZ idle effects. Linear rates are inverse seconds; sine and coherent
-rates are radians per second. All rates and duration products must be finite and
-nonnegative. Gate faults, readout faults, leakage, crosstalk and custom events are
-not supported. Each nonempty native batch goes through one existing general-noise
-controller lifecycle; empty batches do not trigger a lifecycle. In particular,
-this adapter is not permission to split arbitrary noise controllers.
+When preparation (`PZ`, reset-Z) is the first operation on a qubit in a batch,
+its preceding idle channel is omitted: the ideal reset erases the effect of all
+admitted local channels, including leakage. Preparation clears the general-noise
+leakage record as well as resetting the simulator state. Other qubits and gaps before
+non-preparation gates retain their idle noise. Preparation still occupies the
+entire batch and advances the cursor; capacity, overlap and finite-rate checks
+remain enforced. This rule relies on ideal preparation and local noise; it must be revisited
+if preparation faults, correlated channels or other preparation operations are admitted.
+
+Earlier versions sampled idle noise before preparation. Omitting those discarded
+channels avoids unnecessary work and changes RNG consumption, so seeded outcomes
+can differ from earlier versions even though the output distribution is unchanged.
+All scheduled Python factories and Rust profiles use this rule without a
+configuration option.
+
+## Idle families and leakage
+
+`scheduled_idle_z()` retains its existing Z/RZ-only behavior. The additive
+`scheduled_idle_noise()` factory accepts the existing general-noise idle families:
+
+| Family | Model keys | Per-gap behavior for duration `d` seconds |
+| --- | --- | --- |
+| Linear | X, Y, Z, L | One event with probability `min(linear * d, 1)`, followed by an axis drawn from the normalized weights |
+| Sine-squared | X, Y, Z, L | Independent per-axis probability `sin(sine * multiplier * d)**2` |
+| Coherent | RX, RY, RZ | Rotation angle `coherent * multiplier * d`, in RX/RY/RZ order |
+
+`L` means leakage. Sine-squared leakage probability is not monotonic in idle
+duration: it can decrease again for longer gaps. Linear leakage instead saturates
+at one. These are the existing general-noise family semantics.
+
+Linear weights must sum to one within `1e-10`; sine and
+coherent multipliers are deliberately unnormalized. Rates and weights must be
+finite and nonnegative, and rate/multiplier/duration products must remain finite.
+Validation applies even to disabled families. Empty sine/coherent maps disable
+those families; an empty linear distribution rejects. Defaults are Z for the
+stochastic models and RZ for coherent evolution, with all rates zero.
+
+```python
+import pecos_rslib as pr
+
+profile = pr.scheduled_idle_noise(
+    2,
+    linear=0.02,
+    linear_model={"Z": 0.5, "L": 0.5},
+    coherent=0.03,
+    coherent_model={"RZ": 1.0},
+)
+```
+
+These are illustrative process-rate inputs, not calibration values. The factory
+performs no average-infidelity conversion, frequency conversion or external
+scaling. Linear rates use inverse seconds; sine and coherent rates use radians
+per second. Supply any conversions explicitly before constructing the profile.
+
+Leakage state persists across batches, host waits, and measurement feedback.
+Ordinary Z measurement of a leaked qubit returns 1; leakage-aware measurement
+returns 2. Measurement does not clear leakage. Ideal preparation and whole-shot
+reset clear it. These are the existing `GeneralNoiseModel` leakage semantics,
+not a new physical leakage model. Native-to-program result handling must support
+the selected measurement kind.
+
+Gate faults, readout faults, crosstalk and repumping are not configurable in this
+profile. Each nonempty batch goes through one existing general-noise controller
+lifecycle; empty batches do not trigger a lifecycle or split an idle interval.
+In particular, this adapter is not permission to split arbitrary noise controllers.
+The v4 [event adapter](scheduled-event-adapters.md) can use the same profile via
+`scheduled_event_idle_noise(profile, adapter_factory)`.
 
 ## Admission, identity and recovery
 
@@ -90,3 +151,10 @@ Python builder. These timestamps are test inputs, not device calibration.
 The public runtimes tested previously emitted zero timing for the probes; such a
 run cannot validate nonzero idle noise. Full-profile parity, experimental-data
 agreement, leakage repumping and comparative speed remain separate work.
+
+The extended profile has deterministic Rust regressions for forced leakage,
+leakage-aware readout, measurement busy time, reset and clone isolation, and
+nonlinear gaps across metadata-only batches. Mixed-channel scheduled execution
+is compared with explicit general-noise idle operations for both outcomes and
+RNG state. Python native-runtime tests exercise forced leakage, feedback and reset
+through both transport routes. These tests do not establish full device parity.

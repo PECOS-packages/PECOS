@@ -5,6 +5,8 @@
 static SeleneRuntimePluginDescriptorV1 original;
 static SeleneRuntimePluginDescriptorV1 proxy;
 /* Deliberately synthetic timing: one second before the second RXY callback.
+ * INITIAL_NANOS offsets every batch timestamp equally, adding an initial gap
+ * while preserving the gaps between subsequent batches.
  * This is NOT a calibration or timing model for the public runtime. */
 static _Thread_local unsigned rxy_count;
 static _Thread_local RuntimeGetOperationHandle forwarding;
@@ -35,7 +37,7 @@ static SeleneErrno next(RuntimeInstance instance, RuntimeGetOperationHandle ops)
     wrapped.interface.rxy_fn = rxy;
     wrapped.interface.set_batch_time_fn = time_batch;
     SeleneErrno rc = original.get_next_operations_fn(instance, wrapped);
-    if (rc == 0 && has_batch) ops.interface.set_batch_time_fn(ops.instance, rxy_count >= 2 ? GAP_NANOS : 0, 0);
+    if (rc == 0 && has_batch) ops.interface.set_batch_time_fn(ops.instance, INITIAL_NANOS + (rxy_count >= 2 ? GAP_NANOS : 0), 0);
     return rc;
 }
 

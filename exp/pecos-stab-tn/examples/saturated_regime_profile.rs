@@ -179,7 +179,7 @@ impl PythonRandom {
 
     fn randbelow(&mut self, limit: usize) -> usize {
         assert!(limit > 0);
-        let bits = usize::BITS - limit.leading_zeros();
+        let bits = limit.bit_width();
         loop {
             let value = self.getrandbits(bits);
             if value < limit {

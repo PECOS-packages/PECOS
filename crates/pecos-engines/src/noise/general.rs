@@ -3731,21 +3731,21 @@ mod tests {
         let mut duration_zero = ByteMessage::quantum_operations_builder();
         duration_zero.idle(0.0, &[0]);
 
-        assert!(
+        assert_eq!(
             zero_rate
                 .apply_noise_on_start(&duration_one.build())
                 .unwrap()
                 .quantum_ops()
-                .unwrap()
-                .is_empty()
+                .unwrap(),
+            []
         );
-        assert!(
+        assert_eq!(
             nonzero_rate
                 .apply_noise_on_start(&duration_zero.build())
                 .unwrap()
                 .quantum_ops()
-                .unwrap()
-                .is_empty()
+                .unwrap(),
+            []
         );
     }
 
@@ -3763,21 +3763,21 @@ mod tests {
         let mut duration_zero = ByteMessage::quantum_operations_builder();
         duration_zero.idle(0.0, &[0]);
 
-        assert!(
+        assert_eq!(
             zero_rate
                 .apply_noise_on_start(&duration_one.build())
                 .unwrap()
                 .quantum_ops()
-                .unwrap()
-                .is_empty()
+                .unwrap(),
+            []
         );
-        assert!(
+        assert_eq!(
             nonzero_rate
                 .apply_noise_on_start(&duration_zero.build())
                 .unwrap()
                 .quantum_ops()
-                .unwrap()
-                .is_empty()
+                .unwrap(),
+            []
         );
     }
 

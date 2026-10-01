@@ -426,7 +426,10 @@ mod tests {
         let result =
             <FusionBlossomDecoder as Decoder>::decode(&mut decoder, &syndrome.view()).unwrap();
 
-        assert!(!result.observable.is_empty());
+        assert!(
+            !result.observable.is_empty(),
+            "decoder returned no observables"
+        );
         assert!(result.weight >= 0.0);
     }
 
@@ -446,7 +449,10 @@ mod tests {
             .decode_with_erasures(&syndrome.view(), &erasures)
             .unwrap();
 
-        assert!(!result.observable.is_empty());
+        assert!(
+            !result.observable.is_empty(),
+            "decoder returned no observables"
+        );
         assert!(result.weight >= 0.0);
     }
 

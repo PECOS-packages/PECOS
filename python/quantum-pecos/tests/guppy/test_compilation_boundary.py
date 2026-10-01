@@ -95,8 +95,13 @@ def _operation_shape(operation: object) -> tuple:
 
 
 def test_hosted_operations_keep_their_order_through_lowering() -> None:
-    """Barriers and trace metadata stay in place around the gates they bracket,
-    and measurement feedback drives the classical loop exactly once per shot."""
+    """Barriers and qubit-linked trace metadata stay in place around the gates
+    they bracket, and measurement feedback drives the classical loop exactly
+    once per shot.
+
+    Qubit-free trace metadata has no dataflow edge to any gate, so lowering may
+    place it anywhere; the pinned trace records where it lands (after the CX
+    here), not an ordering guarantee."""
     from guppylang.std.builtins import owned, result
     from guppylang.std.quantum import cx
     from pecos import Qis, capture_qis_operation_trace

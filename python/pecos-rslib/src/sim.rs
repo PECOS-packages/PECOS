@@ -38,29 +38,6 @@ fn unwrap_engine_builder_proxy(py: Python, engine_builder: Py<PyAny>) -> PyResul
     }
 }
 
-/// Construct the default QIS engine.
-fn default_qis_engine() -> PyResult<pecos_qis::QisEngineBuilder> {
-    // Get Selene simple runtime
-    log::debug!("Getting Selene simple runtime...");
-    let selene_runtime = selene_simple_runtime().map_err(|e| {
-        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-            "Selene simple runtime not available: {e}\n\
-                    \n\
-                    The default runtime for QIS programs is Selene simple.\n\
-                    Please ensure Selene is built:\n\
-                    cd ../selene && cargo build --release"
-        ))
-    })?;
-
-    log::debug!("Creating QIS engine with Helios interface...");
-    let helios_builder = helios_interface_builder();
-    let builder = pecos_qis::qis_engine();
-    let builder = builder.runtime(selene_runtime);
-    let builder = builder.interface(helios_builder);
-
-    Ok(builder)
-}
-
 /// Check if a Python object is a Guppy function
 fn is_guppy_function(py: Python, obj: &Py<PyAny>) -> PyResult<bool> {
     // Check if guppylang module is available
@@ -134,25 +111,12 @@ pub fn sim(py: Python, program: Py<PyAny>) -> PyResult<PySimBuilder> {
             }),
         })
     } else if let Ok(qis_prog) = program.extract::<PyQis>(py) {
-        // Use the QIS control engine with Selene simple runtime (default)
+        // Defer the default engine until execution so classical() can supply one.
         log::debug!("Extracted Qis successfully");
 
-        let builder = default_qis_engine()?;
-
-        log::debug!("Loading QIS program into engine...");
-        let engine_builder =
-            builder
-                .try_program(qis_prog.inner.clone())
-                .map_err(|e: PecosError| {
-                    log::error!("Failed to load QIS program: {e}");
-                    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                        "Failed to load QIS program with Selene runtime and Helios interface: {e}"
-                    ))
-                })?;
-        log::info!("QIS program loaded successfully");
         Ok(PySimBuilder {
             inner: SimBuilderInner::QisControl(PyQisControlSimBuilder {
-                engine_builder: Arc::new(Mutex::new(Some(engine_builder))),
+                engine_builder: Arc::new(Mutex::new(None)),
                 seed: None,
                 workers: None,
                 shots: None,
@@ -160,10 +124,7 @@ pub fn sim(py: Python, program: Py<PyAny>) -> PyResult<PySimBuilder> {
                 noise_builder: None,
                 explicit_num_qubits: None,
                 keep_intermediate_files: false,
-                qis_source: match &qis_prog.inner.content {
-                    pecos_programs::QisContent::Ir(ir) => Some(ir.clone()),
-                    pecos_programs::QisContent::Bitcode(_) => None,
-                },
+                qis_program: Some(qis_prog.inner),
                 operation_trace_dir: None,
             }),
         })
@@ -265,17 +226,15 @@ impl PySimBuilder {
                 SimBuilderInner::QisControl(sim_builder) => {
                     if let Ok(qis_engine) = engine_builder.extract::<PyQisEngineBuilder>(py) {
                         // A fresh builder replaces the program-loaded one:
-                        // re-attach the stored QIS source, or the built
+                        // re-attach the stored QIS program, or the built
                         // engine has no program to run.
                         let mut inner = qis_engine.inner;
-                        if let Some(ref source) = sim_builder.qis_source {
-                            inner = inner
-                                .try_program(pecos_programs::Qis::from_string(source))
-                                .map_err(|e| {
-                                    PyRuntimeError::new_err(format!(
-                                        "Failed to re-attach QIS program to the new engine builder: {e}"
-                                    ))
-                                })?;
+                        if let Some(program) = &sim_builder.qis_program {
+                            inner = inner.try_program(program.clone()).map_err(|e| {
+                                PyRuntimeError::new_err(format!(
+                                    "Failed to re-attach QIS program to the new engine builder: {e}"
+                                ))
+                            })?;
                         }
                         sim_builder.engine_builder = Arc::new(Mutex::new(Some(inner)));
                         Ok(PySimBuilder {
@@ -572,11 +531,7 @@ impl PySimBuilder {
 
         match &self.inner {
             SimBuilderInner::QisControl(builder) => {
-                let builder_lock = builder.engine_builder.lock().expect("lock poisoned");
-                let engine_builder = builder_lock
-                    .as_ref()
-                    .cloned()
-                    .ok_or_else(|| PyRuntimeError::new_err("Builder already consumed"))?;
+                let engine_builder = builder.engine_builder()?;
                 let collector: pecos_qis::OperationTraceStore = Arc::new(Mutex::new(Vec::new()));
                 let engine_builder =
                     engine_builder.trace_operations_in_memory_to(collector.clone());
@@ -753,12 +708,7 @@ impl PySimBuilder {
             SimBuilderInner::Qasm(builder) => run_qasm_via_facade(builder, shots),
             SimBuilderInner::QisControl(builder) => {
                 // Implementation for QIS Engine
-                let builder_lock = builder.engine_builder.lock().expect("lock poisoned");
-                let engine_builder = builder_lock
-                    .as_ref()
-                    .cloned()
-                    .ok_or_else(|| PyRuntimeError::new_err("Builder already consumed"))?;
-                drop(builder_lock);
+                let engine_builder = builder.engine_builder()?;
                 let engine_builder = if let Some(ref trace_dir) = builder.operation_trace_dir {
                     engine_builder.trace_operations_to(trace_dir)
                 } else {
@@ -1177,11 +1127,7 @@ impl PySimBuilder {
                 }
                 SimBuilderInner::QisControl(builder) => {
                     // Implementation for QIS Engine build()
-                    let builder_lock = builder.engine_builder.lock().expect("lock poisoned");
-                    let engine_builder = builder_lock
-                        .as_ref()
-                        .cloned()
-                        .ok_or_else(|| PyRuntimeError::new_err("Builder already consumed"))?;
+                    let engine_builder = builder.engine_builder()?;
                     let engine_builder = if let Some(ref trace_dir) = builder.operation_trace_dir {
                         engine_builder.trace_operations_to(trace_dir)
                     } else {
@@ -1330,7 +1276,7 @@ impl PySimBuilder {
                         // QIS program is the only intermediate Rust holds; a
                         // caller that wants the envelope reads it from the
                         // Python program wrapper (`Guppy.hugr_bytes`).
-                        if let Some(ref qis_source) = builder.qis_source {
+                        if let Some(qis_source) = builder.qis_source() {
                             let qis_file = temp_path.join("program.ll");
                             std::fs::write(&qis_file, qis_source).map_err(|e| {
                                 PyRuntimeError::new_err(format!(
@@ -1550,7 +1496,7 @@ impl Clone for SimBuilderInner {
                     noise_builder: builder.noise_builder.as_ref().map(|obj| obj.clone_ref(py)),
                     explicit_num_qubits: builder.explicit_num_qubits,
                     keep_intermediate_files: builder.keep_intermediate_files,
-                    qis_source: builder.qis_source.clone(),
+                    qis_program: builder.qis_program.clone(),
                     operation_trace_dir: builder.operation_trace_dir.clone(),
                 })
             }

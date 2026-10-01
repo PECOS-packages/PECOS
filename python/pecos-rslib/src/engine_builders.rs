@@ -254,7 +254,7 @@ impl PyQisEngineBuilder {
                 noise_builder: None,
                 explicit_num_qubits: None,
                 keep_intermediate_files: false,
-                qis_source: None,
+                qis_program: None,
                 operation_trace_dir: None,
             }),
         })
@@ -419,10 +419,70 @@ pub struct PyQisControlSimBuilder {
     pub(crate) noise_builder: Option<Py<PyAny>>,
     pub(crate) explicit_num_qubits: Option<usize>,
     pub(crate) keep_intermediate_files: bool,
-    /// The QIS IR source, kept so classical() can re-attach the program
-    /// when a fresh engine builder replaces the program-loaded one.
-    pub(crate) qis_source: Option<String>,
+    /// The QIS program, retained for lazy default construction and re-attachment.
+    pub(crate) qis_program: Option<Qis>,
     pub(crate) operation_trace_dir: Option<String>,
+}
+
+/// Construct the default QIS engine.
+fn default_qis_engine() -> PyResult<pecos_qis::QisEngineBuilder> {
+    // Get Selene simple runtime
+    log::debug!("Getting Selene simple runtime...");
+    let selene_runtime = selene_simple_runtime().map_err(|e| {
+        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+            "Selene simple runtime not available: {e}\n\
+                    \n\
+                    The default runtime for QIS programs is Selene simple.\n\
+                    Please ensure Selene is built:\n\
+                    cd ../selene && cargo build --release"
+        ))
+    })?;
+
+    log::debug!("Creating QIS engine with Helios interface...");
+    let helios_builder = helios_interface_builder();
+    let builder = pecos_qis::qis_engine();
+    let builder = builder.runtime(selene_runtime);
+    let builder = builder.interface(helios_builder);
+
+    Ok(builder)
+}
+
+impl PyQisControlSimBuilder {
+    /// Clone the supplied engine, or initialize and cache the default first.
+    /// Execution uses a clone so repeated runs do not consume the builder.
+    pub(crate) fn engine_builder(&self) -> PyResult<RustQisEngineBuilder> {
+        if let Some(builder) = self.engine_builder.lock().expect("lock poisoned").as_ref() {
+            return Ok(builder.clone());
+        }
+
+        // Build outside the lock so a failure while loading cannot poison it.
+        let program = self
+            .qis_program
+            .as_ref()
+            .ok_or_else(|| PyRuntimeError::new_err("No QIS program or engine is configured"))?;
+        let builder = default_qis_engine()?
+            .try_program(program.clone())
+            .map_err(|e| {
+                log::error!("Failed to load QIS program: {e}");
+                PyRuntimeError::new_err(format!(
+                    "Failed to load QIS program with Selene runtime and Helios interface: {e}"
+                ))
+            })?;
+        log::info!("QIS program loaded successfully");
+        Ok(self
+            .engine_builder
+            .lock()
+            .expect("lock poisoned")
+            .get_or_insert(builder)
+            .clone())
+    }
+
+    pub(crate) fn qis_source(&self) -> Option<&str> {
+        match &self.qis_program.as_ref()?.content {
+            pecos_programs::QisContent::Ir(ir) => Some(ir),
+            pecos_programs::QisContent::Bitcode(_) => None,
+        }
+    }
 }
 
 /// Python wrapper for built QIS control simulation

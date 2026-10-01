@@ -34,6 +34,10 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 - `keep_intermediate_files` now keeps `program.ll`, the QIS source, instead of
   `program.hugr`.
 - QIS simulation builders can now be run more than once.
+- `sim(Qis(...))` no longer resolves the default Selene runtime or loads the
+  program when `sim()` is called. Both happen at the first `run()`, `build()`,
+  or `capture_operation_trace()` unless `.classical()` supplies an engine, so a
+  missing runtime or an invalid QIS program now raises from that call.
 - `.foreign_object()` on QIS programs, including lowered Guppy/HUGR programs,
   is refused pending issue #854.
 - `LogicalCircuitBuilder.build_algorithm_descriptor(buffer=0)` now rejects a

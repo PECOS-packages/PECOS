@@ -319,6 +319,9 @@ impl BitInt {
     /// binary operation or comparison. Results retain the left operand's width.
     fn normalized_pair(&self, rhs: &Self) -> (BitUInt, BitUInt) {
         let width = self.inner.size().max(rhs.inner.size());
+        if width == self.inner.size() && width == rhs.inner.size() {
+            return (self.inner.clone(), rhs.inner.clone());
+        }
         (
             self.inner.resize_sign_extend(width),
             rhs.inner.resize_sign_extend(width),
@@ -495,7 +498,6 @@ impl Div for &BitInt {
 
     /// Signed division.
     fn div(self, rhs: Self) -> BitInt {
-        assert!(!rhs.is_zero(), "Division by zero");
         let (lhs, rhs) = self.normalized_pair(rhs);
         self.wrap_result(signed_div_rem(&lhs, &rhs, false))
     }
@@ -506,7 +508,6 @@ impl Rem for &BitInt {
 
     /// Signed remainder.
     fn rem(self, rhs: Self) -> BitInt {
-        assert!(!rhs.is_zero(), "Remainder by zero");
         let (lhs, rhs) = self.normalized_pair(rhs);
         self.wrap_result(signed_div_rem(&lhs, &rhs, true))
     }

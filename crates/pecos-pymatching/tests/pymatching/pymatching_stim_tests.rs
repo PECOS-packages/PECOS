@@ -832,7 +832,7 @@ fn test_dem_advanced_decoding_integration() {
         match path_result {
             Ok(path) => {
                 println!("Shortest path from 0 to 3: {path:?}");
-                assert!(!path.is_empty());
+                assert!(!path.is_empty(), "shortest path must contain its endpoints");
                 assert_eq!(path[0], 0);
                 assert_eq!(path[path.len() - 1], 3);
             }
@@ -860,7 +860,7 @@ fn test_dem_advanced_decoding_integration() {
         match pairs_result {
             Ok(pairs) => {
                 println!("Matched pairs: {pairs:?}");
-                assert!(!pairs.is_empty());
+                assert!(!pairs.is_empty(), "decoder returned no matched pairs");
             }
             Err(e) => {
                 println!("Matched pairs failed: {e}");

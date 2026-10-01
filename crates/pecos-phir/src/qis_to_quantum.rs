@@ -535,7 +535,7 @@ mod tests {
 
         convert_qis_to_quantum(&mut module).unwrap();
         // read_future should be elided
-        assert!(module.body.blocks[0].operations.is_empty());
+        assert_eq!(module.body.blocks[0].operations, []);
     }
 
     #[test]
@@ -778,7 +778,7 @@ entry:
         }]);
 
         convert_qis_to_quantum(&mut module).unwrap();
-        assert!(module.body.blocks[0].operations.is_empty());
+        assert_eq!(module.body.blocks[0].operations, []);
     }
 
     // ──────────────────────────────────────────────────────────────────

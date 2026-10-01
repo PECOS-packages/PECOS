@@ -321,7 +321,7 @@ mod tests {
 
         assert_eq!(error.raw_os_error(), Some(13), "the OS error is preserved");
         assert_eq!(attempts.runs, 1, "a non-busy error is not retried");
-        assert!(attempts.sleeps().is_empty());
+        assert_eq!(attempts.sleeps(), []);
     }
 
     /// Exhaustion says which file and how many attempts, so a build log

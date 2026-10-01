@@ -168,7 +168,7 @@ fn single_qubit_gate_mechanisms_compose_to_the_three_pauli_channel() {
     let dem = build_synthetic_dem(&influence, NoiseConfig::new(p1, 0.0, 0.0, 0.0));
     let mechanisms = gate_signature_mechanisms(&dem);
     assert_eq!(mechanisms.len(), 3);
-    assert!(dem.idle_noise_residuals().is_empty());
+    assert_eq!(dem.idle_noise_residuals(), []);
     let dem_distribution = compose_independent_mechanisms(
         mechanisms
             .iter()
@@ -209,7 +209,7 @@ fn two_qubit_gate_mechanisms_compose_to_the_fifteen_pauli_channel() {
     let dem = build_synthetic_dem(&influence, NoiseConfig::new(0.0, p2, 0.0, 0.0));
     let mechanisms = gate_signature_mechanisms(&dem);
     assert_eq!(mechanisms.len(), 15);
-    assert!(dem.idle_noise_residuals().is_empty());
+    assert_eq!(dem.idle_noise_residuals(), []);
     let dem_distribution = compose_independent_mechanisms(
         mechanisms
             .iter()
@@ -237,7 +237,7 @@ fn equal_gate_signatures_sum_before_independent_merging() {
         mechanisms[0].1.to_bits(),
         combine_probabilities(0.2, 0.3).to_bits()
     );
-    assert!(dem.idle_noise_residuals().is_empty());
+    assert_eq!(dem.idle_noise_residuals(), []);
 }
 
 #[test]
@@ -248,7 +248,7 @@ fn vanishing_gate_signatures_drop_without_changing_survivors() {
 
     assert_eq!(mechanisms.len(), 1);
     assert!((mechanisms[0].1 - 0.7).abs() < 1e-15);
-    assert!(dem.idle_noise_residuals().is_empty());
+    assert_eq!(dem.idle_noise_residuals(), []);
 }
 
 #[test]
@@ -282,7 +282,7 @@ fn prep_and_measurement_channels_remain_single_exact_mechanisms() {
                 .to_bits(),
             expected.to_bits()
         );
-        assert!(model.idle_noise_residuals.is_empty());
+        assert_eq!(model.idle_noise_residuals, []);
 
         let dem = build_synthetic_dem(&influence, noise);
         let records = dem.contribution_render_records();
@@ -291,7 +291,7 @@ fn prep_and_measurement_channels_remain_single_exact_mechanisms() {
             records[0].contribution.probability.to_bits(),
             expected.to_bits()
         );
-        assert!(dem.idle_noise_residuals().is_empty());
+        assert_eq!(dem.idle_noise_residuals(), []);
     }
 }
 

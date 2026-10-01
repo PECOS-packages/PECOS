@@ -103,13 +103,14 @@ fn measurement_free_prefix_splits_preserve_seeded_results_in_this_profile() {
             let mut split = QuantumSystem::new(Box::new(model), Box::new(StateVecEngine::new(1)));
             let source = "PIXXM";
             let expected = whole.process(program(source)).unwrap().outcomes().unwrap();
+            let outcomes = split
+                .process(program(&source[..boundary]))
+                .unwrap()
+                .outcomes()
+                .unwrap();
             assert!(
-                split
-                    .process(program(&source[..boundary]))
-                    .unwrap()
-                    .outcomes()
-                    .unwrap()
-                    .is_empty()
+                outcomes.is_empty(),
+                "expected no measurement outcomes, got {outcomes:?}"
             );
             let actual = split
                 .process(program(&source[boundary..]))

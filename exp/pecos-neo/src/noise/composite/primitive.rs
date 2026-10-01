@@ -1806,7 +1806,7 @@ mod tests {
         assert!(response.skips_gate());
         // X gate should NOT be injected because we stopped early
         let gates = response.collect_gates();
-        assert!(gates.is_empty());
+        assert_eq!(gates, []);
     }
 
     #[test]

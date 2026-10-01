@@ -297,7 +297,10 @@ fn test_empty_detector_definitions() {
     let mut rng = PecosRng::seed_from_u64(42);
     let (det_events, _) = sampler.sample(&mut rng);
 
-    assert!(det_events.is_empty());
+    assert!(
+        det_events.is_empty(),
+        "expected no detection events, got {det_events:?}"
+    );
 }
 
 #[test]

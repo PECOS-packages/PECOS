@@ -6189,7 +6189,7 @@ mod tests {
         let ps = PauliString::identity();
         let op = UnitaryRep::Pauli(ps);
         let gates = op.decompose();
-        assert!(gates.is_empty());
+        assert_eq!(gates, []);
     }
 
     #[test]

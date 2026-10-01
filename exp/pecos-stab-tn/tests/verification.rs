@@ -2879,7 +2879,11 @@ fn test_prob_bitstrings_randomized_matches_singular_bit_for_bit() {
     assert_eq!(batched[3..], [1.0; 2]);
 
     let empty: Vec<Vec<bool>> = Vec::new();
-    assert!(endpoint.prob_bitstrings(&empty).is_empty());
+    let probabilities = endpoint.prob_bitstrings(&empty);
+    assert!(
+        probabilities.is_empty(),
+        "expected no bitstring probabilities, got {probabilities:?}"
+    );
 }
 
 fn apply_weak_branch_readout_fixture(stn: &mut StabMps) {

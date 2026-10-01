@@ -166,18 +166,19 @@ idle and local factories retain their distinct profile classes.
 
 ## Shared scheduled admission and execution limits
 
-Every scheduled profile admits at most 4096 gates per batch. A qubit cannot be used
-again after a measurement within that batch, including repeated measurement.
-This prevents later leakage bookkeeping from changing an earlier readout. Put
-such operations in their original distinct native batches; adapters cannot split
-or retime batches to force admission. This restriction applies even when all rates
-are zero, to both original and normalized v4 gates and to idle-only profiles.
+Every scheduled profile admits at most 4096 gates per batch. Same-qubit
+measurement, reset and reuse (including repeated measurement) execute in the
+runtime's original operation order. Each measurement captures the leakage state
+at its own position, so a later reset cannot change an earlier readout. This
+applies to both original v3 and normalized v4 gates, including idle-only profiles.
+Adapters cannot split or retime native batches.
 
-This tightens idle-only admission: older versions accepted measurement followed
-by reset in one batch, allowing the reset's leakage bookkeeping to corrupt the
-earlier readout. Such inputs now fail explicitly before quantum execution.
-Same-qubit repeated measurements within a batch also reject conservatively;
-measurements on distinct qubits and measurement feedback across batches remain supported.
+Readout faults retain the general model's batch-level sampling order: gate and
+idle faults are sampled first, then readout faults in measurement order. Capturing
+leakage consumes no randomness. This is a bounded capability of the admitted
+scheduled profiles, which exclude measurement-conditioned crosstalk, emission and
+seepage; it does not change the legacy general controller's semantics. Measurement
+results still return to the live runtime to resume program feedback.
 
 Each prepared batch retains one noise-controller lifecycle. Inserted idle commands
 are included in an expansion budget of sixteen output commands per prepared

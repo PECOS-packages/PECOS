@@ -344,6 +344,11 @@ pub struct GeneralNoiseModel {
     /// as crosstalk.
     measured_qubits: Vec<(usize, GateType)>,
 
+    // Scheduled profiles have no measurement-conditioned crosstalk continuations.
+    // Capture leakage at each readout before later preparation changes it. Legacy
+    // controllers retain their existing deferred measurement semantics.
+    scheduled_measurement_leakage: Option<Vec<bool>>,
+
     /// Stored outcome builder
     results_builder: ByteMessageBuilder,
 }
@@ -375,6 +380,7 @@ impl ControlEngine for GeneralNoiseModel {
             // collected along the way and reset the results builder.
             let results = self.results_builder.build();
             self.results_builder.reset();
+            self.scheduled_measurement_leakage = None;
             Ok(EngineStage::Complete(results))
         } else {
             // if there are new quantum operations to process.
@@ -433,6 +439,21 @@ impl GeneralNoiseModel {
 
         // Return the noisy operations to QuantumEngine for processing/simulation
         Ok(EngineStage::NeedsProcessing(noisy_gates))
+    }
+
+    /// Only for the closed scheduled profile: no crosstalk, emission or seepage.
+    /// Keeps one batch lifecycle and the existing gate-fault/readout RNG order.
+    pub(crate) fn start_scheduled(
+        &mut self,
+        input: &ByteMessage,
+    ) -> Result<EngineStage<ByteMessage, ByteMessage>, PecosError> {
+        if self.scheduled_measurement_leakage.is_some() || !self.measured_qubits.is_empty() {
+            return Err(PecosError::Processing(
+                "unfinished scheduled measurements".into(),
+            ));
+        }
+        self.scheduled_measurement_leakage = Some(Vec::new());
+        self.start_with_boundaries(input, None)
     }
 
     pub(crate) fn start_runtime_frame(
@@ -633,6 +654,13 @@ impl GeneralNoiseModel {
                 gate.gate_type,
                 GateType::MZ | GateType::MeasureLeaked | GateType::MPZ
             ) {
+                if let Some(leakage) = &mut self.scheduled_measurement_leakage {
+                    leakage.extend(
+                        gate.qubits
+                            .iter()
+                            .map(|q| self.leaked_qubits.contains(&usize::from(*q))),
+                    );
+                }
                 self.measured_qubits.extend(
                     gate.qubits
                         .iter()
@@ -813,8 +841,22 @@ impl GeneralNoiseModel {
             )));
         }
 
+        if self
+            .scheduled_measurement_leakage
+            .as_ref()
+            .is_some_and(|states| states.len() != self.measured_qubits.len())
+        {
+            return Err(PecosError::Processing(
+                "scheduled measurement snapshot mismatch".into(),
+            ));
+        }
+
         for (idx, outcome) in measurement_outcomes.into_iter().enumerate() {
             let (qubit, gate_type) = self.measured_qubits[idx];
+            let leaked_at_measurement = self
+                .scheduled_measurement_leakage
+                .as_ref()
+                .map_or_else(|| self.is_leaked(qubit), |states| states[idx]);
             match gate_type {
                 GateType::MeasCrosstalkGlobalPayload | GateType::MeasCrosstalkLocalPayload => {
                     // It is not a measurement destined for the user, but one we
@@ -833,7 +875,7 @@ impl GeneralNoiseModel {
                 }
                 GateType::MeasureLeaked => {
                     let mut val = outcome as usize;
-                    if self.is_leaked(qubit) {
+                    if leaked_at_measurement {
                         trace!("Qubit {qubit} is leaked, MeasureLeaked returns 2");
                         // For MeasureLeaked, return 2 for leaked qubits
                         val = 2;
@@ -856,7 +898,7 @@ impl GeneralNoiseModel {
                     // Apply biased measurement noise to each outcome
                     // Check if we have leaked qubits that were measured
                     let mut val = outcome as usize;
-                    if self.is_leaked(qubit) {
+                    if leaked_at_measurement {
                         trace!("Qubit {qubit} is leaked, Measure returns 1");
                         // For regular Measure, force the measurement outcome to be 1
                         val = 1;
@@ -1509,6 +1551,7 @@ impl GeneralNoiseModel {
         self.leaked_qubits.clear();
         // Clear measured qubits
         self.measured_qubits.clear();
+        self.scheduled_measurement_leakage = None;
         // Clear prepared qubits. This set is the crosstalk victim pool and is scoped
         // to one program run; carrying it across resets would let a qubit prepared in
         // an earlier shot be a crosstalk victim in a later shot that never prepared it,
@@ -1652,6 +1695,44 @@ mod tests {
             (actual - expected).abs() < f64::EPSILON,
             "expected {expected}, got {actual}"
         );
+    }
+
+    #[test]
+    fn scheduled_measurement_snapshots_clear_on_completion_and_reset() {
+        let mut noise = GeneralNoiseModel::builder().build();
+        let gates = ByteMessage::quantum_operations_builder()
+            .add_gate_commands(&[Gate::measure_leaked(&[0]), Gate::pz(&[0]), Gate::mz(&[0])])
+            .build();
+        noise.mark_as_leaked(0);
+        noise.start_scheduled(&gates).unwrap();
+        // Wrong result count leaves an abandoned continuation; cloning must not
+        // accidentally permit another batch to overwrite its snapshots.
+        let wrong = ByteMessage::outcomes_builder().add_outcomes(&[0]).build();
+        assert!(noise.continue_processing(wrong).is_err());
+        let mut cloned = noise.clone();
+        for model in [&mut noise, &mut cloned] {
+            assert!(model.start_scheduled(&gates).is_err());
+            model.reset().unwrap();
+            model.start_scheduled(&gates).unwrap();
+            let reply = ByteMessage::outcomes_builder()
+                .add_outcomes(&[0, 0])
+                .build();
+            let EngineStage::Complete(outcomes) = model.continue_processing(reply).unwrap() else {
+                panic!("scheduled readout must complete without another simulator call");
+            };
+            assert_eq!(outcomes.outcomes().unwrap(), vec![0, 0]);
+            assert!(model.scheduled_measurement_leakage.is_none());
+            // A gate-only batch must also close snapshot mode.
+            let prep = ByteMessage::quantum_operations_builder().pz(&[0]).build();
+            model.start_scheduled(&prep).unwrap();
+            assert!(matches!(
+                model
+                    .continue_processing(ByteMessage::create_empty())
+                    .unwrap(),
+                EngineStage::Complete(_)
+            ));
+            assert!(model.scheduled_measurement_leakage.is_none());
+        }
     }
 
     #[test]

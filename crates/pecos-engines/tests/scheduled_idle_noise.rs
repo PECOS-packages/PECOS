@@ -472,29 +472,34 @@ fn changing_rates_without_models_retains_existing_channels() {
 }
 
 #[test]
-fn idle_readout_followed_by_reset_rejects_before_losing_leakage() {
+fn same_batch_readouts_capture_leakage_before_each_reset() {
     for events in [false, true] {
         for (measurement, expected) in [(Gate::mz(&[0]), 1), (Gate::measure_leaked(&[0]), 2)] {
             let mut sim = system(leakage(false), events, 1);
-            let invalid = [batch(
+            let batches = [batch(
                 0,
                 1_000_000_000,
                 0,
-                vec![measurement.clone(), Gate::pz(&[0])],
+                vec![
+                    measurement.clone(),
+                    measurement.clone(),
+                    Gate::pz(&[0]),
+                    measurement.clone(),
+                ],
             )];
-            let rng = sim.controller().rng().clone().next_u64();
-            assert!(sim.process(message(&invalid, events)).is_err());
-            assert_eq!(sim.controller().rng().clone().next_u64(), rng);
-            // Rejection leaves the complete original input unexecuted and the
-            // timeline unchanged, including on the v4 source-admission route.
+            assert_eq!(run(&mut sim, &batches, events), vec![expected, expected, 0]);
+            // Completion clears snapshots; leakage cleared by PZ stays cleared.
             assert_eq!(
                 run(
                     &mut sim,
-                    &[batch(0, 1_000_000_000, 0, vec![measurement])],
+                    &[batch(1, 1_000_000_000, 0, vec![measurement.clone()])],
                     events
                 ),
-                vec![expected]
+                vec![0]
             );
+            sim.reset().unwrap();
+            sim.begin_shot(context(1)).unwrap();
+            assert_eq!(run(&mut sim, &batches, events), vec![expected, expected, 0]);
         }
     }
 }

@@ -2,10 +2,10 @@
 use crate::dag_circuit_bindings::PyGate;
 use pecos_core::errors::PecosError;
 use pecos_engines::scheduled_events::{
-    MAX_BATCH_OPERATIONS, ScheduledBatchAdapter, ScheduledEventBatch, ScheduledEventIdleNoise,
+    MAX_BATCH_OPERATIONS, ScheduledBatchAdapter, ScheduledEventBatch, ScheduledEventNoise,
     ScheduledEventOp, ScheduledGateBuffer,
 };
-use pecos_engines::scheduled_frame::{ScheduledIdleNoise, ScheduledIdleZ};
+use pecos_engines::scheduled_frame::{ScheduledIdleZ, ScheduledNoise};
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyList};
@@ -156,7 +156,7 @@ impl ScheduledBatchAdapter for PythonAdapter {
 #[pyclass(name = "ScheduledEventIdleZ", from_py_object)]
 #[derive(Clone)]
 pub struct PyScheduledEventIdleZ {
-    pub(crate) inner: ScheduledEventIdleNoise,
+    pub(crate) inner: ScheduledEventNoise,
 }
 /// Factory receives (run, worker, shot), returns a fresh validate/translate object.
 #[pyfunction]
@@ -179,7 +179,7 @@ pub fn scheduled_event_idle_z(
 #[pyclass(name = "ScheduledEventIdleNoise", from_py_object)]
 #[derive(Clone)]
 pub struct PyScheduledEventIdleNoise {
-    pub(crate) inner: ScheduledEventIdleNoise,
+    pub(crate) inner: ScheduledEventNoise,
 }
 /// Attach a per-shot batch adapter to a checked scheduled idle profile.
 #[pyfunction]
@@ -196,8 +196,10 @@ pub fn scheduled_event_idle_noise(
 #[pyclass(name = "ScheduledEventLocalNoise", from_py_object)]
 #[derive(Clone)]
 pub struct PyScheduledEventLocalNoise {
-    pub(crate) inner: ScheduledEventIdleNoise,
+    pub(crate) inner: ScheduledEventNoise,
 }
+/// Attach a per-shot batch adapter to a checked scheduled local fault profile.
+/// Factory receives (run, worker, shot), returning a fresh validate/translate object.
 #[pyfunction]
 pub fn scheduled_event_local_noise(
     profile: crate::engine_builders::PyScheduledLocalNoise,
@@ -209,14 +211,14 @@ pub fn scheduled_event_local_noise(
     })
 }
 fn event_profile(
-    profile: ScheduledIdleNoise,
+    profile: ScheduledNoise,
     adapter_factory: Py<PyAny>,
     py: Python<'_>,
-) -> PyResult<ScheduledEventIdleNoise> {
+) -> PyResult<ScheduledEventNoise> {
     if !adapter_factory.bind(py).is_callable() {
         return Err(PyTypeError::new_err("adapter_factory must be callable"));
     }
-    Ok(ScheduledEventIdleNoise::new(profile, move |context| {
+    Ok(ScheduledEventNoise::new(profile, move |context| {
         let _scope = CallbackScope::enter();
         Python::attach(|py| -> PyResult<Box<dyn ScheduledBatchAdapter>> {
             let object =
@@ -236,7 +238,7 @@ fn event_profile(
 pub(crate) fn extract_event_noise(
     noise: &Py<PyAny>,
     py: Python<'_>,
-) -> Option<ScheduledEventIdleNoise> {
+) -> Option<ScheduledEventNoise> {
     if let Ok(profile) = noise.extract::<PyScheduledEventLocalNoise>(py) {
         Some(profile.inner)
     } else if let Ok(profile) = noise.extract::<PyScheduledEventIdleNoise>(py) {

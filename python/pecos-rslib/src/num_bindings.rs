@@ -969,13 +969,28 @@ fn seed(seed_value: u64) {
     crate::prelude::random::seed(seed_value);
 }
 
-/// Generate a random sample from a given array.
+// Reserve before filling buffers so allocation failure becomes a Python exception.
+fn choice_buffer<T>(len: usize) -> PyResult<Vec<T>> {
+    let mut items = Vec::new();
+    items
+        .try_reserve_exact(len)
+        .map_err(|_| pyo3::exceptions::PyMemoryError::new_err(()))?;
+    Ok(items)
+}
+
+/// Generate a uniform random sample from a population.
 ///
-/// This is a drop-in replacement for `numpy.random.choice(a, size, replace=True)`.
+/// `choice(a, size=None, replace=True)` samples uniformly from a population.
+/// Array-like objects and sequences supply their elements. Otherwise, objects
+/// implementing the Python integer protocol (`__index__`) supply the bound `a`
+/// of the population `0..a`. Array-like and sequence conversions take precedence.
+/// Only a single sample count is supported, and probability weights are not supported.
+/// Unlike NumPy, integer populations are materialized in memory, so very large
+/// populations can raise `MemoryError`. Empty populations are rejected even for size zero.
 ///
 /// Args:
-///     a: list | ndarray - Array to sample from
-///     size: Optional[int] - Number of samples to draw. If None, returns a single sample.
+///     a: Array-like object, sequence, or integer protocol object - Population to sample from
+///     size: Optional[SupportsIndex] - Number of samples to draw. If None, returns a single sample.
 ///     replace: bool - Whether to sample with replacement (default: True)
 ///
 /// Returns:
@@ -1006,35 +1021,65 @@ fn choice(py: Python<'_>, a: Py<PyAny>, size: Option<usize>, replace: bool) -> P
         // First try to handle Array objects
         if let Ok(arr) = obj.cast::<crate::pecos_array::Array>() {
             let len = arr.len()?;
-            let mut items = Vec::with_capacity(len);
+            let mut items = choice_buffer(len)?;
             for i in 0..len {
                 items.push(arr.get_item(i)?.unbind());
             }
             return Ok::<Vec<Py<PyAny>>, PyErr>(items);
         }
 
-        // Next try to handle numpy arrays by converting to list
+        // Next try array-like objects with a tolist method
         if let Ok(to_list_method) = obj.getattr("tolist")
             && let Ok(list_obj) = to_list_method.call0()
+            && let Ok(seq) = list_obj.cast::<pyo3::types::PySequence>()
         {
-            let seq = list_obj.cast::<pyo3::types::PySequence>()?;
             let len = seq.len()?;
-            let mut items = Vec::with_capacity(len);
+            let mut items = choice_buffer(len)?;
             for i in 0..len {
                 items.push(seq.get_item(i)?.unbind());
             }
             return Ok::<Vec<Py<PyAny>>, PyErr>(items);
         }
 
-        // Fall back to treating as sequence
-        let seq = obj.cast::<pyo3::types::PySequence>()?;
-        let len = seq.len()?;
-
-        let mut items = Vec::with_capacity(len);
-        for i in 0..len {
-            items.push(seq.get_item(i)?.unbind());
+        // Preserve every previously successful conversion on its original branch.
+        // Trying the integer protocol last keeps both samples and the RNG stream
+        // unchanged for objects that also support array-like or sequence protocols.
+        if let Ok(seq) = obj.cast::<pyo3::types::PySequence>() {
+            let len = seq.len()?;
+            let mut items = choice_buffer(len)?;
+            for i in 0..len {
+                items.push(seq.get_item(i)?.unbind());
+            }
+            return Ok::<Vec<Py<PyAny>>, PyErr>(items);
         }
 
+        if obj.is_instance_of::<pyo3::types::PyFloat>() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "a must be a sequence or an integer",
+            ));
+        }
+
+        // SAFETY: PyNumber_Index returns an owned reference or null with a Python
+        // exception set. Keep exceptions from the user's __index__ unchanged.
+        let index =
+            unsafe { Bound::from_owned_ptr_or_err(py, pyo3::ffi::PyNumber_Index(obj.as_ptr()))? };
+        let stop = index.extract::<i64>().map_err(|err| {
+            if err.is_instance_of::<pyo3::exceptions::PyOverflowError>(py) {
+                pyo3::exceptions::PyValueError::new_err("population is out of bounds for int64")
+            } else {
+                err
+            }
+        })?;
+        let len = usize::try_from(stop.max(0))
+            .map_err(|_| pyo3::exceptions::PyMemoryError::new_err(()))?;
+        let mut items = choice_buffer(len)?;
+        for i in 0..stop {
+            // SAFETY: PyLong_FromLongLong returns an owned reference or null with
+            // MemoryError set. The fallible constructor propagates that exception.
+            let item =
+                unsafe { Bound::from_owned_ptr_or_err(py, pyo3::ffi::PyLong_FromLongLong(i))? };
+            items.push(item.unbind());
+        }
         Ok::<Vec<Py<PyAny>>, PyErr>(items)
     })?;
 
@@ -1058,14 +1103,19 @@ fn choice(py: Python<'_>, a: Py<PyAny>, size: Option<usize>, replace: bool) -> P
 
     // Optimize by sampling indices instead of cloning Python objects
     // This avoids expensive Python::attach() and clone_ref() calls
-    let indices: Vec<usize> = (0..array.len()).collect();
+    let mut indices = choice_buffer(array.len())?;
+    indices.extend(0..array.len());
 
     if let Some(n) = size {
         // Sample indices instead of objects
-        let sampled_indices = crate::prelude::random::choice(&indices, n, replace);
+        let sampled_indices = crate::prelude::random::try_choice(&indices, n, replace)
+            .map_err(|_| pyo3::exceptions::PyMemoryError::new_err(()))?;
 
         // Build result list by indexing array once per sample
-        let py_list = pyo3::types::PyList::empty(py);
+        // SAFETY: PyList_New returns an owned reference or null with MemoryError
+        // set; unlike PyList::empty, this constructor checks allocation failure.
+        let py_list = unsafe { Bound::from_owned_ptr_or_err(py, pyo3::ffi::PyList_New(0))? }
+            .cast_into::<pyo3::types::PyList>()?;
         for &idx in &sampled_indices {
             py_list.append(&array[idx])?;
         }

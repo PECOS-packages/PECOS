@@ -663,11 +663,10 @@ class random:
     ) -> int | Array[ScalarI64]: ...
     @staticmethod
     def choice(
-        a: int | Sequence[_T] | Array[Scalar],
-        size: int | tuple[int, ...] | None = None,
+        a: SupportsIndex | Sequence[_T] | Array[Scalar],
+        size: SupportsIndex | None = None,
         replace: bool = True,
-        p: Sequence[float] | Array[Scalar] | None = None,
-    ) -> _T | Array[Scalar]: ...
+    ) -> int | float | complex | _T | Array[Scalar] | list[int | float | complex | _T | Array[Scalar]]: ...
     @staticmethod
     def permutation(x: int | Sequence[_T] | Array[Scalar]) -> Array[Scalar]: ...
     @staticmethod

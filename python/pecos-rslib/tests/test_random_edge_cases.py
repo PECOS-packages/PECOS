@@ -4,10 +4,17 @@ Additional edge case tests for pecos_rslib.num.random.
 Tests for seeding, reproducibility, edge cases, and integration patterns.
 """
 
+from decimal import Decimal
+from fractions import Fraction
+import sys
+import textwrap
+
 import numpy as np
 import pytest
 
 import pecos as pc
+
+pytest_plugins = ("pytester",)
 
 
 class TestEdgeCases:
@@ -243,6 +250,174 @@ class TestNumpyCompatibilityExtended:
         float_items = [1.5, 2.5, 3.5, 4.5]
         float_result = pc.random.choice(float_items, 10)
         assert all(isinstance(x, (float, np.floating)) for x in float_result)
+
+
+@pytest.mark.parametrize("population", [0, -3, False, 5.0, 5.5])
+def test_choice_invalid_scalar_population(population) -> None:
+    """Nonpositive integers and floats raise ValueError, as in NumPy 2.5.1."""
+    with pytest.raises(ValueError, match="a must be"):
+        np.random.choice(population)
+    with pytest.raises(ValueError, match="a must be|empty array"):
+        pc.random.choice(population)
+
+
+def test_choice_boolean_population() -> None:
+    """True is the integer population containing only zero."""
+    assert pc.random.choice(True) == np.random.choice(True) == 0
+
+
+def test_choice_integer_oversampling_with_replacement() -> None:
+    """Replacement permits more samples than population elements."""
+    for random in (np.random, pc.random):
+        random.seed(456)
+        samples = list(random.choice(3, 5))
+        assert len(samples) == 5
+        assert set(samples) <= {0, 1, 2}
+
+
+def test_choice_integer_oversampling_without_replacement() -> None:
+    """Both implementations reject oversampling without replacement."""
+    for random in (np.random, pc.random):
+        with pytest.raises(ValueError, match="larger sample"):
+            random.choice(3, 5, replace=False)
+
+
+class IndexPopulation:
+    """A population bound supplied by Python's integer protocol."""
+
+    def __index__(self) -> int:
+        """Return the population bound without an int subclass."""
+        return 5
+
+
+@pytest.mark.parametrize(
+    "population",
+    [np.int32(5), np.int64(5), np.uint8(5), np.uint64(5), IndexPopulation()],
+    ids=["int32", "int64", "uint8", "uint64", "custom-index"],
+)
+@pytest.mark.parametrize(("size", "replace"), [(None, True), (5, True), (3, False)])
+@pytest.mark.parametrize("check_tail", [False, True], ids=["samples", "rng-tail"])
+def test_choice_index_population_matches_python_int(population, size, replace, check_tail) -> None:
+    """Index populations share the Python-int samples and subsequent RNG stream."""
+    pc.random.seed(456)
+    expected = pc.random.choice(5, size, replace)
+    expected_tail = list(pc.random.random(4))
+    pc.random.seed(456)
+    actual = pc.random.choice(population, size, replace)
+    actual_tail = list(pc.random.random(4))
+    assert (actual_tail if check_tail else actual) == (expected_tail if check_tail else expected)
+
+
+@pytest.mark.parametrize("population", [2**100, np.uint64(2**63)])
+def test_choice_index_population_out_of_int64(population) -> None:
+    """Every integer protocol population is bounded by the same signed int64 range."""
+    with pytest.raises(ValueError, match="population is out of bounds for int64"):
+        pc.random.choice(population)
+
+
+class IndexableList(list):
+    """A sequence whose integer protocol must not override its elements."""
+
+    def __index__(self) -> int:
+        """Return a different population bound from the sequence length."""
+        return 5
+
+
+class FloatWithToList(float):
+    """A float whose array-like conversion already succeeded before issue #889."""
+
+    def tolist(self) -> list[str]:
+        """Supply the existing array-like population."""
+        return ["X", "Y", "Z"]
+
+
+@pytest.mark.parametrize("population", [IndexableList(["X", "Y", "Z"]), FloatWithToList(1.0)])
+@pytest.mark.parametrize("check_tail", [False, True], ids=["samples", "rng-tail"])
+def test_choice_conversion_precedence(population, check_tail) -> None:
+    """Preserve samples and four subsequent draws from the pre-change list path."""
+    pc.random.seed(456)
+    actual = pc.random.choice(population, 5)
+    tail = list(pc.random.random(4))
+    expected = ["Z", "Z", "Y", "Z", "X"]
+    expected_tail = [
+        0.1082339801369997,
+        0.9999203524714277,
+        0.4433146452746973,
+        0.4012271442823965,
+    ]
+    assert (tail if check_tail else actual) == (expected_tail if check_tail else expected)
+
+
+@pytest.mark.parametrize("population", [Decimal(5), Fraction(5)])
+def test_choice_non_index_numeric_population(population) -> None:
+    """Numeric objects without the integer protocol remain rejected."""
+    with pytest.raises(TypeError):
+        pc.random.choice(population)
+
+
+class FailingIndex:
+    """An integer protocol implementation that raises a user's exception."""
+
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+
+    def __index__(self) -> int:
+        """Raise the original exception rather than return a population bound."""
+        raise self.error
+
+
+@pytest.mark.parametrize("error_type", [OverflowError, TypeError, ValueError, RuntimeError, MemoryError])
+def test_choice_preserves_index_exception(error_type) -> None:
+    """A user's __index__ error must not be relabelled as an int64 bound error."""
+    error = error_type("user index failure")
+    with pytest.raises(error_type) as caught:
+        pc.random.choice(FailingIndex(error))
+    assert caught.value is error
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux /proc and RLIMIT_AS memory accounting")
+@pytest.mark.parametrize(
+    ("population", "size", "replace", "headroom_mib"),
+    [
+        pytest.param(100_000_000, 0, True, 64, id="population-buffer"),
+        pytest.param(4_000_000, 0, True, 64, id="python-integers"),
+        pytest.param(1_000_000, 0, True, 42, id="indices-42MiB"),
+        pytest.param(1_000_000, 0, True, 44, id="indices-44MiB"),
+        pytest.param(1_000_000, 0, True, 46, id="indices-46MiB"),
+        pytest.param(5, 100_000_000, True, 64, id="sample-buffer"),
+        pytest.param(1_000_000, 0, False, 50, id="shuffle-buffer"),
+        pytest.param(5, 4_000_000, True, 48, id="result-list"),
+    ],
+)
+def test_choice_allocation_failure_is_memory_error(
+    pytester: pytest.Pytester,
+    population,
+    size,
+    replace,
+    headroom_mib,
+) -> None:
+    """All allocations on the materialized integer path fail without panic or abort."""
+    script = textwrap.dedent(
+        f"""
+        import os
+        from pathlib import Path
+        import resource
+        from pecos_rslib.num import random
+
+        virtual_bytes = int(Path('/proc/self/statm').read_text().split()[0]) * os.sysconf('SC_PAGE_SIZE')
+        limit = virtual_bytes + {headroom_mib} * 1024 * 1024
+        resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+        resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
+        try:
+            random.choice({population}, {size}, {replace})
+        except MemoryError:
+            print('MemoryError')
+        else:
+            raise AssertionError('allocation unexpectedly succeeded')
+        """,
+    )
+    result = pytester.run(sys.executable, "-c", script, timeout=30)
+    assert (result.ret, result.stdout.lines) == (0, ["MemoryError"]), result.stderr.str()
 
 
 if __name__ == "__main__":

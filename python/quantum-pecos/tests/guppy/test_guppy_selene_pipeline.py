@@ -27,13 +27,16 @@ def bell_state() -> None:
     result("right", measure(q1).read())
 
 
-@pytest.fixture(params=[pc.selene_engine], ids=["selene"])
+@pytest.fixture(params=[None, pc.selene_engine], ids=["default", "selene"])
 def engine_factory(request):
+    """``None`` runs the lazily built default engine; otherwise ``.classical()`` supplies one."""
     return request.param
 
 
 def _run(program, engine_factory, qubits: int, shots: int, noise=None) -> dict:
-    builder = pc.sim(pc.Guppy(program)).classical(engine_factory())
+    builder = pc.sim(pc.Guppy(program))
+    if engine_factory is not None:
+        builder = builder.classical(engine_factory())
     builder = builder.quantum(pc.state_vector()).qubits(qubits).seed(42)
     if noise is not None:
         builder = builder.noise(noise)
@@ -159,8 +162,8 @@ def test_hugr_to_qis_compilation(program, num_measurements: int) -> None:
     assert len(re.findall(r"\bcall\b[^\n]*@___lazy_measure\(", output)) == num_measurements
 
 
-def test_default_hugr_lowering_is_deferred(monkeypatch) -> None:
-    """Builder configuration must not lower HUGR before build or execution."""
+def test_default_hugr_lowering_is_cached_at_boundary(monkeypatch) -> None:
+    """Python lowers before passing a QIS program to Rust and caches the result."""
     compile_hugr = hugr_lowering.compile_hugr_to_qis
     calls = []
 
@@ -169,8 +172,23 @@ def test_default_hugr_lowering_is_deferred(monkeypatch) -> None:
         return compile_hugr(*args)
 
     monkeypatch.setattr(hugr_lowering, "compile_hugr_to_qis", compile_recorded)
-    builder = pc.sim(pc.Guppy(bell_state)).qubits(2).seed(42).quantum(pc.state_vector())
-    assert calls == []
+    program = pc.Guppy(bell_state)
+    builder = pc.sim(program).qubits(2).seed(42).quantum(pc.state_vector())
+    assert len(calls) == 1
+    assert program.hugr_bytes == calls[0][0]
+    import pecos_rslib
+
+    received = []
+    rust_sim = pecos_rslib.sim
+
+    def record_program(raw_program):
+        received.append(raw_program)
+        return rust_sim(raw_program)
+
+    monkeypatch.setattr(pecos_rslib, "sim", record_program)
+    pc.sim(program)
+    assert isinstance(received[0], pecos_rslib.Qis)
+    assert len(calls) == 1
     simulation = builder.build()
     assert len(calls) == 1
     data = simulation.run_with_workers(16, 2).to_dict()
@@ -181,20 +199,20 @@ def test_default_hugr_lowering_is_deferred(monkeypatch) -> None:
 def test_hugr_foreign_object_reports_pending_qis_wiring() -> None:
     """The refusal describes the pending QIS integration for WASM objects."""
     builder = pc.sim(pc.Guppy(bell_state)).qubits(2)
-    message = "WASM foreign objects are not yet wired into the QIS route for HUGR/Guppy programs"
+    message = r"only supported for QASM programs; WASM foreign objects on the QIS route are not wired yet .*#854"
     with pytest.raises(TypeError, match=message):
         builder.foreign_object(object())
     lowered = builder.classical(pc.selene_engine())
     with pytest.raises(TypeError, match=message):
-        lowered.foreign_object(object())
+        lowered.foreign_object(foreign_obj=object())
 
 
 def test_explicit_qis_engine_refuses_neo_stack() -> None:
-    """Choosing a QIS engine ends the holder's experimental neo route."""
+    """An explicit QIS engine preserves the native neo refusal."""
     builder = pc.sim(pc.Guppy(bell_state)).qubits(2).classical(pc.selene_engine())
     with pytest.raises(
         ValueError,
-        match="already on the engines stack after choosing a QIS engine",
+        match="Only QASM programs are routed to the neo stack",
     ):
         builder.stack("neo")
     results = builder.quantum(pc.state_vector()).seed(42).run(16).to_dict()
@@ -202,27 +220,11 @@ def test_explicit_qis_engine_refuses_neo_stack() -> None:
     assert results["left"] == results["right"]
 
 
-def test_neo_hugr_refuses_explicit_classical_engine() -> None:
-    """An explicit engine cannot silently replace a selected neo stack."""
-    builder = pc.sim(pc.Guppy(bell_state)).qubits(2).stack("neo")
-    with pytest.raises(RuntimeError, match=r"Explicit \.classical\(\).*not routed to the neo stack"):
-        builder.classical(pc.selene_engine())
-
-
-@pytest.mark.parametrize("method", ["trace_operations", "capture_operation_trace"])
-def test_neo_hugr_refuses_operation_tracing(method, tmp_path) -> None:
-    """Both tracing entry points must preserve the selected stack by refusing."""
-    builder = pc.sim(pc.Guppy(bell_state)).qubits(2).stack("neo")
-    args = (str(tmp_path),) if method == "trace_operations" else ()
-    with pytest.raises(RuntimeError, match="QIS operation tracing are not routed to the neo stack"):
-        getattr(builder, method)(*args)
-
-
 def test_traced_hugr_refuses_neo_stack(tmp_path) -> None:
     """Selecting QIS operation tracing first also prevents switching to neo."""
     builder = pc.sim(pc.Guppy(bell_state)).qubits(2)
     builder.trace_operations(str(tmp_path))
-    with pytest.raises(ValueError, match="already on the engines stack"):
+    with pytest.raises(ValueError, match="Only QASM programs are routed to the neo stack"):
         builder.stack("neo")
 
 
@@ -230,7 +232,7 @@ def test_hugr_classical_mutates_builder_when_return_discarded() -> None:
     """Discarding classical()'s return must still select the explicit engine."""
     builder = pc.sim(pc.Guppy(bell_state)).qubits(2)
     builder.classical(pc.selene_engine())
-    with pytest.raises(ValueError, match="already on the engines stack"):
+    with pytest.raises(ValueError, match="Only QASM programs are routed to the neo stack"):
         builder.stack("neo")
     data = builder.quantum(pc.state_vector()).seed(42).run(16).to_dict()
     assert len(data["left"]) == 16
@@ -265,10 +267,62 @@ def test_hugr_lowering_requires_selene_compiler_package(monkeypatch, entry_point
     engine = pc.selene_engine()
     monkeypatch.setitem(sys.modules, "selene_hugr_qis_compiler", None)
     if entry_point == "sim":
-        load_program = pc.sim(program).qubits(2).classical
-        argument = engine
+        load_program = pc.sim
+        argument = program
     else:
         load_program = engine.program
         argument = program
     with pytest.raises(ImportError, match="requires the selene-hugr-qis-compiler package"):
         load_program(argument)
+
+
+@pytest.mark.parametrize("wrapper", [pc.Guppy, lambda func: pc.Hugr(func.compile().to_bytes())])
+def test_lowered_hugr_program_refuses_neo_stack(wrapper) -> None:
+    builder = pc.sim(wrapper(bell_state)).qubits(2)
+    with pytest.raises(ValueError, match="Only QASM programs are routed to the neo stack"):
+        builder.stack("neo")
+
+
+def test_engine_program_preserves_qis_foreign_object_refusal() -> None:
+    program = pc.Hugr(bell_state.compile().to_bytes())
+    builder = pc.selene_engine().program(program).to_sim().qubits(2).seed(42)
+    with pytest.raises(TypeError, match=r"QIS route.*#854"):
+        builder.foreign_object(object())
+
+
+def test_hugr_program_keeps_bytes_and_caches_qis(monkeypatch) -> None:
+    data = bell_state.compile().to_bytes()
+    program = pc.Hugr(data)
+    calls = []
+    compile_hugr = hugr_lowering.compile_hugr_to_qis
+
+    def compile_recorded(raw):
+        calls.append(raw)
+        return compile_hugr(raw)
+
+    monkeypatch.setattr(hugr_lowering, "compile_hugr_to_qis", compile_recorded)
+    import pecos_rslib
+
+    received = []
+    rust_sim = pecos_rslib.sim
+
+    def record_program(raw_program):
+        received.append(raw_program)
+        return rust_sim(raw_program)
+
+    monkeypatch.setattr(pecos_rslib, "sim", record_program)
+    pc.sim(program)
+    pc.sim(program)
+    assert received[0] is received[1]
+    assert calls == [data]
+    assert program.hugr_bytes == data
+
+
+def test_lowered_guppy_builder_supports_repeated_execution() -> None:
+    builder = pc.sim(pc.Guppy(bell_state)).qubits(2).seed(42).quantum(pc.state_vector())
+    first = builder.run(16).to_dict()
+    second = builder.run(16).to_dict()
+    built = builder.build().run(16).to_dict()
+    assert first == second == built
+    assert len(first["left"]) == 16
+    assert first["left"] == first["right"]

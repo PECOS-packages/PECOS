@@ -87,7 +87,7 @@ Let's create a Bell state using Guppy. First, define a quantum function:
 === ":fontawesome-brands-rust: Rust"
 
     Python HUGR execution lowers through Selene's compiler package.
-    The Rust facade retains its HUGR compiler; this example uses the QASM facade:
+    Rust consumes QIS lowered at the Python boundary; this example uses the QASM facade:
 
     ```hidden-rust
     use pecos::prelude::*;
@@ -203,7 +203,7 @@ If you have HUGR files (compiled from Guppy or other tools), you can run them di
 === ":fontawesome-brands-rust: Rust"
 
     Python HUGR execution lowers through Selene's compiler package.
-    The Rust facade retains its HUGR compiler; this example uses the QASM facade:
+    Rust consumes QIS lowered at the Python boundary; this example uses the QASM facade:
 
     ```hidden-rust
     use pecos::prelude::*;

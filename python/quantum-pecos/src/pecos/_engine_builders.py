@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 
     import pecos_rslib as prs
 
-    from pecos.programs import Hugr, PhirJson, Qasm, Qis
+    from pecos.programs import Guppy, Hugr, PhirJson, Qasm, Qis
     from pecos.typing import CompiledPhirJson, CompiledQasm, CompiledQis
 
 
@@ -132,7 +132,7 @@ class PhirJsonEngineBuilder:
 class QisEngineBuilder:
     """Python wrapper for QIS engine builder.
 
-    This wrapper accepts Python Qis or Hugr objects from pecos.programs.
+    This wrapper accepts Python Qis, Hugr, or Guppy objects from pecos.programs.
 
     Example:
         >>> from pecos import qis_engine, Qis
@@ -142,11 +142,12 @@ class QisEngineBuilder:
     def __init__(self) -> None:
         self._builder = pecos_rslib.qis_engine()
 
-    def program(self, program: Qis | Hugr | CompiledQis) -> Self:
+    def program(self, program: Qis | Hugr | Guppy | CompiledQis) -> Self:
         """Set the program for this engine.
 
         Args:
-            program: A Qis or Hugr object (from pecos.programs or pecos_rslib.programs)
+            program: A Qis, Hugr, or Guppy object from pecos.programs, or a compiled
+                Qis object from pecos_rslib.programs.
 
         Returns:
             Self for method chaining.

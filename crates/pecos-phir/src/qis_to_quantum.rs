@@ -313,9 +313,9 @@ fn resolve_angle(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hugr_to_qis::emit_const_float;
     use crate::ops::CustomOp;
     use crate::phir::{Block, Module, Region};
+    use crate::qis_emit::emit_const_float;
     use std::f64::consts::FRAC_PI_2;
 
     fn make_module(instructions: Vec<Instruction>) -> Module {

@@ -594,8 +594,8 @@ fn classical_failure_requires_whole_host_reset_not_quantum_reset_only() {
 }
 
 #[test]
-fn historical_leakage_boundary_and_unsplit_nonlinear_idle_are_preserved() {
-    for (axis, expected) in [("L", vec![0, 0]), ("X", vec![1])] {
+fn measurement_time_leakage_and_unsplit_nonlinear_idle_match_legacy() {
+    for (axis, expected) in [("L", vec![2, 0]), ("X", vec![1])] {
         let builder = GeneralNoiseModel::builder().with_p_idle_sin_squared(
             std::f64::consts::FRAC_PI_2,
             &BTreeMap::from([(axis.into(), 1.0)]),

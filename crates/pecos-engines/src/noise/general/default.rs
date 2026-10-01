@@ -110,7 +110,7 @@ impl Default for GeneralNoiseModel {
             rng: NoiseRng::default(),
             prepared_qubits: BTreeSet::new(),
             measured_qubits: Vec::new(),
-            scheduled_measurement_leakage: None,
+            scheduled_batch_active: false,
             p_meas_crosstalk_global: 0.0,
             p_meas_crosstalk_local: 0.0,
             p_meas_crosstalk_model: CrosstalkWeightedSampler::new(&p_meas_crosstalk_model),

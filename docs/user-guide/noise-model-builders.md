@@ -95,6 +95,24 @@ noise = (
 )
 ```
 
+### Leakage readout within a batch
+
+The Rust general noise model records leakage when each measurement is emitted.
+A later reset or leakage fault in the same batch cannot change that earlier
+readout. `MeasureLeaked` returns 2 for a leaked qubit; ordinary measurement starts
+at 1 and still applies the configured asymmetric readout fault.
+
+`MPZ` measures and then prepares zero: its readout uses the pre-reset leakage,
+and its reset clears leakage for following gates, including when `MPZ` is marked
+noiseless. Its preparation half does not sample a preparation fault.
+
+This bookkeeping draws no randomness and does not split batches. Gate faults
+are still sampled before readout faults. Measurement-conditioned crosstalk
+transitions still execute in a later simulator call; they affect subsequent
+state but cannot rewrite a readout already executed in the preceding call.
+This preserves the controller's deferred crosstalk approximation rather than
+introducing execution-time interleaving of arbitrary physical effects.
+
 ### Scaling and Global Parameters
 
 ```python

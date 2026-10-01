@@ -182,10 +182,10 @@ Adapters cannot split or retime native batches.
 
 Readout faults retain the general model's batch-level sampling order: gate and
 idle faults are sampled first, then readout faults in measurement order. Capturing
-leakage consumes no randomness. This is a bounded capability of the admitted
-scheduled profiles, which exclude measurement-conditioned crosstalk, emission and
-seepage; it does not change the legacy general controller's semantics. Measurement
-results still return to the live runtime to resume program feedback.
+leakage consumes no randomness. The general controller also records leakage per
+measurement on legacy inputs. Scheduled profiles remain bounded and exclude
+measurement-conditioned crosstalk, emission and seepage. Measurement results still
+return to the live runtime to resume program feedback.
 
 Each prepared batch retains one noise-controller lifecycle. Inserted idle commands
 are included in an expansion budget of sixteen output commands per prepared

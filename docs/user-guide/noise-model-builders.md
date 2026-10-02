@@ -106,12 +106,29 @@ at 1 and still applies the configured asymmetric readout fault.
 and its reset clears leakage for following gates, including when `MPZ` is marked
 noiseless. Its preparation half does not sample a preparation fault.
 
-This bookkeeping draws no randomness and does not split batches. Gate faults
-are still sampled before readout faults. Measurement-conditioned crosstalk
-transitions still execute in a later simulator call; they affect subsequent
-state but cannot rewrite a readout already executed in the preceding call.
-This preserves the controller's deferred crosstalk approximation rather than
-introducing execution-time interleaving of arbitrary physical effects.
+Recording leakage draws no randomness. With no injected measurement-crosstalk
+victims, execution keeps the existing single-call path and gate-before-readout
+sampling order. At an actual measurement-crosstalk injection site, the general
+controller instead suspends the remaining gates, obtains the injected outcomes,
+and emits their leakage/Pauli transitions before resuming those gates. A later
+readout sees the transition; a later reset clears its leakage as expected.
+
+This uses one controller lifecycle without restarting the noise model or applying
+gate noise to generated transitions. Readout faults for the executed prefix are
+sampled before resuming the suffix's gate faults. Crosstalk-enabled seeded results
+therefore intentionally change from the earlier deferred implementation. Extra
+simulator dispatches occur only when measurement-crosstalk victims are injected.
+Preparation crosstalk is a measurement-only channel: its collapse already occurs
+in operation order and needs no outcome-dependent transition or new boundary.
+
+Legacy and metadata runtime-frame routes share this execution. Frame expansion
+and continuation counts remain bounded; existing physical-event admission is not
+widened. Scheduled profiles still exclude crosstalk and retain their single-call
+contract. Failed crosstalk continuations stay blocked across clones until reset,
+which clears pending gates and buffered readouts. Low-level callers of
+`apply_noise_on_start` must process each returned command message and feed replies
+to `apply_noise_on_continue_processing` until no commands remain; the initial
+command message need not contain every source gate.
 
 ### Scaling and Global Parameters
 

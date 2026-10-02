@@ -1220,3 +1220,77 @@ fn empty_and_adjacent_event_segments_complete_without_extra_sampling() {
         vec![0]
     );
 }
+
+#[test]
+fn crosstalk_resumes_before_frame_measurements_resets_and_later_payloads() {
+    for metadata in [false, true] {
+        let builder = GeneralNoiseModel::builder()
+            .with_p_meas_crosstalk_local(1.0)
+            .with_p_meas_crosstalk_model(&BTreeMap::from([
+                ("0->L".into(), 1.0),
+                ("1->L".into(), 1.0),
+            ]));
+        let payload = Gate::simple(GateType::MeasCrosstalkLocalPayload, vec![0.into()]);
+        let gates = [
+            Gate::pz(&[0]),
+            payload.clone(),
+            Gate::measure_leaked(&[0]),
+            Gate::pz(&[0]),
+            Gate::measure_leaked(&[0]),
+            payload,
+            Gate::measure_leaked(&[0]),
+        ];
+        let mut framed = setup(builder.clone(), 17);
+        let mut legacy =
+            QuantumSystem::new(Box::new(builder.build()), Box::new(StateVecEngine::new(2)));
+        legacy.set_seed(17);
+        assert_eq!(
+            framed
+                .process(frame(&gates, metadata))
+                .unwrap()
+                .outcomes()
+                .unwrap(),
+            vec![2, 0, 2]
+        );
+        assert_eq!(
+            legacy.process(message(&gates)).unwrap().outcomes().unwrap(),
+            vec![2, 0, 2]
+        );
+        assert_rng_equal(&framed, &legacy);
+    }
+}
+
+#[test]
+fn identity_crosstalk_completes_with_trailing_metadata() {
+    let mut framed = setup(
+        GeneralNoiseModel::builder().with_p_meas_crosstalk_local(1.0),
+        17,
+    );
+    let records = [
+        FrameRecord::gate(Gate::pz(&[0])),
+        FrameRecord::gate(Gate::simple(
+            GateType::MeasCrosstalkLocalPayload,
+            vec![0.into()],
+        )),
+        FrameRecord::Event {
+            id: METADATA,
+            target: 0,
+        },
+    ];
+    assert_eq!(
+        framed
+            .process(encode_frame(&records).unwrap())
+            .unwrap()
+            .outcomes()
+            .unwrap(),
+        Vec::<u32>::new()
+    );
+    assert_eq!(
+        framed
+            .process(frame(&[Gate::mz(&[0])], true))
+            .unwrap()
+            .outcomes()
+            .unwrap(),
+        vec![0]
+    );
+}

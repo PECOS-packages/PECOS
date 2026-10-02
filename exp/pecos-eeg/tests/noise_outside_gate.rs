@@ -24,21 +24,22 @@ fn walks(
     noise: &dyn NoiseSpec,
     initial: &StabilizerGroup,
     num_qubits: usize,
+    prune: f64,
 ) -> [(&'static str, f64); 4] {
     let index = GateIndex::build(gates, num_qubits, noise);
     let noise_map = build_noise_map(gates, noise, &index.expansion_gates);
     [
         (
             "windowed",
-            heisenberg_detection_probability(gates, detector, noise, initial, 0.0),
+            heisenberg_detection_probability(gates, detector, noise, initial, prune),
         ),
         (
             "precomputed",
-            heisenberg_with_noise_map(gates, detector, &noise_map, initial, 0.0),
+            heisenberg_with_noise_map(gates, detector, &noise_map, initial, prune),
         ),
         (
             "sparse",
-            heisenberg_sparse(gates, detector, noise, initial, 0.0, &index, None),
+            heisenberg_sparse(gates, detector, noise, initial, prune, &index, None),
         ),
         (
             "sparse precomputed",
@@ -47,7 +48,7 @@ fn walks(
                 detector,
                 noise,
                 initial,
-                0.0,
+                prune,
                 &index,
                 Some(&noise_map),
             ),
@@ -63,7 +64,7 @@ fn assert_walks(
     num_qubits: usize,
     expected: f64,
 ) {
-    let results = walks(gates, detector, noise, initial, num_qubits);
+    let results = walks(gates, detector, noise, initial, num_qubits, 0.0);
     assert!(
         results
             .iter()
@@ -211,4 +212,86 @@ fn issue_997_walks_match_the_matrix_reference() {
         expanded.num_qubits,
         exact,
     );
+}
+
+/// Exact noise listed per gate index; gates past the list are noiseless.
+struct NoisePerGate(Vec<GateNoise>);
+
+impl NoiseSpec for NoisePerGate {
+    fn noise_after_gate(&self, i: usize, _: GateType, _: &[usize]) -> Vec<NoiseInjection> {
+        self.0
+            .get(i)
+            .map(|noise| noise.injections.clone())
+            .unwrap_or_default()
+    }
+
+    fn exact_noise_after_gate(&self, i: usize, _: GateType, _: &[usize]) -> GateNoise {
+        self.0.get(i).cloned().unwrap_or_default()
+    }
+}
+
+fn injections(list: Vec<NoiseInjection>) -> GateNoise {
+    GateNoise {
+        injections: list,
+        depolarizing: Vec::new(),
+    }
+}
+
+#[test]
+fn repeated_noise_outside_the_gate_composes() {
+    // Twelve X1 rotations on gates that never touch q1 compose to one
+    // rotation by 12h. Each one branches every term, so the walks must keep
+    // applying (and merging) noise on gates whose own qubits stay inactive.
+    let (count, h) = (12_u32, 0.05_f64);
+    let gates: Vec<Gate> = (0..count).map(|_| make_gate(GateType::I, &[0])).collect();
+    let noise = NoisePerGate(
+        (0..count)
+            .map(|_| injections(vec![injection(EegType::H, Bm::x(1), h)]))
+            .collect(),
+    );
+    let initial = StabilizerGroup::from_circuit(&[Gate::pz(&[0, 1])], 2);
+    let expected = (f64::from(count) * h).sin().powi(2);
+    assert_walks(&gates, &Bm::z(1), &noise, &initial, 2, expected);
+}
+
+#[test]
+fn pruning_applies_after_noise_outside_the_gate() {
+    // S(X1) at p=0.49 leaves Z1 with coefficient 0.02, below the 0.1
+    // threshold. Every walk prunes it, so <Z1> = 0 and p = 0.5.
+    let gates = [make_gate(GateType::I, &[0])];
+    let noise = NoisePerGate(vec![injections(vec![injection(
+        EegType::S,
+        Bm::x(1),
+        -0.49,
+    )])]);
+    let initial = StabilizerGroup::from_circuit(&[Gate::pz(&[0, 1])], 2);
+    let results = walks(&gates, &Bm::z(1), &noise, &initial, 2, 0.1);
+    assert!(
+        results
+            .iter()
+            .all(|(_, actual)| (actual - 0.5).abs() < 1e-12),
+        "walks: {results:?}",
+    );
+}
+
+#[test]
+fn noise_reaches_a_far_qubit_and_schedules_earlier_noise_through_it() {
+    // Gates act on q1, which never becomes active. Backward, the first
+    // X0X130 rotation branches the Z0 term onto q130, beyond any gate qubit;
+    // the Z130 flip on the middle gate is reachable only through that qubit.
+    // Forward: the two rotations compose to sin²(2h), unless the Z130 flip
+    // between them (probability p) makes them cancel, so p_det = (1-p) sin²(2h).
+    let (h, p) = (0.3_f64, 0.2);
+    let far = 130;
+    let rotation = || injection(EegType::H, Bm::x(0).multiply(&Bm::x(far)), h);
+    let gates: Vec<Gate> = (0..3).map(|_| make_gate(GateType::I, &[1])).collect();
+    let noise = NoisePerGate(vec![
+        injections(vec![rotation()]),
+        injections(vec![injection(EegType::S, Bm::z(far), -p)]),
+        injections(vec![rotation()]),
+    ]);
+    let qubits: Vec<usize> = (0..=far).collect();
+    let initial = StabilizerGroup::from_circuit(&[Gate::pz(&qubits)], far + 1);
+    let expected = (1.0 - p) * (2.0 * h).sin().powi(2);
+    assert_walks(&gates, &Bm::z(0), &noise, &initial, far + 1, expected);
 }

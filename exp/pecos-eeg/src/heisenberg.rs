@@ -633,6 +633,7 @@ pub fn heisenberg_with_noise_map(
             .and_then(|n| n.as_ref())
             .filter(|gn| noise_touches_active(gn, &active_qubits));
 
+        let noise_applied = gate_noise.is_some();
         if let Some(gn) = gate_noise {
             // Individual injections in their original order
             for inj in &gn.injections {
@@ -768,40 +769,43 @@ pub fn heisenberg_with_noise_map(
 
         // Step 2: Backward Clifford conjugation. Checked after the noise,
         // which may have branched terms onto the gate's qubits.
-        if !gate_qs
+        let gate_relevant = gate_qs
             .iter()
-            .any(|&q| is_active(&active_qubits, q as usize))
-        {
+            .any(|&q| is_active(&active_qubits, q as usize));
+        if !noise_applied && !gate_relevant {
             continue;
         }
 
-        match gate.gate_type {
-            GateType::PZ | GateType::QAlloc => {
-                terms.retain(|t| !gate_qs.iter().any(|&qi| t.pauli.has_x(qi)));
-                for t in &mut terms {
-                    for &qi in &gate_qs {
-                        t.pauli.clear_z(qi);
+        if gate_relevant {
+            match gate.gate_type {
+                GateType::PZ | GateType::QAlloc => {
+                    terms.retain(|t| !gate_qs.iter().any(|&qi| t.pauli.has_x(qi)));
+                    for t in &mut terms {
+                        for &qi in &gate_qs {
+                            t.pauli.clear_z(qi);
+                        }
                     }
                 }
-            }
-            GateType::MZ => {
-                terms.retain(|t| !gate_qs.iter().any(|&qi| t.pauli.has_x(qi)));
-            }
-            _ => {
-                for t in &mut terms {
-                    if let Some(sign_neg) = sparse_conjugate(&mut t.pauli, gate)
-                        && sign_neg
-                    {
-                        t.coeff_re = -t.coeff_re;
-                        t.coeff_im = -t.coeff_im;
-                    }
-                    for &q in t.pauli.x_qubits.iter().chain(t.pauli.z_qubits.iter()) {
-                        activate(&mut active_qubits, q as usize);
+                GateType::MZ => {
+                    terms.retain(|t| !gate_qs.iter().any(|&qi| t.pauli.has_x(qi)));
+                }
+                _ => {
+                    for t in &mut terms {
+                        if let Some(sign_neg) = sparse_conjugate(&mut t.pauli, gate)
+                            && sign_neg
+                        {
+                            t.coeff_re = -t.coeff_re;
+                            t.coeff_im = -t.coeff_im;
+                        }
+                        for &q in t.pauli.x_qubits.iter().chain(t.pauli.z_qubits.iter()) {
+                            activate(&mut active_qubits, q as usize);
+                        }
                     }
                 }
             }
         }
 
+        // Prune and merge after noise alone too: it can add or shrink terms.
         // Prune
         if prune_threshold > 0.0 {
             let thresh_sq = prune_threshold * prune_threshold;
@@ -941,6 +945,7 @@ pub fn heisenberg_windowed(
                 noise.exact_noise_after_gate(i, gate.gate_type, &qubits_usize)
             })
             .filter(|exact| noise_touches_active(exact, &active_qubits));
+        let noise_applied = gate_noise.is_some();
         if let Some(exact) = gate_noise {
             for inj in &exact.injections {
                 match inj.eeg_type {
@@ -1079,42 +1084,45 @@ pub fn heisenberg_windowed(
         // Step 2: Conjugate backward through the gate.
         // #2: Skip gates that don't touch active qubits. Checked after the
         // noise, which may have branched terms onto the gate's qubits.
-        if !gate_qs
+        let gate_relevant = gate_qs
             .iter()
-            .any(|&q| is_active(&active_qubits, q as usize))
-        {
+            .any(|&q| is_active(&active_qubits, q as usize));
+        if !noise_applied && !gate_relevant {
             continue;
         }
 
-        match gate.gate_type {
-            // #4: Batch PZ/QAlloc — single pass through terms for all qubits
-            GateType::PZ | GateType::QAlloc => {
-                terms.retain(|t| !gate_qs.iter().any(|&qi| t.pauli.has_x(qi)));
-                for t in &mut terms {
-                    for &qi in &gate_qs {
-                        t.pauli.clear_z(qi);
+        if gate_relevant {
+            match gate.gate_type {
+                // #4: Batch PZ/QAlloc — single pass through terms for all qubits
+                GateType::PZ | GateType::QAlloc => {
+                    terms.retain(|t| !gate_qs.iter().any(|&qi| t.pauli.has_x(qi)));
+                    for t in &mut terms {
+                        for &qi in &gate_qs {
+                            t.pauli.clear_z(qi);
+                        }
                     }
                 }
-            }
-            GateType::MZ => {
-                terms.retain(|t| !gate_qs.iter().any(|&qi| t.pauli.has_x(qi)));
-            }
-            _ => {
-                for t in &mut terms {
-                    if let Some(sign_neg) = sparse_conjugate(&mut t.pauli, gate)
-                        && sign_neg
-                    {
-                        t.coeff_re = -t.coeff_re;
-                        t.coeff_im = -t.coeff_im;
-                    }
-                    // Update active bitmap (CX can spread support to new qubits)
-                    for &q in t.pauli.x_qubits.iter().chain(t.pauli.z_qubits.iter()) {
-                        activate(&mut active_qubits, q as usize);
+                GateType::MZ => {
+                    terms.retain(|t| !gate_qs.iter().any(|&qi| t.pauli.has_x(qi)));
+                }
+                _ => {
+                    for t in &mut terms {
+                        if let Some(sign_neg) = sparse_conjugate(&mut t.pauli, gate)
+                            && sign_neg
+                        {
+                            t.coeff_re = -t.coeff_re;
+                            t.coeff_im = -t.coeff_im;
+                        }
+                        // Update active bitmap (CX can spread support to new qubits)
+                        for &q in t.pauli.x_qubits.iter().chain(t.pauli.z_qubits.iter()) {
+                            activate(&mut active_qubits, q as usize);
+                        }
                     }
                 }
             }
         }
 
+        // Merge after noise alone too: it can add duplicate terms.
         // Merge duplicate Pauli terms by sorting + linear scan.
         let should_merge = match gate.gate_type {
             GateType::PZ | GateType::QAlloc | GateType::MZ => terms.len() > 4,

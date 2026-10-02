@@ -17,6 +17,23 @@ use pecos_core::{Gate, QubitId};
 /// Why an EEG DEM could not be built from the circuit.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EegBuildError {
+    /// The dense matrix Heisenberg walk does not implement this noise type.
+    UnsupportedExactNoise {
+        /// The offending EEG type.
+        eeg_type: crate::eeg::EegType,
+    },
+    /// A noise label acts on a qubit outside the expanded circuit.
+    ExactLabelOutOfRange {
+        /// The highest qubit the label acts on.
+        qubit: usize,
+        /// The number of qubits in the expanded circuit.
+        num_qubits: usize,
+    },
+    /// The dense matrix Heisenberg walk does not implement this gate adjoint.
+    UnsupportedExactGate {
+        /// The offending gate type in the expanded circuit.
+        gate_type: GateType,
+    },
     /// The circuit contains a measurement type the EEG expansion does not
     /// handle. Expansion is `MZ`-only; any other measurement would silently
     /// vanish from the deferred-measurement circuit, taking its record with it.
@@ -50,6 +67,18 @@ pub enum EegBuildError {
 impl std::fmt::Display for EegBuildError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::UnsupportedExactNoise { eeg_type } => write!(
+                f,
+                "matrix Heisenberg does not support {eeg_type:?} injections; only H and S are implemented"
+            ),
+            Self::ExactLabelOutOfRange { qubit, num_qubits } => write!(
+                f,
+                "noise label acts on qubit {qubit}, outside the {num_qubits}-qubit expanded circuit"
+            ),
+            Self::UnsupportedExactGate { gate_type } => write!(
+                f,
+                "matrix Heisenberg does not support the {gate_type:?} gate adjoint"
+            ),
             Self::UnsupportedMeasurement { gate_type } => write!(
                 f,
                 "circuit contains {gate_type:?}, which the MZ-only EEG expansion cannot \

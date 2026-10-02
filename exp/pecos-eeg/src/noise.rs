@@ -100,8 +100,9 @@ pub trait NoiseSpec: Send + Sync {
     /// independent Pauli flip at probability `-rate`. Equal rates or a count of
     /// three/fifteen injections never imply a categorical channel. Override
     /// this method to provide explicit categorical depolarizing channels.
-    /// Channel support must lie within `qubits`: sparse walks skip gates
-    /// whose operands do not intersect the current observable.
+    /// Channel support must lie within `qubits`, because sparse walks skip gates
+    /// whose operands do not intersect the current observable. The Heisenberg
+    /// walks panic on a channel outside the gate.
     fn exact_noise_after_gate(
         &self,
         gate_index: usize,

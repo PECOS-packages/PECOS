@@ -11,7 +11,7 @@ use pecos_eeg::heisenberg::{
     build_noise_map, heisenberg_detection_probability, heisenberg_sparse, heisenberg_with_noise_map,
 };
 use pecos_eeg::stabilizer::StabilizerGroup;
-use pecos_eeg::{Bm, GateNoise, NoiseInjection, NoiseSpec, UniformNoise};
+use pecos_eeg::{Bm, DepolarizingChannel, GateNoise, NoiseInjection, NoiseSpec, UniformNoise};
 
 /// Check every walker against a channel eigenvalue derived analytically.
 /// Comparing walkers with one another would preserve their shared model bug.
@@ -269,6 +269,56 @@ fn equal_rate_custom_s_injections_remain_independent() {
         let expected = (1.0 - (1.0 - 2.0 * p).powi(anticommuting)) / 2.0;
         assert_detection_probability(&gates, &Bm::z(0), &noise, 1, expected);
     }
+}
+
+#[test]
+fn single_qubit_custom_s_set_on_a_two_qubit_gate_leaves_the_other_qubit() {
+    // Issue #995: X/Y/Z on q0 of a two-qubit gate were once batched as if
+    // they were two-qubit depolarizing, attenuating terms supported on q1.
+    use pecos_eeg::eeg::EegType;
+    let gates = [pecos_eeg::expand::make_gate(GateType::I, &[0, 1])];
+    let noise = IndependentInjections(
+        [Bm::x(0), Bm::y(0), Bm::z(0)]
+            .into_iter()
+            .map(|pauli| injection(EegType::S, pauli, -0.1))
+            .collect(),
+    );
+    assert_detection_probability(&gates, &Bm::z(1), &noise, 2, 0.0);
+}
+
+/// Reports a channel on qubit 1 after any gate, including gates on qubit 0 only.
+struct ChannelOnQubitOne;
+
+impl NoiseSpec for ChannelOnQubitOne {
+    fn noise_after_gate(&self, _: usize, _: GateType, _: &[usize]) -> Vec<NoiseInjection> {
+        Vec::new()
+    }
+
+    fn exact_noise_after_gate(&self, _: usize, _: GateType, _: &[usize]) -> GateNoise {
+        GateNoise {
+            injections: Vec::new(),
+            depolarizing: vec![DepolarizingChannel::OneQubit {
+                qubit: 1,
+                probability: 0.1,
+            }],
+        }
+    }
+}
+
+#[test]
+#[should_panic(expected = "acts outside gate qubits")]
+fn noise_map_rejects_a_channel_outside_the_gate() {
+    let gates = [pecos_eeg::expand::make_gate(GateType::I, &[0])];
+    build_noise_map(&gates, &ChannelOnQubitOne, &[]);
+}
+
+#[test]
+#[should_panic(expected = "acts outside gate qubits")]
+fn walk_rejects_a_channel_outside_the_gate() {
+    let gates = [pecos_eeg::expand::make_gate(GateType::I, &[0])];
+    let initial = StabilizerGroup::from_circuit(&[Gate::pz(&[0, 1])], 2);
+    let detector = Bm::z(0).multiply(&Bm::z(1));
+    heisenberg_detection_probability(&gates, &detector, &ChannelOnQubitOne, &initial, 0.0);
 }
 
 #[test]

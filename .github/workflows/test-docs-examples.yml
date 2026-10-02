@@ -24,6 +24,11 @@ env:
   PYTHONUTF8: 1
   LLVM_VERSION: "21.1"
   LLVM_RELEASE_VERSION: "21.1.8"
+  # rust-cache hashes CARGO_*/RUST* env into the key; keep these identical to
+  # python-test.yml or the shared python-core cache silently misses.
+  CARGO_HTTP_MULTIPLEXING: "false"
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  CARGO_NET_RETRY: "10"
 
 jobs:
   docs-ci:
@@ -35,17 +40,6 @@ jobs:
         with:
           egress-policy: audit
 
-      - name: Free Disk Space (Ubuntu)
-        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
-        with:
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: false
-          docker-images: true
-          tool-cache: false
-          swap-storage: true
-
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           persist-credentials: false
@@ -56,7 +50,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install the latest version of uv
-        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version-file: ".github/uv.toml"
           enable-cache: true
@@ -76,10 +70,12 @@ jobs:
         with:
           cache-bin: false
           prefix-key: v1-rust-no-bin
-          save-if: ${{ github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev') }}
-          workspaces: |
-            python/pecos-rslib
-            python/pecos-rslib-llvm
+          # Restore-only: python-core (python-test.yml) saves this key on dev pushes.
+          save-if: false
+          # The rslib crates are members of the root Cargo workspace and build
+          # into the top-level target/, so cache the root workspace (the default)
+          # and share the python-core key: same crates, same profile, same env.
+          shared-key: python-core
 
       - name: Cache LLVM ${{ env.LLVM_VERSION }}
         id: cache-llvm

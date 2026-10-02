@@ -116,7 +116,8 @@ jobs:
         cache-bin: false
         prefix-key: v1-rust-no-bin
         save-if: ${{ github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || github.ref_name == 'development' || github.ref_name == 'dev') }}
-        workspaces: julia/pecos-julia-ffi
+        # pecos-julia-ffi is a root-workspace member and builds into the
+        # top-level target/, so cache the root workspace (the default).
 
     - name: Bootstrap MSVC for the Cargo build path (Windows)
       if: runner.os == 'Windows'

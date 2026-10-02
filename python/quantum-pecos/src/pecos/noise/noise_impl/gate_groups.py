@@ -96,6 +96,9 @@ one_qubits = {
 
 zbasis_rotations = {"Z", "S", "Sd", "SqrtZ", "SqrtZd", "RZ", "SZ", "SZdg"}
 
+timing_ops = {"Idle", "Transport"}
+initializations = {"init |0>", "Init", "Init +Z"}
+
 measurementsx = {"measure Z", "Measure", "Measure +Z"}
 measurementsz = {"measure X", "measure Y", "Measure +X", "Measure +Y"}
 initsx = {"init |0>", "init |1>"}

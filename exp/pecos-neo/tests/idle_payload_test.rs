@@ -82,7 +82,7 @@ fn idle_payload_has_no_angles() {
         );
         assert_eq!(idle.clone(), idle);
         let commands = CommandBuilder::new().idle(&[0], duration).build();
-        assert!(commands.to_gate_validations()[0].angles.is_empty());
+        assert_eq!(commands.to_gate_validations()[0].angles, []);
     }
 }
 
@@ -152,7 +152,7 @@ fn idle_payload_reaches_dispatch_unchanged() {
     let captured = Arc::clone(&seen);
     let mut runner = CircuitRunner::<SparseStab>::new().with_seed(42);
     runner.on_idle(move |ctx| {
-        assert!(ctx.angles.is_empty());
+        assert_eq!(ctx.angles, []);
         captured
             .lock()
             .unwrap()

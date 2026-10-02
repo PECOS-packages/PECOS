@@ -264,7 +264,10 @@ fn test_single_node_graph() {
     let result = decoder.decode(&detection_events).unwrap();
     // PyMatching may return different numbers of observables
     // Just check the first observable is set
-    assert!(!result.observable.is_empty());
+    assert!(
+        !result.observable.is_empty(),
+        "decoder returned no observables"
+    );
     assert_eq!(result.observable[0], 1);
 }
 
@@ -410,7 +413,10 @@ fn test_batch_with_bit_packing() {
     // Verify bit-packed output format
     for prediction in &result.predictions {
         // PyMatching may use different packing, so we just check it's reasonable
-        assert!(!prediction.is_empty());
+        assert!(
+            !prediction.is_empty(),
+            "bit-packed prediction must contain at least one byte"
+        );
     }
 }
 
@@ -625,7 +631,7 @@ fn test_shortest_path_complex() {
     let path = decoder.get_shortest_path(0, 9).unwrap();
 
     // Path should exist and include start/end
-    assert!(!path.is_empty());
+    assert!(!path.is_empty(), "shortest path must contain its endpoints");
     assert_eq!(path[0], 0);
     assert_eq!(path[path.len() - 1], 9);
 

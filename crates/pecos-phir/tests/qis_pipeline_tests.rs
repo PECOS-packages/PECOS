@@ -63,15 +63,15 @@ fn test_bell_final_ll_parse_and_convert() {
     let ir = include_str!("../../../examples/bell_final.ll");
     let module =
         pecos_phir::parse_qis_to_quantum(ir).expect("bell_final.ll should parse and convert");
-    assert!(!module.body.blocks.is_empty());
+    assert!(!module.body.blocks.is_empty(), "module must contain blocks");
 }
 
 #[test]
 fn test_hugr_bell_state_ll_parse_and_convert() {
-    let ir = include_str!("../../../crates/pecos/tests/test_data/hugr/bell_state.ll");
+    let ir = include_str!("fixtures/bell_state.ll");
     let module =
         pecos_phir::parse_qis_to_quantum(ir).expect("hugr bell_state.ll should parse and convert");
-    assert!(!module.body.blocks.is_empty());
+    assert!(!module.body.blocks.is_empty(), "module must contain blocks");
 }
 
 // ──────────────────────────────────────────────────────────────────────

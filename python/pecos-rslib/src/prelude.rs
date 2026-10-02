@@ -24,8 +24,6 @@ pub use pecos_num::prelude::*;
 // QIS / LLVM IR execution
 pub use pecos_qis::prelude::*;
 
-// HUGR compilation
-
 // PHIR-JSON format
 pub use pecos_phir_json::prelude::*;
 

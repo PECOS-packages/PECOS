@@ -46,6 +46,7 @@ use rand::distr::uniform::SampleUniform;
 use rand::seq::SliceRandom;
 use rand_distr::Binomial;
 use std::cell::RefCell;
+use std::collections::TryReserveError;
 use std::fmt;
 
 // Thread-local seeded RNG for reproducibility
@@ -335,7 +336,7 @@ where
 
 /// Generate a random sample from a given array.
 ///
-/// This is a drop-in replacement for `numpy.random.choice(a, size, replace=True)`.
+/// `choice(array, size, replace)` samples uniformly from a nonempty Rust slice.
 ///
 /// # Arguments
 ///
@@ -377,6 +378,26 @@ where
 /// - Efficient Rust slice sampling
 /// - No intermediate array conversions
 pub fn choice<T: Clone>(array: &[T], size: usize, replace: bool) -> Vec<T> {
+    try_choice(array, size, replace).expect("Cannot allocate choice samples")
+}
+
+/// Sample uniformly, reporting failures to allocate the sampling buffers.
+///
+/// Uses the same sampling algorithm and random draws as [`choice`]. Cloning
+/// elements may allocate independently; those allocations are owned by `T`.
+///
+/// # Errors
+///
+/// Returns an error if the sample or shuffle buffer cannot be allocated.
+///
+/// # Panics
+///
+/// Panics if `array` is empty or sampling without replacement exceeds its length.
+pub fn try_choice<T: Clone>(
+    array: &[T],
+    size: usize,
+    replace: bool,
+) -> Result<Vec<T>, TryReserveError> {
     assert!(!array.is_empty(), "Cannot sample from empty array");
 
     if !replace {
@@ -387,20 +408,23 @@ pub fn choice<T: Clone>(array: &[T], size: usize, replace: bool) -> Vec<T> {
     }
 
     with_rng(|rng| {
+        let mut samples = Vec::new();
+        samples.try_reserve_exact(size)?;
         if replace {
             // Sample with replacement - use random index
-            (0..size)
-                .map(|_| {
-                    let idx = rng.random_range(0..array.len());
-                    array[idx].clone()
-                })
-                .collect()
+            for _ in 0..size {
+                let idx = rng.random_range(0..array.len());
+                samples.push(array[idx].clone());
+            }
         } else {
             // Sample without replacement using partial_shuffle
-            let mut indices: Vec<usize> = (0..array.len()).collect();
+            let mut indices = Vec::new();
+            indices.try_reserve_exact(array.len())?;
+            indices.extend(0..array.len());
             let (selected, _) = indices.partial_shuffle(rng, size);
-            selected.iter().map(|&i| array[i].clone()).collect()
+            samples.extend(selected.iter().map(|&i| array[i].clone()));
         }
+        Ok(samples)
     })
 }
 

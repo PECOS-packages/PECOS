@@ -353,7 +353,7 @@ fn empty_quantum_circuit_round_trip() {
     // The Python producer test checks its entire output against this same fixture.
     let input = include_str!("fixtures/empty_quantum_circuit.phir.json");
     let module = phir_json_to_module(input).unwrap();
-    assert!(module.body.blocks[0].operations.is_empty());
+    assert_eq!(module.body.blocks[0].operations, []);
     let ast: PHIRProgram = serde_json::from_str(input).unwrap();
     assert!(ast.ops.is_empty());
     let mut interpreter = PhirClassicalInterpreter::new();
@@ -361,7 +361,11 @@ fn empty_quantum_circuit_round_trip() {
     assert!(interpreter.execute_program().unwrap().is_empty());
     let mut engine = PhirJsonEngine::from_json(input).unwrap();
     assert_eq!(engine.num_qubits(), 0);
-    assert!(command_qubits(&engine.generate_commands().unwrap()).is_empty());
+    let qubits = command_qubits(&engine.generate_commands().unwrap());
+    assert!(
+        qubits.is_empty(),
+        "expected no command qubits, got {qubits:?}"
+    );
     let engine = PhirJsonEngine::from_program(ast).unwrap();
     assert_eq!(engine.num_qubits(), 0);
 }

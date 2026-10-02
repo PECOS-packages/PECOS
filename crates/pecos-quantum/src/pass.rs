@@ -2596,7 +2596,7 @@ mod tests {
         tc.tick();
         tc.ticks_mut()[0].add_gate(Gate::i(&[0]));
         StripIdentities.apply_tick(&mut tc);
-        assert!(tc.ticks()[0].gate_batches().is_empty());
+        assert_eq!(tc.ticks()[0].gate_batches(), []);
     }
 
     #[test]
@@ -2604,7 +2604,7 @@ mod tests {
         let mut tc = TickCircuit::new();
         tc.tick().rz(Angle64::ZERO, &[0]);
         StripIdentities.apply_tick(&mut tc);
-        assert!(tc.ticks()[0].gate_batches().is_empty());
+        assert_eq!(tc.ticks()[0].gate_batches(), []);
     }
 
     #[test]
@@ -2764,8 +2764,8 @@ mod tests {
         tc.tick().h(&[0]);
         tc.tick().h(&[0]);
         CancelInverses.apply_tick(&mut tc);
-        assert!(tc.ticks()[0].gate_batches().is_empty());
-        assert!(tc.ticks()[1].gate_batches().is_empty());
+        assert_eq!(tc.ticks()[0].gate_batches(), []);
+        assert_eq!(tc.ticks()[1].gate_batches(), []);
     }
 
     #[test]
@@ -2774,8 +2774,8 @@ mod tests {
         tc.tick().x(&[0]);
         tc.tick().x(&[0]);
         CancelInverses.apply_tick(&mut tc);
-        assert!(tc.ticks()[0].gate_batches().is_empty());
-        assert!(tc.ticks()[1].gate_batches().is_empty());
+        assert_eq!(tc.ticks()[0].gate_batches(), []);
+        assert_eq!(tc.ticks()[1].gate_batches(), []);
     }
 
     #[test]
@@ -2785,8 +2785,8 @@ mod tests {
         tc.tick();
         tc.ticks_mut()[1].add_gate(Gate::sxdg(&[0]));
         CancelInverses.apply_tick(&mut tc);
-        assert!(tc.ticks()[0].gate_batches().is_empty());
-        assert!(tc.ticks()[1].gate_batches().is_empty());
+        assert_eq!(tc.ticks()[0].gate_batches(), []);
+        assert_eq!(tc.ticks()[1].gate_batches(), []);
     }
 
     #[test]
@@ -2796,8 +2796,8 @@ mod tests {
         tc.tick();
         tc.ticks_mut()[1].add_gate(Gate::tdg(&[0]));
         CancelInverses.apply_tick(&mut tc);
-        assert!(tc.ticks()[0].gate_batches().is_empty());
-        assert!(tc.ticks()[1].gate_batches().is_empty());
+        assert_eq!(tc.ticks()[0].gate_batches(), []);
+        assert_eq!(tc.ticks()[1].gate_batches(), []);
     }
 
     #[test]
@@ -2806,8 +2806,8 @@ mod tests {
         tc.tick().cx(&[(0, 1)]);
         tc.tick().cx(&[(0, 1)]);
         CancelInverses.apply_tick(&mut tc);
-        assert!(tc.ticks()[0].gate_batches().is_empty());
-        assert!(tc.ticks()[1].gate_batches().is_empty());
+        assert_eq!(tc.ticks()[0].gate_batches(), []);
+        assert_eq!(tc.ticks()[1].gate_batches(), []);
     }
 
     #[test]
@@ -2817,8 +2817,8 @@ mod tests {
         tc.tick().rz(angle, &[0]);
         tc.tick().rz(-angle, &[0]);
         CancelInverses.apply_tick(&mut tc);
-        assert!(tc.ticks()[0].gate_batches().is_empty());
-        assert!(tc.ticks()[1].gate_batches().is_empty());
+        assert_eq!(tc.ticks()[0].gate_batches(), []);
+        assert_eq!(tc.ticks()[1].gate_batches(), []);
     }
 
     #[test]
@@ -2832,7 +2832,7 @@ mod tests {
         tc.tick().h(&[0]);
         CancelInverses.apply_tick(&mut tc);
         for tick in tc.ticks() {
-            assert!(tick.gate_batches().is_empty());
+            assert_eq!(tick.gate_batches(), []);
         }
     }
 

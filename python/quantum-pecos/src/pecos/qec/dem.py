@@ -21,7 +21,7 @@ even when the key also matches another scheduled gate.
 This wrapper is intentionally thin: it traces the Guppy program into a
 ``TickCircuit``, compiles Guppy inputs to a HUGR to reject unverified control
 flow and, when requested, recover the sound tag -> measurement binding via
-``pecos_hugr_qis::extract_result_tag_measurements``, and hands
+``pecos_hugr::extract_result_tag_measurements``, and hands
 the caller's detector/observable JSON to the Rust DEM builder. The metadata
 validation that applies to **every** ingest path (``from_guppy``,
 ``from_circuit``, ``DemSampler.from_circuit``, public ``DemBuilder``) lives
@@ -57,6 +57,7 @@ from pecos._traced_circuit import (
     measurement_ids_in_execution_order,
     normalize_traced_tick_circuit,
 )
+from pecos.programs import Guppy
 from pecos.qec._idle_noise import _translate_structured_idle_noise
 from pecos.qec.dem_spec import (
     GuppyDemBuild,
@@ -192,7 +193,7 @@ def _certifiable_hugr_bytes(guppy: Any) -> bytes | None:
     """Return the HUGR bytes that certify this program's static schedule.
 
     Accepts ``@guppy`` definitions (compiled through the shared cache),
-    ``pecos.Guppy`` wrappers (unwrapped and compiled), and ``pecos.Hugr``
+    ``pecos.Guppy`` wrappers (their ``hugr_bytes``, from the same cache), and ``pecos.Hugr``
     wrappers or raw HUGR envelope bytes (used directly, so the audit inspects
     the exact bytes that would execute). Returns ``None`` when the input
     shape is not HUGR-certifiable; audited callers fail closed on ``None``
@@ -218,13 +219,20 @@ def _certificate_carrier(guppy: Any) -> Any | None:
     """Return the object whose generator certificate may be honored, if any.
 
     Certificates are stamped by built-in generators on Guppy *definition*
-    objects only. Byte carriers (``pecos.Hugr``, raw HUGR bytes, duck-typed
-    ``hugr_bytes`` holders) never carry an honorable certificate: they are
-    opaque data, and honoring an attribute there would let any bytes suppress
-    the control-flow guard by stapling a self-consistent digest to themselves.
+    objects only. ``pecos.Guppy`` is honored through the definition it wraps,
+    even though it also exposes the compiled envelope as ``hugr_bytes``: those
+    bytes are compiled from that same definition.
+
+    Byte carriers (``pecos.Hugr``, raw HUGR bytes, duck-typed ``hugr_bytes``
+    holders) never carry an honorable certificate, whatever ``wrapped_function``
+    they claim: they are opaque data, and honoring an attribute there would let
+    any bytes suppress the control-flow guard by stapling a self-consistent
+    digest to themselves.
     """
     if isinstance(guppy, (bytes, bytearray)):
         return None
+    if isinstance(guppy, Guppy):
+        return guppy.wrapped_function
     if isinstance(getattr(guppy, "hugr_bytes", None), (bytes, bytearray)):
         return None
     return getattr(guppy, "wrapped_function", guppy)
@@ -440,7 +448,7 @@ class _DetectorErrorModelMixin:
                   (e.g. ``[{"id": 0, "result_tags": ["syn_a"]}]``). The
                   reorder-immune ``tag -> measurement`` binding is recovered
                   from the compiled HUGR by
-                  ``pecos_hugr_qis::extract_result_tag_measurements`` and
+                  ``pecos_hugr::extract_result_tag_measurements`` and
                   resolved to stable runtime ``MeasId`` values in Rust. Supported only for
                   **straight-line, canonical** programs:
                   ``result(tag, measure(q))`` of a raw scalar measurement.

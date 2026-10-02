@@ -1470,15 +1470,13 @@ impl SeleneRuntime {
             QuantumOp::Measure(qubit, result_id) => {
                 let runtime_qubit = self.runtime_qubit_for_program(*qubit)?;
                 self.call_runtime_measure(runtime_qubit, *result_id)?;
-                self.program_to_runtime_qubits.remove(qubit);
-                self.runtime_qfree(runtime_qubit)?;
+                self.release_implicitly_measured_qubit(*qubit, runtime_qubit)?;
             }
             QuantumOp::MeasureLeaked(qubit, result_id) => {
                 self.leakage_results.insert(*result_id);
                 let runtime_qubit = self.runtime_qubit_for_program(*qubit)?;
                 self.call_runtime_measure_leaked(runtime_qubit, *result_id)?;
-                self.program_to_runtime_qubits.remove(qubit);
-                self.runtime_qfree(runtime_qubit)?;
+                self.release_implicitly_measured_qubit(*qubit, runtime_qubit)?;
             }
             QuantumOp::Reset(qubit) => {
                 let runtime_qubit = self.runtime_qubit_for_program(*qubit)?;
@@ -1490,6 +1488,21 @@ impl SeleneRuntime {
             }
         }
 
+        Ok(())
+    }
+
+    fn release_implicitly_measured_qubit(
+        &mut self,
+        program_qubit: usize,
+        runtime_qubit: u64,
+    ) -> Result<()> {
+        // Explicit lifetime streams may reset or measure this same live qubit
+        // again. Only ReleaseQubit ends that lifetime. Preserve measurement-time
+        // release for legacy streams that contain no allocation/release records.
+        if !self.uses_explicit_qubit_allocation {
+            self.runtime_qfree(runtime_qubit)?;
+            self.program_to_runtime_qubits.remove(&program_qubit);
+        }
         Ok(())
     }
 
@@ -3252,6 +3265,110 @@ mod tests {
         assert_eq!(gates.len(), 1, "{lowered:?}");
         assert_eq!(gates[0].op, QuantumOp::RXYXY2Q(-0.73, 0.41, 1, 0));
         assert_eq!(gates[0].metadata, metadata);
+    }
+
+    #[cfg(feature = "selene-runtimes")]
+    fn lower_lifetime_test_input(runtime: &mut SeleneRuntime, mode: usize, ops: &[Operation]) {
+        match mode {
+            0 => {
+                runtime.lower_operations(ops).unwrap();
+            }
+            1 => {
+                runtime.lower_operations_with_metadata(ops).unwrap();
+            }
+            2 => {
+                runtime.lower_scheduled_operations(ops).unwrap();
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    #[cfg(feature = "selene-runtimes")]
+    #[test]
+    fn explicit_measurement_lifetime_survives_until_release() {
+        for mode in 0..3 {
+            for leaked in [false, true] {
+                for mut runtime in [
+                    crate::selene_runtimes::selene_simple_runtime().unwrap(),
+                    crate::selene_runtimes::selene_soft_rz_runtime().unwrap(),
+                ] {
+                    runtime.set_num_qubits(1);
+                    runtime.shot_start(0, Some(7)).unwrap();
+                    lower_lifetime_test_input(
+                        &mut runtime,
+                        mode,
+                        &[
+                            Operation::AllocateQubit { id: 71 },
+                            QuantumOp::Reset(71).into(),
+                        ],
+                    );
+                    let original = runtime.program_to_runtime_qubits[&71];
+                    for result in 0..2 {
+                        let measurement = if leaked {
+                            QuantumOp::MeasureLeaked(71, result)
+                        } else {
+                            QuantumOp::Measure(71, result)
+                        };
+                        // Separate submissions exercise persistence after feedback,
+                        // including a continuation with no allocation records.
+                        lower_lifetime_test_input(&mut runtime, mode, &[measurement.into()]);
+                        assert_eq!(
+                            runtime.program_to_runtime_qubits.get(&71),
+                            Some(&original),
+                            "measurement released a live handle: mode={mode}, leaked={leaked}"
+                        );
+                        runtime
+                            .provide_measurement_outcomes(BTreeMap::from([(result, 0)]))
+                            .unwrap();
+                        lower_lifetime_test_input(
+                            &mut runtime,
+                            mode,
+                            &[QuantumOp::Reset(71).into()],
+                        );
+                        assert_eq!(runtime.program_to_runtime_qubits[&71], original);
+                    }
+                    lower_lifetime_test_input(
+                        &mut runtime,
+                        mode,
+                        &[Operation::ReleaseQubit { id: 71 }],
+                    );
+                    assert!(!runtime.program_to_runtime_qubits.contains_key(&71));
+                    // A one-slot runtime can allocate again only after release.
+                    lower_lifetime_test_input(
+                        &mut runtime,
+                        mode,
+                        &[Operation::AllocateQubit { id: 93 }],
+                    );
+                    assert_eq!(runtime.program_to_runtime_qubits.len(), 1);
+                    lower_lifetime_test_input(
+                        &mut runtime,
+                        mode,
+                        &[Operation::ReleaseQubit { id: 93 }],
+                    );
+                    if mode == 2 {
+                        runtime.drain_pending_scheduled_operations().unwrap();
+                    } else {
+                        runtime.drain_pending_operations().unwrap();
+                    }
+                    runtime.shot_end().unwrap();
+                }
+            }
+        }
+    }
+
+    #[cfg(feature = "selene-runtimes")]
+    #[test]
+    fn legacy_measurement_still_releases_implicit_handles() {
+        for mode in 0..3 {
+            for measurement in [QuantumOp::Measure(0, 0), QuantumOp::MeasureLeaked(0, 0)] {
+                let mut runtime = crate::selene_runtimes::selene_simple_runtime().unwrap();
+                runtime.set_num_qubits(1);
+                runtime.shot_start(0, None).unwrap();
+                lower_lifetime_test_input(&mut runtime, mode, &[measurement.into()]);
+                assert!(!runtime.uses_explicit_qubit_allocation);
+                assert!(runtime.program_to_runtime_qubits.is_empty());
+            }
+        }
     }
 
     #[test]

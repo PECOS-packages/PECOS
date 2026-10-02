@@ -13,6 +13,12 @@ dynamically: runtime batches enter the noise model and simulator, and measuremen
 results return to the program to drive feedback and branches. Validation buffers
 the current input; simulation does not require a precomputed whole-shot trace.
 
+Programs with explicit qubit allocation/release records keep each runtime handle
+alive through measurements until the program releases it. A later reset or
+measurement on that live handle therefore reaches the same runtime allocation,
+including across measurement-feedback continuations. Legacy operation streams
+without lifetime records retain their implicit release on measurement.
+
 <!--skip: API template requires caller-supplied runtime and LLVM program; covered by integration tests.-->
 ```python
 import pecos

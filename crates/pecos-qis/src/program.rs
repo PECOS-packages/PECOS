@@ -26,15 +26,6 @@ pub trait IntoQisInterface {
     fn into_qis_interface(self) -> Result<OperationCollector, PecosError>;
 }
 
-/// Program type classification for interface provider selection
-#[derive(Debug, Clone, PartialEq)]
-pub enum ProgramType {
-    /// LLVM IR text format
-    LlvmIr,
-    /// QIS bitcode format
-    QisBitcode,
-}
-
 /// Implement `IntoQisInterface` for `OperationCollector` itself (identity conversion)
 impl IntoQisInterface for OperationCollector {
     fn into_qis_interface(self) -> Result<OperationCollector, PecosError> {

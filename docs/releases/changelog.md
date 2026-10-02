@@ -54,6 +54,7 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 - `pecos_programs::Hugr` and `Program::Hugr` have been removed. Rust accepts QIS;
   HUGR is lowered to QIS at the Python boundary.
+- The unused `pecos_qis::ProgramType` enum has been removed.
 - The `pecos-hugr-qis` crate, the `pecos-qis` feature `hugr`, and the `pecos`
   feature `hugr-qis` have been removed.
 - `QisEngineBuilder::platform` and `QSystemPlatform` have been removed. Select

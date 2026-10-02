@@ -430,7 +430,13 @@ impl DepolarizingNoiseModel {
             };
 
             // Add the new fault site
-            if let Some((kind, outcomes)) = kind_outcomes {
+            if let Some((kind, mut outcomes)) = kind_outcomes {
+                match gate.gate_type {
+                    GateType::MX | GateType::PX => outcomes[1].label = "Z",
+                    GateType::MZ | GateType::PZ => outcomes[1].label = "X",
+                    _ => {}
+                }
+
                 fault_sites.push(DepolarizingFaultSite {
                     uid: next_fault_site_id,
                     gate_index,

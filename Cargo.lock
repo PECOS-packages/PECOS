@@ -4672,6 +4672,8 @@ version = "0.2.0-dev.0"
 dependencies = [
  "pecos-core",
  "pecos-engines",
+ "pecos-fusion-blossom",
+ "pecos-qec",
  "pecos-random",
 ]
 

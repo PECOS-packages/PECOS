@@ -23,7 +23,8 @@
 //! for QEC circuits (m ~ 5-15). S-type noise does not increase term count.
 //!
 //! The Pauli-tracking walks support these coherent and stochastic channels.
-//! A matrix reference for coherent RZ noise is also provided (~20 qubits).
+//! A dense-matrix reference ([`heisenberg_exact_from_circuit`], up to ~20
+//! qubits) applies the same noise and checks the walks.
 
 use crate::Bm;
 use crate::noise::{GateNoise, NoiseSpec};
@@ -1695,6 +1696,7 @@ pub fn heisenberg_exact_from_circuit(
                     matrix_cx_adjoint(&mut obs_re, &mut im, pair[0], pair[1], n);
                 }
             }
+            GateType::I | GateType::Idle => {}
             gate_type => {
                 return Err(crate::expand::EegBuildError::UnsupportedExactGate { gate_type });
             }
@@ -2866,6 +2868,47 @@ mod tests {
                 (actual - expected).abs() < 1e-10,
                 "detector={detector:?}: {actual} != {expected}"
             );
+        }
+    }
+
+    #[test]
+    fn test_exact_batched_cx_pairs_apply_in_order() {
+        // CX [0,1,1,2] is CX(0,1) then CX(1,2): after H0 that makes a GHZ
+        // state, so q2 is a fair coin. In the other order CX(1,2) acts on
+        // |0> first and q2 stays 0.
+        let gates = [
+            gate(GateType::QAlloc, &[0, 1, 2]),
+            gate(GateType::H, &[0]),
+            gate(GateType::CX, &[0, 1, 1, 2]),
+            gate(GateType::MZ, &[0, 1, 2]),
+        ];
+        let noise = ExactTestNoise(vec![]);
+        for (detector, expected) in [(vec![2], 0.5), (vec![0, 2], 0.0), (vec![1, 2], 0.0)] {
+            let actual = heisenberg_exact_from_circuit(&gates, &detector, &noise, 3).unwrap();
+            assert!(
+                (actual - expected).abs() < 1e-10,
+                "detector={detector:?}: {actual} != {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_exact_identity_gates_carry_noise() {
+        // I and Idle act trivially but still carry noise: an X0 flip with
+        // probability p after either one flips the measurement with p.
+        let p = 0.2;
+        for idle in [GateType::I, GateType::Idle] {
+            let gates = [
+                gate(GateType::PZ, &[0]),
+                gate(idle, &[0]),
+                gate(GateType::MZ, &[0]),
+            ];
+            let noise = ExactTestNoise(vec![(
+                1,
+                exact_test_injection(crate::eeg::EegType::S, Bm::x(0), -p),
+            )]);
+            let actual = heisenberg_exact_from_circuit(&gates, &[0], &noise, 1).unwrap();
+            assert!((actual - p).abs() < 1e-12, "{idle:?}: {actual} != {p}");
         }
     }
 

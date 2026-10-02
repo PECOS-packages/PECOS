@@ -42,7 +42,13 @@ impl PhirJsonEngine {
     fn initial_stack(program: Option<&PHIRProgram>) -> Vec<ExecFrame> {
         program.map_or_else(Vec::new, |p| {
             vec![ExecFrame {
-                ops: p.ops.clone(),
+                // Declarations are registered once when the program is loaded.
+                ops: p
+                    .ops
+                    .iter()
+                    .filter(|op| !matches!(op, Operation::VariableDefinition { .. }))
+                    .cloned()
+                    .collect(),
                 idx: 0,
             }]
         })
@@ -182,6 +188,7 @@ impl PhirJsonEngine {
     /// # Errors
     /// - Returns an error if variable definitions cannot be processed.
     pub fn from_program(program: PHIRProgram) -> Result<Self, PecosError> {
+        super::declarations::validate_operations(&program.ops)?;
         let mut processor = OperationProcessor::new();
 
         // Process variable definitions
@@ -795,22 +802,8 @@ impl Engine for PhirJsonEngine {
                         log::debug!("Processing operation {i}: {op:?}");
 
                         match op {
-                            Operation::VariableDefinition {
-                                data,
-                                data_type,
-                                variable,
-                                size,
-                            } => {
-                                log::debug!(
-                                    "Processing variable definition: {data_type} {variable}"
-                                );
-                                self.processor.handle_variable_definition(
-                                    data,
-                                    data_type,
-                                    variable,
-                                    super::ast::declaration_size(data, data_type, variable, *size)?,
-                                )?;
-                            }
+                            // These declarations were registered during construction.
+                            Operation::VariableDefinition { .. } => {}
                             Operation::ClassicalOp {
                                 cop,
                                 args,

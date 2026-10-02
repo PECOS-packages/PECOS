@@ -1,0 +1,20 @@
+{
+  "format": "PHIR/JSON",
+  "version": "0.1.0",
+  "ops": [
+    {"data": "qvar_define", "variable": "q", "size": 1},
+    {"data": "cvar_define", "data_type": "u32", "variable": "a", "size": 4},
+    {"data": "qvar_define", "variable": "z", "size": 1},
+    {"data": "cvar_define", "data_type": "u32", "variable": "b", "size": 4},
+    {"data": "cvar_define", "data_type": "u32", "variable": "m", "size": 1},
+    {"cop": "=", "args": [2], "returns": ["b"]},
+    {"cop": "=", "args": [3], "returns": ["a"]},
+    {"cop": "=", "args": [{"cop": "+", "args": ["a", "b"]}], "returns": ["a"]},
+    {"cop": "=", "args": [{"cop": "+", "args": ["a", "b"]}], "returns": ["a"]},
+    {"qop": "X", "args": [["q", 0]]},
+    {"qop": "X", "args": [["z", 0]]},
+    {"qop": "X", "args": [["z", 0]]},
+    {"qop": "Measure", "args": [["q", 0]], "returns": [["m", 0]]},
+    {"data": "cvar_export", "variables": ["a", "b", "m"]}
+  ]
+}

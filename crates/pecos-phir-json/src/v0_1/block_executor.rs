@@ -136,6 +136,7 @@ impl BlockExecutor {
     /// # Errors
     /// Returns an error if the operation cannot be processed.
     pub fn process_operation(&mut self, op: &Operation) -> Result<(), PecosError> {
+        super::declarations::validate_operations(std::slice::from_ref(op))?;
         match op {
             Operation::VariableDefinition {
                 data,
@@ -236,6 +237,7 @@ impl BlockExecutor {
     /// # Errors
     /// Returns an error if any operation in the sequence fails.
     pub fn execute_sequence(&mut self, operations: &[Operation]) -> Result<(), PecosError> {
+        super::declarations::validate_operations(operations)?;
         debug!(
             "Executing sequence block with {} operations",
             operations.len()
@@ -275,6 +277,9 @@ impl BlockExecutor {
         true_branch: &[Operation],
         false_branch: Option<&[Operation]>,
     ) -> Result<(), PecosError> {
+        let mut declarations = super::declarations::Declarations::default();
+        declarations.validate_operations(true_branch)?;
+        declarations.validate_operations(false_branch.unwrap_or_default())?;
         debug!("Executing conditional block");
 
         // Evaluate the condition
@@ -307,6 +312,7 @@ impl BlockExecutor {
     /// - A qubit is used more than once
     /// - Any operation fails to process
     pub fn execute_qparallel(&mut self, operations: &[Operation]) -> Result<(), PecosError> {
+        super::declarations::validate_operations(operations)?;
         debug!(
             "Executing quantum parallel block with {} operations",
             operations.len()
@@ -493,6 +499,7 @@ impl BlockExecutor {
         &mut self,
         program: &[Operation],
     ) -> Result<BTreeMap<String, u64>, PecosError> {
+        super::declarations::validate_operations(program)?;
         debug!("Executing PHIR program with {} operations", program.len());
 
         // Reset state before execution

@@ -268,6 +268,56 @@ fn seeded_nary_maxlog_matches_brute_force_integer_routes() {
     }
 }
 
+#[test]
+fn nary_maxlog_dropped_mass_is_the_largest_discarded_route_across_columns() {
+    // Every outcome toggles its own observable, so no two routes merge. At
+    // scale 1024 the first column keeps ln(0.5) = -710 and drops ln(0.3) =
+    // -1233 and ln(0.2) = -1648. Each later column keeps the 0.9 branch and
+    // drops at most -710 + ln(0.06) = -3591, then -818 + ln(0.06) = -3699. The
+    // reported value must be the largest across prune calls, not the last.
+    let factors = [
+        [(0.5, 0), (0.3, 1), (0.2, 2)],
+        [(0.9, 3), (0.06, 4), (0.04, 5)],
+        [(0.9, 6), (0.06, 7), (0.04, 8)],
+    ]
+    .into_iter()
+    .map(|outcomes| Factor {
+        outcomes: outcomes
+            .into_iter()
+            .map(|(probability, observable)| outcome(probability, &[], &[observable]))
+            .collect(),
+    })
+    .collect();
+    let model = FactorModel::new(factors, 0, 9).unwrap();
+    let mut decoder = TrellisDecoder::from_factor_model(
+        &model,
+        TrellisConfig {
+            k: 1,
+            delta: 1_000_000.0,
+            score_alpha: 0.0,
+            metric_mode: MetricMode::MaxLogInt,
+            int_metric_scale: 1024,
+            ..TrellisConfig::default()
+        },
+    )
+    .unwrap();
+    let result = decoder.decode(&[]).unwrap();
+    let expected_dropped_mass = -1_233.0_f64 / 1024.0;
+
+    assert_eq!(result.dropped_states, 6);
+    assert_eq!(
+        result.dropped_log_mass.to_bits(),
+        expected_dropped_mass.to_bits()
+    );
+    assert_eq!(
+        result.status,
+        TrellisStatus::Pruned {
+            k_capped: true,
+            delta_pruned: false,
+        }
+    );
+}
+
 fn assert_decode_matches_enumeration(model: &FactorModel, case_index: usize) {
     let enumerated = enumerate_factor_model(model);
     let mut decoder = TrellisDecoder::from_factor_model(model, exact_config()).unwrap();

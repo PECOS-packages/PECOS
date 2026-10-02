@@ -53,7 +53,11 @@
 //!
 //! # Example Usage
 //!
+//! Requires the `selene` feature (enabled by default).
+//!
 //! ```rust,no_run
+//! # #[cfg(feature = "selene")]
+//! # {
 //! use pecos_qis::{qis_engine, selene_simple_runtime, helios_interface_builder};
 //! use pecos_engines::ClassicalControlEngineBuilder;
 //!
@@ -64,6 +68,7 @@
 //!     .interface(helios_interface_builder())
 //!     .build()
 //!     .expect("Failed to build engine");
+//! # }
 //! ```
 
 // ============================================================================
@@ -227,7 +232,7 @@ pub fn selene_soft_rz_engine() -> Result<QisEngineBuilder, RuntimeFetchError> {
         .interface(helios_interface_builder()))
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "selene"))]
 pub(crate) mod test_env {
     use std::ffi::{OsStr, OsString};
     use std::sync::Mutex;

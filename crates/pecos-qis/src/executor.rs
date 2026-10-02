@@ -2350,46 +2350,61 @@ impl Default for QisHeliosInterface {
 /// Validate before creating or consulting cached program libraries. QIR shares
 /// symbol names with QIS, but passes pointer handles to different signatures.
 fn validate_qis_dialect(bytes: &[u8], format: ProgramFormat) -> Result<(), InterfaceError> {
-    let disassembled;
-    let ir = if format == ProgramFormat::LlvmIrText {
-        std::str::from_utf8(bytes).map_err(|error| {
-            InterfaceError::InvalidFormat(format!("LLVM IR is not UTF-8: {error}"))
-        })?
-    } else {
-        // Use the same LLVM installation as the compiler, including builds
-        // without the optional inkwell/llvm feature.
-        let mut bitcode = NamedTempFile::with_suffix(".bc").map_err(|error| {
+    // Use the compiler's LLVM installation even without optional LLVM bindings.
+    // File input avoids blocking on simultaneous child stdin/stdout pipe traffic.
+    let mut input = NamedTempFile::new().map_err(|error| {
+        InterfaceError::LoadError(format!("Failed to create QIS validation file: {error}"))
+    })?;
+    input
+        .write_all(bytes)
+        .and_then(|()| input.flush())
+        .map_err(|error| {
+            InterfaceError::LoadError(format!("Failed to write QIS validation input: {error}"))
+        })?;
+    let bitcode;
+    let bitcode_path = if format == ProgramFormat::LlvmIrText {
+        bitcode = NamedTempFile::with_suffix(".bc").map_err(|error| {
             InterfaceError::LoadError(format!("Failed to create bitcode validation file: {error}"))
         })?;
-        bitcode
-            .write_all(bytes)
-            .and_then(|()| bitcode.flush())
-            .map_err(|error| {
-                InterfaceError::LoadError(format!(
-                    "Failed to write bitcode for validation: {error}"
-                ))
-            })?;
-        let output = Command::new(find_llvm_tool("llvm-dis"))
+        let output = Command::new(find_llvm_tool("llvm-as"))
+            .arg(input.path())
+            .arg("-o")
             .arg(bitcode.path())
-            .args(["-o", "-"])
             .output()
             .map_err(|error| {
                 InterfaceError::LoadError(format!(
-                    "Failed to run llvm-dis for QIS validation: {error}"
+                    "Failed to run llvm-as for QIS validation: {error}"
                 ))
             })?;
         if !output.status.success() {
             return Err(InterfaceError::InvalidFormat(format!(
-                "Failed to disassemble QIS bitcode: {}",
+                "Failed to assemble QIS IR: {}",
                 String::from_utf8_lossy(&output.stderr)
             )));
         }
-        disassembled = String::from_utf8(output.stdout).map_err(|error| {
-            InterfaceError::InvalidFormat(format!("Disassembled LLVM IR is not UTF-8: {error}"))
-        })?;
-        &disassembled
+        bitcode.path()
+    } else {
+        input.path()
     };
-    if let Some(reason) = crate::qir_detection::qir_reason(ir) {
+    let output = Command::new(find_llvm_tool("llvm-dis"))
+        .arg(bitcode_path)
+        .args(["-o", "-"])
+        .output()
+        .map_err(|error| {
+            InterfaceError::LoadError(format!(
+                "Failed to run llvm-dis for QIS validation: {error}"
+            ))
+        })?;
+    if !output.status.success() {
+        return Err(InterfaceError::InvalidFormat(format!(
+            "Failed to disassemble QIS bitcode: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )));
+    }
+    let ir = String::from_utf8(output.stdout).map_err(|error| {
+        InterfaceError::InvalidFormat(format!("Disassembled LLVM IR is not UTF-8: {error}"))
+    })?;
+    if let Some(reason) = crate::qir_detection::qir_reason(&ir) {
         return Err(InterfaceError::InvalidFormat(format!(
             "QIS input contains {reason}; convert QIR to QIS first"
         )));
@@ -2700,6 +2715,159 @@ mod tests {
     use super::*;
     use crate::test_env::{ENV_MUTEX, EnvVarGuard};
     use std::fs::File;
+
+    fn is_qir_text(ir: &str) -> bool {
+        match validate_qis_dialect(ir.as_bytes(), ProgramFormat::LlvmIrText) {
+            Err(InterfaceError::InvalidFormat(message))
+                if message.contains("convert QIR to QIS first") =>
+            {
+                true
+            }
+            Ok(()) => false,
+            result => panic!("unexpected validation result for {ir}: {result:?}"),
+        }
+    }
+
+    #[test]
+    fn malformed_ir_text_is_invalid_format() {
+        let error = validate_qis_dialect(b"define void @f() prefix i8", ProgramFormat::LlvmIrText)
+            .unwrap_err();
+        assert!(
+            matches!(error, InterfaceError::InvalidFormat(ref message) if message.contains("error:")),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn canonicalizes_qir_attributes() {
+        for attribute in ["entry_point", "qir_profiles", "required_num_results"] {
+            for ir in [
+                format!(
+                    "define void @main() #0 {{ ret void }}\nattributes #0 = {{ \"{attribute}\"=\"1\" }}"
+                ),
+                format!("define void @main()\n\"{attribute}\"=\"1\"\n{{ ret void }}"),
+            ] {
+                assert!(is_qir_text(&ir), "accepted {ir}");
+            }
+        }
+        assert!(is_qir_text(
+            r#"define void @main() #0 { ret void }
+attributes #0 = { "entry\5fpoint" }"#
+        ));
+        assert!(is_qir_text(
+            r#"define void @main() "entry_point" prefix [11 x i8] c"entry_point" { ret void }"#
+        ));
+    }
+
+    #[test]
+    fn canonicalizes_qir_signatures() {
+        for ir in [
+            "declare void @__quantum__qis__mz__body(ptr, ptr)",
+            "declare void @__quantum__qis__mz__body(%Qubit*, %Result*)",
+            "declare void @__quantum__qis__x__body(%Qubit*)",
+            "declare ptr @__quantum__qis__m__body(ptr)",
+            "declare %Result* @__quantum__qis__m__body(%Qubit*)",
+            "declare void @__quantum__qis__rx__body(double, ptr)",
+            "declare ptr @__quantum__rt__qubit_allocate()",
+            "declare void @__quantum__rt__qubit_release(ptr)",
+            "declare %Result* @__quantum__rt__result_get_one()",
+            "declare ptr @__quantum__rt__result_allocate()",
+            "define void @__quantum__qis__x__body(ptr %q) { ret void }",
+            "declare void @\"__quantum__qis__mz__body\"(\n ptr noundef %q,\n ptr nonnull align 8 %r\n)",
+            "declare void @\"__quantum__qis__x__b\\6fdy\"(ptr addrspace(1))",
+        ] {
+            assert!(
+                is_qir_text(&format!(
+                    "%Qubit = type opaque\n%Result = type opaque\n{ir}"
+                )),
+                "accepted {ir}"
+            );
+        }
+    }
+
+    #[test]
+    fn canonicalizes_qis_and_data() {
+        for ir in [
+            "declare i32 @__quantum__qis__mz__body(i64)",
+            "declare i32 @__quantum__qis__m__body(i64, i64)",
+            "declare void @__quantum__qis__rx__body(double, i64)",
+            "declare void @__quantum__rt__result_record_output(ptr, ptr)",
+            "declare void @__quantum__rt__result_record_output(i8*, i8*)",
+            "declare i32 @__quantum__rt__result_get_one(i64)",
+            "declare i64 @__quantum__rt__result_allocate()",
+            "declare void @__quantum__qis__x__body(i64 \"description\"=\"ptr\")",
+            "; declare void @__quantum__qis__mz__body(ptr, ptr)\n; attributes #0 = { \"entry_point\" }",
+            "@message = constant [12 x i8] c\"entry_point\\00\"",
+            "@message = constant [43 x i8] c\"declare void @__quantum__qis__x__body(ptr)\\00\"",
+            "define void @main() #0 { ret void }\nattributes #0 = { \"EntryPoint\" \"note\"=\"entry_point\" \"other\"=\"qir_profiles\" }",
+            "define void @\"entry_point\"() section \"entry_point\" gc \"qir_profiles\" { ret void }",
+            "define i64 @qmain(i64 %arg) prefix [11 x i8] c\"entry_point\" { ret i64 0 }",
+            "define i64 @qmain(i64 %arg) prologue [12 x i8] c\"qir_profiles\" { ret i64 0 }",
+            "define i64 @qmain(i64 %arg) partition \"required_num_results\" { ret i64 0 }",
+            "define i64 @qmain(i64 %arg) prefix { i64, [11 x i8] } { i64 1, [11 x i8] c\"entry_point\" } { attributes: ret i64 0 }",
+            "define i64 @qmain(i64 %arg) prologue <{ [12 x i8] }> <{ [12 x i8] c\"qir_profiles\" }> { declare: ret i64 0 }",
+            "define void @main() { %entry_point = add i64 0, 1\n ret void }",
+            "!0 = !{!\"entry_point\", !\"qir_profiles\"}",
+        ] {
+            validate_qis_dialect(ir.as_bytes(), ProgramFormat::LlvmIrText)
+                .unwrap_or_else(|error| panic!("{ir}: {error}"));
+        }
+    }
+
+    #[test]
+    fn accepts_every_checked_in_qis_fixture() {
+        let fixtures = [
+            (
+                "pliron ghz3",
+                include_str!("../../pecos-phir-pliron/fixtures/ghz3.ll"),
+            ),
+            (
+                "pliron cz_swap",
+                include_str!("../../pecos-phir-pliron/fixtures/cz_swap.ll"),
+            ),
+            (
+                "pliron adaptive_branch",
+                include_str!("../../pecos-phir-pliron/fixtures/adaptive_branch.ll"),
+            ),
+            (
+                "pliron branch_measure",
+                include_str!("../../pecos-phir-pliron/fixtures/branch_measure.ll"),
+            ),
+            ("llvm bell", include_str!("../../../examples/llvm/bell.ll")),
+            (
+                "llvm qprog",
+                include_str!("../../../examples/llvm/qprog.ll"),
+            ),
+            (
+                "bell final",
+                include_str!("../../../examples/bell_final.ll"),
+            ),
+        ];
+        for (name, ir) in fixtures {
+            validate_qis_dialect(ir.as_bytes(), ProgramFormat::LlvmIrText)
+                .unwrap_or_else(|error| panic!("QIS fixture {name}: {error}"));
+        }
+    }
+
+    #[test]
+    fn rejects_both_checked_in_qir_fixtures() {
+        for (name, ir) in [
+            (
+                "ArithmeticOps.Targeted",
+                include_str!(
+                    "../../../python/quantum-pecos/tests/pecos/integration/ll/ArithmeticOps.Targeted.ll"
+                ),
+            ),
+            (
+                "IntegerSupport.TargetedAlt",
+                include_str!(
+                    "../../../python/quantum-pecos/tests/pecos/integration/ll/IntegerSupport.TargetedAlt.ll"
+                ),
+            ),
+        ] {
+            assert!(is_qir_text(ir), "accepted QIR fixture {name}");
+        }
+    }
 
     fn assemble_test_bitcode(ir: &str) -> Vec<u8> {
         let mut source = NamedTempFile::with_suffix(".ll").unwrap();

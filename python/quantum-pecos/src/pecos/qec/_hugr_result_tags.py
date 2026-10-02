@@ -17,7 +17,6 @@ if TYPE_CHECKING:
 def load_hugr_from_bytes(data: bytes) -> Hugr:
     """Validate an envelope and return module zero, requiring at least one module.
 
-    Mirrors ``crates/pecos-hugr/src/loader.rs::load_hugr_from_bytes``.
     Validation and parsing failures raise ``ValueError`` with the prefix
     ``Failed to parse HUGR``.
     """
@@ -53,7 +52,6 @@ def measurement_op_count(hugr: Hugr) -> int:
     """Count static measurements across the whole graph, including function bodies.
 
     Runtime loops count their measurement nodes once, regardless of iterations.
-    Mirrors ``crates/pecos-hugr/src/result_tags.rs::measurement_op_count``.
     """
     return sum(_is_measurement(hugr[node].op) for node in hugr)
 
@@ -63,7 +61,6 @@ def has_nontrivial_control_flow(hugr: Hugr) -> bool:
 
     A DataflowBlock is nontrivial only if its sum has more than one row.
     Direct calls do not hide their function bodies from whole-graph traversal.
-    Mirrors ``crates/pecos-hugr/src/result_tags.rs::has_nontrivial_control_flow``.
     """
     for node in hugr:
         op = hugr[node].op
@@ -86,7 +83,6 @@ def extract_result_tag_measurements(hugr: Hugr) -> dict[str, list[int | None]]:
     ``tket.measurement:Read``) ``<- tket.quantum:Measure|MeasureFree``.
     Every other tagged tket.result occurrence contributes None, preserving
     occurrence order and unsupported holes. Keys are returned in sorted order.
-    Mirrors ``crates/pecos-hugr/src/result_tags.rs::extract_result_tag_measurements``.
     """
     measurements = [node for node in hugr if _is_measurement(hugr[node].op)]
     ordinals = {node: ordinal for ordinal, node in enumerate(measurements)}

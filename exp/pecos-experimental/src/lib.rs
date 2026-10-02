@@ -25,7 +25,7 @@
 //!
 //! ## Current Experimental Features
 //!
-//! - [`hugr_executor`] - Direct HUGR circuit execution on simulators
+//! - [`hugr_executor`] - Symbolic circuit execution on simulators
 //! - [`noisy_symbolic`] - Noisy symbolic measurement sampling with depolarizing noise
 //!
 //! ## Usage

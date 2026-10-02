@@ -20,7 +20,7 @@
 //! Python bindings for quantum circuit representation.
 //!
 //! This module provides Python bindings for `DagCircuit`, `Gate`, `GateType`, and `QubitId`
-//! from the pecos-quantum crate, as well as HUGR conversion utilities.
+//! from the pecos-quantum crate, along with result-tag resolution.
 
 use crate::dtypes::AngleParam;
 use crate::gate_registry_bindings::PyGateRegistry;
@@ -33,7 +33,7 @@ use pecos_quantum::{
     TickGateError,
 };
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict, PyList};
+use pyo3::types::{PyDict, PyList};
 use std::collections::BTreeSet;
 
 type PyMixedPauliTerm = (f64, Vec<(String, usize)>);
@@ -1801,13 +1801,6 @@ impl PyDagCircuit {
     }
 }
 
-// HUGR conversion exception
-pyo3::create_exception!(
-    pecos_rslib,
-    HugrConversionError,
-    pyo3::exceptions::PyException
-);
-
 // Qubit conflict exception
 pyo3::create_exception!(
     pecos_rslib,
@@ -1841,48 +1834,6 @@ fn tick_gate_error_to_pyerr(err: TickGateError, tick_idx: Option<usize>) -> PyEr
             PyErr::new::<pyo3::exceptions::PyValueError, _>(msg)
         }
     }
-}
-
-/// Convert HUGR bytes to a `DagCircuit`.
-///
-/// This function takes serialized HUGR data (JSON or binary envelope format)
-/// and converts it to a `DagCircuit` for circuit analysis and manipulation.
-///
-/// Args:
-///     `hugr_bytes`: Serialized HUGR data as bytes. Can be:
-///         - JSON format (starts with '{')
-///         - Binary envelope format (HUGR package)
-///
-/// Returns:
-///     A `DagCircuit` representing the quantum circuit.
-///
-/// Raises:
-///     `HugrConversionError`: If the HUGR cannot be parsed or contains unsupported structures.
-///
-/// Example:
-///     Guppy callers should use the native QIS trace route:
-///     >>> import pecos
-///     >>> ticks = pecos.trace_program_to_tick_circuit(pecos.Guppy(guppy_func), 2, seed=1)
-///     >>> circuit = ticks.to_dag_circuit()
-///     >>> `print(circuit.gate_count())`
-#[pyfunction]
-#[pyo3(name = "hugr_to_dag_circuit")]
-fn py_hugr_to_dag_circuit(hugr_bytes: &Bound<'_, PyBytes>) -> PyResult<PyDagCircuit> {
-    use pecos_hugr::load_hugr_from_bytes as read_hugr_envelope;
-    use pecos_quantum::hugr_convert::hugr_to_dag_circuit;
-
-    let bytes = hugr_bytes.as_bytes();
-
-    // Parse the HUGR bytes
-    let hugr = read_hugr_envelope(bytes)
-        .map_err(|e| PyErr::new::<HugrConversionError, _>(format!("Failed to parse HUGR: {e}")))?;
-
-    // Convert to DagCircuit
-    let dag = hugr_to_dag_circuit(&hugr).map_err(|e| {
-        PyErr::new::<HugrConversionError, _>(format!("Failed to convert HUGR to DagCircuit: {e}"))
-    })?;
-
-    Ok(PyDagCircuit { inner: dag })
 }
 
 /// Resolve `result_tags` on detector/observable JSON using the sound,
@@ -1926,48 +1877,6 @@ fn py_resolve_result_tags_for_guppy(
         &runtime_meas_ids,
     )
     .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))
-}
-
-/// Map a HUGR operation name to a `GateType`.
-///
-/// Args:
-///     `op_name`: The HUGR operation name (e.g., "H", "CX", "`QAlloc`").
-///
-/// Returns:
-///     The corresponding `GateType`, or None if the operation is not recognized.
-#[pyfunction]
-#[pyo3(name = "hugr_op_to_gate_type")]
-fn py_hugr_op_to_gate_type(op_name: &str) -> Option<PyGateType> {
-    use pecos_quantum::hugr_convert::hugr_op_to_gate_type;
-    hugr_op_to_gate_type(op_name).map(|gt| PyGateType { inner: gt })
-}
-
-/// Map a `GateType` to a HUGR operation name.
-///
-/// Args:
-///     `gate_type`: The `GateType` to convert.
-///
-/// Returns:
-///     The corresponding HUGR operation name, or None if the gate type is not supported.
-#[pyfunction]
-#[pyo3(name = "gate_type_to_hugr_op")]
-fn py_gate_type_to_hugr_op(gate_type: PyGateType) -> Option<String> {
-    use pecos_quantum::hugr_convert::gate_type_to_hugr_op;
-    gate_type_to_hugr_op(gate_type.inner).map(String::from)
-}
-
-/// Check if an operation name is a recognized quantum operation.
-///
-/// Args:
-///     `op_name`: The operation name to check.
-///
-/// Returns:
-///     True if the operation is a recognized quantum operation.
-#[pyfunction]
-#[pyo3(name = "is_quantum_operation")]
-fn py_is_quantum_operation(op_name: &str) -> bool {
-    use pecos_quantum::hugr_convert::is_quantum_operation;
-    is_quantum_operation(op_name)
 }
 
 // --- Time Unit Types ---
@@ -4108,18 +4017,13 @@ pub fn register_quantum_circuit_types(parent_module: &Bound<'_, PyModule>) -> Py
         "DagCircuitWouldCycleError",
         py.get_type::<DagCircuitWouldCycleError>(),
     )?;
-    parent_module.add("HugrConversionError", py.get_type::<HugrConversionError>())?;
     parent_module.add("QubitConflictError", py.get_type::<QubitConflictError>())?;
     parent_module.add(
         "GateSignatureMismatchError",
         py.get_type::<GateSignatureMismatchError>(),
     )?;
 
-    // Add HUGR conversion functions
-    parent_module.add_function(wrap_pyfunction!(py_hugr_to_dag_circuit, parent_module)?)?;
-    parent_module.add_function(wrap_pyfunction!(py_hugr_op_to_gate_type, parent_module)?)?;
-    parent_module.add_function(wrap_pyfunction!(py_gate_type_to_hugr_op, parent_module)?)?;
-    parent_module.add_function(wrap_pyfunction!(py_is_quantum_operation, parent_module)?)?;
+    // Resolve Python-computed result-tag provenance
     parent_module.add_function(wrap_pyfunction!(
         py_resolve_result_tags_for_guppy,
         parent_module

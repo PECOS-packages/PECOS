@@ -10,19 +10,19 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-//! HUGR execution for symbolic stabilizer simulation.
+//! Circuit execution for symbolic stabilizer simulation.
 //!
-//! **⚠️ EXPERIMENTAL: This API is unstable and may change without notice.**
+//! **EXPERIMENTAL: This API is unstable and may change without notice.**
 //!
-//! This module provides functionality to execute HUGR circuits (via [`SimpleHugr`])
+//! This module executes circuits implementing [`Circuit`]
 //! through the [`SymbolicSparseStab`] simulator, enabling efficient sampling from
 //! the resulting measurement history.
 //!
 //! # Overview
 //!
 //! The workflow is:
-//! 1. Compile Guppy code to HUGR bytes
-//! 2. Convert to [`SimpleHugr`] (validates no control flow)
+//! 1. Trace Guppy programs through QIS in Python
+//! 2. Convert the traced tick circuit to a DAG circuit
 //! 3. Execute through [`SymbolicSparseStab`] to get symbolic measurement dependencies
 //! 4. Use [`MeasurementSampler`] to efficiently generate many shots
 //!
@@ -57,7 +57,6 @@
 //! assert_eq!(results.num_measurements(), 2);
 //! ```
 //!
-//! [`SimpleHugr`]: pecos_quantum::hugr_convert::SimpleHugr
 //! [`MeasurementSampler`]: pecos_simulators::MeasurementSampler
 
 use std::fmt;
@@ -67,7 +66,7 @@ use pecos_core::{CliffordLowering, Gate, QubitId, try_lower_rotation_to_clifford
 use pecos_quantum::Circuit;
 use pecos_simulators::SymbolicSparseStab;
 
-/// Error type for HUGR execution failures.
+/// Error type for symbolic circuit execution failures.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HugrExecutionError {
     /// Gate type is not supported by the stabilizer simulator.
@@ -129,7 +128,7 @@ impl fmt::Display for HugrExecutionError {
 
 impl std::error::Error for HugrExecutionError {}
 
-/// Execute a HUGR/circuit through a symbolic stabilizer simulator.
+/// Execute a circuit through a symbolic stabilizer simulator.
 ///
 /// This function walks the circuit in topological order and applies each gate
 /// to the simulator. After execution, the simulator's measurement history
@@ -153,7 +152,7 @@ impl std::error::Error for HugrExecutionError {}
 /// # Arguments
 ///
 /// * `sim` - The symbolic stabilizer simulator to execute on
-/// * `hugr` - The HUGR/circuit to execute (anything implementing the `Circuit` trait)
+/// * `hugr` - The circuit to execute (anything implementing the `Circuit` trait)
 ///
 /// # Returns
 ///

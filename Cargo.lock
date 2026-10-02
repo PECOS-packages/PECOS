@@ -4320,15 +4320,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pecos-hugr"
-version = "0.2.0-dev.0"
-dependencies = [
- "anyhow",
- "tket",
- "tket-qsystem",
-]
-
-[[package]]
 name = "pecos-julia-ffi"
 version = "0.1.0-dev0"
 dependencies = [
@@ -4613,7 +4604,6 @@ dependencies = [
  "pecos-synth",
  "serde_json",
  "smallvec",
- "tket",
 ]
 
 [[package]]
@@ -4670,7 +4660,6 @@ dependencies = [
  "pecos-decoders",
  "pecos-engines",
  "pecos-experimental",
- "pecos-hugr",
  "pecos-num",
  "pecos-phir",
  "pecos-phir-json",
@@ -7134,7 +7123,6 @@ dependencies = [
  "tket-json-rs",
  "tracing",
  "typetag",
- "zstd",
 ]
 
 [[package]]
@@ -7148,27 +7136,6 @@ dependencies = [
  "serde_json",
  "strum 0.28.0",
  "uuid",
-]
-
-[[package]]
-name = "tket-qsystem"
-version = "0.27.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2e5304bc4462759177968822de5e24907c154f8afc1045ecf0d8e5a75081038c"
-dependencies = [
- "delegate",
- "derive_more 2.1.1",
- "hugr",
- "hugr-core",
- "indexmap 2.14.0",
- "itertools 0.15.0",
- "lazy_static",
- "serde",
- "smol_str",
- "strum 0.28.0",
- "tket",
- "tket-json-rs",
- "typetag",
 ]
 
 [[package]]

@@ -10,10 +10,10 @@
 // or implied. See the License for the specific language governing permissions and limitations under
 // the License.
 
-//! Experimental bindings for HUGR symbolic execution.
+//! Experimental bindings for circuit symbolic execution.
 //!
-//! This module provides Python bindings for the symbolic HUGR execution pipeline:
-//! 1. Execute a `SimpleHugr` through `SymbolicSparseStab`
+//! This module provides Python bindings for the symbolic circuit execution pipeline:
+//! 1. Execute a `DagCircuit` through `SymbolicSparseStab`
 //! 2. Get symbolic measurement dependencies (`MeasurementHistory`)
 //! 3. Sample efficiently using `MeasurementSampler`
 
@@ -21,13 +21,10 @@ use pecos_experimental::{
     DepolarizingNoiseModel, HugrExecutionError, NoisyMeasurementHistory,
     NoisyMeasurementHistoryBuilder, NoisyMeasurementSampler, execute_hugr,
 };
-use pecos_hugr::load_hugr_from_bytes as read_hugr_envelope;
-use pecos_quantum::Circuit;
-use pecos_quantum::hugr_convert::SimpleHugr;
 use pecos_simulators::{MeasurementHistory, MeasurementSampler, SymbolicSparseStab};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict};
+use pyo3::types::PyDict;
 
 use crate::dag_circuit_bindings::PyDagCircuit;
 
@@ -154,68 +151,11 @@ impl PySymbolicExecutionResult {
     }
 }
 
-/// Execute a HUGR symbolically and return a result that can be sampled efficiently.
-///
-/// This function performs symbolic stabilizer simulation on a HUGR circuit.
-/// Instead of collapsing measurements to concrete outcomes, it tracks the
-/// symbolic dependencies between measurements. This allows generating
-/// millions of samples extremely quickly.
-///
-/// Args:
-///     `hugr_bytes`: The HUGR program as bytes (envelope format)
-///     `num_qubits`: Number of qubits in the circuit (optional, auto-detected if None)
-///
-/// Returns:
-///     `SymbolicExecutionResult` that can be sampled efficiently
-///
-/// Raises:
-///     `RuntimeError`: If the HUGR contains unsupported gates (non-Clifford)
-///     `RuntimeError`: If the HUGR contains control flow (use `SimpleHugr` validation)
-///
-/// Example:
-///     Guppy callers should trace native QIS gates:
-///     >>> import pecos
-///     >>> from pecos.experimental import execute_dag_circuit_symbolic
-///     >>> circuit = pecos.trace_program_to_tick_circuit(pecos.Guppy(program), 5, seed=1)
-///     >>> result = execute_dag_circuit_symbolic(circuit.to_dag_circuit(), num_qubits=5)
-///     >>> samples = `result.sample(1_000_000)`  # Very fast!
-///     >>> counts = `result.sample_counts(1_000_000)`
-#[pyfunction]
-#[pyo3(signature = (hugr_bytes, num_qubits=None))]
-pub fn execute_hugr_symbolic(
-    hugr_bytes: &Bound<'_, PyBytes>,
-    num_qubits: Option<usize>,
-) -> PyResult<PySymbolicExecutionResult> {
-    let bytes = hugr_bytes.as_bytes();
-
-    // Parse HUGR bytes into a Hugr
-    let hugr = read_hugr_envelope(bytes)
-        .map_err(|e| PyRuntimeError::new_err(format!("Failed to parse HUGR bytes: {e}")))?;
-
-    // Convert to SimpleHugr using relaxed mode to allow guppy-generated HUGRs
-    // which may have CFG wrapper structures but no actual control flow
-    let simple_hugr = SimpleHugr::new_relaxed(hugr)
-        .map_err(|e| PyRuntimeError::new_err(format!("Failed to convert HUGR: {e}")))?;
-
-    // Determine number of qubits
-    let n_qubits = num_qubits.unwrap_or_else(|| simple_hugr.qubits().len());
-
-    // Create symbolic simulator and execute
-    let mut sim = SymbolicSparseStab::new(n_qubits);
-
-    execute_hugr(&mut sim, &simple_hugr).map_err(symbolic_execution_error)?;
-
-    // Return the measurement history wrapped for Python
-    Ok(PySymbolicExecutionResult {
-        history: sim.measurement_history().clone(),
-    })
-}
-
 /// Execute a `DagCircuit` symbolically and return a result that can be sampled efficiently.
 ///
 /// This function performs symbolic stabilizer simulation on a `DagCircuit`.
-/// It's a convenience function that avoids HUGR serialization/deserialization
-/// when you have a `DagCircuit` directly.
+/// Guppy callers can obtain a `DagCircuit` with
+/// `trace_program_to_tick_circuit(...).to_dag_circuit()`.
 ///
 /// Args:
 ///     circuit: The `DagCircuit` to execute
@@ -353,78 +293,6 @@ impl PyNoisySymbolicExecutionResult {
     }
 }
 
-/// Execute a HUGR symbolically with depolarizing noise.
-///
-/// This function:
-/// 1. Performs symbolic stabilizer simulation to get measurement dependencies
-/// 2. Walks the circuit to identify fault locations
-/// 3. Propagates faults to determine which measurements each fault affects
-/// 4. Returns a result that can be sampled with noise
-///
-/// Args:
-///     `hugr_bytes`: The HUGR program as bytes (envelope format)
-///     `p1`: Single-qubit gate error probability (depolarizing)
-///     `p2`: Two-qubit gate error probability (depolarizing)
-///     `p_meas`: Measurement error probability
-///     `p_prep`: State preparation error probability
-///     `num_qubits`: Number of qubits (optional, auto-detected if None)
-///
-/// Returns:
-///     `NoisySymbolicExecutionResult` that can be sampled with noise
-///
-/// Example:
-///     Guppy callers should attach noise to the traced native QIS gates:
-///     >>> import pecos
-///     >>> from pecos.experimental import execute_dag_circuit_symbolic_noisy
-///     >>> circuit = pecos.trace_program_to_tick_circuit(pecos.Guppy(program), 5, seed=1)
-///     >>> result = execute_dag_circuit_symbolic_noisy(
-///     ...     circuit.to_dag_circuit(), num_qubits=5,
-///     ...     p1=0.001,  # 0.1% single-qubit error
-///     ...     p2=0.01,   # 1% two-qubit error
-///     ...     p_meas=0.001,
-///     ...     p_prep=0.001
-///     ... )
-///     >>> counts = result.sample_counts(1_000_000)
-#[pyfunction]
-#[pyo3(signature = (hugr_bytes, p1=0.0, p2=0.0, p_meas=0.0, p_prep=0.0, num_qubits=None))]
-pub fn execute_hugr_symbolic_noisy(
-    hugr_bytes: &Bound<'_, PyBytes>,
-    p1: f64,
-    p2: f64,
-    p_meas: f64,
-    p_prep: f64,
-    num_qubits: Option<usize>,
-) -> PyResult<PyNoisySymbolicExecutionResult> {
-    let bytes = hugr_bytes.as_bytes();
-
-    // Parse HUGR bytes into a Hugr
-    let hugr = read_hugr_envelope(bytes)
-        .map_err(|e| PyRuntimeError::new_err(format!("Failed to parse HUGR bytes: {e}")))?;
-
-    // Convert to SimpleHugr
-    let simple_hugr = SimpleHugr::new_relaxed(hugr)
-        .map_err(|e| PyRuntimeError::new_err(format!("Failed to convert HUGR: {e}")))?;
-
-    // Determine number of qubits
-    let n_qubits = num_qubits.unwrap_or_else(|| simple_hugr.qubits().len());
-
-    // Create symbolic simulator and execute
-    let mut sim = SymbolicSparseStab::new(n_qubits);
-
-    execute_hugr(&mut sim, &simple_hugr).map_err(symbolic_execution_error)?;
-
-    // Build noisy measurement history
-    let noise_model = DepolarizingNoiseModel::new(p1, p2, p_meas, p_prep);
-    let builder = NoisyMeasurementHistoryBuilder::new().with_noise_model(noise_model);
-    let noisy_history = builder
-        .build_from_circuit(&simple_hugr, sim.measurement_history())
-        .map_err(symbolic_execution_error)?;
-
-    Ok(PyNoisySymbolicExecutionResult {
-        history: noisy_history,
-    })
-}
-
 /// Execute a `DagCircuit` symbolically with depolarizing noise.
 ///
 /// Args:
@@ -473,17 +341,12 @@ pub fn register_experimental_module(parent: &Bound<'_, PyModule>) -> PyResult<()
     let experimental = pyo3::types::PyModule::new(py, "experimental")?;
 
     // Add the main functions (noiseless)
-    experimental.add_function(wrap_pyfunction!(execute_hugr_symbolic, &experimental)?)?;
     experimental.add_function(wrap_pyfunction!(
         execute_dag_circuit_symbolic,
         &experimental
     )?)?;
 
     // Add noisy execution functions
-    experimental.add_function(wrap_pyfunction!(
-        execute_hugr_symbolic_noisy,
-        &experimental
-    )?)?;
     experimental.add_function(wrap_pyfunction!(
         execute_dag_circuit_symbolic_noisy,
         &experimental

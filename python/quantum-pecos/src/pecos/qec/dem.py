@@ -450,8 +450,7 @@ class _DetectorErrorModelMixin:
                 - ``result_tags``: Guppy ``result(tag, ...)`` tag strings
                   (e.g. ``[{"id": 0, "result_tags": ["syn_a"]}]``). The
                   reorder-immune ``tag -> measurement`` binding is recovered
-                  from the compiled HUGR by
-                  ``pecos_hugr::extract_result_tag_measurements`` and
+                  from the compiled HUGR by Python static analysis and
                   resolved to stable runtime ``MeasId`` values in Rust. Supported only for
                   **straight-line, canonical** programs:
                   ``result(tag, measure(q))`` of a raw scalar measurement.

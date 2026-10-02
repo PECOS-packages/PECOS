@@ -2885,6 +2885,22 @@ mod tests {
     use pecos_core::Angle64;
     use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, StateVec};
 
+    #[test]
+    fn dag_circuit_refuses_rotation_without_angle() {
+        let mut dag = DagCircuit::new();
+        let node = dag.add_gate(Gate::rz(Angle64::ZERO, &[QubitId(0)]));
+        let before = dag.gate(node).cloned().expect("RZ node");
+        let error = dag
+            .update_gate(node, |gate| gate.angles.clear())
+            .expect_err("RZ without an angle must be refused");
+
+        assert_eq!(
+            error.to_string(),
+            "Invalid gate at DAG node 0: Gate RZ expected 1 angle parameters, got 0"
+        );
+        assert_eq!(dag.gate(node), Some(&before));
+    }
+
     fn dag_crz_state(theta: f64, basis: usize) -> Vec<(f64, f64)> {
         let mut circuit = DagCircuit::new();
         if basis & 1 != 0 {

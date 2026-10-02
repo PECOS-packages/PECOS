@@ -43,7 +43,7 @@ pub fn register_programs_module(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     programs.add("Qasm", parent.getattr("Qasm")?)?;
     programs.add("Qis", parent.getattr("Qis")?)?;
 
-    // PHIR/HUGR programs
+    // PHIR programs
     programs.add("PhirJson", parent.getattr("PhirJson")?)?;
 
     // WebAssembly programs

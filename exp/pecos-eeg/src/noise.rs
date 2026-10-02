@@ -26,6 +26,49 @@ pub struct NoiseInjection {
     pub rate: f64,
 }
 
+/// One categorical depolarizing channel: choose at most one nonidentity Pauli
+/// at this location, with total probability `probability`.
+#[derive(Clone, Debug, PartialEq)]
+pub enum DepolarizingChannel {
+    /// Uniform choice among X, Y and Z on one qubit.
+    OneQubit { qubit: usize, probability: f64 },
+    /// Uniform choice among the fifteen nonidentity two-qubit Paulis.
+    TwoQubit {
+        qubits: [usize; 2],
+        probability: f64,
+    },
+}
+
+impl DepolarizingChannel {
+    pub(crate) fn qubits(&self) -> &[usize] {
+        match self {
+            Self::OneQubit { qubit, .. } => std::slice::from_ref(qubit),
+            Self::TwoQubit { qubits, .. } => qubits,
+        }
+    }
+
+    /// Adjoint eigenvalue on any Pauli with nonidentity channel support.
+    pub(crate) fn eigenvalue(&self) -> f64 {
+        match self {
+            Self::OneQubit { probability, .. } => 1.0 - 4.0 * probability / 3.0,
+            Self::TwoQubit { probability, .. } => 1.0 - 16.0 * probability / 15.0,
+        }
+    }
+}
+
+/// Physical noise for a Heisenberg walk, distinct from a forward EEG's
+/// approximate generator representation of categorical channels.
+#[derive(Clone, Debug, Default)]
+pub struct GateNoise {
+    /// Existing injections. In the Heisenberg walk each S injection remains
+    /// an independent Pauli flip with probability `-rate`.
+    pub injections: Vec<NoiseInjection>,
+    /// Categorical adjoints applied after the injection adjoints in a backward
+    /// walk. Their support must be contained in the gate operands. Channels at separate
+    /// locations are independent; Pauli choices within one channel are exclusive.
+    pub depolarizing: Vec<DepolarizingChannel>,
+}
+
 /// Trait for noise models that produce EEG generators at each gate.
 ///
 /// Implement this to specify arbitrary per-gate noise. The EEG analysis
@@ -36,7 +79,9 @@ pub struct NoiseInjection {
 /// each type. For per-gate or per-qubit noise, implement this trait
 /// with a custom struct.
 pub trait NoiseSpec: Send + Sync {
-    /// Return noise generators to inject after the gate at `gate_index`.
+    /// Return the generator view used by forward EEG and mechanism extraction.
+    /// `UniformNoise` represents categorical depolarizing to first order with
+    /// S coefficients `-p/3` or `-p/15`; these are not an exact channel composition.
     ///
     /// The `qubits` are the qubit indices of the gate. For 2-qubit gates,
     /// idle coherent noise is typically injected on both qubits.
@@ -48,6 +93,28 @@ pub trait NoiseSpec: Send + Sync {
         gate_type: GateType,
         qubits: &[usize],
     ) -> Vec<NoiseInjection>;
+
+    /// Return physical channels for the backward Heisenberg walk.
+    ///
+    /// The default preserves custom models: each returned S injection is an
+    /// independent Pauli flip at probability `-rate`. Equal rates or a count of
+    /// three/fifteen injections never imply a categorical channel. Override
+    /// this method to provide explicit categorical depolarizing channels.
+    /// Channel support must lie within `qubits`, because sparse walks skip gates
+    /// whose operands do not intersect the current observable. `build_noise_map`
+    /// and any walk that visits the gate panic on a channel outside it; a walk
+    /// that skips the gate cannot see the channel at all.
+    fn exact_noise_after_gate(
+        &self,
+        gate_index: usize,
+        gate_type: GateType,
+        qubits: &[usize],
+    ) -> GateNoise {
+        GateNoise {
+            injections: self.noise_after_gate(gate_index, gate_type, qubits),
+            depolarizing: Vec::new(),
+        }
+    }
 }
 
 /// Uniform noise model: same rates for all gates of each type.
@@ -57,9 +124,9 @@ pub trait NoiseSpec: Send + Sync {
 pub struct UniformNoise {
     /// Coherent RZ angle (radians) on both qubits after each 2-qubit gate.
     pub idle_rz: f64,
-    /// Single-qubit depolarizing probability.
+    /// Total categorical single-qubit depolarizing probability.
     pub p1: f64,
-    /// Two-qubit depolarizing probability.
+    /// Total categorical two-qubit depolarizing probability.
     pub p2: f64,
     /// Measurement bit-flip probability.
     pub p_meas: f64,
@@ -97,14 +164,21 @@ impl UniformNoise {
     }
 }
 
-impl NoiseSpec for UniformNoise {
-    fn noise_after_gate(
+#[derive(Clone, Copy)]
+enum DepolarizingRepresentation {
+    Generators,
+    Channels,
+}
+
+impl UniformNoise {
+    fn gate_noise(
         &self,
-        _gate_index: usize,
         gate_type: GateType,
         qubits: &[usize],
-    ) -> Vec<NoiseInjection> {
+        representation: DepolarizingRepresentation,
+    ) -> GateNoise {
         let mut injections = Vec::new();
+        let mut depolarizing = Vec::new();
 
         match gate_type {
             // Two-qubit gates: idle RZ + depolarizing
@@ -130,7 +204,17 @@ impl NoiseSpec for UniformNoise {
                         }
                     }
                     if self.p2 > 0.0 {
-                        inject_depol_2q(qubits[0], qubits[1], self.p2, &mut injections);
+                        match representation {
+                            DepolarizingRepresentation::Generators => {
+                                inject_depol_2q(qubits[0], qubits[1], self.p2, &mut injections);
+                            }
+                            DepolarizingRepresentation::Channels => {
+                                depolarizing.push(DepolarizingChannel::TwoQubit {
+                                    qubits: *qubits,
+                                    probability: self.p2,
+                                });
+                            }
+                        }
                     }
                 }
             }
@@ -148,7 +232,19 @@ impl NoiseSpec for UniformNoise {
             | GateType::Z
                 if self.p1 > 0.0 && !qubits.is_empty() =>
             {
-                inject_depol_1q(qubits[0], self.p1, &mut injections);
+                for &qubit in qubits {
+                    match representation {
+                        DepolarizingRepresentation::Generators => {
+                            inject_depol_1q(qubit, self.p1, &mut injections);
+                        }
+                        DepolarizingRepresentation::Channels => {
+                            depolarizing.push(DepolarizingChannel::OneQubit {
+                                qubit,
+                                probability: self.p1,
+                            });
+                        }
+                    }
+                }
             }
 
             // Measurement error
@@ -178,7 +274,31 @@ impl NoiseSpec for UniformNoise {
             _ => {}
         }
 
-        injections
+        GateNoise {
+            injections,
+            depolarizing,
+        }
+    }
+}
+
+impl NoiseSpec for UniformNoise {
+    fn noise_after_gate(
+        &self,
+        _gate_index: usize,
+        gate_type: GateType,
+        qubits: &[usize],
+    ) -> Vec<NoiseInjection> {
+        self.gate_noise(gate_type, qubits, DepolarizingRepresentation::Generators)
+            .injections
+    }
+
+    fn exact_noise_after_gate(
+        &self,
+        _gate_index: usize,
+        gate_type: GateType,
+        qubits: &[usize],
+    ) -> GateNoise {
+        self.gate_noise(gate_type, qubits, DepolarizingRepresentation::Channels)
     }
 }
 
@@ -224,6 +344,33 @@ fn inject_depol_2q(qa: usize, qb: usize, prob: f64, out: &mut Vec<NoiseInjection
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn batched_single_qubit_generators_cover_every_operand() {
+        let noise = UniformNoise::depolarizing(0.3);
+        let batched = noise.noise_after_gate(0, GateType::H, &[0, 1, 2]);
+        let separate: Vec<_> = (0..3)
+            .flat_map(|q| noise.noise_after_gate(0, GateType::H, &[q]))
+            .collect();
+        assert_eq!(batched.len(), 9);
+        for (actual, expected) in batched.iter().zip(&separate) {
+            assert_eq!(actual.eeg_type, expected.eeg_type);
+            assert_eq!(actual.label, expected.label);
+            assert_eq!(actual.rate.to_bits(), expected.rate.to_bits());
+        }
+        let exact = noise.exact_noise_after_gate(0, GateType::H, &[0, 1, 2]);
+        assert!(exact.injections.is_empty());
+        assert_eq!(exact.depolarizing.len(), 3);
+        for (qubit, channel) in exact.depolarizing.into_iter().enumerate() {
+            assert_eq!(
+                channel,
+                DepolarizingChannel::OneQubit {
+                    qubit,
+                    probability: 0.3
+                }
+            );
+        }
+    }
 
     #[test]
     fn test_batched_two_qubit_injections() {

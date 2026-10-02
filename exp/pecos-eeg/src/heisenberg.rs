@@ -12,20 +12,21 @@
 //!   D → cos(2h)·D + i·sin(2h)·P·D  (when D and P anticommute)
 //!   D → D                            (when D and P commute)
 //!
-//! Stochastic (S-type) noise: EEG rate s < 0, physical error
-//! probability p = (1/2)(1 - exp(2s)).  Heisenberg dual:
+//! Independent stochastic (S-type) injections have physical probability p=-s:
 //!   D → D          (when D and P commute)
-//!   D → exp(2s)·D  (when D and P anticommute)
+//!   D → (1-2p)·D   (when D and P anticommute)
+//! Categorical depolarizing is a separate channel, with nonidentity eigenvalue
+//! 1-4p/3 (one qubit) or 1-16p/15 (two qubits).
 //!
 //! The cost is exponential in the number of anticommuting H-type noise
 //! sources per detector (2^m terms), but this is typically manageable
 //! for QEC circuits (m ~ 5-15). S-type noise does not increase term count.
 //!
-//! Both a Pauli-tracking walk (fast, exact) and a matrix-based method
-//! (exact, limited to ~20 qubits) are provided.
+//! The Pauli-tracking walks support these coherent and stochastic channels.
+//! A matrix reference for coherent RZ noise is also provided (~20 qubits).
 
 use crate::Bm;
-use crate::noise::NoiseSpec;
+use crate::noise::{GateNoise, NoiseSpec};
 use crate::stabilizer::StabilizerGroup;
 use pecos_core::Gate;
 use pecos_core::gate_type::GateType;
@@ -64,233 +65,49 @@ fn activate_qubit(
     }
 }
 
-/// Precomputed noise for a single gate: H-type injections + batched S-type scale.
+/// Physical noise after a gate, for the backward Heisenberg walks.
 ///
-/// Instead of calling `noise_after_gate()` during the walk and processing
-/// 15+ S-type injections individually, we precompute:
-/// - H-type injections (kept as-is, they cause branching)
-/// - A combined S-type scale factor per qubit-support pattern
+/// # Panics
 ///
-/// For uniform 2-qubit depolarizing at rate p: any term with non-identity
-/// on either gate qubit gets scaled by `(1-2p/15)^8` (exactly 8 of 15
-/// Paulis anticommute for any non-identity support). Single-qubit: `(1-2p/3)^2`.
-pub struct PrecomputedGateNoise {
-    /// H-type injections (cause term branching, can't be batched).
-    pub h_injections: SmallVec<[crate::noise::NoiseInjection; 2]>,
-    /// Combined S-type scale for terms with non-identity on qubit 0 only.
-    /// (For 1q gates, this is the full scale. For 2q, see q1_scale/both_scale.)
-    pub q0_scale: f64,
-    /// Qubit 0 index (for S-type fast path).
-    pub q0: u16,
-    /// Combined S-type scale for terms with non-identity on qubit 1 only (2q gates).
-    pub q1_scale: f64,
-    /// Qubit 1 index.
-    pub q1: u16,
-    /// Combined S-type scale for terms with non-identity on BOTH qubits.
-    pub both_scale: f64,
-    /// Number of qubits this gate acts on (0, 1, or 2).
-    pub num_gate_qubits: u8,
+/// Panics if a categorical channel acts outside the gate's qubits. The walks
+/// skip gates that miss the current observable, so such a channel would be
+/// silently dropped. This catches the channel only when the gate is visited.
+fn exact_gate_noise(
+    noise: &dyn NoiseSpec,
+    gate_index: usize,
+    gate_type: GateType,
+    qubits: &[usize],
+) -> GateNoise {
+    let exact = noise.exact_noise_after_gate(gate_index, gate_type, qubits);
+    for channel in &exact.depolarizing {
+        assert!(
+            channel.qubits().iter().all(|q| qubits.contains(q)),
+            "gate {gate_index}: depolarizing channel {channel:?} acts outside gate qubits {qubits:?}"
+        );
+    }
+    exact
 }
 
-/// Build a noise map: precomputed noise for each gate.
-///
-/// Returns `None` for gates with no noise. Expansion gates are mostly
-/// skipped, except expansion CX gates get p_meas noise on their control
-/// qubit (the originally-measured qubit) to model mid-circuit measurement
-/// errors that the expansion would otherwise lose.
+/// Build exact gate noise, skipping gates introduced by measurement expansion.
+/// Returns `None` for gates with neither injections nor categorical channels.
 pub fn build_noise_map(
     gates: &[Gate],
     noise: &dyn NoiseSpec,
     expansion_gates: &[bool],
-) -> Vec<Option<PrecomputedGateNoise>> {
-    let mut map = Vec::with_capacity(gates.len());
-
-    for (i, gate) in gates.iter().enumerate() {
-        if i < expansion_gates.len() && expansion_gates[i] {
-            map.push(None);
-            continue;
-        }
-
-        let qubits: SmallVec<[usize; 4]> =
-            gate.qubits.iter().map(pecos_core::QubitId::index).collect();
-        let injections = noise.noise_after_gate(i, gate.gate_type, &qubits);
-
-        if injections.is_empty() {
-            map.push(None);
-            continue;
-        }
-
-        let mut h_inj = SmallVec::new();
-        // Collect S-type rates grouped by which qubits they touch.
-        // We compute a combined scale factor for each support pattern.
-        let mut s_rates_q0_only = Vec::new(); // S noise on q0 only
-        let mut s_rates_q1_only = Vec::new(); // S noise on q1 only
-        let mut s_rates_both = Vec::new(); // S noise on both q0 and q1
-        let mut s_rates_other = Vec::new(); // S noise on other patterns
-
-        let q0 = qubits.first().copied().unwrap_or(0) as u16;
-        let q1 = if qubits.len() >= 2 {
-            qubits[1] as u16
-        } else {
-            q0
-        };
-
-        for inj in &injections {
-            if inj.eeg_type == crate::eeg::EegType::S {
-                let rate = inj.rate;
-                // Classify by qubit support
-                let on_q0 = inj.label.has_x(q0 as usize) || inj.label.has_z(q0 as usize);
-                let on_q1 = qubits.len() >= 2
-                    && (inj.label.has_x(q1 as usize) || inj.label.has_z(q1 as usize));
-
-                // For each S injection with rate s (s < 0), the scale for
-                // anticommuting terms is (1 - 2*(-s)) = (1 + 2s).
-                // We need to count how many of the term's components
-                // anticommute. For a uniform depolarizing model this is
-                // predetermined by the support pattern.
-                //
-                // Instead of trying to batch analytically (which requires
-                // knowing the exact anticommutation count), we accumulate
-                // the log of the scale factors and compute the combined
-                // scale per support pattern.
-                //
-                // For now, just collect individual rates.
-                if on_q0 && !on_q1 {
-                    s_rates_q0_only.push(rate);
-                } else if !on_q0 && on_q1 {
-                    s_rates_q1_only.push(rate);
-                } else if on_q0 && on_q1 {
-                    s_rates_both.push(rate);
-                } else {
-                    s_rates_other.push(rate);
-                }
-            } else {
-                h_inj.push(inj.clone());
+) -> Vec<Option<GateNoise>> {
+    gates
+        .iter()
+        .enumerate()
+        .map(|(i, gate)| {
+            if expansion_gates.get(i).copied().unwrap_or(false) {
+                return None;
             }
-        }
-
-        // Compute combined scale factors.
-        // A term anticommutes with S_P iff it has non-trivial overlap with P.
-        //
-        // For a term with non-identity on q0 only:
-        //   - Anticommutes with S generators touching q0: all of q0_only + both
-        //   - But WHICH ones anticommute depends on the specific Pauli.
-        //
-        // For uniform depolarizing, the count of anticommuting generators is
-        // deterministic given the support pattern. But for general S noise, we
-        // can't batch — fall back to individual processing.
-        //
-        // Optimization: if ALL S rates are the same (uniform depol), use
-        // closed-form. Otherwise, keep individual injections.
-        let all_s_same_rate = {
-            let all_s: Vec<f64> = s_rates_q0_only
-                .iter()
-                .chain(&s_rates_q1_only)
-                .chain(&s_rates_both)
-                .chain(&s_rates_other)
-                .copied()
-                .collect();
-            !all_s.is_empty() && all_s.iter().all(|&r| (r - all_s[0]).abs() < 1e-20)
-        };
-
-        if all_s_same_rate && s_rates_other.is_empty() {
-            // Uniform depolarizing: use closed-form combined scale.
-            // For any non-identity on q0: 2 of {X,Y,Z} on q0 anticommute.
-            // For single-qubit: 3 S generators, 2 anticommute → scale = (1+2s)^2
-            // For two-qubit: 15 S generators, 8 anticommute for any non-trivial → (1+2s)^8
-            let total_s = s_rates_q0_only.len() + s_rates_q1_only.len() + s_rates_both.len();
-            let s = s_rates_q0_only
-                .first()
-                .or(s_rates_q1_only.first())
-                .or(s_rates_both.first())
-                .copied()
-                .unwrap_or(0.0);
-            let p = -s;
-            let individual_scale = 1.0 - 2.0 * p;
-
-            // Count anticommuting for each support pattern.
-            // For term with non-identity on q0 only:
-            //   anti with q0-only S: 2 out of 3 (if 1q) or 2 out of 3 (for each A⊗I)
-            //   anti with both S: depends on q1 part (commutes since term has I on q1)
-            //   Total for 2q depol: q0_only anti=2 out of 3, both anti=q0 part anti * q1 commutes
-            //   = 2*3 (from 3 A⊗I where 2 of 3 A anticommute on q0, B=I commutes)
-            //   + 0 (from 3 I⊗B)
-            //   + 2*3 (from 9 A⊗B where 2 of 3 A anticommute, B commutes since I on q1)
-            //   Wait, {A, I_term} always commutes for B part. So:
-            //   anti count = (anti on q0) * (total on q1 including I) + (comm on q0) * (anti on q1)
-            //   For term I on q1: anti on q1 = 0.
-            //   So anti count = 2 * 4 + 2 * 0 = 8 for 15 generators (excluding I⊗I).
-            //
-            // Actually, let me just precompute this properly.
-            // For 1q depol (3 generators): non-identity on q → 2 anticommute → (1-2p/3)^2
-            // For 2q depol (15 generators): non-identity on either q → 8 anticommute → (1-2p/15)^8
-            let n_anti = if total_s == 3 {
-                2
-            } else if total_s == 15 {
-                8
-            } else {
-                0
-            };
-            if n_anti == 0 && total_s > 0 {
-                // Non-standard S count (e.g., 1 for p_meas, 1 for p_prep):
-                // can't batch — put in h_injections for individual processing.
-                for inj in &injections {
-                    if inj.eeg_type == crate::eeg::EegType::S {
-                        h_inj.push(inj.clone());
-                    }
-                }
-            }
-            let combined = individual_scale.powi(n_anti);
-
-            map.push(Some(PrecomputedGateNoise {
-                h_injections: h_inj,
-                q0_scale: combined,
-                q0,
-                q1_scale: combined,
-                q1,
-                both_scale: combined,
-                num_gate_qubits: qubits.len().min(2) as u8,
-            }));
-        } else if s_rates_q0_only.is_empty()
-            && s_rates_q1_only.is_empty()
-            && s_rates_both.is_empty()
-            && s_rates_other.is_empty()
-        {
-            // H-type only, no S noise
-            if h_inj.is_empty() {
-                map.push(None);
-            } else {
-                map.push(Some(PrecomputedGateNoise {
-                    h_injections: h_inj,
-                    q0_scale: 1.0,
-                    q0,
-                    q1_scale: 1.0,
-                    q1,
-                    both_scale: 1.0,
-                    num_gate_qubits: qubits.len().min(2) as u8,
-                }));
-            }
-        } else {
-            // Non-uniform S noise: keep individual injections as H-type
-            // (the walk handles them individually).
-            for inj in injections {
-                if inj.eeg_type == crate::eeg::EegType::S {
-                    h_inj.push(inj); // process individually in walk
-                }
-            }
-            map.push(Some(PrecomputedGateNoise {
-                h_injections: h_inj,
-                q0_scale: 1.0,
-                q0,
-                q1_scale: 1.0,
-                q1,
-                both_scale: 1.0,
-                num_gate_qubits: qubits.len().min(2) as u8,
-            }));
-        }
-    }
-
-    map
+            let qubits: SmallVec<[usize; 4]> =
+                gate.qubits.iter().map(pecos_core::QubitId::index).collect();
+            let exact = exact_gate_noise(noise, i, gate.gate_type, &qubits);
+            (!exact.injections.is_empty() || !exact.depolarizing.is_empty()).then_some(exact)
+        })
+        .collect()
 }
 
 /// Sparse Pauli: stores only qubits with non-identity Pauli.
@@ -736,6 +553,27 @@ struct HeisenbergTerm {
     coeff_im: f64,
 }
 
+fn apply_depolarizing(
+    terms: &mut [HeisenbergTerm],
+    channels: &[crate::noise::DepolarizingChannel],
+) {
+    for channel in channels {
+        let scale = channel.eigenvalue();
+        for term in terms.iter_mut() {
+            if channel
+                .qubits()
+                .iter()
+                .any(|&q| term.pauli.has_x(q as u16) || term.pauli.has_z(q as u16))
+            {
+                // Zero and negative eigenvalues are valid, including p=3/4
+                // (1q), p=15/16 (2q), and stronger depolarizing channels.
+                term.coeff_re *= scale;
+                term.coeff_im *= scale;
+            }
+        }
+    }
+}
+
 /// Compute detection probability via backward Heisenberg propagation.
 ///
 /// Operates on the EXPANDED circuit (from [`crate::expand`]). Expansion
@@ -763,11 +601,11 @@ pub fn heisenberg_detection_probability(
 ///
 /// Uses BTreeMap<SparsePauli, (re, im)> for continuous dedup — no separate
 /// merge step. Terms are merged on insert via BTreeMap's O(log n) lookup.
-/// Also uses batched S-type scaling from the precomputed noise map.
+/// Applies explicit categorical channels from the precomputed noise map.
 pub fn heisenberg_with_noise_map(
     gates: &[Gate],
     detector: &Bm,
-    noise_map: &[Option<PrecomputedGateNoise>],
+    noise_map: &[Option<GateNoise>],
     initial_stab: &StabilizerGroup,
     prune_threshold: f64,
 ) -> f64 {
@@ -816,8 +654,8 @@ pub fn heisenberg_with_noise_map(
         };
 
         if let Some(gn) = gate_noise {
-            // H-type injections (branching)
-            for inj in &gn.h_injections {
+            // Individual injections in their original order
+            for inj in &gn.injections {
                 match inj.eeg_type {
                     crate::eeg::EegType::H => {
                         let h = inj.rate;
@@ -907,7 +745,7 @@ pub fn heisenberg_with_noise_map(
                         }
                     }
                     crate::eeg::EegType::S => {
-                        // Non-batched S-type (fallback for non-uniform noise)
+                        // Custom independent S-type injection.
                         let s = inj.rate;
                         if s.abs() < 1e-20 {
                             continue;
@@ -948,34 +786,7 @@ pub fn heisenberg_with_noise_map(
                 }
             }
 
-            // Batched S-type: apply combined scale factor
-            let s_scale = gn.q0_scale; // Same for all non-trivial support patterns
-            if (s_scale - 1.0).abs() > 1e-20 {
-                match gn.num_gate_qubits {
-                    1 => {
-                        let q = gn.q0;
-                        for term in &mut terms {
-                            if term.pauli.has_x(q) || term.pauli.has_z(q) {
-                                term.coeff_re *= s_scale;
-                                term.coeff_im *= s_scale;
-                            }
-                        }
-                    }
-                    2 => {
-                        let q0 = gn.q0;
-                        let q1 = gn.q1;
-                        for term in &mut terms {
-                            let on_q0 = term.pauli.has_x(q0) || term.pauli.has_z(q0);
-                            let on_q1 = term.pauli.has_x(q1) || term.pauli.has_z(q1);
-                            if on_q0 || on_q1 {
-                                term.coeff_re *= s_scale;
-                                term.coeff_im *= s_scale;
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-            }
+            apply_depolarizing(&mut terms, &gn.depolarizing);
         }
 
         // Step 2: Backward Clifford conjugation
@@ -1160,9 +971,9 @@ pub fn heisenberg_windowed(
         // Step 1: Apply noise adjoint (skip expansion gates).
         if !expansion_gates[i] && gate_touches_active {
             let qubits_usize: SmallVec<[usize; 4]> = gate_qs.iter().map(|&q| q as usize).collect();
-            let injections = noise.noise_after_gate(i, gate.gate_type, &qubits_usize);
+            let exact = exact_gate_noise(noise, i, gate.gate_type, &qubits_usize);
 
-            for inj in &injections {
+            for inj in &exact.injections {
                 match inj.eeg_type {
                     crate::eeg::EegType::H => {
                         let h = inj.rate;
@@ -1296,6 +1107,7 @@ pub fn heisenberg_windowed(
                     });
                 }
             }
+            apply_depolarizing(&mut terms, &exact.depolarizing);
         }
 
         // Step 2: Conjugate backward through the gate.
@@ -1402,8 +1214,8 @@ pub fn heisenberg_windowed(
 /// For large circuits (d>=7), this is significantly faster than the linear
 /// scan in [`heisenberg_windowed`] because most gates are irrelevant.
 ///
-/// Accepts an optional precomputed noise map. When provided, uses batched
-/// S-type scaling (faster). When `None`, calls `noise.noise_after_gate()`.
+/// Accepts an optional precomputed noise map. Gates without a map entry call
+/// `noise.exact_noise_after_gate()`.
 pub fn heisenberg_sparse(
     gates: &[Gate],
     detector: &Bm,
@@ -1411,7 +1223,7 @@ pub fn heisenberg_sparse(
     initial_stab: &StabilizerGroup,
     prune_threshold: f64,
     gate_index: &crate::expand::GateIndex,
-    noise_map: Option<&[Option<PrecomputedGateNoise>]>,
+    noise_map: Option<&[Option<GateNoise>]>,
 ) -> f64 {
     let mut terms = vec![HeisenbergTerm {
         pauli: SparsePauli::from_bm(detector),
@@ -1466,23 +1278,18 @@ pub fn heisenberg_sparse(
         // Step 1: Apply noise adjoint (skip expansion gates).
         if !gate_index.is_expansion(i) {
             // Get noise: from precomputed map if available, else dynamic
-            let precomputed = noise_map.and_then(|nm| nm.get(i).and_then(|n| n.as_ref()));
+            let dynamic_noise;
+            let gate_noise =
+                if let Some(gn) = noise_map.and_then(|nm| nm.get(i).and_then(|n| n.as_ref())) {
+                    gn
+                } else {
+                    let qubits_usize: SmallVec<[usize; 4]> =
+                        gate_qs.iter().map(|&q| q as usize).collect();
+                    dynamic_noise = exact_gate_noise(noise, i, gate.gate_type, &qubits_usize);
+                    &dynamic_noise
+                };
 
-            // Get injections: from noise map or dynamic noise spec
-            let dynamic_injections = if precomputed.is_none() {
-                let qubits_usize: SmallVec<[usize; 4]> =
-                    gate_qs.iter().map(|&q| q as usize).collect();
-                noise.noise_after_gate(i, gate.gate_type, &qubits_usize)
-            } else {
-                Vec::new()
-            };
-            let injections: &[crate::noise::NoiseInjection] = if let Some(gn) = precomputed {
-                &gn.h_injections
-            } else {
-                &dynamic_injections
-            };
-
-            for inj in injections {
+            for inj in &gate_noise.injections {
                 match inj.eeg_type {
                     crate::eeg::EegType::H => {
                         let h = inj.rate;
@@ -1579,10 +1386,7 @@ pub fn heisenberg_sparse(
                         terms.append(&mut sin_branches);
                     }
                     crate::eeg::EegType::S => {
-                        // S-type: process individually. When using noise map,
-                        // the batched scaling below handles the common case,
-                        // but unbatchable S injections are placed in h_injections
-                        // and must be processed here.
+                        // Custom S injections retain independent flip semantics.
                         let s = inj.rate;
                         if s.abs() < 1e-20 {
                             continue;
@@ -1625,36 +1429,7 @@ pub fn heisenberg_sparse(
                 }
             }
 
-            // Batched S-type scaling from noise map (much faster than per-injection)
-            if let Some(gn) = precomputed {
-                let s_scale = gn.q0_scale;
-                if (s_scale - 1.0).abs() > 1e-20 {
-                    match gn.num_gate_qubits {
-                        1 => {
-                            let q = gn.q0;
-                            for term in &mut terms {
-                                if term.pauli.has_x(q) || term.pauli.has_z(q) {
-                                    term.coeff_re *= s_scale;
-                                    term.coeff_im *= s_scale;
-                                }
-                            }
-                        }
-                        2 => {
-                            let q0 = gn.q0;
-                            let q1 = gn.q1;
-                            for term in &mut terms {
-                                let on_q0 = term.pauli.has_x(q0) || term.pauli.has_z(q0);
-                                let on_q1 = term.pauli.has_x(q1) || term.pauli.has_z(q1);
-                                if on_q0 || on_q1 {
-                                    term.coeff_re *= s_scale;
-                                    term.coeff_im *= s_scale;
-                                }
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            }
+            apply_depolarizing(&mut terms, &gate_noise.depolarizing);
         }
 
         // Step 2: Backward Clifford conjugation.
@@ -1788,11 +1563,12 @@ pub fn heisenberg_detection_probability_from_circuit(
     ))
 }
 
-/// Exact detection probability via matrix-based backward Heisenberg.
+/// Detection probability via a matrix reference for coherent RZ noise.
 ///
 /// Computes the backward adjoint using dense 2^n × 2^n complex matrix
-/// multiplication. Exact for any circuit, but limited to ~20 expanded
-/// qubits by memory. Useful as a reference/validation for the faster
+/// multiplication, ignoring non-H noise injections. It does not implement
+/// stochastic or categorical channels. Limited to ~20 expanded qubits by
+/// memory. Useful as a coherent-noise reference for the faster
 /// Pauli-tracking walk ([`heisenberg_detection_probability_from_circuit`]).
 pub fn heisenberg_exact_from_circuit(
     original_gates: &[Gate],

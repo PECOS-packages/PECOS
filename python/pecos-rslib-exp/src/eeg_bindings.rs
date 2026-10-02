@@ -369,7 +369,9 @@ pub fn eeg_per_detector(
 ///
 /// Uses backward Heisenberg propagation: walks the detector observable
 /// backward through the circuit, splitting at each noise source. Exact
-/// for both coherent (idle_rz) and stochastic (depolarizing) noise.
+/// for both coherent (idle_rz) and categorical depolarizing noise. At each
+/// location, p1/p2 is the total probability of choosing one of the 3/15
+/// nonidentity Paulis; the alternatives at that location are exclusive.
 ///
 /// This is the most accurate DEM generation method in PECOS. Use it when:
 /// - You need exact detection rates under coherent noise
@@ -455,6 +457,7 @@ pub fn exact_detection_rates(
 }
 
 /// Compute exact pairwise detection rates via backward Heisenberg walk.
+/// The p1/p2 parameters specify total categorical depolarizing probabilities.
 ///
 /// For each pair of detectors (i, j), computes P(Di AND Dj both fire)
 /// using the identity:
@@ -536,11 +539,12 @@ pub fn exact_pairwise_rates(
     Ok(results)
 }
 
-/// Build a coherent DEM with exact Heisenberg marginals.
+/// Fit a coherent DEM to exact Heisenberg marginal targets.
 ///
 /// Combines backward mechanism extraction (correct structure) with
-/// Heisenberg-exact per-detector rates (correct probabilities).
-/// Fits mechanism probabilities to match the exact marginals.
+/// Heisenberg-exact per-detector rates, including categorical p1/p2 channels.
+/// The independent DEM fit is approximate and may not reproduce every target,
+/// particularly at high depolarizing probabilities.
 ///
 /// Returns the DEM as a Stim-format string.
 #[pyfunction]
@@ -637,6 +641,7 @@ pub fn coherent_dem_exact(
 /// Returns (raw_dem, decomposed_dem) where the decomposed version uses
 /// Pauli provenance to split hyperedges into X ^ Z components.
 /// Probabilities are fitted to Heisenberg-exact marginals via L-BFGS.
+/// These categorical-channel targets are exact; the independent DEM fit is approximate.
 #[pyfunction]
 #[pyo3(signature = (tick_circuit, idle_rz=0.0, p1=0.0, p2=0.0, p_meas=0.0, p_prep=0.0, prune=1e-12))]
 pub fn coherent_dem_decomposed(
@@ -742,6 +747,7 @@ pub fn coherent_dem_decomposed(
 /// Returns exact joint detection probabilities for all detector subsets
 /// up to `max_order`. No DEM approximation — captures all coherent
 /// interference. Useful for decoders that can consume raw correlation data.
+/// The p1/p2 parameters specify total categorical depolarizing probabilities.
 ///
 /// Returns a list of (detector_indices, probability) pairs.
 #[pyfunction]
@@ -859,7 +865,8 @@ pub fn correlation_matching_dem(
 /// faults with the same effective Pauli label. Measurement and prep
 /// noise kept at original positions. Returns compression statistics.
 ///
-/// For stochastic Pauli noise: exact. For coherent: within-round exact.
+/// This compresses the forward generator approximation; it does not preserve
+/// categorical channel exclusivity or exact finite-probability composition.
 ///
 /// Returns (original_count, compressed_count, boundary_noise_labels).
 #[pyfunction]
@@ -902,6 +909,9 @@ pub fn compress_noise(
 /// - DEM string for standard decoders
 ///
 /// This is the unified output that captures everything a decoder needs.
+/// The p1/p2 channels are categorical. With compress=True, only mechanism
+/// structure is compressed; exact correlation targets retain the original
+/// physical channels. The fitted independent DEM remains approximate.
 #[pyfunction]
 #[pyo3(signature = (tick_circuit, idle_rz=0.0, p1=0.0, p2=0.0, p_meas=0.0, p_prep=0.0, max_order=2, prune=1e-12, compress=false))]
 pub fn noise_characterization(

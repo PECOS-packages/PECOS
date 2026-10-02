@@ -277,6 +277,68 @@ def test_selene_engine_uses_plugin_when_cargo_target_is_empty(tmp_path: Path) ->
     _run_selene_cwd_probe(tmp_path, empty_cargo_target)
 
 
+@pytest.mark.parametrize("operation", ["run", "run_with_workers", "build", "capture_operation_trace"])
+def test_qis_default_runtime_is_resolved_lazily(tmp_path: Path, operation: str) -> None:
+    """QIS configuration needs no runtime; execution resolves the default."""
+    empty_cargo_target = tmp_path / "empty-cargo-target"
+    empty_cargo_target.mkdir()
+    probe = tmp_path / "qis_lazy_runtime_probe.py"
+    probe.write_text(
+        textwrap.dedent(
+            '''
+            import sys
+
+            import pecos_rslib
+            import pytest
+
+            program = pecos_rslib.Qis("""
+                define i64 @qmain(i64 %0) #0 {
+                    %qubit = call i64 @__quantum__rt__qubit_allocate()
+                    call void @__quantum__qis__h__body(i64 %qubit)
+                    %result = call i64 @__quantum__rt__result_allocate()
+                    %measurement = call i32 @__quantum__qis__m__body(i64 %qubit, i64 %result)
+                    ret i64 0
+                }
+                declare i64 @__quantum__rt__qubit_allocate()
+                declare void @__quantum__qis__h__body(i64)
+                declare i64 @__quantum__rt__result_allocate()
+                declare i32 @__quantum__qis__m__body(i64, i64)
+                attributes #0 = { "EntryPoint" }
+            """)
+            builder = (
+                pecos_rslib.sim(program)
+                .stack("engines")
+                .quantum(pecos_rslib.stabilizer())
+                .noise(pecos_rslib.depolarizing_noise())
+                .qubits(1)
+                .seed(42)
+                .shots(1)
+                .keep_intermediate_files(True)
+                .trace_operations("operation-traces")
+            )
+            operation = sys.argv[1]
+            if operation == "run_with_workers":
+                builder = builder.workers(2)
+                operation = "run"
+            with pytest.raises(RuntimeError, match="Selene simple runtime not available"):
+                getattr(builder, operation)()
+            ''',
+        ),
+        encoding="utf-8",
+    )
+    env = {key: value for key, value in os.environ.items() if not key.startswith(("PECOS", "CARGO"))}
+    env["CARGO_TARGET_DIR"] = str(empty_cargo_target)
+    completed = subprocess.run(
+        [sys.executable, str(probe), operation],
+        cwd=tmp_path,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+
+
 def test_qis_trace_capture_supports_leakage_measurement_futures(tmp_path: Path) -> None:
     """The Helios leakage symbols must resolve instead of calling address zero."""
     probe = tmp_path / "measure_leaked_trace_probe.py"

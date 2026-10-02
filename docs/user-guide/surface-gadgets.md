@@ -632,9 +632,11 @@ current logical frame, like terminal X and Z; after a transversal H, the
 reported value refers to the swapped frame.
 
 Product-Y preparation followed by Y readout emits no observable. Its encoded
-Y sign is a deterministic parity of first-round check records, but the builder
-deliberately omits this distance-1 quantity: a single first-round measurement
-error flips it. Exposing that sign with injection semantics is a follow-up.
+Y sign is the parity of a solved subset of first-round check records XOR a
+reference bit derived from the logical representatives. SZ teleportation exposes
+that selected subset as `resource_sign_records` and the reference as
+`resource_sign_reference` in its injection metadata. It remains a distance-1 quantity:
+a single first-round measurement error flips it.
 At distance 3, zero, one, and two requested rounds give 4, 12, and 20
 deterministic detectors. For one and two rounds, the emitted masks have ranks
 12 and 20, while the full deterministic parity spaces have ranks 13 and 21.
@@ -1031,12 +1033,31 @@ Here the resource is a projected logical-Y state whose sign depends on the
 syndrome projection outcomes. It is prepared by H followed by a physical SZ
 layer on every ancilla data qubit, then syndrome projection. Both forms prepare
 the data in |0_L>, an S eigenstate, so this experiment cannot distinguish S
-from identity. The builder records the readout the correction depends on
-(the ancilla's final logical-Z bits, in `injection_readouts` in the circuit
-metadata and in `build_algorithm_descriptor()`) and nothing applies the
-correction: with parity 1 (for the +Y resource sign) a logical Z on the data
-patch would be required.
-Neither the resource sign nor this correction is processed by any decoder.
+from identity. The projected resource is (-1)^r times logical Y, where r is
+the parity of selected round-0 checks in the ancilla's first projection segment
+XOR `resource_sign_reference`.
+`rounds_before` must be at least one so these checks precede the CX.
+The builder records both the ancilla's final logical-Z readout (`meas_ids`,
+`records`) and the resource sign (`resource_sign_meas_ids`,
+`resource_sign_records`, and the 0/1 bit `resource_sign_reference`) in
+`injection_readouts`, in the circuit metadata and in `build_algorithm_descriptor()`. IDs are absolute measurement indices;
+records are offsets relative to the end of the measurement stream.
+The reference is the sign of the Pauli identity relating the selected checks,
+signed logical Y (`i X_L Z_L`), and all-Y. If logical X has weight w, the logical
+X and Z supports overlap on k qubits, and there are n data qubits, the phase
+for the positive positional Y string is `i^(2w-n-k)`.
+For supported patches, w and k have the same parity: odd dimensions give odd
+logical X weight, preserved by even-weight checks, and logical X/Z
+anticommutation makes k odd. Therefore that phase reduces to `i^(k-n)`.
+Signed logical Y differs from the positive positional string by
+`(-1)^((k-1)/2)`, contributing another `k-1` powers of i modulo four.
+Both exponents must be even; `resource_sign_reference` is `(2k-n-1) % 4 // 2`.
+The solver derives both terms from the same logical representatives. Their
+contributions compensate when a positive check changes the representative's
+overlap from one to three; omitting the logical-Y phase would invert the sign.
+A logical Z correction on the data is required when the logical readout parity
+and resource sign parity disagree: XOR the two parities to decide.
+No decoder applies the correction today.
 
 ```python
 program = module["make_sz_teleportation"](2, 2, 2)
@@ -1061,6 +1082,13 @@ ancilla_data_ids = {
 }
 assert set(readout["meas_ids"]) <= ancilla_data_ids
 descriptor = builder.build_algorithm_descriptor()
+assert len(readout["resource_sign_meas_ids"]) == 4
+assert readout["resource_sign_reference"] == 0
+assert readout["resource_sign_records"] == [
+    meas_id - tc.num_measurements() for meas_id in readout["resource_sign_meas_ids"]
+]
+assert descriptor["injection_readouts"][0]["resource_sign_records"] == readout["resource_sign_records"]
+assert descriptor["injection_readouts"][0]["resource_sign_reference"] == readout["resource_sign_reference"]
 assert descriptor["injection_readouts"][0]["meas_ids"] == readout["meas_ids"]
 ```
 
@@ -1186,11 +1214,12 @@ A terminal Y memory segment uses the fold composition described in
 [Y readout](#y-readout). The oracle example below follows Y preparation with
 a Z segment and stops after the first full syndrome round to inspect the
 projected state before readout.
-The product of the geometry's logical X and Z supports gives logical Y up to
-phase. Check both signs because projection outcomes determine the encoded sign.
+Construct signed logical Y as `i X_L Z_L` using Pauli multiplication. Check both
+signs because projection outcomes determine the encoded sign.
 
 ```python
 from pecos.testing import stabilizer_generators_after, group_contains
+from pecos.quantum import PauliString
 
 builder = new_builder()
 builder.add_memory("D", 1, "Y")
@@ -1206,10 +1235,13 @@ first_readout = next(
 generators = stabilizer_generators_after(tc, first_readout + 1)
 lx = set(patch.geometry.logical_x.data_qubits)
 lz = set(patch.geometry.logical_z.data_qubits)
-body = "".join(
-    "Y" if q in lx & lz else "X" if q in lx else "Z" if q in lz else "I" for q in range(patch.geometry.num_qubits)
+width = patch.geometry.num_qubits
+ix = PauliString.from_dense_str("i" + "".join("X" if q in lx else "I" for q in range(width)))
+z = PauliString.from_dense_str("".join("Z" if q in lz else "I" for q in range(width)))
+logical_y = ix * z
+assert group_contains(generators, logical_y.to_dense_str(num_qubits=width)) or group_contains(
+    generators, (-logical_y).to_dense_str(num_qubits=width)
 )
-assert group_contains(generators, "+" + body) or group_contains(generators, "-" + body)
 ```
 
 The executed [cross-form measurement check](#cross-form-measurement-check)

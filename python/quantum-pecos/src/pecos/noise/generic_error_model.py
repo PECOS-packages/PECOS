@@ -21,6 +21,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pecos as pc
+from pecos.noise.noise_impl.gate_groups import initializations, measurementsx, one_qubits, timing_ops, two_qubits
 from pecos.noise.noise_impl.noise_initz_bitflip_leakage import (
     noise_initz_bitflip_leakage,
 )
@@ -34,7 +35,6 @@ from pecos.noise.noise_impl.noise_tq_depolarizing_leakage import (
     noise_tq_depolarizing_leakage,
     surviving_two_qubit_op,
 )
-from pecos.noise.noise_impl_old.gate_groups import one_qubits, two_qubits
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -157,12 +157,16 @@ class GenericErrorModel:
         noisy_ops = []
 
         for op in qops:
+            if op.name in timing_ops:
+                # Scheduling only: no noise; duration ignored (docs/user-guide/pecos-concepts.md).
+                continue
+
             qops_after = None
             erroneous_ops = None
 
             # ########################################
             # INITS WITH X NOISE
-            if op.name in {"init |0>", "Init", "Init +Z"}:
+            if op.name in initializations:
                 qops_after = noise_initz_bitflip_leakage(
                     op,
                     p=self._eparams["p_prep"],
@@ -216,7 +220,7 @@ class GenericErrorModel:
 
             # ########################################
             # MEASURE X NOISE
-            elif op.name in {"measure Z", "Measure", "Measure +Z"}:
+            elif op.name in measurementsx:
                 erroneous_ops = noise_meas_bitflip_leakage(
                     op,
                     p=self._eparams["p_meas"],

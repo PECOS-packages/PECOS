@@ -24,6 +24,7 @@ from pecos.qec.surface.logical_circuit import (
     _logical_readout_flow,
     _propagate_stabilizer_terms,
     _PropagationContext,
+    _resource_sign_checks,
 )
 from pecos.qec.surface.patch import PatchOrientation
 from pecos.testing import group_contains, simulate_tick_circuit, stabilizer_generators_after
@@ -65,6 +66,89 @@ SHAPES = (
     "d3_late_partner_cx",
     "d2_h_even",
 )
+
+# Pin metadata omitted by the original goldens so sign bookkeeping cannot change provenance.
+TELEPORTATION_METADATA = {
+    "d3_sz_teleport_first_op": {
+        "injection_readouts": [
+            {
+                "data_patch": "D",
+                "ancilla_patch": "Y",
+                "injection_type": "SZ",
+                "basis": "Z",
+                "meas_ids": [64, 65, 66],
+                "records": [-34, -33, -32],
+            },
+        ],
+        "measurement_keys": (
+            '{"stabilizer": [["D", "X", 0, 0, 0, 0], ["D", "X", 1, 0, 0, 1], ["D", "X", 2, 0, 0, 2], ["D", "X", '
+            '3, 0, 0, 3], ["D", "Z", 0, 0, 0, 4], ["D", "Z", 1, 0, 0, 5], ["D", "Z", 2, 0, 0, 6], ["D", "Z", 3, '
+            '0, 0, 7], ["Y", "X", 0, 0, 0, 8], ["Y", "X", 1, 0, 0, 9], ["Y", "X", 2, 0, 0, 10], ["Y", "X", 3, 0, '
+            '0, 11], ["Y", "Z", 0, 0, 0, 12], ["Y", "Z", 1, 0, 0, 13], ["Y", "Z", 2, 0, 0, 14], ["Y", "Z", 3, 0, '
+            '0, 15], ["D", "X", 0, 0, 1, 16], ["D", "X", 1, 0, 1, 17], ["D", "X", 2, 0, 1, 18], ["D", "X", 3, 0, '
+            '1, 19], ["D", "Z", 0, 0, 1, 20], ["D", "Z", 1, 0, 1, 21], ["D", "Z", 2, 0, 1, 22], ["D", "Z", 3, 0, '
+            '1, 23], ["Y", "X", 0, 0, 1, 24], ["Y", "X", 1, 0, 1, 25], ["Y", "X", 2, 0, 1, 26], ["Y", "X", 3, 0, '
+            '1, 27], ["Y", "Z", 0, 0, 1, 28], ["Y", "Z", 1, 0, 1, 29], ["Y", "Z", 2, 0, 1, 30], ["Y", "Z", 3, 0, '
+            '1, 31], ["D", "X", 0, 1, 0, 32], ["D", "X", 1, 1, 0, 33], ["D", "X", 2, 1, 0, 34], ["D", "X", 3, 1, '
+            '0, 35], ["D", "Z", 0, 1, 0, 36], ["D", "Z", 1, 1, 0, 37], ["D", "Z", 2, 1, 0, 38], ["D", "Z", 3, 1, '
+            '0, 39], ["Y", "X", 0, 1, 0, 40], ["Y", "X", 1, 1, 0, 41], ["Y", "X", 2, 1, 0, 42], ["Y", "X", 3, 1, '
+            '0, 43], ["Y", "Z", 0, 1, 0, 44], ["Y", "Z", 1, 1, 0, 45], ["Y", "Z", 2, 1, 0, 46], ["Y", "Z", 3, 1, '
+            '0, 47], ["D", "X", 0, 1, 1, 48], ["D", "X", 1, 1, 1, 49], ["D", "X", 2, 1, 1, 50], ["D", "X", 3, 1, '
+            '1, 51], ["D", "Z", 0, 1, 1, 52], ["D", "Z", 1, 1, 1, 53], ["D", "Z", 2, 1, 1, 54], ["D", "Z", 3, 1, '
+            '1, 55], ["Y", "X", 0, 1, 1, 56], ["Y", "X", 1, 1, 1, 57], ["Y", "X", 2, 1, 1, 58], ["Y", "X", 3, 1, '
+            '1, 59], ["Y", "Z", 0, 1, 1, 60], ["Y", "Z", 1, 1, 1, 61], ["Y", "Z", 2, 1, 1, 62], ["Y", "Z", 3, 1, '
+            '1, 63], ["D", "X", 0, 2, 0, 73], ["D", "X", 1, 2, 0, 74], ["D", "X", 2, 2, 0, 75], ["D", "X", 3, 2, '
+            '0, 76], ["D", "Z", 0, 2, 0, 77], ["D", "Z", 1, 2, 0, 78], ["D", "Z", 2, 2, 0, 79], ["D", "Z", 3, 2, '
+            '0, 80], ["D", "X", 0, 2, 1, 81], ["D", "X", 1, 2, 1, 82], ["D", "X", 2, 2, 1, 83], ["D", "X", 3, 2, '
+            '1, 84], ["D", "Z", 0, 2, 1, 85], ["D", "Z", 1, 2, 1, 86], ["D", "Z", 2, 2, 1, 87], ["D", "Z", 3, 2, '
+            '1, 88]], "data": [["Y", 0, 64], ["Y", 1, 65], ["Y", 2, 66], ["Y", 3, 67], ["Y", 4, 68], ["Y", 5, '
+            '69], ["Y", 6, 70], ["Y", 7, 71], ["Y", 8, 72], ["D", 0, 89], ["D", 1, 90], ["D", 2, 91], ["D", 3, '
+            '92], ["D", 4, 93], ["D", 5, 94], ["D", 6, 95], ["D", 7, 96], ["D", 8, 97]]}'
+        ),
+    },
+    "d3_sz_teleport_memory_first": {
+        "injection_readouts": [
+            {
+                "data_patch": "D",
+                "ancilla_patch": "Y",
+                "injection_type": "SZ",
+                "basis": "Z",
+                "meas_ids": [80, 81, 82],
+                "records": [-34, -33, -32],
+            },
+        ],
+        "measurement_keys": (
+            '{"stabilizer": [["D", "X", 0, 0, 0, 0], ["D", "X", 1, 0, 0, 1], ["D", "X", 2, 0, 0, 2], ["D", "X", '
+            '3, 0, 0, 3], ["D", "Z", 0, 0, 0, 4], ["D", "Z", 1, 0, 0, 5], ["D", "Z", 2, 0, 0, 6], ["D", "Z", 3, '
+            '0, 0, 7], ["D", "X", 0, 0, 1, 8], ["D", "X", 1, 0, 1, 9], ["D", "X", 2, 0, 1, 10], ["D", "X", 3, 0, '
+            '1, 11], ["D", "Z", 0, 0, 1, 12], ["D", "Z", 1, 0, 1, 13], ["D", "Z", 2, 0, 1, 14], ["D", "Z", 3, 0, '
+            '1, 15], ["D", "X", 0, 1, 0, 16], ["D", "X", 1, 1, 0, 17], ["D", "X", 2, 1, 0, 18], ["D", "X", 3, 1, '
+            '0, 19], ["D", "Z", 0, 1, 0, 20], ["D", "Z", 1, 1, 0, 21], ["D", "Z", 2, 1, 0, 22], ["D", "Z", 3, 1, '
+            '0, 23], ["Y", "X", 0, 1, 0, 24], ["Y", "X", 1, 1, 0, 25], ["Y", "X", 2, 1, 0, 26], ["Y", "X", 3, 1, '
+            '0, 27], ["Y", "Z", 0, 1, 0, 28], ["Y", "Z", 1, 1, 0, 29], ["Y", "Z", 2, 1, 0, 30], ["Y", "Z", 3, 1, '
+            '0, 31], ["D", "X", 0, 1, 1, 32], ["D", "X", 1, 1, 1, 33], ["D", "X", 2, 1, 1, 34], ["D", "X", 3, 1, '
+            '1, 35], ["D", "Z", 0, 1, 1, 36], ["D", "Z", 1, 1, 1, 37], ["D", "Z", 2, 1, 1, 38], ["D", "Z", 3, 1, '
+            '1, 39], ["Y", "X", 0, 1, 1, 40], ["Y", "X", 1, 1, 1, 41], ["Y", "X", 2, 1, 1, 42], ["Y", "X", 3, 1, '
+            '1, 43], ["Y", "Z", 0, 1, 1, 44], ["Y", "Z", 1, 1, 1, 45], ["Y", "Z", 2, 1, 1, 46], ["Y", "Z", 3, 1, '
+            '1, 47], ["D", "X", 0, 2, 0, 48], ["D", "X", 1, 2, 0, 49], ["D", "X", 2, 2, 0, 50], ["D", "X", 3, 2, '
+            '0, 51], ["D", "Z", 0, 2, 0, 52], ["D", "Z", 1, 2, 0, 53], ["D", "Z", 2, 2, 0, 54], ["D", "Z", 3, 2, '
+            '0, 55], ["Y", "X", 0, 2, 0, 56], ["Y", "X", 1, 2, 0, 57], ["Y", "X", 2, 2, 0, 58], ["Y", "X", 3, 2, '
+            '0, 59], ["Y", "Z", 0, 2, 0, 60], ["Y", "Z", 1, 2, 0, 61], ["Y", "Z", 2, 2, 0, 62], ["Y", "Z", 3, 2, '
+            '0, 63], ["D", "X", 0, 2, 1, 64], ["D", "X", 1, 2, 1, 65], ["D", "X", 2, 2, 1, 66], ["D", "X", 3, 2, '
+            '1, 67], ["D", "Z", 0, 2, 1, 68], ["D", "Z", 1, 2, 1, 69], ["D", "Z", 2, 2, 1, 70], ["D", "Z", 3, 2, '
+            '1, 71], ["Y", "X", 0, 2, 1, 72], ["Y", "X", 1, 2, 1, 73], ["Y", "X", 2, 2, 1, 74], ["Y", "X", 3, 2, '
+            '1, 75], ["Y", "Z", 0, 2, 1, 76], ["Y", "Z", 1, 2, 1, 77], ["Y", "Z", 2, 2, 1, 78], ["Y", "Z", 3, 2, '
+            '1, 79], ["D", "X", 0, 3, 0, 89], ["D", "X", 1, 3, 0, 90], ["D", "X", 2, 3, 0, 91], ["D", "X", 3, 3, '
+            '0, 92], ["D", "Z", 0, 3, 0, 93], ["D", "Z", 1, 3, 0, 94], ["D", "Z", 2, 3, 0, 95], ["D", "Z", 3, 3, '
+            '0, 96], ["D", "X", 0, 3, 1, 97], ["D", "X", 1, 3, 1, 98], ["D", "X", 2, 3, 1, 99], ["D", "X", 3, 3, '
+            '1, 100], ["D", "Z", 0, 3, 1, 101], ["D", "Z", 1, 3, 1, 102], ["D", "Z", 2, 3, 1, 103], ["D", "Z", 3,'
+            ' 3, 1, 104]], "data": [["Y", 0, 80], ["Y", 1, 81], ["Y", 2, 82], ["Y", 3, 83], ["Y", 4, 84], ["Y", '
+            '5, 85], ["Y", 6, 86], ["Y", 7, 87], ["Y", 8, 88], ["D", 0, 105], ["D", 1, 106], ["D", 2, 107], ["D",'
+            ' 3, 108], ["D", 4, 109], ["D", 5, 110], ["D", 6, 111], ["D", 7, 112], ["D", 8, 113]]}'
+        ),
+    },
+}
+
 
 EXPECTED_OBSERVABLE_COUNTS = {
     "d3_mem_Z_zero_final": 1,
@@ -279,6 +363,19 @@ def golden_outputs(builder: LogicalCircuitBuilder) -> dict[str, str]:
 def test_golden_parity(shape):
     for suffix, actual in golden_outputs(make_builder(shape)).items():
         assert actual.encode() == (GOLDENS / f"{shape}.{suffix}").read_bytes(), suffix
+    if shape in TELEPORTATION_METADATA:
+        tc = make_builder(shape).to_tick_circuit()
+        baseline = TELEPORTATION_METADATA[shape]
+        # The generator's five metadata keys are named explicitly; TickCircuit cannot enumerate them.
+        assert all(
+            tc.get_meta(key) is not None
+            for key in ("detectors", "observables", "num_measurements", "measurement_keys", "injection_readouts")
+        )
+        assert tc.get_meta("measurement_keys").encode() == baseline["measurement_keys"].encode()
+        assert [
+            {key: value for key, value in entry.items() if not key.startswith("resource_sign_")}
+            for entry in json.loads(tc.get_meta("injection_readouts"))
+        ] == baseline["injection_readouts"]
 
 
 @pytest.mark.parametrize("shape", SHAPES)
@@ -994,12 +1091,12 @@ def test_gate_after_patch_final_memory_rejected(method, labels, output):
     assert builder.patches["B"].x_z_swapped
 
 
-@pytest.mark.parametrize("method", ["add_sz_via_teleportation", "add_t_via_injection"])
-def test_teleportation_validates_expanded_preparations(method):
+@pytest.mark.parametrize(("method", "rounds_before"), [("add_sz_via_teleportation", 1), ("add_t_via_injection", 0)])
+def test_teleportation_validates_expanded_preparations(method, rounds_before):
     builder = BuilderProbe()
     for label, offset in [("A", 0), ("B", 17)]:
         builder.add_patch(SurfacePatch.create(3), label, qubit_offset=offset)
-    getattr(builder, method)("A", "B", 0, 2)
+    getattr(builder, method)("A", "B", rounds_before, 2)
     builder.to_tick_circuit()
     # A malformed expanded helper must be rejected just like a plain CX.
     builder.operations.pop(0)
@@ -1505,6 +1602,7 @@ def test_injection_readout_is_separate_from_data_observable(shape):
     assert descriptor["num_observables"] == 1
     assert descriptor["num_frame_slots"] == 4
     if "inject" in shape:
+        assert not any(key.startswith("resource_sign_") for key in readout)
         decision = next(
             g for boundary in descriptor["boundary_gates"] for g in boundary if g["type"] == "TGateInjection"
         )
@@ -1657,23 +1755,16 @@ def test_sz_ancilla_encoded_y_after_first_syndrome(seed):
     )
     group = stabilizer_generators_after(tc, first_readout + 1, seed=seed)
     assert len(allocation.data_qubits) == 9
-    logical_y = _pauli(2 * builder.patches["Y"].patch.geometry.num_qubits, ("Y", allocation.data_qubits))
-    assert group_contains(group, logical_y) or group_contains(group, "-" + logical_y[1:])
+    all_y = _pauli(2 * builder.patches["Y"].patch.geometry.num_qubits, ("Y", allocation.data_qubits))
+    assert group_contains(group, all_y) or group_contains(group, "-" + all_y[1:])
     patch = builder.patches["Y"].patch
     num_qubits = 2 * patch.geometry.num_qubits
     for family, checks in (("X", patch.geometry.x_stabilizers), ("Z", patch.geometry.z_stabilizers)):
         for check in checks:
             pauli = _pauli(num_qubits, (family, [allocation.data_qubits[q] for q in check.data_qubits]))
             assert group_contains(group, pauli) or group_contains(group, "-" + pauli[1:]), (family, check.index)
-    logical_x = {allocation.data_qubits[q] for q in patch.geometry.logical_x.data_qubits}
-    logical_z = {allocation.data_qubits[q] for q in patch.geometry.logical_z.data_qubits}
-    logical_y = _pauli(
-        num_qubits,
-        ("Y", logical_x & logical_z),
-        ("X", logical_x - logical_z),
-        ("Z", logical_z - logical_x),
-    )
-    assert group_contains(group, logical_y) or group_contains(group, "-" + logical_y[1:])
+    logical_y = _logical_y_pauli(patch, num_qubits, builder.patches["Y"].qubit_offset)
+    assert any(_signed_membership(tc, first_readout + 1, logical_y, seed))
 
 
 @pytest.mark.parametrize(("dx", "dz"), [(2, 2), (2, 3), (3, 2)])
@@ -2148,3 +2239,272 @@ def test_orientation_prepass_handles_each_h_patch():
     context = _PropagationContext.from_operations(operations)
     assert context.orientations[1] == {"A": True, "B": True}
     assert _propagate_stabilizer_terms(context, 1, ("B", "Z", "X")) == []
+
+
+RESOURCE_GEOMETRIES = [
+    (3, 3, False, 0),
+    (5, 5, False, 0),
+    (7, 7, False, 0),
+    (3, 5, False, 1),
+    (5, 3, False, 1),
+    (3, 3, True, 0),
+]
+
+
+def _resource_patch(dx, dz, *, alternate_x=False):
+    patch = SurfacePatch.create(dx=dx, dz=dz)
+    if alternate_x:
+        geometry = patch.geometry
+        x = set(geometry.logical_x.data_qubits)
+        z = set(geometry.logical_z.data_qubits)
+        # A positive X check preserves the logical class but changes the positional Y phase.
+        check = next(
+            check
+            for check in geometry.x_stabilizers
+            if (len(x.symmetric_difference(check.data_qubits) & z) - len(x & z)) % 4 == 2
+        )
+        support = tuple(sorted(x.symmetric_difference(check.data_qubits)))
+        assert group_contains(
+            (_pauli(geometry.num_qubits, ("X", x)), _pauli(geometry.num_qubits, ("X", check.data_qubits))),
+            _pauli(geometry.num_qubits, ("X", support)),
+        )
+        geometry.logical_x = replace(geometry.logical_x, data_qubits=support)
+    return patch
+
+
+def _resource_program(dx, dz, gate="teleportation", *, alternate_x=False):
+    patch = _resource_patch(dx, dz, alternate_x=alternate_x)
+    builder = BuilderProbe()
+    builder.add_patch(patch, "D")
+    builder.add_memory("D", 1, "X")
+    if gate == "teleportation":
+        builder.add_patch(patch, "A", qubit_offset=patch.geometry.num_qubits)
+        builder.add_sz_via_teleportation("D", "A", 2, 2)
+    elif gate == "fold":
+        builder.add_logical_sz("D")
+    builder.add_memory("D", 1, "Z")
+    return builder, patch, builder.to_tick_circuit()
+
+
+def _logical_y_pauli(patch, width, offset=0):
+    x = {offset + q for q in patch.geometry.logical_x.data_qubits}
+    z = {offset + q for q in patch.geometry.logical_z.data_qubits}
+    logical_x = stim.PauliString(_pauli(width, ("X", x)))
+    logical_z = stim.PauliString(_pauli(width, ("Z", z)))
+    return str(1j * logical_x * logical_z).replace("_", "I")
+
+
+def _first_measurement_tick(tc, qubits):
+    return next(
+        tick
+        for tick in range(tc.num_ticks())
+        for gate in tc.get_tick(tick).gate_batches()
+        if gate.gate_type.name == "MZ" and qubits.intersection(gate.qubits)
+    )
+
+
+def _signed_membership(tc, tick, pauli, seed):
+    group = stabilizer_generators_after(tc, tick, seed=seed)
+    opposite = str(-stim.PauliString(pauli)).replace("_", "I")
+    return group_contains(group, pauli), group_contains(group, opposite)
+
+
+@pytest.mark.parametrize(("dx", "dz", "alternate_x", "expected_reference"), RESOURCE_GEOMETRIES)
+def test_sz_resource_sign_correction(dx, dz, alternate_x, expected_reference):
+    _, patch, tc = _resource_program(dx, dz, alternate_x=alternate_x)
+    readout = json.loads(tc.get_meta("injection_readouts"))[0]
+    tick = _first_measurement_tick(tc, set(range(patch.geometry.num_data)))
+    logical_y = _logical_y_pauli(patch, 2 * patch.geometry.num_qubits)
+    assert json.loads(tc.get_meta("observables")) == []
+    _, _, identity = _resource_program(dx, dz, "identity", alternate_x=alternate_x)
+    identity_tick = _first_measurement_tick(identity, set(range(patch.geometry.num_data)))
+    identity_y = _logical_y_pauli(patch, patch.geometry.num_qubits)
+    uncorrected_agreements = resource_positive = corrected_agreements = identity_eigenstates = 0
+    without_reference_agreements = 0
+    for seed in range(32):
+        positive, negative = _signed_membership(tc, tick, logical_y, seed)
+        assert positive != negative
+        s = int(negative)
+        measurements = simulate_tick_circuit(tc, seed)[0]
+        m = sum(measurements[record] for record in readout["records"]) % 2
+        check_parity = sum(measurements[record] for record in readout["resource_sign_records"]) % 2
+        r = check_parity ^ readout["resource_sign_reference"]
+        assert s ^ m ^ r == 0, seed
+        corrected_agreements += (s ^ m ^ r) == 0
+        without_reference_agreements += (s ^ m ^ check_parity) == 0
+        uncorrected_agreements += (s ^ m) == 0
+        resource_positive += r == 0
+        # Equality binds every disagreement to the resource, not merely to a plausible split.
+        assert ((s ^ m) == 0) == (r == 0), seed
+        signs = _signed_membership(identity, identity_tick, identity_y, seed)
+        assert signs == (False, False), seed
+        identity_eigenstates += any(signs)
+    assert 1 < uncorrected_agreements < 31
+    assert uncorrected_agreements == resource_positive
+    assert without_reference_agreements == 32 * (1 - readout["resource_sign_reference"])
+    assert readout["resource_sign_reference"] == expected_reference
+    print(
+        f"{dx}x{dz}, alternate_x={alternate_x}: reference={readout['resource_sign_reference']}, "
+        f"corrected={corrected_agreements}/32, without_reference={without_reference_agreements}/32, "
+        f"without_resource={uncorrected_agreements}/32, resource_positive={resource_positive}/32, "
+        f"identity_Y_eigenstates={identity_eigenstates}/32",
+    )
+
+
+@pytest.mark.parametrize("distance", [3, 5])
+def test_sz_resource_sign_fold_control(distance):
+    _, patch, fold = _resource_program(distance, distance, "fold")
+    fold_tick = _first_measurement_tick(fold, set(range(patch.geometry.num_data)))
+    fold_y = _logical_y_pauli(patch, patch.geometry.num_qubits)
+    fold_rows = json.loads(fold.get_meta("measurement_keys"))["stabilizer"]
+    fold_records = [
+        mid for label, family, _, segment, rnd, mid in fold_rows if family == "Z" and segment == 1 and rnd == 0
+    ]
+    for seed in range(32):
+        positive, negative = _signed_membership(fold, fold_tick, fold_y, seed)
+        assert positive != negative
+        measurements = simulate_tick_circuit(fold, seed)[0]
+        frame = sum(measurements[mid] for mid in fold_records) % 2
+        assert int(negative) ^ frame == 0, seed
+
+
+@pytest.mark.parametrize(("dx", "dz", "alternate_x", "expected_reference"), RESOURCE_GEOMETRIES)
+def test_resource_sign_signed_identity(dx, dz, alternate_x, expected_reference):
+    patch = _resource_patch(dx, dz, alternate_x=alternate_x)
+    checks, reference = _resource_sign_checks(patch)
+    selected = set(checks)
+    width = patch.geometry.num_qubits
+    generators = [
+        _pauli(width, (family, check.data_qubits))
+        for family, checks in (("X", patch.geometry.x_stabilizers), ("Z", patch.geometry.z_stabilizers))
+        for check in checks
+        if (family, check.index) in selected
+    ]
+    generators.append(_logical_y_pauli(patch, width))
+    generators = tuple(generators)
+    all_y = _pauli(width, ("Y", range(patch.geometry.num_data)))
+    positive = group_contains(generators, all_y)
+    negative = group_contains(generators, "-" + all_y[1:])
+    assert positive != negative
+    assert reference == int(negative) == expected_reference
+
+
+@pytest.mark.parametrize(("dx", "dz", "alternate_x", "expected_reference"), RESOURCE_GEOMETRIES)
+def test_resource_sign_matches_projected_state(dx, dz, alternate_x, expected_reference):
+    builder, patch, tc = _resource_program(dx, dz, alternate_x=alternate_x)
+    allocation = GeneratorProbe(builder.patches, []).allocation("A")
+    projection_tick = _first_measurement_tick(tc, set(allocation.x_ancilla_qubits + allocation.z_ancilla_qubits))
+    logical_y = _logical_y_pauli(patch, 2 * patch.geometry.num_qubits, patch.geometry.num_qubits)
+    readout = json.loads(tc.get_meta("injection_readouts"))[0]
+    signs = set()
+    for seed in range(16):
+        positive, negative = _signed_membership(tc, projection_tick + 1, logical_y, seed)
+        assert positive != negative
+        measurements = simulate_tick_circuit(tc, seed)[0]
+        r = sum(measurements[record] for record in readout["resource_sign_records"]) % 2
+        r ^= readout["resource_sign_reference"]
+        assert r == int(negative), seed
+        signs.add(r)
+    assert signs == {0, 1}
+    assert readout["resource_sign_reference"] == expected_reference
+
+
+@pytest.mark.parametrize(("dx", "dz"), [(3, 3), (5, 5), (7, 7), (3, 5), (5, 3)])
+@pytest.mark.parametrize("preceding_rounds", [0, 1, 3])
+def test_resource_sign_metadata(dx, dz, preceding_rounds):
+    patch = SurfacePatch.create(dx=dx, dz=dz)
+    builder = BuilderProbe()
+    for label, offset in (("D", 0), ("A", patch.geometry.num_qubits)):
+        builder.add_patch(patch, label, qubit_offset=offset)
+    for _ in range(preceding_rounds):
+        builder.add_memory("D", 1, "X")
+    builder.add_sz_via_teleportation("D", "A", 2, 2)
+    tc = builder.to_tick_circuit()
+    readout = json.loads(tc.get_meta("injection_readouts"))[0]
+    assert set(readout) == {
+        "data_patch",
+        "ancilla_patch",
+        "injection_type",
+        "basis",
+        "meas_ids",
+        "records",
+        "resource_sign_meas_ids",
+        "resource_sign_records",
+        "resource_sign_reference",
+    }
+    total = int(tc.get_meta("num_measurements"))
+    for prefix in ("", "resource_sign_"):
+        assert readout[prefix + "records"] == [mid - total for mid in readout[prefix + "meas_ids"]]
+    rows = json.loads(tc.get_meta("measurement_keys"))["stabilizer"]
+    selected = [row for row in rows if row[-1] in readout["resource_sign_meas_ids"]]
+    num_data = dx * dz
+    assert len(selected) == len(readout["resource_sign_meas_ids"]) == (num_data - 1) // 2
+    assert sorted(Counter(row[1] for row in selected).values()) == [(num_data - 1) // 4, (num_data + 1) // 4]
+    assert {(row[0], row[3], row[4]) for row in selected} == {("A", preceding_rounds, 0)}
+    checks, reference = _resource_sign_checks(patch)
+    assert {(row[1], row[2]) for row in selected} == set(checks)
+    assert readout["resource_sign_reference"] == reference
+    descriptor_readout = builder.build_algorithm_descriptor()["injection_readouts"][0]
+    assert {key: descriptor_readout[key] for key in readout} == readout
+
+
+@pytest.mark.parametrize("rounds_before", [0, -1])
+def test_sz_resource_sign_requires_projection(rounds_before):
+    builder = BuilderProbe()
+    for label, offset in (("D", 0), ("A", 17)):
+        builder.add_patch(SurfacePatch.create(3), label, qubit_offset=offset)
+    with pytest.raises(ValueError, match=r"rounds_before.*resource sign.*before CX"):
+        builder.add_sz_via_teleportation("D", "A", rounds_before, 2)
+    assert builder.operations == []
+
+
+def test_resource_sign_rejects_non_real_phase_in_invalid_geometry():
+    patch = SurfacePatch.create(3)
+    geometry = patch.geometry
+    # This invalid X check anticommutes with logical Z, violating the real-phase invariant.
+    geometry.x_stabilizers[0] = replace(geometry.x_stabilizers[0], data_qubits=(0,))
+    geometry.logical_x = replace(geometry.logical_x, data_qubits=tuple(range(1, geometry.num_data)))
+    with pytest.raises(ValueError, match=r"Resource sign.*non-real Pauli phase.*odd"):
+        _resource_sign_checks(patch)
+
+
+@pytest.mark.parametrize(("dx", "dz", "family", "reference"), [(1, 1, None, 0), (1, 3, "X", 1), (3, 1, "Z", 1)])
+def test_resource_sign_degenerate_ancilla(dx, dz, family, reference):
+    _, patch, tc = _resource_program(dx, dz)
+    readout = json.loads(tc.get_meta("injection_readouts"))[0]
+    ids = readout["resource_sign_meas_ids"]
+    assert len(ids) == int(family is not None)
+    assert readout["resource_sign_records"] == [mid - tc.num_measurements() for mid in ids]
+    assert readout["resource_sign_reference"] == reference
+    rows = [row for row in json.loads(tc.get_meta("measurement_keys"))["stabilizer"] if row[0] == "A"]
+    if family is None:
+        assert rows == []
+    else:
+        assert {row[1] for row in rows} == {family}
+        selected = [row for row in rows if row[-1] in ids]
+        assert len(selected) == 1
+        assert {(row[3], row[4]) for row in selected} == {(min(row[3] for row in rows), 0)}
+    tick = _first_measurement_tick(tc, set(range(patch.geometry.num_data)))
+    logical_y = _logical_y_pauli(patch, 2 * patch.geometry.num_qubits)
+    for seed in range(16):
+        positive, negative = _signed_membership(tc, tick, logical_y, seed)
+        assert positive != negative
+        measurements = simulate_tick_circuit(tc, seed)[0]
+        m = sum(measurements[record] for record in readout["records"]) % 2
+        r = sum(measurements[record] for record in readout["resource_sign_records"]) % 2
+        r ^= reference
+        assert int(negative) ^ m ^ r == 0, seed
+
+
+@pytest.mark.parametrize("distance", [1, 3])
+def test_resource_sign_rejects_swapped_ancilla_at_emission(distance):
+    builder = BuilderProbe()
+    patch = SurfacePatch.create(distance)
+    builder.add_patch(patch, "D")
+    builder.add_patch(patch, "A", qubit_offset=patch.geometry.num_qubits)
+    builder.add_sz_via_teleportation("D", "A", 2, 2)
+    # Bypass public validation to protect the generator if a future builder admits a swapped ancilla.
+    operations = [*builder.operations, LogicalOp(LogicalGateType.TRANSVERSAL_H, ["A"])]
+    generator = GeneratorProbe(builder.patches, operations)
+    with pytest.raises(ValueError, match=r"Resource sign.*ancilla 'A'.*unswapped patch state"):
+        generator.generate()

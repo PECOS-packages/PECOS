@@ -2173,7 +2173,7 @@ mod tests {
         // Weight-0 input faults: just empty
         let w0 = checker.enumerate_input_faults(0);
         assert_eq!(w0.len(), 1);
-        assert!(w0[0].is_empty());
+        assert_eq!(w0[0], []);
 
         // Weight-1 input faults: 3 qubits * 3 Pauli types = 9
         let w1 = checker.enumerate_input_faults(1);
@@ -2384,7 +2384,7 @@ mod tests {
         // Only weight-0 (empty) should work
         let input_faults_w0 = checker.enumerate_input_faults(0);
         assert_eq!(input_faults_w0.len(), 1);
-        assert!(input_faults_w0[0].is_empty());
+        assert_eq!(input_faults_w0[0], []);
     }
 
     #[test]
@@ -2492,7 +2492,11 @@ mod tests {
         assert!(!checker.has_input_qubits(), "State prep has no inputs");
         assert!(checker.has_output_qubits(), "State prep has outputs");
 
-        assert!(checker.input_qubits().is_empty());
+        let input_qubits = checker.input_qubits();
+        assert!(
+            input_qubits.is_empty(),
+            "expected no input qubits, got {input_qubits:?}"
+        );
         assert_eq!(checker.output_qubits().len(), 3);
     }
 
@@ -2512,7 +2516,11 @@ mod tests {
         );
 
         assert_eq!(checker.input_qubits().len(), 3);
-        assert!(checker.output_qubits().is_empty());
+        let output_qubits = checker.output_qubits();
+        assert!(
+            output_qubits.is_empty(),
+            "expected no output qubits, got {output_qubits:?}"
+        );
     }
 
     // =========================================================================

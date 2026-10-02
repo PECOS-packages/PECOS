@@ -1874,6 +1874,25 @@ impl TrellisModel {
         }
     }
 
+    fn finish_binary_prediction(progress: &BinaryProgress) -> ObsMask {
+        let frontier = &progress.frontier;
+        let winner = (0..frontier.parent.masses.len())
+            .min_by(|&left, &right| {
+                frontier.parent.masses[right]
+                    .total_cmp(&frontier.parent.masses[left])
+                    .then_with(|| {
+                        compare_state_words(
+                            frontier.parent.key(left, frontier.stride),
+                            frontier.parent.key(right, frontier.stride),
+                            frontier.detector_words,
+                        )
+                    })
+            })
+            .expect("a successful binary decode retains a terminal state");
+        let key = frontier.parent.key(winner, frontier.stride);
+        ObsMask::from_words(&key[frontier.detector_words..])
+    }
+
     fn decode_attempt_nary(
         &self,
         scratch: &mut TrellisScratch,
@@ -2730,9 +2749,7 @@ fn prune(
     }
 
     score_candidates(frontier, score_alpha, suffix_compatibility, observed);
-    frontier.indices.clear();
-    frontier.indices.extend(0..frontier.parent.masses.len());
-    frontier.indices.sort_unstable_by(|&left, &right| {
+    let better = |&left: &usize, &right: &usize| {
         frontier.scores[right]
             .total_cmp(&frontier.scores[left])
             .then_with(|| {
@@ -2742,39 +2759,48 @@ fn prune(
                     frontier.detector_words,
                 )
             })
-            .then_with(|| left.cmp(&right))
-    });
-    let cutoff = frontier.scores[frontier.indices[0]] - delta;
+    };
+    let best = (0..frontier.parent.masses.len())
+        .min_by(better)
+        .expect("a nonempty merged frontier must have a score");
+    let cutoff = frontier.scores[best] - delta;
+    frontier.indices.clear();
+    frontier.indices.extend(
+        (0..frontier.parent.masses.len()).filter(|&candidate| frontier.scores[candidate] >= cutoff),
+    );
+    let eligible = frontier.indices.len();
+    if eligible > k {
+        frontier.indices.select_nth_unstable_by(k, better);
+        frontier.indices.truncate(k);
+    }
+
     frontier.retained.clear();
     frontier
         .retained
         .resize(frontier.parent.masses.len(), false);
-    let mut dropped_states = 0;
+    for &candidate in &frontier.indices {
+        frontier.retained[candidate] = true;
+    }
+    let original_states = frontier.parent.masses.len();
+    let retained_states = frontier.indices.len();
     let mut dropped_log_mass = f64::NEG_INFINITY;
-    let mut k_capped = false;
-    let mut delta_pruned = false;
-
-    for (index, &candidate) in frontier.indices.iter().enumerate() {
-        let within_k = index < k;
-        let within_delta = frontier.scores[candidate] >= cutoff;
-        if within_k && within_delta {
-            frontier.retained[candidate] = true;
-        } else {
-            dropped_states += 1;
-            if mode == DecodeMode::Full {
-                dropped_log_mass = logaddexp(dropped_log_mass, frontier.parent.masses[candidate]);
-            }
-            k_capped |= !within_k;
-            delta_pruned |= within_k && !within_delta;
+    if mode == DecodeMode::Full {
+        // Keep the existing score-ordered summation for bitwise telemetry stability.
+        frontier.indices.clear();
+        frontier
+            .indices
+            .extend((0..original_states).filter(|&i| !frontier.retained[i]));
+        frontier.indices.sort_unstable_by(better);
+        for &candidate in &frontier.indices {
+            dropped_log_mass = logaddexp(dropped_log_mass, frontier.parent.masses[candidate]);
         }
     }
-
     frontier.retain();
     PruneResult {
-        dropped_states,
+        dropped_states: (original_states - retained_states) as u64,
         dropped_log_mass,
-        k_capped,
-        delta_pruned,
+        k_capped: original_states > k,
+        delta_pruned: original_states.min(k) > eligible,
     }
 }
 

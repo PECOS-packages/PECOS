@@ -1166,16 +1166,22 @@ mod tests {
     fn test_decomposed_tracked_pauli_targets_xor_by_parity() {
         let cancels = ParsedDem::from_str("error(0.5) TP0 TP1 ^ TP1 TP2 ^ TP2 TP0").unwrap();
         let (dets, obs, tracked_paulis) = cancels.mechanisms[0].combined_effect();
-        assert!(dets.is_empty());
-        assert!(obs.is_empty());
-        assert!(tracked_paulis.is_empty());
+        assert!(dets.is_empty(), "expected no detectors, got {dets:?}");
+        assert!(obs.is_empty(), "expected no observables, got {obs:?}");
+        assert!(
+            tracked_paulis.is_empty(),
+            "expected no tracked paulis, got {tracked_paulis:?}"
+        );
         assert_eq!(cancels.mechanisms[0].effect_key().to_string(), "(empty)");
 
         let leaves_detector = ParsedDem::from_str("error(0.5) D0 TP0 ^ TP0").unwrap();
         let (dets, obs, tracked_paulis) = leaves_detector.mechanisms[0].combined_effect();
         assert_eq!(dets, vec![0]);
-        assert!(obs.is_empty());
-        assert!(tracked_paulis.is_empty());
+        assert!(obs.is_empty(), "expected no observables, got {obs:?}");
+        assert!(
+            tracked_paulis.is_empty(),
+            "expected no tracked paulis, got {tracked_paulis:?}"
+        );
         assert_eq!(leaves_detector.mechanisms[0].effect_key().to_string(), "D0");
     }
 
@@ -1219,8 +1225,14 @@ mod tests {
         assert_eq!(sampler.num_dem_outputs(), 0);
         assert_eq!(sampler.num_tracked_paulis(), 1);
         let (detectors, dem_outputs) = sampler.sample(&mut rng);
-        assert!(detectors.is_empty());
-        assert!(dem_outputs.is_empty());
+        assert!(
+            detectors.is_empty(),
+            "expected no detectors, got {detectors:?}"
+        );
+        assert!(
+            dem_outputs.is_empty(),
+            "expected no DEM outputs, got {dem_outputs:?}"
+        );
         let err = sampler.sample_tracked_pauli_flips(&mut rng).unwrap_err();
         assert_eq!(err.backend(), "DemSampler");
         assert_eq!(err.num_tracked_paulis(), 1);
@@ -1298,8 +1310,14 @@ error(0.02) D1 D2
 
         let result = compare_dems_exact(&dem1, &dem2, 1e-6);
         assert!(!result.equivalent);
-        assert!(!result.details.only_in_dem1.is_empty());
-        assert!(!result.details.only_in_dem2.is_empty());
+        assert!(
+            !result.details.only_in_dem1.is_empty(),
+            "first DEM must have a unique mechanism"
+        );
+        assert!(
+            !result.details.only_in_dem2.is_empty(),
+            "second DEM must have a unique mechanism"
+        );
     }
 
     #[test]
@@ -1391,9 +1409,12 @@ error(0.02) D1 D2
 
         // The combined effect should be empty
         let (dets, obs, tracked_paulis) = dem.mechanisms[0].combined_effect();
-        assert!(dets.is_empty());
-        assert!(obs.is_empty());
-        assert!(tracked_paulis.is_empty());
+        assert!(dets.is_empty(), "expected no detectors, got {dets:?}");
+        assert!(obs.is_empty(), "expected no observables, got {obs:?}");
+        assert!(
+            tracked_paulis.is_empty(),
+            "expected no tracked paulis, got {tracked_paulis:?}"
+        );
 
         // Sample and verify D0 never fires
         let mut rng = PecosRng::seed_from_u64(42);

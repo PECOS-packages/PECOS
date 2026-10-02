@@ -5,7 +5,7 @@
 
 use pecos::sim;
 use pecos_engines::{sparse_stab, state_vector};
-use pecos_programs::{Hugr, Qasm, Qis};
+use pecos_programs::{Qasm, Qis};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Example 1: QASM program automatically uses QASM engine
@@ -40,17 +40,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // In a real scenario, you'd use proper LLVM bitcode.
     println!("  (Skipping LLVM execution - would use LLVM engine automatically)");
 
-    // Example 3: HUGR program automatically uses Selene engine
-    println!("\nExample 3: HUGR program -> Selene engine (automatic)");
-    // Note: HUGR programs use serialized HUGR format
-    let _hugr_prog = Hugr::from_bytes(vec![0x48, 0x55, 0x47, 0x52]);
-
-    // Note: Since this is not valid HUGR, this would fail at runtime.
-    // In a real scenario, you'd use proper HUGR serialization.
-    println!("  (Skipping HUGR execution - would use Selene engine automatically)");
-
-    // Example 4: Demonstrating configuration propagation
-    println!("\nExample 4: All configuration options work with auto-selection");
+    // Example 3: Demonstrating configuration propagation
+    println!("\nExample 3: All configuration options work with auto-selection");
     let qasm_prog2 = Qasm::from_string(
         r#"
         OPENQASM 2.0;
@@ -62,7 +53,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     "#,
     );
 
-    let results4 = sim(qasm_prog2)
+    let results3 = sim(qasm_prog2)
         .seed(789)
         .workers(2)
         .verbose(false)
@@ -70,7 +61,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .shots(200)
         .run()?;
 
-    println!("  Ran {} shots with custom configuration", results4.len());
+    println!("  Ran {} shots with custom configuration", results3.len());
 
     println!("\nAll examples completed successfully!");
     Ok(())

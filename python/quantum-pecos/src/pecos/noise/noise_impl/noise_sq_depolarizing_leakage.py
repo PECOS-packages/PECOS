@@ -18,6 +18,7 @@ providing more realistic error modeling for quantum systems.
 
 from __future__ import annotations
 
+from copy import copy
 from typing import TYPE_CHECKING
 
 import pecos as pc
@@ -46,15 +47,25 @@ def noise_sq_depolarizing_leakage(
         machine: Machine protocol handling qubit leakage states.
 
     Returns:
-        List of quantum operations including modified operation and noise,
-        or None if no noise or leakage occurs.
+        The operation once on qubits that were not leaked on entry, if any,
+        followed by faults in noise insertion order. Newly leaked qubits still
+        receive the operation before the leak operations. Returns None if no
+        fault fires and no input was already leaked. An empty list when all
+        inputs were already leaked means the operation was replaced by nothing;
+        a zero-argument operation is never emitted.
     """
     args = set(op.args)
     leaked = machine.leaked_qubits & args
 
     if leaked:
         not_leaked = args - leaked
-        noisy_op = QOp(name=op.name, args=list(not_leaked), metadata=dict(op.metadata))
+        # Copy and replace the arguments, as surviving_two_qubit_op does: rebuilding
+        # the operation from its name alone drops angles, sim_name and returns, which
+        # a rotation or a measurement needs in order to execute.
+        noisy_op = copy(op)
+        noisy_op.args = list(not_leaked)
+        # Copy the validated dict so replacement metadata cannot mutate the input.
+        noisy_op.metadata = dict(op.metadata)
     else:
         noisy_op = op
 
@@ -76,19 +87,15 @@ def noise_sq_depolarizing_leakage(
 
     if noise or leaked:
         buffered_ops = []
-
-        if noise:
-            for sym, args in noise.items():
-                if sym == "L":
-                    leak_ops = machine.leak(set(noise["L"]))
-                    buffered_ops.extend(leak_ops)
-                else:
-                    buffered_ops.extend(
-                        (noisy_op, QOp(name=sym, args=args, metadata={})),
-                    )
-
-        else:
+        if noisy_op.args:
             buffered_ops.append(noisy_op)
+
+        for sym, args in noise.items():
+            if sym == "L":
+                leak_ops = machine.leak(set(args))
+                buffered_ops.extend(leak_ops)
+            else:
+                buffered_ops.append(QOp(name=sym, args=args, metadata={}))
 
         return buffered_ops
 

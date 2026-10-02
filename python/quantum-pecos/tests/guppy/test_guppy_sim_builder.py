@@ -124,10 +124,11 @@ class TestGuppySimBuilder:
         ll_files = list(temp_path.glob("*.ll"))
         hugr_files = list(temp_path.glob("*.hugr"))
 
-        assert len(hugr_files) > 0, "Should have created HUGR file"
-        # LLVM IR is deliberately NOT saved: HUGR -> QIS compilation lives
-        # in the pecos-rslib-llvm wheel (the base wheel does not link LLVM).
-        assert len(ll_files) == 0, "Base wheel must not emit LLVM IR artifacts"
+        # HUGR is lowered to QIS at the Python boundary, so the QIS program is the
+        # only intermediate Rust holds. A caller who wants the envelope reads it
+        # from the program wrapper (``Guppy.hugr_bytes``).
+        assert len(ll_files) > 0, "Should have created the QIS source file"
+        assert len(hugr_files) == 0, "Rust no longer holds the HUGR envelope"
 
         # Run simulation
         results = sim_obj.run(10).to_dict()
@@ -136,7 +137,7 @@ class TestGuppySimBuilder:
 
         # Files should still exist after run
         assert Path(sim_obj.temp_dir).exists()
-        assert hugr_files[0].exists()
+        assert ll_files[0].exists()
 
         # Manually clean up
         shutil.rmtree(sim_obj.temp_dir, ignore_errors=True)

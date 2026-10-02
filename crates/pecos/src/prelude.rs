@@ -50,7 +50,6 @@
 //! - `pecos_programs::prelude` - Program type definitions
 //! - `pecos_random::prelude` - Random number generation
 //! - `pecos_num::prelude` - Numerical computing (scipy.optimize replacement)
-//! - `pecos_hugr_qis::prelude` - HUGR to QIS compilation
 //! - `pecos_phir_json::prelude` - PHIR-JSON format support
 //!
 //! Plus pecos-specific items:
@@ -93,10 +92,6 @@ pub use pecos_random::prelude::*;
 
 // Re-export numerical computing prelude
 pub use pecos_num::prelude::*;
-
-// Re-export HUGR compiler prelude
-#[cfg(feature = "hugr-qis")]
-pub use pecos_hugr_qis::prelude::*;
 
 // Re-export LLVM IR generation prelude
 #[cfg(feature = "llvm")]

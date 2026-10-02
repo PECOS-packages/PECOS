@@ -1131,7 +1131,7 @@ mod tests {
         };
 
         let first = sample();
-        assert!(!first.is_empty());
+        assert!(!first.is_empty(), "idle noise sample must contain gates");
         assert_eq!(first, sample());
     }
 

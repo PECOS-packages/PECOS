@@ -404,101 +404,105 @@ impl FrameExecutor<'_> {
                 original.add_gate_command(g);
             }
         }
-        // Exactly one original start; boundary offsets do not resample or complete.
-        let (expanded, ends) = self
+        let bound = expansion_bound(records.len(), self.model.qubits)
+            .map_err(|_| processing_error("expansion overflow"))?;
+        // At most one outcome-dependent yield per source record, plus final
+        // transition dispatch and completion. Metadata consumes no lifecycle.
+        let dispatch_limit = records.len() + 2;
+        let (mut commands, mut ends) = self
             .model
             .inner
             .start_runtime_frame(&original.build(), records.len())?;
-        let bound = expansion_bound(records.len(), self.model.qubits)
-            .map_err(|_| processing_error("expansion overflow"))?;
-        if ends.last().copied().unwrap_or(0) as usize > bound {
-            return Err(processing_error("expansion invariant exceeded"));
-        }
-        // Metadata does not introduce simulator dispatch boundaries.
-        let mut reply = if records
-            .iter()
-            .any(|r| matches!(r, FrameRecord::Event { id: FLIP, .. }))
-        {
-            let gates = expanded.quantum_ops()?;
-            if gates.len() > bound {
-                return Err(processing_error("expansion invariant exceeded"));
-            }
-            let mut raw = Vec::new();
-            raw.try_reserve_exact(bound)
-                .map_err(|_| processing_error("outcome allocation failed"))?;
-            let mut ends = ends.into_iter();
-            let mut start = 0;
-            let mut end = 0;
-            for record in records {
-                match record {
-                    FrameRecord::Gate(_) => {
-                        end = ends
-                            .next()
-                            .ok_or_else(|| processing_error("missing expansion boundary"))?
-                            as usize;
+        let mut prefix = 0;
+        let mut records = records.into_iter().peekable();
+        let mut emitted = 0usize;
+        for _ in 0..dispatch_limit {
+            let reply =
+                self.execute_chunk(&commands, &ends, prefix, &mut records, &mut emitted, bound)?;
+            let continuation = self.model.inner.continue_runtime_frame(reply)?;
+            match continuation.stage {
+                EngineStage::Complete(outcomes) => {
+                    if records.peek().is_some() {
+                        return Err(processing_error("unexecuted frame records"));
                     }
-                    FrameRecord::Event { id: FLIP, target } => {
-                        let slice = gates
-                            .get(start..end)
-                            .ok_or_else(|| processing_error("invalid expansion boundary"))?;
-                        self.execute_segment(slice, &mut raw, bound)?;
-                        self.simulator.process(
-                            ByteMessage::quantum_operations_builder()
-                                .x(&[target as usize])
-                                .build(),
-                        )?;
-                        start = end;
-                    }
-                    FrameRecord::Event { .. } => {}
+                    return Ok(outcomes);
                 }
-            }
-            let slice = gates
-                .get(start..end)
-                .ok_or_else(|| processing_error("invalid expansion boundary"))?;
-            self.execute_segment(slice, &mut raw, bound)?;
-            ByteMessage::outcomes_builder().add_outcomes(&raw).build()
-        } else {
-            self.simulator.process(expanded)?
-        };
-        // The admitted singleton profile can generate one crosstalk continuation.
-        for _ in 0..2 {
-            match self.model.inner.continue_processing(reply)? {
-                EngineStage::Complete(outcomes) => return Ok(outcomes),
-                EngineStage::NeedsProcessing(commands) => {
-                    reply = self.simulator.process(commands)?;
+                EngineStage::NeedsProcessing(next) => {
+                    commands = next;
+                    ends = continuation.ends;
+                    prefix = continuation.prefix;
                 }
             }
         }
         Err(processing_error("continuation budget exceeded"))
     }
 
-    fn execute_segment(
+    fn execute_chunk(
         &mut self,
-        gates: &[Gate],
-        raw: &mut Vec<usize>,
+        commands: &ByteMessage,
+        ends: &[u32],
+        prefix: usize,
+        records: &mut std::iter::Peekable<std::vec::IntoIter<FrameRecord>>,
+        emitted: &mut usize,
         bound: usize,
-    ) -> Result<(), PecosError> {
-        if gates.is_empty() {
-            return Ok(());
+    ) -> Result<ByteMessage, PecosError> {
+        let gates = commands.quantum_ops()?;
+        let mut output = ByteMessage::quantum_operations_builder();
+        let initial = gates
+            .get(..prefix)
+            .ok_or_else(|| processing_error("invalid transition prefix"))?;
+        output.add_gate_commands(initial);
+        let mut start = prefix;
+        let mut consumed = 0;
+        while let Some(record) = records.peek() {
+            // Events immediately after a suspended payload must wait until its
+            // resolved transition prefix, just like subsequent source gates.
+            if consumed == ends.len() && self.model.inner.has_pending_crosstalk() {
+                break;
+            }
+            match record {
+                FrameRecord::Gate(_) => {
+                    let end = *ends
+                        .get(consumed)
+                        .ok_or_else(|| processing_error("missing expansion boundary"))?
+                        as usize;
+                    let slice = gates
+                        .get(start..end)
+                        .ok_or_else(|| processing_error("invalid expansion boundary"))?;
+                    output.add_gate_commands(slice);
+                    start = end;
+                    consumed += 1;
+                }
+                FrameRecord::Event { id: FLIP, target } => {
+                    output.x(&[*target as usize]);
+                }
+                FrameRecord::Event { .. } => {}
+            }
+            records.next();
         }
-        let reply = self.simulator.process(
-            ByteMessage::quantum_operations_builder()
-                .add_gate_commands(gates)
-                .build(),
-        )?;
-        let values = reply.outcomes()?;
-        if raw.len() + values.len() > bound {
-            return Err(processing_error("outcome budget exceeded"));
+        if consumed != ends.len() || start != gates.len() {
+            return Err(processing_error("unused expansion boundaries"));
         }
-        raw.extend(values.into_iter().map(|v| v as usize));
-        Ok(())
+        *emitted = emitted
+            .checked_add(output.message_count() as usize)
+            .ok_or_else(|| processing_error("expansion overflow"))?;
+        if *emitted > bound {
+            return Err(processing_error("expansion invariant exceeded"));
+        }
+        if output.message_count() == 0 {
+            // Identity transitions/trailing metadata require controller progress,
+            // not a simulator dispatch.
+            Ok(ByteMessage::outcomes_builder().build())
+        } else {
+            self.simulator.process(output.build())
+        }
     }
 }
 
 static NEXT_RUN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 pub(crate) fn next_run() -> Result<u64, PecosError> {
     NEXT_RUN
-        .fetch_update(
+        .try_update(
             std::sync::atomic::Ordering::Relaxed,
             std::sync::atomic::Ordering::Relaxed,
             |v| v.checked_add(1),

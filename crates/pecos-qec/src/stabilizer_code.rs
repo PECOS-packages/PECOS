@@ -736,7 +736,7 @@ mod tests {
         let code = StabilizerCode::from_group(PauliStabilizerGroup::new(vec![Z(0), Z(1)]).unwrap());
         assert_eq!(code.num_logical_qubits(), 0);
         let logicals = code.logical_operators();
-        assert!(logicals.is_empty());
+        assert_eq!(logicals, []);
     }
 
     // ========================================================================
@@ -974,7 +974,7 @@ mod tests {
 
         assert_eq!(code2.num_qubits(), 1);
         assert_eq!(code2.num_logical_qubits(), 0);
-        assert!(code2.logical_operators().is_empty());
+        assert_eq!(code2.logical_operators(), []);
         assert_eq!(code2.distance(), None);
     }
 

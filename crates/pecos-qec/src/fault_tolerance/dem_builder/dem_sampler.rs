@@ -3197,8 +3197,16 @@ mod tests {
     fn test_record_vectors_empty() {
         use super::super::builder::parse_detector_record_vectors;
         let im = im_with_n_measurements(8);
-        assert!(parse_detector_record_vectors("[]", &im).unwrap().is_empty());
-        assert!(parse_detector_record_vectors("", &im).unwrap().is_empty());
+        let records = parse_detector_record_vectors("[]", &im).unwrap();
+        assert!(
+            records.is_empty(),
+            "expected no detector record vectors, got {records:?}"
+        );
+        let records = parse_detector_record_vectors("", &im).unwrap();
+        assert!(
+            records.is_empty(),
+            "expected no detector record vectors, got {records:?}"
+        );
     }
 
     #[test]

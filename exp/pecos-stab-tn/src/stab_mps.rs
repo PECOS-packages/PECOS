@@ -48,6 +48,9 @@ use crate::errors::MpsError;
 use crate::mps::{Mps, MpsConfig};
 use nalgebra::DMatrix;
 use num_complex::Complex64;
+use pecos_core::pauli::pauli_bitmask::{
+    PauliBitmask, conjugate_cx_in_place, conjugate_cz_in_place,
+};
 use pecos_core::{Angle64, QubitId, RngManageable};
 use pecos_random::PecosRng;
 use pecos_simulators::{
@@ -685,20 +688,27 @@ impl StabMpsBuilder {
     /// `apply_depolarizing*` track Pauli errors as classical bits rather
     /// than applying them to the quantum state. Clifford gates propagate
     /// the frame via Heisenberg rules; measurements XOR the tracked
-    /// Z-bit into the outcome.
+    /// X-bit into the outcome.
     ///
     /// **Big win** for Pauli-noise-heavy QEC simulation: each error is
-    /// a single bit flip (O(1)) instead of an O(n) tableau update.
+    /// a local Pauli product (O(1)) instead of an O(n) tableau update.
     ///
     /// - Default: false.
     /// - Sign tracking: `pauli_frame_phase` evolves through Clifford
     ///   propagation per Heisenberg sign-flip rules (H·Y·H = -Y,
-    ///   SZ·Y·SZ† = -X, etc.) and folds into `global_phase` at flush.
-    /// - `State_vector` after flush: EXACT for all states. The frame is
-    ///   applied to the MPS via `C† · P · C = phase · X_flip · Z_sign`
-    ///   (decomposition in the MPS frame), not to the tableau. The
-    ///   Clifford `C` is unchanged, the MPS absorbs the frame's full
-    ///   content, and there is no state-dependent phase loss.
+    ///   SZ·Y·SZ† = -X, etc.) and Pauli multiplication, and folds into
+    ///   `global_phase` at flush.
+    /// - Flush applies the frame exactly: it is applied to the MPS via
+    ///   `C† · P · C = phase · X_flip · Z_sign` (decomposition in the MPS
+    ///   frame), not to the tableau, so the Clifford `C` is unchanged and
+    ///   the frame contributes no state-dependent phase loss. The global
+    ///   phase of `state_vector` still follows the tableau's own gauge,
+    ///   which is not globally phase-exact (issue #666), so
+    ///   flushed states agree with an exact simulation up to one global
+    ///   phase.
+    /// - Later non-Clifford rotations act on the represented state with
+    ///   their angle negated exactly when the frame anticommutes with the
+    ///   rotation axis, since `R_Q(theta) F = F R_Q(-theta)` in that case.
     #[must_use]
     pub fn pauli_frame_tracking(mut self, enable: bool) -> Self {
         self.flags.set_pauli_frame_tracking(enable);
@@ -903,7 +913,8 @@ pub struct StabMps {
     deferred_ops: Vec<measure::DeferredOp>,
     /// Count of pragmatic measurements whose pre-reduction was uncompensated.
     uncompensated_pre_reduction_count: u64,
-    /// Pending non-Clifford RZ angle per qubit when `merge_rz` is on.
+    /// Pending physical RZ angle per qubit when `merge_rz` is on.
+    /// X/Y gates and injections negate it when moved before the rotation.
     pending_rz: Vec<Option<Angle64>>,
     /// Auto-grow bond-dim threshold; `None` disables.
     auto_grow_bond_dim: Option<f64>,
@@ -2367,7 +2378,8 @@ impl StabMps {
     /// - **Pauli-frame tracking** (`pauli_frame_tracking = true`): the
     ///   frame's Pauli bits are not in the returned state vector. Call
     ///   `StabMps::flush_pauli_frame_to_state()` first for frame-applied
-    ///   output (modulo a global phase for Y contributions).
+    ///   output (up to the tableau's global-phase gauge; the frame itself
+    ///   is applied exactly).
     ///
     /// # Panics
     ///
@@ -2665,21 +2677,42 @@ impl StabMps {
     /// Inject Pauli X into the Pauli frame on qubit `q` (no quantum-state
     /// update). See `StabMpsBuilder::pauli_frame_tracking`.
     pub fn inject_x_in_frame(&mut self, q: QubitId) {
-        self.pauli_frame_x[q.index()] ^= true;
+        self.inject_pauli_in_frame(q.index(), PauliBitmask::x(0));
     }
 
     /// Inject Pauli Z into the Pauli frame on qubit `q`.
     pub fn inject_z_in_frame(&mut self, q: QubitId) {
-        self.pauli_frame_z[q.index()] ^= true;
+        self.inject_pauli_in_frame(q.index(), PauliBitmask::z(0));
     }
 
-    /// Inject Pauli Y into the Pauli frame on qubit `q`. In the Y-direct
-    /// representation, the bit pair `(1, 1)` names Y directly — no scalar
-    /// phase contribution.
+    /// Inject Pauli Y into the Pauli frame on qubit `q`.
     pub fn inject_y_in_frame(&mut self, q: QubitId) {
-        let i = q.index();
-        self.pauli_frame_x[i] ^= true;
-        self.pauli_frame_z[i] ^= true;
+        self.inject_pauli_in_frame(q.index(), PauliBitmask::y(0));
+    }
+
+    fn frame_pauli_at(&self, q: usize) -> PauliBitmask {
+        PauliBitmask {
+            x_bits: u128::from(self.pauli_frame_x[q]),
+            z_bits: u128::from(self.pauli_frame_z[q]),
+        }
+    }
+
+    fn inject_pauli_in_frame(&mut self, q: usize, pauli: PauliBitmask) {
+        // The pending angle is physical: P RZ(theta) = RZ(-theta) P
+        // for X/Y. Its later application conjugates by the then-current frame.
+        if self.flags.pauli_frame_tracking()
+            && pauli.has_x(0)
+            && let Some(theta) = self.pending_rz[q].as_mut()
+        {
+            *theta = -*theta;
+        }
+        // New errors multiply on the left; Y-direct support alone loses ±i.
+        let (product, phase) = pauli.multiply_with_phase(&self.frame_pauli_at(q));
+        self.pauli_frame_x[q] = product.has_x(0);
+        self.pauli_frame_z[q] = product.has_z(0);
+        if self.flags.pauli_frame_tracking() {
+            self.pauli_frame_phase *= Complex64::i().powu(u32::from(phase));
+        }
     }
 
     /// Bulk-inject a list of single-qubit Pauli errors into the frame.
@@ -2714,8 +2747,8 @@ impl StabMps {
 
     /// Propagate the Pauli frame through a single-qubit Clifford gate `kind`
     /// applied to qubit `q`. Y-direct representation — bit pair names
-    /// the Pauli directly; `pauli_frame_phase` tracks only `±1` signs
-    /// from Clifford sign flips:
+    /// the Pauli directly; Clifford conjugation contributes `±1` signs
+    /// to `pauli_frame_phase`:
     /// - H: X ↔ Z (swap bits); Y → -Y (phase *= -1 if both bits set).
     /// - SZ: X → Y, Z → Z, Y → -X (toggle z; phase *= -1 if both bits set).
     /// - `SZdg`: X → -Y, Z → Z, Y → X (toggle z; phase *= -1 if x && !z).
@@ -2767,20 +2800,28 @@ impl StabMps {
 
     /// Propagate the Pauli frame through CX(c, t).
     fn propagate_frame_cx(&mut self, c: usize, t: usize) {
-        // Heisenberg:
-        //   X_c → X_c X_t
-        //   X_t → X_t
-        //   Z_c → Z_c
-        //   Z_t → Z_c Z_t
-        // Bit updates:
-        //   if x_bit[c] set: toggle x_bit[t].
-        //   if z_bit[t] set: toggle z_bit[c].
-        if self.pauli_frame_x[c] {
-            self.pauli_frame_x[t] ^= true;
+        self.propagate_frame_pair(c, t, conjugate_cx_in_place);
+    }
+
+    fn propagate_frame_pair(
+        &mut self,
+        a: usize,
+        b: usize,
+        conjugate: fn(&mut PauliBitmask, usize, usize) -> bool,
+    ) {
+        // Pack only the affected sites, keeping frame updates O(1) for any n.
+        let mut pauli = PauliBitmask {
+            x_bits: u128::from(self.pauli_frame_x[a]) | (u128::from(self.pauli_frame_x[b]) << 1),
+            z_bits: u128::from(self.pauli_frame_z[a]) | (u128::from(self.pauli_frame_z[b]) << 1),
+        };
+        let sign_negative = conjugate(&mut pauli, 0, 1);
+        if self.flags.pauli_frame_tracking() && sign_negative {
+            self.pauli_frame_phase = -self.pauli_frame_phase;
         }
-        if self.pauli_frame_z[t] {
-            self.pauli_frame_z[c] ^= true;
-        }
+        self.pauli_frame_x[a] = pauli.has_x(0);
+        self.pauli_frame_z[a] = pauli.has_z(0);
+        self.pauli_frame_x[b] = pauli.has_x(1);
+        self.pauli_frame_z[b] = pauli.has_z(1);
     }
 
     /// Flush the accumulated Pauli frame into the simulator state. Applies
@@ -2869,17 +2910,7 @@ impl StabMps {
 
     /// Propagate the Pauli frame through CZ(a, b).
     fn propagate_frame_cz(&mut self, a: usize, b: usize) {
-        // Heisenberg:
-        //   X_a → X_a Z_b
-        //   X_b → Z_a X_b
-        //   Z_a → Z_a
-        //   Z_b → Z_b
-        if self.pauli_frame_x[a] {
-            self.pauli_frame_z[b] ^= true;
-        }
-        if self.pauli_frame_x[b] {
-            self.pauli_frame_z[a] ^= true;
-        }
+        self.propagate_frame_pair(a, b, conjugate_cz_in_place);
     }
 
     /// Apply Pauli X to qubit `q` with probability `p` (bit-flip channel).
@@ -3166,7 +3197,7 @@ impl StabMps {
             return;
         }
         if let Some(theta) = self.pending_rz[q].take() {
-            self.rz_apply_direct(theta, q);
+            self.rz_apply(theta, q, false);
         }
     }
 
@@ -3180,42 +3211,37 @@ impl StabMps {
         }
     }
 
-    /// Apply `rz(theta)` on qubit `q` directly (without the merge buffer),
-    /// handling Clifford-angle shortcuts and the non-Clifford path.
-    /// Factored from `rz()` so `flush_pending_rz` can reuse it.
-    fn rz_apply_direct(&mut self, theta: Angle64, q: usize) {
+    /// Apply a physical RZ to the represented state, conjugating by the frame
+    /// exactly once. All immediate, merged, and phase-exact rotations meet here.
+    fn rz_apply(&mut self, theta: Angle64, q: usize, phase_exact: bool) {
         if theta == Angle64::ZERO {
             return;
         }
-        let qid = QubitId(q);
-        if theta == Angle64::HALF_TURN {
-            self.global_phase *= Complex64::new(0.0, -1.0);
-            self.tableau.z(&[qid]);
-            return;
-        }
-        if theta == Angle64::QUARTER_TURN {
-            let inv_sqrt2 = std::f64::consts::FRAC_1_SQRT_2;
-            self.global_phase *= Complex64::new(inv_sqrt2, -inv_sqrt2);
-            self.tableau.sz(&[qid]);
-            return;
-        }
-        if theta == Angle64::THREE_QUARTERS_TURN {
-            let inv_sqrt2 = std::f64::consts::FRAC_1_SQRT_2;
-            self.global_phase *= Complex64::new(inv_sqrt2, inv_sqrt2);
-            self.tableau.szdg(&[qid]);
-            return;
-        }
-        self.rz_apply_decomposed(theta, q);
-    }
-
-    /// Apply RZ through the full tableau-to-MPS Pauli decomposition, including
-    /// at Clifford angles. Unlike the tableau shortcuts, this path retains the
-    /// state-dependent scalar needed when RZ is part of a phase-fixed gate.
-    fn rz_apply_decomposed(&mut self, theta: Angle64, q: usize) {
-        if theta == Angle64::ZERO {
-            return;
+        let anticommutes = self.flags.pauli_frame_tracking() && self.pauli_frame_x[q];
+        let represented_theta = if anticommutes { -theta } else { theta };
+        if !phase_exact {
+            let qid = QubitId(q);
+            if represented_theta == Angle64::HALF_TURN {
+                // Angle64 identifies ±pi; conjugation still changes the scalar.
+                self.global_phase *= Complex64::new(0.0, if anticommutes { 1.0 } else { -1.0 });
+                self.tableau.z(&[qid]);
+                return;
+            }
+            if represented_theta == Angle64::QUARTER_TURN {
+                let inv_sqrt2 = std::f64::consts::FRAC_1_SQRT_2;
+                self.global_phase *= Complex64::new(inv_sqrt2, -inv_sqrt2);
+                self.tableau.sz(&[qid]);
+                return;
+            }
+            if represented_theta == Angle64::THREE_QUARTERS_TURN {
+                let inv_sqrt2 = std::f64::consts::FRAC_1_SQRT_2;
+                self.global_phase *= Complex64::new(inv_sqrt2, inv_sqrt2);
+                self.tableau.szdg(&[qid]);
+                return;
+            }
         }
         let (sin_half, cos_half) = theta.half_angle_sin_cos();
+        let sin_half = if anticommutes { -sin_half } else { sin_half };
         expect_mps_operation(
             non_clifford::apply_rz_stab_mps(
                 &mut self.tableau,
@@ -3252,9 +3278,9 @@ impl StabMps {
         if self.flags.merge_rz()
             && let Some(pending) = self.pending_rz[q].take()
         {
-            self.rz_apply_decomposed(pending, q);
+            self.rz_apply(pending, q, true);
         }
-        self.rz_apply_decomposed(theta, q);
+        self.rz_apply(theta, q, true);
     }
 
     /// Measure qubit q in the Z basis using the shared STN measurement protocol.
@@ -3578,7 +3604,7 @@ impl ArbitraryRotationGateable for StabMps {
         for &q in qubits {
             let q_idx = q.index();
             if !self.flags.merge_rz() {
-                self.rz_apply_direct(theta, q_idx);
+                self.rz_apply(theta, q_idx, false);
                 continue;
             }
             // Merge path: accumulate non-Clifford angles; Clifford angles
@@ -3592,7 +3618,7 @@ impl ArbitraryRotationGateable for StabMps {
                 || theta == Angle64::THREE_QUARTERS_TURN;
             if is_clifford_angle {
                 // No flush: Clifford RZ commutes with pending RZ.
-                self.rz_apply_direct(theta, q_idx);
+                self.rz_apply(theta, q_idx, false);
             } else {
                 // Accumulate non-Clifford angle.
                 let prev = self.pending_rz[q_idx].unwrap_or(Angle64::ZERO);
@@ -3605,7 +3631,7 @@ impl ArbitraryRotationGateable for StabMps {
                     || merged == Angle64::THREE_QUARTERS_TURN
                 {
                     self.pending_rz[q_idx] = None;
-                    self.rz_apply_direct(merged, q_idx);
+                    self.rz_apply(merged, q_idx, false);
                 } else {
                     self.pending_rz[q_idx] = Some(merged);
                 }

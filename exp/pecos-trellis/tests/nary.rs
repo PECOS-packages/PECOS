@@ -270,54 +270,79 @@ fn seeded_nary_maxlog_matches_brute_force_integer_routes() {
 
 #[test]
 fn nary_maxlog_dropped_mass_is_the_largest_discarded_route_across_columns() {
-    // Every outcome toggles its own observable, so no two routes merge. At
-    // scale 1024 the first column keeps ln(0.98) = -21 and drops -4529 and
-    // -4944. The second keeps -21 + ln(0.5) = -731 and drops
-    // -21 + ln(0.3) = -1254 and -1669. The third drops -731 + ln(0.06) = -3612
-    // and -4027. The largest falls in the middle column and includes the
-    // first column's prefix, so the reported value must be the largest across
-    // prune calls, not the first or the last.
-    let factors = [
-        [(0.98, 0), (0.012, 1), (0.008, 2)],
-        [(0.5, 3), (0.3, 4), (0.2, 5)],
-        [(0.9, 6), (0.06, 7), (0.04, 8)],
-    ]
-    .into_iter()
-    .map(|outcomes| Factor {
-        outcomes: outcomes
-            .into_iter()
-            .map(|(probability, observable)| outcome(probability, &[], &[observable]))
-            .collect(),
-    })
-    .collect();
-    let model = FactorModel::new(factors, 0, 9).unwrap();
-    let mut decoder = TrellisDecoder::from_factor_model(
-        &model,
-        TrellisConfig {
-            k: 1,
-            delta: 1_000_000.0,
-            score_alpha: 0.0,
-            metric_mode: MetricMode::MaxLogInt,
-            int_metric_scale: 1024,
-            ..TrellisConfig::default()
-        },
-    )
-    .unwrap();
-    let result = decoder.decode(&[]).unwrap();
-    let expected_dropped_mass = -1_254.0_f64 / 1024.0;
+    // Every outcome toggles its own observable, so no two routes merge. Each
+    // column keeps one route and drops two. At scale 1024 the two cases put
+    // the largest discarded route in different prune calls:
+    // - first call: column 0 drops ln(0.3) = -1233 and -1648, column 1 drops
+    //   -710 + ln(0.06) = -3591 and -4006, column 2 drops -3699 and -4114;
+    // - middle call: column 0 drops -4529 and -4944, column 1 drops
+    //   ln(0.98) + ln(0.3) = -21 - 1233 = -1254 and -1669, column 2 drops
+    //   -3612 and -4027.
+    // Keeping the first or last call's value, ignoring the first call, or
+    // dropping the prefix mass from a branch each fails a case.
+    let cases = [
+        (
+            [
+                [(0.5, 0), (0.3, 1), (0.2, 2)],
+                [(0.9, 3), (0.06, 4), (0.04, 5)],
+                [(0.9, 6), (0.06, 7), (0.04, 8)],
+            ],
+            -1_233,
+        ),
+        (
+            [
+                [(0.98, 0), (0.012, 1), (0.008, 2)],
+                [(0.5, 3), (0.3, 4), (0.2, 5)],
+                [(0.9, 6), (0.06, 7), (0.04, 8)],
+            ],
+            -1_254,
+        ),
+    ];
+    for (factors, expected_numerator) in cases {
+        let model = FactorModel::new(
+            factors
+                .into_iter()
+                .map(|outcomes| Factor {
+                    outcomes: outcomes
+                        .into_iter()
+                        .map(|(probability, observable)| outcome(probability, &[], &[observable]))
+                        .collect(),
+                })
+                .collect(),
+            0,
+            9,
+        )
+        .unwrap();
+        let mut decoder = TrellisDecoder::from_factor_model(
+            &model,
+            TrellisConfig {
+                k: 1,
+                delta: 1_000_000.0,
+                score_alpha: 0.0,
+                metric_mode: MetricMode::MaxLogInt,
+                int_metric_scale: 1024,
+                ..TrellisConfig::default()
+            },
+        )
+        .unwrap();
+        let result = decoder.decode(&[]).unwrap();
+        let expected_dropped_mass = f64::from(expected_numerator) / 1024.0;
 
-    assert_eq!(result.dropped_states, 6);
-    assert_eq!(
-        result.dropped_log_mass.to_bits(),
-        expected_dropped_mass.to_bits()
-    );
-    assert_eq!(
-        result.status,
-        TrellisStatus::Pruned {
-            k_capped: true,
-            delta_pruned: false,
-        }
-    );
+        assert_eq!(result.dropped_states, 6, "{factors:?}");
+        assert_eq!(
+            result.dropped_log_mass.to_bits(),
+            expected_dropped_mass.to_bits(),
+            "{factors:?}"
+        );
+        assert_eq!(
+            result.status,
+            TrellisStatus::Pruned {
+                k_capped: true,
+                delta_pruned: false,
+            },
+            "{factors:?}"
+        );
+    }
 }
 
 fn assert_decode_matches_enumeration(model: &FactorModel, case_index: usize) {

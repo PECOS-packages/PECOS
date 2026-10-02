@@ -1895,5 +1895,5 @@ fn op_composition_preserves_dual_consistency_2q() {
 fn display_does_not_panic() {
     let mat = Pauli::X.to_matrix();
     let s = format!("{mat}");
-    assert!(!s.is_empty());
+    assert!(!s.is_empty(), "matrix display must produce text");
 }

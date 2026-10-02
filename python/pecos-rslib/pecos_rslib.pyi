@@ -663,11 +663,10 @@ class random:
     ) -> int | Array[ScalarI64]: ...
     @staticmethod
     def choice(
-        a: int | Sequence[_T] | Array[Scalar],
-        size: int | tuple[int, ...] | None = None,
+        a: SupportsIndex | Sequence[_T] | Array[Scalar],
+        size: SupportsIndex | None = None,
         replace: bool = True,
-        p: Sequence[float] | Array[Scalar] | None = None,
-    ) -> _T | Array[Scalar]: ...
+    ) -> int | float | complex | _T | Array[Scalar] | list[int | float | complex | _T | Array[Scalar]]: ...
     @staticmethod
     def permutation(x: int | Sequence[_T] | Array[Scalar]) -> Array[Scalar]: ...
     @staticmethod
@@ -1087,11 +1086,6 @@ class QasmProgram:
 
 class QisProgram:
     """QIS program representation."""
-
-    ...
-
-class HugrProgram:
-    """HUGR program lowered to QIS for simulation; requires explicit qubits."""
 
     ...
 
@@ -3945,3 +3939,46 @@ def scheduled_event_idle_z(
     sine: float = 0.0,
     coherent: float = 0.0,
 ) -> ScheduledEventIdleZ: ...
+
+class ScheduledIdleNoise:
+    """Checked local idle-noise profile for mandatory scheduled transport."""
+
+def scheduled_idle_noise(
+    qubits: int,
+    *,
+    linear: float = 0.0,
+    linear_model: dict[str, float] | None = None,
+    sine: float = 0.0,
+    sine_model: dict[str, float] | None = None,
+    coherent: float = 0.0,
+    coherent_model: dict[str, float] | None = None,
+) -> ScheduledIdleNoise: ...
+
+class ScheduledEventIdleNoise:
+    """Checked v4 local idle-noise profile with a per-shot batch adapter."""
+
+def scheduled_event_idle_noise(
+    profile: ScheduledIdleNoise,
+    adapter_factory: Callable[[tuple[int, int, int]], _ScheduledBatchAdapter],
+) -> ScheduledEventIdleNoise: ...
+
+class ScheduledLocalNoise:
+    """Checked uniform Pauli gate, preparation bit-flip and asymmetric readout faults."""
+
+def scheduled_local_noise(
+    idle: ScheduledIdleNoise,
+    *,
+    p1: float = 0.0,
+    p2: float = 0.0,
+    prep: float = 0.0,
+    meas0: float = 0.0,
+    meas1: float = 0.0,
+) -> ScheduledLocalNoise: ...
+
+class ScheduledEventLocalNoise:
+    """Checked v4 local faults with a per-shot batch adapter."""
+
+def scheduled_event_local_noise(
+    profile: ScheduledLocalNoise,
+    adapter_factory: Callable[[tuple[int, int, int]], _ScheduledBatchAdapter],
+) -> ScheduledEventLocalNoise: ...

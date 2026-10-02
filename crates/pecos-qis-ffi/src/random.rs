@@ -106,16 +106,37 @@ macro_rules! export_rng {
     };
 }
 
-export_rng!(random_seed(seed_value: i64) -> (), seed(seed_value.cast_unsigned()), ());
+export_rng!(
+    random_seed(seed_value: i64) -> (),
+    seed(seed_value.cast_unsigned()),
+    ()
+);
 export_rng!(random_int() -> i32, with_rng(|rng| rng.next_u32().cast_signed()), 0);
-export_rng!(random_rng(bound: i32) -> i32,
-    u32::try_from(bound).map_err(|_| "bound must be positive".to_string())
-        .and_then(bounded).map(u32::cast_signed), 0);
+export_rng!(
+    random_rng(bound: i32) -> i32,
+    u32::try_from(bound)
+        .map_err(|_| "bound must be positive".to_string())
+        .and_then(bounded)
+        .map(u32::cast_signed),
+    0
+);
 export_rng!(random_float() -> f64, with_rng(PCGRandom::frandom), 0.0);
-export_rng!(random_advance(delta: i64) -> (), advance(delta.cast_unsigned()), ());
+export_rng!(
+    random_advance(delta: i64) -> (),
+    advance(delta.cast_unsigned()),
+    ()
+);
 
-export_rng!(random_seed_selene(seed_value: u64) -> (), seed(seed_value), ());
+export_rng!(
+    random_seed_selene(seed_value: u64) -> (),
+    seed(seed_value),
+    ()
+);
 export_rng!(random_u32_selene() -> u32, with_rng(PCGRandom::next_u32), 0);
-export_rng!(random_u32_bounded_selene(bound: u32) -> u32, bounded(bound), 0);
+export_rng!(
+    random_u32_bounded_selene(bound: u32) -> u32,
+    bounded(bound),
+    0
+);
 export_rng!(random_f64_selene() -> f64, with_rng(PCGRandom::frandom), 0.0);
 export_rng!(random_advance_selene(delta: u64) -> (), advance(delta), ());

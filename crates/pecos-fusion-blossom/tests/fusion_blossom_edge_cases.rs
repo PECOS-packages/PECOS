@@ -29,7 +29,11 @@ mod tests {
             "Weight should be zero but was {}",
             decoding.weight
         );
-        assert!(decoding.matched_edges.is_empty());
+        assert!(
+            decoding.matched_edges.is_empty(),
+            "expected no matched edges, got {:?}",
+            decoding.matched_edges
+        );
     }
 
     #[test]
@@ -188,7 +192,10 @@ mod tests {
         assert!(result.perfect_matching.is_none());
 
         // But we still get the matched edges
-        assert!(!result.matched_edges.is_empty());
+        assert!(
+            !result.matched_edges.is_empty(),
+            "decoder returned no matched edges"
+        );
     }
 
     #[test]

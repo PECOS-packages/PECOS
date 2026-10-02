@@ -87,7 +87,10 @@ fn test_builder_from_qis_llvm_ir() {
         .from_qis_llvm_ir(SINGLE_H_QIS_IR)
         .expect("should parse valid QIS LLVM IR");
     let engine = builder.build().expect("should build engine from parsed IR");
-    assert!(!engine.module().unwrap().name.is_empty());
+    assert!(
+        !engine.module().unwrap().name.is_empty(),
+        "module must have a name"
+    );
 }
 
 #[test]
@@ -96,7 +99,10 @@ fn test_builder_from_qis_llvm_ir_bell() {
         .from_qis_llvm_ir(BELL_QIS_IR)
         .expect("should parse Bell state QIS LLVM IR");
     let engine = builder.build().expect("should build engine");
-    assert!(!engine.module().unwrap().name.is_empty());
+    assert!(
+        !engine.module().unwrap().name.is_empty(),
+        "module must have a name"
+    );
 }
 
 #[test]
@@ -154,7 +160,10 @@ fn test_builder_ron_roundtrip() {
 
     // Serialize the module to RON
     let ron_string = builder.to_ron().expect("should serialize to RON");
-    assert!(!ron_string.is_empty());
+    assert!(
+        !ron_string.is_empty(),
+        "RON serialization must produce text"
+    );
 
     // Deserialize back from RON into a new builder
     let builder2 = phir_engine()

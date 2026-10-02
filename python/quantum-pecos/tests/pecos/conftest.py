@@ -32,8 +32,15 @@ attributes #0 = { "EntryPoint" }
 """
 
 
-def build_timed_runtime(tmp_path: Path, gap: int, *, events: bool = False) -> tuple[Path, int]:
-    """Compile the public timing proxy, optionally emitting an invented event."""
+def build_timed_runtime(
+    tmp_path: Path,
+    gap: int,
+    *,
+    events: bool = False,
+    initial_nanos: int = 0,
+    coalesce_queued: bool = False,
+) -> tuple[Path, int]:
+    """Compile a synthetic timing proxy with optional events or queued-op batching."""
     from selene_simple_runtime_plugin import SimpleRuntimePlugin
 
     if platform.system() == "Windows":
@@ -59,10 +66,13 @@ def build_timed_runtime(tmp_path: Path, gap: int, *, events: bool = False) -> tu
         str(includes[0]),
         "-DBASE_LIBRARY=" + json.dumps(str(SimpleRuntimePlugin().library_file)),
         f"-DGAP_NANOS={gap}ULL",
+        f"-DINITIAL_NANOS={initial_nanos}ULL",
         str(Path(__file__).with_name("fixtures") / "runtime_timing_proxy.c"),
         "-o",
         str(library),
     ]
+    if coalesce_queued:
+        args.append("-DCOALESCE_QUEUED")
     if events:
         args.append("-DSYNTHETIC_EVENT")
     if platform.system() != "Darwin":

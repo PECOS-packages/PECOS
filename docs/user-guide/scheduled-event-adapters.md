@@ -2,7 +2,7 @@
 
 Mandatory v4 transport preserves opaque native events for a shot-local adapter.
 The adapter normalizes complete batches into checked gates **before quantum
-execution**. It retains the existing idle-Z profile and 1–16-qubit StateVec limit;
+execution**. It supports checked local noise profiles and the 1–16-qubit StateVec limit;
 Python supports an opt-in adapter factory on the QIS/HUGR engines route. This is
 not a general execution-time event API.
 
@@ -10,12 +10,15 @@ The first intended downstream use is a deterministic adapter that tracks runtime
 bookkeeping and virtual phase conventions across batches, adjusting ordinary gates
 for a reduced idle-only comparison. That adapter is not implemented or validated
 here. Public synthetic fixtures establish transport contracts, not device fidelity.
-Outcome-dependent behavior and additional noise channels require separate work.
+Outcome-dependent adapters and broader physical noise require separate work.
 
 ## Configure and implement
 
 Use `QisEngineBuilder::scheduled_event_batches(true)` with
-`ScheduledEventIdleZ::new(profile, factory)`. The factory receives `ShotContext` and
+`ScheduledEventNoise::new(profile, factory)`. `ScheduledEventIdleNoise` and
+`ScheduledEventIdleZ` are compatibility aliases for this canonical type.
+The aliases preserve the supplied checked profile; `ScheduledIdleZ` itself remains
+a Z-only convenience constructor. The factory receives `ShotContext` and
 must return an independent `Box<dyn ScheduledBatchAdapter>` for each shot.
 
 The builder has three transport modes: off, v3, v4. Enabling scheduled batches
@@ -74,7 +77,17 @@ bitwise. Normalization does not add another angle serialization round trip.
 
 Pair `qis_engine().scheduled_event_batches()` with
 `scheduled_event_idle_z(qubits, adapter_factory, *, linear=0, sine=0, coherent=0)`
-from `pecos_rslib`. Use StateVec and the explicit physical capacity as for v3.
+from `pecos_rslib` for Z/RZ noise, or
+`scheduled_event_idle_noise(profile, adapter_factory)` with a profile returned by
+`scheduled_idle_noise()` for configurable local idle channels including leakage.
+For checked local gate/preparation/readout faults, use
+`scheduled_event_local_noise(local, adapter_factory)` with `scheduled_local_noise()`.
+All factories enforce the same transport, recovery, batch and measurement-order
+contracts described under [shared scheduled limits](scheduled-idle-simulation.md#shared-scheduled-admission-and-execution-limits). Omission of idle noise before preparation applies to the
+**normalized** gates emitted by the adapter, using the same per-qubit rules as
+[scheduled idle-noise simulation](scheduled-idle-simulation.md#timing-and-noise-contract).
+Source timing admission remains enforced even when a preparation gap is omitted.
+Use StateVec and the explicit physical capacity as for v3.
 The normal `pecos.sim(program).classical(...).noise(...).run(shots)` route and
 QIS `.build()` simulations support this configuration, including HUGR/Guppy
 lowering to QIS. Other stacks and operation tracing do not support this factory.
@@ -109,5 +122,5 @@ that thread, which would still deadlock. Capturing and sharing mutable state acr
 objects violates the contract even if the signatures are correct.
 
 Python callbacks incur GIL and data-copy overhead. This API establishes a usable
-integration path, not a throughput claim. The idle/timing policy and narrow physics
-are unchanged; adding a factory does not admit additional noise channels.
+integration path, not a throughput claim. The idle/timing policy is shared; each checked profile determines the admitted
+noise channels. A batch adapter itself does not enable arbitrary noise models.

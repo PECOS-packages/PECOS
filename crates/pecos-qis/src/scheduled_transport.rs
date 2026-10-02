@@ -267,10 +267,10 @@ mod tests {
         // The custom event itself is valid transport input when it has no mapping.
         batch.measurements.clear();
         let (message, ids) = encode_mode(vec![batch], 7, ScheduledTransport::V4).unwrap();
-        assert!(ids.is_empty());
+        assert!(ids.is_empty(), "expected no measurement IDs, got {ids:?}");
         let decoded = pecos_engines::scheduled_events::decode_event_batches(&message).unwrap();
         assert_eq!(decoded.len(), 1);
-        assert!(decoded[0].measurements.is_empty());
+        assert_eq!(decoded[0].measurements, []);
         assert!(
             matches!(&decoded[0].operations[..], [ScheduledEventOp::Custom { tag: 42, payload }] if payload == &[1])
         );

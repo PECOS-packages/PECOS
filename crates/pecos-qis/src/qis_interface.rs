@@ -13,8 +13,6 @@ pub enum ProgramFormat {
     LlvmIrText,
     /// LLVM bitcode
     LlvmBitcode,
-    /// HUGR bytes
-    HugrBytes,
     /// QIS bitcode (Selene format)
     QisBitcode,
 }
@@ -28,7 +26,6 @@ impl ProgramFormat {
         match self {
             Self::LlvmIrText => "llvm-ir-text",
             Self::LlvmBitcode => "llvm-bitcode",
-            Self::HugrBytes => "hugr-bytes",
             Self::QisBitcode => "qis-bitcode",
         }
     }
@@ -78,7 +75,7 @@ pub trait QisInterface: Send + Sync {
     ///
     /// The format depends on the implementation:
     /// - JIT: LLVM IR text or bitcode
-    /// - Helios: QIS bitcode or HUGR bytes
+    /// - Helios: LLVM IR text or QIS bitcode
     ///
     /// # Errors
     /// Returns an error if the program cannot be loaded or parsed.

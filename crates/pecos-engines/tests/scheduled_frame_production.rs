@@ -60,13 +60,14 @@ fn production_timing_changes_ramsey_and_preserves_submission_boundaries() {
             .unwrap()
             .outcomes()
             .unwrap();
+        let outcomes = split
+            .process(encode_timed_batches(&batches[..1]).unwrap())
+            .unwrap()
+            .outcomes()
+            .unwrap();
         assert!(
-            split
-                .process(encode_timed_batches(&batches[..1]).unwrap())
-                .unwrap()
-                .outcomes()
-                .unwrap()
-                .is_empty()
+            outcomes.is_empty(),
+            "expected no measurement outcomes, got {outcomes:?}"
         );
         let b = split
             .process(encode_timed_batches(&batches[1..]).unwrap())
@@ -318,12 +319,14 @@ fn host_wait_message_preserves_active_scheduled_state() {
     let batches = ramsey(1_000_000_000);
     s.process(encode_timed_batches(&batches[..1]).unwrap())
         .unwrap();
+    let outcomes = s
+        .process(ByteMessage::builder().build())
+        .unwrap()
+        .outcomes()
+        .unwrap();
     assert!(
-        s.process(ByteMessage::builder().build())
-            .unwrap()
-            .outcomes()
-            .unwrap()
-            .is_empty()
+        outcomes.is_empty(),
+        "expected no measurement outcomes, got {outcomes:?}"
     );
     assert_eq!(
         s.process(encode_timed_batches(&batches[1..]).unwrap())

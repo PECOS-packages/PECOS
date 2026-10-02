@@ -211,49 +211,6 @@ impl fmt::Display for Qis {
     }
 }
 
-/// A HUGR program
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Hugr {
-    /// The HUGR data (serialized bytes)
-    pub hugr: Vec<u8>,
-}
-
-impl Hugr {
-    /// Create a HUGR program from bytes
-    #[must_use]
-    pub fn from_bytes(bytes: Vec<u8>) -> Self {
-        Self { hugr: bytes }
-    }
-
-    /// Create a HUGR program by reading from a file
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the file cannot be read
-    pub fn from_file(path: impl AsRef<Path>) -> Result<Self, io::Error> {
-        let hugr = std::fs::read(path)?;
-        Ok(Self { hugr })
-    }
-
-    /// Get the HUGR bytes
-    #[must_use]
-    pub fn bytes(&self) -> &[u8] {
-        &self.hugr
-    }
-
-    /// Get the HUGR bytes as a Vec (consuming self)
-    #[must_use]
-    pub fn into_bytes(self) -> Vec<u8> {
-        self.hugr
-    }
-}
-
-impl fmt::Display for Hugr {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Hugr({} bytes)", self.hugr.len())
-    }
-}
-
 /// A WebAssembly program (binary .wasm format)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Wasm {
@@ -455,8 +412,6 @@ pub enum Program {
     Qasm(Qasm),
     /// A QIS program (Quantum Instruction Set - LLVM IR format)
     Qis(Qis),
-    /// A HUGR program
-    Hugr(Hugr),
     /// A WebAssembly program
     Wasm(Wasm),
     /// A WebAssembly Text program
@@ -474,7 +429,6 @@ impl Program {
         match self {
             Program::Qasm(_) => "QASM",
             Program::Qis(_) => "QIS",
-            Program::Hugr(_) => "HUGR",
             Program::Wasm(_) => "WASM",
             Program::Wat(_) => "WAT",
             Program::PhirJson(_) => "PHIR-JSON",
@@ -492,12 +446,6 @@ impl From<Qasm> for Program {
 impl From<Qis> for Program {
     fn from(program: Qis) -> Self {
         Program::Qis(program)
-    }
-}
-
-impl From<Hugr> for Program {
-    fn from(program: Hugr) -> Self {
-        Program::Hugr(program)
     }
 }
 
@@ -530,7 +478,6 @@ impl fmt::Display for Program {
         match self {
             Program::Qasm(p) => write!(f, "QASM: {p}"),
             Program::Qis(p) => write!(f, "QIS: {p}"),
-            Program::Hugr(p) => write!(f, "{p}"),
             Program::Wasm(p) => write!(f, "{p}"),
             Program::Wat(p) => write!(f, "WAT: {p}"),
             Program::PhirJson(p) => write!(f, "PHIR-JSON: {p}"),
@@ -568,14 +515,6 @@ mod tests {
     }
 
     #[test]
-    fn test_hugr() {
-        let bytes = vec![1, 2, 3, 4, 5];
-        let program = Hugr::from_bytes(bytes.clone());
-        assert_eq!(program.bytes(), &bytes[..]);
-        assert_eq!(program.to_string(), "Hugr(5 bytes)");
-    }
-
-    #[test]
     fn test_wasm() {
         let wasm_bytes = vec![0x00, 0x61, 0x73, 0x6D]; // WASM magic number
         let program = Wasm::from_bytes(wasm_bytes.clone());
@@ -603,10 +542,6 @@ mod tests {
         let qis = Qis::from_string("define void @main() {}");
         let program: Program = qis.into();
         assert_eq!(program.program_type(), "QIS");
-
-        let hugr = Hugr::from_bytes(vec![1, 2, 3]);
-        let program: Program = hugr.into();
-        assert_eq!(program.program_type(), "HUGR");
 
         let wasm = Wasm::from_bytes(vec![0x00, 0x61, 0x73, 0x6D]);
         let program: Program = wasm.into();
@@ -650,14 +585,6 @@ mod tests {
         let bc_program = Qis::from_file(&bc_path)?;
         assert!(bc_program.is_bitcode());
         assert_eq!(bc_program.bitcode(), Some(&bitcode_data[..]));
-
-        // Test HUGR from file
-        let hugr_path = temp_dir.path().join("test.hugr");
-        let hugr_data = vec![0xDE, 0xAD, 0xBE, 0xEF];
-        std::fs::write(&hugr_path, &hugr_data)?;
-
-        let hugr_program = Hugr::from_file(&hugr_path)?;
-        assert_eq!(hugr_program.bytes(), &hugr_data[..]);
 
         // Test WASM from file
         let wasm_path = temp_dir.path().join("test.wasm");

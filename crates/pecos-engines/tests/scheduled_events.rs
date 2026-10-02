@@ -401,14 +401,20 @@ fn dropped_measurements_poison_before_quantum_execution() {
 
 #[test]
 fn event_position_relative_to_measurements_is_preserved() {
-    let mut q = system();
+    let mut q = QuantumSystem::new(
+        ScheduledEventIdleZ::new(ScheduledIdleZ::new(2, 0.0, 0.0, 0.0).unwrap(), |_| {
+            Ok(Box::<Synthetic>::default())
+        })
+        .into_noise_model(),
+        Box::new(StateVecEngine::new(2)),
+    );
     begin(&mut q);
     assert_eq!(
         run(
             &mut q,
             &[batch(
                 0,
-                vec![gate(Gate::mz(&[0])), event(1), gate(Gate::mz(&[0]))]
+                vec![gate(Gate::mz(&[1])), event(1), gate(Gate::mz(&[0]))]
             )]
         ),
         vec![0, 1]
@@ -655,13 +661,14 @@ fn output_operation_bound_accepts_4096_and_rejects_4097_with_measurements_preser
             b: &ScheduledEventBatch,
             out: &mut ScheduledGateBuffer<'_>,
         ) -> Result<(), PecosError> {
+            // Fill the normalized batch while preserving its original readout.
+            for _ in 1..self.0 {
+                out.push(Gate::pz(&[0]))?;
+            }
             for op in &b.operations {
                 if let ScheduledEventOp::Gate(g) = op {
                     out.push(g.as_ref().clone())?;
                 }
-            }
-            for _ in 1..self.0 {
-                out.push(Gate::pz(&[0]))?;
             }
             Ok(())
         }

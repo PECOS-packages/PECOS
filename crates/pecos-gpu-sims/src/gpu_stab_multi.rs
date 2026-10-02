@@ -3308,7 +3308,10 @@ mod tests {
         let results = sim.mz_fetch();
         assert_eq!(results.len(), num_shots);
         for shot_result in &results {
-            assert!(shot_result.is_empty());
+            assert!(
+                shot_result.is_empty(),
+                "expected no measurement results for the shot, got {shot_result:?}"
+            );
         }
     }
 

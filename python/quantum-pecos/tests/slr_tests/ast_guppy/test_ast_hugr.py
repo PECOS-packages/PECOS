@@ -159,7 +159,7 @@ def test_hugr_returns_no_arg_entrypoint_runnable_via_hugr_adapter() -> None:
     `SlrConverter.hugr()` must return a Package whose `to_str()` produces
     HUGR JSON for a no-arg entrypoint -- the same shape `Guppy(func).compile()`
     would produce. This is required for downstream consumers (`pecos.Hugr(bytes)`,
-    Selene runtime, `pecos_rslib.HugrProgram`) that expect a runnable program,
+    Selene runtime) that expect a runnable program,
     not a parameterized function definition.
     """
     from pecos import Hugr, selene_engine, sim

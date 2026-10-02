@@ -1491,6 +1491,15 @@ impl SeleneRuntime {
         Ok(())
     }
 
+    fn restore_qubit_allocation_mode(&mut self) {
+        // A loaded collector defines the next shot's lifetimes. Streaming input
+        // has no collector: rediscover its mode from that shot's own records.
+        self.uses_explicit_qubit_allocation = self
+            .interface
+            .as_ref()
+            .is_some_and(|interface| has_explicit_qubit_allocations(&interface.operations));
+    }
+
     fn release_implicitly_measured_qubit(
         &mut self,
         program_qubit: usize,
@@ -2702,6 +2711,7 @@ impl QisRuntime for SeleneRuntime {
             ));
         }
         // Reset state for new shot
+        self.restore_qubit_allocation_mode();
         self.state = ClassicalState::default();
         self.current_op_index = 0;
         self.needs_reexecution = false;
@@ -2766,6 +2776,7 @@ impl QisRuntime for SeleneRuntime {
 
     fn reset(&mut self) -> Result<()> {
         self.reset_plugin_instance()?;
+        self.restore_qubit_allocation_mode();
         self.batch_failure = None;
         self.state = ClassicalState::default();
         self.current_op_index = 0;
@@ -3369,6 +3380,54 @@ mod tests {
                 assert!(runtime.program_to_runtime_qubits.is_empty());
             }
         }
+    }
+
+    #[cfg(feature = "selene-runtimes")]
+    #[test]
+    fn explicit_lifetime_mode_does_not_leak_into_a_new_legacy_shot() {
+        for mode in 0..3 {
+            for reset in [false, true] {
+                let mut runtime = crate::selene_runtimes::selene_simple_runtime().unwrap();
+                runtime.set_num_qubits(1);
+                runtime.shot_start(0, None).unwrap();
+                lower_lifetime_test_input(
+                    &mut runtime,
+                    mode,
+                    &[
+                        Operation::AllocateQubit { id: 71 },
+                        Operation::ReleaseQubit { id: 71 },
+                    ],
+                );
+                if mode == 2 {
+                    runtime.drain_pending_scheduled_operations().unwrap();
+                } else {
+                    runtime.drain_pending_operations().unwrap();
+                }
+                runtime.shot_end().unwrap();
+                if reset {
+                    runtime.reset().unwrap();
+                }
+                runtime.shot_start(1, None).unwrap();
+                lower_lifetime_test_input(&mut runtime, mode, &[QuantumOp::Measure(0, 0).into()]);
+                assert!(
+                    !runtime.uses_explicit_qubit_allocation,
+                    "previous shot retained explicit lifetime mode: mode={mode}, reset={reset}"
+                );
+                assert!(runtime.program_to_runtime_qubits.is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn loaded_collector_retains_explicit_lifetime_mode_across_reset_and_shot_start() {
+        let mut runtime = SeleneRuntime::new("unused-plugin-path");
+        let mut collector = OperationCollector::default();
+        collector.queue_operation(Operation::AllocateQubit { id: 71 });
+        runtime.load_interface(collector).unwrap();
+        runtime.reset().unwrap();
+        assert!(runtime.uses_explicit_qubit_allocation);
+        runtime.shot_start(1, None).unwrap();
+        assert!(runtime.uses_explicit_qubit_allocation);
     }
 
     #[test]

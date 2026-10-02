@@ -222,7 +222,7 @@ impl QuantumSystem {
                 .len()
                 .checked_mul(16)
                 .ok_or_else(|| runtime_frame::error("scheduled expansion overflow"))?;
-            let stage = self.scheduled_model_mut().start_admitted(message)?;
+            let stage = self.scheduled_model_mut().start_admitted(&message)?;
             let reply = self.drive_scheduled(stage, budget)?;
             let values = reply.outcomes()?;
             if values.len() != expected {

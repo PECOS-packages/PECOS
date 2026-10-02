@@ -78,9 +78,6 @@ pub mod symplectic_matrix;
 mod tick_circuit;
 pub mod unitary_matrix;
 
-#[cfg(feature = "hugr")]
-pub mod hugr_convert;
-
 pub use circuit::{Circuit, CircuitMut, GateHandle, GateView};
 pub use dag_circuit::{
     AnnotationKind, AnnotationRefError, Attribute, DagCircuit, DagGateError, DagTraversalIndex,
@@ -129,7 +126,3 @@ pub use pauli_sequence::{F2Matrix, PauliSequence};
 pub use pauli_set::PauliSet;
 pub use stabilizer_group::{PauliStabilizerGroup, PauliStabilizerGroupError};
 pub use symplectic_matrix::{SymplecticMatrix, SymplecticMatrixError};
-
-// Re-export HUGR types when the feature is enabled
-#[cfg(feature = "hugr")]
-pub use tket::hugr::Hugr;

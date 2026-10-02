@@ -31,7 +31,7 @@ This guide will help you get up and running with PECOS quickly.
     pecos = { version = "0.1", features = ["runtime"] }
     ```
 
-    The `runtime` feature enables the simulation facade with QASM and PHIR parsers. The optional `hugr` feature adds static HUGR/DAG conversion. See the [Rust API docs](https://docs.rs/pecos) for all available features.
+    The `runtime` feature enables the simulation facade with QASM and PHIR parsers. See the [Rust API docs](https://docs.rs/pecos) for all available features.
 
 ## Verify Installation
 

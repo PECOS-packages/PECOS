@@ -10,11 +10,10 @@ Provides a unified API for PECOS users. Most users should depend on this crate r
 
 - **Unified simulation API**: `sim(program).seed(42).shots(100).run()`
 - **Re-exports**: Core types, engines, programs, quantum backends
-- **Feature-gated**: Enable only what you need (qasm, qis, hugr, etc.)
+- **Feature-gated**: Enable only what you need (qasm, qis, etc.)
 
 ## Feature Flags
 
 - `runtime` (default): Full simulation with QASM/PHIR support
 - `qis`: QIS/LLVM IR execution (requires LLVM 21.1)
-- `hugr`: Static HUGR<->DAG conversion (no LLVM)
 - `quest`, `qulacs`: Additional quantum backends

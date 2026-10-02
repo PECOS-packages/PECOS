@@ -50,7 +50,7 @@ wat = { workspace = true, optional = true }
 [dev-dependencies]
 pecos-phir-json.workspace = true
 pecos-qec.workspace = true
-pecos-quantum = { workspace = true, features = ["hugr"] }
+pecos-quantum.workspace = true
 
 # Testing
 tempfile.workspace = true

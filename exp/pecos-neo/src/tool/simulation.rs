@@ -684,16 +684,6 @@ impl SimNeoInput for pecos_programs::Qasm {
     }
 }
 
-/// Implementation for HUGR programs.
-///
-/// HUGR programs are lowered to QIS at the Python boundary and are not
-/// auto-selected by `sim_neo`.
-impl SimNeoInput for pecos_programs::Hugr {
-    fn into_sim_neo_builder(self) -> SimNeoBuilder {
-        SimNeoBuilder::with_typed_program(TypedProgram::Hugr(self))
-    }
-}
-
 /// Implementation for the unified `Program` enum.
 ///
 /// Use `.auto()` to automatically select the appropriate engine based on
@@ -714,7 +704,6 @@ impl SimNeoInput for pecos_programs::Program {
     fn into_sim_neo_builder(self) -> SimNeoBuilder {
         let typed = match self {
             pecos_programs::Program::Qasm(p) => TypedProgram::Qasm(p),
-            pecos_programs::Program::Hugr(p) => TypedProgram::Hugr(p),
             _ => TypedProgram::Unsupported(self.program_type().to_string()),
         };
         SimNeoBuilder::with_typed_program(typed)
@@ -1703,8 +1692,6 @@ pub enum ProgramSource {
 pub enum TypedProgram {
     /// QASM program - uses `qasm_engine()`
     Qasm(pecos_programs::Qasm),
-    /// HUGR program - lowered to QIS at the Python boundary.
-    Hugr(pecos_programs::Hugr),
     /// Unsupported program type (for error messages)
     Unsupported(String),
 }
@@ -1942,12 +1929,6 @@ impl SimNeoBuilder {
                 // Extract source from typed program
                 let source = match typed {
                     TypedProgram::Qasm(qasm) => qasm.source,
-                    TypedProgram::Hugr(_) => {
-                        panic!(
-                            "HUGR programs cannot be used with .classical(engine_builder). \
-                             HUGR programs are lowered to QIS at the Python boundary."
-                        );
-                    }
                     TypedProgram::Unsupported(name) => {
                         panic!("Unsupported program type: {name}");
                     }
@@ -2019,7 +2000,7 @@ impl SimNeoBuilder {
     /// in components you did not set, instead of failing at build time.
     /// Currently it selects:
     /// - The classical engine for typed `Qasm` programs (`qasm_engine()`).
-    ///   Typed HUGR programs are rejected; other sources are left unchanged.
+    ///   Other sources are left unchanged.
     /// - The quantum backend, if `.quantum()` was not called
     ///   (currently `SparseStab`).
     ///
@@ -2066,12 +2047,6 @@ impl SimNeoBuilder {
                     panic!(
                         "QASM auto-selection requires the 'qasm' feature. \
                          Enable it with: features = [\"qasm\"]"
-                    );
-                }
-                TypedProgram::Hugr(_) => {
-                    panic!(
-                        "HUGR programs are lowered to QIS at the Python boundary and are not \
-                         auto-selected by sim_neo."
                     );
                 }
                 TypedProgram::Unsupported(type_name) => {
@@ -2444,12 +2419,6 @@ impl SimNeoBuilder {
                 (Some(ProgramSource::Typed(typed)), _) => {
                     let type_name = match &typed {
                         TypedProgram::Qasm(_) => "Qasm",
-                        TypedProgram::Hugr(_) => {
-                            panic!(
-                                "HUGR programs are lowered to QIS at the Python boundary and are not \
-                                 auto-selected by sim_neo."
-                            );
-                        }
                         TypedProgram::Unsupported(name) => name,
                     };
                     panic!(
@@ -4773,29 +4742,6 @@ mod tests {
         for (o1, o2) in r1.outcomes.iter().zip(r2.outcomes.iter()) {
             assert_eq!(o1.get_bit(QubitId(0)), o2.get_bit(QubitId(0)));
         }
-    }
-
-    #[test]
-    #[should_panic(expected = "HUGR programs are lowered to QIS at the Python boundary")]
-    fn test_sim_neo_rejects_hugr_auto_selection() {
-        let _ = sim_neo(pecos_programs::Hugr::from_bytes(Vec::new())).auto();
-    }
-
-    #[test]
-    #[should_panic(expected = "HUGR programs are lowered to QIS at the Python boundary")]
-    fn test_sim_neo_rejects_hugr_without_auto_selection() {
-        let _ = sim_neo(pecos_programs::Hugr::from_bytes(Vec::new()))
-            .sampling(monte_carlo(1))
-            .quantum(sparse_stab())
-            .build();
-    }
-
-    #[test]
-    #[cfg(feature = "qasm")]
-    #[should_panic(expected = "HUGR programs are lowered to QIS at the Python boundary")]
-    fn test_sim_neo_rejects_hugr_with_classical_builder() {
-        let _ = sim_neo(pecos_programs::Hugr::from_bytes(Vec::new()))
-            .classical(pecos_qasm::qasm_engine());
     }
 
     #[test]

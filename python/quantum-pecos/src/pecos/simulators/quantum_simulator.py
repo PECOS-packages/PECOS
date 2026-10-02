@@ -124,8 +124,6 @@ class QuantumSimulator:
         """
         meas = []
         for op in qops:
-            if op.metadata is None:
-                op.metadata = {}
             if isinstance(op, QOp):
                 output = self.state.run_gate(op.sim_name, op.args, **op.metadata)
                 if op.returns:

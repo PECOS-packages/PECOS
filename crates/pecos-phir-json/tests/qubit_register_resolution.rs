@@ -250,7 +250,7 @@ fn machine_commands_and_barriers_validate_registers() {
             .unwrap();
         let gates = builder.build().quantum_ops().unwrap();
         if name == "Timing" {
-            assert!(gates.is_empty());
+            assert_eq!(gates, []);
         } else {
             assert_eq!(
                 gates[0].qubits.iter().map(|q| q.0).collect::<Vec<_>>(),
@@ -283,7 +283,7 @@ fn machine_commands_and_barriers_validate_registers() {
     processor
         .add_meta_instruction_to_builder(&mut builder, &barrier)
         .unwrap();
-    assert!(builder.build().quantum_ops().unwrap().is_empty());
+    assert_eq!(builder.build().quantum_ops().unwrap(), []);
 }
 
 #[test]

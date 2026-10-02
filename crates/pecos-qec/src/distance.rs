@@ -1076,12 +1076,18 @@ mod tests {
 
         // Should find single-qubit Z errors (equivalent to Z0)
         // and single-qubit X errors (equivalent to X0)
-        assert!(!logicals.is_empty());
+        assert!(
+            !logicals.is_empty(),
+            "code must have shortest logical operators"
+        );
 
         // All weight-1 operators should have exactly one equivalent logical
         for info in &logicals {
             assert_eq!(info.weight, 1);
-            assert!(!info.equivalent_logicals.is_empty());
+            assert!(
+                !info.equivalent_logicals.is_empty(),
+                "logical operator must have an equivalent logical"
+            );
 
             // Check that the equivalence string is sensible
             let equiv_str = info.equivalence_string();

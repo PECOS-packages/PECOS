@@ -77,6 +77,39 @@ impl QuantumSystem {
         }
     }
 
+    fn drive_scheduled(
+        &mut self,
+        stage: crate::EngineStage<ByteMessage, ByteMessage>,
+        budget: usize,
+    ) -> Result<ByteMessage, PecosError> {
+        match stage {
+            crate::EngineStage::Complete(output) => Ok(output),
+            crate::EngineStage::NeedsProcessing(commands) => {
+                // Check bytes before parsing/allocation, then the actual operation
+                // count before executing. Admitted scheduled outputs have <=2 targets.
+                let byte_limit = budget
+                    .checked_mul(128)
+                    .and_then(|n| n.checked_add(16))
+                    .ok_or_else(|| {
+                        runtime_frame::processing_error("scheduled byte budget overflow")
+                    })?;
+                if commands.as_bytes().len() > byte_limit || commands.quantum_ops()?.len() > budget
+                {
+                    return Err(runtime_frame::processing_error(
+                        "scheduled noise expansion limit",
+                    ));
+                }
+                let reply = self.quantum_engine.process(commands)?;
+                match self.noise_model.continue_processing(reply)? {
+                    crate::EngineStage::Complete(output) => Ok(output),
+                    crate::EngineStage::NeedsProcessing(_) => Err(runtime_frame::processing_error(
+                        "scheduled noise requested an unsupported continuation",
+                    )),
+                }
+            }
+        }
+    }
+
     /// Establish host identity after reset. Identity never changes RNG streams.
     ///
     /// # Errors
@@ -92,18 +125,48 @@ impl QuantumSystem {
         Ok(())
     }
 
+    fn scheduled_model(&self) -> Option<&crate::scheduled_frame::ScheduledIdleModel> {
+        if let Some(model) = self
+            .noise_model
+            .as_any()
+            .downcast_ref::<crate::scheduled_events::ScheduledEventModel>()
+        {
+            Some(&model.inner)
+        } else {
+            self.noise_model
+                .as_any()
+                .downcast_ref::<crate::scheduled_frame::ScheduledIdleModel>()
+        }
+    }
+    fn scheduled_model_mut(&mut self) -> &mut crate::scheduled_frame::ScheduledIdleModel {
+        if self
+            .noise_model
+            .as_any()
+            .is::<crate::scheduled_events::ScheduledEventModel>()
+        {
+            &mut self
+                .noise_model
+                .as_any_mut()
+                .downcast_mut::<crate::scheduled_events::ScheduledEventModel>()
+                .expect("checked event model")
+                .inner
+        } else {
+            self.noise_model
+                .as_any_mut()
+                .downcast_mut::<crate::scheduled_frame::ScheduledIdleModel>()
+                .expect("checked scheduled model")
+        }
+    }
+
     fn process_scheduled(&mut self, input: &ByteMessage) -> Result<ByteMessage, PecosError> {
-        use crate::scheduled_frame::ScheduledIdleModel;
         if self.frame_poisoned || self.host_blocked || self.shot_context.is_none() {
             return Err(runtime_frame::processing_error(
                 "scheduled shot requires successful reset and host context",
             ));
         }
         let model = self
-            .noise_model
-            .as_any()
-            .downcast_ref::<ScheduledIdleModel>()
-            .ok_or_else(|| runtime_frame::error("scheduled idle capability required"))?;
+            .scheduled_model()
+            .ok_or_else(|| runtime_frame::error("scheduled capability required"))?;
         let sim = self
             .quantum_engine
             .as_any()
@@ -119,12 +182,30 @@ impl QuantumSystem {
         if input.as_bytes() == ByteMessage::builder().build().as_bytes() {
             return Ok(ByteMessage::outcomes_builder().build());
         }
-        let mut prepared = model.prepare(input)?;
+        let (mut prepared, source_timeline) = if let Some(model) =
+            self.noise_model
+                .as_any_mut()
+                .downcast_mut::<crate::scheduled_events::ScheduledEventModel>()
+        {
+            let admitted = model.admit(input)?;
+            // Latch before any factory/adapter invocation, including unwinding.
+            self.frame_poisoned = true;
+            let (prepared, source) =
+                model.prepare(admitted, self.shot_context.expect("checked context"))?;
+            (prepared, Some(source))
+        } else {
+            (
+                self.scheduled_model()
+                    .expect("checked model")
+                    .prepare(input)?,
+                None,
+            )
+        };
         self.frame_poisoned = true;
         let mut outcomes = Vec::new();
         for message in std::mem::take(&mut prepared.messages) {
-            let expected = message
-                .quantum_ops()?
+            let gates = message.quantum_ops()?;
+            let expected = gates
                 .iter()
                 .filter(|g| {
                     matches!(
@@ -134,13 +215,15 @@ impl QuantumSystem {
                 })
                 .map(|g| g.qubits.len())
                 .sum::<usize>();
-            let stage = self
-                .noise_model
-                .as_any_mut()
-                .downcast_mut::<ScheduledIdleModel>()
-                .expect("checked scheduled capability")
-                .start_admitted(message)?;
-            let reply = self.drive_stage(stage)?;
+            // At most eight idle commands per target, or an ideal operation plus
+            // two Pauli faults. Sixteen per admitted command is conservative.
+            // Scheduled profiles have no crosstalk and need at most one simulator call.
+            let budget = gates
+                .len()
+                .checked_mul(16)
+                .ok_or_else(|| runtime_frame::error("scheduled expansion overflow"))?;
+            let stage = self.scheduled_model_mut().start_admitted(&message)?;
+            let reply = self.drive_scheduled(stage, budget)?;
             let values = reply.outcomes()?;
             if values.len() != expected {
                 return Err(runtime_frame::processing_error(
@@ -149,11 +232,15 @@ impl QuantumSystem {
             }
             outcomes.extend(values.into_iter().map(|v| v as usize));
         }
-        self.noise_model
-            .as_any_mut()
-            .downcast_mut::<ScheduledIdleModel>()
-            .expect("checked scheduled capability")
-            .commit(prepared);
+        if let Some(source) = source_timeline {
+            self.noise_model
+                .as_any_mut()
+                .downcast_mut::<crate::scheduled_events::ScheduledEventModel>()
+                .expect("checked event model")
+                .commit(prepared, source);
+        } else {
+            self.scheduled_model_mut().commit(prepared);
+        }
         self.frame_poisoned = false;
         Ok(ByteMessage::outcomes_builder()
             .add_outcomes(&outcomes)
@@ -167,11 +254,7 @@ impl QuantumSystem {
     }
 
     pub(crate) fn uses_runtime_frames(&self) -> bool {
-        self.noise_model.as_any().is::<RuntimeGeneralNoise>()
-            || self
-                .noise_model
-                .as_any()
-                .is::<crate::scheduled_frame::ScheduledIdleModel>()
+        self.noise_model.as_any().is::<RuntimeGeneralNoise>() || self.scheduled_model().is_some()
     }
     pub(crate) fn block_host(&mut self) {
         self.host_blocked = true;
@@ -277,12 +360,8 @@ impl Engine for QuantumSystem {
     type Output = ByteMessage;
 
     fn process(&mut self, input: Self::Input) -> Result<Self::Output, PecosError> {
-        let scheduled = input.as_bytes().get(4) == Some(&3);
-        if self
-            .noise_model
-            .as_any()
-            .is::<crate::scheduled_frame::ScheduledIdleModel>()
-        {
+        let scheduled = matches!(input.as_bytes().get(4), Some(3 | 4));
+        if self.scheduled_model().is_some() {
             return self.process_scheduled(&input);
         }
         if scheduled {
@@ -410,11 +489,7 @@ impl Clone for QuantumSystem {
             quantum_engine: dyn_clone::clone_box(&*self.quantum_engine),
             shot_context: None,
             frame_poisoned: self.frame_poisoned
-                || (self.shot_context.is_some()
-                    && self
-                        .noise_model
-                        .as_any()
-                        .is::<crate::scheduled_frame::ScheduledIdleModel>()),
+                || (self.shot_context.is_some() && self.scheduled_model().is_some()),
             host_blocked: self.host_blocked,
         }
     }
@@ -705,5 +780,51 @@ mod tests {
             let reset_result = system.engine_mut().reset();
             assert!(reset_result.is_ok());
         }
+    }
+}
+
+#[cfg(test)]
+mod scheduled_limits {
+    use super::*;
+    #[test]
+    fn byte_limit_rejects_one_oversized_command_before_execution() {
+        let mut system =
+            QuantumSystem::new_without_noise(Box::new(crate::StabilizerEngine::new(33)));
+        // A valid legacy grouped gate has one command but a large payload. Such
+        // output is outside the checked profiles' <=2-target emission contract.
+        let commands = ByteMessage::quantum_operations_builder()
+            .x(&(0..33).collect::<Vec<_>>())
+            .build();
+        assert_eq!(commands.quantum_ops().unwrap().len(), 1);
+        assert!(commands.as_bytes().len() > 16 + 128);
+        let result = system.drive_scheduled(crate::EngineStage::NeedsProcessing(commands), 1);
+        assert!(
+            result
+                .err()
+                .expect("byte limit must reject")
+                .to_string()
+                .contains("scheduled noise expansion limit")
+        );
+        let output = system
+            .drive_legacy(ByteMessage::quantum_operations_builder().mz(&[0]).build())
+            .unwrap();
+        assert_eq!(output.outcomes().unwrap(), vec![0]);
+    }
+    #[test]
+    fn expanded_commands_reject_before_simulator_mutation() {
+        let mut system = QuantumSystem::new_without_noise(Box::new(crate::StateVecEngine::new(1)));
+        for budget in [0, 2, usize::MAX] {
+            let mut commands = ByteMessage::quantum_operations_builder();
+            commands.x(&[0]).x(&[0]).x(&[0]);
+            let result = system.drive_scheduled(
+                crate::EngineStage::NeedsProcessing(commands.build()),
+                budget,
+            );
+            assert!(result.is_err());
+        }
+        let result = system
+            .drive_legacy(ByteMessage::quantum_operations_builder().mz(&[0]).build())
+            .unwrap();
+        assert_eq!(result.outcomes().unwrap(), vec![0]);
     }
 }

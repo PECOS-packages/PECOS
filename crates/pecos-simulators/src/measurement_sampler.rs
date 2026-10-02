@@ -1469,7 +1469,10 @@ mod tests {
         // Just verify it doesn't crash and produces reasonable output
         assert_eq!(raw.len(), 50);
         for col in &raw {
-            assert!(!col.is_empty());
+            assert!(
+                !col.is_empty(),
+                "sampled measurement column must contain samples"
+            );
         }
     }
 

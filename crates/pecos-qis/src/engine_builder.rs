@@ -1,5 +1,6 @@
 //! Builder for `QisEngine` that integrates with PECOS `sim()` API
 
+use crate::scheduled_transport::ScheduledTransport;
 use crate::{IntoQisInterface, OperationTraceStore, QisEngine};
 use pecos_core::errors::PecosError;
 use pecos_engines::ClassicalControlEngineBuilder;
@@ -9,21 +10,18 @@ use std::path::{Path, PathBuf};
 /// Builder for creating `QisEngine` instances
 pub struct QisEngineBuilder {
     runtime: Option<Box<dyn crate::runtime::QisRuntime>>,
-    scheduled_batches: bool,
+    scheduled_transport: ScheduledTransport,
     interface: Option<OperationCollector>,
     interface_builder: Option<Box<dyn crate::program::QisInterfaceBuilder>>,
     program_source: Option<String>, // Store original program source for loading
     operation_trace_dir: Option<PathBuf>,
     operation_trace_collector: Option<OperationTraceStore>,
-    /// `QSystem` platform used when lowering HUGR programs (defaults to Helios).
-    #[cfg(feature = "hugr")]
-    platform: pecos_hugr_qis::QSystemPlatform,
 }
 
 impl Clone for QisEngineBuilder {
     fn clone(&self) -> Self {
         Self {
-            scheduled_batches: self.scheduled_batches,
+            scheduled_transport: self.scheduled_transport,
             runtime: self.runtime.as_ref().map(|r| dyn_clone::clone_box(&**r)),
             interface: self.interface.clone(),
             // Clone the interface builder if present
@@ -34,8 +32,6 @@ impl Clone for QisEngineBuilder {
             program_source: self.program_source.clone(),
             operation_trace_dir: self.operation_trace_dir.clone(),
             operation_trace_collector: self.operation_trace_collector.clone(),
-            #[cfg(feature = "hugr")]
-            platform: self.platform,
         }
     }
 }
@@ -46,29 +42,13 @@ impl QisEngineBuilder {
     pub fn new() -> Self {
         Self {
             runtime: None,
-            scheduled_batches: false,
+            scheduled_transport: ScheduledTransport::Off,
             interface: None,
             interface_builder: None,
             program_source: None,
             operation_trace_dir: None,
             operation_trace_collector: None,
-            // PECOS targets the Selene Helios QIS runtime by default.
-            #[cfg(feature = "hugr")]
-            platform: pecos_hugr_qis::QSystemPlatform::Helios,
         }
-    }
-
-    /// Select the `QSystem` platform used when lowering HUGR programs.
-    ///
-    /// Defaults to [`pecos_hugr_qis::QSystemPlatform::Helios`]. Selecting another
-    /// supported platform (e.g. `Sol`) lowers both the executed QIS and the
-    /// interface for that platform; a matching Selene runtime is required to
-    /// execute the result.
-    #[cfg(feature = "hugr")]
-    #[must_use]
-    pub fn platform(mut self, platform: pecos_hugr_qis::QSystemPlatform) -> Self {
-        self.platform = platform;
-        self
     }
 
     /// Dump Helios-collected operation chunks to the given directory as JSON.
@@ -124,7 +104,7 @@ impl QisEngineBuilder {
     /// Set the program to use from any supported program type
     ///
     /// This method accepts any type that can be converted to `QisInterface`,
-    /// including `Qis`, `Hugr`, etc. Panics on conversion errors.
+    /// including `Qis`. Panics on conversion errors.
     /// For error handling, use `try_program()` instead.
     ///
     /// # Example
@@ -176,7 +156,7 @@ impl QisEngineBuilder {
     /// Set the program to use from any supported program type (error handling version)
     ///
     /// This method accepts any type that can be converted to `QisInterface`,
-    /// including `Qis`, `Hugr`, etc. Returns a Result because
+    /// including `Qis`. Returns a Result because
     /// some conversions may fail (e.g., compilation errors).
     ///
     /// # Example
@@ -220,7 +200,7 @@ impl QisEngineBuilder {
             // Use the provided interface directly
             self.interface = Some(interface.clone());
         } else {
-            // For other program types (Qis, Hugr), use the builder
+            // For other program types (Qis), use the builder
             // Also store the original program source for loading into interface implementations
             if let Some(qis_prog) = any_program.downcast_ref::<pecos_programs::Qis>() {
                 // Store the LLVM IR source for later loading
@@ -234,27 +214,6 @@ impl QisEngineBuilder {
                         log::warn!("Bitcode programs not yet supported for interface loading");
                     }
                 }
-            } else if let Some(hugr_prog) = any_program.downcast_ref::<pecos_programs::Hugr>() {
-                #[cfg(feature = "hugr")]
-                {
-                    let args = pecos_hugr_qis::CompileArgs {
-                        platform: self.platform,
-                        ..Default::default()
-                    };
-                    self.program_source =
-                        Some(pecos_hugr_qis::compile_hugr_bytes_to_string_with_options(
-                            &hugr_prog.hugr,
-                            &args,
-                        )?);
-                }
-                #[cfg(not(feature = "hugr"))]
-                {
-                    let _ = hugr_prog;
-                    return Err(PecosError::Processing(
-                        "HUGR programs require the 'hugr' feature to enable HUGR-to-QIS lowering"
-                            .to_string(),
-                    ));
-                }
             }
 
             let interface = if let Some(builder) = &self.interface_builder {
@@ -263,16 +222,6 @@ impl QisEngineBuilder {
                 if let Some(qis_prog) = any_program.downcast_ref::<pecos_programs::Qis>() {
                     log::debug!("Building interface from QIS program");
                     builder.build_from_qis_program(qis_prog.clone())?
-                } else if any_program.is::<pecos_programs::Hugr>() {
-                    // `program_source` already holds the QIS lowered with the
-                    // selected platform above; build the interface from it
-                    // instead of re-compiling, so the interface and the executed
-                    // QIS stay on the same platform.
-                    log::debug!("Building interface from compiled HUGR program source");
-                    let source = self.program_source.clone().ok_or_else(|| {
-                        PecosError::Processing("HUGR program produced no QIS source".to_string())
-                    })?;
-                    builder.build_from_qis_program(pecos_programs::Qis::from_string(&source))?
                 } else {
                     // Unknown type, use default conversion with the default backend (Helios)
                     log::debug!("Unknown program type, using into_qis_interface");
@@ -290,10 +239,32 @@ impl QisEngineBuilder {
     }
 
     /// Preserve original native batches in mandatory transport. Requires the
-    /// matching `ScheduledIdleZ` noise capability and a state-vector simulator.
+    /// matching scheduled noise capability and a state-vector simulator.
+    /// Enabling preserves v4 if selected; disabling turns all scheduled transport off.
     #[must_use]
     pub fn scheduled_batches(mut self, enabled: bool) -> Self {
-        self.scheduled_batches = enabled;
+        self.scheduled_transport = if !enabled {
+            ScheduledTransport::Off
+        } else if self.scheduled_transport == ScheduledTransport::V4 {
+            ScheduledTransport::V4
+        } else {
+            ScheduledTransport::V3
+        };
+        self
+    }
+
+    /// Preserve opaque events in mandatory v4 batches. Requires an explicitly
+    /// configured `ScheduledEventIdleZ` consumer; existing v3 consumers reject it.
+    /// Disabling events downgrades v4 to v3; an already-disabled transport stays off.
+    #[must_use]
+    pub fn scheduled_event_batches(mut self, enabled: bool) -> Self {
+        self.scheduled_transport = if enabled {
+            ScheduledTransport::V4
+        } else if self.scheduled_transport.enabled() {
+            ScheduledTransport::V3
+        } else {
+            ScheduledTransport::Off
+        };
         self
     }
 
@@ -353,7 +324,7 @@ impl ClassicalControlEngineBuilder for QisEngineBuilder {
             log::debug!("Dynamic interface created successfully");
 
             let mut engine = QisEngine::new(dynamic_interface, runtime);
-            engine.scheduled_batches = self.scheduled_batches;
+            engine.scheduled_transport = self.scheduled_transport;
             if let Some(trace_dir) = self.operation_trace_dir {
                 engine.set_operation_trace_dir(trace_dir);
             }
@@ -441,6 +412,54 @@ mod tests {
     fn test_builder_creation() {
         // Basic builder creation - doesn't require a runtime
         let _builder = qis_engine();
+    }
+
+    #[test]
+    fn scheduled_modes_do_not_silently_disable_each_other() {
+        use ScheduledTransport::{Off, V3, V4};
+        let cases = [
+            (
+                qis_engine()
+                    .scheduled_event_batches(true)
+                    .scheduled_batches(true),
+                V4,
+            ),
+            (
+                qis_engine()
+                    .scheduled_batches(true)
+                    .scheduled_event_batches(true),
+                V4,
+            ),
+            (
+                qis_engine()
+                    .scheduled_batches(true)
+                    .scheduled_event_batches(false),
+                V3,
+            ),
+            (
+                qis_engine()
+                    .scheduled_event_batches(false)
+                    .scheduled_batches(true),
+                V3,
+            ),
+            (
+                qis_engine()
+                    .scheduled_event_batches(true)
+                    .scheduled_event_batches(false),
+                V3,
+            ),
+            (
+                qis_engine()
+                    .scheduled_event_batches(true)
+                    .scheduled_batches(false),
+                Off,
+            ),
+            (qis_engine().scheduled_event_batches(false), Off),
+        ];
+        for (builder, expected) in cases {
+            assert_eq!(builder.scheduled_transport, expected);
+            assert_eq!(builder.clone().scheduled_transport, expected);
+        }
     }
 
     // Note: Full builder tests with runtime and interface are in integration tests

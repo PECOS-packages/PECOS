@@ -202,8 +202,6 @@ class PyPHIR:
                         metadata=o.get("metadata"),
                     )
                     if "duration" in o:
-                        if instr.metadata is None:
-                            instr.metadata = {}
                         instr.metadata["duration"] = o["duration"]
 
                 elif "meta" in o:

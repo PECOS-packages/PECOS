@@ -1297,3 +1297,24 @@ def test_overflow_wraps_to_min(size: int) -> None:
     py_r, rs_r = _run_classical(phir)
     assert py_r == rs_r
     assert int(py_r["v"]) == expected, f"max+1 in size={size}: expected {expected}, got {int(py_r['v'])}"
+
+
+def test_metadata_machine_duration_parity() -> None:
+    """Default operation metadata supports preparation, gates, duration and measurement."""
+    phir = {
+        "format": "PHIR/JSON",
+        "version": "0.1.0",
+        "ops": [
+            {"data": "qvar_define", "data_type": "qubits", "variable": "q", "size": 1},
+            {"data": "cvar_define", "data_type": "u32", "variable": "m", "size": 1},
+            {"qop": "Init", "args": [["q", 0]]},
+            {"qop": "H", "args": [["q", 0]]},
+            {"mop": "Idle", "args": [["q", 0]], "duration": [2, "ms"]},
+            {"qop": "Measure", "args": [["q", 0]], "returns": [["m", 0]]},
+        ],
+    }
+    interp = PhirClassicalInterpreter()
+    interp.init(phir)
+    assert interp.program.ops[2].metadata == {"duration": [2, "ms"]}
+    py_result, rust_result = run_both(phir, shots=10, seed=925, qsim="stabilizer")
+    assert py_result == rust_result == {"m": ["0", "0", "0", "0", "0", "0", "1", "1", "0", "0"]}

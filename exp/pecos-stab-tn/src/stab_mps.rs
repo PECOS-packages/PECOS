@@ -34,6 +34,7 @@ mod trivial_measurement_tests;
 
 mod canonical_ket;
 pub mod compile;
+pub mod coordinate_tableau;
 pub mod disentangle;
 pub mod mast;
 pub mod measure;

@@ -237,7 +237,7 @@ fn numeric_output_preserves_measurement_provenance_for_detector() {
         print_uint_selene(b"u".as_ptr(), 1, 6);
         print_float_selene(b"f".as_ptr(), 1, 2.5);
     }
-    assert!(ctx.get_named_result_traces().is_empty());
+    assert_eq!(ctx.get_named_result_traces(), []);
     assert_eq!(*ctx.pending_result_reads.lock().expect("reads"), vec![0]);
     unsafe { print_bool(b"\x03det".as_ptr(), 3, m) };
     let json = serde_json::to_string(&ctx.get_named_result_traces()).expect("trace JSON");
@@ -432,7 +432,7 @@ fn float_zero_and_one_never_produce_detector_traces() {
                 print_float(b"\x01f".as_ptr(), 1, 0.0);
             }
         }
-        assert!(ctx.get_named_result_traces().is_empty());
+        assert_eq!(ctx.get_named_result_traces(), []);
         assert_eq!(ctx.pending_result_reads.lock().expect("reads").len(), 1);
         ctx.record_result_read(2);
         ctx.record_result_read(3);
@@ -443,7 +443,7 @@ fn float_zero_and_one_never_produce_detector_traces() {
                 print_float_arr(b"\x01f".as_ptr(), 1, &raw const dense);
             }
         }
-        assert!(ctx.get_named_result_traces().is_empty());
+        assert_eq!(ctx.get_named_result_traces(), []);
         assert_eq!(
             *ctx.pending_result_reads.lock().expect("reads"),
             vec![1, 2, 3]

@@ -23,6 +23,23 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ### Python breaking changes
 
+- `pecos_rslib.Hugr` and `pecos_rslib.programs.Hugr` have been removed. Use
+  `pecos.Hugr`/`pecos.Guppy` or
+  `pecos_rslib.Qis(pecos_rslib.hugr_lowering.compile_hugr_to_qis(...))`.
+- `pecos_rslib_llvm.compile_hugr_to_qis` has been removed. Use
+  `pecos_rslib.hugr_lowering.compile_hugr_to_qis`.
+- Guppy/HUGR programs no longer run on the neo stack: `.stack("neo")` raises
+  `ValueError`. HUGR reaches the engines stack as QIS. HUGR-to-QIS lowering now
+  happens when `sim()` is called, so compilation errors raise from `sim()`.
+- `keep_intermediate_files` now keeps `program.ll`, the QIS source, instead of
+  `program.hugr`.
+- QIS simulation builders can now be run more than once.
+- `sim(Qis(...))` no longer resolves the default Selene runtime or loads the
+  program when `sim()` is called. Both happen at the first `run()`, `build()`,
+  or `capture_operation_trace()` unless `.classical()` supplies an engine, so a
+  missing runtime or an invalid QIS program now raises from that call.
+- `.foreign_object()` on QIS programs, including lowered Guppy/HUGR programs,
+  is refused pending issue #854.
 - `LogicalCircuitBuilder.build_algorithm_descriptor(buffer=0)` now rejects a
   non-terminal segment when its source-tracked detector model requires forward
   look-ahead. Omit `buffer` to derive the safe minimum automatically, or pass at
@@ -35,6 +52,18 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 
 ### Rust breaking changes
 
+- `pecos_programs::Hugr` and `Program::Hugr` have been removed. Rust accepts QIS;
+  HUGR is lowered to QIS at the Python boundary.
+- The unused `pecos_qis::ProgramType` enum has been removed.
+- The `pecos-hugr-qis` crate, the `pecos-qis` feature `hugr`, and the `pecos`
+  feature `hugr-qis` have been removed.
+- `QisEngineBuilder::platform` and `QSystemPlatform` have been removed. Select
+  Sol at the Python boundary with `compile_hugr_to_qis(..., platform="sol")`.
+- The pecos-phir HUGR functions `compile_hugr_via_phir`,
+  `compile_hugr_bytes_via_phir`, `hugr_to_phir_mlir`, and
+  `PhirEngineBuilder::from_hugr_bytes` have been removed, along with the
+  `Pipeline`, `InputFormat`, `execute_hugr`, and `execute_guppy` stubs.
+- The `pecos::quantum::read_hugr_envelope` re-export has been removed.
 - `CliffordGateable::apply_global_phase` replaces the former
   `ArbitraryRotationGateable::apply_global_phase` hook. This is source-breaking
   for out-of-tree implementors that override or call the hook through the old

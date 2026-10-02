@@ -197,7 +197,7 @@ pub fn compute_correlation_table(input: CorrelationTableInput<'_>) -> Correlatio
     let has_stochastic = true; // conservative; could check noise params
 
     // Build noise map once, shared across all walks
-    let gate_index = crate::expand::GateIndex::build(gates, num_qubits);
+    let gate_index = crate::expand::GateIndex::build(gates, num_qubits, noise);
     let noise_map = if has_stochastic {
         Some(crate::heisenberg::build_noise_map(
             gates,

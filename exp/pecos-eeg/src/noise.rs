@@ -101,8 +101,9 @@ pub trait NoiseSpec: Send + Sync {
     /// three/fifteen injections never imply a categorical channel. Override
     /// this method to provide explicit categorical depolarizing channels.
     /// Channel support must lie within `qubits`, because sparse walks skip gates
-    /// whose operands do not intersect the current observable. The Heisenberg
-    /// walks panic on a channel outside the gate.
+    /// whose operands do not intersect the current observable. `build_noise_map`
+    /// and any walk that visits the gate panic on a channel outside it; a walk
+    /// that skips the gate cannot see the channel at all.
     fn exact_noise_after_gate(
         &self,
         gate_index: usize,

@@ -322,6 +322,24 @@ fn walk_rejects_a_channel_outside_the_gate() {
 }
 
 #[test]
+#[should_panic(expected = "acts outside gate qubits")]
+fn sparse_walk_rejects_a_channel_outside_the_gate() {
+    let gates = [pecos_eeg::expand::make_gate(GateType::I, &[0])];
+    let initial = StabilizerGroup::from_circuit(&[Gate::pz(&[0, 1])], 2);
+    let detector = Bm::z(0).multiply(&Bm::z(1));
+    let index = GateIndex::build(&gates, 2);
+    heisenberg_sparse(
+        &gates,
+        &detector,
+        &ChannelOnQubitOne,
+        &initial,
+        0.0,
+        &index,
+        None,
+    );
+}
+
+#[test]
 fn custom_injection_order_is_preserved_in_noise_maps() {
     use pecos_eeg::eeg::EegType;
     let theta = 0.37_f64;

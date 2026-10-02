@@ -71,7 +71,7 @@ fn activate_qubit(
 ///
 /// Panics if a categorical channel acts outside the gate's qubits. The walks
 /// skip gates that miss the current observable, so such a channel would be
-/// silently dropped.
+/// silently dropped. This catches the channel only when the gate is visited.
 fn exact_gate_noise(
     noise: &dyn NoiseSpec,
     gate_index: usize,

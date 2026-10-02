@@ -32,6 +32,7 @@ pub mod correlated_reweighting;
 pub mod correlation_table;
 pub mod decode_budget;
 pub mod dem;
+pub mod dem_views;
 pub mod ensemble;
 pub mod erasure;
 pub mod errors;

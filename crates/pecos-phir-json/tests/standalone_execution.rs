@@ -20,17 +20,22 @@ fn boxed(json: &str) -> Box<dyn ClassicalControlEngine> {
     setup_phir_json_engine(file.path()).unwrap()
 }
 
-fn assert_quantum_error(result: Result<Shot, PecosError>) {
+fn assert_quantum_error(result: Result<Shot, PecosError>, boxed: bool) {
     let Err(PecosError::Processing(message)) = result else {
         panic!("expected a quantum processing error, got {result:?}");
     };
-    assert_eq!(message, QUANTUM_ERROR);
+    let expected = if boxed {
+        "Box<dyn ClassicalControlEngine>::process(()) cannot execute quantum commands; use start()/continue_processing() with a quantum engine, or the simulation builder."
+    } else {
+        QUANTUM_ERROR
+    };
+    assert_eq!(message, expected);
 }
 
 fn rejects(ops: Vec<Value>) {
     let json = program(ops);
-    assert_quantum_error(PhirJsonEngine::from_json(&json).unwrap().process(()));
-    assert_quantum_error(boxed(&json).process(()));
+    assert_quantum_error(PhirJsonEngine::from_json(&json).unwrap().process(()), false);
+    assert_quantum_error(boxed(&json).process(()), true);
 }
 
 #[test]
@@ -194,7 +199,7 @@ mod foreign {
             } else {
                 engine.process(())
             };
-            assert_quantum_error(result);
+            assert_quantum_error(result, boxed);
             assert_eq!(calls.load(Ordering::SeqCst), 1);
         }
     }

@@ -505,7 +505,7 @@ mod tests {
         let model = RowProblem.optimise(Sense::Maximise);
         let solved = model.solve();
         assert_eq!(solved.status(), HighsModelStatus::ModelEmpty);
-        assert!(solved.get_solution().columns().is_empty());
+        assert_eq!(solved.get_solution().columns(), []);
     }
 
     fn solve_model_built_by_rows() -> Vec<f64> {

@@ -2887,7 +2887,10 @@ mod tests {
         let mut circuit = DagCircuit::new();
         circuit.pz(&[0]);
         let influence_map = DagFaultAnalyzer::new(&circuit).build_influence_map();
-        assert!(!influence_map.locations.is_empty());
+        assert!(
+            !influence_map.locations.is_empty(),
+            "influence map must contain fault locations"
+        );
 
         let error = DemSliceRoundSchedule::from_annotated_circuit(
             "missing owner",

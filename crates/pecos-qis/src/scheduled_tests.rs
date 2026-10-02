@@ -61,10 +61,14 @@ fn native_callbacks_preserve_original_batch_and_result_namespaces() {
             leakage_aware: true
         }]
     );
-    assert!(extracted[1].operations.is_empty());
+    assert_eq!(extracted[1].operations, []);
     assert_eq!(extracted[1].batch_index, 1);
-    assert!(runtime.custom_events.is_empty());
-    assert!(runtime.last_gate_time_end_nanos.is_empty());
+    assert_eq!(runtime.custom_events, []);
+    assert!(
+        runtime.last_gate_time_end_nanos.is_empty(),
+        "expected no gate end times, got {:?}",
+        runtime.last_gate_time_end_nanos
+    );
     assert!(runtime.scheduled_output.is_none());
     let next = runtime
         .collect_scheduled(|runtime| {
@@ -128,7 +132,7 @@ fn callback_budgets_reject_before_reading_oversize_payload_and_stop_appends() {
         );
         runtime_batch_reset((&raw mut batch).cast(), 0);
     }
-    assert!(batch.operations.is_empty());
+    assert_eq!(batch.operations, []);
     assert_eq!(
         batch.callback_error,
         Some("scheduled payload budget exceeded")
@@ -268,7 +272,11 @@ fn public_native_runtime_extracts_across_calls_and_terminal_flush() {
             .flat_map(|b| &b.measurements)
             .any(|m| m.program_result == 123 && m.leakage_aware)
     );
-    assert!(runtime.last_gate_time_end_nanos.is_empty());
+    assert!(
+        runtime.last_gate_time_end_nanos.is_empty(),
+        "expected no gate end times, got {:?}",
+        runtime.last_gate_time_end_nanos
+    );
     assert!(runtime.scheduled_output.is_none());
 }
 
@@ -393,11 +401,11 @@ fn shot_end_requires_a_successful_terminal_drain() {
     let mut runtime = crate::selene_runtimes::selene_soft_rz_runtime().unwrap();
     runtime.set_num_qubits(4);
     runtime.shot_start(33, None).unwrap();
-    assert!(
+    assert_eq!(
         runtime
             .lower_scheduled_operations(&[QuantumOp::RXY(0.25, 0.5, 0).into()])
-            .unwrap()
-            .is_empty()
+            .unwrap(),
+        []
     );
     assert!(
         runtime.shot_end().is_err(),
@@ -452,7 +460,8 @@ fn new_submission_invalidates_terminal_drain_and_prevents_shot_replacement() {
         !runtime
             .drain_pending_scheduled_operations()
             .unwrap()
-            .is_empty()
+            .is_empty(),
+        "new submission must produce pending scheduled operations"
     );
     runtime.shot_end().unwrap();
     runtime.shot_start(41, None).unwrap();

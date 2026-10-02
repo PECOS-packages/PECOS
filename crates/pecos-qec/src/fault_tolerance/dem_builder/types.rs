@@ -8548,8 +8548,8 @@ mod tests {
         assert!(pecos_text.contains("pecos_tracked_pauli"));
 
         let (mechanisms, coords) = dem.to_mechanisms();
-        assert!(mechanisms.is_empty());
-        assert!(coords.is_empty());
+        assert_eq!(mechanisms, []);
+        assert_eq!(coords, []);
     }
 
     #[test]
@@ -8582,7 +8582,11 @@ mod tests {
         assert_eq!(mechanisms.len(), 1);
         assert!((mechanisms[0].0 - 0.26).abs() < 1e-12);
         assert_eq!(mechanisms[0].1, vec![0]);
-        assert!(mechanisms[0].2.is_empty());
+        let observables = &mechanisms[0].2;
+        assert!(
+            observables.is_empty(),
+            "expected no observables, got {observables:?}"
+        );
     }
 
     #[test]

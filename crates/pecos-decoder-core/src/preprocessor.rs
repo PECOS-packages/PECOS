@@ -149,7 +149,7 @@ mod tests {
         let pp = SyndromePreprocessor::new(4);
         let result = pp.preprocess(&[0, 1, 0, 1], None);
         assert!(result.anomaly.is_none());
-        assert!(result.erasure_edges.is_empty());
+        assert_eq!(result.erasure_edges, []);
     }
 
     #[test]

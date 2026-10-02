@@ -102,7 +102,7 @@ fn runtime_custom_event_policy(value: &str) -> PyResult<pecos_qis::RuntimeCustom
     }
 }
 
-/// Python wrapper for QIS Engine builder (unified QIS/HUGR engine)
+/// Python wrapper for QIS Engine builder (accepts QIS lowered from Guppy/HUGR at the Python boundary)
 #[pyclass(name = "QisEngineBuilder", from_py_object)]
 #[derive(Clone)]
 pub struct PyQisEngineBuilder {
@@ -135,20 +135,16 @@ impl PyQisEngineBuilder {
                         "Failed to load QIS program: {e}"
                     ))
                 })?;
-        }
-        // Check if it's a Hugr
-        else if let Ok(hugr_prog) = program.extract::<PyHugr>(py) {
-            self.inner =
-                crate::sim::load_hugr_into_qis(py, &hugr_prog.inner.hugr, self.inner.clone())?.0;
         } else {
             return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
-                "program must be either a Qis or Hugr instance",
+                "program must be a Qis instance",
             ));
         }
         Ok(self.clone())
     }
 
-    /// Opt into mandatory scheduled transport; pair with scheduled_idle_z() or scheduled_idle_noise().
+    /// Opt into mandatory scheduled transport; pair with scheduled_idle_z(),
+    /// scheduled_idle_noise(), or scheduled_local_noise().
     #[pyo3(signature = (enabled = true))]
     fn scheduled_batches(&mut self, enabled: bool) -> Self {
         self.inner = self.inner.clone().scheduled_batches(enabled);
@@ -259,8 +255,7 @@ impl PyQisEngineBuilder {
                 noise_builder: None,
                 explicit_num_qubits: None,
                 keep_intermediate_files: false,
-                hugr_bytes: None,
-                qis_source: None,
+                qis_program: None,
                 operation_trace_dir: None,
             }),
         })
@@ -425,11 +420,70 @@ pub struct PyQisControlSimBuilder {
     pub(crate) noise_builder: Option<Py<PyAny>>,
     pub(crate) explicit_num_qubits: Option<usize>,
     pub(crate) keep_intermediate_files: bool,
-    pub(crate) hugr_bytes: Option<Vec<u8>>,
-    /// The QIS IR source, kept so classical() can re-attach the program
-    /// when a fresh engine builder replaces the program-loaded one.
-    pub(crate) qis_source: Option<String>,
+    /// The QIS program, retained for lazy default construction and re-attachment.
+    pub(crate) qis_program: Option<Qis>,
     pub(crate) operation_trace_dir: Option<String>,
+}
+
+/// Construct the default QIS engine.
+fn default_qis_engine() -> PyResult<pecos_qis::QisEngineBuilder> {
+    // Get Selene simple runtime
+    log::debug!("Getting Selene simple runtime...");
+    let selene_runtime = selene_simple_runtime().map_err(|e| {
+        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+            "Selene simple runtime not available: {e}\n\
+                    \n\
+                    The default runtime for QIS programs is Selene simple.\n\
+                    Please ensure Selene is built:\n\
+                    cd ../selene && cargo build --release"
+        ))
+    })?;
+
+    log::debug!("Creating QIS engine with Helios interface...");
+    let helios_builder = helios_interface_builder();
+    let builder = pecos_qis::qis_engine();
+    let builder = builder.runtime(selene_runtime);
+    let builder = builder.interface(helios_builder);
+
+    Ok(builder)
+}
+
+impl PyQisControlSimBuilder {
+    /// Clone the supplied engine, or initialize and cache the default first.
+    /// Execution uses a clone so repeated runs do not consume the builder.
+    pub(crate) fn engine_builder(&self) -> PyResult<RustQisEngineBuilder> {
+        if let Some(builder) = self.engine_builder.lock().expect("lock poisoned").as_ref() {
+            return Ok(builder.clone());
+        }
+
+        // Build outside the lock so a failure while loading cannot poison it.
+        let program = self
+            .qis_program
+            .as_ref()
+            .ok_or_else(|| PyRuntimeError::new_err("No QIS program or engine is configured"))?;
+        let builder = default_qis_engine()?
+            .try_program(program.clone())
+            .map_err(|e| {
+                log::error!("Failed to load QIS program: {e}");
+                PyRuntimeError::new_err(format!(
+                    "Failed to load QIS program with Selene runtime and Helios interface: {e}"
+                ))
+            })?;
+        log::info!("QIS program loaded successfully");
+        Ok(self
+            .engine_builder
+            .lock()
+            .expect("lock poisoned")
+            .get_or_insert(builder)
+            .clone())
+    }
+
+    pub(crate) fn qis_source(&self) -> Option<&str> {
+        match &self.qis_program.as_ref()?.content {
+            pecos_programs::QisContent::Ir(ir) => Some(ir),
+            pecos_programs::QisContent::Bitcode(_) => None,
+        }
+    }
 }
 
 /// Python wrapper for built QIS control simulation
@@ -614,20 +668,6 @@ impl PyPhirSimulation {
     }
 }
 
-/// Internal HUGR simulation builder state.
-/// The holder can run repeatedly, lowering anew each time; lowered builders are single-use.
-pub struct PyHugrSimBuilder {
-    pub(crate) seed: Option<u64>,
-    pub(crate) workers: Option<usize>,
-    pub(crate) shots: Option<usize>,
-    pub(crate) quantum_engine_builder: Option<Py<PyAny>>,
-    pub(crate) noise_builder: Option<Py<PyAny>>,
-    pub(crate) explicit_num_qubits: Option<usize>,
-    pub(crate) keep_intermediate_files: bool,
-    pub(crate) hugr_bytes: Vec<u8>,
-    pub(crate) stack: Option<crate::sim::PySimStack>,
-}
-
 /// Python wrapper for program types
 #[pyclass(name = "Qasm", from_py_object)]
 #[derive(Clone)]
@@ -677,27 +717,6 @@ impl PyQis {
     }
 }
 
-#[pyclass(name = "Hugr", from_py_object)]
-#[derive(Clone)]
-pub struct PyHugr {
-    pub(crate) inner: Hugr,
-}
-
-#[pymethods]
-impl PyHugr {
-    #[staticmethod]
-    fn from_bytes(bytes: Vec<u8>) -> Self {
-        PyHugr {
-            inner: Hugr::from_bytes(bytes),
-        }
-    }
-
-    /// Get the HUGR bytes
-    fn to_bytes(&self) -> Vec<u8> {
-        self.inner.hugr.clone()
-    }
-}
-
 #[pyclass(name = "PhirJson", from_py_object)]
 #[derive(Clone)]
 pub struct PyPhirJson {
@@ -729,7 +748,7 @@ pub fn qasm_engine() -> PyQasmEngineBuilder {
     }
 }
 
-/// Create a QIS Engine builder (unified QIS/HUGR engine)
+/// Create a QIS Engine builder (accepts QIS lowered from Guppy/HUGR at the Python boundary)
 #[pyfunction]
 pub fn qis_engine() -> PyQisEngineBuilder {
     PyQisEngineBuilder {
@@ -818,7 +837,7 @@ pub fn scheduled_idle_z(
 #[pyclass(name = "ScheduledIdleNoise", from_py_object)]
 #[derive(Clone)]
 pub struct PyScheduledIdleNoise {
-    pub(crate) inner: pecos_engines::scheduled_frame::ScheduledIdleNoise,
+    pub(crate) inner: pecos_engines::scheduled_frame::ScheduledNoise,
 }
 /// Construct checked idle channels; rates use seconds and radians, without conversion.
 #[pyfunction]
@@ -832,8 +851,8 @@ pub fn scheduled_idle_noise(
     coherent: f64,
     coherent_model: Option<std::collections::BTreeMap<String, f64>>,
 ) -> PyResult<PyScheduledIdleNoise> {
-    use pecos_engines::scheduled_frame::ScheduledIdleNoise;
-    let result = ScheduledIdleNoise::new(qubits)
+    use pecos_engines::scheduled_frame::ScheduledNoise;
+    let result = ScheduledNoise::new(qubits)
         .and_then(|p| p.with_linear(linear, linear_model))
         .and_then(|p| p.with_sine(sine, sine_model))
         .and_then(|p| p.with_coherent(coherent, coherent_model));
@@ -841,12 +860,41 @@ pub fn scheduled_idle_noise(
         inner: result.map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?,
     })
 }
-/// Extract either scheduled v3 profile without widening other noise capabilities.
+/// Checked local gate, preparation and readout faults with scheduled idle channels.
+#[pyclass(name = "ScheduledLocalNoise", from_py_object)]
+#[derive(Clone)]
+pub struct PyScheduledLocalNoise {
+    pub(crate) inner: pecos_engines::scheduled_frame::ScheduledLocalNoise,
+}
+/// Add uniform Pauli gate faults, preparation bit flips and asymmetric readout.
+/// The idle base must come from scheduled_idle_noise(), not scheduled_idle_z().
+/// For Z-only channels, scheduled_idle_noise() uses Z models by default.
+/// Probabilities are event probabilities in [0, 1], not average gate infidelities.
+#[pyfunction]
+#[pyo3(signature = (idle, *, p1 = 0.0, p2 = 0.0, prep = 0.0, meas0 = 0.0, meas1 = 0.0))]
+pub fn scheduled_local_noise(
+    idle: PyScheduledIdleNoise,
+    p1: f64,
+    p2: f64,
+    prep: f64,
+    meas0: f64,
+    meas1: f64,
+) -> PyResult<PyScheduledLocalNoise> {
+    Ok(PyScheduledLocalNoise {
+        inner: pecos_engines::scheduled_frame::ScheduledLocalNoise::new(
+            idle.inner, p1, p2, prep, meas0, meas1,
+        )
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?,
+    })
+}
+/// Extract a checked scheduled v3 profile without widening other noise capabilities.
 pub(crate) fn extract_scheduled_idle(
     noise: &Py<PyAny>,
     py: Python<'_>,
-) -> Option<pecos_engines::scheduled_frame::ScheduledIdleNoise> {
-    if let Ok(profile) = noise.extract::<PyScheduledIdleNoise>(py) {
+) -> Option<pecos_engines::scheduled_frame::ScheduledNoise> {
+    if let Ok(profile) = noise.extract::<PyScheduledLocalNoise>(py) {
+        Some(profile.inner.into())
+    } else if let Ok(profile) = noise.extract::<PyScheduledIdleNoise>(py) {
         Some(profile.inner)
     } else {
         noise
@@ -1745,7 +1793,6 @@ pub fn register_engine_builders(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Program types
     m.add_class::<PyQasm>()?;
-    m.add_class::<PyHugr>()?;
     m.add_class::<PyPhirJson>()?;
 
     // Noise builders

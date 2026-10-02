@@ -594,8 +594,8 @@ fn classical_failure_requires_whole_host_reset_not_quantum_reset_only() {
 }
 
 #[test]
-fn historical_leakage_boundary_and_unsplit_nonlinear_idle_are_preserved() {
-    for (axis, expected) in [("L", vec![0, 0]), ("X", vec![1])] {
+fn measurement_time_leakage_and_unsplit_nonlinear_idle_match_legacy() {
+    for (axis, expected) in [("L", vec![2, 0]), ("X", vec![1])] {
         let builder = GeneralNoiseModel::builder().with_p_idle_sin_squared(
             std::f64::consts::FRAC_PI_2,
             &BTreeMap::from([(axis.into(), 1.0)]),
@@ -1173,13 +1173,14 @@ fn empty_and_adjacent_event_segments_complete_without_extra_sampling() {
             target: 0,
         }],
     ] {
+        let outcomes = system
+            .process(encode_frame(&records).unwrap())
+            .unwrap()
+            .outcomes()
+            .unwrap();
         assert!(
-            system
-                .process(encode_frame(&records).unwrap())
-                .unwrap()
-                .outcomes()
-                .unwrap()
-                .is_empty()
+            outcomes.is_empty(),
+            "expected no measurement outcomes, got {outcomes:?}"
         );
         assert_rng_equal(&system, &before);
     }
@@ -1200,13 +1201,14 @@ fn empty_and_adjacent_event_segments_complete_without_extra_sampling() {
             target: 0,
         },
     ];
+    let outcomes = system
+        .process(encode_frame(&records).unwrap())
+        .unwrap()
+        .outcomes()
+        .unwrap();
     assert!(
-        system
-            .process(encode_frame(&records).unwrap())
-            .unwrap()
-            .outcomes()
-            .unwrap()
-            .is_empty()
+        outcomes.is_empty(),
+        "expected no measurement outcomes, got {outcomes:?}"
     );
     assert_rng_equal(&system, &before);
     assert_eq!(
@@ -1217,4 +1219,161 @@ fn empty_and_adjacent_event_segments_complete_without_extra_sampling() {
             .unwrap(),
         vec![0]
     );
+}
+
+#[test]
+fn crosstalk_resumes_before_frame_measurements_resets_and_later_payloads() {
+    for metadata in [false, true] {
+        let builder = GeneralNoiseModel::builder()
+            .with_p_meas_crosstalk_local(1.0)
+            .with_p_meas_crosstalk_model(&BTreeMap::from([
+                ("0->L".into(), 1.0),
+                ("1->L".into(), 1.0),
+            ]));
+        let payload = Gate::simple(GateType::MeasCrosstalkLocalPayload, vec![0.into()]);
+        let gates = [
+            Gate::pz(&[0]),
+            payload.clone(),
+            Gate::measure_leaked(&[0]),
+            Gate::pz(&[0]),
+            Gate::measure_leaked(&[0]),
+            payload,
+            Gate::measure_leaked(&[0]),
+        ];
+        let mut framed = setup(builder.clone(), 17);
+        let mut legacy =
+            QuantumSystem::new(Box::new(builder.build()), Box::new(StateVecEngine::new(2)));
+        legacy.set_seed(17);
+        assert_eq!(
+            framed
+                .process(frame(&gates, metadata))
+                .unwrap()
+                .outcomes()
+                .unwrap(),
+            vec![2, 0, 2]
+        );
+        assert_eq!(
+            legacy.process(message(&gates)).unwrap().outcomes().unwrap(),
+            vec![2, 0, 2]
+        );
+        assert_rng_equal(&framed, &legacy);
+    }
+}
+
+#[test]
+fn identity_crosstalk_completes_with_trailing_metadata() {
+    let mut framed = setup(
+        GeneralNoiseModel::builder().with_p_meas_crosstalk_local(1.0),
+        17,
+    );
+    let records = [
+        FrameRecord::gate(Gate::pz(&[0])),
+        FrameRecord::gate(Gate::simple(
+            GateType::MeasCrosstalkLocalPayload,
+            vec![0.into()],
+        )),
+        FrameRecord::Event {
+            id: METADATA,
+            target: 0,
+        },
+    ];
+    assert_eq!(
+        framed
+            .process(encode_frame(&records).unwrap())
+            .unwrap()
+            .outcomes()
+            .unwrap(),
+        Vec::<u32>::new()
+    );
+    assert_eq!(
+        framed
+            .process(frame(&[Gate::mz(&[0])], true))
+            .unwrap()
+            .outcomes()
+            .unwrap(),
+        vec![0]
+    );
+}
+
+#[test]
+fn maximum_frame_crosstalk_sites_complete_and_preserve_next_input() {
+    let builder = GeneralNoiseModel::builder()
+        .with_p_meas_crosstalk_local(1.0)
+        .with_p_meas_crosstalk_model(&BTreeMap::from([
+            ("0->1".into(), 1.0),
+            ("1->0".into(), 1.0),
+        ]));
+    let mut system = setup(builder, 17);
+    system.process(frame(&[Gate::pz(&[0])], false)).unwrap();
+    // Every record yields, including the final record. Its transition must be
+    // dispatched and acknowledged before completing this maximum-sized frame.
+    let payload = Gate::simple(GateType::MeasCrosstalkLocalPayload, vec![0.into()]);
+    let records = vec![FrameRecord::gate(payload); FrameLimits::default().records];
+    assert_eq!(
+        system
+            .process(encode_frame(&records).unwrap())
+            .unwrap()
+            .outcomes()
+            .unwrap(),
+        Vec::<u32>::new()
+    );
+    // 128 flips return to zero; this separate input also detects leaked active
+    // continuation state after the final transition dispatch.
+    assert_eq!(
+        system
+            .process(frame(&[Gate::mz(&[0])], true))
+            .unwrap()
+            .outcomes()
+            .unwrap(),
+        vec![0]
+    );
+}
+
+#[test]
+fn stochastic_crosstalk_metadata_preserves_results_and_both_rngs() {
+    let builder = GeneralNoiseModel::builder()
+        .with_p1(0.125)
+        .with_p_meas_0(0.25)
+        .with_p_meas_1(0.375)
+        .with_p_meas_crosstalk_local(0.5)
+        .with_p_meas_crosstalk_model(&BTreeMap::from([
+            ("0->1".into(), 0.25),
+            ("1->0".into(), 0.25),
+            ("0->L".into(), 0.25),
+            ("1->L".into(), 0.25),
+            ("0->0".into(), 0.5),
+            ("1->1".into(), 0.5),
+        ]));
+    let payload = Gate::simple(GateType::MeasCrosstalkLocalPayload, vec![0.into()]);
+    let gates = [
+        Gate::pz(&[0]),
+        Gate::h(&[0]),
+        Gate::mz(&[0]),
+        payload.clone(),
+        Gate::h(&[0]),
+        Gate::measure_leaked(&[0]),
+        Gate::pz(&[0]),
+        payload,
+        Gate::mz(&[0]),
+    ];
+    for seed in 0..32 {
+        let mut framed = setup(builder.clone(), seed);
+        let mut legacy = QuantumSystem::new(
+            Box::new(builder.clone().build()),
+            Box::new(StateVecEngine::new(2)),
+        );
+        legacy.set_seed(seed);
+        for input in [&gates[..], &[Gate::h(&[0]), Gate::mz(&[0])][..]] {
+            assert_eq!(
+                framed
+                    .process(frame(input, true))
+                    .unwrap()
+                    .outcomes()
+                    .unwrap(),
+                legacy.process(message(input)).unwrap().outcomes().unwrap(),
+                "seed {seed}"
+            );
+            assert_rng_equal(&framed, &legacy);
+        }
+    }
 }

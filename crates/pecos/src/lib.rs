@@ -46,8 +46,6 @@ pub mod engines {
 /// Quantum circuit representation and Pauli algebra.
 #[cfg(feature = "quantum")]
 pub mod quantum {
-    #[cfg(feature = "hugr-qis")]
-    pub use pecos_hugr_qis::read_hugr_envelope;
     #[cfg(feature = "hugr")]
     pub use pecos_quantum::hugr_convert::{
         HugrConvertError, NotSimpleError, SimpleHugr, dag_circuit_to_hugr, gate_type_to_hugr_op,
@@ -88,10 +86,10 @@ pub mod noise {
     pub use pecos_engines::{BiasedDepolarizingNoise, DepolarizingNoise, PassThroughNoise};
 }
 
-/// Program types (Qasm, Qis, Hugr).
+/// Program types (Qasm, Qis).
 #[cfg(feature = "sim")]
 pub mod programs {
-    pub use pecos_programs::{Hugr, Program, Qasm, Qis};
+    pub use pecos_programs::{Program, Qasm, Qis};
 }
 
 /// QIS runtime (Selene + Helios interface).
@@ -210,7 +208,7 @@ pub use pecos_phir::{PhirConfig, PhirEngineBuilder, phir_engine};
 #[cfg(feature = "phir")]
 pub use pecos_phir_json::{PhirJsonEngineBuilder, phir_json_engine};
 #[cfg(feature = "sim")]
-pub use pecos_programs::{Hugr, Program, Qasm, Qis};
+pub use pecos_programs::{Program, Qasm, Qis};
 #[cfg(feature = "qasm")]
 pub use pecos_qasm::{QasmEngineBuilder, qasm_engine, run_qasm};
 #[cfg(feature = "qis")]

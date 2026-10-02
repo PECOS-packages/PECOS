@@ -1089,11 +1089,6 @@ class QisProgram:
 
     ...
 
-class HugrProgram:
-    """HUGR program lowered to QIS for simulation; requires explicit qubits."""
-
-    ...
-
 class PhirJsonProgram:
     """PHIR JSON program representation."""
 
@@ -3966,3 +3961,24 @@ def scheduled_event_idle_noise(
     profile: ScheduledIdleNoise,
     adapter_factory: Callable[[tuple[int, int, int]], _ScheduledBatchAdapter],
 ) -> ScheduledEventIdleNoise: ...
+
+class ScheduledLocalNoise:
+    """Checked uniform Pauli gate, preparation bit-flip and asymmetric readout faults."""
+
+def scheduled_local_noise(
+    idle: ScheduledIdleNoise,
+    *,
+    p1: float = 0.0,
+    p2: float = 0.0,
+    prep: float = 0.0,
+    meas0: float = 0.0,
+    meas1: float = 0.0,
+) -> ScheduledLocalNoise: ...
+
+class ScheduledEventLocalNoise:
+    """Checked v4 local faults with a per-shot batch adapter."""
+
+def scheduled_event_local_noise(
+    profile: ScheduledLocalNoise,
+    adapter_factory: Callable[[tuple[int, int, int]], _ScheduledBatchAdapter],
+) -> ScheduledEventLocalNoise: ...

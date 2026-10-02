@@ -3125,7 +3125,7 @@ mod tests {
         conjugate_pauli_by_deferred(&mut flip, &mut sign, &[(0, 1)]);
         sort_dedup(&mut flip);
         assert_eq!(flip, vec![0, 1]);
-        assert!(sign.is_empty());
+        assert!(sign.is_empty(), "expected no sign positions, got {sign:?}");
     }
 
     #[test]
@@ -3135,7 +3135,7 @@ mod tests {
         let mut sign = vec![1];
         conjugate_pauli_by_deferred(&mut flip, &mut sign, &[(0, 1)]);
         sort_dedup(&mut sign);
-        assert!(flip.is_empty());
+        assert!(flip.is_empty(), "expected no flip positions, got {flip:?}");
         assert_eq!(sign, vec![0, 1]);
     }
 
@@ -3146,7 +3146,7 @@ mod tests {
         let mut sign: Vec<usize> = vec![];
         conjugate_pauli_by_deferred(&mut flip, &mut sign, &[(0, 1)]);
         assert_eq!(flip, vec![1]);
-        assert!(sign.is_empty());
+        assert!(sign.is_empty(), "expected no sign positions, got {sign:?}");
     }
 
     #[test]
@@ -3155,7 +3155,7 @@ mod tests {
         let mut flip: Vec<usize> = vec![];
         let mut sign = vec![0];
         conjugate_pauli_by_deferred(&mut flip, &mut sign, &[(0, 1)]);
-        assert!(flip.is_empty());
+        assert!(flip.is_empty(), "expected no flip positions, got {flip:?}");
         assert_eq!(sign, vec![0]);
     }
 
@@ -3183,7 +3183,7 @@ mod tests {
         conjugate_pauli_by_deferred(&mut flip, &mut sign, &[(0, 1), (0, 2), (0, 3)]);
         sort_dedup(&mut flip);
         assert_eq!(flip, vec![0, 1, 2, 3]);
-        assert!(sign.is_empty());
+        assert!(sign.is_empty(), "expected no sign positions, got {sign:?}");
     }
 
     #[test]
@@ -3220,7 +3220,7 @@ mod tests {
         // Flush the same CNOTs.
         let mut queue = cnots;
         flush_deferred(&mut mps_lazy, &mut queue).unwrap();
-        assert!(queue.is_empty());
+        assert_eq!(queue, []);
 
         // Compare state vectors.
         let sv_e = mps_eager.state_vector();

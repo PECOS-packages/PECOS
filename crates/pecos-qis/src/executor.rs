@@ -1404,9 +1404,10 @@ impl QisHeliosInterface {
     /// Get the entry point and matching setjmp wrapper from the libraries.
     ///
     /// QIR programs can use one of two entry-point signatures:
-    /// - `i64 @qmain(i64)` -- the Helios / adaptive profile. pecos-hugr-qis
-    ///   emits this (its `LLVM_MAIN` constant in compiler.rs is `"qmain"`),
-    ///   and the pecos-phir RON pipeline fixtures (`ron_support.rs`,
+    /// - `i64 @qmain(i64)` -- the Helios / adaptive profile. Selene's HUGR-to-QIS
+    ///   compiler (the Python boundary) emits this entry point; a test asserts its name
+    ///   in `python/quantum-pecos/tests/guppy/test_guppy_execute_llvm.py`.
+    ///   The pecos-phir RON pipeline fixtures (`ron_support.rs`,
     ///   `qis_pipeline_tests`) use it. The return value is an error code.
     /// - `void @main()` -- the "base profile" form. pecos-phir's MLIR/QIR text
     ///   path matches `@main` directly (see `mlir_toolchain.rs`), and PECOS's QIR
@@ -1782,11 +1783,6 @@ impl QisHeliosInterface {
 
                 // Convert bitcode file to persistent path and keep it alive
                 bitcode_file.into_temp_path()
-            }
-            ProgramFormat::HugrBytes => {
-                return Err(InterfaceError::InvalidFormat(
-                    "HUGR bytes should be compiled to LLVM first".to_string(),
-                ));
             }
         };
 
@@ -2372,12 +2368,6 @@ impl QisInterface for QisHeliosInterface {
                 self.create_shared_library()?;
 
                 Ok(())
-            }
-            ProgramFormat::HugrBytes => {
-                error!("HUGR bytes format not supported");
-                Err(InterfaceError::InvalidFormat(
-                    "Helios interface requires HUGR to be compiled to LLVM first".to_string(),
-                ))
             }
         }
     }

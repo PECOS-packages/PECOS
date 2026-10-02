@@ -2322,7 +2322,11 @@ mod tests {
 
         let traces = ctx.get_named_result_traces();
         assert_eq!(traces.len(), 1);
-        assert!(traces[0].result_ids.is_empty());
+        let result_ids = &traces[0].result_ids;
+        assert!(
+            result_ids.is_empty(),
+            "expected no result IDs, got {result_ids:?}"
+        );
 
         ctx.record_result_read(9);
         ctx.store_named_bool("next", false);
@@ -2501,7 +2505,7 @@ mod tests {
         unsafe { pecos_qis_reset_interface() };
 
         with_interface(|iface| {
-            assert!(iface.operations.is_empty());
+            assert_eq!(iface.operations, []);
         });
     }
 
@@ -2521,7 +2525,7 @@ mod tests {
         unsafe { pecos_qis_free_operations(ptr) };
 
         with_interface(|iface| {
-            assert!(iface.operations.is_empty());
+            assert_eq!(iface.operations, []);
         });
     }
 

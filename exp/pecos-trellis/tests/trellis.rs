@@ -897,45 +897,57 @@ fn width_pruning_accounts_for_the_discarded_state_and_mass() {
 
 #[test]
 fn maxlog_dropped_mass_is_the_largest_discarded_route() {
-    // K=2 first fills at column 0. Columns 1 and 2 both prune two routes:
-    // column 1 drops -1943 and -2358, while column 2 drops -3176 and -3591.
-    // The reported value must therefore be the largest within a prune call and
-    // across prune calls, not whichever discarded route or call came last.
-    let dem = sparse_dem(
-        vec![
-            (0.4, vec![], vec![0]),
-            (0.25, vec![], vec![1]),
-            (0.1, vec![], vec![2]),
-        ],
-        0,
-        3,
-    );
-    let mut decoder = TrellisDecoder::from_sparse_dem(
-        &dem,
-        TrellisConfig {
-            k: 2,
-            delta: 1_000_000.0,
-            score_alpha: 0.0,
-            metric_mode: MetricMode::MaxLogInt,
-            ..TrellisConfig::default()
-        },
-    )
-    .unwrap();
-    let result = decoder.decode(&[]).unwrap();
-    let expected_dropped_mass = -1_943.0_f64 / 1024.0;
+    // K=2 first fills at column 0, and every later column prunes two routes.
+    // The two cases put the largest discarded route in different prune calls:
+    // - first call: column 1 drops -1943 and -2358, column 2 drops -3176 and
+    //   -3591;
+    // - middle call: column 1 drops -2723 and -3591, column 2 drops -1893 and
+    //   -2761, column 3 drops -5483 and -6351.
+    // Keeping the first or last call's value, ignoring the first call, or
+    // keeping the last discarded route within a call each fails a case.
+    let cases: [(&[f64], i32, u64); 2] = [
+        (&[0.4, 0.25, 0.1], -1_943, 4),
+        (&[0.1, 0.3, 0.25, 0.01], -1_893, 6),
+    ];
+    for (probabilities, expected_numerator, expected_dropped_states) in cases {
+        let mechanisms = probabilities
+            .iter()
+            .zip(0..)
+            .map(|(&probability, observable)| (probability, vec![], vec![observable]))
+            .collect();
+        let dem = sparse_dem(mechanisms, 0, probabilities.len());
+        let mut decoder = TrellisDecoder::from_sparse_dem(
+            &dem,
+            TrellisConfig {
+                k: 2,
+                delta: 1_000_000.0,
+                score_alpha: 0.0,
+                metric_mode: MetricMode::MaxLogInt,
+                ..TrellisConfig::default()
+            },
+        )
+        .unwrap();
+        let result = decoder.decode(&[]).unwrap();
+        let expected_dropped_mass = f64::from(expected_numerator) / 1024.0;
 
-    assert_eq!(result.dropped_states, 4);
-    assert_eq!(
-        result.dropped_log_mass.to_bits(),
-        expected_dropped_mass.to_bits()
-    );
-    assert_eq!(
-        result.status,
-        TrellisStatus::Pruned {
-            k_capped: true,
-            delta_pruned: false,
-        }
-    );
+        assert_eq!(
+            result.dropped_states, expected_dropped_states,
+            "{probabilities:?}"
+        );
+        assert_eq!(
+            result.dropped_log_mass.to_bits(),
+            expected_dropped_mass.to_bits(),
+            "{probabilities:?}"
+        );
+        assert_eq!(
+            result.status,
+            TrellisStatus::Pruned {
+                k_capped: true,
+                delta_pruned: false,
+            },
+            "{probabilities:?}"
+        );
+    }
 }
 
 #[test]

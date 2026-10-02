@@ -4,6 +4,7 @@ This test explores how to use Selene's Python build() function to compile
 HUGR from Guppy and create an executable that can be wrapped by SeleneExecutableEngine.
 """
 
+import re
 import tempfile
 import textwrap
 from pathlib import Path
@@ -36,8 +37,11 @@ class TestSeleneBuildProcess:
 
         # Binary HUGR envelope (Model format); verify it is a valid, loadable HUGR.
         import pecos_rslib
+        from pecos_rslib.hugr_lowering import compile_hugr_to_qis
 
-        assert pecos_rslib.Hugr.from_bytes(hugr_bytes) is not None, "HUGR should load as a valid HUGR"
+        llvm_ir = compile_hugr_to_qis(hugr_bytes)
+        assert re.search(r"define\b[^\n]*@qmain\(", llvm_ir)
+        pecos_rslib.Qis(llvm_ir)
 
         with tempfile.TemporaryDirectory() as tmpdir:
             build_dir = Path(tmpdir)
@@ -605,8 +609,11 @@ class TestBuildOutputFormats:
 
         # Binary HUGR envelope (Model format); verify it is a valid, loadable HUGR.
         import pecos_rslib
+        from pecos_rslib.hugr_lowering import compile_hugr_to_qis
 
-        assert pecos_rslib.Hugr.from_bytes(hugr_bytes) is not None, "HUGR should load as a valid HUGR"
+        llvm_ir = compile_hugr_to_qis(hugr_bytes)
+        assert re.search(r"define\b[^\n]*@qmain\(", llvm_ir)
+        pecos_rslib.Qis(llvm_ir)
 
     def test_build_artifacts_structure(self) -> None:
         """Test the structure of build artifacts created."""

@@ -5,12 +5,10 @@ This example demonstrates the simple, qasm_sim-like API for running Guppy
 quantum programs on PECOS. This API is provided for backward compatibility.
 
 NOTE: For new code, consider using the unified API instead:
-    from pecos_rslib import selene_engine
-    from pecos_rslib.programs import HugrProgram
+    import pecos as pc
 
-    # Convert Guppy to HUGR and run
-    hugr_program = HugrProgram.from_bytes(guppy_to_hugr_bytes(my_func))
-    results = selene_engine().program(hugr_program).to_sim().run(shots)
+    # Lowers Guppy through HUGR to QIS and runs it
+    results = pc.sim(pc.Guppy(my_func)).qubits(num_qubits).run(shots)
 
 The backward compatibility API provides:
 - run_guppy(function, shots) - Simple execution

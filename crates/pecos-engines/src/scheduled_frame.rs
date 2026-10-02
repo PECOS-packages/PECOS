@@ -73,8 +73,8 @@ pub struct ScheduledNoise {
 /// Emitted RZ gates receive single-qubit faults too; virtual frame updates must
 /// be resolved by the runtime/adapter rather than represented as physical RZ.
 /// Emission, gate/preparation leakage, seepage and crosstalk are disabled.
-/// Capacity remains 1..=16 with a state-vector engine. A qubit cannot be used
-/// again after measurement within the same batch (including another measurement).
+/// Capacity remains 1..=16 with a state-vector engine. Measurements capture
+/// leakage before subsequent operations, allowing same-batch reset and reuse.
 #[derive(Clone, Debug)]
 pub struct ScheduledLocalNoise(ScheduledNoise);
 #[derive(Clone, Debug)]
@@ -463,9 +463,9 @@ impl ScheduledIdleModel {
     }
     pub(crate) fn start_admitted(
         &mut self,
-        message: ByteMessage,
+        message: &ByteMessage,
     ) -> Result<EngineStage<ByteMessage, ByteMessage>, PecosError> {
-        self.inner.start(message)
+        self.inner.start_scheduled(message)
     }
 }
 impl ScheduleTimeline {
@@ -510,7 +510,6 @@ impl ScheduleTimeline {
             if batch.gates.len() > crate::scheduled_events::MAX_BATCH_OPERATIONS {
                 return Err(error("scheduled batch operation limit"));
             }
-            let mut measured = vec![false; config.qubits];
             let mut touched = vec![false; config.qubits];
             let mut builder = ByteMessage::quantum_operations_builder();
             for gate in batch.gates {
@@ -518,12 +517,6 @@ impl ScheduleTimeline {
                     let q = q.0;
                     if q >= touched.len() || batch.start_nanos < prepared.timeline.ends[q] {
                         return Err(error("scheduled capacity or timing overlap"));
-                    }
-                    if measured[q] {
-                        return Err(error("scheduled qubit used after measurement in one batch"));
-                    }
-                    if matches!(gate.gate_type, GateType::MZ | GateType::MeasureLeaked) {
-                        measured[q] = true;
                     }
                     if !touched[q] {
                         let gap = batch.start_nanos - prepared.timeline.ends[q];
@@ -672,7 +665,7 @@ mod local_gate_contract {
         let mut model = profile.build_model();
         let stage = model
             .start_admitted(
-                ByteMessage::quantum_operations_builder()
+                &ByteMessage::quantum_operations_builder()
                     .rz(Angle64::from_radians(0.4), &[0])
                     .build(),
             )

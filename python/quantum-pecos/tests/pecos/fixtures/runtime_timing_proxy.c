@@ -36,8 +36,20 @@ static SeleneErrno next(RuntimeInstance instance, RuntimeGetOperationHandle ops)
     RuntimeGetOperationHandle wrapped = ops;
     wrapped.interface.rxy_fn = rxy;
     wrapped.interface.set_batch_time_fn = time_batch;
-    SeleneErrno rc = original.get_next_operations_fn(instance, wrapped);
-    if (rc == 0 && has_batch) ops.interface.set_batch_time_fn(ops.instance, INITIAL_NANOS + (rxy_count >= 2 ? GAP_NANOS : 0), 0);
+    SeleneErrno rc;
+    bool any_batch = false;
+    do {
+        has_batch = false;
+        rc = original.get_next_operations_fn(instance, wrapped);
+        any_batch = any_batch || has_batch;
+#ifndef COALESCE_QUEUED
+        break;
+#endif
+        /* Test-only batching: drain only currently queued operations. A program
+         * waiting on a measurement remains suspended until PECOS returns it.
+         * This deliberately invents one zero-duration batch, not runtime timing. */
+    } while (rc == 0 && has_batch);
+    if (rc == 0 && any_batch) ops.interface.set_batch_time_fn(ops.instance, INITIAL_NANOS + (rxy_count >= 2 ? GAP_NANOS : 0), 0);
     return rc;
 }
 

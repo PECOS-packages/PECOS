@@ -38,8 +38,9 @@ def build_timed_runtime(
     *,
     events: bool = False,
     initial_nanos: int = 0,
+    coalesce_queued: bool = False,
 ) -> tuple[Path, int]:
-    """Compile the public timing proxy, optionally emitting an invented event."""
+    """Compile a synthetic timing proxy with optional events or queued-op batching."""
     from selene_simple_runtime_plugin import SimpleRuntimePlugin
 
     if platform.system() == "Windows":
@@ -70,6 +71,8 @@ def build_timed_runtime(
         "-o",
         str(library),
     ]
+    if coalesce_queued:
+        args.append("-DCOALESCE_QUEUED")
     if events:
         args.append("-DSYNTHETIC_EVENT")
     if platform.system() != "Darwin":

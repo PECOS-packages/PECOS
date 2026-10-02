@@ -271,13 +271,15 @@ fn seeded_nary_maxlog_matches_brute_force_integer_routes() {
 #[test]
 fn nary_maxlog_dropped_mass_is_the_largest_discarded_route_across_columns() {
     // Every outcome toggles its own observable, so no two routes merge. At
-    // scale 1024 the first column keeps ln(0.5) = -710 and drops ln(0.3) =
-    // -1233 and ln(0.2) = -1648. Each later column keeps the 0.9 branch and
-    // drops at most -710 + ln(0.06) = -3591, then -818 + ln(0.06) = -3699. The
-    // reported value must be the largest across prune calls, not the last.
+    // scale 1024 the first column keeps ln(0.98) = -21 and drops -4529 and
+    // -4944. The second keeps -21 + ln(0.5) = -731 and drops
+    // -21 + ln(0.3) = -1254 and -1669. The third drops -731 + ln(0.06) = -3612
+    // and -4027. The largest falls in the middle column and includes the
+    // first column's prefix, so the reported value must be the largest across
+    // prune calls, not the first or the last.
     let factors = [
-        [(0.5, 0), (0.3, 1), (0.2, 2)],
-        [(0.9, 3), (0.06, 4), (0.04, 5)],
+        [(0.98, 0), (0.012, 1), (0.008, 2)],
+        [(0.5, 3), (0.3, 4), (0.2, 5)],
         [(0.9, 6), (0.06, 7), (0.04, 8)],
     ]
     .into_iter()
@@ -302,7 +304,7 @@ fn nary_maxlog_dropped_mass_is_the_largest_discarded_route_across_columns() {
     )
     .unwrap();
     let result = decoder.decode(&[]).unwrap();
-    let expected_dropped_mass = -1_233.0_f64 / 1024.0;
+    let expected_dropped_mass = -1_254.0_f64 / 1024.0;
 
     assert_eq!(result.dropped_states, 6);
     assert_eq!(

@@ -897,18 +897,20 @@ fn width_pruning_accounts_for_the_discarded_state_and_mass() {
 
 #[test]
 fn maxlog_dropped_mass_is_the_largest_discarded_route() {
-    // K=2 first fills at column 0. Columns 1 and 2 both prune two routes:
-    // column 1 drops -1943 and -2358, while column 2 drops -3176 and -3591.
-    // The reported value must therefore be the largest within a prune call and
-    // across prune calls, not whichever discarded route or call came last.
+    // K=2 first fills at column 0. Columns 1 to 3 each prune two routes:
+    // column 1 drops -2723 and -3591, column 2 drops -1893 and -2761, and
+    // column 3 drops -5483 and -6351. The largest falls in a middle prune call,
+    // so the reported value must be the largest within a prune call and across
+    // prune calls, not whichever discarded route or call came first or last.
     let dem = sparse_dem(
         vec![
-            (0.4, vec![], vec![0]),
-            (0.25, vec![], vec![1]),
-            (0.1, vec![], vec![2]),
+            (0.1, vec![], vec![0]),
+            (0.3, vec![], vec![1]),
+            (0.25, vec![], vec![2]),
+            (0.01, vec![], vec![3]),
         ],
         0,
-        3,
+        4,
     );
     let mut decoder = TrellisDecoder::from_sparse_dem(
         &dem,
@@ -922,9 +924,9 @@ fn maxlog_dropped_mass_is_the_largest_discarded_route() {
     )
     .unwrap();
     let result = decoder.decode(&[]).unwrap();
-    let expected_dropped_mass = -1_943.0_f64 / 1024.0;
+    let expected_dropped_mass = -1_893.0_f64 / 1024.0;
 
-    assert_eq!(result.dropped_states, 4);
+    assert_eq!(result.dropped_states, 6);
     assert_eq!(
         result.dropped_log_mass.to_bits(),
         expected_dropped_mass.to_bits()

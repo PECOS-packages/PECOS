@@ -30,7 +30,10 @@ from pecos.qec.surface._clifford_deformation import (
     normalize_surface_frame_policy,
     resolve_surface_clifford_frame,
 )
-from pecos.qec.surface._detection_events import extract_detection_events_and_observables
+from pecos.qec.surface._detection_events import (
+    MissingObservableReferenceError,
+    extract_detection_events_and_observables,
+)
 from pecos.qec.surface._twirl_config import GuppyRngMaskConfig, TwirlConfig
 from pecos.qec.surface.circuit_builder import (
     DagCircuitRenderer,
@@ -196,6 +199,7 @@ __all__ = [
     "build_stim_circuit_from_patch",
     "decode_native_samples",
     "demask_pauli_frame_records",
+    "MissingObservableReferenceError",
     "extract_detection_events_and_observables",
     "generate_circuit_level_dem",
     "generate_dem_from_patch",

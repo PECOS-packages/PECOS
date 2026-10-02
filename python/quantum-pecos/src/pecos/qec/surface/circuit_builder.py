@@ -19,9 +19,10 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING, NotRequired, TypedDict
 
 import pecos._traced_circuit as _traced_circuit
+from pecos.qec._replay import _replay_measurements
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -100,10 +101,15 @@ class SurfaceDetectorDescriptor(TypedDict):
 
 
 class SurfaceObservableDescriptor(TypedDict):
-    """Public observable descriptor derived from TickCircuit metadata."""
+    """Public observable descriptor, preserving the noiseless reference when supplied.
+
+    Legacy metadata remains readable; only measurement-to-flip extraction
+    requires the reference.
+    """
 
     id: int
     observable_id: int
+    reference: NotRequired[int]
     basis: str
     records: list[int]
     logical_type: str
@@ -1708,6 +1714,7 @@ def _build_observable_descriptors(
         {
             "id": int(obs["id"]),
             "observable_id": int(obs["id"]),
+            **({"reference": obs["reference"]} if "reference" in obs else {}),
             "basis": basis.upper(),
             "records": [int(value) for value in obs["records"]],
             "logical_type": logical["logical_type"],
@@ -2165,7 +2172,7 @@ class TickCircuitRenderer(CircuitRenderer):
         Metadata is stored at three levels:
         - Circuit-level (preserved in DagCircuit):
             - 'detectors': JSON list of {id, coords, records}
-            - 'observables': JSON list of {id, records}
+            - 'observables': JSON list of {id, records, reference}
             - 'num_measurements', 'num_detectors', 'basis'
         - Tick-level: 'phase', 'syndrome_round', 'cx_round'
         - Gate-level: 'label', 'role'
@@ -2735,10 +2742,12 @@ class TickCircuitRenderer(CircuitRenderer):
 
             # Logical observable
             logical_rec_offsets = [-(meas_count - (final_meas_start + q)) for q in logical_qubits]
+            reference_measurements = _replay_measurements(circuit, meas_count)
             observables = [
                 {
                     "id": 0,
                     "records": logical_rec_offsets,
+                    "reference": sum(reference_measurements[rec] for rec in logical_rec_offsets) % 2,
                 },
             ]
 
@@ -2998,7 +3007,7 @@ def generate_tick_circuit_from_patch(
     Detector annotations (similar to Stim's DETECTOR and OBSERVABLE_INCLUDE)
     are stored as circuit metadata:
     - 'detectors': JSON list of {id, coords, records}
-    - 'observables': JSON list of {id, records}
+    - 'observables': JSON list of {id, records, reference}
     - 'num_measurements': total measurement count
     - 'num_detectors': number of detectors
 

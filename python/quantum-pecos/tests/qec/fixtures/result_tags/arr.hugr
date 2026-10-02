@@ -1,0 +1,2198 @@
+HUGRiHJv)@[{"version": "0.3.0", "name": "tket.quantum", "types": {}, "operations": {"CRz": {"extension": "tket.quantum", "name": "CRz", "description": "CRz", "misc": {"commutation": []}, "signature": {"params": [], "body": {"t": "G", "input": [{"t": "Q"}, {"t": "Q"}, {"t": "Opaque", "extension": "tket.rotation", "extension_version": "0.2.0", "id": "rotation", "args": [], "bound": "C"}], "output": [{"t": "Q"}, {"t": "Q"}]}}, "binary": false, "lower_funcs": []}, "CX": {"extension": "tket.quantum", "name": "CX", "description": "CX", "misc": {"commutation": [[0, "Z"], [1, "X"]]}, "signature": {"params": [], "body": {"t": "G", "input": [{"t": "Q"}, {"t": "Q"}], "output": [{"t": "Q"}, {"t": "Q"}]}}, "binary": false, "lower_funcs": []}, "CY": {"extension": "tket.quantum", "name": "CY", "description": "CY", "misc": {"commutation": []}, "signature": {"params": [], "body": {"t": "G", "input": [{"t": "Q"}, {"t": "Q"}], "output": [{"t": "Q"}, {"t": "Q"}]}}, "binary": false, "lower_funcs": []}, "CZ": {"extension": "tket.quantum", "name": "CZ", "description": "CZ", "misc": {"commutation": [[0, "Z"], [1, "Z"]]}, "signature": {"params": [], "body": {"t": "G", "input": [{"t": "Q"}, {"t": "Q"}], "output": [{"t": "Q"}, {"t": "Q"}]}}, "binary": false, "lower_funcs": []}, "H": {"extension": "tket.quantum", "name": "H", "description": "H", "misc": {"commutation": []}, "signature": {"params": [], "body": {"t": "G", "input": [{"t": "Q"}], "output": [{"t": "Q"}]}}, "binary": false, "lower_funcs": []}, "Measure": {"extension": "tket.quantum", "name": "Measure", "description": "Measure", "misc": {"commutation": [[0, "Z"]]}, "signature": {"params": [], "body": {"t": "G", "input": [{"t": "Q"}], "output": [{"t": "Q"}, {"t": "Sum", "s": "Unit", "size": 2}]}}, "binary": false, "lower_funcs": []}, "MeasureFree": {"extension": "tket.quantum", "name": "MeasureFree", "description": "MeasureFree", "misc": {"commutation": []}, "signature": {"params": [], "body": {"t": "G", "input": [{"t": "Q"}], "output": [{"t": "Opaque", "extension": "tket.measurement", "extension_version": "0.1.0", "id": "Measurement", "args": [], "bound": "C"}]}}, "binary": false, "lower_funcs": []}, "QAlloc": {"extension": "tket.quantum", "name": "QAlloc", "description": "QAlloc", "misc": {"commutation": []}, "signature": {"params": [], "body": {"t": "G", "input": [], "output": [{"t": "Q"}]}}, "binary": false, "lower_funcs": []}, "QFree": {"extension": "tket.quantum", "name": "QFree", "description": "QFree", "misc": {"commutation": []}, "signature": {"params": [], "body": {"t": "G", "input": [{"t": "Q"}], "output": []}}, "binary": false, "lower_funcs": []}, "Reset": {"extension": "tket.quantum", "name": "Reset", "description": "Reset", "misc": {"commutation": []}, "signature": {"params": [], "body": {"t": "G", "input": [{"t": "Q"}], "output": [{"t": "Q"}]}}, "binary": false, "lower_funcs": []}, "Rx": {"extension": "tket.quantum", "name": "Rx", "description": "Rx", "misc": {"commutation": [[0, "X"]]}, "signature": {"params": [], "body": {"t": "G", "input": [{"t": "Q"}, {"t": "Opaque", "extension": "tket.rotation", "extension_version": "0.2.0", "id": "rotation", "args": [], "bound": "C"}], "output": [{"t": "Q"}]}}, "binary": false, "lower_funcs": []}, "Ry": {"extension": "tket.quantum", "name": "Ry", "description": "Ry", "misc": {"commutation": []}, "signature": {"params": [], "body": {"t": "G", "input": [{"t": "Q"}, {"t": "Opaque", "extension": "tket.rotation", "extension_version": "0.2.0", "id": "rotation", "args": [], "bound": "C"}], "output": [{"t": "Q"}]}}, "binary": false, "lower_funcs": []}, "Rz": {"extension": "tket.quantum", "name": "Rz", "description": "Rz", "misc": {"commutation": [[0, "Z"]]}, "signature": {"params": [], "body": {"t": "G", "input": [{"t": "Q"}, {"t": "Opaque", "extension": "tket.rotation", "extension_version": "0.2.0", "id": "rotation", "args": [], "bound": "C"}], "output": [{"t": "Q"}]}}, "binary": false, "lower_funcs": []}, "S": {"extension": "tket.quantum", "name": "S", "description": "S", "misc": {"commutation": [[0, "Z"]]}, "signature": {"params": [], "body": {"t": "G", "input": [{"t": "Q"}], "output": [{"t": "Q"}]}}, "binary": false, "lower_funcs": []}, "Sdg": {"extension": "tket.quantum", "name": "Sdg", "description": "Sdg", "misc": {"commutation": [[0, "Z"]]}, "signature": {"params": [], "body": {"t": "G", "input": [{"t": "Q"}], "output": [{"t": "Q"}]}}, "binary": false, "lower_funcs": []}, "T": {"extension": "tket.quantum", "name": "T", "description": "T", "misc": {"commutation": [[0, "Z"]]}, "signature": {"params": [], "body": {"t": "G", "input": [{"t": "Q"}], "output": [{"t": "Q"}]}}, "binary": false, "lower_funcs": []}, "Tdg": {"extension": "tket.quantum", "name": "Tdg", "description": "Tdg", "misc": {"commutation": [[0, "Z"]]}, "signature": {"params": [], "body": {"t": "G", "input": [{"t": "Q"}], "output": [{"t": "Q"}]}}, "binary": false, "lower_funcs": []}, "Toffoli": {"extension": "tket.quantum", "name": "Toffoli", "description": "Toffoli", "misc": {"commutation": []}, "signature": {"params": [], "body": {"t": "G", "input": [{"t": "Q"}, {"t": "Q"}, {"t": "Q"}], "output": [{"t": "Q"}, {"t": "Q"}, {"t": "Q"}]}}, "binary": false, "lower_funcs": []}, "TryQAlloc": {"extension": "tket.quantum", "name": "TryQAlloc", "description": "TryQAlloc", "misc": {"commutation": []}, "signature": {"params": [], "body": {"t": "G", "input": [], "output": [{"t": "Sum", "s": "General", "rows": [[], [{"t": "Q"}]]}]}}, "binary": false, "lower_funcs": []}, "V": {"extension": "tket.quantum", "name": "V", "description": "V", "misc": {"commutation": [[0, "X"]]}, "signature": {"params": [], "body": {"t": "G", "input": [{"t": "Q"}], "output": [{"t": "Q"}]}}, "binary": false, "lower_funcs": []}, "Vdg": {"extension": "tket.quantum", "name": "Vdg", "description": "Vdg", "misc": {"commutation": [[0, "X"]]}, "signature": {"params": [], "body": {"t": "G", "input": [{"t": "Q"}], "output": [{"t": "Q"}]}}, "binary": false, "lower_funcs": []}, "X": {"extension": "tket.quantum", "name": "X", "description": "X", "misc": {"commutation": [[0, "X"]]}, "signature": {"params": [], "body": {"t": "G", "input": [{"t": "Q"}], "output": [{"t": "Q"}]}}, "binary": false, "lower_funcs": []}, "Y": {"extension": "tket.quantum", "name": "Y", "description": "Y", "misc": {"commutation": [[0, "Y"]]}, "signature": {"params": [], "body": {"t": "G", "input": [{"t": "Q"}], "output": [{"t": "Q"}]}}, "binary": false, "lower_funcs": []}, "Z": {"extension": "tket.quantum", "name": "Z", "description": "Z", "misc": {"commutation": [[0, "Z"]]}, "signature": {"params": [], "body": {"t": "G", "input": [{"t": "Q"}], "output": [{"t": "Q"}]}}, "binary": false, "lower_funcs": []}, "symbolic_angle": {"extension": "tket.quantum", "name": "symbolic_angle", "description": "Store a sympy expression that can be evaluated to an angle.", "misc": {}, "signature": {"params": [{"tp": "String"}], "body": {"t": "G", "input": [], "output": [{"t": "Opaque", "extension": "tket.rotation", "extension_version": "0.2.0", "id": "rotation", "args": [], "bound": "C"}]}}, "binary": false, "lower_funcs": []}}}, {"version": "0.1.0", "name": "tket.measurement", "types": {"Measurement": {"extension": "tket.measurement", "name": "Measurement", "description": "A copyable type representing the result of a measurement operation", "params": [], "bound": {"b": "Explicit", "bound": "C"}}}, "operations": {"Read": {"extension": "tket.measurement", "name": "Read", "description": "Consumes a measurement, converting it into a bool.", "misc": {}, "signature": {"params": [], "body": {"t": "G", "input": [{"t": "Opaque", "extension": "tket.measurement", "extension_version": "0.1.0", "id": "Measurement", "args": [], "bound": "C"}], "output": [{"t": "Sum", "s": "Unit", "size": 2}]}}, "binary": false, "lower_funcs": []}}}, {"version": "0.2.0", "name": "tket.result", "types": {}, "operations": {"result_array_bool": {"extension": "tket.result", "name": "result_array_bool", "description": "Report an array of boolean results.", "misc": {}, "signature": {"params": [{"tp": "String"}, {"tp": "BoundedNat", "bound": null}], "body": {"t": "G", "input": [{"t": "Opaque", "extension": "collections.array", "extension_version": "0.1.2", "id": "array", "args": [{"tya": "Variable", "idx": 1, "cached_decl": {"tp": "BoundedNat", "bound": null}}, {"tya": "Type", "ty": {"t": "Sum", "s": "Unit", "size": 2}}], "bound": "A"}], "output": []}}, "binary": false, "lower_funcs": []}, "result_array_f64": {"extension": "tket.result", "name": "result_array_f64", "description": "Report an array of floating-point results.", "misc": {}, "signature": {"params": [{"tp": "String"}, {"tp": "BoundedNat", "bound": null}], "body": {"t": "G", "input": [{"t": "Opaque", "extension": "collections.array", "extension_version": "0.1.2", "id": "array", "args": [{"tya": "Variable", "idx": 1, "cached_decl": {"tp": "BoundedNat", "bound": null}}, {"tya": "Type", "ty": {"t": "Opaque", "extension": "arithmetic.float.types", "extension_version": "0.1.0", "id": "float64", "args": [], "bound": "C"}}], "bound": "A"}], "output": []}}, "binary": false, "lower_funcs": []}, "result_array_int": {"extension": "tket.result", "name": "result_array_int", "description": "Report an array of signed integer results.", "misc": {}, "signature": {"params": [{"tp": "String"}, {"tp": "BoundedNat", "bound": null}, {"tp": "BoundedNat", "bound": 7}], "body": {"t": "G", "input": [{"t": "Opaque", "extension": "collections.array", "extension_version": "0.1.2", "id": "array", "args": [{"tya": "Variable", "idx": 1, "cached_decl": {"tp": "BoundedNat", "bound": null}}, {"tya": "Type", "ty": {"t": "Opaque", "extension": "arithmetic.int.types", "extension_version": "0.1.0", "id": "int", "args": [{"tya": "Variable", "idx": 2, "cached_decl": {"tp": "BoundedNat", "bound": 7}}], "bound": "C"}}], "bound": "A"}], "output": []}}, "binary": false, "lower_funcs": []}, "result_array_uint": {"extension": "tket.result", "name": "result_array_uint", "description": "Report an array of unsigned integer results.", "misc": {}, "signature": {"params": [{"tp": "String"}, {"tp": "BoundedNat", "bound": null}, {"tp": "BoundedNat", "bound": 7}], "body": {"t": "G", "input": [{"t": "Opaque", "extension": "collections.array", "extension_version": "0.1.2", "id": "array", "args": [{"tya": "Variable", "idx": 1, "cached_decl": {"tp": "BoundedNat", "bound": null}}, {"tya": "Type", "ty": {"t": "Opaque", "extension": "arithmetic.int.types", "extension_version": "0.1.0", "id": "int", "args": [{"tya": "Variable", "idx": 2, "cached_decl": {"tp": "BoundedNat", "bound": 7}}], "bound": "C"}}], "bound": "A"}], "output": []}}, "binary": false, "lower_funcs": []}, "result_bool": {"extension": "tket.result", "name": "result_bool", "description": "Report a boolean result.", "misc": {}, "signature": {"params": [{"tp": "String"}], "body": {"t": "G", "input": [{"t": "Sum", "s": "Unit", "size": 2}], "output": []}}, "binary": false, "lower_funcs": []}, "result_f64": {"extension": "tket.result", "name": "result_f64", "description": "Report a floating-point result.", "misc": {}, "signature": {"params": [{"tp": "String"}], "body": {"t": "G", "input": [{"t": "Opaque", "extension": "arithmetic.float.types", "extension_version": "0.1.0", "id": "float64", "args": [], "bound": "C"}], "output": []}}, "binary": false, "lower_funcs": []}, "result_int": {"extension": "tket.result", "name": "result_int", "description": "Report a signed integer result.", "misc": {}, "signature": {"params": [{"tp": "String"}, {"tp": "BoundedNat", "bound": 7}], "body": {"t": "G", "input": [{"t": "Opaque", "extension": "arithmetic.int.types", "extension_version": "0.1.0", "id": "int", "args": [{"tya": "Variable", "idx": 1, "cached_decl": {"tp": "BoundedNat", "bound": 7}}], "bound": "C"}], "output": []}}, "binary": false, "lower_funcs": []}, "result_uint": {"extension": "tket.result", "name": "result_uint", "description": "Report an unsigned integer result.", "misc": {}, "signature": {"params": [{"tp": "String"}, {"tp": "BoundedNat", "bound": 7}], "body": {"t": "G", "input": [{"t": "Opaque", "extension": "arithmetic.int.types", "extension_version": "0.1.0", "id": "int", "args": [{"tya": "Variable", "idx": 1, "cached_decl": {"tp": "BoundedNat", "bound": 7}}], "bound": "C"}], "output": []}}, "binary": false, "lower_funcs": []}}}, {"version": "0.2.0", "name": "tket.guppy", "types": {}, "operations": {"drop": {"extension": "tket.guppy", "name": "drop", "description": "Drop the input wire. Applicable to guppy affine types only.", "misc": {}, "signature": {"params": [{"tp": "Type", "b": "A"}], "body": {"t": "G", "input": [{"t": "V", "i": 0, "b": "A"}], "output": []}}, "binary": false, "lower_funcs": []}}}, {"version": "0.2.0", "name": "tket.rotation", "types": {"rotation": {"extension": "tket.rotation", "name": "rotation", "description": "rotation type expressed as number of half turns", "params": [], "bound": {"b": "Explicit", "bound": "C"}}}, "operations": {"from_halfturns": {"extension": "tket.rotation", "name": "from_halfturns", "description": "Construct rotation from number of half-turns (would be multiples of PI in radians). Returns None if the float is non-finite.", "misc": {}, "signature": {"params": [], "body": {"t": "G", "input": [{"t": "Opaque", "extension": "arithmetic.float.types", "extension_version": "0.1.0", "id": "float64", "args": [], "bound": "C"}], "output": [{"t": "Sum", "s": "General", "rows": [[], [{"t": "Opaque", "extension": "tket.rotation", "extension_version": "0.2.0", "id": "rotation", "args": [], "bound": "C"}]]}]}}, "binary": false, "lower_funcs": []}, "from_halfturns_unchecked": {"extension": "tket.rotation", "name": "from_halfturns_unchecked", "description": "Construct rotation from number of half-turns (would be multiples of PI in radians). Panics if the float is non-finite.", "misc": {}, "signature": {"params": [], "body": {"t": "G", "input": [{"t": "Opaque", "extension": "arithmetic.float.types", "extension_version": "0.1.0", "id": "float64", "args": [], "bound": "C"}], "output": [{"t": "Opaque", "extension": "tket.rotation", "extension_version": "0.2.0", "id": "rotation", "args": [], "bound": "C"}]}}, "binary": false, "lower_funcs": []}, "radd": {"extension": "tket.rotation", "name": "radd", "description": "Add two angles together (experimental).", "misc": {}, "signature": {"params": [], "body": {"t": "G", "input": [{"t": "Opaque", "extension": "tket.rotation", "extension_version": "0.2.0", "id": "rotation", "args": [], "bound": "C"}, {"t": "Opaque", "extension": "tket.rotation", "extension_version": "0.2.0", "id": "rotation", "args": [], "bound": "C"}], "output": [{"t": "Opaque", "extension": "tket.rotation", "extension_version": "0.2.0", "id": "rotation", "args": [], "bound": "C"}]}}, "binary": false, "lower_funcs": []}, "to_halfturns": {"extension": "tket.rotation", "name": "to_halfturns", "description": "Convert rotation to number of half-turns (would be multiples of PI in radians).", "misc": {}, "signature": {"params": [], "body": {"t": "G", "input": [{"t": "Opaque", "extension": "tket.rotation", "extension_version": "0.2.0", "id": "rotation", "args": [], "bound": "C"}], "output": [{"t": "Opaque", "extension": "arithmetic.float.types", "extension_version": "0.1.0", "id": "float64", "args": [], "bound": "C"}]}}, "binary": false, "lower_funcs": []}}}](hugr 0)
+
+(mod)
+
+(meta
+  (compat.meta_json
+    "core.generator"
+    "{\"name\": \"guppylang (guppylang-internals-v1.0.1)\", \"version\": \"1.0.1\"}"))
+
+(meta
+  (compat.meta_json
+    "core.used_extensions"
+    "[{\"name\": \"collections.borrow_arr\", \"version\": \"0.2.1\"}, {\"name\": \"prelude\", \"version\": \"0.2.2\"}, {\"name\": \"arithmetic.int.types\", \"version\": \"0.1.0\"}, {\"name\": \"tket.quantum\", \"version\": \"0.3.0\"}, {\"name\": \"arithmetic.conversions\", \"version\": \"0.1.1\"}, {\"name\": \"arithmetic.int\", \"version\": \"0.1.1\"}, {\"name\": \"tket.measurement\", \"version\": \"0.1.0\"}, {\"name\": \"collections.array\", \"version\": \"0.1.2\"}, {\"name\": \"tket.result\", \"version\": \"0.2.0\"}, {\"name\": \"tket.guppy\", \"version\": \"0.2.0\"}, {\"name\": \"arithmetic.float.types\", \"version\": \"0.1.0\"}, {\"name\": \"tket.rotation\", \"version\": \"0.2.0\"}]"))
+
+(meta (compat.meta_json "name" "\"__main__\""))
+
+(define-func public __main__.arr (core.fn [] [])
+  (meta (compat.meta_json "tket.unitary" "0"))
+  (meta core.entrypoint)
+  (dfg
+    (signature (core.fn [] []))
+    (meta (core.order_hint.input_key 2))
+    (meta (core.order_hint.order 2 7))
+    (meta (core.order_hint.output_key 3))
+    (meta (core.order_hint.order 7 116))
+    (meta (core.order_hint.order 110 3))
+    (meta (core.order_hint.order 116 182))
+    (meta (core.order_hint.order 182 110))
+    ((collections.borrow_arr.new_all_borrowed@0.2.1 2 prelude.qubit) [] [%_1]
+      (signature
+        (core.fn
+          []
+          [(collections.borrow_arr.borrow_array@0.2.1 2 prelude.qubit)])))
+    ((core.load_const
+        (arithmetic.int.types.int@0.1.0 6)
+        (arithmetic.int.const 6 0))
+      [] [%_3]
+      (signature (core.fn [] [(arithmetic.int.types.int@0.1.0 6)])))
+    (tail-loop [%_4 %_1 %_3] [%_5 %_6]
+      (signature
+        (core.fn
+          [(core.adt
+             [[(arithmetic.int.types.int@0.1.0 6)
+               (arithmetic.int.types.int@0.1.0 6)
+               (arithmetic.int.types.int@0.1.0 6)]])
+           (collections.borrow_arr.borrow_array@0.2.1 2 prelude.qubit)
+           (arithmetic.int.types.int@0.1.0 6)]
+          [(collections.borrow_arr.borrow_array@0.2.1 2 prelude.qubit)
+           (arithmetic.int.types.int@0.1.0 6)]))
+      (meta (core.order_hint.key 7))
+      (dfg [%_7 %_8 %_9] [%_10 %_11 %_12]
+        (signature
+          (core.fn
+            [(core.adt
+               [[(arithmetic.int.types.int@0.1.0 6)
+                 (arithmetic.int.types.int@0.1.0 6)
+                 (arithmetic.int.types.int@0.1.0 6)]])
+             (collections.borrow_arr.borrow_array@0.2.1 2 prelude.qubit)
+             (arithmetic.int.types.int@0.1.0 6)]
+            [(core.adt
+               [[(core.adt
+                   [[(arithmetic.int.types.int@0.1.0 6)
+                     (arithmetic.int.types.int@0.1.0 6)
+                     (arithmetic.int.types.int@0.1.0 6)]])]
+                []])
+             (collections.borrow_arr.borrow_array@0.2.1 2 prelude.qubit)
+             (arithmetic.int.types.int@0.1.0 6)]))
+        (meta (core.order_hint.input_key 8))
+        (meta (core.order_hint.order 8 12))
+        (meta (core.order_hint.output_key 9))
+        (meta (core.order_hint.order 12 9))
+        ((prelude.UnpackTuple@0.2.2
+            [(arithmetic.int.types.int@0.1.0 6)
+             (arithmetic.int.types.int@0.1.0 6)
+             (arithmetic.int.types.int@0.1.0 6)])
+          [%_7] [%_13 %_14 %_15]
+          (signature
+            (core.fn
+              [(core.adt
+                 [[(arithmetic.int.types.int@0.1.0 6)
+                   (arithmetic.int.types.int@0.1.0 6)
+                   (arithmetic.int.types.int@0.1.0 6)]])]
+              [(arithmetic.int.types.int@0.1.0 6)
+               (arithmetic.int.types.int@0.1.0 6)
+               (arithmetic.int.types.int@0.1.0 6)])))
+        ((prelude.MakeTuple@0.2.2
+            [(arithmetic.int.types.int@0.1.0 6)
+             (arithmetic.int.types.int@0.1.0 6)
+             (arithmetic.int.types.int@0.1.0 6)])
+          [%_13 %_16 %_17] [%_18]
+          (signature
+            (core.fn
+              [(arithmetic.int.types.int@0.1.0 6)
+               (arithmetic.int.types.int@0.1.0 6)
+               (arithmetic.int.types.int@0.1.0 6)]
+              [(core.adt
+                 [[(arithmetic.int.types.int@0.1.0 6)
+                   (arithmetic.int.types.int@0.1.0 6)
+                   (arithmetic.int.types.int@0.1.0 6)]])])))
+        (cond [%_19 %_8 %_9] [%_10 %_11 %_12]
+          (signature
+            (core.fn
+              [(core.adt
+                 [[]
+                  [(core.adt
+                     [[(arithmetic.int.types.int@0.1.0 6)
+                       (core.adt
+                         [[(arithmetic.int.types.int@0.1.0 6)
+                           (arithmetic.int.types.int@0.1.0 6)
+                           (arithmetic.int.types.int@0.1.0 6)]])]])]])
+               (collections.borrow_arr.borrow_array@0.2.1 2 prelude.qubit)
+               (arithmetic.int.types.int@0.1.0 6)]
+              [(core.adt
+                 [[(core.adt
+                     [[(arithmetic.int.types.int@0.1.0 6)
+                       (arithmetic.int.types.int@0.1.0 6)
+                       (arithmetic.int.types.int@0.1.0 6)]])]
+                  []])
+               (collections.borrow_arr.borrow_array@0.2.1 2 prelude.qubit)
+               (arithmetic.int.types.int@0.1.0 6)]))
+          (meta (core.order_hint.key 12))
+          (dfg [%_20 %_21] [%_22 %_20 %_21]
+            (signature
+              (core.fn
+                [(collections.borrow_arr.borrow_array@0.2.1 2 prelude.qubit)
+                 (arithmetic.int.types.int@0.1.0 6)]
+                [(core.adt
+                   [[(core.adt
+                       [[(arithmetic.int.types.int@0.1.0 6)
+                         (arithmetic.int.types.int@0.1.0 6)
+                         (arithmetic.int.types.int@0.1.0 6)]])]
+                    []])
+                 (collections.borrow_arr.borrow_array@0.2.1 2 prelude.qubit)
+                 (arithmetic.int.types.int@0.1.0 6)]))
+            ((core.load_const
+                (core.adt
+                  [[(core.adt
+                      [[(arithmetic.int.types.int@0.1.0 6)
+                        (arithmetic.int.types.int@0.1.0 6)
+                        (arithmetic.int.types.int@0.1.0 6)]])]
+                   []])
+                (core.const.adt
+                  [[(core.adt
+                      [[(arithmetic.int.types.int@0.1.0 6)
+                        (arithmetic.int.types.int@0.1.0 6)
+                        (arithmetic.int.types.int@0.1.0 6)]])]
+                   []]
+                  []
+                  1
+                  (tuple)))
+              [] [%_22]
+              (signature
+                (core.fn
+                  []
+                  [(core.adt
+                     [[(core.adt
+                         [[(arithmetic.int.types.int@0.1.0 6)
+                           (arithmetic.int.types.int@0.1.0 6)
+                           (arithmetic.int.types.int@0.1.0 6)]])]
+                      []])]))))
+          (dfg [%_24 %_25 %_26] [%_27 %_28 %_29]
+            (signature
+              (core.fn
+                [(core.adt
+                   [[(arithmetic.int.types.int@0.1.0 6)
+                     (core.adt
+                       [[(arithmetic.int.types.int@0.1.0 6)
+                         (arithmetic.int.types.int@0.1.0 6)
+                         (arithmetic.int.types.int@0.1.0 6)]])]])
+                 (collections.borrow_arr.borrow_array@0.2.1 2 prelude.qubit)
+                 (arithmetic.int.types.int@0.1.0 6)]
+                [(core.adt
+                   [[(core.adt
+                       [[(arithmetic.int.types.int@0.1.0 6)
+                         (arithmetic.int.types.int@0.1.0 6)
+                         (arithmetic.int.types.int@0.1.0 6)]])]
+                    []])
+                 (collections.borrow_arr.borrow_array@0.2.1 2 prelude.qubit)
+                 (arithmetic.int.types.int@0.1.0 6)]))
+            (meta (core.order_hint.input_key 19))
+            (meta (core.order_hint.order 19 25))
+            (meta (core.order_hint.output_key 20))
+            (meta (core.order_hint.order 25 20))
+            ((prelude.UnpackTuple@0.2.2
+                [(arithmetic.int.types.int@0.1.0 6)
+                 (core.adt
+                   [[(arithmetic.int.types.int@0.1.0 6)
+                     (arithmetic.int.types.int@0.1.0 6)
+                     (arithmetic.int.types.int@0.1.0 6)]])])
+              [%_24] [%_30 %_31]
+              (signature
+                (core.fn
+                  [(core.adt
+                     [[(arithmetic.int.types.int@0.1.0 6)
+                       (core.adt
+                         [[(arithmetic.int.types.int@0.1.0 6)
+                           (arithmetic.int.types.int@0.1.0 6)
+                           (arithmetic.int.types.int@0.1.0 6)]])]])]
+                  [(arithmetic.int.types.int@0.1.0 6)
+                   (core.adt
+                     [[(arithmetic.int.types.int@0.1.0 6)
+                       (arithmetic.int.types.int@0.1.0 6)
+                       (arithmetic.int.types.int@0.1.0 6)]])])))
+            ((prelude.UnpackTuple@0.2.2
+                [(arithmetic.int.types.int@0.1.0 6)
+                 (arithmetic.int.types.int@0.1.0 6)
+                 (arithmetic.int.types.int@0.1.0 6)])
+              [%_31] [%_32 %_33 %_34]
+              (signature
+                (core.fn
+                  [(core.adt
+                     [[(arithmetic.int.types.int@0.1.0 6)
+                       (arithmetic.int.types.int@0.1.0 6)
+                       (arithmetic.int.types.int@0.1.0 6)]])]
+                  [(arithmetic.int.types.int@0.1.0 6)
+                   (arithmetic.int.types.int@0.1.0 6)
+                   (arithmetic.int.types.int@0.1.0 6)])))
+            ((prelude.MakeTuple@0.2.2
+                [(arithmetic.int.types.int@0.1.0 6)
+                 (arithmetic.int.types.int@0.1.0 6)
+                 (arithmetic.int.types.int@0.1.0 6)])
+              [%_32 %_35 %_36] [%_37]
+              (signature
+                (core.fn
+                  [(arithmetic.int.types.int@0.1.0 6)
+                   (arithmetic.int.types.int@0.1.0 6)
+                   (arithmetic.int.types.int@0.1.0 6)]
+                  [(core.adt
+                     [[(arithmetic.int.types.int@0.1.0 6)
+                       (arithmetic.int.types.int@0.1.0 6)
+                       (arithmetic.int.types.int@0.1.0 6)]])])))
+            ((core.make_adt
+                [[(core.adt
+                    [[(arithmetic.int.types.int@0.1.0 6)
+                      (arithmetic.int.types.int@0.1.0 6)
+                      (arithmetic.int.types.int@0.1.0 6)]])]
+                 []]
+                [(core.adt
+                   [[(arithmetic.int.types.int@0.1.0 6)
+                     (arithmetic.int.types.int@0.1.0 6)
+                     (arithmetic.int.types.int@0.1.0 6)]])]
+                0)
+              [%_37] [%_27]
+              (signature
+                (core.fn
+                  [(core.adt
+                     [[(arithmetic.int.types.int@0.1.0 6)
+                       (arithmetic.int.types.int@0.1.0 6)
+                       (arithmetic.int.types.int@0.1.0 6)]])]
+                  [(core.adt
+                     [[(core.adt
+                         [[(arithmetic.int.types.int@0.1.0 6)
+                           (arithmetic.int.types.int@0.1.0 6)
+                           (arithmetic.int.types.int@0.1.0 6)]])]
+                      []])])))
+            (tket.quantum.QAlloc@0.3.0 [] [%_38]
+              (signature (core.fn [] [prelude.qubit]))
+              (meta (core.order_hint.key 25)))
+            (arithmetic.conversions.itousize@0.1.1 [%_26] [%_39]
+              (signature
+                (core.fn
+                  [(arithmetic.int.types.int@0.1.0 6)]
+                  [prelude.usize@0.2.2])))
+            ((collections.borrow_arr.return@0.2.1 2 prelude.qubit)
+              [%_25 %_39 %_38] [%_28]
+              (signature
+                (core.fn
+                  [(collections.borrow_arr.borrow_array@0.2.1 2 prelude.qubit)
+                   prelude.usize@0.2.2
+                   prelude.qubit]
+                  [(collections.borrow_arr.borrow_array@0.2.1
+                     2
+                     prelude.qubit)])))
+            ((core.load_const
+                (arithmetic.int.types.int@0.1.0 6)
+                (arithmetic.int.const 6 1))
+              [] [%_41]
+              (signature (core.fn [] [(arithmetic.int.types.int@0.1.0 6)])))
+            ((arithmetic.int.iadd@0.1.1 6) [%_26 %_41] [%_29]
+              (signature
+                (core.fn
+                  [(arithmetic.int.types.int@0.1.0 6)
+                   (arithmetic.int.types.int@0.1.0 6)]
+                  [(arithmetic.int.types.int@0.1.0 6)])))
+            ((core.load_const
+                (arithmetic.int.types.int@0.1.0 6)
+                (arithmetic.int.const 6 2))
+              [] [%_35]
+              (signature (core.fn [] [(arithmetic.int.types.int@0.1.0 6)])))
+            ((core.load_const
+                (arithmetic.int.types.int@0.1.0 6)
+                (arithmetic.int.const 6 1))
+              [] [%_36]
+              (signature (core.fn [] [(arithmetic.int.types.int@0.1.0 6)])))))
+        (cfg [%_18] [%_19]
+          (signature
+            (core.fn
+              [(core.adt
+                 [[(arithmetic.int.types.int@0.1.0 6)
+                   (arithmetic.int.types.int@0.1.0 6)
+                   (arithmetic.int.types.int@0.1.0 6)]])]
+              [(core.adt
+                 [[]
+                  [(core.adt
+                     [[(arithmetic.int.types.int@0.1.0 6)
+                       (core.adt
+                         [[(arithmetic.int.types.int@0.1.0 6)
+                           (arithmetic.int.types.int@0.1.0 6)
+                           (arithmetic.int.types.int@0.1.0 6)]])]])]])]))
+          (cfg [%_56] [%_57]
+            (signature
+              (core.ctrl
+                [[(core.adt
+                    [[(arithmetic.int.types.int@0.1.0 6)
+                      (arithmetic.int.types.int@0.1.0 6)
+                      (arithmetic.int.types.int@0.1.0 6)]])]]
+                [[(core.adt
+                    [[]
+                     [(core.adt
+                        [[(arithmetic.int.types.int@0.1.0 6)
+                          (core.adt
+                            [[(arithmetic.int.types.int@0.1.0 6)
+                              (arithmetic.int.types.int@0.1.0 6)
+                              (arithmetic.int.types.int@0.1.0 6)]])]])]])]]))
+            (block [%_56] [%_44 %_45]
+              (signature
+                (core.ctrl
+                  [[(core.adt
+                      [[(arithmetic.int.types.int@0.1.0 6)
+                        (arithmetic.int.types.int@0.1.0 6)
+                        (arithmetic.int.types.int@0.1.0 6)]])]]
+                  [[(arithmetic.int.types.int@0.1.0 6)
+                    (arithmetic.int.types.int@0.1.0 6)
+                    (arithmetic.int.types.int@0.1.0 6)]
+                   [(arithmetic.int.types.int@0.1.0 6)
+                    (arithmetic.int.types.int@0.1.0 6)
+                    (arithmetic.int.types.int@0.1.0 6)]]))
+              (dfg [%_46] [%_47 %_48 %_49 %_50]
+                (signature
+                  (core.fn
+                    [(core.adt
+                       [[(arithmetic.int.types.int@0.1.0 6)
+                         (arithmetic.int.types.int@0.1.0 6)
+                         (arithmetic.int.types.int@0.1.0 6)]])]
+                    [(core.adt [[] []])
+                     (arithmetic.int.types.int@0.1.0 6)
+                     (arithmetic.int.types.int@0.1.0 6)
+                     (arithmetic.int.types.int@0.1.0 6)]))
+                ((core.load_const
+                    (core.adt [[] []])
+                    (core.const.adt [[] []] [] 1 (tuple)))
+                  [] [%_47]
+                  (signature (core.fn [] [(core.adt [[] []])])))
+                ((prelude.UnpackTuple@0.2.2
+                    [(arithmetic.int.types.int@0.1.0 6)
+                     (arithmetic.int.types.int@0.1.0 6)
+                     (arithmetic.int.types.int@0.1.0 6)])
+                  [%_46] [%_48 %_52 %_53]
+                  (signature
+                    (core.fn
+                      [(core.adt
+                         [[(arithmetic.int.types.int@0.1.0 6)
+                           (arithmetic.int.types.int@0.1.0 6)
+                           (arithmetic.int.types.int@0.1.0 6)]])]
+                      [(arithmetic.int.types.int@0.1.0 6)
+                       (arithmetic.int.types.int@0.1.0 6)
+                       (arithmetic.int.types.int@0.1.0 6)])))
+                ((core.load_const
+                    (arithmetic.int.types.int@0.1.0 6)
+                    (arithmetic.int.const 6 2))
+                  [] [%_50]
+                  (signature (core.fn [] [(arithmetic.int.types.int@0.1.0 6)])))
+                ((core.load_const
+                    (arithmetic.int.types.int@0.1.0 6)
+                    (arithmetic.int.const 6 1))
+                  [] [%_49]
+                  (signature
+                    (core.fn [] [(arithmetic.int.types.int@0.1.0 6)])))))
+            (block [%_45] [%_58]
+              (signature
+                (core.ctrl
+                  [[(arithmetic.int.types.int@0.1.0 6)
+                    (arithmetic.int.types.int@0.1.0 6)
+                    (arithmetic.int.types.int@0.1.0 6)]]
+                  [[(core.adt [[] []])
+                    (arithmetic.int.types.int@0.1.0 6)
+                    (arithmetic.int.types.int@0.1.0 6)
+                    (arithmetic.int.types.int@0.1.0 6)]]))
+              (dfg [%_59 %_60 %_61] [%_62 %_63 %_59 %_64 %_65]
+                (signature
+                  (core.fn
+                    [(arithmetic.int.types.int@0.1.0 6)
+                     (arithmetic.int.types.int@0.1.0 6)
+                     (arithmetic.int.types.int@0.1.0 6)]
+                    [(core.adt [[]])
+                     (core.adt [[] []])
+                     (arithmetic.int.types.int@0.1.0 6)
+                     (arithmetic.int.types.int@0.1.0 6)
+                     (arithmetic.int.types.int@0.1.0 6)]))
+                ((arithmetic.int.ige_s@0.1.1 6) [%_59 %_65] [%_63]
+                  (signature
+                    (core.fn
+                      [(arithmetic.int.types.int@0.1.0 6)
+                       (arithmetic.int.types.int@0.1.0 6)]
+                      [(core.adt [[] []])])))
+                ((core.load_const
+                    (arithmetic.int.types.int@0.1.0 6)
+                    (arithmetic.int.const 6 1))
+                  [] [%_64]
+                  (signature (core.fn [] [(arithmetic.int.types.int@0.1.0 6)])))
+                ((core.load_const
+                    (arithmetic.int.types.int@0.1.0 6)
+                    (arithmetic.int.const 6 2))
+                  [] [%_65]
+                  (signature (core.fn [] [(arithmetic.int.types.int@0.1.0 6)])))
+                ((core.load_const
+                    (core.adt [[]])
+                    (core.const.adt [[]] [] 0 (tuple)))
+                  [] [%_62]
+                  (signature (core.fn [] [(core.adt [[]])])))))
+            (block [%_44] [%_58]
+              (signature
+                (core.ctrl
+                  [[(arithmetic.int.types.int@0.1.0 6)
+                    (arithmetic.int.types.int@0.1.0 6)
+                    (arithmetic.int.types.int@0.1.0 6)]]
+                  [[(core.adt [[] []])
+                    (arithmetic.int.types.int@0.1.0 6)
+                    (arithmetic.int.types.int@0.1.0 6)
+                    (arithmetic.int.types.int@0.1.0 6)]]))
+              (dfg [%_69 %_70 %_71] [%_72 %_73 %_69 %_70 %_71]
+                (signature
+                  (core.fn
+                    [(arithmetic.int.types.int@0.1.0 6)
+                     (arithmetic.int.types.int@0.1.0 6)
+                     (arithmetic.int.types.int@0.1.0 6)]
+                    [(core.adt [[]])
+                     (core.adt [[] []])
+                     (arithmetic.int.types.int@0.1.0 6)
+                     (arithmetic.int.types.int@0.1.0 6)
+                     (arithmetic.int.types.int@0.1.0 6)]))
+                ((arithmetic.int.ile_s@0.1.1 6) [%_69 %_71] [%_73]
+                  (signature
+                    (core.fn
+                      [(arithmetic.int.types.int@0.1.0 6)
+                       (arithmetic.int.types.int@0.1.0 6)]
+                      [(core.adt [[] []])])))
+                ((core.load_const
+                    (core.adt [[]])
+                    (core.const.adt [[]] [] 0 (tuple)))
+                  [] [%_72]
+                  (signature (core.fn [] [(core.adt [[]])])))))
+            (block [%_58] [%_75 %_76]
+              (signature
+                (core.ctrl
+                  [[(core.adt [[] []])
+                    (arithmetic.int.types.int@0.1.0 6)
+                    (arithmetic.int.types.int@0.1.0 6)
+                    (arithmetic.int.types.int@0.1.0 6)]]
+                  [[(arithmetic.int.types.int@0.1.0 6)
+                    (arithmetic.int.types.int@0.1.0 6)
+                    (arithmetic.int.types.int@0.1.0 6)]
+                   []]))
+              (dfg [%_77 %_78 %_79 %_80] [%_81]
+                (signature
+                  (core.fn
+                    [(core.adt [[] []])
+                     (arithmetic.int.types.int@0.1.0 6)
+                     (arithmetic.int.types.int@0.1.0 6)
+                     (arithmetic.int.types.int@0.1.0 6)]
+                    [(core.adt
+                       [[(arithmetic.int.types.int@0.1.0 6)
+                         (arithmetic.int.types.int@0.1.0 6)
+                         (arithmetic.int.types.int@0.1.0 6)]
+                        []])]))
+                (cond [%_77 %_78 %_82 %_83] [%_81]
+                  (signature
+                    (core.fn
+                      [(core.adt [[] []])
+                       (arithmetic.int.types.int@0.1.0 6)
+                       (arithmetic.int.types.int@0.1.0 6)
+                       (arithmetic.int.types.int@0.1.0 6)]
+                      [(core.adt
+                         [[(arithmetic.int.types.int@0.1.0 6)
+                           (arithmetic.int.types.int@0.1.0 6)
+                           (arithmetic.int.types.int@0.1.0 6)]
+                          []])]))
+                  (dfg [%_84 %_85 %_86] [%_87]
+                    (signature
+                      (core.fn
+                        [(arithmetic.int.types.int@0.1.0 6)
+                         (arithmetic.int.types.int@0.1.0 6)
+                         (arithmetic.int.types.int@0.1.0 6)]
+                        [(core.adt
+                           [[(arithmetic.int.types.int@0.1.0 6)
+                             (arithmetic.int.types.int@0.1.0 6)
+                             (arithmetic.int.types.int@0.1.0 6)]
+                            []])]))
+                    ((core.make_adt
+                        [[(arithmetic.int.types.int@0.1.0 6)
+                          (arithmetic.int.types.int@0.1.0 6)
+                          (arithmetic.int.types.int@0.1.0 6)]
+                         []]
+                        [(arithmetic.int.types.int@0.1.0 6)
+                         (arithmetic.int.types.int@0.1.0 6)
+                         (arithmetic.int.types.int@0.1.0 6)]
+                        0)
+                      [%_84 %_88 %_89] [%_87]
+                      (signature
+                        (core.fn
+                          [(arithmetic.int.types.int@0.1.0 6)
+                           (arithmetic.int.types.int@0.1.0 6)
+                           (arithmetic.int.types.int@0.1.0 6)]
+                          [(core.adt
+                             [[(arithmetic.int.types.int@0.1.0 6)
+                               (arithmetic.int.types.int@0.1.0 6)
+                               (arithmetic.int.types.int@0.1.0 6)]
+                              []])])))
+                    ((core.load_const
+                        (arithmetic.int.types.int@0.1.0 6)
+                        (arithmetic.int.const 6 1))
+                      [] [%_88]
+                      (signature
+                        (core.fn [] [(arithmetic.int.types.int@0.1.0 6)])))
+                    ((core.load_const
+                        (arithmetic.int.types.int@0.1.0 6)
+                        (arithmetic.int.const 6 2))
+                      [] [%_89]
+                      (signature
+                        (core.fn [] [(arithmetic.int.types.int@0.1.0 6)]))))
+                  (dfg [%_92 %_93 %_94] [%_95]
+                    (signature
+                      (core.fn
+                        [(arithmetic.int.types.int@0.1.0 6)
+                         (arithmetic.int.types.int@0.1.0 6)
+                         (arithmetic.int.types.int@0.1.0 6)]
+                        [(core.adt
+                           [[(arithmetic.int.types.int@0.1.0 6)
+                             (arithmetic.int.types.int@0.1.0 6)
+                             (arithmetic.int.types.int@0.1.0 6)]
+                            []])]))
+                    ((core.load_const
+                        (core.adt
+                          [[(arithmetic.int.types.int@0.1.0 6)
+                            (arithmetic.int.types.int@0.1.0 6)
+                            (arithmetic.int.types.int@0.1.0 6)]
+                           []])
+                        (core.const.adt
+                          [[(arithmetic.int.types.int@0.1.0 6)
+                            (arithmetic.int.types.int@0.1.0 6)
+                            (arithmetic.int.types.int@0.1.0 6)]
+                           []]
+                          []
+                          1
+                          (tuple)))
+                      [] [%_95]
+                      (signature
+                        (core.fn
+                          []
+                          [(core.adt
+                             [[(arithmetic.int.types.int@0.1.0 6)
+                               (arithmetic.int.types.int@0.1.0 6)
+                               (arithmetic.int.types.int@0.1.0 6)]
+                              []])])))))
+                ((core.load_const
+                    (arithmetic.int.types.int@0.1.0 6)
+                    (arithmetic.int.const 6 1))
+                  [] [%_82]
+                  (signature (core.fn [] [(arithmetic.int.types.int@0.1.0 6)])))
+                ((core.load_const
+                    (arithmetic.int.types.int@0.1.0 6)
+                    (arithmetic.int.const 6 2))
+                  [] [%_83]
+                  (signature
+                    (core.fn [] [(arithmetic.int.types.int@0.1.0 6)])))))
+            (block [%_76] [%_57]
+              (signature
+                (core.ctrl
+                  [[]]
+                  [[(core.adt
+                      [[]
+                       [(core.adt
+                          [[(arithmetic.int.types.int@0.1.0 6)
+                            (core.adt
+                              [[(arithmetic.int.types.int@0.1.0 6)
+                                (arithmetic.int.types.int@0.1.0 6)
+                                (arithmetic.int.types.int@0.1.0 6)]])]])]])]]))
+              (dfg [] [%_99 %_100]
+                (signature
+                  (core.fn
+                    []
+                    [(core.adt [[]])
+                     (core.adt
+                       [[]
+                        [(core.adt
+                           [[(arithmetic.int.types.int@0.1.0 6)
+                             (core.adt
+                               [[(arithmetic.int.types.int@0.1.0 6)
+                                 (arithmetic.int.types.int@0.1.0 6)
+                                 (arithmetic.int.types.int@0.1.0 6)]])]])]])]))
+                ((core.load_const
+                    (core.adt
+                      [[]
+                       [(core.adt
+                          [[(arithmetic.int.types.int@0.1.0 6)
+                            (core.adt
+                              [[(arithmetic.int.types.int@0.1.0 6)
+                                (arithmetic.int.types.int@0.1.0 6)
+                                (arithmetic.int.types.int@0.1.0 6)]])]])]])
+                    (core.const.adt
+                      [[]
+                       [(core.adt
+                          [[(arithmetic.int.types.int@0.1.0 6)
+                            (core.adt
+                              [[(arithmetic.int.types.int@0.1.0 6)
+                                (arithmetic.int.types.int@0.1.0 6)
+                                (arithmetic.int.types.int@0.1.0 6)]])]])]]
+                      []
+                      0
+                      (tuple)))
+                  [] [%_100]
+                  (signature
+                    (core.fn
+                      []
+                      [(core.adt
+                         [[]
+                          [(core.adt
+                             [[(arithmetic.int.types.int@0.1.0 6)
+                               (core.adt
+                                 [[(arithmetic.int.types.int@0.1.0 6)
+                                   (arithmetic.int.types.int@0.1.0 6)
+                                   (arithmetic.int.types.int@0.1.0
+                                     6)]])]])]])])))
+                ((core.load_const
+                    (core.adt [[]])
+                    (core.const.adt [[]] [] 0 (tuple)))
+                  [] [%_99]
+                  (signature (core.fn [] [(core.adt [[]])])))))
+            (block [%_75] [%_57]
+              (signature
+                (core.ctrl
+                  [[(arithmetic.int.types.int@0.1.0 6)
+                    (arithmetic.int.types.int@0.1.0 6)
+                    (arithmetic.int.types.int@0.1.0 6)]]
+                  [[(core.adt
+                      [[]
+                       [(core.adt
+                          [[(arithmetic.int.types.int@0.1.0 6)
+                            (core.adt
+                              [[(arithmetic.int.types.int@0.1.0 6)
+                                (arithmetic.int.types.int@0.1.0 6)
+                                (arithmetic.int.types.int@0.1.0 6)]])]])]])]]))
+              (dfg [%_103 %_104 %_105] [%_106 %_107]
+                (signature
+                  (core.fn
+                    [(arithmetic.int.types.int@0.1.0 6)
+                     (arithmetic.int.types.int@0.1.0 6)
+                     (arithmetic.int.types.int@0.1.0 6)]
+                    [(core.adt [[]])
+                     (core.adt
+                       [[]
+                        [(core.adt
+                           [[(arithmetic.int.types.int@0.1.0 6)
+                             (core.adt
+                               [[(arithmetic.int.types.int@0.1.0 6)
+                                 (arithmetic.int.types.int@0.1.0 6)
+                                 (arithmetic.int.types.int@0.1.0 6)]])]])]])]))
+                ((arithmetic.int.iadd@0.1.1 6) [%_103 %_108] [%_109]
+                  (signature
+                    (core.fn
+                      [(arithmetic.int.types.int@0.1.0 6)
+                       (arithmetic.int.types.int@0.1.0 6)]
+                      [(arithmetic.int.types.int@0.1.0 6)])))
+                ((prelude.MakeTuple@0.2.2
+                    [(arithmetic.int.types.int@0.1.0 6)
+                     (arithmetic.int.types.int@0.1.0 6)
+                     (arithmetic.int.types.int@0.1.0 6)])
+                  [%_109 %_110 %_108] [%_111]
+                  (signature
+                    (core.fn
+                      [(arithmetic.int.types.int@0.1.0 6)
+                       (arithmetic.int.types.int@0.1.0 6)
+                       (arithmetic.int.types.int@0.1.0 6)]
+                      [(core.adt
+                         [[(arithmetic.int.types.int@0.1.0 6)
+                           (arithmetic.int.types.int@0.1.0 6)
+                           (arithmetic.int.types.int@0.1.0 6)]])])))
+                ((prelude.MakeTuple@0.2.2
+                    [(arithmetic.int.types.int@0.1.0 6)
+                     (core.adt
+                       [[(arithmetic.int.types.int@0.1.0 6)
+                         (arithmetic.int.types.int@0.1.0 6)
+                         (arithmetic.int.types.int@0.1.0 6)]])])
+                  [%_103 %_111] [%_112]
+                  (signature
+                    (core.fn
+                      [(arithmetic.int.types.int@0.1.0 6)
+                       (core.adt
+                         [[(arithmetic.int.types.int@0.1.0 6)
+                           (arithmetic.int.types.int@0.1.0 6)
+                           (arithmetic.int.types.int@0.1.0 6)]])]
+                      [(core.adt
+                         [[(arithmetic.int.types.int@0.1.0 6)
+                           (core.adt
+                             [[(arithmetic.int.types.int@0.1.0 6)
+                               (arithmetic.int.types.int@0.1.0 6)
+                               (arithmetic.int.types.int@0.1.0 6)]])]])])))
+                ((core.make_adt
+                    [[]
+                     [(core.adt
+                        [[(arithmetic.int.types.int@0.1.0 6)
+                          (core.adt
+                            [[(arithmetic.int.types.int@0.1.0 6)
+                              (arithmetic.int.types.int@0.1.0 6)
+                              (arithmetic.int.types.int@0.1.0 6)]])]])]]
+                    [(core.adt
+                       [[(arithmetic.int.types.int@0.1.0 6)
+                         (core.adt
+                           [[(arithmetic.int.types.int@0.1.0 6)
+                             (arithmetic.int.types.int@0.1.0 6)
+                             (arithmetic.int.types.int@0.1.0 6)]])]])]
+                    1)
+                  [%_112] [%_107]
+                  (signature
+                    (core.fn
+                      [(core.adt
+                         [[(arithmetic.int.types.int@0.1.0 6)
+                           (core.adt
+                             [[(arithmetic.int.types.int@0.1.0 6)
+                               (arithmetic.int.types.int@0.1.0 6)
+                               (arithmetic.int.types.int@0.1.0 6)]])]])]
+                      [(core.adt
+                         [[]
+                          [(core.adt
+                             [[(arithmetic.int.types.int@0.1.0 6)
+                               (core.adt
+                                 [[(arithmetic.int.types.int@0.1.0 6)
+                                   (arithmetic.int.types.int@0.1.0 6)
+                                   (arithmetic.int.types.int@0.1.0
+                                     6)]])]])]])])))
+                ((core.load_const
+                    (arithmetic.int.types.int@0.1.0 6)
+                    (arithmetic.int.const 6 1))
+                  [] [%_108]
+                  (signature (core.fn [] [(arithmetic.int.types.int@0.1.0 6)])))
+                ((core.load_const
+                    (arithmetic.int.types.int@0.1.0 6)
+                    (arithmetic.int.const 6 2))
+                  [] [%_110]
+                  (signature (core.fn [] [(arithmetic.int.types.int@0.1.0 6)])))
+                ((core.load_const
+                    (core.adt [[]])
+                    (core.const.adt [[]] [] 0 (tuple)))
+                  [] [%_106]
+                  (signature (core.fn [] [(core.adt [[]])])))))))
+        ((core.load_const
+            (arithmetic.int.types.int@0.1.0 6)
+            (arithmetic.int.const 6 2))
+          [] [%_16]
+          (signature (core.fn [] [(arithmetic.int.types.int@0.1.0 6)])))
+        ((core.load_const
+            (arithmetic.int.types.int@0.1.0 6)
+            (arithmetic.int.const 6 1))
+          [] [%_17]
+          (signature (core.fn [] [(arithmetic.int.types.int@0.1.0 6)])))))
+    ((collections.borrow_arr.clone@0.2.1 2 (core.adt [[] []]))
+      [%_118] [%_119 %_120]
+      (signature
+        (core.fn
+          [(collections.borrow_arr.borrow_array@0.2.1 2 (core.adt [[] []]))]
+          [(collections.borrow_arr.borrow_array@0.2.1 2 (core.adt [[] []]))
+           (collections.borrow_arr.borrow_array@0.2.1 2 (core.adt [[] []]))])))
+    ((collections.borrow_arr.to_array@0.2.1 2 (core.adt [[] []]))
+      [%_119] [%_121]
+      (signature
+        (core.fn
+          [(collections.borrow_arr.borrow_array@0.2.1 2 (core.adt [[] []]))]
+          [(collections.array.array@0.1.2 2 (core.adt [[] []]))])))
+    ((tket.result.result_array_bool@0.2.0 "pair" 2) [%_121] []
+      (signature
+        (core.fn [(collections.array.array@0.1.2 2 (core.adt [[] []]))] []))
+      (meta (core.order_hint.key 110)))
+    ((tket.guppy.drop@0.2.0
+        (collections.borrow_arr.borrow_array@0.2.1 2 (core.adt [[] []])))
+      [%_120] []
+      (signature
+        (core.fn
+          [(collections.borrow_arr.borrow_array@0.2.1 2 (core.adt [[] []]))]
+          [])))
+    ((collections.borrow_arr.new_all_borrowed@0.2.1
+        2
+        tket.measurement.Measurement@0.1.0)
+      [] [%_122]
+      (signature
+        (core.fn
+          []
+          [(collections.borrow_arr.borrow_array@0.2.1
+             2
+             tket.measurement.Measurement@0.1.0)])))
+    ((core.load_const
+        (arithmetic.int.types.int@0.1.0 6)
+        (arithmetic.int.const 6 0))
+      [] [%_124]
+      (signature (core.fn [] [(arithmetic.int.types.int@0.1.0 6)])))
+    ((prelude.MakeTuple@0.2.2
+        [(collections.borrow_arr.borrow_array@0.2.1 2 prelude.qubit)
+         (arithmetic.int.types.int@0.1.0 6)])
+      [%_5 %_125] [%_126]
+      (signature
+        (core.fn
+          [(collections.borrow_arr.borrow_array@0.2.1 2 prelude.qubit)
+           (arithmetic.int.types.int@0.1.0 6)]
+          [(core.adt
+             [[(collections.borrow_arr.borrow_array@0.2.1 2 prelude.qubit)
+               (arithmetic.int.types.int@0.1.0 6)]])])))
+    (tail-loop [%_126 %_122 %_124] [%_127 %_128]
+      (signature
+        (core.fn
+          [(core.adt
+             [[(collections.borrow_arr.borrow_array@0.2.1 2 prelude.qubit)
+               (arithmetic.int.types.int@0.1.0 6)]])
+           (collections.borrow_arr.borrow_array@0.2.1
+             2
+             tket.measurement.Measurement@0.1.0)
+           (arithmetic.int.types.int@0.1.0 6)]
+          [(collections.borrow_arr.borrow_array@0.2.1
+             2
+             tket.measurement.Measurement@0.1.0)
+           (arithmetic.int.types.int@0.1.0 6)]))
+      (meta (core.order_hint.key 116))
+      (dfg [%_129 %_130 %_131] [%_132 %_133 %_134]
+        (signature
+          (core.fn
+            [(core.adt
+               [[(collections.borrow_arr.borrow_array@0.2.1 2 prelude.qubit)
+                 (arithmetic.int.types.int@0.1.0 6)]])
+             (collections.borrow_arr.borrow_array@0.2.1
+               2
+               tket.measurement.Measurement@0.1.0)
+             (arithmetic.int.types.int@0.1.0 6)]
+            [(core.adt
+               [[(core.adt
+                   [[(collections.borrow_arr.borrow_array@0.2.1 2 prelude.qubit)
+                     (arithmetic.int.types.int@0.1.0 6)]])]
+                []])
+             (collections.borrow_arr.borrow_array@0.2.1
+               2
+               tket.measurement.Measurement@0.1.0)
+             (arithmetic.int.types.int@0.1.0 6)]))
+        (meta (core.order_hint.input_key 117))
+        (meta (core.order_hint.order 117 121))
+        (meta (core.order_hint.output_key 118))
+        (meta (core.order_hint.order 121 118))
+        ((prelude.UnpackTuple@0.2.2
+            [(collections.borrow_arr.borrow_array@0.2.1 2 prelude.qubit)
+             (arithmetic.int.types.int@0.1.0 6)])
+          [%_129] [%_135 %_136]
+          (signature
+            (core.fn
+              [(core.adt
+                 [[(collections.borrow_arr.borrow_array@0.2.1 2 prelude.qubit)
+                   (arithmetic.int.types.int@0.1.0 6)]])]
+              [(collections.borrow_arr.borrow_array@0.2.1 2 prelude.qubit)
+               (arithmetic.int.types.int@0.1.0 6)])))
+        ((prelude.MakeTuple@0.2.2
+            [(collections.borrow_arr.borrow_array@0.2.1 2 prelude.qubit)
+             (arithmetic.int.types.int@0.1.0 6)])
+          [%_135 %_136] [%_137]
+          (signature
+            (core.fn
+              [(collections.borrow_arr.borrow_array@0.2.1 2 prelude.qubit)
+               (arithmetic.int.types.int@0.1.0 6)]
+              [(core.adt
+                 [[(collections.borrow_arr.borrow_array@0.2.1 2 prelude.qubit)
+                   (arithmetic.int.types.int@0.1.0 6)]])])))
+        (cond [%_138 %_130 %_131] [%_132 %_133 %_134]
+          (signature
+            (core.fn
+              [(core.adt
+                 [[]
+                  [(core.adt
+                     [[prelude.qubit
+                       (core.adt
+                         [[(collections.borrow_arr.borrow_array@0.2.1
+                             2
+                             prelude.qubit)
+                           (arithmetic.int.types.int@0.1.0 6)]])]])]])
+               (collections.borrow_arr.borrow_array@0.2.1
+                 2
+                 tket.measurement.Measurement@0.1.0)
+               (arithmetic.int.types.int@0.1.0 6)]
+              [(core.adt
+                 [[(core.adt
+                     [[(collections.borrow_arr.borrow_array@0.2.1
+                         2
+                         prelude.qubit)
+                       (arithmetic.int.types.int@0.1.0 6)]])]
+                  []])
+               (collections.borrow_arr.borrow_array@0.2.1
+                 2
+                 tket.measurement.Measurement@0.1.0)
+               (arithmetic.int.types.int@0.1.0 6)]))
+          (meta (core.order_hint.key 121))
+          (dfg [%_139 %_140] [%_141 %_139 %_140]
+            (signature
+              (core.fn
+                [(collections.borrow_arr.borrow_array@0.2.1
+                   2
+                   tket.measurement.Measurement@0.1.0)
+                 (arithmetic.int.types.int@0.1.0 6)]
+                [(core.adt
+                   [[(core.adt
+                       [[(collections.borrow_arr.borrow_array@0.2.1
+                           2
+                           prelude.qubit)
+                         (arithmetic.int.types.int@0.1.0 6)]])]
+                    []])
+                 (collections.borrow_arr.borrow_array@0.2.1
+                   2
+                   tket.measurement.Measurement@0.1.0)
+                 (arithmetic.int.types.int@0.1.0 6)]))
+            ((core.make_adt
+                [[(core.adt
+                    [[(collections.borrow_arr.borrow_array@0.2.1
+                        2
+                        prelude.qubit)
+                      (arithmetic.int.types.int@0.1.0 6)]])]
+                 []]
+                []
+                1)
+              [] [%_141]
+              (signature
+                (core.fn
+                  []
+                  [(core.adt
+                     [[(core.adt
+                         [[(collections.borrow_arr.borrow_array@0.2.1
+                             2
+                             prelude.qubit)
+                           (arithmetic.int.types.int@0.1.0 6)]])]
+                      []])]))))
+          (dfg [%_142 %_143 %_144] [%_145 %_146 %_147]
+            (signature
+              (core.fn
+                [(core.adt
+                   [[prelude.qubit
+                     (core.adt
+                       [[(collections.borrow_arr.borrow_array@0.2.1
+                           2
+                           prelude.qubit)
+                         (arithmetic.int.types.int@0.1.0 6)]])]])
+                 (collections.borrow_arr.borrow_array@0.2.1
+                   2
+                   tket.measurement.Measurement@0.1.0)
+                 (arithmetic.int.types.int@0.1.0 6)]
+                [(core.adt
+                   [[(core.adt
+                       [[(collections.borrow_arr.borrow_array@0.2.1
+                           2
+                           prelude.qubit)
+                         (arithmetic.int.types.int@0.1.0 6)]])]
+                    []])
+                 (collections.borrow_arr.borrow_array@0.2.1
+                   2
+                   tket.measurement.Measurement@0.1.0)
+                 (arithmetic.int.types.int@0.1.0 6)]))
+            (meta (core.order_hint.input_key 127))
+            (meta (core.order_hint.order 127 133))
+            (meta (core.order_hint.output_key 128))
+            (meta (core.order_hint.order 133 128))
+            ((prelude.UnpackTuple@0.2.2
+                [prelude.qubit
+                 (core.adt
+                   [[(collections.borrow_arr.borrow_array@0.2.1 2 prelude.qubit)
+                     (arithmetic.int.types.int@0.1.0 6)]])])
+              [%_142] [%_148 %_149]
+              (signature
+                (core.fn
+                  [(core.adt
+                     [[prelude.qubit
+                       (core.adt
+                         [[(collections.borrow_arr.borrow_array@0.2.1
+                             2
+                             prelude.qubit)
+                           (arithmetic.int.types.int@0.1.0 6)]])]])]
+                  [prelude.qubit
+                   (core.adt
+                     [[(collections.borrow_arr.borrow_array@0.2.1
+                         2
+                         prelude.qubit)
+                       (arithmetic.int.types.int@0.1.0 6)]])])))
+            ((prelude.UnpackTuple@0.2.2
+                [(collections.borrow_arr.borrow_array@0.2.1 2 prelude.qubit)
+                 (arithmetic.int.types.int@0.1.0 6)])
+              [%_149] [%_150 %_151]
+              (signature
+                (core.fn
+                  [(core.adt
+                     [[(collections.borrow_arr.borrow_array@0.2.1
+                         2
+                         prelude.qubit)
+                       (arithmetic.int.types.int@0.1.0 6)]])]
+                  [(collections.borrow_arr.borrow_array@0.2.1 2 prelude.qubit)
+                   (arithmetic.int.types.int@0.1.0 6)])))
+            ((prelude.MakeTuple@0.2.2
+                [(collections.borrow_arr.borrow_array@0.2.1 2 prelude.qubit)
+                 (arithmetic.int.types.int@0.1.0 6)])
+              [%_150 %_151] [%_152]
+              (signature
+                (core.fn
+                  [(collections.borrow_arr.borrow_array@0.2.1 2 prelude.qubit)
+                   (arithmetic.int.types.int@0.1.0 6)]
+                  [(core.adt
+                     [[(collections.borrow_arr.borrow_array@0.2.1
+                         2
+                         prelude.qubit)
+                       (arithmetic.int.types.int@0.1.0 6)]])])))
+            ((core.make_adt
+                [[(core.adt
+                    [[(collections.borrow_arr.borrow_array@0.2.1
+                        2
+                        prelude.qubit)
+                      (arithmetic.int.types.int@0.1.0 6)]])]
+                 []]
+                [(core.adt
+                   [[(collections.borrow_arr.borrow_array@0.2.1 2 prelude.qubit)
+                     (arithmetic.int.types.int@0.1.0 6)]])]
+                0)
+              [%_152] [%_145]
+              (signature
+                (core.fn
+                  [(core.adt
+                     [[(collections.borrow_arr.borrow_array@0.2.1
+                         2
+                         prelude.qubit)
+                       (arithmetic.int.types.int@0.1.0 6)]])]
+                  [(core.adt
+                     [[(core.adt
+                         [[(collections.borrow_arr.borrow_array@0.2.1
+                             2
+                             prelude.qubit)
+                           (arithmetic.int.types.int@0.1.0 6)]])]
+                      []])])))
+            (tket.quantum.MeasureFree@0.3.0 [%_148] [%_153]
+              (signature
+                (core.fn [prelude.qubit] [tket.measurement.Measurement@0.1.0]))
+              (meta (core.order_hint.key 133)))
+            (arithmetic.conversions.itousize@0.1.1 [%_144] [%_154]
+              (signature
+                (core.fn
+                  [(arithmetic.int.types.int@0.1.0 6)]
+                  [prelude.usize@0.2.2])))
+            ((collections.borrow_arr.return@0.2.1
+                2
+                tket.measurement.Measurement@0.1.0)
+              [%_143 %_154 %_153] [%_146]
+              (signature
+                (core.fn
+                  [(collections.borrow_arr.borrow_array@0.2.1
+                     2
+                     tket.measurement.Measurement@0.1.0)
+                   prelude.usize@0.2.2
+                   tket.measurement.Measurement@0.1.0]
+                  [(collections.borrow_arr.borrow_array@0.2.1
+                     2
+                     tket.measurement.Measurement@0.1.0)])))
+            ((core.load_const
+                (arithmetic.int.types.int@0.1.0 6)
+                (arithmetic.int.const 6 1))
+              [] [%_156]
+              (signature (core.fn [] [(arithmetic.int.types.int@0.1.0 6)])))
+            ((arithmetic.int.iadd@0.1.1 6) [%_144 %_156] [%_147]
+              (signature
+                (core.fn
+                  [(arithmetic.int.types.int@0.1.0 6)
+                   (arithmetic.int.types.int@0.1.0 6)]
+                  [(arithmetic.int.types.int@0.1.0 6)])))))
+        (cfg [%_137] [%_138]
+          (signature
+            (core.fn
+              [(core.adt
+                 [[(collections.borrow_arr.borrow_array@0.2.1 2 prelude.qubit)
+                   (arithmetic.int.types.int@0.1.0 6)]])]
+              [(core.adt
+                 [[]
+                  [(core.adt
+                     [[prelude.qubit
+                       (core.adt
+                         [[(collections.borrow_arr.borrow_array@0.2.1
+                             2
+                             prelude.qubit)
+                           (arithmetic.int.types.int@0.1.0 6)]])]])]])]))
+          (cfg [%_171] [%_172]
+            (signature
+              (core.ctrl
+                [[(core.adt
+                    [[(collections.borrow_arr.borrow_array@0.2.1
+                        2
+                        prelude.qubit)
+                      (arithmetic.int.types.int@0.1.0 6)]])]]
+                [[(core.adt
+                    [[]
+                     [(core.adt
+                        [[prelude.qubit
+                          (core.adt
+                            [[(collections.borrow_arr.borrow_array@0.2.1
+                                2
+                                prelude.qubit)
+                              (arithmetic.int.types.int@0.1.0 6)]])]])]])]]))
+            (block [%_171] [%_157 %_158]
+              (signature
+                (core.ctrl
+                  [[(core.adt
+                      [[(collections.borrow_arr.borrow_array@0.2.1
+                          2
+                          prelude.qubit)
+                        (arithmetic.int.types.int@0.1.0 6)]])]]
+                  [[(collections.borrow_arr.borrow_array@0.2.1 2 prelude.qubit)]
+                   [(arithmetic.int.types.int@0.1.0 6)
+                    (collections.borrow_arr.borrow_array@0.2.1
+                      2
+                      prelude.qubit)]]))
+              (dfg [%_159] [%_160 %_161]
+                (signature
+                  (core.fn
+                    [(core.adt
+                       [[(collections.borrow_arr.borrow_array@0.2.1
+                           2
+                           prelude.qubit)
+                         (arithmetic.int.types.int@0.1.0 6)]])]
+                    [(core.adt [[] [(arithmetic.int.types.int@0.1.0 6)]])
+                     (collections.borrow_arr.borrow_array@0.2.1
+                       2
+                       prelude.qubit)]))
+                ((prelude.UnpackTuple@0.2.2
+                    [(collections.borrow_arr.borrow_array@0.2.1 2 prelude.qubit)
+                     (arithmetic.int.types.int@0.1.0 6)])
+                  [%_159] [%_161 %_162]
+                  (signature
+                    (core.fn
+                      [(core.adt
+                         [[(collections.borrow_arr.borrow_array@0.2.1
+                             2
+                             prelude.qubit)
+                           (arithmetic.int.types.int@0.1.0 6)]])]
+                      [(collections.borrow_arr.borrow_array@0.2.1
+                         2
+                         prelude.qubit)
+                       (arithmetic.int.types.int@0.1.0 6)])))
+                ((arithmetic.int.ilt_s@0.1.1 6) [%_162 %_163] [%_164]
+                  (signature
+                    (core.fn
+                      [(arithmetic.int.types.int@0.1.0 6)
+                       (arithmetic.int.types.int@0.1.0 6)]
+                      [(core.adt [[] []])])))
+                (cond [%_164 %_162] [%_160]
+                  (signature
+                    (core.fn
+                      [(core.adt [[] []]) (arithmetic.int.types.int@0.1.0 6)]
+                      [(core.adt [[] [(arithmetic.int.types.int@0.1.0 6)]])]))
+                  (dfg [%_165] [%_166]
+                    (signature
+                      (core.fn
+                        [(arithmetic.int.types.int@0.1.0 6)]
+                        [(core.adt [[] [(arithmetic.int.types.int@0.1.0 6)]])]))
+                    ((core.load_const
+                        (core.adt [[] [(arithmetic.int.types.int@0.1.0 6)]])
+                        (core.const.adt
+                          [[] [(arithmetic.int.types.int@0.1.0 6)]]
+                          []
+                          0
+                          (tuple)))
+                      [] [%_166]
+                      (signature
+                        (core.fn
+                          []
+                          [(core.adt
+                             [[] [(arithmetic.int.types.int@0.1.0 6)]])]))))
+                  (dfg [%_168] [%_169]
+                    (signature
+                      (core.fn
+                        [(arithmetic.int.types.int@0.1.0 6)]
+                        [(core.adt [[] [(arithmetic.int.types.int@0.1.0 6)]])]))
+                    ((core.make_adt
+                        [[] [(arithmetic.int.types.int@0.1.0 6)]]
+                        [(arithmetic.int.types.int@0.1.0 6)]
+                        1)
+                      [%_168] [%_169]
+                      (signature
+                        (core.fn
+                          [(arithmetic.int.types.int@0.1.0 6)]
+                          [(core.adt
+                             [[] [(arithmetic.int.types.int@0.1.0 6)]])])))))
+                ((core.load_const
+                    (arithmetic.int.types.int@0.1.0 6)
+                    (arithmetic.int.const 6 2))
+                  [] [%_163]
+                  (signature
+                    (core.fn [] [(arithmetic.int.types.int@0.1.0 6)])))))
+            (block [%_158] [%_172]
+              (signature
+                (core.ctrl
+                  [[(arithmetic.int.types.int@0.1.0 6)
+                    (collections.borrow_arr.borrow_array@0.2.1
+                      2
+                      prelude.qubit)]]
+                  [[(core.adt
+                      [[]
+                       [(core.adt
+                          [[prelude.qubit
+                            (core.adt
+                              [[(collections.borrow_arr.borrow_array@0.2.1
+                                  2
+                                  prelude.qubit)
+                                (arithmetic.int.types.int@0.1.0 6)]])]])]])]]))
+              (dfg [%_173 %_174] [%_175 %_176]
+                (signature
+                  (core.fn
+                    [(arithmetic.int.types.int@0.1.0 6)
+                     (collections.borrow_arr.borrow_array@0.2.1
+                       2
+                       prelude.qubit)]
+                    [(core.adt [[]])
+                     (core.adt
+                       [[]
+                        [(core.adt
+                           [[prelude.qubit
+                             (core.adt
+                               [[(collections.borrow_arr.borrow_array@0.2.1
+                                   2
+                                   prelude.qubit)
+                                 (arithmetic.int.types.int@0.1.0 6)]])]])]])]))
+                (arithmetic.conversions.itousize@0.1.1 [%_173] [%_177]
+                  (signature
+                    (core.fn
+                      [(arithmetic.int.types.int@0.1.0 6)]
+                      [prelude.usize@0.2.2])))
+                ((collections.borrow_arr.borrow@0.2.1 2 prelude.qubit)
+                  [%_174 %_177] [%_178 %_179]
+                  (signature
+                    (core.fn
+                      [(collections.borrow_arr.borrow_array@0.2.1
+                         2
+                         prelude.qubit)
+                       prelude.usize@0.2.2]
+                      [(collections.borrow_arr.borrow_array@0.2.1
+                         2
+                         prelude.qubit)
+                       prelude.qubit])))
+                ((core.load_const
+                    (arithmetic.int.types.int@0.1.0 6)
+                    (arithmetic.int.const 6 1))
+                  [] [%_181]
+                  (signature (core.fn [] [(arithmetic.int.types.int@0.1.0 6)])))
+                ((arithmetic.int.iadd@0.1.1 6) [%_173 %_181] [%_182]
+                  (signature
+                    (core.fn
+                      [(arithmetic.int.types.int@0.1.0 6)
+                       (arithmetic.int.types.int@0.1.0 6)]
+                      [(arithmetic.int.types.int@0.1.0 6)])))
+                ((prelude.MakeTuple@0.2.2
+                    [(collections.borrow_arr.borrow_array@0.2.1 2 prelude.qubit)
+                     (arithmetic.int.types.int@0.1.0 6)])
+                  [%_178 %_182] [%_183]
+                  (signature
+                    (core.fn
+                      [(collections.borrow_arr.borrow_array@0.2.1
+                         2
+                         prelude.qubit)
+                       (arithmetic.int.types.int@0.1.0 6)]
+                      [(core.adt
+                         [[(collections.borrow_arr.borrow_array@0.2.1
+                             2
+                             prelude.qubit)
+                           (arithmetic.int.types.int@0.1.0 6)]])])))
+                ((prelude.MakeTuple@0.2.2
+                    [prelude.qubit
+                     (core.adt
+                       [[(collections.borrow_arr.borrow_array@0.2.1
+                           2
+                           prelude.qubit)
+                         (arithmetic.int.types.int@0.1.0 6)]])])
+                  [%_179 %_183] [%_184]
+                  (signature
+                    (core.fn
+                      [prelude.qubit
+                       (core.adt
+                         [[(collections.borrow_arr.borrow_array@0.2.1
+                             2
+                             prelude.qubit)
+                           (arithmetic.int.types.int@0.1.0 6)]])]
+                      [(core.adt
+                         [[prelude.qubit
+                           (core.adt
+                             [[(collections.borrow_arr.borrow_array@0.2.1
+                                 2
+                                 prelude.qubit)
+                               (arithmetic.int.types.int@0.1.0 6)]])]])])))
+                ((core.make_adt
+                    [[]
+                     [(core.adt
+                        [[prelude.qubit
+                          (core.adt
+                            [[(collections.borrow_arr.borrow_array@0.2.1
+                                2
+                                prelude.qubit)
+                              (arithmetic.int.types.int@0.1.0 6)]])]])]]
+                    [(core.adt
+                       [[prelude.qubit
+                         (core.adt
+                           [[(collections.borrow_arr.borrow_array@0.2.1
+                               2
+                               prelude.qubit)
+                             (arithmetic.int.types.int@0.1.0 6)]])]])]
+                    1)
+                  [%_184] [%_176]
+                  (signature
+                    (core.fn
+                      [(core.adt
+                         [[prelude.qubit
+                           (core.adt
+                             [[(collections.borrow_arr.borrow_array@0.2.1
+                                 2
+                                 prelude.qubit)
+                               (arithmetic.int.types.int@0.1.0 6)]])]])]
+                      [(core.adt
+                         [[]
+                          [(core.adt
+                             [[prelude.qubit
+                               (core.adt
+                                 [[(collections.borrow_arr.borrow_array@0.2.1
+                                     2
+                                     prelude.qubit)
+                                   (arithmetic.int.types.int@0.1.0
+                                     6)]])]])]])])))
+                ((core.load_const
+                    (core.adt [[]])
+                    (core.const.adt [[]] [] 0 (tuple)))
+                  [] [%_175]
+                  (signature (core.fn [] [(core.adt [[]])])))))
+            (block [%_157] [%_172]
+              (signature
+                (core.ctrl
+                  [[(collections.borrow_arr.borrow_array@0.2.1
+                      2
+                      prelude.qubit)]]
+                  [[(core.adt
+                      [[]
+                       [(core.adt
+                          [[prelude.qubit
+                            (core.adt
+                              [[(collections.borrow_arr.borrow_array@0.2.1
+                                  2
+                                  prelude.qubit)
+                                (arithmetic.int.types.int@0.1.0 6)]])]])]])]]))
+              (dfg [%_186] [%_187 %_188]
+                (signature
+                  (core.fn
+                    [(collections.borrow_arr.borrow_array@0.2.1
+                       2
+                       prelude.qubit)]
+                    [(core.adt [[]])
+                     (core.adt
+                       [[]
+                        [(core.adt
+                           [[prelude.qubit
+                             (core.adt
+                               [[(collections.borrow_arr.borrow_array@0.2.1
+                                   2
+                                   prelude.qubit)
+                                 (arithmetic.int.types.int@0.1.0 6)]])]])]])]))
+                ((collections.borrow_arr.discard_all_borrowed@0.2.1
+                    2
+                    prelude.qubit)
+                  [%_186] []
+                  (signature
+                    (core.fn
+                      [(collections.borrow_arr.borrow_array@0.2.1
+                         2
+                         prelude.qubit)]
+                      [])))
+                ((core.make_adt
+                    [[]
+                     [(core.adt
+                        [[prelude.qubit
+                          (core.adt
+                            [[(collections.borrow_arr.borrow_array@0.2.1
+                                2
+                                prelude.qubit)
+                              (arithmetic.int.types.int@0.1.0 6)]])]])]]
+                    []
+                    0)
+                  [] [%_188]
+                  (signature
+                    (core.fn
+                      []
+                      [(core.adt
+                         [[]
+                          [(core.adt
+                             [[prelude.qubit
+                               (core.adt
+                                 [[(collections.borrow_arr.borrow_array@0.2.1
+                                     2
+                                     prelude.qubit)
+                                   (arithmetic.int.types.int@0.1.0
+                                     6)]])]])]])])))
+                ((core.load_const
+                    (core.adt [[]])
+                    (core.const.adt [[]] [] 0 (tuple)))
+                  [] [%_187]
+                  (signature (core.fn [] [(core.adt [[]])])))))))))
+    ((collections.borrow_arr.new_all_borrowed@0.2.1 2 (core.adt [[] []]))
+      [] [%_190]
+      (signature
+        (core.fn
+          []
+          [(collections.borrow_arr.borrow_array@0.2.1 2 (core.adt [[] []]))])))
+    ((core.load_const
+        (arithmetic.int.types.int@0.1.0 6)
+        (arithmetic.int.const 6 0))
+      [] [%_192]
+      (signature (core.fn [] [(arithmetic.int.types.int@0.1.0 6)])))
+    ((prelude.MakeTuple@0.2.2
+        [(collections.borrow_arr.borrow_array@0.2.1
+           2
+           tket.measurement.Measurement@0.1.0)
+         (arithmetic.int.types.int@0.1.0 6)])
+      [%_127 %_193] [%_194]
+      (signature
+        (core.fn
+          [(collections.borrow_arr.borrow_array@0.2.1
+             2
+             tket.measurement.Measurement@0.1.0)
+           (arithmetic.int.types.int@0.1.0 6)]
+          [(core.adt
+             [[(collections.borrow_arr.borrow_array@0.2.1
+                 2
+                 tket.measurement.Measurement@0.1.0)
+               (arithmetic.int.types.int@0.1.0 6)]])])))
+    (tail-loop [%_194 %_190 %_192] [%_118 %_195]
+      (signature
+        (core.fn
+          [(core.adt
+             [[(collections.borrow_arr.borrow_array@0.2.1
+                 2
+                 tket.measurement.Measurement@0.1.0)
+               (arithmetic.int.types.int@0.1.0 6)]])
+           (collections.borrow_arr.borrow_array@0.2.1 2 (core.adt [[] []]))
+           (arithmetic.int.types.int@0.1.0 6)]
+          [(collections.borrow_arr.borrow_array@0.2.1 2 (core.adt [[] []]))
+           (arithmetic.int.types.int@0.1.0 6)]))
+      (meta (core.order_hint.key 182))
+      (dfg [%_196 %_197 %_198] [%_199 %_200 %_201]
+        (signature
+          (core.fn
+            [(core.adt
+               [[(collections.borrow_arr.borrow_array@0.2.1
+                   2
+                   tket.measurement.Measurement@0.1.0)
+                 (arithmetic.int.types.int@0.1.0 6)]])
+             (collections.borrow_arr.borrow_array@0.2.1 2 (core.adt [[] []]))
+             (arithmetic.int.types.int@0.1.0 6)]
+            [(core.adt
+               [[(core.adt
+                   [[(collections.borrow_arr.borrow_array@0.2.1
+                       2
+                       tket.measurement.Measurement@0.1.0)
+                     (arithmetic.int.types.int@0.1.0 6)]])]
+                []])
+             (collections.borrow_arr.borrow_array@0.2.1 2 (core.adt [[] []]))
+             (arithmetic.int.types.int@0.1.0 6)]))
+        (meta (core.order_hint.input_key 183))
+        (meta (core.order_hint.order 183 205))
+        (meta (core.order_hint.output_key 184))
+        (meta (core.order_hint.order 205 184))
+        ((prelude.UnpackTuple@0.2.2
+            [(collections.borrow_arr.borrow_array@0.2.1
+               2
+               tket.measurement.Measurement@0.1.0)
+             (arithmetic.int.types.int@0.1.0 6)])
+          [%_196] [%_202 %_203]
+          (signature
+            (core.fn
+              [(core.adt
+                 [[(collections.borrow_arr.borrow_array@0.2.1
+                     2
+                     tket.measurement.Measurement@0.1.0)
+                   (arithmetic.int.types.int@0.1.0 6)]])]
+              [(collections.borrow_arr.borrow_array@0.2.1
+                 2
+                 tket.measurement.Measurement@0.1.0)
+               (arithmetic.int.types.int@0.1.0 6)])))
+        ((prelude.MakeTuple@0.2.2
+            [(collections.borrow_arr.borrow_array@0.2.1
+               2
+               tket.measurement.Measurement@0.1.0)
+             (arithmetic.int.types.int@0.1.0 6)])
+          [%_202 %_203] [%_204]
+          (signature
+            (core.fn
+              [(collections.borrow_arr.borrow_array@0.2.1
+                 2
+                 tket.measurement.Measurement@0.1.0)
+               (arithmetic.int.types.int@0.1.0 6)]
+              [(core.adt
+                 [[(collections.borrow_arr.borrow_array@0.2.1
+                     2
+                     tket.measurement.Measurement@0.1.0)
+                   (arithmetic.int.types.int@0.1.0 6)]])])))
+        (cond [%_205 %_197 %_198] [%_199 %_200 %_201]
+          (signature
+            (core.fn
+              [(core.adt
+                 [[]
+                  [(core.adt
+                     [[tket.measurement.Measurement@0.1.0
+                       (core.adt
+                         [[(collections.borrow_arr.borrow_array@0.2.1
+                             2
+                             tket.measurement.Measurement@0.1.0)
+                           (arithmetic.int.types.int@0.1.0 6)]])]])]])
+               (collections.borrow_arr.borrow_array@0.2.1 2 (core.adt [[] []]))
+               (arithmetic.int.types.int@0.1.0 6)]
+              [(core.adt
+                 [[(core.adt
+                     [[(collections.borrow_arr.borrow_array@0.2.1
+                         2
+                         tket.measurement.Measurement@0.1.0)
+                       (arithmetic.int.types.int@0.1.0 6)]])]
+                  []])
+               (collections.borrow_arr.borrow_array@0.2.1 2 (core.adt [[] []]))
+               (arithmetic.int.types.int@0.1.0 6)]))
+          (dfg [%_206 %_207] [%_208 %_206 %_207]
+            (signature
+              (core.fn
+                [(collections.borrow_arr.borrow_array@0.2.1
+                   2
+                   (core.adt [[] []]))
+                 (arithmetic.int.types.int@0.1.0 6)]
+                [(core.adt
+                   [[(core.adt
+                       [[(collections.borrow_arr.borrow_array@0.2.1
+                           2
+                           tket.measurement.Measurement@0.1.0)
+                         (arithmetic.int.types.int@0.1.0 6)]])]
+                    []])
+                 (collections.borrow_arr.borrow_array@0.2.1
+                   2
+                   (core.adt [[] []]))
+                 (arithmetic.int.types.int@0.1.0 6)]))
+            ((core.make_adt
+                [[(core.adt
+                    [[(collections.borrow_arr.borrow_array@0.2.1
+                        2
+                        tket.measurement.Measurement@0.1.0)
+                      (arithmetic.int.types.int@0.1.0 6)]])]
+                 []]
+                []
+                1)
+              [] [%_208]
+              (signature
+                (core.fn
+                  []
+                  [(core.adt
+                     [[(core.adt
+                         [[(collections.borrow_arr.borrow_array@0.2.1
+                             2
+                             tket.measurement.Measurement@0.1.0)
+                           (arithmetic.int.types.int@0.1.0 6)]])]
+                      []])]))))
+          (dfg [%_209 %_210 %_211] [%_212 %_213 %_214]
+            (signature
+              (core.fn
+                [(core.adt
+                   [[tket.measurement.Measurement@0.1.0
+                     (core.adt
+                       [[(collections.borrow_arr.borrow_array@0.2.1
+                           2
+                           tket.measurement.Measurement@0.1.0)
+                         (arithmetic.int.types.int@0.1.0 6)]])]])
+                 (collections.borrow_arr.borrow_array@0.2.1
+                   2
+                   (core.adt [[] []]))
+                 (arithmetic.int.types.int@0.1.0 6)]
+                [(core.adt
+                   [[(core.adt
+                       [[(collections.borrow_arr.borrow_array@0.2.1
+                           2
+                           tket.measurement.Measurement@0.1.0)
+                         (arithmetic.int.types.int@0.1.0 6)]])]
+                    []])
+                 (collections.borrow_arr.borrow_array@0.2.1
+                   2
+                   (core.adt [[] []]))
+                 (arithmetic.int.types.int@0.1.0 6)]))
+            ((prelude.UnpackTuple@0.2.2
+                [tket.measurement.Measurement@0.1.0
+                 (core.adt
+                   [[(collections.borrow_arr.borrow_array@0.2.1
+                       2
+                       tket.measurement.Measurement@0.1.0)
+                     (arithmetic.int.types.int@0.1.0 6)]])])
+              [%_209] [%_215 %_216]
+              (signature
+                (core.fn
+                  [(core.adt
+                     [[tket.measurement.Measurement@0.1.0
+                       (core.adt
+                         [[(collections.borrow_arr.borrow_array@0.2.1
+                             2
+                             tket.measurement.Measurement@0.1.0)
+                           (arithmetic.int.types.int@0.1.0 6)]])]])]
+                  [tket.measurement.Measurement@0.1.0
+                   (core.adt
+                     [[(collections.borrow_arr.borrow_array@0.2.1
+                         2
+                         tket.measurement.Measurement@0.1.0)
+                       (arithmetic.int.types.int@0.1.0 6)]])])))
+            ((prelude.UnpackTuple@0.2.2
+                [(collections.borrow_arr.borrow_array@0.2.1
+                   2
+                   tket.measurement.Measurement@0.1.0)
+                 (arithmetic.int.types.int@0.1.0 6)])
+              [%_216] [%_217 %_218]
+              (signature
+                (core.fn
+                  [(core.adt
+                     [[(collections.borrow_arr.borrow_array@0.2.1
+                         2
+                         tket.measurement.Measurement@0.1.0)
+                       (arithmetic.int.types.int@0.1.0 6)]])]
+                  [(collections.borrow_arr.borrow_array@0.2.1
+                     2
+                     tket.measurement.Measurement@0.1.0)
+                   (arithmetic.int.types.int@0.1.0 6)])))
+            ((prelude.MakeTuple@0.2.2
+                [(collections.borrow_arr.borrow_array@0.2.1
+                   2
+                   tket.measurement.Measurement@0.1.0)
+                 (arithmetic.int.types.int@0.1.0 6)])
+              [%_217 %_218] [%_219]
+              (signature
+                (core.fn
+                  [(collections.borrow_arr.borrow_array@0.2.1
+                     2
+                     tket.measurement.Measurement@0.1.0)
+                   (arithmetic.int.types.int@0.1.0 6)]
+                  [(core.adt
+                     [[(collections.borrow_arr.borrow_array@0.2.1
+                         2
+                         tket.measurement.Measurement@0.1.0)
+                       (arithmetic.int.types.int@0.1.0 6)]])])))
+            ((core.make_adt
+                [[(core.adt
+                    [[(collections.borrow_arr.borrow_array@0.2.1
+                        2
+                        tket.measurement.Measurement@0.1.0)
+                      (arithmetic.int.types.int@0.1.0 6)]])]
+                 []]
+                [(core.adt
+                   [[(collections.borrow_arr.borrow_array@0.2.1
+                       2
+                       tket.measurement.Measurement@0.1.0)
+                     (arithmetic.int.types.int@0.1.0 6)]])]
+                0)
+              [%_219] [%_212]
+              (signature
+                (core.fn
+                  [(core.adt
+                     [[(collections.borrow_arr.borrow_array@0.2.1
+                         2
+                         tket.measurement.Measurement@0.1.0)
+                       (arithmetic.int.types.int@0.1.0 6)]])]
+                  [(core.adt
+                     [[(core.adt
+                         [[(collections.borrow_arr.borrow_array@0.2.1
+                             2
+                             tket.measurement.Measurement@0.1.0)
+                           (arithmetic.int.types.int@0.1.0 6)]])]
+                      []])])))
+            (tket.measurement.Read@0.1.0 [%_215] [%_220]
+              (signature
+                (core.fn
+                  [tket.measurement.Measurement@0.1.0]
+                  [(core.adt [[] []])])))
+            (arithmetic.conversions.itousize@0.1.1 [%_211] [%_221]
+              (signature
+                (core.fn
+                  [(arithmetic.int.types.int@0.1.0 6)]
+                  [prelude.usize@0.2.2])))
+            ((collections.borrow_arr.return@0.2.1 2 (core.adt [[] []]))
+              [%_210 %_221 %_220] [%_213]
+              (signature
+                (core.fn
+                  [(collections.borrow_arr.borrow_array@0.2.1
+                     2
+                     (core.adt [[] []]))
+                   prelude.usize@0.2.2
+                   (core.adt [[] []])]
+                  [(collections.borrow_arr.borrow_array@0.2.1
+                     2
+                     (core.adt [[] []]))])))
+            ((core.load_const
+                (arithmetic.int.types.int@0.1.0 6)
+                (arithmetic.int.const 6 1))
+              [] [%_223]
+              (signature (core.fn [] [(arithmetic.int.types.int@0.1.0 6)])))
+            ((arithmetic.int.iadd@0.1.1 6) [%_211 %_223] [%_214]
+              (signature
+                (core.fn
+                  [(arithmetic.int.types.int@0.1.0 6)
+                   (arithmetic.int.types.int@0.1.0 6)]
+                  [(arithmetic.int.types.int@0.1.0 6)])))))
+        (cfg [%_204] [%_205]
+          (signature
+            (core.fn
+              [(core.adt
+                 [[(collections.borrow_arr.borrow_array@0.2.1
+                     2
+                     tket.measurement.Measurement@0.1.0)
+                   (arithmetic.int.types.int@0.1.0 6)]])]
+              [(core.adt
+                 [[]
+                  [(core.adt
+                     [[tket.measurement.Measurement@0.1.0
+                       (core.adt
+                         [[(collections.borrow_arr.borrow_array@0.2.1
+                             2
+                             tket.measurement.Measurement@0.1.0)
+                           (arithmetic.int.types.int@0.1.0 6)]])]])]])]))
+          (meta (core.order_hint.key 205))
+          (cfg [%_239] [%_240]
+            (signature
+              (core.ctrl
+                [[(core.adt
+                    [[(collections.borrow_arr.borrow_array@0.2.1
+                        2
+                        tket.measurement.Measurement@0.1.0)
+                      (arithmetic.int.types.int@0.1.0 6)]])]]
+                [[(core.adt
+                    [[]
+                     [(core.adt
+                        [[tket.measurement.Measurement@0.1.0
+                          (core.adt
+                            [[(collections.borrow_arr.borrow_array@0.2.1
+                                2
+                                tket.measurement.Measurement@0.1.0)
+                              (arithmetic.int.types.int@0.1.0 6)]])]])]])]]))
+            (block [%_239] [%_224 %_225]
+              (signature
+                (core.ctrl
+                  [[(core.adt
+                      [[(collections.borrow_arr.borrow_array@0.2.1
+                          2
+                          tket.measurement.Measurement@0.1.0)
+                        (arithmetic.int.types.int@0.1.0 6)]])]]
+                  [[(collections.borrow_arr.borrow_array@0.2.1
+                      2
+                      tket.measurement.Measurement@0.1.0)]
+                   [(arithmetic.int.types.int@0.1.0 6)
+                    (collections.borrow_arr.borrow_array@0.2.1
+                      2
+                      tket.measurement.Measurement@0.1.0)]]))
+              (dfg [%_226] [%_227]
+                (signature
+                  (core.fn
+                    [(core.adt
+                       [[(collections.borrow_arr.borrow_array@0.2.1
+                           2
+                           tket.measurement.Measurement@0.1.0)
+                         (arithmetic.int.types.int@0.1.0 6)]])]
+                    [(core.adt
+                       [[(collections.borrow_arr.borrow_array@0.2.1
+                           2
+                           tket.measurement.Measurement@0.1.0)]
+                        [(arithmetic.int.types.int@0.1.0 6)
+                         (collections.borrow_arr.borrow_array@0.2.1
+                           2
+                           tket.measurement.Measurement@0.1.0)]])]))
+                ((prelude.UnpackTuple@0.2.2
+                    [(collections.borrow_arr.borrow_array@0.2.1
+                       2
+                       tket.measurement.Measurement@0.1.0)
+                     (arithmetic.int.types.int@0.1.0 6)])
+                  [%_226] [%_228 %_229]
+                  (signature
+                    (core.fn
+                      [(core.adt
+                         [[(collections.borrow_arr.borrow_array@0.2.1
+                             2
+                             tket.measurement.Measurement@0.1.0)
+                           (arithmetic.int.types.int@0.1.0 6)]])]
+                      [(collections.borrow_arr.borrow_array@0.2.1
+                         2
+                         tket.measurement.Measurement@0.1.0)
+                       (arithmetic.int.types.int@0.1.0 6)])))
+                ((arithmetic.int.ilt_s@0.1.1 6) [%_229 %_230] [%_231]
+                  (signature
+                    (core.fn
+                      [(arithmetic.int.types.int@0.1.0 6)
+                       (arithmetic.int.types.int@0.1.0 6)]
+                      [(core.adt [[] []])])))
+                (cond [%_231 %_228 %_229] [%_227]
+                  (signature
+                    (core.fn
+                      [(core.adt [[] []])
+                       (collections.borrow_arr.borrow_array@0.2.1
+                         2
+                         tket.measurement.Measurement@0.1.0)
+                       (arithmetic.int.types.int@0.1.0 6)]
+                      [(core.adt
+                         [[(collections.borrow_arr.borrow_array@0.2.1
+                             2
+                             tket.measurement.Measurement@0.1.0)]
+                          [(arithmetic.int.types.int@0.1.0 6)
+                           (collections.borrow_arr.borrow_array@0.2.1
+                             2
+                             tket.measurement.Measurement@0.1.0)]])]))
+                  (dfg [%_232 %_233] [%_234]
+                    (signature
+                      (core.fn
+                        [(collections.borrow_arr.borrow_array@0.2.1
+                           2
+                           tket.measurement.Measurement@0.1.0)
+                         (arithmetic.int.types.int@0.1.0 6)]
+                        [(core.adt
+                           [[(collections.borrow_arr.borrow_array@0.2.1
+                               2
+                               tket.measurement.Measurement@0.1.0)]
+                            [(arithmetic.int.types.int@0.1.0 6)
+                             (collections.borrow_arr.borrow_array@0.2.1
+                               2
+                               tket.measurement.Measurement@0.1.0)]])]))
+                    ((core.make_adt
+                        [[(collections.borrow_arr.borrow_array@0.2.1
+                            2
+                            tket.measurement.Measurement@0.1.0)]
+                         [(arithmetic.int.types.int@0.1.0 6)
+                          (collections.borrow_arr.borrow_array@0.2.1
+                            2
+                            tket.measurement.Measurement@0.1.0)]]
+                        [(collections.borrow_arr.borrow_array@0.2.1
+                           2
+                           tket.measurement.Measurement@0.1.0)]
+                        0)
+                      [%_232] [%_234]
+                      (signature
+                        (core.fn
+                          [(collections.borrow_arr.borrow_array@0.2.1
+                             2
+                             tket.measurement.Measurement@0.1.0)]
+                          [(core.adt
+                             [[(collections.borrow_arr.borrow_array@0.2.1
+                                 2
+                                 tket.measurement.Measurement@0.1.0)]
+                              [(arithmetic.int.types.int@0.1.0 6)
+                               (collections.borrow_arr.borrow_array@0.2.1
+                                 2
+                                 tket.measurement.Measurement@0.1.0)]])]))))
+                  (dfg [%_235 %_236] [%_237]
+                    (signature
+                      (core.fn
+                        [(collections.borrow_arr.borrow_array@0.2.1
+                           2
+                           tket.measurement.Measurement@0.1.0)
+                         (arithmetic.int.types.int@0.1.0 6)]
+                        [(core.adt
+                           [[(collections.borrow_arr.borrow_array@0.2.1
+                               2
+                               tket.measurement.Measurement@0.1.0)]
+                            [(arithmetic.int.types.int@0.1.0 6)
+                             (collections.borrow_arr.borrow_array@0.2.1
+                               2
+                               tket.measurement.Measurement@0.1.0)]])]))
+                    ((core.make_adt
+                        [[(collections.borrow_arr.borrow_array@0.2.1
+                            2
+                            tket.measurement.Measurement@0.1.0)]
+                         [(arithmetic.int.types.int@0.1.0 6)
+                          (collections.borrow_arr.borrow_array@0.2.1
+                            2
+                            tket.measurement.Measurement@0.1.0)]]
+                        [(arithmetic.int.types.int@0.1.0 6)
+                         (collections.borrow_arr.borrow_array@0.2.1
+                           2
+                           tket.measurement.Measurement@0.1.0)]
+                        1)
+                      [%_236 %_235] [%_237]
+                      (signature
+                        (core.fn
+                          [(arithmetic.int.types.int@0.1.0 6)
+                           (collections.borrow_arr.borrow_array@0.2.1
+                             2
+                             tket.measurement.Measurement@0.1.0)]
+                          [(core.adt
+                             [[(collections.borrow_arr.borrow_array@0.2.1
+                                 2
+                                 tket.measurement.Measurement@0.1.0)]
+                              [(arithmetic.int.types.int@0.1.0 6)
+                               (collections.borrow_arr.borrow_array@0.2.1
+                                 2
+                                 tket.measurement.Measurement@0.1.0)]])])))))
+                ((core.load_const
+                    (arithmetic.int.types.int@0.1.0 6)
+                    (arithmetic.int.const 6 2))
+                  [] [%_230]
+                  (signature
+                    (core.fn [] [(arithmetic.int.types.int@0.1.0 6)])))))
+            (block [%_225] [%_240]
+              (signature
+                (core.ctrl
+                  [[(arithmetic.int.types.int@0.1.0 6)
+                    (collections.borrow_arr.borrow_array@0.2.1
+                      2
+                      tket.measurement.Measurement@0.1.0)]]
+                  [[(core.adt
+                      [[]
+                       [(core.adt
+                          [[tket.measurement.Measurement@0.1.0
+                            (core.adt
+                              [[(collections.borrow_arr.borrow_array@0.2.1
+                                  2
+                                  tket.measurement.Measurement@0.1.0)
+                                (arithmetic.int.types.int@0.1.0 6)]])]])]])]]))
+              (dfg [%_241 %_242] [%_243 %_244]
+                (signature
+                  (core.fn
+                    [(arithmetic.int.types.int@0.1.0 6)
+                     (collections.borrow_arr.borrow_array@0.2.1
+                       2
+                       tket.measurement.Measurement@0.1.0)]
+                    [(core.adt [[]])
+                     (core.adt
+                       [[]
+                        [(core.adt
+                           [[tket.measurement.Measurement@0.1.0
+                             (core.adt
+                               [[(collections.borrow_arr.borrow_array@0.2.1
+                                   2
+                                   tket.measurement.Measurement@0.1.0)
+                                 (arithmetic.int.types.int@0.1.0 6)]])]])]])]))
+                (meta (core.order_hint.input_key 224))
+                (meta (core.order_hint.order 224 228))
+                (meta (core.order_hint.output_key 225))
+                (meta (core.order_hint.order 228 225))
+                (arithmetic.conversions.itousize@0.1.1 [%_241] [%_245]
+                  (signature
+                    (core.fn
+                      [(arithmetic.int.types.int@0.1.0 6)]
+                      [prelude.usize@0.2.2])))
+                ((collections.borrow_arr.get@0.2.1
+                    2
+                    tket.measurement.Measurement@0.1.0)
+                  [%_242 %_245] [%_246 %_247]
+                  (signature
+                    (core.fn
+                      [(collections.borrow_arr.borrow_array@0.2.1
+                         2
+                         tket.measurement.Measurement@0.1.0)
+                       prelude.usize@0.2.2]
+                      [(core.adt [[] [tket.measurement.Measurement@0.1.0]])
+                       (collections.borrow_arr.borrow_array@0.2.1
+                         2
+                         tket.measurement.Measurement@0.1.0)])))
+                (cond [%_246] [%_248]
+                  (signature
+                    (core.fn
+                      [(core.adt [[] [tket.measurement.Measurement@0.1.0]])]
+                      [tket.measurement.Measurement@0.1.0]))
+                  (meta (core.order_hint.key 228))
+                  (dfg [] [%_249]
+                    (signature
+                      (core.fn [] [tket.measurement.Measurement@0.1.0]))
+                    (meta (core.order_hint.input_key 230))
+                    (meta (core.order_hint.order 230 234))
+                    (meta (core.order_hint.output_key 231))
+                    (meta (core.order_hint.order 234 231))
+                    ((core.load_const
+                        prelude.error@0.2.2
+                        (compat.const_json
+                          prelude.error@0.2.2
+                          "{\"c\":\"ConstError\",\"v\":{\"signal\":1,\"message\":\"Array index out of bounds\"}}"))
+                      [] [%_251]
+                      (signature (core.fn [] [prelude.error@0.2.2])))
+                    ((prelude.panic@0.2.2
+                        []
+                        [tket.measurement.Measurement@0.1.0])
+                      [%_251] [%_249]
+                      (signature
+                        (core.fn
+                          [prelude.error@0.2.2]
+                          [tket.measurement.Measurement@0.1.0]))
+                      (meta (core.order_hint.key 234))))
+                  (dfg [%_252] [%_252]
+                    (signature
+                      (core.fn
+                        [tket.measurement.Measurement@0.1.0]
+                        [tket.measurement.Measurement@0.1.0]))))
+                ((core.load_const
+                    (arithmetic.int.types.int@0.1.0 6)
+                    (arithmetic.int.const 6 1))
+                  [] [%_254]
+                  (signature (core.fn [] [(arithmetic.int.types.int@0.1.0 6)])))
+                ((arithmetic.int.iadd@0.1.1 6) [%_241 %_254] [%_255]
+                  (signature
+                    (core.fn
+                      [(arithmetic.int.types.int@0.1.0 6)
+                       (arithmetic.int.types.int@0.1.0 6)]
+                      [(arithmetic.int.types.int@0.1.0 6)])))
+                ((prelude.MakeTuple@0.2.2
+                    [(collections.borrow_arr.borrow_array@0.2.1
+                       2
+                       tket.measurement.Measurement@0.1.0)
+                     (arithmetic.int.types.int@0.1.0 6)])
+                  [%_247 %_255] [%_256]
+                  (signature
+                    (core.fn
+                      [(collections.borrow_arr.borrow_array@0.2.1
+                         2
+                         tket.measurement.Measurement@0.1.0)
+                       (arithmetic.int.types.int@0.1.0 6)]
+                      [(core.adt
+                         [[(collections.borrow_arr.borrow_array@0.2.1
+                             2
+                             tket.measurement.Measurement@0.1.0)
+                           (arithmetic.int.types.int@0.1.0 6)]])])))
+                ((prelude.MakeTuple@0.2.2
+                    [tket.measurement.Measurement@0.1.0
+                     (core.adt
+                       [[(collections.borrow_arr.borrow_array@0.2.1
+                           2
+                           tket.measurement.Measurement@0.1.0)
+                         (arithmetic.int.types.int@0.1.0 6)]])])
+                  [%_248 %_256] [%_257]
+                  (signature
+                    (core.fn
+                      [tket.measurement.Measurement@0.1.0
+                       (core.adt
+                         [[(collections.borrow_arr.borrow_array@0.2.1
+                             2
+                             tket.measurement.Measurement@0.1.0)
+                           (arithmetic.int.types.int@0.1.0 6)]])]
+                      [(core.adt
+                         [[tket.measurement.Measurement@0.1.0
+                           (core.adt
+                             [[(collections.borrow_arr.borrow_array@0.2.1
+                                 2
+                                 tket.measurement.Measurement@0.1.0)
+                               (arithmetic.int.types.int@0.1.0 6)]])]])])))
+                ((core.make_adt
+                    [[]
+                     [(core.adt
+                        [[tket.measurement.Measurement@0.1.0
+                          (core.adt
+                            [[(collections.borrow_arr.borrow_array@0.2.1
+                                2
+                                tket.measurement.Measurement@0.1.0)
+                              (arithmetic.int.types.int@0.1.0 6)]])]])]]
+                    [(core.adt
+                       [[tket.measurement.Measurement@0.1.0
+                         (core.adt
+                           [[(collections.borrow_arr.borrow_array@0.2.1
+                               2
+                               tket.measurement.Measurement@0.1.0)
+                             (arithmetic.int.types.int@0.1.0 6)]])]])]
+                    1)
+                  [%_257] [%_244]
+                  (signature
+                    (core.fn
+                      [(core.adt
+                         [[tket.measurement.Measurement@0.1.0
+                           (core.adt
+                             [[(collections.borrow_arr.borrow_array@0.2.1
+                                 2
+                                 tket.measurement.Measurement@0.1.0)
+                               (arithmetic.int.types.int@0.1.0 6)]])]])]
+                      [(core.adt
+                         [[]
+                          [(core.adt
+                             [[tket.measurement.Measurement@0.1.0
+                               (core.adt
+                                 [[(collections.borrow_arr.borrow_array@0.2.1
+                                     2
+                                     tket.measurement.Measurement@0.1.0)
+                                   (arithmetic.int.types.int@0.1.0
+                                     6)]])]])]])])))
+                ((core.load_const
+                    (core.adt [[]])
+                    (core.const.adt [[]] [] 0 (tuple)))
+                  [] [%_243]
+                  (signature (core.fn [] [(core.adt [[]])])))))
+            (block [%_224] [%_240]
+              (signature
+                (core.ctrl
+                  [[(collections.borrow_arr.borrow_array@0.2.1
+                      2
+                      tket.measurement.Measurement@0.1.0)]]
+                  [[(core.adt
+                      [[]
+                       [(core.adt
+                          [[tket.measurement.Measurement@0.1.0
+                            (core.adt
+                              [[(collections.borrow_arr.borrow_array@0.2.1
+                                  2
+                                  tket.measurement.Measurement@0.1.0)
+                                (arithmetic.int.types.int@0.1.0 6)]])]])]])]]))
+              (dfg [%_259] [%_260 %_261]
+                (signature
+                  (core.fn
+                    [(collections.borrow_arr.borrow_array@0.2.1
+                       2
+                       tket.measurement.Measurement@0.1.0)]
+                    [(core.adt [[]])
+                     (core.adt
+                       [[]
+                        [(core.adt
+                           [[tket.measurement.Measurement@0.1.0
+                             (core.adt
+                               [[(collections.borrow_arr.borrow_array@0.2.1
+                                   2
+                                   tket.measurement.Measurement@0.1.0)
+                                 (arithmetic.int.types.int@0.1.0 6)]])]])]])]))
+                ((core.make_adt
+                    [[]
+                     [(core.adt
+                        [[tket.measurement.Measurement@0.1.0
+                          (core.adt
+                            [[(collections.borrow_arr.borrow_array@0.2.1
+                                2
+                                tket.measurement.Measurement@0.1.0)
+                              (arithmetic.int.types.int@0.1.0 6)]])]])]]
+                    []
+                    0)
+                  [] [%_261]
+                  (signature
+                    (core.fn
+                      []
+                      [(core.adt
+                         [[]
+                          [(core.adt
+                             [[tket.measurement.Measurement@0.1.0
+                               (core.adt
+                                 [[(collections.borrow_arr.borrow_array@0.2.1
+                                     2
+                                     tket.measurement.Measurement@0.1.0)
+                                   (arithmetic.int.types.int@0.1.0
+                                     6)]])]])]])])))
+                ((tket.guppy.drop@0.2.0
+                    (collections.borrow_arr.borrow_array@0.2.1
+                      2
+                      tket.measurement.Measurement@0.1.0))
+                  [%_259] []
+                  (signature
+                    (core.fn
+                      [(collections.borrow_arr.borrow_array@0.2.1
+                         2
+                         tket.measurement.Measurement@0.1.0)]
+                      [])))
+                ((core.load_const
+                    (core.adt [[]])
+                    (core.const.adt [[]] [] 0 (tuple)))
+                  [] [%_260]
+                  (signature (core.fn [] [(core.adt [[]])])))))))))
+    ((core.load_const
+        (arithmetic.int.types.int@0.1.0 6)
+        (arithmetic.int.const 6 0))
+      [] [%_125]
+      (signature (core.fn [] [(arithmetic.int.types.int@0.1.0 6)])))
+    ((core.load_const
+        (arithmetic.int.types.int@0.1.0 6)
+        (arithmetic.int.const 6 0))
+      [] [%_193]
+      (signature (core.fn [] [(arithmetic.int.types.int@0.1.0 6)])))
+    ((core.load_const
+        (core.adt
+          [[(arithmetic.int.types.int@0.1.0 6)
+            (arithmetic.int.types.int@0.1.0 6)
+            (arithmetic.int.types.int@0.1.0 6)]])
+        (core.const.adt
+          [[(arithmetic.int.types.int@0.1.0 6)
+            (arithmetic.int.types.int@0.1.0 6)
+            (arithmetic.int.types.int@0.1.0 6)]]
+          [(core.const (arithmetic.int.types.int@0.1.0 6))
+           (core.const (arithmetic.int.types.int@0.1.0 6))
+           (core.const (arithmetic.int.types.int@0.1.0 6))]
+          0
+          (tuple
+            (arithmetic.int.const 6 0)
+            (arithmetic.int.const 6 2)
+            (arithmetic.int.const 6 1))))
+      [] [%_4]
+      (signature
+        (core.fn
+          []
+          [(core.adt
+             [[(arithmetic.int.types.int@0.1.0 6)
+               (arithmetic.int.types.int@0.1.0 6)
+               (arithmetic.int.types.int@0.1.0 6)]])])))))

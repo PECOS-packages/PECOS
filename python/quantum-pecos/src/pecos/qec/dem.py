@@ -21,7 +21,7 @@ even when the key also matches another scheduled gate.
 This wrapper is intentionally thin: it traces the Guppy program into a
 ``TickCircuit``, compiles Guppy inputs to a HUGR to reject unverified control
 flow and, when requested, recover the sound tag -> measurement binding via
-``pecos_hugr::extract_result_tag_measurements``, and hands
+``pecos.qec._hugr_result_tags.extract_result_tag_measurements``, and hands
 the caller's detector/observable JSON to the Rust DEM builder. The metadata
 validation that applies to **every** ingest path (``from_guppy``,
 ``from_circuit``, ``DemSampler.from_circuit``, public ``DemBuilder``) lives
@@ -49,6 +49,7 @@ import json
 import math
 import warnings
 from collections.abc import Mapping, Sequence
+from functools import cached_property
 from typing import TYPE_CHECKING, Any
 
 from pecos_rslib.qec import DetectorErrorModel as _RustDetectorErrorModel
@@ -68,6 +69,8 @@ from pecos.qec.dem_spec import (
 
 if TYPE_CHECKING:
     from typing import Self
+
+    from hugr import Hugr
 
     from pecos.qec.dem_spec import Detector, Observable
     from pecos.qec.surface.decode import NoiseParameters
@@ -654,8 +657,8 @@ class _DetectorErrorModelMixin:
 def _result_tags_present(detectors_json: str, observables_json: str) -> bool:
     """Cheap gate: does any entry use ``result_tags``? (substring check).
 
-    Only decides whether to compile the Guppy program to HUGR; the actual
-    extraction, loop-guard, resolution, and validation are all done in Rust.
+    Only decides whether JSON metadata needs tag resolution. Static extraction
+    is performed in Python; the loop guard and metadata resolution stay in Rust.
     """
     return '"result_tags"' in (detectors_json or "") or '"result_tags"' in (observables_json or "")
 
@@ -683,20 +686,42 @@ def _validated_source_measurement_ids(circuit: Any) -> list[int]:
     return source_measurement_ids
 
 
+class _GuppyHugrAnalysis:
+    """Load and analyze a HUGR on demand, sharing results within one DEM build."""
+
+    def __init__(self, hugr_bytes: bytes) -> None:
+        self.hugr_bytes = hugr_bytes
+
+    @cached_property
+    def hugr(self) -> Hugr:
+        """Return the validated module, loading it only on first use."""
+        from pecos.qec._hugr_result_tags import load_hugr_from_bytes
+
+        return load_hugr_from_bytes(self.hugr_bytes)
+
+    @cached_property
+    def result_tags(self) -> tuple[dict[str, list[int | None]], int]:
+        """Extract tag occurrences and the static count only on first use."""
+        from pecos.qec._hugr_result_tags import extract_result_tag_measurements, measurement_op_count
+
+        return extract_result_tag_measurements(self.hugr), measurement_op_count(self.hugr)
+
+
 def _preflight_guppy_static_schedule(
     guppy: Any,
     *,
     required_tags: Sequence[str],
     json_result_tags: bool = False,
-) -> tuple[Sequence[Any] | None, bytes]:
+) -> tuple[Sequence[Any] | None, _GuppyHugrAnalysis]:
     """Validate program-level trust before any runtime trace is captured.
 
-    Returns ``(generator_layout, hugr_bytes)``. Runs the generator-certificate
+    Returns ``(generator_layout, analysis)``. Runs the generator-certificate
     digest check and the branching/looping HUGR rejection *before* execution,
     so an unsupported program cannot run (or hang) ahead of its rejection.
     Fails closed on any input whose HUGR cannot be obtained: one sampled
     execution of an uninspectable program is not a certifiable static circuit.
-    The returned bytes are the exact bytes the caller must execute.
+    The analysis holds the exact bytes the caller must execute. Certified
+    generators bypass loading; other programs load for the control-flow check.
     """
     hugr_bytes = _certifiable_hugr_bytes(guppy)
     if hugr_bytes is None:
@@ -725,24 +750,25 @@ def _preflight_guppy_static_schedule(
     generator_layout = (
         _generator_certified_layout(certificate_carrier, hugr_bytes) if certificate_carrier is not None else None
     )
+    analysis = _GuppyHugrAnalysis(hugr_bytes)
     if generator_layout is not None:
-        return generator_layout, hugr_bytes
+        return generator_layout, analysis
 
-    from pecos_rslib import guppy_hugr_has_nontrivial_control_flow
+    from pecos.qec._hugr_result_tags import has_nontrivial_control_flow
 
-    if guppy_hugr_has_nontrivial_control_flow(hugr_bytes):
+    if has_nontrivial_control_flow(analysis.hugr):
         msg = (
             "GuppyDemBuilder requires a statically straight-line Guppy program unless it carries "
             "a trusted generator-owned measurement layout; branching or looping control flow cannot be "
             "certified from one runtime trace"
         )
         raise ValueError(msg)
-    return None, hugr_bytes
+    return None, analysis
 
 
 def _compiler_certified_result_traces(
     generator_layout: Sequence[Any] | None,
-    hugr_bytes: bytes,
+    analysis: _GuppyHugrAnalysis,
     circuit: Any,
     runtime_result_traces: Sequence[Mapping[str, Any]],
     *,
@@ -766,9 +792,7 @@ def _compiler_certified_result_traces(
     if not candidate_tags:
         return []
 
-    from pecos_rslib import extract_result_tag_measurements_for_guppy
-
-    tag_occurrences, static_measurement_count = extract_result_tag_measurements_for_guppy(hugr_bytes)
+    tag_occurrences, static_measurement_count = analysis.result_tags
     source_measurement_ids = _validated_source_measurement_ids(circuit)
     if static_measurement_count != len(source_measurement_ids):
         if required_tags:
@@ -1253,14 +1277,14 @@ class GuppyDemBuilder:
         raw_detectors_json = self._detectors_value if self._detectors_kind == "json" else "[]"
         raw_observables_json = self._observables_value if self._observables_kind == "json" else "[]"
         json_needs_tags = _result_tags_present(raw_detectors_json, raw_observables_json)
-        generator_layout, hugr_bytes = _preflight_guppy_static_schedule(
+        generator_layout, analysis = _preflight_guppy_static_schedule(
             program,
             required_tags=referenced_tags,
             json_result_tags=json_needs_tags,
         )
         with _collect_program_result_traces() as result_traces:
             circuit = trace_program_to_tick_circuit(
-                _HugrProgram(hugr_bytes),
+                _HugrProgram(analysis.hugr_bytes),
                 num_qubits,
                 seed=0 if self._seed is _UNSET else self._seed,
                 runtime=None if self._runtime is _UNSET else self._runtime,
@@ -1298,7 +1322,7 @@ class GuppyDemBuilder:
         )
         result_traces = _compiler_certified_result_traces(
             generator_layout,
-            hugr_bytes,
+            analysis,
             circuit,
             result_traces,
             required_tags=referenced_tags,
@@ -1318,10 +1342,12 @@ class GuppyDemBuilder:
                 "guppy_source_measurement_ids",
             )
             source_measurement_ids = json.loads(source_ids_json) if source_ids_json else []
+            tag_occurrences, static_measurement_count = analysis.result_tags
             detectors_json, observables_json = resolve_result_tags_for_guppy(
                 detectors_json,
                 observables_json,
-                hugr_bytes,
+                tag_occurrences,
+                static_measurement_count,
                 source_measurement_ids,
                 measurement_ids_in_execution_order(circuit),
             )

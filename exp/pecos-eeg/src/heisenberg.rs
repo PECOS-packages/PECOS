@@ -23,7 +23,8 @@
 //! for QEC circuits (m ~ 5-15). S-type noise does not increase term count.
 //!
 //! The Pauli-tracking walks support these coherent and stochastic channels.
-//! A matrix reference for coherent RZ noise is also provided (~20 qubits).
+//! A dense-matrix reference ([`heisenberg_exact_from_circuit`], up to ~20
+//! qubits) applies the same noise and checks the walks.
 
 use crate::Bm;
 use crate::noise::{GateNoise, NoiseSpec};
@@ -1563,13 +1564,29 @@ pub fn heisenberg_detection_probability_from_circuit(
     ))
 }
 
-/// Detection probability via a matrix reference for coherent RZ noise.
+/// Detection probability via a dense-matrix reference for the exact walks.
 ///
 /// Computes the backward adjoint using dense 2^n × 2^n complex matrix
-/// multiplication, ignoring non-H noise injections. It does not implement
-/// stochastic or categorical channels. Limited to ~20 expanded qubits by
-/// memory. Useful as a coherent-noise reference for the faster
+/// operations, with O(4^n) memory. Supports PZ, QAlloc, MZ, H, and CX in the
+/// expanded circuit. Noise is the physical view from
+/// [`NoiseSpec::exact_noise_after_gate`]: H-type rotations U = exp(-i h P) and
+/// S-type Pauli channels with probability p = -s, for arbitrary Pauli strings
+/// P, followed by categorical depolarizing channels, each applied as the
+/// explicit sum over its 3 or 15 nonidentity Paulis.
+/// Identity labels have no effect. Expansion gates receive no noise.
+/// Useful as a reference/validation for the faster
 /// Pauli-tracking walk ([`heisenberg_detection_probability_from_circuit`]).
+///
+/// # Errors
+///
+/// Returns an error for C/A injections (even at zero rate), a label acting on
+/// a qubit outside the expanded circuit, any unimplemented expanded gate
+/// adjoint, or an expansion/measurement-record resolution error.
+///
+/// # Panics
+///
+/// Panics if the expanded circuit has more than 20 qubits, or if a
+/// categorical channel acts outside its gate's qubits.
 pub fn heisenberg_exact_from_circuit(
     original_gates: &[Gate],
     detector_meas_indices: &[usize],
@@ -1618,43 +1635,71 @@ pub fn heisenberg_exact_from_circuit(
 
         // Noise adjoint (skip expansion gates)
         if !expansion_gates[idx] {
-            let injections = noise.noise_after_gate(idx, g.gate_type, &qs);
-            for inj in &injections {
-                if inj.eeg_type != crate::eeg::EegType::H {
-                    continue;
-                }
-                if inj.rate.abs() < 1e-20 {
-                    continue;
-                }
-                // RZ(θ) on the noise qubit, where θ = 2*rate
-                let theta = 2.0 * inj.rate;
-                // Find which qubit the noise acts on
-                let noise_q = if let Some(q) = inj.label.z_bits.highest_set_bit() {
-                    q
-                } else if let Some(q) = inj.label.x_bits.highest_set_bit() {
-                    q
-                } else {
-                    continue;
+            let exact = exact_gate_noise(noise, idx, g.gate_type, &qs);
+            for inj in &exact.injections {
+                let weights = match inj.eeg_type {
+                    crate::eeg::EegType::H => {
+                        let (s, c) = inj.rate.sin_cos();
+                        (c * c, s * s, s * c)
+                    }
+                    crate::eeg::EegType::S => {
+                        let p = -inj.rate;
+                        (1.0 - p, p, 0.0)
+                    }
+                    eeg_type => {
+                        return Err(crate::expand::EegBuildError::UnsupportedExactNoise {
+                            eeg_type,
+                        });
+                    }
                 };
-                matrix_rz_adjoint(&mut obs_re, &mut im, noise_q, theta, n);
+                if let Some(qubit) = inj
+                    .label
+                    .x_bits
+                    .highest_set_bit()
+                    .max(inj.label.z_bits.highest_set_bit())
+                    .filter(|&q| q >= n)
+                {
+                    return Err(crate::expand::EegBuildError::ExactLabelOutOfRange {
+                        qubit,
+                        num_qubits: n,
+                    });
+                }
+                if inj.rate.abs() < 1e-20 || inj.label.is_identity() {
+                    continue;
+                }
+                matrix_pauli_adjoint(&mut obs_re, &mut im, &inj.label, weights, n);
+            }
+            for channel in &exact.depolarizing {
+                matrix_depolarizing_adjoint(&mut obs_re, &mut im, channel, n);
             }
         }
 
         // Gate adjoint
         match g.gate_type {
             GateType::PZ | GateType::QAlloc => {
-                matrix_pz_adjoint(&mut obs_re, &mut im, qs[0], n);
+                for &q in &qs {
+                    matrix_pz_adjoint(&mut obs_re, &mut im, q, n);
+                }
             }
             GateType::MZ => {
-                matrix_mz_adjoint(&mut obs_re, &mut im, qs[0], n);
+                for &q in &qs {
+                    matrix_mz_adjoint(&mut obs_re, &mut im, q, n);
+                }
             }
             GateType::H => {
-                matrix_h_adjoint(&mut obs_re, &mut im, qs[0], n);
+                for &q in &qs {
+                    matrix_h_adjoint(&mut obs_re, &mut im, q, n);
+                }
             }
-            GateType::CX if qs.len() >= 2 => {
-                matrix_cx_adjoint(&mut obs_re, &mut im, qs[0], qs[1], n);
+            GateType::CX if qs.len() >= 2 && qs.len().is_multiple_of(2) => {
+                for pair in qs.rchunks_exact(2) {
+                    matrix_cx_adjoint(&mut obs_re, &mut im, pair[0], pair[1], n);
+                }
             }
-            _ => {}
+            GateType::I | GateType::Idle => {}
+            gate_type => {
+                return Err(crate::expand::EegBuildError::UnsupportedExactGate { gate_type });
+            }
         }
     }
 
@@ -1666,27 +1711,95 @@ pub fn heisenberg_exact_from_circuit(
 
 // --- Matrix helpers for exact Heisenberg ---
 
-fn bit_to_f64(value: usize) -> f64 {
-    f64::from(u8::try_from(value).expect("bit value fits in u8"))
+fn matrix_phase(re: f64, im: f64, phase: u8) -> (f64, f64) {
+    match phase % 4 {
+        0 => (re, im),
+        1 => (-im, re),
+        2 => (-re, -im),
+        3 => (im, -re),
+        _ => unreachable!(),
+    }
 }
 
-fn matrix_rz_adjoint(re: &mut [f64], im: &mut [f64], q: usize, theta: f64, n: usize) {
+/// Apply a O + b P O P + i c (P O - O P), using P's monomial action.
+fn matrix_pauli_adjoint(
+    re: &mut [f64],
+    im: &mut [f64],
+    label: &Bm,
+    (a, b, c): (f64, f64, f64),
+    n: usize,
+) {
     let dim = 1usize << n;
-    for i in 0..dim {
-        let bi = bit_to_f64((i >> q) & 1);
-        for j in 0..dim {
-            let bj = bit_to_f64((j >> q) & 1);
-            let phase = (bi - bj) * theta;
-            if phase.abs() < 1e-20 {
-                continue;
-            }
-            let (cp, sp) = (phase.cos(), phase.sin());
+    let action: Vec<_> = (0..dim)
+        .map(|i| {
+            let state = SmallVec::from_slice(&[u64::try_from(i).expect("basis index fits in u64")]);
+            let (image, phase) = label.apply_to_basis_state(&state);
+            // The dense walk is limited to 20 qubits, so one word suffices.
+            let index = usize::try_from(image[0]).expect("basis image fits in usize");
+            (index, phase)
+        })
+        .collect();
+    let mut new_re = vec![0.0; dim * dim];
+    let mut new_im = vec![0.0; dim * dim];
+    for (i, &(pi, phase_i)) in action.iter().enumerate() {
+        for (j, &(pj, phase_j)) in action.iter().enumerate() {
+            // P is Hermitian: <i|P = conjugate(i^phase_i) <pi|.
+            let po = pi * dim + j;
+            let op = i * dim + pj;
+            let pop = pi * dim + pj;
+            let (po_re, po_im) = matrix_phase(re[po], im[po], 4 - phase_i);
+            let (op_re, op_im) = matrix_phase(re[op], im[op], phase_j);
+            let (pop_re, pop_im) = matrix_phase(re[pop], im[pop], 4 - phase_i + phase_j);
             let idx = i * dim + j;
-            let (r, m) = (re[idx], im[idx]);
-            re[idx] = cp * r - sp * m;
-            im[idx] = sp * r + cp * m;
+            new_re[idx] = a * re[idx] + b * pop_re - c * (po_im - op_im);
+            new_im[idx] = a * im[idx] + b * pop_im + c * (po_re - op_re);
         }
     }
+    re.copy_from_slice(&new_re);
+    im.copy_from_slice(&new_im);
+}
+
+/// Apply (1-p) O + (p/k) Σ P O P over the channel's k nonidentity Paulis.
+fn matrix_depolarizing_adjoint(
+    re: &mut [f64],
+    im: &mut [f64],
+    channel: &crate::noise::DepolarizingChannel,
+    n: usize,
+) {
+    use crate::noise::DepolarizingChannel;
+    let local = |q: usize| [Bm::default(), Bm::x(q), Bm::y(q), Bm::z(q)];
+    let (paulis, probability): (Vec<Bm>, f64) = match *channel {
+        DepolarizingChannel::OneQubit { qubit, probability } => {
+            (local(qubit)[1..].to_vec(), probability)
+        }
+        DepolarizingChannel::TwoQubit {
+            qubits: [qa, qb],
+            probability,
+        } => {
+            let paulis = local(qa)
+                .iter()
+                .flat_map(|a| local(qb).map(|b| a.multiply(&b)))
+                .skip(1) // I ⊗ I
+                .collect();
+            (paulis, probability)
+        }
+    };
+    let weight = probability / paulis.len() as f64;
+    let mut sum_re: Vec<f64> = re.iter().map(|v| (1.0 - probability) * v).collect();
+    let mut sum_im: Vec<f64> = im.iter().map(|v| (1.0 - probability) * v).collect();
+    for pauli in &paulis {
+        let mut pop_re = re.to_vec();
+        let mut pop_im = im.to_vec();
+        matrix_pauli_adjoint(&mut pop_re, &mut pop_im, pauli, (0.0, 1.0, 0.0), n);
+        for (sum, pop) in sum_re.iter_mut().zip(&pop_re) {
+            *sum += weight * pop;
+        }
+        for (sum, pop) in sum_im.iter_mut().zip(&pop_im) {
+            *sum += weight * pop;
+        }
+    }
+    re.copy_from_slice(&sum_re);
+    im.copy_from_slice(&sum_im);
 }
 
 fn matrix_pz_adjoint(re: &mut [f64], im: &mut [f64], q: usize, n: usize) {
@@ -2360,6 +2473,442 @@ mod tests {
                 (p - exact).abs() < 1e-10,
                 "theta={theta}: exact_heisenberg {p:.10} vs sin²(θ) {exact:.10}"
             );
+        }
+    }
+
+    #[test]
+    fn test_exact_categorical_depolarizing() {
+        // Two H locations each attenuate the detector by 1-4p/3; at p=3/4 the
+        // channel is fully depolarizing and the detector is a coin flip.
+        let one_qubit = vec![
+            gate(GateType::PZ, &[0]),
+            gate(GateType::H, &[0]),
+            gate(GateType::H, &[0]),
+            gate(GateType::MZ, &[0]),
+        ];
+        // CX preserves |00>; each nontrivial Z-type detector anticommutes
+        // with 8 of the 15 exclusive two-qubit Paulis.
+        let two_qubit = vec![
+            gate(GateType::PZ, &[0]),
+            gate(GateType::PZ, &[1]),
+            gate(GateType::CX, &[0, 1]),
+            gate(GateType::MZ, &[0]),
+            gate(GateType::MZ, &[1]),
+        ];
+        for p in [0.0_f64, 0.1, 0.3, 0.75, 0.9375, 1.0] {
+            let mut noise = crate::noise::UniformNoise::coherent_only(0.0);
+            noise.p1 = p;
+            let actual = heisenberg_exact_from_circuit(&one_qubit, &[0], &noise, 1).unwrap();
+            let expected = (1.0 - (1.0 - 4.0 * p / 3.0).powi(2)) / 2.0;
+            assert!(
+                (actual - expected).abs() < 1e-12,
+                "p1={p}: {actual} vs {expected}"
+            );
+
+            let mut noise = crate::noise::UniformNoise::coherent_only(0.0);
+            noise.p2 = p;
+            for detector in [&[0][..], &[1], &[0, 1]] {
+                let actual =
+                    heisenberg_exact_from_circuit(&two_qubit, detector, &noise, 2).unwrap();
+                let expected = 8.0 * p / 15.0;
+                assert!(
+                    (actual - expected).abs() < 1e-12,
+                    "p2={p}, detector {detector:?}: {actual} vs {expected}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_exact_matches_walk_under_mixed_uniform_noise() {
+        // Two rounds of an X check on two data qubits, with every UniformNoise
+        // channel active, so coherent, categorical and measurement noise mix.
+        let gates = vec![
+            gate(GateType::PZ, &[0]),
+            gate(GateType::PZ, &[1]),
+            gate(GateType::PZ, &[2]),
+            gate(GateType::H, &[2]),
+            gate(GateType::CX, &[2, 0]),
+            gate(GateType::CX, &[2, 1]),
+            gate(GateType::H, &[2]),
+            gate(GateType::MZ, &[2]),
+            gate(GateType::PZ, &[2]),
+            gate(GateType::H, &[2]),
+            gate(GateType::CX, &[2, 0]),
+            gate(GateType::CX, &[2, 1]),
+            gate(GateType::H, &[2]),
+            gate(GateType::MZ, &[2]),
+        ];
+        let noise = crate::noise::UniformNoise {
+            idle_rz: 0.13,
+            p1: 0.2,
+            p2: 0.3,
+            p_meas: 0.05,
+            p_prep: 0.04,
+        };
+        let exact = heisenberg_exact_from_circuit(&gates, &[0, 1], &noise, 3).unwrap();
+        let walk =
+            heisenberg_detection_probability_from_circuit(&gates, &[0, 1], &noise, 3, 0.0).unwrap();
+        assert!(
+            (exact - walk).abs() < 1e-10,
+            "matrix {exact} vs walk {walk}"
+        );
+    }
+
+    struct ExactTestNoise(Vec<(usize, crate::noise::NoiseInjection)>);
+
+    impl NoiseSpec for ExactTestNoise {
+        fn noise_after_gate(
+            &self,
+            gate_index: usize,
+            _gate_type: GateType,
+            _qubits: &[usize],
+        ) -> Vec<crate::noise::NoiseInjection> {
+            self.0
+                .iter()
+                .filter(|(idx, _)| *idx == gate_index)
+                .map(|(_, inj)| inj.clone())
+                .collect()
+        }
+    }
+
+    fn exact_test_injection(
+        eeg_type: crate::eeg::EegType,
+        label: Bm,
+        rate: f64,
+    ) -> crate::noise::NoiseInjection {
+        crate::noise::NoiseInjection {
+            eeg_type,
+            label,
+            label2: None,
+            rate,
+        }
+    }
+
+    #[test]
+    fn test_exact_single_qubit_pauli_rotations() {
+        let gates = [gate(GateType::PZ, &[0]), gate(GateType::MZ, &[0])];
+        for h in [-0.7_f64, -0.3, 0.0, 0.13, 0.3, 0.8] {
+            for (label, expected) in [
+                (Bm::x(0), h.sin().powi(2)),
+                (Bm::y(0), h.sin().powi(2)),
+                (Bm::z(0), 0.0),
+            ] {
+                let noise = ExactTestNoise(vec![(
+                    0,
+                    exact_test_injection(crate::eeg::EegType::H, label.clone(), h),
+                )]);
+                let actual = heisenberg_exact_from_circuit(&gates, &[0], &noise, 1).unwrap();
+                assert!(
+                    (actual - expected).abs() < 1e-10,
+                    "label={label:?}, h={h}: {actual} != {expected}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_exact_multi_qubit_zz_rotation() {
+        let gates = [
+            gate(GateType::PZ, &[0]),
+            gate(GateType::PZ, &[1]),
+            gate(GateType::H, &[0]),
+            gate(GateType::H, &[0]),
+            gate(GateType::MZ, &[0]),
+        ];
+        for h in [-0.4_f64, 0.3, 0.7] {
+            // Z0Z1 on |+0>, followed by H0: P(q0=1) = sin²(h).
+            // Keeping only Z1 leaves |+0> unchanged and gives zero.
+            let noise = ExactTestNoise(vec![(
+                2,
+                exact_test_injection(crate::eeg::EegType::H, Bm::z(0).multiply(&Bm::z(1)), h),
+            )]);
+            let actual = heisenberg_exact_from_circuit(&gates, &[0], &noise, 2).unwrap();
+            assert!((actual - h.sin().powi(2)).abs() < 1e-10);
+        }
+    }
+
+    #[test]
+    fn test_exact_multi_qubit_xx_rotation() {
+        let gates = [
+            gate(GateType::PZ, &[0]),
+            gate(GateType::PZ, &[1]),
+            gate(GateType::MZ, &[0]),
+        ];
+        for h in [-0.4_f64, 0.3, 0.7] {
+            // exp(-i h X0X1)|00> = cos(h)|00> - i sin(h)|11>:
+            // P(q0=1) = sin²(h); acting on q1 alone gives zero.
+            let noise = ExactTestNoise(vec![(
+                1,
+                exact_test_injection(crate::eeg::EegType::H, Bm::x(0).multiply(&Bm::x(1)), h),
+            )]);
+            let actual = heisenberg_exact_from_circuit(&gates, &[0], &noise, 2).unwrap();
+            assert!((actual - h.sin().powi(2)).abs() < 1e-10);
+        }
+    }
+
+    #[test]
+    fn test_exact_noncommuting_rotations_forward_oracle() {
+        use pecos_core::Angle64;
+        use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, StateVec};
+
+        let gates = [
+            gate(GateType::PZ, &[0]),
+            gate(GateType::PZ, &[1]),
+            gate(GateType::H, &[0]),
+            gate(GateType::CX, &[0, 1]),
+            gate(GateType::H, &[1]),
+            gate(GateType::CX, &[1, 0]),
+            gate(GateType::H, &[0]),
+            gate(GateType::CX, &[0, 1]),
+            gate(GateType::H, &[1]),
+            gate(GateType::MZ, &[0]),
+            gate(GateType::MZ, &[1]),
+        ];
+        let noise = ExactTestNoise(
+            [
+                (2, Bm::y(0), 0.23),
+                (3, Bm::x(1), -0.31),
+                (4, Bm::z(0), 0.41),
+                (5, Bm::y(0).multiply(&Bm::z(1)), -0.19),
+                (6, Bm::x(0).multiply(&Bm::x(1)), 0.27),
+                (7, Bm::z(1), -0.37),
+                (8, Bm::y(0).multiply(&Bm::y(1)), 0.17),
+            ]
+            .into_iter()
+            .map(|(idx, label, h)| (idx, exact_test_injection(crate::eeg::EegType::H, label, h)))
+            .collect(),
+        );
+
+        // Independent forward evolution on the original two qubits. Each
+        // simulator rotation uses angle 2h for U = exp(-i h P).
+        let mut state = StateVec::new(2);
+        let q0 = [QubitId(0)];
+        let q1 = [QubitId(1)];
+        let pair = [(QubitId(0), QubitId(1))];
+        state.h(&q0);
+        state.ry(Angle64::from_radians(2.0 * 0.23), &q0);
+        state.cx(&pair);
+        state.rx(Angle64::from_radians(2.0 * -0.31), &q1);
+        state.h(&q1);
+        state.rz(Angle64::from_radians(2.0 * 0.41), &q0);
+        state.cx(&[(QubitId(1), QubitId(0))]);
+        // RX(pi/2) maps Y to Z; undo it after the ZZ rotation.
+        state.rx(Angle64::from_radians(std::f64::consts::FRAC_PI_2), &q0);
+        state.rzz(Angle64::from_radians(2.0 * -0.19), &pair);
+        state.rx(Angle64::from_radians(-std::f64::consts::FRAC_PI_2), &q0);
+        state.h(&q0);
+        state.rxx(Angle64::from_radians(2.0 * 0.27), &pair);
+        state.cx(&pair);
+        state.rz(Angle64::from_radians(2.0 * -0.37), &q1);
+        state.h(&q1);
+        state.ryy(Angle64::from_radians(2.0 * 0.17), &pair);
+
+        for (detector, expected) in [
+            (vec![0], state.probability(1) + state.probability(3)),
+            (vec![1], state.probability(2) + state.probability(3)),
+            (vec![0, 1], state.probability(1) + state.probability(2)),
+        ] {
+            let actual = heisenberg_exact_from_circuit(&gates, &detector, &noise, 2).unwrap();
+            assert!(
+                (actual - expected).abs() < 1e-10,
+                "detector={detector:?}: matrix={actual}, forward={expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_exact_stochastic_pauli_channels() {
+        let gates = [
+            gate(GateType::PZ, &[0]),
+            gate(GateType::PZ, &[1]),
+            gate(GateType::MZ, &[0]),
+        ];
+        for p in [0.0, 0.2, 0.5, 1.0] {
+            for (label, expected) in [
+                (Bm::x(0), p),
+                (Bm::y(0), p),
+                (Bm::z(0), 0.0),
+                (Bm::x(0).multiply(&Bm::x(1)), p),
+                (Bm::y(0).multiply(&Bm::y(1)), p),
+                (Bm::z(0).multiply(&Bm::z(1)), 0.0),
+            ] {
+                let noise = ExactTestNoise(vec![(
+                    1,
+                    exact_test_injection(crate::eeg::EegType::S, label.clone(), -p),
+                )]);
+                let actual = heisenberg_exact_from_circuit(&gates, &[0], &noise, 2).unwrap();
+                assert!(
+                    (actual - expected).abs() < 1e-10,
+                    "label={label:?}, p={p}: {actual} != {expected}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_exact_identity_injections() {
+        let gates = [
+            gate(GateType::PZ, &[0]),
+            gate(GateType::H, &[0]),
+            gate(GateType::MZ, &[0]),
+        ];
+        for eeg_type in [crate::eeg::EegType::H, crate::eeg::EegType::S] {
+            let noise = ExactTestNoise(vec![(
+                1,
+                exact_test_injection(eeg_type, Bm::default(), -0.7),
+            )]);
+            let actual = heisenberg_exact_from_circuit(&gates, &[0], &noise, 1).unwrap();
+            assert!((actual - 0.5).abs() < 1e-10);
+        }
+    }
+
+    #[test]
+    fn test_exact_unsupported_injections() {
+        let gates = [gate(GateType::PZ, &[0]), gate(GateType::MZ, &[0])];
+        for eeg_type in [crate::eeg::EegType::C, crate::eeg::EegType::A] {
+            for rate in [0.0, 0.3] {
+                for label in [Bm::default(), Bm::x(0)] {
+                    let mut inj = exact_test_injection(eeg_type, label, rate);
+                    inj.label2 = Some(Bm::z(0));
+                    let noise = ExactTestNoise(vec![(0, inj)]);
+                    assert_eq!(
+                        heisenberg_exact_from_circuit(&gates, &[0], &noise, 1),
+                        Err(expand::EegBuildError::UnsupportedExactNoise { eeg_type })
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_exact_label_out_of_range() {
+        let gates = [gate(GateType::PZ, &[0]), gate(GateType::MZ, &[0])];
+        // Expansion adds one aux qubit, so qubit 2 lies outside the circuit.
+        for eeg_type in [crate::eeg::EegType::H, crate::eeg::EegType::S] {
+            let noise = ExactTestNoise(vec![(0, exact_test_injection(eeg_type, Bm::x(2), -0.1))]);
+            assert_eq!(
+                heisenberg_exact_from_circuit(&gates, &[0], &noise, 1),
+                Err(expand::EegBuildError::ExactLabelOutOfRange {
+                    qubit: 2,
+                    num_qubits: 2
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn test_exact_unsupported_gates() {
+        for unsupported in [
+            gate(GateType::SZ, &[0]),
+            gate(GateType::CZ, &[0, 1]),
+            gate(GateType::CX, &[0, 1, 2]),
+        ] {
+            let gate_type = unsupported.gate_type;
+            let gates = [
+                gate(GateType::PZ, &[0]),
+                gate(GateType::PZ, &[1]),
+                unsupported,
+                gate(GateType::MZ, &[0]),
+            ];
+            assert_eq!(
+                heisenberg_exact_from_circuit(&gates, &[0], &ExactTestNoise(vec![]), 2),
+                Err(expand::EegBuildError::UnsupportedExactGate { gate_type })
+            );
+        }
+    }
+
+    #[test]
+    fn test_exact_skips_expansion_noise() {
+        let gates = [
+            gate(GateType::PZ, &[0]),
+            gate(GateType::MZ, &[0]),
+            gate(GateType::PZ, &[0]),
+            gate(GateType::MZ, &[0]),
+        ];
+        // Expansion inserts QAlloc, CX, PZ at indices 1..=3 and 5..=7.
+        let noise = ExactTestNoise(
+            [1, 2, 3, 5, 6, 7]
+                .into_iter()
+                .map(|idx| {
+                    (
+                        idx,
+                        exact_test_injection(crate::eeg::EegType::C, Bm::x(0), 0.3),
+                    )
+                })
+                .collect(),
+        );
+        let actual = heisenberg_exact_from_circuit(&gates, &[0, 1], &noise, 1).unwrap();
+        assert!(actual.abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_exact_batched_supported_gates() {
+        let gates = [
+            gate(GateType::QAlloc, &[0, 1, 2, 3]),
+            gate(GateType::H, &[1]),
+            gate(GateType::PZ, &[0, 1]),
+            gate(GateType::H, &[0, 1]),
+            gate(GateType::CX, &[0, 2, 1, 3]),
+            gate(GateType::MZ, &[0, 1, 2, 3]),
+        ];
+        // The reset removes the first H1. The batched H and CX then prepare
+        // two Bell pairs, (0,2) and (1,3): each bit is fair, each pair even.
+        let noise = ExactTestNoise(vec![]);
+        for (detector, expected) in [
+            (vec![0], 0.5),
+            (vec![1], 0.5),
+            (vec![2], 0.5),
+            (vec![3], 0.5),
+            (vec![0, 2], 0.0),
+            (vec![1, 3], 0.0),
+        ] {
+            let actual = heisenberg_exact_from_circuit(&gates, &detector, &noise, 4).unwrap();
+            assert!(
+                (actual - expected).abs() < 1e-10,
+                "detector={detector:?}: {actual} != {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_exact_batched_cx_pairs_apply_in_order() {
+        // CX [0,1,1,2] is CX(0,1) then CX(1,2): after H0 that makes a GHZ
+        // state, so q2 is a fair coin. In the other order CX(1,2) acts on
+        // |0> first and q2 stays 0.
+        let gates = [
+            gate(GateType::QAlloc, &[0, 1, 2]),
+            gate(GateType::H, &[0]),
+            gate(GateType::CX, &[0, 1, 1, 2]),
+            gate(GateType::MZ, &[0, 1, 2]),
+        ];
+        let noise = ExactTestNoise(vec![]);
+        for (detector, expected) in [(vec![2], 0.5), (vec![0, 2], 0.0), (vec![1, 2], 0.0)] {
+            let actual = heisenberg_exact_from_circuit(&gates, &detector, &noise, 3).unwrap();
+            assert!(
+                (actual - expected).abs() < 1e-10,
+                "detector={detector:?}: {actual} != {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_exact_identity_gates_carry_noise() {
+        // I and Idle act trivially but still carry noise: an X0 flip with
+        // probability p after either one flips the measurement with p.
+        let p = 0.2;
+        for idle in [GateType::I, GateType::Idle] {
+            let gates = [
+                gate(GateType::PZ, &[0]),
+                gate(idle, &[0]),
+                gate(GateType::MZ, &[0]),
+            ];
+            let noise = ExactTestNoise(vec![(
+                1,
+                exact_test_injection(crate::eeg::EegType::S, Bm::x(0), -p),
+            )]);
+            let actual = heisenberg_exact_from_circuit(&gates, &[0], &noise, 1).unwrap();
+            assert!((actual - p).abs() < 1e-12, "{idle:?}: {actual} != {p}");
         }
     }
 

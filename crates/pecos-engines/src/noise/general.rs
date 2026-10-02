@@ -339,18 +339,28 @@ pub struct GeneralNoiseModel {
     /// Using a `BTreeSet` because we will iterate over the qubits and we want determinism.
     prepared_qubits: BTreeSet<usize>,
 
-    /// Track which qubits are being measured in the current batch and their gate types
-    /// This is needed to properly handle leakage during measurements as well
-    /// as crosstalk.
-    measured_qubits: Vec<(usize, GateType)>,
+    /// Qubit, gate kind and leakage at each emitted measurement's position.
+    /// Keep these together for both user and injected crosstalk measurements:
+    /// later resets, faults and continuation effects cannot rewrite past readout.
+    measured_qubits: Vec<(usize, GateType, bool)>,
 
-    // Scheduled profiles have no measurement-conditioned crosstalk continuations.
-    // Capture leakage at each readout before later preparation changes it. Legacy
-    // controllers retain their existing deferred measurement semantics.
-    scheduled_measurement_leakage: Option<Vec<bool>>,
+    // Preserve scheduled admission/recovery even for a gate-only batch.
+    scheduled_batch_active: bool,
+
+    // Original gates after an outcome-dependent crosstalk site. Some(empty)
+    // still means its injected measurements must complete before a new start.
+    pending_crosstalk: Option<std::vec::IntoIter<Gate>>,
+    crosstalk_failed: bool,
+    crosstalk_active: bool,
 
     /// Stored outcome builder
     results_builder: ByteMessageBuilder,
+}
+
+pub(crate) struct FrameContinuation {
+    pub(crate) stage: EngineStage<ByteMessage, ByteMessage>,
+    pub(crate) ends: Vec<u32>,
+    pub(crate) prefix: usize,
 }
 
 impl ControlEngine for GeneralNoiseModel {
@@ -375,17 +385,7 @@ impl ControlEngine for GeneralNoiseModel {
     ) -> Result<EngineStage<Self::EngineInput, Self::Output>, PecosError> {
         trace!("GeneralNoise::continue_processing");
         let next_operations = self.apply_noise_on_continue_processing(msg)?;
-        if next_operations.is_empty()? {
-            // No more quantum operations to process, return results
-            // collected along the way and reset the results builder.
-            let results = self.results_builder.build();
-            self.results_builder.reset();
-            self.scheduled_measurement_leakage = None;
-            Ok(EngineStage::Complete(results))
-        } else {
-            // if there are new quantum operations to process.
-            Ok(EngineStage::NeedsProcessing(next_operations))
-        }
+        self.finish_stage(next_operations, false)
     }
 
     fn reset(&mut self) -> Result<(), PecosError> {
@@ -424,6 +424,44 @@ impl RngManageable for GeneralNoiseModel {
 impl ProbabilityValidator for GeneralNoiseModel {}
 
 impl GeneralNoiseModel {
+    fn finish_stage(
+        &mut self,
+        commands: ByteMessage,
+        force_dispatch: bool,
+    ) -> Result<EngineStage<ByteMessage, ByteMessage>, PecosError> {
+        if commands.is_empty()? && !force_dispatch {
+            let results = self.results_builder.build();
+            self.results_builder.reset();
+            self.scheduled_batch_active = false;
+            Ok(EngineStage::Complete(results))
+        } else {
+            Ok(EngineStage::NeedsProcessing(commands))
+        }
+    }
+
+    pub(crate) fn has_pending_crosstalk(&self) -> bool {
+        self.pending_crosstalk.is_some()
+    }
+
+    // Prefix commands are resolved transitions, preceding any resumed source gates.
+    pub(crate) fn continue_runtime_frame(
+        &mut self,
+        reply: ByteMessage,
+    ) -> Result<FrameContinuation, PecosError> {
+        let was_pending = self.has_pending_crosstalk();
+        let mut ends = Vec::new();
+        let mut prefix = 0;
+        let commands = self.continue_with_boundaries(reply, Some(&mut ends), &mut prefix)?;
+        // Let the owner consume trailing frame records before completion even
+        // when the last payload's transition is identity.
+        let stage = self.finish_stage(commands, was_pending)?;
+        Ok(FrameContinuation {
+            stage,
+            ends,
+            prefix,
+        })
+    }
+
     fn start_with_boundaries(
         &mut self,
         input: &ByteMessage,
@@ -447,12 +485,12 @@ impl GeneralNoiseModel {
         &mut self,
         input: &ByteMessage,
     ) -> Result<EngineStage<ByteMessage, ByteMessage>, PecosError> {
-        if self.scheduled_measurement_leakage.is_some() || !self.measured_qubits.is_empty() {
+        if self.scheduled_batch_active || !self.measured_qubits.is_empty() {
             return Err(PecosError::Processing(
                 "unfinished scheduled measurements".into(),
             ));
         }
-        self.scheduled_measurement_leakage = Some(Vec::new());
+        self.scheduled_batch_active = true;
         self.start_with_boundaries(input, None)
     }
 
@@ -633,10 +671,14 @@ impl GeneralNoiseModel {
     fn apply_noise_on_start_with_boundaries(
         &mut self,
         input: &ByteMessage,
-        mut boundaries: Option<&mut Vec<u32>>,
+        boundaries: Option<&mut Vec<u32>>,
     ) -> Result<ByteMessage, PecosError> {
+        if self.crosstalk_active || self.crosstalk_failed {
+            return Err(PecosError::Processing(
+                "unfinished crosstalk continuation; reset required after failure".into(),
+            ));
+        }
         let mut builder = NoiseUtils::create_quantum_builder();
-        let mut err = None;
 
         // Parse the input as quantum operations
         let gates = input.quantum_ops().map_err(|err| {
@@ -648,24 +690,31 @@ impl GeneralNoiseModel {
             return Err(PecosError::Input(Self::channel_gate_error()));
         }
 
-        for gate in gates {
+        self.apply_gate_sequence(gates.into_iter(), &mut builder, boundaries)?;
+        Ok(builder.build())
+    }
+
+    fn apply_gate_sequence(
+        &mut self,
+        mut gates: std::vec::IntoIter<Gate>,
+        builder: &mut ByteMessageBuilder,
+        mut boundaries: Option<&mut Vec<u32>>,
+    ) -> Result<(), PecosError> {
+        let mut err = None;
+        while let Some(gate) = gates.next() {
+            let measurements_before = self.measured_qubits.len();
             // Track which qubits are being measured for leakage handling
             if matches!(
                 gate.gate_type,
                 GateType::MZ | GateType::MeasureLeaked | GateType::MPZ
             ) {
-                if let Some(leakage) = &mut self.scheduled_measurement_leakage {
-                    leakage.extend(
-                        gate.qubits
-                            .iter()
-                            .map(|q| self.leaked_qubits.contains(&usize::from(*q))),
-                    );
-                }
-                self.measured_qubits.extend(
-                    gate.qubits
-                        .iter()
-                        .map(|q| (usize::from(*q), gate.gate_type)),
-                );
+                self.measured_qubits.extend(gate.qubits.iter().map(|q| {
+                    (
+                        usize::from(*q),
+                        gate.gate_type,
+                        self.leaked_qubits.contains(&usize::from(*q)),
+                    )
+                }));
             }
 
             // Skip noise application for noiseless gates.
@@ -676,7 +725,7 @@ impl GeneralNoiseModel {
                 // preparation to a real reset on the simulator, so skipping this
                 // bookkeeping would leave the leakage record disagreeing with the
                 // state the simulator actually holds.
-                if matches!(gate.gate_type, GateType::PZ) {
+                if matches!(gate.gate_type, GateType::PZ | GateType::MPZ) {
                     for &qubit in &gate.qubits {
                         let qubit = usize::from(qubit);
                         if self.is_leaked(qubit) {
@@ -697,14 +746,14 @@ impl GeneralNoiseModel {
             // decide whether to add the original gate based on error models
             match gate.gate_type {
                 GateType::Idle => {
-                    self.apply_idle_faults(&gate, self.p_idle_linear_rate, &mut builder);
+                    self.apply_idle_faults(&gate, self.p_idle_linear_rate, builder);
                 }
                 GateType::PZ => {
                     for &q in &gate.qubits {
                         self.prepared_qubits.insert(usize::from(q));
                     }
-                    self.apply_prep_faults(&gate, &mut builder);
-                    self.apply_simple_crosstalk_faults(&gate, self.p_prep_crosstalk, &mut builder);
+                    self.apply_prep_faults(&gate, builder);
+                    self.apply_simple_crosstalk_faults(&gate, self.p_prep_crosstalk, builder);
                 }
                 GateType::MZ | GateType::MeasureLeaked => {
                     // Measurement noise is handled in apply_noise_on_continue_processing
@@ -713,11 +762,12 @@ impl GeneralNoiseModel {
                 }
                 GateType::MPZ => {
                     // Measurement noise is applied post-engine like MZ; the
-                    // built-in preparation marks the qubits prepared but draws
-                    // no preparation fault (measurement-half only, like every
-                    // other noise path).
+                    // built-in preparation clears leakage after its readout
+                    // was recorded above. Like other noise paths, it draws no
+                    // preparation fault.
                     for &q in &gate.qubits {
                         self.prepared_qubits.insert(usize::from(q));
+                        self.mark_as_unleaked(usize::from(q));
                     }
                     builder.add_gate_command(&gate);
                 }
@@ -737,7 +787,7 @@ impl GeneralNoiseModel {
                     self.apply_crosstalk_faults_from_payload(
                         gate.gate_type,
                         potential_victims,
-                        &mut builder,
+                        builder,
                     );
                 }
                 GateType::MeasCrosstalkLocalPayload => {
@@ -747,7 +797,7 @@ impl GeneralNoiseModel {
                     self.apply_crosstalk_faults_from_payload(
                         gate.gate_type,
                         potential_victims,
-                        &mut builder,
+                        builder,
                     );
                 }
                 GateType::I => {
@@ -758,7 +808,7 @@ impl GeneralNoiseModel {
                     err = Some(err_msg);
                 }
                 _ if gate.is_single_qubit() => {
-                    self.apply_sq_faults(&gate, &mut builder);
+                    self.apply_sq_faults(&gate, builder);
                 }
                 _ if gate.is_two_qubit() => {
                     // For angle-dependent error rates (rotation gates like RZZ).
@@ -777,7 +827,7 @@ impl GeneralNoiseModel {
                         self.p2
                     };
 
-                    self.apply_tq_faults(&gate, p2, &mut builder);
+                    self.apply_tq_faults(&gate, p2, builder);
                 }
                 _ => {
                     // This should never happen since we've covered all cases above
@@ -788,13 +838,22 @@ impl GeneralNoiseModel {
             if let Some(ends) = boundaries.as_deref_mut() {
                 ends.push(builder.message_count());
             }
+            if gate.gate_type.is_crosstalk_payload()
+                && self.measured_qubits.len() > measurements_before
+            {
+                // The injected measurement must execute and its transition must
+                // be resolved before we sample or emit any later source gate.
+                self.pending_crosstalk = Some(gates);
+                self.crosstalk_active = true;
+                break;
+            }
         }
 
         if let Some(e) = err {
             return Err(PecosError::Processing(e));
         }
 
-        Ok(builder.build())
+        Ok(())
     }
 
     /// Apply measurement faults to the message after measurements have occurred
@@ -821,8 +880,46 @@ impl GeneralNoiseModel {
         &mut self,
         message: ByteMessage,
     ) -> Result<ByteMessage, PecosError> {
+        self.continue_with_boundaries(message, None, &mut 0)
+    }
+
+    fn continue_with_boundaries(
+        &mut self,
+        message: ByteMessage,
+        boundaries: Option<&mut Vec<u32>>,
+        prefix: &mut usize,
+    ) -> Result<ByteMessage, PecosError> {
+        if self.crosstalk_failed {
+            return Err(PecosError::Processing(
+                "crosstalk continuation failed; reset required".into(),
+            ));
+        }
+        // Latch before any result handling/RNG mutation, including unwinding.
+        self.crosstalk_failed = self.crosstalk_active;
+        let transitions = self.apply_measurement_reply(message)?;
+        let transition_gates = transitions.quantum_ops()?;
+        *prefix = transition_gates.len();
+        let mut builder = NoiseUtils::create_quantum_builder();
+        builder.add_gate_commands(&transition_gates);
+        if let Some(remaining) = self.pending_crosstalk.take() {
+            self.apply_gate_sequence(remaining, &mut builder, boundaries)?;
+        }
+        self.crosstalk_failed = false;
+        let commands = builder.build();
+        if commands.is_empty()? && self.pending_crosstalk.is_none() {
+            self.crosstalk_active = false;
+        }
+        Ok(commands)
+    }
+
+    fn apply_measurement_reply(&mut self, message: ByteMessage) -> Result<ByteMessage, PecosError> {
         // If there are no measurement results, return the message unchanged
         if !NoiseUtils::has_measurements(&message) {
+            if !self.measured_qubits.is_empty() {
+                return Err(PecosError::Processing(
+                    "missing pending measurement outcomes".into(),
+                ));
+            }
             return Ok(message);
         }
         // Parse the measurements from the message
@@ -841,27 +938,15 @@ impl GeneralNoiseModel {
             )));
         }
 
-        if self
-            .scheduled_measurement_leakage
-            .as_ref()
-            .is_some_and(|states| states.len() != self.measured_qubits.len())
-        {
-            return Err(PecosError::Processing(
-                "scheduled measurement snapshot mismatch".into(),
-            ));
-        }
-
         for (idx, outcome) in measurement_outcomes.into_iter().enumerate() {
-            let (qubit, gate_type) = self.measured_qubits[idx];
-            let leaked_at_measurement = self
-                .scheduled_measurement_leakage
-                .as_ref()
-                .map_or_else(|| self.is_leaked(qubit), |states| states[idx]);
+            let (qubit, gate_type, leaked_at_measurement) = self.measured_qubits[idx];
             match gate_type {
                 GateType::MeasCrosstalkGlobalPayload | GateType::MeasCrosstalkLocalPayload => {
                     // It is not a measurement destined for the user, but one we
                     // injected in order to model crosstalk. Use the measurement result
-                    // to determine any transitions to apply.
+                    // to determine any transitions to apply. The recorded leakage
+                    // flag is unused for injected measurements: their raw outcome
+                    // selects the transition rather than a user readout value.
                     let transition =
                         self.p_meas_crosstalk_model
                             .sample_gates(&mut self.rng, qubit, outcome);
@@ -1168,8 +1253,11 @@ impl GeneralNoiseModel {
         // We need to mark these measurements as being introduced by crosstalk rather
         // than the user's program so that we can discard the results in
         // apply_noise_on_continue_processing.
-        self.measured_qubits
-            .extend(affected_qubits.iter().map(|&q| (q, gate.gate_type)));
+        self.measured_qubits.extend(
+            affected_qubits
+                .iter()
+                .map(|&q| (q, gate.gate_type, self.leaked_qubits.contains(&q))),
+        );
     }
 
     /// Apply crosstalk noise from runtime information given by Crosstalk*Payload instructions
@@ -1205,8 +1293,11 @@ impl GeneralNoiseModel {
         // We need to mark these measurements as being introduced by crosstalk rather
         // than the user's program so that we can discard the results in
         // apply_noise_on_continue_processing.
-        self.measured_qubits
-            .extend(affected_qubits.iter().map(|&q| (q, gate_type)));
+        self.measured_qubits.extend(
+            affected_qubits
+                .iter()
+                .map(|&q| (q, gate_type, self.leaked_qubits.contains(&q))),
+        );
         // NOTE: Crosstalk transitions are carried out by apply_noise_on_continue_processing
     }
 
@@ -1551,7 +1642,10 @@ impl GeneralNoiseModel {
         self.leaked_qubits.clear();
         // Clear measured qubits
         self.measured_qubits.clear();
-        self.scheduled_measurement_leakage = None;
+        self.scheduled_batch_active = false;
+        self.pending_crosstalk = None;
+        self.crosstalk_failed = false;
+        self.crosstalk_active = false;
         // Clear prepared qubits. This set is the crosstalk victim pool and is scoped
         // to one program run; carrying it across resets would let a qubit prepared in
         // an earlier shot be a crosstalk victim in a later shot that never prepared it,
@@ -1713,7 +1807,7 @@ mod tests {
         for model in [&mut noise, &mut cloned] {
             assert!(model.start_scheduled(&gates).is_err());
             model.reset().unwrap();
-            assert!(model.scheduled_measurement_leakage.is_none());
+            assert!(!model.scheduled_batch_active);
             // Exercise a fresh leaked readout after recovery, not just cleanup.
             model.mark_as_leaked(0);
             model.start_scheduled(&gates).unwrap();
@@ -1724,7 +1818,7 @@ mod tests {
                 panic!("scheduled readout must complete without another simulator call");
             };
             assert_eq!(outcomes.outcomes().unwrap(), vec![2, 0]);
-            assert!(model.scheduled_measurement_leakage.is_none());
+            assert!(!model.scheduled_batch_active);
             // A gate-only batch must also close snapshot mode.
             let prep = ByteMessage::quantum_operations_builder().pz(&[0]).build();
             model.start_scheduled(&prep).unwrap();
@@ -1734,7 +1828,7 @@ mod tests {
                     .unwrap(),
                 EngineStage::Complete(_)
             ));
-            assert!(model.scheduled_measurement_leakage.is_none());
+            assert!(!model.scheduled_batch_active);
         }
     }
 
@@ -2838,14 +2932,14 @@ mod tests {
             noise.measured_qubits
         );
 
-        let (q, gate_type) = noise.measured_qubits[0];
+        let (q, gate_type, _) = noise.measured_qubits[0];
         assert_eq!(q, 2, "The first measurement should be the MCMR on qubit 2");
         assert!(
             gate_type == GateType::MZ,
             "The first measurement should come from MCMR"
         );
 
-        for (_, gate_type) in &noise.measured_qubits[1..] {
+        for (_, gate_type, _) in &noise.measured_qubits[1..] {
             assert!(
                 *gate_type == GateType::PZ,
                 "The other measurements should come from crosstalk"
@@ -2907,14 +3001,14 @@ mod tests {
             noise.measured_qubits
         );
 
-        let (q, gate_type) = noise.measured_qubits[0];
+        let (q, gate_type, _) = noise.measured_qubits[0];
         assert_eq!(q, 2, "The first measurement should be the MCMR on qubit 2");
         assert!(
             !gate_type.is_crosstalk_payload(),
             "The first measurement should come from MCMR"
         );
 
-        for (_, gate_type) in &noise.measured_qubits[1..] {
+        for (_, gate_type, _) in &noise.measured_qubits[1..] {
             assert!(
                 gate_type.is_crosstalk_payload(),
                 "The other measurements should come from crosstalk"
@@ -2926,7 +3020,14 @@ mod tests {
         let _ = outcome_builder.for_outcomes();
         outcome_builder.add_outcomes(&[0, 0, 0, 0, 0]);
 
-        let mcmr = noise.continue_processing(outcome_builder.build()).unwrap();
+        let stage = noise.continue_processing(outcome_builder.build()).unwrap();
+        let EngineStage::NeedsProcessing(tail) = stage else {
+            panic!("reset after crosstalk must resume after its injected outcomes");
+        };
+        assert_eq!(tail.quantum_ops().unwrap(), vec![Gate::pz(&[2])]);
+        let mcmr = noise
+            .continue_processing(ByteMessage::create_empty())
+            .unwrap();
 
         let EngineStage::Complete(mcmr) = mcmr else {
             panic!("Expected Complete stage after processing outcomes");

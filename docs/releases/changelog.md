@@ -98,7 +98,9 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   the measured qubit in its X-basis eigenstate, including during fault propagation.
 - Symbolic execution and noisy history building now take `&DagCircuit` and use
   `DagCircuit::insertion_stable_topological_order` to preserve measurement record
-  positions. This opt-in traversal costs O(E + V log V); `topological_order` and
+  positions. Gate insertion sequences survive removal and node-index reuse,
+  and are preserved when cloning a circuit. This opt-in traversal costs
+  O(E + V log V); `topological_order` and
   `iter_gates_topo` retain their fast O(V + E) traversal for other consumers.
 - The pecos-phir HUGR functions `compile_hugr_via_phir`,
   `compile_hugr_bytes_via_phir`, `hugr_to_phir_mlir`, and

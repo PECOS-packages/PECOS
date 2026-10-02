@@ -141,8 +141,11 @@ impl std::error::Error for SymbolicExecutionError {}
 /// - Single-qubit: I, X, Y, Z, H, SX, SY, SZ and their adjoints
 /// - Two-qubit: CX, CY, CZ, SXX, SYY, SZZ and their adjoints
 /// - Rotations at Clifford angles accepted by the shared lowering policy
-/// - Measurements: Measure, `MeasureFree`
-/// - Preparations: Prep, `QAlloc` (treated as reset to |0⟩)
+/// - Measurements: MX, MZ, `MeasureFree`, `MeasureLeaked`
+/// - Preparations: PX, PZ, `QAlloc` (reset to |0⟩)
+/// - Measurement and reset: MPZ (measure Z, then reset to |0⟩)
+/// - Release, timing and metadata: `QFree`, `Idle`, `MeasCrosstalkGlobalPayload`,
+///   `MeasCrosstalkLocalPayload`, `TrackedPauliMeta`
 ///
 /// # Unsupported Gates
 ///
@@ -531,6 +534,29 @@ mod tests {
         // Deterministic with flip=true (was X'd)
         assert!(history[0].is_deterministic);
         assert!(history[0].flip);
+    }
+
+    #[test]
+    fn removed_node_reuse_preserves_insertion_order() {
+        let mut circuit = DagCircuit::new();
+        circuit.z(&[2]).x(&[0]);
+        circuit.mz(&[0]);
+        circuit.mz(&[1]);
+        circuit.remove_gate(0).unwrap();
+        circuit.mz(&[2]);
+
+        let mut sim = SymbolicSparseStab::new(3);
+        execute_circuit_symbolic(&mut sim, &circuit).unwrap();
+        assert_eq!(sim.measurement_history().format_all(), "[m0=1, m1=0, m2=0]");
+        let noisy = crate::NoisyMeasurementHistoryBuilder::new()
+            .with_noise_model(crate::DepolarizingNoiseModel::new(0.3, 0.0, 0.0, 0.0))
+            .build_from_circuit(&circuit, sim.measurement_history())
+            .unwrap();
+        // X/Y faults after X(q0) affect the first record, never the appended q2 record.
+        assert_eq!(noisy.faults().len(), 2);
+        assert!(!noisy.measurements()[0].fault_deps.is_empty());
+        assert!(noisy.measurements()[1].fault_deps.is_empty());
+        assert!(noisy.measurements()[2].fault_deps.is_empty());
     }
 
     #[test]

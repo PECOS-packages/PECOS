@@ -5,7 +5,7 @@ use pecos_phir::qis_parser::parse_qis_llvm_ir;
 fn test_parse_bell_ll() {
     let ir = include_str!("../../../examples/llvm/bell.ll");
     let module = parse_qis_llvm_ir(ir).expect("bell.ll should parse");
-    assert!(!module.body.blocks.is_empty());
+    assert!(!module.body.blocks.is_empty(), "module must contain blocks");
 }
 
 #[test]
@@ -20,14 +20,14 @@ fn test_parse_qprog_ll() {
 fn test_parse_bell_final_ll() {
     let ir = include_str!("../../../examples/bell_final.ll");
     let module = parse_qis_llvm_ir(ir).expect("bell_final.ll should parse");
-    assert!(!module.body.blocks.is_empty());
+    assert!(!module.body.blocks.is_empty(), "module must contain blocks");
 }
 
 #[test]
 fn test_parse_hugr_bell_state_ll() {
     let ir = include_str!("fixtures/bell_state.ll");
     let module = parse_qis_llvm_ir(ir).expect("bell_state.ll should parse");
-    assert!(!module.body.blocks.is_empty());
+    assert!(!module.body.blocks.is_empty(), "module must contain blocks");
 }
 
 #[test]

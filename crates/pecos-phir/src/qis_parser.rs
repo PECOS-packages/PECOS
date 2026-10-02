@@ -1900,7 +1900,7 @@ entry:
 ";
         let module = parse_qis_llvm_ir(ir).unwrap();
         // All runtime calls should be elided -- no operations
-        assert!(module.body.blocks[0].operations.is_empty());
+        assert_eq!(module.body.blocks[0].operations, []);
     }
 
     #[test]

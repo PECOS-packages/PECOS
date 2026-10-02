@@ -176,7 +176,7 @@ fn random_rounds_match_batch_for_every_chunk_size_and_reset() {
                             early |= logical < 4 && progress.columns_processed < 12;
                             commitments.push((logical, value));
                         }
-                        assert!(stream.advance()?.newly_committed.is_empty());
+                        assert_eq!(stream.advance()?.newly_committed, []);
                     }
                     stream.flush()
                 })();

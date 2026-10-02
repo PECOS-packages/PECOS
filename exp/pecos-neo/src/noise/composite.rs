@@ -293,7 +293,7 @@ mod tests {
 
         // Should skip, not apply pauli
         assert!(response.skips_gate());
-        assert!(response.collect_gates().is_empty());
+        assert_eq!(response.collect_gates(), []);
     }
 
     /// Test seepage for leaked qubits.

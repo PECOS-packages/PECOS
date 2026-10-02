@@ -252,7 +252,10 @@ mod tests {
             <PyMatchingDecoder as Decoder>::decode(&mut decoder, &syndrome.view()).unwrap();
 
         // PyMatching returns one bit per observable
-        assert!(!result.observable.is_empty());
+        assert!(
+            !result.observable.is_empty(),
+            "decoder returned no observables"
+        );
         assert!(result.weight >= 0.0);
     }
 

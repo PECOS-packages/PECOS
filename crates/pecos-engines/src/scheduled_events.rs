@@ -2,12 +2,12 @@
 //!
 //! Adapters normalize complete inputs before quantum execution. They cannot observe
 //! measurement outcomes or access simulator/RNG state. This is not an arbitrary
-//! execution-time physical-event interface. The admitted noise remains idle-Z.
+//! execution-time physical-event interface. The admitted noise is restricted to checked local profiles.
 use crate::noise::{IntoNoiseModel, NoiseModel};
 use crate::runtime_frame::{ShotContext, error, processing_error};
 use crate::scheduled_frame::{
     self, MAX_SCHEDULE_BYTES, PreparedSchedule, ScheduleTimeline, ScheduledIdleModel,
-    ScheduledIdleNoise, TimedBatch,
+    ScheduledNoise, TimedBatch,
 };
 use crate::{ByteMessage, ControlEngine, EngineStage, Gate, GateType};
 use pecos_core::{RngManageable, errors::PecosError};
@@ -363,17 +363,19 @@ type Factory =
 /// Compatibility alias retaining the original public event-wrapper name.
 /// This wraps a supplied profile; unlike the Z-only `ScheduledIdleZ` constructor,
 /// the alias does not restrict that profile to Z/RZ channels.
-pub type ScheduledEventIdleZ = ScheduledEventIdleNoise;
-/// Explicit opt-in to mandatory v4 with the same bounded local idle physics as v3.
+pub type ScheduledEventIdleZ = ScheduledEventNoise;
+/// Compatibility name for [`ScheduledEventNoise`], retaining the supplied profile.
+pub type ScheduledEventIdleNoise = ScheduledEventNoise;
+/// Explicit opt-in to mandatory v4 with the same checked local physics as v3.
 #[derive(Clone)]
-pub struct ScheduledEventIdleNoise {
-    profile: ScheduledIdleNoise,
+pub struct ScheduledEventNoise {
+    profile: ScheduledNoise,
     factory: Factory,
 }
-impl ScheduledEventIdleNoise {
+impl ScheduledEventNoise {
     /// The factory must return an independent session; captured configuration may
     /// be shared, but mutable adapter state must not be shared between shots.
-    pub fn new<F>(profile: impl Into<ScheduledIdleNoise>, factory: F) -> Self
+    pub fn new<F>(profile: impl Into<ScheduledNoise>, factory: F) -> Self
     where
         F: Fn(ShotContext) -> Result<Box<dyn ScheduledBatchAdapter>, PecosError>
             + Send
@@ -386,7 +388,7 @@ impl ScheduledEventIdleNoise {
         }
     }
 }
-impl IntoNoiseModel for ScheduledEventIdleNoise {
+impl IntoNoiseModel for ScheduledEventNoise {
     fn into_noise_model(self) -> Box<dyn NoiseModel> {
         let inner = self.profile.build_model();
         Box::new(ScheduledEventModel {

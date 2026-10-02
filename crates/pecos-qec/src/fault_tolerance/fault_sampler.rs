@@ -2505,7 +2505,7 @@ mod tests {
             p_prep: 0.0,
         };
         let faults = build_fault_table(&tc, &noise).unwrap();
-        assert!(faults.is_empty());
+        assert_eq!(faults, []);
     }
 
     #[test]
@@ -3261,7 +3261,11 @@ mod tests {
         assert_eq!(x_fault.affected_measurements, vec![0]);
         assert_eq!(x_fault.affected_detectors, vec![0]);
         assert_eq!(x_fault.affected_observables, vec![0]);
-        assert!(x_fault.affected_tracked_paulis.is_empty());
+        assert!(
+            x_fault.affected_tracked_paulis.is_empty(),
+            "expected no affected tracked paulis, got {:?}",
+            x_fault.affected_tracked_paulis
+        );
 
         let tracked_h_loc = catalog
             .locations
@@ -3273,9 +3277,21 @@ mod tests {
             .iter()
             .find(|fault| fault.pauli.as_ref() == Some(&PauliString::x(1)))
             .unwrap();
-        assert!(tracked_x_fault.affected_measurements.is_empty());
-        assert!(tracked_x_fault.affected_detectors.is_empty());
-        assert!(tracked_x_fault.affected_observables.is_empty());
+        assert!(
+            tracked_x_fault.affected_measurements.is_empty(),
+            "expected no affected measurements, got {:?}",
+            tracked_x_fault.affected_measurements
+        );
+        assert!(
+            tracked_x_fault.affected_detectors.is_empty(),
+            "expected no affected detectors, got {:?}",
+            tracked_x_fault.affected_detectors
+        );
+        assert!(
+            tracked_x_fault.affected_observables.is_empty(),
+            "expected no affected observables, got {:?}",
+            tracked_x_fault.affected_observables
+        );
         assert_eq!(tracked_x_fault.affected_tracked_paulis, vec![0]);
 
         let meas_fault = catalog
@@ -3287,7 +3303,11 @@ mod tests {
         assert_eq!(meas_fault.affected_measurements, vec![0]);
         assert_eq!(meas_fault.affected_detectors, vec![0]);
         assert_eq!(meas_fault.affected_observables, vec![0]);
-        assert!(meas_fault.affected_tracked_paulis.is_empty());
+        assert!(
+            meas_fault.affected_tracked_paulis.is_empty(),
+            "expected no affected tracked paulis, got {:?}",
+            meas_fault.affected_tracked_paulis
+        );
 
         assert!(catalog.to_mechanisms().iter().any(|mechanism| {
             mechanism
@@ -3778,19 +3798,23 @@ mod tests {
             [0]
         );
         assert_eq!(catalog.locations[h1].faults[x1].affected_detectors, [0]);
+        let affected_observables = &catalog.locations[h1].faults[x1].affected_observables;
         assert!(
-            catalog.locations[h1].faults[x1]
-                .affected_observables
-                .is_empty()
+            affected_observables.is_empty(),
+            "expected no affected observables, got {affected_observables:?}"
         );
+        let affected_tracked_paulis = &catalog.locations[h1].faults[x1].affected_tracked_paulis;
         assert!(
-            catalog.locations[h1].faults[x1]
-                .affected_tracked_paulis
-                .is_empty()
+            affected_tracked_paulis.is_empty(),
+            "expected no affected tracked paulis, got {affected_tracked_paulis:?}"
         );
 
         assert_eq!(config.affected_measurements, [0, 1]);
-        assert!(config.affected_detectors.is_empty());
+        assert!(
+            config.affected_detectors.is_empty(),
+            "expected no affected detectors, got {:?}",
+            config.affected_detectors
+        );
         assert_eq!(config.affected_observables, [0]);
         assert_eq!(config.affected_tracked_paulis, [0]);
     }
@@ -4095,7 +4119,7 @@ mod tests {
         assert!(h_loc.faults.iter().any(|fault| {
             fault.affected_measurements.is_empty() && !fault.affected_tracked_paulis.is_empty()
         }));
-        assert!(catalog.to_mechanisms().is_empty());
+        assert_eq!(catalog.to_mechanisms(), []);
     }
 
     #[test]
@@ -4308,10 +4332,26 @@ mod tests {
         let configs: Vec<_> = catalog.fault_configurations(0).collect();
         assert_eq!(configs.len(), 1);
         let c = &configs[0];
-        assert!(c.location_indices.is_empty());
-        assert!(c.alternative_indices.is_empty());
-        assert!(c.affected_measurements.is_empty());
-        assert!(c.affected_detectors.is_empty());
+        assert!(
+            c.location_indices.is_empty(),
+            "expected no location indices, got {:?}",
+            c.location_indices
+        );
+        assert!(
+            c.alternative_indices.is_empty(),
+            "expected no alternative indices, got {:?}",
+            c.alternative_indices
+        );
+        assert!(
+            c.affected_measurements.is_empty(),
+            "expected no affected measurements, got {:?}",
+            c.affected_measurements
+        );
+        assert!(
+            c.affected_detectors.is_empty(),
+            "expected no affected detectors, got {:?}",
+            c.affected_detectors
+        );
         assert_close(c.selected_probability, 1.0);
         // config_prob = product of all no_fault_probability
         let expected: f64 = catalog
@@ -4862,11 +4902,23 @@ mod tests {
         let raw = plan.sample_raw(0, 42);
 
         assert_eq!(raw.columns.len(), 2);
-        assert!(raw.columns[0].is_empty());
-        assert!(raw.columns[1].is_empty());
+        let columns = &raw.columns[0];
+        assert!(
+            columns.is_empty(),
+            "expected no samples in the column, got {columns:?}"
+        );
+        let columns = &raw.columns[1];
+        assert!(
+            columns.is_empty(),
+            "expected no samples in the column, got {columns:?}"
+        );
         assert_eq!(raw.r_source_measurements, vec![0]);
         assert_eq!(raw.r_columns.len(), 1);
-        assert!(raw.r_columns[0].is_empty());
+        let r_columns = &raw.r_columns[0];
+        assert!(
+            r_columns.is_empty(),
+            "expected no samples in the R column, got {r_columns:?}"
+        );
         assert_eq!(raw.shots, 0);
     }
 }

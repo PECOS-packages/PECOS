@@ -143,7 +143,8 @@ impl PyQisEngineBuilder {
         Ok(self.clone())
     }
 
-    /// Opt into mandatory scheduled transport; pair with scheduled_idle_z() or scheduled_idle_noise().
+    /// Opt into mandatory scheduled transport; pair with scheduled_idle_z(),
+    /// scheduled_idle_noise(), or scheduled_local_noise().
     #[pyo3(signature = (enabled = true))]
     fn scheduled_batches(&mut self, enabled: bool) -> Self {
         self.inner = self.inner.clone().scheduled_batches(enabled);
@@ -836,7 +837,7 @@ pub fn scheduled_idle_z(
 #[pyclass(name = "ScheduledIdleNoise", from_py_object)]
 #[derive(Clone)]
 pub struct PyScheduledIdleNoise {
-    pub(crate) inner: pecos_engines::scheduled_frame::ScheduledIdleNoise,
+    pub(crate) inner: pecos_engines::scheduled_frame::ScheduledNoise,
 }
 /// Construct checked idle channels; rates use seconds and radians, without conversion.
 #[pyfunction]
@@ -850,8 +851,8 @@ pub fn scheduled_idle_noise(
     coherent: f64,
     coherent_model: Option<std::collections::BTreeMap<String, f64>>,
 ) -> PyResult<PyScheduledIdleNoise> {
-    use pecos_engines::scheduled_frame::ScheduledIdleNoise;
-    let result = ScheduledIdleNoise::new(qubits)
+    use pecos_engines::scheduled_frame::ScheduledNoise;
+    let result = ScheduledNoise::new(qubits)
         .and_then(|p| p.with_linear(linear, linear_model))
         .and_then(|p| p.with_sine(sine, sine_model))
         .and_then(|p| p.with_coherent(coherent, coherent_model));
@@ -859,12 +860,41 @@ pub fn scheduled_idle_noise(
         inner: result.map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?,
     })
 }
-/// Extract either scheduled v3 profile without widening other noise capabilities.
+/// Checked local gate, preparation and readout faults with scheduled idle channels.
+#[pyclass(name = "ScheduledLocalNoise", from_py_object)]
+#[derive(Clone)]
+pub struct PyScheduledLocalNoise {
+    pub(crate) inner: pecos_engines::scheduled_frame::ScheduledLocalNoise,
+}
+/// Add uniform Pauli gate faults, preparation bit flips and asymmetric readout.
+/// The idle base must come from scheduled_idle_noise(), not scheduled_idle_z().
+/// For Z-only channels, scheduled_idle_noise() uses Z models by default.
+/// Probabilities are event probabilities in [0, 1], not average gate infidelities.
+#[pyfunction]
+#[pyo3(signature = (idle, *, p1 = 0.0, p2 = 0.0, prep = 0.0, meas0 = 0.0, meas1 = 0.0))]
+pub fn scheduled_local_noise(
+    idle: PyScheduledIdleNoise,
+    p1: f64,
+    p2: f64,
+    prep: f64,
+    meas0: f64,
+    meas1: f64,
+) -> PyResult<PyScheduledLocalNoise> {
+    Ok(PyScheduledLocalNoise {
+        inner: pecos_engines::scheduled_frame::ScheduledLocalNoise::new(
+            idle.inner, p1, p2, prep, meas0, meas1,
+        )
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?,
+    })
+}
+/// Extract a checked scheduled v3 profile without widening other noise capabilities.
 pub(crate) fn extract_scheduled_idle(
     noise: &Py<PyAny>,
     py: Python<'_>,
-) -> Option<pecos_engines::scheduled_frame::ScheduledIdleNoise> {
-    if let Ok(profile) = noise.extract::<PyScheduledIdleNoise>(py) {
+) -> Option<pecos_engines::scheduled_frame::ScheduledNoise> {
+    if let Ok(profile) = noise.extract::<PyScheduledLocalNoise>(py) {
+        Some(profile.inner.into())
+    } else if let Ok(profile) = noise.extract::<PyScheduledIdleNoise>(py) {
         Some(profile.inner)
     } else {
         noise

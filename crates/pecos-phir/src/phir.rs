@@ -657,7 +657,7 @@ mod tests {
     fn test_block_creation() {
         let mut block = Block::new(Some("entry".to_string()));
         assert_eq!(block.label, Some("entry".to_string()));
-        assert!(block.operations.is_empty());
+        assert_eq!(block.operations, []);
 
         let instruction = Instruction::new(
             Operation::Quantum(QuantumOp::H),

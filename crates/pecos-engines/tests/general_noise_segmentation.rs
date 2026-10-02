@@ -36,22 +36,31 @@ fn rng_tail(system: &QuantumSystem) -> [u64; 8] {
 }
 
 #[test]
-fn general_noise_segmentation_changes_leakage_readout() {
+fn leakage_readout_survives_later_reset_with_or_without_a_batch_boundary() {
     let mut model = GeneralNoiseModel::default();
     model.mark_as_leaked(0);
     let mut whole = QuantumSystem::new(Box::new(model.clone()), Box::new(StateVecEngine::new(1)));
     let mut split = QuantumSystem::new(Box::new(model), Box::new(StateVecEngine::new(1)));
-    // Preparation is processed at start, but leakage readout at continuation.
+    // Readout captures leakage before preparation, even in one legacy batch.
     assert_eq!(
         whole.process(program("LP")).unwrap().outcomes().unwrap(),
-        [0]
+        [2]
     );
     assert_eq!(
         split.process(program("L")).unwrap().outcomes().unwrap(),
         [2]
     );
     split.process(program("P")).unwrap();
-    // This is a deterministic distribution change, not just RNG reordering.
+    assert_eq!(
+        whole.process(program("L")).unwrap().outcomes().unwrap(),
+        [0]
+    );
+    assert_eq!(
+        split.process(program("L")).unwrap().outcomes().unwrap(),
+        [0]
+    );
+    // This resolved counterexample does not certify arbitrary segmentation:
+    // the RNG-order and nonlinear-idle counterexamples below still apply.
 }
 
 #[test]
@@ -103,13 +112,14 @@ fn measurement_free_prefix_splits_preserve_seeded_results_in_this_profile() {
             let mut split = QuantumSystem::new(Box::new(model), Box::new(StateVecEngine::new(1)));
             let source = "PIXXM";
             let expected = whole.process(program(source)).unwrap().outcomes().unwrap();
+            let outcomes = split
+                .process(program(&source[..boundary]))
+                .unwrap()
+                .outcomes()
+                .unwrap();
             assert!(
-                split
-                    .process(program(&source[..boundary]))
-                    .unwrap()
-                    .outcomes()
-                    .unwrap()
-                    .is_empty()
+                outcomes.is_empty(),
+                "expected no measurement outcomes, got {outcomes:?}"
             );
             let actual = split
                 .process(program(&source[boundary..]))

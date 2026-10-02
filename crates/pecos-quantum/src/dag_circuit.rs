@@ -3780,7 +3780,8 @@ mod tests {
             .expect_err("DAG should reject invalid gate payloads");
 
         assert!(err.to_string().contains("requires distinct qubits"));
-        assert!(circuit.nodes().is_empty());
+        let nodes = circuit.nodes();
+        assert!(nodes.is_empty(), "expected no circuit nodes, got {nodes:?}");
     }
 
     #[test]
@@ -3799,7 +3800,11 @@ mod tests {
         );
         assert_eq!(circuit.gate(node), Some(&Gate::h(&[0])));
         assert_eq!(circuit.qubit_timeline(QubitId(0)), vec![node]);
-        assert!(circuit.qubit_timeline(QubitId(1)).is_empty());
+        let timeline = circuit.qubit_timeline(QubitId(1));
+        assert!(
+            timeline.is_empty(),
+            "expected no qubit timeline entries, got {timeline:?}"
+        );
     }
 
     #[test]

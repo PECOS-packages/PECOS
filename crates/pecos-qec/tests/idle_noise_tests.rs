@@ -613,7 +613,7 @@ fn equal_idle_signatures_sum_exclusive_probabilities_before_dem_merging() {
         combine_probabilities(0.25, 0.75).to_bits(),
         "exclusive aliases must sum, not use the independent XOR rule",
     );
-    assert!(dem.idle_noise_residuals().is_empty());
+    assert_eq!(dem.idle_noise_residuals(), []);
 
     let measurement_model = MemBuilder::new(&influence)
         .with_noise_config(
@@ -645,7 +645,7 @@ fn empty_idle_signature_is_dropped_before_conversion() {
 
     assert_eq!(contributions.len(), 1);
     assert_eq!(contributions[0].1.to_bits(), 0.75_f64.to_bits());
-    assert!(dem.idle_noise_residuals().is_empty());
+    assert_eq!(dem.idle_noise_residuals(), []);
 
     let measurement_model = MemBuilder::new(&influence)
         .with_noise_config(
@@ -663,7 +663,7 @@ fn empty_idle_signature_is_dropped_before_conversion() {
             .to_bits(),
         0.75_f64.to_bits()
     );
-    assert!(measurement_model.idle_noise_residuals.is_empty());
+    assert_eq!(measurement_model.idle_noise_residuals, []);
 }
 
 #[test]
@@ -761,7 +761,7 @@ fn three_distinct_idle_signatures_match_engines_pauli_channel() {
         assert!((distribution[&x_effect] - px).abs() < 1e-12);
         assert!((distribution[&y_effect] - py).abs() < 1e-12);
         assert!((distribution[&z_effect] - pz).abs() < 1e-12);
-        assert!(dem.idle_noise_residuals().is_empty());
+        assert_eq!(dem.idle_noise_residuals(), []);
     }
 }
 

@@ -1515,7 +1515,7 @@ mod tests {
         pecos_clear_pending_operations();
 
         with_interface(|iface| {
-            assert!(iface.operations.is_empty());
+            assert_eq!(iface.operations, []);
         });
     }
 
@@ -1732,7 +1732,7 @@ mod tests {
             assert!(wait_for_result_ready(0, TEST_SYNC_TIMEOUT_MS));
 
             with_interface(|iface| {
-                assert!(iface.operations.is_empty());
+                assert_eq!(iface.operations, []);
             });
 
             with_interface(|iface| {
@@ -1742,7 +1742,7 @@ mod tests {
             assert!(wait_for_result_ready(1, TEST_SYNC_TIMEOUT_MS));
 
             with_interface(|iface| {
-                assert!(iface.operations.is_empty());
+                assert_eq!(iface.operations, []);
             });
 
             unsafe { pecos_register_execution_context(std::ptr::null_mut()) };

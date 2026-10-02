@@ -2838,7 +2838,7 @@ mod tests {
         assert_eq!(runtime.shot_start(2, None).unwrap_err().to_string(), error);
         runtime.reset().unwrap();
         runtime.shot_start(2, None).unwrap();
-        assert!(runtime.custom_events().is_empty());
+        assert_eq!(runtime.custom_events(), []);
         assert!(runtime.shot_end().is_ok());
     }
 
@@ -2861,7 +2861,7 @@ mod tests {
             batch.callback_error,
             Some("invalid custom-event payload pointer/length")
         );
-        assert!(batch.operations.is_empty());
+        assert_eq!(batch.operations, []);
         assert_eq!(batch.operations.capacity(), 0);
     }
 
@@ -2912,7 +2912,7 @@ mod tests {
             runtime_batch_custom((&raw mut batch).cast(), 8404, std::ptr::null(), 0);
             runtime_batch_rz((&raw mut batch).cast(), 0, 0.25);
         }
-        assert!(batch.operations.is_empty());
+        assert_eq!(batch.operations, []);
         let mut runtime = SeleneRuntime::new("synthetic-runtime.so");
         let error = runtime
             .convert_runtime_batch(batch)
@@ -3065,7 +3065,7 @@ mod tests {
         );
         assert_eq!(events[1].tag, 7302);
         assert_eq!(events[1].batch_index, 2);
-        assert!(runtime.custom_events().is_empty());
+        assert_eq!(runtime.custom_events(), []);
         assert_eq!(runtime.runtime_batch_index, 3);
     }
 
@@ -3149,7 +3149,11 @@ mod tests {
         }
         let mut runtime = SeleneRuntime::new("synthetic-runtime.so");
         runtime.convert_runtime_batch(batch).unwrap();
-        assert!(runtime.custom_events()[0].data.is_empty());
+        let data = &runtime.custom_events()[0].data;
+        assert!(
+            data.is_empty(),
+            "expected no custom event data, got {data:?}"
+        );
     }
 
     #[test]
@@ -3166,7 +3170,7 @@ mod tests {
         assert_eq!(runtime.custom_events().len(), 1);
         let mut cloned = runtime.clone();
         cloned.shot_start(2, Some(13)).unwrap();
-        assert!(cloned.custom_events().is_empty());
+        assert_eq!(cloned.custom_events(), []);
         assert_eq!(cloned.runtime_batch_index, 0);
         assert_eq!(
             cloned.custom_event_policy,
@@ -3175,7 +3179,7 @@ mod tests {
         assert!(cloned.custom_event_handler.is_some());
         assert_eq!(runtime.custom_events().len(), 1);
         runtime.reset().unwrap();
-        assert!(runtime.custom_events().is_empty());
+        assert_eq!(runtime.custom_events(), []);
         assert_eq!(runtime.runtime_batch_index, 0);
     }
 

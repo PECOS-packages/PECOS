@@ -16,5 +16,5 @@ Provides a unified API for PECOS users. Most users should depend on this crate r
 
 - `runtime` (default): Full simulation with QASM/PHIR support
 - `qis`: QIS/LLVM IR execution (requires LLVM 21.1)
-- `hugr`: HUGR program support
+- `hugr`: Static HUGR<->DAG conversion (no LLVM)
 - `quest`, `qulacs`: Additional quantum backends

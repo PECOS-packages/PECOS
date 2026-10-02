@@ -141,7 +141,7 @@ On macOS, install Homebrew LLVM 21 (`brew install llvm@21`) and run
 `scripts\ci\install-llvm-21-windows.ps1` to install the conda-forge LLVM 21.1
 toolchain, then configure `~\.pecos\deps\llvm-21.1\Library`.
 
-`pecos rust test` requires shared LLVM for the workspace HUGR test lane. LLVM
+`pecos rust test` requires shared LLVM for the workspace LLVM-dependent tests. LLVM
 21.1 static test links can use multiple GB of RAM each, so PECOS fails early
 instead of letting `just dev` spawn enough concurrent linkers to overwhelm a
 normal development machine.

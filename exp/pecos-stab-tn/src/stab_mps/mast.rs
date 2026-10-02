@@ -1705,7 +1705,7 @@ mod tests {
             assert_eq!(mast.projection_peak_bond(), recorded_peak);
 
             mast.reset();
-            assert!(mast.projection_records().is_empty());
+            assert_eq!(mast.projection_records(), []);
             assert_eq!(mast.projection_peak_bond(), 0);
         }
     }
@@ -1723,7 +1723,7 @@ mod tests {
             let mut outcomes = Vec::with_capacity(200);
             for _ in 0..200 {
                 mast.reset();
-                assert!(mast.projection_records().is_empty());
+                assert_eq!(mast.projection_records(), []);
                 assert_eq!(mast.projection_peak_bond(), 0);
                 assert_eq!(mast.stats.total_nonclifford, 0);
                 outcomes.push(run(&mut mast));

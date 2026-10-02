@@ -86,7 +86,10 @@ fn pending_crosstalk(model: &mut GeneralNoiseModel) {
     let EngineStage::NeedsProcessing(effects) = model.continue_processing(outcomes).unwrap() else {
         panic!("expected crosstalk continuation");
     };
-    assert!(!effects.quantum_ops().unwrap().is_empty());
+    assert!(
+        !effects.quantum_ops().unwrap().is_empty(),
+        "crosstalk continuation must contain quantum operations"
+    );
 }
 
 #[test]

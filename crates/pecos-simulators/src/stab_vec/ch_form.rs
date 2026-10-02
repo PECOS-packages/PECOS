@@ -1951,7 +1951,10 @@ impl<S: IndexSet, R: SeedableRng + Rng + Debug> CHFormGeneric<S, R> {
         let pivot;
 
         if set0.is_empty() {
-            debug_assert!(!set1.is_empty());
+            debug_assert!(
+                !set1.is_empty(),
+                "differing positions must contain a pivot when set0 is empty"
+            );
             pivot = set1[0];
             for &i in &set1[1..] {
                 self.right_cx(i, pivot);
@@ -3728,9 +3731,17 @@ mod tests {
             let expected_len = n - ch.v.len();
             if n <= 62 {
                 assert_eq!(rows.rows_u64.len(), expected_len);
-                assert!(rows.rows_wide.is_empty());
+                assert!(
+                    rows.rows_wide.is_empty(),
+                    "expected no wide constraint rows, got {:?}",
+                    rows.rows_wide
+                );
             } else {
-                assert!(rows.rows_u64.is_empty());
+                assert!(
+                    rows.rows_u64.is_empty(),
+                    "expected no u64 constraint rows, got {:?}",
+                    rows.rows_u64
+                );
                 assert_eq!(rows.rows_wide.len(), expected_len);
             }
             for (r, j) in (0..n).filter(|&j| !ch.v.contains(j)).enumerate() {

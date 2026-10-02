@@ -1233,7 +1233,10 @@ mod tests {
         let map = builder.build().expect("circuit is replayable");
 
         // Should have some locations and at least one detector
-        assert!(!map.locations.is_empty());
+        assert!(
+            !map.locations.is_empty(),
+            "influence map must contain fault locations"
+        );
     }
 
     #[test]
@@ -1254,8 +1257,14 @@ mod tests {
         let builder = InfluenceBuilder::new(&dag);
         let map = builder.build().expect("circuit is replayable");
 
-        assert!(!map.locations.is_empty());
-        assert!(!map.measurements.is_empty());
+        assert!(
+            !map.locations.is_empty(),
+            "influence map must contain fault locations"
+        );
+        assert!(
+            !map.measurements.is_empty(),
+            "influence map must contain measurements"
+        );
     }
 
     #[test]
@@ -1283,7 +1292,10 @@ mod tests {
 
         // The second measurement should be deterministic (depends on first)
         // and thus create a proper detector
-        assert!(!map.detectors.is_empty());
+        assert!(
+            !map.detectors.is_empty(),
+            "influence map must contain detectors"
+        );
     }
 
     #[test]

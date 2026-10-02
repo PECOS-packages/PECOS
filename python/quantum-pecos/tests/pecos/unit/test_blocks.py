@@ -12,9 +12,11 @@
 
 from typing import Any
 
+import pytest
 from pecos.classical_interpreters.phir_classical_interpreter import (
     PhirClassicalInterpreter,
 )
+from pecos.reps.pyphir.op_types import COp, EMOp, FFCall, MOp, Op, QOp, SOp
 
 
 def get_seq(program: dict[str, Any]) -> list[list[tuple[Any, ...]]]:
@@ -264,3 +266,42 @@ def test_if_no_false() -> None:
             ),
         ],
     ]
+
+
+class FalseyDict(dict):
+    """Keep metadata entries even when a valid dict reports false."""
+
+    def __bool__(self) -> bool:
+        """Report false regardless of contents."""
+        return False
+
+
+@pytest.mark.parametrize("op_type", [Op, QOp, MOp, COp, FFCall, EMOp, SOp])
+@pytest.mark.parametrize("kwargs", [{}, {"metadata": None}])
+def test_operation_metadata_defaults(op_type: type, kwargs: dict) -> None:
+    """Omitted and explicit None metadata produce independent empty dictionaries."""
+    first = op_type("H", [0], **kwargs)
+    second = op_type("H", [0], **kwargs)
+    assert isinstance(first.metadata, dict)
+    assert first.metadata == {}
+    assert second.metadata == {}
+    first.metadata["angle"] = 0.5
+    assert second.metadata == {}
+
+
+@pytest.mark.parametrize("op_type", [Op, QOp, MOp, COp, FFCall, EMOp, SOp])
+@pytest.mark.parametrize("dict_type", [dict, FalseyDict])
+def test_operation_metadata_identity(op_type: type, dict_type: type) -> None:
+    """Explicit metadata retains identity and entries, including falsey subclasses."""
+    metadata = dict_type(angle=0.5, bitflips=[1])
+    op = op_type("H", [0], metadata=metadata)
+    assert op.metadata == {"angle": 0.5, "bitflips": [1]}
+    assert op.metadata is metadata
+
+
+@pytest.mark.parametrize("op_type", [Op, QOp, MOp, COp, FFCall, EMOp, SOp])
+@pytest.mark.parametrize("metadata", [False, 0, [], "", "invalid", [1]])
+def test_operation_metadata_rejects_non_dict(op_type: type, metadata: object) -> None:
+    """Reject non-dicts at construction and name the received type."""
+    with pytest.raises(TypeError, match=type(metadata).__name__):
+        op_type("H", [0], metadata=metadata)

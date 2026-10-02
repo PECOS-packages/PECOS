@@ -238,7 +238,7 @@ impl<T: CliffordGateable> CliffordRotation for T {
     ) -> Result<&mut Self, String> {
         let error =
             || format!("U(theta={theta}, phi={phi}, lambda={lambda}) is not a Clifford rotation");
-        let decomposition = simplify_u_clifford([theta, phi, lambda]).ok_or_else(&error)?;
+        let decomposition = simplify_u_clifford([theta, phi, lambda]).ok_or_else(error)?;
 
         dispatch_u_decomposition(self, decomposition, qubits).map_err(|_| error())?;
         Ok(self)
@@ -256,7 +256,7 @@ impl<T: CliffordGateable> CliffordRotation for T {
                 "RXXRYYRZZ(alpha={alpha}, beta={beta}, gamma={gamma}) is not a Clifford rotation"
             )
         };
-        let decomposition = simplify_rxxryyrzz_clifford([alpha, beta, gamma]).ok_or_else(&error)?;
+        let decomposition = simplify_rxxryyrzz_clifford([alpha, beta, gamma]).ok_or_else(error)?;
 
         dispatch_rxxryyrzz_decomposition(self, decomposition, pairs).map_err(|_| error())?;
         Ok(self)
@@ -273,13 +273,13 @@ impl<T: CliffordGateable> CliffordRotation for T {
         // Applied right-to-left: after first, then interaction, then before.
         let err = || "U2q is not a Clifford rotation".to_string();
         let after = [
-            simplify_u_clifford(after[0]).ok_or_else(&err)?,
-            simplify_u_clifford(after[1]).ok_or_else(&err)?,
+            simplify_u_clifford(after[0]).ok_or_else(err)?,
+            simplify_u_clifford(after[1]).ok_or_else(err)?,
         ];
-        let interaction = simplify_rxxryyrzz_clifford(interaction).ok_or_else(&err)?;
+        let interaction = simplify_rxxryyrzz_clifford(interaction).ok_or_else(err)?;
         let before = [
-            simplify_u_clifford(before[0]).ok_or_else(&err)?,
-            simplify_u_clifford(before[1]).ok_or_else(&err)?,
+            simplify_u_clifford(before[0]).ok_or_else(err)?,
+            simplify_u_clifford(before[1]).ok_or_else(err)?,
         ];
 
         for &(q0, q1) in pairs {

@@ -104,9 +104,7 @@ mod qir_detection;
 pub use ccengine::{LoweredQuantumGateTrace, OperationTraceChunk, OperationTraceStore, QisEngine};
 pub use engine_builder::{QisEngineBuilder, qis_engine};
 
-pub use program::{
-    InterfaceChoice, IntoQisInterface, ProgramType, QisEngineProgram, QisInterfaceBuilder,
-};
+pub use program::{InterfaceChoice, IntoQisInterface, QisEngineProgram, QisInterfaceBuilder};
 
 // ============================================================================
 // Selene implementation (feature-gated, enabled by default)

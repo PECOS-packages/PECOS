@@ -116,9 +116,7 @@ fn print_status_summary(skip_llvm: bool, skip_cuda: bool, skip_cmake: bool, skip
     } else if pecos_build::llvm::installer::managed_install_unavailable_reason().is_some() {
         println!("  LLVM 21.1:    not found (configure a shared LLVM 21 install manually)");
     } else {
-        println!(
-            "  LLVM 21.1:    not found (several hundred MB, required for QIR/HUGR compilation)"
-        );
+        println!("  LLVM 21.1:    not found (several hundred MB, required for QIR compilation)");
     }
 
     // CUDA
@@ -358,7 +356,7 @@ fn setup_llvm(mode: PromptMode) -> Result<()> {
     if let Some(reason) = pecos_build::llvm::installer::managed_install_unavailable_reason() {
         println!("  LLVM 21.1 not found.");
         println!("  {reason}");
-        println!("  QIR/HUGR compilation will not be available until LLVM is configured.");
+        println!("  QIR compilation will not be available until LLVM is configured.");
         return Ok(());
     }
 
@@ -372,7 +370,7 @@ fn setup_llvm(mode: PromptMode) -> Result<()> {
     ) {
         pecos_build::llvm::installer::install_llvm(false, false)?;
     } else {
-        println!("  Skipping LLVM. QIR/HUGR compilation will not be available.");
+        println!("  Skipping LLVM. QIR compilation will not be available.");
     }
 
     Ok(())

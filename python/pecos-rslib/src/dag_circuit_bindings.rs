@@ -1860,10 +1860,10 @@ fn tick_gate_error_to_pyerr(err: TickGateError, tick_idx: Option<usize>) -> PyEr
 ///     `HugrConversionError`: If the HUGR cannot be parsed or contains unsupported structures.
 ///
 /// Example:
-///     >>> from `pecos_rslib.quantum` import `hugr_to_dag_circuit`
-///     >>> # Get HUGR bytes from a compiled Guppy program
-///     >>> `hugr_bytes` = `guppy_func.compile().package.to_bytes()`
-///     >>> circuit = `hugr_to_dag_circuit(hugr_bytes)`
+///     Guppy callers should use the native QIS trace route:
+///     >>> import pecos
+///     >>> ticks = pecos.trace_program_to_tick_circuit(pecos.Guppy(guppy_func), 2, seed=1)
+///     >>> circuit = ticks.to_dag_circuit()
 ///     >>> `print(circuit.gate_count())`
 #[pyfunction]
 #[pyo3(name = "hugr_to_dag_circuit")]

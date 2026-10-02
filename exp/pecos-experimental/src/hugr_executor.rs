@@ -63,6 +63,7 @@
 use std::fmt;
 
 use pecos_core::gate_type::GateType;
+use pecos_core::{CliffordLowering, Gate, QubitId, try_lower_rotation_to_clifford};
 use pecos_quantum::Circuit;
 use pecos_simulators::SymbolicSparseStab;
 
@@ -137,16 +138,17 @@ impl std::error::Error for HugrExecutionError {}
 /// # Supported Gates
 ///
 /// The following Clifford gates are supported:
-/// - Single-qubit: I, X, Y, Z, H, SZ (S gate), `SZdg` (S†)
-/// - Two-qubit: CX, CY, CZ
+/// - Single-qubit: I, X, Y, Z, H, SX, SY, SZ and their adjoints
+/// - Two-qubit: CX, CY, CZ, SXX, SYY, SZZ and their adjoints
+/// - Rotations at Clifford angles accepted by the shared lowering policy
 /// - Measurements: Measure, `MeasureFree`
 /// - Preparations: Prep, `QAlloc` (treated as reset to |0⟩)
 ///
 /// # Unsupported Gates
 ///
 /// The following gates will return an error:
-/// - Rotation gates: RX, RY, RZ, RZZ, T, Tdg, U, RXY1Q
-/// - Other: SZZ, `SZZdg`
+/// - Rotations outside the shared Clifford lowering policy, T and Tdg
+/// - Other operations without a supported named Clifford action
 ///
 /// # Arguments
 ///
@@ -182,7 +184,6 @@ impl std::error::Error for HugrExecutionError {}
 /// // Now sim.measurement_history() contains the symbolic dependencies
 /// assert_eq!(sim.measurement_history().len(), 1);
 /// ```
-#[allow(clippy::too_many_lines)]
 pub fn execute_hugr<C>(sim: &mut SymbolicSparseStab, hugr: &C) -> Result<(), HugrExecutionError>
 where
     C: Circuit,
@@ -205,149 +206,15 @@ where
             }
         }
 
-        match gate.gate_type {
-            // No-op gates: identity, prep/alloc (qubits start in |0⟩), dealloc, idle, crosstalk
-            GateType::I
-            | GateType::QAlloc
-            | GateType::QFree
-            | GateType::Idle
-            | GateType::MeasCrosstalkGlobalPayload
-            | GateType::MeasCrosstalkLocalPayload
-            | GateType::TrackedPauliMeta => {}
-
-            GateType::PZ => {
-                validate_qubit_count(gate.gate_type, gate_idx, 1, gate.qubits.len())?;
-                sim.pz(gate.qubits[0].index());
+        match clifford_action(gate, gate_idx)? {
+            CliffordLowering::Named(named) => {
+                execute_named_gate(sim, named, &gate.qubits, gate_idx)?;
             }
-            GateType::PX => {
-                validate_qubit_count(gate.gate_type, gate_idx, 1, gate.qubits.len())?;
-                let q = gate.qubits[0].index();
-                sim.pz(q);
-                sim.h(&[q]);
-            }
-
-            // Single-qubit Clifford gates
-            GateType::X => {
-                validate_qubit_count(gate.gate_type, gate_idx, 1, gate.qubits.len())?;
-                let q = gate.qubits[0].index();
-                sim.x(&[q]);
-            }
-            GateType::Y => {
-                validate_qubit_count(gate.gate_type, gate_idx, 1, gate.qubits.len())?;
-                let q = gate.qubits[0].index();
-                sim.y(&[q]);
-            }
-            GateType::Z => {
-                validate_qubit_count(gate.gate_type, gate_idx, 1, gate.qubits.len())?;
-                let q = gate.qubits[0].index();
-                sim.z(&[q]);
-            }
-            GateType::H => {
-                validate_qubit_count(gate.gate_type, gate_idx, 1, gate.qubits.len())?;
-                let q = gate.qubits[0].index();
-                sim.h(&[q]);
-            }
-            GateType::SZ => {
-                validate_qubit_count(gate.gate_type, gate_idx, 1, gate.qubits.len())?;
-                let q = gate.qubits[0].index();
-                sim.sz(&[q]);
-            }
-            GateType::SZdg => {
-                // S† = S^3, so apply S three times
-                validate_qubit_count(gate.gate_type, gate_idx, 1, gate.qubits.len())?;
-                let q = gate.qubits[0].index();
-                sim.sz(&[q]);
-                sim.sz(&[q]);
-                sim.sz(&[q]);
-            }
-
-            // Two-qubit Clifford gates
-            GateType::CX => {
+            CliffordLowering::PerQubit(pauli) => {
                 validate_qubit_count(gate.gate_type, gate_idx, 2, gate.qubits.len())?;
-                let q1 = gate.qubits[0].index();
-                let q2 = gate.qubits[1].index();
-                sim.cx(&[(q1, q2)]);
-            }
-            GateType::CY => {
-                // CY = (I ⊗ S†) CX (I ⊗ S)
-                validate_qubit_count(gate.gate_type, gate_idx, 2, gate.qubits.len())?;
-                let q1 = gate.qubits[0].index();
-                let q2 = gate.qubits[1].index();
-                // S on target
-                sim.sz(&[q2]);
-                // CX
-                sim.cx(&[(q1, q2)]);
-                // S† on target (= S^3)
-                sim.sz(&[q2]);
-                sim.sz(&[q2]);
-                sim.sz(&[q2]);
-            }
-            GateType::CZ => {
-                // CZ = (I ⊗ H) CX (I ⊗ H)
-                validate_qubit_count(gate.gate_type, gate_idx, 2, gate.qubits.len())?;
-                let q1 = gate.qubits[0].index();
-                let q2 = gate.qubits[1].index();
-                sim.h(&[q2]);
-                sim.cx(&[(q1, q2)]);
-                sim.h(&[q2]);
-            }
-
-            // Measurements (including leaked measurement, treated as regular)
-            GateType::MX => {
-                validate_qubit_count(gate.gate_type, gate_idx, 1, gate.qubits.len())?;
-                let q = gate.qubits[0].index();
-                sim.h(&[q]);
-                sim.mz(&[q]);
-            }
-            GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked => {
-                validate_qubit_count(gate.gate_type, gate_idx, 1, gate.qubits.len())?;
-                let q = gate.qubits[0].index();
-                sim.mz(&[q]);
-            }
-            GateType::MPZ => {
-                validate_qubit_count(gate.gate_type, gate_idx, 1, gate.qubits.len())?;
-                let q = gate.qubits[0].index();
-                // Symbolic measure-and-prepare: the unconditional reset to |0>
-                // is equivalent to the outcome-conditioned X correction.
-                sim.mz(&[q]);
-                sim.pz(q);
-            }
-
-            // Unsupported gates (non-Clifford)
-            GateType::SX
-            | GateType::SXdg
-            | GateType::SY
-            | GateType::SYdg
-            | GateType::RX
-            | GateType::RY
-            | GateType::RZ
-            | GateType::RXX
-            | GateType::RYY
-            | GateType::RZZ
-            | GateType::RXYXY2Q
-            | GateType::RXXRYYRZZ
-            | GateType::U2q
-            | GateType::T
-            | GateType::Tdg
-            | GateType::U
-            | GateType::RXY1Q
-            | GateType::F
-            | GateType::Fdg
-            | GateType::SXX
-            | GateType::SXXdg
-            | GateType::SYY
-            | GateType::SYYdg
-            | GateType::SZZ
-            | GateType::SZZdg
-            | GateType::SWAP
-            | GateType::CH
-            | GateType::CCX
-            | GateType::Channel
-            | GateType::Custom => {
-                return Err(HugrExecutionError::UnsupportedGate {
-                    gate_type: gate.gate_type,
-                    gate_index: gate_idx,
-                });
+                for &qubit in &gate.qubits {
+                    execute_named_gate(sim, pauli, &[qubit], gate_idx)?;
+                }
             }
         }
     }
@@ -355,7 +222,237 @@ where
     Ok(())
 }
 
-/// Helper function to validate qubit count.
+/// Resolve rotations once, preserving the original gate in unsupported-gate errors.
+pub(crate) fn clifford_action(
+    gate: &Gate,
+    gate_index: usize,
+) -> Result<CliffordLowering, HugrExecutionError> {
+    // Global phase is irrelevant to stabilizer simulation.
+    if let Some(lowering) = try_lower_rotation_to_clifford(gate) {
+        validate_qubit_count(
+            gate.gate_type,
+            gate_index,
+            gate.gate_type.quantum_arity(),
+            gate.qubits.len(),
+        )?;
+        Ok(lowering)
+    } else if pecos_core::is_lowerable_rotation(gate.gate_type) {
+        Err(HugrExecutionError::UnsupportedGate {
+            gate_type: gate.gate_type,
+            gate_index,
+        })
+    } else {
+        validate_named_gate(gate.gate_type, gate_index, gate.qubits.len())?;
+        Ok(CliffordLowering::Named(gate.gate_type))
+    }
+}
+
+fn validate_named_gate(
+    gate_type: GateType,
+    gate_index: usize,
+    qubit_count: usize,
+) -> Result<(), HugrExecutionError> {
+    match gate_type {
+        GateType::I
+        | GateType::QFree
+        | GateType::Idle
+        | GateType::MeasCrosstalkGlobalPayload
+        | GateType::MeasCrosstalkLocalPayload
+        | GateType::TrackedPauliMeta => Ok(()),
+        GateType::X
+        | GateType::Y
+        | GateType::Z
+        | GateType::H
+        | GateType::SZ
+        | GateType::SZdg
+        | GateType::SX
+        | GateType::SXdg
+        | GateType::SY
+        | GateType::SYdg
+        | GateType::CX
+        | GateType::CY
+        | GateType::CZ
+        | GateType::SXX
+        | GateType::SXXdg
+        | GateType::SYY
+        | GateType::SYYdg
+        | GateType::SZZ
+        | GateType::SZZdg
+        | GateType::PZ
+        | GateType::QAlloc
+        | GateType::PX
+        | GateType::MX
+        | GateType::MZ
+        | GateType::MeasureFree
+        | GateType::MeasureLeaked
+        | GateType::MPZ => validate_qubit_count(
+            gate_type,
+            gate_index,
+            gate_type.quantum_arity(),
+            qubit_count,
+        ),
+        _ => Err(HugrExecutionError::UnsupportedGate {
+            gate_type,
+            gate_index,
+        }),
+    }
+}
+
+fn execute_named_gate(
+    sim: &mut SymbolicSparseStab,
+    gate_type: GateType,
+    qubits: &[QubitId],
+    gate_idx: usize,
+) -> Result<(), HugrExecutionError> {
+    match gate_type {
+        // Identity, timing, release and non-quantum metadata have no stabilizer action.
+        GateType::I
+        | GateType::QFree
+        | GateType::Idle
+        | GateType::MeasCrosstalkGlobalPayload
+        | GateType::MeasCrosstalkLocalPayload
+        | GateType::TrackedPauliMeta => {}
+        GateType::X
+        | GateType::Y
+        | GateType::Z
+        | GateType::H
+        | GateType::SZ
+        | GateType::SZdg
+        | GateType::SX
+        | GateType::SXdg
+        | GateType::SY
+        | GateType::SYdg => {
+            validate_qubit_count(gate_type, gate_idx, 1, qubits.len())?;
+            execute_single_qubit(sim, gate_type, qubits[0].index());
+        }
+        GateType::CX
+        | GateType::CY
+        | GateType::CZ
+        | GateType::SXX
+        | GateType::SXXdg
+        | GateType::SYY
+        | GateType::SYYdg
+        | GateType::SZZ
+        | GateType::SZZdg => {
+            validate_qubit_count(gate_type, gate_idx, 2, qubits.len())?;
+            execute_two_qubit(sim, gate_type, qubits[0].index(), qubits[1].index());
+        }
+        GateType::PZ | GateType::QAlloc | GateType::PX => {
+            validate_qubit_count(gate_type, gate_idx, 1, qubits.len())?;
+            let q = qubits[0].index();
+            sim.pz(q);
+            if gate_type == GateType::PX {
+                sim.h(&[q]);
+            }
+        }
+        GateType::MX
+        | GateType::MZ
+        | GateType::MeasureFree
+        | GateType::MeasureLeaked
+        | GateType::MPZ => {
+            validate_qubit_count(gate_type, gate_idx, 1, qubits.len())?;
+            let q = qubits[0].index();
+            if gate_type == GateType::MX {
+                sim.h(&[q]);
+            }
+            sim.mz(&[q]);
+            if gate_type == GateType::MPZ {
+                // The unconditional reset implements the outcome-conditioned X correction.
+                sim.pz(q);
+            }
+        }
+        _ => {
+            return Err(HugrExecutionError::UnsupportedGate {
+                gate_type,
+                gate_index: gate_idx,
+            });
+        }
+    }
+    Ok(())
+}
+
+fn execute_single_qubit(sim: &mut SymbolicSparseStab, gate: GateType, q: usize) {
+    match gate {
+        GateType::X => {
+            sim.x(&[q]);
+        }
+        GateType::Y => {
+            sim.y(&[q]);
+        }
+        GateType::Z => {
+            sim.z(&[q]);
+        }
+        GateType::H => {
+            sim.h(&[q]);
+        }
+        GateType::SZ => {
+            sim.sz(&[q]);
+        }
+        GateType::SZdg => {
+            sim.sz(&[q]).z(&[q]);
+        }
+        _ => execute_sqrt_pauli(sim, gate, q),
+    }
+}
+
+fn execute_two_qubit(sim: &mut SymbolicSparseStab, gate: GateType, a: usize, b: usize) {
+    match gate {
+        GateType::CX => {
+            sim.cx(&[(a, b)]);
+        }
+        GateType::CY => {
+            sim.sz(&[b]).cx(&[(a, b)]).sz(&[b]).z(&[b]);
+        }
+        GateType::CZ => {
+            sim.h(&[b]).cx(&[(a, b)]).h(&[b]);
+        }
+        _ => execute_sqrt_pair(sim, gate, a, b),
+    }
+}
+
+fn execute_sqrt_pauli(sim: &mut SymbolicSparseStab, gate: GateType, q: usize) {
+    match gate {
+        GateType::SX | GateType::SXdg => {
+            sim.h(&[q]).sz(&[q]);
+            if gate == GateType::SXdg {
+                sim.z(&[q]);
+            }
+            sim.h(&[q]);
+        }
+        GateType::SY => {
+            sim.z(&[q]).h(&[q]);
+        }
+        GateType::SYdg => {
+            sim.h(&[q]).z(&[q]);
+        }
+        _ => unreachable!("only single-qubit square roots are dispatched here"),
+    }
+}
+
+fn execute_sqrt_pair(sim: &mut SymbolicSparseStab, gate: GateType, a: usize, b: usize) {
+    // Conjugate a ZZ rotation into the requested Pauli basis.
+    let xx = matches!(gate, GateType::SXX | GateType::SXXdg);
+    let yy = matches!(gate, GateType::SYY | GateType::SYYdg);
+    if yy {
+        sim.sz(&[a, b]).sz(&[a, b]).sz(&[a, b]);
+    }
+    if xx || yy {
+        sim.h(&[a, b]);
+    }
+    sim.cx(&[(a, b)]).sz(&[b]);
+    if matches!(gate, GateType::SXXdg | GateType::SYYdg | GateType::SZZdg) {
+        sim.z(&[b]);
+    }
+    sim.cx(&[(a, b)]);
+    if xx || yy {
+        sim.h(&[a, b]);
+    }
+    if yy {
+        sim.sz(&[a, b]);
+    }
+}
+
+/// Validate the qubit count for one gate application.
 fn validate_qubit_count(
     gate_type: GateType,
     gate_index: usize,
@@ -501,7 +598,7 @@ mod tests {
         use pecos_core::{Angle64, Gate};
 
         let mut circuit = DagCircuit::new();
-        circuit.add_gate(Gate::rz(Angle64::from_turns(0.25), &[0])); // RZ is not Clifford
+        circuit.add_gate(Gate::rz(Angle64::from_turns(0.125), &[0])); // Non-Clifford RZ
 
         let mut sim = SymbolicSparseStab::new(1);
         let result = execute_hugr(&mut sim, &circuit);
@@ -612,5 +709,173 @@ mod tests {
             2,
             "Expected 2 data measurements depending on the random one"
         );
+    }
+    fn assert_rotation_matches(rotation: &Gate, named: &[Gate]) {
+        use crate::{DepolarizingNoiseModel, NoisyMeasurementHistoryBuilder};
+        // Vary input and readout bases so phase and two-qubit propagation matter.
+        for basis in 0..9 {
+            let make_circuit = |gates: &[Gate]| {
+                let mut circuit = DagCircuit::new();
+                circuit.h(&[0]);
+                circuit.sz(&[0]);
+                circuit.h(&[1]);
+                // A fault before the rotation must propagate through its lowered action.
+                for gate in gates {
+                    circuit.add_gate_auto_wire(gate.clone());
+                }
+                if basis % 3 != 0 {
+                    circuit.h(&[0]);
+                }
+                if basis % 3 == 2 {
+                    circuit.sz(&[0]);
+                    circuit.h(&[0]);
+                }
+                if basis / 3 != 0 {
+                    circuit.h(&[1]);
+                }
+                if basis / 3 == 2 {
+                    circuit.sz(&[1]);
+                    circuit.h(&[1]);
+                }
+                // Join the readout paths so both DAGs schedule measurements identically.
+                circuit.cx(&[(0, 1)]);
+                circuit.mz(&[0]);
+                circuit.mz(&[1]);
+                circuit
+            };
+            let original = make_circuit(std::slice::from_ref(rotation));
+            let lowered = make_circuit(named);
+            let mut original_sim = SymbolicSparseStab::new(2);
+            let mut lowered_sim = SymbolicSparseStab::new(2);
+            execute_hugr(&mut original_sim, &original).unwrap();
+            execute_hugr(&mut lowered_sim, &lowered).unwrap();
+            assert_eq!(
+                original_sim.measurement_history().format_all(),
+                lowered_sim.measurement_history().format_all(),
+                "{rotation:?}"
+            );
+            // Turn off noise at the rotation's own arity when comparing decompositions.
+            let noise = if rotation.qubits.len() == 2 {
+                DepolarizingNoiseModel::new(0.03, 0.0, 0.0, 0.0)
+            } else {
+                DepolarizingNoiseModel::new(0.03, 0.02, 0.0, 0.0)
+            };
+            if named.len() == 1 && named[0].gate_type != GateType::I {
+                let builder = NoisyMeasurementHistoryBuilder::new().with_noise_model(noise);
+                let a = builder
+                    .build_from_circuit(&original, original_sim.measurement_history())
+                    .unwrap();
+                let b = builder
+                    .build_from_circuit(&lowered, lowered_sim.measurement_history())
+                    .unwrap();
+                assert_eq!(
+                    a.measurements(),
+                    b.measurements(),
+                    "fault propagation for {rotation:?}"
+                );
+                assert_eq!(
+                    a.faults().iter().map(|f| f.probability).collect::<Vec<_>>(),
+                    b.faults().iter().map(|f| f.probability).collect::<Vec<_>>()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn clifford_rotations_match_named_gates() {
+        use GateType::{
+            I, RX, RXX, RY, RYY, RZ, RZZ, SX, SXX, SXXdg, SXdg, SY, SYY, SYYdg, SYdg, SZ, SZZ,
+            SZZdg, SZdg, X, Y, Z,
+        };
+        use pecos_core::Angle64;
+        for (rotation, quarter, half, inverse, two_qubit) in [
+            (RX, SX, X, SXdg, false),
+            (RY, SY, Y, SYdg, false),
+            (RZ, SZ, Z, SZdg, false),
+            (RXX, SXX, X, SXXdg, true),
+            (RYY, SYY, Y, SYYdg, true),
+            (RZZ, SZZ, Z, SZZdg, true),
+        ] {
+            for (angle, expected) in [
+                (Angle64::ZERO, I),
+                (Angle64::QUARTER_TURN, quarter),
+                (Angle64::HALF_TURN, half),
+                (Angle64::THREE_QUARTERS_TURN, inverse),
+            ] {
+                let qubits = if two_qubit {
+                    vec![QubitId(0), QubitId(1)]
+                } else {
+                    vec![QubitId(0)]
+                };
+                let gate = Gate::with_angles(rotation, vec![angle], qubits.clone());
+                let named: Vec<Gate> = if two_qubit && angle == Angle64::HALF_TURN {
+                    qubits
+                        .iter()
+                        .map(|&q| Gate::simple(expected, vec![q]))
+                        .collect()
+                } else {
+                    vec![Gate::simple(expected, qubits)]
+                };
+                assert_rotation_matches(&gate, &named);
+            }
+        }
+        assert_rotation_matches(
+            &Gate::rxy1q(Angle64::QUARTER_TURN, Angle64::ZERO, &[0]),
+            &[Gate::sx(&[0])],
+        );
+        assert_rotation_matches(
+            &Gate::rxyxy2q(Angle64::QUARTER_TURN, Angle64::QUARTER_TURN, &[(0, 1)]),
+            &[Gate::syy(&[(0, 1)])],
+        );
+        assert_rotation_matches(
+            &Gate::rxyxy2q(Angle64::HALF_TURN, Angle64::ZERO, &[(0, 1)]),
+            &[Gate::x(&[0]), Gate::x(&[1])],
+        );
+        assert_rotation_matches(
+            &Gate::u(Angle64::ZERO, Angle64::ZERO, Angle64::QUARTER_TURN, &[0]),
+            &[Gate::sz(&[0])],
+        );
+    }
+
+    #[test]
+    fn rxy1q_snaps_both_angles() {
+        use pecos_core::Angle64;
+        assert_rotation_matches(
+            &Gate::rxy1q(
+                Angle64::from_turns(0.25 + 1e-12),
+                Angle64::from_turns(0.5 - 1e-12),
+                &[0],
+            ),
+            &[Gate::sxdg(&[0])],
+        );
+    }
+
+    #[test]
+    fn non_clifford_rotations_preserve_original_error() {
+        use pecos_core::Angle64;
+        let angle = Angle64::from_turns(0.125);
+        for gate in [
+            Gate::rx(angle, &[0]),
+            Gate::ry(angle, &[0]),
+            Gate::rz(angle, &[0]),
+            Gate::rxx(angle, &[(0, 1)]),
+            Gate::ryy(angle, &[(0, 1)]),
+            Gate::rzz(angle, &[(0, 1)]),
+            Gate::rxy1q(angle, Angle64::ZERO, &[0]),
+            Gate::rxy1q(
+                Angle64::QUARTER_TURN,
+                Angle64::from_turns(0.25 + 1e-7),
+                &[0],
+            ),
+            Gate::rxyxy2q(angle, Angle64::ZERO, &[(0, 1)]),
+            Gate::u(Angle64::ZERO, Angle64::ZERO, angle, &[0]),
+        ] {
+            let mut circuit = DagCircuit::new();
+            circuit.add_gate_auto_wire(gate.clone());
+            assert!(
+                matches!(execute_hugr(&mut SymbolicSparseStab::new(2), &circuit),
+                Err(HugrExecutionError::UnsupportedGate { gate_type, .. }) if gate_type == gate.gate_type)
+            );
+        }
     }
 }

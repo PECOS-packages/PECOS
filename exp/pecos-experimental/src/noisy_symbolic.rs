@@ -41,9 +41,10 @@
 //! 3. Compute all measurements via XOR chains
 //! 4. Return only the measurement outcomes (fault bits are hidden)
 
-use pecos_core::BitSet;
+use crate::hugr_executor::HugrExecutionError;
 use pecos_core::QubitId;
 use pecos_core::gate_type::GateType;
+use pecos_core::{BitSet, CliffordLowering};
 use pecos_quantum::Circuit;
 use pecos_random::{PecosRng, Rng, RngBulkExt, RngExt};
 use pecos_simulators::CliffordGateable;
@@ -537,8 +538,12 @@ impl std::fmt::Display for Pauli {
 /// A gate location in the circuit, used for fault injection.
 #[derive(Clone, Debug)]
 struct GateLocation {
+    /// Original circuit index for execution errors.
+    gate_index: usize,
     /// The gate type
     gate_type: GateType,
+    /// Clifford action, separate from the physical gate used for noise.
+    clifford: CliffordLowering,
     /// The qubits involved
     qubits: Vec<usize>,
 }
@@ -572,9 +577,10 @@ struct GateLocation {
 /// // Build noisy measurement history
 /// let noisy_history = NoisyMeasurementHistoryBuilder::new()
 ///     .with_noise_model(DepolarizingNoiseModel::uniform(0.001))
-///     .build_from_circuit(&circuit, sim.measurement_history());
+///     .build_from_circuit(&circuit, sim.measurement_history())?;
 ///
 /// assert_eq!(noisy_history.num_measurements(), 2);
+/// # Ok::<(), pecos_experimental::HugrExecutionError>(())
 /// ```
 pub struct NoisyMeasurementHistoryBuilder {
     noise_model: DepolarizingNoiseModel,
@@ -616,22 +622,25 @@ impl NoisyMeasurementHistoryBuilder {
     ///
     /// # Returns
     /// A `NoisyMeasurementHistory` with fault events based on the noise model.
-    #[must_use]
+    ///
+    /// # Errors
+    /// Returns [`HugrExecutionError`] for unsupported gates or invalid qubit counts.
+    /// Gates are validated even when the noise model is noiseless.
     pub fn build_from_circuit<C: Circuit>(
         &self,
         circuit: &C,
         noiseless_history: &MeasurementHistory,
-    ) -> NoisyMeasurementHistory {
+    ) -> Result<NoisyMeasurementHistory, HugrExecutionError> {
+        // Validate every gate, including gates in noiseless circuits or with no observable faults.
+        let (gate_locations, measurement_positions) = Self::collect_gate_info(circuit)?;
+
         // Start with the noiseless history
         let mut history = NoisyMeasurementHistory::from_noiseless(noiseless_history);
 
         // If noiseless, nothing to do
         if self.noise_model.is_noiseless() {
-            return history;
+            return Ok(history);
         }
-
-        // Collect gate locations and identify measurement positions
-        let (gate_locations, measurement_positions) = Self::collect_gate_info(circuit);
 
         // Process each gate for potential faults
         for (loc_idx, location) in gate_locations.iter().enumerate() {
@@ -641,10 +650,10 @@ impl NoisyMeasurementHistoryBuilder {
                 loc_idx,
                 &gate_locations,
                 &measurement_positions,
-            );
+            )?;
         }
 
-        history
+        Ok(history)
     }
 
     /// Collect gate information from the circuit.
@@ -654,7 +663,8 @@ impl NoisyMeasurementHistoryBuilder {
     /// - `measurement_positions`: Map from gate index to measurement index
     fn collect_gate_info<C: Circuit>(
         circuit: &C,
-    ) -> (Vec<GateLocation>, std::collections::HashMap<usize, usize>) {
+    ) -> Result<(Vec<GateLocation>, std::collections::HashMap<usize, usize>), HugrExecutionError>
+    {
         let mut gate_locations = Vec::new();
         let mut measurement_positions = std::collections::HashMap::new();
         let mut measurement_count = 0;
@@ -666,19 +676,26 @@ impl NoisyMeasurementHistoryBuilder {
             // Track measurement positions
             if matches!(
                 gate.gate_type,
-                GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked | GateType::MPZ
+                GateType::MX
+                    | GateType::MZ
+                    | GateType::MeasureFree
+                    | GateType::MeasureLeaked
+                    | GateType::MPZ
             ) {
                 measurement_positions.insert(gate_locations.len(), measurement_count);
                 measurement_count += 1;
             }
 
             gate_locations.push(GateLocation {
+                gate_index: gate_view.index,
                 gate_type: gate.gate_type,
+                // Global phase is irrelevant to stabilizer fault propagation.
+                clifford: crate::hugr_executor::clifford_action(gate, gate_view.index)?,
                 qubits,
             });
         }
 
-        (gate_locations, measurement_positions)
+        Ok((gate_locations, measurement_positions))
     }
 
     /// Add fault events for a specific gate.
@@ -690,15 +707,39 @@ impl NoisyMeasurementHistoryBuilder {
         loc_idx: usize,
         all_gates: &[GateLocation],
         measurement_positions: &std::collections::HashMap<usize, usize>,
-    ) {
+    ) -> Result<(), HugrExecutionError> {
+        if self.noise_model.p_prep > 0.0
+            && matches!(
+                location.gate_type,
+                GateType::PX | GateType::PZ | GateType::QAlloc | GateType::MPZ
+            )
+        {
+            self.add_preparation_fault(
+                history,
+                location,
+                loc_idx,
+                all_gates,
+                measurement_positions,
+            )?;
+        }
         match location.gate_type {
-            // Single-qubit Clifford gates: depolarizing noise applies X, Y, or Z
+            // One noise location per physical gate, even for a PerQubit lowering.
+            // Single-qubit gates: depolarizing noise applies X, Y, or Z
             GateType::X
             | GateType::Y
             | GateType::Z
             | GateType::H
             | GateType::SZ
             | GateType::SZdg
+            | GateType::SX
+            | GateType::SXdg
+            | GateType::SY
+            | GateType::SYdg
+            | GateType::RX
+            | GateType::RY
+            | GateType::RZ
+            | GateType::RXY1Q
+            | GateType::U
                 if self.noise_model.p1 > 0.0 =>
             {
                 let q = location.qubits[0];
@@ -711,7 +752,7 @@ impl NoisyMeasurementHistoryBuilder {
                         loc_idx + 1, // Fault occurs AFTER the gate
                         all_gates,
                         measurement_positions,
-                    );
+                    )?;
 
                     if !affected.is_empty() {
                         history.add_fault(
@@ -724,7 +765,21 @@ impl NoisyMeasurementHistoryBuilder {
             }
 
             // Two-qubit Clifford gates: depolarizing noise applies one of 15 Pauli pairs
-            GateType::CX | GateType::CY | GateType::CZ if self.noise_model.p2 > 0.0 => {
+            GateType::CX
+            | GateType::CY
+            | GateType::CZ
+            | GateType::SXX
+            | GateType::SXXdg
+            | GateType::SYY
+            | GateType::SYYdg
+            | GateType::SZZ
+            | GateType::SZZdg
+            | GateType::RXX
+            | GateType::RYY
+            | GateType::RZZ
+            | GateType::RXYXY2Q
+                if self.noise_model.p2 > 0.0 =>
+            {
                 let q1 = location.qubits[0];
                 let q2 = location.qubits[1];
                 let p_each = self.noise_model.p2 / 15.0;
@@ -742,7 +797,7 @@ impl NoisyMeasurementHistoryBuilder {
                             loc_idx + 1,
                             all_gates,
                             measurement_positions,
-                        );
+                        )?;
 
                         if !affected.is_empty() {
                             history.add_fault(
@@ -758,8 +813,13 @@ impl NoisyMeasurementHistoryBuilder {
                 // These are the remaining 6 of the 15 non-identity pairs
                 for &p in &paulis {
                     // Pauli on q1 only
-                    let affected =
-                        Self::propagate_fault(p, q1, loc_idx + 1, all_gates, measurement_positions);
+                    let affected = Self::propagate_fault(
+                        p,
+                        q1,
+                        loc_idx + 1,
+                        all_gates,
+                        measurement_positions,
+                    )?;
                     if !affected.is_empty() {
                         history.add_fault(
                             p_each,
@@ -769,8 +829,13 @@ impl NoisyMeasurementHistoryBuilder {
                     }
 
                     // Pauli on q2 only
-                    let affected =
-                        Self::propagate_fault(p, q2, loc_idx + 1, all_gates, measurement_positions);
+                    let affected = Self::propagate_fault(
+                        p,
+                        q2,
+                        loc_idx + 1,
+                        all_gates,
+                        measurement_positions,
+                    )?;
                     if !affected.is_empty() {
                         history.add_fault(
                             p_each,
@@ -781,32 +846,12 @@ impl NoisyMeasurementHistoryBuilder {
                 }
             }
 
-            // State preparation: X error with probability p_prep
-            GateType::PZ | GateType::QAlloc
-                if self.noise_model.p_prep > 0.0 && !location.qubits.is_empty() =>
-            {
-                let q = location.qubits[0];
-
-                // X error flips the prepared |0⟩ to |1⟩
-                let affected = Self::propagate_fault(
-                    Pauli::X,
-                    q,
-                    loc_idx + 1,
-                    all_gates,
-                    measurement_positions,
-                );
-
-                if !affected.is_empty() {
-                    history.add_fault(
-                        self.noise_model.p_prep,
-                        &affected,
-                        format!("X prep error on q{q}"),
-                    );
-                }
-            }
-
             // Measurement: flip the measurement outcome with probability p_meas
-            GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked | GateType::MPZ
+            GateType::MX
+            | GateType::MZ
+            | GateType::MeasureFree
+            | GateType::MeasureLeaked
+            | GateType::MPZ
                 if self.noise_model.p_meas > 0.0 =>
             {
                 // Measurement fault directly flips this measurement
@@ -825,6 +870,33 @@ impl NoisyMeasurementHistoryBuilder {
             // Other gates: no noise applied
             _ => {}
         }
+        Ok(())
+    }
+
+    fn add_preparation_fault(
+        &self,
+        history: &mut NoisyMeasurementHistory,
+        location: &GateLocation,
+        loc_idx: usize,
+        all_gates: &[GateLocation],
+        measurement_positions: &std::collections::HashMap<usize, usize>,
+    ) -> Result<(), HugrExecutionError> {
+        let q = location.qubits[0];
+        let pauli = if location.gate_type == GateType::PX {
+            Pauli::Z
+        } else {
+            Pauli::X
+        };
+        let affected =
+            Self::propagate_fault(pauli, q, loc_idx + 1, all_gates, measurement_positions)?;
+        if !affected.is_empty() {
+            history.add_fault(
+                self.noise_model.p_prep,
+                &affected,
+                format!("{pauli} prep error on q{q}"),
+            );
+        }
+        Ok(())
     }
 
     /// Propagate a single-qubit Pauli fault forward through the circuit.
@@ -836,7 +908,7 @@ impl NoisyMeasurementHistoryBuilder {
         start_loc: usize,
         all_gates: &[GateLocation],
         measurement_positions: &std::collections::HashMap<usize, usize>,
-    ) -> BTreeSet<usize> {
+    ) -> Result<BTreeSet<usize>, HugrExecutionError> {
         let mut prop = PauliProp::new();
 
         // Add the initial Pauli
@@ -846,61 +918,7 @@ impl NoisyMeasurementHistoryBuilder {
             Pauli::Z => prop.track_z(&[qubit]),
         }
 
-        let mut affected_measurements = BTreeSet::new();
-
-        // Propagate through subsequent gates
-        for (loc_idx, location) in all_gates.iter().enumerate().skip(start_loc) {
-            match location.gate_type {
-                // Single-qubit Clifford gates
-                // Note: X, Y, Z gates don't change the X/Z basis of Paulis for propagation purposes
-                // (sign changes don't affect measurement flips), so they fall through to _ => {}
-                GateType::H if !location.qubits.is_empty() => {
-                    prop.h(&[QubitId(location.qubits[0])]);
-                }
-                GateType::SZ if !location.qubits.is_empty() => {
-                    prop.sz(&[QubitId(location.qubits[0])]);
-                }
-                GateType::SZdg if !location.qubits.is_empty() => {
-                    // S† = S³
-                    let q = QubitId(location.qubits[0]);
-                    prop.sz(&[q]).sz(&[q]).sz(&[q]);
-                }
-
-                // Two-qubit Clifford gates
-                GateType::CX if location.qubits.len() >= 2 => {
-                    prop.cx(&[(QubitId(location.qubits[0]), QubitId(location.qubits[1]))]);
-                }
-                GateType::CY if location.qubits.len() >= 2 => {
-                    let (q1, q2) = (QubitId(location.qubits[0]), QubitId(location.qubits[1]));
-                    // CY = (I ⊗ S†) CX (I ⊗ S)
-                    prop.sz(&[q2]).cx(&[(q1, q2)]).sz(&[q2]).sz(&[q2]).sz(&[q2]);
-                }
-                GateType::CZ if location.qubits.len() >= 2 => {
-                    let (q1, q2) = (QubitId(location.qubits[0]), QubitId(location.qubits[1]));
-                    // CZ = (I ⊗ H) CX (I ⊗ H)
-                    prop.h(&[q2]).cx(&[(q1, q2)]).h(&[q2]);
-                }
-
-                // Measurements
-                GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked | GateType::MPZ
-                    if !location.qubits.is_empty() =>
-                {
-                    let q = location.qubits[0];
-                    // Check if this fault would flip the measurement
-                    // A Z-basis measurement is flipped iff there's an X component
-                    if prop.contains_x(q)
-                        && let Some(&meas_idx) = measurement_positions.get(&loc_idx)
-                    {
-                        affected_measurements.insert(meas_idx);
-                    }
-                }
-
-                // Other gates: pass through unchanged
-                _ => {}
-            }
-        }
-
-        affected_measurements
+        Self::propagate_frame(prop, start_loc, all_gates, measurement_positions)
     }
 
     /// Propagate a two-qubit Pauli fault forward through the circuit.
@@ -912,7 +930,7 @@ impl NoisyMeasurementHistoryBuilder {
         start_loc: usize,
         all_gates: &[GateLocation],
         measurement_positions: &std::collections::HashMap<usize, usize>,
-    ) -> BTreeSet<usize> {
+    ) -> Result<BTreeSet<usize>, HugrExecutionError> {
         let mut prop = PauliProp::new();
 
         // Add both Paulis
@@ -927,47 +945,141 @@ impl NoisyMeasurementHistoryBuilder {
             Pauli::Z => prop.track_z(&[qubit2]),
         }
 
-        let mut affected_measurements = BTreeSet::new();
+        Self::propagate_frame(prop, start_loc, all_gates, measurement_positions)
+    }
 
-        // Propagate through subsequent gates (same logic as single-qubit)
+    fn propagate_frame(
+        mut prop: PauliProp,
+        start_loc: usize,
+        all_gates: &[GateLocation],
+        measurement_positions: &std::collections::HashMap<usize, usize>,
+    ) -> Result<BTreeSet<usize>, HugrExecutionError> {
+        let mut affected = BTreeSet::new();
         for (loc_idx, location) in all_gates.iter().enumerate().skip(start_loc) {
-            match location.gate_type {
-                GateType::H if !location.qubits.is_empty() => {
-                    prop.h(&[QubitId(location.qubits[0])]);
+            let qubits: Vec<_> = location.qubits.iter().copied().map(QubitId).collect();
+            match location.clifford {
+                CliffordLowering::Named(gate) => {
+                    Self::propagate_named(&mut prop, gate, &qubits, location)?;
                 }
-                GateType::SZ if !location.qubits.is_empty() => {
-                    prop.sz(&[QubitId(location.qubits[0])]);
-                }
-                GateType::SZdg if !location.qubits.is_empty() => {
-                    let q = QubitId(location.qubits[0]);
-                    prop.sz(&[q]).sz(&[q]).sz(&[q]);
-                }
-                GateType::CX if location.qubits.len() >= 2 => {
-                    prop.cx(&[(QubitId(location.qubits[0]), QubitId(location.qubits[1]))]);
-                }
-                GateType::CY if location.qubits.len() >= 2 => {
-                    let (q1, q2) = (QubitId(location.qubits[0]), QubitId(location.qubits[1]));
-                    prop.sz(&[q2]).cx(&[(q1, q2)]).sz(&[q2]).sz(&[q2]).sz(&[q2]);
-                }
-                GateType::CZ if location.qubits.len() >= 2 => {
-                    let (q1, q2) = (QubitId(location.qubits[0]), QubitId(location.qubits[1]));
-                    prop.h(&[q2]).cx(&[(q1, q2)]).h(&[q2]);
-                }
-                GateType::MZ | GateType::MeasureFree | GateType::MeasureLeaked | GateType::MPZ
-                    if !location.qubits.is_empty() =>
-                {
-                    let q = location.qubits[0];
-                    if prop.contains_x(q)
-                        && let Some(&meas_idx) = measurement_positions.get(&loc_idx)
-                    {
-                        affected_measurements.insert(meas_idx);
+                CliffordLowering::PerQubit(pauli) => {
+                    for &qubit in &qubits {
+                        Self::propagate_named(&mut prop, pauli, &[qubit], location)?;
                     }
                 }
-                _ => {}
+            }
+            if let Some(&meas_idx) = measurement_positions.get(&loc_idx) {
+                let q = location.qubits[0];
+                if prop.contains_x(q) {
+                    affected.insert(meas_idx);
+                }
+                if matches!(location.gate_type, GateType::MPZ | GateType::MeasureFree) {
+                    prop.clear_qubit(q);
+                }
             }
         }
+        Ok(affected)
+    }
 
-        affected_measurements
+    fn propagate_named(
+        prop: &mut PauliProp,
+        gate: GateType,
+        qubits: &[QubitId],
+        location: &GateLocation,
+    ) -> Result<(), HugrExecutionError> {
+        match gate {
+            GateType::H | GateType::MX => {
+                prop.h(qubits);
+            }
+            GateType::SZ => {
+                prop.sz(qubits);
+            }
+            GateType::SZdg => {
+                prop.szdg(qubits);
+            }
+            GateType::SX => {
+                prop.sx(qubits);
+            }
+            GateType::SXdg => {
+                prop.sxdg(qubits);
+            }
+            GateType::SY => {
+                prop.sy(qubits);
+            }
+            GateType::SYdg => {
+                prop.sydg(qubits);
+            }
+            GateType::CX
+            | GateType::CY
+            | GateType::CZ
+            | GateType::SXX
+            | GateType::SXXdg
+            | GateType::SYY
+            | GateType::SYYdg
+            | GateType::SZZ
+            | GateType::SZZdg => {
+                let pair = [(qubits[0], qubits[1])];
+                match gate {
+                    GateType::CX => {
+                        prop.cx(&pair);
+                    }
+                    GateType::CY => {
+                        prop.cy(&pair);
+                    }
+                    GateType::CZ => {
+                        prop.cz(&pair);
+                    }
+                    GateType::SXX => {
+                        prop.sxx(&pair);
+                    }
+                    GateType::SXXdg => {
+                        prop.sxxdg(&pair);
+                    }
+                    GateType::SYY => {
+                        prop.syy(&pair);
+                    }
+                    GateType::SYYdg => {
+                        prop.syydg(&pair);
+                    }
+                    GateType::SZZ => {
+                        prop.szz(&pair);
+                    }
+                    GateType::SZZdg => {
+                        prop.szzdg(&pair);
+                    }
+                    _ => {
+                        return Err(HugrExecutionError::UnsupportedGate {
+                            gate_type: location.gate_type,
+                            gate_index: location.gate_index,
+                        });
+                    }
+                }
+            }
+            GateType::QAlloc | GateType::PZ | GateType::PX | GateType::QFree => {
+                for q in qubits {
+                    prop.clear_qubit(q.index());
+                }
+            }
+            // Pauli signs do not affect flips; measurements are handled by the caller.
+            GateType::I
+            | GateType::X
+            | GateType::Y
+            | GateType::Z
+            | GateType::Idle
+            | GateType::MZ
+            | GateType::MPZ
+            | GateType::MeasureFree
+            | GateType::MeasureLeaked
+            | GateType::MeasCrosstalkGlobalPayload
+            | GateType::MeasCrosstalkLocalPayload
+            | GateType::TrackedPauliMeta => {}
+            _ => {
+                return Err(HugrExecutionError::UnsupportedGate {
+                    gate_type: location.gate_type,
+                    gate_index: location.gate_index,
+                });
+            }
+        }
+        Ok(())
     }
 }
 
@@ -1777,5 +1889,110 @@ mod tests {
         // Z on target propagates to control: IZ -> ZZ
         assert!(prop.contains_z(0));
         assert!(prop.contains_z(1));
+    }
+    #[test]
+    fn native_two_qubit_rotations_have_one_two_qubit_noise_location() {
+        use pecos_core::{Angle64, Gate};
+        use pecos_quantum::DagCircuit;
+        use pecos_simulators::SymbolicSparseStab;
+        // Identity and PerQubit lowerings still represent one physical two-qubit gate.
+        for angle in [Angle64::ZERO, Angle64::HALF_TURN, Angle64::QUARTER_TURN] {
+            let mut circuit = DagCircuit::new();
+            circuit.add_gate_auto_wire(Gate::rzz(angle, &[(0, 1)]));
+            circuit.mz(&[0]);
+            circuit.mz(&[1]);
+            let mut sim = SymbolicSparseStab::new(2);
+            crate::execute_hugr(&mut sim, &circuit).unwrap();
+            let history = NoisyMeasurementHistoryBuilder::new()
+                .with_noise_model(DepolarizingNoiseModel::new(0.3, 0.15, 0.0, 0.0))
+                .build_from_circuit(&circuit, sim.measurement_history())
+                .unwrap();
+            // Of 15 Pauli pairs, only ZI, IZ and ZZ leave both Z measurements unchanged.
+            assert_eq!(history.num_faults(), 12);
+            for fault in history.faults() {
+                assert!((fault.probability - 0.01).abs() < 1e-12);
+                assert!(fault.description.contains("RZZ"));
+            }
+        }
+    }
+
+    #[test]
+    fn reset_clears_faults_and_x_basis_preparation_and_measurement_are_noisy() {
+        use pecos_core::Gate;
+        use pecos_quantum::DagCircuit;
+        use pecos_simulators::SymbolicSparseStab;
+        for reset in [GateType::QAlloc, GateType::PZ, GateType::PX, GateType::MPZ] {
+            let mut circuit = DagCircuit::new();
+            circuit.x(&[0]);
+            circuit.add_gate_auto_wire(Gate::simple(reset, vec![QubitId(0)]));
+            circuit.add_gate_auto_wire(if reset == GateType::PX {
+                Gate::mx(&[0])
+            } else {
+                Gate::mz(&[0])
+            });
+            let mut sim = SymbolicSparseStab::new(1);
+            crate::execute_hugr(&mut sim, &circuit).unwrap();
+            assert_eq!(
+                sim.measurement_history().format_all(),
+                if reset == GateType::MPZ {
+                    "[m0=1, m1=0]"
+                } else {
+                    "[m0=0]"
+                }
+            );
+            let last = sim.measurement_history().len() - 1;
+            let builder = NoisyMeasurementHistoryBuilder::new()
+                .with_noise_model(DepolarizingNoiseModel::new(0.03, 0.0, 0.0, 0.0));
+            let history = builder
+                .build_from_circuit(&circuit, sim.measurement_history())
+                .unwrap();
+            assert!(history.measurements()[last].fault_deps.is_empty());
+            let builder = NoisyMeasurementHistoryBuilder::new()
+                .with_noise_model(DepolarizingNoiseModel::new(0.0, 0.0, 0.02, 0.01));
+            let history = builder
+                .build_from_circuit(&circuit, sim.measurement_history())
+                .unwrap();
+            assert_eq!(history.measurements()[last].fault_deps.len(), 2);
+        }
+    }
+    #[test]
+    fn builder_returns_unsupported_gate_for_non_clifford_rz() {
+        use pecos_core::{Angle64, Gate};
+        use pecos_quantum::DagCircuit;
+
+        let mut circuit = DagCircuit::new();
+        circuit.h(&[0]);
+        let gate_index = circuit.add_gate_auto_wire(Gate::rz(Angle64::from_turns(0.125), &[0]));
+        for noise in [
+            DepolarizingNoiseModel::default(),
+            DepolarizingNoiseModel::uniform(0.01),
+        ] {
+            let result = NoisyMeasurementHistoryBuilder::new()
+                .with_noise_model(noise)
+                .build_from_circuit(&circuit, &MeasurementHistory::new());
+            assert!(matches!(result, Err(HugrExecutionError::UnsupportedGate {
+                gate_type: GateType::RZ, gate_index: index,
+            }) if index == gate_index));
+        }
+    }
+
+    #[test]
+    fn builder_rejects_unsupported_named_gates_without_observable_faults() {
+        use pecos_core::Gate;
+        use pecos_quantum::DagCircuit;
+
+        let mut circuit = DagCircuit::new();
+        let gate_index = circuit.add_gate_auto_wire(Gate::t(&[0]));
+        for noise in [
+            DepolarizingNoiseModel::default(),
+            DepolarizingNoiseModel::uniform(0.01),
+        ] {
+            let result = NoisyMeasurementHistoryBuilder::new()
+                .with_noise_model(noise)
+                .build_from_circuit(&circuit, &MeasurementHistory::new());
+            assert!(matches!(result, Err(HugrExecutionError::UnsupportedGate {
+                gate_type: GateType::T, gate_index: index,
+            }) if index == gate_index));
+        }
     }
 }

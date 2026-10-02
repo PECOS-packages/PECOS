@@ -31,6 +31,28 @@ use pyo3::types::{PyBytes, PyDict};
 
 use crate::dag_circuit_bindings::PyDagCircuit;
 
+fn symbolic_execution_error(error: HugrExecutionError) -> PyErr {
+    match error {
+        HugrExecutionError::UnsupportedGate { gate_type, .. } => PyRuntimeError::new_err(format!(
+            "Unsupported gate for stabilizer simulation: {gate_type}. \
+                 Only supported Clifford gates and rotations at Clifford angles are supported."
+        )),
+        HugrExecutionError::InvalidQubitCount {
+            gate_type,
+            expected,
+            actual,
+            ..
+        } => PyRuntimeError::new_err(format!(
+            "Gate {gate_type} expected {expected} qubits but got {actual}"
+        )),
+        HugrExecutionError::QubitOutOfBounds {
+            qubit, num_qubits, ..
+        } => PyRuntimeError::new_err(format!(
+            "Qubit {qubit} out of bounds (circuit has {num_qubits} qubits)"
+        )),
+    }
+}
+
 /// Python wrapper for `MeasurementHistory` with sampling capabilities
 #[pyclass(name = "SymbolicExecutionResult")]
 pub struct PySymbolicExecutionResult {
@@ -151,8 +173,11 @@ impl PySymbolicExecutionResult {
 ///     `RuntimeError`: If the HUGR contains control flow (use `SimpleHugr` validation)
 ///
 /// Example:
-///     >>> from pecos.experimental import `execute_hugr_symbolic`
-///     >>> result = `execute_hugr_symbolic(hugr_bytes`, `num_qubits=5`)
+///     Guppy callers should trace native QIS gates:
+///     >>> import pecos
+///     >>> from pecos.experimental import execute_dag_circuit_symbolic
+///     >>> circuit = pecos.trace_program_to_tick_circuit(pecos.Guppy(program), 5, seed=1)
+///     >>> result = execute_dag_circuit_symbolic(circuit.to_dag_circuit(), num_qubits=5)
 ///     >>> samples = `result.sample(1_000_000)`  # Very fast!
 ///     >>> counts = `result.sample_counts(1_000_000)`
 #[pyfunction]
@@ -178,25 +203,7 @@ pub fn execute_hugr_symbolic(
     // Create symbolic simulator and execute
     let mut sim = SymbolicSparseStab::new(n_qubits);
 
-    execute_hugr(&mut sim, &simple_hugr).map_err(|e| match e {
-        HugrExecutionError::UnsupportedGate { gate_type, .. } => PyRuntimeError::new_err(format!(
-            "Unsupported gate for stabilizer simulation: {gate_type}. \
-                 Only Clifford gates (H, S, CX, CY, CZ, X, Y, Z) are supported."
-        )),
-        HugrExecutionError::InvalidQubitCount {
-            gate_type,
-            expected,
-            actual,
-            ..
-        } => PyRuntimeError::new_err(format!(
-            "Gate {gate_type} expected {expected} qubits but got {actual}"
-        )),
-        HugrExecutionError::QubitOutOfBounds {
-            qubit, num_qubits, ..
-        } => PyRuntimeError::new_err(format!(
-            "Qubit {qubit} out of bounds (circuit has {num_qubits} qubits)"
-        )),
-    })?;
+    execute_hugr(&mut sim, &simple_hugr).map_err(symbolic_execution_error)?;
 
     // Return the measurement history wrapped for Python
     Ok(PySymbolicExecutionResult {
@@ -242,25 +249,7 @@ pub fn execute_dag_circuit_symbolic(
     // Create symbolic simulator and execute
     let mut sim = SymbolicSparseStab::new(n_qubits);
 
-    execute_hugr(&mut sim, &circuit.inner).map_err(|e| match e {
-        HugrExecutionError::UnsupportedGate { gate_type, .. } => PyRuntimeError::new_err(format!(
-            "Unsupported gate for stabilizer simulation: {gate_type}. \
-                 Only Clifford gates (H, S, CX, CY, CZ, X, Y, Z) are supported."
-        )),
-        HugrExecutionError::InvalidQubitCount {
-            gate_type,
-            expected,
-            actual,
-            ..
-        } => PyRuntimeError::new_err(format!(
-            "Gate {gate_type} expected {expected} qubits but got {actual}"
-        )),
-        HugrExecutionError::QubitOutOfBounds {
-            qubit, num_qubits, ..
-        } => PyRuntimeError::new_err(format!(
-            "Qubit {qubit} out of bounds (circuit has {num_qubits} qubits)"
-        )),
-    })?;
+    execute_hugr(&mut sim, &circuit.inner).map_err(symbolic_execution_error)?;
 
     // Return the measurement history wrapped for Python
     Ok(PySymbolicExecutionResult {
@@ -384,15 +373,18 @@ impl PyNoisySymbolicExecutionResult {
 ///     `NoisySymbolicExecutionResult` that can be sampled with noise
 ///
 /// Example:
-///     >>> from pecos.experimental import `execute_hugr_symbolic_noisy`
-///     >>> result = `execute_hugr_symbolic_noisy`(
-///     ...     `hugr_bytes`,
-///     ...     `p1=0.001`,  # 0.1% single-qubit error
-///     ...     `p2=0.01`,   # 1% two-qubit error
-///     ...     `p_meas=0.001`,
-///     ...     `p_prep=0.001`
+///     Guppy callers should attach noise to the traced native QIS gates:
+///     >>> import pecos
+///     >>> from pecos.experimental import execute_dag_circuit_symbolic_noisy
+///     >>> circuit = pecos.trace_program_to_tick_circuit(pecos.Guppy(program), 5, seed=1)
+///     >>> result = execute_dag_circuit_symbolic_noisy(
+///     ...     circuit.to_dag_circuit(), num_qubits=5,
+///     ...     p1=0.001,  # 0.1% single-qubit error
+///     ...     p2=0.01,   # 1% two-qubit error
+///     ...     p_meas=0.001,
+///     ...     p_prep=0.001
 ///     ... )
-///     >>> counts = `result.sample_counts(1_000_000)`
+///     >>> counts = result.sample_counts(1_000_000)
 #[pyfunction]
 #[pyo3(signature = (hugr_bytes, p1=0.0, p2=0.0, p_meas=0.0, p_prep=0.0, num_qubits=None))]
 pub fn execute_hugr_symbolic_noisy(
@@ -419,30 +411,14 @@ pub fn execute_hugr_symbolic_noisy(
     // Create symbolic simulator and execute
     let mut sim = SymbolicSparseStab::new(n_qubits);
 
-    execute_hugr(&mut sim, &simple_hugr).map_err(|e| match e {
-        HugrExecutionError::UnsupportedGate { gate_type, .. } => PyRuntimeError::new_err(format!(
-            "Unsupported gate for stabilizer simulation: {gate_type}. \
-                 Only Clifford gates (H, S, CX, CY, CZ, X, Y, Z) are supported."
-        )),
-        HugrExecutionError::InvalidQubitCount {
-            gate_type,
-            expected,
-            actual,
-            ..
-        } => PyRuntimeError::new_err(format!(
-            "Gate {gate_type} expected {expected} qubits but got {actual}"
-        )),
-        HugrExecutionError::QubitOutOfBounds {
-            qubit, num_qubits, ..
-        } => PyRuntimeError::new_err(format!(
-            "Qubit {qubit} out of bounds (circuit has {num_qubits} qubits)"
-        )),
-    })?;
+    execute_hugr(&mut sim, &simple_hugr).map_err(symbolic_execution_error)?;
 
     // Build noisy measurement history
     let noise_model = DepolarizingNoiseModel::new(p1, p2, p_meas, p_prep);
     let builder = NoisyMeasurementHistoryBuilder::new().with_noise_model(noise_model);
-    let noisy_history = builder.build_from_circuit(&simple_hugr, sim.measurement_history());
+    let noisy_history = builder
+        .build_from_circuit(&simple_hugr, sim.measurement_history())
+        .map_err(symbolic_execution_error)?;
 
     Ok(PyNoisySymbolicExecutionResult {
         history: noisy_history,
@@ -477,30 +453,14 @@ pub fn execute_dag_circuit_symbolic_noisy(
     // Create symbolic simulator and execute
     let mut sim = SymbolicSparseStab::new(n_qubits);
 
-    execute_hugr(&mut sim, &circuit.inner).map_err(|e| match e {
-        HugrExecutionError::UnsupportedGate { gate_type, .. } => PyRuntimeError::new_err(format!(
-            "Unsupported gate for stabilizer simulation: {gate_type}. \
-                 Only Clifford gates (H, S, CX, CY, CZ, X, Y, Z) are supported."
-        )),
-        HugrExecutionError::InvalidQubitCount {
-            gate_type,
-            expected,
-            actual,
-            ..
-        } => PyRuntimeError::new_err(format!(
-            "Gate {gate_type} expected {expected} qubits but got {actual}"
-        )),
-        HugrExecutionError::QubitOutOfBounds {
-            qubit, num_qubits, ..
-        } => PyRuntimeError::new_err(format!(
-            "Qubit {qubit} out of bounds (circuit has {num_qubits} qubits)"
-        )),
-    })?;
+    execute_hugr(&mut sim, &circuit.inner).map_err(symbolic_execution_error)?;
 
     // Build noisy measurement history
     let noise_model = DepolarizingNoiseModel::new(p1, p2, p_meas, p_prep);
     let builder = NoisyMeasurementHistoryBuilder::new().with_noise_model(noise_model);
-    let noisy_history = builder.build_from_circuit(&circuit.inner, sim.measurement_history());
+    let noisy_history = builder
+        .build_from_circuit(&circuit.inner, sim.measurement_history())
+        .map_err(symbolic_execution_error)?;
 
     Ok(PyNoisySymbolicExecutionResult {
         history: noisy_history,

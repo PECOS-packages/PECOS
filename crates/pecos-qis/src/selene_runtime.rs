@@ -335,15 +335,12 @@ pub struct SeleneRuntime {
     /// Some generated programs use sparse, monotonically increasing logical
     /// handles while guaranteeing a smaller maximum number of live physical
     /// slots. In those cases the `.qubits(...)` hint is the runtime capacity;
-    /// if the program actually exceeds it, plugin qalloc fails loudly.
+    /// if the program actually exceeds it, capacity admission rejects the input.
     num_qubits_hint: Option<usize>,
 
-    /// Whether the loaded operation stream uses explicit qalloc/qfree records.
-    ///
-    /// In this mode program qubit IDs are logical handles, not dense physical
-    /// runtime slots. Runtime plugin capacity must therefore follow the maximum
-    /// simultaneously-live allocation count instead of `max(program_id) + 1`.
-    uses_explicit_qubit_allocation: bool,
+    /// Live program handles whose lifetime was explicitly introduced by qalloc.
+    /// Other materialized handles retain legacy release-on-measure semantics.
+    explicit_qubit_handles: BTreeSet<usize>,
 
     /// Number of allocated result slots
     num_results: usize,
@@ -464,7 +461,7 @@ impl SeleneRuntime {
             batch_size: 100,
             num_qubits: 0,
             num_qubits_hint: None,
-            uses_explicit_qubit_allocation: false,
+            explicit_qubit_handles: BTreeSet::new(),
             num_results: 0,
             interface: None,
             current_op_index: 0,
@@ -490,15 +487,7 @@ impl SeleneRuntime {
 
     fn lower_native_operations(&mut self, operations: &[Operation]) -> Result<Vec<QuantumOp>> {
         self.check_batch_failure()?;
-        if has_explicit_qubit_allocations(operations) {
-            self.uses_explicit_qubit_allocation = true;
-        }
-        let (num_qubits, num_results) =
-            operation_capacity_with_mode(operations, self.uses_explicit_qubit_allocation);
-        self.num_qubits = self.num_qubits.max(num_qubits);
-        self.num_results = self.num_results.max(num_results);
-        self.ensure_plugin_capacity()?;
-        self.load_plugin()?;
+        self.prepare_runtime_input(operations)?;
         let mut lowered_ops = Vec::new();
 
         for op in operations {
@@ -793,8 +782,6 @@ impl SeleneRuntime {
         let (num_qubits, num_results) = collector_capacity(&operations);
         self.num_qubits = num_qubits;
         self.num_results = num_results;
-        self.uses_explicit_qubit_allocation =
-            has_explicit_qubit_allocations(&operations.operations);
 
         self.interface = Some(operations);
         self.current_op_index = 0;
@@ -869,20 +856,32 @@ impl SeleneRuntime {
         Ok(())
     }
 
-    fn ensure_plugin_capacity(&mut self) -> Result<()> {
-        let Some(initialized_num_qubits) = self.initialized_num_qubits else {
-            return Ok(());
-        };
-
-        let plugin_num_qubits = self.plugin_num_qubits();
-        if plugin_num_qubits <= initialized_num_qubits {
-            return Ok(());
-        }
-
-        debug!(
-            "Reinitializing Selene plugin capacity from {initialized_num_qubits} to {plugin_num_qubits} qubits"
+    fn prepare_runtime_input(&mut self, operations: &[Operation]) -> Result<()> {
+        self.check_batch_failure()?;
+        let (qubits, results, peak_live) = operation_capacity(
+            operations,
+            self.program_to_runtime_qubits.keys().copied().collect(),
+            self.explicit_qubit_handles.clone(),
         );
-        self.reset_plugin_instance()?;
+        let requested = self.num_qubits_hint.unwrap_or(self.num_qubits.max(qubits));
+        if peak_live > requested {
+            return Err(RuntimeError::ExecutionError(format!(
+                "runtime input requires {peak_live} live qubits but configured capacity is {requested}; \
+                 configure sufficient qubits before starting the shot"
+            )));
+        }
+        if let Some(initialized) = self.initialized_num_qubits
+            && requested > initialized
+        {
+            // The plugin ABI has no state-preserving resize. Reinitializing here
+            // loses allocations, pending work, results and native shot identity.
+            return Err(RuntimeError::ExecutionError(format!(
+                "runtime input requires capacity {requested} but initialized capacity is {initialized}; \
+                 reset and configure sufficient qubits before starting a new shot"
+            )));
+        }
+        self.num_qubits = self.num_qubits.max(qubits);
+        self.num_results = self.num_results.max(results);
         self.load_plugin()
     }
 
@@ -910,6 +909,7 @@ impl SeleneRuntime {
         self.library = None;
         self.initialized_num_qubits = None;
         self.program_to_runtime_qubits.clear();
+        self.explicit_qubit_handles.clear();
         self.program_to_runtime_results.clear();
         self.runtime_to_program_results.clear();
         self.leakage_results.clear();
@@ -1077,9 +1077,6 @@ impl SeleneRuntime {
         let runtime_qubit = self.runtime_qalloc()?;
         self.program_to_runtime_qubits
             .insert(program_qubit, runtime_qubit);
-        if !self.uses_explicit_qubit_allocation {
-            self.num_qubits = self.num_qubits.max(program_qubit + 1);
-        }
         Ok(runtime_qubit)
     }
 
@@ -1376,14 +1373,13 @@ impl SeleneRuntime {
         match op {
             Operation::AllocateQubit { id } => {
                 let _ = self.runtime_qubit_for_program(*id)?;
+                self.explicit_qubit_handles.insert(*id);
             }
             Operation::AllocateResult { id } => {
                 self.num_results = self.num_results.max(id + 1);
             }
             Operation::ReleaseQubit { id } => {
-                if let Some(runtime_qubit) = self.program_to_runtime_qubits.remove(id) {
-                    self.runtime_qfree(runtime_qubit)?;
-                }
+                self.release_runtime_qubit(*id)?;
             }
             Operation::RecordOutput { .. }
             | Operation::TraceMetadata { .. }
@@ -1470,13 +1466,13 @@ impl SeleneRuntime {
             QuantumOp::Measure(qubit, result_id) => {
                 let runtime_qubit = self.runtime_qubit_for_program(*qubit)?;
                 self.call_runtime_measure(runtime_qubit, *result_id)?;
-                self.release_implicitly_measured_qubit(*qubit, runtime_qubit)?;
+                self.release_implicitly_measured_qubit(*qubit)?;
             }
             QuantumOp::MeasureLeaked(qubit, result_id) => {
                 self.leakage_results.insert(*result_id);
                 let runtime_qubit = self.runtime_qubit_for_program(*qubit)?;
                 self.call_runtime_measure_leaked(runtime_qubit, *result_id)?;
-                self.release_implicitly_measured_qubit(*qubit, runtime_qubit)?;
+                self.release_implicitly_measured_qubit(*qubit)?;
             }
             QuantumOp::Reset(qubit) => {
                 let runtime_qubit = self.runtime_qubit_for_program(*qubit)?;
@@ -1491,26 +1487,22 @@ impl SeleneRuntime {
         Ok(())
     }
 
-    fn restore_qubit_allocation_mode(&mut self) {
-        // A loaded collector defines the next shot's lifetimes. Streaming input
-        // has no collector: rediscover its mode from that shot's own records.
-        self.uses_explicit_qubit_allocation = self
-            .interface
-            .as_ref()
-            .is_some_and(|interface| has_explicit_qubit_allocations(&interface.operations));
+    fn release_runtime_qubit(&mut self, program_qubit: usize) -> Result<()> {
+        if let Some(&runtime_qubit) = self.program_to_runtime_qubits.get(&program_qubit) {
+            if let Err(error) = self.runtime_qfree(runtime_qubit) {
+                // Native state may have changed even on failure. Retain the map
+                // only for diagnostics; no further execution is allowed until reset.
+                return Err(self.latch_batch_failure(error));
+            }
+            self.program_to_runtime_qubits.remove(&program_qubit);
+        }
+        self.explicit_qubit_handles.remove(&program_qubit);
+        Ok(())
     }
 
-    fn release_implicitly_measured_qubit(
-        &mut self,
-        program_qubit: usize,
-        runtime_qubit: u64,
-    ) -> Result<()> {
-        // Explicit lifetime streams may reset or measure this same live qubit
-        // again. Only ReleaseQubit ends that lifetime. Preserve measurement-time
-        // release for legacy streams that contain no allocation/release records.
-        if !self.uses_explicit_qubit_allocation {
-            self.runtime_qfree(runtime_qubit)?;
-            self.program_to_runtime_qubits.remove(&program_qubit);
+    fn release_implicitly_measured_qubit(&mut self, program_qubit: usize) -> Result<()> {
+        if !self.explicit_qubit_handles.contains(&program_qubit) {
+            self.release_runtime_qubit(program_qubit)?;
         }
         Ok(())
     }
@@ -2163,7 +2155,7 @@ impl Clone for SeleneRuntime {
             batch_size: self.batch_size,
             num_qubits: self.num_qubits,
             num_qubits_hint: self.num_qubits_hint,
-            uses_explicit_qubit_allocation: self.uses_explicit_qubit_allocation,
+            explicit_qubit_handles: self.explicit_qubit_handles.clone(),
             num_results: self.num_results,
             interface: self.interface.clone(),
             current_op_index: self.current_op_index,
@@ -2191,67 +2183,73 @@ impl Clone for SeleneRuntime {
 }
 
 fn collector_capacity(interface: &OperationCollector) -> (usize, usize) {
-    let uses_explicit_allocations = has_explicit_qubit_allocations(&interface.operations);
-    let (mut num_qubits, mut num_results) =
-        operation_capacity_with_mode(&interface.operations, uses_explicit_allocations);
-
-    if !uses_explicit_allocations {
-        for &qubit in &interface.allocated_qubits {
-            include_qubit(&mut num_qubits, qubit);
+    let (mut qubits, mut results, _) =
+        operation_capacity(&interface.operations, BTreeSet::new(), BTreeSet::new());
+    let explicit: BTreeSet<_> = interface
+        .operations
+        .iter()
+        .filter_map(|op| {
+            if let Operation::AllocateQubit { id } = op {
+                Some(*id)
+            } else {
+                None
+            }
+        })
+        .collect();
+    for &qubit in &interface.allocated_qubits {
+        if !explicit.contains(&qubit) {
+            include_qubit(&mut qubits, qubit);
         }
     }
     for &result in &interface.allocated_results {
-        include_result(&mut num_results, result);
+        include_result(&mut results, result);
     }
-
-    (num_qubits, num_results)
+    (qubits, results)
 }
 
-fn has_explicit_qubit_allocations(operations: &[Operation]) -> bool {
-    operations.iter().any(|op| {
-        matches!(
-            op,
-            Operation::AllocateQubit { .. } | Operation::ReleaseQubit { .. }
-        )
-    })
-}
-
-fn operation_capacity_with_mode(
+/// Capacity admission mirrors per-handle submission lifetimes, seeded with all
+/// handles still live from earlier input. The third result is physical peak use;
+/// the first also retains conservative legacy index-based automatic sizing.
+fn operation_capacity(
     operations: &[Operation],
-    uses_explicit_allocations: bool,
-) -> (usize, usize) {
-    let mut num_qubits = 0;
-    let mut num_results = 0;
-    let mut live_qubits = BTreeSet::new();
-    let mut max_live_qubits = 0;
-
+    mut live: BTreeSet<usize>,
+    mut explicit: BTreeSet<usize>,
+) -> (usize, usize, usize) {
+    let mut qubits = 0;
+    let mut results = 0;
+    let mut peak = live.len();
     for op in operations {
         match op {
-            Operation::Quantum(qop) if !uses_explicit_allocations => {
-                include_quantum_op_capacity(qop, &mut num_qubits, &mut num_results);
-            }
-            Operation::Quantum(qop) => {
-                include_quantum_result_capacity(qop, &mut num_results);
-            }
             Operation::AllocateQubit { id } => {
-                live_qubits.insert(*id);
-                max_live_qubits = max_live_qubits.max(live_qubits.len());
+                live.insert(*id);
+                explicit.insert(*id);
+                peak = peak.max(live.len());
             }
             Operation::ReleaseQubit { id } => {
-                live_qubits.remove(id);
+                live.remove(id);
+                explicit.remove(id);
             }
-            Operation::AllocateResult { id } => include_result(&mut num_results, *id),
-            Operation::RecordOutput { result_id, .. } => {
-                include_result(&mut num_results, *result_id);
+            Operation::Quantum(qop) => {
+                for_each_quantum_qubit(qop, |qubit| {
+                    live.insert(qubit);
+                    if !explicit.contains(&qubit) {
+                        include_qubit(&mut qubits, qubit);
+                    }
+                });
+                peak = peak.max(live.len());
+                include_quantum_result_capacity(qop, &mut results);
+                if let QuantumOp::Measure(qubit, _) | QuantumOp::MeasureLeaked(qubit, _) = qop
+                    && !explicit.contains(qubit)
+                {
+                    live.remove(qubit);
+                }
             }
+            Operation::AllocateResult { id } => include_result(&mut results, *id),
+            Operation::RecordOutput { result_id, .. } => include_result(&mut results, *result_id),
             Operation::TraceMetadata { .. } | Operation::Barrier => {}
         }
     }
-    if uses_explicit_allocations {
-        num_qubits = max_live_qubits;
-    }
-
-    (num_qubits, num_results)
+    (qubits.max(peak), results, peak)
 }
 
 fn include_quantum_result_capacity(qop: &QuantumOp, num_results: &mut usize) {
@@ -2263,7 +2261,7 @@ fn include_quantum_result_capacity(qop: &QuantumOp, num_results: &mut usize) {
     }
 }
 
-fn include_quantum_op_capacity(qop: &QuantumOp, num_qubits: &mut usize, num_results: &mut usize) {
+fn for_each_quantum_qubit(qop: &QuantumOp, mut include: impl FnMut(usize)) {
     match qop {
         QuantumOp::H(qubit)
         | QuantumOp::X(qubit)
@@ -2278,7 +2276,7 @@ fn include_quantum_op_capacity(qop: &QuantumOp, num_qubits: &mut usize, num_resu
         | QuantumOp::RZ(_, qubit)
         | QuantumOp::RXY(_, _, qubit)
         | QuantumOp::Idle(_, qubit)
-        | QuantumOp::Reset(qubit) => include_qubit(num_qubits, *qubit),
+        | QuantumOp::Reset(qubit) => include(*qubit),
         QuantumOp::CX(qubit_1, qubit_2)
         | QuantumOp::CY(qubit_1, qubit_2)
         | QuantumOp::CZ(qubit_1, qubit_2)
@@ -2287,17 +2285,16 @@ fn include_quantum_op_capacity(qop: &QuantumOp, num_qubits: &mut usize, num_resu
         | QuantumOp::ZZ(qubit_1, qubit_2)
         | QuantumOp::RZZ(_, qubit_1, qubit_2)
         | QuantumOp::RXYXY2Q(_, _, qubit_1, qubit_2) => {
-            include_qubit(num_qubits, *qubit_1);
-            include_qubit(num_qubits, *qubit_2);
+            include(*qubit_1);
+            include(*qubit_2);
         }
         QuantumOp::CCX(qubit_1, qubit_2, qubit_3) => {
-            include_qubit(num_qubits, *qubit_1);
-            include_qubit(num_qubits, *qubit_2);
-            include_qubit(num_qubits, *qubit_3);
+            include(*qubit_1);
+            include(*qubit_2);
+            include(*qubit_3);
         }
-        QuantumOp::Measure(qubit, result) | QuantumOp::MeasureLeaked(qubit, result) => {
-            include_qubit(num_qubits, *qubit);
-            include_result(num_results, *result);
+        QuantumOp::Measure(qubit, _) | QuantumOp::MeasureLeaked(qubit, _) => {
+            include(*qubit);
         }
     }
 }
@@ -2324,7 +2321,6 @@ impl QisRuntime for SeleneRuntime {
         let (num_qubits, num_results) = collector_capacity(&interface);
         self.num_qubits = num_qubits;
         self.num_results = num_results;
-        self.uses_explicit_qubit_allocation = has_explicit_qubit_allocations(&interface.operations);
 
         debug!(
             "Interface has {} qubits and {} result slots",
@@ -2464,15 +2460,7 @@ impl QisRuntime for SeleneRuntime {
         operations: &[Operation],
     ) -> Result<Vec<LoweredQuantumOp>> {
         self.select_output_mode(false)?;
-        if has_explicit_qubit_allocations(operations) {
-            self.uses_explicit_qubit_allocation = true;
-        }
-        let (num_qubits, num_results) =
-            operation_capacity_with_mode(operations, self.uses_explicit_qubit_allocation);
-        self.num_qubits = self.num_qubits.max(num_qubits);
-        self.num_results = self.num_results.max(num_results);
-        self.ensure_plugin_capacity()?;
-        self.load_plugin()?;
+        self.prepare_runtime_input(operations)?;
 
         let mut lowered_ops = Vec::new();
         let mut source_metadata = VecDeque::new();
@@ -2711,12 +2699,12 @@ impl QisRuntime for SeleneRuntime {
             ));
         }
         // Reset state for new shot
-        self.restore_qubit_allocation_mode();
         self.state = ClassicalState::default();
         self.current_op_index = 0;
         self.needs_reexecution = false;
         self.pending_measurements.clear();
         self.program_to_runtime_qubits.clear();
+        self.explicit_qubit_handles.clear();
         self.program_to_runtime_results.clear();
         self.runtime_to_program_results.clear();
         self.leakage_results.clear();
@@ -2776,11 +2764,11 @@ impl QisRuntime for SeleneRuntime {
 
     fn reset(&mut self) -> Result<()> {
         self.reset_plugin_instance()?;
-        self.restore_qubit_allocation_mode();
         self.batch_failure = None;
         self.state = ClassicalState::default();
         self.current_op_index = 0;
         self.program_to_runtime_qubits.clear();
+        self.explicit_qubit_handles.clear();
         self.program_to_runtime_results.clear();
         self.runtime_to_program_results.clear();
         self.leakage_results.clear();
@@ -3279,25 +3267,50 @@ mod tests {
     }
 
     #[cfg(feature = "selene-runtimes")]
-    fn lower_lifetime_test_input(runtime: &mut SeleneRuntime, mode: usize, ops: &[Operation]) {
-        match mode {
-            0 => {
-                runtime.lower_operations(ops).unwrap();
+    #[derive(Clone, Copy, Debug)]
+    enum LoweringRoute {
+        Flat,
+        Metadata,
+        Scheduled,
+    }
+
+    #[cfg(feature = "selene-runtimes")]
+    impl LoweringRoute {
+        const ALL: [Self; 3] = [Self::Flat, Self::Metadata, Self::Scheduled];
+
+        fn lower(self, runtime: &mut SeleneRuntime, ops: &[Operation]) -> Result<()> {
+            match self {
+                Self::Flat => runtime.lower_operations(ops).map(|_| ()),
+                Self::Metadata => runtime.lower_operations_with_metadata(ops).map(|_| ()),
+                Self::Scheduled => runtime.lower_scheduled_operations(ops).map(|_| ()),
             }
-            1 => {
-                runtime.lower_operations_with_metadata(ops).unwrap();
-            }
-            2 => {
-                runtime.lower_scheduled_operations(ops).unwrap();
-            }
-            _ => unreachable!(),
         }
+
+        fn drain(self, runtime: &mut SeleneRuntime) {
+            match self {
+                Self::Flat | Self::Metadata => {
+                    runtime.drain_pending_operations().unwrap();
+                }
+                Self::Scheduled => {
+                    runtime.drain_pending_scheduled_operations().unwrap();
+                }
+            }
+        }
+    }
+
+    #[cfg(feature = "selene-runtimes")]
+    fn lower_lifetime_test_input(
+        runtime: &mut SeleneRuntime,
+        mode: LoweringRoute,
+        ops: &[Operation],
+    ) {
+        mode.lower(runtime, ops).unwrap();
     }
 
     #[cfg(feature = "selene-runtimes")]
     #[test]
     fn explicit_measurement_lifetime_survives_until_release() {
-        for mode in 0..3 {
+        for mode in LoweringRoute::ALL {
             for leaked in [false, true] {
                 for mut runtime in [
                     crate::selene_runtimes::selene_simple_runtime().unwrap(),
@@ -3326,7 +3339,7 @@ mod tests {
                         assert_eq!(
                             runtime.program_to_runtime_qubits.get(&71),
                             Some(&original),
-                            "measurement released a live handle: mode={mode}, leaked={leaked}"
+                            "measurement released a live handle: mode={mode:?}, leaked={leaked}"
                         );
                         runtime
                             .provide_measurement_outcomes(BTreeMap::from([(result, 0)]))
@@ -3356,11 +3369,7 @@ mod tests {
                         mode,
                         &[Operation::ReleaseQubit { id: 93 }],
                     );
-                    if mode == 2 {
-                        runtime.drain_pending_scheduled_operations().unwrap();
-                    } else {
-                        runtime.drain_pending_operations().unwrap();
-                    }
+                    mode.drain(&mut runtime);
                     runtime.shot_end().unwrap();
                 }
             }
@@ -3370,13 +3379,12 @@ mod tests {
     #[cfg(feature = "selene-runtimes")]
     #[test]
     fn legacy_measurement_still_releases_implicit_handles() {
-        for mode in 0..3 {
+        for mode in LoweringRoute::ALL {
             for measurement in [QuantumOp::Measure(0, 0), QuantumOp::MeasureLeaked(0, 0)] {
                 let mut runtime = crate::selene_runtimes::selene_simple_runtime().unwrap();
                 runtime.set_num_qubits(1);
                 runtime.shot_start(0, None).unwrap();
                 lower_lifetime_test_input(&mut runtime, mode, &[measurement.into()]);
-                assert!(!runtime.uses_explicit_qubit_allocation);
                 assert!(runtime.program_to_runtime_qubits.is_empty());
             }
         }
@@ -3385,7 +3393,7 @@ mod tests {
     #[cfg(feature = "selene-runtimes")]
     #[test]
     fn explicit_lifetime_mode_does_not_leak_into_a_new_legacy_shot() {
-        for mode in 0..3 {
+        for mode in LoweringRoute::ALL {
             for reset in [false, true] {
                 let mut runtime = crate::selene_runtimes::selene_simple_runtime().unwrap();
                 runtime.set_num_qubits(1);
@@ -3398,36 +3406,212 @@ mod tests {
                         Operation::ReleaseQubit { id: 71 },
                     ],
                 );
-                if mode == 2 {
-                    runtime.drain_pending_scheduled_operations().unwrap();
-                } else {
-                    runtime.drain_pending_operations().unwrap();
-                }
+                mode.drain(&mut runtime);
                 runtime.shot_end().unwrap();
                 if reset {
                     runtime.reset().unwrap();
                 }
                 runtime.shot_start(1, None).unwrap();
                 lower_lifetime_test_input(&mut runtime, mode, &[QuantumOp::Measure(0, 0).into()]);
-                assert!(
-                    !runtime.uses_explicit_qubit_allocation,
-                    "previous shot retained explicit lifetime mode: mode={mode}, reset={reset}"
-                );
                 assert!(runtime.program_to_runtime_qubits.is_empty());
             }
         }
     }
 
+    #[cfg(feature = "selene-runtimes")]
     #[test]
-    fn loaded_collector_retains_explicit_lifetime_mode_across_reset_and_shot_start() {
-        let mut runtime = SeleneRuntime::new("unused-plugin-path");
-        let mut collector = OperationCollector::default();
+    fn review_continuation_capacity_preserves_native_state() {
+        for mode in [LoweringRoute::Flat, LoweringRoute::Metadata] {
+            for grow_by in [1, 2] {
+                let mut runtime = crate::selene_runtimes::selene_simple_runtime().unwrap();
+                runtime.shot_start(4, Some(9)).unwrap();
+                mode.lower(
+                    &mut runtime,
+                    &[
+                        Operation::AllocateQubit { id: 0 },
+                        QuantumOp::Measure(0, 0).into(),
+                    ],
+                )
+                .unwrap();
+                runtime
+                    .provide_measurement_outcomes(BTreeMap::from([(0, 1)]))
+                    .unwrap();
+                let handles = runtime.program_to_runtime_qubits.clone();
+                let instance = runtime.instance;
+                let active = runtime.active_shot;
+                let ops = (1..=grow_by)
+                    .map(|id| Operation::AllocateQubit { id })
+                    .collect::<Vec<_>>();
+                let error = mode
+                    .lower(&mut runtime, &ops)
+                    .expect_err("live plugin must not resize");
+                assert!(error.to_string().contains("capacity"), "{error}");
+                assert_eq!(runtime.program_to_runtime_qubits, handles);
+                assert_eq!(runtime.instance, instance);
+                assert_eq!(runtime.active_shot, active);
+                assert_eq!(runtime.initialized_num_qubits, Some(1));
+                assert_eq!(
+                    runtime.get_classical_state().measurements.get(&0),
+                    Some(&true)
+                );
+                mode.lower(&mut runtime, &[Operation::ReleaseQubit { id: 0 }])
+                    .unwrap();
+                mode.drain(&mut runtime);
+                runtime.shot_end().unwrap();
+            }
+        }
+    }
+
+    #[cfg(feature = "selene-runtimes")]
+    #[test]
+    fn review_mixed_handles_keep_individual_lifetimes() {
+        let mut runtime = crate::selene_runtimes::selene_simple_runtime().unwrap();
+        runtime.set_num_qubits(2);
+        runtime.shot_start(0, None).unwrap();
+        runtime
+            .lower_operations(&[
+                QuantumOp::Reset(0).into(),
+                Operation::AllocateQubit { id: 71 },
+                QuantumOp::Measure(0, 0).into(),
+                QuantumOp::Measure(71, 1).into(),
+            ])
+            .unwrap();
+        assert!(!runtime.program_to_runtime_qubits.contains_key(&0));
+        assert!(runtime.program_to_runtime_qubits.contains_key(&71));
+    }
+
+    #[cfg(feature = "selene-runtimes")]
+    #[test]
+    fn review_loaded_collector_does_not_define_streamed_lifetimes() {
+        let mut runtime = crate::selene_runtimes::selene_simple_runtime().unwrap();
+        let mut collector = OperationCollector::new();
         collector.queue_operation(Operation::AllocateQubit { id: 71 });
         runtime.load_interface(collector).unwrap();
+        runtime.shot_start(0, None).unwrap();
+        runtime
+            .lower_operations(&[QuantumOp::Measure(0, 0).into()])
+            .unwrap();
+        assert!(runtime.program_to_runtime_qubits.is_empty());
+    }
+
+    #[cfg(feature = "selene-runtimes")]
+    #[test]
+    fn review_failed_release_latches_uncertain_native_state() {
+        let mut runtime = crate::selene_runtimes::selene_simple_runtime().unwrap();
+        runtime.set_num_qubits(1);
+        runtime.shot_start(0, None).unwrap();
+        runtime
+            .lower_operations(&[Operation::AllocateQubit { id: 0 }])
+            .unwrap();
+        // Force a deterministic public-plugin qfree failure without invalid pointers.
+        runtime.program_to_runtime_qubits.insert(0, u64::MAX);
+        assert!(
+            runtime
+                .lower_operations(&[Operation::ReleaseQubit { id: 0 }])
+                .is_err()
+        );
+        assert!(runtime.shot_end().is_err());
+        assert!(runtime.lower_operations(&[]).is_err());
+        assert!(runtime.clone().shot_end().is_err());
         runtime.reset().unwrap();
-        assert!(runtime.uses_explicit_qubit_allocation);
         runtime.shot_start(1, None).unwrap();
-        assert!(runtime.uses_explicit_qubit_allocation);
+        runtime
+            .lower_operations(&[Operation::AllocateQubit { id: 0 }])
+            .unwrap();
+        assert_eq!(runtime.explicit_qubit_handles, BTreeSet::from([0]));
+    }
+
+    #[cfg(feature = "selene-runtimes")]
+    #[test]
+    fn no_hint_continuations_use_preloaded_whole_program_capacity() {
+        for mode in [LoweringRoute::Flat, LoweringRoute::Metadata] {
+            let mut runtime = crate::selene_runtimes::selene_simple_runtime().unwrap();
+            let first = [
+                Operation::AllocateQubit { id: 71 },
+                QuantumOp::Measure(71, 0).into(),
+            ];
+            let second = [
+                Operation::AllocateQubit { id: 93 },
+                QuantumOp::Measure(93, 1).into(),
+                Operation::ReleaseQubit { id: 93 },
+                Operation::ReleaseQubit { id: 71 },
+            ];
+            let mut collector = OperationCollector::new();
+            for op in first.iter().chain(&second) {
+                collector.queue_operation(op.clone());
+            }
+            runtime.load_interface(collector).unwrap();
+            runtime.shot_start(4, Some(9)).unwrap();
+            mode.lower(&mut runtime, &first).unwrap();
+            runtime
+                .provide_measurement_outcomes(BTreeMap::from([(0, 1)]))
+                .unwrap();
+            let instance = runtime.instance;
+            mode.lower(&mut runtime, &second).unwrap();
+            assert_eq!(runtime.instance, instance);
+            assert_eq!(runtime.initialized_num_qubits, Some(2));
+            assert_eq!(runtime.active_shot, Some((4, 9)));
+            assert!(runtime.program_to_runtime_qubits.is_empty());
+            runtime
+                .provide_measurement_outcomes(BTreeMap::from([(1, 0)]))
+                .unwrap();
+            mode.drain(&mut runtime);
+            assert_eq!(
+                runtime.shot_end().unwrap().measurements,
+                BTreeMap::from([(0, true), (1, false)])
+            );
+        }
+    }
+
+    #[cfg(feature = "selene-runtimes")]
+    #[test]
+    fn unreleased_measurement_handles_do_not_leak_across_completed_public_shots() {
+        for mode in LoweringRoute::ALL {
+            for mut runtime in [
+                crate::selene_runtimes::selene_simple_runtime().unwrap(),
+                crate::selene_runtimes::selene_soft_rz_runtime().unwrap(),
+            ] {
+                runtime.set_num_qubits(1);
+                for shot in 0..3 {
+                    runtime.shot_start(shot, None).unwrap();
+                    mode.lower(
+                        &mut runtime,
+                        &[
+                            Operation::AllocateQubit { id: 71 },
+                            QuantumOp::Reset(71).into(),
+                            QuantumOp::Measure(71, 0).into(),
+                        ],
+                    )
+                    .unwrap();
+                    runtime
+                        .provide_measurement_outcomes(BTreeMap::from([(0, 0)]))
+                        .unwrap();
+                    assert_eq!(runtime.program_to_runtime_qubits.len(), 1);
+                    mode.drain(&mut runtime);
+                    runtime.shot_end().unwrap();
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn mixed_capacity_counts_implicit_handles_and_retained_explicit_allocations() {
+        let ops = [
+            QuantumOp::Reset(0).into(),
+            Operation::AllocateQubit { id: 71 },
+            QuantumOp::Measure(0, 0).into(),
+            Operation::AllocateQubit { id: 93 },
+            QuantumOp::Measure(71, 1).into(),
+        ];
+        assert_eq!(
+            operation_capacity(&ops, BTreeSet::new(), BTreeSet::new()),
+            (2, 2, 2)
+        );
+        let live = BTreeSet::from([71, 93]);
+        assert_eq!(
+            operation_capacity(&[Operation::AllocateQubit { id: 105 }], live.clone(), live),
+            (3, 0, 3)
+        );
     }
 
     #[test]
@@ -3806,9 +3990,10 @@ mod tests {
         let mut runtime = SeleneRuntime::new("/path/to/selene.so");
         runtime.set_num_qubits(98);
 
-        let (num_qubits, _) = operation_capacity_with_mode(
+        let (num_qubits, _, _) = operation_capacity(
             &[QuantumOp::CX(81, 105).into()],
-            runtime.uses_explicit_qubit_allocation,
+            BTreeSet::new(),
+            BTreeSet::new(),
         );
         runtime.num_qubits = runtime.num_qubits.max(num_qubits);
 

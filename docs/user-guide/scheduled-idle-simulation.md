@@ -13,11 +13,26 @@ dynamically: runtime batches enter the noise model and simulator, and measuremen
 results return to the program to drive feedback and branches. Validation buffers
 the current input; simulation does not require a precomputed whole-shot trace.
 
-Programs with explicit qubit allocation/release records keep each runtime handle
-alive through measurements until the program releases it. A later reset or
-measurement on that live handle therefore reaches the same runtime allocation,
-including across measurement-feedback continuations. Legacy operation streams
-without lifetime records retain their implicit release on measurement.
+Each handle introduced by an explicit qubit-allocation record stays alive through
+measurements until the program releases it. A later reset or measurement on that
+handle reaches the same runtime allocation, including across feedback
+continuations. Implicitly materialized legacy handles still release on
+measurement, even when explicit and implicit handles occur in the same stream.
+
+Capacity admission counts handles still live from earlier inputs, including
+measured handles that have not been released. Set `.qubits(...)` to the maximum
+simultaneously live physical allocation count before running a dynamic program.
+The scheduled route requires this capacity explicitly. Flat and metadata routes
+can infer it from a preloaded complete collector or the first submitted input,
+but cannot safely increase it once the plugin has initialized: the plugin ABI
+has no state-preserving resize. A continuation that needs more capacity rejects
+before native submission. Reset and configure sufficient capacity before starting
+a new shot; automatic reinitialization never discards an in-progress shot.
+
+A failed native release leaves allocation state uncertain and blocks further
+execution and shot completion until a successful reset. Shot lifecycle cleanup
+remains the plugin's responsibility; the public runtimes clear allocations at
+`shot_end`, including measured handles not explicitly released by the program.
 
 <!--skip: API template requires caller-supplied runtime and LLVM program; covered by integration tests.-->
 ```python

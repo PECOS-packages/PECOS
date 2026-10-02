@@ -242,14 +242,14 @@ impl<R: Rng> SparseStateVecAoS<R> {
 
     /// Apply X gate using O(k) partition-swap instead of O(k log k) sort.
     ///
-    /// X gate flips bit q in each index. After XOR:
-    /// - Indices with bit q=0 become bit q=1 (move to second half)
-    /// - Indices with bit q=1 become bit q=0 (move to first half)
+    /// X gate flips bit q in each index. In sorted order, indices sharing the
+    /// bits above q form contiguous blocks, and within each block the bit q=0
+    /// entries precede the bit q=1 entries. The target bit alternates from
+    /// block to block, so the support is not one global bit=0 / bit=1 split.
     ///
-    /// Within each partition, relative order is preserved, so we can:
-    /// 1. Partition into low (bit=0) and high (bit=1) groups
-    /// 2. Concatenate: high group first (becomes low), then low group (becomes high)
-    /// 3. XOR all indices
+    /// For each block, emit the bit=1 group first (it becomes bit=0), then the
+    /// bit=0 group, flipping bit q in every index. Relative order within each group is
+    /// preserved, so sorted input gives sorted output.
     ///
     /// For very small states (<= 8 amplitudes), uses simple XOR + sort which has
     /// lower overhead.
@@ -267,28 +267,31 @@ impl<R: Rng> SparseStateVecAoS<R> {
             return;
         }
 
-        // For larger states, use O(k) partition-swap
-        // Find partition point: first index with bit q=1
-        // Since array is sorted, all bit=0 come before bit=1
-        let partition = self.amplitudes.partition_point(|&(idx, _)| idx & mask == 0);
-
-        // Partition: [low_0..low_n | high_0..high_m]
-        // After X:  [high_0'..high_m' | low_0'..low_n'] where ' means XOR with mask
-
-        // Use scratch buffer to reorder
+        // For larger states, swap the bit=0 and bit=1 groups block by block.
+        // Shift in two steps so q = usize::BITS - 1 does not overflow.
+        let block_of = |idx: usize| idx >> q >> 1;
         self.scratch.clear();
         self.scratch.reserve(len);
-
-        // High group first (becomes low indices after XOR)
-        for i in partition..len {
-            let (idx, amp) = self.amplitudes[i];
-            self.scratch.push((idx ^ mask, amp));
-        }
-
-        // Low group second (becomes high indices after XOR)
-        for i in 0..partition {
-            let (idx, amp) = self.amplitudes[i];
-            self.scratch.push((idx ^ mask, amp));
+        let mut start = 0;
+        while start < len {
+            let block = block_of(self.amplitudes[start].0);
+            let block_len = self.amplitudes[start..]
+                .iter()
+                .position(|&(idx, _)| block_of(idx) != block)
+                .unwrap_or(len - start);
+            let end = start + block_len;
+            let low_len = self.amplitudes[start..end]
+                .iter()
+                .position(|&(idx, _)| idx & mask != 0)
+                .unwrap_or(block_len);
+            let split = start + low_len;
+            self.scratch.extend(
+                self.amplitudes[split..end]
+                    .iter()
+                    .chain(&self.amplitudes[start..split])
+                    .map(|&(idx, amp)| (idx ^ mask, amp)),
+            );
+            start = end;
         }
 
         std::mem::swap(&mut self.amplitudes, &mut self.scratch);
@@ -1766,6 +1769,35 @@ mod tests {
         sparse.sxdg(&[QubitId(2)]).cx(&[(QubitId(4), QubitId(0))]);
         dense.sxdg(&[QubitId(2)]).cx(&[(QubitId(4), QubitId(0))]);
         assert_matches_dense(&mut sparse, &mut dense, 6);
+    }
+
+    #[test]
+    fn large_single_qubit_x_keeps_support_sorted_when_higher_bits_vary() {
+        // Issue #654: with bits above the target varying, the target bit
+        // alternates in blocks, so the support is not a single bit=0 / bit=1
+        // partition.
+        let all = [QubitId(0), QubitId(1), QubitId(2), QubitId(3)];
+        for target in all {
+            let mut sparse = SparseStateVecAoS::new(4);
+            let mut dense = StateVecSoA::new(4);
+            sparse.h(&all).sz(&[QubitId(1)]).sxdg(&[QubitId(3)]);
+            dense.h(&all).sz(&[QubitId(1)]).sxdg(&[QubitId(3)]);
+            sparse.ensure_sorted();
+            assert!(
+                sparse.num_amplitudes() > 8,
+                "must take the large-state path"
+            );
+
+            sparse.x(&[target]);
+            dense.x(&[target]);
+
+            assert!(
+                sparse.needs_sort || sparse.amplitudes.is_sorted_by_key(|&(idx, _)| idx),
+                "X on qubit {} left the support unsorted without marking it",
+                target.0
+            );
+            assert_matches_dense(&mut sparse, &mut dense, 4);
+        }
     }
 
     #[test]

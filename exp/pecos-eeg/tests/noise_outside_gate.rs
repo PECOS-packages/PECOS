@@ -238,11 +238,14 @@ fn injections(list: Vec<NoiseInjection>) -> GateNoise {
 }
 
 #[test]
-fn repeated_noise_outside_the_gate_composes() {
-    // Twelve X1 rotations on gates that never touch q1 compose to one
-    // rotation by 12h. Each one branches every term, so the walks must keep
-    // applying (and merging) noise on gates whose own qubits stay inactive.
-    let (count, h) = (12_u32, 0.05_f64);
+fn repeated_noise_outside_the_gate_composes_and_merges() {
+    // Seven X1 rotations by h = π/8 on gates that never touch q1 compose to
+    // one rotation by 7π/8. Each branches every term into Z1 and Y1 paths of
+    // weight 0.707, so after seven rotations an unmerged path has weight
+    // 0.088, below the 0.1 threshold, and a walk that stops merging after
+    // noise on an inactive gate prunes everything and returns 0.5. Merged
+    // terms keep the weight above the threshold.
+    let (count, h) = (7_u32, std::f64::consts::FRAC_PI_8);
     let gates: Vec<Gate> = (0..count).map(|_| make_gate(GateType::I, &[0])).collect();
     let noise = NoisePerGate(
         (0..count)
@@ -251,7 +254,13 @@ fn repeated_noise_outside_the_gate_composes() {
     );
     let initial = StabilizerGroup::from_circuit(&[Gate::pz(&[0, 1])], 2);
     let expected = (f64::from(count) * h).sin().powi(2);
-    assert_walks(&gates, &Bm::z(1), &noise, &initial, 2, expected);
+    let results = walks(&gates, &Bm::z(1), &noise, &initial, 2, 0.1);
+    assert!(
+        results
+            .iter()
+            .all(|(_, actual)| (actual - expected).abs() < 1e-12),
+        "expected {expected}; walks: {results:?}",
+    );
 }
 
 #[test]

@@ -816,7 +816,9 @@ pub fn heisenberg_with_noise_map(
         // For typical term counts (~50-100), this beats both HashMap and
         // BTreeMap due to zero allocation overhead and sequential access.
         let should_merge = match gate.gate_type {
-            GateType::PZ | GateType::QAlloc | GateType::MZ => terms.len() > 4,
+            // Reset and measurement remove terms, so merge eagerly, but only
+            // when the gate acted; noise alone grows terms like any gate.
+            GateType::PZ | GateType::QAlloc | GateType::MZ if gate_relevant => terms.len() > 4,
             _ => terms.len() > last_merge_count * 2 && terms.len() > 16,
         };
         if should_merge {
@@ -1125,7 +1127,9 @@ pub fn heisenberg_windowed(
         // Merge after noise alone too: it can add duplicate terms.
         // Merge duplicate Pauli terms by sorting + linear scan.
         let should_merge = match gate.gate_type {
-            GateType::PZ | GateType::QAlloc | GateType::MZ => terms.len() > 4,
+            // Reset and measurement remove terms, so merge eagerly, but only
+            // when the gate acted; noise alone grows terms like any gate.
+            GateType::PZ | GateType::QAlloc | GateType::MZ if gate_relevant => terms.len() > 4,
             _ => terms.len() > last_merge_count * 2 && terms.len() > 16,
         };
         if should_merge {

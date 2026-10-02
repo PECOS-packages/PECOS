@@ -166,15 +166,14 @@ class StimGenerator(Generator):
                         stim.CircuitRepeatBlock(repeat_count, sub_circuit),
                     )
         elif block_name == "If":
-            # Conditional blocks - add tick and process
-            if self.add_comments:
-                self.circuit.append("TICK")
-            if hasattr(block, "then_block"):
-                self._handle_block(block.then_block)
-            if hasattr(block, "else_block") and block.else_block:
-                if self.add_comments:
-                    self.circuit.append("TICK")
-                self._handle_block(block.else_block)
+            # Emitting the branches unconditionally drops the condition, a
+            # silent miscompile (#978). The AST backend lowers the
+            # measurement-conditioned Pauli case this generator cannot.
+            msg = (
+                "StimGenerator does not support If; use pecos.slr.generate(prog, 'stim'), "
+                "which lowers measurement-conditioned Pauli corrections."
+            )
+            raise NotImplementedError(msg)
         elif block_name == "Parallel":
             # Process parallel operations
             for op in block.ops:

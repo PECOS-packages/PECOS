@@ -72,7 +72,7 @@ fn test_zbasis_generator_labels() {
     }
 
     let noise = NoiseModel::coherent_only(0.001);
-    let result = analyze_expanded(&expanded.gates, &noise);
+    let result = analyze_expanded(&expanded.gates, &noise, &expanded.expansion_gates);
 
     let h_gens: Vec<&PropagatedEeg> = result
         .generators

@@ -40,7 +40,11 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   Z-basis preparations and a Z error to X-basis preparations, after preparation.
   Resets clear incoming faults, and measurement-and-reset operations apply
   measurement noise before reset and preparation noise afterwards. Gate noise
-  remains attached to each physical gate before Clifford lowering.
+  remains attached to each physical gate before Clifford lowering. Noisy symbolic
+  statistics for Guppy programs differ from the removed HUGR route because noise
+  now attaches to each native QIS gate: for example, one Guppy `h` becomes two
+  native gates. Measurement records follow the circuit's measurement order
+  (runtime order for a traced program), including independent measurements.
 - `pecos_rslib.Hugr` and `pecos_rslib.programs.Hugr` have been removed. Use
   `pecos.Hugr`/`pecos.Guppy` or
   `pecos_rslib.Qis(pecos_rslib.hugr_lowering.compile_hugr_to_qis(...))`.
@@ -87,10 +91,20 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   feature `hugr-qis` have been removed.
 - `QisEngineBuilder::platform` and `QSystemPlatform` have been removed. Select
   Sol at the Python boundary with `compile_hugr_to_qis(..., platform="sol")`.
+- In `pecos-experimental`, `hugr_executor`, `execute_hugr`, and
+  `HugrExecutionError` have been renamed to `symbolic_executor`,
+  `execute_circuit_symbolic`, and `SymbolicExecutionError`. The executor accepts
+  circuits and no longer reads HUGR. CY now has the correct phase, and MX leaves
+  the measured qubit in its X-basis eigenstate, including during fault propagation.
+- Symbolic execution and noisy history building now take `&DagCircuit` and use
+  `DagCircuit::insertion_stable_topological_order` to preserve measurement record
+  positions. This opt-in traversal costs O(E + V log V); `topological_order` and
+  `iter_gates_topo` retain their fast O(V + E) traversal for other consumers.
 - The pecos-phir HUGR functions `compile_hugr_via_phir`,
   `compile_hugr_bytes_via_phir`, `hugr_to_phir_mlir`, and
   `PhirEngineBuilder::from_hugr_bytes` have been removed, along with the
-  `Pipeline`, `InputFormat`, `execute_hugr`, and `execute_guppy` stubs.
+  `pecos_phir::Pipeline`, `pecos_phir::InputFormat`, `pecos_phir::prelude::execute_hugr`,
+  and `pecos_phir::prelude::execute_guppy` stubs.
 - The `pecos::quantum::read_hugr_envelope` re-export has been removed.
 - `CliffordGateable::apply_global_phase` replaces the former
   `ArbitraryRotationGateable::apply_global_phase` hook. This is source-breaking

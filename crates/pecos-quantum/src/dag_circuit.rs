@@ -1320,6 +1320,20 @@ impl DagCircuit {
         self.dag.topological_sort()
     }
 
+    /// Returns a topological order with ready ties broken by smallest node index.
+    ///
+    /// This preserves insertion order for appended gates, including measurements
+    /// on independent qubits. Use it when measurement record positions must match
+    /// circuit insertion order, as in symbolic execution. Prefer
+    /// [`Self::topological_order`] when any valid execution order suffices.
+    ///
+    /// Costs O(E + V log V), or O(V log V) for circuits with bounded gate arity,
+    /// rather than the O(V + E) cost of [`Self::topological_order`].
+    #[must_use]
+    pub fn insertion_stable_topological_order(&self) -> Vec<usize> {
+        self.dag.lexicographical_topological_sort(|node| node)
+    }
+
     /// Returns an iterator over circuit layers.
     ///
     /// Each layer contains gates that can execute in parallel
@@ -3222,6 +3236,25 @@ mod tests {
 
         let order = circuit.topological_order();
         assert_eq!(order, vec![h, t, cx]);
+    }
+
+    #[test]
+    fn insertion_stable_topological_order_breaks_ready_ties_by_node_index() {
+        let mut circuit = DagCircuit::new();
+        circuit.x(&[0]);
+        circuit.mz(&[0]);
+        circuit.mz(&[1]);
+        circuit.mz(&[2]);
+        // m0 becomes ready after X, while m1 and m2 were ready from the start.
+        let order = circuit.insertion_stable_topological_order();
+        assert_eq!(order, vec![0, 1, 2, 3]);
+        let measured: Vec<_> = order
+            .into_iter()
+            .filter_map(|node| circuit.gate(node))
+            .filter(|gate| gate.gate_type == GateType::MZ)
+            .map(|gate| gate.qubits[0].index())
+            .collect();
+        assert_eq!(measured, vec![0, 1, 2]);
     }
 
     #[test]

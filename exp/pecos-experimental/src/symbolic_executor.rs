@@ -14,7 +14,7 @@
 //!
 //! **EXPERIMENTAL: This API is unstable and may change without notice.**
 //!
-//! This module executes circuits implementing [`Circuit`]
+//! This module executes [`DagCircuit`] circuits
 //! through the [`SymbolicSparseStab`] simulator, enabling efficient sampling from
 //! the resulting measurement history.
 //!
@@ -35,7 +35,7 @@
 //!
 //! ```rust
 //! use pecos_simulators::{SymbolicSparseStab, MeasurementSampler};
-//! use pecos_experimental::execute_hugr;
+//! use pecos_experimental::execute_circuit_symbolic;
 //! use pecos_quantum::{DagCircuit, Gate};
 //!
 //! // Create a Bell state circuit
@@ -47,7 +47,7 @@
 //!
 //! // Execute symbolically (once!)
 //! let mut sim = SymbolicSparseStab::new(2);
-//! execute_hugr(&mut sim, &circuit).unwrap();
+//! execute_circuit_symbolic(&mut sim, &circuit).unwrap();
 //!
 //! // Sample efficiently (millions of shots)
 //! let sampler = MeasurementSampler::new(sim.measurement_history());
@@ -63,12 +63,12 @@ use std::fmt;
 
 use pecos_core::gate_type::GateType;
 use pecos_core::{CliffordLowering, Gate, QubitId, try_lower_rotation_to_clifford};
-use pecos_quantum::Circuit;
-use pecos_simulators::SymbolicSparseStab;
+use pecos_quantum::DagCircuit;
+use pecos_simulators::{CliffordGateable, PauliProp, SymbolicSparseStab};
 
 /// Error type for symbolic circuit execution failures.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum HugrExecutionError {
+pub enum SymbolicExecutionError {
     /// Gate type is not supported by the stabilizer simulator.
     UnsupportedGate {
         gate_type: GateType,
@@ -89,7 +89,7 @@ pub enum HugrExecutionError {
     },
 }
 
-impl fmt::Display for HugrExecutionError {
+impl fmt::Display for SymbolicExecutionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::UnsupportedGate {
@@ -126,13 +126,14 @@ impl fmt::Display for HugrExecutionError {
     }
 }
 
-impl std::error::Error for HugrExecutionError {}
+impl std::error::Error for SymbolicExecutionError {}
 
 /// Execute a circuit through a symbolic stabilizer simulator.
 ///
 /// This function walks the circuit in topological order and applies each gate
 /// to the simulator. After execution, the simulator's measurement history
-/// contains the symbolic dependencies for all measurements.
+/// contains the symbolic dependencies for all measurements. DAG circuits retain
+/// the insertion order of appended measurements, including independent qubits.
 ///
 /// # Supported Gates
 ///
@@ -152,24 +153,24 @@ impl std::error::Error for HugrExecutionError {}
 /// # Arguments
 ///
 /// * `sim` - The symbolic stabilizer simulator to execute on
-/// * `hugr` - The circuit to execute (anything implementing the `Circuit` trait)
+/// * `circuit` - The DAG circuit to execute
 ///
 /// # Returns
 ///
-/// `Ok(())` if execution succeeded, or a [`HugrExecutionError`] if a gate
+/// `Ok(())` if execution succeeded, or a [`SymbolicExecutionError`] if a gate
 /// could not be executed.
 ///
 /// # Errors
 ///
-/// Returns [`HugrExecutionError::UnsupportedGate`] if the circuit contains non-Clifford gates.
-/// Returns [`HugrExecutionError::InvalidQubitCount`] if a gate has wrong number of qubits.
-/// Returns [`HugrExecutionError::QubitOutOfBounds`] if a qubit index exceeds simulator size.
+/// Returns [`SymbolicExecutionError::UnsupportedGate`] if the circuit contains non-Clifford gates.
+/// Returns [`SymbolicExecutionError::InvalidQubitCount`] if a gate has wrong number of qubits.
+/// Returns [`SymbolicExecutionError::QubitOutOfBounds`] if a qubit index exceeds simulator size.
 ///
 /// # Example
 ///
 /// ```rust
 /// use pecos_simulators::SymbolicSparseStab;
-/// use pecos_experimental::execute_hugr;
+/// use pecos_experimental::execute_circuit_symbolic;
 /// use pecos_quantum::{DagCircuit, Gate};
 ///
 /// // Create a simple circuit
@@ -178,26 +179,27 @@ impl std::error::Error for HugrExecutionError {}
 /// circuit.add_gate(Gate::mz(&[0]));
 ///
 /// let mut sim = SymbolicSparseStab::new(1);
-/// execute_hugr(&mut sim, &circuit).unwrap();
+/// execute_circuit_symbolic(&mut sim, &circuit).unwrap();
 ///
 /// // Now sim.measurement_history() contains the symbolic dependencies
 /// assert_eq!(sim.measurement_history().len(), 1);
 /// ```
-pub fn execute_hugr<C>(sim: &mut SymbolicSparseStab, hugr: &C) -> Result<(), HugrExecutionError>
-where
-    C: Circuit,
-{
+pub fn execute_circuit_symbolic(
+    sim: &mut SymbolicSparseStab,
+    circuit: &DagCircuit,
+) -> Result<(), SymbolicExecutionError> {
     let num_qubits = sim.num_qubits();
 
-    for gate_view in hugr.iter_gates_topo() {
-        let gate = gate_view.gate;
-        let gate_idx = gate_view.index;
-
+    for (gate_idx, gate) in circuit
+        .insertion_stable_topological_order()
+        .into_iter()
+        .filter_map(|index| circuit.gate(index).map(|gate| (index, gate)))
+    {
         // Validate qubit bounds
         for qubit in &gate.qubits {
             let q_idx = qubit.index();
             if q_idx >= num_qubits {
-                return Err(HugrExecutionError::QubitOutOfBounds {
+                return Err(SymbolicExecutionError::QubitOutOfBounds {
                     qubit: q_idx,
                     gate_index: gate_idx,
                     num_qubits,
@@ -225,7 +227,7 @@ where
 pub(crate) fn clifford_action(
     gate: &Gate,
     gate_index: usize,
-) -> Result<CliffordLowering, HugrExecutionError> {
+) -> Result<CliffordLowering, SymbolicExecutionError> {
     // Global phase is irrelevant to stabilizer simulation.
     if let Some(lowering) = try_lower_rotation_to_clifford(gate) {
         validate_qubit_count(
@@ -236,7 +238,7 @@ pub(crate) fn clifford_action(
         )?;
         Ok(lowering)
     } else if pecos_core::is_lowerable_rotation(gate.gate_type) {
-        Err(HugrExecutionError::UnsupportedGate {
+        Err(SymbolicExecutionError::UnsupportedGate {
             gate_type: gate.gate_type,
             gate_index,
         })
@@ -246,55 +248,157 @@ pub(crate) fn clifford_action(
     }
 }
 
+/// A named action defines support, arity, execution, propagation and noise together.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum NamedAction {
+    Unitary {
+        noise: NoiseClass,
+        execute: fn(&mut SymbolicSparseStab, &[QubitId]),
+        propagate: fn(&mut PauliProp, &[QubitId]),
+    },
+    Prepare {
+        x_basis: bool,
+    },
+    Measure {
+        x_basis: bool,
+        reset: bool,
+        release: bool,
+    },
+    Marker {
+        release: bool,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum NoiseClass {
+    SingleQubit,
+    TwoQubit,
+    Preparation,
+    Measurement,
+    MeasurementAndPreparation,
+    None,
+}
+
+impl NamedAction {
+    pub(crate) fn noise_class(self) -> NoiseClass {
+        match self {
+            Self::Unitary { noise, .. } => noise,
+            Self::Prepare { .. } => NoiseClass::Preparation,
+            Self::Measure { reset: true, .. } => NoiseClass::MeasurementAndPreparation,
+            Self::Measure { .. } => NoiseClass::Measurement,
+            Self::Marker { .. } => NoiseClass::None,
+        }
+    }
+
+    fn arity(self) -> Option<usize> {
+        match self {
+            Self::Unitary {
+                noise: NoiseClass::TwoQubit,
+                ..
+            } => Some(2),
+            Self::Unitary { .. } | Self::Prepare { .. } | Self::Measure { .. } => Some(1),
+            Self::Marker { .. } => None,
+        }
+    }
+}
+
+pub(crate) fn named_action(
+    gate_type: GateType,
+    gate_index: usize,
+) -> Result<NamedAction, SymbolicExecutionError> {
+    // Each entry selects both native implementations and its physical noise class.
+    macro_rules! single {
+        ($method:ident) => {
+            NamedAction::Unitary {
+                noise: NoiseClass::SingleQubit,
+                execute: |sim, qs| {
+                    sim.$method(&[qs[0].index()]);
+                },
+                propagate: |prop, qs| {
+                    prop.$method(qs);
+                },
+            }
+        };
+    }
+    macro_rules! pair {
+        ($method:ident) => {
+            NamedAction::Unitary {
+                noise: NoiseClass::TwoQubit,
+                execute: |sim, qs| {
+                    sim.$method(&[(qs[0].index(), qs[1].index())]);
+                },
+                propagate: |prop, qs| {
+                    prop.$method(&[(qs[0], qs[1])]);
+                },
+            }
+        };
+    }
+    Ok(match gate_type {
+        GateType::X => single!(x),
+        GateType::Y => single!(y),
+        GateType::Z => single!(z),
+        GateType::H => single!(h),
+        GateType::SZ => single!(sz),
+        GateType::SZdg => single!(szdg),
+        GateType::SX => single!(sx),
+        GateType::SXdg => single!(sxdg),
+        GateType::SY => single!(sy),
+        GateType::SYdg => single!(sydg),
+        GateType::CX => pair!(cx),
+        GateType::CY => pair!(cy),
+        GateType::CZ => pair!(cz),
+        GateType::SXX => pair!(sxx),
+        GateType::SXXdg => pair!(sxxdg),
+        GateType::SYY => pair!(syy),
+        GateType::SYYdg => pair!(syydg),
+        GateType::SZZ => pair!(szz),
+        GateType::SZZdg => pair!(szzdg),
+        GateType::PZ | GateType::QAlloc => NamedAction::Prepare { x_basis: false },
+        GateType::PX => NamedAction::Prepare { x_basis: true },
+        GateType::MX => NamedAction::Measure {
+            x_basis: true,
+            reset: false,
+            release: false,
+        },
+        GateType::MZ | GateType::MeasureLeaked => NamedAction::Measure {
+            x_basis: false,
+            reset: false,
+            release: false,
+        },
+        GateType::MPZ => NamedAction::Measure {
+            x_basis: false,
+            reset: true,
+            release: false,
+        },
+        GateType::MeasureFree => NamedAction::Measure {
+            x_basis: false,
+            reset: false,
+            release: true,
+        },
+        GateType::QFree => NamedAction::Marker { release: true },
+        GateType::I
+        | GateType::Idle
+        | GateType::MeasCrosstalkGlobalPayload
+        | GateType::MeasCrosstalkLocalPayload
+        | GateType::TrackedPauliMeta => NamedAction::Marker { release: false },
+        _ => {
+            return Err(SymbolicExecutionError::UnsupportedGate {
+                gate_type,
+                gate_index,
+            });
+        }
+    })
+}
+
 fn validate_named_gate(
     gate_type: GateType,
     gate_index: usize,
     qubit_count: usize,
-) -> Result<(), HugrExecutionError> {
-    match gate_type {
-        GateType::I
-        | GateType::QFree
-        | GateType::Idle
-        | GateType::MeasCrosstalkGlobalPayload
-        | GateType::MeasCrosstalkLocalPayload
-        | GateType::TrackedPauliMeta => Ok(()),
-        GateType::X
-        | GateType::Y
-        | GateType::Z
-        | GateType::H
-        | GateType::SZ
-        | GateType::SZdg
-        | GateType::SX
-        | GateType::SXdg
-        | GateType::SY
-        | GateType::SYdg
-        | GateType::CX
-        | GateType::CY
-        | GateType::CZ
-        | GateType::SXX
-        | GateType::SXXdg
-        | GateType::SYY
-        | GateType::SYYdg
-        | GateType::SZZ
-        | GateType::SZZdg
-        | GateType::PZ
-        | GateType::QAlloc
-        | GateType::PX
-        | GateType::MX
-        | GateType::MZ
-        | GateType::MeasureFree
-        | GateType::MeasureLeaked
-        | GateType::MPZ => validate_qubit_count(
-            gate_type,
-            gate_index,
-            gate_type.quantum_arity(),
-            qubit_count,
-        ),
-        _ => Err(HugrExecutionError::UnsupportedGate {
-            gate_type,
-            gate_index,
-        }),
+) -> Result<(), SymbolicExecutionError> {
+    if let Some(arity) = named_action(gate_type, gate_index)?.arity() {
+        validate_qubit_count(gate_type, gate_index, arity, qubit_count)?;
     }
+    Ok(())
 }
 
 fn execute_named_gate(
@@ -302,153 +406,36 @@ fn execute_named_gate(
     gate_type: GateType,
     qubits: &[QubitId],
     gate_idx: usize,
-) -> Result<(), HugrExecutionError> {
-    match gate_type {
-        // Identity, timing, release and non-quantum metadata have no stabilizer action.
-        GateType::I
-        | GateType::QFree
-        | GateType::Idle
-        | GateType::MeasCrosstalkGlobalPayload
-        | GateType::MeasCrosstalkLocalPayload
-        | GateType::TrackedPauliMeta => {}
-        GateType::X
-        | GateType::Y
-        | GateType::Z
-        | GateType::H
-        | GateType::SZ
-        | GateType::SZdg
-        | GateType::SX
-        | GateType::SXdg
-        | GateType::SY
-        | GateType::SYdg => {
-            validate_qubit_count(gate_type, gate_idx, 1, qubits.len())?;
-            execute_single_qubit(sim, gate_type, qubits[0].index());
-        }
-        GateType::CX
-        | GateType::CY
-        | GateType::CZ
-        | GateType::SXX
-        | GateType::SXXdg
-        | GateType::SYY
-        | GateType::SYYdg
-        | GateType::SZZ
-        | GateType::SZZdg => {
-            validate_qubit_count(gate_type, gate_idx, 2, qubits.len())?;
-            execute_two_qubit(sim, gate_type, qubits[0].index(), qubits[1].index());
-        }
-        GateType::PZ | GateType::QAlloc | GateType::PX => {
-            validate_qubit_count(gate_type, gate_idx, 1, qubits.len())?;
+) -> Result<(), SymbolicExecutionError> {
+    validate_named_gate(gate_type, gate_idx, qubits.len())?;
+    match named_action(gate_type, gate_idx)? {
+        NamedAction::Unitary { execute, .. } => execute(sim, qubits),
+        NamedAction::Prepare { x_basis } => {
             let q = qubits[0].index();
             sim.pz(q);
-            if gate_type == GateType::PX {
+            if x_basis {
                 sim.h(&[q]);
             }
         }
-        GateType::MX
-        | GateType::MZ
-        | GateType::MeasureFree
-        | GateType::MeasureLeaked
-        | GateType::MPZ => {
-            validate_qubit_count(gate_type, gate_idx, 1, qubits.len())?;
+        NamedAction::Measure { x_basis, reset, .. } => {
             let q = qubits[0].index();
-            if gate_type == GateType::MX {
+            if x_basis {
                 sim.h(&[q]);
             }
             sim.mz(&[q]);
-            if gate_type == GateType::MPZ {
+            // Restore the X-basis eigenstate after the Z-basis projection.
+            if x_basis {
+                sim.h(&[q]);
+            }
+            if reset {
                 // The unconditional reset implements the outcome-conditioned X correction.
                 sim.pz(q);
             }
         }
-        _ => {
-            return Err(HugrExecutionError::UnsupportedGate {
-                gate_type,
-                gate_index: gate_idx,
-            });
-        }
+        // Identity, timing, release and non-quantum metadata have no stabilizer action.
+        NamedAction::Marker { .. } => {}
     }
     Ok(())
-}
-
-fn execute_single_qubit(sim: &mut SymbolicSparseStab, gate: GateType, q: usize) {
-    match gate {
-        GateType::X => {
-            sim.x(&[q]);
-        }
-        GateType::Y => {
-            sim.y(&[q]);
-        }
-        GateType::Z => {
-            sim.z(&[q]);
-        }
-        GateType::H => {
-            sim.h(&[q]);
-        }
-        GateType::SZ => {
-            sim.sz(&[q]);
-        }
-        GateType::SZdg => {
-            sim.sz(&[q]).z(&[q]);
-        }
-        _ => execute_sqrt_pauli(sim, gate, q),
-    }
-}
-
-fn execute_two_qubit(sim: &mut SymbolicSparseStab, gate: GateType, a: usize, b: usize) {
-    match gate {
-        GateType::CX => {
-            sim.cx(&[(a, b)]);
-        }
-        GateType::CY => {
-            sim.sz(&[b]).cx(&[(a, b)]).sz(&[b]).z(&[b]);
-        }
-        GateType::CZ => {
-            sim.h(&[b]).cx(&[(a, b)]).h(&[b]);
-        }
-        _ => execute_sqrt_pair(sim, gate, a, b),
-    }
-}
-
-fn execute_sqrt_pauli(sim: &mut SymbolicSparseStab, gate: GateType, q: usize) {
-    match gate {
-        GateType::SX | GateType::SXdg => {
-            sim.h(&[q]).sz(&[q]);
-            if gate == GateType::SXdg {
-                sim.z(&[q]);
-            }
-            sim.h(&[q]);
-        }
-        GateType::SY => {
-            sim.z(&[q]).h(&[q]);
-        }
-        GateType::SYdg => {
-            sim.h(&[q]).z(&[q]);
-        }
-        _ => unreachable!("only single-qubit square roots are dispatched here"),
-    }
-}
-
-fn execute_sqrt_pair(sim: &mut SymbolicSparseStab, gate: GateType, a: usize, b: usize) {
-    // Conjugate a ZZ rotation into the requested Pauli basis.
-    let xx = matches!(gate, GateType::SXX | GateType::SXXdg);
-    let yy = matches!(gate, GateType::SYY | GateType::SYYdg);
-    if yy {
-        sim.sz(&[a, b]).sz(&[a, b]).sz(&[a, b]);
-    }
-    if xx || yy {
-        sim.h(&[a, b]);
-    }
-    sim.cx(&[(a, b)]).sz(&[b]);
-    if matches!(gate, GateType::SXXdg | GateType::SYYdg | GateType::SZZdg) {
-        sim.z(&[b]);
-    }
-    sim.cx(&[(a, b)]);
-    if xx || yy {
-        sim.h(&[a, b]);
-    }
-    if yy {
-        sim.sz(&[a, b]);
-    }
 }
 
 /// Validate the qubit count for one gate application.
@@ -457,9 +444,9 @@ fn validate_qubit_count(
     gate_index: usize,
     expected: usize,
     actual: usize,
-) -> Result<(), HugrExecutionError> {
+) -> Result<(), SymbolicExecutionError> {
     if actual != expected {
-        return Err(HugrExecutionError::InvalidQubitCount {
+        return Err(SymbolicExecutionError::InvalidQubitCount {
             gate_type,
             gate_index,
             expected,
@@ -486,7 +473,7 @@ mod tests {
 
         // Execute
         let mut sim = SymbolicSparseStab::new(2);
-        execute_hugr(&mut sim, &circuit).expect("execution failed");
+        execute_circuit_symbolic(&mut sim, &circuit).expect("execution failed");
 
         // Verify measurement history
         let history = sim.measurement_history();
@@ -513,7 +500,7 @@ mod tests {
 
         // Execute
         let mut sim = SymbolicSparseStab::new(3);
-        execute_hugr(&mut sim, &circuit).expect("execution failed");
+        execute_circuit_symbolic(&mut sim, &circuit).expect("execution failed");
 
         // Verify
         let history = sim.measurement_history();
@@ -536,7 +523,7 @@ mod tests {
         circuit.mz(&[0]);
 
         let mut sim = SymbolicSparseStab::new(2);
-        execute_hugr(&mut sim, &circuit).expect("execution failed");
+        execute_circuit_symbolic(&mut sim, &circuit).expect("execution failed");
 
         let history = sim.measurement_history();
         assert_eq!(history.len(), 1);
@@ -549,14 +536,14 @@ mod tests {
     #[test]
     fn test_deterministic_circuit_multiple() {
         // Test multiple independent measurements
-        // Note: Order of independent measurements in history depends on topological order
+        // Independent measurements retain their insertion order.
         let mut circuit = DagCircuit::new();
         circuit.x(&[0]); // Flip qubit 0 to |1⟩
         circuit.mz(&[0]);
         circuit.mz(&[1]); // Qubit 1 stays |0⟩
 
         let mut sim = SymbolicSparseStab::new(2);
-        execute_hugr(&mut sim, &circuit).expect("execution failed");
+        execute_circuit_symbolic(&mut sim, &circuit).expect("execution failed");
 
         let history = sim.measurement_history();
         assert_eq!(history.len(), 2);
@@ -565,11 +552,8 @@ mod tests {
         assert!(history[0].is_deterministic);
         assert!(history[1].is_deterministic);
 
-        // One has flip=true, one has flip=false (order may vary)
-        let num_flipped = history.iter().filter(|m| m.flip).count();
-        let num_not_flipped = history.iter().filter(|m| !m.flip).count();
-        assert_eq!(num_flipped, 1);
-        assert_eq!(num_not_flipped, 1);
+        assert!(history[0].flip);
+        assert!(!history[1].flip);
     }
 
     #[test]
@@ -586,7 +570,7 @@ mod tests {
         circuit.mz(&[1]);
 
         let mut sim = SymbolicSparseStab::new(2);
-        execute_hugr(&mut sim, &circuit).expect("execution failed");
+        execute_circuit_symbolic(&mut sim, &circuit).expect("execution failed");
 
         // Should work without error
         assert_eq!(sim.measurement_history().len(), 2);
@@ -600,11 +584,11 @@ mod tests {
         circuit.add_gate(Gate::rz(Angle64::from_turns(0.125), &[0])); // Non-Clifford RZ
 
         let mut sim = SymbolicSparseStab::new(1);
-        let result = execute_hugr(&mut sim, &circuit);
+        let result = execute_circuit_symbolic(&mut sim, &circuit);
 
         assert!(result.is_err());
         match result {
-            Err(HugrExecutionError::UnsupportedGate { gate_type, .. }) => {
+            Err(SymbolicExecutionError::UnsupportedGate { gate_type, .. }) => {
                 assert_eq!(gate_type, GateType::RZ);
             }
             _ => panic!("Expected UnsupportedGate error"),
@@ -617,11 +601,11 @@ mod tests {
         circuit.h(&[5]); // Qubit 5 doesn't exist in a 2-qubit sim
 
         let mut sim = SymbolicSparseStab::new(2);
-        let result = execute_hugr(&mut sim, &circuit);
+        let result = execute_circuit_symbolic(&mut sim, &circuit);
 
         assert!(result.is_err());
         match result {
-            Err(HugrExecutionError::QubitOutOfBounds { qubit, .. }) => {
+            Err(SymbolicExecutionError::QubitOutOfBounds { qubit, .. }) => {
                 assert_eq!(qubit, 5);
             }
             _ => panic!("Expected QubitOutOfBounds error"),
@@ -633,7 +617,7 @@ mod tests {
         let circuit = DagCircuit::new();
         let mut sim = SymbolicSparseStab::new(2);
 
-        execute_hugr(&mut sim, &circuit).expect("empty circuit should succeed");
+        execute_circuit_symbolic(&mut sim, &circuit).expect("empty circuit should succeed");
         assert_eq!(sim.measurement_history().len(), 0);
     }
 
@@ -669,7 +653,7 @@ mod tests {
         circuit.mz(&[2]);
 
         let mut sim = SymbolicSparseStab::new(5);
-        execute_hugr(&mut sim, &circuit).expect("execution failed");
+        execute_circuit_symbolic(&mut sim, &circuit).expect("execution failed");
 
         let history = sim.measurement_history();
         assert_eq!(history.len(), 5);
@@ -709,6 +693,7 @@ mod tests {
             "Expected 2 data measurements depending on the random one"
         );
     }
+
     fn assert_rotation_matches(rotation: &Gate, named: &[Gate]) {
         use crate::{DepolarizingNoiseModel, NoisyMeasurementHistoryBuilder};
         // Vary input and readout bases so phase and two-qubit propagation matter.
@@ -746,8 +731,8 @@ mod tests {
             let lowered = make_circuit(named);
             let mut original_sim = SymbolicSparseStab::new(2);
             let mut lowered_sim = SymbolicSparseStab::new(2);
-            execute_hugr(&mut original_sim, &original).unwrap();
-            execute_hugr(&mut lowered_sim, &lowered).unwrap();
+            execute_circuit_symbolic(&mut original_sim, &original).unwrap();
+            execute_circuit_symbolic(&mut lowered_sim, &lowered).unwrap();
             assert_eq!(
                 original_sim.measurement_history().format_all(),
                 lowered_sim.measurement_history().format_all(),
@@ -872,8 +857,8 @@ mod tests {
             let mut circuit = DagCircuit::new();
             circuit.add_gate_auto_wire(gate.clone());
             assert!(
-                matches!(execute_hugr(&mut SymbolicSparseStab::new(2), &circuit),
-                Err(HugrExecutionError::UnsupportedGate { gate_type, .. }) if gate_type == gate.gate_type)
+                matches!(execute_circuit_symbolic(&mut SymbolicSparseStab::new(2), &circuit),
+                Err(SymbolicExecutionError::UnsupportedGate { gate_type, .. }) if gate_type == gate.gate_type)
             );
         }
     }

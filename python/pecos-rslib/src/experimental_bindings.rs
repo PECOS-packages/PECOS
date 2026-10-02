@@ -18,8 +18,8 @@
 //! 3. Sample efficiently using `MeasurementSampler`
 
 use pecos_experimental::{
-    DepolarizingNoiseModel, HugrExecutionError, NoisyMeasurementHistory,
-    NoisyMeasurementHistoryBuilder, NoisyMeasurementSampler, execute_hugr,
+    DepolarizingNoiseModel, NoisyMeasurementHistory, NoisyMeasurementHistoryBuilder,
+    NoisyMeasurementSampler, SymbolicExecutionError, execute_circuit_symbolic,
 };
 use pecos_simulators::{MeasurementHistory, MeasurementSampler, SymbolicSparseStab};
 use pyo3::exceptions::PyRuntimeError;
@@ -28,13 +28,15 @@ use pyo3::types::PyDict;
 
 use crate::dag_circuit_bindings::PyDagCircuit;
 
-fn symbolic_execution_error(error: HugrExecutionError) -> PyErr {
+fn symbolic_execution_error(error: SymbolicExecutionError) -> PyErr {
     match error {
-        HugrExecutionError::UnsupportedGate { gate_type, .. } => PyRuntimeError::new_err(format!(
-            "Unsupported gate for stabilizer simulation: {gate_type}. \
+        SymbolicExecutionError::UnsupportedGate { gate_type, .. } => {
+            PyRuntimeError::new_err(format!(
+                "Unsupported gate for stabilizer simulation: {gate_type}. \
                  Only supported Clifford gates and rotations at Clifford angles are supported."
-        )),
-        HugrExecutionError::InvalidQubitCount {
+            ))
+        }
+        SymbolicExecutionError::InvalidQubitCount {
             gate_type,
             expected,
             actual,
@@ -42,7 +44,7 @@ fn symbolic_execution_error(error: HugrExecutionError) -> PyErr {
         } => PyRuntimeError::new_err(format!(
             "Gate {gate_type} expected {expected} qubits but got {actual}"
         )),
-        HugrExecutionError::QubitOutOfBounds {
+        SymbolicExecutionError::QubitOutOfBounds {
             qubit, num_qubits, ..
         } => PyRuntimeError::new_err(format!(
             "Qubit {qubit} out of bounds (circuit has {num_qubits} qubits)"
@@ -154,6 +156,7 @@ impl PySymbolicExecutionResult {
 /// Execute a `DagCircuit` symbolically and return a result that can be sampled efficiently.
 ///
 /// This function performs symbolic stabilizer simulation on a `DagCircuit`.
+/// Measurement records retain the circuit measurement order.
 /// Guppy callers can obtain a `DagCircuit` with
 /// `trace_program_to_tick_circuit(...).to_dag_circuit()`.
 ///
@@ -189,7 +192,7 @@ pub fn execute_dag_circuit_symbolic(
     // Create symbolic simulator and execute
     let mut sim = SymbolicSparseStab::new(n_qubits);
 
-    execute_hugr(&mut sim, &circuit.inner).map_err(symbolic_execution_error)?;
+    execute_circuit_symbolic(&mut sim, &circuit.inner).map_err(symbolic_execution_error)?;
 
     // Return the measurement history wrapped for Python
     Ok(PySymbolicExecutionResult {
@@ -321,7 +324,7 @@ pub fn execute_dag_circuit_symbolic_noisy(
     // Create symbolic simulator and execute
     let mut sim = SymbolicSparseStab::new(n_qubits);
 
-    execute_hugr(&mut sim, &circuit.inner).map_err(symbolic_execution_error)?;
+    execute_circuit_symbolic(&mut sim, &circuit.inner).map_err(symbolic_execution_error)?;
 
     // Build noisy measurement history
     let noise_model = DepolarizingNoiseModel::new(p1, p2, p_meas, p_prep);

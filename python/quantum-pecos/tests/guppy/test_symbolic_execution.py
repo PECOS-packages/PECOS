@@ -391,9 +391,22 @@ class TestMeasurementStructure:
 
         counts = result.sample_counts(1000)
         assert len(counts) == 2
-        # DAG measurement order is q2, q1, q0: q2=False, q1=True; q0 varies
+        # Circuit measurement order is q0, q1, q2: q0 varies; q1=True, q2=False
         assert b"\x00\x01\x00" in counts
-        assert b"\x00\x01\x01" in counts
+        assert b"\x01\x01\x00" in counts
+
+    def test_measurements_keep_program_order(self) -> None:
+        """Independent measurements retain their runtime positions."""
+
+        @guppy
+        def asymmetric() -> tuple[bool, bool, bool]:
+            q0, q1, q2 = qubit(), qubit(), qubit()
+            x(q0)
+            return (measure(q0).read(), measure(q1).read(), measure(q2).read())
+
+        result = execute_guppy_symbolic(asymmetric, 3)
+        assert str(result) == "[m0=1, m1=0, m2=0]"
+        assert result.sample_counts(100) == {b"\x01\x00\x00": 100}
 
 
 class TestRepetitionCode:

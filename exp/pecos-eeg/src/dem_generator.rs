@@ -100,7 +100,7 @@ impl DemGenerator for CoherentApprox {
 /// Coherent DEM generator with Heisenberg-exact probability fitting.
 ///
 /// Slower (runs Heisenberg walks for marginals + pairwise). Handles coherent
-/// noise. Exact marginals via L-BFGS fit.
+/// noise. L-BFGS fits an approximate independent DEM to exact marginal targets.
 pub struct CoherentExact {
     pub prune_threshold: f64,
 }

@@ -2384,6 +2384,9 @@ impl QisInterface for QisHeliosInterface {
         match format {
             ProgramFormat::QisBitcode | ProgramFormat::LlvmBitcode | ProgramFormat::LlvmIrText => {
                 debug!("Format is compatible, storing program...");
+                // A failed load must not leave the previous program executable.
+                self.executable_path = None;
+                self.metadata.clear();
                 self.program = program_bytes.to_vec();
                 self.format = format;
 
@@ -2913,6 +2916,36 @@ mod tests {
                 .collect();
             assert!(cached.is_empty(), "rejected program was cached: {cached:?}");
         }
+    }
+
+    #[test]
+    fn failed_reload_does_not_execute_previous_program() {
+        let _env_lock = ENV_MUTEX.lock().expect("environment lock");
+        let cache = tempfile::tempdir().expect("cache directory");
+        let _cache_dir = EnvVarGuard::set("PECOS_CACHE_DIR", cache.path());
+        let mut interface = QisHeliosInterface::new();
+        interface
+            .load_program(
+                b"define i64 @qmain(i64 %arg) { ret i64 0 }",
+                ProgramFormat::LlvmIrText,
+            )
+            .expect("valid program");
+        interface
+            .load_program(
+                br"
+                    declare i64 @get_current_shot()
+                    define i64 @qmain(i64 %arg) {
+                        %shot = call i64 @get_current_shot()
+                        ret i64 %shot
+                    }
+                ",
+                ProgramFormat::LlvmIrText,
+            )
+            .expect_err("an undefined program import must fail at load time");
+        assert!(interface.metadata().is_empty());
+        interface
+            .collect_operations()
+            .expect_err("the previous program must not run after a failed load");
     }
 
     #[test]

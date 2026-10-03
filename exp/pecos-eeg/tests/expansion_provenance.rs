@@ -118,6 +118,25 @@ fn user_cx_keeps_builtin_noise() {
     }
 }
 
+/// A user allocation is a preparation and carries built-in prep noise. The
+/// allocation inserted for the measurement does not: if it did, the record
+/// would flip with probability 2p(1-p) instead of p.
+#[test]
+fn user_qalloc_keeps_builtin_prep_noise() {
+    for p_prep in [0.1, 0.3] {
+        let noise = UniformNoise {
+            p_prep,
+            idle_rz: 0.0,
+            p1: 0.0,
+            p2: 0.0,
+            p_meas: 0.0,
+        };
+        for prep in [GateType::PZ, GateType::QAlloc] {
+            assert_walks(&[make_gate(prep, &[0]), Gate::mz(&[0])], 0, &noise, p_prep);
+        }
+    }
+}
+
 struct FlipAt {
     index: usize,
     qubit: usize,

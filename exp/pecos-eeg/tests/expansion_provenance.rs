@@ -309,3 +309,52 @@ fn sparse_rejects_wrong_noise_map_length() {
         Some(&[]),
     );
 }
+
+#[test]
+fn coherent_dem_and_compression_skip_noise_on_inserted_gates() {
+    use pecos_eeg::coherent_dem::build_coherent_dem;
+    use pecos_eeg::dem_mapping::Detector;
+    use pecos_eeg::noise_compression::compress_noise_to_boundaries;
+
+    // Expanded: PZ(0), H(0), H(0), QAlloc(1), CX(0,1), MZ(1). An X0 flip
+    // after the second H and an X1 flip after the inserted CX both flip the
+    // record, so only the provenance flags decide whether these consumers see
+    // them.
+    let gates = [Gate::pz(&[0]), Gate::h(&[0]), Gate::h(&[0]), Gate::mz(&[0])];
+    let expanded = expand_circuit(&gates).unwrap();
+    assert_eq!(expanded.gates[4].gate_type, GateType::CX);
+    assert!(expanded.expansion_gates[4]);
+    let detector = Detector {
+        id: 0,
+        stabilizer: Bm::z(expanded.aux_qubit_for_record(0).unwrap()),
+    };
+    for (index, qubit, inserted) in [(2, 0, false), (4, 1, true)] {
+        let noise = FlipAt {
+            index,
+            qubit,
+            probability: 0.2,
+        };
+        let dem = build_coherent_dem(
+            &expanded.gates,
+            &noise,
+            std::slice::from_ref(&detector),
+            &[],
+            &expanded.expansion_gates,
+        );
+        let compressed =
+            compress_noise_to_boundaries(&expanded.gates, &noise, &expanded.expansion_gates);
+        if inserted {
+            assert!(
+                dem.is_empty(),
+                "noise after the inserted CX reached the DEM"
+            );
+            assert_eq!(compressed.original_count, 0);
+        } else {
+            // One mechanism; its probability follows the DEM's own S-type
+            // generator approximation, which this test does not pin.
+            assert_eq!(dem.len(), 1);
+            assert!(dem[0].probability > 0.0);
+            assert_eq!(compressed.original_count, 1);
+        }
+    }
+}

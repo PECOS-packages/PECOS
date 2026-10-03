@@ -151,13 +151,21 @@ pub struct ExpandedCircuit {
 
 /// Expand a circuit by deferring mid-circuit measurements.
 ///
-/// For each MZ(q) followed by PZ(q), replaces with:
-/// 1. CX(q, aux) — copy q's state to a fresh auxiliary qubit
-/// 2. PZ(q) — reset q to |0> (kept as-is, since PZ after CX is valid)
+/// Each measurement of qubit q (`MZ`, `MeasureFree`, `MPZ`) is replaced by:
+/// 1. QAlloc(aux) -- a fresh auxiliary qubit
+/// 2. CX(q, aux) -- copy q's Z value onto it
+/// 3. PZ(q) -- for an ancilla (a qubit reset later) or an `MPZ`, the
+///    projection the measurement performs
 ///
-/// All auxiliary qubits are measured at the end via MZ.
-/// Final data measurements (MZ not followed by PZ) are also deferred
-/// to auxiliary qubits for uniformity.
+/// All auxiliary qubits are measured at the end via MZ. Final data
+/// measurements are deferred the same way, for uniformity.
+///
+/// The inserted gates are virtual and carry no physical noise.
+/// [`ExpandedCircuit::expansion_gates`] marks exactly them; user gates and the
+/// final auxiliary measurements are not marked. Consumers take these flags
+/// rather than inferring inserted gates from gate types, which a user
+/// `QAlloc` followed by a `CX` into it would fool.
+///
 /// # Errors
 ///
 /// Returns [`EegBuildError::UnsupportedMeasurement`] when the circuit contains

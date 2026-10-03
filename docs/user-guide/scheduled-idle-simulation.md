@@ -23,14 +23,22 @@ Capacity admission counts handles still live from earlier inputs, including
 measured handles that have not been released. Set `.qubits(...)` to the maximum
 simultaneously live physical allocation count before running a dynamic program.
 The scheduled route requires this capacity explicitly. Flat and metadata routes
-can infer it from a preloaded complete collector or the first submitted input,
+can infer it from a preloaded complete collector or the first nonempty input,
 but cannot safely increase it once the plugin has initialized: the plugin ABI
 has no state-preserving resize. A continuation that needs more capacity rejects
-before native submission. Reset and configure sufficient capacity before starting
-a new shot; automatic reinitialization never discards an in-progress shot.
+before native submission. Legacy program IDs are logical handles, so a larger ID
+alone does not require a larger initialized runtime: peak live use determines
+whether a continuation fits. Empty inputs without a capacity hint defer plugin
+initialization. Reset and configure sufficient capacity before starting a new
+shot; automatic reinitialization never discards an in-progress shot. Python
+`sim()` already requires `.qubits(N)` for QIS; the inference rules concern Rust
+and direct runtime callers.
 
-A failed native release leaves allocation state uncertain and blocks further
-execution and shot completion until a successful reset. Shot lifecycle cleanup
+An explicit allocation of an already-live program handle is rejected; release it
+before reallocation. Once native submission begins, an error or caught panic can
+follow partial mutation. Such failures block further execution and shot completion
+until a successful reset, including on flat and metadata routes. Capacity
+rejections before submission leave the existing native state intact. Shot lifecycle cleanup
 remains the plugin's responsibility; the public runtimes clear allocations at
 `shot_end`, including measured handles not explicitly released by the program.
 

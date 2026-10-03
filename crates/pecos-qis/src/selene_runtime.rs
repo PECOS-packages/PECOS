@@ -487,18 +487,118 @@ impl SeleneRuntime {
 
     fn lower_native_operations(&mut self, operations: &[Operation]) -> Result<Vec<QuantumOp>> {
         self.check_batch_failure()?;
+        if operations.is_empty() && self.instance.is_none() && self.num_qubits_hint.is_none() {
+            return Ok(Vec::new());
+        }
         self.prepare_runtime_input(operations)?;
+        self.with_native_submission(|runtime| {
+            let mut lowered_ops = Vec::new();
+
+            for op in operations {
+                if matches!(op, Operation::Barrier) {
+                    lowered_ops.extend(runtime.lower_runtime_barrier()?);
+                }
+                runtime.submit_operation_to_runtime(op, &mut lowered_ops)?;
+            }
+
+            lowered_ops.extend(runtime.drain_runtime_operations()?);
+            Ok(lowered_ops)
+        })
+    }
+
+    fn submit_metadata_operations(
+        &mut self,
+        operations: &[Operation],
+    ) -> Result<Vec<LoweredQuantumOp>> {
         let mut lowered_ops = Vec::new();
+        let mut source_metadata = VecDeque::new();
+        let mut pending_global_metadata = TraceMetadata::new();
+        let mut pending_qubit_metadata: BTreeMap<usize, TraceMetadata> = BTreeMap::new();
 
         for op in operations {
-            if matches!(op, Operation::Barrier) {
-                lowered_ops.extend(self.lower_runtime_barrier()?);
+            match op {
+                Operation::TraceMetadata { metadata, qubit } => {
+                    if let Some(qubit) = qubit {
+                        let pending = pending_qubit_metadata.entry(*qubit).or_default();
+                        Self::merge_trace_metadata(pending, metadata.clone())?;
+                    } else {
+                        Self::merge_trace_metadata(&mut pending_global_metadata, metadata.clone())?;
+                    }
+                }
+                Operation::Quantum(qop) => {
+                    let metadata = Self::take_pending_trace_metadata_for_source_op(
+                        qop,
+                        &mut pending_global_metadata,
+                        &mut pending_qubit_metadata,
+                    )?;
+                    if !metadata.is_empty() {
+                        let source_op = self.map_quantum_op_to_runtime_qubits(qop)?;
+                        source_metadata.push_back(SourceTraceMetadata {
+                            op: source_op,
+                            metadata,
+                        });
+                    }
+                    let mut emitted_ops = Vec::new();
+                    self.submit_operation_to_runtime(op, &mut emitted_ops)?;
+                    Self::push_lowered_ops_with_source_metadata(
+                        &mut lowered_ops,
+                        emitted_ops,
+                        &mut source_metadata,
+                    );
+                }
+                Operation::Barrier => {
+                    let emitted_ops = self.lower_runtime_barrier()?;
+                    Self::push_lowered_ops_with_source_metadata(
+                        &mut lowered_ops,
+                        emitted_ops,
+                        &mut source_metadata,
+                    );
+                }
+                _ => {
+                    let mut emitted_ops = Vec::new();
+                    self.submit_operation_to_runtime(op, &mut emitted_ops)?;
+                    Self::push_lowered_ops_with_source_metadata(
+                        &mut lowered_ops,
+                        emitted_ops,
+                        &mut source_metadata,
+                    );
+                }
             }
-            self.submit_operation_to_runtime(op, &mut lowered_ops)?;
         }
 
-        lowered_ops.extend(self.drain_runtime_operations()?);
+        let emitted_ops = self.drain_runtime_operations()?;
+        Self::push_lowered_ops_with_source_metadata(
+            &mut lowered_ops,
+            emitted_ops,
+            &mut source_metadata,
+        );
+
+        if !pending_global_metadata.is_empty() {
+            return Err(RuntimeError::ExecutionError(format!(
+                "trace metadata was not followed by a quantum operation: {pending_global_metadata:?}"
+            )));
+        }
+        Self::fail_if_qubit_metadata_was_not_consumed(&pending_qubit_metadata)?;
+        Self::fail_if_metadata_was_not_lowered(&source_metadata)?;
+
         Ok(lowered_ops)
+    }
+
+    /// Once native submission starts, any error can follow partial mutation.
+    /// Retrying such a shot is unsafe even if the plugin returns an ordinary error.
+    fn with_native_submission<T>(
+        &mut self,
+        submit: impl FnOnce(&mut Self) -> Result<T>,
+    ) -> Result<T> {
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| submit(self))) {
+            Ok(result) => result.map_err(|error| self.latch_batch_failure(error)),
+            Err(payload) => {
+                self.latch_batch_failure(RuntimeError::ExecutionError(
+                    "native submission panicked; reset required".into(),
+                ));
+                std::panic::resume_unwind(payload)
+            }
+        }
     }
 
     fn drain_native_pending_operations(&mut self) -> Result<Vec<QuantumOp>> {
@@ -776,9 +876,8 @@ impl SeleneRuntime {
             self.interface.as_ref().map_or(0, |i| i.operations.len())
         );
 
-        // Update capacities from explicit allocation records when available,
-        // otherwise fall back to direct program handles used by older QIR/LLVM
-        // examples.
+        // Infer the reloaded program's live allocation peak, retaining legacy
+        // index-based sizing as a conservative initial-capacity estimate.
         let (num_qubits, num_results) = collector_capacity(&operations);
         self.num_qubits = num_qubits;
         self.num_results = num_results;
@@ -870,13 +969,14 @@ impl SeleneRuntime {
                  configure sufficient qubits before starting the shot"
             )));
         }
+        let required_live_capacity = self.num_qubits_hint.unwrap_or(peak_live);
         if let Some(initialized) = self.initialized_num_qubits
-            && requested > initialized
+            && required_live_capacity > initialized
         {
             // The plugin ABI has no state-preserving resize. Reinitializing here
             // loses allocations, pending work, results and native shot identity.
             return Err(RuntimeError::ExecutionError(format!(
-                "runtime input requires capacity {requested} but initialized capacity is {initialized}; \
+                "runtime input requires capacity {required_live_capacity} but initialized capacity is {initialized}; \
                  reset and configure sufficient qubits before starting a new shot"
             )));
         }
@@ -886,7 +986,8 @@ impl SeleneRuntime {
     }
 
     fn plugin_num_qubits(&self) -> usize {
-        self.num_qubits_hint.unwrap_or(self.num_qubits)
+        self.initialized_num_qubits
+            .unwrap_or_else(|| self.num_qubits_hint.unwrap_or(self.num_qubits))
     }
 
     fn reset_plugin_instance(&mut self) -> Result<()> {
@@ -1372,6 +1473,11 @@ impl SeleneRuntime {
     ) -> Result<()> {
         match op {
             Operation::AllocateQubit { id } => {
+                if self.program_to_runtime_qubits.contains_key(id) {
+                    return Err(RuntimeError::ExecutionError(format!(
+                        "program qubit {id} is already allocated; release it before allocating again"
+                    )));
+                }
                 let _ = self.runtime_qubit_for_program(*id)?;
                 self.explicit_qubit_handles.insert(*id);
             }
@@ -2315,9 +2421,9 @@ impl QisRuntime for SeleneRuntime {
             interface.operations.len()
         );
 
-        // Count qubits from explicit allocation records when present,
-        // otherwise from direct program handles. Some legacy LLVM/QIR inputs
-        // use qubit handles like 0 and 1 without emitting allocation calls.
+        // Infer peak live allocations, including mixed explicit and implicit
+        // handles. Conservative legacy index sizing is used only to choose the
+        // initial capacity; runtime handles are allocated independently.
         let (num_qubits, num_results) = collector_capacity(&interface);
         self.num_qubits = num_qubits;
         self.num_results = num_results;
@@ -2460,80 +2566,11 @@ impl QisRuntime for SeleneRuntime {
         operations: &[Operation],
     ) -> Result<Vec<LoweredQuantumOp>> {
         self.select_output_mode(false)?;
+        if operations.is_empty() && self.instance.is_none() && self.num_qubits_hint.is_none() {
+            return Ok(Vec::new());
+        }
         self.prepare_runtime_input(operations)?;
-
-        let mut lowered_ops = Vec::new();
-        let mut source_metadata = VecDeque::new();
-        let mut pending_global_metadata = TraceMetadata::new();
-        let mut pending_qubit_metadata: BTreeMap<usize, TraceMetadata> = BTreeMap::new();
-
-        for op in operations {
-            match op {
-                Operation::TraceMetadata { metadata, qubit } => {
-                    if let Some(qubit) = qubit {
-                        let pending = pending_qubit_metadata.entry(*qubit).or_default();
-                        Self::merge_trace_metadata(pending, metadata.clone())?;
-                    } else {
-                        Self::merge_trace_metadata(&mut pending_global_metadata, metadata.clone())?;
-                    }
-                }
-                Operation::Quantum(qop) => {
-                    let metadata = Self::take_pending_trace_metadata_for_source_op(
-                        qop,
-                        &mut pending_global_metadata,
-                        &mut pending_qubit_metadata,
-                    )?;
-                    if !metadata.is_empty() {
-                        let source_op = self.map_quantum_op_to_runtime_qubits(qop)?;
-                        source_metadata.push_back(SourceTraceMetadata {
-                            op: source_op,
-                            metadata,
-                        });
-                    }
-                    let mut emitted_ops = Vec::new();
-                    self.submit_operation_to_runtime(op, &mut emitted_ops)?;
-                    Self::push_lowered_ops_with_source_metadata(
-                        &mut lowered_ops,
-                        emitted_ops,
-                        &mut source_metadata,
-                    );
-                }
-                Operation::Barrier => {
-                    let emitted_ops = self.lower_runtime_barrier()?;
-                    Self::push_lowered_ops_with_source_metadata(
-                        &mut lowered_ops,
-                        emitted_ops,
-                        &mut source_metadata,
-                    );
-                }
-                _ => {
-                    let mut emitted_ops = Vec::new();
-                    self.submit_operation_to_runtime(op, &mut emitted_ops)?;
-                    Self::push_lowered_ops_with_source_metadata(
-                        &mut lowered_ops,
-                        emitted_ops,
-                        &mut source_metadata,
-                    );
-                }
-            }
-        }
-
-        let emitted_ops = self.drain_runtime_operations()?;
-        Self::push_lowered_ops_with_source_metadata(
-            &mut lowered_ops,
-            emitted_ops,
-            &mut source_metadata,
-        );
-
-        if !pending_global_metadata.is_empty() {
-            return Err(RuntimeError::ExecutionError(format!(
-                "trace metadata was not followed by a quantum operation: {pending_global_metadata:?}"
-            )));
-        }
-        Self::fail_if_qubit_metadata_was_not_consumed(&pending_qubit_metadata)?;
-        Self::fail_if_metadata_was_not_lowered(&source_metadata)?;
-
-        Ok(lowered_ops)
+        self.with_native_submission(|runtime| runtime.submit_metadata_operations(operations))
     }
 
     fn provide_measurements(&mut self, measurements: BTreeMap<usize, bool>) -> Result<()> {
@@ -3612,6 +3649,153 @@ mod tests {
             operation_capacity(&[Operation::AllocateQubit { id: 105 }], live.clone(), live),
             (3, 0, 3)
         );
+    }
+
+    #[cfg(feature = "selene-runtimes")]
+    #[test]
+    fn rereview_legacy_handle_indices_do_not_require_native_growth() {
+        for mode in [LoweringRoute::Flat, LoweringRoute::Metadata] {
+            let mut runtime = crate::selene_runtimes::selene_simple_runtime().unwrap();
+            runtime.shot_start(0, None).unwrap();
+            mode.lower(&mut runtime, &[QuantumOp::Measure(0, 0).into()])
+                .unwrap();
+            runtime
+                .provide_measurement_outcomes(BTreeMap::from([(0, 0)]))
+                .unwrap();
+            let instance = runtime.instance;
+            mode.lower(
+                &mut runtime,
+                &[QuantumOp::H(71).into(), QuantumOp::Measure(71, 1).into()],
+            )
+            .unwrap();
+            assert_eq!(runtime.instance, instance);
+            assert_eq!(runtime.initialized_num_qubits, Some(1));
+            assert_eq!(runtime.num_qubits(), 1);
+            runtime
+                .provide_measurement_outcomes(BTreeMap::from([(1, 1)]))
+                .unwrap();
+            let error = mode
+                .lower(&mut runtime, &[QuantumOp::CX(71, 93).into()])
+                .unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("requires capacity 2 but initialized capacity is 1")
+            );
+            assert_eq!(runtime.instance, instance);
+            assert!(runtime.program_to_runtime_qubits.is_empty());
+        }
+    }
+
+    #[cfg(feature = "selene-runtimes")]
+    #[test]
+    fn rereview_empty_input_does_not_initialize_zero_capacity() {
+        for mode in [LoweringRoute::Flat, LoweringRoute::Metadata] {
+            let mut runtime = crate::selene_runtimes::selene_simple_runtime().unwrap();
+            runtime.shot_start(0, None).unwrap();
+            mode.lower(&mut runtime, &[]).unwrap();
+            assert!(runtime.instance.is_none());
+            mode.lower(
+                &mut runtime,
+                &[
+                    Operation::AllocateQubit { id: 71 },
+                    QuantumOp::Measure(71, 0).into(),
+                    Operation::ReleaseQubit { id: 71 },
+                ],
+            )
+            .unwrap();
+            assert_eq!(runtime.initialized_num_qubits, Some(1));
+        }
+    }
+
+    #[cfg(feature = "selene-runtimes")]
+    #[test]
+    fn rereview_duplicate_live_allocation_rejects_until_release() {
+        for mode in LoweringRoute::ALL {
+            let mut runtime = crate::selene_runtimes::selene_simple_runtime().unwrap();
+            runtime.set_num_qubits(1);
+            runtime.shot_start(0, None).unwrap();
+            mode.lower(
+                &mut runtime,
+                &[
+                    Operation::AllocateQubit { id: 71 },
+                    QuantumOp::Measure(71, 0).into(),
+                ],
+            )
+            .unwrap();
+            runtime
+                .provide_measurement_outcomes(BTreeMap::from([(0, 0)]))
+                .unwrap();
+            assert!(
+                mode.lower(&mut runtime, &[Operation::AllocateQubit { id: 71 }])
+                    .is_err()
+            );
+        }
+    }
+
+    #[cfg(feature = "selene-runtimes")]
+    #[test]
+    fn rereview_native_operation_errors_latch_after_partial_input() {
+        for mode in [LoweringRoute::Flat, LoweringRoute::Metadata] {
+            for failure in 0..5 {
+                let mut runtime = crate::selene_runtimes::selene_simple_runtime().unwrap();
+                runtime.set_num_qubits(2);
+                runtime.shot_start(0, None).unwrap();
+                mode.lower(&mut runtime, &[Operation::AllocateQubit { id: 0 }])
+                    .unwrap();
+                let bad_op: Operation = if failure == 0 {
+                    // Occupy the spare native slot without updating the host map.
+                    runtime.runtime_qalloc().unwrap();
+                    Operation::AllocateQubit { id: 1 }
+                } else {
+                    // A valid library rejects an out-of-range integer handle.
+                    runtime.program_to_runtime_qubits.insert(1, u64::MAX);
+                    match failure {
+                        1 => QuantumOp::Reset(1),
+                        2 => QuantumOp::Measure(1, 0),
+                        3 => QuantumOp::MeasureLeaked(1, 0),
+                        _ => QuantumOp::RXY(0.5, 0.0, 1),
+                    }
+                    .into()
+                };
+                assert!(
+                    mode.lower(&mut runtime, &[QuantumOp::RXY(0.5, 0.0, 0).into(), bad_op])
+                        .is_err()
+                );
+                assert!(runtime.shot_end().is_err());
+                assert!(runtime.clone().shot_end().is_err());
+                assert!(mode.lower(&mut runtime, &[]).is_err());
+                runtime.reset().unwrap();
+                runtime.shot_start(1, None).unwrap();
+                mode.lower(&mut runtime, &[Operation::AllocateQubit { id: 0 }])
+                    .unwrap();
+            }
+        }
+    }
+
+    #[cfg(feature = "selene-runtimes")]
+    #[test]
+    fn caught_submission_panic_cannot_resume_native_state() {
+        let mut runtime = crate::selene_runtimes::selene_simple_runtime().unwrap();
+        runtime.set_num_qubits(1);
+        runtime.shot_start(0, None).unwrap();
+        runtime
+            .lower_operations(&[Operation::AllocateQubit { id: 0 }])
+            .unwrap();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            runtime.with_native_submission::<()>(|runtime| {
+                runtime.call_runtime_rxy(0, 0.5, 0.0)?;
+                panic!("synthetic panic after native mutation");
+            })
+        }));
+        assert!(result.is_err());
+        assert!(runtime.shot_end().is_err());
+        assert!(runtime.lower_operations(&[]).is_err());
+        runtime.reset().unwrap();
+        runtime.shot_start(1, None).unwrap();
+        runtime
+            .lower_operations(&[Operation::AllocateQubit { id: 0 }])
+            .unwrap();
     }
 
     #[test]

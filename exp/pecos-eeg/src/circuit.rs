@@ -11,13 +11,13 @@
 
 use crate::Bm;
 use crate::eeg::EegType;
-use pecos_core::Gate;
 use pecos_core::gate_type::GateType;
 use pecos_core::pauli::pauli_bitmask::{
     BitmaskStorage, Conjugated, conjugate_cx, conjugate_cy, conjugate_cz, conjugate_h,
     conjugate_swap, conjugate_sx, conjugate_sxdg, conjugate_sy, conjugate_sydg, conjugate_sz,
     conjugate_szdg, conjugate_x, conjugate_y, conjugate_z,
 };
+use pecos_core::{Gate, QubitId};
 
 /// Noise model parameters.
 #[derive(Clone, Debug)]
@@ -341,13 +341,48 @@ fn propagate_s(mut label: Bm, remaining: &[Gate]) -> (Bm, f64) {
     (label, 0.0)
 }
 
+/// Forward conjugation by a gate: P -> U P U†.
+///
+/// A batched gate acts on each operand group (one qubit, or one pair for a
+/// two-qubit gate); the groups of a valid gate are disjoint (`Gate::validate`).
+/// Returns `None` for gates that do not conjugate Paulis.
+///
+/// # Panics
+///
+/// Panics if the qubit count is not a multiple of the gate's arity.
 fn conjugate_by_gate(label: &Bm, gate: &Gate) -> Option<Conjugated<smallvec::SmallVec<[u64; 8]>>> {
     if gate.qubits.is_empty() {
         return None;
     }
-    let q0 = || gate.qubits[0].index();
-    let q1 = || gate.qubits[1].index();
-    match gate.gate_type {
+    let arity = gate.gate_type.quantum_arity();
+    assert!(
+        gate.qubits.len().is_multiple_of(arity),
+        "EEG: {:?} acts on {} qubits, not a multiple of its arity {arity}",
+        gate.gate_type,
+        gate.qubits.len()
+    );
+    let mut label = label.clone();
+    let mut sign_negative = false;
+    for operands in gate.qubits.chunks_exact(arity) {
+        let r = conjugate_operands(&label, gate.gate_type, operands)?;
+        label = r.label;
+        sign_negative ^= r.sign_negative;
+    }
+    Some(Conjugated {
+        label,
+        sign_negative,
+    })
+}
+
+/// Forward conjugation by one operand group of a gate.
+fn conjugate_operands(
+    label: &Bm,
+    gate_type: GateType,
+    operands: &[QubitId],
+) -> Option<Conjugated<smallvec::SmallVec<[u64; 8]>>> {
+    let q0 = || operands[0].index();
+    let q1 = || operands[1].index();
+    match gate_type {
         GateType::H => Some(conjugate_h(label, q0())),
         GateType::SZ => Some(conjugate_sz(label, q0())),
         GateType::SZdg => Some(conjugate_szdg(label, q0())),

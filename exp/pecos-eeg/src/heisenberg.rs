@@ -414,16 +414,45 @@ impl SparsePauli {
 
 /// Apply backward (Heisenberg) gate conjugation: P → U† P U.
 ///
+/// A batched gate acts on each operand group (one qubit, or one pair for a
+/// two-qubit gate). The groups of a valid gate are disjoint (`Gate::validate`,
+/// checked by `expand::expand_circuit`), so they commute and their signs
+/// multiply. Returns the accumulated sign, or `None` for gates that do not
+/// conjugate Paulis.
+///
+/// # Panics
+///
+/// Panics if the qubit count is not a multiple of the gate's arity, or for a
+/// gate type the walk does not support.
+pub(crate) fn sparse_conjugate(p: &mut SparsePauli, gate: &Gate) -> Option<bool> {
+    let arity = gate.gate_type.quantum_arity();
+    assert!(
+        gate.qubits.len().is_multiple_of(arity),
+        "EEG Heisenberg: {:?} acts on {} qubits, not a multiple of its arity {arity}",
+        gate.gate_type,
+        gate.qubits.len()
+    );
+    let mut sign = None;
+    for operands in gate.qubits.chunks_exact(arity) {
+        let group_sign = conjugate_operands(p, gate.gate_type, operands)?;
+        sign = Some(sign.unwrap_or(false) ^ group_sign);
+    }
+    sign
+}
+
+/// Backward conjugation by one operand group of a gate.
+///
 /// The conjugation methods on `SparsePauli` use the Schrödinger convention
 /// (P → U P U†), so for the backward walk we swap non-self-adjoint gates
 /// to their adjoints: SZ↔SZdg, SX↔SXdg, SY↔SYdg, SZZ↔SZZdg, etc.
 /// Self-adjoint gates (H, X, Y, Z, CX, CZ, SWAP, CY) are unchanged.
-pub(crate) fn sparse_conjugate(p: &mut SparsePauli, gate: &Gate) -> Option<bool> {
-    if gate.qubits.is_empty() {
-        return None;
-    }
-    let q0 = gate.qubits[0].index() as u16;
-    match gate.gate_type {
+fn conjugate_operands(
+    p: &mut SparsePauli,
+    gate_type: GateType,
+    operands: &[pecos_core::QubitId],
+) -> Option<bool> {
+    let q0 = operands[0].index() as u16;
+    match gate_type {
         // Self-adjoint single-qubit gates
         GateType::H => Some(p.conjugate_h(q0)),
         GateType::X => Some(p.conjugate_pauli_x(q0)),
@@ -438,21 +467,21 @@ pub(crate) fn sparse_conjugate(p: &mut SparsePauli, gate: &Gate) -> Option<bool>
         GateType::SYdg => Some(p.conjugate_sy(q0)),
         // Self-adjoint two-qubit gates
         GateType::CX => {
-            let q1 = gate.qubits[1].index() as u16;
+            let q1 = operands[1].index() as u16;
             Some(p.conjugate_cx(q0, q1))
         }
         GateType::CZ => {
-            let q1 = gate.qubits[1].index() as u16;
+            let q1 = operands[1].index() as u16;
             Some(p.conjugate_cz(q0, q1))
         }
         GateType::SWAP => {
-            let q1 = gate.qubits[1].index() as u16;
+            let q1 = operands[1].index() as u16;
             p.conjugate_swap(q0, q1);
             Some(false)
         }
         // CY is self-adjoint: CY = SZdg(t) CX(c,t) SZ(t) — chain
         GateType::CY => {
-            let q1 = gate.qubits[1].index() as u16;
+            let q1 = operands[1].index() as u16;
             let s1 = p.conjugate_sz(q1);
             let s2 = p.conjugate_cx(q0, q1);
             let s3 = p.conjugate_szdg(q1);
@@ -461,7 +490,7 @@ pub(crate) fn sparse_conjugate(p: &mut SparsePauli, gate: &Gate) -> Option<bool>
         // Non-self-adjoint two-qubit: swap to adjoint for backward.
         // SZZ backward = SZZdg forward = CX(q0,q1) SZdg(q1) CX(q0,q1)
         GateType::SZZ => {
-            let q1 = gate.qubits[1].index() as u16;
+            let q1 = operands[1].index() as u16;
             let s1 = p.conjugate_cx(q0, q1);
             let s2 = p.conjugate_szdg(q1);
             let s3 = p.conjugate_cx(q0, q1);
@@ -469,7 +498,7 @@ pub(crate) fn sparse_conjugate(p: &mut SparsePauli, gate: &Gate) -> Option<bool>
         }
         // SZZdg backward = SZZ forward = CX(q0,q1) SZ(q1) CX(q0,q1)
         GateType::SZZdg => {
-            let q1 = gate.qubits[1].index() as u16;
+            let q1 = operands[1].index() as u16;
             let s1 = p.conjugate_cx(q0, q1);
             let s2 = p.conjugate_sz(q1);
             let s3 = p.conjugate_cx(q0, q1);
@@ -477,7 +506,7 @@ pub(crate) fn sparse_conjugate(p: &mut SparsePauli, gate: &Gate) -> Option<bool>
         }
         // SXX backward = SXXdg forward = H(q0) H(q1) SZZdg H(q0) H(q1)
         GateType::SXX => {
-            let q1 = gate.qubits[1].index() as u16;
+            let q1 = operands[1].index() as u16;
             let s1 = p.conjugate_h(q0);
             let s2 = p.conjugate_h(q1);
             let s3 = p.conjugate_cx(q0, q1);
@@ -489,7 +518,7 @@ pub(crate) fn sparse_conjugate(p: &mut SparsePauli, gate: &Gate) -> Option<bool>
         }
         // SXXdg backward = SXX forward
         GateType::SXXdg => {
-            let q1 = gate.qubits[1].index() as u16;
+            let q1 = operands[1].index() as u16;
             let s1 = p.conjugate_h(q0);
             let s2 = p.conjugate_h(q1);
             let s3 = p.conjugate_cx(q0, q1);
@@ -501,7 +530,7 @@ pub(crate) fn sparse_conjugate(p: &mut SparsePauli, gate: &Gate) -> Option<bool>
         }
         // SYY backward = SYYdg forward = SX(q0) SX(q1) SZZdg SXdg(q0) SXdg(q1)
         GateType::SYY => {
-            let q1 = gate.qubits[1].index() as u16;
+            let q1 = operands[1].index() as u16;
             let s1 = p.conjugate_sxdg(q0);
             let s2 = p.conjugate_sxdg(q1);
             let s3 = p.conjugate_cx(q0, q1);
@@ -513,7 +542,7 @@ pub(crate) fn sparse_conjugate(p: &mut SparsePauli, gate: &Gate) -> Option<bool>
         }
         // SYYdg backward = SYY forward
         GateType::SYYdg => {
-            let q1 = gate.qubits[1].index() as u16;
+            let q1 = operands[1].index() as u16;
             let s1 = p.conjugate_sx(q0);
             let s2 = p.conjugate_sx(q1);
             let s3 = p.conjugate_cx(q0, q1);
@@ -1677,7 +1706,7 @@ pub fn heisenberg_exact_from_circuit(
                     matrix_h_adjoint(&mut obs_re, &mut im, q, n);
                 }
             }
-            GateType::CX if qs.len() >= 2 && qs.len().is_multiple_of(2) => {
+            GateType::CX => {
                 for pair in qs.rchunks_exact(2) {
                     matrix_cx_adjoint(&mut obs_re, &mut im, pair[0], pair[1], n);
                 }
@@ -2823,11 +2852,7 @@ mod tests {
 
     #[test]
     fn test_exact_unsupported_gates() {
-        for unsupported in [
-            gate(GateType::SZ, &[0]),
-            gate(GateType::CZ, &[0, 1]),
-            gate(GateType::CX, &[0, 1, 2]),
-        ] {
+        for unsupported in [gate(GateType::SZ, &[0]), gate(GateType::CZ, &[0, 1])] {
             let gate_type = unsupported.gate_type;
             let gates = [
                 gate(GateType::PZ, &[0]),
@@ -2840,6 +2865,13 @@ mod tests {
                 Err(expand::EegBuildError::UnsupportedExactGate { gate_type })
             );
         }
+
+        // A CX on an odd number of qubits is not a valid gate at all.
+        let gates = [gate(GateType::CX, &[0, 1, 2]), gate(GateType::MZ, &[0])];
+        assert!(matches!(
+            heisenberg_exact_from_circuit(&gates, &[0], &ExactTestNoise(vec![]), 3),
+            Err(expand::EegBuildError::InvalidGate { index: 0, .. })
+        ));
     }
 
     #[test]
@@ -2896,24 +2928,18 @@ mod tests {
     }
 
     #[test]
-    fn test_exact_batched_cx_pairs_apply_in_order() {
-        // CX [0,1,1,2] is CX(0,1) then CX(1,2): after H0 that makes a GHZ
-        // state, so q2 is a fair coin. In the other order CX(1,2) acts on
-        // |0> first and q2 stays 0.
+    fn test_exact_rejects_overlapping_batched_cx() {
+        // CX [0,1,1,2] repeats qubit 1, which `Gate::validate` forbids: the
+        // operand groups of a batched gate must be disjoint.
         let gates = [
             gate(GateType::QAlloc, &[0, 1, 2]),
-            gate(GateType::H, &[0]),
             gate(GateType::CX, &[0, 1, 1, 2]),
             gate(GateType::MZ, &[0, 1, 2]),
         ];
-        let noise = ExactTestNoise(vec![]);
-        for (detector, expected) in [(vec![2], 0.5), (vec![0, 2], 0.0), (vec![1, 2], 0.0)] {
-            let actual = heisenberg_exact_from_circuit(&gates, &detector, &noise, 3).unwrap();
-            assert!(
-                (actual - expected).abs() < 1e-10,
-                "detector={detector:?}: {actual} != {expected}"
-            );
-        }
+        assert!(matches!(
+            heisenberg_exact_from_circuit(&gates, &[2], &ExactTestNoise(vec![]), 3),
+            Err(expand::EegBuildError::InvalidGate { index: 1, .. })
+        ));
     }
 
     #[test]
@@ -2921,12 +2947,9 @@ mod tests {
         // I and Idle act trivially but still carry noise: an X0 flip with
         // probability p after either one flips the measurement with p.
         let p = 0.2;
-        for idle in [GateType::I, GateType::Idle] {
-            let gates = [
-                gate(GateType::PZ, &[0]),
-                gate(idle, &[0]),
-                gate(GateType::MZ, &[0]),
-            ];
+        for identity in [gate(GateType::I, &[0]), Gate::idle(1.0, &[QubitId(0)][..])] {
+            let idle = identity.gate_type;
+            let gates = [gate(GateType::PZ, &[0]), identity, gate(GateType::MZ, &[0])];
             let noise = ExactTestNoise(vec![(
                 1,
                 exact_test_injection(crate::eeg::EegType::S, Bm::x(0), -p),

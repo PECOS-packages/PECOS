@@ -58,7 +58,7 @@ def test_converted_qir_preserves_the_requested_result(tmp_path: Path) -> None:
         import pecos_rslib
         import qir_qis
 
-        bitcode = qir_qis.qir_to_qis(qir_qis.qir_ll_to_bc({QIR!r}), target="native")
+        bitcode = qir_qis.qir_to_qis(qir_qis.qir_ll_to_bc({QIR!r}), target="native", opt_level=2)
         ir = subprocess.run(
             [pecos_rslib.find_llvm_tool("llvm-dis"), "-o", "-"],
             input=bitcode, capture_output=True, check=True,

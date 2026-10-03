@@ -5,11 +5,11 @@
 use super::qir_reason;
 
 #[test]
-fn rejects_each_qir_attribute() {
+fn accepts_each_qir_attribute() {
     for key in ["entry_point", "qir_profiles", "required_num_results"] {
         for suffix in ["", "=\"1\""] {
             let ir = format!("attributes #0 = {{ \"{key}\"{suffix} }}");
-            assert!(qir_reason(&ir).is_some(), "accepted {ir}");
+            assert_eq!(qir_reason(&ir), None, "rejected {ir}");
         }
     }
 }

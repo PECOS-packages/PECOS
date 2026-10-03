@@ -2,10 +2,13 @@
 //
 // Licensed under the Apache License, Version 2.0
 
-//! Recognize QIR in `llvm-dis` output. LLVM canonicalization makes line-based
-//! detection sound: signatures occupy one top-level line, function string
-//! attributes live in attribute groups, and pointer types use `ptr`. Symbol
-//! escapes are normalized, and body instructions are indented.
+//! Recognize QIR pointer signatures in `llvm-dis` output. LLVM canonicalization
+//! makes line-based detection sound: signatures occupy one top-level line,
+//! pointer types use `ptr`, symbol escapes are normalized, and body instructions
+//! are indented. Function attributes do not determine the dialect.
+//! The check reads declarations and definitions, not call sites, so hand-written
+//! IR that calls an integer-declared intrinsic with a pointer, or aliases one,
+//! is not caught; it targets QIR emitted by QIR producers, not hostile input.
 
 fn shared_intrinsic(name: &str) -> bool {
     // QIS gates never take pointers. Only these runtime functions share that
@@ -31,17 +34,7 @@ fn has_pointer(signature: &str) -> bool {
 /// Return a recognizable QIR marker, or `None` for canonical IR without one.
 pub(crate) fn qir_reason(ir: &str) -> Option<String> {
     for line in ir.lines() {
-        if line.starts_with("attributes #") {
-            // LLVM escapes embedded quotes as hex, so quote pairs delimit strings.
-            let mut parts = line.split('"');
-            while let (Some(before), Some(key)) = (parts.next(), parts.next()) {
-                if !before.trim_end().ends_with('=')
-                    && matches!(key, "entry_point" | "qir_profiles" | "required_num_results")
-                {
-                    return Some(format!("QIR function attribute {key:?}"));
-                }
-            }
-        } else if let Some(header) = line
+        if let Some(header) = line
             .strip_prefix("declare ")
             .or_else(|| line.strip_prefix("define "))
         {

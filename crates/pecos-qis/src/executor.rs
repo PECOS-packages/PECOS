@@ -83,6 +83,11 @@ static COMPILED_PROGRAM_CACHE: OnceLock<
     std::sync::Mutex<std::collections::BTreeMap<String, PathBuf>>,
 > = OnceLock::new();
 
+/// Programs that passed dialect validation in this process, including their format.
+/// Engine clones can reuse success without invoking LLVM again; errors are not cached.
+static VALIDATED_PROGRAM_CACHE: OnceLock<std::sync::Mutex<std::collections::BTreeSet<[u8; 32]>>> =
+    OnceLock::new();
+
 /// Tracks whether cache cleanup has been performed (once per process).
 static CACHE_CLEANUP_DONE: OnceLock<()> = OnceLock::new();
 
@@ -2350,6 +2355,25 @@ impl Default for QisHeliosInterface {
 /// Validate before creating or consulting cached program libraries. QIR shares
 /// symbol names with QIS, but passes pointer handles to different signatures.
 fn validate_qis_dialect(bytes: &[u8], format: ProgramFormat) -> Result<(), InterfaceError> {
+    use sha2::{Digest, Sha256};
+
+    let mut hasher = Sha256::new();
+    hasher.update(format.cache_tag().as_bytes());
+    hasher.update([0]);
+    hasher.update(bytes);
+    let digest: [u8; 32] = hasher.finalize().into();
+    let cache = VALIDATED_PROGRAM_CACHE
+        .get_or_init(|| std::sync::Mutex::new(std::collections::BTreeSet::new()));
+    if cache
+        .lock()
+        .map_err(|error| {
+            InterfaceError::LoadError(format!("Failed to lock validation cache: {error}"))
+        })?
+        .contains(&digest)
+    {
+        return Ok(());
+    }
+
     // Use the compiler's LLVM installation even without optional LLVM bindings.
     // File input avoids blocking on simultaneous child stdin/stdout pipe traffic.
     let mut input = NamedTempFile::new().map_err(|error| {
@@ -2386,9 +2410,18 @@ fn validate_qis_dialect(bytes: &[u8], format: ProgramFormat) -> Result<(), Inter
     } else {
         input.path()
     };
+    // Multi-module bitcode produces suffixed files instead of the requested file,
+    // even with a successful exit status. Contain all such output in this directory.
+    let output_dir = tempfile::tempdir().map_err(|error| {
+        InterfaceError::LoadError(format!(
+            "Failed to create validation output directory: {error}"
+        ))
+    })?;
+    let ir_path = output_dir.path().join("program.ll");
     let output = Command::new(find_llvm_tool("llvm-dis"))
         .arg(bitcode_path)
-        .args(["-o", "-"])
+        .arg("-o")
+        .arg(&ir_path)
         .output()
         .map_err(|error| {
             InterfaceError::LoadError(format!(
@@ -2401,7 +2434,17 @@ fn validate_qis_dialect(bytes: &[u8], format: ProgramFormat) -> Result<(), Inter
             String::from_utf8_lossy(&output.stderr)
         )));
     }
-    let ir = String::from_utf8(output.stdout).map_err(|error| {
+    let disassembled = std::fs::read(&ir_path).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            InterfaceError::InvalidFormat(format!(
+                "Multi-module bitcode is not supported: llvm-dis did not create its requested output: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ))
+        } else {
+            InterfaceError::LoadError(format!("Failed to read validation output: {error}"))
+        }
+    })?;
+    let ir = String::from_utf8(disassembled).map_err(|error| {
         InterfaceError::InvalidFormat(format!("Disassembled LLVM IR is not UTF-8: {error}"))
     })?;
     if let Some(reason) = crate::qir_detection::qir_reason(&ir) {
@@ -2409,6 +2452,12 @@ fn validate_qis_dialect(bytes: &[u8], format: ProgramFormat) -> Result<(), Inter
             "QIS input contains {reason}; convert QIR to QIS first"
         )));
     }
+    cache
+        .lock()
+        .map_err(|error| {
+            InterfaceError::LoadError(format!("Failed to lock validation cache: {error}"))
+        })?
+        .insert(digest);
     Ok(())
 }
 
@@ -2719,7 +2768,8 @@ mod tests {
     fn is_qir_text(ir: &str) -> bool {
         match validate_qis_dialect(ir.as_bytes(), ProgramFormat::LlvmIrText) {
             Err(InterfaceError::InvalidFormat(message))
-                if message.contains("convert QIR to QIS first") =>
+                if message.contains("QIR pointer signature")
+                    && message.contains("convert QIR to QIS first") =>
             {
                 true
             }
@@ -2739,7 +2789,7 @@ mod tests {
     }
 
     #[test]
-    fn canonicalizes_qir_attributes() {
+    fn accepts_qir_attributes() {
         for attribute in ["entry_point", "qir_profiles", "required_num_results"] {
             for ir in [
                 format!(
@@ -2747,14 +2797,14 @@ mod tests {
                 ),
                 format!("define void @main()\n\"{attribute}\"=\"1\"\n{{ ret void }}"),
             ] {
-                assert!(is_qir_text(&ir), "accepted {ir}");
+                validate_qis_dialect(ir.as_bytes(), ProgramFormat::LlvmIrText).unwrap();
             }
         }
-        assert!(is_qir_text(
+        assert!(!is_qir_text(
             r#"define void @main() #0 { ret void }
 attributes #0 = { "entry\5fpoint" }"#
         ));
-        assert!(is_qir_text(
+        assert!(!is_qir_text(
             r#"define void @main() "entry_point" prefix [11 x i8] c"entry_point" { ret void }"#
         ));
     }
@@ -2812,6 +2862,14 @@ attributes #0 = { "entry\5fpoint" }"#
             validate_qis_dialect(ir.as_bytes(), ProgramFormat::LlvmIrText)
                 .unwrap_or_else(|error| panic!("{ir}: {error}"));
         }
+    }
+
+    #[test]
+    fn accepts_bell_with_lowercase_entry_point() {
+        let ir =
+            include_str!("../../../examples/llvm/bell.ll").replace("EntryPoint", "entry_point");
+        assert!(ir.contains("\"entry_point\""));
+        validate_qis_dialect(ir.as_bytes(), ProgramFormat::LlvmIrText).unwrap();
     }
 
     #[test]
@@ -2886,6 +2944,139 @@ attributes #0 = { "entry\5fpoint" }"#
             String::from_utf8_lossy(&assembled.stderr)
         );
         std::fs::read(bitcode.path()).unwrap()
+    }
+
+    // Each child runs only the named test, isolating environment changes and any
+    // accidental llvm-dis output from the other tests and the repository.
+    fn validation_test_subprocess(name: &str) -> bool {
+        if std::env::var("PECOS_VALIDATION_TEST").as_deref() == Ok(name) {
+            return false;
+        }
+        let directory = tempfile::tempdir().unwrap();
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", name, "--nocapture"])
+            .env("PECOS_VALIDATION_TEST", name)
+            .current_dir(directory.path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        true
+    }
+
+    #[test]
+    fn rejects_multi_module_bitcode_without_stray_files() {
+        if validation_test_subprocess(
+            "executor::tests::rejects_multi_module_bitcode_without_stray_files",
+        ) {
+            return;
+        }
+        let directory = tempfile::tempdir().unwrap();
+        let first = directory.path().join("a.bc");
+        let second = directory.path().join("b.bc");
+        let combined = directory.path().join("combined.bc");
+        std::fs::write(
+            &first,
+            assemble_test_bitcode("define void @main() { ret void }"),
+        )
+        .unwrap();
+        std::fs::write(
+            &second,
+            assemble_test_bitcode("declare void @__quantum__qis__mz__body(ptr, ptr)"),
+        )
+        .unwrap();
+        let llvm_cat = find_llvm_tool("llvm-cat");
+        assert!(
+            llvm_cat.is_file(),
+            "llvm-cat did not resolve: {}",
+            llvm_cat.display()
+        );
+        let output = Command::new(llvm_cat)
+            .arg("-b")
+            .arg(first)
+            .arg(second)
+            .arg("-o")
+            .arg(&combined)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let bytes = std::fs::read(combined).unwrap();
+        for format in [ProgramFormat::QisBitcode, ProgramFormat::LlvmBitcode] {
+            let result = QisHeliosInterface::new().load_program(&bytes, format);
+            assert!(
+                !Path::new("-.0").exists(),
+                "llvm-dis left -.0 in the current directory"
+            );
+            assert!(
+                !Path::new("-.1").exists(),
+                "llvm-dis left -.1 in the current directory"
+            );
+            assert!(
+                matches!(result, Err(InterfaceError::InvalidFormat(ref message)) if message.contains("Multi-module bitcode is not supported")),
+                "{result:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn validation_memo_distinguishes_programs_and_formats() {
+        let qis = b"declare void @__quantum__qis__memo__body(i64)";
+        validate_qis_dialect(qis, ProgramFormat::LlvmIrText).unwrap();
+        for _ in 0..2 {
+            assert!(is_qir_text("declare void @__quantum__qis__memo__body(ptr)"));
+            assert!(matches!(
+                validate_qis_dialect(qis, ProgramFormat::QisBitcode),
+                Err(InterfaceError::InvalidFormat(_))
+            ));
+        }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn validation_memo_reuses_success_without_llvm_input_files() {
+        if validation_test_subprocess(
+            "executor::tests::validation_memo_reuses_success_without_llvm_input_files",
+        ) {
+            return;
+        }
+        let _env_lock = ENV_MUTEX.lock().expect("environment lock");
+        let qis = b"declare void @__quantum__qis__memo_reuse__body(i64)";
+        let qir = b"declare void @__quantum__qis__memo_reuse__body(ptr)";
+        let bitcode = assemble_test_bitcode(std::str::from_utf8(qis).unwrap());
+        let programs = [
+            (qis.as_slice(), ProgramFormat::LlvmIrText),
+            (bitcode.as_slice(), ProgramFormat::QisBitcode),
+            (bitcode.as_slice(), ProgramFormat::LlvmBitcode),
+        ];
+        for (bytes, format) in programs {
+            validate_qis_dialect(bytes, format).unwrap();
+        }
+        assert!(matches!(
+            validate_qis_dialect(qir, ProgramFormat::LlvmIrText),
+            Err(InterfaceError::InvalidFormat(_))
+        ));
+        // A fresh validation cannot even prepare LLVM's input. Memo hits must
+        // bypass that work, while a previous rejection must be attempted again.
+        let directory = tempfile::tempdir().unwrap();
+        let _temp_dir = EnvVarGuard::set("TMPDIR", directory.path().join("missing"));
+        assert!(NamedTempFile::new().is_err());
+        for (bytes, format) in programs {
+            validate_qis_dialect(bytes, format).expect("reuse successful validation");
+        }
+        for bytes in [qir.as_slice(), b"declare void @uncached()".as_slice()] {
+            assert!(matches!(
+                validate_qis_dialect(bytes, ProgramFormat::LlvmIrText),
+                Err(InterfaceError::LoadError(_))
+            ));
+        }
     }
 
     #[test]

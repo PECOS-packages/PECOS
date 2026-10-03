@@ -414,10 +414,11 @@ impl SparsePauli {
 
 /// Apply backward (Heisenberg) gate conjugation: P → U† P U.
 ///
-/// A batched gate applies its operand groups (one qubit, or one pair for a
-/// two-qubit gate) in order, so the backward walk undoes the last group first.
-/// Returns the accumulated sign, or `None` for gates that do not conjugate
-/// Paulis.
+/// A batched gate acts on each operand group (one qubit, or one pair for a
+/// two-qubit gate). The groups of a valid gate are disjoint (`Gate::validate`,
+/// checked by `expand::expand_circuit`), so they commute and their signs
+/// multiply. Returns the accumulated sign, or `None` for gates that do not
+/// conjugate Paulis.
 ///
 /// # Panics
 ///
@@ -432,7 +433,7 @@ pub(crate) fn sparse_conjugate(p: &mut SparsePauli, gate: &Gate) -> Option<bool>
         gate.qubits.len()
     );
     let mut sign = None;
-    for operands in gate.qubits.rchunks_exact(arity) {
+    for operands in gate.qubits.chunks_exact(arity) {
         let group_sign = conjugate_operands(p, gate.gate_type, operands)?;
         sign = Some(sign.unwrap_or(false) ^ group_sign);
     }
@@ -1705,7 +1706,7 @@ pub fn heisenberg_exact_from_circuit(
                     matrix_h_adjoint(&mut obs_re, &mut im, q, n);
                 }
             }
-            GateType::CX if qs.len() >= 2 && qs.len().is_multiple_of(2) => {
+            GateType::CX => {
                 for pair in qs.rchunks_exact(2) {
                     matrix_cx_adjoint(&mut obs_re, &mut im, pair[0], pair[1], n);
                 }
@@ -2851,11 +2852,7 @@ mod tests {
 
     #[test]
     fn test_exact_unsupported_gates() {
-        for unsupported in [
-            gate(GateType::SZ, &[0]),
-            gate(GateType::CZ, &[0, 1]),
-            gate(GateType::CX, &[0, 1, 2]),
-        ] {
+        for unsupported in [gate(GateType::SZ, &[0]), gate(GateType::CZ, &[0, 1])] {
             let gate_type = unsupported.gate_type;
             let gates = [
                 gate(GateType::PZ, &[0]),
@@ -2868,6 +2865,13 @@ mod tests {
                 Err(expand::EegBuildError::UnsupportedExactGate { gate_type })
             );
         }
+
+        // A CX on an odd number of qubits is not a valid gate at all.
+        let gates = [gate(GateType::CX, &[0, 1, 2]), gate(GateType::MZ, &[0])];
+        assert!(matches!(
+            heisenberg_exact_from_circuit(&gates, &[0], &ExactTestNoise(vec![]), 3),
+            Err(expand::EegBuildError::InvalidGate { index: 0, .. })
+        ));
     }
 
     #[test]
@@ -2924,24 +2928,18 @@ mod tests {
     }
 
     #[test]
-    fn test_exact_batched_cx_pairs_apply_in_order() {
-        // CX [0,1,1,2] is CX(0,1) then CX(1,2): after H0 that makes a GHZ
-        // state, so q2 is a fair coin. In the other order CX(1,2) acts on
-        // |0> first and q2 stays 0.
+    fn test_exact_rejects_overlapping_batched_cx() {
+        // CX [0,1,1,2] repeats qubit 1, which `Gate::validate` forbids: the
+        // operand groups of a batched gate must be disjoint.
         let gates = [
             gate(GateType::QAlloc, &[0, 1, 2]),
-            gate(GateType::H, &[0]),
             gate(GateType::CX, &[0, 1, 1, 2]),
             gate(GateType::MZ, &[0, 1, 2]),
         ];
-        let noise = ExactTestNoise(vec![]);
-        for (detector, expected) in [(vec![2], 0.5), (vec![0, 2], 0.0), (vec![1, 2], 0.0)] {
-            let actual = heisenberg_exact_from_circuit(&gates, &detector, &noise, 3).unwrap();
-            assert!(
-                (actual - expected).abs() < 1e-10,
-                "detector={detector:?}: {actual} != {expected}"
-            );
-        }
+        assert!(matches!(
+            heisenberg_exact_from_circuit(&gates, &[2], &ExactTestNoise(vec![]), 3),
+            Err(expand::EegBuildError::InvalidGate { index: 1, .. })
+        ));
     }
 
     #[test]
@@ -2949,12 +2947,9 @@ mod tests {
         // I and Idle act trivially but still carry noise: an X0 flip with
         // probability p after either one flips the measurement with p.
         let p = 0.2;
-        for idle in [GateType::I, GateType::Idle] {
-            let gates = [
-                gate(GateType::PZ, &[0]),
-                gate(idle, &[0]),
-                gate(GateType::MZ, &[0]),
-            ];
+        for identity in [gate(GateType::I, &[0]), Gate::idle(1.0, &[QubitId(0)][..])] {
+            let idle = identity.gate_type;
+            let gates = [gate(GateType::PZ, &[0]), identity, gate(GateType::MZ, &[0])];
             let noise = ExactTestNoise(vec![(
                 1,
                 exact_test_injection(crate::eeg::EegType::S, Bm::x(0), -p),

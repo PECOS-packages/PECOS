@@ -85,7 +85,7 @@ impl StabilizerGroup {
                 GateType::Z => {
                     sim.z(&qubits);
                 }
-                // A batched two-qubit gate acts on every pair, in order.
+                // A batched two-qubit gate acts on every (disjoint) pair.
                 GateType::CX => {
                     sim.cx(&operand_pairs(gate.gate_type, &qubits));
                 }

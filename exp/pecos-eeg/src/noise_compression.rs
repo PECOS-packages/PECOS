@@ -256,18 +256,12 @@ fn forward_conjugate_label(label: &mut Bm, gate: &Gate) {
         other => other, // self-adjoint
     };
 
-    // Build a temporary gate with the adjoint type. A batched gate applies its
-    // operand groups in order, so its adjoint applies them in reverse.
-    let arity = gate.gate_type.quantum_arity();
+    // Build a temporary gate with the adjoint type
     let mut adj_gate = Gate::new(
         adjoint_type,
         gate.angles.clone(),
         gate.params.clone(),
-        gate.qubits
-            .rchunks(arity)
-            .flatten()
-            .copied()
-            .collect::<pecos_core::GateQubits>(),
+        gate.qubits.clone(),
     );
     adj_gate.meas_ids.clone_from(&gate.meas_ids);
 
@@ -339,12 +333,12 @@ mod tests {
     use crate::noise::UniformNoise;
 
     #[test]
-    fn forward_conjugation_applies_batched_pairs_in_order() {
-        // CX(0,1) then CX(1,2) takes X0 to X0X1 and then to X0X1X2. The
-        // reverse order would stop at X0X1.
-        let mut label = Bm::x(0);
-        forward_conjugate_label(&mut label, &Gate::cx(&[(0, 1), (1, 2)]));
-        assert_eq!(label, Bm::x(0).multiply(&Bm::x(1)).multiply(&Bm::x(2)));
+    fn forward_conjugation_acts_on_every_batched_pair() {
+        // X2 is untouched by the first pair and spreads to X2X3 through the
+        // second.
+        let mut label = Bm::x(2);
+        forward_conjugate_label(&mut label, &Gate::cx(&[(0, 1), (2, 3)]));
+        assert_eq!(label, Bm::x(2).multiply(&Bm::x(3)));
     }
 
     #[test]

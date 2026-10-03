@@ -865,6 +865,13 @@ fn warn_if_wrong_llvm_version(tool_path: &Path, tool_name: &str) {
     }
 }
 
+/// libloading's `Display` only names the failed call (for example "dlopen
+/// failed"); the loader's own message, such as a missing symbol, is its source.
+fn library_load_error(context: &str, error: &libloading::Error) -> InterfaceError {
+    let detail = std::error::Error::source(error).unwrap_or(error);
+    InterfaceError::ExecutionError(format!("{context}: {detail}"))
+}
+
 fn link_error_message(stdout: &[u8], stderr: &[u8]) -> String {
     // Clang and its platform linker can report errors on different streams.
     format!(
@@ -1318,17 +1325,12 @@ impl QisHeliosInterface {
                     libloading::os::unix::RTLD_NOW | libloading::os::unix::RTLD_LOCAL
                 },
             )
-            .map_err(|e| {
-                // libloading's Display only says "dlopen failed"; its source
-                // contains the loader diagnostic, including the missing symbol.
-                let detail = std::error::Error::source(&e).unwrap_or(&e);
-                InterfaceError::ExecutionError(format!("{error_msg}: {detail}"))
-            })?
+            .map_err(|e| library_load_error(error_msg, &e))?
         };
 
         let lib = unsafe {
             Library::new(path)
-                .map_err(|e| InterfaceError::ExecutionError(format!("{error_msg} (lookup): {e}")))?
+                .map_err(|e| library_load_error(&format!("{error_msg} (lookup)"), &e))?
         };
 
         Ok((lib_global, lib))
@@ -1400,15 +1402,12 @@ impl QisHeliosInterface {
 
         // Load the library
         let load_result = (|| {
-            let lib_global = unsafe {
-                Library::new(path)
-                    .map_err(|e| InterfaceError::ExecutionError(format!("{error_msg}: {e}")))?
-            };
+            let lib_global =
+                unsafe { Library::new(path).map_err(|e| library_load_error(error_msg, &e))? };
 
             let lib = unsafe {
-                Library::new(path).map_err(|e| {
-                    InterfaceError::ExecutionError(format!("{error_msg} (lookup): {e}"))
-                })?
+                Library::new(path)
+                    .map_err(|e| library_load_error(&format!("{error_msg} (lookup)"), &e))?
             };
 
             Ok((lib_global, lib))
@@ -1565,6 +1564,13 @@ impl QisHeliosInterface {
         use sha2::{Digest, Sha256};
         use std::fmt::Write as _;
 
+        // Program libraries import from these runtimes. A runtime that fails
+        // to load stays failed for the process, so check it before touching the
+        // shared cache: otherwise every load here would treat a valid cached
+        // program as invalid and delete it.
+        Self::get_qis_ffi_lib_singleton()?;
+        Self::get_shim_lib_singleton()?;
+
         // Compute a stable content digest for caching.
         // - SHA-256 (not the std `DefaultHasher`, whose output is not stable
         //   across toolchains) so the on-disk key is reproducible for a cache
@@ -1645,8 +1651,8 @@ impl QisHeliosInterface {
 
         // If we found a cached path in the in-process cache, load it
         if let Some(cached_path) = cached_path_opt {
-            self.executable_path = Some(cached_path.clone());
             let _lib = Self::get_or_cache_program_lib(&cached_path)?;
+            self.executable_path = Some(cached_path.clone());
             debug!("Successfully loaded cached program library from in-process cache");
             return Ok(cached_path);
         }
@@ -2855,15 +2861,14 @@ mod tests {
         }
     }
 
-    /// Run one test of this binary in a fresh process with `child_env` set.
-    fn run_test_in_child(test_name: &str, child_env: &str, cache_dir: &Path) {
+    /// Run one test of this binary in a fresh process with `envs` set.
+    fn run_test_in_child(test_name: &str, envs: &[(&str, &std::ffi::OsStr)]) {
         // The child inherits this process's environment, which other tests
         // change temporarily (for example PECOS_QIS_FFI_PATH).
         let _env_lock = ENV_MUTEX.lock().expect("environment lock");
         let output = Command::new(std::env::current_exe().expect("test executable"))
             .args(["--exact", test_name, "--nocapture"])
-            .env(child_env, "1")
-            .env("PECOS_CACHE_DIR", cache_dir)
+            .envs(envs.iter().copied())
             .output()
             .expect("run child");
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -2903,8 +2908,10 @@ mod tests {
         for _ in 0..2 {
             run_test_in_child(
                 "executor::tests::missing_program_import_fails_program_load",
-                CHILD_ENV,
-                cache.path(),
+                &[
+                    (CHILD_ENV, "1".as_ref()),
+                    ("PECOS_CACHE_DIR", cache.path().as_os_str()),
+                ],
             );
             let cached: Vec<_> = std::fs::read_dir(cache.path())
                 .expect("read cache directory")
@@ -2916,6 +2923,62 @@ mod tests {
                 .collect();
             assert!(cached.is_empty(), "rejected program was cached: {cached:?}");
         }
+    }
+
+    /// Linux only: programs there do not link the runtime, so a copied runtime
+    /// is selected by its path alone.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn runtime_failure_keeps_valid_cached_program() {
+        const CHILD_ENV: &str = "PECOS_TEST_RUNTIME_FAILURE";
+        let program = b"define i64 @qmain(i64 %arg) { ret i64 0 }";
+        if let Some(mode) = std::env::var_os(CHILD_ENV) {
+            let result = QisHeliosInterface::new().load_program(program, ProgramFormat::LlvmIrText);
+            if mode == "broken" {
+                result.expect_err("an unloadable runtime must fail the program load");
+            } else {
+                result.expect("valid program");
+            }
+            return;
+        }
+
+        let dir = tempfile::tempdir().expect("temporary directory");
+        let cache = dir.path().join("cache");
+        let runtime = dir.path().join("libpecos_qis_ffi.so");
+        {
+            let _env_lock = ENV_MUTEX.lock().expect("environment lock");
+            let selected = QisHeliosInterface::find_pecos_qis_lib().expect("QIS FFI library");
+            std::fs::copy(selected, &runtime).expect("copy QIS FFI library");
+        }
+        let envs = |mode: &'static str| {
+            [
+                (CHILD_ENV, std::ffi::OsStr::new(mode)),
+                ("PECOS_CACHE_DIR", cache.as_os_str()),
+                ("PECOS_QIS_FFI_PATH", runtime.as_os_str()),
+            ]
+        };
+        let test_name = "executor::tests::runtime_failure_keeps_valid_cached_program";
+        run_test_in_child(test_name, &envs("valid"));
+        let cached: Vec<_> = std::fs::read_dir(&cache)
+            .expect("read cache directory")
+            .map(|entry| entry.expect("cache entry").path())
+            .filter(|path| path.extension().is_some_and(|ext| ext == "so"))
+            .collect();
+        assert_eq!(cached.len(), 1, "{cached:?}");
+
+        // Break the runtime without changing the path or mtime that key the cache.
+        let modified = std::fs::metadata(&runtime)
+            .and_then(|metadata| metadata.modified())
+            .expect("runtime mtime");
+        std::fs::write(&runtime, b"not a shared library").expect("break runtime");
+        std::fs::File::options()
+            .write(true)
+            .open(&runtime)
+            .and_then(|file| file.set_modified(modified))
+            .expect("restore runtime mtime");
+
+        run_test_in_child(test_name, &envs("broken"));
+        assert!(cached[0].exists(), "a runtime failure deleted {cached:?}");
     }
 
     #[test]
@@ -2983,8 +3046,10 @@ mod tests {
         for _ in 0..2 {
             run_test_in_child(
                 "executor::tests::program_load_resolves_runtime_imports_in_fresh_process",
-                CHILD_ENV,
-                cache.path(),
+                &[
+                    (CHILD_ENV, "1".as_ref()),
+                    ("PECOS_CACHE_DIR", cache.path().as_os_str()),
+                ],
             );
         }
     }

@@ -995,6 +995,37 @@ impl QisHeliosInterface {
             .clone()
     }
 
+    /// Digest of the selected runtime libraries' paths and contents, computed
+    /// once per process because the selection is pinned. Contents, not
+    /// modification times, identify a runtime: two builds can share an mtime,
+    /// and on macOS a program records each runtime's install name, which only
+    /// the file's contents carry.
+    fn runtime_libraries_digest() -> Result<&'static [u8; 32], InterfaceError> {
+        use sha2::{Digest, Sha256};
+
+        static DIGEST: OnceLock<Result<[u8; 32], String>> = OnceLock::new();
+        DIGEST
+            .get_or_init(|| {
+                let mut hasher = Sha256::new();
+                for lib in [
+                    Self::pinned_qis_ffi_lib_path().ok(),
+                    Self::pinned_shim_lib_path(),
+                ]
+                .into_iter()
+                .flatten()
+                {
+                    let contents = std::fs::read(&lib).map_err(|e| {
+                        format!("Failed to read runtime library {}: {e}", lib.display())
+                    })?;
+                    hasher.update(lib.to_string_lossy().as_bytes());
+                    hasher.update(contents);
+                }
+                Ok(hasher.finalize().into())
+            })
+            .as_ref()
+            .map_err(|e| InterfaceError::LoadError(e.clone()))
+    }
+
     /// Find the `libpecos_qis_ffi` library by searching common locations.
     ///
     /// Issue #365 discovery precedence is: the authoritative
@@ -1598,30 +1629,11 @@ impl QisHeliosInterface {
         hasher.update(env!("CARGO_PKG_VERSION").as_bytes());
         hasher.update(cache_target().as_bytes());
         hasher.update(build_fingerprint().to_le_bytes());
-        // The compiled object resolves `__quantum__rt__*` / `selene_*` symbols at
-        // runtime from the QIS FFI shim and the Selene shim, which are SELECTED at
-        // runtime (library search order + the `PECOS_SELENE_SHIM_PATH` override)
-        // and may differ from the build-embedded libraries that the executable
-        // fingerprint captures. Fold each selected library's identity (path +
-        // last-modified time) into the key so swapping a shim invalidates a cached
-        // object that was compiled against the old one.
-        for lib in [
-            Self::pinned_qis_ffi_lib_path().ok(),
-            Self::pinned_shim_lib_path(),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            hasher.update(lib.to_string_lossy().as_bytes());
-            let mtime_nanos = std::fs::metadata(&lib)
-                .and_then(|m| m.modified())
-                .ok()
-                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                .map(|d| d.as_nanos());
-            if let Some(nanos) = mtime_nanos {
-                hasher.update(nanos.to_le_bytes());
-            }
-        }
+        // The compiled object links the QIS FFI and the Selene shim, which are
+        // SELECTED at runtime (library search order + the `PECOS_QIS_FFI_PATH` /
+        // `PECOS_SELENE_SHIM_PATH` overrides) and may differ from the
+        // build-embedded libraries that the executable fingerprint captures.
+        hasher.update(Self::runtime_libraries_digest()?);
         let digest = hasher.finalize();
         let mut content_hash = String::with_capacity(digest.len() * 2);
         for byte in digest {
@@ -2036,9 +2048,10 @@ entry:
             // On macOS this also binds through Mach-O's two-level namespace:
             // libSystem exports a `panic` with a different ABI, and a flat lookup
             // would bind Guppy's panic(i32, ptr) to that process-aborting function.
-            // Use the pinned spellings unchanged: the loader matches a recorded
-            // dependency to the loaded singleton by this name, and the cache key
-            // hashes the same name, so all three name one runtime instance.
+            // Use the pinned spellings unchanged. On Linux the program records
+            // this name, and the loader matches it to the loaded singleton by name;
+            // macOS records each runtime's install name instead, which the cache
+            // key covers through the runtimes' contents.
             let qis_ffi_path =
                 Self::pinned_qis_ffi_lib_path().map_err(InterfaceError::LoadError)?;
             let shim_path = Self::pinned_shim_lib_path().ok_or_else(|| {
@@ -2971,19 +2984,11 @@ mod tests {
             let _env_lock = ENV_MUTEX.lock().expect("environment lock");
             QisHeliosInterface::find_pecos_qis_lib().expect("QIS FFI library")
         };
-        let modified = std::fs::metadata(&runtime)
-            .and_then(|metadata| metadata.modified())
-            .expect("runtime mtime");
         let copies = ["first", "second"].map(|copy| {
             let path = dir.path().join(copy).join("libpecos_qis_ffi.so");
             std::fs::create_dir(path.parent().expect("parent")).expect("runtime directory");
+            // Identical copies selected under one path share a program cache key.
             std::fs::copy(&runtime, &path).expect("copy QIS FFI library");
-            // Equal mtimes give both copies the same program cache key.
-            std::fs::File::options()
-                .write(true)
-                .open(&path)
-                .and_then(|file| file.set_modified(modified))
-                .expect("set runtime mtime");
             std::fs::canonicalize(path).expect("runtime copy")
         });
         let selected = dir.path().join("libpecos_qis_ffi.so");
@@ -3064,11 +3069,11 @@ mod tests {
         );
     }
 
-    /// Linux only: programs there do not link the runtime, so a copied runtime
-    /// is selected by its path alone.
+    /// Linux only: a copied runtime keeps its identity there, while on macOS
+    /// the program would record the original's install name.
     #[cfg(target_os = "linux")]
     #[test]
-    fn runtime_failure_keeps_valid_cached_program() {
+    fn program_cache_follows_runtime_contents_and_survives_runtime_failure() {
         const CHILD_ENV: &str = "PECOS_TEST_RUNTIME_FAILURE";
         let program = b"define i64 @qmain(i64 %arg) { ret i64 0 }";
         if let Some(mode) = std::env::var_os(CHILD_ENV) {
@@ -3096,28 +3101,46 @@ mod tests {
                 ("PECOS_QIS_FFI_PATH", runtime.as_os_str()),
             ]
         };
-        let test_name = "executor::tests::runtime_failure_keeps_valid_cached_program";
-        run_test_in_child(test_name, &envs("valid"));
-        let cached: Vec<_> = std::fs::read_dir(&cache)
-            .expect("read cache directory")
-            .map(|entry| entry.expect("cache entry").path())
-            .filter(|path| path.extension().is_some_and(|ext| ext == "so"))
-            .collect();
-        assert_eq!(cached.len(), 1, "{cached:?}");
-
-        // Break the runtime without changing the path or mtime that key the cache.
+        let test_name =
+            "executor::tests::program_cache_follows_runtime_contents_and_survives_runtime_failure";
+        let cached_programs = || -> Vec<PathBuf> {
+            std::fs::read_dir(&cache)
+                .expect("read cache directory")
+                .map(|entry| entry.expect("cache entry").path())
+                .filter(|path| path.extension().is_some_and(|ext| ext == "so"))
+                .collect()
+        };
         let modified = std::fs::metadata(&runtime)
             .and_then(|metadata| metadata.modified())
             .expect("runtime mtime");
-        std::fs::write(&runtime, b"not a shared library").expect("break runtime");
-        std::fs::File::options()
-            .write(true)
-            .open(&runtime)
-            .and_then(|file| file.set_modified(modified))
-            .expect("restore runtime mtime");
+        // Replace the runtime in place, keeping the path and mtime.
+        let replace_runtime = |contents: &[u8]| {
+            std::fs::write(&runtime, contents).expect("replace runtime");
+            std::fs::File::options()
+                .write(true)
+                .open(&runtime)
+                .and_then(|file| file.set_modified(modified))
+                .expect("restore runtime mtime");
+        };
 
+        run_test_in_child(test_name, &envs("valid"));
+        assert_eq!(cached_programs().len(), 1, "{:?}", cached_programs());
+
+        // A different runtime under the same path and mtime gets its own program.
+        let mut changed = std::fs::read(&runtime).expect("read runtime");
+        changed.push(0);
+        replace_runtime(&changed);
+        run_test_in_child(test_name, &envs("valid"));
+        let cached = cached_programs();
+        assert_eq!(cached.len(), 2, "{cached:?}");
+
+        // An unloadable runtime must not delete valid cached programs.
+        replace_runtime(b"not a shared library");
         run_test_in_child(test_name, &envs("broken"));
-        assert!(cached[0].exists(), "a runtime failure deleted {cached:?}");
+        assert!(
+            cached.iter().all(|path| path.exists()),
+            "a runtime failure deleted {cached:?}"
+        );
     }
 
     #[test]

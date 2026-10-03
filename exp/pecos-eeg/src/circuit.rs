@@ -331,9 +331,9 @@ fn propagate_s(mut label: Bm, remaining: &[Gate]) -> (Bm, f64) {
 
 /// Forward conjugation by a gate: P -> U P U†.
 ///
-/// A batched gate applies its operand groups (one qubit, or one pair for a
-/// two-qubit gate) in order. Returns `None` for gates that do not conjugate
-/// Paulis.
+/// A batched gate acts on each operand group (one qubit, or one pair for a
+/// two-qubit gate); the groups of a valid gate are disjoint (`Gate::validate`).
+/// Returns `None` for gates that do not conjugate Paulis.
 ///
 /// # Panics
 ///

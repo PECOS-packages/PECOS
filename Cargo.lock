@@ -4848,6 +4848,7 @@ dependencies = [
  "num-complex 0.4.6",
  "paste",
  "pecos-core",
+ "pecos-quantum",
  "pecos-random",
  "pecos-simulators",
  "pecos-stab-tn",

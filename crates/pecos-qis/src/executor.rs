@@ -3143,6 +3143,96 @@ mod tests {
         );
     }
 
+    /// Linux only: builds the stand-in runtime with the system C compiler.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn runtime_failure_with_unchanged_cache_key_keeps_cached_program() {
+        const CHILD_ENV: &str = "PECOS_TEST_RUNTIME_DEPENDENCY";
+        if let Some(mode) = std::env::var_os(CHILD_ENV) {
+            let result = QisHeliosInterface::new().load_program(
+                b"define i64 @qmain(i64 %arg) { ret i64 0 }",
+                ProgramFormat::LlvmIrText,
+            );
+            if mode == "broken" {
+                result.expect_err("a runtime missing a dependency must fail the program load");
+            } else {
+                result.expect("valid program");
+            }
+            return;
+        }
+
+        // A stand-in shim that needs a helper library. Loading a program never
+        // calls into the shim, and the stand-in's bytes, and so the program's
+        // cache key, stay the same when the helper disappears.
+        let dir = tempfile::tempdir().expect("temporary directory");
+        let compile = |args: &[&std::ffi::OsStr]| {
+            let output = Command::new("cc").args(args).output().expect("run cc");
+            assert!(
+                output.status.success(),
+                "C fixture compilation failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+        let helper_source = dir.path().join("helper.c");
+        let helper = dir.path().join("libpecos_test_helper.so");
+        std::fs::write(
+            &helper_source,
+            "int pecos_test_helper(void) { return 0; }\n",
+        )
+        .expect("write helper source");
+        compile(&[
+            "-shared".as_ref(),
+            "-fPIC".as_ref(),
+            helper_source.as_os_str(),
+            "-o".as_ref(),
+            helper.as_os_str(),
+        ]);
+        let shim_source = dir.path().join("shim.c");
+        let shim = dir.path().join("libpecos_test_shim.so");
+        std::fs::write(
+            &shim_source,
+            "int pecos_test_helper(void);\nint pecos_test_shim(void) { return pecos_test_helper(); }\n",
+        )
+        .expect("write shim source");
+        let library_dir = dir.path().as_os_str().to_owned();
+        let mut rpath = std::ffi::OsString::from("-Wl,-rpath,");
+        rpath.push(&library_dir);
+        let mut search = std::ffi::OsString::from("-L");
+        search.push(&library_dir);
+        compile(&[
+            "-shared".as_ref(),
+            "-fPIC".as_ref(),
+            shim_source.as_os_str(),
+            "-o".as_ref(),
+            shim.as_os_str(),
+            &search,
+            "-lpecos_test_helper".as_ref(),
+            &rpath,
+        ]);
+
+        let cache = dir.path().join("cache");
+        let envs = |mode: &'static str| {
+            [
+                (CHILD_ENV, std::ffi::OsStr::new(mode)),
+                ("PECOS_CACHE_DIR", cache.as_os_str()),
+                ("PECOS_SELENE_SHIM_PATH", shim.as_os_str()),
+            ]
+        };
+        let test_name =
+            "executor::tests::runtime_failure_with_unchanged_cache_key_keeps_cached_program";
+        run_test_in_child(test_name, &envs("valid"));
+        let cached: Vec<_> = std::fs::read_dir(&cache)
+            .expect("read cache directory")
+            .map(|entry| entry.expect("cache entry").path())
+            .filter(|path| path.extension().is_some_and(|ext| ext == "so"))
+            .collect();
+        assert_eq!(cached.len(), 1, "{cached:?}");
+
+        std::fs::remove_file(&helper).expect("remove helper library");
+        run_test_in_child(test_name, &envs("broken"));
+        assert!(cached[0].exists(), "a runtime failure deleted {cached:?}");
+    }
+
     #[test]
     fn failed_reload_does_not_execute_previous_program() {
         let _env_lock = ENV_MUTEX.lock().expect("environment lock");

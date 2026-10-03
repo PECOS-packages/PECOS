@@ -150,13 +150,13 @@ impl NoiseCharacterization {
             .filter(|(k, _)| k.len() == 2)
             .map(|(k, &v)| ((k[0], k[1]), v))
             .collect();
-        let gate_index = crate::expand::GateIndex::build(gates, num_qubits);
+        let expansion_gates = crate::expand::expansion_gate_flags(gates);
         let dem_entries = build_coherent_dem_exact(
             gates,
             mechanism_noise,
             detectors,
             observables,
-            &gate_index.expansion_gates,
+            &expansion_gates,
             &marginals,
             Some(&pairwise),
         );
@@ -165,7 +165,7 @@ impl NoiseCharacterization {
             mechanism_noise,
             detectors,
             observables,
-            &gate_index.expansion_gates,
+            &expansion_gates,
             &marginals,
             Some(&pairwise),
         );

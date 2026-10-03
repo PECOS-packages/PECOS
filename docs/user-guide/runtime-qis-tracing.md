@@ -2,7 +2,8 @@
 
 This guide covers PECOS's public tracing APIs for capturing the QIS operation
 stream produced during one program execution and replaying the runtime-lowered
-gates into a `TickCircuit`.
+gates into a `TickCircuit`. For handle lifetimes, capacity and recovery rules shared
+by the lowering routes, see [Selene runtime execution](selene-runtime-execution.md).
 
 ## What You'll Learn
 

@@ -8,18 +8,28 @@ capture, see [Runtime QIS tracing](runtime-qis-tracing.md).
 
 ## Allocation lifetimes and capacity
 
-Each handle introduced by an explicit qubit-allocation record stays alive through
-measurements until the program releases it. A later reset or measurement on that
-handle reaches the same native allocation, including across feedback continuations.
-Implicit legacy handles release on measurement, even in mixed streams.
+Every qubit handle stays alive through ordinary and leakage-aware measurements.
+An explicit handle lives from `AllocateQubit`; an implicit legacy handle lives from
+its first quantum operation. Both live until `ReleaseQubit` or shot end. Later
+operations on a live handle reach the same native allocation, including across
+feedback continuations.
+
+Duplicate live allocation and use after release without re-allocation are rejected
+on every lowering route, including direct lowering and all Selene routes. This
+also rejects explicit allocation of an already-live legacy static handle. Releasing
+a handle that is not live is a no-op and does not prevent its legacy first use.
 
 This changes explicit-allocation loops that measured without releasing: with
 `.qubits(1)`, allocating and measuring a new handle each iteration rejects at the
 second allocation. Release each handle when its lifetime ends, or reserve capacity
-for all handles that must remain live. Measurement alone does not free an explicit
+for all handles that must remain live. Measurement alone does not free any
 allocation. Allocating an already-live handle is invalid; admission detects this
 before submitting any operation from that input, including allocations that would
 otherwise precede the duplicate.
+
+Compatibility: a legacy program that touches more distinct static qubit handles
+than the configured capacity and relied on measurement to recycle slots is now
+rejected at admission. Release handles explicitly when their lifetimes end.
 
 Capacity admission counts all handles still live from earlier inputs, including
 measured handles not yet released. Set capacity to the maximum simultaneously live
@@ -36,11 +46,36 @@ Conservative initial sizing still uses legacy indices and retains that estimate
 across reset, so sparse IDs can enlarge the next shot's inferred capacity. An
 explicit capacity avoids this overestimate.
 
+## Prep at lifetime start
+
+`QisEngine` starts every used qubit lifetime with exactly one prep (`Reset`, lowered
+as `PZ`). The prep establishes |0> and receives the noise model's normal prep noise,
+including when a released simulator slot is reused. Allocation defers the prep
+until the first quantum operation on that handle. If that operation is a program
+reset, it counts as the lifetime's prep; otherwise the engine inserts a prep before
+it. A legacy static handle without an allocation receives the same treatment at
+its first use in the shot. An allocated handle released without use needs no prep.
+
+This rule applies to direct, runtime-provided and scheduled lowering. Prep state
+persists across feedback continuations. Release ends the lifetime; re-allocation starts a
+new one. Later program resets remain preps with normal prep noise. `SeleneRuntime`
+lowers the resets supplied by `QisEngine` and does not add preps itself.
+
+Source operation traces retain the program's operations. Inserted preps appear
+only in lowered output, and source trace metadata stays with its program operation.
+Trace metadata is local to each chunk and does not carry across feedback continuations.
+
+Compatibility: noisy results change for QIR and legacy-handle programs, which now
+receive a prep at lifetime start. Results also change for programs on the direct
+lowering path that previously received a second prep on allocation in addition to
+their first program reset, such as Guppy programs. These now receive just one prep
+at lifetime start.
+
 ## Rejection and recovery
 
 | Failure | Flat and metadata routes | Scheduled route |
 | --- | --- | --- |
-| Capacity or duplicate-allocation admission | Native state is unchanged; correct the input and retry | Native state is unchanged, but collection latches the rejection; reset is required |
+| Capacity, duplicate-allocation or use-after-release admission | Native state is unchanged; correct the input and retry | Native state is unchanged, but collection latches the rejection; reset is required |
 | Input submission, feedback or terminal draining | Reset required | Reset required |
 | Native shot-start callback | Reset required, including failure during lazy initialization | Reset required |
 

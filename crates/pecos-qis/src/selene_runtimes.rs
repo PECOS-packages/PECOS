@@ -231,6 +231,11 @@ pub fn selene_soft_rz_runtime() -> Result<SeleneRuntime, RuntimeFetchError> {
 /// the Selene runtimes are built as dependencies that may not exist when the build
 /// script runs.
 fn find_built_selene_runtime(lib_name: &str) -> Result<PathBuf, RuntimeFetchError> {
+    // Executor tests temporarily redirect CARGO_TARGET_DIR under this same lock.
+    // ENV_MUTEX is not reentrant: tests must not hold it while fetching a runtime.
+    #[cfg(test)]
+    let _env_lock = crate::test_env::ENV_MUTEX.lock().expect("environment lock");
+
     // Note: We don't check build-time environment variables here because they may be stale
     // The build script runs before Selene runtime dependencies are built, so those env vars
     // would point to non-existent paths. We rely solely on runtime detection instead.

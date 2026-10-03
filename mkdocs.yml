@@ -56,6 +56,7 @@ nav:
   - QASM Simulation: user-guide/qasm-simulation.md
   - WASM Foreign Objects: user-guide/wasm-foreign-objects.md
   - HUGR & Guppy Simulation: user-guide/hugr-simulation.md
+  - Selene Runtime Execution: user-guide/selene-runtime-execution.md
   - Runtime QIS Tracing: user-guide/runtime-qis-tracing.md
   - Runtime Custom Events: user-guide/runtime-custom-events.md
   - Scheduled Idle Simulation: user-guide/scheduled-idle-simulation.md

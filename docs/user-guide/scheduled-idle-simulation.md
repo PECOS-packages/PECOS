@@ -13,6 +13,13 @@ dynamically: runtime batches enter the noise model and simulator, and measuremen
 results return to the program to drive feedback and branches. Validation buffers
 the current input; simulation does not require a precomputed whole-shot trace.
 
+For allocation lifetimes, capacity inference, cloning and error recovery on all
+routes, see [Selene runtime execution](selene-runtime-execution.md). Scheduled
+extraction requires an explicit nonzero capacity. Once collection begins, any
+error—including capacity or duplicate-allocation admission—requires reset even
+when native state was not changed. Initial source-shape validation happens before
+collection; it does not by itself poison the runtime.
+
 <!--skip: API template requires caller-supplied runtime and LLVM program; covered by integration tests.-->
 ```python
 import pecos

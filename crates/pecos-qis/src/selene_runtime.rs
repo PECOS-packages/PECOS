@@ -487,11 +487,8 @@ impl SeleneRuntime {
 
     fn lower_native_operations(&mut self, operations: &[Operation]) -> Result<Vec<QuantumOp>> {
         self.check_batch_failure()?;
-        if operations.is_empty() && self.instance.is_none() && self.num_qubits_hint.is_none() {
-            return Ok(Vec::new());
-        }
         self.prepare_runtime_input(operations)?;
-        self.with_native_submission(|runtime| {
+        self.with_native_mutation(|runtime| {
             let mut lowered_ops = Vec::new();
 
             for op in operations {
@@ -584,9 +581,113 @@ impl SeleneRuntime {
         Ok(lowered_ops)
     }
 
-    /// Once native submission starts, any error can follow partial mutation.
+    fn deliver_measurement_outcomes(&mut self, measurements: &BTreeMap<usize, u32>) -> Result<()> {
+        self.check_batch_failure()?;
+        // Feedback can make previously blocked native operations ready. A drain
+        // preceding this delivery cannot certify the scheduler is still empty.
+        if self.scheduled_mode == Some(true) && !measurements.is_empty() {
+            self.scheduled_terminal_drained = false;
+        }
+        debug!(
+            "Received {} measurement results, num_results={}, allocated_results={:?}",
+            measurements.len(),
+            self.num_results,
+            self.interface.as_ref().map(|i| &i.allocated_results)
+        );
+
+        // Store measurements in classical state
+        for (result_id, value) in measurements {
+            trace!(
+                "Measurement result {} = {} (num_results={})",
+                result_id, value, self.num_results
+            );
+            if *value <= 1 {
+                self.state.measurements.insert(*result_id, *value == 1);
+            }
+
+            if let Some(runtime_result_id) = self.program_to_runtime_results.get(result_id) {
+                if let Some(lib) = &self.library
+                    && let Some(instance) = self.instance
+                {
+                    unsafe {
+                        let descriptor = Self::runtime_plugin_descriptor(lib)?;
+                        if self.leakage_results.contains(result_id) {
+                            let errno = (descriptor.set_u64_result_fn)(
+                                instance,
+                                *runtime_result_id,
+                                u64::from(*value),
+                            );
+                            if errno != 0 {
+                                return Err(RuntimeError::FfiError(format!(
+                                    "selene_runtime_set_u64_result failed with errno {errno} \
+                                     for result {result_id}"
+                                )));
+                            }
+                        } else {
+                            let bool_value = match *value {
+                                0 => false,
+                                1 => true,
+                                _ => {
+                                    return Err(RuntimeError::ExecutionError(format!(
+                                        "ordinary measurement result {result_id} has non-Boolean outcome {value}"
+                                    )));
+                                }
+                            };
+                            // A delivery FAILURE is fatal: the scheduler
+                            // would otherwise proceed on stale/default state
+                            // while the QIS worker advances on the real bit,
+                            // and no later gate can detect the divergence.
+                            let errno = (descriptor.set_bool_result_fn)(
+                                instance,
+                                *runtime_result_id,
+                                bool_value,
+                            );
+                            if errno != 0 {
+                                return Err(RuntimeError::FfiError(format!(
+                                    "selene_runtime_set_bool_result failed with errno {errno} \
+                                     for result {result_id}"
+                                )));
+                            }
+                        }
+                    }
+                }
+            } else {
+                log::trace!(
+                    "Measurement result {result_id} was not allocated by the Selene runtime, storing locally only"
+                );
+            }
+
+            if let Some(interface) = &mut self.interface
+                && *value <= 1
+            {
+                interface.store_result(*result_id, *value == 1);
+            }
+        }
+
+        // Check if there are remaining operations that might depend on these measurements
+        // If so, we need to re-execute the program with the known measurement values
+        // so that conditionals can evaluate correctly
+        if let Some(interface) = &self.interface {
+            let remaining_ops = interface
+                .operations
+                .len()
+                .saturating_sub(self.current_op_index);
+            if remaining_ops > 0 && !measurements.is_empty() {
+                debug!(
+                    "Setting needs_reexecution=true: {} ops remaining after {} measurements",
+                    remaining_ops,
+                    measurements.len()
+                );
+                self.needs_reexecution = true;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Submission, feedback and draining can each fail after partial mutation.
     /// Retrying such a shot is unsafe even if the plugin returns an ordinary error.
-    fn with_native_submission<T>(
+    fn with_native_mutation<T>(
         &mut self,
         submit: impl FnOnce(&mut Self) -> Result<T>,
     ) -> Result<T> {
@@ -594,7 +695,7 @@ impl SeleneRuntime {
             Ok(result) => result.map_err(|error| self.latch_batch_failure(error)),
             Err(payload) => {
                 self.latch_batch_failure(RuntimeError::ExecutionError(
-                    "native submission panicked; reset required".into(),
+                    "native operation panicked; reset required".into(),
                 ));
                 std::panic::resume_unwind(payload)
             }
@@ -607,21 +708,23 @@ impl SeleneRuntime {
             // Nothing was ever submitted; do not load the plugin just to drain.
             return Ok(Vec::new());
         }
-        // Force the scheduler to release held work before collecting: a plain
-        // poll only returns operations the plugin already considers ready, so
-        // without the terminal barrier a lazily scheduling runtime could hold
-        // a tail batch straight past this check. A plugin without the barrier
-        // symbol cannot prove it released held work, so this fails closed
-        // (both PECOS-built runtimes export `selene_runtime_global_barrier`).
-        if !self.call_runtime_global_barrier(0)? {
-            return Err(RuntimeError::ExecutionError(
-                "runtime plugin does not export selene_runtime_global_barrier; \
+        self.with_native_mutation(|runtime| {
+            // Force the scheduler to release held work before collecting: a plain
+            // poll only returns operations the plugin already considers ready, so
+            // without the terminal barrier a lazily scheduling runtime could hold
+            // a tail batch straight past this check. A plugin without the barrier
+            // symbol cannot prove it released held work, so this fails closed
+            // (both PECOS-built runtimes export `selene_runtime_global_barrier`).
+            if !runtime.call_runtime_global_barrier(0)? {
+                return Err(RuntimeError::ExecutionError(
+                    "runtime plugin does not export selene_runtime_global_barrier; \
                  cannot force the terminal flush required to verify the \
                  scheduler is drained"
-                    .to_string(),
-            ));
-        }
-        self.drain_runtime_operations()
+                        .to_string(),
+                ));
+            }
+            runtime.drain_runtime_operations()
+        })
     }
 
     fn select_output_mode(&mut self, scheduled: bool) -> Result<()> {
@@ -962,8 +1065,9 @@ impl SeleneRuntime {
             self.program_to_runtime_qubits.keys().copied().collect(),
             self.explicit_qubit_handles.clone(),
         );
-        let requested = self.num_qubits_hint.unwrap_or(self.num_qubits.max(qubits));
-        if peak_live > requested {
+        if let Some(requested) = self.num_qubits_hint
+            && peak_live > requested
+        {
             return Err(RuntimeError::ExecutionError(format!(
                 "runtime input requires {peak_live} live qubits but configured capacity is {requested}; \
                  configure sufficient qubits before starting the shot"
@@ -982,6 +1086,11 @@ impl SeleneRuntime {
         }
         self.num_qubits = self.num_qubits.max(qubits);
         self.num_results = self.num_results.max(results);
+        // Result bookkeeping and empty barriers need no native instance. Keep
+        // capacity inference open until there is qubit demand or an explicit hint.
+        if self.instance.is_none() && self.num_qubits_hint.is_none() && self.num_qubits == 0 {
+            return Ok(());
+        }
         self.load_plugin()
     }
 
@@ -1454,7 +1563,9 @@ impl SeleneRuntime {
     }
 
     fn lower_runtime_barrier(&mut self) -> Result<Vec<QuantumOp>> {
-        self.load_plugin()?;
+        if self.instance.is_none() {
+            return Ok(Vec::new());
+        }
 
         // Runtime-native barriers keep scheduler-specific ordering decisions
         // inside the plugin. Falling back to a drain preserves compatibility
@@ -1475,7 +1586,7 @@ impl SeleneRuntime {
             Operation::AllocateQubit { id } => {
                 if self.program_to_runtime_qubits.contains_key(id) {
                     return Err(RuntimeError::ExecutionError(format!(
-                        "program qubit {id} is already allocated; release it before allocating again"
+                        "program qubit {id} is already allocated; reset required after rejected input; release live handles before reallocation in the new shot"
                     )));
                 }
                 let _ = self.runtime_qubit_for_program(*id)?;
@@ -1615,7 +1726,9 @@ impl SeleneRuntime {
 
     fn drain_runtime_operations(&mut self) -> Result<Vec<QuantumOp>> {
         self.check_batch_failure()?;
-        self.load_plugin()?;
+        if self.instance.is_none() {
+            return Ok(Vec::new());
+        }
         let mut lowered_ops = Vec::new();
 
         loop {
@@ -2247,8 +2360,9 @@ fn nanoseconds_to_seconds(nanoseconds: u64) -> f64 {
 
 impl Clone for SeleneRuntime {
     fn clone(&self) -> Self {
-        // For now, create a new instance with the same plugin path
-        // The library itself can't be cloned, so we'll reload if needed
+        // Clone configuration for a fresh shot, never a native snapshot. An
+        // initialized instance may hold allocations, results or scheduler state
+        // that cannot be transferred to the fresh plugin, so require reset.
         Self {
             plugin_path: self.plugin_path.clone(),
             init_args: self.init_args.clone(),
@@ -2279,7 +2393,16 @@ impl Clone for SeleneRuntime {
             custom_event_policy: self.custom_event_policy,
             custom_event_handler: self.custom_event_handler.clone(),
             batch_failure: self.batch_failure.clone().or_else(|| {
-                (self.scheduled_mode == Some(true)).then(|| RuntimeError::ExecutionError("cloned scheduled runtime requires reset; live native snapshots are unsupported".into()))
+                let kind = if self.scheduled_mode == Some(true) {
+                    "scheduled"
+                } else if self.instance.is_some() {
+                    "native"
+                } else {
+                    return None;
+                };
+                Some(RuntimeError::ExecutionError(format!(
+                    "cloned {kind} runtime requires reset; live native snapshots are unsupported"
+                )))
             }),
             scheduled_mode: self.scheduled_mode,
             scheduled_terminal_drained: false,
@@ -2566,11 +2689,8 @@ impl QisRuntime for SeleneRuntime {
         operations: &[Operation],
     ) -> Result<Vec<LoweredQuantumOp>> {
         self.select_output_mode(false)?;
-        if operations.is_empty() && self.instance.is_none() && self.num_qubits_hint.is_none() {
-            return Ok(Vec::new());
-        }
         self.prepare_runtime_input(operations)?;
-        self.with_native_submission(|runtime| runtime.submit_metadata_operations(operations))
+        self.with_native_mutation(|runtime| runtime.submit_metadata_operations(operations))
     }
 
     fn provide_measurements(&mut self, measurements: BTreeMap<usize, bool>) -> Result<()> {
@@ -2584,109 +2704,7 @@ impl QisRuntime for SeleneRuntime {
 
     fn provide_measurement_outcomes(&mut self, measurements: BTreeMap<usize, u32>) -> Result<()> {
         self.check_batch_failure()?;
-        // Feedback can make previously blocked native operations ready. A drain
-        // preceding this delivery cannot certify the scheduler is still empty.
-        if self.scheduled_mode == Some(true) && !measurements.is_empty() {
-            self.scheduled_terminal_drained = false;
-        }
-        debug!(
-            "Received {} measurement results, num_results={}, allocated_results={:?}",
-            measurements.len(),
-            self.num_results,
-            self.interface.as_ref().map(|i| &i.allocated_results)
-        );
-
-        // Store measurements in classical state
-        for (result_id, value) in &measurements {
-            trace!(
-                "Measurement result {} = {} (num_results={})",
-                result_id, value, self.num_results
-            );
-            if *value <= 1 {
-                self.state.measurements.insert(*result_id, *value == 1);
-            }
-
-            if let Some(runtime_result_id) = self.program_to_runtime_results.get(result_id) {
-                if let Some(lib) = &self.library
-                    && let Some(instance) = self.instance
-                {
-                    unsafe {
-                        let descriptor = Self::runtime_plugin_descriptor(lib)?;
-                        if self.leakage_results.contains(result_id) {
-                            let errno = (descriptor.set_u64_result_fn)(
-                                instance,
-                                *runtime_result_id,
-                                u64::from(*value),
-                            );
-                            if errno != 0 {
-                                return Err(RuntimeError::FfiError(format!(
-                                    "selene_runtime_set_u64_result failed with errno {errno} \
-                                     for result {result_id}"
-                                )));
-                            }
-                        } else {
-                            let bool_value = match *value {
-                                0 => false,
-                                1 => true,
-                                _ => {
-                                    return Err(RuntimeError::ExecutionError(format!(
-                                        "ordinary measurement result {result_id} has non-Boolean outcome {value}"
-                                    )));
-                                }
-                            };
-                            // A delivery FAILURE is fatal: the scheduler
-                            // would otherwise proceed on stale/default state
-                            // while the QIS worker advances on the real bit,
-                            // and no later gate can detect the divergence.
-                            // An ABSENT symbol stays legal -- a runtime that
-                            // never conditions on results has no delivery to
-                            // fail.
-                            let errno = (descriptor.set_bool_result_fn)(
-                                instance,
-                                *runtime_result_id,
-                                bool_value,
-                            );
-                            if errno != 0 {
-                                return Err(RuntimeError::FfiError(format!(
-                                    "selene_runtime_set_bool_result failed with errno {errno} \
-                                     for result {result_id}"
-                                )));
-                            }
-                        }
-                    }
-                }
-            } else {
-                log::trace!(
-                    "Measurement result {result_id} was not allocated by the Selene runtime, storing locally only"
-                );
-            }
-
-            if let Some(interface) = &mut self.interface
-                && *value <= 1
-            {
-                interface.store_result(*result_id, *value == 1);
-            }
-        }
-
-        // Check if there are remaining operations that might depend on these measurements
-        // If so, we need to re-execute the program with the known measurement values
-        // so that conditionals can evaluate correctly
-        if let Some(interface) = &self.interface {
-            let remaining_ops = interface
-                .operations
-                .len()
-                .saturating_sub(self.current_op_index);
-            if remaining_ops > 0 && !measurements.is_empty() {
-                debug!(
-                    "Setting needs_reexecution=true: {} ops remaining after {} measurements",
-                    remaining_ops,
-                    measurements.len()
-                );
-                self.needs_reexecution = true;
-            }
-        }
-
-        Ok(())
+        self.with_native_mutation(|runtime| runtime.deliver_measurement_outcomes(&measurements))
     }
 
     fn get_classical_state(&self) -> &ClassicalState {
@@ -3336,15 +3354,6 @@ mod tests {
     }
 
     #[cfg(feature = "selene-runtimes")]
-    fn lower_lifetime_test_input(
-        runtime: &mut SeleneRuntime,
-        mode: LoweringRoute,
-        ops: &[Operation],
-    ) {
-        mode.lower(runtime, ops).unwrap();
-    }
-
-    #[cfg(feature = "selene-runtimes")]
     #[test]
     fn explicit_measurement_lifetime_survives_until_release() {
         for mode in LoweringRoute::ALL {
@@ -3355,14 +3364,14 @@ mod tests {
                 ] {
                     runtime.set_num_qubits(1);
                     runtime.shot_start(0, Some(7)).unwrap();
-                    lower_lifetime_test_input(
+                    mode.lower(
                         &mut runtime,
-                        mode,
                         &[
                             Operation::AllocateQubit { id: 71 },
                             QuantumOp::Reset(71).into(),
                         ],
-                    );
+                    )
+                    .unwrap();
                     let original = runtime.program_to_runtime_qubits[&71];
                     for result in 0..2 {
                         let measurement = if leaked {
@@ -3372,7 +3381,7 @@ mod tests {
                         };
                         // Separate submissions exercise persistence after feedback,
                         // including a continuation with no allocation records.
-                        lower_lifetime_test_input(&mut runtime, mode, &[measurement.into()]);
+                        mode.lower(&mut runtime, &[measurement.into()]).unwrap();
                         assert_eq!(
                             runtime.program_to_runtime_qubits.get(&71),
                             Some(&original),
@@ -3381,31 +3390,19 @@ mod tests {
                         runtime
                             .provide_measurement_outcomes(BTreeMap::from([(result, 0)]))
                             .unwrap();
-                        lower_lifetime_test_input(
-                            &mut runtime,
-                            mode,
-                            &[QuantumOp::Reset(71).into()],
-                        );
+                        mode.lower(&mut runtime, &[QuantumOp::Reset(71).into()])
+                            .unwrap();
                         assert_eq!(runtime.program_to_runtime_qubits[&71], original);
                     }
-                    lower_lifetime_test_input(
-                        &mut runtime,
-                        mode,
-                        &[Operation::ReleaseQubit { id: 71 }],
-                    );
+                    mode.lower(&mut runtime, &[Operation::ReleaseQubit { id: 71 }])
+                        .unwrap();
                     assert!(!runtime.program_to_runtime_qubits.contains_key(&71));
                     // A one-slot runtime can allocate again only after release.
-                    lower_lifetime_test_input(
-                        &mut runtime,
-                        mode,
-                        &[Operation::AllocateQubit { id: 93 }],
-                    );
+                    mode.lower(&mut runtime, &[Operation::AllocateQubit { id: 93 }])
+                        .unwrap();
                     assert_eq!(runtime.program_to_runtime_qubits.len(), 1);
-                    lower_lifetime_test_input(
-                        &mut runtime,
-                        mode,
-                        &[Operation::ReleaseQubit { id: 93 }],
-                    );
+                    mode.lower(&mut runtime, &[Operation::ReleaseQubit { id: 93 }])
+                        .unwrap();
                     mode.drain(&mut runtime);
                     runtime.shot_end().unwrap();
                 }
@@ -3421,7 +3418,7 @@ mod tests {
                 let mut runtime = crate::selene_runtimes::selene_simple_runtime().unwrap();
                 runtime.set_num_qubits(1);
                 runtime.shot_start(0, None).unwrap();
-                lower_lifetime_test_input(&mut runtime, mode, &[measurement.into()]);
+                mode.lower(&mut runtime, &[measurement.into()]).unwrap();
                 assert!(runtime.program_to_runtime_qubits.is_empty());
             }
         }
@@ -3435,21 +3432,22 @@ mod tests {
                 let mut runtime = crate::selene_runtimes::selene_simple_runtime().unwrap();
                 runtime.set_num_qubits(1);
                 runtime.shot_start(0, None).unwrap();
-                lower_lifetime_test_input(
+                mode.lower(
                     &mut runtime,
-                    mode,
                     &[
                         Operation::AllocateQubit { id: 71 },
                         Operation::ReleaseQubit { id: 71 },
                     ],
-                );
+                )
+                .unwrap();
                 mode.drain(&mut runtime);
                 runtime.shot_end().unwrap();
                 if reset {
                     runtime.reset().unwrap();
                 }
                 runtime.shot_start(1, None).unwrap();
-                lower_lifetime_test_input(&mut runtime, mode, &[QuantumOp::Measure(0, 0).into()]);
+                mode.lower(&mut runtime, &[QuantumOp::Measure(0, 0).into()])
+                    .unwrap();
                 assert!(runtime.program_to_runtime_qubits.is_empty());
             }
         }
@@ -3457,7 +3455,7 @@ mod tests {
 
     #[cfg(feature = "selene-runtimes")]
     #[test]
-    fn review_continuation_capacity_preserves_native_state() {
+    fn continuation_capacity_preserves_native_state() {
         for mode in [LoweringRoute::Flat, LoweringRoute::Metadata] {
             for grow_by in [1, 2] {
                 let mut runtime = crate::selene_runtimes::selene_simple_runtime().unwrap();
@@ -3501,7 +3499,7 @@ mod tests {
 
     #[cfg(feature = "selene-runtimes")]
     #[test]
-    fn review_mixed_handles_keep_individual_lifetimes() {
+    fn mixed_handles_keep_individual_lifetimes() {
         let mut runtime = crate::selene_runtimes::selene_simple_runtime().unwrap();
         runtime.set_num_qubits(2);
         runtime.shot_start(0, None).unwrap();
@@ -3519,7 +3517,7 @@ mod tests {
 
     #[cfg(feature = "selene-runtimes")]
     #[test]
-    fn review_loaded_collector_does_not_define_streamed_lifetimes() {
+    fn loaded_collector_does_not_define_streamed_lifetimes() {
         let mut runtime = crate::selene_runtimes::selene_simple_runtime().unwrap();
         let mut collector = OperationCollector::new();
         collector.queue_operation(Operation::AllocateQubit { id: 71 });
@@ -3533,7 +3531,7 @@ mod tests {
 
     #[cfg(feature = "selene-runtimes")]
     #[test]
-    fn review_failed_release_latches_uncertain_native_state() {
+    fn failed_release_latches_uncertain_native_state() {
         let mut runtime = crate::selene_runtimes::selene_simple_runtime().unwrap();
         runtime.set_num_qubits(1);
         runtime.shot_start(0, None).unwrap();
@@ -3653,7 +3651,7 @@ mod tests {
 
     #[cfg(feature = "selene-runtimes")]
     #[test]
-    fn rereview_legacy_handle_indices_do_not_require_native_growth() {
+    fn legacy_handle_indices_do_not_require_native_growth() {
         for mode in [LoweringRoute::Flat, LoweringRoute::Metadata] {
             let mut runtime = crate::selene_runtimes::selene_simple_runtime().unwrap();
             runtime.shot_start(0, None).unwrap();
@@ -3689,7 +3687,7 @@ mod tests {
 
     #[cfg(feature = "selene-runtimes")]
     #[test]
-    fn rereview_empty_input_does_not_initialize_zero_capacity() {
+    fn empty_input_does_not_initialize_zero_capacity() {
         for mode in [LoweringRoute::Flat, LoweringRoute::Metadata] {
             let mut runtime = crate::selene_runtimes::selene_simple_runtime().unwrap();
             runtime.shot_start(0, None).unwrap();
@@ -3710,7 +3708,7 @@ mod tests {
 
     #[cfg(feature = "selene-runtimes")]
     #[test]
-    fn rereview_duplicate_live_allocation_rejects_until_release() {
+    fn duplicate_live_allocation_requires_reset() {
         for mode in LoweringRoute::ALL {
             let mut runtime = crate::selene_runtimes::selene_simple_runtime().unwrap();
             runtime.set_num_qubits(1);
@@ -3730,12 +3728,28 @@ mod tests {
                 mode.lower(&mut runtime, &[Operation::AllocateQubit { id: 71 }])
                     .is_err()
             );
+            assert!(
+                mode.lower(&mut runtime, &[Operation::ReleaseQubit { id: 71 }])
+                    .is_err()
+            );
+            assert!(runtime.shot_end().is_err());
+            runtime.reset().unwrap();
+            runtime.shot_start(1, None).unwrap();
+            mode.lower(
+                &mut runtime,
+                &[
+                    Operation::AllocateQubit { id: 71 },
+                    Operation::ReleaseQubit { id: 71 },
+                    Operation::AllocateQubit { id: 71 },
+                ],
+            )
+            .unwrap();
         }
     }
 
     #[cfg(feature = "selene-runtimes")]
     #[test]
-    fn rereview_native_operation_errors_latch_after_partial_input() {
+    fn native_operation_errors_latch_after_partial_input() {
         for mode in [LoweringRoute::Flat, LoweringRoute::Metadata] {
             for failure in 0..5 {
                 let mut runtime = crate::selene_runtimes::selene_simple_runtime().unwrap();
@@ -3775,6 +3789,164 @@ mod tests {
 
     #[cfg(feature = "selene-runtimes")]
     #[test]
+    fn result_only_input_defers_native_capacity() {
+        for mode in [LoweringRoute::Flat, LoweringRoute::Metadata] {
+            let mut runtime = crate::selene_runtimes::selene_simple_runtime().unwrap();
+            runtime.shot_start(7, Some(11)).unwrap();
+            mode.lower(
+                &mut runtime,
+                &[Operation::AllocateResult { id: 5 }, Operation::Barrier],
+            )
+            .unwrap();
+            assert!(runtime.instance.is_none());
+            assert_eq!(runtime.num_results, 6);
+            assert_eq!(runtime.pending_shot_start, Some((7, Some(11))));
+            mode.lower(
+                &mut runtime,
+                &[
+                    Operation::AllocateQubit { id: 71 },
+                    QuantumOp::Measure(71, 5).into(),
+                    Operation::ReleaseQubit { id: 71 },
+                ],
+            )
+            .unwrap();
+            assert_eq!(runtime.initialized_num_qubits, Some(1));
+            assert_eq!(runtime.active_shot, Some((7, 11)));
+            runtime
+                .provide_measurement_outcomes(BTreeMap::from([(5, 1)]))
+                .unwrap();
+            mode.drain(&mut runtime);
+            assert!(runtime.shot_end().unwrap().measurements[&5]);
+        }
+    }
+
+    #[cfg(feature = "selene-runtimes")]
+    #[test]
+    fn live_native_clone_requires_reset_before_reallocation() {
+        for mode in LoweringRoute::ALL {
+            for measured in [false, true] {
+                let mut runtime = crate::selene_runtimes::selene_simple_runtime().unwrap();
+                runtime.set_num_qubits(2);
+                runtime.shot_start(0, None).unwrap();
+                mode.lower(
+                    &mut runtime,
+                    &[
+                        Operation::AllocateQubit { id: 71 },
+                        QuantumOp::RXY(0.5, 0.0, 71).into(),
+                    ],
+                )
+                .unwrap();
+                if measured {
+                    mode.lower(&mut runtime, &[QuantumOp::Measure(71, 0).into()])
+                        .unwrap();
+                    runtime
+                        .provide_measurement_outcomes(BTreeMap::from([(0, 0)]))
+                        .unwrap();
+                }
+                let mut cloned = runtime.clone();
+                assert!(
+                    mode.lower(&mut cloned, &[Operation::AllocateQubit { id: 72 }])
+                        .is_err()
+                );
+                assert!(cloned.shot_end().is_err());
+                assert!(cloned.clone().shot_start(1, None).is_err());
+                // The original remains usable; only the unsupported snapshot is rejected.
+                mode.lower(&mut runtime, &[Operation::AllocateQubit { id: 72 }])
+                    .unwrap();
+                assert_ne!(
+                    runtime.program_to_runtime_qubits[&71],
+                    runtime.program_to_runtime_qubits[&72]
+                );
+                cloned.reset().unwrap();
+                cloned.shot_start(1, None).unwrap();
+                mode.lower(
+                    &mut cloned,
+                    &[
+                        Operation::AllocateQubit { id: 71 },
+                        Operation::AllocateQubit { id: 72 },
+                    ],
+                )
+                .unwrap();
+                assert_ne!(
+                    cloned.program_to_runtime_qubits[&71],
+                    cloned.program_to_runtime_qubits[&72]
+                );
+            }
+        }
+    }
+
+    #[cfg(feature = "selene-runtimes")]
+    #[test]
+    fn failed_feedback_delivery_requires_reset() {
+        for mode in LoweringRoute::ALL {
+            for leaked in [false, true] {
+                let mut runtime = crate::selene_runtimes::selene_simple_runtime().unwrap();
+                runtime.set_num_qubits(1);
+                runtime.shot_start(0, None).unwrap();
+                let measurement = if leaked {
+                    QuantumOp::MeasureLeaked(0, 0)
+                } else {
+                    QuantumOp::Measure(0, 0)
+                };
+                mode.lower(
+                    &mut runtime,
+                    &[Operation::AllocateQubit { id: 0 }, measurement.into()],
+                )
+                .unwrap();
+                // The real plugin rejects an unknown integer result ID.
+                runtime.program_to_runtime_results.insert(0, u64::MAX);
+                let error = runtime
+                    .provide_measurement_outcomes(BTreeMap::from([(0, 1)]))
+                    .unwrap_err();
+                assert!(error.to_string().contains("set_"));
+                assert!(
+                    runtime
+                        .provide_measurement_outcomes(BTreeMap::new())
+                        .is_err()
+                );
+                assert!(runtime.shot_end().is_err());
+                assert!(runtime.clone().shot_end().is_err());
+                runtime.reset().unwrap();
+                runtime.shot_start(1, None).unwrap();
+                mode.lower(&mut runtime, &[QuantumOp::Measure(0, 0).into()])
+                    .unwrap();
+                runtime
+                    .provide_measurement_outcomes(BTreeMap::from([(0, 0)]))
+                    .unwrap();
+                mode.drain(&mut runtime);
+                runtime.shot_end().unwrap();
+            }
+        }
+    }
+
+    #[cfg(feature = "selene-runtimes")]
+    #[test]
+    fn failed_terminal_barrier_requires_reset() {
+        for mode in [LoweringRoute::Flat, LoweringRoute::Metadata] {
+            let mut runtime = crate::selene_runtimes::selene_simple_runtime().unwrap();
+            runtime.set_num_qubits(1);
+            runtime.shot_start(0, None).unwrap();
+            mode.lower(&mut runtime, &[Operation::AllocateQubit { id: 0 }])
+                .unwrap();
+            // Simulate an unavailable barrier API without supplying invalid FFI pointers.
+            let library = runtime.library.take();
+            let error = runtime.drain_pending_operations().unwrap_err();
+            runtime.library = library;
+            assert!(error.to_string().contains("runtime is not loaded"));
+            assert!(runtime.shot_end().is_err());
+            assert!(runtime.drain_pending_operations().is_err());
+            assert!(runtime.clone().shot_end().is_err());
+            runtime.reset().unwrap();
+            runtime.shot_start(1, None).unwrap();
+            mode.lower(&mut runtime, &[Operation::AllocateQubit { id: 0 }])
+                .unwrap();
+            mode.drain(&mut runtime);
+            runtime.shot_end().unwrap();
+        }
+    }
+
+    #[cfg(feature = "selene-runtimes")]
+    #[test]
     fn caught_submission_panic_cannot_resume_native_state() {
         let mut runtime = crate::selene_runtimes::selene_simple_runtime().unwrap();
         runtime.set_num_qubits(1);
@@ -3783,7 +3955,7 @@ mod tests {
             .lower_operations(&[Operation::AllocateQubit { id: 0 }])
             .unwrap();
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            runtime.with_native_submission::<()>(|runtime| {
+            runtime.with_native_mutation::<()>(|runtime| {
                 runtime.call_runtime_rxy(0, 0.5, 0.0)?;
                 panic!("synthetic panic after native mutation");
             })

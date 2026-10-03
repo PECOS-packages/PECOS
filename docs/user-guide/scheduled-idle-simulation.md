@@ -18,29 +18,44 @@ measurements until the program releases it. A later reset or measurement on that
 handle reaches the same runtime allocation, including across feedback
 continuations. Implicitly materialized legacy handles still release on
 measurement, even when explicit and implicit handles occur in the same stream.
+This changes explicit-allocation loops that measured without releasing: with
+`.qubits(1)`, allocating and measuring a new handle each iteration now rejects at
+the second allocation. Release each handle when its lifetime ends, or reserve
+capacity for all handles that must remain live. Measurement alone no longer frees
+an explicitly allocated slot.
 
 Capacity admission counts handles still live from earlier inputs, including
 measured handles that have not been released. Set `.qubits(...)` to the maximum
 simultaneously live physical allocation count before running a dynamic program.
 The scheduled route requires this capacity explicitly. Flat and metadata routes
-can infer it from a preloaded complete collector or the first nonempty input,
+can infer it from a preloaded complete collector or the first input needing qubits,
 but cannot safely increase it once the plugin has initialized: the plugin ABI
 has no state-preserving resize. A continuation that needs more capacity rejects
 before native submission. Legacy program IDs are logical handles, so a larger ID
-alone does not require a larger initialized runtime: peak live use determines
-whether a continuation fits. Empty inputs without a capacity hint defer plugin
-initialization. Reset and configure sufficient capacity before starting a new
-shot; automatic reinitialization never discards an in-progress shot. Python
+alone does not require a larger initialized runtime within a shot: peak live use
+determines whether a continuation fits. Conservative initial sizing still uses
+legacy indices and retains that estimate across reset; sparse legacy IDs can
+therefore enlarge the next shot's inferred capacity. Set an explicit capacity to
+avoid this overestimate. Inputs with no qubit demand, such as result allocation
+and empty barriers, defer initialization when no capacity is configured or inferred.
+Reset and configure sufficient capacity before starting a new shot; automatic reinitialization never discards an in-progress shot. Python
 `sim()` already requires `.qubits(N)` for QIS; the inference rules concern Rust
 and direct runtime callers.
 
-An explicit allocation of an already-live program handle is rejected; release it
-before reallocation. Once native submission begins, an error or caught panic can
-follow partial mutation. Such failures block further execution and shot completion
-until a successful reset, including on flat and metadata routes. Capacity
-rejections before submission leave the existing native state intact. Shot lifecycle cleanup
-remains the plugin's responsibility; the public runtimes clear allocations at
-`shot_end`, including measured handles not explicitly released by the program.
+An explicit allocation of an already-live program handle is rejected. This
+rejection requires reset, because earlier operations in the input may already
+have executed; sending a release after the error cannot recover the shot. In the
+new shot, release each handle before allocating it again. Errors and caught
+panics during input submission, measurement feedback or terminal draining block
+further execution and shot completion until a successful reset, including on flat
+and metadata routes. Capacity rejections before submission leave the existing
+native state intact.
+
+Cloning an initialized native runtime also requires reset before use: the plugin
+ABI cannot copy live allocations, pending results or scheduler state. Configuration
+templates without a native instance remain cloneable for fresh shots. Shot lifecycle
+cleanup remains the plugin's responsibility; the public runtimes clear allocations
+at `shot_end`, including measured handles not explicitly released by the program.
 
 <!--skip: API template requires caller-supplied runtime and LLVM program; covered by integration tests.-->
 ```python

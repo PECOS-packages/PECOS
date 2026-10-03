@@ -18,6 +18,25 @@ pub struct StabilizerGroup {
     sim: SparseStab,
 }
 
+/// The (first, second) operand pairs of a batched two-qubit gate.
+///
+/// # Panics
+///
+/// Panics if the qubit count is odd.
+fn operand_pairs(gate_type: GateType, qubits: &[QubitId]) -> Vec<(QubitId, QubitId)> {
+    assert!(
+        qubits.len().is_multiple_of(2),
+        "EEG: {gate_type:?} acts on {} qubits, not a multiple of its arity 2",
+        qubits.len()
+    );
+    qubits
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|&[first, second]| (first, second))
+        .collect()
+}
+
 impl StabilizerGroup {
     /// Run the noiseless circuit on SparseStab.
     #[must_use]
@@ -66,17 +85,18 @@ impl StabilizerGroup {
                 GateType::Z => {
                     sim.z(&qubits);
                 }
-                GateType::CX if qubits.len() >= 2 => {
-                    sim.cx(&[(qubits[0], qubits[1])]);
+                // A batched two-qubit gate acts on every pair, in order.
+                GateType::CX => {
+                    sim.cx(&operand_pairs(gate.gate_type, &qubits));
                 }
-                GateType::CY if qubits.len() >= 2 => {
-                    sim.cy(&[(qubits[0], qubits[1])]);
+                GateType::CY => {
+                    sim.cy(&operand_pairs(gate.gate_type, &qubits));
                 }
-                GateType::CZ if qubits.len() >= 2 => {
-                    sim.cz(&[(qubits[0], qubits[1])]);
+                GateType::CZ => {
+                    sim.cz(&operand_pairs(gate.gate_type, &qubits));
                 }
-                GateType::SWAP if qubits.len() >= 2 => {
-                    sim.swap(&[(qubits[0], qubits[1])]);
+                GateType::SWAP => {
+                    sim.swap(&operand_pairs(gate.gate_type, &qubits));
                 }
                 GateType::MZ => {
                     sim.mz(&qubits);

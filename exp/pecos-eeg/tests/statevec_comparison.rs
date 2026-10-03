@@ -55,7 +55,7 @@ fn bit_to_f64(value: usize) -> f64 {
 fn eeg_detection_prob(gates: &[Gate], theta: f64) -> f64 {
     let expanded = expand::expand_circuit(gates).expect("supported circuit");
     let noise = NoiseModel::coherent_only(theta);
-    let result = analyze_expanded(&expanded.gates, &noise);
+    let result = analyze_expanded(&expanded.gates, &noise, &expanded.expansion_gates);
 
     // Parity detector: Z on all auxiliary qubits
     let mut det_stab = Bm::default();
@@ -87,7 +87,7 @@ fn eeg_detection_prob(gates: &[Gate], theta: f64) -> f64 {
 fn eeg_per_round_probs(gates: &[Gate], theta: f64, num_rounds: usize) -> Vec<f64> {
     let expanded = expand::expand_circuit(gates).expect("supported circuit");
     let noise = NoiseModel::coherent_only(theta);
-    let result = analyze_expanded(&expanded.gates, &noise);
+    let result = analyze_expanded(&expanded.gates, &noise, &expanded.expansion_gates);
 
     // One detector per round (Z on that round's aux qubit)
     let dets: Vec<Detector> = (0..num_rounds)
@@ -147,7 +147,7 @@ fn test_eeg_vs_statevec_bell_parity() {
 
     let expanded = expand::expand_circuit(&gates).expect("supported circuit");
     let noise = NoiseModel::coherent_only(theta);
-    let result = analyze_expanded(&expanded.gates, &noise);
+    let result = analyze_expanded(&expanded.gates, &noise, &expanded.expansion_gates);
 
     // Parity detector: Z_aux0 * Z_aux1
     assert_eq!(expanded.measurement_qubit.len(), 2);
@@ -238,7 +238,7 @@ fn test_eeg_vs_statevec_larger_angle() {
 
     let expanded = expand::expand_circuit(&gates).expect("supported circuit");
     let noise = NoiseModel::coherent_only(theta);
-    let result = analyze_expanded(&expanded.gates, &noise);
+    let result = analyze_expanded(&expanded.gates, &noise, &expanded.expansion_gates);
 
     let aux0 = expanded.measurement_qubit[0];
     let aux1 = expanded.measurement_qubit[1];
@@ -477,7 +477,7 @@ fn bench_z_basis_check() {
     for &theta in &[0.01, 0.05, 0.1, 0.2, 0.3] {
         let expanded = expand::expand_circuit(&gates).expect("supported circuit");
         let noise = NoiseModel::coherent_only(theta);
-        let result = analyze_expanded(&expanded.gates, &noise);
+        let result = analyze_expanded(&expanded.gates, &noise, &expanded.expansion_gates);
 
         let aux = expanded.measurement_qubit[0];
         let det = Detector {
@@ -609,7 +609,7 @@ fn bench_repetition_code_comparison() {
             let expanded = expand::expand_circuit(&gates).expect("supported circuit");
             let noise_model = NoiseModel::coherent_only(theta);
             let noise_spec = UniformNoise::coherent_only(theta);
-            let result = analyze_expanded(&expanded.gates, &noise_model);
+            let result = analyze_expanded(&expanded.gates, &noise_model, &expanded.expansion_gates);
 
             let mut dets = Vec::new();
             for round in 0..(num_rounds - 1) {
@@ -842,22 +842,7 @@ fn bench_expansion_equivalence() {
             for (i, g) in expanded.gates.iter().enumerate() {
                 let qs: Vec<usize> = g.qubits.iter().map(pecos_core::QubitId::index).collect();
 
-                // Skip expansion gates for noise (same logic as Heisenberg)
-                let is_exp_gate = {
-                    let is_qalloc = g.gate_type == pecos_core::gate_type::GateType::QAlloc;
-                    let is_exp_cx = i > 0
-                        && g.gate_type == pecos_core::gate_type::GateType::CX
-                        && expanded.gates[i - 1].gate_type
-                            == pecos_core::gate_type::GateType::QAlloc
-                        && expanded.gates[i - 1].qubits[0].index()
-                            == qs.get(1).copied().unwrap_or(999);
-                    let is_exp_pz = i > 1
-                        && g.gate_type == pecos_core::gate_type::GateType::PZ
-                        && expanded.gates[i - 1].gate_type == pecos_core::gate_type::GateType::CX
-                        && expanded.gates[i - 2].gate_type
-                            == pecos_core::gate_type::GateType::QAlloc;
-                    is_qalloc || is_exp_cx || is_exp_pz
-                };
+                let is_exp_gate = expanded.expansion_gates[i];
 
                 match g.gate_type {
                     pecos_core::gate_type::GateType::PZ
@@ -979,39 +964,12 @@ fn bench_matrix_heisenberg() {
     }
 
     // Process gates in reverse order
-    let exp_gates_set = {
-        let mut s = std::collections::HashSet::new();
-        // Detect expansion gates (same logic as heisenberg.rs)
-        for i in 1..expanded.gates.len() {
-            if expanded.gates[i].gate_type == pecos_core::gate_type::GateType::QAlloc {
-                s.insert(i);
-            }
-            if expanded.gates[i].gate_type == pecos_core::gate_type::GateType::CX
-                && expanded.gates[i - 1].gate_type == pecos_core::gate_type::GateType::QAlloc
-            {
-                let aq = expanded.gates[i - 1].qubits[0].index();
-                if expanded.gates[i].qubits.len() >= 2 && expanded.gates[i].qubits[1].index() == aq
-                {
-                    s.insert(i);
-                    if i + 1 < expanded.gates.len()
-                        && expanded.gates[i + 1].gate_type == pecos_core::gate_type::GateType::PZ
-                        && expanded.gates[i + 1].qubits[0].index()
-                            == expanded.gates[i].qubits[0].index()
-                    {
-                        s.insert(i + 1);
-                    }
-                }
-            }
-        }
-        s
-    };
-
     for idx in (0..expanded.gates.len()).rev() {
         let g = &expanded.gates[idx];
         let qs: Vec<usize> = g.qubits.iter().map(pecos_core::QubitId::index).collect();
 
         // Apply noise adjoint (if not expansion gate)
-        if !exp_gates_set.contains(&idx) && g.gate_type == pecos_core::gate_type::GateType::CX {
+        if !expanded.expansion_gates[idx] && g.gate_type == pecos_core::gate_type::GateType::CX {
             // idle_rz on both qubits
             for &q in &qs {
                 apply_rz_adjoint(&mut obs_re, &mut obs_im, q, theta, n);
@@ -1064,7 +1022,7 @@ fn bench_matrix_heisenberg() {
         for idx in (0..expanded.gates.len()).rev() {
             let g = &expanded.gates[idx];
             let qs: Vec<usize> = g.qubits.iter().map(pecos_core::QubitId::index).collect();
-            let is_exp = exp_gates_set.contains(&idx);
+            let is_exp = expanded.expansion_gates[idx];
 
             if !is_exp && g.gate_type == pecos_core::gate_type::GateType::CX && qs.len() >= 2 {
                 for &q in &qs {
@@ -1354,10 +1312,7 @@ fn bench_per_noise_attribution() {
         let g = &expanded.gates[idx];
         let qs: Vec<usize> = g.qubits.iter().map(pecos_core::QubitId::index).collect();
         if g.gate_type == pecos_core::gate_type::GateType::CX && qs.len() >= 2 {
-            // Check if expansion gate
-            let is_exp = idx > 0
-                && expanded.gates[idx - 1].gate_type == pecos_core::gate_type::GateType::QAlloc
-                && expanded.gates[idx - 1].qubits[0].index() == qs[1];
+            let is_exp = expanded.expansion_gates[idx];
             if !is_exp {
                 apply_rz_adjoint(&mut obs_re, &mut obs_im, qs[0], theta, n);
                 apply_rz_adjoint(&mut obs_re, &mut obs_im, qs[1], theta, n);

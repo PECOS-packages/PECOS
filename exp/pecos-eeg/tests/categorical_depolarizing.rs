@@ -37,12 +37,19 @@ fn assert_walkers(
     num_qubits: usize,
     expected: f64,
 ) {
-    let index = GateIndex::build(gates, num_qubits, noise);
+    let index = GateIndex::build(gates, num_qubits, noise, &vec![false; gates.len()]);
     let noise_map = build_noise_map(gates, noise, &index.expansion_gates);
     let results = [
         (
             "windowed",
-            heisenberg_detection_probability(gates, detector, noise, initial, 0.0),
+            heisenberg_detection_probability(
+                gates,
+                detector,
+                noise,
+                initial,
+                0.0,
+                &vec![false; gates.len()],
+            ),
         ),
         (
             "precomputed",
@@ -340,7 +347,7 @@ fn compressed_mechanism_structure_retains_exact_categorical_targets() {
         p1: 0.75,
         ..UniformNoise::coherent_only(0.0)
     };
-    let expansion_gates = pecos_eeg::expand::expansion_gate_flags(&gates);
+    let expansion_gates = vec![false; gates.len()];
     let compressed = compress_noise_to_boundaries(&gates, &noise, &expansion_gates);
     assert!(compressed.compressed_count < compressed.original_count);
     let structure = CompressedNoiseSpec::from_compressed(&compressed);
@@ -352,6 +359,7 @@ fn compressed_mechanism_structure_retains_exact_categorical_targets() {
     for structure_noise in [None, Some(&structure as &dyn NoiseSpec)] {
         let characterization = NoiseCharacterization::build(NoiseCharacterizationInput {
             gates: &gates,
+            expansion_gates: &expansion_gates,
             noise: &noise,
             structure_noise,
             detectors: &detectors,

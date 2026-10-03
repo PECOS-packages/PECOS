@@ -64,7 +64,7 @@ fn test_repetition_code_no_noise() {
     let (gates, _, _) = build_repetition_code();
     let expanded = expand::expand_circuit(&gates).expect("supported circuit");
     let noise = NoiseModel::coherent_only(0.0);
-    let result = analyze_expanded(&expanded.gates, &noise);
+    let result = analyze_expanded(&expanded.gates, &noise, &expanded.expansion_gates);
 
     assert!(result.generators.is_empty());
 }
@@ -74,7 +74,7 @@ fn test_repetition_code_coherent_noise() {
     let (gates, detectors, observables) = build_repetition_code();
     let expanded = expand::expand_circuit(&gates).expect("supported circuit");
     let noise = NoiseModel::coherent_only(0.1);
-    let result = analyze_expanded(&expanded.gates, &noise);
+    let result = analyze_expanded(&expanded.gates, &noise, &expanded.expansion_gates);
 
     let h_count = result
         .generators
@@ -108,7 +108,7 @@ fn test_repetition_code_depolarizing_noise() {
     let (gates, detectors, observables) = build_repetition_code();
     let expanded = expand::expand_circuit(&gates).expect("supported circuit");
     let noise = NoiseModel::depolarizing(0.003);
-    let result = analyze_expanded(&expanded.gates, &noise);
+    let result = analyze_expanded(&expanded.gates, &noise, &expanded.expansion_gates);
 
     let s_count = result
         .generators
@@ -134,7 +134,7 @@ fn test_repetition_code_combined_noise() {
     let (gates, detectors, observables) = build_repetition_code();
     let expanded = expand::expand_circuit(&gates).expect("supported circuit");
     let noise = NoiseModel::depolarizing(0.003).with_idle_rz(0.1);
-    let result = analyze_expanded(&expanded.gates, &noise);
+    let result = analyze_expanded(&expanded.gates, &noise, &expanded.expansion_gates);
 
     let h_count = result
         .generators
@@ -177,7 +177,7 @@ fn test_eeg_generator_count_scales_linearly() {
             .collect();
         let expanded = expand::expand_circuit(&gates).expect("supported circuit");
         let noise = NoiseModel::coherent_only(0.1);
-        let result = analyze_expanded(&expanded.gates, &noise);
+        let result = analyze_expanded(&expanded.gates, &noise, &expanded.expansion_gates);
 
         let h_count = result
             .generators

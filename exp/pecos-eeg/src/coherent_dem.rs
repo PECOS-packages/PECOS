@@ -19,6 +19,8 @@
 //!
 //! For H-type (coherent) noise: amplitudes add, probability = sin²(total).
 //! For S-type (stochastic) noise: rates add, probability = (1-exp(2·total))/2.
+//! This uses the forward generator approximation of categorical depolarizing.
+//! Exact Heisenberg targets use the separate physical channel view.
 
 use crate::Bm;
 use crate::dem_mapping::{DecomposableDemEntry, DemEntry, DemEvent, Detector, Observable};
@@ -153,8 +155,8 @@ pub fn build_coherent_dem(
     // coherently. Different labels (e.g., Z on qubit 1 vs Z on qubit 2)
     // are separate mechanisms even if they flip the same detectors.
     //
-    // For S-type: same grouping — different Pauli types at the same location
-    // are independent mechanisms.
+    // For S-type: use independent mechanisms as an approximation to the
+    // generator view, including exclusive choices from categorical channels.
     //
     // After coherent accumulation per label, mechanisms with the same
     // detector set are combined independently (product formula).
@@ -458,7 +460,7 @@ fn merge_decomposable_dem_entries(
     merged
 }
 
-/// Build a coherent DEM with Heisenberg-exact marginals.
+/// Fit an independent DEM to Heisenberg-exact marginal targets.
 ///
 /// Uses the backward mechanism extraction for structure (which detectors
 /// each noise source flips) and fits mechanism probabilities to match
@@ -468,6 +470,10 @@ fn merge_decomposable_dem_entries(
 /// - Correct mechanism structure from backward propagation
 /// - Exact marginals from the Heisenberg walk
 /// - Best independent approximation via iterative fitting
+///
+/// The fitted DEM is approximate: its mechanism probabilities are constrained
+/// below 0.5, so it cannot represent every categorical high-noise target or
+/// every coherent correlation exactly.
 ///
 /// The `heisenberg_marginals` parameter should be a slice where
 /// `heisenberg_marginals[det_id] = exact_detection_probability`.
@@ -765,7 +771,7 @@ pub fn build_coherent_dem_exact(
 
 /// Build a coherent DEM with Heisenberg-exact marginals AND X/Z decomposition.
 ///
-/// Combines the exact probability fitting from `build_coherent_dem_exact`
+/// Combines the approximate fit to exact targets from `build_coherent_dem_exact`
 /// with the X/Z component tracking from `build_coherent_dem_decomposable`.
 pub fn build_coherent_dem_exact_decomposable(
     gates: &[Gate],

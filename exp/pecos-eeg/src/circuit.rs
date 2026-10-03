@@ -119,6 +119,7 @@ impl EegAnalysisResult {
 /// Analyze the expanded circuit with a flexible noise specification.
 ///
 /// For each gate, calls `noise.noise_after_gate()` to get generators,
+/// using the first-order generator representation of categorical channels,
 /// then propagates them to the end via Clifford conjugation.
 ///
 /// Expansion gates (QAlloc, expansion CX, expansion PZ) are skipped

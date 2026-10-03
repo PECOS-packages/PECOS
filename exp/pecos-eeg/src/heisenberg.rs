@@ -12,20 +12,22 @@
 //!   D → cos(2h)·D + i·sin(2h)·P·D  (when D and P anticommute)
 //!   D → D                            (when D and P commute)
 //!
-//! Stochastic (S-type) noise: EEG rate s < 0, physical error
-//! probability p = (1/2)(1 - exp(2s)).  Heisenberg dual:
+//! Independent stochastic (S-type) injections have physical probability p=-s:
 //!   D → D          (when D and P commute)
-//!   D → exp(2s)·D  (when D and P anticommute)
+//!   D → (1-2p)·D   (when D and P anticommute)
+//! Categorical depolarizing is a separate channel, with nonidentity eigenvalue
+//! 1-4p/3 (one qubit) or 1-16p/15 (two qubits).
 //!
 //! The cost is exponential in the number of anticommuting H-type noise
 //! sources per detector (2^m terms), but this is typically manageable
 //! for QEC circuits (m ~ 5-15). S-type noise does not increase term count.
 //!
-//! Both a Pauli-tracking walk (fast, exact) and a matrix-based method
-//! (exact, limited to ~20 qubits) are provided.
+//! The Pauli-tracking walks support these coherent and stochastic channels.
+//! A dense-matrix reference ([`heisenberg_exact_from_circuit`], up to ~20
+//! qubits) applies the same noise and checks the walks.
 
 use crate::Bm;
-use crate::noise::NoiseSpec;
+use crate::noise::{GateNoise, NoiseSpec};
 use crate::stabilizer::StabilizerGroup;
 use pecos_core::Gate;
 use pecos_core::gate_type::GateType;
@@ -39,19 +41,34 @@ fn sign_parity<const N: usize>(signs: [bool; N]) -> bool {
     signs.into_iter().fold(false, |parity, sign| parity ^ sign)
 }
 
+/// Mark `q` active, growing the bitmap: noise may act on qubits no gate touches.
+fn activate(active: &mut Vec<bool>, q: usize) {
+    if q >= active.len() {
+        active.resize(q + 1, false);
+    }
+    active[q] = true;
+}
+
+fn is_active(active: &[bool], q: usize) -> bool {
+    active.get(q).copied().unwrap_or(false)
+}
+
+/// Whether any of the noise's injections or channels acts on an active qubit.
+/// Noise acting only on inactive qubits commutes with every term.
+fn noise_touches_active(noise: &GateNoise, active: &[bool]) -> bool {
+    noise.qubits().any(|q| is_active(active, q))
+}
+
 fn activate_qubit(
     q: u16,
     before_gate: u32,
-    active: &mut [bool],
+    active: &mut Vec<bool>,
     visited: &mut [bool],
     heap: &mut BinaryHeap<u32>,
     gate_index: &crate::expand::GateIndex,
 ) {
     let qu = q as usize;
-    if qu >= active.len() {
-        return;
-    }
-    active[qu] = true;
+    activate(active, qu);
     for gi in gate_index.gates_on_qubit_rev(qu) {
         if gi >= before_gate {
             continue;
@@ -64,233 +81,26 @@ fn activate_qubit(
     }
 }
 
-/// Precomputed noise for a single gate: H-type injections + batched S-type scale.
-///
-/// Instead of calling `noise_after_gate()` during the walk and processing
-/// 15+ S-type injections individually, we precompute:
-/// - H-type injections (kept as-is, they cause branching)
-/// - A combined S-type scale factor per qubit-support pattern
-///
-/// For uniform 2-qubit depolarizing at rate p: any term with non-identity
-/// on either gate qubit gets scaled by `(1-2p/15)^8` (exactly 8 of 15
-/// Paulis anticommute for any non-identity support). Single-qubit: `(1-2p/3)^2`.
-pub struct PrecomputedGateNoise {
-    /// H-type injections (cause term branching, can't be batched).
-    pub h_injections: SmallVec<[crate::noise::NoiseInjection; 2]>,
-    /// Combined S-type scale for terms with non-identity on qubit 0 only.
-    /// (For 1q gates, this is the full scale. For 2q, see q1_scale/both_scale.)
-    pub q0_scale: f64,
-    /// Qubit 0 index (for S-type fast path).
-    pub q0: u16,
-    /// Combined S-type scale for terms with non-identity on qubit 1 only (2q gates).
-    pub q1_scale: f64,
-    /// Qubit 1 index.
-    pub q1: u16,
-    /// Combined S-type scale for terms with non-identity on BOTH qubits.
-    pub both_scale: f64,
-    /// Number of qubits this gate acts on (0, 1, or 2).
-    pub num_gate_qubits: u8,
-}
-
-/// Build a noise map: precomputed noise for each gate.
-///
-/// Returns `None` for gates with no noise. Expansion gates are mostly
-/// skipped, except expansion CX gates get p_meas noise on their control
-/// qubit (the originally-measured qubit) to model mid-circuit measurement
-/// errors that the expansion would otherwise lose.
+/// Build exact gate noise, skipping gates introduced by measurement expansion.
+/// Returns `None` for gates with neither injections nor categorical channels.
 pub fn build_noise_map(
     gates: &[Gate],
     noise: &dyn NoiseSpec,
     expansion_gates: &[bool],
-) -> Vec<Option<PrecomputedGateNoise>> {
-    let mut map = Vec::with_capacity(gates.len());
-
-    for (i, gate) in gates.iter().enumerate() {
-        if i < expansion_gates.len() && expansion_gates[i] {
-            map.push(None);
-            continue;
-        }
-
-        let qubits: SmallVec<[usize; 4]> =
-            gate.qubits.iter().map(pecos_core::QubitId::index).collect();
-        let injections = noise.noise_after_gate(i, gate.gate_type, &qubits);
-
-        if injections.is_empty() {
-            map.push(None);
-            continue;
-        }
-
-        let mut h_inj = SmallVec::new();
-        // Collect S-type rates grouped by which qubits they touch.
-        // We compute a combined scale factor for each support pattern.
-        let mut s_rates_q0_only = Vec::new(); // S noise on q0 only
-        let mut s_rates_q1_only = Vec::new(); // S noise on q1 only
-        let mut s_rates_both = Vec::new(); // S noise on both q0 and q1
-        let mut s_rates_other = Vec::new(); // S noise on other patterns
-
-        let q0 = qubits.first().copied().unwrap_or(0) as u16;
-        let q1 = if qubits.len() >= 2 {
-            qubits[1] as u16
-        } else {
-            q0
-        };
-
-        for inj in &injections {
-            if inj.eeg_type == crate::eeg::EegType::S {
-                let rate = inj.rate;
-                // Classify by qubit support
-                let on_q0 = inj.label.has_x(q0 as usize) || inj.label.has_z(q0 as usize);
-                let on_q1 = qubits.len() >= 2
-                    && (inj.label.has_x(q1 as usize) || inj.label.has_z(q1 as usize));
-
-                // For each S injection with rate s (s < 0), the scale for
-                // anticommuting terms is (1 - 2*(-s)) = (1 + 2s).
-                // We need to count how many of the term's components
-                // anticommute. For a uniform depolarizing model this is
-                // predetermined by the support pattern.
-                //
-                // Instead of trying to batch analytically (which requires
-                // knowing the exact anticommutation count), we accumulate
-                // the log of the scale factors and compute the combined
-                // scale per support pattern.
-                //
-                // For now, just collect individual rates.
-                if on_q0 && !on_q1 {
-                    s_rates_q0_only.push(rate);
-                } else if !on_q0 && on_q1 {
-                    s_rates_q1_only.push(rate);
-                } else if on_q0 && on_q1 {
-                    s_rates_both.push(rate);
-                } else {
-                    s_rates_other.push(rate);
-                }
-            } else {
-                h_inj.push(inj.clone());
+) -> Vec<Option<GateNoise>> {
+    gates
+        .iter()
+        .enumerate()
+        .map(|(i, gate)| {
+            if expansion_gates.get(i).copied().unwrap_or(false) {
+                return None;
             }
-        }
-
-        // Compute combined scale factors.
-        // A term anticommutes with S_P iff it has non-trivial overlap with P.
-        //
-        // For a term with non-identity on q0 only:
-        //   - Anticommutes with S generators touching q0: all of q0_only + both
-        //   - But WHICH ones anticommute depends on the specific Pauli.
-        //
-        // For uniform depolarizing, the count of anticommuting generators is
-        // deterministic given the support pattern. But for general S noise, we
-        // can't batch — fall back to individual processing.
-        //
-        // Optimization: if ALL S rates are the same (uniform depol), use
-        // closed-form. Otherwise, keep individual injections.
-        let all_s_same_rate = {
-            let all_s: Vec<f64> = s_rates_q0_only
-                .iter()
-                .chain(&s_rates_q1_only)
-                .chain(&s_rates_both)
-                .chain(&s_rates_other)
-                .copied()
-                .collect();
-            !all_s.is_empty() && all_s.iter().all(|&r| (r - all_s[0]).abs() < 1e-20)
-        };
-
-        if all_s_same_rate && s_rates_other.is_empty() {
-            // Uniform depolarizing: use closed-form combined scale.
-            // For any non-identity on q0: 2 of {X,Y,Z} on q0 anticommute.
-            // For single-qubit: 3 S generators, 2 anticommute → scale = (1+2s)^2
-            // For two-qubit: 15 S generators, 8 anticommute for any non-trivial → (1+2s)^8
-            let total_s = s_rates_q0_only.len() + s_rates_q1_only.len() + s_rates_both.len();
-            let s = s_rates_q0_only
-                .first()
-                .or(s_rates_q1_only.first())
-                .or(s_rates_both.first())
-                .copied()
-                .unwrap_or(0.0);
-            let p = -s;
-            let individual_scale = 1.0 - 2.0 * p;
-
-            // Count anticommuting for each support pattern.
-            // For term with non-identity on q0 only:
-            //   anti with q0-only S: 2 out of 3 (if 1q) or 2 out of 3 (for each A⊗I)
-            //   anti with both S: depends on q1 part (commutes since term has I on q1)
-            //   Total for 2q depol: q0_only anti=2 out of 3, both anti=q0 part anti * q1 commutes
-            //   = 2*3 (from 3 A⊗I where 2 of 3 A anticommute on q0, B=I commutes)
-            //   + 0 (from 3 I⊗B)
-            //   + 2*3 (from 9 A⊗B where 2 of 3 A anticommute, B commutes since I on q1)
-            //   Wait, {A, I_term} always commutes for B part. So:
-            //   anti count = (anti on q0) * (total on q1 including I) + (comm on q0) * (anti on q1)
-            //   For term I on q1: anti on q1 = 0.
-            //   So anti count = 2 * 4 + 2 * 0 = 8 for 15 generators (excluding I⊗I).
-            //
-            // Actually, let me just precompute this properly.
-            // For 1q depol (3 generators): non-identity on q → 2 anticommute → (1-2p/3)^2
-            // For 2q depol (15 generators): non-identity on either q → 8 anticommute → (1-2p/15)^8
-            let n_anti = if total_s == 3 {
-                2
-            } else if total_s == 15 {
-                8
-            } else {
-                0
-            };
-            if n_anti == 0 && total_s > 0 {
-                // Non-standard S count (e.g., 1 for p_meas, 1 for p_prep):
-                // can't batch — put in h_injections for individual processing.
-                for inj in &injections {
-                    if inj.eeg_type == crate::eeg::EegType::S {
-                        h_inj.push(inj.clone());
-                    }
-                }
-            }
-            let combined = individual_scale.powi(n_anti);
-
-            map.push(Some(PrecomputedGateNoise {
-                h_injections: h_inj,
-                q0_scale: combined,
-                q0,
-                q1_scale: combined,
-                q1,
-                both_scale: combined,
-                num_gate_qubits: qubits.len().min(2) as u8,
-            }));
-        } else if s_rates_q0_only.is_empty()
-            && s_rates_q1_only.is_empty()
-            && s_rates_both.is_empty()
-            && s_rates_other.is_empty()
-        {
-            // H-type only, no S noise
-            if h_inj.is_empty() {
-                map.push(None);
-            } else {
-                map.push(Some(PrecomputedGateNoise {
-                    h_injections: h_inj,
-                    q0_scale: 1.0,
-                    q0,
-                    q1_scale: 1.0,
-                    q1,
-                    both_scale: 1.0,
-                    num_gate_qubits: qubits.len().min(2) as u8,
-                }));
-            }
-        } else {
-            // Non-uniform S noise: keep individual injections as H-type
-            // (the walk handles them individually).
-            for inj in injections {
-                if inj.eeg_type == crate::eeg::EegType::S {
-                    h_inj.push(inj); // process individually in walk
-                }
-            }
-            map.push(Some(PrecomputedGateNoise {
-                h_injections: h_inj,
-                q0_scale: 1.0,
-                q0,
-                q1_scale: 1.0,
-                q1,
-                both_scale: 1.0,
-                num_gate_qubits: qubits.len().min(2) as u8,
-            }));
-        }
-    }
-
-    map
+            let qubits: SmallVec<[usize; 4]> =
+                gate.qubits.iter().map(pecos_core::QubitId::index).collect();
+            let exact = noise.exact_noise_after_gate(i, gate.gate_type, &qubits);
+            (!exact.injections.is_empty() || !exact.depolarizing.is_empty()).then_some(exact)
+        })
+        .collect()
 }
 
 /// Sparse Pauli: stores only qubits with non-identity Pauli.
@@ -736,6 +546,27 @@ struct HeisenbergTerm {
     coeff_im: f64,
 }
 
+fn apply_depolarizing(
+    terms: &mut [HeisenbergTerm],
+    channels: &[crate::noise::DepolarizingChannel],
+) {
+    for channel in channels {
+        let scale = channel.eigenvalue();
+        for term in terms.iter_mut() {
+            if channel
+                .qubits()
+                .iter()
+                .any(|&q| term.pauli.has_x(q as u16) || term.pauli.has_z(q as u16))
+            {
+                // Zero and negative eigenvalues are valid, including p=3/4
+                // (1q), p=15/16 (2q), and stronger depolarizing channels.
+                term.coeff_re *= scale;
+                term.coeff_im *= scale;
+            }
+        }
+    }
+}
+
 /// Compute detection probability via backward Heisenberg propagation.
 ///
 /// Operates on the EXPANDED circuit (from [`crate::expand`]). Expansion
@@ -763,11 +594,12 @@ pub fn heisenberg_detection_probability(
 ///
 /// Uses BTreeMap<SparsePauli, (re, im)> for continuous dedup — no separate
 /// merge step. Terms are merged on insert via BTreeMap's O(log n) lookup.
-/// Also uses batched S-type scaling from the precomputed noise map.
+/// Applies explicit categorical channels from the precomputed noise map.
+#[must_use]
 pub fn heisenberg_with_noise_map(
     gates: &[Gate],
     detector: &Bm,
-    noise_map: &[Option<PrecomputedGateNoise>],
+    noise_map: &[Option<GateNoise>],
     initial_stab: &StabilizerGroup,
     prune_threshold: f64,
 ) -> f64 {
@@ -778,23 +610,14 @@ pub fn heisenberg_with_noise_map(
     }];
 
     // Conservative active-qubit bitmap
-    let max_qubit = gates
-        .iter()
-        .flat_map(|g| g.qubits.iter())
-        .map(pecos_core::QubitId::index)
-        .max()
-        .unwrap_or(0)
-        + 1;
-    let mut active_qubits = vec![false; max_qubit];
+    let mut active_qubits = Vec::new();
     for &q in terms[0]
         .pauli
         .x_qubits
         .iter()
         .chain(terms[0].pauli.z_qubits.iter())
     {
-        if (q as usize) < active_qubits.len() {
-            active_qubits[q as usize] = true;
-        }
+        activate(&mut active_qubits, q as usize);
     }
 
     let mut last_merge_count = 1usize;
@@ -804,20 +627,16 @@ pub fn heisenberg_with_noise_map(
         let gate = &gates[i];
         let gate_qs: SmallVec<[u16; 4]> = gate.qubits.iter().map(|q| q.index() as u16).collect();
 
-        let gate_touches_active = gate_qs
-            .iter()
-            .any(|&q| (q as usize) < active_qubits.len() && active_qubits[q as usize]);
+        // Noise is relevant by its own support, which may lie outside the gate.
+        let gate_noise = noise_map
+            .get(i)
+            .and_then(|n| n.as_ref())
+            .filter(|gn| noise_touches_active(gn, &active_qubits));
 
-        // Look up precomputed noise for this gate
-        let gate_noise = if gate_touches_active {
-            noise_map.get(i).and_then(|n| n.as_ref())
-        } else {
-            None
-        };
-
+        let noise_applied = gate_noise.is_some();
         if let Some(gn) = gate_noise {
-            // H-type injections (branching)
-            for inj in &gn.h_injections {
+            // Individual injections in their original order
+            for inj in &gn.injections {
                 match inj.eeg_type {
                     crate::eeg::EegType::H => {
                         let h = inj.rate;
@@ -886,10 +705,7 @@ pub fn heisenberg_with_noise_map(
                         // are still sorted from last merge, else just extend.
                         for t in sin_branches.drain(..) {
                             for &q in t.pauli.x_qubits.iter().chain(t.pauli.z_qubits.iter()) {
-                                let qu = q as usize;
-                                if qu < active_qubits.len() {
-                                    active_qubits[qu] = true;
-                                }
+                                activate(&mut active_qubits, q as usize);
                             }
                             if last_merge_count == terms.len() {
                                 match terms.binary_search_by(|p| p.pauli.cmp(&t.pauli)) {
@@ -907,7 +723,7 @@ pub fn heisenberg_with_noise_map(
                         }
                     }
                     crate::eeg::EegType::S => {
-                        // Non-batched S-type (fallback for non-uniform noise)
+                        // Custom independent S-type injection.
                         let s = inj.rate;
                         if s.abs() < 1e-20 {
                             continue;
@@ -948,71 +764,48 @@ pub fn heisenberg_with_noise_map(
                 }
             }
 
-            // Batched S-type: apply combined scale factor
-            let s_scale = gn.q0_scale; // Same for all non-trivial support patterns
-            if (s_scale - 1.0).abs() > 1e-20 {
-                match gn.num_gate_qubits {
-                    1 => {
-                        let q = gn.q0;
-                        for term in &mut terms {
-                            if term.pauli.has_x(q) || term.pauli.has_z(q) {
-                                term.coeff_re *= s_scale;
-                                term.coeff_im *= s_scale;
-                            }
-                        }
-                    }
-                    2 => {
-                        let q0 = gn.q0;
-                        let q1 = gn.q1;
-                        for term in &mut terms {
-                            let on_q0 = term.pauli.has_x(q0) || term.pauli.has_z(q0);
-                            let on_q1 = term.pauli.has_x(q1) || term.pauli.has_z(q1);
-                            if on_q0 || on_q1 {
-                                term.coeff_re *= s_scale;
-                                term.coeff_im *= s_scale;
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-            }
+            apply_depolarizing(&mut terms, &gn.depolarizing);
         }
 
-        // Step 2: Backward Clifford conjugation
-        if !gate_touches_active {
+        // Step 2: Backward Clifford conjugation. Checked after the noise,
+        // which may have branched terms onto the gate's qubits.
+        let gate_relevant = gate_qs
+            .iter()
+            .any(|&q| is_active(&active_qubits, q as usize));
+        if !noise_applied && !gate_relevant {
             continue;
         }
 
-        match gate.gate_type {
-            GateType::PZ | GateType::QAlloc => {
-                terms.retain(|t| !gate_qs.iter().any(|&qi| t.pauli.has_x(qi)));
-                for t in &mut terms {
-                    for &qi in &gate_qs {
-                        t.pauli.clear_z(qi);
+        if gate_relevant {
+            match gate.gate_type {
+                GateType::PZ | GateType::QAlloc => {
+                    terms.retain(|t| !gate_qs.iter().any(|&qi| t.pauli.has_x(qi)));
+                    for t in &mut terms {
+                        for &qi in &gate_qs {
+                            t.pauli.clear_z(qi);
+                        }
                     }
                 }
-            }
-            GateType::MZ => {
-                terms.retain(|t| !gate_qs.iter().any(|&qi| t.pauli.has_x(qi)));
-            }
-            _ => {
-                for t in &mut terms {
-                    if let Some(sign_neg) = sparse_conjugate(&mut t.pauli, gate)
-                        && sign_neg
-                    {
-                        t.coeff_re = -t.coeff_re;
-                        t.coeff_im = -t.coeff_im;
-                    }
-                    for &q in t.pauli.x_qubits.iter().chain(t.pauli.z_qubits.iter()) {
-                        let qu = q as usize;
-                        if qu < active_qubits.len() {
-                            active_qubits[qu] = true;
+                GateType::MZ => {
+                    terms.retain(|t| !gate_qs.iter().any(|&qi| t.pauli.has_x(qi)));
+                }
+                _ => {
+                    for t in &mut terms {
+                        if let Some(sign_neg) = sparse_conjugate(&mut t.pauli, gate)
+                            && sign_neg
+                        {
+                            t.coeff_re = -t.coeff_re;
+                            t.coeff_im = -t.coeff_im;
+                        }
+                        for &q in t.pauli.x_qubits.iter().chain(t.pauli.z_qubits.iter()) {
+                            activate(&mut active_qubits, q as usize);
                         }
                     }
                 }
             }
         }
 
+        // Prune and merge after noise alone too: it can add or shrink terms.
         // Prune
         if prune_threshold > 0.0 {
             let thresh_sq = prune_threshold * prune_threshold;
@@ -1023,7 +816,9 @@ pub fn heisenberg_with_noise_map(
         // For typical term counts (~50-100), this beats both HashMap and
         // BTreeMap due to zero allocation overhead and sequential access.
         let should_merge = match gate.gate_type {
-            GateType::PZ | GateType::QAlloc | GateType::MZ => terms.len() > 4,
+            // Reset and measurement remove terms, so merge eagerly, but only
+            // when the gate acted; noise alone grows terms like any gate.
+            GateType::PZ | GateType::QAlloc | GateType::MZ if gate_relevant => terms.len() > 4,
             _ => terms.len() > last_merge_count * 2 && terms.len() > 16,
         };
         if should_merge {
@@ -1126,14 +921,7 @@ pub fn heisenberg_windowed(
 
     // Conservative active-qubit bitmap: once a qubit is active, stays active.
     // This avoids the expensive per-term scan for gate relevance.
-    let max_qubit = gates
-        .iter()
-        .flat_map(|g| g.qubits.iter())
-        .map(pecos_core::QubitId::index)
-        .max()
-        .unwrap_or(0)
-        + 1;
-    let mut active_qubits = vec![false; max_qubit];
+    let mut active_qubits = Vec::new();
     // Seed from detector
     for &q in terms[0]
         .pauli
@@ -1141,9 +929,7 @@ pub fn heisenberg_windowed(
         .iter()
         .chain(terms[0].pauli.z_qubits.iter())
     {
-        if (q as usize) < active_qubits.len() {
-            active_qubits[q as usize] = true;
-        }
+        activate(&mut active_qubits, q as usize);
     }
 
     // Walk backward through the circuit (optionally windowed)
@@ -1152,17 +938,18 @@ pub fn heisenberg_windowed(
         let gate = &gates[i];
         let gate_qs: SmallVec<[u16; 4]> = gate.qubits.iter().map(|q| q.index() as u16).collect();
 
-        // O(1) gate relevance check via bitmap (conservative: may visit some extra gates)
-        let gate_touches_active = gate_qs
-            .iter()
-            .any(|&q| (q as usize) < active_qubits.len() && active_qubits[q as usize]);
-
-        // Step 1: Apply noise adjoint (skip expansion gates).
-        if !expansion_gates[i] && gate_touches_active {
-            let qubits_usize: SmallVec<[usize; 4]> = gate_qs.iter().map(|&q| q as usize).collect();
-            let injections = noise.noise_after_gate(i, gate.gate_type, &qubits_usize);
-
-            for inj in &injections {
+        // Step 1: Apply noise adjoint (skip expansion gates). Noise is relevant
+        // by its own support, which may lie outside the gate.
+        let gate_noise = (!expansion_gates[i])
+            .then(|| {
+                let qubits_usize: SmallVec<[usize; 4]> =
+                    gate_qs.iter().map(|&q| q as usize).collect();
+                noise.exact_noise_after_gate(i, gate.gate_type, &qubits_usize)
+            })
+            .filter(|exact| noise_touches_active(exact, &active_qubits));
+        let noise_applied = gate_noise.is_some();
+        if let Some(exact) = gate_noise {
+            for inj in &exact.injections {
                 match inj.eeg_type {
                     crate::eeg::EegType::H => {
                         let h = inj.rate;
@@ -1237,10 +1024,7 @@ pub fn heisenberg_windowed(
                         // Update active bitmap BEFORE extending (only scan new branches)
                         for t in &sin_branches {
                             for &q in t.pauli.x_qubits.iter().chain(t.pauli.z_qubits.iter()) {
-                                let qu = q as usize;
-                                if qu < active_qubits.len() {
-                                    active_qubits[qu] = true;
-                                }
+                                activate(&mut active_qubits, q as usize);
                             }
                         }
                         terms.append(&mut sin_branches);
@@ -1296,49 +1080,56 @@ pub fn heisenberg_windowed(
                     });
                 }
             }
+            apply_depolarizing(&mut terms, &exact.depolarizing);
         }
 
         // Step 2: Conjugate backward through the gate.
-        // #2: Skip gates that don't touch active qubits
-        if !gate_touches_active {
+        // #2: Skip gates that don't touch active qubits. Checked after the
+        // noise, which may have branched terms onto the gate's qubits.
+        let gate_relevant = gate_qs
+            .iter()
+            .any(|&q| is_active(&active_qubits, q as usize));
+        if !noise_applied && !gate_relevant {
             continue;
         }
 
-        match gate.gate_type {
-            // #4: Batch PZ/QAlloc — single pass through terms for all qubits
-            GateType::PZ | GateType::QAlloc => {
-                terms.retain(|t| !gate_qs.iter().any(|&qi| t.pauli.has_x(qi)));
-                for t in &mut terms {
-                    for &qi in &gate_qs {
-                        t.pauli.clear_z(qi);
+        if gate_relevant {
+            match gate.gate_type {
+                // #4: Batch PZ/QAlloc — single pass through terms for all qubits
+                GateType::PZ | GateType::QAlloc => {
+                    terms.retain(|t| !gate_qs.iter().any(|&qi| t.pauli.has_x(qi)));
+                    for t in &mut terms {
+                        for &qi in &gate_qs {
+                            t.pauli.clear_z(qi);
+                        }
                     }
                 }
-            }
-            GateType::MZ => {
-                terms.retain(|t| !gate_qs.iter().any(|&qi| t.pauli.has_x(qi)));
-            }
-            _ => {
-                for t in &mut terms {
-                    if let Some(sign_neg) = sparse_conjugate(&mut t.pauli, gate)
-                        && sign_neg
-                    {
-                        t.coeff_re = -t.coeff_re;
-                        t.coeff_im = -t.coeff_im;
-                    }
-                    // Update active bitmap (CX can spread support to new qubits)
-                    for &q in t.pauli.x_qubits.iter().chain(t.pauli.z_qubits.iter()) {
-                        let qu = q as usize;
-                        if qu < active_qubits.len() {
-                            active_qubits[qu] = true;
+                GateType::MZ => {
+                    terms.retain(|t| !gate_qs.iter().any(|&qi| t.pauli.has_x(qi)));
+                }
+                _ => {
+                    for t in &mut terms {
+                        if let Some(sign_neg) = sparse_conjugate(&mut t.pauli, gate)
+                            && sign_neg
+                        {
+                            t.coeff_re = -t.coeff_re;
+                            t.coeff_im = -t.coeff_im;
+                        }
+                        // Update active bitmap (CX can spread support to new qubits)
+                        for &q in t.pauli.x_qubits.iter().chain(t.pauli.z_qubits.iter()) {
+                            activate(&mut active_qubits, q as usize);
                         }
                     }
                 }
             }
         }
 
+        // Merge after noise alone too: it can add duplicate terms.
         // Merge duplicate Pauli terms by sorting + linear scan.
         let should_merge = match gate.gate_type {
-            GateType::PZ | GateType::QAlloc | GateType::MZ => terms.len() > 4,
+            // Reset and measurement remove terms, so merge eagerly, but only
+            // when the gate acted; noise alone grows terms like any gate.
+            GateType::PZ | GateType::QAlloc | GateType::MZ if gate_relevant => terms.len() > 4,
             _ => terms.len() > last_merge_count * 2 && terms.len() > 16,
         };
         if should_merge {
@@ -1402,8 +1193,8 @@ pub fn heisenberg_windowed(
 /// For large circuits (d>=7), this is significantly faster than the linear
 /// scan in [`heisenberg_windowed`] because most gates are irrelevant.
 ///
-/// Accepts an optional precomputed noise map. When provided, uses batched
-/// S-type scaling (faster). When `None`, calls `noise.noise_after_gate()`.
+/// Accepts an optional precomputed noise map. Gates without a map entry call
+/// `noise.exact_noise_after_gate()`.
 pub fn heisenberg_sparse(
     gates: &[Gate],
     detector: &Bm,
@@ -1411,7 +1202,7 @@ pub fn heisenberg_sparse(
     initial_stab: &StabilizerGroup,
     prune_threshold: f64,
     gate_index: &crate::expand::GateIndex,
-    noise_map: Option<&[Option<PrecomputedGateNoise>]>,
+    noise_map: Option<&[Option<GateNoise>]>,
 ) -> f64 {
     let mut terms = vec![HeisenbergTerm {
         pauli: SparsePauli::from_bm(detector),
@@ -1421,8 +1212,7 @@ pub fn heisenberg_sparse(
 
     // Active qubit set: union of all terms' support.
     // Use a Vec<bool> for O(1) check (faster than BTreeSet for small qubit counts).
-    let num_qubits = gate_index.expansion_gates.len().min(gates.len()) + 64;
-    let mut active = vec![false; num_qubits.max(1)];
+    let mut active = Vec::new();
 
     // Visited gate set: don't add the same gate to the heap twice.
     let mut visited = vec![false; gates.len()];
@@ -1466,23 +1256,18 @@ pub fn heisenberg_sparse(
         // Step 1: Apply noise adjoint (skip expansion gates).
         if !gate_index.is_expansion(i) {
             // Get noise: from precomputed map if available, else dynamic
-            let precomputed = noise_map.and_then(|nm| nm.get(i).and_then(|n| n.as_ref()));
+            let dynamic_noise;
+            let gate_noise =
+                if let Some(gn) = noise_map.and_then(|nm| nm.get(i).and_then(|n| n.as_ref())) {
+                    gn
+                } else {
+                    let qubits_usize: SmallVec<[usize; 4]> =
+                        gate_qs.iter().map(|&q| q as usize).collect();
+                    dynamic_noise = noise.exact_noise_after_gate(i, gate.gate_type, &qubits_usize);
+                    &dynamic_noise
+                };
 
-            // Get injections: from noise map or dynamic noise spec
-            let dynamic_injections = if precomputed.is_none() {
-                let qubits_usize: SmallVec<[usize; 4]> =
-                    gate_qs.iter().map(|&q| q as usize).collect();
-                noise.noise_after_gate(i, gate.gate_type, &qubits_usize)
-            } else {
-                Vec::new()
-            };
-            let injections: &[crate::noise::NoiseInjection] = if let Some(gn) = precomputed {
-                &gn.h_injections
-            } else {
-                &dynamic_injections
-            };
-
-            for inj in injections {
+            for inj in &gate_noise.injections {
                 match inj.eeg_type {
                     crate::eeg::EegType::H => {
                         let h = inj.rate;
@@ -1579,10 +1364,7 @@ pub fn heisenberg_sparse(
                         terms.append(&mut sin_branches);
                     }
                     crate::eeg::EegType::S => {
-                        // S-type: process individually. When using noise map,
-                        // the batched scaling below handles the common case,
-                        // but unbatchable S injections are placed in h_injections
-                        // and must be processed here.
+                        // Custom S injections retain independent flip semantics.
                         let s = inj.rate;
                         if s.abs() < 1e-20 {
                             continue;
@@ -1625,36 +1407,7 @@ pub fn heisenberg_sparse(
                 }
             }
 
-            // Batched S-type scaling from noise map (much faster than per-injection)
-            if let Some(gn) = precomputed {
-                let s_scale = gn.q0_scale;
-                if (s_scale - 1.0).abs() > 1e-20 {
-                    match gn.num_gate_qubits {
-                        1 => {
-                            let q = gn.q0;
-                            for term in &mut terms {
-                                if term.pauli.has_x(q) || term.pauli.has_z(q) {
-                                    term.coeff_re *= s_scale;
-                                    term.coeff_im *= s_scale;
-                                }
-                            }
-                        }
-                        2 => {
-                            let q0 = gn.q0;
-                            let q1 = gn.q1;
-                            for term in &mut terms {
-                                let on_q0 = term.pauli.has_x(q0) || term.pauli.has_z(q0);
-                                let on_q1 = term.pauli.has_x(q1) || term.pauli.has_z(q1);
-                                if on_q0 || on_q1 {
-                                    term.coeff_re *= s_scale;
-                                    term.coeff_im *= s_scale;
-                                }
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            }
+            apply_depolarizing(&mut terms, &gate_noise.depolarizing);
         }
 
         // Step 2: Backward Clifford conjugation.
@@ -1700,9 +1453,12 @@ pub fn heisenberg_sparse(
             terms.retain(|t| t.coeff_re * t.coeff_re + t.coeff_im * t.coeff_im > thresh_sq);
         }
 
-        // Merge duplicate Pauli terms.
+        // Merge duplicate Pauli terms. Reset and measurement merge eagerly only
+        // when the gate acted: this walk also pops gates whose noise alone
+        // reaches an active qubit.
+        let gate_acted = gate_qs.iter().any(|&q| is_active(&active, q as usize));
         let should_merge = match gate.gate_type {
-            GateType::PZ | GateType::QAlloc | GateType::MZ => terms.len() > 4,
+            GateType::PZ | GateType::QAlloc | GateType::MZ if gate_acted => terms.len() > 4,
             _ => terms.len() > last_merge_count * 2 && terms.len() > 16,
         };
         if should_merge {
@@ -1788,12 +1544,29 @@ pub fn heisenberg_detection_probability_from_circuit(
     ))
 }
 
-/// Exact detection probability via matrix-based backward Heisenberg.
+/// Detection probability via a dense-matrix reference for the exact walks.
 ///
 /// Computes the backward adjoint using dense 2^n × 2^n complex matrix
-/// multiplication. Exact for any circuit, but limited to ~20 expanded
-/// qubits by memory. Useful as a reference/validation for the faster
+/// operations, with O(4^n) memory. Supports PZ, QAlloc, MZ, H, and CX in the
+/// expanded circuit. Noise is the physical view from
+/// [`NoiseSpec::exact_noise_after_gate`]: H-type rotations U = exp(-i h P) and
+/// S-type Pauli channels with probability p = -s, for arbitrary Pauli strings
+/// P, followed by categorical depolarizing channels, each applied as the
+/// explicit sum over its 3 or 15 nonidentity Paulis.
+/// Identity labels have no effect. Expansion gates receive no noise.
+/// Useful as a reference/validation for the faster
 /// Pauli-tracking walk ([`heisenberg_detection_probability_from_circuit`]).
+///
+/// # Errors
+///
+/// Returns an error for C/A injections (even at zero rate), a label or
+/// categorical channel acting on a qubit outside the expanded circuit, any
+/// unimplemented expanded gate adjoint, or an expansion/measurement-record
+/// resolution error.
+///
+/// # Panics
+///
+/// Panics if the expanded circuit has more than 20 qubits.
 pub fn heisenberg_exact_from_circuit(
     original_gates: &[Gate],
     detector_meas_indices: &[usize],
@@ -1842,43 +1615,77 @@ pub fn heisenberg_exact_from_circuit(
 
         // Noise adjoint (skip expansion gates)
         if !expansion_gates[idx] {
-            let injections = noise.noise_after_gate(idx, g.gate_type, &qs);
-            for inj in &injections {
-                if inj.eeg_type != crate::eeg::EegType::H {
-                    continue;
-                }
-                if inj.rate.abs() < 1e-20 {
-                    continue;
-                }
-                // RZ(θ) on the noise qubit, where θ = 2*rate
-                let theta = 2.0 * inj.rate;
-                // Find which qubit the noise acts on
-                let noise_q = if let Some(q) = inj.label.z_bits.highest_set_bit() {
-                    q
-                } else if let Some(q) = inj.label.x_bits.highest_set_bit() {
-                    q
-                } else {
-                    continue;
+            let exact = noise.exact_noise_after_gate(idx, g.gate_type, &qs);
+            for inj in &exact.injections {
+                let weights = match inj.eeg_type {
+                    crate::eeg::EegType::H => {
+                        let (s, c) = inj.rate.sin_cos();
+                        (c * c, s * s, s * c)
+                    }
+                    crate::eeg::EegType::S => {
+                        let p = -inj.rate;
+                        (1.0 - p, p, 0.0)
+                    }
+                    eeg_type => {
+                        return Err(crate::expand::EegBuildError::UnsupportedExactNoise {
+                            eeg_type,
+                        });
+                    }
                 };
-                matrix_rz_adjoint(&mut obs_re, &mut im, noise_q, theta, n);
+                if let Some(qubit) = inj
+                    .label
+                    .x_bits
+                    .highest_set_bit()
+                    .max(inj.label.z_bits.highest_set_bit())
+                    .filter(|&q| q >= n)
+                {
+                    return Err(crate::expand::EegBuildError::ExactLabelOutOfRange {
+                        qubit,
+                        num_qubits: n,
+                    });
+                }
+                if inj.rate.abs() < 1e-20 || inj.label.is_identity() {
+                    continue;
+                }
+                matrix_pauli_adjoint(&mut obs_re, &mut im, &inj.label, weights, n);
+            }
+            for channel in &exact.depolarizing {
+                if let Some(&qubit) = channel.qubits().iter().find(|&&q| q >= n) {
+                    return Err(crate::expand::EegBuildError::ExactLabelOutOfRange {
+                        qubit,
+                        num_qubits: n,
+                    });
+                }
+                matrix_depolarizing_adjoint(&mut obs_re, &mut im, channel, n);
             }
         }
 
         // Gate adjoint
         match g.gate_type {
             GateType::PZ | GateType::QAlloc => {
-                matrix_pz_adjoint(&mut obs_re, &mut im, qs[0], n);
+                for &q in &qs {
+                    matrix_pz_adjoint(&mut obs_re, &mut im, q, n);
+                }
             }
             GateType::MZ => {
-                matrix_mz_adjoint(&mut obs_re, &mut im, qs[0], n);
+                for &q in &qs {
+                    matrix_mz_adjoint(&mut obs_re, &mut im, q, n);
+                }
             }
             GateType::H => {
-                matrix_h_adjoint(&mut obs_re, &mut im, qs[0], n);
+                for &q in &qs {
+                    matrix_h_adjoint(&mut obs_re, &mut im, q, n);
+                }
             }
-            GateType::CX if qs.len() >= 2 => {
-                matrix_cx_adjoint(&mut obs_re, &mut im, qs[0], qs[1], n);
+            GateType::CX if qs.len() >= 2 && qs.len().is_multiple_of(2) => {
+                for pair in qs.rchunks_exact(2) {
+                    matrix_cx_adjoint(&mut obs_re, &mut im, pair[0], pair[1], n);
+                }
             }
-            _ => {}
+            GateType::I | GateType::Idle => {}
+            gate_type => {
+                return Err(crate::expand::EegBuildError::UnsupportedExactGate { gate_type });
+            }
         }
     }
 
@@ -1890,27 +1697,95 @@ pub fn heisenberg_exact_from_circuit(
 
 // --- Matrix helpers for exact Heisenberg ---
 
-fn bit_to_f64(value: usize) -> f64 {
-    f64::from(u8::try_from(value).expect("bit value fits in u8"))
+fn matrix_phase(re: f64, im: f64, phase: u8) -> (f64, f64) {
+    match phase % 4 {
+        0 => (re, im),
+        1 => (-im, re),
+        2 => (-re, -im),
+        3 => (im, -re),
+        _ => unreachable!(),
+    }
 }
 
-fn matrix_rz_adjoint(re: &mut [f64], im: &mut [f64], q: usize, theta: f64, n: usize) {
+/// Apply a O + b P O P + i c (P O - O P), using P's monomial action.
+fn matrix_pauli_adjoint(
+    re: &mut [f64],
+    im: &mut [f64],
+    label: &Bm,
+    (a, b, c): (f64, f64, f64),
+    n: usize,
+) {
     let dim = 1usize << n;
-    for i in 0..dim {
-        let bi = bit_to_f64((i >> q) & 1);
-        for j in 0..dim {
-            let bj = bit_to_f64((j >> q) & 1);
-            let phase = (bi - bj) * theta;
-            if phase.abs() < 1e-20 {
-                continue;
-            }
-            let (cp, sp) = (phase.cos(), phase.sin());
+    let action: Vec<_> = (0..dim)
+        .map(|i| {
+            let state = SmallVec::from_slice(&[u64::try_from(i).expect("basis index fits in u64")]);
+            let (image, phase) = label.apply_to_basis_state(&state);
+            // The dense walk is limited to 20 qubits, so one word suffices.
+            let index = usize::try_from(image[0]).expect("basis image fits in usize");
+            (index, phase)
+        })
+        .collect();
+    let mut new_re = vec![0.0; dim * dim];
+    let mut new_im = vec![0.0; dim * dim];
+    for (i, &(pi, phase_i)) in action.iter().enumerate() {
+        for (j, &(pj, phase_j)) in action.iter().enumerate() {
+            // P is Hermitian: <i|P = conjugate(i^phase_i) <pi|.
+            let po = pi * dim + j;
+            let op = i * dim + pj;
+            let pop = pi * dim + pj;
+            let (po_re, po_im) = matrix_phase(re[po], im[po], 4 - phase_i);
+            let (op_re, op_im) = matrix_phase(re[op], im[op], phase_j);
+            let (pop_re, pop_im) = matrix_phase(re[pop], im[pop], 4 - phase_i + phase_j);
             let idx = i * dim + j;
-            let (r, m) = (re[idx], im[idx]);
-            re[idx] = cp * r - sp * m;
-            im[idx] = sp * r + cp * m;
+            new_re[idx] = a * re[idx] + b * pop_re - c * (po_im - op_im);
+            new_im[idx] = a * im[idx] + b * pop_im + c * (po_re - op_re);
         }
     }
+    re.copy_from_slice(&new_re);
+    im.copy_from_slice(&new_im);
+}
+
+/// Apply (1-p) O + (p/k) Σ P O P over the channel's k nonidentity Paulis.
+fn matrix_depolarizing_adjoint(
+    re: &mut [f64],
+    im: &mut [f64],
+    channel: &crate::noise::DepolarizingChannel,
+    n: usize,
+) {
+    use crate::noise::DepolarizingChannel;
+    let local = |q: usize| [Bm::default(), Bm::x(q), Bm::y(q), Bm::z(q)];
+    let (paulis, probability): (Vec<Bm>, f64) = match *channel {
+        DepolarizingChannel::OneQubit { qubit, probability } => {
+            (local(qubit)[1..].to_vec(), probability)
+        }
+        DepolarizingChannel::TwoQubit {
+            qubits: [qa, qb],
+            probability,
+        } => {
+            let paulis = local(qa)
+                .iter()
+                .flat_map(|a| local(qb).map(|b| a.multiply(&b)))
+                .skip(1) // I ⊗ I
+                .collect();
+            (paulis, probability)
+        }
+    };
+    let weight = probability / paulis.len() as f64;
+    let mut sum_re: Vec<f64> = re.iter().map(|v| (1.0 - probability) * v).collect();
+    let mut sum_im: Vec<f64> = im.iter().map(|v| (1.0 - probability) * v).collect();
+    for pauli in &paulis {
+        let mut pop_re = re.to_vec();
+        let mut pop_im = im.to_vec();
+        matrix_pauli_adjoint(&mut pop_re, &mut pop_im, pauli, (0.0, 1.0, 0.0), n);
+        for (sum, pop) in sum_re.iter_mut().zip(&pop_re) {
+            *sum += weight * pop;
+        }
+        for (sum, pop) in sum_im.iter_mut().zip(&pop_im) {
+            *sum += weight * pop;
+        }
+    }
+    re.copy_from_slice(&sum_re);
+    im.copy_from_slice(&sum_im);
 }
 
 fn matrix_pz_adjoint(re: &mut [f64], im: &mut [f64], q: usize, n: usize) {
@@ -2116,7 +1991,6 @@ mod tests {
                 gate(GateType::MZ, &[0]),
             ];
             let stab = StabilizerGroup::from_circuit(&gates[..1], 1);
-            let gate_index = crate::expand::GateIndex::build(&gates, 1);
             for (injection, label) in [("X", Bm::x(0)), ("Y", Bm::y(0)), ("Z", Bm::z(0))] {
                 for probability in [0.0, 0.01, 0.2, 0.5, 0.75, 1.0] {
                     let noise = PauliAfterGate {
@@ -2124,6 +1998,7 @@ mod tests {
                         label: label.clone(),
                         probability,
                     };
+                    let gate_index = crate::expand::GateIndex::build(&gates, 1, &noise);
                     let noise_map = build_noise_map(&gates, &noise, &gate_index.expansion_gates);
                     let actual = match walk {
                         "windowed" => {
@@ -2188,7 +2063,6 @@ mod tests {
             gate(GateType::MZ, &[0]),
         ];
         let stab = StabilizerGroup::from_circuit(&gates[..2], 2);
-        let gate_index = crate::expand::GateIndex::build(&gates, 2);
         let labels = [
             ("X0X1", Bm::x(0).multiply(&Bm::x(1)), true),
             ("X0Y1", Bm::x(0).multiply(&Bm::y(1)), true),
@@ -2204,6 +2078,7 @@ mod tests {
                 label,
                 probability,
             };
+            let gate_index = crate::expand::GateIndex::build(&gates, 2, &noise);
             let noise_map = build_noise_map(&gates, &noise, &gate_index.expansion_gates);
             let expected = if anticommutes { probability } else { 0.0 };
             let results = [
@@ -2300,12 +2175,12 @@ mod tests {
                 ("bell", &bell, 3, 0.0),
             ] {
                 let stab = StabilizerGroup::from_circuit(&gates[..2], 2);
-                let gate_index = crate::expand::GateIndex::build(gates, 2);
                 let noise = CoherentAfterGate {
                     gate_index: injection_gate,
                     label: label.clone(),
                     angle,
                 };
+                let gate_index = crate::expand::GateIndex::build(gates, 2, &noise);
                 let noise_map = build_noise_map(gates, &noise, &gate_index.expansion_gates);
                 let results = [
                     (
@@ -2588,6 +2463,480 @@ mod tests {
     }
 
     #[test]
+    fn test_exact_categorical_depolarizing() {
+        // Two H locations each attenuate the detector by 1-4p/3; at p=3/4 the
+        // channel is fully depolarizing and the detector is a coin flip.
+        let one_qubit = vec![
+            gate(GateType::PZ, &[0]),
+            gate(GateType::H, &[0]),
+            gate(GateType::H, &[0]),
+            gate(GateType::MZ, &[0]),
+        ];
+        // CX preserves |00>; each nontrivial Z-type detector anticommutes
+        // with 8 of the 15 exclusive two-qubit Paulis.
+        let two_qubit = vec![
+            gate(GateType::PZ, &[0]),
+            gate(GateType::PZ, &[1]),
+            gate(GateType::CX, &[0, 1]),
+            gate(GateType::MZ, &[0]),
+            gate(GateType::MZ, &[1]),
+        ];
+        for p in [0.0_f64, 0.1, 0.3, 0.75, 0.9375, 1.0] {
+            let mut noise = crate::noise::UniformNoise::coherent_only(0.0);
+            noise.p1 = p;
+            let actual = heisenberg_exact_from_circuit(&one_qubit, &[0], &noise, 1).unwrap();
+            let expected = (1.0 - (1.0 - 4.0 * p / 3.0).powi(2)) / 2.0;
+            assert!(
+                (actual - expected).abs() < 1e-12,
+                "p1={p}: {actual} vs {expected}"
+            );
+
+            let mut noise = crate::noise::UniformNoise::coherent_only(0.0);
+            noise.p2 = p;
+            for detector in [&[0][..], &[1], &[0, 1]] {
+                let actual =
+                    heisenberg_exact_from_circuit(&two_qubit, detector, &noise, 2).unwrap();
+                let expected = 8.0 * p / 15.0;
+                assert!(
+                    (actual - expected).abs() < 1e-12,
+                    "p2={p}, detector {detector:?}: {actual} vs {expected}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_exact_matches_walk_under_mixed_uniform_noise() {
+        // Two rounds of an X check on two data qubits, with every UniformNoise
+        // channel active, so coherent, categorical and measurement noise mix.
+        let gates = vec![
+            gate(GateType::PZ, &[0]),
+            gate(GateType::PZ, &[1]),
+            gate(GateType::PZ, &[2]),
+            gate(GateType::H, &[2]),
+            gate(GateType::CX, &[2, 0]),
+            gate(GateType::CX, &[2, 1]),
+            gate(GateType::H, &[2]),
+            gate(GateType::MZ, &[2]),
+            gate(GateType::PZ, &[2]),
+            gate(GateType::H, &[2]),
+            gate(GateType::CX, &[2, 0]),
+            gate(GateType::CX, &[2, 1]),
+            gate(GateType::H, &[2]),
+            gate(GateType::MZ, &[2]),
+        ];
+        let noise = crate::noise::UniformNoise {
+            idle_rz: 0.13,
+            p1: 0.2,
+            p2: 0.3,
+            p_meas: 0.05,
+            p_prep: 0.04,
+        };
+        let exact = heisenberg_exact_from_circuit(&gates, &[0, 1], &noise, 3).unwrap();
+        let walk =
+            heisenberg_detection_probability_from_circuit(&gates, &[0, 1], &noise, 3, 0.0).unwrap();
+        assert!(
+            (exact - walk).abs() < 1e-10,
+            "matrix {exact} vs walk {walk}"
+        );
+    }
+
+    struct ExactTestNoise(Vec<(usize, crate::noise::NoiseInjection)>);
+
+    impl NoiseSpec for ExactTestNoise {
+        fn noise_after_gate(
+            &self,
+            gate_index: usize,
+            _gate_type: GateType,
+            _qubits: &[usize],
+        ) -> Vec<crate::noise::NoiseInjection> {
+            self.0
+                .iter()
+                .filter(|(idx, _)| *idx == gate_index)
+                .map(|(_, inj)| inj.clone())
+                .collect()
+        }
+    }
+
+    fn exact_test_injection(
+        eeg_type: crate::eeg::EegType,
+        label: Bm,
+        rate: f64,
+    ) -> crate::noise::NoiseInjection {
+        crate::noise::NoiseInjection {
+            eeg_type,
+            label,
+            label2: None,
+            rate,
+        }
+    }
+
+    #[test]
+    fn test_exact_single_qubit_pauli_rotations() {
+        let gates = [gate(GateType::PZ, &[0]), gate(GateType::MZ, &[0])];
+        for h in [-0.7_f64, -0.3, 0.0, 0.13, 0.3, 0.8] {
+            for (label, expected) in [
+                (Bm::x(0), h.sin().powi(2)),
+                (Bm::y(0), h.sin().powi(2)),
+                (Bm::z(0), 0.0),
+            ] {
+                let noise = ExactTestNoise(vec![(
+                    0,
+                    exact_test_injection(crate::eeg::EegType::H, label.clone(), h),
+                )]);
+                let actual = heisenberg_exact_from_circuit(&gates, &[0], &noise, 1).unwrap();
+                assert!(
+                    (actual - expected).abs() < 1e-10,
+                    "label={label:?}, h={h}: {actual} != {expected}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_exact_multi_qubit_zz_rotation() {
+        let gates = [
+            gate(GateType::PZ, &[0]),
+            gate(GateType::PZ, &[1]),
+            gate(GateType::H, &[0]),
+            gate(GateType::H, &[0]),
+            gate(GateType::MZ, &[0]),
+        ];
+        for h in [-0.4_f64, 0.3, 0.7] {
+            // Z0Z1 on |+0>, followed by H0: P(q0=1) = sin²(h).
+            // Keeping only Z1 leaves |+0> unchanged and gives zero.
+            let noise = ExactTestNoise(vec![(
+                2,
+                exact_test_injection(crate::eeg::EegType::H, Bm::z(0).multiply(&Bm::z(1)), h),
+            )]);
+            let actual = heisenberg_exact_from_circuit(&gates, &[0], &noise, 2).unwrap();
+            assert!((actual - h.sin().powi(2)).abs() < 1e-10);
+        }
+    }
+
+    #[test]
+    fn test_exact_multi_qubit_xx_rotation() {
+        let gates = [
+            gate(GateType::PZ, &[0]),
+            gate(GateType::PZ, &[1]),
+            gate(GateType::MZ, &[0]),
+        ];
+        for h in [-0.4_f64, 0.3, 0.7] {
+            // exp(-i h X0X1)|00> = cos(h)|00> - i sin(h)|11>:
+            // P(q0=1) = sin²(h); acting on q1 alone gives zero.
+            let noise = ExactTestNoise(vec![(
+                1,
+                exact_test_injection(crate::eeg::EegType::H, Bm::x(0).multiply(&Bm::x(1)), h),
+            )]);
+            let actual = heisenberg_exact_from_circuit(&gates, &[0], &noise, 2).unwrap();
+            assert!((actual - h.sin().powi(2)).abs() < 1e-10);
+        }
+    }
+
+    #[test]
+    fn test_exact_noncommuting_rotations_forward_oracle() {
+        use pecos_core::Angle64;
+        use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, StateVec};
+
+        let gates = [
+            gate(GateType::PZ, &[0]),
+            gate(GateType::PZ, &[1]),
+            gate(GateType::H, &[0]),
+            gate(GateType::CX, &[0, 1]),
+            gate(GateType::H, &[1]),
+            gate(GateType::CX, &[1, 0]),
+            gate(GateType::H, &[0]),
+            gate(GateType::CX, &[0, 1]),
+            gate(GateType::H, &[1]),
+            gate(GateType::MZ, &[0]),
+            gate(GateType::MZ, &[1]),
+        ];
+        let noise = ExactTestNoise(
+            [
+                (2, Bm::y(0), 0.23),
+                (3, Bm::x(1), -0.31),
+                (4, Bm::z(0), 0.41),
+                (5, Bm::y(0).multiply(&Bm::z(1)), -0.19),
+                (6, Bm::x(0).multiply(&Bm::x(1)), 0.27),
+                (7, Bm::z(1), -0.37),
+                (8, Bm::y(0).multiply(&Bm::y(1)), 0.17),
+            ]
+            .into_iter()
+            .map(|(idx, label, h)| (idx, exact_test_injection(crate::eeg::EegType::H, label, h)))
+            .collect(),
+        );
+
+        // Independent forward evolution on the original two qubits. Each
+        // simulator rotation uses angle 2h for U = exp(-i h P).
+        let mut state = StateVec::new(2);
+        let q0 = [QubitId(0)];
+        let q1 = [QubitId(1)];
+        let pair = [(QubitId(0), QubitId(1))];
+        state.h(&q0);
+        state.ry(Angle64::from_radians(2.0 * 0.23), &q0);
+        state.cx(&pair);
+        state.rx(Angle64::from_radians(2.0 * -0.31), &q1);
+        state.h(&q1);
+        state.rz(Angle64::from_radians(2.0 * 0.41), &q0);
+        state.cx(&[(QubitId(1), QubitId(0))]);
+        // RX(pi/2) maps Y to Z; undo it after the ZZ rotation.
+        state.rx(Angle64::from_radians(std::f64::consts::FRAC_PI_2), &q0);
+        state.rzz(Angle64::from_radians(2.0 * -0.19), &pair);
+        state.rx(Angle64::from_radians(-std::f64::consts::FRAC_PI_2), &q0);
+        state.h(&q0);
+        state.rxx(Angle64::from_radians(2.0 * 0.27), &pair);
+        state.cx(&pair);
+        state.rz(Angle64::from_radians(2.0 * -0.37), &q1);
+        state.h(&q1);
+        state.ryy(Angle64::from_radians(2.0 * 0.17), &pair);
+
+        for (detector, expected) in [
+            (vec![0], state.probability(1) + state.probability(3)),
+            (vec![1], state.probability(2) + state.probability(3)),
+            (vec![0, 1], state.probability(1) + state.probability(2)),
+        ] {
+            let actual = heisenberg_exact_from_circuit(&gates, &detector, &noise, 2).unwrap();
+            assert!(
+                (actual - expected).abs() < 1e-10,
+                "detector={detector:?}: matrix={actual}, forward={expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_exact_stochastic_pauli_channels() {
+        let gates = [
+            gate(GateType::PZ, &[0]),
+            gate(GateType::PZ, &[1]),
+            gate(GateType::MZ, &[0]),
+        ];
+        for p in [0.0, 0.2, 0.5, 1.0] {
+            for (label, expected) in [
+                (Bm::x(0), p),
+                (Bm::y(0), p),
+                (Bm::z(0), 0.0),
+                (Bm::x(0).multiply(&Bm::x(1)), p),
+                (Bm::y(0).multiply(&Bm::y(1)), p),
+                (Bm::z(0).multiply(&Bm::z(1)), 0.0),
+            ] {
+                let noise = ExactTestNoise(vec![(
+                    1,
+                    exact_test_injection(crate::eeg::EegType::S, label.clone(), -p),
+                )]);
+                let actual = heisenberg_exact_from_circuit(&gates, &[0], &noise, 2).unwrap();
+                assert!(
+                    (actual - expected).abs() < 1e-10,
+                    "label={label:?}, p={p}: {actual} != {expected}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_exact_identity_injections() {
+        let gates = [
+            gate(GateType::PZ, &[0]),
+            gate(GateType::H, &[0]),
+            gate(GateType::MZ, &[0]),
+        ];
+        for eeg_type in [crate::eeg::EegType::H, crate::eeg::EegType::S] {
+            let noise = ExactTestNoise(vec![(
+                1,
+                exact_test_injection(eeg_type, Bm::default(), -0.7),
+            )]);
+            let actual = heisenberg_exact_from_circuit(&gates, &[0], &noise, 1).unwrap();
+            assert!((actual - 0.5).abs() < 1e-10);
+        }
+    }
+
+    #[test]
+    fn test_exact_unsupported_injections() {
+        let gates = [gate(GateType::PZ, &[0]), gate(GateType::MZ, &[0])];
+        for eeg_type in [crate::eeg::EegType::C, crate::eeg::EegType::A] {
+            for rate in [0.0, 0.3] {
+                for label in [Bm::default(), Bm::x(0)] {
+                    let mut inj = exact_test_injection(eeg_type, label, rate);
+                    inj.label2 = Some(Bm::z(0));
+                    let noise = ExactTestNoise(vec![(0, inj)]);
+                    assert_eq!(
+                        heisenberg_exact_from_circuit(&gates, &[0], &noise, 1),
+                        Err(expand::EegBuildError::UnsupportedExactNoise { eeg_type })
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_exact_label_out_of_range() {
+        /// A depolarizing channel on qubit 5 after gate 0.
+        struct FarChannel;
+        impl NoiseSpec for FarChannel {
+            fn noise_after_gate(
+                &self,
+                _: usize,
+                _: GateType,
+                _: &[usize],
+            ) -> Vec<crate::noise::NoiseInjection> {
+                Vec::new()
+            }
+            fn exact_noise_after_gate(
+                &self,
+                gate_index: usize,
+                _: GateType,
+                _: &[usize],
+            ) -> GateNoise {
+                GateNoise {
+                    injections: Vec::new(),
+                    depolarizing: (gate_index == 0)
+                        .then_some(crate::noise::DepolarizingChannel::OneQubit {
+                            qubit: 5,
+                            probability: 0.1,
+                        })
+                        .into_iter()
+                        .collect(),
+                }
+            }
+        }
+        let gates = [gate(GateType::PZ, &[0]), gate(GateType::MZ, &[0])];
+        // Expansion adds one aux qubit, so qubit 2 lies outside the circuit.
+        for eeg_type in [crate::eeg::EegType::H, crate::eeg::EegType::S] {
+            let noise = ExactTestNoise(vec![(0, exact_test_injection(eeg_type, Bm::x(2), -0.1))]);
+            assert_eq!(
+                heisenberg_exact_from_circuit(&gates, &[0], &noise, 1),
+                Err(expand::EegBuildError::ExactLabelOutOfRange {
+                    qubit: 2,
+                    num_qubits: 2
+                })
+            );
+        }
+
+        // A categorical channel past the circuit is reported the same way.
+        assert_eq!(
+            heisenberg_exact_from_circuit(&gates, &[0], &FarChannel, 1),
+            Err(expand::EegBuildError::ExactLabelOutOfRange {
+                qubit: 5,
+                num_qubits: 2
+            })
+        );
+    }
+
+    #[test]
+    fn test_exact_unsupported_gates() {
+        for unsupported in [
+            gate(GateType::SZ, &[0]),
+            gate(GateType::CZ, &[0, 1]),
+            gate(GateType::CX, &[0, 1, 2]),
+        ] {
+            let gate_type = unsupported.gate_type;
+            let gates = [
+                gate(GateType::PZ, &[0]),
+                gate(GateType::PZ, &[1]),
+                unsupported,
+                gate(GateType::MZ, &[0]),
+            ];
+            assert_eq!(
+                heisenberg_exact_from_circuit(&gates, &[0], &ExactTestNoise(vec![]), 2),
+                Err(expand::EegBuildError::UnsupportedExactGate { gate_type })
+            );
+        }
+    }
+
+    #[test]
+    fn test_exact_skips_expansion_noise() {
+        let gates = [
+            gate(GateType::PZ, &[0]),
+            gate(GateType::MZ, &[0]),
+            gate(GateType::PZ, &[0]),
+            gate(GateType::MZ, &[0]),
+        ];
+        // Expansion inserts QAlloc, CX, PZ at indices 1..=3 and 5..=7.
+        let noise = ExactTestNoise(
+            [1, 2, 3, 5, 6, 7]
+                .into_iter()
+                .map(|idx| {
+                    (
+                        idx,
+                        exact_test_injection(crate::eeg::EegType::C, Bm::x(0), 0.3),
+                    )
+                })
+                .collect(),
+        );
+        let actual = heisenberg_exact_from_circuit(&gates, &[0, 1], &noise, 1).unwrap();
+        assert!(actual.abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_exact_batched_supported_gates() {
+        let gates = [
+            gate(GateType::QAlloc, &[0, 1, 2, 3]),
+            gate(GateType::H, &[1]),
+            gate(GateType::PZ, &[0, 1]),
+            gate(GateType::H, &[0, 1]),
+            gate(GateType::CX, &[0, 2, 1, 3]),
+            gate(GateType::MZ, &[0, 1, 2, 3]),
+        ];
+        // The reset removes the first H1. The batched H and CX then prepare
+        // two Bell pairs, (0,2) and (1,3): each bit is fair, each pair even.
+        let noise = ExactTestNoise(vec![]);
+        for (detector, expected) in [
+            (vec![0], 0.5),
+            (vec![1], 0.5),
+            (vec![2], 0.5),
+            (vec![3], 0.5),
+            (vec![0, 2], 0.0),
+            (vec![1, 3], 0.0),
+        ] {
+            let actual = heisenberg_exact_from_circuit(&gates, &detector, &noise, 4).unwrap();
+            assert!(
+                (actual - expected).abs() < 1e-10,
+                "detector={detector:?}: {actual} != {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_exact_batched_cx_pairs_apply_in_order() {
+        // CX [0,1,1,2] is CX(0,1) then CX(1,2): after H0 that makes a GHZ
+        // state, so q2 is a fair coin. In the other order CX(1,2) acts on
+        // |0> first and q2 stays 0.
+        let gates = [
+            gate(GateType::QAlloc, &[0, 1, 2]),
+            gate(GateType::H, &[0]),
+            gate(GateType::CX, &[0, 1, 1, 2]),
+            gate(GateType::MZ, &[0, 1, 2]),
+        ];
+        let noise = ExactTestNoise(vec![]);
+        for (detector, expected) in [(vec![2], 0.5), (vec![0, 2], 0.0), (vec![1, 2], 0.0)] {
+            let actual = heisenberg_exact_from_circuit(&gates, &detector, &noise, 3).unwrap();
+            assert!(
+                (actual - expected).abs() < 1e-10,
+                "detector={detector:?}: {actual} != {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_exact_identity_gates_carry_noise() {
+        // I and Idle act trivially but still carry noise: an X0 flip with
+        // probability p after either one flips the measurement with p.
+        let p = 0.2;
+        for idle in [GateType::I, GateType::Idle] {
+            let gates = [
+                gate(GateType::PZ, &[0]),
+                gate(idle, &[0]),
+                gate(GateType::MZ, &[0]),
+            ];
+            let noise = ExactTestNoise(vec![(
+                1,
+                exact_test_injection(crate::eeg::EegType::S, Bm::x(0), -p),
+            )]);
+            let actual = heisenberg_exact_from_circuit(&gates, &[0], &noise, 1).unwrap();
+            assert!((actual - p).abs() < 1e-12, "{idle:?}: {actual} != {p}");
+        }
+    }
+
+    #[test]
     fn test_exact_2round_xcheck() {
         // Matrix Heisenberg on the simplest failing case: 2-round, 1 ancilla.
         // Exact analytical: P = [2 - cos(6θ) - cos(2θ)] / 4.
@@ -2675,7 +3024,6 @@ mod tests {
         ];
 
         let expanded = crate::expand::expand_circuit(&gates_orig).expect("supported circuit");
-        let gate_index = crate::expand::GateIndex::build(&expanded.gates, expanded.num_qubits);
 
         let init_gates: Vec<Gate> = (0..7).map(|q| gate(GateType::PZ, &[q])).collect();
         let stab =
@@ -2710,6 +3058,8 @@ mod tests {
         ];
 
         for (label, noise) in &noise_configs {
+            let gate_index =
+                crate::expand::GateIndex::build(&expanded.gates, expanded.num_qubits, noise);
             let noise_map = build_noise_map(&expanded.gates, noise, &gate_index.expansion_gates);
 
             // Test all 3 detectors (auxiliary qubits in round 1: meas 0,1,2)
@@ -2855,7 +3205,8 @@ mod tests {
             }
 
             let expanded = crate::expand::expand_circuit(&gates).expect("supported circuit");
-            let gate_index = crate::expand::GateIndex::build(&expanded.gates, expanded.num_qubits);
+            let gate_index =
+                crate::expand::GateIndex::build(&expanded.gates, expanded.num_qubits, &noise);
             let noise_map = build_noise_map(&expanded.gates, &noise, &gate_index.expansion_gates);
 
             let init_gates: Vec<Gate> = (0..num_qubits).map(|q| gate(GateType::PZ, &[q])).collect();
@@ -2981,7 +3332,8 @@ mod tests {
             }
 
             let expanded = crate::expand::expand_circuit(&gates).expect("supported circuit");
-            let gate_index = crate::expand::GateIndex::build(&expanded.gates, expanded.num_qubits);
+            let gate_index =
+                crate::expand::GateIndex::build(&expanded.gates, expanded.num_qubits, &noise);
             let noise_map = build_noise_map(&expanded.gates, &noise, &gate_index.expansion_gates);
 
             let init_gates: Vec<Gate> = (0..num_qubits).map(|q| gate(GateType::PZ, &[q])).collect();

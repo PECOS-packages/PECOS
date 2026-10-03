@@ -51,8 +51,10 @@ attributes #0 = { "EntryPoint" }
         print("after", flush=True)
         """,
     )
-    env = {**os.environ, "PECOS_CACHE_DIR": str(tmp_path / "program-cache")}
-    # A second fresh interpreter also exercises the persisted program cache.
+    cache_dir = tmp_path / "program-cache"
+    env = {**os.environ, "PECOS_CACHE_DIR": str(cache_dir)}
+    # A second fresh interpreter loads the valid program from the persistent
+    # cache and must compile, and reject, the missing import again.
     for _ in range(2):
         completed = subprocess.run(
             [sys.executable, "-c", script, program],
@@ -65,3 +67,5 @@ attributes #0 = { "EntryPoint" }
         assert completed.returncode == 0, completed.stdout + completed.stderr
         assert "caught missing get_current_shot" in completed.stdout
         assert "after" in completed.stdout
+    cached = [path for path in cache_dir.iterdir() if path.suffix in {".so", ".dll"}]
+    assert len(cached) == 1, cached

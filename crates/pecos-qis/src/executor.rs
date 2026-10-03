@@ -2053,14 +2053,14 @@ entry:
             error!("Linking FAILED!");
             debug!("stderr: {}", String::from_utf8_lossy(&output.stderr));
             debug!("stdout: {}", String::from_utf8_lossy(&output.stdout));
+            let message = link_error_message(&output.stdout, &output.stderr);
 
             // On Windows, check if we're still getting LNK2019 errors for selene_* symbols
             #[cfg(target_os = "windows")]
             {
-                let stderr_str = String::from_utf8_lossy(&output.stderr);
-                if stderr_str.contains("LNK2019") {
+                if message.contains("LNK2019") {
                     error!("LNK2019 UNRESOLVED SYMBOL ERRORS DETECTED");
-                    for line in stderr_str.lines() {
+                    for line in message.lines() {
                         if line.contains("LNK2019") || line.contains("unresolved external symbol") {
                             error!("  {line}");
                         }
@@ -2068,10 +2068,7 @@ entry:
                 }
             }
 
-            return Err(InterfaceError::LoadError(link_error_message(
-                &output.stdout,
-                &output.stderr,
-            )));
+            return Err(InterfaceError::LoadError(message));
         }
 
         // Verify the DLL/SO file was created
@@ -2122,6 +2119,17 @@ entry:
 
         let so_path = final_path;
 
+        // Load the program library into the global cache.
+        // This avoids repeated library load/unload cycles which cause instability on macOS.
+        // Load before caching: a library whose imports do not resolve fails the same way
+        // on every load, so it must not be served from either cache.
+        debug!("Loading program library into global cache...");
+        if let Err(e) = Self::get_or_cache_program_lib(&so_path) {
+            let _ = std::fs::remove_file(&so_path);
+            return Err(e);
+        }
+        debug!("Program library loaded into cache successfully");
+
         self.executable_path = Some(so_path.clone());
 
         self.metadata
@@ -2168,12 +2176,6 @@ entry:
                 Err(e) => debug!("Failed to serialize cache manifest: {e}"),
             }
         }
-
-        // Load the program library into the global cache.
-        // This avoids repeated library load/unload cycles which cause instability on macOS.
-        debug!("Loading program library into global cache...");
-        let _lib = Self::get_or_cache_program_lib(&so_path)?;
-        debug!("Program library loaded into cache successfully");
 
         Ok(so_path)
     }
@@ -2850,8 +2852,29 @@ mod tests {
         }
     }
 
+    /// Run one test of this binary in a fresh process with `child_env` set.
+    fn run_test_in_child(test_name: &str, child_env: &str, cache_dir: &Path) {
+        // The child inherits this process's environment, which other tests
+        // change temporarily (for example PECOS_QIS_FFI_PATH).
+        let _env_lock = ENV_MUTEX.lock().expect("environment lock");
+        let output = Command::new(std::env::current_exe().expect("test executable"))
+            .args(["--exact", test_name, "--nocapture"])
+            .env(child_env, "1")
+            .env("PECOS_CACHE_DIR", cache_dir)
+            .output()
+            .expect("run child");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(output.status.success(), "child failed: {stdout}\n{stderr}");
+        // A filter that matches no test also exits successfully.
+        assert!(
+            stdout.contains("test result: ok. 1 passed"),
+            "child did not run {test_name}: {stdout}\n{stderr}"
+        );
+    }
+
     #[test]
-    fn missing_program_import_returns_load_error() {
+    fn missing_program_import_fails_program_load() {
         const CHILD_ENV: &str = "PECOS_TEST_MISSING_PROGRAM_IMPORT";
         if std::env::var_os(CHILD_ENV).is_some() {
             let mut interface = QisHeliosInterface::new();
@@ -2872,23 +2895,23 @@ mod tests {
         }
 
         let cache = tempfile::tempdir().expect("cache directory");
+        // The rejected library must not stay in the persistent cache, so the
+        // second child compiles again and reports the same error.
         for _ in 0..2 {
-            let output = Command::new(std::env::current_exe().expect("test executable"))
-                .args([
-                    "--exact",
-                    "executor::tests::missing_program_import_returns_load_error",
-                    "--nocapture",
-                ])
-                .env(CHILD_ENV, "1")
-                .env("PECOS_CACHE_DIR", cache.path())
-                .output()
-                .expect("run child");
-            assert!(
-                output.status.success(),
-                "child failed: {}\n{}",
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
+            run_test_in_child(
+                "executor::tests::missing_program_import_fails_program_load",
+                CHILD_ENV,
+                cache.path(),
             );
+            let cached: Vec<_> = std::fs::read_dir(cache.path())
+                .expect("read cache directory")
+                .map(|entry| entry.expect("cache entry").path())
+                .filter(|path| {
+                    path.extension()
+                        .is_some_and(|ext| ext == "so" || ext == "dll" || ext == "manifest")
+                })
+                .collect();
+            assert!(cached.is_empty(), "rejected program was cached: {cached:?}");
         }
     }
 
@@ -2925,21 +2948,10 @@ mod tests {
         // The first child compiles; the second loads the persistent cache with
         // neither runtime initialized. Each also repeats the in-process load.
         for _ in 0..2 {
-            let output = Command::new(std::env::current_exe().expect("test executable"))
-                .args([
-                    "--exact",
-                    "executor::tests::program_load_resolves_runtime_imports_in_fresh_process",
-                    "--nocapture",
-                ])
-                .env(CHILD_ENV, "1")
-                .env("PECOS_CACHE_DIR", cache.path())
-                .output()
-                .expect("run child");
-            assert!(
-                output.status.success(),
-                "child failed: {}\n{}",
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
+            run_test_in_child(
+                "executor::tests::program_load_resolves_runtime_imports_in_fresh_process",
+                CHILD_ENV,
+                cache.path(),
             );
         }
     }

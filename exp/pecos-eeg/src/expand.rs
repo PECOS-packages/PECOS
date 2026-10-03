@@ -330,8 +330,9 @@ impl ExpandedCircuit {
 /// Precomputed qubit-to-gate index for sparse backward traversal.
 ///
 /// For each qubit, stores the gate indices (in the flat gate list) that
-/// touch it, sorted in ascending order. This enables the backward walk
-/// to visit only gates on active qubits instead of scanning all gates.
+/// touch it through the gate itself or through the gate's exact noise,
+/// sorted in ascending order. This enables the backward walk to visit only
+/// gates on active qubits instead of scanning all gates.
 pub struct GateIndex {
     /// qubit_gates[q] = sorted Vec of gate indices touching qubit q.
     qubit_gates: Vec<Vec<u32>>,
@@ -340,36 +341,31 @@ pub struct GateIndex {
 }
 
 impl GateIndex {
-    /// Build the index from a gate list (typically the expanded circuit).
+    /// Build the index from a gate list (typically the expanded circuit) and
+    /// the noise the sparse walks will apply. Noise may act outside its gate's
+    /// qubits, so the gate is also indexed under every qubit its noise acts on.
     #[must_use]
-    pub fn build(gates: &[Gate], num_qubits: usize) -> Self {
+    pub fn build(gates: &[Gate], num_qubits: usize, noise: &dyn crate::noise::NoiseSpec) -> Self {
+        let expansion = expansion_gate_flags(gates);
         let mut qubit_gates = vec![Vec::new(); num_qubits];
 
         for (i, gate) in gates.iter().enumerate() {
-            for q in &gate.qubits {
-                qubit_gates[q.index()].push(i as u32);
+            let gate_qubits: Vec<usize> = gate.qubits.iter().map(QubitId::index).collect();
+            let mut touched = gate_qubits.clone();
+            if !expansion[i] {
+                touched.extend(
+                    noise
+                        .exact_noise_after_gate(i, gate.gate_type, &gate_qubits)
+                        .qubits(),
+                );
             }
-        }
-
-        // Identify expansion gates (QAlloc + subsequent CX + PZ)
-        let mut expansion = vec![false; gates.len()];
-        for i in 0..gates.len() {
-            if gates[i].gate_type == GateType::QAlloc {
-                expansion[i] = true;
-            }
-        }
-        for i in 1..gates.len() {
-            if gates[i].gate_type == GateType::CX && gates[i - 1].gate_type == GateType::QAlloc {
-                let alloc_q = gates[i - 1].qubits[0].index();
-                if gates[i].qubits.len() >= 2 && gates[i].qubits[1].index() == alloc_q {
-                    expansion[i] = true;
-                    if i + 1 < gates.len()
-                        && gates[i + 1].gate_type == GateType::PZ
-                        && gates[i + 1].qubits[0].index() == gates[i].qubits[0].index()
-                    {
-                        expansion[i + 1] = true;
-                    }
+            touched.sort_unstable();
+            touched.dedup();
+            for q in touched {
+                if q >= qubit_gates.len() {
+                    qubit_gates.resize_with(q + 1, Vec::new);
                 }
+                qubit_gates[q].push(i as u32);
             }
         }
 
@@ -393,6 +389,32 @@ impl GateIndex {
     pub fn is_expansion(&self, gate_idx: usize) -> bool {
         self.expansion_gates.get(gate_idx).copied().unwrap_or(false)
     }
+}
+
+/// Identify expansion gates (QAlloc + subsequent CX + PZ).
+#[must_use]
+pub fn expansion_gate_flags(gates: &[Gate]) -> Vec<bool> {
+    let mut expansion = vec![false; gates.len()];
+    for i in 0..gates.len() {
+        if gates[i].gate_type == GateType::QAlloc {
+            expansion[i] = true;
+        }
+    }
+    for i in 1..gates.len() {
+        if gates[i].gate_type == GateType::CX && gates[i - 1].gate_type == GateType::QAlloc {
+            let alloc_q = gates[i - 1].qubits[0].index();
+            if gates[i].qubits.len() >= 2 && gates[i].qubits[1].index() == alloc_q {
+                expansion[i] = true;
+                if i + 1 < gates.len()
+                    && gates[i + 1].gate_type == GateType::PZ
+                    && gates[i + 1].qubits[0].index() == gates[i].qubits[0].index()
+                {
+                    expansion[i + 1] = true;
+                }
+            }
+        }
+    }
+    expansion
 }
 
 /// Construct an unparameterized expansion gate.

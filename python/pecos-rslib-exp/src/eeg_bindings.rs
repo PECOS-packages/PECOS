@@ -419,7 +419,8 @@ pub fn exact_detection_rates(
         pecos_eeg::stabilizer::StabilizerGroup::from_circuit(&init_gates, expanded.num_qubits);
 
     // Build qubit-to-gate index once, shared across all detector walks.
-    let gate_index = pecos_eeg::expand::GateIndex::build(&expanded.gates, expanded.num_qubits);
+    let gate_index =
+        pecos_eeg::expand::GateIndex::build(&expanded.gates, expanded.num_qubits, &noise);
 
     // Use noise map (with batched S-type) when stochastic noise is present.
     // For coherent-only (idle_rz), the bitmap-enhanced linear scan is faster.
@@ -494,7 +495,8 @@ pub fn exact_pairwise_rates(
     let stab =
         pecos_eeg::stabilizer::StabilizerGroup::from_circuit(&init_gates, expanded.num_qubits);
 
-    let gate_index = pecos_eeg::expand::GateIndex::build(&expanded.gates, expanded.num_qubits);
+    let gate_index =
+        pecos_eeg::expand::GateIndex::build(&expanded.gates, expanded.num_qubits, &noise);
     let has_stochastic = p1 > 0.0 || p2 > 0.0 || p_meas > 0.0 || p_prep > 0.0;
     let noise_map = if has_stochastic {
         Some(pecos_eeg::heisenberg::build_noise_map(
@@ -569,7 +571,8 @@ pub fn coherent_dem_exact(
     let expanded = pecos_eeg::expand::expand_circuit(&gates)
         .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
     let (detectors, observables) = extract_detectors_expanded(tick_circuit, &expanded)?;
-    let gate_index = pecos_eeg::expand::GateIndex::build(&expanded.gates, expanded.num_qubits);
+    let gate_index =
+        pecos_eeg::expand::GateIndex::build(&expanded.gates, expanded.num_qubits, &noise);
 
     // Compute Heisenberg exact marginals
     let init_gates: Vec<Gate> = (0..expanded.num_original_qubits)
@@ -664,7 +667,8 @@ pub fn coherent_dem_decomposed(
     let expanded = pecos_eeg::expand::expand_circuit(&gates)
         .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
     let (detectors, observables) = extract_detectors_expanded(tick_circuit, &expanded)?;
-    let gate_index = pecos_eeg::expand::GateIndex::build(&expanded.gates, expanded.num_qubits);
+    let gate_index =
+        pecos_eeg::expand::GateIndex::build(&expanded.gates, expanded.num_qubits, &noise);
 
     // Compute Heisenberg-exact marginals for probability fitting
     let init_gates: Vec<Gate> = (0..expanded.num_original_qubits)
@@ -889,12 +893,12 @@ pub fn compress_noise(
     let gates = extract_gates(tick_circuit)?;
     let expanded = pecos_eeg::expand::expand_circuit(&gates)
         .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
-    let gate_index = pecos_eeg::expand::GateIndex::build(&expanded.gates, expanded.num_qubits);
+    let expansion_gates = pecos_eeg::expand::expansion_gate_flags(&expanded.gates);
 
     let result = pecos_eeg::noise_compression::compress_noise_to_boundaries(
         &expanded.gates,
         &noise,
-        &gate_index.expansion_gates,
+        &expansion_gates,
     );
 
     Ok((result.original_count, result.compressed_count))
@@ -946,11 +950,11 @@ pub fn noise_characterization(
     // For compressed mode: use original noise for Heisenberg targets (exact),
     // compressed noise for mechanism structure (fast).
     let structure_noise: Option<Box<dyn pecos_eeg::noise::NoiseSpec>> = if compress {
-        let gate_index = pecos_eeg::expand::GateIndex::build(&expanded.gates, expanded.num_qubits);
+        let expansion_gates = pecos_eeg::expand::expansion_gate_flags(&expanded.gates);
         let compressed = pecos_eeg::noise_compression::compress_noise_to_boundaries(
             &expanded.gates,
             &base_noise,
-            &gate_index.expansion_gates,
+            &expansion_gates,
         );
         Some(Box::new(
             pecos_eeg::noise_compression::CompressedNoiseSpec::from_compressed(&compressed),

@@ -4569,6 +4569,7 @@ dependencies = [
  "pecos-programs",
  "pecos-qis-ffi",
  "pecos-qis-ffi-types",
+ "pecos-qis-test-runtime",
  "pecos-random",
  "rand 0.10.2",
  "selene-core",
@@ -4597,6 +4598,10 @@ version = "0.2.0-dev.0"
 dependencies = [
  "serde",
 ]
+
+[[package]]
+name = "pecos-qis-test-runtime"
+version = "0.2.0-dev.0"
 
 [[package]]
 name = "pecos-quantum"

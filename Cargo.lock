@@ -4264,6 +4264,7 @@ dependencies = [
  "pecos-neo",
  "pecos-random",
  "pecos-simulators",
+ "tempfile",
 ]
 
 [[package]]

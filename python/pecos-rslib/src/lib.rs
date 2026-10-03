@@ -201,9 +201,6 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     {
         use std::ffi::CString;
 
-        const RTLD_LAZY: i32 = 0x00001;
-        const RTLD_GLOBAL: i32 = 0x00100;
-
         log::debug!("Unix detected, attempting Selene runtime preload...");
 
         // Build search paths for libselene_simple_runtime.so:
@@ -233,7 +230,10 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
                 unsafe {
                     let path_cstr =
                         CString::new(path_str.as_bytes()).expect("path contains null byte");
-                    let handle = libc::dlopen(path_cstr.as_ptr(), RTLD_LAZY | RTLD_GLOBAL);
+                    // RTLD_NOW: a later eager open of this same file reuses this
+                    // handle, so a lazy load here would hide unresolved imports.
+                    let handle =
+                        libc::dlopen(path_cstr.as_ptr(), libc::RTLD_NOW | libc::RTLD_GLOBAL);
                     if handle.is_null() {
                         let error_ptr = libc::dlerror();
                         if !error_ptr.is_null() {

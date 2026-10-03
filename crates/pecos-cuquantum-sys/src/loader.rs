@@ -21,6 +21,8 @@ use thiserror::Error;
 pub enum CuQuantumLoadError {
     #[error("cuQuantum libraries not found. Searched: {searched_paths}")]
     LibraryNotFound { searched_paths: String },
+    #[error("Found {path} but could not load it: {reason}")]
+    LibraryLoadFailed { path: String, reason: String },
     #[error("Missing symbol {symbol} in {lib_name}: {reason}")]
     MissingSymbol {
         lib_name: String,
@@ -40,7 +42,7 @@ macro_rules! load_sym {
                 symbol: String::from_utf8_lossy($name)
                     .trim_end_matches('\0')
                     .to_string(),
-                reason: e.to_string(),
+                reason: std::error::Error::source(&e).unwrap_or(&e).to_string(),
             })?;
         *sym
     }};
@@ -302,6 +304,8 @@ fn load_local<P: AsRef<std::ffi::OsStr>>(path: P) -> Result<Library, libloading:
 /// unversioned name (`libcudart.so`). On runtime-only installs the unversioned
 /// symlink often doesn't exist, so trying the versioned name first is important.
 fn try_load_lib(names: &[&str], search_dirs: &[PathBuf]) -> LoadResult<Library> {
+    // A candidate that exists but fails to load is the real error, not "not found".
+    let mut first_load_failure = None;
     for name in names {
         for dir in search_dirs {
             let path = dir.join(name);
@@ -311,7 +315,16 @@ fn try_load_lib(names: &[&str], search_dirs: &[PathBuf]) -> LoadResult<Library> 
                     log::info!("Loaded {name} from: {}", path.display());
                     return Ok(lib);
                 }
-                Err(e) => log::debug!("  Failed: {e}"),
+                Err(e) => {
+                    let reason = std::error::Error::source(&e).unwrap_or(&e).to_string();
+                    log::debug!("  Failed: {reason}");
+                    if first_load_failure.is_none() && path.exists() {
+                        first_load_failure = Some(CuQuantumLoadError::LibraryLoadFailed {
+                            path: path.display().to_string(),
+                            reason,
+                        });
+                    }
+                }
             }
         }
         // Fall back to bare name (system linker search)
@@ -320,6 +333,10 @@ fn try_load_lib(names: &[&str], search_dirs: &[PathBuf]) -> LoadResult<Library> 
             log::info!("Loaded {name} from system path");
             return Ok(lib);
         }
+    }
+
+    if let Some(failure) = first_load_failure {
+        return Err(failure);
     }
 
     let primary = names[0];
@@ -467,6 +484,20 @@ fn load_all() -> Result<CuQuantumBackend, CuQuantumLoadError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn found_but_unloadable_library_reports_its_load_error() {
+        let dir = std::env::temp_dir().join(format!("pecos-cuquantum-load-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let name = "libpecos_not_a_library.so";
+        std::fs::write(dir.join(name), b"not a shared library").unwrap();
+        let result = try_load_lib(&[name], std::slice::from_ref(&dir));
+        std::fs::remove_dir_all(&dir).unwrap();
+        let Err(CuQuantumLoadError::LibraryLoadFailed { path, .. }) = result else {
+            panic!("expected LibraryLoadFailed, got {:?}", result.err());
+        };
+        assert!(path.ends_with(name), "{path}");
+    }
 
     #[test]
     fn try_load_returns_result() {

@@ -1595,11 +1595,10 @@ impl SeleneRuntime {
     ) -> Result<()> {
         match op {
             Operation::AllocateQubit { id } => {
-                if self.program_to_runtime_qubits.contains_key(id) {
-                    return Err(RuntimeError::ExecutionError(format!(
-                        "program qubit {id} is already allocated; reset required after rejected input; release live handles before reallocation in the new shot"
-                    )));
-                }
+                debug_assert!(
+                    !self.program_to_runtime_qubits.contains_key(id),
+                    "duplicate allocations must be rejected by input preflight"
+                );
                 let _ = self.runtime_qubit_for_program(*id)?;
                 self.explicit_qubit_handles.insert(*id);
             }
@@ -3949,43 +3948,12 @@ mod tests {
         // Export a descriptor accessor from a tiny test library. Its descriptor
         // lives in this process and delegates every other callback to the real
         // public runtime; no ABI layout duplication or invalid pointers are used.
-        let dir = tempfile::tempdir().unwrap();
-        let source = dir.path().join("runtime.rs");
-        let plugin = dir
-            .path()
-            .join(format!("runtime.{}", std::env::consts::DLL_EXTENSION));
-        std::fs::write(
-            &source,
-            r#"
-            use std::sync::atomic::{AtomicPtr, Ordering};
-            static DESCRIPTOR: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
-            #[unsafe(no_mangle)]
-            pub extern "C" fn set_descriptor(value: *mut ()) {
-                DESCRIPTOR.store(value, Ordering::SeqCst);
-            }
-            #[unsafe(no_mangle)]
-            pub extern "C" fn selene_runtime_get_plugin_descriptor_v1() -> *mut () {
-                DESCRIPTOR.load(Ordering::SeqCst)
-            }
-        "#,
+        let executable = std::env::current_exe().unwrap();
+        let plugin = crate::selene_runtimes::find_library_in_dir(
+            executable.parent().unwrap(),
+            pecos_qis_test_runtime::LIBRARY_NAME,
         )
-        .unwrap();
-        let output = std::process::Command::new("rustc")
-            .args([
-                "--crate-type=cdylib",
-                "--edition=2024",
-                "--crate-name=runtime_fixture",
-            ])
-            .arg(&source)
-            .arg("-o")
-            .arg(&plugin)
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
+        .expect("Cargo-built runtime fixture beside the test executable");
         let public_runtime = crate::selene_runtimes::selene_simple_runtime().unwrap();
         // SAFETY: Both libraries stay loaded and the boxed descriptor stays alive
         // until all runtimes have been reset. Every callback has its original ABI.

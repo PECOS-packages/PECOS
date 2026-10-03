@@ -1308,8 +1308,10 @@ impl QisHeliosInterface {
 
     /// Load runtime libraries globally and program libraries locally.
     /// Program definitions must not interpose on later programs with the same names.
-    /// Resolve program imports now so missing functions return an error instead
-    /// of terminating the process when the program first calls them.
+    /// Resolve every import now so a missing function returns an error instead
+    /// of terminating the process when it is first called. This applies to
+    /// runtimes too: a later eager open of an already-loaded library reuses it
+    /// without checking its imports.
     #[cfg(unix)]
     fn load_library(
         path: &std::path::Path,
@@ -1319,11 +1321,12 @@ impl QisHeliosInterface {
         let lib_global = unsafe {
             libloading::os::unix::Library::open(
                 Some(path),
-                if global {
-                    libloading::os::unix::RTLD_LAZY | libloading::os::unix::RTLD_GLOBAL
-                } else {
-                    libloading::os::unix::RTLD_NOW | libloading::os::unix::RTLD_LOCAL
-                },
+                libloading::os::unix::RTLD_NOW
+                    | if global {
+                        libloading::os::unix::RTLD_GLOBAL
+                    } else {
+                        libloading::os::unix::RTLD_LOCAL
+                    },
             )
             .map_err(|e| library_load_error(error_msg, &e))?
         };
@@ -2923,6 +2926,58 @@ mod tests {
                 .collect();
             assert!(cached.is_empty(), "rejected program was cached: {cached:?}");
         }
+    }
+
+    /// Linux only: the fixture must be lazily bound for the runtime's load flags
+    /// to decide when its missing import fails, and macOS binds at load anyway.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn runtime_with_missing_import_fails_at_load() {
+        const CHILD_ENV: &str = "PECOS_TEST_RUNTIME_MISSING_IMPORT";
+        if std::env::var_os(CHILD_ENV).is_some() {
+            let error = QisHeliosInterface::new()
+                .load_program(
+                    b"define i64 @qmain(i64 %arg) { ret i64 0 }",
+                    ProgramFormat::LlvmIrText,
+                )
+                .expect_err("a runtime with an unresolved import must fail to load");
+            assert!(
+                error.to_string().contains("pecos_test_missing_import"),
+                "{error}"
+            );
+            return;
+        }
+
+        let dir = tempfile::tempdir().expect("temporary directory");
+        let source = dir.path().join("missing_import.c");
+        let shim = dir.path().join("libmissing_import.so");
+        std::fs::write(
+            &source,
+            "extern void pecos_test_missing_import(void);\n\
+             void pecos_test_export(void) { pecos_test_missing_import(); }\n",
+        )
+        .expect("write fixture source");
+        let output = Command::new("cc")
+            .args(["-shared", "-fPIC", "-Wl,-z,lazy"])
+            .arg(&source)
+            .arg("-o")
+            .arg(&shim)
+            .output()
+            .expect("run cc");
+        assert!(
+            output.status.success(),
+            "C fixture compilation failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let cache = dir.path().join("cache");
+        run_test_in_child(
+            "executor::tests::runtime_with_missing_import_fails_at_load",
+            &[
+                (CHILD_ENV, "1".as_ref()),
+                ("PECOS_CACHE_DIR", cache.as_os_str()),
+                ("PECOS_SELENE_SHIM_PATH", shim.as_os_str()),
+            ],
+        );
     }
 
     /// Linux only: programs there do not link the runtime, so a copied runtime

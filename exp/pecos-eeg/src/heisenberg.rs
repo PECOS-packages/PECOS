@@ -1453,9 +1453,12 @@ pub fn heisenberg_sparse(
             terms.retain(|t| t.coeff_re * t.coeff_re + t.coeff_im * t.coeff_im > thresh_sq);
         }
 
-        // Merge duplicate Pauli terms.
+        // Merge duplicate Pauli terms. Reset and measurement merge eagerly only
+        // when the gate acted: this walk also pops gates whose noise alone
+        // reaches an active qubit.
+        let gate_acted = gate_qs.iter().any(|&q| is_active(&active, q as usize));
         let should_merge = match gate.gate_type {
-            GateType::PZ | GateType::QAlloc | GateType::MZ => terms.len() > 4,
+            GateType::PZ | GateType::QAlloc | GateType::MZ if gate_acted => terms.len() > 4,
             _ => terms.len() > last_merge_count * 2 && terms.len() > 16,
         };
         if should_merge {
@@ -1556,14 +1559,14 @@ pub fn heisenberg_detection_probability_from_circuit(
 ///
 /// # Errors
 ///
-/// Returns an error for C/A injections (even at zero rate), a label acting on
-/// a qubit outside the expanded circuit, any unimplemented expanded gate
-/// adjoint, or an expansion/measurement-record resolution error.
+/// Returns an error for C/A injections (even at zero rate), a label or
+/// categorical channel acting on a qubit outside the expanded circuit, any
+/// unimplemented expanded gate adjoint, or an expansion/measurement-record
+/// resolution error.
 ///
 /// # Panics
 ///
-/// Panics if the expanded circuit has more than 20 qubits, or if a
-/// categorical channel acts outside its gate's qubits.
+/// Panics if the expanded circuit has more than 20 qubits.
 pub fn heisenberg_exact_from_circuit(
     original_gates: &[Gate],
     detector_meas_indices: &[usize],
@@ -1647,6 +1650,12 @@ pub fn heisenberg_exact_from_circuit(
                 matrix_pauli_adjoint(&mut obs_re, &mut im, &inj.label, weights, n);
             }
             for channel in &exact.depolarizing {
+                if let Some(&qubit) = channel.qubits().iter().find(|&&q| q >= n) {
+                    return Err(crate::expand::EegBuildError::ExactLabelOutOfRange {
+                        qubit,
+                        num_qubits: n,
+                    });
+                }
                 matrix_depolarizing_adjoint(&mut obs_re, &mut im, channel, n);
             }
         }
@@ -2760,6 +2769,35 @@ mod tests {
 
     #[test]
     fn test_exact_label_out_of_range() {
+        /// A depolarizing channel on qubit 5 after gate 0.
+        struct FarChannel;
+        impl NoiseSpec for FarChannel {
+            fn noise_after_gate(
+                &self,
+                _: usize,
+                _: GateType,
+                _: &[usize],
+            ) -> Vec<crate::noise::NoiseInjection> {
+                Vec::new()
+            }
+            fn exact_noise_after_gate(
+                &self,
+                gate_index: usize,
+                _: GateType,
+                _: &[usize],
+            ) -> GateNoise {
+                GateNoise {
+                    injections: Vec::new(),
+                    depolarizing: (gate_index == 0)
+                        .then_some(crate::noise::DepolarizingChannel::OneQubit {
+                            qubit: 5,
+                            probability: 0.1,
+                        })
+                        .into_iter()
+                        .collect(),
+                }
+            }
+        }
         let gates = [gate(GateType::PZ, &[0]), gate(GateType::MZ, &[0])];
         // Expansion adds one aux qubit, so qubit 2 lies outside the circuit.
         for eeg_type in [crate::eeg::EegType::H, crate::eeg::EegType::S] {
@@ -2772,6 +2810,15 @@ mod tests {
                 })
             );
         }
+
+        // A categorical channel past the circuit is reported the same way.
+        assert_eq!(
+            heisenberg_exact_from_circuit(&gates, &[0], &FarChannel, 1),
+            Err(expand::EegBuildError::ExactLabelOutOfRange {
+                qubit: 5,
+                num_qubits: 2
+            })
+        );
     }
 
     #[test]

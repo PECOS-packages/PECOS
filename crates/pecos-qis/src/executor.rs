@@ -3032,6 +3032,10 @@ attributes #0 = { "EntryPoint" }
     }
 
     impl TestChild {
+        pub(super) fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>> {
+            self.process.try_wait()
+        }
+
         pub(super) fn kill_and_wait(&mut self) -> std::process::ExitStatus {
             self.process.kill().expect("kill child");
             self.process.wait().expect("observe child exit")
@@ -3062,7 +3066,9 @@ attributes #0 = { "EntryPoint" }
         envs: &[(&str, &std::ffi::OsStr)],
     ) -> TestChild {
         let mut process = {
-            let _env_lock = ENV_MUTEX.lock().expect("environment lock");
+            let _env_lock = ENV_MUTEX
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             Command::new(std::env::current_exe().expect("test executable"))
                 .args(["--exact", test_name, "--nocapture"])
                 .envs(envs.iter().copied())
@@ -3084,7 +3090,7 @@ attributes #0 = { "EntryPoint" }
     pub(super) fn finish_test_child(
         mut child: TestChild,
         budget: std::time::Duration,
-    ) -> Result<(), String> {
+    ) -> Result<std::process::Output, String> {
         let watchdog = std::time::Instant::now();
         let (status, timed_out) = loop {
             if let Some(status) = child.process.try_wait().expect("child status") {
@@ -3109,8 +3115,13 @@ attributes #0 = { "EntryPoint" }
             .join()
             .expect("stderr thread")
             .expect("read stderr");
-        let stdout = String::from_utf8_lossy(&stdout);
-        let stderr = String::from_utf8_lossy(&stderr);
+        let output = std::process::Output {
+            status,
+            stdout,
+            stderr,
+        };
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
         if timed_out {
             return Err(format!(
                 "child watchdog expired ({status}): {stdout}\n{stderr}"
@@ -3120,9 +3131,11 @@ attributes #0 = { "EntryPoint" }
             return Err(format!("child failed ({status}): {stdout}\n{stderr}"));
         }
         if !stdout.contains("test result: ok. 1 passed") {
-            return Err(format!("child did not run one test: {stdout}\n{stderr}"));
+            return Err(format!(
+                "child did not run exactly one test ({status}): {stdout}\n{stderr}"
+            ));
         }
-        Ok(())
+        Ok(output)
     }
 
     pub(super) fn join_test_child(child: TestChild) {

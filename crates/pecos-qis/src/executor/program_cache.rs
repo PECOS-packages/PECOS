@@ -211,8 +211,6 @@ pub(super) fn cleanup_old_cache_files(cache_dir: &Path, max_age_secs: u64) {
             }
         }
         let _lock = CompilationLock { _file: file };
-        #[cfg(test)]
-        super::cache_faults::point(super::cache_faults::Site::CleanupLocked, cache_dir);
         for (path, kind) in paths {
             // A publisher may have replaced an old entry before we acquired its lock.
             if !is_old(&path, max_age_secs) {
@@ -228,5 +226,7 @@ pub(super) fn cleanup_old_cache_files(cache_dir: &Path, max_age_secs: u64) {
                 debug!("Cannot remove program cache entry {}: {e}", path.display());
             }
         }
+        #[cfg(test)]
+        super::cache_faults::point(super::cache_faults::Site::CleanupLocked, cache_dir);
     }
 }

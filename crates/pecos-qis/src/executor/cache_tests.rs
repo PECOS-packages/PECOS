@@ -14,6 +14,38 @@ const CHILD_TEST: &str = "executor::cache_tests::cache_child";
 struct ChildRun(Option<TestChild>);
 
 impl ChildRun {
+    fn wait(&mut self, path: &Path) -> Result<(), String> {
+        let watchdog = std::time::Instant::now();
+        while !path.exists() {
+            let exited = self
+                .0
+                .as_mut()
+                .expect("child")
+                .try_wait()
+                .expect("child status")
+                .is_some();
+            // A child can signal and exit between the file check and try_wait.
+            if exited && path.exists() {
+                return Ok(());
+            }
+            if exited || watchdog.elapsed() >= Duration::from_secs(60) {
+                let result = finish_test_child(self.0.take().expect("child"), Duration::ZERO);
+                let detail = match result {
+                    Ok(output) => format!(
+                        "child exited ({}) before signalling: {}\n{}",
+                        output.status,
+                        String::from_utf8_lossy(&output.stdout),
+                        String::from_utf8_lossy(&output.stderr),
+                    ),
+                    Err(error) => error,
+                };
+                return Err(format!("barrier {}: {detail}", path.display()));
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        Ok(())
+    }
+
     fn join(mut self) {
         join_test_child(self.0.take().expect("child"));
     }
@@ -52,8 +84,10 @@ impl Fixture {
     fn signal(&self, name: &str) {
         signal(&self.control.path().join(name));
     }
-    fn wait(&self, name: &str) {
-        faults::wait_for(&self.control.path().join(name));
+    fn wait(&self, name: &str, child: &mut ChildRun) {
+        child
+            .wait(&self.control.path().join(name))
+            .unwrap_or_else(|error| panic!("{error}"));
     }
 
     fn library(&self) -> PathBuf {
@@ -411,11 +445,11 @@ fn budget(mode: &str) {
 #[test]
 fn concurrent_processes_and_layout() {
     let fixture = Fixture::new();
-    let children: Vec<_> = (0..4)
+    let mut children: Vec<_> = (0..4)
         .map(|i| fixture.spawn("concurrent", &i.to_string()))
         .collect();
-    for i in 0..4 {
-        fixture.wait(&format!("ready-{i}"));
+    for (i, child) in children.iter_mut().enumerate() {
+        fixture.wait(&format!("ready-{i}"), child);
     }
     fixture.signal("go");
     for child in children {
@@ -472,8 +506,8 @@ fn failed_final_load_preserves_publication() {
 #[test]
 fn killed_holder_releases_lock() {
     let fixture = Fixture::new();
-    let holder = fixture.spawn("holder", "holder");
-    fixture.wait("acquired");
+    let mut holder = fixture.spawn("holder", "holder");
+    fixture.wait("acquired", &mut holder);
     holder.kill();
     fixture.run("dead-waiter");
 }
@@ -481,14 +515,14 @@ fn killed_holder_releases_lock() {
 #[test]
 fn live_holder_keeps_lock_path_after_publication() {
     let fixture = Fixture::new();
-    let holder = fixture.spawn("live-holder", "holder");
-    fixture.wait("acquired");
-    let waiter = fixture.spawn("live-waiter", "waiter");
-    fixture.wait("contended");
+    let mut holder = fixture.spawn("live-holder", "holder");
+    fixture.wait("acquired", &mut holder);
+    let mut waiter = fixture.spawn("live-waiter", "waiter");
+    fixture.wait("contended", &mut waiter);
     fixture.signal("publish");
-    fixture.wait("published");
+    fixture.wait("published", &mut holder);
     fixture.signal("poll-again");
-    fixture.wait("polled-after-publication");
+    fixture.wait("polled-after-publication", &mut waiter);
     fixture.run("probe");
     fixture.signal("release");
     fixture.signal("finish-poll");
@@ -510,8 +544,8 @@ fn exhausted_budget_rechecks_publication_without_compiling() {
                 std::fs::read(fixture.library()).expect("original bytes"),
             ))
         };
-        let holder = fixture.spawn("holder", "holder");
-        fixture.wait("acquired");
+        let mut holder = fixture.spawn("holder", "holder");
+        fixture.wait("acquired", &mut holder);
         fixture.run(mode);
         if let Some((library, bytes)) = original {
             assert_eq!(
@@ -605,8 +639,8 @@ fn cleanup_removes_only_owned_old_entries() {
 fn cleanup_skips_locked_digest() {
     let fixture = Fixture::new();
     fixture.run("seed");
-    let holder = fixture.spawn("holder", "holder");
-    fixture.wait("acquired");
+    let mut holder = fixture.spawn("holder", "holder");
+    fixture.wait("acquired", &mut holder);
     let library = fixture.library();
     let name = library.file_name().expect("name").to_str().expect("utf8");
     let (digest, _) = parse_entry(name).expect("owned");
@@ -631,8 +665,8 @@ fn cleanup_rechecks_age_after_locking() {
     fixture.run("seed");
     let library = fixture.library();
     make_old(&library);
-    let cleaner = fixture.spawn("cleanup-race", "cleaner");
-    fixture.wait("observed");
+    let mut cleaner = fixture.spawn("cleanup-race", "cleaner");
+    fixture.wait("observed", &mut cleaner);
     // The publishing child first observes the old file during its own startup
     // cleanup; reset its age so that child builds via the two failed-load seams.
     File::options()
@@ -652,8 +686,10 @@ fn replacement_driver() {
     let mut loaded = interface();
     let path = loaded.create_shared_library().expect("first load");
     let before = std::fs::read(&path).expect("old bytes");
-    let child = spawn("replacement-child", "replacement", &root(), &control());
-    faults::wait_for(&control().join("replace-ready"));
+    let mut child = spawn("replacement-child", "replacement", &root(), &control());
+    child
+        .wait(&control().join("replace-ready"))
+        .unwrap_or_else(|error| panic!("{error}"));
     let staging: Vec<_> = entries(&root().join("qis-programs"))
         .into_iter()
         .filter(|p| kind(p) == Some(EntryKind::Staging))
@@ -905,23 +941,22 @@ fn cleanup_holds_lock_through_deletion() {
     fixture.run("seed");
     let library = fixture.library();
     make_old(&library);
-    let cleaner = fixture.spawn("cleanup-locked", "cleaner");
-    fixture.wait("cleanup-held");
-    assert!(library.exists(), "cleanup must pause before deletion");
+    let mut cleaner = fixture.spawn("cleanup-locked", "cleaner");
+    fixture.wait("cleanup-held", &mut cleaner);
+    assert!(
+        !library.exists(),
+        "cleanup must delete the old library before the barrier"
+    );
     fixture.run("probe");
     fixture.signal("finish-cleanup");
     cleaner.join();
-    assert!(
-        !library.exists(),
-        "old publication must be removed after the barrier"
-    );
 }
 
 #[test]
 fn compilation_holds_lock_through_final_load() {
     let fixture = Fixture::new();
-    let compiler = fixture.spawn("final-locked", "compiler");
-    fixture.wait("final-ready");
+    let mut compiler = fixture.spawn("final-locked", "compiler");
+    fixture.wait("final-ready", &mut compiler);
     assert!(fixture.library().with_extension("manifest").exists());
     fixture.run("probe");
     fixture.signal("finish-final");
@@ -956,10 +991,18 @@ fn noisy_child(mode: &str) {
 
 #[test]
 fn child_helper_drains_pipes_and_reports_failure_output() {
+    let child = spawn_test_child("executor::cache_tests::nonexistent_child_test", &[]);
+    let error = finish_test_child(child, Duration::from_secs(60))
+        .expect_err("a misspelled filter must not silently succeed");
+    assert!(
+        error.contains("child did not run exactly one test"),
+        "{error}"
+    );
+
     for mode in ["noisy-success", "noisy-failure", "noisy-watchdog"] {
         let fixture = Fixture::new();
         let mut child = fixture.spawn(mode, "noisy");
-        fixture.wait("noisy-ready");
+        fixture.wait("noisy-ready", &mut child);
         let budget = if mode == "noisy-watchdog" {
             Duration::ZERO
         } else {
@@ -995,4 +1038,25 @@ fn cache_path_with_comma_keeps_linker_outputs_in_staging() {
     assert_layout(&fixture.cache(), true);
     assert_eq!(entries(fixture.root.path()), vec![fixture.cache()]);
     fixture.run("fresh");
+}
+
+#[test]
+fn barrier_wait_reports_early_child_exit() {
+    for mode in ["noisy-success", "noisy-failure"] {
+        let fixture = Fixture::new();
+        let mut child = fixture.spawn(mode, "early-exit");
+        let error = child
+            .wait(&fixture.control.path().join("never-signalled"))
+            .expect_err("a child that exits without signalling must fail the barrier");
+        assert!(error.contains("CHILD_STDOUT_END"));
+        assert!(error.contains("CHILD_STDERR_END"));
+        assert!(!error.contains("watchdog"), "{error}");
+        if mode == "noisy-failure" {
+            assert!(error.contains("child failed"));
+            assert!(error.contains("intentional child failure"));
+        } else {
+            assert!(error.contains("child exited"));
+            assert!(error.contains("before signalling"));
+        }
+    }
 }

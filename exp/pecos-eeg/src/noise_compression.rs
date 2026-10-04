@@ -338,6 +338,15 @@ mod tests {
     use crate::noise::UniformNoise;
 
     #[test]
+    fn forward_conjugation_acts_on_every_batched_pair() {
+        // X2 is untouched by the first pair and spreads to X2X3 through the
+        // second.
+        let mut label = Bm::x(2);
+        forward_conjugate_label(&mut label, &Gate::cx(&[(0, 1), (2, 3)]));
+        assert_eq!(label, Bm::x(2).multiply(&Bm::x(3)));
+    }
+
+    #[test]
     #[should_panic(expected = "Gate H expected 0 angle parameters, got 1")]
     fn adjoint_materialization_checks_constructor_arity() {
         let gate = Gate {

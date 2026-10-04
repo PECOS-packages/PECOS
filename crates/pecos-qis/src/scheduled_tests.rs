@@ -514,3 +514,25 @@ fn measurement_feedback_invalidates_terminal_drain() {
         .unwrap();
     runtime.shot_end().unwrap();
 }
+
+#[test]
+fn inactive_scheduled_extraction_does_not_invoke_custom_handler() {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+    let mut runtime = synthetic();
+    let invoked = Arc::new(AtomicBool::new(false));
+    let handler_invoked = Arc::clone(&invoked);
+    runtime.set_custom_event_handler(move |_| {
+        handler_invoked.store(true, Ordering::SeqCst);
+        Ok(RuntimeCustomEventDisposition::MetadataOnly)
+    });
+    let error = runtime
+        .retain_scheduled_batch(batch())
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("no scheduled extraction active"), "{error}");
+    assert!(!invoked.load(Ordering::SeqCst));
+    assert_eq!(runtime.runtime_batch_index, 0);
+}

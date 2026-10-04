@@ -19,6 +19,23 @@ Noise applies per emitted native gate. Programs that previously passed non-nativ
 gates directly to the simulator therefore have different noisy results. Soft-RZ
 can fold virtual Z rotations into later pulse axes without emitting an RZ gate.
 
+A decomposed gate's source metadata labels exactly one native: its first non-RZ
+operation, or its first RZ if the sequence contains only Z rotations. On runtimes
+that fold virtual Z, labels on Z-only gates (Z, S, Sdg, T, Tdg, and RZ-only
+sequences) have no emitted gate. Optional labels are dropped; labels with
+`source_lowering_required=true` fail the shot. These labels never move to a later
+pulse, which may have its own label.
+
+Metadata matching retains only outstanding labels and temporary empty guards on
+their qubits. Emission retires earlier unmatched records touching the emitted
+operation's qubits, including absorbed virtual Z anchors; required labels still
+fail when retired without an emission. Unlabelled flat input creates no matching
+records. When tracking begins on a qubit without an outstanding label, PECOS uses
+a local barrier and drains its earlier untracked work before registering the new
+label. This boundary prevents an older identical pulse from taking the new label,
+including across flat-to-metadata transitions; it can release queued work earlier
+than an otherwise identical unlabelled program.
+
 Flat and metadata routes release queued work on an Idle's qubit before emitting
 the Idle. Scheduled extraction accepts decomposable gates but continues to reject
 source Idle and trace metadata. Leakage-aware measurements release queued work on

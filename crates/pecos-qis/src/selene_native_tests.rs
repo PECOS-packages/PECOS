@@ -632,3 +632,122 @@ fn queued_metadata_records_survive_calls_and_flat_transitions() {
         }
     }
 }
+
+#[test]
+fn soft_rz_outstanding_metadata_is_bounded_across_h_chunks() {
+    for labelled in [false, true] {
+        let mut runtime = start(crate::selene_runtimes::selene_soft_rz_runtime().unwrap(), 1);
+        runtime
+            .lower_operations(&[Operation::AllocateQubit { id: 0 }])
+            .unwrap();
+        for chunk in 0..160 {
+            let mut ops = Vec::new();
+            if labelled {
+                // An absorbed, optional anchor must retire at the next pulse,
+                // even when that pulse also has its own label.
+                ops.extend([
+                    Operation::TraceMetadata {
+                        metadata: TraceMetadata::from([("source_label".into(), "Z-only".into())]),
+                        qubit: None,
+                    },
+                    QuantumOp::S(0).into(),
+                ]);
+            }
+            for _ in 0..50 {
+                if labelled {
+                    ops.push(Operation::TraceMetadata {
+                        metadata: TraceMetadata::from([("source_label".into(), "H".into())]),
+                        qubit: None,
+                    });
+                }
+                ops.push(QuantumOp::H(0).into());
+            }
+            ops.push(Operation::Barrier);
+            if labelled {
+                let lowered = runtime.lower_operations_with_metadata(&ops).unwrap();
+                assert_eq!(
+                    lowered.iter().filter(|op| !op.metadata.is_empty()).count(),
+                    50
+                );
+            } else {
+                runtime.lower_operations(&ops).unwrap();
+                assert!(runtime.source_trace_metadata.is_empty());
+            }
+            assert!(
+                runtime.source_trace_metadata.len() <= 2,
+                "chunk {chunk}: {} outstanding records",
+                runtime.source_trace_metadata.len()
+            );
+        }
+        if !labelled {
+            runtime.lower_operations(&[QuantumOp::H(0).into()]).unwrap();
+            assert!(
+                runtime.source_trace_metadata.is_empty(),
+                "unlabelled queued work needs no records"
+            );
+        }
+    }
+}
+
+#[test]
+fn z_only_metadata_has_no_anchor_when_virtual_z_is_absorbed() {
+    for gate in [
+        QuantumOp::Z(0),
+        QuantumOp::S(0),
+        QuantumOp::Sdg(0),
+        QuantumOp::T(0),
+        QuantumOp::Tdg(0),
+        QuantumOp::RZ(0.0, 0),
+        QuantumOp::RZ(-0.73, 0),
+    ] {
+        for soft in [false, true] {
+            for required in [false, true] {
+                let mut runtime = start(
+                    if soft {
+                        crate::selene_runtimes::selene_soft_rz_runtime().unwrap()
+                    } else {
+                        crate::selene_runtimes::selene_simple_runtime().unwrap()
+                    },
+                    1,
+                );
+                let output = runtime.lower_operations_with_metadata(&[
+                    Operation::AllocateQubit { id: 0 },
+                    Operation::TraceMetadata {
+                        metadata: TraceMetadata::from([
+                            ("source_label".into(), "Z-only".into()),
+                            ("source_lowering_required".into(), required.to_string()),
+                        ]),
+                        qubit: None,
+                    },
+                    gate.clone().into(),
+                    Operation::TraceMetadata {
+                        metadata: TraceMetadata::from([("source_label".into(), "next X".into())]),
+                        qubit: None,
+                    },
+                    QuantumOp::X(0).into(),
+                    Operation::Barrier,
+                ]);
+                if soft && required {
+                    let error = output.unwrap_err().to_string();
+                    assert!(
+                        error.contains("Z-only") && error.contains("did not emit"),
+                        "{error}"
+                    );
+                } else {
+                    let output = output.unwrap();
+                    let labelled: Vec<_> =
+                        output.iter().filter(|op| !op.metadata.is_empty()).collect();
+                    assert_eq!(labelled.len(), if soft { 1 } else { 2 }, "{gate:?}");
+                    if !soft {
+                        assert!(matches!(labelled[0].op, QuantumOp::RZ(_, 0)));
+                        assert_eq!(labelled[0].metadata["source_label"], "Z-only");
+                    }
+                    let pulse = labelled.last().unwrap();
+                    assert!(matches!(pulse.op, QuantumOp::RXY(_, _, 0)));
+                    assert_eq!(pulse.metadata["source_label"], "next X");
+                    assert!(runtime.source_trace_metadata.is_empty());
+                }
+            }
+        }
+    }
+}

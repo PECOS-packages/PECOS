@@ -509,7 +509,7 @@ impl SeleneRuntime {
             }
 
             lowered_ops.extend(runtime.drain_runtime_operations()?);
-            runtime.discard_emitted_source_metadata(&lowered_ops);
+            runtime.discard_emitted_source_metadata(&lowered_ops)?;
             Ok(lowered_ops)
         })
     }
@@ -538,13 +538,17 @@ impl SeleneRuntime {
                         &mut pending_global_metadata,
                         &mut pending_qubit_metadata,
                     )?;
+                    if !metadata.is_empty() {
+                        self.begin_source_metadata(qop, &mut lowered_ops)
+                            .map_err(|error| self.operation_lowering_error(qop, &error))?;
+                    }
                     let mut emitted_ops = Vec::new();
                     self.submit_quantum_op_with_metadata(qop, metadata, &mut emitted_ops)?;
                     Self::push_lowered_ops_with_source_metadata(
                         &mut lowered_ops,
                         emitted_ops,
                         &mut self.source_trace_metadata,
-                    );
+                    )?;
                 }
                 Operation::Barrier => {
                     let emitted_ops = self.lower_runtime_barrier()?;
@@ -552,7 +556,7 @@ impl SeleneRuntime {
                         &mut lowered_ops,
                         emitted_ops,
                         &mut self.source_trace_metadata,
-                    );
+                    )?;
                 }
                 _ => {
                     let mut emitted_ops = Vec::new();
@@ -561,7 +565,7 @@ impl SeleneRuntime {
                         &mut lowered_ops,
                         emitted_ops,
                         &mut self.source_trace_metadata,
-                    );
+                    )?;
                 }
             }
         }
@@ -571,7 +575,7 @@ impl SeleneRuntime {
             &mut lowered_ops,
             emitted_ops,
             &mut self.source_trace_metadata,
-        );
+        )?;
 
         if !pending_global_metadata.is_empty() {
             return Err(RuntimeError::ExecutionError(format!(
@@ -584,13 +588,63 @@ impl SeleneRuntime {
         Ok(lowered_ops)
     }
 
+    fn begin_source_metadata(
+        &mut self,
+        qop: &QuantumOp,
+        lowered_ops: &mut Vec<LoweredQuantumOp>,
+    ) -> Result<()> {
+        let source = self.map_quantum_op_to_runtime_qubits(qop)?;
+        let untracked: Vec<_> = Self::quantum_op_qubits(&source)
+            .into_iter()
+            .filter(|q| {
+                !self.source_trace_metadata.iter().any(|record| {
+                    !record.metadata.is_empty() && Self::quantum_op_qubits(&record.op).contains(q)
+                })
+            })
+            .map(|q| q as u64)
+            .collect();
+        if !untracked.is_empty() {
+            // Flat/unlabelled input keeps no provenance records. Establish a
+            // per-qubit boundary before tracking starts, so an older identical
+            // pulse cannot consume the new label. Match the released work BEFORE
+            // registering the label. Local barriers preserve per-qubit order.
+            self.call_runtime_local_barrier(&untracked)?;
+            let emitted = self.drain_runtime_operations()?;
+            Self::push_lowered_ops_with_source_metadata(
+                lowered_ops,
+                emitted,
+                &mut self.source_trace_metadata,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn needs_source_record(
+        op: &QuantumOp,
+        metadata: &TraceMetadata,
+        records: &VecDeque<SourceTraceMetadata>,
+    ) -> bool {
+        !metadata.is_empty()
+            || records.iter().any(|record| {
+                !record.metadata.is_empty()
+                    && !Self::quantum_op_qubits(&record.op)
+                        .is_disjoint(&Self::quantum_op_qubits(op))
+            })
+    }
+
     fn record_source_metadata(
         &mut self,
         qop: &QuantumOp,
         mut metadata: TraceMetadata,
         records: &mut VecDeque<SourceTraceMetadata>,
     ) -> Result<()> {
+        if metadata.is_empty() && records.is_empty() {
+            return Ok(());
+        }
         let source = self.map_quantum_op_to_runtime_qubits(qop)?;
+        if !Self::needs_source_record(&source, &metadata, records) {
+            return Ok(());
+        }
         let classification = classify(&source)?;
         let sequence = match classification {
             RuntimeInput::Decomposed(sequence) => sequence,
@@ -627,9 +681,11 @@ impl SeleneRuntime {
             }
         };
         // Exactly ONE native carries a decomposed source's metadata: the first
-        // non-RZ native, or the first RZ for a Z-only sequence. This anchor survives
-        // soft-RZ's virtual-Z elimination. Every other native, even from an
-        // unlabelled source, has an empty record so it cannot steal a later label.
+        // non-RZ native, or the first RZ for a Z-only sequence. On runtimes that
+        // absorb virtual Z, a Z-only anchor has no emission: its optional label
+        // is dropped, or its required marker fails. It never moves to a pulse.
+        // Empty guard records exist only while a label is outstanding on one of
+        // their qubits; they prevent neighbouring natives from stealing labels.
         let anchor = sequence
             .iter()
             .position(|op| !matches!(op, NativeOp::Rz(..)))
@@ -651,16 +707,20 @@ impl SeleneRuntime {
                 | NativeOp::Measure(..)
                 | NativeOp::MeasureLeaked(..) => None,
             };
-            records.push_back(SourceTraceMetadata {
-                op: native.quantum_op(),
-                metadata: if index == anchor {
-                    std::mem::take(&mut metadata)
-                } else {
-                    TraceMetadata::new()
-                },
-                native_match: true,
-                folded_phi,
-            });
+            let op = native.quantum_op();
+            let metadata = if index == anchor {
+                std::mem::take(&mut metadata)
+            } else {
+                TraceMetadata::new()
+            };
+            if Self::needs_source_record(&op, &metadata, records) {
+                records.push_back(SourceTraceMetadata {
+                    op,
+                    metadata,
+                    native_match: true,
+                    folded_phi,
+                });
+            }
         }
         Ok(())
     }
@@ -808,7 +868,7 @@ impl SeleneRuntime {
                 ));
             }
             let ops = runtime.drain_runtime_operations()?;
-            runtime.discard_emitted_source_metadata(&ops);
+            runtime.discard_emitted_source_metadata(&ops)?;
             Ok(ops)
         })
     }
@@ -963,6 +1023,10 @@ impl SeleneRuntime {
             .runtime_batch_index
             .checked_add(1)
             .ok_or_else(|| fail("scheduled batch index overflow"))?;
+        let output = self
+            .scheduled_output
+            .as_mut()
+            .ok_or_else(|| fail("no scheduled extraction active"))?;
         for (operation_index, op) in batch.operations.iter().enumerate() {
             if let RuntimeScheduledOp::Custom { tag, data } = op {
                 let event = RuntimeCustomEvent {
@@ -982,10 +1046,6 @@ impl SeleneRuntime {
                 )?;
             }
         }
-        let output = self
-            .scheduled_output
-            .as_mut()
-            .ok_or_else(|| fail("no scheduled extraction active"))?;
         output
             .batches
             .try_reserve(1)
@@ -1794,8 +1854,8 @@ impl SeleneRuntime {
         metadata: TraceMetadata,
         lowered_ops: &mut Vec<QuantumOp>,
     ) -> Result<()> {
-        // Keep records across calls: a scheduler may emit an earlier unlabelled
-        // pulse beside a later labelled one, including flat-to-metadata transitions.
+        // Keep outstanding labels and their guards across calls, including
+        // metadata-to-flat transitions. Unlabelled shots need no records.
         // Scheduled mode cannot be mixed with these routes and has no annotations.
         if self.scheduled_mode != Some(true) {
             let mut records = std::mem::take(&mut self.source_trace_metadata);
@@ -1970,33 +2030,69 @@ impl SeleneRuntime {
         Ok(lowered_ops)
     }
 
-    fn discard_emitted_source_metadata(&mut self, ops: &[QuantumOp]) {
+    fn discard_emitted_source_metadata(&mut self, ops: &[QuantumOp]) -> Result<()> {
         for op in ops {
-            Self::take_emitted_source_metadata(op, &mut self.source_trace_metadata);
+            Self::take_emitted_source_metadata(op, &mut self.source_trace_metadata)?;
         }
+        Ok(())
     }
 
     fn take_emitted_source_metadata(
         op: &QuantumOp,
         records: &mut VecDeque<SourceTraceMetadata>,
-    ) -> TraceMetadata {
-        records
+    ) -> Result<TraceMetadata> {
+        let Some(index) = records
             .iter()
             .position(|source| Self::source_trace_metadata_matches_lowered_op(source, op))
-            .and_then(|index| records.remove(index))
+        else {
+            // Untracked work and synthesized timing Idles have no source record.
+            return Ok(TraceMetadata::new());
+        };
+        let qubits = Self::quantum_op_qubits(op);
+        let mut retired = VecDeque::new();
+        let mut position = 0;
+        // Every Selene runtime preserves output order on each qubit. Once this
+        // native emits, earlier unmatched records touching its qubits cannot
+        // emit later (notably absorbed RZs). Disjoint-qubit records remain live.
+        // Idle is not a native emission: it can be synthesized from batch timing
+        // before a native gate, so it cannot establish this retirement boundary.
+        records.retain(|record| {
+            let retire = !matches!(op, QuantumOp::Idle(..))
+                && position < index
+                && !Self::quantum_op_qubits(&record.op).is_disjoint(&qubits);
+            position += 1;
+            if retire {
+                retired.push_back(record.clone());
+            }
+            !retire
+        });
+        Self::fail_if_metadata_was_not_lowered(&retired)?;
+        let metadata = records
+            .remove(index - retired.len())
             .map(|record| record.metadata)
-            .unwrap_or_default()
+            .unwrap_or_default();
+        let tracked_qubits: BTreeSet<_> = records
+            .iter()
+            .filter(|record| !record.metadata.is_empty())
+            .flat_map(|record| Self::quantum_op_qubits(&record.op))
+            .collect();
+        records.retain(|record| {
+            !record.metadata.is_empty()
+                || !Self::quantum_op_qubits(&record.op).is_disjoint(&tracked_qubits)
+        });
+        Ok(metadata)
     }
 
     fn push_lowered_ops_with_source_metadata(
         lowered_ops: &mut Vec<LoweredQuantumOp>,
         ops: Vec<QuantumOp>,
         source_metadata: &mut VecDeque<SourceTraceMetadata>,
-    ) {
+    ) -> Result<()> {
         for op in ops {
-            let metadata = Self::take_emitted_source_metadata(&op, source_metadata);
+            let metadata = Self::take_emitted_source_metadata(&op, source_metadata)?;
             lowered_ops.push(LoweredQuantumOp::new(op, metadata));
         }
+        Ok(())
     }
 
     fn merge_trace_metadata(target: &mut TraceMetadata, metadata: TraceMetadata) -> Result<()> {
@@ -4543,7 +4639,8 @@ mod tests {
             &mut lowered,
             vec![QuantumOp::Idle(3e-9, 2), source.clone()],
             &mut pending,
-        );
+        )
+        .unwrap();
         assert!(pending.is_empty());
         assert!(lowered[0].metadata.is_empty());
         assert_eq!(lowered[1], LoweredQuantumOp::new(source.clone(), metadata));
@@ -4573,7 +4670,8 @@ mod tests {
             &mut lowered_ops,
             vec![QuantumOp::Idle(20e-9, 0), QuantumOp::RZZ(0.5, 0, 1)],
             &mut source_metadata,
-        );
+        )
+        .unwrap();
 
         assert!(lowered_ops[0].metadata.is_empty());
         assert_eq!(
@@ -4602,7 +4700,8 @@ mod tests {
             &mut lowered_ops,
             vec![QuantumOp::Idle(20e-9, 0)],
             &mut source_metadata,
-        );
+        )
+        .unwrap();
 
         assert_eq!(
             lowered_ops[0]
@@ -4615,7 +4714,7 @@ mod tests {
     }
 
     #[test]
-    fn test_unmatched_metadata_does_not_block_later_compatible_metadata() {
+    fn test_earlier_unmatched_metadata_retires_on_shared_qubits() {
         let mut rz_metadata = TraceMetadata::new();
         rz_metadata.insert("source_label".to_string(), "probe:virtual-rz".to_string());
         let mut rzz_metadata = TraceMetadata::new();
@@ -4640,7 +4739,8 @@ mod tests {
             &mut lowered_ops,
             vec![QuantumOp::RZZ(0.5, 0, 1)],
             &mut source_metadata,
-        );
+        )
+        .unwrap();
 
         assert_eq!(
             lowered_ops[0]
@@ -4649,14 +4749,34 @@ mod tests {
                 .map(String::as_str),
             Some("probe:szz-host")
         );
-        assert_eq!(source_metadata.len(), 1);
-        assert_eq!(
-            source_metadata[0]
-                .metadata
-                .get("source_label")
-                .map(String::as_str),
-            Some("probe:virtual-rz")
-        );
+        assert!(source_metadata.is_empty());
+    }
+
+    #[test]
+    fn test_timing_idle_does_not_retire_pending_native_metadata() {
+        let native = QuantumOp::RXY(0.5, 0.0, 0);
+        let idle = QuantumOp::Idle(20e-9, 0);
+        let mut records = VecDeque::from([
+            SourceTraceMetadata {
+                op: native.clone(),
+                metadata: TraceMetadata::from([
+                    ("source_label".into(), "pulse".into()),
+                    ("source_lowering_required".into(), "true".into()),
+                ]),
+                native_match: true,
+                folded_phi: None,
+            },
+            SourceTraceMetadata {
+                op: idle.clone(),
+                metadata: TraceMetadata::new(),
+                native_match: true,
+                folded_phi: None,
+            },
+        ]);
+        SeleneRuntime::take_emitted_source_metadata(&idle, &mut records).unwrap();
+        let metadata = SeleneRuntime::take_emitted_source_metadata(&native, &mut records).unwrap();
+        assert_eq!(metadata["source_label"], "pulse");
+        assert!(records.is_empty());
     }
 
     #[test]
@@ -4685,7 +4805,8 @@ mod tests {
             &mut lowered_ops,
             vec![QuantumOp::RZZ(-0.5, 2, 3), QuantumOp::RZZ(0.5, 0, 1)],
             &mut source_metadata,
-        );
+        )
+        .unwrap();
 
         assert_eq!(
             lowered_ops[0]
@@ -4721,7 +4842,8 @@ mod tests {
             &mut lowered_ops,
             vec![QuantumOp::RXY(std::f64::consts::FRAC_PI_2, 0.0, 2)],
             &mut source_metadata,
-        );
+        )
+        .unwrap();
 
         assert_eq!(
             lowered_ops[0]

@@ -283,19 +283,31 @@ pub(crate) mod tests {
             QuantumOp::Sdg(0),
             QuantumOp::T(0),
             QuantumOp::Tdg(0),
-            QuantumOp::CX(0, 1),
-            QuantumOp::CY(0, 1),
-            QuantumOp::CZ(0, 1),
-            QuantumOp::CH(0, 1),
-            QuantumOp::CCX(0, 1, 2),
-            QuantumOp::ZZ(0, 1),
         ];
-        for theta in [-7.3, -2.0 * PI, -PI, -0.73, 0.0, 0.41, PI, 2.0 * PI, 9.1] {
+        for (a, b) in [(0, 1), (1, 0), (2, 0)] {
             gates.extend([
-                QuantumOp::RX(theta, 0),
-                QuantumOp::RY(theta, 0),
-                QuantumOp::CRZ(theta, 0, 1),
+                QuantumOp::CX(a, b),
+                QuantumOp::CY(a, b),
+                QuantumOp::CZ(a, b),
+                QuantumOp::CH(a, b),
+                QuantumOp::ZZ(a, b),
             ]);
+        }
+        for (a, b, c) in [
+            (0, 1, 2),
+            (0, 2, 1),
+            (1, 0, 2),
+            (1, 2, 0),
+            (2, 0, 1),
+            (2, 1, 0),
+        ] {
+            gates.push(QuantumOp::CCX(a, b, c));
+        }
+        for theta in [-7.3, -2.0 * PI, -PI, -0.73, 0.0, 0.41, PI, 2.0 * PI, 9.1] {
+            gates.extend([QuantumOp::RX(theta, 0), QuantumOp::RY(theta, 0)]);
+            for (a, b) in [(0, 1), (1, 0), (2, 0)] {
+                gates.push(QuantumOp::CRZ(theta, a, b));
+            }
         }
         for gate in gates {
             let RuntimeInput::Decomposed(sequence) = classify(&gate).unwrap() else {

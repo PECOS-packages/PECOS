@@ -258,7 +258,11 @@ pub(crate) mod test_env {
     pub(crate) fn run_test_in_child(test_name: &str, envs: &[(&str, &OsStr)]) {
         // The child inherits this process's environment, which other tests
         // change temporarily (for example PECOS_QIS_FFI_PATH).
-        let _env_lock = ENV_MUTEX.lock().expect("environment lock");
+        // A poisoned lock only records another test's panic; its guards have
+        // already restored the environment while unwinding.
+        let _env_lock = ENV_MUTEX
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let output = std::process::Command::new(std::env::current_exe().expect("test executable"))
             .args(["--exact", test_name, "--nocapture"])
             .envs(envs.iter().copied())

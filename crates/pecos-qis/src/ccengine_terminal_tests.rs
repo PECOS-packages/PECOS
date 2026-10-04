@@ -53,7 +53,9 @@ struct CompletedRun {
 fn run(soft: bool, source: &str, tracing: bool) -> CompletedRun {
     // Executor tests mutate process-wide runtime/cache paths, and Helios uses
     // the shared FFI library. Use their lock for the whole worker lifetime.
-    let _env_lock = crate::test_env::ENV_MUTEX.lock().expect("environment lock");
+    let _env_lock = crate::test_env::ENV_MUTEX
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let runtime = if soft {
         crate::selene_soft_rz_runtime().unwrap()
     } else {
@@ -75,8 +77,16 @@ fn run(soft: bool, source: &str, tracing: bool) -> CompletedRun {
     let mut stage = engine.start(()).unwrap();
     let mut batches = Vec::new();
     let mut terminal_batches = Vec::new();
-    for _ in 0..32 {
+    // Empty batches mean the program worker is still running; only real
+    // batches count toward the bound, and waiting is bounded by time.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while batches.len() < 32 && std::time::Instant::now() < deadline {
         match stage {
+            EngineStage::NeedsProcessing(commands) if commands.is_empty().unwrap() => {
+                std::thread::yield_now();
+                let measurements = quantum.process(commands).unwrap();
+                stage = engine.continue_processing(measurements).unwrap();
+            }
             EngineStage::NeedsProcessing(commands) => {
                 let gates = commands.quantum_ops().unwrap();
                 if engine

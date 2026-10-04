@@ -4264,6 +4264,7 @@ dependencies = [
  "pecos-neo",
  "pecos-random",
  "pecos-simulators",
+ "tempfile",
 ]
 
 [[package]]
@@ -4661,7 +4662,6 @@ name = "pecos-rslib"
 version = "0.2.0-dev.0"
 dependencies = [
  "dirs",
- "libc",
  "log",
  "nalgebra",
  "ndarray 0.17.2",

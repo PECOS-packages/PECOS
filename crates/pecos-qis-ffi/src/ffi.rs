@@ -676,7 +676,7 @@ pub unsafe extern "C-unwind" fn pecos_qis_runtime_barrier_qubits2_hugr(
 /// Attach source/runtime metadata to the next lowerable quantum operation.
 ///
 /// This variant uses direct string data pointers instead of the tket2 string
-/// struct layout. It is useful for runtime shims that already carry plain
+/// struct layout. It is useful for Selene adapters that already carry plain
 /// pointer/length pairs.
 ///
 /// # Safety
@@ -1006,13 +1006,13 @@ pub unsafe extern "C" fn teardown() -> i64 {
 }
 
 thread_local! {
-    // Installed only while this thread is inside the C shim's setjmp wrapper.
-    static PROGRAM_PANIC_TRANSFER: std::cell::Cell<Option<unsafe extern "C-unwind" fn()>> = const {
+    // Installed only while this thread is inside the C execution guard.
+    pub(super) static PROGRAM_PANIC_TRANSFER: std::cell::Cell<Option<unsafe extern "C-unwind" fn()>> = const {
         std::cell::Cell::new(None)
     };
 }
 
-/// Register the shim's C longjmp function, or clear it after leaving the guard.
+/// Register the guard's C longjmp function, or clear it after leaving the guard.
 ///
 /// # Safety
 /// A non-null handler must be safe to invoke on this thread and remain valid
@@ -1071,7 +1071,7 @@ fn checked_slice_len<T>(len: u64) -> Result<usize, String> {
     Ok(count)
 }
 
-/// Record a panic with plain string data, also used by the Selene shim.
+/// Record a panic with plain string data, also used by the Selene adapters.
 ///
 /// # Safety
 /// `message` must be null or reference `len` readable bytes.
@@ -1120,7 +1120,7 @@ pub unsafe extern "C-unwind" fn pecos_record_program_panic(
 /// Panic function called on program errors, with tket's length-prefixed message.
 ///
 /// Guppylang emits calls to this direct symbol, rather than routing through the
-/// Selene shim. For division by zero its LLVM IR contains:
+/// Selene adapters. For division by zero its LLVM IR contains:
 /// ```llvm
 /// @"e_Attempted .0BD5FABD.0" = private constant [33 x i8] c" EXIT:INT:Attempted division by 0"
 /// tail call void @panic(i32 1002, ptr nonnull @"e_Attempted .0BD5FABD.0")
@@ -1135,7 +1135,7 @@ pub unsafe extern "C-unwind" fn pecos_record_program_panic(
 ///
 /// # Safety
 /// `message` must be null or point to a length byte followed by that many bytes.
-/// Program execution must take place inside the shim's setjmp wrapper.
+/// Program execution must take place inside the runtime's setjmp wrapper.
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn panic(code: i32, message: *const std::ffi::c_char) {
     if message.is_null() {

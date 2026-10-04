@@ -31,6 +31,7 @@ use std::sync::{Condvar, Mutex};
 
 pub mod ffi;
 mod random;
+mod selene;
 
 #[cfg(test)]
 mod named_results_tests;

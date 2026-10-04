@@ -36,28 +36,15 @@ use tempfile::NamedTempFile;
 /// 3. We only read from the library (no mutation after initialization)
 static QIS_FFI_LIB_SINGLETON: OnceLock<Result<SharedLibrary, String>> = OnceLock::new();
 
-/// Process-wide singleton for the shim library.
+/// Selected FFI library path, resolved once and pinned at first use.
 ///
-/// The PECOS C shim library (`libpecos_selene.so/dylib`) provides the selene_*
-/// functions that bridge to __quantum__* FFI functions. On macOS, loading and
-/// unloading this library repeatedly (once per shot in dynamic execution mode)
-/// can cause issues with the dynamic linker.
-///
-/// By making it a singleton, we load it once and keep it for the process lifetime.
-static SHIM_LIB_SINGLETON: OnceLock<Result<SharedLibrary, String>> = OnceLock::new();
-
-/// Pinned selected library paths, resolved once at first use.
-///
-/// The QIS FFI and selene shim libraries are discovered at runtime (library
-/// search order, and for the shim the `PECOS_SELENE_SHIM_PATH` override). Both
-/// the program-cache key (which hashes the selected library identity) and the
-/// `dlopen` singletons must agree on WHICH library is selected; if discovery
+/// The QIS FFI library is discovered at runtime (library search order and
+/// the `PECOS_QIS_FFI_PATH` override). The program-cache key hashes the selected
+/// library identity and must agree with the `dlopen` singleton; if discovery
 /// re-ran independently and the environment changed in between, the key could be
 /// computed for one library while another was loaded. Pinning the discovery
-/// result the first time either path is needed keeps them consistent for the
-/// process lifetime.
+/// result at first use keeps them consistent for the process lifetime.
 static QIS_FFI_LIB_PATH: OnceLock<Result<PathBuf, String>> = OnceLock::new();
-static SHIM_LIB_PATH: OnceLock<Option<PathBuf>> = OnceLock::new();
 
 /// Process-wide cache for program libraries (keyed by file path).
 ///
@@ -363,8 +350,8 @@ type CallQmainFn = unsafe extern "C" fn(extern "C" fn(u64) -> u64) -> u64;
 type CallVoidMainFn = unsafe extern "C" fn(extern "C" fn()) -> u64;
 
 /// The entry-point shape found in a compiled QIR program, bundled with the
-/// matching setjmp wrapper from the C shim. Each variant pairs the function
-/// pointer ABI with the shim that calls it -- mixing them (e.g. calling a
+/// matching setjmp wrapper from the FFI runtime. Each variant pairs the function
+/// pointer ABI with the guard that calls it -- mixing them (e.g. calling a
 /// `void main()` through the qmain wrapper) is undefined behaviour.
 enum ExecutionEntryPoint<'a> {
     Qmain {
@@ -919,10 +906,10 @@ type DisableDynamicModeFn = unsafe extern "C" fn();
 /// Helios interface implementation
 ///
 /// This interface:
-/// 1. Links program bitcode with libhelios.a to create an executable
-/// 2. Loads the executable in-process using dlopen (libloading)
-/// 3. Calls `qmain()` to execute the program
-/// 4. Collects operations via thread-local storage in the PECOS shim
+/// 1. Links program bitcode against the QIS FFI runtime to create a shared library
+/// 2. Loads the program in-process using dlopen (libloading)
+/// 3. Calls `qmain()` or `main()` through the FFI execution guard
+/// 4. Collects operations via thread-local storage in the PECOS runtime
 pub struct QisHeliosInterface {
     /// Path to the linked executable (if created)
     executable_path: Option<PathBuf>,
@@ -939,7 +926,7 @@ pub struct QisHeliosInterface {
     /// Keep temporary files alive (`TempPath` auto-deletes when dropped)
     temp_files: Vec<tempfile::TempPath>,
 
-    // Note: The QIS FFI library, shim library, and program libraries are stored in
+    // Note: The QIS FFI library and program libraries are stored in
     // process-wide caches/singletons to avoid macOS TLS/dynamic linker issues.
     // Program libraries are cached by path in PROGRAM_LIB_CACHE.
     /// Execution context for dynamic circuit coordination
@@ -986,19 +973,10 @@ impl QisHeliosInterface {
             .clone()
     }
 
-    /// The selected selene shim library path, resolved once and pinned for the
-    /// process lifetime (see [`SHIM_LIB_PATH`]). Honors `PECOS_SELENE_SHIM_PATH`
-    /// at first resolution only, so the cache key and the loaded shim agree.
-    fn pinned_shim_lib_path() -> Option<PathBuf> {
-        SHIM_LIB_PATH
-            .get_or_init(crate::shim::get_shim_library_path)
-            .clone()
-    }
-
-    /// Digest of the selected runtime libraries' paths and contents, computed
+    /// Digest of the selected runtime library's path and contents, computed
     /// once per process because the selection is pinned. Contents, not
     /// modification times, identify a runtime: two builds can share an mtime,
-    /// and on macOS a program records each runtime's install name, which only
+    /// and on macOS a program records the runtime's install name, which only
     /// the file's contents carry.
     fn runtime_libraries_digest() -> Result<&'static [u8; 32], InterfaceError> {
         use sha2::{Digest, Sha256};
@@ -1007,19 +985,12 @@ impl QisHeliosInterface {
         DIGEST
             .get_or_init(|| {
                 let mut hasher = Sha256::new();
-                for lib in [
-                    Self::pinned_qis_ffi_lib_path().ok(),
-                    Self::pinned_shim_lib_path(),
-                ]
-                .into_iter()
-                .flatten()
-                {
-                    let contents = std::fs::read(&lib).map_err(|e| {
-                        format!("Failed to read runtime library {}: {e}", lib.display())
-                    })?;
-                    hasher.update(lib.to_string_lossy().as_bytes());
-                    hasher.update(contents);
-                }
+                let lib = Self::pinned_qis_ffi_lib_path()?;
+                let contents = std::fs::read(&lib).map_err(|e| {
+                    format!("Failed to read runtime library {}: {e}", lib.display())
+                })?;
+                hasher.update(lib.to_string_lossy().as_bytes());
+                hasher.update(contents);
                 Ok(hasher.finalize().into())
             })
             .as_ref()
@@ -1195,6 +1166,7 @@ impl QisHeliosInterface {
                     lib_path.display()
                 );
 
+                // Global: in-process Selene QIS plugins import selene_* by name.
                 match Self::load_library(
                     &lib_path,
                     "Failed to load QIS FFI library singleton",
@@ -1248,7 +1220,6 @@ impl QisHeliosInterface {
         // initializes its context. Make their runtime imports available before
         // eagerly resolving the program, in dependency order.
         Self::get_qis_ffi_lib_singleton()?;
-        Self::get_shim_lib_singleton()?;
 
         // Load library WITHOUT holding the lock - this is the slow part
         debug!("Loading program library (outside lock): {}", path.display());
@@ -1280,45 +1251,6 @@ impl QisHeliosInterface {
 
         // SAFETY: Box ensures stable heap address, BTreeMap never removes, OnceLock ensures lifetime
         Ok(unsafe { &*ptr })
-    }
-
-    /// Get or initialize the process-wide shim library singleton.
-    ///
-    /// The PECOS C shim library provides the selene_* functions. On macOS,
-    /// loading and unloading it repeatedly can cause dynamic linker issues.
-    /// By making it a singleton, we load once and keep it for the process lifetime.
-    fn get_shim_lib_singleton() -> Result<&'static SharedLibrary, InterfaceError> {
-        let result = SHIM_LIB_SINGLETON.get_or_init(|| {
-            let shim_path = Self::pinned_shim_lib_path().ok_or_else(|| {
-                "PECOS selene shim library not found - build script may have failed".to_string()
-            })?;
-
-            debug!(
-                "Initializing shim library singleton from: {}",
-                shim_path.display()
-            );
-
-            // Global: Selene QIS plugins loaded into this process (for example
-            // selene_base_qis_plugin) import `selene_*` from the shim by name.
-            match Self::load_library(
-                &shim_path,
-                "Failed to load PECOS C shim library singleton",
-                true,
-            ) {
-                Ok((lib_global, lib)) => {
-                    debug!("Shim library singleton initialized successfully");
-                    Ok(SharedLibrary {
-                        _global_handle: std::mem::ManuallyDrop::new(lib_global),
-                        lib: std::mem::ManuallyDrop::new(lib),
-                    })
-                }
-                Err(e) => Err(e.to_string()),
-            }
-        });
-
-        result
-            .as_ref()
-            .map_err(|e| InterfaceError::ExecutionError(e.clone()))
     }
 
     /// Collect operations from thread-local storage via the QIS cdylib
@@ -1398,23 +1330,15 @@ impl QisHeliosInterface {
 
         // On Windows, there's no RTLD_GLOBAL flag. DLL dependencies need to be
         // findable via the standard DLL search order. For program.dll, we need
-        // pecos_qis_ffi.dll and the shim DLL to be findable.
+        // pecos_qis_ffi.dll to be findable.
         //
-        // We use AddDllDirectory to temporarily add the directories containing
-        // our FFI DLLs to the search path.
-
-        // Find the directories containing our dependency DLLs (use the pinned
-        // paths so dependency search dirs match the libraries hashed in the cache
-        // key and loaded by the singletons).
+        // Add the FFI DLL directory temporarily to the search path, using the
+        // pinned path so it matches the runtime hashed in the cache key and
+        // loaded by the singleton.
         let qis_ffi_path = Self::pinned_qis_ffi_lib_path().ok();
         let qis_ffi_dir = qis_ffi_path.as_ref().and_then(|p| p.parent());
 
-        let shim_path = Self::pinned_shim_lib_path();
-        let shim_dir = shim_path.as_ref().and_then(|p| p.parent());
-
-        // Combine both directories (they may be different)
-        let dll_dirs: Vec<&std::path::Path> =
-            [qis_ffi_dir, shim_dir].into_iter().flatten().collect();
+        let dll_dirs: Vec<&std::path::Path> = qis_ffi_dir.into_iter().collect();
 
         // Set the default search order to include user-added directories
         unsafe {
@@ -1486,7 +1410,7 @@ impl QisHeliosInterface {
     /// canonical signatures above.
     fn get_execution_symbols<'a>(
         program_lib: &'a Library,
-        shim_lib: &'a Library,
+        ffi_lib: &'a Library,
     ) -> Result<ExecutionEntryPoint<'a>, InterfaceError> {
         // Prefer `qmain` (Helios profile); fall back to `main` (void-return form).
         // We look up qmain first because it's the only one we want to call
@@ -1496,7 +1420,7 @@ impl QisHeliosInterface {
 
         if let Ok(func) = qmain_fn {
             let call: Symbol<'a, CallQmainFn> = unsafe {
-                shim_lib
+                ffi_lib
                     .get(b"pecos_call_qmain_with_setjmp\0")
                     .map_err(|e| {
                         InterfaceError::ExecutionError(format!(
@@ -1517,7 +1441,7 @@ impl QisHeliosInterface {
             })?
         };
         let call: Symbol<'a, CallVoidMainFn> = unsafe {
-            shim_lib
+            ffi_lib
                 .get(b"pecos_call_void_main_with_setjmp\0")
                 .map_err(|e| {
                     InterfaceError::ExecutionError(format!(
@@ -1595,18 +1519,17 @@ impl QisHeliosInterface {
         }
     }
 
-    /// Link the program with Helios interface to create a shared library
+    /// Link the program with the QIS FFI runtime to create a shared library
     #[allow(clippy::too_many_lines)]
     fn create_shared_library(&mut self) -> Result<PathBuf, InterfaceError> {
         use sha2::{Digest, Sha256};
         use std::fmt::Write as _;
 
-        // Program libraries import from these runtimes. A runtime that fails
+        // Program libraries import from the FFI runtime. A runtime that fails
         // to load stays failed for the process, so check it before touching the
         // shared cache: otherwise every load here would treat a valid cached
         // program as invalid and delete it.
         Self::get_qis_ffi_lib_singleton()?;
-        Self::get_shim_lib_singleton()?;
 
         // Compute a stable content digest for caching.
         // - SHA-256 (not the std `DefaultHasher`, whose output is not stable
@@ -1620,7 +1543,7 @@ impl QisHeliosInterface {
         let mut hasher = Sha256::new();
         // Also invalidate programs when the link policy changes inside a Python
         // extension: rebuilding it need not change the Python executable mtime.
-        hasher.update(b"pecos-qis-link-policy-v3-linked-runtime");
+        hasher.update(b"pecos-qis-link-policy-v4-single-runtime");
         hasher.update(&self.program);
         // Explicit ABI inputs (stable format tag, crate version, target triple)
         // in addition to the build fingerprint, so the key does not rely on the
@@ -1629,10 +1552,8 @@ impl QisHeliosInterface {
         hasher.update(env!("CARGO_PKG_VERSION").as_bytes());
         hasher.update(cache_target().as_bytes());
         hasher.update(build_fingerprint().to_le_bytes());
-        // The compiled object links the QIS FFI and the Selene shim, which are
-        // SELECTED at runtime (library search order + the `PECOS_QIS_FFI_PATH` /
-        // `PECOS_SELENE_SHIM_PATH` overrides) and may differ from the
-        // build-embedded libraries that the executable fingerprint captures.
+        // Hash the selected FFI path and contents as well as the host build:
+        // PECOS_QIS_FFI_PATH can select a different runtime after compilation.
         hasher.update(Self::runtime_libraries_digest()?);
         let digest = hasher.finalize();
         let mut content_hash = String::with_capacity(digest.len() * 2);
@@ -1963,15 +1884,10 @@ entry:
 
         debug!("Temp library path: {}", so_path_for_clang.display());
 
-        // Link using clang to create a shared library:
-        // program.bc + libhelios.a → program.so/.dll
-        // The resulting shared library will:
-        // - Export qmain symbol
-        // - Have undefined selene_* symbols (to be resolved by our shim at runtime)
+        // Link the program directly against the selected QIS FFI runtime.
         debug!(
-            "Linking: {} + {} -> {}",
+            "Linking program: {} -> {}",
             program_temp_path.display(),
-            helios_lib_path,
             so_path_for_clang.display()
         );
 
@@ -1985,19 +1901,7 @@ entry:
         {
             debug!("Windows: Using DLL path: {}", so_path_for_clang.display());
 
-            // On Windows, we need to link against both import libraries (.lib files)
-            // to populate the import table for selene_* and __quantum__* symbols
-
-            // Get the selene shim import library path (set by build.rs)
-            let shim_lib_path = std::env::var("PECOS_SELENE_SHIM_LIB")
-                .ok()
-                .or_else(|| option_env!("PECOS_SELENE_SHIM_LIB").map(String::from))
-                .ok_or_else(|| {
-                    InterfaceError::LoadError(
-                        "PECOS selene shim import library not found - build script may have failed to generate it".to_string(),
-                    )
-                })?;
-
+            // One import library provides both QIS and selene_* symbols.
             // Find the pecos_qis_ffi.dll.lib import library (pinned, so the link
             // import library matches the FFI library hashed in the cache key).
             let pecos_qis_lib_path =
@@ -2011,7 +1915,6 @@ entry:
                 )));
             }
 
-            debug!("Windows: Linking against selene shim import library: {shim_lib_path}");
             debug!(
                 "Windows: Linking against QIS FFI import library: {}",
                 qis_ffi_import_lib.display()
@@ -2023,13 +1926,9 @@ entry:
                 .arg(&so_path_for_clang)
                 .arg(&program_temp_path)
                 .arg(&qis_ffi_import_lib) // Link QIS FFI import library for setup/teardown/___* symbols
-                .arg(&shim_lib_path) // Link against selene shim import library to resolve selene_* symbols
                 // NOTE: On Windows, DO NOT link helios_lib_path - it conflicts with DLL symbols
                 // The static library contains stub implementations that we replace with DLL versions
                 .arg("-Wl,/EXPORT:qmain"); // Export qmain symbol for GetProcAddress
-            debug!(
-                "Windows: Linking against selene shim import library to resolve selene_* symbols"
-            );
             debug!("Windows: Exporting qmain entry point (auto-wrapped from main if needed)");
         }
 
@@ -2040,27 +1939,21 @@ entry:
                 .arg("-o")
                 .arg(&so_path_for_clang)
                 .arg(&program_temp_path);
-            // Link the selected runtimes, the same pinned libraries as dlopen and
+            // Link the selected runtime, the same pinned library as dlopen and
             // the program cache, so the program records its providers and the
             // linker rejects any import nothing provides (see
             // add_platform_linker_flags). Programs import `___*`/`__quantum__*`
-            // from the QIS FFI and may import `selene_*` from the shim.
+            // and `selene_*` from the QIS FFI.
             // On macOS this also binds through Mach-O's two-level namespace:
             // libSystem exports a `panic` with a different ABI, and a flat lookup
             // would bind Guppy's panic(i32, ptr) to that process-aborting function.
             // Use the pinned spellings unchanged. On Linux the program records
             // this name, and the loader matches it to the loaded singleton by name;
-            // macOS records each runtime's install name instead, which the cache
-            // key covers through the runtimes' contents.
+            // macOS records the runtime's install name instead, which the cache
+            // key covers through the runtime's contents.
             let qis_ffi_path =
                 Self::pinned_qis_ffi_lib_path().map_err(InterfaceError::LoadError)?;
-            let shim_path = Self::pinned_shim_lib_path().ok_or_else(|| {
-                InterfaceError::LoadError(
-                    "PECOS selene shim library not found - build script may have failed"
-                        .to_string(),
-                )
-            })?;
-            clang_cmd.arg(qis_ffi_path).arg(shim_path);
+            clang_cmd.arg(qis_ffi_path);
             // NOTE: We intentionally do NOT link helios_lib_path here.
             // The helios library statically defines ___read_future_bool which would
             // shadow our dynamic version from libpecos_qis_ffi.so.
@@ -2228,21 +2121,10 @@ entry:
             )
         })?;
 
-        // Architecture note:
-        // The __quantum__* FFI symbols are in libpecos_qis_ffi.so (Rust cdylib from pecos-qis-ffi).
-        // The selene_* symbols are in libpecos_selene.so (C shim).
-        //
-        // Symbol resolution chain:
-        //   qmain() → ___qalloc() → selene_qalloc() → __quantum__rt__qubit_allocate()
-        //
-        // Load the runtimes globally, then isolate program definitions:
-        //   1. libpecos_qis_ffi.so (provides __quantum__*; the shim imports these
-        //      without a dependency edge)
-        //   2. libpecos_selene.so (provides selene_*, calls __quantum__*)
-        //   3. program.so (local symbols; provides qmain; linked against both runtimes)
-
-        // Step 1: Get the process-wide QIS FFI library singleton
-        // This provides the __quantum__* symbols for the shim to resolve.
+        // Load the FFI globally for QIS and selene_* imports, then load the
+        // program locally. Programs link directly to this one runtime; Selene
+        // QIS plugins also resolve their selene_* imports from its global exports.
+        // Step 1: Get the process-wide QIS FFI library singleton.
         //
         // IMPORTANT: We use a process-wide singleton to ensure all code uses the same
         // library instance. On macOS, loading the same library multiple times creates
@@ -2279,7 +2161,7 @@ entry:
 
         // Step 2: Reset the QIS interface via the cdylib
         // IMPORTANT: We call the cdylib's version to ensure we're using the same thread-local
-        // storage instance that the shim will use
+        // storage instance that the runtime will use
         let reset_fn: Symbol<ResetInterfaceFn> = unsafe {
             pecos_qis_lib
                 .get(b"pecos_qis_reset_interface\0")
@@ -2310,33 +2192,19 @@ entry:
             }
         }
 
-        // Step 3: Get the PECOS C shim library from the singleton
-        // The shim has undefined __quantum__* symbols that will resolve to the cdylib
-        // We use a singleton to avoid repeated library load/unload cycles on macOS
-        let shim_lib = Self::get_shim_lib_singleton()?;
-        debug!("Using shim library from process-wide singleton");
-
-        // Step 4: Get the program library from the global cache
+        // Step 3: Get the program library from the global cache
         // The program library is cached to avoid repeated load/unload cycles on macOS.
         let program_lib = Self::get_or_cache_program_lib(so_path)?;
         debug!("Using cached program library");
 
-        // Step 5: Get the execution entry point (qmain or main) and matching
-        // setjmp wrapper from the shim.
-        let entry_point = Self::get_execution_symbols(program_lib.inner(), shim_lib.inner())?;
+        // Step 4: Get the execution entry point (qmain or main) and matching
+        // setjmp wrapper from the runtime.
+        let entry_point = Self::get_execution_symbols(program_lib.inner(), pecos_qis_lib.inner())?;
 
-        // Step 6: Call the entry point via the matching setjmp wrapper.
-        // The call chain will be:
-        //   pecos_call_qmain_with_setjmp(qmain) [from our shim]
-        //   → setjmp(user_program_jmpbuf) [saves stack state for longjmp]
-        //   → qmain(0)  -or-  main()  [user code in program.so]
-        //   → ___qalloc() [from libhelios.a linked into program.so]
-        //   → selene_qalloc() [from libpecos_selene.so C shim]
-        //   → __quantum__rt__qubit_allocate() [from libpecos_qis_ffi.so]
-        //   → pecos_qis_ffi::with_interface() [thread-local in current process]
-        // If an error occurs:
-        //   → longjmp(user_program_jmpbuf, error_code) [jumps back to setjmp]
-        //   → wrapper catches error and returns error code
+        // Step 5: Call the entry point via the matching setjmp wrapper.
+        // FFI Rust guard export → C setjmp → program qmain/main → FFI QIS or
+        // selene_* adapter → thread-local operation collection. Termination
+        // transfers to the C guard, which cleans up and restores the handler.
         let (entry_label, result) = match &entry_point {
             ExecutionEntryPoint::Qmain { func, call } => ("qmain", unsafe { call(**func) }),
             ExecutionEntryPoint::VoidMain { func, call } => ("main", unsafe { call(**func) }),
@@ -2385,12 +2253,12 @@ entry:
         }
         info!("{entry_label} executed successfully!");
 
-        // Step 7: Collect the operations from thread-local storage via the cdylib
+        // Step 6: Collect the operations from thread-local storage via the cdylib
         // IMPORTANT: We call the cdylib's version to get the operations from the same
-        // thread-local storage instance that the shim used
+        // thread-local storage instance that the runtime used
         let operations = Self::collect_operations_from_lib(pecos_qis_lib.inner())?;
 
-        // Note: All libraries (QIS FFI, shim, and program) are in process-wide caches.
+        // Note: All libraries (QIS FFI and program) are in process-wide caches.
         // They remain loaded for the process lifetime to avoid macOS dynamic linker issues.
 
         Ok(operations)
@@ -2743,7 +2611,7 @@ mod tests {
     }
 
     #[test]
-    fn c_shim_numeric_outputs_and_unguarded_termination() {
+    fn selene_adapters_numeric_outputs_and_unguarded_termination() {
         use pecos_qis_ffi_types::{NamedResult, ProgramError};
         #[repr(C)]
         struct SeleneString {
@@ -2759,16 +2627,15 @@ mod tests {
             unsafe extern "C" fn(*mut std::ffi::c_void, SeleneString, T) -> SeleneVoidResult;
         let _env_lock = ENV_MUTEX.lock().expect("environment lock");
         let ffi = QisHeliosInterface::get_qis_ffi_lib_singleton().expect("FFI library");
-        let shim = QisHeliosInterface::get_shim_lib_singleton().expect("shim library");
         let context = QisHeliosInterface::create_execution_context(ffi.inner()).expect("context");
         unsafe {
             let register: Symbol<RegisterExecutionContextFn> = ffi
                 .get(b"pecos_register_execution_context\0")
                 .expect("register");
             register(context.0);
-            let print_i: Symbol<Print<i64>> = shim.get(b"selene_print_i64\0").expect("i64 output");
-            let print_u: Symbol<Print<u64>> = shim.get(b"selene_print_u64\0").expect("u64 output");
-            let print_f: Symbol<Print<f64>> = shim.get(b"selene_print_f64\0").expect("f64 output");
+            let print_i: Symbol<Print<i64>> = ffi.get(b"selene_print_i64\0").expect("i64 output");
+            let print_u: Symbol<Print<u64>> = ffi.get(b"selene_print_u64\0").expect("u64 output");
+            let print_f: Symbol<Print<f64>> = ffi.get(b"selene_print_f64\0").expect("f64 output");
             let tag = |data: &'static [u8]| SeleneString {
                 data: data.as_ptr(),
                 length: data.len() as u64,
@@ -2787,8 +2654,7 @@ mod tests {
                     ("f".to_string(), NamedResult::F64(vec![2.5])),
                 ])
             );
-            let panic: Symbol<Print<u32>> =
-                shim.get(b"selene_print_panic\0").expect("panic output");
+            let panic: Symbol<Print<u32>> = ffi.get(b"selene_print_panic\0").expect("panic output");
             let clear: Symbol<unsafe extern "C" fn()> =
                 ffi.get(b"pecos_clear_program_error\0").expect("clear");
             let get: Symbol<GetProgramErrorJsonFn> =
@@ -2825,7 +2691,7 @@ mod tests {
     }
 
     #[test]
-    fn c_shim_rng_shares_direct_stream_and_resets_at_shot_start() {
+    fn selene_adapters_rng_shares_direct_stream_and_resets_at_shot_start() {
         #[repr(C)]
         struct VoidResult {
             error_code: u32,
@@ -2839,22 +2705,21 @@ mod tests {
         type WithU64 = unsafe extern "C" fn(Instance, u64) -> VoidResult;
         let _env_lock = ENV_MUTEX.lock().expect("environment lock");
         let ffi = QisHeliosInterface::get_qis_ffi_lib_singleton().expect("FFI library");
-        let shim = QisHeliosInterface::get_shim_lib_singleton().expect("shim library");
         let context = QisHeliosInterface::create_execution_context(ffi.inner()).expect("context");
         unsafe {
             let register: Symbol<RegisterExecutionContextFn> = ffi
                 .get(b"pecos_register_execution_context\0")
                 .expect("register");
             register(context.0);
-            let seed: Symbol<WithU64> = shim.get(b"selene_random_seed\0").expect("seed");
-            let advance: Symbol<WithU64> = shim.get(b"selene_random_advance\0").expect("advance");
-            let start: Symbol<WithU64> = shim.get(b"selene_on_shot_start\0").expect("shot start");
+            let seed: Symbol<WithU64> = ffi.get(b"selene_random_seed\0").expect("seed");
+            let advance: Symbol<WithU64> = ffi.get(b"selene_random_advance\0").expect("advance");
+            let start: Symbol<WithU64> = ffi.get(b"selene_on_shot_start\0").expect("shot start");
             let draw: Symbol<unsafe extern "C" fn(Instance) -> ValueResult<u32>> =
-                shim.get(b"selene_random_u32\0").expect("draw");
+                ffi.get(b"selene_random_u32\0").expect("draw");
             let bounded: Symbol<unsafe extern "C" fn(Instance, u32) -> ValueResult<u32>> =
-                shim.get(b"selene_random_u32_bounded\0").expect("bounded");
+                ffi.get(b"selene_random_u32_bounded\0").expect("bounded");
             let float: Symbol<unsafe extern "C" fn(Instance) -> ValueResult<f64>> =
-                shim.get(b"selene_random_f64\0").expect("float");
+                ffi.get(b"selene_random_f64\0").expect("float");
             let direct: Symbol<unsafe extern "C" fn() -> i32> =
                 ffi.get(b"random_int\0").expect("direct draw");
             let get: Symbol<GetProgramErrorJsonFn> =
@@ -3039,7 +2904,7 @@ mod tests {
 
         let dir = tempfile::tempdir().expect("temporary directory");
         let source = dir.path().join("missing_import.c");
-        let shim = dir.path().join("libmissing_import.so");
+        let runtime = dir.path().join("libmissing_import.so");
         std::fs::write(
             &source,
             "extern void pecos_test_missing_import(void);\n\
@@ -3050,7 +2915,7 @@ mod tests {
             .args(["-shared", "-fPIC", "-Wl,-z,lazy"])
             .arg(&source)
             .arg("-o")
-            .arg(&shim)
+            .arg(&runtime)
             .output()
             .expect("run cc");
         assert!(
@@ -3064,7 +2929,7 @@ mod tests {
             &[
                 (CHILD_ENV, "1".as_ref()),
                 ("PECOS_CACHE_DIR", cache.as_os_str()),
-                ("PECOS_SELENE_SHIM_PATH", shim.as_os_str()),
+                ("PECOS_QIS_FFI_PATH", runtime.as_os_str()),
             ],
         );
     }
@@ -3161,8 +3026,8 @@ mod tests {
             return;
         }
 
-        // A stand-in shim that needs a helper library. Loading a program never
-        // calls into the shim, and the stand-in's bytes, and so the program's
+        // A stand-in runtime that needs a helper library. Loading a program never
+        // calls into the runtime, and the stand-in's bytes, and so the program's
         // cache key, stay the same when the helper disappears.
         let dir = tempfile::tempdir().expect("temporary directory");
         let compile = |args: &[&std::ffi::OsStr]| {
@@ -3187,13 +3052,13 @@ mod tests {
             "-o".as_ref(),
             helper.as_os_str(),
         ]);
-        let shim_source = dir.path().join("shim.c");
-        let shim = dir.path().join("libpecos_test_shim.so");
+        let runtime_source = dir.path().join("runtime.c");
+        let runtime = dir.path().join("libpecos_test_runtime.so");
         std::fs::write(
-            &shim_source,
-            "int pecos_test_helper(void);\nint pecos_test_shim(void) { return pecos_test_helper(); }\n",
+            &runtime_source,
+            "int pecos_test_helper(void);\nint pecos_test_runtime(void) { return pecos_test_helper(); }\n",
         )
-        .expect("write shim source");
+        .expect("write runtime source");
         let library_dir = dir.path().as_os_str().to_owned();
         let mut rpath = std::ffi::OsString::from("-Wl,-rpath,");
         rpath.push(&library_dir);
@@ -3202,9 +3067,9 @@ mod tests {
         compile(&[
             "-shared".as_ref(),
             "-fPIC".as_ref(),
-            shim_source.as_os_str(),
+            runtime_source.as_os_str(),
             "-o".as_ref(),
-            shim.as_os_str(),
+            runtime.as_os_str(),
             &search,
             "-lpecos_test_helper".as_ref(),
             &rpath,
@@ -3215,7 +3080,7 @@ mod tests {
             [
                 (CHILD_ENV, std::ffi::OsStr::new(mode)),
                 ("PECOS_CACHE_DIR", cache.as_os_str()),
-                ("PECOS_SELENE_SHIM_PATH", shim.as_os_str()),
+                ("PECOS_QIS_FFI_PATH", runtime.as_os_str()),
             ]
         };
         let test_name =
@@ -3268,8 +3133,7 @@ mod tests {
         const CHILD_ENV: &str = "PECOS_TEST_FRESH_PROGRAM_LOAD";
         if std::env::var_os(CHILD_ENV).is_some() {
             assert!(QIS_FFI_LIB_SINGLETON.get().is_none());
-            assert!(SHIM_LIB_SINGLETON.get().is_none());
-            // Both providers are needed before the program is opened, including
+            // The provider is needed before the program is opened, including
             // compilation and cache paths that run before execute_program().
             let program = br"
                 declare void @__quantum__qis__h__body(i64)
@@ -3286,7 +3150,6 @@ mod tests {
                     .load_program(program, ProgramFormat::LlvmIrText)
                     .expect("runtime imports must resolve when loading a program");
                 assert!(QIS_FFI_LIB_SINGLETON.get().is_some());
-                assert!(SHIM_LIB_SINGLETON.get().is_some());
                 interface.collect_operations().expect("execute program");
             }
             return;
@@ -3294,7 +3157,7 @@ mod tests {
 
         let cache = tempfile::tempdir().expect("cache directory");
         // The first child compiles; the second loads the persistent cache with
-        // neither runtime initialized. Each also repeats the in-process load.
+        // the runtime uninitialized. Each also repeats the in-process load.
         for _ in 0..2 {
             run_test_in_child(
                 "executor::tests::program_load_resolves_runtime_imports_in_fresh_process",
@@ -3680,3 +3543,6 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod selene_tests;

@@ -1246,7 +1246,8 @@ fn extract_gates(py_tc: &Bound<'_, PyAny>) -> PyResult<Vec<Gate>> {
                         // record silently vanishes.
                         "MeasureFree" => pecos_core::gate_type::GateType::MeasureFree,
                         "RZ" => pecos_core::gate_type::GateType::RZ,
-                        "Idle" | "I" => pecos_core::gate_type::GateType::Idle,
+                        "Idle" => pecos_core::gate_type::GateType::Idle,
+                        "I" => pecos_core::gate_type::GateType::I,
                         other => {
                             return Err(pyo3::exceptions::PyValueError::new_err(format!(
                                 "EEG extract_gates: unsupported gate type {other:?}"
@@ -1262,11 +1263,18 @@ fn extract_gates(py_tc: &Bound<'_, PyAny>) -> PyResult<Vec<Gate>> {
                     } else {
                         Vec::new()
                     };
+                    // Carry the gate's own non-angle parameters, such as an
+                    // Idle duration; `expand_circuit` validates them.
+                    let params: GateParams = gate
+                        .getattr("params")?
+                        .extract::<Vec<f64>>()?
+                        .into_iter()
+                        .collect();
                     tick_gates.push(
                         Gate::try_new(
                             gt,
                             angles,
-                            GateParams::new(),
+                            params,
                             qubits.iter().map(|&q| QubitId(q)).collect::<Vec<_>>(),
                         )
                         .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?,

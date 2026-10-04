@@ -16,6 +16,15 @@ use pecos_core::{Gate, QubitId};
 /// Why an EEG DEM could not be built from the circuit.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EegBuildError {
+    /// A gate fails `Gate::validate`: for example it repeats a qubit, or its
+    /// qubit count is not a multiple of its arity. Batched gates are applied
+    /// operand group by operand group, which assumes the groups are disjoint.
+    InvalidGate {
+        /// Position of the gate in the input circuit.
+        index: usize,
+        /// The validation message.
+        reason: String,
+    },
     /// The dense matrix Heisenberg walk does not implement this noise type.
     UnsupportedExactNoise {
         /// The offending EEG type.
@@ -66,6 +75,7 @@ pub enum EegBuildError {
 impl std::fmt::Display for EegBuildError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::InvalidGate { index, reason } => write!(f, "gate {index} is invalid: {reason}"),
             Self::UnsupportedExactNoise { eeg_type } => write!(
                 f,
                 "matrix Heisenberg does not support {eeg_type:?} injections; only H and S are implemented"
@@ -174,7 +184,9 @@ pub struct ExpandedCircuit {
 /// entrance: every consumer (builder, simulator, bindings) routes through it,
 /// so the check cannot drift across copies.
 pub fn expand_circuit(gates: &[Gate]) -> Result<ExpandedCircuit, EegBuildError> {
-    for gate in gates {
+    for (index, gate) in gates.iter().enumerate() {
+        gate.validate()
+            .map_err(|reason| EegBuildError::InvalidGate { index, reason })?;
         // `MeasureFree` is record-bearing and lowers to `MZ` below -- the
         // "free" is resource bookkeeping with no stabilizer effect, and a
         // reused qubit reappears behind an explicit prep the expansion keeps.

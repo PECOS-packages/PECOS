@@ -64,13 +64,13 @@ fn apply_dense(matrix: &[(usize, Complex64)], vector: &[Complex64]) -> Vec<Compl
 // Independent H1 oracle: no simulator methods or decomposition/basis-change
 // helpers are used. The random seed only selects a nonorthogonal projector input.
 fn reconstruct(sim: &StabActive) -> Vec<Complex64> {
-    let n = sim.tableau.num_qubits();
+    let n = sim.structure.tableau.num_qubits();
     let mut rng = PecosRng::seed_from_u64(937);
     let mut phi: Vec<_> = (0..1 << n)
         .map(|_| Complex64::new(rng.next_f64() - 0.5, rng.next_f64() - 0.5))
         .collect();
     for row in 0..n {
-        let image = apply_dense(&dense_row(sim.tableau.stabs(), row), &phi);
+        let image = apply_dense(&dense_row(sim.structure.tableau.stabs(), row), &phi);
         for (a, b) in phi.iter_mut().zip(image) {
             *a = (*a + b) / 2.0;
         }
@@ -81,9 +81,10 @@ fn reconstruct(sim: &StabActive) -> Vec<Complex64> {
         *a /= norm;
     }
     let matrices: Vec<_> = sim
+        .structure
         .active
         .iter()
-        .map(|&row| dense_row(sim.tableau.destabs(), row))
+        .map(|&row| dense_row(sim.structure.tableau.destabs(), row))
         .collect();
     let mut basis = vec![phi];
     for x in 1usize..sim.amplitudes.len() {
@@ -557,4 +558,82 @@ fn diagonal_roundoff_endpoint_ignores_impossible_force() {
 #[test]
 fn pair_roundoff_endpoint_ignores_impossible_force() {
     check_roundoff_endpoint(true);
+}
+
+#[test]
+fn signed_clifford_paulis_match_dense_matrix() {
+    use PauliKindForDecomp::{X, Y, Z};
+
+    let mut initial = StabActive::with_seed(3, 91);
+    let mut reference = StateVec::new(3).state();
+    for (gate, q, r, radians) in [
+        (9, 0, 0, 0.37),
+        (9, 1, 1, 0.79),
+        (1, 0, 0, 0.0),
+        (6, 0, 2, 0.0),
+        (8, 1, 1, 0.43),
+    ] {
+        let angle = Angle64::from_radians(radians);
+        unitary(&mut initial, gate, q, r, angle);
+        reference_unitary(&mut reference, gate, q, r, angle);
+    }
+    assert_eq!(initial.active_width(), 2);
+    assert_state(&initial, &reference, "signed Clifford preparation");
+
+    // Enumerate every nonidentity tensor on three qubits, including identities
+    // on the unused support. Build P directly in the physical computational basis.
+    for body in 1usize..64 {
+        let pauli: Vec<_> = (0..3)
+            .filter_map(|q| match (body >> (2 * q)) & 3 {
+                0 => None,
+                axis => Some((q, [X, Y, Z][axis - 1])),
+            })
+            .collect();
+        let matrix: Vec<_> = (0usize..8)
+            .map(|input| {
+                let mut output = input;
+                let mut coefficient = Complex64::new(1.0, 0.0);
+                for &(q, axis) in &pauli {
+                    let one = input & (1 << q) != 0;
+                    match axis {
+                        X => output ^= 1 << q,
+                        Y => {
+                            output ^= 1 << q;
+                            coefficient *= Complex64::new(0.0, if one { -1.0 } else { 1.0 });
+                        }
+                        Z => coefficient *= if one { -1.0 } else { 1.0 },
+                    }
+                }
+                (output, coefficient)
+            })
+            .collect();
+        let image = apply_dense(&matrix, &reference);
+        for (angle, radians) in [
+            (Angle64::QUARTER_TURN, std::f64::consts::FRAC_PI_2),
+            (
+                Angle64::THREE_QUARTERS_TURN,
+                3.0 * std::f64::consts::FRAC_PI_2,
+            ),
+            (Angle64::HALF_TURN, std::f64::consts::PI),
+        ] {
+            for negative in [false, true] {
+                let signed_radians = if negative { -radians } else { radians };
+                let (sine, cosine) = (signed_radians / 2.0).sin_cos();
+                // P^2 = I: exp(-i theta P/2) = cos(theta/2) I - i sin(theta/2) P.
+                let expected: Vec<_> = reference
+                    .iter()
+                    .zip(&image)
+                    .map(|(&a, &p)| cosine * a - Complex64::new(0.0, sine) * p)
+                    .collect();
+                let mut state = initial.clone();
+                state.rotate_pauli(angle, &pauli, negative);
+                assert_eq!(state.active_width(), 2);
+                assert_state(
+                    &state,
+                    &expected,
+                    &format!("{pauli:?}, angle={angle:?}, negative={negative}"),
+                );
+            }
+        }
+    }
 }

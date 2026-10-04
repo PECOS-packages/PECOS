@@ -1122,6 +1122,7 @@ class QisEngineBuilder:
         runtime_name: str | None = None,
         *,
         custom_event_policy: str = "reject_unhandled",
+        native_gates: list[str] | None = None,
     ) -> QisEngineBuilder: ...
     def selene_runtime_plugin(
         self,
@@ -1130,6 +1131,7 @@ class QisEngineBuilder:
         library_search_dirs: list[str] | None = None,
         *,
         custom_event_policy: str = "reject_unhandled",
+        native_gates: list[str] | None = None,
     ) -> QisEngineBuilder: ...
 
 class PhirJsonEngineBuilder:

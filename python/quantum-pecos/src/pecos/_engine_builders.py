@@ -160,7 +160,13 @@ class QisEngineBuilder:
             self._builder = self._builder.program(program)
         return self
 
-    def selene_runtime(self, runtime: object | None = None, *, custom_event_policy: str = "reject_unhandled") -> Self:
+    def selene_runtime(
+        self,
+        runtime: object | None = None,
+        *,
+        custom_event_policy: str = "reject_unhandled",
+        native_gates: list[str] | None = None,
+    ) -> Self:
         """Use a Selene runtime.
 
         Args:
@@ -170,6 +176,9 @@ class QisEngineBuilder:
                 value, or any Selene runtime plugin object exposing
                 ``library_file``, ``get_init_args()``, and optional
                 ``library_search_dirs``, is passed through generically.
+            native_gates: Accepted ABI gates (``rxy``, ``rz``, ``rzz``, ``rpp``).
+                Generic plugins default to all four; known runtimes use their declared set.
+                Plugin objects may alternatively expose a ``native_gates`` property.
             custom_event_policy: ``"reject_unhandled"`` is the default.
                 ``"capture"`` explicitly opts into execution without
                 modeling custom effects. ``"reject_unhandled"`` rejects any custom
@@ -178,7 +187,12 @@ class QisEngineBuilder:
         Returns:
             Self for method chaining.
         """
-        self._builder = _configure_selene_runtime(self._builder, runtime, custom_event_policy=custom_event_policy)
+        self._builder = _configure_selene_runtime(
+            self._builder,
+            runtime,
+            custom_event_policy=custom_event_policy,
+            native_gates=native_gates,
+        )
         return self
 
     def interface(self, builder: object) -> Self:
@@ -273,38 +287,55 @@ def _configure_selene_runtime(
     runtime: object | None,
     *,
     custom_event_policy: str = "reject_unhandled",
+    native_gates: list[str] | None = None,
 ) -> object:
     if custom_event_policy not in ("capture", "reject_unhandled"):
         msg = "custom_event_policy must be 'capture' or 'reject_unhandled'"
         raise ValueError(msg)
+    if native_gates is None and runtime is not None:
+        native_gates = getattr(runtime, "native_gates", None)
+    gate_options = {} if native_gates is None else {"native_gates": native_gates}
     if runtime is None:
         # Issue #365: freshly built Cargo artifacts win for dev iteration; the
         # installed plugin package is the stable cwd-independent fallback.
         try:
-            return builder.selene_runtime(custom_event_policy=custom_event_policy)
+            return builder.selene_runtime(custom_event_policy=custom_event_policy, **gate_options)
         except RuntimeError as original_error:
             try:
                 plugin_module = import_module("selene_simple_runtime_plugin")
                 plugin = _plugin_object_from_module(plugin_module)
-                return _configure_selene_runtime(builder, plugin, custom_event_policy=custom_event_policy)
+                return _configure_selene_runtime(
+                    builder,
+                    plugin,
+                    custom_event_policy=custom_event_policy,
+                    native_gates=native_gates,
+                )
             except Exception as fallback_error:
                 raise original_error from fallback_error
 
     if isinstance(runtime, str):
         if _looks_like_library_path(runtime):
-            return builder.selene_runtime_plugin(runtime, custom_event_policy=custom_event_policy)
+            return builder.selene_runtime_plugin(runtime, custom_event_policy=custom_event_policy, **gate_options)
         try:
-            return builder.selene_runtime(runtime, custom_event_policy=custom_event_policy)
+            return builder.selene_runtime(runtime, custom_event_policy=custom_event_policy, **gate_options)
         except RuntimeError as original_error:
             try:
                 plugin_module = import_module(f"{runtime}_plugin")
                 plugin = _plugin_object_from_module(plugin_module)
-                return _configure_selene_runtime(builder, plugin, custom_event_policy=custom_event_policy)
+                declared_gates = native_gates
+                if declared_gates is None and runtime == "selene_soft_rz_runtime":
+                    declared_gates = ["rxy", "rz", "rzz"]
+                return _configure_selene_runtime(
+                    builder,
+                    plugin,
+                    custom_event_policy=custom_event_policy,
+                    native_gates=declared_gates,
+                )
             except Exception as fallback_error:
                 raise original_error from fallback_error
 
     if isinstance(runtime, PathLike):
-        return builder.selene_runtime_plugin(fspath(runtime), custom_event_policy=custom_event_policy)
+        return builder.selene_runtime_plugin(fspath(runtime), custom_event_policy=custom_event_policy, **gate_options)
 
     library_file = getattr(runtime, "library_file", None)
     if library_file is None:
@@ -322,16 +353,24 @@ def _configure_selene_runtime(
         [str(arg) for arg in init_args],
         library_search_dirs,
         custom_event_policy=custom_event_policy,
+        **gate_options,
     )
 
 
-def selene_engine(runtime: object | None = None, *, custom_event_policy: str = "reject_unhandled") -> QisEngineBuilder:
+def selene_engine(
+    runtime: object | None = None,
+    *,
+    custom_event_policy: str = "reject_unhandled",
+    native_gates: list[str] | None = None,
+) -> QisEngineBuilder:
     """Create a Selene-backed QIS engine builder.
 
     Args:
         runtime: Optional runtime selector. ``None`` selects the default
             ``selene_simple_runtime``. A built runtime name, shared-library
             path, or generic Selene runtime plugin object may also be supplied.
+        native_gates: Optional accepted ABI gate names; generic plugins default to
+            all four, while known runtimes use their declared set.
         custom_event_policy: ``"capture"`` (explicit opt-in) or
             ``"reject_unhandled"`` (default; fail on custom events).
             Selecting this policy does not implement a physical model.
@@ -341,7 +380,7 @@ def selene_engine(runtime: object | None = None, *, custom_event_policy: str = "
     """
     return (
         QisEngineBuilder()
-        .selene_runtime(runtime, custom_event_policy=custom_event_policy)
+        .selene_runtime(runtime, custom_event_policy=custom_event_policy, native_gates=native_gates)
         .interface(pecos_rslib.qis_helios_interface())
     )
 

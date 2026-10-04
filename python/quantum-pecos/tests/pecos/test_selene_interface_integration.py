@@ -563,3 +563,55 @@ def test_custom_event_policy_reaches_sim_execution(
     else:
         data = simulation.run(2).to_dict()
         assert data["measurement_0"] == [0, 0]
+
+
+@pytest.mark.parametrize("explicit", [None, [], ["rpp"]])
+def test_custom_runtime_native_gate_declaration_is_forwarded(explicit: list[str] | None) -> None:
+    """Plugin declarations reach the Rust binding; explicit sets take precedence."""
+    from types import SimpleNamespace
+
+    from pecos._engine_builders import _configure_selene_runtime
+
+    class RecordingBuilder:
+        native_gates: list[str] | None = None
+
+        def selene_runtime_plugin(self, *_args: object, **kwargs: object) -> object:
+            self.native_gates = kwargs["native_gates"]
+            return self
+
+    builder = RecordingBuilder()
+    plugin = SimpleNamespace(library_file="custom.so", native_gates=["rxy", "rz", "rzz"])
+    _configure_selene_runtime(builder, plugin, native_gates=explicit)
+    assert builder.native_gates == (plugin.native_gates if explicit is None else explicit)
+
+
+def test_named_soft_rz_package_retains_native_gate_declaration(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Installed-package lookup preserves the named soft-RZ declaration."""
+    from types import SimpleNamespace
+
+    from pecos import _engine_builders
+    from pecos._engine_builders import _configure_selene_runtime
+
+    class RecordingBuilder:
+        native_gates: list[str] | None = None
+
+        def selene_runtime(self, *_args: object, **_kwargs: object) -> object:
+            message = "forced Cargo discovery failure"
+            raise RuntimeError(message)
+
+        def selene_runtime_plugin(self, *_args: object, **kwargs: object) -> object:
+            self.native_gates = kwargs["native_gates"]
+            return self
+
+    monkeypatch.setattr(_engine_builders, "import_module", lambda _name: SimpleNamespace(library_file="soft.so"))
+    builder = RecordingBuilder()
+    _configure_selene_runtime(builder, "selene_soft_rz_runtime")
+    assert builder.native_gates == ["rxy", "rz", "rzz"]
+
+
+def test_custom_runtime_rejects_unknown_native_gate_name() -> None:
+    """Reject misspelled declarations before a plugin is loaded."""
+    import pecos_rslib
+
+    with pytest.raises(ValueError, match=r"unknown Selene native gate.*expected rxy, rz, rzz or rpp"):
+        pecos_rslib.qis_engine().selene_runtime_plugin("custom.so", native_gates=["rxz"])

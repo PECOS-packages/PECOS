@@ -50,6 +50,17 @@ impl Route {
                                 usize::try_from(qubit_id_1).unwrap(),
                                 usize::try_from(qubit_id_2).unwrap(),
                             ),
+                            RuntimeScheduledOp::Rpp {
+                                qubit_id_1,
+                                qubit_id_2,
+                                theta,
+                                phi,
+                            } => QuantumOp::RXYXY2Q(
+                                theta,
+                                phi,
+                                usize::try_from(qubit_id_1).unwrap(),
+                                usize::try_from(qubit_id_2).unwrap(),
+                            ),
                             RuntimeScheduledOp::Reset { qubit_id } => {
                                 QuantumOp::Reset(usize::try_from(qubit_id).unwrap())
                             }
@@ -72,7 +83,9 @@ impl Route {
                                     )
                                 }
                             }
-                            _ => panic!("unexpected native output {op:?}"),
+                            RuntimeScheduledOp::Custom { .. } => {
+                                panic!("unexpected native output {op:?}")
+                            }
                         })
                         .collect::<Vec<_>>()
                 })
@@ -434,10 +447,19 @@ fn native_metadata_rejects_an_unexplained_pulse_axis() {
 }
 
 #[test]
-fn unsupported_native_gate_error_names_source_qubits_and_runtime() {
+fn reduced_native_set_rejects_before_any_plugin_submission() {
     for route in Route::ALL {
-        let mut runtime = start(crate::selene_runtimes::selene_soft_rz_runtime().unwrap(), 2);
-        let operations = [QuantumOp::RXYXY2Q(0.25, 0.5, 0, 1).into()];
+        let mut runtime = start(
+            SeleneRuntime::new("limited-runtime.so").with_native_gate_set(
+                RuntimeNativeGateSet::new([RuntimeNativeGate::Rxy, RuntimeNativeGate::Rz]),
+            ),
+            2,
+        );
+        let operations = [
+            Operation::AllocateQubit { id: 0 },
+            QuantumOp::H(0).into(),
+            QuantumOp::CX(0, 1).into(),
+        ];
         let error = match route {
             Route::Flat => runtime.lower_operations(&operations).unwrap_err(),
             Route::Metadata => runtime
@@ -446,11 +468,19 @@ fn unsupported_native_gate_error_names_source_qubits_and_runtime() {
             Route::Scheduled => runtime.lower_scheduled_operations(&operations).unwrap_err(),
         }
         .to_string();
-        assert!(error.contains("RXYXY2Q(0.25, 0.5, 0, 1)"), "{error}");
-        assert!(error.contains("qubits {0, 1}"), "{error}");
-        assert!(error.contains(&runtime.plugin_path), "{error}");
-        assert!(error.contains("rpp failed with errno"), "{error}");
-        assert!(runtime.shot_end().is_err());
+        for field in [
+            "CX(0, 1)",
+            "qubits {0, 1}",
+            "limited-runtime.so",
+            "native set {rxy, rz}",
+            "needs missing entry point(s) {rzz}",
+            "with_native_gate_set",
+        ] {
+            assert!(error.contains(field), "{error}");
+        }
+        assert!(runtime.library.is_none());
+        assert!(runtime.instance.is_none());
+        assert!(runtime.program_to_runtime_qubits.is_empty());
     }
 }
 
@@ -553,6 +583,11 @@ fn emitted_custom_events_require_default_acknowledgement_on_every_route() {
                     "{error}"
                 );
                 assert!(error.contains(&runtime.plugin_path), "{error}");
+                assert!(error.contains("set_custom_event_handler"), "{error}");
+                assert!(
+                    error.contains("RuntimeCustomEventPolicy::Capture"),
+                    "{error}"
+                );
                 assert!(runtime.shot_end().is_err());
             } else {
                 result.unwrap();
@@ -750,4 +785,79 @@ fn z_only_metadata_has_no_anchor_when_virtual_z_is_absorbed() {
             }
         }
     }
+}
+
+#[test]
+fn rpp_uses_each_runtime_native_set_on_every_route() {
+    for route in Route::ALL {
+        for soft in [false, true] {
+            let runtime = if soft {
+                crate::selene_runtimes::selene_soft_rz_runtime().unwrap()
+            } else {
+                crate::selene_runtimes::selene_simple_runtime().unwrap()
+            };
+            let mut runtime = start(runtime, 2);
+            let output = route.lower(
+                &mut runtime,
+                &[
+                    Operation::AllocateQubit { id: 0 },
+                    Operation::AllocateQubit { id: 1 },
+                    QuantumOp::Reset(0).into(),
+                    QuantumOp::Reset(1).into(),
+                    QuantumOp::RXYXY2Q(PI, -0.61, 0, 1).into(),
+                    QuantumOp::Measure(0, 0).into(),
+                    QuantumOp::Measure(1, 1).into(),
+                    Operation::Barrier,
+                ],
+            );
+            assert_eq!(
+                output
+                    .iter()
+                    .filter(|op| matches!(op, QuantumOp::RXYXY2Q(..)))
+                    .count(),
+                usize::from(!soft)
+            );
+            if soft {
+                assert_eq!(
+                    output
+                        .iter()
+                        .filter(|op| matches!(op, QuantumOp::RXY(..)))
+                        .count(),
+                    4
+                );
+                assert_eq!(
+                    output
+                        .iter()
+                        .filter(|op| matches!(op, QuantumOp::RZZ(..)))
+                        .count(),
+                    1
+                );
+            }
+            let results = simulate(&mut StateVecAoS::new(2), &output);
+            assert_eq!(results, BTreeMap::from([(0, 1), (1, 1)]));
+        }
+    }
+}
+
+#[test]
+fn native_set_identity_survives_named_construction_clone_and_reset() {
+    assert_eq!(
+        SeleneRuntime::new("custom.so").native_gate_set(),
+        RuntimeNativeGateSet::ALL
+    );
+    for (name, expected) in [
+        ("selene_simple_runtime", RuntimeNativeGateSet::ALL),
+        ("selene_soft_rz_runtime", RuntimeNativeGateSet::RXY_RZ_RZZ),
+    ] {
+        let mut runtime = crate::selene_runtimes::selene_runtime_auto(name)
+            .unwrap()
+            .clone();
+        assert_eq!(runtime.native_gate_set(), expected);
+        runtime.reset().unwrap();
+        assert_eq!(runtime.native_gate_set(), expected);
+    }
+    let set = RuntimeNativeGateSet::new([RuntimeNativeGate::Rpp]);
+    let runtime =
+        SeleneRuntime::with_plugin_config("custom.so", vec![], vec![]).with_native_gate_set(set);
+    assert_eq!(runtime.clone().native_gate_set(), set);
 }

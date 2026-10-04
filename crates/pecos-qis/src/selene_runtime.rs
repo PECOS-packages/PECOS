@@ -9,6 +9,7 @@ use crate::scheduled::{
     ScheduledOutput,
 };
 use crate::selene_native::{NativeOp, RuntimeInput, classify};
+pub use crate::selene_native::{RuntimeNativeGate, RuntimeNativeGateSet};
 use log::{debug, trace};
 use pecos_qis_ffi_types::{
     LoweredQuantumOp, Operation, OperationCollector, QuantumOp, TraceMetadata,
@@ -79,6 +80,22 @@ struct SourceTraceMetadata {
     folded_phi: Option<f64>,
 }
 
+/// Selene ABI egress table. The ABI fixes this callback list; any other
+/// operation can arrive only through `custom`, which is rejected by default.
+/// Scheduled extraction retains the corresponding `RuntimeScheduledOp`;
+/// flat/metadata conversion produces the `QuantumOp` and PECOS gate below.
+///
+/// | ABI callback | QuantumOp | PECOS gate / handling |
+/// | --- | --- | --- |
+/// | rxy | RXY | RXY1Q |
+/// | rz | RZ | RZ |
+/// | rzz | RZZ | RZZ |
+/// | rpp | RXYXY2Q | RXYXY2Q |
+/// | reset | Reset | PZ |
+/// | measure | Measure | MZ (MeasureLeaked for a leakage-aware result) |
+/// | measure_leaked | MeasureLeaked | MeasureLeaked |
+/// | set_batch_time | Idle for timing gaps | Idle; scheduled routes retain batch timing |
+/// | custom | no automatic gate mapping | configured handler / explicit Capture / rejection |
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct SeleneRuntimeGetOperationInterface {
@@ -304,6 +321,8 @@ type CustomEventHandler =
 pub struct SeleneRuntime {
     /// Path to the Selene .so file
     plugin_path: String,
+    /// Declared accepted ABI gates; part of this runtime's configuration identity.
+    native_gate_set: RuntimeNativeGateSet,
 
     /// Runtime-plugin init arguments passed to `selene_runtime_init`.
     init_args: Vec<String>,
@@ -445,20 +464,41 @@ impl SeleneRuntime {
         }
 
         let descriptor = unsafe { std::ptr::read_unaligned(descriptor) };
-        RuntimeAPIVersion::from(descriptor.api_version)
-            .validate()
-            .map_err(|error| {
-                RuntimeError::FfiError(format!(
-                    "runtime plugin has an incompatible Selene API version: {error}"
-                ))
-            })?;
+        Self::validate_runtime_api_version(descriptor.api_version)?;
         Ok(descriptor)
+    }
+
+    fn validate_runtime_api_version(packed: u64) -> Result<()> {
+        let version = RuntimeAPIVersion::from(packed);
+        version.validate().map_err(|error| {
+            let supported = selene_core::runtime::version::CURRENT_API_VERSION.as_u64();
+            RuntimeError::FfiError(format!(
+                "runtime plugin has an incompatible Selene API version: plugin {version:?} (packed {packed:#010x}); \
+                 PECOS supports Selene runtime API {}.{}.* (reserved=0); rebuild the plugin against the supported Selene version: {error}",
+                (supported >> 16) & 255, (supported >> 8) & 255
+            ))
+        })
+    }
+
+    /// Declare the ABI gates this plugin accepts. Generic plugins default to
+    /// the full ABI set. Reset, measure and `measure_leaked` are always required.
+    /// Unsupported source operations fail before plugin submission.
+    #[must_use]
+    pub fn with_native_gate_set(mut self, native_gate_set: RuntimeNativeGateSet) -> Self {
+        self.native_gate_set = native_gate_set;
+        self
+    }
+
+    #[must_use]
+    pub fn native_gate_set(&self) -> RuntimeNativeGateSet {
+        self.native_gate_set
     }
 
     /// Create a new Selene runtime with the given plugin path
     pub fn new(plugin_path: impl AsRef<Path>) -> Self {
         Self {
             plugin_path: plugin_path.as_ref().to_string_lossy().to_string(),
+            native_gate_set: RuntimeNativeGateSet::default(),
             init_args: Vec::new(),
             library_search_dirs: Vec::new(),
             library: None,
@@ -645,7 +685,7 @@ impl SeleneRuntime {
         if !Self::needs_source_record(&source, &metadata, records) {
             return Ok(());
         }
-        let classification = classify(&source)?;
+        let classification = classify(&source, self.native_gate_set)?;
         let sequence = match classification {
             RuntimeInput::Decomposed(sequence) => sequence,
             RuntimeInput::Native(native) => {
@@ -1239,6 +1279,14 @@ impl SeleneRuntime {
 
     fn prepare_runtime_input(&mut self, operations: &[Operation]) -> Result<()> {
         self.check_batch_failure()?;
+        // Validate the complete input before allocation, barriers, metadata
+        // matching, or any gate can mutate the plugin.
+        for op in operations {
+            if let Operation::Quantum(qop) = op {
+                classify(qop, self.native_gate_set)
+                    .map_err(|error| self.operation_lowering_error(qop, &error))?;
+            }
+        }
         let InputCapacity {
             qubits,
             results,
@@ -1854,6 +1902,8 @@ impl SeleneRuntime {
         metadata: TraceMetadata,
         lowered_ops: &mut Vec<QuantumOp>,
     ) -> Result<()> {
+        classify(qop, self.native_gate_set)
+            .map_err(|error| self.operation_lowering_error(qop, &error))?;
         // Keep outstanding labels and their guards across calls, including
         // metadata-to-flat transitions. Unlabelled shots need no records.
         // Scheduled mode cannot be mixed with these routes and has no annotations.
@@ -1868,8 +1918,13 @@ impl SeleneRuntime {
     }
 
     fn operation_lowering_error(&self, qop: &QuantumOp, error: &RuntimeError) -> RuntimeError {
+        // Keep the cause's own variant prefix only when it adds information.
+        let cause = match error {
+            RuntimeError::ExecutionError(message) => message.clone(),
+            other => other.to_string(),
+        };
         RuntimeError::ExecutionError(format!(
-            "failed to lower {qop:?} on qubits {:?} through runtime {}: {error}",
+            "failed to lower {qop:?} on qubits {:?} through runtime {}: {cause}",
             Self::quantum_op_qubits(qop),
             self.plugin_path
         ))
@@ -1880,7 +1935,7 @@ impl SeleneRuntime {
         qop: &QuantumOp,
         lowered_ops: &mut Vec<QuantumOp>,
     ) -> Result<()> {
-        match classify(qop)? {
+        match classify(qop, self.native_gate_set)? {
             RuntimeInput::Native(native) => self.submit_native_op(&native),
             RuntimeInput::Decomposed(sequence) => {
                 for native in sequence {
@@ -2623,7 +2678,7 @@ impl SeleneRuntime {
             && policy == RuntimeCustomEventPolicy::RejectUnhandled
         {
             return Err(RuntimeError::ExecutionError(format!(
-                "unsupported runtime custom event {context}; register a metadata-only handler for understood metadata; physical effects require downstream modeling"
+                "unsupported runtime custom event {context}; register a metadata-only handler with set_custom_event_handler for understood metadata or explicitly opt into RuntimeCustomEventPolicy::Capture with set_custom_event_policy; physical effects require downstream modeling"
             )));
         }
         Ok(())
@@ -2696,6 +2751,7 @@ impl Clone for SeleneRuntime {
         // that cannot be transferred to the fresh plugin, so require reset.
         Self {
             plugin_path: self.plugin_path.clone(),
+            native_gate_set: self.native_gate_set,
             init_args: self.init_args.clone(),
             library_search_dirs: self.library_search_dirs.clone(),
             library: None,  // Will be reloaded on demand
@@ -3231,6 +3287,23 @@ mod tests {
 
     /// Discriminates on Linux; macOS binds the fixture's import at load either way.
     #[cfg(unix)]
+    #[test]
+    fn api_version_error_reports_supported_version_and_rebuild_guidance() {
+        let error = SeleneRuntime::validate_runtime_api_version(0x0001_0203)
+            .unwrap_err()
+            .to_string();
+        for field in [
+            "incompatible Selene API version",
+            "major: 1, minor: 2, patch: 3",
+            "0x00010203",
+            "supports Selene runtime API 0.3.*",
+            "rebuild the plugin against the supported Selene version",
+        ] {
+            assert!(error.contains(field), "{error}");
+        }
+        SeleneRuntime::validate_runtime_api_version(0x0000_03ff).unwrap();
+    }
+
     #[test]
     fn selene_runtime_rejects_unresolved_import_at_load() {
         let directory = tempfile::tempdir().unwrap();

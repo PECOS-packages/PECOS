@@ -33,6 +33,23 @@ use crate::shot_results_bindings::PyShotVec;
 // Import the unified SimBuilder from sim.rs
 use crate::sim::{PySimBuilder, SimBuilderInner};
 
+fn runtime_native_gate_set(names: Vec<String>) -> PyResult<pecos_qis::RuntimeNativeGateSet> {
+    use pecos_qis::{RuntimeNativeGate, RuntimeNativeGateSet};
+    let gates = names
+        .into_iter()
+        .map(|name| match name.as_str() {
+            "rxy" => Ok(RuntimeNativeGate::Rxy),
+            "rz" => Ok(RuntimeNativeGate::Rz),
+            "rzz" => Ok(RuntimeNativeGate::Rzz),
+            "rpp" => Ok(RuntimeNativeGate::Rpp),
+            _ => Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "unknown Selene native gate {name:?}; expected rxy, rz, rzz or rpp"
+            ))),
+        })
+        .collect::<PyResult<Vec<_>>>()?;
+    Ok(RuntimeNativeGateSet::new(gates))
+}
+
 /// Python wrapper for QASM engine builder
 #[pyclass(name = "QasmEngineBuilder", from_py_object)]
 #[derive(Clone)]
@@ -159,11 +176,12 @@ impl PyQisEngineBuilder {
     }
 
     /// Use a Selene runtime built into the current PECOS/Cargo target.
-    #[pyo3(signature = (runtime_name = None, *, custom_event_policy = "reject_unhandled"))]
+    #[pyo3(signature = (runtime_name = None, *, custom_event_policy = "reject_unhandled", native_gates = None))]
     fn selene_runtime(
         &mut self,
         runtime_name: Option<&str>,
         custom_event_policy: &str,
+        native_gates: Option<Vec<String>>,
     ) -> PyResult<Self> {
         let policy = runtime_custom_event_policy(custom_event_policy)?;
         let mut runtime = match runtime_name {
@@ -175,6 +193,9 @@ impl PyQisEngineBuilder {
                 "Failed to load Selene runtime: {e}"
             ))
         })?;
+        if let Some(names) = native_gates {
+            runtime = runtime.with_native_gate_set(runtime_native_gate_set(names)?);
+        }
         runtime.set_custom_event_policy(policy);
         self.inner = self.inner.clone().runtime(runtime);
         self.runtime_configured = true;
@@ -182,13 +203,14 @@ impl PyQisEngineBuilder {
     }
 
     /// Use a generic Selene runtime plugin by its shared library and plugin arguments.
-    #[pyo3(signature = (library_file, init_args = None, library_search_dirs = None, *, custom_event_policy = "reject_unhandled"))]
+    #[pyo3(signature = (library_file, init_args = None, library_search_dirs = None, *, custom_event_policy = "reject_unhandled", native_gates = None))]
     fn selene_runtime_plugin(
         &mut self,
         library_file: &str,
         init_args: Option<Vec<String>>,
         library_search_dirs: Option<Vec<String>>,
         custom_event_policy: &str,
+        native_gates: Option<Vec<String>>,
     ) -> PyResult<Self> {
         let policy = runtime_custom_event_policy(custom_event_policy)?;
         let mut runtime = pecos_qis::SeleneRuntime::with_plugin_config(
@@ -200,6 +222,9 @@ impl PyQisEngineBuilder {
                 .map(PathBuf::from)
                 .collect(),
         );
+        if let Some(names) = native_gates {
+            runtime = runtime.with_native_gate_set(runtime_native_gate_set(names)?);
+        }
         runtime.set_custom_event_policy(policy);
         self.inner = self.inner.clone().runtime(runtime);
         self.runtime_configured = true;

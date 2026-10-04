@@ -4,7 +4,7 @@
 //! The runtimes are automatically built when you build this crate if the
 //! Selene repository is found at ../selene (relative to PECOS).
 
-use crate::SeleneRuntime;
+use crate::{RuntimeNativeGateSet, SeleneRuntime};
 use std::path::{Path, PathBuf};
 
 const SIMPLE_RUNTIME_DEFAULT_INIT_ARGS: &[&str] = &[
@@ -176,7 +176,8 @@ pub fn selene_simple_runtime() -> Result<SeleneRuntime, RuntimeFetchError> {
             .map(ToString::to_string)
             .collect(),
         Vec::new(),
-    );
+    )
+    .with_native_gate_set(RuntimeNativeGateSet::ALL);
     Ok(runtime)
 }
 
@@ -217,7 +218,8 @@ pub fn selene_soft_rz_runtime() -> Result<SeleneRuntime, RuntimeFetchError> {
             .map(ToString::to_string)
             .collect(),
         Vec::new(),
-    ))
+    )
+    .with_native_gate_set(RuntimeNativeGateSet::RXY_RZ_RZZ))
 }
 
 // Note: We only expose convenience functions for actual Selene runtime plugins.
@@ -405,7 +407,11 @@ pub fn selene_runtime_auto(lib_name: &str) -> Result<SeleneRuntime, RuntimeFetch
         runtime_path,
         init_args.iter().map(ToString::to_string).collect(),
         Vec::new(),
-    ))
+    )
+    .with_native_gate_set(match lib_name {
+        "selene_soft_rz_runtime" => RuntimeNativeGateSet::RXY_RZ_RZZ,
+        _ => RuntimeNativeGateSet::ALL,
+    }))
 }
 
 #[cfg(test)]

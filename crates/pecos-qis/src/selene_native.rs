@@ -4,6 +4,76 @@ use crate::runtime::{Result, RuntimeError};
 use pecos_qis_ffi_types::QuantumOp;
 use std::f64::consts::{FRAC_PI_2, FRAC_PI_4, PI};
 
+/// A gate entry point in the Selene runtime plugin ABI.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum RuntimeNativeGate {
+    Rxy = 1,
+    Rz = 2,
+    Rzz = 4,
+    Rpp = 8,
+}
+
+impl RuntimeNativeGate {
+    /// The ABI entry point's name.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Rxy => "rxy",
+            Self::Rz => "rz",
+            Self::Rzz => "rzz",
+            Self::Rpp => "rpp",
+        }
+    }
+}
+
+/// Gate entry points accepted by a Selene runtime. Lifetime operations (reset,
+/// measure and `measure_leaked`) are mandatory and are not configurable here.
+/// Generic plugins default to the full ABI contract, [`Self::ALL`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct RuntimeNativeGateSet(u8);
+
+impl RuntimeNativeGateSet {
+    pub const ALL: Self = Self(15);
+    pub const RXY_RZ_RZZ: Self = Self(7);
+
+    /// Declare exactly the gate entry points accepted by a custom plugin.
+    #[must_use]
+    pub fn new(gates: impl IntoIterator<Item = RuntimeNativeGate>) -> Self {
+        Self(gates.into_iter().fold(0, |bits, gate| bits | gate as u8))
+    }
+
+    #[must_use]
+    pub const fn contains(self, gate: RuntimeNativeGate) -> bool {
+        self.0 & gate as u8 != 0
+    }
+}
+
+impl Default for RuntimeNativeGateSet {
+    fn default() -> Self {
+        Self::ALL
+    }
+}
+
+impl std::fmt::Display for RuntimeNativeGateSet {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("{")?;
+        let mut separator = "";
+        for gate in [
+            RuntimeNativeGate::Rxy,
+            RuntimeNativeGate::Rz,
+            RuntimeNativeGate::Rzz,
+            RuntimeNativeGate::Rpp,
+        ] {
+            if self.contains(gate) {
+                write!(f, "{separator}{}", gate.name())?;
+                separator = ", ";
+            }
+        }
+        f.write_str("}")
+    }
+}
+
 /// The only quantum operations with a Selene runtime entry point.
 #[derive(Debug, Clone)]
 pub(crate) enum NativeOp {
@@ -17,6 +87,16 @@ pub(crate) enum NativeOp {
 }
 
 impl NativeOp {
+    fn entry_point(&self) -> Option<RuntimeNativeGate> {
+        match self {
+            Self::Rxy(..) => Some(RuntimeNativeGate::Rxy),
+            Self::Rz(..) => Some(RuntimeNativeGate::Rz),
+            Self::Rzz(..) => Some(RuntimeNativeGate::Rzz),
+            Self::Rpp(..) => Some(RuntimeNativeGate::Rpp),
+            Self::Reset(..) | Self::Measure(..) | Self::MeasureLeaked(..) => None,
+        }
+    }
+
     pub(crate) fn quantum_op(&self) -> QuantumOp {
         match *self {
             Self::Rxy(a, b, q) => QuantumOp::RXY(a, b, q),
@@ -38,7 +118,31 @@ pub(crate) enum RuntimeInput {
 
 /// Exhaustive ingress classification: a new `QuantumOp` must be classified here.
 /// References below are to Quantinuum qir-qis/src/decompose.rs.
-pub(crate) fn classify(op: &QuantumOp) -> Result<RuntimeInput> {
+pub(crate) fn classify(op: &QuantumOp, native_set: RuntimeNativeGateSet) -> Result<RuntimeInput> {
+    let input = native_sequence(op, native_set)?;
+    let sequence = match &input {
+        RuntimeInput::Native(native) => std::slice::from_ref(native),
+        RuntimeInput::Decomposed(sequence) => sequence.as_slice(),
+        RuntimeInput::Idle { .. } => &[],
+    };
+    let missing = RuntimeNativeGateSet::new(
+        sequence
+            .iter()
+            .filter_map(NativeOp::entry_point)
+            .filter(|gate| !native_set.contains(*gate)),
+    );
+    if missing != RuntimeNativeGateSet::new([]) {
+        return Err(RuntimeError::ExecutionError(format!(
+            "no lowering for {op:?} into native set {native_set}: needs missing entry point(s) {missing}; \
+             custom plugins declare their accepted entry points with SeleneRuntime::with_native_gate_set(RuntimeNativeGateSet::new(...))"
+        )));
+    }
+    Ok(input)
+}
+
+// Exhaustive source classification; validate the complete sequence before any
+// native call, so unsupported sets cannot partially submit a decomposition.
+fn native_sequence(op: &QuantumOp, native_set: RuntimeNativeGateSet) -> Result<RuntimeInput> {
     use NativeOp::{Rxy, Rz, Rzz};
     Ok(RuntimeInput::Decomposed(match *op {
         // define_h_gate, lines 162-202.
@@ -111,7 +215,20 @@ pub(crate) fn classify(op: &QuantumOp) -> Result<RuntimeInput> {
         QuantumOp::RZ(a, q) => return Ok(RuntimeInput::Native(Rz(a, q))),
         QuantumOp::RZZ(a, q, r) => return Ok(RuntimeInput::Native(Rzz(a, q, r))),
         QuantumOp::RXYXY2Q(a, b, q, r) => {
-            return Ok(RuntimeInput::Native(NativeOp::Rpp(a, b, q, r)));
+            if native_set.contains(RuntimeNativeGate::Rpp) {
+                return Ok(RuntimeInput::Native(NativeOp::Rpp(a, b, q, r)));
+            }
+            // P(phi) = U Z U†, U = Rxy(pi/2, phi+pi/2). Thus RPP is
+            // (U tensor U) Rzz(theta) (U† tensor U†), in matrix order.
+            // This is the Rz-conjugated Rxx identity documented by
+            // ArbitraryRotationGateable::rxyxy2q, with merged basis rotations.
+            vec![
+                Rxy(-FRAC_PI_2, b + FRAC_PI_2, q),
+                Rxy(-FRAC_PI_2, b + FRAC_PI_2, r),
+                Rzz(a, q, r),
+                Rxy(FRAC_PI_2, b + FRAC_PI_2, q),
+                Rxy(FRAC_PI_2, b + FRAC_PI_2, r),
+            ]
         }
         QuantumOp::Reset(q) => return Ok(RuntimeInput::Native(NativeOp::Reset(q))),
         QuantumOp::Measure(q, r) => return Ok(RuntimeInput::Native(NativeOp::Measure(q, r))),
@@ -203,6 +320,9 @@ pub(crate) mod tests {
             QuantumOp::RZZ(a, q, r) => {
                 sim.rzz(angle(a), &[(QubitId(q), QubitId(r))]);
             }
+            QuantumOp::RXYXY2Q(theta, phi, q, r) => {
+                sim.rxyxy2q(angle(theta), angle(phi), &[(QubitId(q), QubitId(r))]);
+            }
             QuantumOp::CX(q, r) => {
                 sim.cx(&[(QubitId(q), QubitId(r))]);
             }
@@ -253,6 +373,38 @@ pub(crate) mod tests {
             }
             QuantumOp::Idle(..) => {}
             _ => panic!("unexpected oracle operation {op:?}"),
+        }
+    }
+
+    #[test]
+    fn every_native_entry_point_respects_the_declared_set() {
+        use RuntimeNativeGate::{Rpp, Rxy, Rz, Rzz};
+        for mask in 0_u8..16 {
+            let set = RuntimeNativeGateSet::new(
+                [Rxy, Rz, Rzz, Rpp]
+                    .into_iter()
+                    .enumerate()
+                    .filter(|(index, _)| mask & (1 << index) != 0)
+                    .map(|(_, gate)| gate),
+            );
+            for (gate, op) in [
+                (Rxy, QuantumOp::RXY(0.3, -0.2, 0)),
+                (Rz, QuantumOp::RZ(0.3, 0)),
+                (Rzz, QuantumOp::RZZ(0.3, 0, 1)),
+                (Rpp, QuantumOp::RXYXY2Q(0.3, -0.2, 0, 1)),
+            ] {
+                let result = classify(&op, set);
+                let supported =
+                    set.contains(gate) || (gate == Rpp && set.contains(Rxy) && set.contains(Rzz));
+                assert_eq!(result.is_ok(), supported, "{op:?}, set {set}");
+            }
+            for op in [
+                QuantumOp::Reset(0),
+                QuantumOp::Measure(0, 0),
+                QuantumOp::MeasureLeaked(0, 0),
+            ] {
+                assert!(classify(&op, set).is_ok(), "{op:?}, set {set}");
+            }
         }
     }
 
@@ -309,8 +461,17 @@ pub(crate) mod tests {
                 gates.push(QuantumOp::CRZ(theta, a, b));
             }
         }
+        for theta in [-7.3, -PI, -0.73, 0.0, 0.41, PI, 2.0 * PI] {
+            for phi in [-PI, -0.61, 0.0, 0.37, PI] {
+                for (a, b) in [(0, 1), (1, 0)] {
+                    gates.push(QuantumOp::RXYXY2Q(theta, phi, a, b));
+                }
+            }
+        }
         for gate in gates {
-            let RuntimeInput::Decomposed(sequence) = classify(&gate).unwrap() else {
+            let RuntimeInput::Decomposed(sequence) =
+                classify(&gate, RuntimeNativeGateSet::RXY_RZ_RZZ).unwrap()
+            else {
                 panic!("expected decomposition for {gate:?}");
             };
             let mut phase = None;

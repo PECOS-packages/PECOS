@@ -1,8 +1,11 @@
 // Copyright 2026 The PECOS Developers
 // Licensed under the Apache License, Version 2.0.
 
+mod joint_distribution;
 mod oracle;
+mod reordering;
 mod sampling;
+mod validation;
 
 use super::*;
 use crate::{ArbitraryRotationGateable, CliffordGateable, PecosRng, SparseStabY};

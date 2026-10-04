@@ -17,20 +17,15 @@
 //! The Helios interface uses Selene's Helios compiler to execute quantum programs:
 //!
 //! ```text
-//! user_program.bc + libhelios.a → program.x
-//!           ↓
-//!       dlopen (in-process)
-//!           ↓
-//!   program.x calls ___qalloc(), ___rxy(), etc.
-//!           ↓
-//!   libhelios.a forwards to selene_qalloc(), selene_rxy(), etc.
-//!           ↓
-//!   libpecos_selene_shim.so implements selene_* functions
-//!           ↓
-//!   Shim forwards to pecos_qis_ffi::with_interface()
-//!           ↓
-//!   Operations collected in thread-local storage
+//! user_program.bc + libpecos_qis_ffi → program.so (loaded locally)
+//!                                         │
+//!                                  QIS / selene_* calls
+//!                                         ↓
+//! in-process Selene QIS plugins → libpecos_qis_ffi (global singleton)
+//!                                         ↓
+//!                     Operations collected in thread-local storage
 //! ```
+//! The Helios archive is built for interface tooling; programs do not link it.
 //!
 //! # LLVM Setup
 //!
@@ -53,7 +48,11 @@
 //!
 //! # Example Usage
 //!
+//! Requires the `selene` feature (enabled by default).
+//!
 //! ```rust,no_run
+//! # #[cfg(feature = "selene")]
+//! # {
 //! use pecos_qis::{qis_engine, selene_simple_runtime, helios_interface_builder};
 //! use pecos_engines::ClassicalControlEngineBuilder;
 //!
@@ -64,6 +63,7 @@
 //!     .interface(helios_interface_builder())
 //!     .build()
 //!     .expect("Failed to build engine");
+//! # }
 //! ```
 
 // ============================================================================
@@ -98,6 +98,8 @@ pub mod ccengine;
 pub mod engine_builder;
 pub mod interface_impl;
 pub mod program;
+#[cfg(any(feature = "selene", test))]
+mod qir_detection;
 
 pub use ccengine::{LoweredQuantumGateTrace, OperationTraceChunk, OperationTraceStore, QisEngine};
 pub use engine_builder::{QisEngineBuilder, qis_engine};
@@ -117,8 +119,6 @@ pub mod selene_builder;
 pub mod selene_runtime;
 #[cfg(feature = "selene")]
 pub mod selene_runtimes;
-#[cfg(feature = "selene")]
-pub mod shim;
 
 #[cfg(feature = "selene")]
 pub use executor::{HeliosSyncHandle, QisHeliosInterface};
@@ -225,7 +225,7 @@ pub fn selene_soft_rz_engine() -> Result<QisEngineBuilder, RuntimeFetchError> {
         .interface(helios_interface_builder()))
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "selene"))]
 pub(crate) mod test_env {
     use std::ffi::{OsStr, OsString};
     use std::sync::Mutex;

@@ -455,12 +455,13 @@ pub(crate) fn sparse_conjugate(p: &mut SparsePauli, gate: &Gate) -> Option<bool>
             p.conjugate_swap(q0, q1);
             Some(false)
         }
-        // CY is self-adjoint: CY = SZdg(t) CX(c,t) SZ(t) — chain
+        // CY is self-adjoint: CY = SZ(t) CX(c,t) SZdg(t), so conjugate by
+        // SZdg, then CX, then SZ (as `pecos_core`'s `conjugate_cy` does).
         GateType::CY => {
             let q1 = gate.qubits[1].index() as u16;
-            let s1 = p.conjugate_sz(q1);
+            let s1 = p.conjugate_szdg(q1);
             let s2 = p.conjugate_cx(q0, q1);
-            let s3 = p.conjugate_szdg(q1);
+            let s3 = p.conjugate_sz(q1);
             Some(sign_parity([s1, s2, s3]))
         }
         // Non-self-adjoint two-qubit: swap to adjoint for backward.
@@ -2482,6 +2483,44 @@ mod tests {
                 (p - exact).abs()
             );
         }
+    }
+
+    #[test]
+    fn test_cy_conjugation_matches_pecos_core() {
+        // CY is self-adjoint, so the backward conjugation must equal the
+        // forward `conjugate_cy`, label and sign, for every two-qubit Pauli.
+        let gate = gate(GateType::CY, &[0, 1]);
+        let local = |q: usize| [Bm::default(), Bm::x(q), Bm::y(q), Bm::z(q)];
+        for a in local(0) {
+            for b in local(1) {
+                let pauli = a.multiply(&b);
+                let expected = pecos_core::pauli::pauli_bitmask::conjugate_cy(&pauli, 0, 1);
+                let mut sparse = SparsePauli::from_bm(&pauli);
+                let sign = sparse_conjugate(&mut sparse, &gate).expect("CY conjugates");
+                assert_eq!(sparse.to_bm(), expected.label, "{pauli:?}");
+                assert_eq!(sign, expected.sign_negative, "{pauli:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn test_cy_detection_matches_hand_value() {
+        // H0 CY(0,1) H0 SX(1) CX(0,1) on |00> leaves qubit 1 in |0>, so the
+        // detector on its measurement never fires.
+        let gates = vec![
+            gate(GateType::PZ, &[0]),
+            gate(GateType::PZ, &[1]),
+            gate(GateType::H, &[0]),
+            gate(GateType::CY, &[0, 1]),
+            gate(GateType::H, &[0]),
+            gate(GateType::SX, &[1]),
+            gate(GateType::CX, &[0, 1]),
+            gate(GateType::MZ, &[1]),
+        ];
+        let noise = crate::noise::UniformNoise::coherent_only(0.0);
+        let p = heisenberg_detection_probability_from_circuit(&gates, &[0], &noise, 2, 0.0)
+            .expect("supported circuit");
+        assert!(p.abs() < 1e-12, "{p}");
     }
 
     #[test]

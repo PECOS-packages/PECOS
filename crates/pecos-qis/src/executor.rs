@@ -2398,11 +2398,11 @@ impl QisInterface for QisHeliosInterface {
         // Check if Helios can handle this format
         match format {
             ProgramFormat::QisBitcode | ProgramFormat::LlvmBitcode | ProgramFormat::LlvmIrText => {
-                validate_qis_dialect(program_bytes, format)?;
-                debug!("Format is compatible, storing program...");
                 // A failed load must not leave the previous program executable.
                 self.executable_path = None;
                 self.metadata.clear();
+                validate_qis_dialect(program_bytes, format)?;
+                debug!("Format is compatible, storing program...");
                 self.program = program_bytes.to_vec();
                 self.format = format;
 
@@ -3566,29 +3566,33 @@ attributes #0 = { "EntryPoint" }
         let _env_lock = ENV_MUTEX.lock().expect("environment lock");
         let cache = tempfile::tempdir().expect("cache directory");
         let _cache_dir = EnvVarGuard::set("PECOS_CACHE_DIR", cache.path());
-        let mut interface = QisHeliosInterface::new();
-        interface
-            .load_program(
-                b"define i64 @qmain(i64 %arg) { ret i64 0 }",
-                ProgramFormat::LlvmIrText,
-            )
-            .expect("valid program");
-        interface
-            .load_program(
-                br"
-                    declare i64 @get_current_shot()
-                    define i64 @qmain(i64 %arg) {
-                        %shot = call i64 @get_current_shot()
-                        ret i64 %shot
-                    }
-                ",
-                ProgramFormat::LlvmIrText,
-            )
-            .expect_err("an undefined program import must fail at load time");
-        assert!(interface.metadata().is_empty());
-        interface
-            .collect_operations()
-            .expect_err("the previous program must not run after a failed load");
+        // Linking and dialect validation fail at different points of the load.
+        let failing_programs: [&[u8]; 2] = [
+            br"
+                declare i64 @get_current_shot()
+                define i64 @qmain(i64 %arg) {
+                    %shot = call i64 @get_current_shot()
+                    ret i64 %shot
+                }
+            ",
+            b"declare void @__quantum__qis__x__body(ptr)",
+        ];
+        for failing_program in failing_programs {
+            let mut interface = QisHeliosInterface::new();
+            interface
+                .load_program(
+                    b"define i64 @qmain(i64 %arg) { ret i64 0 }",
+                    ProgramFormat::LlvmIrText,
+                )
+                .expect("valid program");
+            interface
+                .load_program(failing_program, ProgramFormat::LlvmIrText)
+                .expect_err("an invalid program must fail at load time");
+            assert!(interface.metadata().is_empty());
+            interface
+                .collect_operations()
+                .expect_err("the previous program must not run after a failed load");
+        }
     }
 
     #[test]

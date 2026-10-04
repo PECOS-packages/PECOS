@@ -649,3 +649,37 @@ def test_flat_runtime_flushes_native_tail_after_last_measurement(runtime_name: s
         .to_dict()
     )
     assert results["measurement_0"] == [1] * shots
+
+
+def test_upstream_soft_rz_plugin_object_lowers_rpp_before_submission() -> None:
+    """Selene's own soft-RZ plugin object carries soft-RZ's gate set, so rpp is decomposed."""
+    import pecos
+    import pecos_rslib as pr
+
+    plugin_package = pytest.importorskip("selene_soft_rz_runtime_plugin")
+    program = """
+        define i64 @qmain(i64 %shot) #0 {
+            call void @___rpp(i64 0, i64 1, double 3.141592653589793, double 0.0)
+            %m0 = call i32 @__quantum__qis__m__body(i64 0, i64 0)
+            %m1 = call i32 @__quantum__qis__m__body(i64 1, i64 1)
+            ret i64 0
+        }
+        declare void @___rpp(i64, i64, double, double)
+        declare i32 @__quantum__qis__m__body(i64, i64)
+        attributes #0 = { "EntryPoint" }
+    """
+    shots = 5
+    classical = pecos.selene_engine(plugin_package.SoftRZRuntimePlugin()).interface(pr.qis_helios_interface())
+    results = (
+        pecos.sim(pecos.Qis(program))
+        .classical(classical)
+        .qubits(2)
+        .quantum(pr.state_vector())
+        .seed(42)
+        .workers(1)
+        .run(shots)
+        .to_dict()
+    )
+    # rpp(pi, 0) is XX up to global phase, so |00> becomes |11>.
+    assert results["measurement_0"] == [1] * shots
+    assert results["measurement_1"] == [1] * shots

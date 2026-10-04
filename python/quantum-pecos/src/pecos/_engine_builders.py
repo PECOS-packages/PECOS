@@ -282,6 +282,21 @@ def _plugin_object_from_module(module: object) -> object:
     raise error
 
 
+# Gates each known Selene runtime accepts, checked against the plugin sources.
+# Runtimes absent here are declared by the caller or default to the full ABI set.
+_KNOWN_RUNTIME_NATIVE_GATES = {
+    "selene_simple_runtime": ["rxy", "rz", "rzz", "rpp"],
+    "selene_soft_rz_runtime": ["rxy", "rz", "rzz"],
+}
+
+
+def _known_runtime_name(runtime: object) -> str | None:
+    """Name a plugin object from its upstream ``<runtime>_plugin`` package."""
+    package = type(runtime).__module__.partition(".")[0]
+    name = package.removesuffix("_plugin")
+    return name if name != package and name in _KNOWN_RUNTIME_NATIVE_GATES else None
+
+
 def _configure_selene_runtime(
     builder: object,
     runtime: object | None,
@@ -294,6 +309,10 @@ def _configure_selene_runtime(
         raise ValueError(msg)
     if native_gates is None and runtime is not None:
         native_gates = getattr(runtime, "native_gates", None)
+    if native_gates is None and runtime is not None and not isinstance(runtime, (str, PathLike)):
+        known_name = _known_runtime_name(runtime)
+        if known_name is not None:
+            native_gates = _KNOWN_RUNTIME_NATIVE_GATES[known_name]
     gate_options = {} if native_gates is None else {"native_gates": native_gates}
     if runtime is None:
         # Issue #365: freshly built Cargo artifacts win for dev iteration; the
@@ -323,8 +342,8 @@ def _configure_selene_runtime(
                 plugin_module = import_module(f"{runtime}_plugin")
                 plugin = _plugin_object_from_module(plugin_module)
                 declared_gates = native_gates
-                if declared_gates is None and runtime == "selene_soft_rz_runtime":
-                    declared_gates = ["rxy", "rz", "rzz"]
+                if declared_gates is None:
+                    declared_gates = _KNOWN_RUNTIME_NATIVE_GATES.get(runtime)
                 return _configure_selene_runtime(
                     builder,
                     plugin,

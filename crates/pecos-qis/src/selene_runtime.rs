@@ -1556,9 +1556,7 @@ impl SeleneRuntime {
             let rxy_fn = Self::runtime_plugin_descriptor(lib)?.rxy_gate_fn;
             let errno = rxy_fn(instance, runtime_qubit, theta, phi);
             if errno != 0 {
-                return Err(RuntimeError::FfiError(format!(
-                    "rxy failed with errno {errno}"
-                )));
+                return Err(Self::native_gate_errno_error("rxy", errno));
             }
         }
 
@@ -1578,9 +1576,7 @@ impl SeleneRuntime {
             let rz_fn = Self::runtime_plugin_descriptor(lib)?.rz_gate_fn;
             let errno = rz_fn(instance, runtime_qubit, theta);
             if errno != 0 {
-                return Err(RuntimeError::FfiError(format!(
-                    "rz failed with errno {errno}"
-                )));
+                return Err(Self::native_gate_errno_error("rz", errno));
             }
         }
 
@@ -1605,9 +1601,7 @@ impl SeleneRuntime {
             let rzz_fn = Self::runtime_plugin_descriptor(lib)?.rzz_gate_fn;
             let errno = rzz_fn(instance, runtime_qubit_1, runtime_qubit_2, theta);
             if errno != 0 {
-                return Err(RuntimeError::FfiError(format!(
-                    "rzz failed with errno {errno}"
-                )));
+                return Err(Self::native_gate_errno_error("rzz", errno));
             }
         }
 
@@ -1633,12 +1627,20 @@ impl SeleneRuntime {
             let rpp_fn = Self::runtime_plugin_descriptor(lib)?.rpp_gate_fn;
             let errno = rpp_fn(instance, runtime_qubit_1, runtime_qubit_2, theta, phi);
             if errno != 0 {
-                return Err(RuntimeError::FfiError(format!(
-                    "rpp failed with errno {errno}"
-                )));
+                return Err(Self::native_gate_errno_error("rpp", errno));
             }
         }
         Ok(())
+    }
+
+    /// The Selene ABI returns only an errno; the plugin prints its reason to stderr.
+    fn native_gate_errno_error(gate: &str, errno: i32) -> RuntimeError {
+        RuntimeError::FfiError(format!(
+            "{gate} failed with errno {errno}; the runtime plugin printed its reason to stderr. \
+             If this runtime does not implement {gate}, declare the gates it accepts with \
+             SeleneRuntime::with_native_gate_set (Python: native_gates=[...]) so PECOS lowers \
+             around {gate} before submitting anything"
+        ))
     }
 
     fn call_runtime_reset(&self, runtime_qubit: u64) -> Result<()> {

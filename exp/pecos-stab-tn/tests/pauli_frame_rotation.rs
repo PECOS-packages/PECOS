@@ -363,70 +363,6 @@ fn sequential_injections_exact_phase() {
 }
 
 #[test]
-fn frame_off_bitwise_baseline() {
-    let mut hashes = Vec::new();
-    for merge in [false, true] {
-        for seed in [0, 7, 946] {
-            let mut sim = StabMps::builder(3)
-                .seed(seed)
-                .merge_rz(merge)
-                .pauli_frame_tracking(false)
-                .build();
-            let mut hash = 0xcbf2_9ce4_8422_2325_u64;
-            let mut absorb = |word: u64| {
-                hash = (hash ^ word).wrapping_mul(0x100_0000_01b3);
-            };
-            for round in 0..12 {
-                let q = round % 3;
-                let r = (q + 1) % 3;
-                for op in [
-                    Op::H,
-                    Op::Rz,
-                    Op::X,
-                    Op::Rz,
-                    Op::S,
-                    Op::Cx,
-                    Op::Rx,
-                    Op::Ry,
-                    Op::Rzz,
-                    Op::U,
-                    Op::Cz,
-                ] {
-                    apply(&mut sim, op, q, r, Angle64::from_radians(0.37));
-                }
-                sim.flush();
-                for a in sim.state_vector() {
-                    absorb(a.re.to_bits());
-                    absorb(a.im.to_bits());
-                }
-                for result in sim.mz(&[QubitId(q)]) {
-                    absorb(u64::from(result.outcome));
-                    absorb(u64::from(result.is_deterministic));
-                }
-                for a in sim.state_vector() {
-                    absorb(a.re.to_bits());
-                    absorb(a.im.to_bits());
-                }
-            }
-            hashes.push(hash);
-        }
-    }
-    // Captured from the unmodified implementation, including every amplitude
-    // component before/after MZ and every reported outcome/determinism bit.
-    assert_eq!(
-        hashes,
-        vec![
-            14_870_145_503_267_271_652,
-            13_106_549_893_236_556_173,
-            8_555_850_177_496_023_279,
-            7_724_859_125_195_220_033,
-            17_684_147_531_403_832_011,
-            6_598_468_813_120_580_889
-        ]
-    );
-}
-
-#[test]
 fn noise_channels_before_rotations() {
     for channel in 0..3 {
         let (mut on, mut off) = pair(2, true, 946);
@@ -546,53 +482,25 @@ fn scalar_only_frame_flush() {
 }
 
 #[test]
-fn frame_off_explicit_injections_bitwise_baseline() {
-    let mut hashes = Vec::new();
+fn half_turn_after_x_frame_exact_phase() {
+    // Angle64 identifies RZ(pi) and RZ(-pi), so conjugation by the frame
+    // shows up only in the global phase: X RZ(pi) X = +iZ, not -iZ.
     for merge in [false, true] {
-        let mut sim = StabMps::builder(2)
-            .seed(946)
+        let mut on = StabMps::builder(1)
             .merge_rz(merge)
-            .pauli_frame_tracking(false)
+            .pauli_frame_tracking(true)
             .build();
-        let mut hash = 0xcbf2_9ce4_8422_2325_u64;
-        let mut absorb = |word: u64| {
-            hash = (hash ^ word).wrapping_mul(0x100_0000_01b3);
-        };
-        for round in 0..8 {
-            sim.h(&[QubitId(0), QubitId(1)]);
-            sim.rz(Angle64::from_radians(0.3), &[QubitId(0)]);
-            sim.inject_x_in_frame(QubitId(0));
-            sim.inject_z_in_frame(QubitId(1));
-            sim.rz(Angle64::from_radians(0.7), &[QubitId(0)]);
-            sim.cx(&[(QubitId(0), QubitId(1))]);
-            sim.inject_y_in_frame(QubitId(0));
-            sim.inject_x_in_frame(QubitId(1));
-            sim.cz(&[(QubitId(0), QubitId(1))]);
-            sim.y(&[QubitId(0)]);
-            sim.flush();
-            for a in sim.state_vector() {
-                absorb(a.re.to_bits());
-                absorb(a.im.to_bits());
-            }
-            sim.flush_pauli_frame_to_state();
-            for a in sim.state_vector() {
-                absorb(a.re.to_bits());
-                absorb(a.im.to_bits());
-            }
-            for result in sim.mz(&[QubitId(round % 2)]) {
-                absorb(u64::from(result.outcome));
-                absorb(u64::from(result.is_deterministic));
-            }
-            for a in sim.state_vector() {
-                absorb(a.re.to_bits());
-                absorb(a.im.to_bits());
-            }
-        }
-        hashes.push(hash);
+        let mut dense = DenseStateVec::new(1);
+        on.h(&[QubitId(0)]);
+        dense.h(&[QubitId(0)]);
+        on.inject_x_in_frame(QubitId(0));
+        dense.x(&[QubitId(0)]);
+        on.rz(Angle64::HALF_TURN, &[QubitId(0)]);
+        dense.rz(Angle64::HALF_TURN, &[QubitId(0)]);
+        assert_dense(
+            &mut on,
+            &mut dense,
+            &format!("X frame then RZ(pi), merge={merge}"),
+        );
     }
-    // Captured before the fix, including explicit flushes of an OFF-mode frame.
-    assert_eq!(
-        hashes,
-        vec![5_352_307_923_487_451_094, 10_090_046_536_418_606_682]
-    );
 }

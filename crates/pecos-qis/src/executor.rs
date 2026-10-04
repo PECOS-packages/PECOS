@@ -2873,35 +2873,20 @@ attributes #0 = { "entry\5fpoint" }"#
         std::fs::read(bitcode.path()).unwrap()
     }
 
-    // Each child runs only the named test, isolating environment changes and any
-    // accidental llvm-dis output from the other tests and the repository.
-    fn validation_test_subprocess(name: &str) -> bool {
-        if std::env::var("PECOS_VALIDATION_TEST").as_deref() == Ok(name) {
-            return false;
-        }
-        let directory = tempfile::tempdir().unwrap();
-        let output = Command::new(std::env::current_exe().unwrap())
-            .args(["--exact", name, "--nocapture"])
-            .env("PECOS_VALIDATION_TEST", name)
-            .current_dir(directory.path())
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "{}\n{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-        true
-    }
-
     #[test]
     fn rejects_multi_module_bitcode_without_stray_files() {
-        if validation_test_subprocess(
-            "executor::tests::rejects_multi_module_bitcode_without_stray_files",
-        ) {
+        const CHILD_ENV: &str = "PECOS_TEST_MULTI_MODULE_BITCODE";
+        if std::env::var_os(CHILD_ENV).is_none() {
+            run_test_in_child(
+                "executor::tests::rejects_multi_module_bitcode_without_stray_files",
+                &[(CHILD_ENV, "1".as_ref())],
+            );
             return;
         }
+        // The child runs only this test, so it can move its working directory
+        // to keep any stray llvm-dis output out of the repository.
+        let working_directory = tempfile::tempdir().unwrap();
+        std::env::set_current_dir(working_directory.path()).unwrap();
         let directory = tempfile::tempdir().unwrap();
         let first = directory.path().join("a.bc");
         let second = directory.path().join("b.bc");
@@ -2969,9 +2954,13 @@ attributes #0 = { "entry\5fpoint" }"#
     #[test]
     #[cfg(unix)]
     fn validation_memo_reuses_success_without_llvm_input_files() {
-        if validation_test_subprocess(
-            "executor::tests::validation_memo_reuses_success_without_llvm_input_files",
-        ) {
+        // The child's broken TMPDIR must not reach tests running in parallel.
+        const CHILD_ENV: &str = "PECOS_TEST_VALIDATION_MEMO_REUSE";
+        if std::env::var_os(CHILD_ENV).is_none() {
+            run_test_in_child(
+                "executor::tests::validation_memo_reuses_success_without_llvm_input_files",
+                &[(CHILD_ENV, "1".as_ref())],
+            );
             return;
         }
         let _env_lock = ENV_MUTEX.lock().expect("environment lock");

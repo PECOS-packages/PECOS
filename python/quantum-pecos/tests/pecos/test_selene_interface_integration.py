@@ -174,6 +174,7 @@ def test_default_runtime_falls_back_to_installed_plugin_package(policy: str) -> 
         def __init__(self) -> None:
             self.builder = pecos_rslib.qis_engine()
             self.plugin_call: tuple[str, list[str], list[str]] | None = None
+            self.native_gates: list[str] | None = None
 
         def selene_runtime(self, *, custom_event_policy: str) -> object:
             assert custom_event_policy == policy
@@ -187,14 +188,17 @@ def test_default_runtime_falls_back_to_installed_plugin_package(policy: str) -> 
             library_search_dirs: list[str],
             *,
             custom_event_policy: str,
+            native_gates: list[str] | None = None,
         ) -> object:
             assert custom_event_policy == policy
             self.plugin_call = (library_file, init_args, library_search_dirs)
+            self.native_gates = native_gates
             return self.builder.selene_runtime_plugin(
                 library_file,
                 init_args,
                 library_search_dirs,
                 custom_event_policy=custom_event_policy,
+                native_gates=native_gates,
             )
 
     builder = FailingCargoRuntimeBuilder()
@@ -202,6 +206,7 @@ def test_default_runtime_falls_back_to_installed_plugin_package(policy: str) -> 
 
     assert builder.plugin_call is not None
     assert Path(builder.plugin_call[0]) == SimpleRuntimePlugin().library_file
+    assert builder.native_gates == ["rxy", "rz", "rzz", "rpp"]
 
 
 @pytest.mark.parametrize("policy", ["capture", "reject_unhandled"])

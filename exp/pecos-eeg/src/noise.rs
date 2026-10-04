@@ -290,8 +290,8 @@ impl UniformNoise {
                 }
             }
 
-            // Preparation error
-            GateType::PZ if self.p_prep > 0.0 => {
+            // Preparation error, for resets and allocations alike
+            GateType::PZ | GateType::QAlloc if self.p_prep > 0.0 => {
                 for &q in qubits {
                     injections.push(NoiseInjection {
                         eeg_type: EegType::S,

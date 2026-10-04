@@ -64,6 +64,8 @@ pub struct CorrelationTable {
 pub struct CorrelationTableInput<'a> {
     /// Circuit gates.
     pub gates: &'a [Gate],
+    /// Provenance flags parallel to `gates`.
+    pub expansion_gates: &'a [bool],
     /// Noise model used for exact correlation targets.
     pub noise: &'a dyn NoiseSpec,
     /// Detector definitions.
@@ -179,10 +181,14 @@ impl CorrelationTable {
 ///
 /// Each entry gives the exact joint detection probability for a subset of
 /// detectors, including all coherent interference effects.
+///
+/// # Panics
+/// Panics if the provenance flags do not match the gate count.
 #[must_use]
 pub fn compute_correlation_table(input: CorrelationTableInput<'_>) -> CorrelationTable {
     let CorrelationTableInput {
         gates,
+        expansion_gates,
         noise,
         detectors,
         observables,
@@ -191,18 +197,19 @@ pub fn compute_correlation_table(input: CorrelationTableInput<'_>) -> Correlatio
         max_order,
         prune_threshold,
     } = input;
+    crate::expand::assert_one_per_gate("expansion_gates", expansion_gates.len(), gates.len());
 
     let n = detectors.len();
     let n_obs = observables.len();
     let has_stochastic = true; // conservative; could check noise params
 
     // Build noise map once, shared across all walks
-    let gate_index = crate::expand::GateIndex::build(gates, num_qubits, noise);
+    let gate_index = crate::expand::GateIndex::build(gates, num_qubits, noise, expansion_gates);
     let noise_map = if has_stochastic {
         Some(crate::heisenberg::build_noise_map(
             gates,
             noise,
-            &gate_index.expansion_gates,
+            expansion_gates,
         ))
     } else {
         None

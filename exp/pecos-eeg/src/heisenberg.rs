@@ -83,16 +83,21 @@ fn activate_qubit(
 
 /// Build exact gate noise, skipping gates introduced by measurement expansion.
 /// Returns `None` for gates with neither injections nor categorical channels.
+///
+/// # Panics
+/// Panics if the provenance flags do not match the gate count.
 pub fn build_noise_map(
     gates: &[Gate],
     noise: &dyn NoiseSpec,
     expansion_gates: &[bool],
 ) -> Vec<Option<GateNoise>> {
+    crate::expand::assert_one_per_gate("expansion_gates", expansion_gates.len(), gates.len());
+
     gates
         .iter()
         .enumerate()
         .map(|(i, gate)| {
-            if expansion_gates.get(i).copied().unwrap_or(false) {
+            if expansion_gates[i] {
                 return None;
             }
             let qubits: SmallVec<[usize; 4]> =
@@ -571,7 +576,7 @@ fn apply_depolarizing(
 /// Compute detection probability via backward Heisenberg propagation.
 ///
 /// Operates on the EXPANDED circuit (from [`crate::expand`]). Expansion
-/// gates are automatically detected and skipped for noise injection.
+/// gates marked in `expansion_gates` are skipped for noise injection.
 ///
 /// Handles both H-type (coherent) and S-type (stochastic) noise.
 ///
@@ -581,14 +586,27 @@ fn apply_depolarizing(
 /// * `noise` - Noise specification
 /// * `initial_stab` - Stabilizer group of |0...0⟩
 /// * `prune_threshold` - Drop terms with |coefficient| below this (0 for exact)
+/// * `expansion_gates` - Provenance flags parallel to `gates`; all false for an unexpanded circuit
+///
+/// # Panics
+/// Panics if the provenance flags do not match the gate count.
 pub fn heisenberg_detection_probability(
     gates: &[Gate],
     detector: &Bm,
     noise: &dyn NoiseSpec,
     initial_stab: &StabilizerGroup,
     prune_threshold: f64,
+    expansion_gates: &[bool],
 ) -> f64 {
-    heisenberg_windowed(gates, detector, noise, initial_stab, prune_threshold, None)
+    heisenberg_windowed(
+        gates,
+        detector,
+        noise,
+        initial_stab,
+        prune_threshold,
+        None,
+        expansion_gates,
+    )
 }
 
 /// Backward Heisenberg with precomputed noise map and BTreeMap-based merging.
@@ -596,6 +614,9 @@ pub fn heisenberg_detection_probability(
 /// Uses BTreeMap<SparsePauli, (re, im)> for continuous dedup — no separate
 /// merge step. Terms are merged on insert via BTreeMap's O(log n) lookup.
 /// Applies explicit categorical channels from the precomputed noise map.
+///
+/// # Panics
+/// Panics if the noise map does not match the gate count.
 #[must_use]
 pub fn heisenberg_with_noise_map(
     gates: &[Gate],
@@ -604,6 +625,8 @@ pub fn heisenberg_with_noise_map(
     initial_stab: &StabilizerGroup,
     prune_threshold: f64,
 ) -> f64 {
+    crate::expand::assert_one_per_gate("noise_map", noise_map.len(), gates.len());
+
     let mut terms = vec![HeisenbergTerm {
         pauli: SparsePauli::from_bm(detector),
         coeff_re: 1.0,
@@ -629,9 +652,8 @@ pub fn heisenberg_with_noise_map(
         let gate_qs: SmallVec<[u16; 4]> = gate.qubits.iter().map(|q| q.index() as u16).collect();
 
         // Noise is relevant by its own support, which may lie outside the gate.
-        let gate_noise = noise_map
-            .get(i)
-            .and_then(|n| n.as_ref())
+        let gate_noise = noise_map[i]
+            .as_ref()
             .filter(|gn| noise_touches_active(gn, &active_qubits));
 
         let noise_applied = gate_noise.is_some();
@@ -875,6 +897,9 @@ pub fn heisenberg_with_noise_map(
 /// If `gate_window` is `Some((start, end))`, only walks gates in `[start, end)`.
 /// Faster for large circuits but may miss long-range correlations.
 /// Use `None` (or call [`heisenberg_detection_probability`]) for exact results.
+///
+/// # Panics
+/// Panics if the provenance flags do not match the gate count.
 pub fn heisenberg_windowed(
     gates: &[Gate],
     detector: &Bm,
@@ -882,39 +907,16 @@ pub fn heisenberg_windowed(
     initial_stab: &StabilizerGroup,
     prune_threshold: f64,
     gate_window: Option<(usize, usize)>,
+    expansion_gates: &[bool],
 ) -> f64 {
+    crate::expand::assert_one_per_gate("expansion_gates", expansion_gates.len(), gates.len());
+
     // Start with the detector as a single sparse term
     let mut terms = vec![HeisenbergTerm {
         pauli: SparsePauli::from_bm(detector),
         coeff_re: 1.0,
         coeff_im: 0.0,
     }];
-
-    // Identify expansion gates (virtual, no physical noise).
-    let expansion_gates = {
-        let mut exp = vec![false; gates.len()];
-        if !gates.is_empty() && gates[0].gate_type == GateType::QAlloc {
-            exp[0] = true;
-        }
-        for i in 1..gates.len() {
-            if gates[i].gate_type == GateType::QAlloc {
-                exp[i] = true;
-            }
-            if gates[i].gate_type == GateType::CX && gates[i - 1].gate_type == GateType::QAlloc {
-                let aq = gates[i - 1].qubits[0].index();
-                if gates[i].qubits.len() >= 2 && gates[i].qubits[1].index() == aq {
-                    exp[i] = true;
-                    if i + 1 < gates.len()
-                        && gates[i + 1].gate_type == GateType::PZ
-                        && gates[i + 1].qubits[0].index() == gates[i].qubits[0].index()
-                    {
-                        exp[i + 1] = true;
-                    }
-                }
-            }
-        }
-        exp
-    };
 
     let mut last_merge_count = 1usize;
     // #3: Pre-allocate sin branches buffer, reused across noise sources
@@ -1196,6 +1198,9 @@ pub fn heisenberg_windowed(
 ///
 /// Accepts an optional precomputed noise map. Gates without a map entry call
 /// `noise.exact_noise_after_gate()`.
+///
+/// # Panics
+/// Panics if the index provenance flags or a supplied noise map do not match the gate count.
 pub fn heisenberg_sparse(
     gates: &[Gate],
     detector: &Bm,
@@ -1205,6 +1210,15 @@ pub fn heisenberg_sparse(
     gate_index: &crate::expand::GateIndex,
     noise_map: Option<&[Option<GateNoise>]>,
 ) -> f64 {
+    crate::expand::assert_one_per_gate(
+        "gate_index.expansion_gates",
+        gate_index.expansion_gates.len(),
+        gates.len(),
+    );
+
+    if let Some(noise_map) = noise_map {
+        crate::expand::assert_one_per_gate("noise_map", noise_map.len(), gates.len());
+    }
     let mut terms = vec![HeisenbergTerm {
         pauli: SparsePauli::from_bm(detector),
         coeff_re: 1.0,
@@ -1258,15 +1272,14 @@ pub fn heisenberg_sparse(
         if !gate_index.is_expansion(i) {
             // Get noise: from precomputed map if available, else dynamic
             let dynamic_noise;
-            let gate_noise =
-                if let Some(gn) = noise_map.and_then(|nm| nm.get(i).and_then(|n| n.as_ref())) {
-                    gn
-                } else {
-                    let qubits_usize: SmallVec<[usize; 4]> =
-                        gate_qs.iter().map(|&q| q as usize).collect();
-                    dynamic_noise = noise.exact_noise_after_gate(i, gate.gate_type, &qubits_usize);
-                    &dynamic_noise
-                };
+            let gate_noise = if let Some(gn) = noise_map.and_then(|nm| nm[i].as_ref()) {
+                gn
+            } else {
+                let qubits_usize: SmallVec<[usize; 4]> =
+                    gate_qs.iter().map(|&q| q as usize).collect();
+                dynamic_noise = noise.exact_noise_after_gate(i, gate.gate_type, &qubits_usize);
+                &dynamic_noise
+            };
 
             for inj in &gate_noise.injections {
                 match inj.eeg_type {
@@ -1542,6 +1555,7 @@ pub fn heisenberg_detection_probability_from_circuit(
         noise,
         &stab,
         prune_threshold,
+        &expanded.expansion_gates,
     ))
 }
 
@@ -1605,8 +1619,8 @@ pub fn heisenberg_exact_from_circuit(
         obs_re[i * dim + i] = eigenvalue;
     }
 
-    // Identify expansion gates
-    let expansion_gates = find_expansion_gates(&expanded.gates);
+    // Provenance recorded by measurement expansion
+    let expansion_gates = &expanded.expansion_gates;
 
     // Walk backward, applying adjoints via matrix multiplication.
     let mut im = obs_im;
@@ -1882,32 +1896,6 @@ fn matrix_cx_adjoint(re: &mut [f64], im: &mut [f64], control: usize, target: usi
     im.copy_from_slice(&new_im);
 }
 
-/// Identify expansion gate indices.
-fn find_expansion_gates(gates: &[Gate]) -> Vec<bool> {
-    let mut exp = vec![false; gates.len()];
-    if !gates.is_empty() && gates[0].gate_type == GateType::QAlloc {
-        exp[0] = true;
-    }
-    for i in 1..gates.len() {
-        if gates[i].gate_type == GateType::QAlloc {
-            exp[i] = true;
-        }
-        if gates[i].gate_type == GateType::CX && gates[i - 1].gate_type == GateType::QAlloc {
-            let aq = gates[i - 1].qubits[0].index();
-            if gates[i].qubits.len() >= 2 && gates[i].qubits[1].index() == aq {
-                exp[i] = true;
-                if i + 1 < gates.len()
-                    && gates[i + 1].gate_type == GateType::PZ
-                    && gates[i + 1].qubits[0].index() == gates[i].qubits[0].index()
-                {
-                    exp[i + 1] = true;
-                }
-            }
-        }
-    }
-    exp
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1969,7 +1957,14 @@ mod tests {
                 label: Bm::y(0),
                 probability,
             };
-            let actual = heisenberg_detection_probability(&gates, &Bm::z(0), &noise, &stab, 0.0);
+            let actual = heisenberg_detection_probability(
+                &gates,
+                &Bm::z(0),
+                &noise,
+                &stab,
+                0.0,
+                &vec![false; gates.len()],
+            );
             assert!(actual.abs() < 1e-12, "p={probability}: got {actual}");
         }
     }
@@ -1999,12 +1994,22 @@ mod tests {
                         label: label.clone(),
                         probability,
                     };
-                    let gate_index = crate::expand::GateIndex::build(&gates, 1, &noise);
+                    let gate_index = crate::expand::GateIndex::build(
+                        &gates,
+                        1,
+                        &noise,
+                        &vec![false; gates.len()],
+                    );
                     let noise_map = build_noise_map(&gates, &noise, &gate_index.expansion_gates);
                     let actual = match walk {
-                        "windowed" => {
-                            heisenberg_detection_probability(&gates, &Bm::z(0), &noise, &stab, 0.0)
-                        }
+                        "windowed" => heisenberg_detection_probability(
+                            &gates,
+                            &Bm::z(0),
+                            &noise,
+                            &stab,
+                            0.0,
+                            &vec![false; gates.len()],
+                        ),
                         "noise_map" => {
                             heisenberg_with_noise_map(&gates, &Bm::z(0), &noise_map, &stab, 0.0)
                         }
@@ -2079,13 +2084,21 @@ mod tests {
                 label,
                 probability,
             };
-            let gate_index = crate::expand::GateIndex::build(&gates, 2, &noise);
+            let gate_index =
+                crate::expand::GateIndex::build(&gates, 2, &noise, &vec![false; gates.len()]);
             let noise_map = build_noise_map(&gates, &noise, &gate_index.expansion_gates);
             let expected = if anticommutes { probability } else { 0.0 };
             let results = [
                 (
                     "windowed",
-                    heisenberg_detection_probability(&gates, &Bm::z(0), &noise, &stab, 0.0),
+                    heisenberg_detection_probability(
+                        &gates,
+                        &Bm::z(0),
+                        &noise,
+                        &stab,
+                        0.0,
+                        &vec![false; gates.len()],
+                    ),
                 ),
                 (
                     "noise_map",
@@ -2181,12 +2194,20 @@ mod tests {
                     label: label.clone(),
                     angle,
                 };
-                let gate_index = crate::expand::GateIndex::build(gates, 2, &noise);
+                let gate_index =
+                    crate::expand::GateIndex::build(gates, 2, &noise, &vec![false; gates.len()]);
                 let noise_map = build_noise_map(gates, &noise, &gate_index.expansion_gates);
                 let results = [
                     (
                         "windowed",
-                        heisenberg_detection_probability(gates, &Bm::z(0), &noise, &stab, 0.0),
+                        heisenberg_detection_probability(
+                            gates,
+                            &Bm::z(0),
+                            &noise,
+                            &stab,
+                            0.0,
+                            &vec![false; gates.len()],
+                        ),
                     ),
                     (
                         "noise_map",
@@ -2303,13 +2324,26 @@ mod tests {
         det2.z_bits.set_bit(aux_m4);
 
         // Run Heisenberg for both detectors
-        let p1_heis =
-            heisenberg_detection_probability(&expanded.gates, &det1, &noise, &stab, 1e-10);
-        let p2_heis =
-            heisenberg_detection_probability(&expanded.gates, &det2, &noise, &stab, 1e-10);
+        let p1_heis = heisenberg_detection_probability(
+            &expanded.gates,
+            &det1,
+            &noise,
+            &stab,
+            1e-10,
+            &expanded.expansion_gates,
+        );
+        let p2_heis = heisenberg_detection_probability(
+            &expanded.gates,
+            &det2,
+            &noise,
+            &stab,
+            1e-10,
+            &expanded.expansion_gates,
+        );
 
         // For comparison: forward EEG
-        let eeg_result = crate::circuit::analyze_with_noise(&expanded.gates, &noise);
+        let eeg_result =
+            crate::circuit::analyze_with_noise(&expanded.gates, &noise, &expanded.expansion_gates);
         let dets = vec![
             crate::dem_mapping::Detector {
                 id: 1,
@@ -2385,7 +2419,14 @@ mod tests {
         // Detector: Z on ancilla qubit 2 (round-comparison)
         let det = Bm::z(2);
 
-        let p_heis = heisenberg_detection_probability(&gates_orig, &det, &noise, &stab, 0.0);
+        let p_heis = heisenberg_detection_probability(
+            &gates_orig,
+            &det,
+            &noise,
+            &stab,
+            0.0,
+            &vec![false; gates_orig.len()],
+        );
 
         eprintln!("\nSimple X-check (original circuit), theta={theta}:");
         eprintln!("  Heisenberg: {p_heis:.6}");
@@ -2419,7 +2460,14 @@ mod tests {
         for &theta in &[0.01, 0.05, 0.1, 0.2, 0.5] {
             let noise = UniformNoise::coherent_only(theta);
 
-            let p = heisenberg_detection_probability(&gates_orig, &det, &noise, &stab, 0.0);
+            let p = heisenberg_detection_probability(
+                &gates_orig,
+                &det,
+                &noise,
+                &stab,
+                0.0,
+                &vec![false; gates_orig.len()],
+            );
 
             let exact = theta.sin().powi(2);
             let eeg_taylor = theta * theta; // leading-order EEG
@@ -3097,9 +3145,13 @@ mod tests {
         ];
 
         for (label, noise) in &noise_configs {
-            let gate_index =
-                crate::expand::GateIndex::build(&expanded.gates, expanded.num_qubits, noise);
-            let noise_map = build_noise_map(&expanded.gates, noise, &gate_index.expansion_gates);
+            let gate_index = crate::expand::GateIndex::build(
+                &expanded.gates,
+                expanded.num_qubits,
+                noise,
+                &expanded.expansion_gates,
+            );
+            let noise_map = build_noise_map(&expanded.gates, noise, &expanded.expansion_gates);
 
             // Test all 3 detectors (auxiliary qubits in round 1: meas 0,1,2)
             for meas_idx in 0..3 {
@@ -3108,8 +3160,15 @@ mod tests {
 
                 // Windowed (old path)
                 let start = Instant::now();
-                let p_windowed =
-                    heisenberg_windowed(&expanded.gates, &det, noise, &stab, 1e-12, None);
+                let p_windowed = heisenberg_windowed(
+                    &expanded.gates,
+                    &det,
+                    noise,
+                    &stab,
+                    1e-12,
+                    None,
+                    &expanded.expansion_gates,
+                );
                 let t_windowed = start.elapsed();
 
                 // Sparse without noise map
@@ -3244,9 +3303,13 @@ mod tests {
             }
 
             let expanded = crate::expand::expand_circuit(&gates).expect("supported circuit");
-            let gate_index =
-                crate::expand::GateIndex::build(&expanded.gates, expanded.num_qubits, &noise);
-            let noise_map = build_noise_map(&expanded.gates, &noise, &gate_index.expansion_gates);
+            let gate_index = crate::expand::GateIndex::build(
+                &expanded.gates,
+                expanded.num_qubits,
+                &noise,
+                &expanded.expansion_gates,
+            );
+            let noise_map = build_noise_map(&expanded.gates, &noise, &expanded.expansion_gates);
 
             let init_gates: Vec<Gate> = (0..num_qubits).map(|q| gate(GateType::PZ, &[q])).collect();
             let stab =
@@ -3371,9 +3434,13 @@ mod tests {
             }
 
             let expanded = crate::expand::expand_circuit(&gates).expect("supported circuit");
-            let gate_index =
-                crate::expand::GateIndex::build(&expanded.gates, expanded.num_qubits, &noise);
-            let noise_map = build_noise_map(&expanded.gates, &noise, &gate_index.expansion_gates);
+            let gate_index = crate::expand::GateIndex::build(
+                &expanded.gates,
+                expanded.num_qubits,
+                &noise,
+                &expanded.expansion_gates,
+            );
+            let noise_map = build_noise_map(&expanded.gates, &noise, &expanded.expansion_gates);
 
             let init_gates: Vec<Gate> = (0..num_qubits).map(|q| gate(GateType::PZ, &[q])).collect();
             let stab =

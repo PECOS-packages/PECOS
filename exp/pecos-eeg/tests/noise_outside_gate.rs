@@ -25,13 +25,21 @@ fn walks(
     initial: &StabilizerGroup,
     num_qubits: usize,
     prune: f64,
+    expansion_gates: &[bool],
 ) -> [(&'static str, f64); 4] {
-    let index = GateIndex::build(gates, num_qubits, noise);
+    let index = GateIndex::build(gates, num_qubits, noise, expansion_gates);
     let noise_map = build_noise_map(gates, noise, &index.expansion_gates);
     [
         (
             "windowed",
-            heisenberg_detection_probability(gates, detector, noise, initial, prune),
+            heisenberg_detection_probability(
+                gates,
+                detector,
+                noise,
+                initial,
+                prune,
+                expansion_gates,
+            ),
         ),
         (
             "precomputed",
@@ -63,8 +71,17 @@ fn assert_walks(
     initial: &StabilizerGroup,
     num_qubits: usize,
     expected: f64,
+    expansion_gates: &[bool],
 ) {
-    let results = walks(gates, detector, noise, initial, num_qubits, 0.0);
+    let results = walks(
+        gates,
+        detector,
+        noise,
+        initial,
+        num_qubits,
+        0.0,
+        expansion_gates,
+    );
     assert!(
         results
             .iter()
@@ -112,10 +129,26 @@ fn noise_on_qubit_one_after_gate_on_qubit_zero(noise: GateNoise, expected: f64) 
     let gates = [make_gate(GateType::I, &[0])];
     let initial = StabilizerGroup::from_circuit(&[Gate::pz(&[0, 1])], 2);
     let noise = NoiseAt { at: 0, noise };
-    assert_walks(&gates, &Bm::z(1), &noise, &initial, 2, expected);
+    assert_walks(
+        &gates,
+        &Bm::z(1),
+        &noise,
+        &initial,
+        2,
+        expected,
+        &vec![false; gates.len()],
+    );
     // A detector that also covers the gate's qubit must see the same flip.
     let detector = Bm::z(0).multiply(&Bm::z(1));
-    assert_walks(&gates, &detector, &noise, &initial, 2, expected);
+    assert_walks(
+        &gates,
+        &detector,
+        &noise,
+        &initial,
+        2,
+        expected,
+        &vec![false; gates.len()],
+    );
 }
 
 #[test]
@@ -211,6 +244,7 @@ fn issue_997_walks_match_the_matrix_reference() {
         &initial,
         expanded.num_qubits,
         exact,
+        &expanded.expansion_gates,
     );
 }
 
@@ -254,7 +288,15 @@ fn repeated_noise_outside_the_gate_composes_and_merges() {
     );
     let initial = StabilizerGroup::from_circuit(&[Gate::pz(&[0, 1])], 2);
     let expected = (f64::from(count) * h).sin().powi(2);
-    let results = walks(&gates, &Bm::z(1), &noise, &initial, 2, 0.1);
+    let results = walks(
+        &gates,
+        &Bm::z(1),
+        &noise,
+        &initial,
+        2,
+        0.1,
+        &vec![false; gates.len()],
+    );
     assert!(
         results
             .iter()
@@ -274,7 +316,15 @@ fn pruning_applies_after_noise_outside_the_gate() {
         -0.49,
     )])]);
     let initial = StabilizerGroup::from_circuit(&[Gate::pz(&[0, 1])], 2);
-    let results = walks(&gates, &Bm::z(1), &noise, &initial, 2, 0.1);
+    let results = walks(
+        &gates,
+        &Bm::z(1),
+        &noise,
+        &initial,
+        2,
+        0.1,
+        &vec![false; gates.len()],
+    );
     assert!(
         results
             .iter()
@@ -302,5 +352,13 @@ fn noise_reaches_a_far_qubit_and_schedules_earlier_noise_through_it() {
     let qubits: Vec<usize> = (0..=far).collect();
     let initial = StabilizerGroup::from_circuit(&[Gate::pz(&qubits)], far + 1);
     let expected = (1.0 - p) * (2.0 * h).sin().powi(2);
-    assert_walks(&gates, &Bm::z(0), &noise, &initial, far + 1, expected);
+    assert_walks(
+        &gates,
+        &Bm::z(0),
+        &noise,
+        &initial,
+        far + 1,
+        expected,
+        &vec![false; gates.len()],
+    );
 }

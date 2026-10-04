@@ -4562,6 +4562,7 @@ dependencies = [
  "dyn-clone",
  "env_logger",
  "inkwell",
+ "libc",
  "libloading 0.9.0",
  "log",
  "pecos-build",

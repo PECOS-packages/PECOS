@@ -4586,6 +4586,7 @@ dependencies = [
 name = "pecos-qis-ffi"
 version = "0.2.0-dev.0"
 dependencies = [
+ "cc",
  "libc",
  "log",
  "pecos-qis-ffi-types",

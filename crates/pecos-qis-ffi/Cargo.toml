@@ -13,7 +13,8 @@ categories.workspace = true
 
 [lib]
 # Generate both cdylib and rlib:
-# - cdylib: Provides __quantum__* symbols globally for shim and programs to use via dlopen
+# - cdylib: Provides QIS, selene_*, and execution guards via dlopen
+# - Hosts must not reference crate items: that would link a second runtime instance
 # - rlib: Allows Rust code to depend on this crate (triggers cdylib build during cargo test)
 # - For types, use pecos-qis-ffi-types which has NO FFI symbols
 crate-type = ["cdylib", "rlib"]
@@ -24,10 +25,13 @@ pecos-qis-ffi-types.workspace = true
 pecos-random.workspace = true
 # Minimal dependencies for fast compilation
 log.workspace = true
-# For heap allocation (malloc/free)
+# For heap allocation and the C stderr stream
 libc.workspace = true
 # For JSON serialization of named results
 serde_json.workspace = true
+
+[build-dependencies]
+cc.workspace = true
 
 [features]
 default = []

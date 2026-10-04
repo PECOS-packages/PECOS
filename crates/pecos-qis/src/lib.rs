@@ -17,20 +17,15 @@
 //! The Helios interface uses Selene's Helios compiler to execute quantum programs:
 //!
 //! ```text
-//! user_program.bc + libhelios.a → program.x
-//!           ↓
-//!       dlopen (in-process)
-//!           ↓
-//!   program.x calls ___qalloc(), ___rxy(), etc.
-//!           ↓
-//!   libhelios.a forwards to selene_qalloc(), selene_rxy(), etc.
-//!           ↓
-//!   libpecos_selene_shim.so implements selene_* functions
-//!           ↓
-//!   Shim forwards to pecos_qis_ffi::with_interface()
-//!           ↓
-//!   Operations collected in thread-local storage
+//! user_program.bc + libpecos_qis_ffi → program.so (loaded locally)
+//!                                         │
+//!                                  QIS / selene_* calls
+//!                                         ↓
+//! in-process Selene QIS plugins → libpecos_qis_ffi (global singleton)
+//!                                         ↓
+//!                     Operations collected in thread-local storage
 //! ```
+//! The Helios archive is built for interface tooling; programs do not link it.
 //!
 //! # LLVM Setup
 //!
@@ -117,8 +112,6 @@ pub mod selene_builder;
 pub mod selene_runtime;
 #[cfg(feature = "selene")]
 pub mod selene_runtimes;
-#[cfg(feature = "selene")]
-pub mod shim;
 
 #[cfg(feature = "selene")]
 pub use executor::{HeliosSyncHandle, QisHeliosInterface};

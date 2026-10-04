@@ -3829,6 +3829,16 @@ attributes #0 = { "EntryPoint" }
 
     #[test]
     fn qis_ffi_env_accepts_direct_file() {
+        // The process-wide QIS FFI singleton reads PECOS_QIS_FFI_PATH on first load,
+        // possibly from a parallel test, so change it only in a child process.
+        const CHILD_ENV: &str = "PECOS_TEST_QIS_FFI_DIRECT_FILE";
+        if std::env::var_os(CHILD_ENV).is_none() {
+            run_test_in_child(
+                "executor::tests::qis_ffi_env_accepts_direct_file",
+                &[(CHILD_ENV, "1".as_ref())],
+            );
+            return;
+        }
         let _env_lock = ENV_MUTEX
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -3843,6 +3853,16 @@ attributes #0 = { "EntryPoint" }
 
     #[test]
     fn qis_ffi_env_accepts_directory_with_exact_library() {
+        // The process-wide QIS FFI singleton reads PECOS_QIS_FFI_PATH on first load,
+        // possibly from a parallel test, so change it only in a child process.
+        const CHILD_ENV: &str = "PECOS_TEST_QIS_FFI_EXACT_DIR";
+        if std::env::var_os(CHILD_ENV).is_none() {
+            run_test_in_child(
+                "executor::tests::qis_ffi_env_accepts_directory_with_exact_library",
+                &[(CHILD_ENV, "1".as_ref())],
+            );
+            return;
+        }
         let _env_lock = ENV_MUTEX
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -3859,6 +3879,16 @@ attributes #0 = { "EntryPoint" }
 
     #[test]
     fn qis_ffi_env_accepts_directory_with_hashed_deps_library() {
+        // The process-wide QIS FFI singleton reads PECOS_QIS_FFI_PATH on first load,
+        // possibly from a parallel test, so change it only in a child process.
+        const CHILD_ENV: &str = "PECOS_TEST_QIS_FFI_HASHED_DIR";
+        if std::env::var_os(CHILD_ENV).is_none() {
+            run_test_in_child(
+                "executor::tests::qis_ffi_env_accepts_directory_with_hashed_deps_library",
+                &[(CHILD_ENV, "1".as_ref())],
+            );
+            return;
+        }
         let _env_lock = ENV_MUTEX
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -3881,6 +3911,16 @@ attributes #0 = { "EntryPoint" }
 
     #[test]
     fn qis_ffi_env_fails_fast_for_empty_directory() {
+        // The process-wide QIS FFI singleton reads PECOS_QIS_FFI_PATH on first load,
+        // possibly from a parallel test, so change it only in a child process.
+        const CHILD_ENV: &str = "PECOS_TEST_QIS_FFI_EMPTY_DIR";
+        if std::env::var_os(CHILD_ENV).is_none() {
+            run_test_in_child(
+                "executor::tests::qis_ffi_env_fails_fast_for_empty_directory",
+                &[(CHILD_ENV, "1".as_ref())],
+            );
+            return;
+        }
         let _env_lock = ENV_MUTEX
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -3894,6 +3934,16 @@ attributes #0 = { "EntryPoint" }
 
     #[test]
     fn qis_ffi_cargo_target_finds_hashed_deps_library() {
+        // Selene runtime discovery also reads CARGO_TARGET_DIR without ENV_MUTEX.
+        // Keep this override out of the process running parallel runtime tests.
+        const CHILD_ENV: &str = "PECOS_TEST_QIS_HASHED_CARGO_TARGET";
+        if std::env::var_os(CHILD_ENV).is_none() {
+            run_test_in_child(
+                "executor::tests::qis_ffi_cargo_target_finds_hashed_deps_library",
+                &[(CHILD_ENV, "1".as_ref())],
+            );
+            return;
+        }
         let _env_lock = ENV_MUTEX
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -3936,6 +3986,16 @@ attributes #0 = { "EntryPoint" }
 
     #[test]
     fn qis_ffi_build_associated_library_precedes_cargo_target() {
+        // Selene runtime discovery also reads CARGO_TARGET_DIR without ENV_MUTEX.
+        // Keep this override out of the process running parallel runtime tests.
+        const CHILD_ENV: &str = "PECOS_TEST_QIS_BUILD_BEFORE_CARGO_TARGET";
+        if std::env::var_os(CHILD_ENV).is_none() {
+            run_test_in_child(
+                "executor::tests::qis_ffi_build_associated_library_precedes_cargo_target",
+                &[(CHILD_ENV, "1".as_ref())],
+            );
+            return;
+        }
         let _env_lock = ENV_MUTEX
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);

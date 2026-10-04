@@ -16,6 +16,7 @@ publish = false
 pecos-stab-tn.workspace = true
 pecos-simulators.workspace = true
 pecos-core.workspace = true
+pecos-quantum.workspace = true
 pecos-random.workspace = true
 num-complex.workspace = true
 

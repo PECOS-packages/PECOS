@@ -15,8 +15,10 @@
 //! Propagates mid-round fault locations to round boundaries, producing
 //! effective noise sources with accumulated probabilities/amplitudes.
 //!
-//! For stochastic Pauli noise: exact (Paulis compose deterministically).
-//! For coherent noise: accumulates within-round angles exactly.
+//! This compresses the forward EEG generator approximation, not physical
+//! categorical channels. Adding rates does not preserve exclusive Pauli
+//! choices or exact finite-probability composition. Use it for DEM mechanism
+//! structure, keeping the original noise model for exact Heisenberg targets.
 //!
 //! This dramatically reduces the number of noise sources:
 //! ~60 mid-round faults per round → ~17 boundary faults (9 data + 8 meas).
@@ -64,11 +66,17 @@ pub struct CompressedNoise {
 ///
 /// Gate noise (p1, p2) is compressed. Measurement (p_meas) and
 /// preparation (p_prep) noise is kept at its original position.
+/// The result is a generator approximation, not an exact replacement channel.
+///
+/// # Panics
+/// Panics if the provenance flags do not match the gate count.
 pub fn compress_noise_to_boundaries(
     gates: &[Gate],
     noise: &dyn NoiseSpec,
     expansion_gates: &[bool],
 ) -> CompressedNoise {
+    crate::expand::assert_one_per_gate("expansion_gates", expansion_gates.len(), gates.len());
+
     let n_gates = gates.len();
     let max_qubit = gates
         .iter()
@@ -80,7 +88,7 @@ pub fn compress_noise_to_boundaries(
     // Step 1: Collect all noise sources
     let mut all_noise: Vec<(usize, NoiseInjection)> = Vec::new();
     for (gate_idx, gate) in gates.iter().enumerate() {
-        if gate_idx < expansion_gates.len() && expansion_gates[gate_idx] {
+        if expansion_gates[gate_idx] {
             continue;
         }
         let qubits: SmallVec<[usize; 4]> =
@@ -152,7 +160,7 @@ pub fn compress_noise_to_boundaries(
                     // Only update inject_at for non-expansion gates.
                     // Expansion gates are invisible to the noise map —
                     // injecting there would be silently dropped.
-                    if !(g < expansion_gates.len() && expansion_gates[g]) {
+                    if !expansion_gates[g] {
                         inject_at = g;
                     }
                 }
@@ -271,6 +279,9 @@ fn forward_conjugate_label(label: &mut Bm, gate: &Gate) {
 ///
 /// Call `noise_after_gate()` on each gate just like the original noise model,
 /// but mid-round gate noise is empty — all accumulated at boundaries.
+/// This is a generator approximation. Its default physical view uses
+/// independent S flips and does not reproduce the original categorical noise.
+/// Keep the original model for exact targets and use this for DEM structure.
 pub struct CompressedNoiseSpec {
     /// Gate index → noise injections at that gate.
     gate_noise: BTreeMap<usize, Vec<NoiseInjection>>,

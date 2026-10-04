@@ -13,10 +13,26 @@ use pecos_core::gate_type::GateType;
 use pecos_core::pauli::pauli_bitmask::BitmaskStorage;
 use pecos_core::{Gate, QubitId};
 
-/// Result of circuit expansion.
 /// Why an EEG DEM could not be built from the circuit.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EegBuildError {
+    /// The dense matrix Heisenberg walk does not implement this noise type.
+    UnsupportedExactNoise {
+        /// The offending EEG type.
+        eeg_type: crate::eeg::EegType,
+    },
+    /// A noise label acts on a qubit outside the expanded circuit.
+    ExactLabelOutOfRange {
+        /// The highest qubit the label acts on.
+        qubit: usize,
+        /// The number of qubits in the expanded circuit.
+        num_qubits: usize,
+    },
+    /// The dense matrix Heisenberg walk does not implement this gate adjoint.
+    UnsupportedExactGate {
+        /// The offending gate type in the expanded circuit.
+        gate_type: GateType,
+    },
     /// The circuit contains a measurement type the EEG expansion does not
     /// handle. Expansion is `MZ`-only; any other measurement would silently
     /// vanish from the deferred-measurement circuit, taking its record with it.
@@ -50,6 +66,18 @@ pub enum EegBuildError {
 impl std::fmt::Display for EegBuildError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::UnsupportedExactNoise { eeg_type } => write!(
+                f,
+                "matrix Heisenberg does not support {eeg_type:?} injections; only H and S are implemented"
+            ),
+            Self::ExactLabelOutOfRange { qubit, num_qubits } => write!(
+                f,
+                "noise label acts on qubit {qubit}, outside the {num_qubits}-qubit expanded circuit"
+            ),
+            Self::UnsupportedExactGate { gate_type } => write!(
+                f,
+                "matrix Heisenberg does not support the {gate_type:?} gate adjoint"
+            ),
             Self::UnsupportedMeasurement { gate_type } => write!(
                 f,
                 "circuit contains {gate_type:?}, which the MZ-only EEG expansion cannot \
@@ -84,9 +112,14 @@ impl std::fmt::Display for EegBuildError {
 
 impl std::error::Error for EegBuildError {}
 
+/// Result of circuit expansion.
 pub struct ExpandedCircuit {
     /// The expanded gate sequence (purely Clifford, no mid-circuit measurements).
     pub gates: Vec<Gate>,
+    /// Flags parallel to `gates`: true for the `QAlloc`, `CX` and `PZ` this
+    /// expansion inserted, which carry no physical noise. User gates and the
+    /// final auxiliary measurements are false.
+    pub expansion_gates: Vec<bool>,
     /// Total number of qubits (original + auxiliary).
     pub num_qubits: usize,
     /// Number of original qubits.
@@ -118,13 +151,21 @@ pub struct ExpandedCircuit {
 
 /// Expand a circuit by deferring mid-circuit measurements.
 ///
-/// For each MZ(q) followed by PZ(q), replaces with:
-/// 1. CX(q, aux) — copy q's state to a fresh auxiliary qubit
-/// 2. PZ(q) — reset q to |0> (kept as-is, since PZ after CX is valid)
+/// Each measurement of qubit q (`MZ`, `MeasureFree`, `MPZ`) is replaced by:
+/// 1. QAlloc(aux) -- a fresh auxiliary qubit
+/// 2. CX(q, aux) -- copy q's Z value onto it
+/// 3. PZ(q) -- for an ancilla (a qubit reset later) or an `MPZ`, the
+///    projection the measurement performs
 ///
-/// All auxiliary qubits are measured at the end via MZ.
-/// Final data measurements (MZ not followed by PZ) are also deferred
-/// to auxiliary qubits for uniformity.
+/// All auxiliary qubits are measured at the end via MZ. Final data
+/// measurements are deferred the same way, for uniformity.
+///
+/// The inserted gates are virtual and carry no physical noise.
+/// [`ExpandedCircuit::expansion_gates`] marks exactly them; user gates and the
+/// final auxiliary measurements are not marked. Consumers take these flags
+/// rather than inferring inserted gates from gate types, which a user
+/// `QAlloc` followed by a `CX` into it would fool.
+///
 /// # Errors
 ///
 /// Returns [`EegBuildError::UnsupportedMeasurement`] when the circuit contains
@@ -156,6 +197,7 @@ pub fn expand_circuit(gates: &[Gate]) -> Result<ExpandedCircuit, EegBuildError> 
     let mut next_aux = num_original;
 
     let mut expanded = Vec::with_capacity(gates.len() * 2);
+    let mut expansion_gates = Vec::with_capacity(gates.len() * 2);
     let mut meas_id_rank = std::collections::BTreeMap::new();
     let mut measurement_qubit = Vec::new();
     let mut original_measured_qubit = Vec::new();
@@ -207,12 +249,12 @@ pub fn expand_circuit(gates: &[Gate]) -> Result<ExpandedCircuit, EegBuildError> 
                     next_aux += 1;
 
                     // Initialize auxiliary: QAlloc(aux)
-                    // Use QAlloc (not PZ) so the noise model can distinguish
-                    // auxiliary initialization from original circuit resets.
                     expanded.push(make_gate(GateType::QAlloc, &[aux]));
+                    expansion_gates.push(true);
 
                     // CX(q, aux) — copy measurement info to auxiliary
                     expanded.push(make_gate(GateType::CX, &[q_idx, aux]));
+                    expansion_gates.push(true);
 
                     // For ancilla qubits: add PZ to model measurement projection.
                     // MZ projects to a Z eigenstate, destroying X/Y coherences.
@@ -227,6 +269,7 @@ pub fn expand_circuit(gates: &[Gate]) -> Result<ExpandedCircuit, EegBuildError> 
                     // unconditional for it.
                     if ancilla_qubits.contains(&q_idx) || gate.gate_type == GateType::MPZ {
                         expanded.push(make_gate(GateType::PZ, &[q_idx]));
+                        expansion_gates.push(true);
                     }
 
                     // Record: this measurement maps to the auxiliary qubit
@@ -237,10 +280,12 @@ pub fn expand_circuit(gates: &[Gate]) -> Result<ExpandedCircuit, EegBuildError> 
             GateType::PZ | GateType::QAlloc => {
                 // Keep resets — they re-initialize the qubit for the next round
                 expanded.push(gate.clone());
+                expansion_gates.push(false);
             }
             _ => {
                 // All other gates pass through unchanged
                 expanded.push(gate.clone());
+                expansion_gates.push(false);
             }
         }
 
@@ -250,10 +295,12 @@ pub fn expand_circuit(gates: &[Gate]) -> Result<ExpandedCircuit, EegBuildError> 
     // Add final measurements of all auxiliary qubits at the end
     for &aux in &measurement_qubit {
         expanded.push(make_gate(GateType::MZ, &[aux]));
+        expansion_gates.push(false);
     }
 
     Ok(ExpandedCircuit {
         gates: expanded,
+        expansion_gates,
         num_qubits: next_aux,
         num_original_qubits: num_original,
         measurement_qubit,
@@ -301,8 +348,9 @@ impl ExpandedCircuit {
 /// Precomputed qubit-to-gate index for sparse backward traversal.
 ///
 /// For each qubit, stores the gate indices (in the flat gate list) that
-/// touch it, sorted in ascending order. This enables the backward walk
-/// to visit only gates on active qubits instead of scanning all gates.
+/// touch it through the gate itself or through the gate's exact noise,
+/// sorted in ascending order. This enables the backward walk to visit only
+/// gates on active qubits instead of scanning all gates.
 pub struct GateIndex {
     /// qubit_gates[q] = sorted Vec of gate indices touching qubit q.
     qubit_gates: Vec<Vec<u32>>,
@@ -311,42 +359,47 @@ pub struct GateIndex {
 }
 
 impl GateIndex {
-    /// Build the index from a gate list (typically the expanded circuit).
+    /// Build the index from a gate list (typically the expanded circuit) and
+    /// the noise the sparse walks will apply. Noise may act outside its gate's
+    /// qubits, so the gate is also indexed under every qubit its noise acts on.
+    /// Explicit provenance flags suppress noise on inserted expansion gates.
+    ///
+    /// # Panics
+    /// Panics if the provenance flags do not match the gate count.
     #[must_use]
-    pub fn build(gates: &[Gate], num_qubits: usize) -> Self {
+    pub fn build(
+        gates: &[Gate],
+        num_qubits: usize,
+        noise: &dyn crate::noise::NoiseSpec,
+        expansion_gates: &[bool],
+    ) -> Self {
+        assert_one_per_gate("expansion_gates", expansion_gates.len(), gates.len());
+
         let mut qubit_gates = vec![Vec::new(); num_qubits];
 
         for (i, gate) in gates.iter().enumerate() {
-            for q in &gate.qubits {
-                qubit_gates[q.index()].push(i as u32);
+            let gate_qubits: Vec<usize> = gate.qubits.iter().map(QubitId::index).collect();
+            let mut touched = gate_qubits.clone();
+            if !expansion_gates[i] {
+                touched.extend(
+                    noise
+                        .exact_noise_after_gate(i, gate.gate_type, &gate_qubits)
+                        .qubits(),
+                );
             }
-        }
-
-        // Identify expansion gates (QAlloc + subsequent CX + PZ)
-        let mut expansion = vec![false; gates.len()];
-        for i in 0..gates.len() {
-            if gates[i].gate_type == GateType::QAlloc {
-                expansion[i] = true;
-            }
-        }
-        for i in 1..gates.len() {
-            if gates[i].gate_type == GateType::CX && gates[i - 1].gate_type == GateType::QAlloc {
-                let alloc_q = gates[i - 1].qubits[0].index();
-                if gates[i].qubits.len() >= 2 && gates[i].qubits[1].index() == alloc_q {
-                    expansion[i] = true;
-                    if i + 1 < gates.len()
-                        && gates[i + 1].gate_type == GateType::PZ
-                        && gates[i + 1].qubits[0].index() == gates[i].qubits[0].index()
-                    {
-                        expansion[i + 1] = true;
-                    }
+            touched.sort_unstable();
+            touched.dedup();
+            for q in touched {
+                if q >= qubit_gates.len() {
+                    qubit_gates.resize_with(q + 1, Vec::new);
                 }
+                qubit_gates[q].push(i as u32);
             }
         }
 
         Self {
             qubit_gates,
-            expansion_gates: expansion,
+            expansion_gates: expansion_gates.to_vec(),
         }
     }
 
@@ -359,11 +412,23 @@ impl GateIndex {
     }
 
     /// Is this gate an expansion gate (no physical noise)?
+    ///
+    /// # Panics
+    /// Panics if `gate_idx` is outside the indexed gate list.
     #[inline]
     #[must_use]
     pub fn is_expansion(&self, gate_idx: usize) -> bool {
-        self.expansion_gates.get(gate_idx).copied().unwrap_or(false)
+        self.expansion_gates[gate_idx]
     }
+}
+
+/// Panic unless a per-gate list (`what`, such as expansion flags or a noise
+/// map) has exactly one entry per gate.
+pub(crate) fn assert_one_per_gate(what: &str, len: usize, num_gates: usize) {
+    assert_eq!(
+        len, num_gates,
+        "{what} length {len} must equal gates length {num_gates}"
+    );
 }
 
 /// Construct an unparameterized expansion gate.
@@ -423,6 +488,34 @@ impl ExpandedCircuit {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn expansion_flags_are_exact() {
+        let gates = [
+            make_gate(GateType::PZ, &[0]),
+            make_gate(GateType::H, &[0]),
+            make_gate(GateType::PZ, &[1]),
+            make_gate(GateType::CX, &[0, 1]),
+            make_gate(GateType::MZ, &[1]),
+            make_gate(GateType::QAlloc, &[2]),
+            make_gate(GateType::CX, &[0, 2]),
+            make_gate(GateType::PZ, &[0]),
+            make_gate(GateType::MZ, &[2, 3]),
+        ];
+        let expanded = expand_circuit(&gates).unwrap();
+        assert_eq!(expanded.expansion_gates.len(), expanded.gates.len());
+        assert_eq!(
+            expanded.expansion_gates,
+            [
+                false, false, false, false, // original gates
+                true, true, true, // deferred ancilla measurement
+                false, false, false, // user allocation, CX and reset
+                true, true, true, // deferred measurement of qubit 2
+                true, true, // final data measurement of qubit 3
+                false, false, false, // final auxiliary measurements
+            ]
+        );
+    }
+
     #[test]
     #[should_panic(expected = "Gate RZ expected 1 angle parameters, got 0")]
     fn make_gate_refuses_rotation_without_angles() {

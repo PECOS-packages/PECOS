@@ -76,6 +76,8 @@ pub struct NoiseCharacterization {
 pub struct NoiseCharacterizationInput<'a> {
     /// Circuit gates.
     pub gates: &'a [Gate],
+    /// Provenance flags parallel to `gates`.
+    pub expansion_gates: &'a [bool],
     /// Noise model used for exact Heisenberg correlation targets.
     pub noise: &'a dyn NoiseSpec,
     /// Optional alternate noise model used for DEM mechanism structure.
@@ -105,10 +107,14 @@ impl NoiseCharacterization {
     /// `structure_noise` (if provided) is used for DEM mechanism extraction —
     /// useful when passing compressed noise for structure while keeping
     /// original noise for exact targets. If `None`, uses `noise` for both.
+    ///
+    /// # Panics
+    /// Panics if the provenance flags do not match the gate count.
     #[must_use]
     pub fn build(input: NoiseCharacterizationInput<'_>) -> Self {
         let NoiseCharacterizationInput {
             gates,
+            expansion_gates,
             noise,
             structure_noise,
             detectors,
@@ -120,11 +126,14 @@ impl NoiseCharacterization {
             detector_meas_ids,
             observable_meas_ids,
         } = input;
+        crate::expand::assert_one_per_gate("expansion_gates", expansion_gates.len(), gates.len());
+
         let mechanism_noise = structure_noise.unwrap_or(noise);
 
         // Correlation table (always uses exact noise)
         let table = compute_correlation_table(CorrelationTableInput {
             gates,
+            expansion_gates,
             noise,
             detectors,
             observables,
@@ -150,13 +159,12 @@ impl NoiseCharacterization {
             .filter(|(k, _)| k.len() == 2)
             .map(|(k, &v)| ((k[0], k[1]), v))
             .collect();
-        let gate_index = crate::expand::GateIndex::build(gates, num_qubits);
         let dem_entries = build_coherent_dem_exact(
             gates,
             mechanism_noise,
             detectors,
             observables,
-            &gate_index.expansion_gates,
+            expansion_gates,
             &marginals,
             Some(&pairwise),
         );
@@ -165,7 +173,7 @@ impl NoiseCharacterization {
             mechanism_noise,
             detectors,
             observables,
-            &gate_index.expansion_gates,
+            expansion_gates,
             &marginals,
             Some(&pairwise),
         );

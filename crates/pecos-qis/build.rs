@@ -2,7 +2,7 @@
 //!
 //! Handles:
 //! - LLVM validation (when `llvm` feature is enabled)
-//! - Selene shim and Helios interface building (when `selene` feature is enabled)
+//! - Helios interface building (when `selene` feature is enabled)
 
 use std::env;
 use std::path::PathBuf;

@@ -411,7 +411,7 @@ pub fn selene_runtime_auto(lib_name: &str) -> Result<SeleneRuntime, RuntimeFetch
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_env::{ENV_MUTEX, EnvVarGuard};
+    use crate::test_env::{ENV_MUTEX, EnvVarGuard, run_test_in_child};
     use std::fs::File;
     use std::time::{Duration, SystemTime};
 
@@ -445,6 +445,16 @@ mod tests {
 
     #[test]
     fn test_find_selene_runtime_in_hashed_env_deps_dir() {
+        // Every runtime lookup reads PECOS_SELENE_DIR, including lookups in tests
+        // that do not hold ENV_MUTEX, so change it only in a child process.
+        const CHILD_ENV: &str = "PECOS_TEST_HASHED_ENV_DEPS_DIR";
+        if std::env::var_os(CHILD_ENV).is_none() {
+            run_test_in_child(
+                "selene_runtimes::tests::test_find_selene_runtime_in_hashed_env_deps_dir",
+                &[(CHILD_ENV, "1".as_ref())],
+            );
+            return;
+        }
         let _env_lock = ENV_MUTEX
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);

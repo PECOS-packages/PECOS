@@ -2689,7 +2689,7 @@ impl Drop for QisHeliosInterface {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_env::{ENV_MUTEX, EnvVarGuard};
+    use crate::test_env::{ENV_MUTEX, EnvVarGuard, run_test_in_child};
     use std::fs::File;
 
     fn is_qir_text(ir: &str) -> bool {
@@ -3206,25 +3206,6 @@ attributes #0 = { "EntryPoint" }
     }
 
     /// Run one test of this binary in a fresh process with `envs` set.
-    fn run_test_in_child(test_name: &str, envs: &[(&str, &std::ffi::OsStr)]) {
-        // The child inherits this process's environment, which other tests
-        // change temporarily (for example PECOS_QIS_FFI_PATH).
-        let _env_lock = ENV_MUTEX.lock().expect("environment lock");
-        let output = Command::new(std::env::current_exe().expect("test executable"))
-            .args(["--exact", test_name, "--nocapture"])
-            .envs(envs.iter().copied())
-            .output()
-            .expect("run child");
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(output.status.success(), "child failed: {stdout}\n{stderr}");
-        // A filter that matches no test also exits successfully.
-        assert!(
-            stdout.contains("test result: ok. 1 passed"),
-            "child did not run {test_name}: {stdout}\n{stderr}"
-        );
-    }
-
     #[test]
     fn missing_program_import_fails_program_load() {
         const CHILD_ENV: &str = "PECOS_TEST_MISSING_PROGRAM_IMPORT";

@@ -252,6 +252,27 @@ pub(crate) mod test_env {
         }
     }
 
+    /// Run one test of this binary in a child process, for tests that must change
+    /// process-wide state that concurrently running tests read.
+    pub(crate) fn run_test_in_child(test_name: &str, envs: &[(&str, &OsStr)]) {
+        // The child inherits this process's environment, which other tests
+        // change temporarily (for example PECOS_QIS_FFI_PATH).
+        let _env_lock = ENV_MUTEX.lock().expect("environment lock");
+        let output = std::process::Command::new(std::env::current_exe().expect("test executable"))
+            .args(["--exact", test_name, "--nocapture"])
+            .envs(envs.iter().copied())
+            .output()
+            .expect("run child");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(output.status.success(), "child failed: {stdout}\n{stderr}");
+        // A filter that matches no test also exits successfully.
+        assert!(
+            stdout.contains("test result: ok. 1 passed"),
+            "child did not run {test_name}: {stdout}\n{stderr}"
+        );
+    }
+
     impl Drop for EnvVarGuard {
         fn drop(&mut self) {
             // SAFETY: Environment-mutating tests hold ENV_MUTEX for the guard's lifetime.

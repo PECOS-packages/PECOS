@@ -159,7 +159,7 @@ impl PyQisEngineBuilder {
     }
 
     /// Use a Selene runtime built into the current PECOS/Cargo target.
-    #[pyo3(signature = (runtime_name = None, *, custom_event_policy = "capture"))]
+    #[pyo3(signature = (runtime_name = None, *, custom_event_policy = "reject_unhandled"))]
     fn selene_runtime(
         &mut self,
         runtime_name: Option<&str>,
@@ -182,7 +182,7 @@ impl PyQisEngineBuilder {
     }
 
     /// Use a generic Selene runtime plugin by its shared library and plugin arguments.
-    #[pyo3(signature = (library_file, init_args = None, library_search_dirs = None, *, custom_event_policy = "capture"))]
+    #[pyo3(signature = (library_file, init_args = None, library_search_dirs = None, *, custom_event_policy = "reject_unhandled"))]
     fn selene_runtime_plugin(
         &mut self,
         library_file: &str,

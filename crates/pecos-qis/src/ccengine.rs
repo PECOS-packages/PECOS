@@ -2460,6 +2460,33 @@ mod tests {
         assert_eq!(result.outcomes().expect("parse outcome"), vec![2]);
     }
 
+    #[cfg(feature = "selene-runtimes")]
+    #[test]
+    fn selene_native_commands_use_only_runtime_gates() {
+        use pecos_core::gate_type::GateType;
+        let runtime = crate::selene_runtimes::selene_simple_runtime().unwrap();
+        let mut engine = QisEngine::with_runtime(Box::new(runtime));
+        let lowered = engine
+            .lower_operations_to_commands(&[
+                Operation::AllocateQubit { id: 0 },
+                Operation::AllocateQubit { id: 1 },
+                Operation::AllocateQubit { id: 2 },
+                QuantumOp::Reset(0).into(),
+                QuantumOp::H(0).into(),
+                QuantumOp::CX(0, 1).into(),
+                QuantumOp::CCX(0, 1, 2).into(),
+                QuantumOp::Measure(2, 0).into(),
+            ])
+            .unwrap();
+        let gates = lowered.commands.quantum_ops().unwrap();
+        assert!(gates.iter().any(|gate| gate.gate_type == GateType::RXY1Q));
+        assert!(gates.iter().any(|gate| gate.gate_type == GateType::RZZ));
+        assert!(gates.iter().all(|gate| matches!(
+            gate.gate_type,
+            GateType::RXY1Q | GateType::RZ | GateType::RZZ | GateType::PZ | GateType::MZ
+        )));
+    }
+
     #[test]
     fn test_direct_lowering_attaches_trace_metadata_to_next_gate() {
         let mut engine = QisEngine::with_runtime(Box::new(DummyRuntime::default()));

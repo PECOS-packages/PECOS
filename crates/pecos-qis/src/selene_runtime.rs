@@ -8,6 +8,7 @@ use crate::scheduled::{
     MAX_OPERATIONS, MAX_PAYLOAD_BYTES, RuntimeScheduledOp, ScheduledBatch, ScheduledMeasurement,
     ScheduledOutput,
 };
+use crate::selene_native::{NativeOp, RuntimeInput, classify};
 use log::{debug, trace};
 use pecos_qis_ffi_types::{
     LoweredQuantumOp, Operation, OperationCollector, QuantumOp, TraceMetadata,
@@ -72,6 +73,10 @@ impl RuntimeOperationBatch {
 struct SourceTraceMetadata {
     op: QuantumOp,
     metadata: TraceMetadata,
+    // Native records use exact angles, with a specifically predicted virtual-Z
+    // alternative for RXY. Legacy source_gate annotations retain their policy.
+    native_match: bool,
+    folded_phi: Option<f64>,
 }
 
 #[repr(C)]
@@ -268,13 +273,13 @@ pub struct RuntimeCustomEvent {
     pub duration_nanos: u64,
 }
 
-/// Compatibility policy for events not explicitly recognized as metadata.
+/// Execution policy for events not explicitly recognized as metadata.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum RuntimeCustomEventPolicy {
-    /// Retain events for inspection without changing ordinary execution (default).
-    #[default]
+    /// Explicit opt-in: retain unhandled events without simulating their effects.
     Capture,
-    /// Fail on every event not acknowledged as metadata-only by the handler.
+    /// Default: fail on every event not acknowledged as metadata-only by the handler.
+    #[default]
     RejectUnhandled,
 }
 
@@ -372,6 +377,9 @@ pub struct SeleneRuntime {
 
     /// End timestamp of the last scheduled physical operation per runtime qubit.
     last_gate_time_end_nanos: Vec<u64>,
+    /// Virtual-Z hypothesis for provenance matching; never alters emitted gates.
+    submitted_rz_phases: BTreeMap<usize, f64>,
+    source_trace_metadata: VecDeque<SourceTraceMetadata>,
 
     /// Shot metadata waiting for a lazily loaded runtime plugin.
     pending_shot_start: Option<(u64, Option<u64>)>,
@@ -472,6 +480,8 @@ impl SeleneRuntime {
             runtime_to_program_results: BTreeMap::new(),
             leakage_results: BTreeSet::new(),
             last_gate_time_end_nanos: Vec::new(),
+            submitted_rz_phases: BTreeMap::new(),
+            source_trace_metadata: VecDeque::new(),
             pending_shot_start: None,
             active_shot: None,
             custom_events: Vec::new(),
@@ -499,6 +509,7 @@ impl SeleneRuntime {
             }
 
             lowered_ops.extend(runtime.drain_runtime_operations()?);
+            runtime.discard_emitted_source_metadata(&lowered_ops);
             Ok(lowered_ops)
         })
     }
@@ -508,7 +519,6 @@ impl SeleneRuntime {
         operations: &[Operation],
     ) -> Result<Vec<LoweredQuantumOp>> {
         let mut lowered_ops = Vec::new();
-        let mut source_metadata = VecDeque::new();
         let mut pending_global_metadata = TraceMetadata::new();
         let mut pending_qubit_metadata: BTreeMap<usize, TraceMetadata> = BTreeMap::new();
 
@@ -528,19 +538,12 @@ impl SeleneRuntime {
                         &mut pending_global_metadata,
                         &mut pending_qubit_metadata,
                     )?;
-                    if !metadata.is_empty() {
-                        let source_op = self.map_quantum_op_to_runtime_qubits(qop)?;
-                        source_metadata.push_back(SourceTraceMetadata {
-                            op: source_op,
-                            metadata,
-                        });
-                    }
                     let mut emitted_ops = Vec::new();
-                    self.submit_operation_to_runtime(op, &mut emitted_ops)?;
+                    self.submit_quantum_op_with_metadata(qop, metadata, &mut emitted_ops)?;
                     Self::push_lowered_ops_with_source_metadata(
                         &mut lowered_ops,
                         emitted_ops,
-                        &mut source_metadata,
+                        &mut self.source_trace_metadata,
                     );
                 }
                 Operation::Barrier => {
@@ -548,7 +551,7 @@ impl SeleneRuntime {
                     Self::push_lowered_ops_with_source_metadata(
                         &mut lowered_ops,
                         emitted_ops,
-                        &mut source_metadata,
+                        &mut self.source_trace_metadata,
                     );
                 }
                 _ => {
@@ -557,7 +560,7 @@ impl SeleneRuntime {
                     Self::push_lowered_ops_with_source_metadata(
                         &mut lowered_ops,
                         emitted_ops,
-                        &mut source_metadata,
+                        &mut self.source_trace_metadata,
                     );
                 }
             }
@@ -567,7 +570,7 @@ impl SeleneRuntime {
         Self::push_lowered_ops_with_source_metadata(
             &mut lowered_ops,
             emitted_ops,
-            &mut source_metadata,
+            &mut self.source_trace_metadata,
         );
 
         if !pending_global_metadata.is_empty() {
@@ -576,9 +579,90 @@ impl SeleneRuntime {
             )));
         }
         Self::fail_if_qubit_metadata_was_not_consumed(&pending_qubit_metadata)?;
-        Self::fail_if_metadata_was_not_lowered(&source_metadata)?;
+        Self::fail_if_metadata_was_not_lowered(&self.source_trace_metadata)?;
 
         Ok(lowered_ops)
+    }
+
+    fn record_source_metadata(
+        &mut self,
+        qop: &QuantumOp,
+        mut metadata: TraceMetadata,
+        records: &mut VecDeque<SourceTraceMetadata>,
+    ) -> Result<()> {
+        let source = self.map_quantum_op_to_runtime_qubits(qop)?;
+        let classification = classify(&source)?;
+        let sequence = match classification {
+            RuntimeInput::Decomposed(sequence) => sequence,
+            RuntimeInput::Native(native) => {
+                // Preserve the existing source_gate matching contract for source
+                // programs already expressed in native gates.
+                let folded_phi = match native {
+                    NativeOp::Rxy(_, phi, q) => {
+                        Some(phi - self.submitted_rz_phases.get(&q).copied().unwrap_or(0.0))
+                    }
+                    NativeOp::Rz(..)
+                    | NativeOp::Rzz(..)
+                    | NativeOp::Rpp(..)
+                    | NativeOp::Reset(..)
+                    | NativeOp::Measure(..)
+                    | NativeOp::MeasureLeaked(..) => None,
+                };
+                records.push_back(SourceTraceMetadata {
+                    native_match: !metadata.contains_key("source_gate"),
+                    op: source,
+                    metadata,
+                    folded_phi,
+                });
+                return Ok(());
+            }
+            RuntimeInput::Idle { .. } => {
+                records.push_back(SourceTraceMetadata {
+                    op: source,
+                    metadata,
+                    native_match: true,
+                    folded_phi: None,
+                });
+                return Ok(());
+            }
+        };
+        // Exactly ONE native carries a decomposed source's metadata: the first
+        // non-RZ native, or the first RZ for a Z-only sequence. This anchor survives
+        // soft-RZ's virtual-Z elimination. Every other native, even from an
+        // unlabelled source, has an empty record so it cannot steal a later label.
+        let anchor = sequence
+            .iter()
+            .position(|op| !matches!(op, NativeOp::Rz(..)))
+            .unwrap_or(0);
+        let mut phases: BTreeMap<_, _> = Self::quantum_op_qubits(&source)
+            .into_iter()
+            .map(|q| (q, self.submitted_rz_phases.get(&q).copied().unwrap_or(0.0)))
+            .collect();
+        for (index, native) in sequence.into_iter().enumerate() {
+            let folded_phi = match native {
+                NativeOp::Rxy(_, phi, q) => Some(phi - phases.get(&q).copied().unwrap_or(0.0)),
+                NativeOp::Rz(theta, q) => {
+                    *phases.entry(q).or_default() += theta;
+                    None
+                }
+                NativeOp::Rzz(..)
+                | NativeOp::Rpp(..)
+                | NativeOp::Reset(..)
+                | NativeOp::Measure(..)
+                | NativeOp::MeasureLeaked(..) => None,
+            };
+            records.push_back(SourceTraceMetadata {
+                op: native.quantum_op(),
+                metadata: if index == anchor {
+                    std::mem::take(&mut metadata)
+                } else {
+                    TraceMetadata::new()
+                },
+                native_match: true,
+                folded_phi,
+            });
+        }
+        Ok(())
     }
 
     fn deliver_measurement_outcomes(&mut self, measurements: &BTreeMap<usize, u32>) -> Result<()> {
@@ -723,7 +807,9 @@ impl SeleneRuntime {
                         .to_string(),
                 ));
             }
-            runtime.drain_runtime_operations()
+            let ops = runtime.drain_runtime_operations()?;
+            runtime.discard_emitted_source_metadata(&ops);
+            Ok(ops)
         })
     }
 
@@ -806,10 +892,6 @@ impl SeleneRuntime {
         let capacity = self
             .num_qubits_hint
             .ok_or_else(|| fail("scheduled extraction requires explicit capacity"))?;
-        let output = self
-            .scheduled_output
-            .as_mut()
-            .ok_or_else(|| fail("no scheduled extraction active"))?;
         if batch.operations.len() > MAX_OPERATIONS {
             return Err(fail("scheduled per-batch operation budget exceeded"));
         }
@@ -881,6 +963,29 @@ impl SeleneRuntime {
             .runtime_batch_index
             .checked_add(1)
             .ok_or_else(|| fail("scheduled batch index overflow"))?;
+        for (operation_index, op) in batch.operations.iter().enumerate() {
+            if let RuntimeScheduledOp::Custom { tag, data } = op {
+                let event = RuntimeCustomEvent {
+                    tag: *tag,
+                    data: data.clone(),
+                    batch_index: self.runtime_batch_index,
+                    operation_index,
+                    start_time_nanos: batch.start_time_nanos,
+                    duration_nanos: batch.duration_nanos,
+                };
+                Self::validate_custom_event(
+                    &event,
+                    self.custom_event_policy,
+                    self.custom_event_handler.as_ref(),
+                    &self.plugin_path,
+                    &mut self.batch_failure,
+                )?;
+            }
+        }
+        let output = self
+            .scheduled_output
+            .as_mut()
+            .ok_or_else(|| fail("no scheduled extraction active"))?;
         output
             .batches
             .try_reserve(1)
@@ -908,8 +1013,8 @@ impl SeleneRuntime {
         self.batch_failure.get_or_insert(error).clone()
     }
 
-    /// Configure handling of opaque events. Capture is backward-compatible;
-    /// strict emulation should use `RejectUnhandled`. Changing this policy does
+    /// Configure handling of opaque events. `RejectUnhandled` is the default;
+    /// `Capture` explicitly opts into retaining unhandled events. Changing this policy does
     /// not clear a latched batch failure; successful `QisRuntime::reset` is required.
     pub fn set_custom_event_policy(&mut self, policy: RuntimeCustomEventPolicy) {
         self.custom_event_policy = policy;
@@ -1148,6 +1253,8 @@ impl SeleneRuntime {
         self.runtime_to_program_results.clear();
         self.leakage_results.clear();
         self.last_gate_time_end_nanos.clear();
+        self.submitted_rz_phases.clear();
+        self.source_trace_metadata.clear();
         Ok(())
     }
 
@@ -1216,89 +1323,49 @@ impl SeleneRuntime {
     /// simulator to execute measurements before continuing. This is essential
     /// for dynamic circuits where conditionals depend on measurement results.
     fn process_interface_ops(&mut self) -> Result<Option<Vec<QuantumOp>>> {
-        let interface = self
-            .interface
-            .as_ref()
-            .ok_or(RuntimeError::NoProgramLoaded)?;
-
-        self.operations_buffer.clear();
         self.pending_measurements.clear();
-
-        while self.current_op_index < interface.operations.len() {
-            let op = &interface.operations[self.current_op_index];
-
-            match op {
-                Operation::Quantum(qop) => {
-                    trace!("Processing quantum operation: {qop:?}");
-                    self.operations_buffer.push(qop.clone());
-                    self.current_op_index += 1;
-
-                    // Check if this is a measurement operation
-                    if let QuantumOp::Measure(_, result_id) = qop {
-                        self.pending_measurements.push(*result_id);
-                        debug!(
-                            "Breaking batch after measurement (result_id={result_id}) to wait for results"
-                        );
-                        // Break the batch after measurements to get results
-                        // This enables dynamic circuits with conditionals
+        loop {
+            let interface = self
+                .interface
+                .as_ref()
+                .ok_or(RuntimeError::NoProgramLoaded)?;
+            let start = self.current_op_index;
+            let mut quantum_count = 0;
+            while self.current_op_index < interface.operations.len() {
+                let op = &interface.operations[self.current_op_index];
+                self.current_op_index += 1;
+                match op {
+                    Operation::Quantum(
+                        QuantumOp::Measure(_, result) | QuantumOp::MeasureLeaked(_, result),
+                    ) => {
+                        self.pending_measurements.push(*result);
                         break;
                     }
-
-                    // Also break if we've reached the batch size limit
-                    if self.operations_buffer.len() >= self.batch_size {
-                        debug!("Breaking batch at size limit ({})", self.batch_size);
-                        break;
+                    Operation::Quantum(_) => {
+                        quantum_count += 1;
+                        if quantum_count >= self.batch_size {
+                            break;
+                        }
                     }
-                }
-                Operation::AllocateQubit { id } => {
-                    trace!("Allocating qubit {id}");
-                    self.current_op_index += 1;
-                }
-                Operation::AllocateResult { id } => {
-                    trace!("Allocating result {id}");
-                    self.num_results = self.num_results.max(id + 1);
-                    self.current_op_index += 1;
-                }
-                Operation::ReleaseQubit { id } => {
-                    trace!("Releasing qubit {id}");
-                    let _ = id; // Just track it
-                    self.current_op_index += 1;
-                }
-                Operation::RecordOutput {
-                    result_id,
-                    register_name,
-                } => {
-                    trace!(
-                        "Recording output: result_id={result_id}, register_name={register_name}"
-                    );
-                    // Metadata operation - just advance the index
-                    // The actual result mapping is handled by the runtime's results collection
-                    self.current_op_index += 1;
-                }
-                Operation::TraceMetadata { .. } => {
-                    trace!("Trace metadata encountered");
-                    self.current_op_index += 1;
-                }
-                Operation::Barrier => {
-                    trace!("Barrier encountered");
-                    // Barriers don't produce quantum ops but can break batches
-                    self.current_op_index += 1;
-                    if !self.operations_buffer.is_empty() {
-                        // End current batch at barrier
-                        break;
-                    }
+                    Operation::Barrier => break,
+                    _ => {}
                 }
             }
-        }
-
-        if self.operations_buffer.is_empty() {
-            Ok(None)
-        } else {
-            trace!(
-                "Returning batch of {} quantum operations",
-                self.operations_buffer.len()
-            );
-            Ok(Some(self.operations_buffer.clone()))
+            let complete = self.current_op_index == interface.operations.len();
+            let operations = interface.operations[start..self.current_op_index].to_vec();
+            self.operations_buffer = self.lower_native_operations(&operations)?;
+            if complete {
+                let tail = self.drain_native_pending_operations()?;
+                self.operations_buffer.extend(tail);
+            }
+            if !self.operations_buffer.is_empty() {
+                return Ok(Some(std::mem::take(&mut self.operations_buffer)));
+            }
+            if complete {
+                return Ok(None);
+            }
+            // A lazy scheduler may retain a whole source chunk. Keep submitting
+            // until it emits work, reaches a forced measurement, or drains at EOF.
         }
     }
 
@@ -1309,6 +1376,12 @@ impl SeleneRuntime {
 
         self.load_plugin()?;
         let runtime_qubit = self.runtime_qalloc()?;
+        let physical = usize::try_from(runtime_qubit).map_err(|_| {
+            RuntimeError::ExecutionError(format!(
+                "runtime qubit {runtime_qubit} does not fit usize"
+            ))
+        })?;
+        self.submitted_rz_phases.insert(physical, 0.0);
         self.program_to_runtime_qubits
             .insert(program_qubit, runtime_qubit);
         Ok(runtime_qubit)
@@ -1539,7 +1612,35 @@ impl SeleneRuntime {
             .insert(program_result, runtime_result);
         self.runtime_to_program_results
             .insert(runtime_result, program_result);
+        // Soft-RZ's force_result only matches Measure, not MeasureLeaked.
+        // Release this qubit's queued work before PECOS needs the leaked result.
+        self.call_runtime_local_barrier(&[runtime_qubit])?;
         self.force_runtime_result(runtime_result)
+    }
+
+    fn call_runtime_local_barrier(&self, qubits: &[u64]) -> Result<()> {
+        let lib = self
+            .library
+            .as_ref()
+            .ok_or_else(|| RuntimeError::FfiError("Selene runtime is not loaded".into()))?;
+        let instance = self
+            .instance
+            .ok_or_else(|| RuntimeError::FfiError("Selene runtime is not initialized".into()))?;
+        // SAFETY: the slice remains live throughout the synchronous plugin call.
+        let errno = unsafe {
+            (Self::runtime_plugin_descriptor(lib)?.local_barrier_fn)(
+                instance,
+                qubits.as_ptr(),
+                qubits.len() as u64,
+                0,
+            )
+        };
+        if errno != 0 {
+            return Err(RuntimeError::FfiError(format!(
+                "local_barrier failed with errno {errno}"
+            )));
+        }
+        Ok(())
     }
 
     fn force_runtime_result(&self, runtime_result: u64) -> Result<()> {
@@ -1684,43 +1785,101 @@ impl SeleneRuntime {
         qop: &QuantumOp,
         lowered_ops: &mut Vec<QuantumOp>,
     ) -> Result<()> {
-        match qop {
-            QuantumOp::RXY(theta, phi, qubit) => {
+        self.submit_quantum_op_with_metadata(qop, TraceMetadata::new(), lowered_ops)
+    }
+
+    fn submit_quantum_op_with_metadata(
+        &mut self,
+        qop: &QuantumOp,
+        metadata: TraceMetadata,
+        lowered_ops: &mut Vec<QuantumOp>,
+    ) -> Result<()> {
+        // Keep records across calls: a scheduler may emit an earlier unlabelled
+        // pulse beside a later labelled one, including flat-to-metadata transitions.
+        // Scheduled mode cannot be mixed with these routes and has no annotations.
+        if self.scheduled_mode != Some(true) {
+            let mut records = std::mem::take(&mut self.source_trace_metadata);
+            let recorded = self.record_source_metadata(qop, metadata, &mut records);
+            self.source_trace_metadata = records;
+            recorded.map_err(|error| self.operation_lowering_error(qop, &error))?;
+        }
+        self.submit_classified_op(qop, lowered_ops)
+            .map_err(|error| self.operation_lowering_error(qop, &error))
+    }
+
+    fn operation_lowering_error(&self, qop: &QuantumOp, error: &RuntimeError) -> RuntimeError {
+        RuntimeError::ExecutionError(format!(
+            "failed to lower {qop:?} on qubits {:?} through runtime {}: {error}",
+            Self::quantum_op_qubits(qop),
+            self.plugin_path
+        ))
+    }
+
+    fn submit_classified_op(
+        &mut self,
+        qop: &QuantumOp,
+        lowered_ops: &mut Vec<QuantumOp>,
+    ) -> Result<()> {
+        match classify(qop)? {
+            RuntimeInput::Native(native) => self.submit_native_op(&native),
+            RuntimeInput::Decomposed(sequence) => {
+                for native in sequence {
+                    self.submit_native_op(&native)?;
+                }
+                Ok(())
+            }
+            RuntimeInput::Idle { duration, qubit } => {
+                let runtime_qubit = self.runtime_qubit_for_program(qubit)?;
+                self.call_runtime_local_barrier(&[runtime_qubit])?;
+                lowered_ops.extend(self.drain_runtime_operations()?);
+                lowered_ops.push(
+                    self.map_quantum_op_to_runtime_qubits(&QuantumOp::Idle(duration, qubit))?,
+                );
+                Ok(())
+            }
+        }
+    }
+
+    fn submit_native_op(&mut self, native: &NativeOp) -> Result<()> {
+        match native {
+            NativeOp::Rxy(theta, phi, qubit) => {
                 let runtime_qubit = self.runtime_qubit_for_program(*qubit)?;
                 self.call_runtime_rxy(runtime_qubit, *theta, *phi)?;
             }
-            QuantumOp::RZ(theta, qubit) => {
+            NativeOp::Rz(theta, qubit) => {
                 let runtime_qubit = self.runtime_qubit_for_program(*qubit)?;
                 self.call_runtime_rz(runtime_qubit, *theta)?;
+                let physical = usize::try_from(runtime_qubit).map_err(|_| {
+                    RuntimeError::ExecutionError(format!(
+                        "runtime qubit {runtime_qubit} does not fit usize"
+                    ))
+                })?;
+                *self.submitted_rz_phases.entry(physical).or_default() += theta;
             }
-            QuantumOp::RZZ(theta, qubit_1, qubit_2) => {
+            NativeOp::Rzz(theta, qubit_1, qubit_2) => {
                 let runtime_qubit_1 = self.runtime_qubit_for_program(*qubit_1)?;
                 let runtime_qubit_2 = self.runtime_qubit_for_program(*qubit_2)?;
                 self.call_runtime_rzz(runtime_qubit_1, runtime_qubit_2, *theta)?;
             }
-            QuantumOp::RXYXY2Q(theta, phi, qubit_1, qubit_2) => {
+            NativeOp::Rpp(theta, phi, qubit_1, qubit_2) => {
                 let runtime_qubit_1 = self.runtime_qubit_for_program(*qubit_1)?;
                 let runtime_qubit_2 = self.runtime_qubit_for_program(*qubit_2)?;
                 self.call_runtime_rpp(runtime_qubit_1, runtime_qubit_2, *theta, *phi)?;
             }
-            QuantumOp::Measure(qubit, result_id) => {
+            NativeOp::Measure(qubit, result_id) => {
                 let runtime_qubit = self.runtime_qubit_for_program(*qubit)?;
                 self.call_runtime_measure(runtime_qubit, *result_id)?;
                 self.release_implicitly_measured_qubit(*qubit)?;
             }
-            QuantumOp::MeasureLeaked(qubit, result_id) => {
+            NativeOp::MeasureLeaked(qubit, result_id) => {
                 self.leakage_results.insert(*result_id);
                 let runtime_qubit = self.runtime_qubit_for_program(*qubit)?;
                 self.call_runtime_measure_leaked(runtime_qubit, *result_id)?;
                 self.release_implicitly_measured_qubit(*qubit)?;
             }
-            QuantumOp::Reset(qubit) => {
+            NativeOp::Reset(qubit) => {
                 let runtime_qubit = self.runtime_qubit_for_program(*qubit)?;
                 self.call_runtime_reset(runtime_qubit)?;
-            }
-            _ => {
-                lowered_ops.extend(self.drain_runtime_operations()?);
-                lowered_ops.push(self.map_quantum_op_to_runtime_qubits(qop)?);
             }
         }
 
@@ -1811,23 +1970,31 @@ impl SeleneRuntime {
         Ok(lowered_ops)
     }
 
+    fn discard_emitted_source_metadata(&mut self, ops: &[QuantumOp]) {
+        for op in ops {
+            Self::take_emitted_source_metadata(op, &mut self.source_trace_metadata);
+        }
+    }
+
+    fn take_emitted_source_metadata(
+        op: &QuantumOp,
+        records: &mut VecDeque<SourceTraceMetadata>,
+    ) -> TraceMetadata {
+        records
+            .iter()
+            .position(|source| Self::source_trace_metadata_matches_lowered_op(source, op))
+            .and_then(|index| records.remove(index))
+            .map(|record| record.metadata)
+            .unwrap_or_default()
+    }
+
     fn push_lowered_ops_with_source_metadata(
         lowered_ops: &mut Vec<LoweredQuantumOp>,
         ops: Vec<QuantumOp>,
         source_metadata: &mut VecDeque<SourceTraceMetadata>,
     ) {
         for op in ops {
-            let metadata = if let Some(source_index) = source_metadata
-                .iter()
-                .position(|source| Self::source_trace_metadata_matches_lowered_op(source, &op))
-            {
-                source_metadata
-                    .remove(source_index)
-                    .map(|source| source.metadata)
-                    .unwrap_or_default()
-            } else {
-                TraceMetadata::new()
-            };
+            let metadata = Self::take_emitted_source_metadata(&op, source_metadata);
             lowered_ops.push(LoweredQuantumOp::new(op, metadata));
         }
     }
@@ -1886,10 +2053,32 @@ impl SeleneRuntime {
         source: &SourceTraceMetadata,
         lowered: &QuantumOp,
     ) -> bool {
+        if source.native_match {
+            if let (QuantumOp::RXY(theta, phi, q), QuantumOp::RXY(other, axis, r)) =
+                (&source.op, lowered)
+            {
+                // Never ignore phi. Accept the submitted axis (simple runtime) or
+                // exactly phi - accumulated RZ (virtual-Z runtimes). The plugin
+                // ABI has no phase-folding capability flag, so these two explicit
+                // angle hypotheses work without guessing from a library filename.
+                return q == r
+                    && Self::same_float(*theta, *other)
+                    && (Self::same_phase(*phi, *axis)
+                        || source
+                            .folded_phi
+                            .is_some_and(|folded| Self::same_phase(folded, *axis)));
+            }
+            return Self::source_op_matches_lowered_op(&source.op, lowered);
+        }
         if source.metadata.contains_key("source_gate") {
             return Self::source_gate_metadata_matches_lowered_op(source, lowered);
         }
         Self::source_op_matches_lowered_op(&source.op, lowered)
+    }
+
+    fn same_phase(left: f64, right: f64) -> bool {
+        let delta = (left - right).rem_euclid(std::f64::consts::TAU);
+        delta.min(std::f64::consts::TAU - delta) <= 1e-12
     }
 
     fn source_gate_metadata_matches_lowered_op(
@@ -2295,30 +2484,53 @@ impl SeleneRuntime {
                     })?;
                     self.custom_events.push(event);
                     let event = self.custom_events.last().expect("just inserted");
-                    let disposition = if let Some(handler) = &self.custom_event_handler {
-                        // If user Rust code panics and its caller catches the unwind,
-                        // the consumed event must still leave this shot poisoned.
-                        self.batch_failure = Some(RuntimeError::ExecutionError(format!(
-                            "runtime custom event handler panicked at batch {batch_index}, operation {operation_index}; reset required"
-                        )));
-                        let result = handler(event);
-                        self.batch_failure = None;
-                        result?
-                    } else {
-                        RuntimeCustomEventDisposition::Unsupported
-                    };
-                    if disposition == RuntimeCustomEventDisposition::Unsupported
-                        && self.custom_event_policy == RuntimeCustomEventPolicy::RejectUnhandled
-                    {
-                        return Err(RuntimeError::ExecutionError(format!(
-                            "unsupported runtime custom event tag {tag} at batch {batch_index}, operation {operation_index}, start {start_time} ns; register a metadata-only handler for understood metadata; physical effects require downstream modeling"
-                        )));
-                    }
+                    Self::validate_custom_event(
+                        event,
+                        self.custom_event_policy,
+                        self.custom_event_handler.as_ref(),
+                        &self.plugin_path,
+                        &mut self.batch_failure,
+                    )?;
                 }
             }
         }
 
         Ok(lowered_ops)
+    }
+
+    fn validate_custom_event(
+        event: &RuntimeCustomEvent,
+        policy: RuntimeCustomEventPolicy,
+        handler: Option<&CustomEventHandler>,
+        runtime: &str,
+        batch_failure: &mut Option<RuntimeError>,
+    ) -> Result<()> {
+        let context = format!(
+            "tag {} at batch {}, operation {}, start {} ns from runtime {runtime}",
+            event.tag, event.batch_index, event.operation_index, event.start_time_nanos
+        );
+        let disposition = if let Some(handler) = handler {
+            *batch_failure = Some(RuntimeError::ExecutionError(format!(
+                "runtime custom event handler panicked for {context}; reset required"
+            )));
+            let result = handler(event);
+            *batch_failure = None;
+            result.map_err(|error| {
+                RuntimeError::ExecutionError(format!(
+                    "custom event handler failed for {context}: {error}"
+                ))
+            })?
+        } else {
+            RuntimeCustomEventDisposition::Unsupported
+        };
+        if disposition == RuntimeCustomEventDisposition::Unsupported
+            && policy == RuntimeCustomEventPolicy::RejectUnhandled
+        {
+            return Err(RuntimeError::ExecutionError(format!(
+                "unsupported runtime custom event {context}; register a metadata-only handler for understood metadata; physical effects require downstream modeling"
+            )));
+        }
+        Ok(())
     }
 
     fn runtime_qubit_to_usize(&mut self, runtime_qubit: u64) -> Result<usize> {
@@ -2409,6 +2621,8 @@ impl Clone for SeleneRuntime {
             runtime_to_program_results: self.runtime_to_program_results.clone(),
             leakage_results: self.leakage_results.clone(),
             last_gate_time_end_nanos: self.last_gate_time_end_nanos.clone(),
+            submitted_rz_phases: self.submitted_rz_phases.clone(),
+            source_trace_metadata: self.source_trace_metadata.clone(),
             pending_shot_start: self.pending_shot_start,
             active_shot: self.active_shot,
             custom_events: self.custom_events.clone(),
@@ -2612,10 +2826,7 @@ impl QisRuntime for SeleneRuntime {
 
     fn execute_until_quantum(&mut self) -> Result<Option<Vec<QuantumOp>>> {
         self.select_output_mode(false)?;
-        // For now, we'll use the simple approach of processing from the interface
-        // In a full implementation, we'd call into the Selene runtime's
-        // get_next_operations function
-        self.process_interface_ops()
+        self.with_native_mutation(Self::process_interface_ops)
     }
 
     fn supports_operation_lowering(&self) -> bool {
@@ -2627,13 +2838,13 @@ impl QisRuntime for SeleneRuntime {
         self.drain_native_pending_operations()
     }
 
-    /// Extract native batches without flattening, idle insertion or event handling.
+    /// Extract native batches without flattening or idle insertion, enforcing the custom-event policy.
     /// See [`crate::scheduled`] for the extraction-only contract.
     ///
-    /// Requires `shot_start` and explicit `set_num_qubits` capacity. Only native
-    /// RXY/RZ/RZZ/RXYXY2Q, reset, measurements,
-    /// allocation/release and barriers are accepted. Source trace metadata is
-    /// rejected rather than silently lost. Flat and scheduled lowering cannot
+    /// Requires `shot_start` and explicit `set_num_qubits` capacity. Gates are
+    /// decomposed through the same native table as flat lowering. Reset,
+    /// measurements, allocation/release and barriers are accepted; Idle and source
+    /// trace metadata are rejected rather than silently lost. Flat and scheduled lowering cannot
     /// be mixed within a shot. Each native batch admits at most 4096 operations
     /// and 256 KiB of opaque payload. Returned batch counts are not capped;
     /// aggregate memory grows with the native schedule. No history is kept after return.
@@ -2648,48 +2859,53 @@ impl QisRuntime for SeleneRuntime {
     ) -> Result<Vec<ScheduledBatch>> {
         self.check_batch_failure()?;
         for op in operations {
-            let ids: &[usize] = match op {
+            let ids = match op {
                 Operation::AllocateQubit { id }
                 | Operation::AllocateResult { id }
-                | Operation::ReleaseQubit { id } => &[*id],
-                Operation::Quantum(
-                    QuantumOp::RXY(_, _, q) | QuantumOp::RZ(_, q) | QuantumOp::Reset(q),
-                ) => &[*q],
-                Operation::Quantum(
-                    QuantumOp::RZZ(_, a, b)
-                    | QuantumOp::RXYXY2Q(_, _, a, b)
-                    | QuantumOp::Measure(a, b)
-                    | QuantumOp::MeasureLeaked(a, b),
-                ) => &[*a, *b],
-                _ => &[],
+                | Operation::ReleaseQubit { id } => vec![*id],
+                Operation::Quantum(qop) => {
+                    let mut ids: Vec<_> = Self::quantum_op_qubits(qop).into_iter().collect();
+                    if let QuantumOp::Measure(_, result) | QuantumOp::MeasureLeaked(_, result) = qop
+                    {
+                        ids.push(*result);
+                    }
+                    ids
+                }
+                _ => Vec::new(),
             };
             if ids.iter().any(|id| id.checked_add(1).is_none()) {
-                return Err(RuntimeError::ExecutionError(
-                    "scheduled source identifier overflow".into(),
-                ));
+                return Err(RuntimeError::ExecutionError(format!(
+                    "scheduled source identifier overflow for {op:?} in runtime {}",
+                    self.plugin_path
+                )));
             }
             let angles: &[f64] = match op {
                 Operation::Quantum(QuantumOp::RXY(a, b, _) | QuantumOp::RXYXY2Q(a, b, _, _)) => {
                     &[*a, *b]
                 }
-                Operation::Quantum(QuantumOp::RZ(a, _) | QuantumOp::RZZ(a, _, _)) => &[*a],
+                Operation::Quantum(
+                    QuantumOp::RX(a, _)
+                    | QuantumOp::RY(a, _)
+                    | QuantumOp::CRZ(a, _, _)
+                    | QuantumOp::RZ(a, _)
+                    | QuantumOp::RZZ(a, _, _),
+                ) => &[*a],
                 _ => &[],
             };
             if angles.iter().any(|angle| !angle.is_finite()) {
-                return Err(RuntimeError::ExecutionError(
-                    "non-finite scheduled source angle".into(),
-                ));
+                return Err(RuntimeError::ExecutionError(format!(
+                    "non-finite scheduled source angle for {op:?} in runtime {}",
+                    self.plugin_path
+                )));
             }
             match op {
-                Operation::Quantum(
-                    QuantumOp::RXY(..)
-                    | QuantumOp::RXYXY2Q(..)
-                    | QuantumOp::RZ(..)
-                    | QuantumOp::RZZ(..)
-                    | QuantumOp::Reset(_)
-                    | QuantumOp::Measure(_, _)
-                    | QuantumOp::MeasureLeaked(_, _),
-                )
+                Operation::Quantum(idle @ QuantumOp::Idle(..)) => {
+                    return Err(RuntimeError::ExecutionError(format!(
+                        "cannot lower {idle:?} through runtime {}: scheduled extraction has no native idle entry point",
+                        self.plugin_path
+                    )));
+                }
+                Operation::Quantum(_)
                 | Operation::AllocateQubit { .. }
                 | Operation::AllocateResult { .. }
                 | Operation::ReleaseQubit { .. }
@@ -2807,6 +3023,8 @@ impl QisRuntime for SeleneRuntime {
         self.runtime_to_program_results.clear();
         self.leakage_results.clear();
         self.last_gate_time_end_nanos.clear();
+        self.submitted_rz_phases.clear();
+        self.source_trace_metadata.clear();
         self.custom_events.clear();
         self.scheduled_mode = None;
         self.scheduled_terminal_drained = false;
@@ -2871,6 +3089,8 @@ impl QisRuntime for SeleneRuntime {
         self.runtime_to_program_results.clear();
         self.leakage_results.clear();
         self.last_gate_time_end_nanos.clear();
+        self.submitted_rz_phases.clear();
+        self.source_trace_metadata.clear();
         self.custom_events.clear();
         self.scheduled_mode = None;
         self.scheduled_terminal_drained = false;
@@ -3136,6 +3356,7 @@ mod tests {
         }
         drop(extractor);
         let mut runtime = SeleneRuntime::new("synthetic-runtime.so");
+        runtime.set_custom_event_policy(RuntimeCustomEventPolicy::Capture);
         runtime.convert_runtime_batch(batch).unwrap();
         assert_eq!(
             runtime
@@ -3175,6 +3396,7 @@ mod tests {
     #[test]
     fn custom_capture_preserves_order_timing_and_measurement_routing() {
         let mut runtime = SeleneRuntime::new("synthetic-runtime.so");
+        runtime.set_custom_event_policy(RuntimeCustomEventPolicy::Capture);
         runtime.runtime_to_program_results.insert(901, 7);
         let ops = runtime
             .convert_runtime_batch(synthetic_custom_batch(7301))
@@ -3227,7 +3449,10 @@ mod tests {
     fn custom_strict_policy_requires_explicit_metadata_acknowledgement() {
         let mut runtime = SeleneRuntime::new("synthetic-runtime.so");
         runtime.runtime_to_program_results.insert(901, 7);
-        runtime.set_custom_event_policy(RuntimeCustomEventPolicy::RejectUnhandled);
+        assert_eq!(
+            runtime.custom_event_policy,
+            RuntimeCustomEventPolicy::RejectUnhandled
+        );
         let error = runtime
             .convert_runtime_batch(synthetic_custom_batch(7301))
             .unwrap_err();
@@ -3236,6 +3461,7 @@ mod tests {
                 .to_string()
                 .contains("tag 7301 at batch 0, operation 1, start 20 ns")
         );
+        assert!(error.to_string().contains("synthetic-runtime.so"));
         assert_eq!(runtime.custom_events().len(), 1);
         runtime.set_custom_event_handler(|event| {
             assert_eq!(event.data, [17, 29, 43]);
@@ -3292,6 +3518,7 @@ mod tests {
                 runtime_batch_custom((&raw mut batch).cast(), 7301, ptr, len);
             }
             let mut runtime = SeleneRuntime::new("synthetic-runtime.so");
+            runtime.set_custom_event_policy(RuntimeCustomEventPolicy::Capture);
             assert!(matches!(
                 runtime.convert_runtime_batch(batch),
                 Err(RuntimeError::FfiError(_))
@@ -3302,6 +3529,7 @@ mod tests {
             runtime_batch_custom((&raw mut batch).cast(), 7301, std::ptr::null(), 0);
         }
         let mut runtime = SeleneRuntime::new("synthetic-runtime.so");
+        runtime.set_custom_event_policy(RuntimeCustomEventPolicy::Capture);
         runtime.convert_runtime_batch(batch).unwrap();
         let data = &runtime.custom_events()[0].data;
         assert!(
@@ -4305,6 +4533,8 @@ mod tests {
         }
         let metadata = TraceMetadata::from([("source_label".to_string(), "xyxy".to_string())]);
         let mut pending = VecDeque::from([SourceTraceMetadata {
+            native_match: false,
+            folded_phi: None,
             op: source.clone(),
             metadata: metadata.clone(),
         }]);
@@ -4332,6 +4562,8 @@ mod tests {
         let mut metadata = TraceMetadata::new();
         metadata.insert("source_label".to_string(), "probe:szz-host".to_string());
         let mut source_metadata = VecDeque::from([SourceTraceMetadata {
+            native_match: false,
+            folded_phi: None,
             op: QuantumOp::RZZ(0.5, 0, 1),
             metadata,
         }]);
@@ -4359,6 +4591,8 @@ mod tests {
         let mut metadata = TraceMetadata::new();
         metadata.insert("source_label".to_string(), "probe:idle".to_string());
         let mut source_metadata = VecDeque::from([SourceTraceMetadata {
+            native_match: false,
+            folded_phi: None,
             op: QuantumOp::Idle(20e-9, 0),
             metadata,
         }]);
@@ -4388,10 +4622,14 @@ mod tests {
         rzz_metadata.insert("source_label".to_string(), "probe:szz-host".to_string());
         let mut source_metadata = VecDeque::from([
             SourceTraceMetadata {
+                native_match: false,
+                folded_phi: None,
                 op: QuantumOp::RZ(0.25, 0),
                 metadata: rz_metadata,
             },
             SourceTraceMetadata {
+                native_match: false,
+                folded_phi: None,
                 op: QuantumOp::RZZ(0.5, 0, 1),
                 metadata: rzz_metadata,
             },
@@ -4429,10 +4667,14 @@ mod tests {
         second_metadata.insert("source_label".to_string(), "probe:second".to_string());
         let mut source_metadata = VecDeque::from([
             SourceTraceMetadata {
+                native_match: false,
+                folded_phi: None,
                 op: QuantumOp::RZZ(0.5, 0, 1),
                 metadata: first_metadata,
             },
             SourceTraceMetadata {
+                native_match: false,
+                folded_phi: None,
                 op: QuantumOp::RZZ(-0.5, 2, 3),
                 metadata: second_metadata,
             },
@@ -4468,6 +4710,8 @@ mod tests {
         metadata.insert("source_gate".to_string(), "H".to_string());
         metadata.insert("source_label".to_string(), "probe:h-prefix".to_string());
         let mut source_metadata = VecDeque::from([SourceTraceMetadata {
+            native_match: false,
+            folded_phi: None,
             op: QuantumOp::RXY(std::f64::consts::FRAC_PI_2, -std::f64::consts::FRAC_PI_2, 2),
             metadata,
         }]);
@@ -4554,6 +4798,8 @@ mod tests {
             "probe:optimized-away-prefix".to_string(),
         );
         let source_metadata = VecDeque::from([SourceTraceMetadata {
+            native_match: false,
+            folded_phi: None,
             op: QuantumOp::RXY(std::f64::consts::FRAC_PI_2, 0.0, 4),
             metadata,
         }]);
@@ -4571,6 +4817,8 @@ mod tests {
         );
         metadata.insert("source_lowering_required".to_string(), "true".to_string());
         let source_metadata = VecDeque::from([SourceTraceMetadata {
+            native_match: false,
+            folded_phi: None,
             op: QuantumOp::RZZ(std::f64::consts::FRAC_PI_2, 0, 1),
             metadata,
         }]);
@@ -4673,3 +4921,7 @@ mod tests {
 #[cfg(test)]
 #[path = "scheduled_tests.rs"]
 mod scheduled_tests;
+
+#[cfg(all(test, feature = "selene-runtimes"))]
+#[path = "selene_native_tests.rs"]
+mod native_tests;

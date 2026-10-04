@@ -520,11 +520,11 @@ def event_runtime_proxy(tmp_path: Path) -> Path:
 
 
 @pytest.mark.parametrize("selector_kind", ["path", "plugin"])
-@pytest.mark.parametrize("policy", ["capture", "reject_unhandled"])
+@pytest.mark.parametrize("policy", [None, "capture", "reject_unhandled"])
 def test_custom_event_policy_reaches_sim_execution(
     event_runtime_proxy: Path,
     selector_kind: str,
-    policy: str,
+    policy: str | None,
 ) -> None:
     import pecos
     from guppylang import guppy
@@ -541,6 +541,8 @@ def test_custom_event_policy_reaches_sim_execution(
     def prepare_zero() -> bool:
         return measure(qubit()).read()
 
+    policy_kwargs = {} if policy is None else {"custom_event_policy": policy}
+
     # The direct path route supplies the public runtime's required init args
     # through the native builder, while the plugin route uses the Python adapter.
     if selector_kind == "path":
@@ -549,13 +551,13 @@ def test_custom_event_policy_reaches_sim_execution(
         builder = pecos_rslib.qis_engine().selene_runtime_plugin(
             str(event_runtime_proxy),
             SimpleRuntimePlugin().get_init_args(),
-            custom_event_policy=policy,
+            **policy_kwargs,
         )
         builder = builder.interface(pecos_rslib.qis_helios_interface())
     else:
-        builder = pecos.selene_engine(EventPlugin(), custom_event_policy=policy)
+        builder = pecos.selene_engine(EventPlugin(), **policy_kwargs)
     simulation = pecos.sim(pecos.Guppy(prepare_zero)).classical(builder).qubits(1).seed(42).workers(1)
-    if policy == "reject_unhandled":
+    if policy in (None, "reject_unhandled"):
         with pytest.raises(RuntimeError, match="unsupported runtime custom event tag 424242"):
             simulation.run(2)
     else:

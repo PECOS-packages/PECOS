@@ -160,7 +160,7 @@ class QisEngineBuilder:
             self._builder = self._builder.program(program)
         return self
 
-    def selene_runtime(self, runtime: object | None = None, *, custom_event_policy: str = "capture") -> Self:
+    def selene_runtime(self, runtime: object | None = None, *, custom_event_policy: str = "reject_unhandled") -> Self:
         """Use a Selene runtime.
 
         Args:
@@ -170,7 +170,8 @@ class QisEngineBuilder:
                 value, or any Selene runtime plugin object exposing
                 ``library_file``, ``get_init_args()``, and optional
                 ``library_search_dirs``, is passed through generically.
-            custom_event_policy: ``"capture"`` preserves compatibility without
+            custom_event_policy: ``"reject_unhandled"`` is the default.
+                ``"capture"`` explicitly opts into execution without
                 modeling custom effects. ``"reject_unhandled"`` rejects any custom
                 event; Python does not yet expose metadata or physical-effect handlers.
 
@@ -271,7 +272,7 @@ def _configure_selene_runtime(
     builder: object,
     runtime: object | None,
     *,
-    custom_event_policy: str = "capture",
+    custom_event_policy: str = "reject_unhandled",
 ) -> object:
     if custom_event_policy not in ("capture", "reject_unhandled"):
         msg = "custom_event_policy must be 'capture' or 'reject_unhandled'"
@@ -324,15 +325,15 @@ def _configure_selene_runtime(
     )
 
 
-def selene_engine(runtime: object | None = None, *, custom_event_policy: str = "capture") -> QisEngineBuilder:
+def selene_engine(runtime: object | None = None, *, custom_event_policy: str = "reject_unhandled") -> QisEngineBuilder:
     """Create a Selene-backed QIS engine builder.
 
     Args:
         runtime: Optional runtime selector. ``None`` selects the default
             ``selene_simple_runtime``. A built runtime name, shared-library
             path, or generic Selene runtime plugin object may also be supplied.
-        custom_event_policy: ``"capture"`` (compatibility default) or
-            ``"reject_unhandled"`` (fail on custom events rather than omit effects).
+        custom_event_policy: ``"capture"`` (explicit opt-in) or
+            ``"reject_unhandled"`` (default; fail on custom events).
             Selecting this policy does not implement a physical model.
 
     Returns:

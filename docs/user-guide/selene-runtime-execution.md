@@ -6,6 +6,25 @@ concern Rust and direct-runtime callers. For timing and noise on the scheduled
 route, see [Scheduled idle simulation](scheduled-idle-simulation.md). For operation
 capture, see [Runtime QIS tracing](runtime-qis-tracing.md).
 
+## Native gate lowering
+
+All Selene runtimes receive gates through their native entry points. Flat,
+metadata and scheduled lowering share the same decomposition table for H, Pauli,
+phase, controlled and rotation gates. PECOS simulates only the operations emitted
+by the plugin: RXY1Q, RZ, RZZ, RXYXY2Q, reset and measurement, together with the
+existing idle/timing operations. A plugin may reject a native entry point it does
+not support; for example, soft-RZ rejects RXYXY2Q.
+
+Noise applies per emitted native gate. Programs that previously passed non-native
+gates directly to the simulator therefore have different noisy results. Soft-RZ
+can fold virtual Z rotations into later pulse axes without emitting an RZ gate.
+
+Flat and metadata routes release queued work on an Idle's qubit before emitting
+the Idle. Scheduled extraction accepts decomposable gates but continues to reject
+source Idle and trace metadata. Leakage-aware measurements release queued work on
+the measured qubit so their results are available even when a plugin's result
+forcing only recognizes ordinary measurements.
+
 ## Allocation lifetimes and capacity
 
 Each handle introduced by an explicit qubit-allocation record stays alive through

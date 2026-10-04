@@ -615,3 +615,37 @@ def test_custom_runtime_rejects_unknown_native_gate_name() -> None:
 
     with pytest.raises(ValueError, match=r"unknown Selene native gate.*expected rxy, rz, rzz or rpp"):
         pecos_rslib.qis_engine().selene_runtime_plugin("custom.so", native_gates=["rxz"])
+
+
+@pytest.mark.parametrize("runtime_name", ["selene_simple_runtime", "selene_soft_rz_runtime"])
+def test_flat_runtime_flushes_native_tail_after_last_measurement(runtime_name: str) -> None:
+    """Queued work after the last measurement reaches the final lowered batch."""
+    import pecos
+    import pecos_rslib as pr
+
+    program = """
+        define i64 @qmain(i64 %shot) #0 {
+            call void @__quantum__qis__x__body(i64 0)
+            %m = call i32 @__quantum__qis__m__body(i64 0, i64 0)
+            call void @__quantum__qis__x__body(i64 1)
+            call void @__quantum__qis__rz__body(double 0.3, i64 1)
+            ret i64 0
+        }
+        declare void @__quantum__qis__x__body(i64)
+        declare i32 @__quantum__qis__m__body(i64, i64)
+        declare void @__quantum__qis__rz__body(double, i64)
+        attributes #0 = { "EntryPoint" }
+    """
+    shots = 10
+    classical = pr.qis_engine().selene_runtime(runtime_name).interface(pr.qis_helios_interface())
+    results = (
+        pecos.sim(pecos.Qis(program))
+        .classical(classical)
+        .qubits(2)
+        .quantum(pr.state_vector())
+        .seed(42)
+        .workers(1)
+        .run(shots)
+        .to_dict()
+    )
+    assert results["measurement_0"] == [1] * shots

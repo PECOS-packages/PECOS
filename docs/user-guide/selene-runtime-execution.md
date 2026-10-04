@@ -76,6 +76,12 @@ source Idle and trace metadata. Leakage-aware measurements release queued work o
 the measured qubit so their results are available even when a plugin's result
 forcing only recognizes ordinary measurements.
 
+At program completion, flat and metadata routes lower a final global barrier
+through the normal metadata-aware path. Any queued native gates become one final
+batch, retaining their source labels; an empty drain adds no batch. Certification
+then checks for unexpected late operations and still fails if any remain. Scheduled
+execution retains its own terminal batch drain.
+
 ## Allocation lifetimes and capacity
 
 Each handle introduced by an explicit qubit-allocation record stays alive through

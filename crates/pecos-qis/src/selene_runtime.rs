@@ -4702,7 +4702,7 @@ mod tests {
         }
         let metadata = TraceMetadata::from([("source_label".to_string(), "xyxy".to_string())]);
         let mut pending = VecDeque::from([SourceTraceMetadata {
-            native_match: false,
+            native_match: !metadata.contains_key("source_gate"),
             folded_phi: None,
             op: source.clone(),
             metadata: metadata.clone(),
@@ -4732,7 +4732,7 @@ mod tests {
         let mut metadata = TraceMetadata::new();
         metadata.insert("source_label".to_string(), "probe:szz-host".to_string());
         let mut source_metadata = VecDeque::from([SourceTraceMetadata {
-            native_match: false,
+            native_match: !metadata.contains_key("source_gate"),
             folded_phi: None,
             op: QuantumOp::RZZ(0.5, 0, 1),
             metadata,
@@ -4762,7 +4762,7 @@ mod tests {
         let mut metadata = TraceMetadata::new();
         metadata.insert("source_label".to_string(), "probe:idle".to_string());
         let mut source_metadata = VecDeque::from([SourceTraceMetadata {
-            native_match: false,
+            native_match: !metadata.contains_key("source_gate"),
             folded_phi: None,
             op: QuantumOp::Idle(20e-9, 0),
             metadata,
@@ -4794,13 +4794,13 @@ mod tests {
         rzz_metadata.insert("source_label".to_string(), "probe:szz-host".to_string());
         let mut source_metadata = VecDeque::from([
             SourceTraceMetadata {
-                native_match: false,
+                native_match: !rz_metadata.contains_key("source_gate"),
                 folded_phi: None,
                 op: QuantumOp::RZ(0.25, 0),
                 metadata: rz_metadata,
             },
             SourceTraceMetadata {
-                native_match: false,
+                native_match: !rzz_metadata.contains_key("source_gate"),
                 folded_phi: None,
                 op: QuantumOp::RZZ(0.5, 0, 1),
                 metadata: rzz_metadata,
@@ -4837,7 +4837,7 @@ mod tests {
                     ("source_lowering_required".into(), "true".into()),
                 ]),
                 native_match: true,
-                folded_phi: None,
+                folded_phi: Some(0.0),
             },
             SourceTraceMetadata {
                 op: idle.clone(),
@@ -4860,13 +4860,13 @@ mod tests {
         second_metadata.insert("source_label".to_string(), "probe:second".to_string());
         let mut source_metadata = VecDeque::from([
             SourceTraceMetadata {
-                native_match: false,
+                native_match: !first_metadata.contains_key("source_gate"),
                 folded_phi: None,
                 op: QuantumOp::RZZ(0.5, 0, 1),
                 metadata: first_metadata,
             },
             SourceTraceMetadata {
-                native_match: false,
+                native_match: !second_metadata.contains_key("source_gate"),
                 folded_phi: None,
                 op: QuantumOp::RZZ(-0.5, 2, 3),
                 metadata: second_metadata,
@@ -4904,8 +4904,8 @@ mod tests {
         metadata.insert("source_gate".to_string(), "H".to_string());
         metadata.insert("source_label".to_string(), "probe:h-prefix".to_string());
         let mut source_metadata = VecDeque::from([SourceTraceMetadata {
-            native_match: false,
-            folded_phi: None,
+            native_match: !metadata.contains_key("source_gate"),
+            folded_phi: Some(-std::f64::consts::FRAC_PI_2),
             op: QuantumOp::RXY(std::f64::consts::FRAC_PI_2, -std::f64::consts::FRAC_PI_2, 2),
             metadata,
         }]);
@@ -4993,8 +4993,8 @@ mod tests {
             "probe:optimized-away-prefix".to_string(),
         );
         let source_metadata = VecDeque::from([SourceTraceMetadata {
-            native_match: false,
-            folded_phi: None,
+            native_match: !metadata.contains_key("source_gate"),
+            folded_phi: Some(0.0),
             op: QuantumOp::RXY(std::f64::consts::FRAC_PI_2, 0.0, 4),
             metadata,
         }]);
@@ -5012,7 +5012,7 @@ mod tests {
         );
         metadata.insert("source_lowering_required".to_string(), "true".to_string());
         let source_metadata = VecDeque::from([SourceTraceMetadata {
-            native_match: false,
+            native_match: !metadata.contains_key("source_gate"),
             folded_phi: None,
             op: QuantumOp::RZZ(std::f64::consts::FRAC_PI_2, 0, 1),
             metadata,

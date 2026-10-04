@@ -10,12 +10,14 @@
 // either express or implied. See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Frame rotations use the projective `StabMps` oracle; frame scalars use a dense oracle.
+//! Frame rotations and Clifford propagation agree with projective and dense oracles.
 
 use num_complex::Complex64;
 use pecos_core::{Angle64, QubitId};
 use pecos_random::PecosRng;
-use pecos_simulators::{ArbitraryRotationGateable, CliffordGateable, DenseStateVec};
+use pecos_simulators::{
+    ArbitraryRotationGateable, CliffordGateable, DenseStateVec, QuantumSimulator,
+};
 use pecos_stab_tn::stab_mps::{PauliKind, StabMps};
 
 #[derive(Clone, Copy, Debug)]
@@ -109,7 +111,10 @@ fn states(on: &StabMps, off: &StabMps) -> (Vec<Complex64>, Vec<Complex64>) {
     let mut off = off.clone();
     on.flush_pauli_frame_to_state();
     off.flush();
-    (on.state_vector(), off.state_vector())
+    (
+        on.state_vector_up_to_phase(),
+        off.state_vector_up_to_phase(),
+    )
 }
 
 fn assert_projective(a: &[Complex64], b: &[Complex64], label: &str) {
@@ -312,19 +317,21 @@ fn randomized_rotations_and_measurement_probabilities() {
 
 fn assert_dense(on: &mut StabMps, dense: &mut DenseStateVec, label: &str) {
     on.flush_pauli_frame_to_state();
-    for (i, a) in on.state_vector().iter().enumerate() {
-        let b = dense.get_amplitude(i);
-        assert!(
-            (*a - b).norm() < 2e-10,
-            "{label}: amplitude {i}: {a} vs {b}"
-        );
-    }
+    let actual = on.state_vector_up_to_phase();
+    let expected: Vec<_> = (0..actual.len())
+        .map(|index| dense.get_amplitude(index))
+        .collect();
+    assert_projective(&actual, &expected, label);
 }
 
 #[test]
-fn frame_cx_exact_phase() {
-    let mut on = StabMps::builder(2).pauli_frame_tracking(true).build();
-    let mut dense = DenseStateVec::new(2);
+fn frame_cx_up_to_phase() {
+    let mut on = StabMps::builder(4).pauli_frame_tracking(true).build();
+    let mut dense = DenseStateVec::new(4);
+    for q in 0..2 {
+        on.h(&[QubitId(q)]).cx(&[(QubitId(q), QubitId(q + 2))]);
+        dense.h(&[QubitId(q)]).cx(&[(QubitId(q), QubitId(q + 2))]);
+    }
     on.inject_x_in_frame(QubitId(0));
     on.inject_z_in_frame(QubitId(1));
     dense.x(&[QubitId(0)]).z(&[QubitId(1)]);
@@ -334,8 +341,10 @@ fn frame_cx_exact_phase() {
 }
 
 fn sequential_injection_case(first: PauliKind, second: PauliKind) {
-    let mut on = StabMps::builder(1).pauli_frame_tracking(true).build();
-    let mut dense = DenseStateVec::new(1);
+    let mut on = StabMps::builder(2).pauli_frame_tracking(true).build();
+    let mut dense = DenseStateVec::new(2);
+    on.h(&[QubitId(0)]).cx(&[(QubitId(0), QubitId(1))]);
+    dense.h(&[QubitId(0)]).cx(&[(QubitId(0), QubitId(1))]);
     inject(&mut on, first, 0);
     inject(&mut on, second, 0);
     pauli(&mut dense, first, 0);
@@ -344,17 +353,17 @@ fn sequential_injection_case(first: PauliKind, second: PauliKind) {
 }
 
 #[test]
-fn frame_x_then_z_exact_phase() {
+fn frame_x_then_z_up_to_phase() {
     sequential_injection_case(PauliKind::X, PauliKind::Z);
 }
 
 #[test]
-fn frame_y_then_x_exact_phase() {
+fn frame_y_then_x_up_to_phase() {
     sequential_injection_case(PauliKind::Y, PauliKind::X);
 }
 
 #[test]
-fn sequential_injections_exact_phase() {
+fn sequential_injections_up_to_phase() {
     for first in [PauliKind::X, PauliKind::Y, PauliKind::Z] {
         for second in [PauliKind::X, PauliKind::Y, PauliKind::Z] {
             sequential_injection_case(first, second);
@@ -390,7 +399,7 @@ fn noise_channels_before_rotations() {
 }
 
 #[test]
-fn pending_rz_y_and_phase_exact_u() {
+fn pending_rz_y_and_u() {
     for tail in [
         Angle64::ZERO,
         Angle64::QUARTER_TURN,
@@ -420,9 +429,8 @@ fn pending_rz_y_and_phase_exact_u() {
 }
 
 #[test]
-fn every_frame_clifford_conjugation_exact_phase() {
-    // These preparations keep the represented tableau's canonical scalar
-    // unchanged under the tested gate, isolating the frame's exact operator.
+fn every_frame_clifford_conjugation_up_to_phase() {
+    // Bell partners distinguish every frame Pauli up to a global phase.
     for op in [Op::H, Op::S, Op::Sdg, Op::X, Op::Y, Op::Z, Op::Cx, Op::Cz] {
         for first in [
             None,
@@ -436,15 +444,11 @@ fn every_frame_clifford_conjugation_exact_phase() {
                 Some(PauliKind::Y),
                 Some(PauliKind::Z),
             ] {
-                let mut on = StabMps::builder(2).pauli_frame_tracking(true).build();
-                let mut dense = DenseStateVec::new(2);
-                if matches!(op, Op::X | Op::Y) {
-                    on.h(&[QubitId(0)]);
-                    dense.h(&[QubitId(0)]);
-                }
-                if matches!(op, Op::Y) {
-                    on.sz(&[QubitId(0)]);
-                    dense.sz(&[QubitId(0)]);
+                let mut on = StabMps::builder(4).pauli_frame_tracking(true).build();
+                let mut dense = DenseStateVec::new(4);
+                for q in 0..2 {
+                    on.h(&[QubitId(q)]).cx(&[(QubitId(q), QubitId(q + 2))]);
+                    dense.h(&[QubitId(q)]).cx(&[(QubitId(q), QubitId(q + 2))]);
                 }
                 for (q, kind) in [first, second].into_iter().enumerate() {
                     if let Some(kind) = kind {
@@ -465,42 +469,78 @@ fn every_frame_clifford_conjugation_exact_phase() {
 }
 
 #[test]
-fn scalar_only_frame_flush() {
-    let mut on = StabMps::builder(1).pauli_frame_tracking(true).build();
-    let mut dense = DenseStateVec::new(1);
-    for kind in [PauliKind::X, PauliKind::Z, PauliKind::X, PauliKind::Z] {
-        inject(&mut on, kind, 0);
-        pauli(&mut dense, kind, 0);
-    }
-    assert!(!on.frame_x_bit(QubitId(0)) && !on.frame_z_bit(QubitId(0)));
-    assert_dense(&mut on, &mut dense, "scalar -1 with identity support");
-    assert_dense(
-        &mut on,
-        &mut dense,
-        "second flush does not reapply the scalar",
-    );
+#[should_panic(expected = "pauli_frame_tracking")]
+fn inject_x_in_frame_requires_tracking() {
+    let mut sim = StabMps::new(1);
+    sim.inject_x_in_frame(QubitId(0));
 }
 
 #[test]
-fn half_turn_after_x_frame_exact_phase() {
-    // Angle64 identifies RZ(pi) and RZ(-pi), so conjugation by the frame
-    // shows up only in the global phase: X RZ(pi) X = +iZ, not -iZ.
-    for merge in [false, true] {
-        let mut on = StabMps::builder(1)
-            .merge_rz(merge)
-            .pauli_frame_tracking(true)
-            .build();
-        let mut dense = DenseStateVec::new(1);
-        on.h(&[QubitId(0)]);
-        dense.h(&[QubitId(0)]);
-        on.inject_x_in_frame(QubitId(0));
-        dense.x(&[QubitId(0)]);
-        on.rz(Angle64::HALF_TURN, &[QubitId(0)]);
-        dense.rz(Angle64::HALF_TURN, &[QubitId(0)]);
-        assert_dense(
-            &mut on,
-            &mut dense,
-            &format!("X frame then RZ(pi), merge={merge}"),
-        );
+#[should_panic(expected = "pauli_frame_tracking")]
+fn inject_y_in_frame_requires_tracking() {
+    let mut sim = StabMps::new(1);
+    sim.inject_y_in_frame(QubitId(0));
+}
+
+#[test]
+#[should_panic(expected = "pauli_frame_tracking")]
+fn inject_z_in_frame_requires_tracking() {
+    let mut sim = StabMps::new(1);
+    sim.inject_z_in_frame(QubitId(0));
+}
+
+#[test]
+#[should_panic(expected = "pauli_frame_tracking")]
+fn inject_paulis_in_frame_requires_tracking() {
+    let mut sim = StabMps::new(1);
+    sim.inject_paulis_in_frame(&[]);
+}
+
+#[test]
+#[should_panic(expected = "pauli_frame_tracking")]
+fn frame_x_bit_requires_tracking() {
+    let sim = StabMps::new(1);
+    let _ = sim.frame_x_bit(QubitId(0));
+}
+
+#[test]
+#[should_panic(expected = "pauli_frame_tracking")]
+fn frame_z_bit_requires_tracking() {
+    let sim = StabMps::new(1);
+    let _ = sim.frame_z_bit(QubitId(0));
+}
+
+#[test]
+fn reset_retains_frame_setting_and_clears_bits() {
+    for tracking in [false, true] {
+        let mut sim = StabMps::builder(2).pauli_frame_tracking(tracking).build();
+        if tracking {
+            sim.inject_y_in_frame(QubitId(0));
+            sim.inject_x_in_frame(QubitId(1));
+        }
+        sim.reset();
+        assert_eq!(sim.pauli_frame_tracking(), tracking);
+        if tracking {
+            for q in [QubitId(0), QubitId(1)] {
+                assert!(!sim.frame_x_bit(q));
+                assert!(!sim.frame_z_bit(q));
+            }
+        }
+        assert!(sim.is_state_exact());
     }
+}
+
+#[test]
+fn frame_flush_without_tracking_still_flushes_pending_rotations() {
+    let mut sim = StabMps::builder(1).merge_rz(true).build();
+    let mut dense = DenseStateVec::new(1);
+    sim.h(&[QubitId(0)])
+        .rz(Angle64::from_radians(0.37), &[QubitId(0)]);
+    dense
+        .h(&[QubitId(0)])
+        .rz(Angle64::from_radians(0.37), &[QubitId(0)]);
+    assert!(!sim.is_state_exact());
+    assert_dense(&mut sim, &mut dense, "flush without frame");
+    assert!(!sim.pauli_frame_tracking());
+    assert!(sim.is_state_exact());
 }

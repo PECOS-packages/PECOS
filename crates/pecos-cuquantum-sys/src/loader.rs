@@ -26,8 +26,12 @@ pub enum CuQuantumLoadError {
         searched_paths: String,
         system_loader: String,
     },
-    #[error("Found {path} but could not load it: {reason}")]
-    LibraryLoadFailed { path: String, reason: String },
+    #[error("Found {path} but could not load it: {reason}; system loader: {system_loader}")]
+    LibraryLoadFailed {
+        path: String,
+        reason: String,
+        system_loader: String,
+    },
     #[error("Missing symbol {symbol} in {lib_name}: {reason}")]
     MissingSymbol {
         lib_name: String,
@@ -325,10 +329,7 @@ fn try_load_lib(names: &[&str], search_dirs: &[PathBuf]) -> LoadResult<Library> 
                     let reason = std::error::Error::source(&e).unwrap_or(&e).to_string();
                     log::debug!("  Failed: {reason}");
                     if first_load_failure.is_none() && path.exists() {
-                        first_load_failure = Some(CuQuantumLoadError::LibraryLoadFailed {
-                            path: path.display().to_string(),
-                            reason,
-                        });
+                        first_load_failure = Some((path.display().to_string(), reason));
                     }
                 }
             }
@@ -347,8 +348,13 @@ fn try_load_lib(names: &[&str], search_dirs: &[PathBuf]) -> LoadResult<Library> 
         }
     }
 
-    if let Some(failure) = first_load_failure {
-        return Err(failure);
+    let system_loader = system_loader_failures.join("; ");
+    if let Some((path, reason)) = first_load_failure {
+        return Err(CuQuantumLoadError::LibraryLoadFailed {
+            path,
+            reason,
+            system_loader,
+        });
     }
 
     let primary = names[0];
@@ -359,7 +365,7 @@ fn try_load_lib(names: &[&str], search_dirs: &[PathBuf]) -> LoadResult<Library> 
         .join(", ");
     Err(CuQuantumLoadError::LibraryNotFound {
         searched_paths: format!("{primary} not found in: {searched}"),
-        system_loader: system_loader_failures.join("; "),
+        system_loader,
     })
 }
 
@@ -506,13 +512,20 @@ mod tests {
         std::fs::write(dir.join(name), b"not a shared library").unwrap();
         let result = try_load_lib(&[name], std::slice::from_ref(&dir));
         std::fs::remove_dir_all(&dir).unwrap();
-        let Err(CuQuantumLoadError::LibraryLoadFailed { path, reason }) = result else {
+        let Err(CuQuantumLoadError::LibraryLoadFailed {
+            path,
+            reason,
+            system_loader,
+        }) = result
+        else {
             panic!("expected LibraryLoadFailed, got {:?}", result.err());
         };
         assert!(path.ends_with(name), "{path}");
         // The loader's own message, not libloading's "dlopen failed".
         if cfg!(target_os = "linux") {
             assert!(reason.contains(name), "{reason}");
+            // The system loader's attempt is reported too.
+            assert!(system_loader.contains(name), "{system_loader}");
         }
     }
 

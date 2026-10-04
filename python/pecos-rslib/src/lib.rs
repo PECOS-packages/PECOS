@@ -187,7 +187,7 @@ fn setup_cuda_library_path() {
 /// with additional Python-native enhancements.
 #[pymodule]
 #[allow(clippy::too_many_lines)] // Module initialization legitimately needs many lines
-fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn pecos_rslib(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Note: Rust logging is controlled via RUST_LOG environment variable (e.g., RUST_LOG=debug)
     // We don't use pyo3-log because it interferes with Python's logging.basicConfig() in tests
     log::debug!("pecos_rslib module initializing...");
@@ -195,59 +195,78 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Set up QuEST CUDA backend path for runtime loading (before any QuEST usage)
     setup_cuda_library_path();
 
-    // CRITICAL: Preload libselene_simple_runtime.so with RTLD_GLOBAL BEFORE anything else
-    // This prevents conflicts with LLVM-21.1 when the Selene runtime is loaded later
+    // Preload libselene_simple_runtime.so with RTLD_GLOBAL before anything else.
+    // It was added to avoid a conflict with LLVM 21.1 that could not be
+    // reproduced since; see issue #1021.
     #[cfg(unix)]
     {
         use std::ffi::CString;
 
         log::debug!("Unix detected, attempting Selene runtime preload...");
 
-        // Build search paths for libselene_simple_runtime.so:
-        // 1. PECOS_SELENE_PRELOAD env var (explicit override)
-        // 2. ~/.pecos/lib/
-        // 3. Relative development paths (target/debug, target/release)
-        let mut possible_paths: Vec<std::path::PathBuf> = Vec::new();
-
-        if let Ok(path) = std::env::var("PECOS_SELENE_PRELOAD") {
-            possible_paths.push(std::path::PathBuf::from(path));
-        }
-
-        if let Some(home) = dirs::home_dir() {
-            possible_paths.push(home.join(".pecos/lib/libselene_simple_runtime.so"));
-        }
-
-        possible_paths.push("target/debug/libselene_simple_runtime.so".into());
-        possible_paths.push("target/release/libselene_simple_runtime.so".into());
+        // An explicit PECOS_SELENE_PRELOAD is the only candidate when set, and
+        // its failure is reported to Python rather than replaced by another
+        // library. Otherwise search ~/.pecos/lib/ and the relative development
+        // paths (target/debug, target/release).
+        let explicit = std::env::var_os("PECOS_SELENE_PRELOAD").map(std::path::PathBuf::from);
+        let possible_paths: Vec<std::path::PathBuf> = if let Some(path) = &explicit {
+            vec![path.clone()]
+        } else {
+            let mut paths = Vec::new();
+            if let Some(home) = dirs::home_dir() {
+                paths.push(home.join(".pecos/lib/libselene_simple_runtime.so"));
+            }
+            paths.push("target/debug/libselene_simple_runtime.so".into());
+            paths.push("target/release/libselene_simple_runtime.so".into());
+            paths
+        };
 
         log::debug!("Checking for Selene runtime libraries...");
+        let mut explicit_failure = None;
         for path in &possible_paths {
             let path_str = path.to_string_lossy();
             log::trace!("Checking path: {path_str}");
-            if path.exists() {
-                log::debug!("Found Selene runtime! Attempting to preload: {path_str}");
+            if !path.exists() {
+                if explicit.is_some() {
+                    explicit_failure = Some(format!("{path_str} does not exist"));
+                }
+                continue;
+            }
+            log::debug!("Found Selene runtime! Attempting to preload: {path_str}");
 
-                unsafe {
-                    let path_cstr =
-                        CString::new(path_str.as_bytes()).expect("path contains null byte");
-                    // RTLD_NOW: a later eager open of this same file reuses this
-                    // handle, so a lazy load here would hide unresolved imports.
-                    let handle =
-                        libc::dlopen(path_cstr.as_ptr(), libc::RTLD_NOW | libc::RTLD_GLOBAL);
-                    if handle.is_null() {
-                        let error_ptr = libc::dlerror();
-                        if !error_ptr.is_null() {
-                            let error = std::ffi::CStr::from_ptr(error_ptr).to_string_lossy();
-                            log::warn!("Failed to preload {path_str}: {error}");
-                        }
+            unsafe {
+                let path_cstr = CString::new(path_str.as_bytes()).expect("path contains null byte");
+                // RTLD_NOW: a later eager open of this same file reuses this
+                // handle, so a lazy load here would hide unresolved imports.
+                let handle = libc::dlopen(path_cstr.as_ptr(), libc::RTLD_NOW | libc::RTLD_GLOBAL);
+                if handle.is_null() {
+                    let error_ptr = libc::dlerror();
+                    let error = if error_ptr.is_null() {
+                        "unknown loader error".into()
                     } else {
-                        log::info!(
-                            "Successfully preloaded Selene runtime with RTLD_GLOBAL from: {path_str}"
-                        );
-                        break;
+                        std::ffi::CStr::from_ptr(error_ptr).to_string_lossy()
+                    };
+                    log::warn!("Failed to preload {path_str}: {error}");
+                    if explicit.is_some() {
+                        explicit_failure = Some(error.into_owned());
                     }
+                } else {
+                    log::info!(
+                        "Successfully preloaded Selene runtime with RTLD_GLOBAL from: {path_str}"
+                    );
+                    break;
                 }
             }
+        }
+        if let Some(failure) = explicit_failure {
+            let message = CString::new(format!("PECOS_SELENE_PRELOAD was not loaded: {failure}"))
+                .expect("message contains null byte");
+            PyErr::warn(
+                py,
+                &py.get_type::<pyo3::exceptions::PyRuntimeWarning>(),
+                &message,
+                1,
+            )?;
         }
     }
 

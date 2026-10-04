@@ -1010,10 +1010,23 @@ impl SeleneRuntime {
         );
 
         unsafe {
-            let lib = Arc::new(
-                libloading::Library::new(&self.plugin_path)
-                    .map_err(|e| RuntimeError::FfiError(format!("Failed to load plugin: {e}")))?,
-            );
+            // RTLD_NOW: an unresolved import fails here with the loader's message
+            // instead of terminating the process on its first call.
+            #[cfg(unix)]
+            let library = libloading::os::unix::Library::open(
+                Some(&self.plugin_path),
+                libloading::os::unix::RTLD_NOW | libloading::os::unix::RTLD_LOCAL,
+            )
+            .map(Into::into);
+            #[cfg(not(unix))]
+            let library = libloading::Library::new(&self.plugin_path);
+            let lib = Arc::new(library.map_err(|e| {
+                RuntimeError::FfiError(format!(
+                    "Failed to load plugin {}: {}",
+                    self.plugin_path,
+                    std::error::Error::source(&e).unwrap_or(&e)
+                ))
+            })?);
 
             let descriptor = Self::runtime_plugin_descriptor(&lib)?;
 
@@ -2899,6 +2912,50 @@ impl Drop for SeleneRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Discriminates on Linux; macOS binds the fixture's import at load either way.
+    #[cfg(unix)]
+    #[test]
+    fn selene_runtime_rejects_unresolved_import_at_load() {
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("missing_import.c");
+        let library = directory.path().join(if cfg!(target_os = "macos") {
+            "missing_import.dylib"
+        } else {
+            "missing_import.so"
+        });
+        std::fs::write(
+            &source,
+            "extern void pecos_test_missing_import(void);\n\
+             void pecos_test_export(void) { pecos_test_missing_import(); }\n",
+        )
+        .unwrap();
+        let mut compiler = std::process::Command::new("cc");
+        compiler.args(["-shared", "-fPIC"]);
+        #[cfg(target_os = "linux")]
+        compiler.arg("-Wl,-z,lazy");
+        #[cfg(target_os = "macos")]
+        compiler.arg("-Wl,-undefined,dynamic_lookup");
+        let output = compiler
+            .arg(&source)
+            .arg("-o")
+            .arg(&library)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "C fixture compilation failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let mut runtime = SeleneRuntime::new(&library);
+        let error = runtime
+            .lower_operations(&[Operation::AllocateQubit { id: 0 }])
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("pecos_test_missing_import"),
+            "unexpected loader error: {error}"
+        );
+    }
 
     #[test]
     fn custom_rejection_remains_terminal_until_reset() {

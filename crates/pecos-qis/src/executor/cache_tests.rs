@@ -568,7 +568,9 @@ fn cleanup_owned() {
         root().join(format!("program_{digest}.{LIB_SUFFIX}")),
         cache.join("dependency.tar.gz"),
         cache.join(".hidden"),
-        cache.join(format!("program_{}.{LIB_SUFFIX}", "A".repeat(64))),
+        // Uppercase hex is not owned. Use a digest that cannot name an owned file
+        // on a case-insensitive filesystem (macOS, Windows).
+        cache.join(format!("program_{}.{LIB_SUFFIX}", "C".repeat(64))),
         cache.join(format!("program_{}.so", "a".repeat(63))),
         cache.join(format!("program_{digest}.so.compiling.123")),
         cache.join(format!(".program_{digest}.bad-token.tmp")),

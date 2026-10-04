@@ -54,7 +54,7 @@ def test_preloaded_runtime_with_missing_import_fails_at_load(tmp_path: Path) -> 
             raise AssertionError("a runtime with an unresolved import must fail to load")
         ''',
     )
-    env = {**os.environ, "PECOS_SELENE_PRELOAD": str(library)}
+    env = {**os.environ, "PECOS_SELENE_PRELOAD": str(library), "PECOS_CACHE_DIR": str(tmp_path / "program-cache")}
     completed = subprocess.run(
         [sys.executable, "-c", script, str(library)],
         env=env,

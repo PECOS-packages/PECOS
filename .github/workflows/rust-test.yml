@@ -31,6 +31,8 @@ on:
       - 'python/pecos-rslib-exp/**'
       - 'python/pecos-rslib-llvm/**'
       - 'python/selene-plugins/**'
+      - 'python/quantum-pecos/tests/pecos/integration/ll/**'
+      - '.gitattributes'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'Justfile'
@@ -51,6 +53,8 @@ on:
       - 'python/pecos-rslib-exp/**'
       - 'python/pecos-rslib-llvm/**'
       - 'python/selene-plugins/**'
+      - 'python/quantum-pecos/tests/pecos/integration/ll/**'
+      - '.gitattributes'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'Justfile'
@@ -81,7 +85,7 @@ jobs:
       # Reuse the full-history merge-base approach from pr-core-gate.yml.
       # Non-PR events and explicitly labeled PRs need no changed-file lookup.
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-        if: github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ci:full-rust')
+        if: github.event_name == 'pull_request'
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -96,6 +100,8 @@ jobs:
           import subprocess
 
           # Whole crates include their build scripts, native sources and fixtures.
+          # pecos-rslib*, pecos-julia-ffi: `pecos rust test` excludes them
+          # (crates/pecos-cli/src/cli/rust_cmd.rs), so they cannot change this matrix.
           # fnmatchcase's * also spans /, so these ** patterns cover all descendants.
           platform_paths = (
               "crates/benchmarks/**",
@@ -104,6 +110,7 @@ jobs:
               "crates/pecos-chromobius/**",
               "crates/pecos-cli/**",
               "crates/pecos-cppsparsestab/**",
+              # pecos-cuquantum-sys is tested; pecos-cuquantum itself is not.
               "crates/pecos-cuquantum*/**",
               "crates/pecos-decoders/**",
               "crates/pecos-ffi/**",
@@ -118,14 +125,16 @@ jobs:
               "crates/pecos-quantum/**",
               "crates/pecos-selene-core/**",
               "crates/pecos-tesseract/**",
+              "crates/pecos-wasm/**",
               "exp/guppy-zlup/**",
               "exp/pecos-frontier*/**",
               "exp/pecos-trellis/**",
               "exp/zlu*/**",
-              "julia/pecos-julia-ffi/**",
-              "python/pecos-rslib*/**",
               "python/selene-plugins/**",
               "examples/**",
+              # Rust tests include these QIS/QIR fixtures at compile time.
+              "python/quantum-pecos/tests/pecos/integration/ll/**",
+              ".gitattributes",
               "Cargo.toml",
               "Cargo.lock",
               "Justfile",
@@ -137,7 +146,8 @@ jobs:
               event = json.load(source)
           pr = event.get("pull_request", {})
           full = os.environ["GITHUB_EVENT_NAME"] != "pull_request" or any(
-              label["name"] == "ci:full-rust" for label in pr.get("labels", [])
+              # GitHub label names are case-insensitive.
+              label["name"].lower() == "ci:full-rust" for label in pr.get("labels", [])
           )
           if not full:
               # Compare the event's exact PR head against its merge base, not the

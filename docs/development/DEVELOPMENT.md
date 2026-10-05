@@ -293,7 +293,11 @@ PECOS uses `~/.pecos/` to store external dependencies and build artifacts that c
 |----------|---------|---------|
 | `PECOS_HOME` | Override entire home directory | `~/.pecos/` |
 | `PECOS_DEPS_DIR` | Override deps location | `$PECOS_HOME/deps/` |
-| `PECOS_CACHE_DIR` | Override cache location | `$PECOS_HOME/cache/` |
+| `PECOS_CACHE_DIR` | Override archive and compiled-program cache root | Archives: `$PECOS_HOME/cache/`; programs: `<temp_dir>/pecos_compiled_cache/` |
+
+Compiled QIS programs live in `qis-programs/` under their cache root. Downloaded archives
+remain directly under the archive root. Old compiled programs at the root from earlier
+versions are neither reused nor removed.
 
 These can be set via shell environment or in `.cargo/config.toml`:
 

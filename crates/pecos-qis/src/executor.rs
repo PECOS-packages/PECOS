@@ -75,35 +75,13 @@ static COMPILED_PROGRAM_CACHE: OnceLock<
 static VALIDATED_PROGRAM_CACHE: OnceLock<std::sync::Mutex<std::collections::BTreeSet<[u8; 32]>>> =
     OnceLock::new();
 
-/// Tracks whether cache cleanup has been performed (once per process).
-static CACHE_CLEANUP_DONE: OnceLock<()> = OnceLock::new();
+mod program_cache;
+use program_cache::{CompilationLock, LIB_SUFFIX, LockOutcome, get_persistent_cache_dir};
 
-/// Directory for persistent compiled program cache.
-///
-/// Unlike temp files that are deleted when the process exits, files in this directory
-/// persist across process invocations. This enables:
-/// - Tests running in parallel (each subprocess can reuse previously compiled programs)
-/// - Repeated `pecos run` commands to reuse cached compilation
-///
-/// The cache is cleaned up periodically (files older than 24 hours are removed on startup).
-fn get_persistent_cache_dir() -> Result<PathBuf, InterfaceError> {
-    // Use PECOS_CACHE_DIR if set, otherwise use a subdirectory of the system temp dir
-    let cache_dir = std::env::var("PECOS_CACHE_DIR").map_or_else(
-        |_| std::env::temp_dir().join("pecos_compiled_cache"),
-        PathBuf::from,
-    );
-
-    // Ensure the directory exists
-    std::fs::create_dir_all(&cache_dir)
-        .map_err(|e| InterfaceError::LoadError(format!("Failed to create cache directory: {e}")))?;
-
-    // Cleanup old files (older than 24 hours) - do this once per process
-    CACHE_CLEANUP_DONE.get_or_init(|| {
-        cleanup_old_cache_files(&cache_dir, 24 * 60 * 60); // 24 hours
-    });
-
-    Ok(cache_dir)
-}
+#[cfg(test)]
+mod cache_faults;
+#[cfg(test)]
+mod cache_tests;
 
 /// A fingerprint of the running build, mixed into the persistent compiled-program
 /// cache key so a shared object produced by one build is never reused by a
@@ -165,133 +143,6 @@ struct CacheManifest {
     pecos_qis_version: String,
     /// Target arch/os the object was compiled for.
     target: String,
-}
-
-/// Remove cache files older than the specified age in seconds
-fn cleanup_old_cache_files(cache_dir: &Path, max_age_secs: u64) {
-    let now = std::time::SystemTime::now();
-    let Ok(entries) = std::fs::read_dir(cache_dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let dominated_by_age = entry
-            .metadata()
-            .ok()
-            .and_then(|m| m.modified().ok())
-            .and_then(|modified| now.duration_since(modified).ok())
-            .is_some_and(|age| age.as_secs() > max_age_secs);
-
-        if dominated_by_age {
-            debug!("Removing old cache file: {}", entry.path().display());
-            let _ = std::fs::remove_file(entry.path());
-        }
-    }
-}
-
-/// File-based lock for cross-process synchronization during compilation.
-///
-/// This prevents multiple processes from compiling the same program simultaneously,
-/// which would waste resources and potentially cause race conditions.
-///
-/// The lock is acquired by creating a `.lock` file with `O_CREAT | O_EXCL` semantics.
-/// If the lock file already exists, the process waits and retries.
-struct CompilationLock {
-    lock_path: PathBuf,
-}
-
-impl CompilationLock {
-    /// Maximum time to wait for the lock (in seconds)
-    const MAX_WAIT_SECS: u64 = 120;
-    /// Time between retry attempts (in milliseconds)
-    const RETRY_DELAY_MS: u64 = 100;
-    /// Maximum age of a lock file before considering it stale (in seconds)
-    const STALE_LOCK_SECS: u64 = 300;
-
-    /// Try to acquire a compilation lock for the given cache path.
-    ///
-    /// Returns `Some(lock)` if acquired, `None` if the compiled file appeared while waiting.
-    fn acquire(cache_path: &Path) -> Result<Option<Self>, InterfaceError> {
-        let lock_path = cache_path.with_extension("lock");
-        let start = std::time::Instant::now();
-
-        loop {
-            // Try to create the lock file exclusively
-            match std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&lock_path)
-            {
-                Ok(file) => {
-                    // Write our PID to help debug stale locks
-                    use std::io::Write;
-                    let mut file = file;
-                    let _ = writeln!(file, "{}", std::process::id());
-                    debug!("Acquired compilation lock: {}", lock_path.display());
-                    return Ok(Some(Self { lock_path }));
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                    // Lock exists - another process is compiling
-
-                    // Check if the compiled file appeared (other process finished)
-                    if cache_path.exists() {
-                        debug!(
-                            "Compiled file appeared while waiting for lock: {}",
-                            cache_path.display()
-                        );
-                        // Try to clean up stale lock if we can
-                        let _ = std::fs::remove_file(&lock_path);
-                        return Ok(None);
-                    }
-
-                    // Check if lock is stale (process crashed)
-                    let lock_age = std::fs::metadata(&lock_path)
-                        .ok()
-                        .and_then(|m| m.modified().ok())
-                        .and_then(|modified| {
-                            std::time::SystemTime::now().duration_since(modified).ok()
-                        });
-
-                    if let Some(age) = lock_age.filter(|a| a.as_secs() > Self::STALE_LOCK_SECS) {
-                        warn!(
-                            "Removing stale compilation lock ({}s old): {}",
-                            age.as_secs(),
-                            lock_path.display()
-                        );
-                        let _ = std::fs::remove_file(&lock_path);
-                        continue; // Try again immediately
-                    }
-
-                    // Check timeout
-                    if start.elapsed().as_secs() > Self::MAX_WAIT_SECS {
-                        return Err(InterfaceError::LoadError(format!(
-                            "Timeout waiting for compilation lock: {}",
-                            lock_path.display()
-                        )));
-                    }
-
-                    // Wait and retry
-                    debug!(
-                        "Waiting for compilation lock: {} (elapsed: {:?})",
-                        lock_path.display(),
-                        start.elapsed()
-                    );
-                    std::thread::sleep(std::time::Duration::from_millis(Self::RETRY_DELAY_MS));
-                }
-                Err(e) => {
-                    return Err(InterfaceError::LoadError(format!(
-                        "Failed to create compilation lock: {e}"
-                    )));
-                }
-            }
-        }
-    }
-}
-
-impl Drop for CompilationLock {
-    fn drop(&mut self) {
-        debug!("Releasing compilation lock: {}", self.lock_path.display());
-        let _ = std::fs::remove_file(&self.lock_path);
-    }
 }
 
 /// Thread-safe wrapper for a loaded dynamic library.
@@ -928,9 +779,6 @@ pub struct QisHeliosInterface {
     /// Metadata about the interface
     metadata: BTreeMap<String, String>,
 
-    /// Keep temporary files alive (`TempPath` auto-deletes when dropped)
-    temp_files: Vec<tempfile::TempPath>,
-
     // Note: The QIS FFI library and program libraries are stored in
     // process-wide caches/singletons to avoid macOS TLS/dynamic linker issues.
     // Program libraries are cached by path in PROGRAM_LIB_CACHE.
@@ -948,7 +796,6 @@ impl QisHeliosInterface {
             program: Vec::new(),
             format: ProgramFormat::QisBitcode,
             metadata: BTreeMap::new(),
-            temp_files: Vec::new(),
             execution_context: None,
         }
     }
@@ -1524,17 +1371,9 @@ impl QisHeliosInterface {
         }
     }
 
-    /// Link the program with the QIS FFI runtime to create a shared library
-    #[allow(clippy::too_many_lines)]
-    fn create_shared_library(&mut self) -> Result<PathBuf, InterfaceError> {
+    fn program_digest(&self) -> Result<String, InterfaceError> {
         use sha2::{Digest, Sha256};
         use std::fmt::Write as _;
-
-        // Program libraries import from the FFI runtime. A runtime that fails
-        // to load stays failed for the process, so check it before touching the
-        // shared cache: otherwise every load here would treat a valid cached
-        // program as invalid and delete it.
-        Self::get_qis_ffi_lib_singleton()?;
 
         // Compute a stable content digest for caching.
         // - SHA-256 (not the std `DefaultHasher`, whose output is not stable
@@ -1565,6 +1404,65 @@ impl QisHeliosInterface {
         for byte in digest {
             let _ = write!(content_hash, "{byte:02x}");
         }
+
+        Ok(content_hash)
+    }
+
+    fn remember_program(&mut self, digest: &str, path: &Path) -> PathBuf {
+        let cache = COMPILED_PROGRAM_CACHE.get_or_init(|| std::sync::Mutex::new(BTreeMap::new()));
+        if let Ok(mut cache) = cache.lock() {
+            cache.insert(digest.to_owned(), path.to_owned());
+        }
+        self.executable_path = Some(path.to_owned());
+        path.to_owned()
+    }
+
+    fn load_cached_program(
+        path: &Path,
+        #[cfg(test)] site: cache_faults::Site,
+    ) -> Result<(), InterfaceError> {
+        #[cfg(test)]
+        cache_faults::check(site, path).map_err(|e| {
+            InterfaceError::LoadError(format!("Injected program load failure: {e}"))
+        })?;
+        Self::get_or_cache_program_lib(path).map(|_| ())
+    }
+
+    fn try_published_program(
+        &mut self,
+        digest: &str,
+        path: &Path,
+        #[cfg(test)] site: cache_faults::Site,
+    ) -> Option<PathBuf> {
+        if !path.exists() {
+            return None;
+        }
+        match Self::load_cached_program(
+            path,
+            #[cfg(test)]
+            site,
+        ) {
+            Ok(()) => Some(self.remember_program(digest, path)),
+            Err(e) => {
+                warn!("Cannot load published program {}: {e}", path.display());
+                None
+            }
+        }
+    }
+
+    // A no-op outside tests; the same call sites always perform the real I/O.
+    #[cfg(not(test))]
+    const CHECK_CACHE_FAULT: fn() -> std::io::Result<()> = || Ok(());
+    #[cfg(test)]
+    const CHECK_CACHE_FAULT: fn(cache_faults::Site, &Path) -> std::io::Result<()> =
+        cache_faults::check;
+
+    /// Link the program with the QIS FFI runtime to create a shared library
+    #[allow(clippy::too_many_lines)]
+    fn create_shared_library(&mut self) -> Result<PathBuf, InterfaceError> {
+        // Runtime failure must be reported before inspecting the program cache.
+        Self::get_qis_ffi_lib_singleton()?;
+        let content_hash = self.program_digest()?;
 
         // Check if we already have a compiled library for this content
         let compiled_cache = COMPILED_PROGRAM_CACHE
@@ -1603,109 +1501,64 @@ impl QisHeliosInterface {
 
         // Check for a persistent cache file (survives process restarts)
         let cache_dir = get_persistent_cache_dir()?;
-        let lib_suffix = if cfg!(target_os = "windows") {
-            ".dll"
-        } else {
-            ".so"
-        };
-        let persistent_cache_path = cache_dir.join(format!("program_{content_hash}{lib_suffix}"));
-
-        if persistent_cache_path.exists() {
-            debug!(
-                "Found persistent cache file: {}",
-                persistent_cache_path.display()
-            );
-            // Load the cached library
-            match Self::get_or_cache_program_lib(&persistent_cache_path) {
-                Ok(_lib) => {
-                    // Update in-process cache
-                    {
-                        let compiled_cache = COMPILED_PROGRAM_CACHE.get_or_init(|| {
-                            std::sync::Mutex::new(std::collections::BTreeMap::new())
-                        });
-                        if let Ok(mut cache_guard) = compiled_cache.lock() {
-                            cache_guard.insert(content_hash.clone(), persistent_cache_path.clone());
-                        }
-                    }
-                    self.executable_path = Some(persistent_cache_path.clone());
-                    info!(
-                        "Loaded program from persistent cache: {}",
-                        persistent_cache_path.display()
-                    );
-                    return Ok(persistent_cache_path);
-                }
-                Err(e) => {
-                    // Cache file is invalid, remove it and recompile
-                    warn!(
-                        "Persistent cache file invalid ({}), will recompile: {}",
-                        e,
-                        persistent_cache_path.display()
-                    );
-                    let _ = std::fs::remove_file(&persistent_cache_path);
-                }
-            }
+        let persistent_cache_path = cache_dir.join(format!("program_{content_hash}.{LIB_SUFFIX}"));
+        if let Some(path) = self.try_published_program(
+            &content_hash,
+            &persistent_cache_path,
+            #[cfg(test)]
+            cache_faults::Site::InitialLoad,
+        ) {
+            return Ok(path);
         }
 
-        // Acquire compilation lock to prevent multiple processes from compiling simultaneously
-        // This is a cross-process lock using file system primitives
-        let Some(_compilation_lock) = CompilationLock::acquire(&persistent_cache_path)? else {
-            // Another process compiled it while we waited - load the cached version
-            debug!("Another process compiled the program, loading from cache");
-            match Self::get_or_cache_program_lib(&persistent_cache_path) {
-                Ok(_lib) => {
-                    let compiled_cache = COMPILED_PROGRAM_CACHE
-                        .get_or_init(|| std::sync::Mutex::new(std::collections::BTreeMap::new()));
-                    if let Ok(mut cache_guard) = compiled_cache.lock() {
-                        cache_guard.insert(content_hash.clone(), persistent_cache_path.clone());
-                    }
-                    self.executable_path = Some(persistent_cache_path.clone());
-                    info!(
-                        "Loaded program compiled by another process: {}",
-                        persistent_cache_path.display()
-                    );
-                    return Ok(persistent_cache_path);
+        let budget = std::time::Duration::from_secs(120);
+        #[cfg(test)]
+        let budget = cache_faults::wait_budget(budget);
+        #[cfg(test)]
+        cache_faults::point(cache_faults::Site::BeforeLock, &persistent_cache_path);
+        let lock = CompilationLock::acquire(&cache_dir, &content_hash, budget)
+            .map_err(|e| InterfaceError::LoadError(format!("Failed to lock program cache: {e}")))?;
+        let _compilation_lock = match lock {
+            LockOutcome::Acquired(lock) => Some(lock),
+            LockOutcome::Unsupported => None,
+            LockOutcome::TimedOut => {
+                if let Some(path) = self.try_published_program(
+                    &content_hash,
+                    &persistent_cache_path,
+                    #[cfg(test)]
+                    cache_faults::Site::TimeoutLoad,
+                ) {
+                    return Ok(path);
                 }
-                Err(e) => {
-                    // The file that appeared is invalid - we need to recompile
-                    // But we don't have the lock, so we need to acquire it
-                    warn!("Cached file from other process is invalid: {e}");
-                    let _ = std::fs::remove_file(&persistent_cache_path);
-                    // Retry by recursively calling ourselves (will try to get lock again)
-                    return self.create_shared_library();
-                }
+                return Err(InterfaceError::LoadError(format!(
+                    "Timeout waiting for compilation lock: {}",
+                    persistent_cache_path.display()
+                )));
             }
         };
-
-        // Double-check the file doesn't exist after acquiring the lock
-        // (another process may have created it between our check and lock acquisition)
-        if persistent_cache_path.exists() {
-            match Self::get_or_cache_program_lib(&persistent_cache_path) {
-                Ok(_lib) => {
-                    let compiled_cache = COMPILED_PROGRAM_CACHE
-                        .get_or_init(|| std::sync::Mutex::new(std::collections::BTreeMap::new()));
-                    if let Ok(mut cache_guard) = compiled_cache.lock() {
-                        cache_guard.insert(content_hash.clone(), persistent_cache_path.clone());
-                    }
-                    self.executable_path = Some(persistent_cache_path.clone());
-                    info!(
-                        "Loaded program from cache (appeared after lock): {}",
-                        persistent_cache_path.display()
-                    );
-                    return Ok(persistent_cache_path);
-                }
-                Err(e) => {
-                    warn!("Cache file invalid after acquiring lock: {e}");
-                    let _ = std::fs::remove_file(&persistent_cache_path);
-                }
-            }
+        if let Some(path) = self.try_published_program(
+            &content_hash,
+            &persistent_cache_path,
+            #[cfg(test)]
+            cache_faults::Site::PostLockLoad,
+        ) {
+            return Ok(path);
         }
+
+        let staging = program_cache::staging_dir(&cache_dir, &content_hash)
+            .map_err(|e| InterfaceError::LoadError(format!("Failed to stage program: {e}")))?;
+        #[cfg(test)]
+        cache_faults::point(cache_faults::Site::Staged, staging.path());
+        #[cfg(test)]
+        cache_faults::check(cache_faults::Site::Link, staging.path())
+            .map_err(|e| InterfaceError::LoadError(format!("Injected linking failure: {e}")))?;
 
         // Find the Helios library using robust search
         let helios_lib_path = find_helios_lib()?;
         let helios_lib_path = helios_lib_path.to_string_lossy().to_string();
 
         // Create temporary files for the program
-        let mut program_file = NamedTempFile::new()
+        let mut program_file = NamedTempFile::new_in(staging.path())
             .map_err(|e| InterfaceError::LoadError(format!("Failed to create temp file: {e}")))?;
 
         // Get the program file path that we'll pass to clang
@@ -1730,9 +1583,10 @@ impl QisHeliosInterface {
 
                 let ir_path = program_file.into_temp_path();
 
-                let bitcode_file = NamedTempFile::with_suffix(".bc").map_err(|e| {
-                    InterfaceError::LoadError(format!("Failed to create bitcode file: {e}"))
-                })?;
+                let bitcode_file =
+                    NamedTempFile::with_suffix_in(".bc", staging.path()).map_err(|e| {
+                        InterfaceError::LoadError(format!("Failed to create bitcode file: {e}"))
+                    })?;
 
                 let llvm_as_cmd = find_llvm_tool("llvm-as");
 
@@ -1805,17 +1659,19 @@ entry:
 ";
 
                 // Write wrapper IR to temp file
-                let wrapper_ir_file = NamedTempFile::with_suffix(".ll").map_err(|e| {
-                    InterfaceError::LoadError(format!("Failed to create wrapper IR file: {e}"))
-                })?;
+                let wrapper_ir_file = NamedTempFile::with_suffix_in(".ll", staging.path())
+                    .map_err(|e| {
+                        InterfaceError::LoadError(format!("Failed to create wrapper IR file: {e}"))
+                    })?;
                 std::fs::write(wrapper_ir_file.path(), wrapper_ir).map_err(|e| {
                     InterfaceError::LoadError(format!("Failed to write wrapper IR: {e}"))
                 })?;
 
                 // Compile wrapper IR to bitcode
-                let wrapper_bc_file = NamedTempFile::with_suffix(".bc").map_err(|e| {
-                    InterfaceError::LoadError(format!("Failed to create wrapper BC file: {e}"))
-                })?;
+                let wrapper_bc_file = NamedTempFile::with_suffix_in(".bc", staging.path())
+                    .map_err(|e| {
+                        InterfaceError::LoadError(format!("Failed to create wrapper BC file: {e}"))
+                    })?;
 
                 let llvm_as_cmd = find_llvm_tool("llvm-as");
 
@@ -1836,9 +1692,10 @@ entry:
                 }
 
                 // Link original bitcode with wrapper using llvm-link
-                let linked_bc_file = NamedTempFile::with_suffix(".bc").map_err(|e| {
-                    InterfaceError::LoadError(format!("Failed to create linked BC file: {e}"))
-                })?;
+                let linked_bc_file =
+                    NamedTempFile::with_suffix_in(".bc", staging.path()).map_err(|e| {
+                        InterfaceError::LoadError(format!("Failed to create linked BC file: {e}"))
+                    })?;
 
                 let llvm_link_cmd = find_llvm_tool("llvm-link");
 
@@ -1867,27 +1724,7 @@ entry:
         #[cfg(not(target_os = "windows"))]
         let program_temp_path = program_temp_path;
 
-        // We already determined lib_suffix above for persistent cache
-        // Create shared library path - use persistent cache path
-        debug!(
-            "Will compile to persistent cache: {}",
-            persistent_cache_path.display()
-        );
-
-        // Use persistent cache path directly
-        // We compile to a temp file first, then rename to avoid partial/corrupted cache files
-        let so_path_for_clang = {
-            // Use a temp file with a unique suffix to avoid conflicts during compilation
-            let temp_path = persistent_cache_path.with_extension(format!(
-                "{}.compiling.{}",
-                lib_suffix.trim_start_matches('.'),
-                std::process::id()
-            ));
-            debug!("Compiling to temp path first: {}", temp_path.display());
-            temp_path
-        };
-
-        debug!("Temp library path: {}", so_path_for_clang.display());
+        let so_path_for_clang = staging.path().join(format!("program.{LIB_SUFFIX}"));
 
         // Link the program directly against the selected QIS FFI runtime.
         debug!(
@@ -2015,70 +1852,28 @@ entry:
             warn!("Output file does not exist after successful link!");
         }
 
-        // Rename temp file to persistent cache path
-        // Use rename for atomicity on Unix (instant, no partial writes)
-        // On some filesystems, rename across mount points may fail, so we fall back to copy+delete
-        let final_path = if std::fs::rename(&so_path_for_clang, &persistent_cache_path).is_ok() {
-            debug!(
-                "Renamed compiled library to persistent cache: {}",
-                persistent_cache_path.display()
-            );
-            persistent_cache_path.clone()
-        } else {
-            // Rename failed (possibly cross-filesystem), try copy
-            debug!("Rename failed, trying copy for persistent cache...");
-            if std::fs::copy(&so_path_for_clang, &persistent_cache_path).is_ok() {
-                let _ = std::fs::remove_file(&so_path_for_clang);
-                debug!(
-                    "Copied compiled library to persistent cache: {}",
-                    persistent_cache_path.display()
-                );
-                persistent_cache_path.clone()
-            } else {
-                // Copy also failed, use the temp path (it will work, just won't persist)
-                warn!(
-                    "Failed to create persistent cache, using temp path: {}",
-                    so_path_for_clang.display()
-                );
-                so_path_for_clang.clone()
+        let publish = Self::CHECK_CACHE_FAULT(
+            #[cfg(test)]
+            cache_faults::Site::Publish,
+            #[cfg(test)]
+            &persistent_cache_path,
+        )
+        .and_then(|()| std::fs::rename(&so_path_for_clang, &persistent_cache_path));
+        if let Err(e) = publish {
+            if let Some(path) = self.try_published_program(
+                &content_hash,
+                &persistent_cache_path,
+                #[cfg(test)]
+                cache_faults::Site::RenameLoad,
+            ) {
+                return Ok(path);
             }
-        };
-
-        // Keep the program bitcode temp path alive (not the .so since it's now in cache)
-        self.temp_files.push(program_temp_path);
-
-        let so_path = final_path;
-
-        // Load the program library into the global cache.
-        // This avoids repeated library load/unload cycles which cause instability on macOS.
-        // Load before caching: a library whose imports do not resolve fails the same way
-        // on every load, so it must not be served from either cache.
-        debug!("Loading program library into global cache...");
-        if let Err(e) = Self::get_or_cache_program_lib(&so_path) {
-            let _ = std::fs::remove_file(&so_path);
-            return Err(e);
+            return Err(InterfaceError::LoadError(format!(
+                "Failed to publish program: {e}"
+            )));
         }
-        debug!("Program library loaded into cache successfully");
-
-        self.executable_path = Some(so_path.clone());
-
-        self.metadata
-            .insert("library_path".to_string(), so_path.display().to_string());
-        self.metadata
-            .insert("helios_lib".to_string(), helios_lib_path);
-
-        // Cache the compiled path for content-based lookup
-        {
-            let compiled_cache = COMPILED_PROGRAM_CACHE
-                .get_or_init(|| std::sync::Mutex::new(std::collections::BTreeMap::new()));
-            if let Ok(mut cache_guard) = compiled_cache.lock() {
-                cache_guard.insert(content_hash.clone(), so_path.clone());
-                debug!(
-                    "Cached compiled library for content hash {content_hash}: {}",
-                    so_path.display()
-                );
-            }
-        }
+        #[cfg(test)]
+        cache_faults::point(cache_faults::Site::Published, &persistent_cache_path);
 
         // Write an auditable manifest next to the compiled object so the shared
         // cache directory can be inspected and each library traced back to the
@@ -2093,12 +1888,24 @@ entry:
                 pecos_qis_version: env!("CARGO_PKG_VERSION").to_string(),
                 target: cache_target(),
             };
-            let manifest_path = so_path.with_extension("manifest");
+            let manifest_path = staging.path().join("program.manifest");
             match serde_json::to_string_pretty(&manifest) {
                 Ok(json) => {
-                    if let Err(e) = std::fs::write(&manifest_path, json) {
+                    let written = Self::CHECK_CACHE_FAULT(
+                        #[cfg(test)]
+                        cache_faults::Site::Manifest,
+                        #[cfg(test)]
+                        &manifest_path,
+                    )
+                    .and_then(|()| std::fs::write(&manifest_path, json));
+                    if let Err(e) = written.and_then(|()| {
+                        std::fs::rename(
+                            &manifest_path,
+                            persistent_cache_path.with_extension("manifest"),
+                        )
+                    }) {
                         debug!(
-                            "Failed to write cache manifest {}: {e}",
+                            "Failed to publish cache manifest {}: {e}",
                             manifest_path.display()
                         );
                     }
@@ -2107,7 +1914,20 @@ entry:
             }
         }
 
-        Ok(so_path)
+        // Republication repairs future uncached loads only. The process cache and
+        // platform loader may reuse an existing handle for this digest/path.
+        Self::load_cached_program(
+            &persistent_cache_path,
+            #[cfg(test)]
+            cache_faults::Site::FinalLoad,
+        )?;
+        self.metadata.insert(
+            "library_path".to_string(),
+            persistent_cache_path.display().to_string(),
+        );
+        self.metadata
+            .insert("helios_lib".to_string(), helios_lib_path);
+        Ok(self.remember_program(&content_hash, &persistent_cache_path))
     }
 
     /// Execute the program by loading it in-process and calling `qmain()`
@@ -3205,24 +3025,126 @@ attributes #0 = { "EntryPoint" }
         }
     }
 
-    /// Run one test of this binary in a fresh process with `envs` set.
-    fn run_test_in_child(test_name: &str, envs: &[(&str, &std::ffi::OsStr)]) {
-        // The child inherits this process's environment, which other tests
-        // change temporarily (for example PECOS_QIS_FFI_PATH).
-        let _env_lock = ENV_MUTEX.lock().expect("environment lock");
-        let output = Command::new(std::env::current_exe().expect("test executable"))
-            .args(["--exact", test_name, "--nocapture"])
-            .envs(envs.iter().copied())
-            .output()
-            .expect("run child");
+    pub(super) struct TestChild {
+        process: std::process::Child,
+        stdout: Option<std::thread::JoinHandle<std::io::Result<Vec<u8>>>>,
+        stderr: Option<std::thread::JoinHandle<std::io::Result<Vec<u8>>>>,
+    }
+
+    impl TestChild {
+        pub(super) fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>> {
+            self.process.try_wait()
+        }
+
+        pub(super) fn kill_and_wait(&mut self) -> std::process::ExitStatus {
+            self.process.kill().expect("kill child");
+            self.process.wait().expect("observe child exit")
+        }
+    }
+
+    impl Drop for TestChild {
+        fn drop(&mut self) {
+            // Also reap a holder if its parent's assertion or barrier fails.
+            let _ = self.process.kill();
+            let _ = self.process.wait();
+        }
+    }
+
+    fn drain_child_pipe(
+        mut pipe: impl std::io::Read + Send + 'static,
+    ) -> std::thread::JoinHandle<std::io::Result<Vec<u8>>> {
+        std::thread::spawn(move || {
+            let mut bytes = Vec::new();
+            pipe.read_to_end(&mut bytes)?;
+            Ok(bytes)
+        })
+    }
+
+    /// Spawn with a stable inherited environment, releasing `ENV_MUTEX` before waiting.
+    pub(super) fn spawn_test_child(
+        test_name: &str,
+        envs: &[(&str, &std::ffi::OsStr)],
+    ) -> TestChild {
+        let mut process = {
+            let _env_lock = ENV_MUTEX
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            Command::new(std::env::current_exe().expect("test executable"))
+                .args(["--exact", test_name, "--nocapture"])
+                .envs(envs.iter().copied())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .expect("spawn child")
+        };
+        // Drain immediately: callers may wait for a child barrier before joining.
+        let stdout = drain_child_pipe(process.stdout.take().expect("stdout pipe"));
+        let stderr = drain_child_pipe(process.stderr.take().expect("stderr pipe"));
+        TestChild {
+            process,
+            stdout: Some(stdout),
+            stderr: Some(stderr),
+        }
+    }
+
+    pub(super) fn finish_test_child(
+        mut child: TestChild,
+        budget: std::time::Duration,
+    ) -> Result<std::process::Output, String> {
+        let watchdog = std::time::Instant::now();
+        let (status, timed_out) = loop {
+            if let Some(status) = child.process.try_wait().expect("child status") {
+                break (status, false);
+            }
+            if watchdog.elapsed() >= budget {
+                break (child.kill_and_wait(), true);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        };
+        let stdout = child
+            .stdout
+            .take()
+            .expect("stdout reader")
+            .join()
+            .expect("stdout thread")
+            .expect("read stdout");
+        let stderr = child
+            .stderr
+            .take()
+            .expect("stderr reader")
+            .join()
+            .expect("stderr thread")
+            .expect("read stderr");
+        let output = std::process::Output {
+            status,
+            stdout,
+            stderr,
+        };
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(output.status.success(), "child failed: {stdout}\n{stderr}");
-        // A filter that matches no test also exits successfully.
-        assert!(
-            stdout.contains("test result: ok. 1 passed"),
-            "child did not run {test_name}: {stdout}\n{stderr}"
-        );
+        if timed_out {
+            return Err(format!(
+                "child watchdog expired ({status}): {stdout}\n{stderr}"
+            ));
+        }
+        if !status.success() {
+            return Err(format!("child failed ({status}): {stdout}\n{stderr}"));
+        }
+        if !stdout.contains("test result: ok. 1 passed") {
+            return Err(format!(
+                "child did not run exactly one test ({status}): {stdout}\n{stderr}"
+            ));
+        }
+        Ok(output)
+    }
+
+    pub(super) fn join_test_child(child: TestChild) {
+        finish_test_child(child, std::time::Duration::from_secs(60))
+            .unwrap_or_else(|error| panic!("{error}"));
+    }
+
+    fn run_test_in_child(test_name: &str, envs: &[(&str, &std::ffi::OsStr)]) {
+        join_test_child(spawn_test_child(test_name, envs));
     }
 
     #[test]
@@ -3259,12 +3181,20 @@ attributes #0 = { "EntryPoint" }
                     ("PECOS_CACHE_DIR", cache.path().as_os_str()),
                 ],
             );
-            let cached: Vec<_> = std::fs::read_dir(cache.path())
+            let cached: Vec<_> = std::fs::read_dir(cache.path().join("qis-programs"))
                 .expect("read cache directory")
                 .map(|entry| entry.expect("cache entry").path())
                 .filter(|path| {
-                    path.extension()
-                        .is_some_and(|ext| ext == "so" || ext == "dll" || ext == "manifest")
+                    path.file_name()
+                        .and_then(|name| name.to_str())
+                        .and_then(program_cache::parse_entry)
+                        .is_some_and(|(_, kind)| {
+                            matches!(
+                                kind,
+                                program_cache::EntryKind::Library
+                                    | program_cache::EntryKind::Manifest
+                            )
+                        })
                 })
                 .collect();
             assert!(cached.is_empty(), "rejected program was cached: {cached:?}");
@@ -3421,10 +3351,15 @@ attributes #0 = { "EntryPoint" }
         let test_name =
             "executor::tests::program_cache_follows_runtime_contents_and_survives_runtime_failure";
         let cached_programs = || -> Vec<PathBuf> {
-            std::fs::read_dir(&cache)
+            std::fs::read_dir(cache.join("qis-programs"))
                 .expect("read cache directory")
                 .map(|entry| entry.expect("cache entry").path())
-                .filter(|path| path.extension().is_some_and(|ext| ext == "so"))
+                .filter(|path| {
+                    path.file_name()
+                        .and_then(|name| name.to_str())
+                        .and_then(program_cache::parse_entry)
+                        .is_some_and(|(_, kind)| kind == program_cache::EntryKind::Library)
+                })
                 .collect()
         };
         let modified = std::fs::metadata(&runtime)
@@ -3538,10 +3473,15 @@ attributes #0 = { "EntryPoint" }
         let test_name =
             "executor::tests::runtime_failure_with_unchanged_cache_key_keeps_cached_program";
         run_test_in_child(test_name, &envs("valid"));
-        let cached: Vec<_> = std::fs::read_dir(&cache)
+        let cached: Vec<_> = std::fs::read_dir(cache.join("qis-programs"))
             .expect("read cache directory")
             .map(|entry| entry.expect("cache entry").path())
-            .filter(|path| path.extension().is_some_and(|ext| ext == "so"))
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .and_then(program_cache::parse_entry)
+                    .is_some_and(|(_, kind)| kind == program_cache::EntryKind::Library)
+            })
             .collect();
         assert_eq!(cached.len(), 1, "{cached:?}");
 
@@ -3913,6 +3853,15 @@ attributes #0 = { "EntryPoint" }
 
     #[test]
     fn qis_ffi_cargo_target_finds_hashed_deps_library() {
+        const CHILD_ENV: &str = "PECOS_TEST_CARGO_TARGET_HASHED";
+        if std::env::var_os(CHILD_ENV).is_none() {
+            // Runtime tests also discover libraries through CARGO_TARGET_DIR.
+            run_test_in_child(
+                "executor::tests::qis_ffi_cargo_target_finds_hashed_deps_library",
+                &[(CHILD_ENV, "1".as_ref())],
+            );
+            return;
+        }
         let _env_lock = ENV_MUTEX
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -3955,6 +3904,14 @@ attributes #0 = { "EntryPoint" }
 
     #[test]
     fn qis_ffi_build_associated_library_precedes_cargo_target() {
+        const CHILD_ENV: &str = "PECOS_TEST_CARGO_TARGET_PRECEDENCE";
+        if std::env::var_os(CHILD_ENV).is_none() {
+            run_test_in_child(
+                "executor::tests::qis_ffi_build_associated_library_precedes_cargo_target",
+                &[(CHILD_ENV, "1".as_ref())],
+            );
+            return;
+        }
         let _env_lock = ENV_MUTEX
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);

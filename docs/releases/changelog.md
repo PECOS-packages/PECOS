@@ -67,8 +67,8 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
 - `CliffordGateable::apply_global_phase` replaces the former
   `ArbitraryRotationGateable::apply_global_phase` hook. This is source-breaking
   for out-of-tree implementors that override or call the hook through the old
-  trait. Projective backends may retain the no-op default; amplitude-exposing
-  backends must implement it.
+  trait. Projective backends with `*_up_to_phase` reads retain the no-op
+  default; backends exposing exact amplitudes must implement it.
 
 ### Rust bug fixes
 
@@ -78,7 +78,7 @@ Please see our [GitHub releases page](https://github.com/PECOS-packages/PECOS/re
   negative `theta` in `RXY1Q` and `U3`, composites containing those rotations,
   and the named `SXXdg`, `SYYdg`, and `SZZdg` gates.
 - The `CliffordGateable` default decompositions now deliver their residual
-  global phases through `apply_global_phase`. Amplitude-exposing backends that
+  global phases through `apply_global_phase`. Exact-amplitude backends that
   inherit these defaults therefore change state by the required global phase;
   projective backends continue to use the no-op hook.
 - `StateVecSoA::g` and `gdg` were the only two-qubit kernels missing the

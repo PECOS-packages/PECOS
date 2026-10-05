@@ -163,8 +163,8 @@ fn main() {
     let probabilities = simulator.prob_bitstrings(&queries);
     let mut max_delta = 0.0_f64;
     for (probability, query) in probabilities.iter().zip(&queries).take(4) {
-        max_delta =
-            max_delta.max((probability - simulator.amplitude_iterative(query).norm_sqr()).abs());
+        max_delta = max_delta
+            .max((probability - simulator.amplitude_iterative_up_to_phase(query).norm_sqr()).abs());
     }
     eprintln!(
         "readback complete: queries={} subset_max_delta={max_delta:.3e} elapsed={:?}",

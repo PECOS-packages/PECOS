@@ -39,7 +39,7 @@
 //! At the `StabMps`/`Mast` layer, public bitstrings use qubit-index order:
 //! `bits[q]` is the bit for qubit `q`. Consequently, converting a `StabMps`
 //! bitstring to the little-endian integer index used by
-//! [`stab_mps::StabMps::state_vector`] gives
+//! [`stab_mps::StabMps::state_vector_up_to_phase`] gives
 //! `index = sum(usize::from(bits[q]) << q)`. This convention applies equally
 //! to bitstrings accepted by probability and amplitude reads and to rows
 //! returned by the samplers. The lower-level [`mps::Mps::state_vector`] is an

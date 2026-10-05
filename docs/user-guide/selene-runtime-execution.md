@@ -96,7 +96,12 @@ also rejects explicit allocation of an already-live legacy static handle. Releas
 a handle that is not live is a no-op and does not prevent its legacy first use.
 For example, static `H(0); AllocateQubit { id: 0 }` rejects because handle 0 is
 already live. `AllocateQubit { id: 0 }; H(0)` is valid; mixing static and explicitly
-allocated handles is allowed when it respects these lifetime rules.
+allocated handles is allowed when it respects these lifetime rules. Programs do not
+choose allocated ids: `__quantum__rt__qubit_allocate` issues them in order from 0,
+in the same index space as static handles, and measurement does not end a static
+handle's lifetime. A program such as `x(0); m(0); qubit_allocate()` is therefore
+rejected, because the allocator returns 0 while static handle 0 is live. Keep static
+handles out of the ids the allocator will issue, or use only allocated qubits.
 
 This changes explicit-allocation loops that measured without releasing: with
 `.qubits(1)`, allocating and measuring a new handle each iteration rejects at the

@@ -2037,10 +2037,18 @@ impl SeleneRuntime {
     }
 
     fn lower_runtime_release(&mut self, program_qubit: usize) -> Result<Vec<LoweredQuantumOp>> {
+        if self.scheduled_mode == Some(true) {
+            // Scheduled extraction has no source annotations to retire. Submit
+            // qfree in source order and let the plugin own its pending work;
+            // a host-inserted barrier/drain here would commit a schedule before
+            // later operations in this input have reached the native scheduler.
+            self.release_runtime_qubit(program_qubit)?;
+            return Ok(Vec::new());
+        }
         let mut lowered = Vec::new();
         if let Some(&slot) = self.program_to_runtime_qubits.get(&program_qubit) {
             // Resolve work and provenance for the ending lifetime before qfree
-            // permits a new lifetime to reuse its native slot, on every route.
+            // permits a new lifetime to reuse its native slot on annotated/flat routes.
             self.call_runtime_local_barrier(&[slot])?;
             let emitted = self.drain_runtime_operations()?;
             Self::push_lowered_ops_with_source_metadata(
@@ -5322,8 +5330,8 @@ mod tests {
                 LoweredQuantumOp::from(QuantumOp::Measure(0, 0)),
             ]
         );
-        // Exercise the shared release boundary even without provenance tracking,
-        // including scheduled extraction, which has no source metadata records.
+        // Flat routes retain the source-provenance boundary. Scheduled extraction
+        // leaves queued work with the plugin until its normal extraction boundary.
         for mode in LoweringRoute::ALL {
             let mut runtime = crate::selene_runtimes::selene_soft_rz_runtime().unwrap();
             runtime.set_num_qubits(1);
@@ -5341,7 +5349,11 @@ mod tests {
             let slot = runtime.program_to_runtime_qubits[&7];
             assert_eq!(
                 mode.lower_qubit_slots(&mut runtime, &[Operation::ReleaseQubit { id: 7 },]),
-                [slot],
+                if matches!(mode, LoweringRoute::Scheduled) {
+                    vec![]
+                } else {
+                    vec![slot]
+                },
                 "{mode:?}"
             );
             assert!(runtime.source_trace_metadata.is_empty());
@@ -5354,7 +5366,11 @@ mod tests {
                         QuantumOp::Measure(9, 0).into(),
                     ]
                 ),
-                [slot, slot],
+                if matches!(mode, LoweringRoute::Scheduled) {
+                    vec![slot, slot, slot]
+                } else {
+                    vec![slot, slot]
+                },
                 "{mode:?}"
             );
             assert_eq!(runtime.program_to_runtime_qubits[&9], slot);

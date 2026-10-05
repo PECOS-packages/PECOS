@@ -548,7 +548,7 @@ pub fn pre_reduce_for_measurement_pub(
 ///     `apply_long_range_two_site_gate`.
 ///
 /// `apply_mps_compensation` is `true` for the exact-state caller
-/// `project_forced_z`, used by `prob_bitstring` / `amplitude_iterative`. It is `false` for random
+/// `project_forced_z`, used by `prob_bitstring` / `amplitude_iterative_up_to_phase`. It is `false` for random
 /// measurement (`measure_qubit_stab_mps_pragmatic`): the state representation becomes
 /// inconsistent with the tableau after row ops, but measurement
 /// statistics stay correct and subsequent measurements remain
@@ -2724,7 +2724,7 @@ mod tests {
             snapshot.tableau = tableau.clone();
             snapshot.mps = mps.clone();
             snapshot.deferred_ops.clear();
-            snapshot.state_vector()
+            snapshot.state_vector_up_to_phase()
         }
 
         let coefficient_mps = generic_coefficient_mps();

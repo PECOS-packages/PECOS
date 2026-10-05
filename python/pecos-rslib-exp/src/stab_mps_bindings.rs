@@ -293,6 +293,15 @@ fn stabilizer_state_from_generators(
 }
 
 impl PyStabMps {
+    fn check_pauli_frame_tracking(&self) -> PyResult<()> {
+        if !self.inner.pauli_frame_tracking() {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "Pauli frame tracking is disabled; construct StabMps with pauli_frame_tracking=True",
+            ));
+        }
+        Ok(())
+    }
+
     fn check_qubit(&self, q: isize, method: &str) -> PyResult<usize> {
         let Ok(q) = usize::try_from(q) else {
             return Err(PyErr::new::<pyo3::exceptions::PyIndexError, _>(format!(
@@ -594,20 +603,23 @@ impl PyStabMps {
     /// Indexing is little-endian: the entry for `bits` is at
     /// `sum(int(bits[q]) << q)`. This allocates `2**num_qubits` amplitudes and
     /// constructs dense operators, so it is restricted to `num_qubits <= 14`.
-    /// Prefer `amplitude_iterative`, `prob_bitstring`, `prob_bitstrings`,
+    /// Prefer `amplitude_iterative_up_to_phase`, `prob_bitstring`, `prob_bitstrings`,
     /// `pauli_expectation`, or `sample_bitstrings` for scalable reads. Pending
     /// work is auto-flushed; a tracked Pauli frame must be materialized
     /// explicitly.
+    /// The overall phase follows the canonical stabilizer-reference gauge
+    /// (first supported basis word real positive), not the circuit's phase.
+    /// Relative phases are exact and shared by all three amplitude reads.
     ///
     /// Raises `ValueError` when more than 14 qubits are present.
-    fn state_vector(&mut self, py: Python<'_>) -> PyResult<Py<PyList>> {
+    fn state_vector_up_to_phase(&mut self, py: Python<'_>) -> PyResult<Py<PyList>> {
         if self.inner.num_qubits() > 14 {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "state_vector requires n <= 14",
+                "state_vector_up_to_phase requires n <= 14",
             ));
         }
         self.inner.flush();
-        let sv = self.inner.state_vector();
+        let sv = self.inner.state_vector_up_to_phase();
         let list: Vec<(f64, f64)> = sv.iter().map(|c| (c.re, c.im)).collect();
         Ok(PyList::new(py, &list)?.unbind())
     }
@@ -616,20 +628,23 @@ impl PyStabMps {
     ///
     /// `bitstring` must contain exactly `num_qubits` Python `bool` values and
     /// `bitstring[q]` specifies qubit `q`. This materializes the full `2**n`
-    /// state and is restricted to `n <= 14`; prefer `amplitude_iterative` for
+    /// state and is restricted to `n <= 14`; prefer `amplitude_iterative_up_to_phase` for
     /// larger systems. Pending work is auto-flushed; materialize a tracked
     /// Pauli frame explicitly.
+    /// The overall phase follows the canonical stabilizer-reference gauge
+    /// (first supported basis word real positive), not the circuit's phase.
+    /// Relative phases are exact and shared by all three amplitude reads.
     ///
     /// Raises `ValueError` for a malformed bitstring or `n > 14`.
-    fn amplitude(&mut self, bitstring: &Bound<'_, PyAny>) -> PyResult<(f64, f64)> {
-        let bitstring = self.bitstring(bitstring, "amplitude")?;
+    fn amplitude_up_to_phase(&mut self, bitstring: &Bound<'_, PyAny>) -> PyResult<(f64, f64)> {
+        let bitstring = self.bitstring(bitstring, "amplitude_up_to_phase")?;
         if self.inner.num_qubits() > 14 {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "amplitude requires n <= 14",
+                "amplitude_up_to_phase requires n <= 14",
             ));
         }
         self.inner.flush();
-        let amplitude = self.inner.amplitude(&bitstring);
+        let amplitude = self.inner.amplitude_up_to_phase(&bitstring);
         Ok((amplitude.re, amplitude.im))
     }
 
@@ -639,12 +654,18 @@ impl PyStabMps {
     /// `bitstring[q]` specifies qubit `q`. Forced projections avoid dense-state
     /// materialization and scale with MPS contractions. Pending work is
     /// auto-flushed; materialize a tracked Pauli frame explicitly.
+    /// The overall phase follows the canonical stabilizer-reference gauge
+    /// (first supported basis word real positive), not the circuit's phase.
+    /// Relative phases are exact and shared by all three amplitude reads.
     ///
     /// Raises `ValueError` for a malformed bitstring.
-    fn amplitude_iterative(&mut self, bitstring: &Bound<'_, PyAny>) -> PyResult<(f64, f64)> {
-        let bitstring = self.bitstring(bitstring, "amplitude_iterative")?;
+    fn amplitude_iterative_up_to_phase(
+        &mut self,
+        bitstring: &Bound<'_, PyAny>,
+    ) -> PyResult<(f64, f64)> {
+        let bitstring = self.bitstring(bitstring, "amplitude_iterative_up_to_phase")?;
         self.inner.flush();
-        let amplitude = self.inner.amplitude_iterative(&bitstring);
+        let amplitude = self.inner.amplitude_iterative_up_to_phase(&bitstring);
         Ok((amplitude.re, amplitude.im))
     }
 
@@ -653,22 +674,23 @@ impl PyStabMps {
     /// `stabilizers` is a complete list of `num_qubits` independent, commuting
     /// +1 generators; each generator is a list of `(qubit, "X"|"Y"|"Z")`
     /// factors. `num_samples` controls statistical error, and `rng_seed`
-    /// controls the estimator stream (default 42). Returns `(real, imag)`.
+    /// controls the estimator stream (default 42). Returns the magnitude as a float;
+    /// the complex phase depends on both states' gauges.
     /// Cost is linear in `num_samples` times sequential stabilizer sampling and
     /// iterative-amplitude work. Pending simulator work is auto-flushed.
     ///
     /// Raises `IndexError` for an out-of-range qubit and `ValueError` for zero
     /// samples, invalid/incomplete/noncommuting generators, or more than 64 qubits.
     #[pyo3(signature = (stabilizers, *, num_samples, rng_seed=None))]
-    fn overlap_with_stabilizer(
+    fn overlap_magnitude_with_stabilizer(
         &mut self,
         stabilizers: Vec<Vec<(isize, String)>>,
         num_samples: usize,
         rng_seed: Option<u64>,
-    ) -> PyResult<(f64, f64)> {
+    ) -> PyResult<f64> {
         if self.inner.num_qubits() > 64 {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "overlap_with_stabilizer requires n <= 64",
+                "overlap_magnitude_with_stabilizer requires n <= 64",
             ));
         }
         if num_samples == 0 {
@@ -684,8 +706,8 @@ impl PyStabMps {
         self.inner.flush();
         let overlap = self
             .inner
-            .overlap_with_stabilizer(&state, num_samples, rng_seed);
-        Ok((overlap.re, overlap.im))
+            .overlap_magnitude_with_stabilizer(&state, num_samples, rng_seed);
+        Ok(overlap)
     }
 
     /// Return the computational-basis probability of `bitstring`.
@@ -868,7 +890,9 @@ impl PyStabMps {
     ///
     /// Intended when `pauli_frame_tracking=True`. Raises `IndexError` for an
     /// out-of-range qubit. This is O(1) and does not update the MPS immediately.
+    /// Raises `ValueError` first when `pauli_frame_tracking` is disabled.
     fn inject_x_in_frame(&mut self, q: isize) -> PyResult<()> {
+        self.check_pauli_frame_tracking()?;
         let q = self.check_qubit(q, "inject_x_in_frame")?;
         self.inner.inject_x_in_frame(QubitId(q));
         Ok(())
@@ -878,7 +902,9 @@ impl PyStabMps {
     ///
     /// Intended when `pauli_frame_tracking=True`. Raises `IndexError` for an
     /// out-of-range qubit. This is O(1) and does not update the MPS immediately.
+    /// Raises `ValueError` first when `pauli_frame_tracking` is disabled.
     fn inject_y_in_frame(&mut self, q: isize) -> PyResult<()> {
+        self.check_pauli_frame_tracking()?;
         let q = self.check_qubit(q, "inject_y_in_frame")?;
         self.inner.inject_y_in_frame(QubitId(q));
         Ok(())
@@ -888,7 +914,9 @@ impl PyStabMps {
     ///
     /// Intended when `pauli_frame_tracking=True`. Raises `IndexError` for an
     /// out-of-range qubit. This is O(1) and does not update the MPS immediately.
+    /// Raises `ValueError` first when `pauli_frame_tracking` is disabled.
     fn inject_z_in_frame(&mut self, q: isize) -> PyResult<()> {
+        self.check_pauli_frame_tracking()?;
         let q = self.check_qubit(q, "inject_z_in_frame")?;
         self.inner.inject_z_in_frame(QubitId(q));
         Ok(())
@@ -899,7 +927,9 @@ impl PyStabMps {
     /// `paulis` contains `(qubit, "X"|"Y"|"Z")` pairs. Raises `IndexError`
     /// for an out-of-range qubit and `ValueError` for any other Pauli name.
     /// Cost is linear in the number of factors and does not update the MPS.
+    /// Raises `ValueError` first when `pauli_frame_tracking` is disabled.
     fn inject_paulis_in_frame(&mut self, paulis: Vec<(isize, String)>) -> PyResult<()> {
+        self.check_pauli_frame_tracking()?;
         let converted: Vec<(QubitId, PauliKind)> = self
             .pauli_string(paulis, "inject_paulis_in_frame")?
             .into_iter()
@@ -912,7 +942,9 @@ impl PyStabMps {
     /// Return the X component of the tracked Pauli frame at qubit `q`.
     ///
     /// Raises `IndexError` for an out-of-range qubit.
+    /// Raises `ValueError` first when `pauli_frame_tracking` is disabled.
     fn frame_x_bit(&self, q: isize) -> PyResult<bool> {
+        self.check_pauli_frame_tracking()?;
         let q = self.check_qubit(q, "frame_x_bit")?;
         Ok(self.inner.frame_x_bit(QubitId(q)))
     }
@@ -920,7 +952,9 @@ impl PyStabMps {
     /// Return the Z component of the tracked Pauli frame at qubit `q`.
     ///
     /// Raises `IndexError` for an out-of-range qubit.
+    /// Raises `ValueError` first when `pauli_frame_tracking` is disabled.
     fn frame_z_bit(&self, q: isize) -> PyResult<bool> {
+        self.check_pauli_frame_tracking()?;
         let q = self.check_qubit(q, "frame_z_bit")?;
         Ok(self.inner.frame_z_bit(QubitId(q)))
     }

@@ -14,6 +14,10 @@ Outcome-dependent adapters and broader physical noise require separate work.
 
 ## Configure and implement
 
+Set the Selene runtime policy to `RuntimeCustomEventPolicy::Capture` explicitly
+when forwarding custom events to this consumer (Python: `custom_event_policy="capture"`).
+The default runtime policy rejects unacknowledged custom events during extraction.
+
 Use `QisEngineBuilder::scheduled_event_batches(true)` with
 `ScheduledEventNoise::new(profile, factory)`. `ScheduledEventIdleNoise` and
 `ScheduledEventIdleZ` are compatibility aliases for this canonical type.

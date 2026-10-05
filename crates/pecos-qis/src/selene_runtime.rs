@@ -1273,6 +1273,14 @@ impl SeleneRuntime {
                     "Init failed with errno {errno}"
                 )));
             }
+            // Every later plugin call receives this handle; a plugin that reports
+            // success without producing one violates the Selene runtime contract.
+            if instance.is_null() {
+                return Err(RuntimeError::FfiError(
+                    "runtime plugin init reported success but returned a null runtime instance"
+                        .into(),
+                ));
+            }
 
             self.library = Some(ManuallyDrop::new(lib));
             self.instance = Some(instance);
@@ -4746,6 +4754,68 @@ mod tests {
             .unwrap();
             mode.drain(&mut runtime);
             runtime.shot_end().unwrap();
+        }
+    }
+
+    #[cfg(feature = "selene-runtimes")]
+    #[test]
+    fn successful_init_without_instance_is_rejected() {
+        unsafe extern "C" fn init_without_instance(
+            _: *mut *mut c_void,
+            _: u64,
+            _: u64,
+            _: u32,
+            _: *const *const std::ffi::c_char,
+        ) -> i32 {
+            0
+        }
+
+        // The fixture library holds one process-wide descriptor, so install the
+        // faulty one only in a child process.
+        const CHILD_ENV: &str = "PECOS_TEST_NULL_RUNTIME_INSTANCE";
+        if std::env::var_os(CHILD_ENV).is_none() {
+            crate::test_env::run_test_in_child(
+                "selene_runtime::tests::successful_init_without_instance_is_rejected",
+                &[(CHILD_ENV, "1".as_ref())],
+            );
+            return;
+        }
+        let executable = std::env::current_exe().unwrap();
+        let plugin = crate::selene_runtimes::find_library_in_dir(
+            executable.parent().unwrap(),
+            pecos_qis_test_runtime::LIBRARY_NAME,
+        )
+        .expect("Cargo-built runtime fixture beside the test executable");
+        let public_runtime = crate::selene_runtimes::selene_simple_runtime().unwrap();
+        // SAFETY: Both libraries stay loaded and the boxed descriptor outlives the
+        // runtime below. Every callback has its original ABI.
+        let public_library =
+            unsafe { libloading::Library::new(&public_runtime.plugin_path).unwrap() };
+        let mut descriptor =
+            Box::new(unsafe { SeleneRuntime::runtime_plugin_descriptor(&public_library).unwrap() });
+        descriptor.init_fn = init_without_instance;
+        let fixture = unsafe { libloading::Library::new(&plugin).unwrap() };
+        unsafe {
+            let set = fixture
+                .get::<unsafe extern "C" fn(*mut c_void)>(b"set_descriptor")
+                .unwrap();
+            set((&raw mut *descriptor).cast());
+        }
+        for mode in LoweringRoute::ALL {
+            let mut runtime = SeleneRuntime::new(&plugin);
+            runtime.init_args.clone_from(&public_runtime.init_args);
+            runtime.set_num_qubits(1);
+            runtime.shot_start(0, None).unwrap();
+            let error = mode
+                .lower(&mut runtime, &[Operation::AllocateQubit { id: 0 }])
+                .unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("returned a null runtime instance"),
+                "{error}"
+            );
+            assert!(runtime.instance.is_none());
         }
     }
 

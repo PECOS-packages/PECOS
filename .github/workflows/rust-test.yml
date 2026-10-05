@@ -1,5 +1,5 @@
 name: Rust test / linting
-run-name: Rust validation (${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full-rust')) && 'full' || 'PR smoke' }})
+run-name: Rust validation (${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full-rust')) && 'full' || 'PR (path-selected matrix)' }})
 
 permissions:
   contents: read
@@ -30,6 +30,7 @@ on:
       - 'python/pecos-rslib/**'
       - 'python/pecos-rslib-exp/**'
       - 'python/pecos-rslib-llvm/**'
+      - 'python/selene-plugins/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'Justfile'
@@ -49,6 +50,7 @@ on:
       - 'python/pecos-rslib/**'
       - 'python/pecos-rslib-exp/**'
       - 'python/pecos-rslib-llvm/**'
+      - 'python/selene-plugins/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'Justfile'
@@ -63,6 +65,96 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  rust-test-matrix:
+    if: (github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'ci:full-rust'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      full: ${{ steps.detect.outputs.full }}
+    steps:
+      - name: Harden the runner (egress audit)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      # Reuse the full-history merge-base approach from pr-core-gate.yml.
+      # Non-PR events and explicitly labeled PRs need no changed-file lookup.
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        if: github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ci:full-rust')
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Select the Rust test matrix
+        id: detect
+        shell: python
+        run: |
+          import fnmatch
+          import json
+          import os
+          import subprocess
+
+          # Whole crates include their build scripts, native sources and fixtures.
+          # fnmatchcase's * also spans /, so these ** patterns cover all descendants.
+          platform_paths = (
+              "crates/benchmarks/**",
+              "crates/pecos/**",
+              "crates/pecos-build/**",
+              "crates/pecos-chromobius/**",
+              "crates/pecos-cli/**",
+              "crates/pecos-cppsparsestab/**",
+              "crates/pecos-cuquantum*/**",
+              "crates/pecos-decoders/**",
+              "crates/pecos-ffi/**",
+              "crates/pecos-foreign/**",
+              "crates/pecos-hugr/**",
+              "crates/pecos-ldpc-decoders/**",
+              "crates/pecos-llvm/**",
+              "crates/pecos-phir*/**",
+              "crates/pecos-pymatching/**",
+              "crates/pecos-qasm/**",
+              "crates/pecos-qis*/**",
+              "crates/pecos-quantum/**",
+              "crates/pecos-selene-core/**",
+              "crates/pecos-tesseract/**",
+              "exp/guppy-zlup/**",
+              "exp/pecos-frontier*/**",
+              "exp/pecos-trellis/**",
+              "exp/zlu*/**",
+              "julia/pecos-julia-ffi/**",
+              "python/pecos-rslib*/**",
+              "python/selene-plugins/**",
+              "examples/**",
+              "Cargo.toml",
+              "Cargo.lock",
+              "Justfile",
+              ".github/workflows/rust-test.yml",
+              "scripts/ci/**",
+              "scripts/win-msvc-bootstrap.ps1",
+          )
+          with open(os.environ["GITHUB_EVENT_PATH"]) as source:
+              event = json.load(source)
+          pr = event.get("pull_request", {})
+          full = os.environ["GITHUB_EVENT_NAME"] != "pull_request" or any(
+              label["name"] == "ci:full-rust" for label in pr.get("labels", [])
+          )
+          if not full:
+              # Compare the event's exact PR head against its merge base, not the
+              # synthetic merge commit. Include deletions and both sides of moves.
+              # Fail the job on git errors rather than silently selecting smoke.
+              changed = subprocess.check_output([
+                  "git", "diff", "--name-only", "--no-renames", "-z",
+                  f"{pr['base']['sha']}...{pr['head']['sha']}", "--",
+              ]).decode("utf-8", errors="surrogateescape").split("\0")
+              full = any(
+                  fnmatch.fnmatchcase(path, pattern)
+                  for path in changed if path
+                  for pattern in platform_paths
+              )
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write(f"full={str(full).lower()}\n")
+
   rust-lint:
     if: (github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'ci:full-rust'
     runs-on: ubuntu-latest
@@ -217,14 +309,14 @@ jobs:
         run: pre-commit run --all-files --show-diff-on-failure
 
   rust-test:
-    needs: [pre-commit, rust-lint]
+    needs: [pre-commit, rust-lint, rust-test-matrix]
     runs-on: ${{ matrix.os }}
     env:
-      FULL_RUST_TESTS: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full-rust') }}
+      FULL_RUST_TESTS: ${{ needs.rust-test-matrix.outputs.full }}
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ci:full-rust') && fromJSON('["ubuntu-latest"]') || fromJSON('["ubuntu-latest", "macos-latest", "windows-2022"]') }}
+        os: ${{ needs.rust-test-matrix.outputs.full != 'true' && fromJSON('["ubuntu-latest"]') || fromJSON('["ubuntu-latest", "macos-latest", "windows-2022"]') }}
 
     steps:
       - name: Harden the runner (egress audit)

@@ -101,6 +101,25 @@ impl Default for DepolarizingFaultCatalog {
     }
 }
 
+impl DepolarizingFaultCatalog {
+    /// Build a sparse history from the selected outcome at each site.
+    pub(crate) fn fault_history_from_digits(&self, digits: &[usize]) -> DepolarizingFaultHistory {
+        let mut history = Vec::new();
+        for (site, &digit) in self.sites.iter().zip(digits) {
+            let outcome = &site.outcomes[digit];
+            if outcome.label == "NoFault" {
+                continue;
+            }
+            history.push(DepolarizingSampledFault {
+                site_uid: site.uid,
+                outcome_index: u8::try_from(digit).expect("Fault outcome index must fit in a u8"),
+                outcome_label: outcome.label,
+            });
+        }
+        history
+    }
+}
+
 /// Implements depolarizing channel noise for quantum simulations
 ///
 /// This model applies different error probabilities to various quantum operations:

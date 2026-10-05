@@ -193,6 +193,7 @@ impl SampledFault {
 ///  - fault_history_log_probability: returns the log of the probability of a given fault history
 ///  - fault_history_probability: returns the probability of a given fault history
 ///  - fault_histories_probability_ratio: returns the ratio of probabilities of two fault histories
+///  - `enumerate_fault_histories`: enumerates all possible fault histories
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum FaultCatalog {
@@ -224,6 +225,52 @@ impl FaultCatalog {
         self.sites()
             .find(|site| site.uid() == site_uid)
             .unwrap_or_else(|| panic!("Site uid {site_uid} not found in fault catalog"))
+    }
+
+    /// Returns a lazy iterator over all possible fault histories.
+    ///
+    /// Starts with no faults and increments the first site's outcome fastest,
+    /// carrying into subsequent sites. Includes zero-probability outcomes.
+    /// An empty catalog yields one empty history; a site without outcomes
+    /// yields no histories.
+    ///
+    /// # Panics
+    ///
+    /// The iterator panics if a nontrivial outcome index does not fit in a `u8`.
+    pub fn enumerate_fault_histories(&self) -> impl Iterator<Item = FaultHistory> + '_ {
+        // Determine the number of possible outcomes for each site.
+        let dimensions: Vec<_> = self.sites().map(|site| site.outcomes().len()).collect();
+
+        // Assign a string of 00000...000 to the starting no-fault representation
+        let mut digits = vec![0; dimensions.len()];
+        let mut done = dimensions.contains(&0);
+
+        std::iter::from_fn(move || {
+            if done {
+                return None;
+            }
+
+            // Return the fault history with the corresponding digits
+            let history = self.fault_history_from_digits(&digits);
+
+            // Increment the digits for the next iteration
+            for (digit, &dimension) in digits.iter_mut().zip(&dimensions) {
+                *digit += 1;
+                if *digit < dimension {
+                    return Some(history);
+                }
+                *digit = 0;
+            }
+            done = true;
+            Some(history)
+        })
+    }
+
+
+    fn fault_history_from_digits(&self, digits: &[usize]) -> FaultHistory {
+        match self {
+            Self::Depolarizing(catalog) => catalog.fault_history_from_digits(digits).into(),
+        }
     }
 
     #[must_use]

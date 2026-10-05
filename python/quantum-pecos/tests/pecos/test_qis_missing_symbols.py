@@ -67,5 +67,5 @@ attributes #0 = { "EntryPoint" }
         assert completed.returncode == 0, completed.stdout + completed.stderr
         assert "caught missing get_current_shot" in completed.stdout
         assert "after" in completed.stdout
-    cached = [path for path in (cache_dir / "qis-programs").iterdir() if path.suffix in {".so", ".dll"}]
+    cached = [path for path in (cache_dir / "qis-programs-v2").iterdir() if path.suffix in {".so", ".dll"}]
     assert len(cached) == 1, cached

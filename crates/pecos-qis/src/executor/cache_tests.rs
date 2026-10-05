@@ -1,7 +1,9 @@
 //! Cache contracts exercised in isolated, genuinely concurrent test processes.
 
 use super::cache_faults::{self as faults, Action, Site};
-use super::program_cache::{self, EntryKind, LIB_SUFFIX, LockOutcome, parse_entry};
+use super::program_cache::{
+    self, EntryKind, LIB_SUFFIX, LockOutcome, bucket_lock_path, parse_entry,
+};
 use super::tests::{TestChild, finish_test_child, join_test_child, spawn_test_child};
 use super::*;
 use std::fs::{File, TryLockError};
@@ -10,6 +12,8 @@ use std::time::Duration;
 
 const PROGRAM: &[u8] = b"define i64 @qmain(i64 %arg) { ret i64 0 } ; cache protocol tests";
 const CHILD_TEST: &str = "executor::cache_tests::cache_child";
+
+mod bucket_tests;
 
 struct ChildRun(Option<TestChild>);
 
@@ -78,7 +82,7 @@ impl Fixture {
     }
 
     fn cache(&self) -> PathBuf {
-        self.root.path().join("qis-programs")
+        self.root.path().join("qis-programs-v2")
     }
 
     fn signal(&self, name: &str) {
@@ -282,9 +286,7 @@ fn cache_child() {
         }
         "live-waiter" => live_waiter(),
         "probe" => {
-            let path = root()
-                .join("qis-programs")
-                .join(format!("program_{}.lock", digest()));
+            let path = bucket_lock_path(&root().join("qis-programs-v2"), &digest());
             let file = File::options()
                 .read(true)
                 .write(true)
@@ -300,19 +302,19 @@ fn cache_child() {
         "budget-present" | "budget-absent" | "budget-load-failure" => budget(&mode),
         "cleanup-owned" => cleanup_owned(),
         "cleanup" => {
-            program_cache::cleanup_old_cache_files(&root().join("qis-programs"), 86400);
+            program_cache::cleanup_old_cache_files(&root().join("qis-programs-v2"), 86400);
             assert_eq!(count(Site::Lock), 1);
             assert_eq!(count(Site::CleanupObserved), 1);
         }
         "cleanup-locked" => {
             pause(Site::CleanupLocked, 1, "cleanup-held", "finish-cleanup");
-            program_cache::cleanup_old_cache_files(&root().join("qis-programs"), 86400);
+            program_cache::cleanup_old_cache_files(&root().join("qis-programs-v2"), 86400);
             assert_eq!(count(Site::CleanupLocked), 1);
             assert_eq!(count(Site::Lock), 1);
         }
         "cleanup-race" => {
             pause(Site::CleanupObserved, 1, "observed", "clean");
-            program_cache::cleanup_old_cache_files(&root().join("qis-programs"), 86400);
+            program_cache::cleanup_old_cache_files(&root().join("qis-programs-v2"), 86400);
             assert_eq!(count(Site::CleanupObserved), 1);
             assert_eq!(count(Site::Lock), 1);
         }
@@ -337,6 +339,7 @@ fn cache_child() {
         | "unsupported"
         | "lock-error"
         | "manifest-error" => error_path(&mode),
+        mode if mode.starts_with("bucket-") => bucket_tests::run(mode),
         _ => panic!("unknown mode {mode}"),
     }
 }
@@ -394,7 +397,7 @@ fn concurrent_threads(unsupported: bool) {
     if unsupported {
         assert_eq!(count(Site::Lock), 2);
     }
-    assert_layout(&root().join("qis-programs"), true);
+    assert_layout(&root().join("qis-programs-v2"), true);
 }
 
 fn hold_lock() {
@@ -581,12 +584,12 @@ fn make_old(path: &Path) {
 }
 
 fn cleanup_owned() {
-    let cache = root().join("qis-programs");
+    let cache = root().join("qis-programs-v2");
     std::fs::create_dir_all(&cache).expect("cache");
     let digest = "a".repeat(64);
     let library = cache.join(format!("program_{digest}.{LIB_SUFFIX}"));
     let manifest = library.with_extension("manifest");
-    let lock = library.with_extension("lock");
+    let lock = bucket_lock_path(&cache, &digest);
     let staging = program_cache::staging_dir(&cache, &digest)
         .expect("staging")
         .keep();
@@ -611,12 +614,13 @@ fn cleanup_owned() {
         cache.join(format!(".program_{digest}.abcde.tmp")),
         cache.join(format!(".program_{digest}.abcdefg.tmp")),
         cache.join(format!("program_{digest}.lock.extra")),
+        cache.join(format!("program_{digest}.lock")),
     ];
     for path in &foreign {
         std::fs::write(path, b"foreign").expect("foreign");
         make_old(path);
     }
-    let other_lock = cache.join(format!("program_{}.lock", "b".repeat(64)));
+    let other_lock = bucket_lock_path(&cache, &"b".repeat(64));
     std::fs::write(&other_lock, b"retained lock").expect("other lock");
     make_old(&other_lock);
     program_cache::cleanup_old_cache_files(&cache, 86400);
@@ -690,7 +694,7 @@ fn replacement_driver() {
     child
         .wait(&control().join("replace-ready"))
         .unwrap_or_else(|error| panic!("{error}"));
-    let staging: Vec<_> = entries(&root().join("qis-programs"))
+    let staging: Vec<_> = entries(&root().join("qis-programs-v2"))
         .into_iter()
         .filter(|p| kind(p) == Some(EntryKind::Staging))
         .collect();
@@ -726,7 +730,7 @@ fn replacement_driver() {
         .expect("existing process handle still works");
     spawn("fresh", "fresh", &root(), &control()).join();
     assert_eq!(count(Site::Link), 1);
-    assert_layout(&root().join("qis-programs"), true);
+    assert_layout(&root().join("qis-programs-v2"), true);
 }
 
 fn replacement_child() {
@@ -816,12 +820,12 @@ fn error_path(mode: &str) {
             result.expect("manifest failure is best effort");
             assert_eq!(count(Site::Manifest), 1);
             assert_eq!(count(Site::FinalLoad), 1);
-            assert_layout(&root().join("qis-programs"), false);
+            assert_layout(&root().join("qis-programs-v2"), false);
         }
         _ => unreachable!(),
     }
     assert_eq!(count(Site::Link), usize::from(mode != "lock-error"));
-    assert_no_staging(&root().join("qis-programs"));
+    assert_no_staging(&root().join("qis-programs-v2"));
 }
 
 #[test]
@@ -870,17 +874,28 @@ fn owned_name_grammar() {
     for (name, expected) in [
         (format!("program_{digest}.{LIB_SUFFIX}"), EntryKind::Library),
         (format!("program_{digest}.manifest"), EntryKind::Manifest),
-        (format!("program_{digest}.lock"), EntryKind::Lock),
         (format!(".program_{digest}.aB09zZ.tmp"), EntryKind::Staging),
     ] {
         assert_eq!(parse_entry(&name), Some((digest.as_str(), expected)));
     }
+    for byte in 0..=255 {
+        let bucket = format!("{byte:02x}");
+        assert_eq!(
+            parse_entry(&format!("lock_{bucket}.lock")),
+            Some((bucket.as_str(), EntryKind::Lock))
+        );
+    }
+    assert_eq!(parse_entry(&format!("program_{digest}.lock")), None);
     for name in [
         "",
         "program",
         ".program_",
         "program_💣.so",
         "program_../x.so",
+        "lock_0.lock",
+        "lock_000.lock",
+        "lock_AB.lock",
+        "lock_ab.lock.x",
     ] {
         assert_eq!(parse_entry(name), None);
     }
@@ -897,9 +912,9 @@ fn raw_lock_error(mode: &str) {
         assert_eq!(count(Site::Link), 1);
         assert_eq!(count(Site::FinalLoad), 1);
         assert_eq!(count(Site::LockPoll), 0);
-        assert_layout(&root().join("qis-programs"), true);
+        assert_layout(&root().join("qis-programs-v2"), true);
     } else {
-        let cache = root().join("qis-programs");
+        let cache = root().join("qis-programs-v2");
         std::fs::create_dir_all(&cache).expect("cache");
         let library = cache.join(format!("program_{}.{LIB_SUFFIX}", "a".repeat(64)));
         std::fs::write(&library, b"old publication").expect("fixture");

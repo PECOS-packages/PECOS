@@ -1531,7 +1531,10 @@ impl QisHeliosInterface {
                     return Ok(path);
                 }
                 return Err(InterfaceError::LoadError(format!(
-                    "Timeout waiting for compilation lock: {}",
+                    "Timeout waiting for compilation lock {} (shared by all programs whose digest \
+                     starts with {}) for {}",
+                    program_cache::bucket_lock_path(&cache_dir, &content_hash).display(),
+                    &content_hash[..2],
                     persistent_cache_path.display()
                 )));
             }
@@ -3181,7 +3184,7 @@ attributes #0 = { "EntryPoint" }
                     ("PECOS_CACHE_DIR", cache.path().as_os_str()),
                 ],
             );
-            let cached: Vec<_> = std::fs::read_dir(cache.path().join("qis-programs"))
+            let cached: Vec<_> = std::fs::read_dir(cache.path().join("qis-programs-v2"))
                 .expect("read cache directory")
                 .map(|entry| entry.expect("cache entry").path())
                 .filter(|path| {
@@ -3351,7 +3354,7 @@ attributes #0 = { "EntryPoint" }
         let test_name =
             "executor::tests::program_cache_follows_runtime_contents_and_survives_runtime_failure";
         let cached_programs = || -> Vec<PathBuf> {
-            std::fs::read_dir(cache.join("qis-programs"))
+            std::fs::read_dir(cache.join("qis-programs-v2"))
                 .expect("read cache directory")
                 .map(|entry| entry.expect("cache entry").path())
                 .filter(|path| {
@@ -3473,7 +3476,7 @@ attributes #0 = { "EntryPoint" }
         let test_name =
             "executor::tests::runtime_failure_with_unchanged_cache_key_keeps_cached_program";
         run_test_in_child(test_name, &envs("valid"));
-        let cached: Vec<_> = std::fs::read_dir(cache.join("qis-programs"))
+        let cached: Vec<_> = std::fs::read_dir(cache.join("qis-programs-v2"))
             .expect("read cache directory")
             .map(|entry| entry.expect("cache entry").path())
             .filter(|path| {

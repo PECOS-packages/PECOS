@@ -52,7 +52,18 @@ pub(super) enum EntryKind {
 }
 
 /// Recognize only names this cache owns, including tempfile's alphanumeric token.
+/// The returned key is the digest, except for `EntryKind::Lock`, where it is the bucket.
 pub(super) fn parse_entry(name: &str) -> Option<(&str, EntryKind)> {
+    if let Some(bucket) = name
+        .strip_prefix("lock_")
+        .and_then(|s| s.strip_suffix(".lock"))
+    {
+        return (bucket.len() == 2
+            && bucket
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
+        .then_some((bucket, EntryKind::Lock));
+    }
     let (body, staging) = name.strip_prefix(".program_").map_or_else(
         || Some((name.strip_prefix("program_")?, false)),
         |s| Some((s, true)),
@@ -75,7 +86,6 @@ pub(super) fn parse_entry(name: &str) -> Option<(&str, EntryKind)> {
         match tail {
             s if s == LIB_SUFFIX => EntryKind::Library,
             "manifest" => EntryKind::Manifest,
-            "lock" => EntryKind::Lock,
             _ => return None,
         }
     };
@@ -87,7 +97,7 @@ pub(super) fn get_persistent_cache_dir() -> Result<PathBuf, InterfaceError> {
         || std::env::temp_dir().join("pecos_compiled_cache"),
         PathBuf::from,
     );
-    let cache_dir = root.join("qis-programs");
+    let cache_dir = root.join("qis-programs-v2");
     std::fs::create_dir_all(&cache_dir)
         .map_err(|e| InterfaceError::LoadError(format!("Failed to create cache directory: {e}")))?;
     // Cleanup never runs while this process holds a compilation lock.
@@ -103,6 +113,11 @@ pub(super) fn staging_dir(cache_dir: &Path, digest: &str) -> std::io::Result<tem
         .tempdir_in(cache_dir)
 }
 
+/// Only the first two hex characters of `key` (a digest or a bucket) select the lock.
+pub(super) fn bucket_lock_path(cache_dir: &Path, key: &str) -> PathBuf {
+    cache_dir.join(format!("lock_{}.lock", &key[..2]))
+}
+
 /// Closing the independently opened handle releases the OS lock, even on exit.
 pub(super) struct CompilationLock {
     _file: File,
@@ -115,18 +130,18 @@ pub(super) enum LockOutcome {
 }
 
 impl CompilationLock {
-    fn open(cache_dir: &Path, digest: &str) -> std::io::Result<File> {
+    fn open(path: &Path) -> std::io::Result<File> {
         OpenOptions::new()
             .read(true)
             .write(true)
             .create(true)
             .truncate(false)
-            .open(cache_dir.join(format!("program_{digest}.lock")))
+            .open(path)
     }
 
-    fn try_lock(file: &File) -> Result<(), TryLockError> {
+    fn try_lock(file: &File, #[cfg(test)] path: &Path) -> Result<(), TryLockError> {
         #[cfg(test)]
-        super::cache_faults::lock_error()?;
+        super::cache_faults::lock_error(path)?;
         file.try_lock()
     }
 
@@ -135,10 +150,15 @@ impl CompilationLock {
         digest: &str,
         budget: Duration,
     ) -> std::io::Result<LockOutcome> {
-        let file = Self::open(cache_dir, digest)?;
+        let path = bucket_lock_path(cache_dir, digest);
+        let file = Self::open(&path)?;
         let start = Instant::now();
         loop {
-            match Self::try_lock(&file) {
+            match Self::try_lock(
+                &file,
+                #[cfg(test)]
+                &path,
+            ) {
                 Ok(()) => return Ok(LockOutcome::Acquired(Self { _file: file })),
                 Err(TryLockError::WouldBlock) => {
                     #[cfg(test)]
@@ -170,12 +190,12 @@ fn is_old(path: &Path, max_age_secs: u64) -> bool {
         .is_some_and(|age| age.as_secs() > max_age_secs)
 }
 
-/// Best effort, one nonblocking lock attempt per digest. Lock files are permanent.
+/// Best effort, one nonblocking lock attempt per bucket. Lock files are permanent.
 pub(super) fn cleanup_old_cache_files(cache_dir: &Path, max_age_secs: u64) {
     let Ok(entries) = std::fs::read_dir(cache_dir) else {
         return;
     };
-    let mut candidates = BTreeMap::<String, Vec<(PathBuf, EntryKind)>>::new();
+    let mut candidates = BTreeMap::<PathBuf, Vec<(PathBuf, EntryKind)>>::new();
     for entry in entries.flatten() {
         let name = entry.file_name();
         let Some((digest, kind)) = name.to_str().and_then(parse_entry) else {
@@ -183,30 +203,40 @@ pub(super) fn cleanup_old_cache_files(cache_dir: &Path, max_age_secs: u64) {
         };
         if kind != EntryKind::Lock && is_old(&entry.path(), max_age_secs) {
             candidates
-                .entry(digest.to_owned())
+                .entry(bucket_lock_path(cache_dir, digest))
                 .or_default()
                 .push((entry.path(), kind));
         }
     }
-    for (digest, paths) in candidates {
+    for (lock_path, paths) in candidates {
         #[cfg(test)]
         super::cache_faults::point(super::cache_faults::Site::CleanupObserved, cache_dir);
-        let file = match CompilationLock::open(cache_dir, &digest) {
+        let file = match CompilationLock::open(&lock_path) {
             Ok(file) => file,
             Err(e) => {
-                warn!("Cannot open cleanup lock for {digest}: {e}");
+                warn!("Cannot open cleanup lock {}: {e}", lock_path.display());
                 continue;
             }
         };
-        match CompilationLock::try_lock(&file) {
+        match CompilationLock::try_lock(
+            &file,
+            #[cfg(test)]
+            &lock_path,
+        ) {
             Ok(()) => (),
             Err(TryLockError::WouldBlock) => continue,
             Err(TryLockError::Error(e)) if locking_unsupported(&e) => {
-                debug!("Locking unsupported for cleanup of {digest}: {e}");
+                debug!(
+                    "Locking unsupported for cleanup of {}: {e}",
+                    lock_path.display()
+                );
                 continue;
             }
             Err(TryLockError::Error(e)) => {
-                warn!("Cannot lock program cache for cleanup of {digest}: {e}");
+                warn!(
+                    "Cannot lock program cache for cleanup of {}: {e}",
+                    lock_path.display()
+                );
                 continue;
             }
         }

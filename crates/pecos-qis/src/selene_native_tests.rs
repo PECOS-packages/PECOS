@@ -906,6 +906,11 @@ fn scheduled_release_does_not_extract_before_later_submissions() {
         let original = ORIGINAL.get().unwrap();
         unsafe { (original.local_barrier_fn)(instance, qubits, count, delay) }
     }
+    unsafe extern "C" fn global_barrier(instance: RuntimeInstance, delay: u64) -> i32 {
+        CALLS.with_borrow_mut(|calls| calls.push("global_barrier"));
+        let original = ORIGINAL.get().unwrap();
+        unsafe { (original.global_barrier_fn)(instance, delay) }
+    }
     let executable = std::env::current_exe().unwrap();
     let source = crate::selene_runtimes::find_library_in_dir(
         executable.parent().unwrap(),
@@ -930,6 +935,7 @@ fn scheduled_release_does_not_extract_before_later_submissions() {
     descriptor.reset_fn = reset;
     descriptor.qfree_fn = release;
     descriptor.local_barrier_fn = barrier;
+    descriptor.global_barrier_fn = global_barrier;
     let fixture = unsafe { libloading::Library::new(&plugin).unwrap() };
     unsafe {
         let set = fixture
@@ -954,7 +960,11 @@ fn scheduled_release_does_not_extract_before_later_submissions() {
         ])
         .unwrap();
     let calls = CALLS.with_borrow(Clone::clone);
-    assert_eq!(&calls[..3], ["reset", "release", "reset"], "{calls:?}");
+    assert_eq!(
+        calls.get(..3),
+        Some(["reset", "release", "reset"].as_slice()),
+        "{calls:?}"
+    );
     assert!(
         calls[3..].iter().all(|call| *call == "extract"),
         "{calls:?}"

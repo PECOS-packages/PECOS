@@ -147,11 +147,17 @@ jobs:
                   "git", "diff", "--name-only", "--no-renames", "-z",
                   f"{pr['base']['sha']}...{pr['head']['sha']}", "--",
               ]).decode("utf-8", errors="surrogateescape").split("\0")
-              full = any(
-                  fnmatch.fnmatchcase(path, pattern)
-                  for path in changed if path
-                  for pattern in platform_paths
-              )
+              matched = [
+                  path for path in changed
+                  if path and any(fnmatch.fnmatchcase(path, pattern) for pattern in platform_paths)
+              ]
+              full = bool(matched)
+              print(f"{len(matched)} platform-sensitive changed file(s)")
+              for path in matched[:20]:
+                  print(f"  {path}")
+          else:
+              print("full matrix: not a pull request, or labelled ci:full-rust")
+          print(f"full={str(full).lower()}")
           with open(os.environ["GITHUB_OUTPUT"], "a") as output:
               output.write(f"full={str(full).lower()}\n")
 

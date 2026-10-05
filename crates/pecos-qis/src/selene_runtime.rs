@@ -1358,6 +1358,7 @@ impl SeleneRuntime {
     }
 
     fn reset_plugin_instance(&mut self) -> Result<()> {
+        let mut exit_result = Ok(());
         if let Some(lib) = &self.library
             && let Some(instance) = self.instance
         {
@@ -1365,7 +1366,9 @@ impl SeleneRuntime {
                 if let Some(exit_fn) = Self::runtime_plugin_descriptor(lib)?.exit_fn {
                     let errno = exit_fn(instance);
                     if errno != 0 {
-                        return Err(RuntimeError::ExecutionError(format!(
+                        // Selene ends an instance once exit is called, whatever errno
+                        // it returns, so the handle is dropped below either way.
+                        exit_result = Err(RuntimeError::ExecutionError(format!(
                             "Selene runtime exit failed with errno {errno}"
                         )));
                     }
@@ -1385,7 +1388,7 @@ impl SeleneRuntime {
         self.last_gate_time_end_nanos.clear();
         self.submitted_rz_phases.clear();
         self.source_trace_metadata.clear();
-        Ok(())
+        exit_result
     }
 
     fn apply_pending_shot_start(&mut self) -> Result<()> {
@@ -4816,6 +4819,109 @@ mod tests {
                 "{error}"
             );
             assert!(runtime.instance.is_none());
+        }
+    }
+
+    #[cfg(feature = "selene-runtimes")]
+    #[test]
+    fn failed_exit_never_reuses_the_ended_instance() {
+        use std::sync::Mutex;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        type InitFn = unsafe extern "C" fn(
+            *mut *mut c_void,
+            u64,
+            u64,
+            u32,
+            *const *const std::ffi::c_char,
+        ) -> i32;
+        static REAL_INIT: Mutex<Option<InitFn>> = Mutex::new(None);
+        static INSTANCES: Mutex<Vec<usize>> = Mutex::new(Vec::new());
+        static EXIT_CALLS: AtomicUsize = AtomicUsize::new(0);
+        unsafe extern "C" fn recording_init(
+            instance: *mut *mut c_void,
+            n_qubits: u64,
+            start: u64,
+            argc: u32,
+            argv: *const *const std::ffi::c_char,
+        ) -> i32 {
+            let init = REAL_INIT.lock().unwrap().expect("real init installed");
+            let errno = unsafe { init(instance, n_qubits, start, argc, argv) };
+            INSTANCES
+                .lock()
+                .unwrap()
+                .push(unsafe { *instance } as usize);
+            errno
+        }
+        // Reports failure without ending the real instance: PECOS must still treat
+        // the handle as ended, as Selene's contract requires.
+        unsafe extern "C" fn failing_exit(_: *mut c_void) -> i32 {
+            EXIT_CALLS.fetch_add(1, Ordering::SeqCst);
+            7
+        }
+
+        // The fixture library holds one process-wide descriptor, so install the
+        // faulty one only in a child process.
+        const CHILD_ENV: &str = "PECOS_TEST_FAILED_RUNTIME_EXIT";
+        if std::env::var_os(CHILD_ENV).is_none() {
+            crate::test_env::run_test_in_child(
+                "selene_runtime::tests::failed_exit_never_reuses_the_ended_instance",
+                &[(CHILD_ENV, "1".as_ref())],
+            );
+            return;
+        }
+
+        let executable = std::env::current_exe().unwrap();
+        let plugin = crate::selene_runtimes::find_library_in_dir(
+            executable.parent().unwrap(),
+            pecos_qis_test_runtime::LIBRARY_NAME,
+        )
+        .expect("Cargo-built runtime fixture beside the test executable");
+        let public_runtime = crate::selene_runtimes::selene_simple_runtime().unwrap();
+        // SAFETY: Both libraries stay loaded and the boxed descriptor outlives the
+        // runtimes below. Every callback has its original ABI.
+        let public_library =
+            unsafe { libloading::Library::new(&public_runtime.plugin_path).unwrap() };
+        let mut descriptor =
+            Box::new(unsafe { SeleneRuntime::runtime_plugin_descriptor(&public_library).unwrap() });
+        *REAL_INIT.lock().unwrap() = Some(descriptor.init_fn);
+        descriptor.init_fn = recording_init;
+        descriptor.exit_fn = Some(failing_exit);
+        let fixture = unsafe { libloading::Library::new(&plugin).unwrap() };
+        unsafe {
+            let set = fixture
+                .get::<unsafe extern "C" fn(*mut c_void)>(b"set_descriptor")
+                .unwrap();
+            set((&raw mut *descriptor).cast());
+        }
+        for mode in LoweringRoute::ALL {
+            INSTANCES.lock().unwrap().clear();
+            EXIT_CALLS.store(0, Ordering::SeqCst);
+            let mut runtime = SeleneRuntime::new(&plugin);
+            runtime.init_args.clone_from(&public_runtime.init_args);
+            runtime.set_num_qubits(1);
+            runtime.shot_start(0, None).unwrap();
+            mode.lower(&mut runtime, &[Operation::AllocateQubit { id: 0 }])
+                .unwrap();
+            let ended = runtime.instance.expect("initialized instance") as usize;
+
+            let error = runtime.reset().unwrap_err();
+            assert!(
+                error.to_string().contains("exit failed with errno 7"),
+                "{error}"
+            );
+            assert_eq!(EXIT_CALLS.load(Ordering::SeqCst), 1);
+            assert!(runtime.instance.is_none());
+
+            runtime.reset().unwrap();
+            runtime.shot_start(1, None).unwrap();
+            mode.lower(&mut runtime, &[Operation::AllocateQubit { id: 0 }])
+                .unwrap();
+            let instances = INSTANCES.lock().unwrap().clone();
+            assert_eq!(instances.len(), 2, "{instances:?}");
+            assert_eq!(instances[0], ended);
+            let current = runtime.instance.expect("re-initialized instance") as usize;
+            assert_eq!(current, instances[1]);
+            assert_ne!(current, ended);
         }
     }
 

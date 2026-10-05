@@ -3287,8 +3287,6 @@ impl Drop for SeleneRuntime {
 mod tests {
     use super::*;
 
-    /// Discriminates on Linux; macOS binds the fixture's import at load either way.
-    #[cfg(unix)]
     #[test]
     fn api_version_error_reports_supported_version_and_rebuild_guidance() {
         let error = SeleneRuntime::validate_runtime_api_version(0x0001_0203)
@@ -3306,6 +3304,8 @@ mod tests {
         SeleneRuntime::validate_runtime_api_version(0x0000_03ff).unwrap();
     }
 
+    /// Discriminates on Linux; macOS binds the fixture's import at load either way.
+    #[cfg(unix)]
     #[test]
     fn selene_runtime_rejects_unresolved_import_at_load() {
         let directory = tempfile::tempdir().unwrap();

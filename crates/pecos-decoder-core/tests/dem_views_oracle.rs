@@ -609,7 +609,7 @@ fn init_dets_view_with_an_empty_family_is_empty() {
     let all_z = vec![DetectorBasis::Z; dem.num_detectors];
     let view = init_dets_view(&dem, &all_z, DetectorBasis::X).unwrap();
     assert_eq!(view.dem.num_detectors, 0);
-    assert!(view.detector_index.is_empty());
+    assert_eq!(view.detector_index, Vec::<u32>::new());
     // Only columns that still touch an observable survive the projection.
     assert!(
         view.dem
@@ -617,5 +617,5 @@ fn init_dets_view_with_an_empty_family_is_empty() {
             .iter()
             .all(|(_, dets, obs)| dets.is_empty() && !obs.is_empty())
     );
-    assert!(view.project_syndrome(&[0u8; 24]).unwrap().is_empty());
+    assert_eq!(view.project_syndrome(&[0u8; 24]).unwrap(), Vec::<u8>::new());
 }

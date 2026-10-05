@@ -11,13 +11,23 @@ use pecos_eeg::circuit::{self, NoiseModel};
 use pecos_eeg::correlation_table::CorrelationTableInput;
 use pecos_eeg::dem_mapping::{DemEntry, Detector, Observable};
 use pecos_eeg::noise_characterization::NoiseCharacterizationInput;
+use pecos_qec::fault_tolerance::dem_builder::{
+    parse_detectors_json, parse_observables_json, record_offset_to_absolute_index,
+};
 use pyo3::prelude::*;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 type PyDemEvent = (f64, Vec<usize>, Vec<usize>);
 type PyEegEventDiagnostic = (Vec<usize>, usize, usize, Vec<f64>, f64);
 type MeasurementRecordDefinition = (usize, Vec<usize>, Vec<i32>);
+
+struct MetadataDefinition {
+    id: usize,
+    meas_ids: Vec<usize>,
+    records: Vec<i32>,
+    has_both_reference_forms: bool,
+}
 
 /// Build a DEM using forward EEG analysis (perturbative, fast).
 ///
@@ -957,7 +967,17 @@ pub fn noise_characterization(
     let gates = extract_gates(tick_circuit)?;
     let expanded = pecos_eeg::expand::expand_circuit(&gates)
         .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
-    let (detectors, observables) = extract_detectors_expanded(tick_circuit, &expanded)?;
+    let det_defs = extract_meas_id_defs(tick_circuit, "detectors")?;
+    let obs_defs = extract_meas_id_defs(tick_circuit, "observables")?;
+    let (detectors, observables) = resolve_definitions(&det_defs, &obs_defs, &expanded)?;
+    let to_records = |definitions: &[MetadataDefinition]| -> Vec<MeasurementRecordDefinition> {
+        definitions
+            .iter()
+            .map(|entry| (entry.id, entry.meas_ids.clone(), entry.records.clone()))
+            .collect()
+    };
+    let det_meas_ids = to_records(&det_defs);
+    let obs_meas_ids = to_records(&obs_defs);
 
     let init_gates: Vec<Gate> = (0..expanded.num_original_qubits)
         .map(|q| pecos_eeg::expand::make_gate(pecos_core::gate_type::GateType::PZ, &[q]))
@@ -980,9 +1000,6 @@ pub fn noise_characterization(
     } else {
         None
     };
-
-    let det_meas_ids = extract_meas_id_defs(tick_circuit, "detectors")?;
-    let obs_meas_ids = extract_meas_id_defs(tick_circuit, "observables")?;
 
     let nc = pecos_eeg::noise_characterization::NoiseCharacterization::build(
         NoiseCharacterizationInput {
@@ -1267,15 +1284,20 @@ fn extract_gates(py_tc: &Bound<'_, PyAny>) -> PyResult<Vec<Gate>> {
                         .extract::<Vec<f64>>()?
                         .into_iter()
                         .collect();
-                    tick_gates.push(
-                        Gate::try_new(
-                            gt,
-                            angles,
-                            params,
-                            qubits.iter().map(|&q| QubitId(q)).collect::<Vec<_>>(),
-                        )
-                        .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?,
-                    );
+                    let mut rust_gate = Gate::try_new(
+                        gt,
+                        angles,
+                        params,
+                        qubits.iter().map(|&q| QubitId(q)).collect::<Vec<_>>(),
+                    )
+                    .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
+                    rust_gate.meas_ids = gate
+                        .getattr("meas_ids")?
+                        .extract::<Vec<usize>>()?
+                        .into_iter()
+                        .map(pecos_core::MeasId::from_raw)
+                        .collect();
+                    tick_gates.push(rust_gate);
                 }
             }
         }
@@ -1289,199 +1311,137 @@ fn extract_gates(py_tc: &Bound<'_, PyAny>) -> PyResult<Vec<Gate>> {
     Ok(gates)
 }
 
-fn measurement_record_index(record: i32, num_measurements: usize) -> Option<usize> {
-    let idx = if record < 0 {
-        i32::try_from(num_measurements).ok()?.checked_add(record)?
-    } else {
-        record
-    };
-    usize::try_from(idx)
-        .ok()
-        .filter(|&idx| idx < num_measurements)
-}
-
 fn extract_detectors_expanded(
     py_tc: &Bound<'_, PyAny>,
     expanded: &pecos_eeg::expand::ExpandedCircuit,
 ) -> PyResult<(Vec<Detector>, Vec<Observable>)> {
-    // In the expanded circuit, each measurement record k maps to a
-    // Z-measurement on auxiliary qubit expanded.measurement_qubit[k].
-    //
-    // A detector defined by records {r1, r2, ...} has stabilizer
-    // Z_{aux_r1} * Z_{aux_r2} * ... in the expanded circuit.
-    let num_meas = expanded.measurement_qubit.len();
+    let detectors = extract_meas_id_defs(py_tc, "detectors")?;
+    let observables = extract_meas_id_defs(py_tc, "observables")?;
+    resolve_definitions(&detectors, &observables, expanded)
+}
 
-    let mut detectors = Vec::new();
-    let mut observables = Vec::new();
-
-    // Parse detector JSON from metadata
-    if let Ok(det_json_str) = py_tc.call_method1("get_meta", ("detectors",))
-        && let Ok(det_json) = det_json_str.extract::<String>()
-        && let Ok(det_list) = serde_json_parse_detectors(&det_json)
-    {
-        for (id, records) in det_list {
-            let mut bm = Bm::default();
-            for &rec in &records {
-                // Single resolver: an unresolvable record is an error, not a
-                // silently thinner detector.
-                let abs_idx = measurement_record_index(rec, num_meas).ok_or_else(|| {
-                    pyo3::exceptions::PyValueError::new_err(format!(
-                        "detector {id} references record offset {rec}, which does not \
-                         resolve against {num_meas} measurements"
-                    ))
-                })?;
-                let aux_qubit = expanded
-                    .aux_qubit_for_record(abs_idx)
-                    .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
-                bm.z_bits.xor_bit(aux_qubit);
-            }
-            detectors.push(Detector { id, stabilizer: bm });
+/// Read each metadata key once with the canonical parser, retaining declared ids.
+fn extract_meas_id_defs(py_tc: &Bound<'_, PyAny>, key: &str) -> PyResult<Vec<MetadataDefinition>> {
+    let value = py_tc.call_method1("get_meta", (key,))?;
+    if value.is_none() {
+        return Ok(Vec::new());
+    }
+    let json = value.extract::<String>().map_err(|_| {
+        pyo3::exceptions::PyValueError::new_err(format!(
+            "{key} metadata must be a JSON string; pass a JSON string"
+        ))
+    })?;
+    let mut definitions: Vec<MetadataDefinition> = if key == "detectors" {
+        parse_detectors_json(&json)
+            .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?
+            .into_iter()
+            .map(|entry| MetadataDefinition {
+                id: entry.id as usize,
+                has_both_reference_forms: entry.has_both_reference_forms(),
+                meas_ids: entry.meas_ids,
+                records: entry.records,
+            })
+            .collect()
+    } else {
+        parse_observables_json(&json)
+            .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?
+            .into_iter()
+            .map(|entry| MetadataDefinition {
+                id: entry.id as usize,
+                has_both_reference_forms: entry.has_both_reference_forms(),
+                meas_ids: entry.meas_ids,
+                records: entry.records,
+            })
+            .collect()
+    };
+    definitions.sort_unstable_by_key(|entry| entry.id);
+    for pair in definitions.windows(2) {
+        if pair[0].id == pair[1].id {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "duplicate {key} id {}",
+                pair[0].id
+            )));
         }
     }
+    Ok(definitions)
+}
 
-    // Parse observable JSON from metadata
-    if let Ok(obs_json_str) = py_tc.call_method1("get_meta", ("observables",))
-        && let Ok(obs_json) = obs_json_str.extract::<String>()
-        && let Ok(obs_list) = serde_json_parseobservables(&obs_json)
-    {
-        for (id, records) in obs_list {
-            let mut bm = Bm::default();
-            for &rec in &records {
-                let abs_idx = measurement_record_index(rec, num_meas).ok_or_else(|| {
-                    pyo3::exceptions::PyValueError::new_err(format!(
-                        "observable {id} references record offset {rec}, which does not \
-                         resolve against {num_meas} measurements"
-                    ))
-                })?;
-                let aux_qubit = expanded
-                    .aux_qubit_for_record(abs_idx)
-                    .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))?;
-                bm.z_bits.xor_bit(aux_qubit);
-            }
-            observables.push(Observable { id, pauli: bm });
-        }
-    }
-
+fn resolve_definitions(
+    detectors: &[MetadataDefinition],
+    observables: &[MetadataDefinition],
+    expanded: &pecos_eeg::expand::ExpandedCircuit,
+) -> PyResult<(Vec<Detector>, Vec<Observable>)> {
+    let detectors = detectors
+        .iter()
+        .map(|definition| {
+            Ok(Detector {
+                id: definition.id,
+                stabilizer: resolve_definition(definition, "detector", expanded)?,
+            })
+        })
+        .collect::<PyResult<_>>()?;
+    let observables = observables
+        .iter()
+        .map(|definition| {
+            Ok(Observable {
+                id: definition.id,
+                pauli: resolve_definition(definition, "observable", expanded)?,
+            })
+        })
+        .collect::<PyResult<_>>()?;
     Ok((detectors, observables))
 }
 
-/// Minimal JSON parser for detector definitions (avoids serde dependency).
-/// Parses [{"id": N, "records": [R1, R2, ...], ...}, ...]
-fn serde_json_parse_detectors(json: &str) -> Result<Vec<(usize, Vec<i32>)>, String> {
-    // Simple approach: find "id" and "records" fields via string scanning
-    let mut result = Vec::new();
-    let mut pos = 0;
-    while let Some(start) = json[pos..].find('{') {
-        let start = pos + start;
-        let end = json[start..]
-            .find('}')
-            .map(|e| start + e + 1)
-            .ok_or_else(|| "Unmatched brace".to_string())?;
-        let entry = &json[start..end];
-
-        let id = extract_json_int(entry, "\"id\"")
-            .and_then(|value| usize::try_from(value).ok())
-            .unwrap_or(result.len());
-        let records = extract_json_int_array(entry, "\"records\"").unwrap_or_default();
-
-        result.push((id, records));
-        pos = end;
-    }
-    Ok(result)
-}
-
-fn serde_json_parseobservables(json: &str) -> Result<Vec<(usize, Vec<i32>)>, String> {
-    serde_json_parse_detectors(json) // Same format
-}
-
-/// Extract MeasId definitions from circuit metadata JSON.
-fn extract_meas_id_defs(
-    py_tc: &Bound<'_, pyo3::PyAny>,
-    key: &str, // "detectors" or "observables"
-) -> PyResult<Vec<MeasurementRecordDefinition>> {
-    let mut result = Vec::new();
-    if let Ok(json_str) = py_tc.call_method1("get_meta", (key,))
-        && let Ok(s) = json_str.extract::<String>()
+fn resolve_definition(
+    definition: &MetadataDefinition,
+    kind: &str,
+    expanded: &pecos_eeg::expand::ExpandedCircuit,
+) -> PyResult<Bm> {
+    let MetadataDefinition {
+        id,
+        meas_ids,
+        records,
+        has_both_reference_forms,
+    } = definition;
+    let num_meas = expanded.measurement_qubit.len();
+    let record_qubits = records
+        .iter()
+        .map(|&record| {
+            let index = record_offset_to_absolute_index(num_meas, record).ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "{kind} {id} references record offset {record}, which does not \
+                     resolve against {num_meas} measurements"
+                ))
+            })?;
+            expanded
+                .aux_qubit_for_record(index)
+                .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))
+        })
+        .collect::<PyResult<Vec<_>>>()?;
+    let id_qubits = meas_ids
+        .iter()
+        .map(|&meas_id| {
+            expanded
+                .aux_qubit_for_id(pecos_core::MeasId::from_raw(meas_id))
+                .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))
+        })
+        .collect::<PyResult<Vec<_>>>()?;
+    if *has_both_reference_forms
+        && record_qubits.iter().collect::<BTreeSet<_>>()
+            != id_qubits.iter().collect::<BTreeSet<_>>()
     {
-        // Parse JSON: each item has id, meas_ids (optional), records
-        let items = parse_json_items(&s);
-        for (idx, (records, meas_ids)) in items.iter().enumerate() {
-            result.push((idx, meas_ids.clone(), records.clone()));
-        }
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "{kind} {id} has records and meas_ids that reference different auxiliary qubits"
+        )));
     }
-    Ok(result)
-}
-
-/// Parse JSON array items, extracting records and meas_ids fields.
-fn parse_json_items(json: &str) -> Vec<(Vec<i32>, Vec<usize>)> {
-    let mut result = Vec::new();
-    // Split by "records" occurrences
-    let trimmed = json.trim();
-    if !trimmed.starts_with('[') {
-        return result;
+    let qubits = if records.is_empty() {
+        id_qubits
+    } else {
+        record_qubits
+    };
+    let mut bitmask = Bm::default();
+    for qubit in qubits {
+        bitmask.z_bits.xor_bit(qubit);
     }
-
-    // Simple state machine: find each {...} block and extract fields
-    let mut depth = 0;
-    let mut block_start = None;
-    for (i, ch) in trimmed.char_indices() {
-        match ch {
-            '{' => {
-                if depth == 1 {
-                    block_start = Some(i);
-                }
-                depth += 1;
-            }
-            '}' => {
-                depth -= 1;
-                if depth == 1
-                    && let Some(start) = block_start
-                {
-                    let block = &trimmed[start..=i];
-                    let records = extract_json_int_array(block, "records").unwrap_or_default();
-                    let meas_ids = extract_json_int_array(block, "meas_ids")
-                        .map(|v| {
-                            v.into_iter()
-                                .filter_map(|x| usize::try_from(x).ok())
-                                .collect()
-                        })
-                        .unwrap_or_default();
-                    result.push((records, meas_ids));
-                }
-            }
-            '[' if depth == 0 => {
-                depth = 1;
-            }
-            ']' if depth == 1 => {
-                break;
-            }
-            _ => {}
-        }
-    }
-    result
-}
-
-fn extract_json_int(s: &str, key: &str) -> Option<i64> {
-    let key_pos = s.find(key)?;
-    let after_key = &s[key_pos + key.len()..];
-    let colon = after_key.find(':')?;
-    let value_str = after_key[colon + 1..].trim();
-    // Read digits (possibly with minus)
-    let end = value_str
-        .find(|c: char| !c.is_ascii_digit() && c != '-')
-        .unwrap_or(value_str.len());
-    value_str[..end].trim().parse().ok()
-}
-
-fn extract_json_int_array(s: &str, key: &str) -> Option<Vec<i32>> {
-    let key_pos = s.find(key)?;
-    let after_key = &s[key_pos + key.len()..];
-    let bracket_start = after_key.find('[')?;
-    let bracket_end = after_key[bracket_start..].find(']')? + bracket_start;
-    let array_str = &after_key[bracket_start + 1..bracket_end];
-    let values: Vec<i32> = array_str
-        .split(',')
-        .filter_map(|v| v.trim().parse().ok())
-        .collect();
-    Some(values)
+    Ok(bitmask)
 }

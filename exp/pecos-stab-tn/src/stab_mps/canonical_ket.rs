@@ -12,7 +12,7 @@
 
 //! Polynomial-time relative amplitudes of the canonical ket represented by a stabilizer tableau.
 //!
-//! `StabMps::state_vector` fixes a tableau's otherwise arbitrary ket phase by
+//! `StabMps::state_vector_up_to_phase` fixes a tableau's otherwise arbitrary ket phase by
 //! normalizing the first nonzero column of `prod_k (I + S_k) / 2`. Equivalently,
 //! the numerically first computational-basis word in the support has a positive
 //! real amplitude. This module implements that same convention without building
@@ -137,7 +137,7 @@ impl CanonicalKet {
 
         // The solution set differs by the row space of the X block. Clearing
         // its pivots from q0 upward gives the smallest MSB-first projector
-        // column, exactly matching state_vector's scan order.
+        // column, exactly matching state_vector_up_to_phase's scan order.
         for &(pivot_qubit, row) in &x_pivots {
             if first_support[pivot_qubit] {
                 for qubit in &reduced_stabs.row_x[row] {
@@ -160,7 +160,7 @@ impl CanonicalKet {
         &self.first_support
     }
 
-    /// Return one amplitude in `state_vector`'s canonical representative.
+    /// Return one amplitude in `state_vector_up_to_phase`'s canonical representative.
     ///
     /// Relative phases within the ket are exact; the physical state remains
     /// defined only up to a common global phase.
@@ -222,7 +222,7 @@ fn pauli_applied_amplitude_at(
 }
 
 /// Return `<target|D_0^x0 ... D_{n-1}^xn|phi>` in the same effective
-/// multiplication order used by `StabMps::state_vector`.
+/// multiplication order used by `StabMps::state_vector_up_to_phase`.
 #[cfg(test)]
 fn destabilizer_basis_amplitude(
     tableau: &SparseStabY,
@@ -264,7 +264,7 @@ fn destabilizer_basis_amplitude_with_ket(
         return source_amplitude;
     }
 
-    // state_vector applies row 0 first, then row 1, etc. Track the phase of
+    // state_vector_up_to_phase applies row 0 first, then row 1, etc. Track the phase of
     // that same left-multiplication sequence on the source computational ket.
     let mut current = source;
     let mut phase = QuarterPhase::ONE;
@@ -426,7 +426,7 @@ impl CanonicalPhaseTracker {
     }
 
     /// Unit phase of the selected terminal tableau basis vector, relative to
-    /// `state_vector`'s canonical representative.
+    /// `state_vector_up_to_phase`'s canonical representative.
     pub(super) fn terminal_tableau_basis_phase(
         &self,
         tableau: &SparseStabY,
@@ -576,7 +576,7 @@ mod tests {
                 ],
             );
             stn.mps.apply_one_site_gate(0, &x).unwrap();
-            let dense = stn.state_vector();
+            let dense = stn.state_vector_up_to_phase();
             assert_eq!(
                 destabilizer_basis_amplitude(&stn.tableau, &[1], &[true]),
                 expected
@@ -606,7 +606,7 @@ mod tests {
         );
         stn.mps.apply_one_site_gate(0, &x).unwrap();
         stn.mps.apply_one_site_gate(1, &x).unwrap();
-        let dense = stn.state_vector();
+        let dense = stn.state_vector_up_to_phase();
         for (index, expected) in dense.into_iter().enumerate() {
             let target = [index & 1 != 0, index & 2 != 0];
             assert_eq!(

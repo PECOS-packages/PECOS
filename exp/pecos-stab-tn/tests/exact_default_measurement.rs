@@ -904,7 +904,7 @@ fn assert_trivial_product_repeat_outcome_is_valid(mode: MeasurementMode) {
     assert_eq!(second_probability.to_bits(), 1.0_f64.to_bits());
 
     simulator.flush();
-    let fidelity = state_fidelity(&simulator.state_vector(), &expected.state());
+    let fidelity = state_fidelity(&simulator.state_vector_up_to_phase(), &expected.state());
     assert!(
         fidelity >= 1.0 - 1e-12,
         "mode={mode:?}: repeated trivial-product measurement fidelity={fidelity:.16}"
@@ -938,7 +938,7 @@ fn lazy_trivial_stored_mps_materializes_pending_frame_before_tableau_read() {
 
         let mut snapshot = simulator.clone();
         snapshot.flush();
-        let fidelity = state_fidelity(&snapshot.state_vector(), &dense.state());
+        let fidelity = state_fidelity(&snapshot.state_vector_up_to_phase(), &dense.state());
         assert!(
             fidelity >= 1.0 - 1e-12,
             "measurement {measurement_index}: conditional-state fidelity={fidelity:.16}"
@@ -1035,7 +1035,10 @@ fn lazy_measure_clifford_rz_conditional_state_fidelity() {
         replay_gates(&mut expected, &cliffords);
         let mut before_rotation = simulator.clone();
         before_rotation.flush();
-        let before_fidelity = state_fidelity(&before_rotation.state_vector(), &expected.state());
+        let before_fidelity = state_fidelity(
+            &before_rotation.state_vector_up_to_phase(),
+            &expected.state(),
+        );
         assert!(
             before_fidelity >= 1.0 - 1e-10,
             "seed={seed}: the Lazy conditional state must be correct before RZ; fidelity={before_fidelity:.16}"
@@ -1044,7 +1047,7 @@ fn lazy_measure_clifford_rz_conditional_state_fidelity() {
         expected.rz(angle, &[QubitId(rotated)]);
 
         simulator.flush();
-        let fidelity = state_fidelity(&simulator.state_vector(), &expected.state());
+        let fidelity = state_fidelity(&simulator.state_vector_up_to_phase(), &expected.state());
         eprintln!(
             "lazy-frame-rz-fidelity seed={seed} measured={measured} rotated={rotated} before={before_fidelity:.16} fidelity={fidelity:.16}"
         );
@@ -1084,7 +1087,7 @@ fn lazy_single_measurement_preserves_pre_measurement_rz_branch_phase() {
     );
     let (_, mut expected) = projected_dense_state(dense, 2, outcome).unwrap();
     simulator.flush();
-    let fidelity = state_fidelity(&simulator.state_vector(), &expected.state());
+    let fidelity = state_fidelity(&simulator.state_vector_up_to_phase(), &expected.state());
     assert!(
         fidelity >= 1.0 - 1e-12,
         "issue #572 lazy projection changed the pre-measurement RZ branch phase: \
@@ -1140,7 +1143,7 @@ fn lazy_randomized_4000_conditional_state_hunt() {
         let outcome = simulator.mz(&[QubitId(measured)])[0].outcome;
         let (_, mut expected) = projected_dense_state(dense, measured, outcome).unwrap();
         simulator.flush();
-        let fidelity = state_fidelity(&simulator.state_vector(), &expected.state());
+        let fidelity = state_fidelity(&simulator.state_vector_up_to_phase(), &expected.state());
         worst_fidelity = worst_fidelity.min(fidelity);
         mismatches += usize::from(fidelity < 1.0 - 1e-10);
     }
@@ -1261,7 +1264,8 @@ fn lazy_interleaved_multi_measurement_adversarial_family() {
 
                     let mut snapshot = simulator.clone();
                     snapshot.flush();
-                    let fidelity = state_fidelity(&snapshot.state_vector(), &dense.state());
+                    let fidelity =
+                        state_fidelity(&snapshot.state_vector_up_to_phase(), &dense.state());
                     worst_fidelity = worst_fidelity.min(fidelity);
                     fidelity_mismatches += usize::from(fidelity < 1.0 - 1e-10);
 
@@ -1331,7 +1335,7 @@ fn lazy_frame_rz_does_not_consume_stored_disentangling_proof() {
     );
 
     simulator.flush();
-    let fidelity = state_fidelity(&simulator.state_vector(), &expected.state());
+    let fidelity = state_fidelity(&simulator.state_vector_up_to_phase(), &expected.state());
     assert!(
         fidelity >= 1.0 - 1e-10,
         "bypassed stored-proof path must remain state-correct; fidelity={fidelity:.16}"
@@ -1344,7 +1348,7 @@ fn assert_default_state_matches(
     context: &str,
 ) {
     simulator.flush();
-    let fidelity = state_fidelity(&simulator.state_vector(), &expected.state());
+    let fidelity = state_fidelity(&simulator.state_vector_up_to_phase(), &expected.state());
     assert!(
         fidelity >= 1.0 - 1e-10,
         "{context}: conditional-state fidelity={fidelity:.16}"
@@ -1404,7 +1408,7 @@ fn exact_default_conditional_state_fidelity_matrix() {
                 dense_pz(vec![branch], measured)
             };
             stn.flush();
-            let actual = stn.state_vector();
+            let actual = stn.state_vector_up_to_phase();
             let fidelity = branches
                 .iter_mut()
                 .map(|branch| state_fidelity(&actual, &branch.state.state()))

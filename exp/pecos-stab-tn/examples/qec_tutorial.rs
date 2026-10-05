@@ -200,13 +200,12 @@ fn main() {
     println!();
 
     // ------------------------------------------------------------------
-    // 7. Flush the frame before reading exact state
+    // 7. Flush the frame before reading the physical state
     // ------------------------------------------------------------------
     //
-    // If you want exact state_vector/amplitude readouts (including
-    // complex phase from Y injections), call `flush_pauli_frame_to_state`
-    // first. The decomposition-based flush gives EXACT amplitudes even
-    // on Clifford-evolved states — no ±1 residual.
+    // Call `flush_pauli_frame_to_state` before projective amplitude reads
+    // that must include the frame. Relative phases from Y injections are
+    // preserved; the overall phase follows the stabilizer-reference gauge.
 
     let mut stn = StabMps::builder(2)
         .seed(1)
@@ -216,8 +215,8 @@ fn main() {
     stn.cx(&[(QubitId(0), QubitId(1))]);
     stn.inject_y_in_frame(QubitId(0));
     stn.flush_pauli_frame_to_state();
-    let sv = stn.state_vector();
-    println!("Step 7: Y_0 on a Bell state, exact amplitudes after flush");
+    let sv = stn.state_vector_up_to_phase();
+    println!("Step 7: Y_0 on a Bell state, amplitudes up to phase after flush");
     for (i, a) in sv.iter().enumerate() {
         println!("  sv[{i}] = {a:.4}");
     }
@@ -228,5 +227,5 @@ fn main() {
     println!("  - reset_qubit(q), pz(q), px(q)");
     println!("  - inject_{{x,y,z}}_in_frame(q), inject_paulis_in_frame(&[...])");
     println!("  - apply_depolarizing(q, p), apply_depolarizing_all(&qs, p)");
-    println!("  - flush_pauli_frame_to_state(): exact state_vector after Y frames");
+    println!("  - flush_pauli_frame_to_state(): state_vector_up_to_phase after Y frames");
 }

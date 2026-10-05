@@ -451,6 +451,87 @@ struct Column {
     log_one_minus_probability: f64,
     log_odds_int: i64,
     log_one_minus_probability_int: i64,
+    compact: CompactColumn,
+}
+
+/// Losslessly omit zero detector words outside each column's live span.
+/// Word order within the span is unchanged, preserving numeric tie-breaks.
+#[derive(Clone, Debug)]
+struct CompactColumn {
+    first_word: usize,
+    parent_words: usize,
+    // Parent word index (or MAX for an implicit zero), toggle, active mask.
+    output: Vec<(usize, u64, u64)>,
+    // Parent word index, original observed word index, closing mask, toggle.
+    closing: Vec<(usize, usize, u64, u64)>,
+}
+
+impl CompactColumn {
+    fn new(previous_span: (usize, usize), active: &[u64], close: &[u64], toggle: &[u64]) -> Self {
+        let first_word = active.iter().position(|&word| word != 0).unwrap_or(0);
+        let end = active
+            .iter()
+            .rposition(|&word| word != 0)
+            .map_or(0, |i| i + 1);
+        let source = |word: usize| {
+            word.checked_sub(previous_span.0)
+                .filter(|&index| index < previous_span.1)
+                .unwrap_or(usize::MAX)
+        };
+        Self {
+            first_word,
+            parent_words: previous_span.1,
+            output: (first_word..end)
+                .map(|word| (source(word), toggle[word], active[word]))
+                .collect(),
+            closing: close
+                .iter()
+                .enumerate()
+                .filter(|&(_, &mask)| mask != 0)
+                .map(|(word, &mask)| (source(word), word, mask, toggle[word]))
+                .collect(),
+        }
+    }
+}
+
+impl Column {
+    fn emit_compact(
+        &self,
+        destination: &mut StateBuffer<f64>,
+        parent: &[u64],
+        observed: &[u64],
+        toggled: bool,
+        mass: f64,
+        transitions: &mut u64,
+    ) {
+        *transitions += 1;
+        let plan = &self.compact;
+        let read = |index: usize| {
+            if index == usize::MAX {
+                0
+            } else {
+                parent[index]
+            }
+        };
+        for &(source, word, mask, toggle) in &plan.closing {
+            let value = read(source) ^ if toggled { toggle } else { 0 };
+            if (value ^ observed[word]) & mask != 0 {
+                return;
+            }
+        }
+        for &(source, toggle, active) in &plan.output {
+            destination
+                .words
+                .push((read(source) ^ if toggled { toggle } else { 0 }) & active);
+        }
+        destination.words.extend(
+            parent[plan.parent_words..]
+                .iter()
+                .zip(&self.logical_toggle)
+                .map(|(&word, &toggle)| word ^ if toggled { toggle } else { 0 }),
+        );
+        destination.masses.push(mass);
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -637,6 +718,7 @@ struct FrontierScratch<M> {
     retained: Vec<bool>,
     detector_words: usize,
     stride: usize,
+    detector_word_offset: usize,
 }
 
 impl<M: Copy> FrontierScratch<M> {
@@ -644,6 +726,7 @@ impl<M: Copy> FrontierScratch<M> {
         self.parent.clear(self.stride);
         self.branches.clear(self.stride);
         self.detector_words = syndrome.len();
+        self.detector_word_offset = 0;
         self.stride = syndrome.len() + logical.len();
         self.parent.words.extend_from_slice(syndrome);
         and_assign(&mut self.parent.words, touched);
@@ -770,6 +853,7 @@ fn compare_state_words(left: &[u64], right: &[u64], detector_words: usize) -> Or
 /// A column's compatibility masks and syndrome are shared by every branch.
 struct BranchContext<'a> {
     detector_words: usize,
+    has_closing_detectors: bool,
     close_mask: &'a [u64],
     active_mask: &'a [u64],
     observed: &'a [u64],
@@ -792,25 +876,34 @@ impl BranchContext<'_> {
             destination.masses.len() * parent.len()
         );
         *transitions += 1;
+        // Check compatibility before copying a branch that will be discarded.
+        // Most columns close no detector: skip the per-state scan entirely.
+        if self.has_closing_detectors {
+            let syndrome = &parent[..self.detector_words];
+            let incompatible = if let Some((detector_toggle, _)) = toggles {
+                syndrome
+                    .iter()
+                    .zip(detector_toggle)
+                    .zip(self.observed)
+                    .zip(self.close_mask)
+                    .any(|(((&accumulated, &toggle), &expected), &closing)| {
+                        (accumulated ^ toggle ^ expected) & closing != 0
+                    })
+            } else {
+                syndrome.iter().zip(self.observed).zip(self.close_mask).any(
+                    |((&accumulated, &expected), &closing)| (accumulated ^ expected) & closing != 0,
+                )
+            };
+            if incompatible {
+                return;
+            }
+        }
         let start = destination.words.len();
         destination.words.extend_from_slice(parent);
         let (syndrome, logical) = destination.words[start..].split_at_mut(self.detector_words);
         if let Some((detector_toggle, logical_toggle)) = toggles {
             xor_assign(syndrome, detector_toggle);
             xor_assign(logical, logical_toggle);
-        }
-        if syndrome
-            .iter()
-            .zip(self.observed)
-            .zip(self.close_mask)
-            .any(|((&accumulated, &expected), &closing)| (accumulated ^ expected) & closing != 0)
-        {
-            destination.words.truncate(start);
-            debug_assert_eq!(
-                destination.words.len(),
-                destination.masses.len() * parent.len()
-            );
-            return;
         }
         and_assign(syndrome, self.active_mask);
         destination.masses.push(mass);
@@ -1156,6 +1249,7 @@ impl TrellisDecoder {
         and_assign(&mut open_detectors, &touched_detectors);
         let mut columns = Vec::with_capacity(raw_columns.len());
         let mut column_moments = Vec::with_capacity(raw_columns.len());
+        let mut previous_span = (0, detector_words);
         for (column_index, (detector_toggle, logical_toggle, probability)) in
             raw_columns.into_iter().enumerate()
         {
@@ -1171,7 +1265,15 @@ impl TrellisDecoder {
             column_moments.push(1.0 - 2.0 * probability);
             let log_odds = libm::log(probability / (1.0 - probability));
             let log_one_minus_probability = libm::log(1.0 - probability);
+            let compact = CompactColumn::new(
+                previous_span,
+                &open_detectors,
+                &close_mask,
+                &detector_toggle,
+            );
+            previous_span = (compact.first_word, compact.output.len());
             columns.push(Column {
+                compact,
                 detector_toggle,
                 logical_toggle,
                 close_mask,
@@ -1742,30 +1844,31 @@ impl TrellisModel {
                 ) == Ordering::Less
             }));
             frontier.branches.clear(frontier.stride);
-            let branch_context = BranchContext {
-                detector_words: frontier.detector_words,
-                close_mask: &column.close_mask,
-                active_mask: &column.active_mask,
-                observed,
-            };
             for (index, &log_mass) in frontier.parent.masses.iter().enumerate() {
                 let state = frontier.parent.key(index, frontier.stride);
                 let branch_base = log_mass + column.log_one_minus_probability;
-                branch_context.emit(
+                column.emit_compact(
                     &mut frontier.branches,
                     state,
-                    None,
+                    observed,
+                    false,
                     branch_base,
                     transitions,
                 );
-                branch_context.emit(
+                column.emit_compact(
                     &mut frontier.branches,
                     state,
-                    Some((&column.detector_toggle, &column.logical_toggle)),
+                    observed,
+                    true,
                     branch_base + column.log_odds,
                     transitions,
                 );
             }
+            let logical_words = frontier.stride - frontier.detector_words;
+            frontier.parent.clear(frontier.stride);
+            frontier.detector_words = column.compact.output.len();
+            frontier.detector_word_offset = column.compact.first_word;
+            frontier.stride = frontier.detector_words + logical_words;
             frontier.merge(logaddexp);
             if frontier.parent.masses.is_empty() {
                 return Err(BinaryFailure::NoPath);
@@ -1928,6 +2031,7 @@ impl TrellisModel {
             frontier.branches.clear(frontier.stride);
             let branch_context = BranchContext {
                 detector_words: frontier.detector_words,
+                has_closing_detectors: column.close_mask.iter().any(|&mask| mask != 0),
                 close_mask: &column.close_mask,
                 active_mask: &column.active_mask,
                 observed,
@@ -2081,6 +2185,7 @@ impl TrellisModel {
             frontier.branches.clear(frontier.stride);
             let branch_context = BranchContext {
                 detector_words: frontier.detector_words,
+                has_closing_detectors: column.close_mask.iter().any(|&mask| mask != 0),
                 close_mask: &column.close_mask,
                 active_mask: &column.active_mask,
                 observed,
@@ -2189,6 +2294,7 @@ impl TrellisModel {
             frontier.branches.clear(frontier.stride);
             let branch_context = BranchContext {
                 detector_words: frontier.detector_words,
+                has_closing_detectors: column.close_mask.iter().any(|&mask| mask != 0),
                 close_mask: &column.close_mask,
                 active_mask: &column.active_mask,
                 observed,
@@ -2662,7 +2768,10 @@ fn score_candidates(
         return;
     };
     let first_word = first.word as usize;
-    frontier.transpose_detectors(first_word, last.word as usize);
+    frontier.transpose_detectors(
+        first_word - frontier.detector_word_offset,
+        last.word as usize - frontier.detector_word_offset,
+    );
     let count = frontier.parent.masses.len();
     frontier.scores.resize(count, neutral);
     for row in suffix_compatibility.rows {
@@ -3202,6 +3311,308 @@ mod tests {
     };
     use std::collections::BTreeMap;
 
+    #[test]
+    fn short_state_comparisons_match_generic_word_order() {
+        use rand::{RngExt, SeedableRng};
+        let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(918_341);
+        for detector_words in [0, 1, 2, 3, 12] {
+            for logical_words in 0..=3 {
+                let stride = detector_words + logical_words;
+                for _ in 0..256 {
+                    let left: Vec<u64> = (0..stride).map(|_| rng.random()).collect();
+                    for first_changed in 0..=stride {
+                        let mut right = left.clone();
+                        for word in &mut right[first_changed..] {
+                            *word = rng.random();
+                        }
+                        let expected = super::compare_words_as_unsigned(
+                            &left[..detector_words],
+                            &right[..detector_words],
+                        )
+                        .then_with(|| {
+                            super::compare_words_as_unsigned(
+                                &left[detector_words..],
+                                &right[detector_words..],
+                            )
+                        });
+                        assert_eq!(
+                            super::compare_state_words(&left, &right, detector_words),
+                            expected
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn retention_preserves_order_and_mass_bits() {
+        use rand::{RngExt, SeedableRng};
+        let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(381_929);
+        for stride in [0, 1, 2, 3, 13] {
+            for count in [0, 1, 2, 64, 129] {
+                for pattern in 0..4 {
+                    let mut frontier = super::FrontierScratch::<f64> {
+                        stride,
+                        detector_words: stride,
+                        ..Default::default()
+                    };
+                    let mut expected = super::StateBuffer::<f64>::default();
+                    for index in 0..count {
+                        frontier
+                            .parent
+                            .words
+                            .extend((0..stride).map(|_| rng.random::<u64>()));
+                        frontier.parent.masses.push(f64::from_bits(rng.random()));
+                        let keep = match pattern {
+                            0 => false,
+                            1 => true,
+                            2 => index % 2 == 0,
+                            _ => rng.random_bool(0.5),
+                        };
+                        frontier.retained.push(keep);
+                        if keep {
+                            expected.copy_state(&frontier.parent, index, stride);
+                        }
+                    }
+                    frontier.branches.words.resize(3 * stride, u64::MAX);
+                    frontier.branches.masses.resize(3, -1.0);
+                    frontier.retain();
+                    assert_eq!(frontier.parent.words, expected.words);
+                    assert_eq!(
+                        frontier
+                            .parent
+                            .masses
+                            .iter()
+                            .map(|value| value.to_bits())
+                            .collect::<Vec<_>>(),
+                        expected
+                            .masses
+                            .iter()
+                            .map(|value| value.to_bits())
+                            .collect::<Vec<_>>()
+                    );
+                    frontier.reset(&vec![0; stride], &[], &vec![0; stride], 0.0);
+                    assert_eq!(frontier.parent.words, vec![0; stride]);
+                    assert_eq!(frontier.parent.masses, vec![0.0]);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn compact_branches_match_full_width_bit_for_bit() {
+        use rand::{RngExt, SeedableRng};
+        let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(78123);
+        for width in [0, 1, 2, 12] {
+            for _ in 0..256 {
+                let start = rng.random_range(0..=width);
+                let end = rng.random_range(start..=width);
+                let mut full_parent = vec![0_u64; width];
+                for word in &mut full_parent[start..end] {
+                    *word = rng.random();
+                }
+                let logical = [rng.random::<u64>(), rng.random::<u64>()];
+                let toggle: Vec<u64> = (0..width).map(|_| rng.random()).collect();
+                let close: Vec<u64> = (0..width)
+                    .map(|_| {
+                        if rng.random_bool(0.1) {
+                            rng.random()
+                        } else {
+                            0
+                        }
+                    })
+                    .collect();
+                let active: Vec<u64> = close
+                    .iter()
+                    .map(|&mask| if rng.random_bool(0.5) { !mask } else { 0 })
+                    .collect();
+                let logical_toggle = vec![rng.random(), rng.random()];
+                let plan =
+                    super::CompactColumn::new((start, end - start), &active, &close, &toggle);
+                let column = super::Column {
+                    detector_toggle: toggle.clone(),
+                    logical_toggle: logical_toggle.clone(),
+                    close_mask: close.clone(),
+                    active_mask: active.clone(),
+                    suffix_compatibility: Vec::new(),
+                    log_odds: 0.0,
+                    log_one_minus_probability: 0.0,
+                    log_odds_int: 0,
+                    log_one_minus_probability_int: 0,
+                    compact: plan,
+                };
+                for take in [false, true] {
+                    for compatible in [false, true] {
+                        let observed: Vec<u64> = (0..width)
+                            .map(|i| {
+                                if compatible {
+                                    full_parent[i] ^ if take { toggle[i] } else { 0 }
+                                } else {
+                                    rng.random()
+                                }
+                            })
+                            .collect();
+                        let mut parent = full_parent[start..end].to_vec();
+                        parent.extend(logical);
+                        let mut expanded_parent = full_parent.clone();
+                        expanded_parent.extend(logical);
+                        let context = super::BranchContext {
+                            detector_words: width,
+                            has_closing_detectors: close.iter().any(|&x| x != 0),
+                            close_mask: &close,
+                            active_mask: &active,
+                            observed: &observed,
+                        };
+                        let mut expected = super::StateBuffer::<f64>::default();
+                        let mut actual = super::StateBuffer::<f64>::default();
+                        let (mut expected_count, mut actual_count) = (0, 0);
+                        context.emit(
+                            &mut expected,
+                            &expanded_parent,
+                            take.then_some((&toggle[..], &logical_toggle[..])),
+                            -0.5,
+                            &mut expected_count,
+                        );
+                        column.emit_compact(
+                            &mut actual,
+                            &parent,
+                            &observed,
+                            take,
+                            -0.5,
+                            &mut actual_count,
+                        );
+                        assert_eq!(actual_count, expected_count);
+                        assert_eq!(actual.masses, expected.masses);
+                        if !actual.masses.is_empty() {
+                            let mut expanded = vec![0; width];
+                            let first = column.compact.first_word;
+                            let count = column.compact.output.len();
+                            expanded[first..first + count].copy_from_slice(&actual.words[..count]);
+                            expanded.extend_from_slice(&actual.words[count..]);
+                            assert_eq!(expanded, expected.words);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn branch_compatibility_precheck_matches_copy_then_check() {
+        // Exhaust all two-bit parent, toggle, observed, and closing masks.
+        // Keep previously emitted states to catch accidental truncation.
+        for parent_bits in 0..4_u64 {
+            for toggle_bits in 0..4_u64 {
+                for observed in 0..4_u64 {
+                    for closing in 0..4_u64 {
+                        for take in [false, true] {
+                            let parent = [parent_bits, 7];
+                            let toggle = [toggle_bits];
+                            let logical_toggle = [3];
+                            let context = super::BranchContext {
+                                detector_words: 1,
+                                has_closing_detectors: closing != 0,
+                                close_mask: &[closing],
+                                active_mask: &[!closing],
+                                observed: &[observed],
+                            };
+                            let mut actual = super::StateBuffer::<f64>::default();
+                            actual.words.extend_from_slice(&[9, 11]);
+                            actual.masses.push(-0.25);
+                            let mut expected_words = actual.words.clone();
+                            let mut expected_masses = actual.masses.clone();
+                            let syndrome = parent_bits ^ if take { toggle_bits } else { 0 };
+                            if (syndrome ^ observed) & closing == 0 {
+                                expected_words.extend_from_slice(&[
+                                    syndrome & !closing,
+                                    7 ^ if take { 3 } else { 0 },
+                                ]);
+                                expected_masses.push(-0.5);
+                            }
+                            let mut transitions = 0;
+                            context.emit(
+                                &mut actual,
+                                &parent,
+                                take.then_some((&toggle[..], &logical_toggle[..])),
+                                -0.5,
+                                &mut transitions,
+                            );
+                            assert_eq!(transitions, 1);
+                            assert_eq!(actual.words, expected_words);
+                            assert_eq!(actual.masses, expected_masses);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn merge_order_matches_stable_sort_bit_for_bit() {
+        use rand::{RngExt, SeedableRng};
+        use rand_xoshiro::Xoshiro256PlusPlus;
+
+        let mut rng = Xoshiro256PlusPlus::seed_from_u64(20_260_929);
+        for detector_words in [0, 1, 6, 12] {
+            for count in [0, 1, 8, 64, 256, 1024] {
+                let stride = detector_words + 1;
+                let mut frontier = super::FrontierScratch::<f64> {
+                    detector_words,
+                    stride,
+                    ..Default::default()
+                };
+                for _ in 0..count {
+                    // Duplicate keys exercise arrival-order-sensitive mass folds.
+                    let key = rng.random_range(0..8_u64);
+                    frontier.branches.words.extend(
+                        (0..stride).map(|word| key.rotate_left(u32::try_from(word).unwrap())),
+                    );
+                    frontier
+                        .branches
+                        .masses
+                        .push(-rng.random_range(0.0..1000.0));
+                }
+                let mut indices: Vec<_> = (0..count).collect();
+                indices.sort_by(|&a, &b| {
+                    super::compare_state_words(
+                        frontier.branches.key(a, stride),
+                        frontier.branches.key(b, stride),
+                        detector_words,
+                    )
+                });
+                let mut expected = super::StateBuffer::<f64>::default();
+                for &index in &indices {
+                    let length = expected.masses.len();
+                    if length > 0
+                        && expected.key(length - 1, stride) == frontier.branches.key(index, stride)
+                    {
+                        expected.masses[length - 1] =
+                            logaddexp(expected.masses[length - 1], frontier.branches.masses[index]);
+                    } else {
+                        expected.copy_state(&frontier.branches, index, stride);
+                    }
+                }
+                frontier.merge(logaddexp);
+                assert_eq!(frontier.indices, indices);
+                assert_eq!(frontier.parent.words, expected.words);
+                assert_eq!(
+                    frontier
+                        .parent
+                        .masses
+                        .iter()
+                        .map(|v| v.to_bits())
+                        .collect::<Vec<_>>(),
+                    expected
+                        .masses
+                        .iter()
+                        .map(|v| v.to_bits())
+                        .collect::<Vec<_>>()
+                );
+            }
+        }
+    }
+
     #[cfg(target_pointer_width = "64")]
     #[test]
     fn detector_word_width_is_checked_before_allocation() {
@@ -3235,6 +3646,7 @@ mod tests {
         frontier.reset(&[0, 0], &[0], &[0, 0], 0.0);
         let context = super::BranchContext {
             detector_words: frontier.detector_words,
+            has_closing_detectors: false,
             close_mask: &[0, 0],
             active_mask: &[u64::MAX, u64::MAX],
             observed: &[0, 0],
@@ -3417,6 +3829,12 @@ mod tests {
                             float.branches.words.extend_from_slice(&key);
                             float.branches.masses.push(-200.0);
                         }
+                        // Same scored detector state, distinct logical key and
+                        // mass: suffix scores must still match the scalar oracle.
+                        let mut alternative = key.clone();
+                        alternative[detector_words] ^= 1_u64 << 63;
+                        float.branches.words.extend_from_slice(&alternative);
+                        float.branches.masses.push(-300.0);
                     }
                     float.merge(logaddexp);
                     assert!(float.parent.masses.contains(&0.0));
@@ -3437,6 +3855,35 @@ mod tests {
                             (0..detector_words).map(|_| rng.random()).collect();
                         for alpha in [0.0, 0.8, 1.0] {
                             super::score_candidates(&mut float, alpha, compatibility, &observed);
+                            let first = compatibility
+                                .rows
+                                .first()
+                                .map_or(0, |row| row.word as usize);
+                            let end = compatibility
+                                .rows
+                                .last()
+                                .map_or(0, |row| row.word as usize + 1);
+                            let mut compact = super::FrontierScratch::<f64> {
+                                detector_word_offset: first,
+                                detector_words: end - first,
+                                stride: end - first + 1,
+                                ..Default::default()
+                            };
+                            for index in 0..float.parent.masses.len() {
+                                let key = float.parent.key(index, float.stride);
+                                compact.parent.words.extend_from_slice(&key[first..end]);
+                                compact.parent.words.push(key[detector_words]);
+                                compact.parent.masses.push(float.parent.masses[index]);
+                            }
+                            super::score_candidates(&mut compact, alpha, compatibility, &observed);
+                            assert_eq!(
+                                compact
+                                    .scores
+                                    .iter()
+                                    .map(|x| x.to_bits())
+                                    .collect::<Vec<_>>(),
+                                float.scores.iter().map(|x| x.to_bits()).collect::<Vec<_>>()
+                            );
                             for (index, &mass) in float.parent.masses.iter().enumerate() {
                                 let expected = if alpha == 0.0 {
                                     mass

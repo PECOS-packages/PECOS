@@ -12,9 +12,9 @@
 
 //! Bare-WebAssembly adapter for the PECOS Frontier decoder.
 //!
-//! The module has no imports. All exported parameters and results are WebAssembly
-//! `i32` values, with at most one result per function. This lowest-common-denominator
-//! ABI runs on Quantinuum hardware, which requires those integer-only signatures.
+//! The module has no imports. The original API uses WebAssembly `i32` values;
+//! Helios callers use the explicit `_i64` streaming wrappers. Every function
+//! returns at most one value. Decoder words remain 32-bit on both interfaces.
 //! Each live call carries at most 128 detector bits; streaming and replay support
 //! wider models. Corrections contain at most 128 observables. Bits are packed little-endian:
 //! word `w`, bit `b` represents index `32*w + b`.
@@ -416,6 +416,64 @@ pub extern "C" fn frontier_stream_finish_round(
     })
 }
 
+/// Convert a signed or unsigned 32-bit packed word carried by a Helios i64.
+fn helios_word(value: i64) -> Option<i32> {
+    i32::try_from(value)
+        .ok()
+        .or_else(|| u32::try_from(value).ok().map(u32::cast_signed))
+}
+
+fn helios_round(bit_count: i64, words: [i64; 4]) -> Option<(i32, [i32; 4])> {
+    let bit_count = i32::try_from(bit_count).ok()?;
+    Some((
+        bit_count,
+        [
+            helios_word(words[0])?,
+            helios_word(words[1])?,
+            helios_word(words[2])?,
+            helios_word(words[3])?,
+        ],
+    ))
+}
+
+/// Helios-compatible i64 call boundary; the decoder retains its i32 word layout.
+/// Packed words may be sign-extended i32 or zero-extended u32 values.
+/// Invalid values return -1 without truncating or changing the stream.
+#[unsafe(no_mangle)]
+pub extern "C" fn frontier_stream_push_i64(
+    bit_count: i64,
+    s0: i64,
+    s1: i64,
+    s2: i64,
+    s3: i64,
+) -> i64 {
+    let Some((count, [w0, w1, w2, w3])) = helios_round(bit_count, [s0, s1, s2, s3]) else {
+        return -1;
+    };
+    i64::from(frontier_stream_push(count, w0, w1, w2, w3))
+}
+
+/// Helios final-block-to-correction call, including sign extension of errors.
+#[unsafe(no_mangle)]
+pub extern "C" fn frontier_stream_finish_round_i64(
+    bit_count: i64,
+    s0: i64,
+    s1: i64,
+    s2: i64,
+    s3: i64,
+) -> i64 {
+    let Some((count, [w0, w1, w2, w3])) = helios_round(bit_count, [s0, s1, s2, s3]) else {
+        return -1;
+    };
+    i64::from(frontier_stream_finish_round(count, w0, w1, w2, w3))
+}
+
+/// Helios-compatible status query.
+#[unsafe(no_mangle)]
+pub extern "C" fn frontier_status_i64() -> i64 {
+    i64::from(frontier_status())
+}
+
 /// Return the number of hardware shots compiled into this module.
 #[cfg(any(feature = "replay", test))]
 #[unsafe(no_mangle)]
@@ -568,6 +626,41 @@ pub extern "C" fn frontier_reset() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn helios_words_preserve_all_32_bits_without_truncation() {
+        assert_eq!(helios_word(i64::from(i32::MIN)), Some(i32::MIN));
+        assert_eq!(helios_word(0x8000_0000), Some(i32::MIN));
+        assert_eq!(helios_word(0xffff_ffff), Some(-1));
+        assert_eq!(helios_word(-1), Some(-1));
+        assert_eq!(helios_word(1_i64 << 32), None);
+        assert_eq!(helios_word(i64::from(i32::MIN) - 1), None);
+        assert_eq!(frontier_stream_push_i64(1_i64 << 32, 0, 0, 0, 0), -1);
+        assert_eq!(
+            frontier_stream_finish_round_i64(1, 1_i64 << 32, 0, 0, 0),
+            -1
+        );
+    }
+
+    #[test]
+    fn helios_streaming_matches_i32_exports() {
+        // A synthetic 33-detector model exercises both high bits and word boundaries.
+        STATE.with_borrow_mut(|state| state.initialize("error(0.1) D31 L0\nerror(0.1) D32 L1"));
+        frontier_stream_begin();
+        assert!(frontier_stream_push_i64(32, 0x8000_0000, 0, 0, 0) >= 0);
+        let unsigned = frontier_stream_finish_round_i64(1, 1, 0, 0, 0);
+        assert_eq!(unsigned, 3);
+        assert_eq!(frontier_status_i64(), 0);
+        frontier_stream_begin();
+        assert!(frontier_stream_push_i64(32, i64::from(i32::MIN), 0, 0, 0) >= 0);
+        assert_eq!(frontier_stream_finish_round_i64(1, 1, 0, 0, 0), unsigned);
+        frontier_stream_begin();
+        assert!(frontier_stream_push(32, i32::MIN, 0, 0, 0) >= 0);
+        assert_eq!(
+            i64::from(frontier_stream_finish_round(1, 1, 0, 0, 0)),
+            unsigned
+        );
+    }
 
     #[test]
     fn embedded_model_initializes_and_decodes() {

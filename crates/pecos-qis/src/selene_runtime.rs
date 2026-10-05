@@ -3341,7 +3341,12 @@ impl QisRuntime for SeleneRuntime {
     }
 
     fn reset(&mut self) -> Result<()> {
-        self.reset_plugin_instance()?;
+        if let Err(error) = self.reset_plugin_instance() {
+            // The plugin instance is gone but this runtime's shot state is not
+            // reset, so block every operation until a reset succeeds.
+            self.latch_batch_failure(error.clone());
+            return Err(error);
+        }
         self.batch_failure = None;
         self.state = ClassicalState::default();
         self.current_op_index = 0;
@@ -4911,6 +4916,14 @@ mod tests {
             );
             assert_eq!(EXIT_CALLS.load(Ordering::SeqCst), 1);
             assert!(runtime.instance.is_none());
+            // Until a reset succeeds, nothing may run on the half-reset runtime:
+            // no stale shot result and no fresh instance without a shot start.
+            assert!(runtime.shot_end().is_err());
+            assert!(
+                mode.lower(&mut runtime, &[Operation::AllocateQubit { id: 1 }])
+                    .is_err()
+            );
+            assert_eq!(INSTANCES.lock().unwrap().len(), 1);
 
             runtime.reset().unwrap();
             runtime.shot_start(1, None).unwrap();

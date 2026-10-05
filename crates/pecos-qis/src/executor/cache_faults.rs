@@ -96,8 +96,8 @@ pub(super) fn point(site: Site, path: &Path) {
     check(site, path).expect("pause seam");
 }
 
-pub(super) fn lock_error() -> Result<(), TryLockError> {
-    check(Site::Lock, Path::new("")).map_err(TryLockError::Error)
+pub(super) fn lock_error(path: &Path) -> Result<(), TryLockError> {
+    check(Site::Lock, path).map_err(TryLockError::Error)
 }
 
 pub(super) fn set_budget(budget: Duration) {

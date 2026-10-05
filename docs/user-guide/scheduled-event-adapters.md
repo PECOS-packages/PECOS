@@ -128,3 +128,15 @@ objects violates the contract even if the signatures are correct.
 Python callbacks incur GIL and data-copy overhead. This API establishes a usable
 integration path, not a throughput claim. The idle/timing policy is shared; each checked profile determines the admitted
 noise channels. A batch adapter itself does not enable arbitrary noise models.
+
+### Native scheduling across release
+
+Scheduled extraction submits qubit release to the runtime in source order without
+adding a host barrier or draining the queue at that release. Later operations in
+the same input reach the scheduler before normal extraction. The runtime owns
+queued work and native slot reuse. Result mappings remain available after release.
+Source-annotated flat lowering retains its separate provenance boundary.
+
+Consumers use the runtime's batch start times and durations to determine idle
+exposure; they must not reschedule operations or replace those timestamps with a
+reconstructed timeline. Explicit source barriers and terminal draining still apply.

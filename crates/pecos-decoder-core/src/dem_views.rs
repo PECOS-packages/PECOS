@@ -172,8 +172,8 @@ impl GariModel {
 
     /// Return the merged original columns in GARI order `[eZ | eX | eY]`.
     #[must_use]
-    pub fn physical_columns(&self) -> SparseDem {
-        self.physical_dem.clone()
+    pub fn physical_columns(&self) -> &SparseDem {
+        &self.physical_dem
     }
 
     /// Return `(nnz(H), nnz(Hbar))` for the merged physical and GARI models.
@@ -296,6 +296,10 @@ pub fn init_dets_view(
 /// this function succeeds. This is a complete equivalence check because both
 /// sides of the checked identities are GF(2)-linear.
 ///
+/// Columns that are empty after GF(2) cancellation, with no detectors and no
+/// observables, change neither the syndrome nor the logical outcome and are
+/// dropped. The reference implementation rejects them instead.
+///
 /// # Errors
 ///
 /// Returns [`DecoderError::InvalidConfiguration`] when the DEM cannot satisfy
@@ -325,9 +329,10 @@ pub fn gari_transform(
             (true, false) => ez.push(mechanism),
             (false, true) => ex.push(mechanism),
             (true, true) => ey.push(mechanism),
+            (false, false) if mechanism.2.is_empty() => {}
             (false, false) => {
                 return Err(DecoderError::InvalidConfiguration(
-                    "undetectable error mechanisms are not supported by the GARI transform".into(),
+                    "detector-silent error mechanisms with observable support are not supported by the GARI transform".into(),
                 ));
             }
         }
@@ -457,29 +462,13 @@ pub fn gari_transform(
         let mut rows = detectors.clone();
         let row = checked_add(u_start, column, "U row")?;
         rows.push(u32_index(row, "U row")?);
-        mechanisms.push((
-            0.5,
-            rows,
-            if init_basis == DetectorBasis::X {
-                observables.clone()
-            } else {
-                Vec::new()
-            },
-        ));
+        mechanisms.push((0.5, rows, observables.clone()));
     }
     for (column, (_, detectors, observables)) in ex.iter().enumerate() {
         let mut rows = detectors.clone();
         let row = checked_add(v_start, column, "V row")?;
         rows.push(u32_index(row, "V row")?);
-        mechanisms.push((
-            0.5,
-            rows,
-            if init_basis == DetectorBasis::Z {
-                observables.clone()
-            } else {
-                Vec::new()
-            },
-        ));
+        mechanisms.push((0.5, rows, observables.clone()));
     }
 
     let mut relevant_rows = Vec::new();
@@ -854,7 +843,7 @@ mod tests {
 
     #[test]
     fn input_probabilities_must_be_finite_and_in_range() {
-        for probability in [f64::NAN, 1.01] {
+        for probability in [f64::NAN, -0.1, 1.01] {
             let model = dem(vec![(probability, vec![0], vec![])], 1, 0);
             assert!(matches!(
                 validate_input(&model, &[DetectorBasis::X]),
@@ -949,5 +938,143 @@ mod tests {
             DecoderError::InternalError(message)
                 if message.contains("physical column 2")
         ));
+    }
+
+    #[test]
+    fn deterministic_verification_compares_rows_and_observables() {
+        let model = dem(
+            vec![
+                (0.1, vec![0], vec![0]),
+                (0.2, vec![1], vec![]),
+                (0.3, vec![0, 1], vec![0]),
+            ],
+            2,
+            1,
+        );
+        let gari = gari_transform(
+            &model,
+            &[DetectorBasis::X, DetectorBasis::Z],
+            DetectorBasis::X,
+        )
+        .unwrap();
+        let ebar_z = gari.columns(GariColumnBlock::EbarZ).start;
+
+        let mut wrong_detector_row = gari.clone();
+        wrong_detector_row.dem.mechanisms[ebar_z]
+            .1
+            .retain(|&row| row != 0);
+        // Without its U entry, eZ leaves the ebarZ U entry uncancelled.
+        let mut consistency_residue = gari.clone();
+        consistency_residue.dem.mechanisms[0].1.clear();
+        let mut wrong_observables = gari.clone();
+        wrong_observables.dem.mechanisms[ebar_z].2.clear();
+
+        for corrupted in [wrong_detector_row, consistency_residue, wrong_observables] {
+            assert!(matches!(
+                verify_gari_equivalence(&corrupted),
+                Err(DecoderError::InternalError(message))
+                    if message.contains("physical column 0")
+            ));
+        }
+    }
+
+    #[test]
+    fn unmatched_mixed_columns_report_each_missing_partner_side() {
+        let bases = [DetectorBasis::X, DetectorBasis::Z, DetectorBasis::Z];
+        let cases = [
+            (
+                (0.3, vec![0, 1], vec![]),
+                "1 of 1 eY columns lacked an eZ partner and 0 of 1 lacked an eX partner",
+            ),
+            (
+                (0.3, vec![0, 2], vec![0]),
+                "0 of 1 eY columns lacked an eZ partner and 1 of 1 lacked an eX partner",
+            ),
+        ];
+        for (mixed, expected) in cases {
+            let model = dem(
+                vec![(0.1, vec![0], vec![0]), (0.2, vec![1], vec![]), mixed],
+                3,
+                1,
+            );
+            let error = gari_transform(&model, &bases, DetectorBasis::X).unwrap_err();
+            assert!(matches!(
+                error,
+                DecoderError::InvalidConfiguration(message) if message == expected
+            ));
+        }
+    }
+
+    #[test]
+    fn gari_drops_columns_that_cancel_to_nothing() {
+        let bases = [DetectorBasis::X, DetectorBasis::Z];
+        let mechanisms = vec![
+            (0.1, vec![0], vec![0]),
+            (0.2, vec![1], vec![]),
+            (0.3, vec![0, 1], vec![0]),
+        ];
+        let reference =
+            gari_transform(&dem(mechanisms.clone(), 2, 1), &bases, DetectorBasis::X).unwrap();
+
+        let mut with_empty = mechanisms;
+        with_empty.insert(1, (0.4, vec![1, 1], vec![0, 0]));
+        let gari =
+            gari_transform(&dem(with_empty.clone(), 2, 1), &bases, DetectorBasis::X).unwrap();
+        assert_eq!(gari.dem.mechanisms, reference.dem.mechanisms);
+        assert_eq!(
+            gari.physical_columns().mechanisms,
+            reference.physical_columns().mechanisms
+        );
+
+        // An empty detector support that still flips an observable is a
+        // logical error no syndrome can see, so it is still rejected.
+        with_empty[1].2 = vec![0];
+        assert!(matches!(
+            gari_transform(&dem(with_empty, 2, 1), &bases, DetectorBasis::X),
+            Err(DecoderError::InvalidConfiguration(message))
+                if message.starts_with("detector-silent")
+        ));
+    }
+
+    #[test]
+    fn init_view_rejects_detector_logical_collisions() {
+        let model = dem(vec![(0.1, vec![0], vec![0]), (0.2, vec![0], vec![])], 1, 1);
+        assert!(matches!(
+            init_dets_view(&model, &[DetectorBasis::X], DetectorBasis::X),
+            Err(DecoderError::InvalidConfiguration(message))
+                if message.contains("identical detector support")
+        ));
+    }
+
+    #[test]
+    fn init_view_reindexes_detector_coordinates() {
+        let mut model = dem(vec![(0.1, vec![0, 1, 2], vec![])], 3, 0);
+        model.detector_coords = BTreeMap::from([(0, vec![0.0]), (1, vec![1.0]), (2, vec![2.0])]);
+        let view = init_dets_view(
+            &model,
+            &[DetectorBasis::Z, DetectorBasis::X, DetectorBasis::X],
+            DetectorBasis::X,
+        )
+        .unwrap();
+        assert_eq!(
+            view.dem.detector_coords,
+            BTreeMap::from([(0, vec![1.0]), (1, vec![2.0])])
+        );
+    }
+
+    #[test]
+    fn input_observable_indices_must_be_in_range() {
+        let model = dem(vec![(0.1, vec![0], vec![1])], 1, 1);
+        assert!(matches!(
+            validate_input(&model, &[DetectorBasis::X]),
+            Err(DecoderError::InvalidConfiguration(message))
+                if message.contains("observable index 1 is out of range")
+        ));
+    }
+
+    #[test]
+    #[should_panic(expected = "at least one round")]
+    fn memory_mask_requires_a_round() {
+        let _ = xz_memory_detector_bases(1, 1, 0, DetectorBasis::X);
     }
 }

@@ -544,6 +544,7 @@ fn prior_llr(probability: f64) -> f64 {
 mod tests {
     use super::{BpGraph, BpScratch, LLR_SATURATION, min_sum_bp_into, prior_llr};
     use pecos_decoder_core::dem::{DemCheckMatrix, SparseDem};
+    use pecos_decoder_core::errors::DecoderError;
     use pecos_random::PecosRng;
     use std::collections::BTreeMap;
 
@@ -582,6 +583,23 @@ mod tests {
         assert_eq!(sparse.var_data, dense.var_data);
         assert_eq!(sparse.var_offset, dense.var_offset);
         assert_eq!(sparse.total_edges, dense.total_edges);
+    }
+
+    #[test]
+    fn sparse_constructor_rejects_invalid_probabilities() {
+        for probability in [f64::NAN, f64::INFINITY, -0.1, 1.5] {
+            let dem = SparseDem {
+                mechanisms: vec![(probability, vec![0], Vec::new())],
+                detector_coords: BTreeMap::new(),
+                num_detectors: 1,
+                num_observables: 0,
+            };
+            assert!(matches!(
+                BpGraph::from_sparse_dem(&dem),
+                Err(DecoderError::InvalidConfiguration(message))
+                    if message.contains("probability")
+            ));
+        }
     }
 
     /// A subnormal probability overflows `(1 - p) / p` to infinity before the

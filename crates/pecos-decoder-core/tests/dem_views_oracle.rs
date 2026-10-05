@@ -235,7 +235,7 @@ fn check_gari_against(gari: &GariModel, expected: &Value, n_det: usize, init: De
 /// every physical unit vector (complete, since the equations are linear).
 fn check_gari_equivalence(gari: &GariModel) {
     let physical = gari.physical_columns();
-    assert_canonical(&physical);
+    assert_canonical(physical);
     let n_phys = physical.mechanisms.len();
     let ez = gari.columns(GariColumnBlock::EZ);
     let ex = gari.columns(GariColumnBlock::EX);
@@ -259,7 +259,7 @@ fn check_gari_equivalence(gari: &GariModel) {
             e_hat[ebarx.start + gari.v_map[k] as usize] ^= 1;
         }
         let lhs = syndrome_of(&gari.dem, &e_hat);
-        let rhs = syndrome_of(&physical, &e);
+        let rhs = syndrome_of(physical, &e);
         assert_eq!(&lhs[..n_det], &rhs[..], "column {j}: detector rows");
         assert!(
             lhs[n_det..].iter().all(|&b| b == 0),
@@ -267,7 +267,7 @@ fn check_gari_equivalence(gari: &GariModel) {
         );
         assert_eq!(
             flips_of(&gari.dem, &e_hat),
-            flips_of(&physical, &e),
+            flips_of(physical, &e),
             "column {j}: observables"
         );
     }

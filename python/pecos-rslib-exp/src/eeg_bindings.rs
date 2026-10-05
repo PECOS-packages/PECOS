@@ -1198,8 +1198,7 @@ fn extract_gates(py_tc: &Bound<'_, PyAny>) -> PyResult<Vec<Gate>> {
                     }
                 }
                 // Single-qubit gates: split multi-qubit into individual per-qubit gates
-                "H" | "X" | "Y" | "Z" | "SZ" | "SZdg" | "SX" | "SXdg" | "SY" | "SYdg" | "F"
-                | "Fdg" => {
+                "H" | "X" | "Y" | "Z" | "SZ" | "SZdg" | "SX" | "SXdg" | "SY" | "SYdg" => {
                     let gt = match name.as_str() {
                         "H" => pecos_core::gate_type::GateType::H,
                         "X" => pecos_core::gate_type::GateType::X,
@@ -1210,8 +1209,6 @@ fn extract_gates(py_tc: &Bound<'_, PyAny>) -> PyResult<Vec<Gate>> {
                         "SX" => pecos_core::gate_type::GateType::SX,
                         "SXdg" => pecos_core::gate_type::GateType::SXdg,
                         "SY" => pecos_core::gate_type::GateType::SY,
-                        "F" => pecos_core::gate_type::GateType::F,
-                        "Fdg" => pecos_core::gate_type::GateType::Fdg,
                         _ => pecos_core::gate_type::GateType::SYdg,
                     };
                     for &q in &qubits {

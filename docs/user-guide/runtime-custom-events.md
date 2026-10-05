@@ -8,10 +8,10 @@ idle operations. Event ordering is emission ordering, not a sort by timestamp.
 
 The Rust `SeleneRuntime` API provides two policies:
 
-- `Capture` (default) retains events without changing quantum execution. This
+- `Capture` (explicit opt-in) retains events without changing quantum execution. This
   preserves compatibility with runtimes that emit optional metadata. It does not
   certify that custom physical effects have been simulated.
-- `RejectUnhandled` fails unless a configured handler explicitly acknowledges the
+- `RejectUnhandled` (default) fails unless a configured handler explicitly acknowledges the
   event as `MetadataOnly`. Use this policy when unsupported information must stop
   execution. Unknown events and unsupported physical effects must remain
   `Unsupported`; PECOS cannot infer their meaning from opaque bytes.
@@ -60,9 +60,9 @@ native `pecos_rslib` runtime configuration methods. It follows the runtime throu
 plugin-object, library-path, built-runtime and installed-plugin fallback selection.
 Unknown policy values raise `ValueError` before runtime discovery or configuration.
 
-The default `"capture"` keeps existing behavior: custom events do not change the
-simulated physics. `"reject_unhandled"` stops execution with the event tag and
-batch/operation/timing context. Python does not expose a metadata handler or a
+The default `"reject_unhandled"` stops execution with the event tag, runtime,
+and batch/operation/timing context. Explicit `"capture"` retains the old behavior:
+custom events do not change the simulated physics. Python does not expose a metadata handler or a
 physical-effect adapter here, so this policy rejects **every** custom event,
 including metadata. A successful run in capture mode is not a fidelity check;
 strict rejection identifies missing integration, rather than implementing it.
@@ -75,7 +75,8 @@ and final batch timing is available. This is callback emission order during
 lowering, not execution-time interleaving: preceding gates or measurements may
 not yet have been simulated. No measurement outcome or before/after execution
 phase is supplied. Handler errors propagate in both policies.
-A rejected event remains available through `custom_events()` for diagnosis.
+On flat and metadata routes, a rejected event remains available through
+`custom_events()` for diagnosis. Scheduled extraction does not retain a history.
 A failed callback batch, batch-conversion error, or handler error latches a terminal
 failure in the runtime. Further lowering, draining, measurement updates, and shot
 completion/start fail until `QisRuntime::reset()` succeeds. Draining captured
@@ -119,3 +120,9 @@ stop appending after the first batch error. This does not promise recovery from
 all process-wide out-of-memory conditions. As with the rest of the plugin ABI, the
 plugin must return the supplied live instance pointer and valid non-null payload
 allocations; arbitrary dangling foreign pointers cannot be validated by PECOS.
+
+Scheduled extraction enforces the same policy before returning a batch. Its
+metadata handler runs during extraction; events remain in the returned batch,
+without a second history copy. To pass custom physical events to a configured
+downstream scheduled consumer, explicitly select `Capture`. That consumer must
+validate and model the events; capture alone does not simulate them.

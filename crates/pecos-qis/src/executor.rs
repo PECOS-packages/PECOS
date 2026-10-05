@@ -2512,7 +2512,7 @@ impl Drop for QisHeliosInterface {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_env::{ENV_MUTEX, EnvVarGuard};
+    use crate::test_env::{ENV_MUTEX, EnvVarGuard, run_test_in_child};
     use std::fs::File;
 
     fn is_qir_text(ir: &str) -> bool {
@@ -3026,128 +3026,6 @@ attributes #0 = { "EntryPoint" }
             free(error);
             register(std::ptr::null_mut());
         }
-    }
-
-    pub(super) struct TestChild {
-        process: std::process::Child,
-        stdout: Option<std::thread::JoinHandle<std::io::Result<Vec<u8>>>>,
-        stderr: Option<std::thread::JoinHandle<std::io::Result<Vec<u8>>>>,
-    }
-
-    impl TestChild {
-        pub(super) fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>> {
-            self.process.try_wait()
-        }
-
-        pub(super) fn kill_and_wait(&mut self) -> std::process::ExitStatus {
-            self.process.kill().expect("kill child");
-            self.process.wait().expect("observe child exit")
-        }
-    }
-
-    impl Drop for TestChild {
-        fn drop(&mut self) {
-            // Also reap a holder if its parent's assertion or barrier fails.
-            let _ = self.process.kill();
-            let _ = self.process.wait();
-        }
-    }
-
-    fn drain_child_pipe(
-        mut pipe: impl std::io::Read + Send + 'static,
-    ) -> std::thread::JoinHandle<std::io::Result<Vec<u8>>> {
-        std::thread::spawn(move || {
-            let mut bytes = Vec::new();
-            pipe.read_to_end(&mut bytes)?;
-            Ok(bytes)
-        })
-    }
-
-    /// Spawn with a stable inherited environment, releasing `ENV_MUTEX` before waiting.
-    pub(super) fn spawn_test_child(
-        test_name: &str,
-        envs: &[(&str, &std::ffi::OsStr)],
-    ) -> TestChild {
-        let mut process = {
-            let _env_lock = ENV_MUTEX
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            Command::new(std::env::current_exe().expect("test executable"))
-                .args(["--exact", test_name, "--nocapture"])
-                .envs(envs.iter().copied())
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
-                .spawn()
-                .expect("spawn child")
-        };
-        // Drain immediately: callers may wait for a child barrier before joining.
-        let stdout = drain_child_pipe(process.stdout.take().expect("stdout pipe"));
-        let stderr = drain_child_pipe(process.stderr.take().expect("stderr pipe"));
-        TestChild {
-            process,
-            stdout: Some(stdout),
-            stderr: Some(stderr),
-        }
-    }
-
-    pub(super) fn finish_test_child(
-        mut child: TestChild,
-        budget: std::time::Duration,
-    ) -> Result<std::process::Output, String> {
-        let watchdog = std::time::Instant::now();
-        let (status, timed_out) = loop {
-            if let Some(status) = child.process.try_wait().expect("child status") {
-                break (status, false);
-            }
-            if watchdog.elapsed() >= budget {
-                break (child.kill_and_wait(), true);
-            }
-            std::thread::sleep(std::time::Duration::from_millis(1));
-        };
-        let stdout = child
-            .stdout
-            .take()
-            .expect("stdout reader")
-            .join()
-            .expect("stdout thread")
-            .expect("read stdout");
-        let stderr = child
-            .stderr
-            .take()
-            .expect("stderr reader")
-            .join()
-            .expect("stderr thread")
-            .expect("read stderr");
-        let output = std::process::Output {
-            status,
-            stdout,
-            stderr,
-        };
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        if timed_out {
-            return Err(format!(
-                "child watchdog expired ({status}): {stdout}\n{stderr}"
-            ));
-        }
-        if !status.success() {
-            return Err(format!("child failed ({status}): {stdout}\n{stderr}"));
-        }
-        if !stdout.contains("test result: ok. 1 passed") {
-            return Err(format!(
-                "child did not run exactly one test ({status}): {stdout}\n{stderr}"
-            ));
-        }
-        Ok(output)
-    }
-
-    pub(super) fn join_test_child(child: TestChild) {
-        finish_test_child(child, std::time::Duration::from_secs(60))
-            .unwrap_or_else(|error| panic!("{error}"));
-    }
-
-    fn run_test_in_child(test_name: &str, envs: &[(&str, &std::ffi::OsStr)]) {
-        join_test_child(spawn_test_child(test_name, envs));
     }
 
     #[test]
@@ -3791,6 +3669,16 @@ attributes #0 = { "EntryPoint" }
 
     #[test]
     fn qis_ffi_env_accepts_direct_file() {
+        // The process-wide QIS FFI singleton reads PECOS_QIS_FFI_PATH on first load,
+        // possibly from a parallel test, so change it only in a child process.
+        const CHILD_ENV: &str = "PECOS_TEST_QIS_FFI_DIRECT_FILE";
+        if std::env::var_os(CHILD_ENV).is_none() {
+            run_test_in_child(
+                "executor::tests::qis_ffi_env_accepts_direct_file",
+                &[(CHILD_ENV, "1".as_ref())],
+            );
+            return;
+        }
         let _env_lock = ENV_MUTEX
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -3805,6 +3693,16 @@ attributes #0 = { "EntryPoint" }
 
     #[test]
     fn qis_ffi_env_accepts_directory_with_exact_library() {
+        // The process-wide QIS FFI singleton reads PECOS_QIS_FFI_PATH on first load,
+        // possibly from a parallel test, so change it only in a child process.
+        const CHILD_ENV: &str = "PECOS_TEST_QIS_FFI_EXACT_DIR";
+        if std::env::var_os(CHILD_ENV).is_none() {
+            run_test_in_child(
+                "executor::tests::qis_ffi_env_accepts_directory_with_exact_library",
+                &[(CHILD_ENV, "1".as_ref())],
+            );
+            return;
+        }
         let _env_lock = ENV_MUTEX
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -3821,6 +3719,16 @@ attributes #0 = { "EntryPoint" }
 
     #[test]
     fn qis_ffi_env_accepts_directory_with_hashed_deps_library() {
+        // The process-wide QIS FFI singleton reads PECOS_QIS_FFI_PATH on first load,
+        // possibly from a parallel test, so change it only in a child process.
+        const CHILD_ENV: &str = "PECOS_TEST_QIS_FFI_HASHED_DIR";
+        if std::env::var_os(CHILD_ENV).is_none() {
+            run_test_in_child(
+                "executor::tests::qis_ffi_env_accepts_directory_with_hashed_deps_library",
+                &[(CHILD_ENV, "1".as_ref())],
+            );
+            return;
+        }
         let _env_lock = ENV_MUTEX
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -3843,6 +3751,16 @@ attributes #0 = { "EntryPoint" }
 
     #[test]
     fn qis_ffi_env_fails_fast_for_empty_directory() {
+        // The process-wide QIS FFI singleton reads PECOS_QIS_FFI_PATH on first load,
+        // possibly from a parallel test, so change it only in a child process.
+        const CHILD_ENV: &str = "PECOS_TEST_QIS_FFI_EMPTY_DIR";
+        if std::env::var_os(CHILD_ENV).is_none() {
+            run_test_in_child(
+                "executor::tests::qis_ffi_env_fails_fast_for_empty_directory",
+                &[(CHILD_ENV, "1".as_ref())],
+            );
+            return;
+        }
         let _env_lock = ENV_MUTEX
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);

@@ -108,6 +108,9 @@ struct DynamicExecutionState {
     /// polling `continue_processing` again after `Complete` must not re-run
     /// the drain / `shot_end` gates or emit a second terminal marker.
     finalized: bool,
+    /// The operation-lowering route gets one final barrier batch before the
+    /// fail-loud drain check. Later emissions must still fail certification.
+    terminal_lowering_flushed: bool,
     /// Sync handle for main thread FFI calls
     /// Uses the same library instance (singleton) as the worker thread,
     /// ensuring TLS consistency across platforms
@@ -1351,6 +1354,7 @@ impl QisEngine {
             execution_complete: false,
             terminal_error: None,
             finalized: false,
+            terminal_lowering_flushed: false,
         });
 
         Ok(())
@@ -1480,6 +1484,33 @@ impl QisEngine {
             state.terminal_error = Some(message.clone());
         }
         PecosError::Generic(message)
+    }
+
+    fn drain_terminal_commands(&mut self) -> Result<Option<ByteMessage>, PecosError> {
+        if self.scheduled_transport.enabled() {
+            return self.drain_scheduled_commands();
+        }
+        if !self.runtime.supports_operation_lowering() {
+            return Ok(None);
+        }
+        let Some(state) = self.dynamic_state.as_mut() else {
+            return Ok(None);
+        };
+        if state.finalized || state.terminal_lowering_flushed {
+            return Ok(None);
+        }
+        state.terminal_lowering_flushed = true;
+
+        // A terminal barrier is ordinary lowering: use the same conversion,
+        // metadata matching, measurement mapping and sticky error path as source
+        // operations. The subsequent certification drain remains only a guard.
+        let ops = [Operation::Barrier];
+        let lowered = self.lower_operations_terminal(&ops)?;
+        if lowered.commands.is_empty()? {
+            return Ok(None);
+        }
+        self.trace_operations_chunk("terminal_flush", &ops, None, Some(&lowered));
+        Ok(Some(lowered.commands))
     }
 
     fn drain_scheduled_commands(&mut self) -> Result<Option<ByteMessage>, PecosError> {
@@ -1942,7 +1973,7 @@ impl ControlEngine for QisEngine {
                     return Ok(EngineStage::NeedsProcessing(lowered.commands));
                 }
             }
-            if let Some(commands) = self.drain_scheduled_commands()? {
+            if let Some(commands) = self.drain_terminal_commands()? {
                 return Ok(EngineStage::NeedsProcessing(commands));
             }
             self.finalize_shot_for_certification()?;
@@ -1991,7 +2022,7 @@ impl ControlEngine for QisEngine {
                     return Ok(EngineStage::NeedsProcessing(lowered.commands));
                 }
             }
-            if let Some(commands) = self.drain_scheduled_commands()? {
+            if let Some(commands) = self.drain_terminal_commands()? {
                 return Ok(EngineStage::NeedsProcessing(commands));
             }
             self.finalize_shot_for_certification()?;
@@ -2062,7 +2093,7 @@ impl ControlEngine for QisEngine {
                     return Ok(EngineStage::NeedsProcessing(lowered.commands));
                 }
             }
-            if let Some(commands) = self.drain_scheduled_commands()? {
+            if let Some(commands) = self.drain_terminal_commands()? {
                 return Ok(EngineStage::NeedsProcessing(commands));
             }
             self.finalize_shot_for_certification()?;
@@ -2145,6 +2176,7 @@ mod tests {
                     execution_complete: true,
                     terminal_error: None,
                     finalized: false,
+                    terminal_lowering_flushed: false,
                 });
                 let input = ByteMessage::builder().add_outcomes(&outcomes).build();
                 let error = if dynamic {
@@ -2460,6 +2492,33 @@ mod tests {
         assert_eq!(result.outcomes().expect("parse outcome"), vec![2]);
     }
 
+    #[cfg(feature = "selene-runtimes")]
+    #[test]
+    fn selene_native_commands_use_only_runtime_gates() {
+        use pecos_core::gate_type::GateType;
+        let runtime = crate::selene_runtimes::selene_simple_runtime().unwrap();
+        let mut engine = QisEngine::with_runtime(Box::new(runtime));
+        let lowered = engine
+            .lower_operations_to_commands(&[
+                Operation::AllocateQubit { id: 0 },
+                Operation::AllocateQubit { id: 1 },
+                Operation::AllocateQubit { id: 2 },
+                QuantumOp::Reset(0).into(),
+                QuantumOp::H(0).into(),
+                QuantumOp::CX(0, 1).into(),
+                QuantumOp::CCX(0, 1, 2).into(),
+                QuantumOp::Measure(2, 0).into(),
+            ])
+            .unwrap();
+        let gates = lowered.commands.quantum_ops().unwrap();
+        assert!(gates.iter().any(|gate| gate.gate_type == GateType::RXY1Q));
+        assert!(gates.iter().any(|gate| gate.gate_type == GateType::RZZ));
+        assert!(gates.iter().all(|gate| matches!(
+            gate.gate_type,
+            GateType::RXY1Q | GateType::RZ | GateType::RZZ | GateType::PZ | GateType::MZ
+        )));
+    }
+
     #[test]
     fn test_direct_lowering_attaches_trace_metadata_to_next_gate() {
         let mut engine = QisEngine::with_runtime(Box::new(DummyRuntime::default()));
@@ -2678,6 +2737,7 @@ mod tests {
             execution_complete: true,
             terminal_error: Some("dynamic QIS worker failed: interface crashed".to_string()),
             finalized: false,
+            terminal_lowering_flushed: false,
         });
 
         let Err(err) = engine.continue_processing(ByteMessage::builder().build()) else {
@@ -2824,6 +2884,7 @@ mod tests {
             execution_complete: true,
             terminal_error: None,
             finalized: false,
+            terminal_lowering_flushed: false,
         });
 
         let Err(err) = engine.continue_processing(ByteMessage::builder().build()) else {
@@ -2893,6 +2954,7 @@ mod tests {
             execution_complete: true,
             terminal_error: None,
             finalized: false,
+            terminal_lowering_flushed: false,
         });
 
         let Err(err) = engine.continue_processing(ByteMessage::builder().build()) else {
@@ -2988,6 +3050,7 @@ mod tests {
             execution_complete: true,
             terminal_error: None,
             finalized: false,
+            terminal_lowering_flushed: false,
         });
 
         // First completion certifies the shot; a redundant poll must neither
@@ -3084,6 +3147,7 @@ mod tests {
             execution_complete: true,
             terminal_error: None,
             finalized: false,
+            terminal_lowering_flushed: false,
         });
         engine.pending_dynamic_ops = vec![QuantumOp::H(0).into()];
 
@@ -3133,6 +3197,7 @@ mod tests {
             execution_complete: true,
             terminal_error: None,
             finalized: false,
+            terminal_lowering_flushed: false,
         });
 
         let Err(err) = engine.continue_processing(ByteMessage::builder().build()) else {
@@ -3360,6 +3425,7 @@ mod scheduled_completion_tests {
             execution_complete: true,
             terminal_error: None,
             finalized: false,
+            terminal_lowering_flushed: false,
         });
         // Execute the terminal measurement and feedback-triggered tail in a real owner.
         let mut quantum = QuantumSystem::new(
@@ -3460,6 +3526,7 @@ mod scheduled_completion_tests {
             execution_complete: true,
             terminal_error: None,
             finalized: false,
+            terminal_lowering_flushed: false,
         });
         let mut quantum = QuantumSystem::new(
             ScheduledEventIdleZ::new(ScheduledIdleZ::new(1, 0.0, 0.0, 0.0).unwrap(), |_| {
@@ -3511,6 +3578,7 @@ mod scheduled_completion_tests {
             execution_complete: true,
             terminal_error: None,
             finalized: false,
+            terminal_lowering_flushed: false,
         });
         engine
             .continue_processing(ByteMessage::outcomes_builder().build())
@@ -3528,3 +3596,7 @@ mod scheduled_completion_tests {
         assert!(!engine.dynamic_state.as_ref().unwrap().finalized);
     }
 }
+
+#[cfg(all(test, feature = "selene-runtimes"))]
+#[path = "ccengine_terminal_tests.rs"]
+mod terminal_lowering_tests;

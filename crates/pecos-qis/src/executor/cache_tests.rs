@@ -4,8 +4,8 @@ use super::cache_faults::{self as faults, Action, Site};
 use super::program_cache::{
     self, EntryKind, LIB_SUFFIX, LockOutcome, bucket_lock_path, parse_entry,
 };
-use super::tests::{TestChild, finish_test_child, join_test_child, spawn_test_child};
 use super::*;
+use crate::test_env::{TestChild, finish_test_child, join_test_child, spawn_test_child};
 use std::fs::{File, TryLockError};
 use std::io::{ErrorKind, Write};
 use std::time::Duration;

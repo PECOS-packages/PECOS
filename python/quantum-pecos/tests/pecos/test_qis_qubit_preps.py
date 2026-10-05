@@ -127,8 +127,9 @@ def test_scheduled_late_first_use_prep_timing(allocated: bool, explicit_reset: b
         .run(1)
         .to_dict()
     )
-    # SoftRZRuntime::push starts at zero. With max_batch_size=1, every
-    # PZ/RXY/MZ opens a batch and advances start by its configured duration.
+    # SoftRZRuntime's clock starts at the init time PECOS passes, which is zero.
+    # With max_batch_size=1, push gives every PZ/RXY/MZ its own batch and
+    # advances start by its configured duration.
     # Allocation emits no batch: even an early allocation must defer its prep.
     # X lowers to one RXY1Q(pi, 0). Qubit 0 costs R+X; qubit 1 then costs R+X+M:
     # starts = 0, R, R+X, 2R+X, 2R+2X; final end = 2R+2X+M.

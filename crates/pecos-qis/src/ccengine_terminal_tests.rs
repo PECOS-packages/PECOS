@@ -136,14 +136,18 @@ fn soft_rz_control_engine_flushes_native_tail() {
                 let output = run(true, &program(PULSE_TAIL, explicit, read_result), tracing);
                 assert_eq!(output.terminal_batches.len(), 1);
                 let tail = &output.terminal_batches[0];
-                assert_eq!(tail.len(), 1);
-                assert_eq!(tail[0].gate_type, GateType::RXY1Q);
-                // Legacy static handles release on measurement; the new logical
-                // handle then reuses slot 0. Explicit lifetimes keep slot 1.
-                assert_eq!(tail[0].qubits.as_slice(), &[QubitId(usize::from(explicit))]);
-                if explicit {
-                    assert!(output.probabilities[3] > 1.0 - 1e-10);
-                }
+                // Qubit 1's lifetime starts in the tail, so its prep is queued
+                // with the pulse. Measurement keeps qubit 0 on slot 0, static or
+                // explicit, so qubit 1 always has slot 1.
+                assert_eq!(
+                    tail.iter().map(|gate| gate.gate_type).collect::<Vec<_>>(),
+                    [GateType::PZ, GateType::RXY1Q]
+                );
+                assert!(
+                    tail.iter()
+                        .all(|gate| gate.qubits.as_slice() == [QubitId(1)])
+                );
+                assert!(output.probabilities[3] > 1.0 - 1e-10);
             }
         }
     }

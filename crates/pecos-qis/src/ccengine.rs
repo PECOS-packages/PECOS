@@ -8,13 +8,13 @@
 //! For programs with conditionals that depend on measurement results (dynamic circuits),
 //! the engine runs LLVM execution on a worker thread. When a measurement result is needed:
 //! 1. The worker thread pauses and sends pending operations to the main thread
-//! 2. The main thread returns operations via `generate_commands()`
+//! 2. The main thread returns operations via `ControlEngine::start()` / `continue_processing()`
 //! 3. `continue_processing()` receives measurements and signals the worker to continue
 //! 4. The worker resumes with the measurement results available
 
 use crate::program::QisInterfaceBuilder;
 use crate::qis_interface::{BoxedInterface, DynamicSyncHandle, ProgramFormat};
-use crate::runtime::QisRuntime;
+use crate::runtime::{QisRuntime, for_each_quantum_qubit};
 use crate::scheduled_transport::ScheduledTransport;
 use log::{debug, warn};
 use pecos_core::Angle64;
@@ -87,6 +87,13 @@ type WorkerResult = Result<(OperationList, BoxedInterface), (String, Option<Boxe
 struct LoweredCommandBatch {
     commands: ByteMessage,
     gate_metadata: Vec<TraceMetadata>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum QubitPrepState {
+    Pending,
+    Prepared,
+    Released,
 }
 
 /// State for dynamic circuit execution
@@ -273,6 +280,9 @@ pub struct QisEngine {
     /// arrives.
     seen_program_qubits: BTreeSet<usize>,
 
+    /// Prep state for source handles, shared by all lowering routes within a shot.
+    qubit_prep_states: BTreeMap<usize, QubitPrepState>,
+
     /// Whether we've started processing
     started: bool,
 
@@ -393,6 +403,7 @@ impl QisEngine {
             active_qubit_slots: BTreeMap::new(),
             free_qubit_slots: BTreeSet::new(),
             seen_program_qubits: BTreeSet::new(),
+            qubit_prep_states: BTreeMap::new(),
             started: false,
             measurement_mapping: Vec::new(),
             measurement_results: BTreeMap::new(),
@@ -487,6 +498,7 @@ impl QisEngine {
             active_qubit_slots: BTreeMap::new(),
             free_qubit_slots: BTreeSet::new(),
             seen_program_qubits: BTreeSet::new(),
+            qubit_prep_states: BTreeMap::new(),
             started: false,
             measurement_mapping: Vec::new(),
             measurement_results: BTreeMap::new(),
@@ -557,12 +569,15 @@ impl QisEngine {
         self.active_qubit_slots.clear();
         self.free_qubit_slots.clear();
         self.seen_program_qubits.clear();
+        self.qubit_prep_states.clear();
         self.num_physical_slots = 0;
     }
 
     fn allocate_qubit_slot(&mut self, program_id: usize) -> Result<usize, PecosError> {
-        if let Some(&slot) = self.active_qubit_slots.get(&program_id) {
-            return Ok(slot);
+        if self.active_qubit_slots.contains_key(&program_id) {
+            return Err(PecosError::Generic(format!(
+                "QIS program qubit {program_id} is already allocated; release live handles before reallocation"
+            )));
         }
 
         let slot = if let Some(slot) = self.free_qubit_slots.pop_first() {
@@ -634,9 +649,7 @@ impl QisEngine {
                         pending_metadata.extend(metadata.clone());
                     }
                     Operation::AllocateQubit { id } => {
-                        let slot = self.allocate_qubit_slot(*id)?;
-                        builder.pz(&[slot]);
-                        Self::push_gate_metadata(&mut gate_metadata, &mut pending_metadata);
+                        self.allocate_qubit_slot(*id)?;
                     }
                     Operation::ReleaseQubit { id } => {
                         self.release_qubit_slot(*id);
@@ -796,6 +809,64 @@ impl QisEngine {
         message
     }
 
+    /// Defer each lifetime's prep until its first quantum operation.
+    fn normalize_qubit_preps(&mut self, ops: &[Operation]) -> Vec<Operation> {
+        let mut normalized = Vec::with_capacity(ops.len());
+        let mut pending_trace_metadata = Vec::new();
+        for op in ops {
+            match op {
+                Operation::AllocateQubit { id } => {
+                    self.qubit_prep_states.insert(*id, QubitPrepState::Pending);
+                }
+                Operation::ReleaseQubit { id } => {
+                    if let Some(state) = self.qubit_prep_states.get_mut(id)
+                        && *state != QubitPrepState::Released
+                    {
+                        *state = QubitPrepState::Released;
+                    }
+                }
+                Operation::TraceMetadata { .. } => {
+                    pending_trace_metadata.push(op.clone());
+                    continue;
+                }
+                Operation::Quantum(qop) => {
+                    let mut qubits = Vec::new();
+                    for_each_quantum_qubit(qop, |qubit| {
+                        qubits.push(qubit);
+                        let state = self
+                            .qubit_prep_states
+                            .entry(qubit)
+                            .or_insert(QubitPrepState::Pending);
+                        if *state == QubitPrepState::Pending {
+                            if !matches!(qop, QuantumOp::Reset(_)) {
+                                normalized.push(QuantumOp::Reset(qubit).into());
+                            }
+                            *state = QubitPrepState::Prepared;
+                        }
+                    });
+                    // Hold even nonadjacent scoped metadata until its source op.
+                    // Emitting it after the preps keeps them free of source labels.
+                    pending_trace_metadata.retain(|metadata| {
+                        if let Operation::TraceMetadata { qubit, .. } = metadata
+                            && qubit.is_none_or(|q| qubits.contains(&q))
+                        {
+                            normalized.push(metadata.clone());
+                            return false;
+                        }
+                        true
+                    });
+                }
+                Operation::AllocateResult { .. }
+                | Operation::RecordOutput { .. }
+                | Operation::Barrier => {}
+            }
+            normalized.push(op.clone());
+        }
+        // Leave dangling metadata visible to this chunk's downstream validation.
+        normalized.extend(pending_trace_metadata);
+        normalized
+    }
+
     /// Convert freshly collected dynamic operations into a `ByteMessage`.
     ///
     /// Selene runtime plugins can opt in to lowering so their scheduler sees
@@ -805,6 +876,8 @@ impl QisEngine {
         &mut self,
         ops: &[Operation],
     ) -> Result<LoweredCommandBatch, PecosError> {
+        let normalized = self.normalize_qubit_preps(ops);
+        let ops = normalized.as_slice();
         if self.scheduled_transport.enabled() {
             let batches = self
                 .runtime
@@ -964,14 +1037,6 @@ impl QisEngine {
         self.command_builder = builder;
         message
     }
-
-    fn quantum_ops_to_bytemessage(
-        &mut self,
-        ops: Vec<QuantumOp>,
-    ) -> Result<ByteMessage, PecosError> {
-        self.quantum_ops_to_lowered_commands(ops.into_iter().map(LoweredQuantumOp::from).collect())
-            .map(|lowered| lowered.commands)
-    }
 }
 
 impl Clone for QisEngine {
@@ -1007,6 +1072,7 @@ impl Clone for QisEngine {
             active_qubit_slots: self.active_qubit_slots.clone(),
             free_qubit_slots: self.free_qubit_slots.clone(),
             seen_program_qubits: self.seen_program_qubits.clone(),
+            qubit_prep_states: self.qubit_prep_states.clone(),
             started: false,                       // Reset started flag for the clone
             measurement_mapping: Vec::new(),      // Clear for new shot
             measurement_results: BTreeMap::new(), // Clear for new shot
@@ -1722,45 +1788,9 @@ impl ClassicalEngine for QisEngine {
     }
 
     fn generate_commands(&mut self) -> Result<ByteMessage, PecosError> {
-        debug!("QisEngine::generate_commands called");
-
-        // Get next batch of quantum operations from runtime
-        match self.runtime.execute_until_quantum() {
-            Ok(Some(ops)) => {
-                debug!("QisEngine: Runtime returned {} operations", ops.len());
-                for op in &ops {
-                    debug!("QisEngine: Operation: {op:?}");
-                }
-                let quantum_ops: Vec<QuantumOp> = ops;
-                let msg = self.quantum_ops_to_bytemessage(quantum_ops)?;
-                debug!(
-                    "QisEngine: Generated ByteMessage with {} measurement mappings",
-                    self.measurement_mapping.len()
-                );
-
-                // Debug: Print the actual ByteMessage content
-                debug!("QisEngine: Generated ByteMessage:");
-                if let Ok(quantum_ops) = msg.quantum_ops() {
-                    debug!("  Quantum ops: {} total", quantum_ops.len());
-                    for (i, gate) in quantum_ops.iter().enumerate() {
-                        debug!("    Gate {i}: {gate:?}");
-                    }
-                }
-                if let Ok(empty) = msg.is_empty() {
-                    debug!("  Is empty: {empty}");
-                }
-
-                Ok(msg)
-            }
-            Ok(None) => {
-                debug!("QisEngine: Runtime complete, no more operations");
-                Ok(ByteMessage::builder().build())
-            }
-            Err(e) => {
-                debug!("QisEngine: Runtime error: {e}");
-                Err(PecosError::Generic(format!("Runtime error: {e}")))
-            }
-        }
+        Err(PecosError::Generic(
+            "QisEngine must be driven through ControlEngine::start/continue_processing, which apply the qubit lifetime and prep rules".into(),
+        ))
     }
 
     fn get_results(&self) -> Result<Shot, PecosError> {
@@ -2203,6 +2233,705 @@ mod tests {
     }
 
     #[test]
+    fn generate_commands_requires_control_engine() {
+        let mut engine: Box<dyn ClassicalEngine> =
+            Box::new(QisEngine::with_runtime(Box::new(DummyRuntime::default())));
+        let error = engine
+            .generate_commands()
+            .err()
+            .expect("unsupported entry point")
+            .to_string();
+        assert!(error.contains("QisEngine"), "{error}");
+        assert!(
+            error.contains("ControlEngine::start/continue_processing"),
+            "{error}"
+        );
+        assert!(error.contains("lifetime and prep rules"), "{error}");
+    }
+
+    #[cfg(feature = "selene-runtimes")]
+    fn delayed_metadata_engine() -> QisEngine {
+        let mut engine = QisEngine::with_runtime(Box::new(
+            crate::selene_runtimes::selene_soft_rz_runtime().unwrap(),
+        ));
+        engine.set_num_qubits_hint(2);
+        engine.runtime.shot_start(0, None).unwrap();
+        engine
+    }
+
+    #[cfg(feature = "selene-runtimes")]
+    #[test]
+    fn delayed_inserted_prep_does_not_take_later_reset_metadata() {
+        use pecos_core::gate_type::GateType::{MZ, PZ};
+        let mut engine = delayed_metadata_engine();
+        let first = engine
+            .lower_operations_to_commands(&[
+                QuantumOp::Measure(0, 0).into(),
+                QuantumOp::RZ(0.5, 1).into(),
+            ])
+            .unwrap();
+        assert_eq!(
+            first
+                .commands
+                .quantum_ops()
+                .unwrap()
+                .iter()
+                .map(|gate| gate.gate_type)
+                .collect::<Vec<_>>(),
+            [PZ, MZ]
+        );
+        let metadata = TraceMetadata::from([("source_label".into(), "program reset".into())]);
+        let second = engine
+            .lower_operations_to_commands(&[
+                Operation::TraceMetadata {
+                    metadata: metadata.clone(),
+                    qubit: Some(1),
+                },
+                QuantumOp::Reset(1).into(),
+                QuantumOp::Measure(1, 1).into(),
+            ])
+            .unwrap();
+        assert_eq!(
+            second
+                .commands
+                .quantum_ops()
+                .unwrap()
+                .iter()
+                .map(|gate| gate.gate_type)
+                .collect::<Vec<_>>(),
+            [PZ, PZ, MZ]
+        );
+        assert_eq!(
+            second.gate_metadata,
+            [TraceMetadata::new(), metadata, TraceMetadata::new()]
+        );
+    }
+
+    #[cfg(feature = "selene-runtimes")]
+    #[test]
+    fn delayed_labelled_operation_keeps_metadata_across_chunks() {
+        for op in [QuantumOp::Reset(1), QuantumOp::RXY(0.25, 0.0, 1)] {
+            let mut engine = delayed_metadata_engine();
+            let metadata = TraceMetadata::from([
+                ("source_label".into(), "delayed operation".into()),
+                ("source_lowering_required".into(), "true".into()),
+            ]);
+            let expected_gate = if matches!(op, QuantumOp::Reset(_)) {
+                "PZ"
+            } else {
+                "RXY1Q"
+            };
+            let first = engine
+                .lower_operations_to_commands(&[
+                    QuantumOp::Measure(0, 0).into(),
+                    QuantumOp::RZ(0.5, 1).into(),
+                    Operation::TraceMetadata {
+                        metadata: metadata.clone(),
+                        qubit: Some(1),
+                    },
+                    op.into(),
+                ])
+                .unwrap();
+            // #1027's label-start barrier emits the queued inserted prep in A.
+            // The labelled operation itself remains queued until B.
+            assert_eq!(first.gate_metadata, vec![TraceMetadata::new(); 3]);
+            assert_eq!(
+                first
+                    .commands
+                    .quantum_ops()
+                    .unwrap()
+                    .iter()
+                    .map(|gate| gate.gate_type.to_string())
+                    .collect::<Vec<_>>(),
+                ["PZ", "MZ", "PZ"]
+            );
+            let second = engine
+                .lower_operations_to_commands(&[QuantumOp::Measure(1, 1).into()])
+                .unwrap();
+            assert_eq!(
+                second
+                    .commands
+                    .quantum_ops()
+                    .unwrap()
+                    .iter()
+                    .map(|gate| gate.gate_type.to_string())
+                    .collect::<Vec<_>>(),
+                [expected_gate, "MZ"]
+            );
+            assert_eq!(second.gate_metadata, [metadata, TraceMetadata::new()]);
+        }
+    }
+
+    fn prep_test_engine(selene: bool) -> QisEngine {
+        let mut engine = if selene {
+            #[cfg(feature = "selene-runtimes")]
+            {
+                QisEngine::with_runtime(Box::new(
+                    crate::selene_runtimes::selene_simple_runtime().unwrap(),
+                ))
+            }
+            #[cfg(not(feature = "selene-runtimes"))]
+            panic!("Selene tests require selene-runtimes");
+        } else {
+            QisEngine::with_runtime(Box::new(DummyRuntime::default()))
+        };
+        engine.set_num_qubits_hint(3);
+        engine.runtime.shot_start(0, None).unwrap();
+        engine
+    }
+
+    fn prep_test_gates(
+        engine: &mut QisEngine,
+        ops: &[Operation],
+    ) -> Vec<pecos_core::gate_type::GateType> {
+        engine
+            .lower_operations_to_commands(ops)
+            .unwrap()
+            .commands
+            .quantum_ops()
+            .unwrap()
+            .iter()
+            .map(|gate| gate.gate_type)
+            .collect()
+    }
+
+    // Red/green: the direct allocation used to add a second prep.
+    #[test]
+    fn prep_direct_first_reset_is_the_only_prep() {
+        use pecos_core::gate_type::GateType::{H, PZ};
+        let mut engine = prep_test_engine(false);
+        let lowered = engine
+            .lower_operations_to_commands(&[
+                Operation::AllocateQubit { id: 71 },
+                QuantumOp::Reset(71).into(),
+                QuantumOp::H(71).into(),
+            ])
+            .unwrap();
+        let gates = lowered.commands.quantum_ops().unwrap();
+        assert_eq!(
+            gates.iter().map(|gate| gate.gate_type).collect::<Vec<_>>(),
+            [PZ, H]
+        );
+        assert!(
+            gates
+                .iter()
+                .all(|gate| gate.qubits.as_slice() == [0.into()])
+        );
+    }
+
+    // Compatibility: direct allocation followed by H already had one prep.
+    #[test]
+    fn prep_direct_allocation_before_h() {
+        use pecos_core::gate_type::GateType::{H, PZ};
+        assert_eq!(
+            prep_test_gates(
+                &mut prep_test_engine(false),
+                &[Operation::AllocateQubit { id: 0 }, QuantumOp::H(0).into(),]
+            ),
+            [PZ, H]
+        );
+    }
+
+    // Red/green: Selene previously received no prep for this allocation.
+    #[cfg(feature = "selene-runtimes")]
+    #[test]
+    fn prep_selene_allocation_before_h() {
+        use pecos_core::gate_type::GateType::{PZ, RXY1Q, RZ};
+        assert_eq!(
+            prep_test_gates(
+                &mut prep_test_engine(true),
+                &[Operation::AllocateQubit { id: 0 }, QuantumOp::H(0).into(),]
+            ),
+            [PZ, RXY1Q, RZ]
+        );
+    }
+
+    // Red/green: legacy first use lacked a prep; later uses must not repeat it.
+    #[test]
+    fn prep_legacy_first_use_and_shot_boundary() {
+        use pecos_core::gate_type::GateType::{H, PZ, X};
+        let mut engine = prep_test_engine(false);
+        assert_eq!(
+            prep_test_gates(&mut engine, &[QuantumOp::H(7).into()]),
+            [PZ, H]
+        );
+        assert_eq!(prep_test_gates(&mut engine, &[QuantumOp::X(7).into()]), [X]);
+        engine.reset_qubit_slots();
+        assert_eq!(
+            prep_test_gates(&mut engine, &[QuantumOp::H(7).into()]),
+            [PZ, H]
+        );
+    }
+
+    // Red/green: the prep belongs to the first-use chunk, including after feedback.
+    #[test]
+    fn prep_deferred_across_feedback() {
+        use pecos_core::gate_type::GateType::{H, MZ, PZ, X};
+        let mut engine = prep_test_engine(false);
+        assert_eq!(
+            prep_test_gates(&mut engine, &[Operation::AllocateQubit { id: 71 }]),
+            vec![]
+        );
+        assert_eq!(
+            prep_test_gates(
+                &mut engine,
+                &[QuantumOp::H(71).into(), QuantumOp::Measure(71, 9).into(),]
+            ),
+            [PZ, H, MZ]
+        );
+        engine
+            .handle_measurements(ByteMessage::builder().add_outcomes(&[0]).build())
+            .unwrap();
+        assert_eq!(
+            prep_test_gates(&mut engine, &[QuantumOp::X(71).into()]),
+            [X]
+        );
+    }
+
+    // Red/green: a re-allocation defers its own prep until the next use.
+    #[test]
+    fn prep_reallocation_starts_new_lifetime() {
+        use pecos_core::gate_type::GateType::{H, PZ, X};
+        let mut engine = prep_test_engine(false);
+        assert_eq!(
+            prep_test_gates(
+                &mut engine,
+                &[
+                    Operation::AllocateQubit { id: 7 },
+                    QuantumOp::X(7).into(),
+                    Operation::ReleaseQubit { id: 7 },
+                    Operation::AllocateQubit { id: 7 },
+                ]
+            ),
+            [PZ, X]
+        );
+        assert_eq!(
+            prep_test_gates(&mut engine, &[QuantumOp::H(7).into()]),
+            [PZ, H]
+        );
+    }
+
+    // Red/green: unused lifetimes must not produce a prep.
+    #[test]
+    fn prep_unused_allocation_emits_nothing() {
+        assert_eq!(
+            prep_test_gates(
+                &mut prep_test_engine(false),
+                &[
+                    Operation::AllocateQubit { id: 7 },
+                    Operation::ReleaseQubit { id: 7 },
+                ]
+            ),
+            vec![]
+        );
+    }
+
+    // Red/green: every fresh target needs a prep, in source operand order.
+    #[test]
+    fn prep_multi_qubit_first_use() {
+        use pecos_core::gate_type::GateType::{CX, PZ};
+        let mut engine = prep_test_engine(false);
+        let lowered = engine
+            .lower_operations_to_commands(&[QuantumOp::CX(7, 3).into()])
+            .unwrap();
+        let gates = lowered.commands.quantum_ops().unwrap();
+        assert_eq!(
+            gates.iter().map(|gate| gate.gate_type).collect::<Vec<_>>(),
+            [PZ, PZ, CX]
+        );
+        assert_eq!(gates[0].qubits.as_slice(), [0.into()]);
+        assert_eq!(gates[1].qubits.as_slice(), [1.into()]);
+        assert_eq!(gates[2].qubits.as_slice(), [0.into(), 1.into()]);
+    }
+
+    // Compatibility: program-written preps remain normal PZ gates throughout a lifetime.
+    #[test]
+    fn prep_program_mid_circuit_reset_is_preserved() {
+        use pecos_core::gate_type::GateType::{H, PZ};
+        let mut engine = prep_test_engine(false);
+        assert_eq!(
+            prep_test_gates(
+                &mut engine,
+                &[
+                    QuantumOp::Reset(0).into(),
+                    QuantumOp::H(0).into(),
+                    QuantumOp::Reset(0).into(),
+                ]
+            ),
+            [PZ, H, PZ]
+        );
+    }
+
+    // Compatibility: normalization must leave the original use-after-release error intact.
+    #[test]
+    fn prep_released_handle_is_not_a_legacy_first_use() {
+        let mut engine = prep_test_engine(false);
+        let error = engine
+            .lower_operations_to_commands(&[
+                Operation::AllocateQubit { id: 7 },
+                QuantumOp::Reset(7).into(),
+                Operation::ReleaseQubit { id: 7 },
+                QuantumOp::H(7).into(),
+            ])
+            .err()
+            .unwrap();
+        assert!(error.to_string().contains("emitted H(7)"));
+        assert!(error.to_string().contains("not currently active"));
+    }
+
+    fn check_prep_metadata(selene: bool) {
+        let mut engine = prep_test_engine(selene);
+        let global = TraceMetadata::from([("global".into(), "h".into())]);
+        let scoped = TraceMetadata::from([("scoped".into(), "x".into())]);
+        let ops = [
+            Operation::TraceMetadata {
+                metadata: scoped.clone(),
+                qubit: Some(7),
+            },
+            Operation::TraceMetadata {
+                metadata: global.clone(),
+                qubit: None,
+            },
+            Operation::AllocateQubit { id: 3 },
+            QuantumOp::H(3).into(),
+            Operation::Barrier,
+            QuantumOp::X(7).into(),
+        ];
+        let lowered = engine.lower_operations_to_commands(&ops).unwrap();
+        assert_eq!(
+            lowered.gate_metadata,
+            if selene {
+                vec![
+                    TraceMetadata::new(),
+                    global,
+                    TraceMetadata::new(),
+                    TraceMetadata::new(),
+                    scoped,
+                ]
+            } else {
+                vec![TraceMetadata::new(), global, TraceMetadata::new(), scoped]
+            }
+        );
+        let gates = lowered.commands.quantum_ops().unwrap();
+        assert_eq!(
+            gates
+                .iter()
+                .map(|gate| gate.gate_type.to_string())
+                .collect::<Vec<_>>(),
+            if selene {
+                vec!["PZ", "RXY1Q", "RZ", "PZ", "RXY1Q"]
+            } else {
+                vec!["PZ", "H", "PZ", "X"]
+            }
+        );
+        let store = Arc::new(Mutex::new(Vec::new()));
+        engine.set_operation_trace_collector(store.clone());
+        engine.simulated_op_count = ops.len();
+        engine.trace_operations_chunk("prep_test", &ops, None, Some(&lowered));
+        let traces = store.lock().unwrap();
+        assert_eq!(traces[0].operations, ops);
+        assert_eq!(traces[0].num_operations, ops.len());
+        assert_eq!(traces[0].simulated_op_count, ops.len());
+        assert!(traces[0].lowered_quantum_ops_complete);
+        assert_eq!(
+            traces[0].lowered_quantum_ops.len(),
+            if selene { 5 } else { 4 }
+        );
+    }
+
+    // Red/green: global and scoped labels must stay on source ops, across allocations/barriers.
+    #[test]
+    fn prep_metadata_direct() {
+        check_prep_metadata(false);
+    }
+
+    // Red/green: exercise Selene's source-to-lowered metadata matching with inserted preps.
+    #[cfg(feature = "selene-runtimes")]
+    #[test]
+    fn prep_metadata_selene() {
+        check_prep_metadata(true);
+    }
+
+    // Compatibility: the direct route drops dangling metadata at the chunk boundary.
+    #[test]
+    fn prep_metadata_across_chunks() {
+        for qubit in [None, Some(7)] {
+            let mut engine = prep_test_engine(false);
+            engine
+                .lower_operations_to_commands(&[
+                    QuantumOp::Reset(7).into(),
+                    Operation::TraceMetadata {
+                        metadata: TraceMetadata::from([("source_label".into(), "h".into())]),
+                        qubit,
+                    },
+                ])
+                .unwrap();
+            let lowered = engine
+                .lower_operations_to_commands(&[QuantumOp::H(7).into()])
+                .unwrap();
+            assert_eq!(lowered.gate_metadata, [TraceMetadata::new()]);
+        }
+    }
+
+    // Compatibility: Selene rejects dangling global and qubit-scoped metadata in its chunk.
+    #[cfg(feature = "selene-runtimes")]
+    #[test]
+    fn prep_metadata_dangling_selene() {
+        for (qubit, message) in [
+            (
+                None,
+                "trace metadata was not followed by a quantum operation",
+            ),
+            (
+                Some(7),
+                "qubit-scoped trace metadata was not followed by a compatible quantum operation",
+            ),
+        ] {
+            let mut engine = prep_test_engine(true);
+            let error = engine
+                .lower_operations_to_commands(&[
+                    QuantumOp::Reset(7).into(),
+                    Operation::TraceMetadata {
+                        metadata: TraceMetadata::from([("source_label".into(), "h".into())]),
+                        qubit,
+                    },
+                ])
+                .err()
+                .expect("dangling metadata must fail in its own chunk");
+            assert!(error.to_string().contains(message), "{error}");
+        }
+    }
+
+    fn check_prep_nonadjacent_metadata(selene: bool) {
+        let mut engine = prep_test_engine(selene);
+        let metadata = TraceMetadata::from([("source_label".into(), "x".into())]);
+        let lowered = engine
+            .lower_operations_to_commands(&[
+                Operation::TraceMetadata {
+                    metadata: metadata.clone(),
+                    qubit: Some(1),
+                },
+                QuantumOp::H(0).into(),
+                QuantumOp::X(1).into(),
+            ])
+            .unwrap();
+        let gates = lowered.commands.quantum_ops().unwrap();
+        assert_eq!(
+            gates
+                .iter()
+                .map(|gate| gate.gate_type.to_string())
+                .collect::<Vec<_>>(),
+            if selene {
+                vec!["PZ", "RXY1Q", "RZ", "PZ", "RXY1Q"]
+            } else {
+                vec!["PZ", "H", "PZ", "X"]
+            }
+        );
+        assert_eq!(
+            lowered.gate_metadata,
+            if selene {
+                vec![
+                    TraceMetadata::new(),
+                    TraceMetadata::new(),
+                    TraceMetadata::new(),
+                    TraceMetadata::new(),
+                    metadata,
+                ]
+            } else {
+                vec![
+                    TraceMetadata::new(),
+                    TraceMetadata::new(),
+                    TraceMetadata::new(),
+                    metadata,
+                ]
+            }
+        );
+    }
+
+    // Red/green: both fresh legacy handles get preps without consuming the scoped label.
+    #[test]
+    fn prep_metadata_nonadjacent_direct() {
+        check_prep_nonadjacent_metadata(false);
+    }
+
+    // Red/green: Selene keeps the scoped label on X after both inserted preps.
+    #[cfg(feature = "selene-runtimes")]
+    #[test]
+    fn prep_metadata_nonadjacent_selene() {
+        check_prep_nonadjacent_metadata(true);
+    }
+
+    // Red/green: unlabelled native occurrences must consume their own lowered gates.
+    #[cfg(feature = "selene-runtimes")]
+    #[test]
+    fn prep_native_metadata_does_not_label_inserted_reset() {
+        for qubit in [None, Some(0)] {
+            let mut engine = prep_test_engine(true);
+            let metadata = TraceMetadata::from([("source_label".into(), "program prep".into())]);
+            let lowered = engine
+                .lower_operations_to_commands(&[
+                    QuantumOp::RZ(0.5, 0).into(),
+                    Operation::TraceMetadata {
+                        metadata: metadata.clone(),
+                        qubit,
+                    },
+                    QuantumOp::Reset(0).into(),
+                ])
+                .unwrap();
+            assert_eq!(
+                lowered
+                    .commands
+                    .quantum_ops()
+                    .unwrap()
+                    .iter()
+                    .map(|gate| gate.gate_type.to_string())
+                    .collect::<Vec<_>>(),
+                ["PZ", "RZ", "PZ"]
+            );
+            assert_eq!(
+                lowered.gate_metadata,
+                [TraceMetadata::new(), TraceMetadata::new(), metadata]
+            );
+        }
+    }
+
+    // Red/green: repeated program-native ops match metadata by occurrence too.
+    #[cfg(feature = "selene-runtimes")]
+    #[test]
+    fn prep_native_metadata_repeated_program_ops() {
+        for op in [
+            QuantumOp::Reset(0),
+            QuantumOp::RZ(0.5, 0),
+            QuantumOp::RXY(0.5, 0.25, 0),
+            QuantumOp::RZZ(0.5, 0, 1),
+        ] {
+            for qubit in [None, Some(0)] {
+                let mut engine = prep_test_engine(true);
+                let metadata =
+                    TraceMetadata::from([("source_label".into(), "second occurrence".into())]);
+                let lowered = engine
+                    .lower_operations_to_commands(&[
+                        op.clone().into(),
+                        Operation::TraceMetadata {
+                            metadata: metadata.clone(),
+                            qubit,
+                        },
+                        op.clone().into(),
+                    ])
+                    .unwrap();
+                assert_eq!(lowered.gate_metadata.last(), Some(&metadata), "{op:?}");
+                assert!(
+                    lowered.gate_metadata[..lowered.gate_metadata.len() - 1]
+                        .iter()
+                        .all(TraceMetadata::is_empty),
+                    "{op:?}"
+                );
+            }
+        }
+    }
+
+    fn check_prep_unknown_release(selene: bool) {
+        let mut engine = prep_test_engine(selene);
+        engine.set_num_qubits_hint(1);
+        let lowered = engine
+            .lower_operations_to_commands(&[
+                Operation::AllocateQubit { id: 0 },
+                QuantumOp::X(0).into(),
+                Operation::ReleaseQubit { id: 0 },
+                Operation::ReleaseQubit { id: 9 },
+                QuantumOp::Measure(9, 0).into(),
+            ])
+            .unwrap();
+        let gates = lowered.commands.quantum_ops().unwrap();
+        assert_eq!(
+            gates
+                .iter()
+                .map(|gate| gate.gate_type.to_string())
+                .collect::<Vec<_>>(),
+            if selene {
+                ["PZ", "RXY1Q", "PZ", "MZ"]
+            } else {
+                ["PZ", "X", "PZ", "MZ"]
+            }
+        );
+        assert!(
+            gates
+                .iter()
+                .all(|gate| gate.qubits.as_slice() == [0.into()])
+        );
+    }
+
+    // Red/green: releasing an unknown handle must not suppress its first-use prep.
+    #[test]
+    fn prep_unknown_release_direct() {
+        check_prep_unknown_release(false);
+    }
+
+    // Red/green: native slot reuse after an unknown release still receives a prep.
+    #[cfg(feature = "selene-runtimes")]
+    #[test]
+    fn prep_unknown_release_selene() {
+        check_prep_unknown_release(true);
+    }
+
+    // Red/green: a second explicit allocation cannot restart a live lifetime.
+    #[test]
+    fn prep_duplicate_live_allocation_direct() {
+        for prefix in [
+            vec![Operation::AllocateQubit { id: 7 }, QuantumOp::H(7).into()],
+            vec![QuantumOp::Measure(7, 0).into()],
+            vec![Operation::AllocateQubit { id: 7 }],
+        ] {
+            for split in [false, true] {
+                let mut engine = prep_test_engine(false);
+                let mut ops = if split {
+                    engine.lower_operations_to_commands(&prefix).unwrap();
+                    Vec::new()
+                } else {
+                    prefix.clone()
+                };
+                ops.extend([Operation::AllocateQubit { id: 7 }, QuantumOp::X(7).into()]);
+                let error = engine
+                    .lower_operations_to_commands(&ops)
+                    .err()
+                    .expect("duplicate live allocation must fail");
+                assert!(
+                    error
+                        .to_string()
+                        .contains("program qubit 7 is already allocated"),
+                    "{error}"
+                );
+            }
+        }
+    }
+
+    // Red/green: the scheduled route also receives the deferred prep exactly once.
+    #[cfg(feature = "selene-runtimes")]
+    #[test]
+    fn prep_scheduled_first_use() {
+        use pecos_core::gate_type::GateType::{PZ, RZ};
+        use pecos_engines::scheduled_events::{ScheduledEventOp, decode_event_batches};
+        let mut engine = prep_test_engine(true);
+        engine.scheduled_transport = ScheduledTransport::V4;
+        let lowered = engine
+            .lower_operations_to_commands(&[
+                Operation::AllocateQubit { id: 7 },
+                QuantumOp::RZ(0.5, 7).into(),
+            ])
+            .unwrap();
+        let gates = decode_event_batches(&lowered.commands)
+            .unwrap()
+            .into_iter()
+            .flat_map(|batch| batch.operations)
+            .map(|op| match op {
+                ScheduledEventOp::Gate(gate) => gate.gate_type,
+                ScheduledEventOp::Custom { .. } => panic!("expected gate"),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(gates, [PZ, RZ]);
+    }
+
+    #[test]
     fn test_operation_trace_chunk_writes_json() {
         let temp_dir = TempDir::new().expect("tempdir");
         let mut engine = QisEngine::with_runtime(Box::new(DummyRuntime::default()));
@@ -2219,7 +2948,7 @@ mod tests {
             QuantumOp::Measure(0, 7).into(),
         ];
         let lowered = engine
-            .operations_to_lowered_commands(&ops)
+            .lower_operations_to_commands(&ops)
             .expect("convert ops to lowered commands");
         engine.trace_operations_chunk("unit_test", &ops, Some(7), Some(&lowered));
 
@@ -2310,10 +3039,10 @@ mod tests {
             QuantumOp::H(1).into(),
         ];
         let lowered = engine
-            .operations_to_lowered_commands(&ops)
+            .lower_operations_to_commands(&ops)
             .expect("lower annotated CRZ");
         let gates = lowered.commands.quantum_ops().unwrap();
-        // Allocations emit two PZ commands before the three CRZ legs and H.
+        // First use emits two PZ commands before the three CRZ legs and H.
         assert_eq!(gates.len(), 6);
         assert_eq!(gates[2].gate_type, pecos_core::gate_type::GateType::Z);
         assert!(
@@ -2709,7 +3438,7 @@ mod tests {
         ];
 
         let lowered_commands = engine
-            .operations_to_lowered_commands(&ops)
+            .lower_operations_to_commands(&ops)
             .expect("sparse handles should map onto live physical slots");
 
         let lowered = lowered_commands

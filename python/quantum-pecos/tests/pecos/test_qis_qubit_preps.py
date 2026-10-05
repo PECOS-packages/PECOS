@@ -59,9 +59,11 @@ def test_scheduled_late_first_use_prep_timing(allocated: bool, explicit_reset: b
     """A late lifetime prep takes the same runtime time as a program reset."""
     import pecos
     import pecos_rslib as pr
+
+    # Ships with selene-sim, a required dependency: a missing package must fail.
+    import selene_soft_rz_runtime_plugin as plugin_package
     from pecos_rslib.quantum import GateType
 
-    plugin_package = pytest.importorskip("selene_soft_rz_runtime_plugin")
     reset_nanos, rxy_nanos, measure_nanos = 7, 11, 13
     runtime = plugin_package.SoftRZRuntimePlugin(
         duration_ns_reset=reset_nanos,

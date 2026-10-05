@@ -661,7 +661,9 @@ def test_upstream_soft_rz_plugin_object_lowers_rpp_before_submission() -> None:
     import pecos
     import pecos_rslib as pr
 
-    plugin_package = pytest.importorskip("selene_soft_rz_runtime_plugin")
+    # Ships with selene-sim, a required dependency: a missing package must fail.
+    import selene_soft_rz_runtime_plugin as plugin_package
+
     program = """
         define i64 @qmain(i64 %shot) #0 {
             call void @___rpp(i64 0, i64 1, double 3.141592653589793, double 0.0)

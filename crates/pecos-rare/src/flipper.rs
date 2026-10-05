@@ -317,7 +317,7 @@ impl BasicSubregionFaultFlipper {
                 .expect("Set the fault flipper seed before requesting a flip")
                 .next_f64();
             if random_value < region_probability{
-                (new_history,ratio_contribution) = self.random_flip_and_ratio_at_site(site_uid, history);
+                (new_history,ratio_contribution) = self.random_flip_and_ratio_at_site(site_uid, &new_history);
             }
             ratio *= ratio_contribution;
         }
@@ -570,7 +570,7 @@ impl WeightedSubregionFaultFlipper {
                 .expect("Set the fault flipper seed before requesting a flip")
                 .next_f64();
             if random_value < region_probability{
-                (new_history,ratio_contribution) = self.random_flip_and_ratio_at_site(site_uid, history);
+                (new_history,ratio_contribution) = self.random_flip_and_ratio_at_site(site_uid, &new_history);
             }
             ratio *= ratio_contribution;
         }

@@ -1358,6 +1358,7 @@ impl SeleneRuntime {
     }
 
     fn reset_plugin_instance(&mut self) -> Result<()> {
+        let mut exit_result = Ok(());
         if let Some(lib) = &self.library
             && let Some(instance) = self.instance
         {
@@ -1365,7 +1366,9 @@ impl SeleneRuntime {
                 if let Some(exit_fn) = Self::runtime_plugin_descriptor(lib)?.exit_fn {
                     let errno = exit_fn(instance);
                     if errno != 0 {
-                        return Err(RuntimeError::ExecutionError(format!(
+                        // Selene ends an instance once exit is called, whatever errno
+                        // it returns, so the handle is dropped below either way.
+                        exit_result = Err(RuntimeError::ExecutionError(format!(
                             "Selene runtime exit failed with errno {errno}"
                         )));
                     }
@@ -1385,7 +1388,7 @@ impl SeleneRuntime {
         self.last_gate_time_end_nanos.clear();
         self.submitted_rz_phases.clear();
         self.source_trace_metadata.clear();
-        Ok(())
+        exit_result
     }
 
     fn apply_pending_shot_start(&mut self) -> Result<()> {
@@ -2034,10 +2037,18 @@ impl SeleneRuntime {
     }
 
     fn lower_runtime_release(&mut self, program_qubit: usize) -> Result<Vec<LoweredQuantumOp>> {
+        if self.scheduled_mode == Some(true) {
+            // Scheduled extraction has no source annotations to retire. Submit
+            // qfree in source order and let the plugin own its pending work;
+            // a host-inserted barrier/drain here would commit a schedule before
+            // later operations in this input have reached the native scheduler.
+            self.release_runtime_qubit(program_qubit)?;
+            return Ok(Vec::new());
+        }
         let mut lowered = Vec::new();
         if let Some(&slot) = self.program_to_runtime_qubits.get(&program_qubit) {
             // Resolve work and provenance for the ending lifetime before qfree
-            // permits a new lifetime to reuse its native slot, on every route.
+            // permits a new lifetime to reuse its native slot on annotated/flat routes.
             self.call_runtime_local_barrier(&[slot])?;
             let emitted = self.drain_runtime_operations()?;
             Self::push_lowered_ops_with_source_metadata(
@@ -3338,7 +3349,12 @@ impl QisRuntime for SeleneRuntime {
     }
 
     fn reset(&mut self) -> Result<()> {
-        self.reset_plugin_instance()?;
+        if let Err(error) = self.reset_plugin_instance() {
+            // The plugin instance is gone but this runtime's shot state is not
+            // reset, so block every operation until a reset succeeds.
+            self.latch_batch_failure(error.clone());
+            return Err(error);
+        }
         self.batch_failure = None;
         self.state = ClassicalState::default();
         self.current_op_index = 0;
@@ -4821,6 +4837,117 @@ mod tests {
 
     #[cfg(feature = "selene-runtimes")]
     #[test]
+    fn failed_exit_never_reuses_the_ended_instance() {
+        use std::sync::Mutex;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        type InitFn = unsafe extern "C" fn(
+            *mut *mut c_void,
+            u64,
+            u64,
+            u32,
+            *const *const std::ffi::c_char,
+        ) -> i32;
+        static REAL_INIT: Mutex<Option<InitFn>> = Mutex::new(None);
+        static INSTANCES: Mutex<Vec<usize>> = Mutex::new(Vec::new());
+        static EXIT_CALLS: AtomicUsize = AtomicUsize::new(0);
+        unsafe extern "C" fn recording_init(
+            instance: *mut *mut c_void,
+            n_qubits: u64,
+            start: u64,
+            argc: u32,
+            argv: *const *const std::ffi::c_char,
+        ) -> i32 {
+            let init = REAL_INIT.lock().unwrap().expect("real init installed");
+            let errno = unsafe { init(instance, n_qubits, start, argc, argv) };
+            INSTANCES
+                .lock()
+                .unwrap()
+                .push(unsafe { *instance } as usize);
+            errno
+        }
+        // Reports failure without ending the real instance: PECOS must still treat
+        // the handle as ended, as Selene's contract requires.
+        unsafe extern "C" fn failing_exit(_: *mut c_void) -> i32 {
+            EXIT_CALLS.fetch_add(1, Ordering::SeqCst);
+            7
+        }
+
+        // The fixture library holds one process-wide descriptor, so install the
+        // faulty one only in a child process.
+        const CHILD_ENV: &str = "PECOS_TEST_FAILED_RUNTIME_EXIT";
+        if std::env::var_os(CHILD_ENV).is_none() {
+            crate::test_env::run_test_in_child(
+                "selene_runtime::tests::failed_exit_never_reuses_the_ended_instance",
+                &[(CHILD_ENV, "1".as_ref())],
+            );
+            return;
+        }
+
+        let executable = std::env::current_exe().unwrap();
+        let plugin = crate::selene_runtimes::find_library_in_dir(
+            executable.parent().unwrap(),
+            pecos_qis_test_runtime::LIBRARY_NAME,
+        )
+        .expect("Cargo-built runtime fixture beside the test executable");
+        let public_runtime = crate::selene_runtimes::selene_simple_runtime().unwrap();
+        // SAFETY: Both libraries stay loaded and the boxed descriptor outlives the
+        // runtimes below. Every callback has its original ABI.
+        let public_library =
+            unsafe { libloading::Library::new(&public_runtime.plugin_path).unwrap() };
+        let mut descriptor =
+            Box::new(unsafe { SeleneRuntime::runtime_plugin_descriptor(&public_library).unwrap() });
+        *REAL_INIT.lock().unwrap() = Some(descriptor.init_fn);
+        descriptor.init_fn = recording_init;
+        descriptor.exit_fn = Some(failing_exit);
+        let fixture = unsafe { libloading::Library::new(&plugin).unwrap() };
+        unsafe {
+            let set = fixture
+                .get::<unsafe extern "C" fn(*mut c_void)>(b"set_descriptor")
+                .unwrap();
+            set((&raw mut *descriptor).cast());
+        }
+        for mode in LoweringRoute::ALL {
+            INSTANCES.lock().unwrap().clear();
+            EXIT_CALLS.store(0, Ordering::SeqCst);
+            let mut runtime = SeleneRuntime::new(&plugin);
+            runtime.init_args.clone_from(&public_runtime.init_args);
+            runtime.set_num_qubits(1);
+            runtime.shot_start(0, None).unwrap();
+            mode.lower(&mut runtime, &[Operation::AllocateQubit { id: 0 }])
+                .unwrap();
+            let ended = runtime.instance.expect("initialized instance") as usize;
+
+            let error = runtime.reset().unwrap_err();
+            assert!(
+                error.to_string().contains("exit failed with errno 7"),
+                "{error}"
+            );
+            assert_eq!(EXIT_CALLS.load(Ordering::SeqCst), 1);
+            assert!(runtime.instance.is_none());
+            // Until a reset succeeds, nothing may run on the half-reset runtime:
+            // no stale shot result and no fresh instance without a shot start.
+            assert!(runtime.shot_end().is_err());
+            assert!(
+                mode.lower(&mut runtime, &[Operation::AllocateQubit { id: 1 }])
+                    .is_err()
+            );
+            assert_eq!(INSTANCES.lock().unwrap().len(), 1);
+
+            runtime.reset().unwrap();
+            runtime.shot_start(1, None).unwrap();
+            mode.lower(&mut runtime, &[Operation::AllocateQubit { id: 0 }])
+                .unwrap();
+            let instances = INSTANCES.lock().unwrap().clone();
+            assert_eq!(instances.len(), 2, "{instances:?}");
+            assert_eq!(instances[0], ended);
+            let current = runtime.instance.expect("re-initialized instance") as usize;
+            assert_eq!(current, instances[1]);
+            assert_ne!(current, ended);
+        }
+    }
+
+    #[cfg(feature = "selene-runtimes")]
+    #[test]
     fn failed_lazy_shot_start_requires_reset() {
         use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
         static FAIL_START: AtomicBool = AtomicBool::new(true);
@@ -5203,8 +5330,8 @@ mod tests {
                 LoweredQuantumOp::from(QuantumOp::Measure(0, 0)),
             ]
         );
-        // Exercise the shared release boundary even without provenance tracking,
-        // including scheduled extraction, which has no source metadata records.
+        // Flat routes retain the source-provenance boundary. Scheduled extraction
+        // leaves queued work with the plugin until its normal extraction boundary.
         for mode in LoweringRoute::ALL {
             let mut runtime = crate::selene_runtimes::selene_soft_rz_runtime().unwrap();
             runtime.set_num_qubits(1);
@@ -5222,7 +5349,11 @@ mod tests {
             let slot = runtime.program_to_runtime_qubits[&7];
             assert_eq!(
                 mode.lower_qubit_slots(&mut runtime, &[Operation::ReleaseQubit { id: 7 },]),
-                [slot],
+                if matches!(mode, LoweringRoute::Scheduled) {
+                    vec![]
+                } else {
+                    vec![slot]
+                },
                 "{mode:?}"
             );
             assert!(runtime.source_trace_metadata.is_empty());
@@ -5235,7 +5366,11 @@ mod tests {
                         QuantumOp::Measure(9, 0).into(),
                     ]
                 ),
-                [slot, slot],
+                if matches!(mode, LoweringRoute::Scheduled) {
+                    vec![slot, slot, slot]
+                } else {
+                    vec![slot, slot]
+                },
                 "{mode:?}"
             );
             assert_eq!(runtime.program_to_runtime_qubits[&9], slot);

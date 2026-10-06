@@ -9,7 +9,6 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-import pytest
 from guppylang import guppy
 from guppylang.std.quantum import cx, h, measure, qubit
 from pecos.compilation_pipeline import compile_guppy_to_hugr
@@ -49,217 +48,33 @@ class TestSeleneDirectIntegration:
             assert hugr_file.exists(), "HUGR file should be created"
 
             # Use Selene's build API
-            try:
-                # Build the program using Selene (pass bytes directly)
-                instance = build(hugr_bytes)
-                assert instance is not None, "Build should create an instance"
+            # Build the program using Selene (pass bytes directly)
+            instance = build(hugr_bytes)
+            assert instance is not None, "Build should create an instance"
 
-                runtime = SimpleRuntime()  # Selene's simple runtime
-                simulator = Coinflip()  # Simple 50/50 simulator
-                noise_model = IdealNoiseModel()  # No noise
+            runtime = SimpleRuntime()  # Selene's simple runtime
+            simulator = Coinflip()  # Simple 50/50 simulator
+            noise_model = IdealNoiseModel()  # No noise
 
-                # Step 5: Run the program and collect results
-                n_shots = 10
-                n_qubits = 2
+            # Step 5: Run the program and collect results
+            n_shots = 10
+            n_qubits = 2
 
-                results: list[dict[str, Any]] = []
-                for shot_results in instance.run_shots(
-                    simulator=simulator,
-                    n_qubits=n_qubits,
-                    runtime=runtime,
-                    error_model=noise_model,
-                    n_shots=n_shots,
-                    verbose=False,
-                ):
-                    # Collect all results from this shot
-                    shot_data = dict(shot_results)
-                    results.append(shot_data)
-
-                # Verify we got results
-                assert len(results) == n_shots, f"Expected {n_shots} shots, got {len(results)}"
-
-                # Check that each shot is a dictionary (may be empty for some simulators)
-                for i, shot in enumerate(results):
-                    assert isinstance(shot, dict), f"Shot {i} should be a dictionary"
-                    # Note: Coinflip simulator may return empty dicts for shots
-
-                # For Bell state, measurements should be correlated
-                # With a coinflip simulator this won't be perfect, but we can check structure
-                assert all(isinstance(shot, dict) for shot in results), "All results should be dicts"
-
-            except (ImportError, RuntimeError, ValueError, AttributeError) as e:
-                # This is expected if Selene's HUGR support isn't fully ready
-                if "hugr" in str(e).lower() or "not supported" in str(e).lower():
-                    # Let's try a simpler approach with LLVM IR instead
-                    self._test_with_llvm_ir_fallback(build_dir)
-                else:
-                    pytest.fail(f"Unexpected error during Selene build/run: {e}")
-
-    def _test_with_llvm_ir_fallback(self, build_dir: Path) -> None:
-        """Fallback test using LLVM IR instead of HUGR."""
-        # Create a simple LLVM IR program
-        llvm_ir = """
-        declare void @__quantum__qis__h__body(i64)
-        declare void @__quantum__qis__cnot__body(i64, i64)
-        declare i1 @__quantum__qis__mz__body(i64)
-        declare void @__quantum__rt__result_record(i8*, i1)
-
-        define void @bell_state() #0 {
-        entry:
-            ; Apply H to qubit 0
-            call void @__quantum__qis__h__body(i64 0)
-
-            ; Apply CNOT(0, 1)
-            call void @__quantum__qis__cnot__body(i64 0, i64 1)
-
-            ; Measure both qubits
-            %m0 = call i1 @__quantum__qis__mz__body(i64 0)
-            %m1 = call i1 @__quantum__qis__mz__body(i64 1)
-
-            ; Record results
-            call void @__quantum__rt__result_record(i8* null, i1 %m0)
-            call void @__quantum__rt__result_record(i8* null, i1 %m1)
-
-            ret void
-        }
-
-        attributes #0 = { "entry_point" }
-        """
-
-        # Write LLVM IR to file
-        llvm_file = build_dir / "program.ll"
-        llvm_file.write_text(llvm_ir)
-        assert llvm_file.exists(), "LLVM file should be created"
-
-        try:
-            # Try to build with Selene using LLVM IR
-            instance = build(
-                str(llvm_file),
-                build_dir=str(build_dir),
+            results: list[dict[str, Any]] = []
+            for shot_results in instance.run_shots(
+                simulator=simulator,
+                n_qubits=n_qubits,
+                runtime=runtime,
+                error_model=noise_model,
+                n_shots=n_shots,
                 verbose=False,
-            )
-            assert instance is not None, "LLVM build should create an instance"
+            ):
+                # Collect all results from this shot
+                shot_data = dict(shot_results)
+                results.append(shot_data)
 
-            runtime = SimpleRuntime()
-            simulator = Coinflip()
-            noise_model = IdealNoiseModel()
-
-            results = list(
-                instance.run_shots(
-                    simulator=simulator,
-                    n_qubits=2,
-                    runtime=runtime,
-                    error_model=noise_model,
-                    n_shots=1,
-                    verbose=False,
-                ),
-            )
-
-            # Verify we got some results
-            assert len(results) > 0, "Should get at least one result from LLVM execution"
-
-        except (ImportError, RuntimeError, ValueError) as e:
-            # This is okay - we're learning about the integration
-            if "not supported" in str(e).lower() or "not available" in str(e).lower():
-                pytest.skip(f"LLVM fallback not fully supported: {e}")
-            # Don't fail the test - we tried the fallback
-
-    def test_selene_configuration_exploration(self) -> None:
-        """Explore what configuration Selene needs for running quantum programs."""
-        # Check available runtime
-        runtime = SimpleRuntime()
-        assert runtime is not None, "Should create SimpleRuntime"
-
-        # Check runtime attributes
-        runtime_attrs = dir(runtime)
-        assert len(runtime_attrs) > 0, "Runtime should have some attributes"
-
-        # Check for common methods
-        public_methods = [attr for attr in runtime_attrs if not attr.startswith("_")]
-        assert len(public_methods) > 0, "Runtime should have public methods"
-
-        # Check simulator options
-        from selene_sim.backends import bundled_simulators
-
-        # Check if bundled_simulators has __all__ attribute
-        if hasattr(bundled_simulators, "__all__"):
-            sims_list = bundled_simulators.__all__
-            assert isinstance(sims_list, list), "Simulators list should be a list"
-            assert len(sims_list) > 0, "Should have at least one bundled simulator"
-        else:
-            # Check what's available in the module
-            sim_attrs = dir(bundled_simulators)
-            simulators = [attr for attr in sim_attrs if not attr.startswith("_") and "Simulator" in attr]
-            assert len(simulators) > 0, "Should have some simulator classes"
-
-    def test_understanding_selene_result_stream(self) -> None:
-        """Understand how Selene handles result streams."""
-        # Create a minimal test to see result format
-        with tempfile.TemporaryDirectory() as tmpdir:
-            # Create the simplest possible quantum program
-            simple_program = """
-            ; Minimal quantum program
-            declare i1 @__quantum__qis__mz__body(i64)
-            declare void @__quantum__rt__result_record(i8*, i1)
-
-            @.str.result = constant [7 x i8] c"result\\00"
-
-            define void @main() #0 {
-                %result = call i1 @__quantum__qis__mz__body(i64 0)
-                call void @__quantum__rt__result_record(
-                    i8* getelementptr inbounds ([7 x i8], [7 x i8]* @.str.result, i32 0, i32 0),
-                    i1 %result)
-                ret void
-            }
-
-            attributes #0 = { "entry_point" }
-            """
-
-            program_file = Path(tmpdir) / "minimal.ll"
-            program_file.write_text(simple_program)
-            assert program_file.exists(), "Program file should be created"
-
-            try:
-                # Try to understand the build process
-                # Check what build function signature looks like
-                import inspect
-
-                sig = inspect.signature(build)
-                params = list(sig.parameters.keys())
-
-                # Verify build has expected parameters
-                assert "src" in params or len(params) > 0, "build() should have parameters"
-
-                # Try to build the minimal program
-                instance = build(str(program_file))
-
-                # Check instance type and methods
-                assert instance is not None, "Should create an instance"
-                instance_methods = [m for m in dir(instance) if not m.startswith("_")]
-                assert len(instance_methods) > 0, "Instance should have public methods"
-
-                # Check for run methods
-                run_methods = [m for m in instance_methods if "run" in m.lower()]
-                assert len(run_methods) > 0, "Instance should have run methods"
-
-            except (ImportError, RuntimeError, ValueError, AttributeError) as e:
-                if "not supported" in str(e).lower():
-                    pytest.skip(f"Minimal program build not supported: {e}")
-                # Don't fail - this is exploratory
-
-    def test_selene_noise_models(self) -> None:
-        """Test different noise models available in Selene."""
-        # Check available noise models
-        from selene_sim.backends import IdealErrorModel as IdealNoiseModel
-
-        # Test IdealNoiseModel (no noise)
-        ideal_model = IdealNoiseModel()
-        assert ideal_model is not None, "Should create IdealNoiseModel"
-
-        # Check error model interface
-        model_methods = dir(ideal_model)
-        public_methods = [m for m in model_methods if not m.startswith("_")]
-        assert len(public_methods) >= 0, "Error model should have interface methods"
+            # Verify we got results
+            assert len(results) == n_shots, f"Expected {n_shots} shots, got {len(results)}"
 
 
 class TestGuppyToHUGRCompilation:

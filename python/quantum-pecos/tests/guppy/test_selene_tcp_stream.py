@@ -6,14 +6,12 @@ results, which is essential for extracting final results in our integration.
 
 import socket
 import tempfile
-import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
-import pytest
-from selene_sim import SeleneInstance
-from selene_sim.result_handling import ResultStream, TCPStream
+from selene_sim.result_handling import TCPStream
 
 
 def _unused_tcp_port() -> int:
@@ -75,82 +73,44 @@ class TestSeleneTCPStream:
             # Connect in a separate thread
             def client_thread() -> None:
                 nonlocal connection_successful
-                try:
-                    client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                    client_socket.settimeout(2.0)  # 2 second timeout
-                    client_socket.connect((host, port))
-                    connection_successful = True
+                client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                client_socket.settimeout(2.0)  # 2 second timeout
+                client_socket.connect((host, port))
+                connection_successful = True
 
-                    # Send test messages (simulating Selene output)
-                    test_messages = [
-                        b"USER:BOOL:measurement_1\x001\x00",
-                        b"USER:BOOL:measurement_2\x000\x00",
-                        b"USER:INT:count\x0042\x00",
-                    ]
+                # Send test messages (simulating Selene output)
+                test_messages = [
+                    b"USER:BOOL:measurement_1\x001\x00",
+                    b"USER:BOOL:measurement_2\x000\x00",
+                    b"USER:INT:count\x0042\x00",
+                ]
 
-                    for msg in test_messages:
-                        client_socket.send(msg)
-                        time.sleep(0.01)  # Small delay between messages
+                for msg in test_messages:
+                    client_socket.send(msg)
+                    time.sleep(0.01)  # Small delay between messages
 
-                    client_socket.close()
+                client_socket.close()
 
-                except (TimeoutError, OSError, ConnectionError):
-                    # Connection failed - this might be expected depending on setup
-                    pass
-
-            client = threading.Thread(target=client_thread)
-            client.start()
-            client.join(timeout=3)
-
-            # Verify connection attempt was made
-            assert not client.is_alive(), "Client thread should complete"
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                client = executor.submit(client_thread)
+                client.result(timeout=3)
 
             # Note: Actual message reception would require stream.read() or similar
             # which might not be directly exposed in the API
-
-    def test_result_stream_wrapper(self) -> None:
-        """Test the ResultStream wrapper around TCPStream."""
-        with TCPStream() as tcp_stream:
-            result_stream = ResultStream(tcp_stream)
-
-            # Verify ResultStream was created
-            assert result_stream is not None, "ResultStream should be created"
-
-            # Check available methods
-            result_methods = [m for m in dir(result_stream) if not m.startswith("_")]
-            assert len(result_methods) > 0, "ResultStream should have public methods"
-
-            # ResultStream should be iterable
-            assert hasattr(result_stream, "__iter__") or hasattr(
-                result_stream,
-                "__next__",
-            ), "ResultStream should be iterable"
 
     def test_tcp_stream_configuration_options(self) -> None:
         """Test different configuration options for TCPStream."""
         # Test with specific port
         specific_port = _unused_tcp_port()
-        try:
-            with TCPStream(
-                host="127.0.0.1",
-                port=specific_port,
-                logfile=None,
-                shot_offset=10,
-                shot_increment=5,
-            ) as stream:
-                uri = stream.get_uri()
-                assert f":{specific_port}" in uri, f"URI should contain port {specific_port}"
-
-                # Check shot configuration
-                # These might affect how results are indexed
-                assert hasattr(stream, "shot_offset") or True, "Stream tracks shot offset"
-                assert hasattr(stream, "shot_increment") or True, "Stream tracks shot increment"
-
-        except OSError as e:
-            # The selected port can still be claimed between discovery and bind.
-            if "address already in use" in str(e).lower():
-                pytest.skip(f"Port {specific_port} already in use")
-            raise
+        with TCPStream(
+            host="127.0.0.1",
+            port=specific_port,
+            logfile=None,
+            shot_offset=10,
+            shot_increment=5,
+        ) as stream:
+            uri = stream.get_uri()
+            assert f":{specific_port}" in uri, f"URI should contain port {specific_port}"
 
     def test_tcp_stream_with_logfile(self) -> None:
         """Test TCPStream with logging enabled."""
@@ -177,19 +137,11 @@ class TestSeleneTCPStream:
                 host, port_str = host_port.split(":")
                 port = int(port_str)
 
-                try:
-                    client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                    client.settimeout(1.0)
-                    client.connect((host, port))
-                    client.send(b"TEST:LOG:message\x00")
-                    client.close()
-                except (TimeoutError, OSError):
-                    pass
-
-            # Check if log file was created/written
-            if logfile_path.exists():
-                log_size = logfile_path.stat().st_size
-                assert log_size >= 0, "Log file should exist"
+                client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                client.settimeout(1.0)
+                client.connect((host, port))
+                client.send(b"TEST:LOG:message\x00")
+                client.close()
 
         finally:
             # Clean up log file
@@ -199,77 +151,6 @@ class TestSeleneTCPStream:
 
 class TestSeleneResultInterception:
     """Test intercepting results from Selene execution."""
-
-    def test_selene_instance_stream_configuration(self) -> None:
-        """Test how SeleneInstance handles stream configuration."""
-        import inspect
-
-        # Check SeleneInstance initialization
-        sig = inspect.signature(SeleneInstance.__init__)
-        params = list(sig.parameters.keys())
-
-        assert "executable" in params, "SeleneInstance should take executable parameter"
-
-        # Check run_shots method signature
-        if hasattr(SeleneInstance, "run_shots"):
-            run_sig = inspect.signature(SeleneInstance.run_shots)
-            run_params = list(run_sig.parameters.keys())
-
-            # Check for stream-related parameters
-            [p for p in run_params if "stream" in p.lower() or "output" in p.lower()]
-
-            # Should have some way to configure output
-            assert len(run_params) > 0, "run_shots should have parameters"
-
-    def test_selene_with_custom_stream(self) -> None:
-        """Test running Selene with a custom output stream."""
-        # Create a simple LLVM program
-        llvm_ir = """
-        declare void @__quantum__qis__h__body(i64)
-        declare i1 @__quantum__qis__mz__body(i64)
-        declare void @__quantum__rt__result_record_output(i64, i8*)
-
-        @.str.result = constant [7 x i8] c"result\\00"
-
-        define void @main() #0 {
-            call void @__quantum__qis__h__body(i64 0)
-            %m = call i1 @__quantum__qis__mz__body(i64 0)
-            %m.i64 = zext i1 %m to i64
-            call void @__quantum__rt__result_record_output(i64 %m.i64,
-                i8* getelementptr inbounds ([7 x i8], [7 x i8]* @.str.result, i32 0, i32 0))
-            ret void
-        }
-
-        attributes #0 = { "entry_point" }
-        """
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            # Save LLVM
-            llvm_file = Path(tmpdir) / "test.ll"
-            llvm_file.write_text(llvm_ir)
-
-            try:
-                # Try to build with Selene
-                from selene_sim import build
-
-                instance = build(
-                    src=str(llvm_file),
-                    name="stream_test",
-                    build_dir=tmpdir,
-                )
-
-                # Verify instance was created
-                assert instance is not None, "Should create SeleneInstance"
-
-                # Check if instance has methods for stream configuration
-                instance_methods = [m for m in dir(instance) if not m.startswith("_")]
-                run_methods = [m for m in instance_methods if "run" in m.lower()]
-
-                assert len(run_methods) > 0, "Instance should have run methods"
-
-            except (ImportError, RuntimeError, ValueError) as e:
-                if "not supported" in str(e).lower():
-                    pytest.skip(f"Custom stream not supported: {e}")
 
     def test_result_message_format(self) -> None:
         """Test the format of result messages in the TCP stream."""

@@ -45,28 +45,22 @@ class TestSeleneHUGRCompilation:
             return measure(q1).read(), measure(q2).read()
 
         # The sim API handles HUGR compilation internally
-        try:
-            results = sim(Guppy(bell_state)).qubits(2).quantum(state_vector()).seed(42).run(100)
+        results = sim(Guppy(bell_state)).qubits(2).quantum(state_vector()).seed(42).run(100)
 
-            # Verify results structure
-            assert hasattr(results, "__getitem__"), "Results should be dict-like"
+        # Verify results structure
+        assert hasattr(results, "__getitem__"), "Results should be dict-like"
 
-            # Two untagged measurements per shot land in measurement_0 and measurement_1.
-            m1 = results["measurement_0"]
-            m2 = results["measurement_1"]
+        # Two untagged measurements per shot land in measurement_0 and measurement_1.
+        m1 = results["measurement_0"]
+        m2 = results["measurement_1"]
 
-            assert len(m1) == 100, "Should have 100 measurements for qubit 1"
-            assert len(m2) == 100, "Should have 100 measurements for qubit 2"
+        assert len(m1) == 100, "Should have 100 measurements for qubit 1"
+        assert len(m2) == 100, "Should have 100 measurements for qubit 2"
 
-            # Bell state measurements should be correlated
-            correlated = sum(1 for i in range(100) if m1[i] == m2[i])
-            correlation_rate = correlated / 100
-            assert correlation_rate > 0.95, f"Bell state should be highly correlated, got {correlation_rate:.2%}"
-
-        except (ImportError, RuntimeError, ValueError) as e:
-            if "not supported" in str(e).lower() or "not available" in str(e).lower():
-                pytest.skip(f"HUGR compilation not fully supported: {e}")
-            pytest.fail(f"Unexpected compilation error: {e}")
+        # Bell state measurements should be correlated
+        correlated = sum(1 for i in range(100) if m1[i] == m2[i])
+        correlation_rate = correlated / 100
+        assert correlation_rate > 0.95, f"Bell state should be highly correlated, got {correlation_rate:.2%}"
 
     def test_direct_hugr_compilation(self) -> None:
         """Test direct HUGR compilation without simulation."""

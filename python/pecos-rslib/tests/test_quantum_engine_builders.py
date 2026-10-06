@@ -1,6 +1,5 @@
 """Tests for quantum engine builders in the unified API."""
 
-import pytest
 from pecos_rslib import (
     SparseStabEngineBuilder,
     StateVectorEngineBuilder,
@@ -132,36 +131,30 @@ entry:
 attributes #0 = { "EntryPoint" }
 """
 
-        try:
-            # Import sim directly from pecos_rslib (Rust implementation)
-            from pecos_rslib import sim
+        # Import sim directly from pecos_rslib (Rust implementation)
+        from pecos_rslib import sim
 
-            # Create QIS program and run with quantum engine
-            # Need to specify number of qubits (1 qubit in this test)
-            program = Qis.from_string(llvm_ir)
-            results = sim(program).qubits(1).quantum(state_vector()).seed(42).run(100)
-            results_dict = results.to_dict()
+        # Create QIS program and run with quantum engine
+        # Need to specify number of qubits (1 qubit in this test)
+        program = Qis.from_string(llvm_ir)
+        results = sim(program).qubits(1).quantum(state_vector()).seed(42).run(100)
+        results_dict = results.to_dict()
 
-            # Check results - should have roughly 50/50 distribution due to H gate
-            # Note: The result key might be "measurement_0" instead of "r0" depending on backend
-            result_key = None
-            for key in results_dict.keys():
-                if "0" in str(key) or "r0" in str(key):
-                    result_key = key
-                    break
+        # Check results - should have roughly 50/50 distribution due to H gate
+        # Note: The result key might be "measurement_0" instead of "r0" depending on backend
+        result_key = None
+        for key in results_dict.keys():
+            if "0" in str(key) or "r0" in str(key):
+                result_key = key
+                break
 
-            assert result_key is not None, f"No measurement result found. Keys: {list(results_dict.keys())}"
-            assert len(results_dict[result_key]) == 100
+        assert result_key is not None, f"No measurement result found. Keys: {list(results_dict.keys())}"
+        assert len(results_dict[result_key]) == 100
 
-            # Count occurrences
-            zeros = sum(1 for r in results_dict[result_key] if r == 0)
-            ones = sum(1 for r in results_dict[result_key] if r == 1)
-            assert zeros + ones == 100
-            # With H gate, should get roughly 50/50 split (allow some variance)
-            assert 30 < zeros < 70
-            assert 30 < ones < 70
-
-        except (RuntimeError, ImportError, AttributeError, OSError) as e:
-            # LLVM runtime not available or not working
-            # OSError can occur if LLVM shared libraries are missing
-            pytest.skip(f"LLVM runtime not available: {type(e).__name__}: {e}")
+        # Count occurrences
+        zeros = sum(1 for r in results_dict[result_key] if r == 0)
+        ones = sum(1 for r in results_dict[result_key] if r == 1)
+        assert zeros + ones == 100
+        # With H gate, should get roughly 50/50 split (allow some variance)
+        assert 30 < zeros < 70
+        assert 30 < ones < 70

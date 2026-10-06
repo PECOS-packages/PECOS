@@ -155,39 +155,21 @@ class TestLLVMSimulation:
         attributes #0 = { "EntryPoint" }
         """
 
-        try:
-            program = Qis.from_string(llvm_ir)
+        program = Qis.from_string(llvm_ir)
 
-            # Try to run - this might work now with proper QIR format
-            shot_vec = sim(program).qubits(1).seed(42).run(10)
-            results = shot_vec.to_dict()
+        # Try to run - this might work now with proper QIR format
+        shot_vec = sim(program).qubits(1).seed(42).run(10)
+        results = shot_vec.to_dict()
 
-            # If it works, verify results
-            assert isinstance(results, dict), "Results should be a dictionary"
-            assert len(results) > 0, "Should have some results"
+        # If it works, verify results
+        assert isinstance(results, dict), "Results should be a dictionary"
+        assert len(results) > 0, "Should have some results"
 
-            # Check for measurements
-            if "c" in results:
-                measurements = results["c"]
-                assert len(measurements) == 10, "Should have 10 shots"
-                assert all(m in [0, 1] for m in measurements), "Measurements should be binary"
-
-        except (RuntimeError, ValueError, NotImplementedError) as e:
-            # Known LLVM runtime issues
-            error_msg = str(e).lower()
-            if any(
-                x in error_msg
-                for x in [
-                    "entry",
-                    "not implemented",
-                    "undefined symbol",
-                    "failed to load",
-                ]
-            ):
-                pytest.skip(f"LLVM runtime not fully working yet: {e}")
-            else:
-                # Truly unexpected error
-                pytest.fail(f"Unexpected LLVM simulation error: {e}")
+        # Check for measurements
+        if "c" in results:
+            measurements = results["c"]
+            assert len(measurements) == 10, "Should have 10 shots"
+            assert all(m in [0, 1] for m in measurements), "Measurements should be binary"
 
     def test_sim_api_with_llvm_bell_state(self) -> None:
         """Test sim API with Bell state in LLVM IR."""
@@ -240,41 +222,23 @@ class TestLLVMSimulation:
         attributes #0 = { "EntryPoint" }
         """
 
-        try:
-            program = Qis.from_string(llvm_ir)
-            shot_vec = sim(program).qubits(2).seed(42).run(50)
-            results = shot_vec.to_dict()
+        program = Qis.from_string(llvm_ir)
+        shot_vec = sim(program).qubits(2).seed(42).run(50)
+        results = shot_vec.to_dict()
 
-            assert isinstance(results, dict), "Results should be a dictionary"
+        assert isinstance(results, dict), "Results should be a dictionary"
 
-            # Check if we have correlated measurements
-            if "c0" in results and "c1" in results:
-                m0 = results["c0"]
-                m1 = results["c1"]
+        # Check if we have correlated measurements
+        if "c0" in results and "c1" in results:
+            m0 = results["c0"]
+            m1 = results["c1"]
 
-                assert len(m0) == 50, "Should have 50 shots for qubit 0"
-                assert len(m1) == 50, "Should have 50 shots for qubit 1"
+            assert len(m0) == 50, "Should have 50 shots for qubit 0"
+            assert len(m1) == 50, "Should have 50 shots for qubit 1"
 
-                # Bell state should be correlated
-                correlated = sum(1 for i in range(50) if m0[i] == m1[i])
-                assert correlated == 50, f"Bell state should be perfectly correlated, got {correlated}/50"
-
-        except (RuntimeError, ValueError, NotImplementedError) as e:
-            error_msg = str(e).lower()
-            if any(
-                x in error_msg
-                for x in [
-                    "not implemented",
-                    "not supported",
-                    "undefined symbol",
-                    "failed to load",
-                    "getelementptr",
-                    "unsized type",
-                ]
-            ):
-                pytest.skip(f"LLVM Bell state not fully working yet: {e}")
-            else:
-                pytest.fail(f"Unexpected error: {e}")
+            # Bell state should be correlated
+            correlated = sum(1 for i in range(50) if m0[i] == m1[i])
+            assert correlated == 50, f"Bell state should be perfectly correlated, got {correlated}/50"
 
 
 class TestHUGRSimulation:
@@ -301,86 +265,22 @@ class TestHUGRSimulation:
             hugr_str = compiled.to_str()
             hugr_bytes = hugr_str.encode("utf-8")
 
-        try:
-            program = Hugr.from_bytes(hugr_bytes)
+        program = Hugr.from_bytes(hugr_bytes)
 
-            # This should route through Selene with HUGR 0.13
-            shot_vec = sim(program).qubits(1).quantum(state_vector()).seed(42).run(100)
-            results = shot_vec.to_dict()
+        # This should route through Selene with HUGR 0.13
+        shot_vec = sim(program).qubits(1).quantum(state_vector()).seed(42).run(100)
+        results = shot_vec.to_dict()
 
-            # If it works, verify results
-            assert isinstance(results, dict), "Results should be a dictionary"
+        # If it works, verify results
+        assert isinstance(results, dict), "Results should be a dictionary"
 
-            # One untagged measurement per shot lands in measurement_0.
-            measurements = results["measurement_0"]
-            assert len(measurements) == 100, "Should have 100 measurements"
+        # One untagged measurement per shot lands in measurement_0.
+        measurements = results["measurement_0"]
+        assert len(measurements) == 100, "Should have 100 measurements"
 
-            # Should be roughly 50/50 for H gate
-            ones = sum(measurements)
-            assert 30 < ones < 70, f"H gate should give roughly 50/50, got {ones}/100"
-
-        except (
-            ImportError,
-            RuntimeError,
-            ValueError,
-            NotImplementedError,
-            TypeError,
-        ) as e:
-            error_msg = str(e).lower()
-            if "hugr" in error_msg and "not implemented" in error_msg:
-                pytest.skip(f"HUGR parsing not fully implemented: {e}")
-            elif "not supported" in error_msg:
-                pytest.skip(f"HUGR not fully supported: {e}")
-            elif "unknown resource type" in error_msg and "hugrprogram" in error_msg:
-                pytest.skip(f"Hugr type not properly recognized by sim API: {e}")
-            else:
-                # This might be a real error worth investigating
-                pytest.fail(f"Unexpected HUGR simulation error: {e}")
-
-    def test_sim_api_hugr_routing(self) -> None:
-        """Test that HUGR programs route through compilation to Selene engine."""
-
-        # Create a real HUGR program from Guppy for routing test
-        @guppy
-        def simple_h_measure() -> bool:
-            q = qubit()
-            h(q)
-            return measure(q).read()
-
-        # Compile to HUGR
-        compiled = simple_h_measure.compile()
-
-        # Get HUGR bytes
-        if hasattr(compiled, "to_bytes"):
-            hugr_bytes = compiled.to_bytes()
-        else:
-            hugr_str = compiled.to_str()
-            hugr_bytes = hugr_str.encode("utf-8")
-
-        try:
-            program = Hugr.from_bytes(hugr_bytes)
-
-            # Create builder - this should work with real HUGR
-            builder = sim(program)
-            assert builder is not None, "Should create sim builder for HUGR"
-
-            # Builder should have the right methods
-            assert hasattr(builder, "qubits"), "Builder should have qubits method"
-            assert hasattr(builder, "run"), "Builder should have run method"
-            assert hasattr(builder, "quantum"), "Builder should have quantum method"
-
-            # Configure and verify builder works
-            configured = builder.qubits(1).quantum(state_vector())
-            assert configured is not None, "Should configure builder"
-
-        except (ImportError, RuntimeError) as e:
-            error_msg = str(e).lower()
-            if "selene" in error_msg:
-                pytest.skip("Selene not available for HUGR routing")
-            elif "hugr" in error_msg and "not implemented" in error_msg:
-                pytest.skip(f"HUGR compilation not fully implemented: {e}")
-            else:
-                pytest.fail(f"Unexpected error in HUGR routing: {e}")
+        # Should be roughly 50/50 for H gate
+        ones = sum(measurements)
+        assert 30 < ones < 70, f"H gate should give roughly 50/50, got {ones}/100"
 
 
 class TestPHIRSimulation:
@@ -505,18 +405,13 @@ class TestSimAPIFeatures:
         assert "c" in results_sv, "State vector backend should produce results"
 
         # Test with sparse stabilizer backend
-        try:
-            shot_vec_ss = sim(program).quantum(sparse_stab()).seed(42).run(100)
-            results_ss = shot_vec_ss.to_dict()
-            assert "c" in results_ss, "Sparse stabilizer backend should produce results"
+        shot_vec_ss = sim(program).quantum(sparse_stab()).seed(42).run(100)
+        results_ss = shot_vec_ss.to_dict()
+        assert "c" in results_ss, "Sparse stabilizer backend should produce results"
 
-            # Results might differ between backends but both should be valid
-            assert len(results_sv["c"]) == 100, "State vector should give 100 shots"
-            assert len(results_ss["c"]) == 100, "Sparse stabilizer should give 100 shots"
-
-        except (RuntimeError, ValueError) as e:
-            if "not supported" in str(e).lower():
-                pytest.skip(f"Sparse stabilizer not supported for this program: {e}")
+        # Results might differ between backends but both should be valid
+        assert len(results_sv["c"]) == 100, "State vector should give 100 shots"
+        assert len(results_ss["c"]) == 100, "Sparse stabilizer should give 100 shots"
 
     def test_sim_error_handling(self) -> None:
         """Test error handling in sim API."""
@@ -529,12 +424,8 @@ class TestSimAPIFeatures:
         """
 
         program = Qasm.from_string(invalid_qasm)
-        with pytest.raises((RuntimeError, ValueError)) as exc_info:
+        with pytest.raises(RuntimeError, match="Undefined gate 'invalid_gate'"):
             sim(program).run(10)
-
-        assert (
-            "invalid" in str(exc_info.value).lower() or "error" in str(exc_info.value).lower()
-        ), "Should raise error for invalid QASM"
 
     def test_sim_deterministic_seeding(self) -> None:
         """Test that seeding produces deterministic results."""

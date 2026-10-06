@@ -30,6 +30,9 @@ fn boxed_external_rejects_quantum_circuit() {
     );
 }
 
+// `ExternalClassicalEngine::start` does not clear results; callers reset between shots,
+// as Monte Carlo does. Boxed `process` must not add a reset of its own, so seeded
+// results survive until an explicit `reset`.
 #[test]
 fn boxed_external_empty_circuit_preserves_results_until_reset() {
     let mut engine: Box<dyn ClassicalControlEngine> = Box::new(ExternalClassicalEngine::new());

@@ -4,7 +4,10 @@ mod common;
 mod tests {
     use pecos_core::errors::PecosError;
     use pecos_core::{Gate, QubitId};
-    use pecos_engines::{ControlEngine, EngineStage};
+    use pecos_engines::{
+        ClassicalControlEngineBuilder, ControlEngine, EngineStage, StateVectorEngineBuilder,
+    };
+    use pecos_phir_json::phir_json_engine;
     use pecos_phir_json::v0_1::ast::PHIRProgram;
     use pecos_phir_json::v0_1::engine::PhirJsonEngine;
     use pecos_phir_json::v0_1::operations::{MachineOperationResult, OperationProcessor};
@@ -108,6 +111,18 @@ mod tests {
             ]
         );
 
+        // The classical work after the machine operations must still run to completion.
+        let results = phir_json_engine()
+            .json(phir_json)?
+            .to_sim()
+            .quantum(StateVectorEngineBuilder::default())
+            .seed(42)
+            .run(4)?;
+        assert_eq!(results.shots.len(), 4);
+        for shot in &results.shots {
+            assert_eq!(shot.data["x"].as_u32(), Some(1));
+        }
+
         Ok(())
     }
 
@@ -153,6 +168,18 @@ mod tests {
                 Gate::cx(&[(0, 1)]),
             ]
         );
+
+        // The classical work after the machine operations must still run to completion.
+        let results = phir_json_engine()
+            .json(phir_json)?
+            .to_sim()
+            .quantum(StateVectorEngineBuilder::default())
+            .seed(42)
+            .run(4)?;
+        assert_eq!(results.shots.len(), 4);
+        for shot in &results.shots {
+            assert_eq!(shot.data["a"].as_u32(), Some(42));
+        }
 
         Ok(())
     }

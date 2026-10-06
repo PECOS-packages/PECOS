@@ -140,11 +140,8 @@ class TestPartialConsumption:
         )
 
         # This should compile without errors
-        try:
-            hugr = SlrConverter(prog).hugr()
-            assert hugr is not None
-        except ImportError as e:
-            pytest.fail(f"HUGR compilation failed: {e}")
+        hugr = SlrConverter(prog).hugr()
+        assert hugr is not None
 
 
 class TestEdgeCases:

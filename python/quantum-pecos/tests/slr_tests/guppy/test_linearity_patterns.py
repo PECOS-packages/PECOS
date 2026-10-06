@@ -103,11 +103,8 @@ class TestLinearityPatterns:
         assert "def main" in guppy_code
 
         # Should compile to HUGR without errors
-        try:
-            hugr = SlrConverter(prog).hugr()
-            assert hugr is not None
-        except ImportError as e:
-            pytest.fail(f"Empty main should compile: {e}")
+        hugr = SlrConverter(prog).hugr()
+        assert hugr is not None
 
     def test_nested_blocks_linearity(self) -> None:
         """Nested Block subclasses are flattened into main and compile."""

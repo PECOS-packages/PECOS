@@ -12,16 +12,11 @@ from pathlib import Path
 import pytest
 from guppylang import GuppyModule, guppy
 from guppylang.std.builtins import owned
+from guppylang.std.quantum import cx, h, measure, qubit
 from hugr.package import Package
 from pecos.compilation_pipeline import compile_hugr_to_qis as pecos_compile
 from pecos_rslib.hugr_lowering import PECOS_HELPER_ABIS
 from selene_hugr_qis_compiler import compile_to_llvm_ir as selene_compile
-
-# Import quantum operations - try stdlib first, fall back to std
-try:
-    from guppylang.stdlib.quantum import cx, h, measure, qubit
-except ImportError:
-    from guppylang.std.quantum import cx, h, measure, qubit
 
 
 def count_modules_in_hugr(pkg: Package) -> tuple[int, list[str]]:

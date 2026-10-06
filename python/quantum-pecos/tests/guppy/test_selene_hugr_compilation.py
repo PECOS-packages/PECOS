@@ -5,7 +5,7 @@ from guppylang.decorator import guppy as guppy_decorator
 from guppylang.std.quantum import cx, h, measure, qubit, x
 from hugr.package import Package
 from pecos import Guppy, sim
-from pecos.compilation_pipeline import compile_guppy_to_hugr
+from pecos.compilation_pipeline import compile_guppy_to_hugr, compile_hugr_to_qis
 from pecos_rslib import state_vector
 
 # compile_guppy_to_hugr returns the BINARY HUGR envelope (Model format): the
@@ -180,21 +180,14 @@ class TestLLVMGeneration:
         hugr_bytes = compile_guppy_to_hugr(simple_measurement)
         assert hugr_bytes is not None, "Should produce HUGR bytes"
 
-        # Try to convert HUGR to LLVM (if available)
-        try:
-            from pecos.backends import hugr_to_llvm
+        llvm_ir = compile_hugr_to_qis(hugr_bytes)
+        assert isinstance(llvm_ir, str), "Should produce LLVM IR string"
 
-            llvm_ir = hugr_to_llvm(hugr_bytes)
-            assert isinstance(llvm_ir, str), "Should produce LLVM IR string"
-            assert len(llvm_ir) > 0, "LLVM IR should not be empty"
-
-            # Verify LLVM structure
-            assert "define" in llvm_ir, "Should have function definitions"
-            assert "@__quantum__" in llvm_ir, "Should have quantum intrinsics"
-
-        except ImportError:
-            # HUGR to LLVM conversion might not be available yet
-            pass
+        # Verify LLVM structure: Selene QIS allocates, rotates (X lowers to rxy), and measures
+        assert "define" in llvm_ir, "Should have function definitions"
+        assert "@___qalloc" in llvm_ir, "Should allocate a qubit"
+        assert "@___rxy" in llvm_ir, "Should apply the X rotation"
+        assert "@___lazy_measure" in llvm_ir, "Should measure the qubit"
 
     def test_llvm_ir_patterns(self) -> None:
         """Test that generated LLVM IR follows expected patterns."""

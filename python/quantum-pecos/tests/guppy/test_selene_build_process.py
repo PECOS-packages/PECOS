@@ -162,11 +162,8 @@ class TestSeleneBuildProcess:
         1. build(HUGR) → Selene executable (for building executables)
         2. sim(Qis) → PECOS execution (for direct simulation)
         """
-        try:
-            from pecos import Guppy, Qis, sim
-            from pecos_rslib import state_vector
-        except ImportError as e:
-            pytest.skip(f"Qis or sim API not available: {e}")
+        from pecos import Guppy, Qis, sim
+        from pecos_rslib import state_vector
 
         # Create Selene QIS format LLVM IR - use textwrap to avoid indentation issues
         llvm_ir = textwrap.dedent(
@@ -250,12 +247,8 @@ class TestSeleneBuildProcess:
 
     def test_qis_program_with_comments(self) -> None:
         """Test that QIS programs with comments are properly handled."""
-        try:
-            from pecos import Guppy, Qis, sim
-            from pecos_rslib import state_vector
-
-        except ImportError as e:
-            pytest.skip(f"Qis or sim API not available: {e}")
+        from pecos import Guppy, Qis, sim
+        from pecos_rslib import state_vector
 
         # Create QIS with extensive comments
         llvm_ir_with_comments = textwrap.dedent(
@@ -311,12 +304,8 @@ class TestSeleneBuildProcess:
 
     def test_qis_edge_cases(self) -> None:
         """Test QIS programs with edge cases like empty lines, multiple spaces, etc."""
-        try:
-            from pecos import Guppy, Qis, sim
-            from pecos_rslib import state_vector
-
-        except ImportError as e:
-            pytest.skip(f"Qis or sim API not available: {e}")
+        from pecos import Guppy, Qis, sim
+        from pecos_rslib import state_vector
 
         # QIS with various formatting edge cases
         llvm_ir_edge_cases = textwrap.dedent(
@@ -359,12 +348,8 @@ class TestSeleneBuildProcess:
         Test that the same QIS LLVM IR produces consistent results when run
         multiple times with the same seed.
         """
-        try:
-            from pecos import Guppy, Qis, sim
-            from pecos_rslib import state_vector
-
-        except ImportError as e:
-            pytest.skip(f"Required imports not available: {e}")
+        from pecos import Guppy, Qis, sim
+        from pecos_rslib import state_vector
 
         # Same QIS program for both
         qis_ir = textwrap.dedent(
@@ -514,81 +499,46 @@ class TestSeleneBackends:
     def test_available_backends(self) -> None:
         """Test which Selene backends are available."""
         # Import backends directly
-        try:
-            from selene_sim.backends import Coinflip, SimpleRuntime
+        from selene_sim.backends import Coinflip, SimpleRuntime
 
-            available_backends = ["Coinflip", "SimpleRuntime"]
-        except ImportError:
-            # Try alternative import paths
-            available_backends = []
-            try:
-                from selene_sim import Coinflip
+        simulator = Coinflip()
+        assert simulator is not None, "Should create Coinflip simulator"
 
-                available_backends.append("Coinflip")
-            except ImportError:
-                pass
-            try:
-                from selene_sim import SimpleRuntime
-
-                available_backends.append("SimpleRuntime")
-            except ImportError:
-                pass
-
-        assert len(available_backends) > 0, "Should have at least one backend available"
-
-        # Test instantiation
-        if "Coinflip" in available_backends:
-            from selene_sim.backends import Coinflip
-
-            simulator = Coinflip()
-            assert simulator is not None, "Should create Coinflip simulator"
-
-        if "SimpleRuntime" in available_backends:
-            from selene_sim.backends import SimpleRuntime
-
-            runtime = SimpleRuntime()
-            assert runtime is not None, "Should create SimpleRuntime"
+        runtime = SimpleRuntime()
+        assert runtime is not None, "Should create SimpleRuntime"
 
     def test_backend_configuration(self) -> None:
         """Test backend configuration options."""
         # Test Coinflip simulator
-        try:
-            from selene_sim.backends import Coinflip
+        from selene_sim.backends import Coinflip
 
-            simulator = Coinflip()
+        simulator = Coinflip()
 
-            # Check for configuration methods
-            if hasattr(simulator, "set_seed"):
-                simulator.set_seed(42)
-                # Seed was set (no error raised)
-                assert True, "Should be able to set seed"
+        # Check for configuration methods
+        if hasattr(simulator, "set_seed"):
+            simulator.set_seed(42)
+            # Seed was set (no error raised)
+            assert True, "Should be able to set seed"
 
-            if hasattr(simulator, "get_probability"):
-                prob = simulator.get_probability()
-                assert 0 <= prob <= 1, "Probability should be between 0 and 1"
-
-        except ImportError:
-            pytest.skip("Coinflip backend not available")
+        if hasattr(simulator, "get_probability"):
+            prob = simulator.get_probability()
+            assert 0 <= prob <= 1, "Probability should be between 0 and 1"
 
     def test_runtime_configuration(self) -> None:
         """Test runtime configuration options."""
-        try:
-            from selene_sim.backends import SimpleRuntime
+        from selene_sim.backends import SimpleRuntime
 
-            runtime = SimpleRuntime()
+        runtime = SimpleRuntime()
 
-            # Check runtime capabilities
-            assert hasattr(runtime, "__init__"), "Runtime should be initializable"
+        # Check runtime capabilities
+        assert hasattr(runtime, "__init__"), "Runtime should be initializable"
 
-            # Check for common runtime methods
-            runtime_methods = dir(runtime)
+        # Check for common runtime methods
+        runtime_methods = dir(runtime)
 
-            # Should have some methods for execution
-            execution_methods = [m for m in runtime_methods if not m.startswith("_")]
-            assert len(execution_methods) > 0, "Runtime should have public methods"
-
-        except ImportError:
-            pytest.skip("SimpleRuntime not available")
+        # Should have some methods for execution
+        execution_methods = [m for m in runtime_methods if not m.startswith("_")]
+        assert len(execution_methods) > 0, "Runtime should have public methods"
 
 
 class TestBuildOutputFormats:

@@ -28,11 +28,7 @@ def test_phir_json_result_instruction_documentation() -> None:
 
 def test_phir_json_measurement_only() -> None:
     """Test PHIR-JSON with only measurements (no Result instruction needed)."""
-    # Import here to avoid module-level skip
-    try:
-        from pecos_rslib import PhirJsonEngine
-    except ImportError:
-        pytest.skip("PhirJsonEngine not available")
+    from pecos_rslib import PhirJsonEngine
 
     # Create a minimal PHIR-JSON program without Result instruction
     # This should work with current validation
@@ -84,11 +80,7 @@ def test_phir_json_measurement_only() -> None:
 
 def test_phir_json_validation_requirements() -> None:
     """Test to understand PHIR-JSON validation requirements."""
-    # Import here to avoid module-level skip
-    try:
-        from pecos_rslib import PhirJsonEngine
-    except ImportError:
-        pytest.skip("PhirJsonEngine not available")
+    from pecos_rslib import PhirJsonEngine
 
     # Test various PHIR-JSON structures to understand what's required
     test_cases = [

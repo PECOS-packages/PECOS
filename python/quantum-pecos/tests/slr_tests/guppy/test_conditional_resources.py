@@ -36,10 +36,4 @@ def test_hugr_compilation_simple() -> None:
 
     # This might still fail due to other HUGR issues, but the conditional
     # resource handling should be correct
-    try:
-        SlrConverter(prog).hugr()
-        # If it succeeds, great!
-    except ImportError as e:
-        # If it fails due to import, that's expected
-        if "linearity" in str(e).lower():
-            pytest.fail(f"Should not fail due to linearity: {e}")
+    SlrConverter(prog).hugr()

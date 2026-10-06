@@ -179,25 +179,18 @@ class TestSeleneDirectIntegration:
         assert len(public_methods) > 0, "Runtime should have public methods"
 
         # Check simulator options
-        try:
-            from selene_sim.backends import bundled_simulators
+        from selene_sim.backends import bundled_simulators
 
-            # Check if bundled_simulators has __all__ attribute
-            if hasattr(bundled_simulators, "__all__"):
-                sims_list = bundled_simulators.__all__
-                assert isinstance(sims_list, list), "Simulators list should be a list"
-                assert len(sims_list) > 0, "Should have at least one bundled simulator"
-            else:
-                # Check what's available in the module
-                sim_attrs = dir(bundled_simulators)
-                simulators = [attr for attr in sim_attrs if not attr.startswith("_") and "Simulator" in attr]
-                assert len(simulators) > 0, "Should have some simulator classes"
-
-        except ImportError:
-            # bundled_simulators might not exist in this version
-            # Check for individual simulators
-            simulator = Coinflip()
-            assert simulator is not None, "Should create Coinflip"
+        # Check if bundled_simulators has __all__ attribute
+        if hasattr(bundled_simulators, "__all__"):
+            sims_list = bundled_simulators.__all__
+            assert isinstance(sims_list, list), "Simulators list should be a list"
+            assert len(sims_list) > 0, "Should have at least one bundled simulator"
+        else:
+            # Check what's available in the module
+            sim_attrs = dir(bundled_simulators)
+            simulators = [attr for attr in sim_attrs if not attr.startswith("_") and "Simulator" in attr]
+            assert len(simulators) > 0, "Should have some simulator classes"
 
     def test_understanding_selene_result_stream(self) -> None:
         """Understand how Selene handles result streams."""
@@ -262,16 +255,6 @@ class TestSeleneDirectIntegration:
         # Test IdealNoiseModel (no noise)
         ideal_model = IdealNoiseModel()
         assert ideal_model is not None, "Should create IdealNoiseModel"
-
-        # Check if there are other noise models
-        try:
-            from selene_sim.backends import NoisyErrorModel
-
-            noisy_model = NoisyErrorModel()
-            assert noisy_model is not None, "Should create NoisyErrorModel"
-        except ImportError:
-            # NoisyErrorModel might not exist
-            pass
 
         # Check error model interface
         model_methods = dir(ideal_model)

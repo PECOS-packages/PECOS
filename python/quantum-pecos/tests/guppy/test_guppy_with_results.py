@@ -17,58 +17,24 @@ class TestGuppyWithResults:
     @pytest.fixture
     def check_guppy_imports(self) -> dict:
         """Check and provide Guppy imports."""
-        try:
-            from guppylang import guppy
-            from guppylang.std.quantum import cx, h, measure, qubit
-        except ImportError:
-            pytest.skip("Guppy not available")
-
-        # Check for result function in various locations
-        result_func = None
-        result_location = None
-
-        # Try different import locations for result()
-        try:
-            from guppylang.std.builtins import result
-
-            result_func = result
-            result_location = "guppylang.std.builtins"
-        except ImportError:
-            try:
-                from guppylang.std.io import result
-
-                result_func = result
-                result_location = "guppylang.std.io"
-            except ImportError:
-                try:
-                    from guppylang.std import result
-
-                    result_func = result
-                    result_location = "guppylang.std"
-                except ImportError:
-                    pass
+        from guppylang import guppy
+        from guppylang.std.builtins import result
+        from guppylang.std.quantum import cx, h, measure, qubit
 
         return {
             "guppy": guppy,
             "quantum": {"h": h, "cx": cx, "measure": measure, "qubit": qubit},
-            "result": result_func,
-            "result_location": result_location,
+            "result": result,
         }
 
     def test_result_function_availability(self, check_guppy_imports: dict) -> None:
-        """Test that result() function is available and document its location."""
-        if check_guppy_imports["result"] is None:
-            pytest.skip("result() function not available in this Guppy version")
-
+        """Test that result() function is available."""
         assert callable(
             check_guppy_imports["result"],
         ), "result should be a callable function"
-        assert check_guppy_imports["result_location"] is not None, "result function should have a known import location"
 
     def test_simple_measurement_with_result(self, check_guppy_imports: dict) -> None:
         """Test simple measurement with result tagging."""
-        if check_guppy_imports["result"] is None:
-            pytest.skip("result() function not available")
 
         guppy = check_guppy_imports["guppy"]
         q_ops = check_guppy_imports["quantum"]
@@ -89,10 +55,7 @@ class TestGuppyWithResults:
             result("measurement_outcome", measurement)
 
         # Test compilation
-        try:
-            from pecos.compilation_pipeline import compile_guppy_to_hugr
-        except ImportError:
-            pytest.skip("Compilation pipeline not available")
+        from pecos.compilation_pipeline import compile_guppy_to_hugr
 
         try:
             hugr_bytes = compile_guppy_to_hugr(measure_with_result)
@@ -102,8 +65,8 @@ class TestGuppyWithResults:
         assert hugr_bytes is not None, "Compilation should produce HUGR bytes"
         assert len(hugr_bytes) > 0, "HUGR bytes should not be empty"
 
-    def test_measurement_with_return_fallback(self, check_guppy_imports: dict) -> None:
-        """Test measurement using return statement when result() is not available."""
+    def test_measurement_with_return(self, check_guppy_imports: dict) -> None:
+        """Test measurement using a return statement."""
         guppy = check_guppy_imports["guppy"]
         q_ops = check_guppy_imports["quantum"]
 
@@ -120,10 +83,7 @@ class TestGuppyWithResults:
             return measure(q).read()
 
         # Test compilation
-        try:
-            from pecos.compilation_pipeline import compile_guppy_to_hugr
-        except ImportError:
-            pytest.skip("Compilation pipeline not available")
+        from pecos.compilation_pipeline import compile_guppy_to_hugr
 
         try:
             hugr_bytes = compile_guppy_to_hugr(measure_with_return)
@@ -135,60 +95,36 @@ class TestGuppyWithResults:
 
     def test_bell_state_with_named_results(self, check_guppy_imports: dict) -> None:
         """Test Bell state creation with named result outputs."""
-        if check_guppy_imports["result"] is None:
-            # Test fallback with return statement
-            guppy = check_guppy_imports["guppy"]
-            q_ops = check_guppy_imports["quantum"]
+        # Test with result() function
+        guppy = check_guppy_imports["guppy"]
+        q_ops = check_guppy_imports["quantum"]
+        result = check_guppy_imports["result"]
 
-            # Extract functions for use in guppy function
-            qubit = q_ops["qubit"]
-            h = q_ops["h"]
-            cx = q_ops["cx"]
-            measure = q_ops["measure"]
+        # Extract functions for use in guppy function
+        qubit = q_ops["qubit"]
+        h = q_ops["h"]
+        cx = q_ops["cx"]
+        measure = q_ops["measure"]
 
-            @guppy
-            def bell_state_with_return() -> tuple[bool, bool]:
-                """Return Bell state measurements."""
-                q0, q1 = qubit(), qubit()
-                h(q0)
-                cx(q0, q1)
-                return measure(q0).read(), measure(q1).read()
+        @guppy
+        def bell_state_with_results() -> None:
+            """Create Bell state and output named results."""
+            q0, q1 = qubit(), qubit()
+            h(q0)
+            cx(q0, q1)
 
-            test_func = bell_state_with_return
-        else:
-            # Test with result() function
-            guppy = check_guppy_imports["guppy"]
-            q_ops = check_guppy_imports["quantum"]
-            result = check_guppy_imports["result"]
+            # Measure and tag results
+            m0 = measure(q0).read()
+            m1 = measure(q1).read()
 
-            # Extract functions for use in guppy function
-            qubit = q_ops["qubit"]
-            h = q_ops["h"]
-            cx = q_ops["cx"]
-            measure = q_ops["measure"]
+            result("qubit_0", m0)
+            result("qubit_1", m1)
+            result("both_same", m0 == m1)  # Should always be True for Bell state
 
-            @guppy
-            def bell_state_with_results() -> None:
-                """Create Bell state and output named results."""
-                q0, q1 = qubit(), qubit()
-                h(q0)
-                cx(q0, q1)
-
-                # Measure and tag results
-                m0 = measure(q0).read()
-                m1 = measure(q1).read()
-
-                result("qubit_0", m0)
-                result("qubit_1", m1)
-                result("both_same", m0 == m1)  # Should always be True for Bell state
-
-            test_func = bell_state_with_results
+        test_func = bell_state_with_results
 
         # Test compilation
-        try:
-            from pecos.compilation_pipeline import compile_guppy_to_hugr
-        except ImportError:
-            pytest.skip("Compilation pipeline not available")
+        from pecos.compilation_pipeline import compile_guppy_to_hugr
 
         try:
             hugr_bytes = compile_guppy_to_hugr(test_func)
@@ -200,8 +136,6 @@ class TestGuppyWithResults:
 
     def test_quantum_statistics_output(self, check_guppy_imports: dict) -> None:
         """Test multiple measurements with statistical outputs."""
-        if check_guppy_imports["result"] is None:
-            pytest.skip("result() function not available for this test")
 
         guppy = check_guppy_imports["guppy"]
         q_ops = check_guppy_imports["quantum"]
@@ -237,10 +171,7 @@ class TestGuppyWithResults:
             result("all_same", (m0 == m1) and (m1 == m2))
 
         # Test compilation
-        try:
-            from pecos.compilation_pipeline import compile_guppy_to_hugr
-        except ImportError:
-            pytest.skip("Compilation pipeline not available")
+        from pecos.compilation_pipeline import compile_guppy_to_hugr
 
         try:
             hugr_bytes = compile_guppy_to_hugr(quantum_stats)
@@ -252,8 +183,6 @@ class TestGuppyWithResults:
 
     def test_hugr_output_operations(self, check_guppy_imports: dict) -> None:
         """Test that HUGR contains output/result operations."""
-        if check_guppy_imports["result"] is None:
-            pytest.skip("result() function not available")
 
         guppy = check_guppy_imports["guppy"]
         q_ops = check_guppy_imports["quantum"]
@@ -273,10 +202,7 @@ class TestGuppyWithResults:
             result("test_output", m)
             result("constant_output", 42)
 
-        try:
-            from pecos.compilation_pipeline import compile_guppy_to_hugr
-        except ImportError:
-            pytest.skip("Compilation pipeline not available")
+        from pecos.compilation_pipeline import compile_guppy_to_hugr
 
         hugr_bytes = compile_guppy_to_hugr(test_with_outputs)
 
@@ -304,10 +230,7 @@ class TestGuppyWithResults:
             h(q)
             return measure(q).read()
 
-        try:
-            from pecos.compilation_pipeline import compile_guppy_to_hugr
-        except ImportError:
-            pytest.skip("Compilation pipeline not available")
+        from pecos.compilation_pipeline import compile_guppy_to_hugr
 
         hugr_bytes = compile_guppy_to_hugr(simple_quantum)
 

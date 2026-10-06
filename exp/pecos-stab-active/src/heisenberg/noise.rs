@@ -30,7 +30,7 @@ impl NoiseChannel {
                 cumulative += p;
                 draw < cumulative / total
             })
-            .expect("validated nonempty probability distribution");
+            .expect("program validation guarantees a nonempty distribution with a finite positive total");
         let values = &self.alternatives[index].1;
         bits[self.first_symbol..self.first_symbol + values.len()].copy_from_slice(values);
     }

@@ -58,13 +58,15 @@ impl DepolarizingChannel {
 
 /// Physical noise for a Heisenberg walk, distinct from a forward EEG's
 /// approximate generator representation of categorical channels.
+/// In forward time, injections act in list order, then categorical channels
+/// act in list order. Backward walks apply the adjoints in reverse order.
 #[derive(Clone, Debug, Default)]
 pub struct GateNoise {
-    /// Existing injections. In the Heisenberg walk each S injection remains
+    /// Injections in forward-time application order. Each S injection remains
     /// an independent Pauli flip with probability `-rate`.
     pub injections: Vec<NoiseInjection>,
-    /// Categorical adjoints applied after the injection adjoints in a backward
-    /// walk. Channels at separate locations are independent; Pauli choices
+    /// Categorical channels in forward-time application order, after all
+    /// injections. Channels at separate locations are independent; Pauli choices
     /// within one channel are exclusive.
     pub depolarizing: Vec<DepolarizingChannel>,
 }
@@ -112,6 +114,7 @@ pub(crate) fn label_qubits(label: &Bm) -> impl Iterator<Item = usize> + '_ {
 /// with a custom struct.
 pub trait NoiseSpec: Send + Sync {
     /// Return the generator view used by forward EEG and mechanism extraction.
+    /// The returned list is in forward-time application order.
     /// `UniformNoise` represents categorical depolarizing to first order with
     /// S coefficients `-p/3` or `-p/15`; these are not an exact channel composition.
     ///
@@ -127,6 +130,7 @@ pub trait NoiseSpec: Send + Sync {
     ) -> Vec<NoiseInjection>;
 
     /// Return physical channels for the backward Heisenberg walk.
+    /// The returned lists are in forward-time application order: injections, then channels.
     ///
     /// The default preserves custom models: each returned S injection is an
     /// independent Pauli flip at probability `-rate`. Equal rates or a count of

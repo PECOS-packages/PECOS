@@ -18,8 +18,11 @@
 //! Native loops and blocking callbacks that never reach a QIS checkpoint cannot
 //! be cancelled; reset fails and stays latched until a later reset reclaims the
 //! worker. Python `run` and `reset` share a simulation mutex, so Python reset
-//! cannot interrupt a running call. Dropping an active engine and recovering its
-//! original worker through `Clone` are outside this cancellation contract.
+//! cannot interrupt a running call. Drop requests cancellation, closes the work
+//! channel, and waits up to ten seconds for the worker to finish before joining
+//! it. If the worker misses that deadline, Drop warns and detaches it; an abort
+//! failure is also reported. Only the thread wait is bounded, not the abort's
+//! sync lock. Recovering the original worker through `Clone` remains unsupported.
 //! Cancellation also transfers through in-process Selene QIS plugin frames that
 //! call PECOS entry points, so plugins must not hold locks or owned resources
 //! across any `selene_*` or QIS entry call.
@@ -48,6 +51,9 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
+
+#[cfg(test)]
+use tests::drop_tests;
 
 const RESET_WORKER_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -196,22 +202,39 @@ struct DynamicWorkItem {
 /// and sends results back via another channel.
 struct PersistentDynamicWorker {
     /// Channel to send work items to the worker
-    work_tx: Sender<DynamicWorkItem>,
+    work_tx: Option<Sender<DynamicWorkItem>>,
     /// Channel to receive results from the worker (wrapped in Mutex for Sync)
     result_rx: Mutex<Receiver<WorkerResult>>,
-    /// Persistent thread handle (dropping it detaches; joining is out of scope).
-    handle: JoinHandle<()>,
+    /// Joined on drop after a bounded wait; detached with a warning on timeout.
+    handle: Option<JoinHandle<()>>,
+    /// Only the thread wait is bounded, not the engine's cancellation request.
+    drop_timeout: Duration,
+    /// Retain cancellation failure for the detach diagnostic.
+    abort_error: Option<InterfaceError>,
+    #[cfg(test)]
+    worker_counts: Arc<drop_tests::WorkerCounts>,
 }
 
 impl PersistentDynamicWorker {
     /// Create a new persistent dynamic worker thread
-    fn new() -> Self {
+    fn new(#[cfg(test)] worker_counts: Arc<drop_tests::WorkerCounts>) -> Self {
         let (work_tx, work_rx) = mpsc::channel::<DynamicWorkItem>();
         let (result_tx, result_rx) = mpsc::channel::<WorkerResult>();
 
+        #[cfg(test)]
+        let exit_guard = drop_tests::WorkerExitGuard::new(Arc::clone(&worker_counts));
+        #[cfg(test)]
+        let thread_counts = Arc::clone(&worker_counts);
         let handle = std::thread::Builder::new()
             .name("pecos-dynamic-worker".to_string())
             .spawn(move || {
+                // Declare first so this witness drops after all worker locals,
+                // including the channels, on normal exit and unwinding.
+                #[cfg(test)]
+                let _exit_guard = exit_guard;
+                #[cfg(test)]
+                let thread_counts = thread_counts;
+                let (work_rx, result_tx) = (work_rx, result_tx);
                 debug!("Persistent dynamic worker started");
                 while let Ok(work_item) = work_rx.recv() {
                     debug!("Persistent worker: received work item, starting collect_operations");
@@ -241,15 +264,21 @@ impl PersistentDynamicWorker {
                         debug!("Persistent worker: result channel closed, exiting");
                         break;
                     }
+                    #[cfg(test)]
+                    thread_counts.returned.fetch_add(1, Ordering::SeqCst);
                 }
                 debug!("Persistent dynamic worker exiting");
             })
             .expect("Failed to spawn persistent dynamic worker thread");
 
         Self {
-            work_tx,
+            work_tx: Some(work_tx),
             result_rx: Mutex::new(result_rx),
-            handle,
+            handle: Some(handle),
+            drop_timeout: RESET_WORKER_TIMEOUT,
+            abort_error: None,
+            #[cfg(test)]
+            worker_counts,
         }
     }
 
@@ -257,9 +286,11 @@ impl PersistentDynamicWorker {
     fn execute(&self, interface: BoxedInterface) -> Result<(), PecosError> {
         debug!(
             "Submitting shot to dynamic worker {:?}",
-            self.handle.thread().id()
+            self.handle.as_ref().map(|handle| handle.thread().id())
         );
         self.work_tx
+            .as_ref()
+            .ok_or_else(|| PecosError::Generic("Persistent worker channel closed".to_string()))?
             .send(DynamicWorkItem { interface })
             .map_err(|_| PecosError::Generic("Persistent worker thread died".to_string()))
     }
@@ -306,6 +337,41 @@ impl PersistentDynamicWorker {
                 None,
             ))),
         }
+    }
+}
+
+impl Drop for PersistentDynamicWorker {
+    fn drop(&mut self) {
+        // Field destruction happens after this method. Close work explicitly,
+        // but keep result_rx alive for the worker's final interface handoff.
+        drop(self.work_tx.take());
+        let Some(handle) = self.handle.take() else {
+            return;
+        };
+        let started = Instant::now();
+        while !handle.is_finished() {
+            let remaining = self.drop_timeout.saturating_sub(started.elapsed());
+            if remaining.is_zero() {
+                if let Some(error) = &self.abort_error {
+                    warn!(
+                        "Dynamic worker did not finish within {:?}; detaching; abort failed: {error}",
+                        self.drop_timeout
+                    );
+                } else {
+                    warn!(
+                        "Dynamic worker did not finish within {:?}; detaching",
+                        self.drop_timeout
+                    );
+                }
+                return;
+            }
+            std::thread::sleep(remaining.min(Duration::from_millis(1)));
+        }
+        if let Err(panic) = handle.join() {
+            warn!("Dynamic worker panicked: {panic:?}");
+        }
+        #[cfg(test)]
+        self.worker_counts.joined.fetch_add(1, Ordering::SeqCst);
     }
 }
 
@@ -401,6 +467,10 @@ pub struct QisEngine {
     /// Persistent worker thread for dynamic execution (stays alive across shots)
     /// This avoids spawning a new thread per shot, which causes TLS allocation issues.
     persistent_worker: Option<PersistentDynamicWorker>,
+
+    /// Counts only this engine's workers, including clones used by `MonteCarlo`.
+    #[cfg(test)]
+    worker_counts: Arc<drop_tests::WorkerCounts>,
 
     /// Directory where operation trace chunks are dumped as JSON.
     operation_trace_dir: Option<PathBuf>,
@@ -499,6 +569,8 @@ impl QisEngine {
             program_format: None,
             interface_builder: None,
             persistent_worker: None,
+            #[cfg(test)]
+            worker_counts: Arc::default(),
             operation_trace_dir: None,
             operation_trace_collector: None,
             trace_engine_id: TRACE_ENGINE_ID_COUNTER.fetch_add(1, Ordering::Relaxed),
@@ -595,6 +667,8 @@ impl QisEngine {
             program_format: None,
             interface_builder: None,
             persistent_worker: None,
+            #[cfg(test)]
+            worker_counts: Arc::default(),
             operation_trace_dir: None,
             operation_trace_collector: None,
             trace_engine_id: TRACE_ENGINE_ID_COUNTER.fetch_add(1, Ordering::Relaxed),
@@ -1174,6 +1248,8 @@ impl Clone for QisEngine {
                 .map(|b| dyn_clone::clone_box(&**b)),
             // Create a new persistent worker for this clone (can't share threads across clones)
             persistent_worker: None,
+            #[cfg(test)]
+            worker_counts: Arc::clone(&self.worker_counts),
             operation_trace_dir: self.operation_trace_dir.clone(),
             operation_trace_collector: self.operation_trace_collector.clone(),
             trace_engine_id: TRACE_ENGINE_ID_COUNTER.fetch_add(1, Ordering::Relaxed),
@@ -1490,7 +1566,10 @@ impl QisEngine {
         // Create persistent worker if it doesn't exist
         if self.persistent_worker.is_none() {
             debug!("Creating new persistent dynamic worker thread");
-            self.persistent_worker = Some(PersistentDynamicWorker::new());
+            self.persistent_worker = Some(PersistentDynamicWorker::new(
+                #[cfg(test)]
+                Arc::clone(&self.worker_counts),
+            ));
         }
 
         // Send work to persistent worker
@@ -1886,6 +1965,21 @@ impl QisEngine {
         self.dynamic_state = None;
         self.pending_dynamic_ops.clear();
         Ok(())
+    }
+}
+
+impl Drop for QisEngine {
+    fn drop(&mut self) {
+        if let Some(state) = &self.dynamic_state
+            && !state.execution_complete
+            && let Some(handle) = &state.sync_handle
+            && let Err(error) = handle.abort_execution()
+        {
+            warn!("Failed to abort dynamic execution during engine drop: {error}");
+            if let Some(worker) = &mut self.persistent_worker {
+                worker.abort_error = Some(error);
+            }
+        }
     }
 }
 
@@ -2324,6 +2418,9 @@ impl ControlEngine for QisEngine {
 
 #[cfg(test)]
 mod tests {
+    pub(super) mod drop_tests {
+        include!("ccengine_drop_tests.rs");
+    }
     mod reset_tests {
         include!("ccengine_reset_tests.rs");
     }

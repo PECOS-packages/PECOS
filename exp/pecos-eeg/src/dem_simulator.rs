@@ -294,7 +294,12 @@ fn run_eeg_path(
 ) -> Result<DemSimulationResult, DemSimulationError> {
     // Expand circuit for EEG analysis
     let expanded = crate::expand::expand_circuit(gates)?;
-    let gate_index = GateIndex::build(&expanded.gates, expanded.num_qubits);
+    let gate_index = GateIndex::build(
+        &expanded.gates,
+        expanded.num_qubits,
+        noise,
+        &expanded.expansion_gates,
+    );
 
     // Build detectors and observables from metadata
     let detectors = build_detectors_from_meta(meta, &expanded)?;

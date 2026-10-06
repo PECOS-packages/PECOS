@@ -13,6 +13,13 @@ dynamically: runtime batches enter the noise model and simulator, and measuremen
 results return to the program to drive feedback and branches. Validation buffers
 the current input; simulation does not require a precomputed whole-shot trace.
 
+For allocation lifetimes, capacity inference, cloning and error recovery on all
+routes, see [Selene runtime execution](selene-runtime-execution.md). Scheduled
+extraction requires an explicit nonzero capacity. Once collection begins, any
+error—including capacity or duplicate-allocation admission—requires reset even
+when native state was not changed. Initial source-shape validation happens before
+collection; it does not by itself poison the runtime.
+
 <!--skip: API template requires caller-supplied runtime and LLVM program; covered by integration tests.-->
 ```python
 import pecos
@@ -43,6 +50,12 @@ messages; the canonical empty host-wait message is the only legacy exception.
 Operation tracing is currently incompatible with this opt-in route.
 
 ## Timing and noise contract
+
+Every scheduled consumer uses the runtime's batch start times and durations to
+calculate idle exposure. Consumers must not reschedule operations or replace those
+timestamps with a reconstructed timeline. Explicit source barriers and terminal
+draining still apply. For release ordering, see
+[native scheduling across release](scheduled-event-adapters.md#native-scheduling-across-release).
 
 Batch start and duration remain integer nanoseconds. For each physical qubit,
 its idle interval runs from the end of its previous touching batch to the start

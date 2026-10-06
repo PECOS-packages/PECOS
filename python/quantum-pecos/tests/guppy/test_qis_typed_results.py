@@ -190,14 +190,14 @@ def test_exit_above_range_and_explicit_panic_fail() -> None:
 
 
 def test_installed_runtime_plugin_forwards_numeric_outputs() -> None:
-    """Exercise the installed Base QIS plugin through the C shim's plain ABI."""
+    """Exercise the installed Base QIS plugin through the FFI runtime's Selene ABI."""
     import ctypes
     import json
     import os
 
     from selene_base_qis_plugin import BaseQISInterface
 
-    # Load the same process-wide FFI and shim libraries used by the QIS route.
+    # Load the same process-wide FFI library used by the QIS route.
     sim(Guppy(typed_results)).classical(pecos.selene_engine()).qubits(1).run(1)
     ffi = ctypes.CDLL(None)
     plugin = ctypes.CDLL(str(BaseQISInterface().library_file), mode=os.RTLD_LAZY)

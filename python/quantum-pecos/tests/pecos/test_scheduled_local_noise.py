@@ -131,7 +131,7 @@ def test_native_multi_operation_batch_reuses_qubit_before_live_feedback(
     library, _ = scheduled_support.build_runtime(
         tmp_path,
         0,
-        initial_nanos=1_000_000_000,
+        prep_gap_nanos=1_000_000_000,
         coalesce_queued=True,
     )
     program = """
@@ -146,6 +146,7 @@ declare i64 @teardown()
 define i64 @qmain(i64 %arg) #0 {
   call void @setup(i64 %arg)
   %q = call i64 @___qalloc()
+  call void @___reset(i64 %q)
   %first = call i64 @___lazy_measure(i64 %q)
   %repeat = call i64 @___lazy_measure(i64 %q)
   call void @___reset(i64 %q)
@@ -164,14 +165,19 @@ done:
 attributes #0 = { "EntryPoint" }
 """
     idle = pr.scheduled_idle_noise(1, linear=1.0, linear_model={"L": 1.0})
-    # The first two readouts see leakage; the later reset clears it. Only the
-    # returned first result can cause the live program to enqueue its X branch.
+    # The initial prep has its own batch at time zero. One second of idle before
+    # the readout batch leaks the qubit; the later reset clears that leakage.
+    # Only the returned first result can make the live program enqueue its X branch.
     profile = idle if idle_only else pr.scheduled_local_noise(idle, prep=1.0)
     batches = []
 
     class Inspect(PassThrough):
+        def __init__(self):
+            self.batches = []
+            batches.append(self.batches)
+
         def translate(self, batch):
-            batches.append((len(batch.operations), [entry[0] for entry in batch.measurements]))
+            self.batches.append((batch.start_nanos, len(batch.operations), [entry[0] for entry in batch.measurements]))
             return super().translate(batch)
 
     built = simulation(
@@ -190,7 +196,6 @@ attributes #0 = { "EntryPoint" }
         assert result["measurement_2"] == [0 if idle_only else 1] * shots
         assert result["measurement_3"] == [1 if idle_only else 0] * shots
         if events:
-            # Prove the fixture really emits MZ, MZ, PZ, MZ together, followed
-            # by the branch-dependent RXY, MZ after the first result returns.
-            assert batches.count((4, [0, 1, 3])) == shots
-            assert batches.count((2, [1])) == shots
+            # The initial PZ is separate; MZ, MZ, PZ, MZ arrive together after
+            # the idle gap, then RXY, MZ arrive after the first result returns.
+            assert batches == [[(0, 1, []), (1_000_000_000, 4, [0, 1, 3]), (1_000_000_000, 2, [1])]] * shots

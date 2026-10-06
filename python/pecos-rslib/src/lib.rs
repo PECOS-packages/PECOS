@@ -195,62 +195,6 @@ fn pecos_rslib(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Set up QuEST CUDA backend path for runtime loading (before any QuEST usage)
     setup_cuda_library_path();
 
-    // CRITICAL: Preload libselene_simple_runtime.so with RTLD_GLOBAL BEFORE anything else
-    // This prevents conflicts with LLVM-21.1 when the Selene runtime is loaded later
-    #[cfg(unix)]
-    {
-        use std::ffi::CString;
-
-        const RTLD_LAZY: i32 = 0x00001;
-        const RTLD_GLOBAL: i32 = 0x00100;
-
-        log::debug!("Unix detected, attempting Selene runtime preload...");
-
-        // Build search paths for libselene_simple_runtime.so:
-        // 1. PECOS_SELENE_PRELOAD env var (explicit override)
-        // 2. ~/.pecos/lib/
-        // 3. Relative development paths (target/debug, target/release)
-        let mut possible_paths: Vec<std::path::PathBuf> = Vec::new();
-
-        if let Ok(path) = std::env::var("PECOS_SELENE_PRELOAD") {
-            possible_paths.push(std::path::PathBuf::from(path));
-        }
-
-        if let Some(home) = dirs::home_dir() {
-            possible_paths.push(home.join(".pecos/lib/libselene_simple_runtime.so"));
-        }
-
-        possible_paths.push("target/debug/libselene_simple_runtime.so".into());
-        possible_paths.push("target/release/libselene_simple_runtime.so".into());
-
-        log::debug!("Checking for Selene runtime libraries...");
-        for path in &possible_paths {
-            let path_str = path.to_string_lossy();
-            log::trace!("Checking path: {path_str}");
-            if path.exists() {
-                log::debug!("Found Selene runtime! Attempting to preload: {path_str}");
-
-                unsafe {
-                    let path_cstr =
-                        CString::new(path_str.as_bytes()).expect("path contains null byte");
-                    let handle = libc::dlopen(path_cstr.as_ptr(), RTLD_LAZY | RTLD_GLOBAL);
-                    if handle.is_null() {
-                        let error_ptr = libc::dlerror();
-                        if !error_ptr.is_null() {
-                            let error = std::ffi::CStr::from_ptr(error_ptr).to_string_lossy();
-                            log::warn!("Failed to preload {path_str}: {error}");
-                        }
-                    } else {
-                        log::info!(
-                            "Successfully preloaded Selene runtime with RTLD_GLOBAL from: {path_str}"
-                        );
-                        break;
-                    }
-                }
-            }
-        }
-    }
-
     m.add_class::<PyStabVec>()?;
     m.add_class::<PySparseStab>()?;
     m.add_class::<PyStabilizer>()?;

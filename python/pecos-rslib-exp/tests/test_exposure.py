@@ -35,11 +35,15 @@ def assert_complex_tuple(value):
     assert all(isinstance(component, float) for component in value)
 
 
-def assert_state_vector(actual, expected):
+def assert_state_vector_up_to_phase(actual, expected):
     assert len(actual) == len(expected)
-    for actual_amplitude, expected_amplitude in zip(actual, expected, strict=True):
-        assert math.isclose(actual_amplitude[0], expected_amplitude[0], abs_tol=1e-12)
-        assert math.isclose(actual_amplitude[1], expected_amplitude[1], abs_tol=1e-12)
+    actual = [complex(*amplitude) for amplitude in actual]
+    expected = [complex(*amplitude) for amplitude in expected]
+    overlap = sum(a * b.conjugate() for a, b in zip(actual, expected, strict=True))
+    assert abs(overlap) > 1e-12
+    phase = overlap / abs(overlap)
+    for a, b in zip(actual, expected, strict=True):
+        assert abs(a - phase * b) < 1e-12
 
 
 def test_sim_neo_stab_mps_measurement_and_boolean_builder_options():
@@ -230,24 +234,22 @@ def test_stab_mps_analysis_and_noise_exposure():
     bell.run_1q_gate("H", 0)
     bell.run_2q_gate("CX", (0, 1))
 
-    amplitude = bell.amplitude([False, False])
+    amplitude = bell.amplitude_up_to_phase([False, False])
     assert_complex_tuple(amplitude)
-    assert math.isclose(amplitude[0], 1 / math.sqrt(2), abs_tol=1e-12)
-    assert math.isclose(amplitude[1], 0.0, abs_tol=1e-12)
+    assert math.isclose(abs(complex(*amplitude)), 1 / math.sqrt(2), abs_tol=1e-12)
 
-    iterative = bell.amplitude_iterative([False, False])
+    iterative = bell.amplitude_iterative_up_to_phase([False, False])
     assert_complex_tuple(iterative)
     assert math.isclose(iterative[0], amplitude[0], abs_tol=1e-12)
     assert math.isclose(iterative[1], amplitude[1], abs_tol=1e-12)
 
-    overlap = bell.overlap_with_stabilizer(
+    overlap = bell.overlap_magnitude_with_stabilizer(
         [[(0, "X"), (1, "X")], [(0, "Z"), (1, "Z")]],
         num_samples=32,
         rng_seed=11,
     )
-    assert_complex_tuple(overlap)
-    assert math.isclose(overlap[0], 1.0, abs_tol=1e-12)
-    assert math.isclose(overlap[1], 0.0, abs_tol=1e-12)
+    assert isinstance(overlap, float)
+    assert math.isclose(overlap, 1.0, abs_tol=1e-12)
 
     product = exp.StabMps(2)
     assert math.isclose(product.renyi_s2(1), 0.0, abs_tol=1e-12)
@@ -280,13 +282,13 @@ def test_stab_mps_analysis_and_noise_exposure():
     )
 
 
-def test_stab_mps_named_t_has_conventional_exact_amplitudes():
+def test_stab_mps_named_t_has_conventional_relative_amplitudes():
     inv_sqrt_2 = 1 / math.sqrt(2)
 
     ht = exp.StabMps(1, merge_rz=False)
     ht.run_1q_gate("H", 0)
     ht.run_1q_gate("T", 0)
-    assert_state_vector(ht.state_vector(), [(inv_sqrt_2, 0.0), (0.5, 0.5)])
+    assert_state_vector_up_to_phase(ht.state_vector_up_to_phase(), [(inv_sqrt_2, 0.0), (0.5, 0.5)])
 
     t_squared = exp.StabMps(1, merge_rz=False)
     t_squared.run_1q_gate("H", 0)
@@ -297,8 +299,8 @@ def test_stab_mps_named_t_has_conventional_exact_amplitudes():
     s.run_1q_gate("H", 0)
     s.run_1q_gate("S", 0)
     expected = [(inv_sqrt_2, 0.0), (0.0, inv_sqrt_2)]
-    assert_state_vector(t_squared.state_vector(), expected)
-    assert_state_vector(s.state_vector(), expected)
+    assert_state_vector_up_to_phase(t_squared.state_vector_up_to_phase(), expected)
+    assert_state_vector_up_to_phase(s.state_vector_up_to_phase(), expected)
 
 
 def test_stab_mps_bitstring_convention_auto_flush_and_validation():
@@ -307,14 +309,18 @@ def test_stab_mps_bitstring_convention_auto_flush_and_validation():
     assert not hasattr(q0_one, "sample_bit" + "string")
     assert hasattr(q0_one, "sample_bit" + "strings")
     assert q0_one.sample_bitstrings(4) == [[True, False]] * 4
-    assert q0_one.state_vector() == [
-        (0.0, 0.0),
-        (1.0, 0.0),
-        (0.0, 0.0),
-        (0.0, 0.0),
-    ]
-    assert q0_one.amplitude([True, False]) == (1.0, 0.0)
-    assert q0_one.amplitude_iterative([True, False]) == (1.0, 0.0)
+    assert_state_vector_up_to_phase(
+        q0_one.state_vector_up_to_phase(),
+        [
+            (0.0, 0.0),
+            (1.0, 0.0),
+            (0.0, 0.0),
+            (0.0, 0.0),
+        ],
+    )
+    amplitude = q0_one.amplitude_up_to_phase([True, False])
+    assert math.isclose(abs(complex(*amplitude)), 1.0, abs_tol=1e-12)
+    assert q0_one.amplitude_iterative_up_to_phase([True, False]) == amplitude
     assert math.isclose(q0_one.prob_bitstring([True, False]), 1.0)
     assert q0_one.prob_bitstrings(
         [[True, False], [False, False], [True, False]],
@@ -325,7 +331,7 @@ def test_stab_mps_bitstring_convention_auto_flush_and_validation():
     merged.run_1q_gate("H", 0)
     merged.run_1q_gate("T", 0)
     assert merged.is_state_exact() is False
-    merged_amplitude = merged.amplitude([True, False])
+    merged_amplitude = merged.amplitude_up_to_phase([True, False])
     assert_complex_tuple(merged_amplitude)
     assert merged.is_state_exact() is True
 
@@ -337,7 +343,7 @@ def test_stab_mps_bitstring_convention_auto_flush_and_validation():
     lazy.run_2q_gate("CX", (0, 1))
     lazy.run_1q_gate("MZ", 0)
     assert lazy.is_state_exact() is False
-    assert len(lazy.state_vector()) == 4
+    assert len(lazy.state_vector_up_to_phase()) == 4
     assert lazy.is_state_exact() is False
     assert lazy.uncompensated_pre_reduction_count == 0
     assert lazy.summed_discarded_weight == 0.0
@@ -346,7 +352,7 @@ def test_stab_mps_bitstring_convention_auto_flush_and_validation():
     assert isinstance(lazy.lifetime_peak_bond, int)
 
     with pytest.raises(ValueError, match="bitstring length 1, expected 2"):
-        q0_one.amplitude([True])
+        q0_one.amplitude_up_to_phase([True])
     with pytest.raises(ValueError, match="bitstring item 0 must be bool"):
         q0_one.prob_bitstring([1, False])
     with pytest.raises(
@@ -364,10 +370,11 @@ def test_stab_mps_bitstring_convention_auto_flush_and_validation():
         match="prob_bitstrings: queries must be an iterable of bitstrings",
     ):
         q0_one.prob_bitstrings(1)
+    framed = exp.StabMps(2, pauli_frame_tracking=True)
     with pytest.raises(IndexError):
-        q0_one.frame_x_bit(2)
+        framed.frame_x_bit(2)
     with pytest.raises(IndexError):
-        q0_one.frame_x_bit(-1)
+        framed.frame_x_bit(-1)
     with pytest.raises(IndexError):
         q0_one.pauli_expectation([(2, "Z")])
     with pytest.raises(ValueError, match="Unknown Pauli: A"):
@@ -550,3 +557,33 @@ def test_stab_mps_compile_dispatch_accessors_and_advice():
 
     assert compile_only.reset() is compile_only
     assert compile_only.total_nonclifford == 0
+
+
+@pytest.mark.parametrize(
+    "method",
+    ["inject_x_in_frame", "inject_y_in_frame", "inject_z_in_frame", "frame_x_bit", "frame_z_bit"],
+)
+@pytest.mark.parametrize("qubit", [0, -1, 2])
+def test_stab_mps_frame_methods_require_tracking_before_index_check(method, qubit):
+    sim = exp.StabMps(2)
+    with pytest.raises(ValueError, match="construct StabMps with pauli_frame_tracking=True"):
+        getattr(sim, method)(qubit)
+    framed = exp.StabMps(2, pauli_frame_tracking=True)
+    if qubit == 0:
+        getattr(framed, method)(qubit)
+    else:
+        with pytest.raises(IndexError):
+            getattr(framed, method)(qubit)
+
+
+@pytest.mark.parametrize("paulis", [[], [(0, "X")], [(-1, "X")], [(2, "Z")]])
+def test_stab_mps_bulk_frame_injection_requires_tracking(paulis):
+    sim = exp.StabMps(2)
+    with pytest.raises(ValueError, match="construct StabMps with pauli_frame_tracking=True"):
+        sim.inject_paulis_in_frame(paulis)
+    framed = exp.StabMps(2, pauli_frame_tracking=True)
+    if paulis and paulis[0][0] in (-1, 2):
+        with pytest.raises(IndexError):
+            framed.inject_paulis_in_frame(paulis)
+    else:
+        framed.inject_paulis_in_frame(paulis)

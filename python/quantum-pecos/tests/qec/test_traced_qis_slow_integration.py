@@ -3,19 +3,17 @@
 
 """Slow traced-QIS integration tests for the raw-measurement pipeline."""
 
-import json
 import math
 
 import numpy as np
 import pytest
 import stim
-from pecos.qec.surface import SurfacePatch
+from pecos.decoders import PyMatchingDecoder
+from pecos.qec.surface import SurfacePatch, extract_detection_events_and_observables
 from pecos.qec.surface.circuit_builder import tick_circuit_to_stim
 from pecos.qec.surface.decode import _build_surface_tick_circuit_for_native_model
 from pecos_rslib.qec import DemSampler
 from pecos_rslib_exp import depolarizing, fault_catalog, meas_sampling, monte_carlo, sim_neo
-
-pymatching = pytest.importorskip("pymatching")
 
 pytestmark = pytest.mark.slow
 
@@ -49,44 +47,22 @@ def _build_lowered_traced_qis_surface_code(distance, rounds, basis="Z"):
 def _pymatching_decoder(circuit, noise_args):
     stim_str = tick_circuit_to_stim(circuit, **noise_args)
     dem = stim.Circuit(stim_str).detector_error_model(decompose_errors=True)
-    return pymatching.Matching.from_detector_error_model(dem)
-
-
-def _extract_observable_mask(row, observables, num_measurements):
-    mask = 0
-    for obs_index, obs in enumerate(observables):
-        value = 0
-        for rec in obs["records"]:
-            idx = num_measurements + rec
-            if 0 <= idx < len(row):
-                value ^= int(row[idx])
-        if value:
-            mask |= 1 << obs_index
-    return mask
+    return PyMatchingDecoder.from_dem(str(dem))
 
 
 def _decode_raw_measurements(result, circuit, matching, shots):
-    detectors = json.loads(circuit.get_meta("detectors"))
-    observables = json.loads(circuit.get_meta("observables") or "[]")
-    num_measurements = int(circuit.get_meta("num_measurements"))
-    syndrome = np.zeros(len(detectors), dtype=np.uint8)
+    rows = [result[shot_index] for shot_index in range(shots)]
+    events_per_shot, flips_per_shot = extract_detection_events_and_observables(circuit, rows)
+    syndrome = np.zeros(matching.num_detectors, dtype=np.uint8)
 
     errors = 0
-    for shot_index in range(shots):
-        row = result[shot_index]
+    for fired_detectors, flipped_observables in zip(events_per_shot, flips_per_shot, strict=True):
         syndrome.fill(0)
+        syndrome[fired_detectors] = 1
 
-        for det_index, det in enumerate(detectors):
-            value = 0
-            for rec in det["records"]:
-                idx = num_measurements + rec
-                if 0 <= idx < len(row):
-                    value ^= int(row[idx])
-            syndrome[det_index] = value
-
-        predicted = matching.decode(syndrome)
+        predicted = matching.decode_syndrome(syndrome).observable_flips
         predicted_mask = sum(int(bit) << index for index, bit in enumerate(predicted))
-        actual_mask = _extract_observable_mask(row, observables, num_measurements)
+        actual_mask = sum(1 << index for index in flipped_observables)
         errors += predicted_mask != actual_mask
 
     return errors
@@ -102,7 +78,7 @@ def _decode_native_dem_samples(circuit, noise_args, matching, shots, seed):
         sampled_syndrome = batch.get_syndrome(shot_index)
         for det_index in range(sampler.num_detectors):
             syndrome[det_index] = sampled_syndrome[det_index]
-        predicted = matching.decode(syndrome)
+        predicted = matching.decode_syndrome(syndrome).observable_flips
         predicted_mask = sum(int(bit) << index for index, bit in enumerate(predicted))
         errors += predicted_mask != batch.get_observable_flips(shot_index).mask
 

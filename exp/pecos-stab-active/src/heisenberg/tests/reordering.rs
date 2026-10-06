@@ -7,7 +7,7 @@ use super::joint_distribution::{
 use super::*;
 use crate::MeasurementCase;
 
-fn reordered(
+pub(super) fn reordered(
     program: &HeisenbergProgram,
     order: &[usize],
 ) -> Result<HeisenbergProgram, ProgramError> {
@@ -29,7 +29,7 @@ fn body_and_sign(operation: &HeisenbergOp) -> (&VirtualPauli, &AffineSign) {
     }
 }
 
-fn dependencies(program: &HeisenbergProgram, include_r2: bool) -> Vec<Vec<usize>> {
+pub(super) fn dependencies(program: &HeisenbergProgram, include_r2: bool) -> Vec<Vec<usize>> {
     let mut predecessors = vec![Vec::new(); program.operations.len()];
     for (later, b) in program.operations.iter().enumerate() {
         let (pb, sb) = body_and_sign(b);
@@ -47,7 +47,7 @@ fn dependencies(program: &HeisenbergProgram, include_r2: bool) -> Vec<Vec<usize>
     predecessors
 }
 
-fn ready(predecessors: &[Vec<usize>], order: &[usize]) -> Vec<usize> {
+pub(super) fn ready(predecessors: &[Vec<usize>], order: &[usize]) -> Vec<usize> {
     (0..predecessors.len())
         .filter(|i| !order.contains(i) && predecessors[*i].iter().all(|p| order.contains(p)))
         .collect()
@@ -400,11 +400,11 @@ fn noise_alternative_branch_bound() {
     let _ = with_noise(&HeisenbergProgram::compile(&circuit).unwrap());
 }
 
-fn index(rng: &mut PecosRng, n: usize) -> usize {
+pub(super) fn index(rng: &mut PecosRng, n: usize) -> usize {
     usize::try_from(rng.next_u64() % u64::try_from(n).unwrap()).unwrap()
 }
 
-fn random_circuit(rng: &mut PecosRng) -> TickCircuit {
+pub(super) fn random_circuit(rng: &mut PecosRng) -> TickCircuit {
     let kinds = [
         GateType::H,
         GateType::F,

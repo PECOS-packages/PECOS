@@ -198,6 +198,32 @@ def _map_gate(gate_name, targets, args, q, c, measurement_offset):
                 ops.append(qubit.CX(q[qubit_targets[i]], q[qubit_targets[i + 1]]))
                 ops.append(qubit.CX(q[qubit_targets[i + 1]], q[qubit_targets[i]]))
                 ops.append(qubit.CX(q[qubit_targets[i]], q[qubit_targets[i + 1]]))
+    elif gate_name in ["MR", "MRZ"]:
+        # Measurement reset
+        if c is not None:
+            for i, idx in enumerate(qubit_targets):
+                if measurement_offset + i < len(c):
+                    ops.append(qubit.Measure(q[idx]) > c[measurement_offset + i])
+                    ops.append(qubit.PZ(q[idx]))
+    elif gate_name in ["MRX", "MRY"]:
+        # Measurement reset in X or Y basis
+        if c is not None:
+            for i, idx in enumerate(qubit_targets):
+                if measurement_offset + i < len(c):
+                    # Measure
+                    if gate_name == "MRX":
+                        ops.append(qubit.H(q[idx]))
+                    else:
+                        ops.append(qubit.SZdg(q[idx]))
+                        ops.append(qubit.H(q[idx]))
+                    ops.append(qubit.Measure(q[idx]) > c[measurement_offset + i])
+                    # Prep
+                    ops.append(qubit.PZ(q[idx]))
+                    if gate_name == "MRX":
+                        ops.append(qubit.H(q[idx]))
+                    else:
+                        ops.append(qubit.H(q[idx]))
+                        ops.append(qubit.SZ(q[idx]))
     elif gate_name in ["M", "MZ"]:
         # Measurement
         if c is not None:

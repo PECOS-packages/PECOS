@@ -380,5 +380,12 @@ pub(super) fn compile(circuit: &TickCircuit) -> Result<HeisenbergProgram, Compil
             );
         }
     }
-    Ok(builder.program)
+    let operations = std::mem::take(&mut builder.program.operations);
+    let program = builder
+        .program
+        .with_operations(operations)
+        .unwrap_or_else(|error| {
+            panic!("compile produced an invalid program (builder bug): {error}")
+        });
+    Ok(program)
 }

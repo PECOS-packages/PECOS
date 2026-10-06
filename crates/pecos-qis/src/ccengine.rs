@@ -1714,6 +1714,37 @@ impl QisEngine {
         Ok(())
     }
 
+    /// The one complete reset behind `Engine::reset`, `ClassicalEngine::reset`
+    /// and `ControlEngine::reset`: stop the worker, reset the runtime and the
+    /// interface, and clear per-shot state. A failure is latched in
+    /// `reset_failure` until a later reset succeeds.
+    fn reset_all(&mut self) -> Result<(), PecosError> {
+        debug!("QisEngine: reset() called");
+        self.abort_dynamic_execution();
+        let reset = self
+            .runtime
+            .reset()
+            .map_err(|e| PecosError::Generic(format!("Failed to reset runtime: {e}")))
+            .and_then(|()| match self.interface {
+                Some(ref mut interface) => interface
+                    .reset()
+                    .map_err(crate::interface_impl::interface_error_to_pecos),
+                None => Ok(()),
+            });
+        if let Err(error) = reset {
+            self.reset_failure = Some(error.to_string());
+            return Err(error);
+        }
+        self.reset_failure = None;
+        self.current_operations = None;
+        self.started = false;
+        self.measurement_mapping.clear();
+        self.measurement_results.clear();
+        self.current_shot_seed = None;
+        debug!("QisEngine: reset() completed, cleared measurement_results");
+        Ok(())
+    }
+
     /// Abort dynamic execution (cleanup)
     fn abort_dynamic_execution(&mut self) {
         // Abort execution via sync handle if available
@@ -1753,29 +1784,7 @@ impl Engine for QisEngine {
     }
 
     fn reset(&mut self) -> Result<(), PecosError> {
-        debug!("QisEngine: reset() called");
-        let reset = self
-            .runtime
-            .reset()
-            .map_err(|e| PecosError::Generic(format!("Failed to reset runtime: {e}")))
-            .and_then(|()| match self.interface {
-                Some(ref mut interface) => interface
-                    .reset()
-                    .map_err(crate::interface_impl::interface_error_to_pecos),
-                None => Ok(()),
-            });
-        if let Err(error) = reset {
-            self.reset_failure = Some(error.to_string());
-            return Err(error);
-        }
-        self.reset_failure = None;
-        self.current_operations = None;
-        self.started = false;
-        self.measurement_mapping.clear();
-        self.measurement_results.clear();
-        self.current_shot_seed = None;
-        debug!("QisEngine: reset() completed, cleared measurement_results");
-        Ok(())
+        self.reset_all()
     }
 }
 
@@ -1805,6 +1814,11 @@ impl ClassicalEngine for QisEngine {
         // Seed the RNG for generating per-shot seeds
         self.rng = PecosRng::seed_from_u64(seed);
         debug!("QisEngine: Set master seed to {seed}");
+    }
+
+    // HybridEngine resets its classical engine through this method.
+    fn reset(&mut self) -> Result<(), PecosError> {
+        self.reset_all()
     }
 
     fn generate_commands(&mut self) -> Result<ByteMessage, PecosError> {
@@ -1933,6 +1947,12 @@ impl ControlEngine for QisEngine {
     ) -> Result<EngineStage<Self::EngineInput, Self::Output>, PecosError> {
         debug!("QisEngine::start called");
 
+        // A latched reset failure is cleared only by a complete reset, which
+        // also resets the interface; starting a shot must not bypass it.
+        if let Some(failure) = &self.reset_failure {
+            return Err(PecosError::Generic(failure.clone()));
+        }
+
         // Verify we have a dynamic-capable interface
         if !self
             .interface
@@ -1968,14 +1988,13 @@ impl ControlEngine for QisEngine {
         self.current_shot_seed = Some(shot_seed);
         self.begin_trace_shot();
 
-        // Reset the runtime to ensure clean state for new shot. This is as
-        // complete as `Engine::reset`, so it sets or clears the same latch.
+        // Reset the runtime to ensure clean state for new shot. A failure is
+        // latched like a failed `reset_all`, which alone clears the latch.
         if let Err(e) = self.runtime.reset() {
             let error = PecosError::Generic(format!("Failed to reset runtime: {e}"));
             self.reset_failure = Some(error.to_string());
             return Err(error);
         }
-        self.reset_failure = None;
 
         // Start a new shot with the generated seed and a real, monotonically
         // increasing shot id (a plugin keying state or telemetry on the shot
@@ -2160,10 +2179,7 @@ impl ControlEngine for QisEngine {
     }
 
     fn reset(&mut self) -> Result<(), PecosError> {
-        // Abort any dynamic execution in progress
-        self.abort_dynamic_execution();
-        // Reset everything
-        <Self as Engine>::reset(self)
+        self.reset_all()
     }
 }
 
@@ -3794,51 +3810,176 @@ mod tests {
         }
     }
 
-    // #1040: reset drops the shot's terminal error with the worker state, so a
-    // failed runtime reset must not let `get_results` certify the failed shot.
+    /// Interface whose `reset` fails while `fail_reset` is set.
+    #[derive(Clone, Default)]
+    struct FlakyResetInterface {
+        fail_reset: std::sync::Arc<std::sync::atomic::AtomicBool>,
+        dynamic: bool,
+    }
+
+    impl crate::QisInterface for FlakyResetInterface {
+        fn load_program(
+            &mut self,
+            _: &[u8],
+            _: crate::ProgramFormat,
+        ) -> Result<(), crate::InterfaceError> {
+            Ok(())
+        }
+        fn collect_operations(&mut self) -> Result<OperationList, crate::InterfaceError> {
+            Ok(OperationList::new())
+        }
+        fn execute_with_measurements(
+            &mut self,
+            _: BTreeMap<usize, bool>,
+        ) -> Result<OperationList, crate::InterfaceError> {
+            Ok(OperationList::new())
+        }
+        fn name(&self) -> &'static str {
+            "flaky-reset"
+        }
+        fn reset(&mut self) -> Result<(), crate::InterfaceError> {
+            if self.fail_reset.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err(crate::InterfaceError::Other(
+                    "interface reset failed".into(),
+                ));
+            }
+            Ok(())
+        }
+        fn supports_dynamic(&self) -> bool {
+            self.dynamic
+        }
+    }
+
+    // #1040: a failed reset after a failed shot must not let `get_results`
+    // certify that shot, through every reset entry point; a successful reset
+    // through the same entry point recovers fully.
     #[test]
     fn failed_reset_after_failed_shot_never_certifies_results() {
+        use std::sync::atomic::Ordering;
+        type ResetFn = fn(&mut QisEngine) -> Result<(), PecosError>;
+        let resets: [(&str, ResetFn); 3] = [
+            ("ControlEngine", |engine| ControlEngine::reset(engine)),
+            ("Engine", |engine| Engine::reset(engine)),
+            ("ClassicalEngine", |engine| ClassicalEngine::reset(engine)),
+        ];
+        for (name, reset) in resets {
+            let runtime = ShotEndAndResetFailRuntime::default();
+            let fail_reset = std::sync::Arc::clone(&runtime.fail_reset);
+            fail_reset.store(true, Ordering::SeqCst);
+            let mut engine = QisEngine::with_runtime(Box::new(runtime));
+            engine.measurement_results.insert(0, 1);
+            engine.dynamic_state = Some(DynamicExecutionState {
+                sync_handle: None,
+                execution_complete: true,
+                terminal_error: None,
+                finalized: false,
+                terminal_lowering_flushed: false,
+            });
+
+            assert!(
+                engine
+                    .continue_processing(ByteMessage::builder().build())
+                    .is_err()
+            );
+            assert!(engine.get_results().is_err());
+
+            let Err(reset_error) = reset(&mut engine) else {
+                panic!("{name}: the runtime reset must fail");
+            };
+            assert!(
+                reset_error.to_string().contains("exit failed"),
+                "{name}: {reset_error}"
+            );
+            let Err(results_error) = engine.get_results() else {
+                panic!("{name}: a failed reset must not certify the failed shot's results");
+            };
+            assert!(
+                results_error.to_string().contains("exit failed"),
+                "{name}: {results_error}"
+            );
+            assert!(engine.clone().get_results().is_err(), "{name}");
+
+            fail_reset.store(false, Ordering::SeqCst);
+            reset(&mut engine).unwrap();
+            let shot = engine.get_results().unwrap();
+            assert!(shot.data.is_empty(), "{name}: {shot:?}");
+        }
+    }
+
+    // An interface reset failure stays latched through `start()`, which resets
+    // only the runtime, until a complete reset succeeds.
+    #[test]
+    fn interface_reset_failure_blocks_start_until_reset_succeeds() {
+        use std::sync::atomic::Ordering;
+        let interface = FlakyResetInterface::default();
+        let fail_reset = std::sync::Arc::clone(&interface.fail_reset);
+        fail_reset.store(true, Ordering::SeqCst);
+        let mut engine = QisEngine::new(
+            Box::new(interface),
+            Box::new(ShotEndAndResetFailRuntime::default()),
+        );
+
+        let Err(reset_error) = ClassicalEngine::reset(&mut engine) else {
+            panic!("the interface reset must fail");
+        };
+        assert!(
+            reset_error.to_string().contains("interface reset failed"),
+            "{reset_error}"
+        );
+        let Err(start_error) = engine.start(()) else {
+            panic!("start must refuse while a reset failure is latched");
+        };
+        assert!(
+            start_error.to_string().contains("interface reset failed"),
+            "{start_error}"
+        );
+        assert!(engine.get_results().is_err());
+
+        fail_reset.store(false, Ordering::SeqCst);
+        ControlEngine::reset(&mut engine).unwrap();
+        assert!(engine.get_results().unwrap().data.is_empty());
+        // Unlatched, start proceeds to its own checks again.
+        let Err(start_error) = engine.start(()) else {
+            panic!("this test interface cannot run a shot");
+        };
+        assert!(
+            start_error.to_string().contains("dynamic-capable"),
+            "{start_error}"
+        );
+    }
+
+    // A failed runtime reset inside `start()` is latched, and `start()` itself
+    // never clears the latch; a complete reset does.
+    #[test]
+    fn start_runtime_reset_failure_is_latched() {
         use std::sync::atomic::Ordering;
         let runtime = ShotEndAndResetFailRuntime::default();
         let fail_reset = std::sync::Arc::clone(&runtime.fail_reset);
         fail_reset.store(true, Ordering::SeqCst);
-        let mut engine = QisEngine::with_runtime(Box::new(runtime));
-        engine.measurement_results.insert(0, 1);
-        engine.dynamic_state = Some(DynamicExecutionState {
-            sync_handle: None,
-            execution_complete: true,
-            terminal_error: None,
-            finalized: false,
-            terminal_lowering_flushed: false,
-        });
-
-        assert!(
-            engine
-                .continue_processing(ByteMessage::builder().build())
-                .is_err()
+        let mut engine = QisEngine::new(
+            Box::new(FlakyResetInterface {
+                dynamic: true,
+                ..FlakyResetInterface::default()
+            }),
+            Box::new(runtime),
         );
+        engine.measurement_results.insert(0, 1);
+
+        let Err(first) = engine.start(()) else {
+            panic!("start's runtime reset must fail");
+        };
+        assert!(first.to_string().contains("exit failed"), "{first}");
         assert!(engine.get_results().is_err());
 
-        let Err(reset_error) = ControlEngine::reset(&mut engine) else {
-            panic!("the runtime reset must fail");
-        };
-        assert!(
-            reset_error.to_string().contains("exit failed"),
-            "{reset_error}"
-        );
-        let Err(results_error) = engine.get_results() else {
-            panic!("a failed reset must not certify the failed shot's results");
-        };
-        assert!(
-            results_error.to_string().contains("exit failed"),
-            "{results_error}"
-        );
-        assert!(engine.clone().get_results().is_err());
-
+        // The runtime is healthy again, but start alone must not unlatch.
         fail_reset.store(false, Ordering::SeqCst);
-        ControlEngine::reset(&mut engine).unwrap();
-        let shot = engine.get_results().unwrap();
-        assert!(shot.data.is_empty(), "{shot:?}");
+        let Err(second) = engine.start(()) else {
+            panic!("start must refuse while a reset failure is latched");
+        };
+        assert!(second.to_string().contains("exit failed"), "{second}");
+
+        Engine::reset(&mut engine).unwrap();
+        assert!(engine.get_results().unwrap().data.is_empty());
     }
 
     /// Counts `shot_end` invocations to pin one-shot finalization.

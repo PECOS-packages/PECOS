@@ -1688,7 +1688,11 @@ impl QisEngine {
             self.signal_dynamic_result_ready()?;
             return Ok(None);
         }
-        if let Some(commands) = self.drain_commands(false)? {
+        // A forced drain releases all held work. Padding or unrelated work
+        // cannot keep an unsatisfiable request alive across host polls.
+        if let Some(commands) = self.drain_commands(false)?
+            && self.measurement_mapping.contains(&result_key)
+        {
             return Ok(Some(commands));
         }
         Err(self.latch_terminal_error(format!(
@@ -1833,9 +1837,7 @@ impl QisEngine {
             let batches = self
                 .runtime
                 .drain_pending_scheduled_operations()
-                .map_err(|e| {
-                    PecosError::Generic(format!("scheduled terminal drain failed: {e}"))
-                })?;
+                .map_err(|e| PecosError::Generic(e.to_string()))?;
             if batches.is_empty() {
                 return Ok(None);
             }
@@ -2404,8 +2406,16 @@ impl ControlEngine for QisEngine {
             self.set_dynamic_result(result_id as u64, value)?;
         }
 
-        // Signal that results are ready
-        if !measurement_updates.is_empty() {
+        // Only the outstanding read's freshly delivered outcome permits ready.
+        // Other measurements leave need_result set so the same request can
+        // process any work the runtime still holds.
+        if !measurement_updates.is_empty()
+            && self.wait_for_result_needed(0).is_some_and(|requested| {
+                measurement_updates
+                    .iter()
+                    .any(|&(result_id, _)| result_id as u64 == requested)
+            })
+        {
             self.signal_dynamic_result_ready()?;
         }
 

@@ -848,14 +848,23 @@ fn never_measured_failure_surfaces_from_start_and_continue() {
     }
 }
 
-/// Scheduler fixture that accepts source operations and releases them only on
-/// the runtime's normal barrier/drain. It can also discard one measured slot.
+#[derive(Clone, Copy)]
+enum DrainPadding {
+    Idle,
+    Custom,
+    Empty,
+}
+
+/// Scheduler fixture that accepts source operations and defers their release
+/// to a barrier/drain, optionally releasing measurement 0 early or padding drains.
 #[derive(Clone, Default)]
 struct DeferredReadRuntime {
     state: crate::runtime::ClassicalState,
     pending: Vec<QuantumOp>,
     discard: Option<usize>,
     batch_index: usize,
+    drain_padding: Option<DrainPadding>,
+    release_measurement_zero: bool,
 }
 impl DeferredReadRuntime {
     fn accept(&mut self, operations: &[Operation]) {
@@ -868,9 +877,22 @@ impl DeferredReadRuntime {
             }
         }
     }
+    fn ready_operations(&mut self) -> Vec<QuantumOp> {
+        if self.release_measurement_zero
+            && let Some(position) = self
+                .pending
+                .iter()
+                .position(|op| matches!(op, QuantumOp::Measure(_, 0)))
+        {
+            self.pending.drain(..=position).collect()
+        } else {
+            vec![]
+        }
+    }
+
     fn scheduled_drain(&mut self) -> Vec<crate::scheduled::ScheduledBatch> {
         use crate::scheduled::{RuntimeScheduledOp as Op, ScheduledBatch, ScheduledMeasurement};
-        if self.pending.is_empty() {
+        if self.pending.is_empty() && self.drain_padding.is_none() {
             return vec![];
         }
         let mut operations = Vec::new();
@@ -899,13 +921,24 @@ impl DeferredReadRuntime {
             };
             operations.push(scheduled);
         }
+        match self.drain_padding {
+            Some(DrainPadding::Idle) => operations.push(Op::Rz {
+                qubit_id: 0,
+                theta: 0.0,
+            }),
+            Some(DrainPadding::Custom) => operations.push(Op::Custom {
+                tag: 1058,
+                data: vec![],
+            }),
+            Some(DrainPadding::Empty) | None => {}
+        }
         let batch_index = self.batch_index;
         self.batch_index += 1;
         vec![ScheduledBatch {
             runtime_shot_id: self.state.shot_id.unwrap(),
             batch_index,
             start_time_nanos: 0,
-            duration_nanos: 0,
+            duration_nanos: u64::from(self.drain_padding.is_some()),
             operations,
             measurements,
         }]
@@ -946,9 +979,13 @@ impl crate::runtime::QisRuntime for DeferredReadRuntime {
     ) -> crate::runtime::Result<Vec<QuantumOp>> {
         self.accept(operations);
         if operations.contains(&Operation::Barrier) {
-            Ok(std::mem::take(&mut self.pending))
+            let mut emitted = std::mem::take(&mut self.pending);
+            if let Some(DrainPadding::Idle) = self.drain_padding {
+                emitted.push(QuantumOp::Idle(1e-9, 0));
+            }
+            Ok(emitted)
         } else {
-            Ok(vec![])
+            Ok(self.ready_operations())
         }
     }
     fn drain_pending_operations(&mut self) -> crate::runtime::Result<Vec<QuantumOp>> {
@@ -959,13 +996,87 @@ impl crate::runtime::QisRuntime for DeferredReadRuntime {
         operations: &[Operation],
     ) -> crate::runtime::Result<Vec<crate::scheduled::ScheduledBatch>> {
         self.accept(operations);
-        Ok(vec![])
+        let ready = self.ready_operations();
+        if ready.is_empty() {
+            return Ok(vec![]);
+        }
+        let held = std::mem::replace(&mut self.pending, ready);
+        let batches = self.scheduled_drain();
+        self.pending = held;
+        Ok(batches)
     }
     fn drain_pending_scheduled_operations(
         &mut self,
     ) -> crate::runtime::Result<Vec<crate::scheduled::ScheduledBatch>> {
         Ok(self.scheduled_drain())
     }
+}
+
+fn assert_unsatisfiable_read_fails(
+    mode: ScheduledTransport,
+    runtime: DeferredReadRuntime,
+    after_first_read: bool,
+) {
+    let prefix = if after_first_read {
+        "%m0 = call i32 @__quantum__qis__m__body(i64 0, i64 0)\n%r0 = call i1 @___read_future_bool(i64 0)"
+    } else {
+        ""
+    };
+    let source = format!(
+        r#"
+        declare i32 @__quantum__qis__m__body(i64, i64)
+        declare i1 @___read_future_bool(i64)
+        define void @main() #0 {{
+            {prefix}
+            %m = call i32 @__quantum__qis__m__body(i64 0, i64 7)
+            %r = call i1 @___read_future_bool(i64 7)
+            ret void
+        }}
+        attributes #0 = {{ "EntryPoint" }}
+    "#
+    );
+    let mut engine = QisEngine::new(
+        Box::new(crate::QisHeliosInterface::new()),
+        Box::new(runtime),
+    );
+    engine.scheduled_transport = mode;
+    engine.set_num_qubits_hint(2);
+    engine
+        .load_program(source.as_bytes(), ProgramFormat::LlvmIrText)
+        .unwrap();
+    // Discarded measurement 7 may still emit a lifetime prep; simulate
+    // that work, then require the next poll to fail instead of spinning.
+    let mut stage = engine.start(());
+    let mut polls = 0;
+    let started = Instant::now();
+    while let Ok(EngineStage::NeedsProcessing(_)) = &stage {
+        polls += 1;
+        if polls > 3 {
+            break;
+        }
+        assert!(!engine.measurement_mapping.contains(&7));
+        let outcomes = ByteMessage::outcomes_builder()
+            .add_outcomes(&vec![0; engine.measurement_mapping.len()])
+            .build();
+        // Scheduled commands are intentionally not decoded by a flat engine.
+        stage = engine.continue_processing(outcomes);
+    }
+    let retry = engine.continue_processing(ByteMessage::outcomes_builder().build());
+    engine.reset_all().unwrap();
+    assert!(started.elapsed() < Duration::from_secs(5));
+    let error = stage
+        .err()
+        .expect("an unsatisfiable measured read must fail promptly");
+    assert!(
+        error
+            .to_string()
+            .contains("worker requested result 7 with no pending measurement"),
+        "{error}"
+    );
+    assert_eq!(
+        retry.err().expect("failure must stay latched").to_string(),
+        error.to_string()
+    );
 }
 
 #[test]
@@ -977,75 +1088,44 @@ fn unsatisfiable_measured_request_fails_from_start_and_continue() {
         ScheduledTransport::V4,
     ] {
         for after_first_read in [false, true] {
-            let prefix = if after_first_read {
-                "%m0 = call i32 @__quantum__qis__m__body(i64 0, i64 0)\n%r0 = call i1 @___read_future_bool(i64 0)"
-            } else {
-                ""
-            };
-            let source = format!(
-                r#"
-                declare i32 @__quantum__qis__m__body(i64, i64)
-                declare i1 @___read_future_bool(i64)
-                define void @main() #0 {{
-                    {prefix}
-                    %m = call i32 @__quantum__qis__m__body(i64 0, i64 7)
-                    %r = call i1 @___read_future_bool(i64 7)
-                    ret void
-                }}
-                attributes #0 = {{ "EntryPoint" }}
-            "#
-            );
-            let mut engine = QisEngine::new(
-                Box::new(crate::QisHeliosInterface::new()),
-                Box::new(DeferredReadRuntime {
+            assert_unsatisfiable_read_fails(
+                mode,
+                DeferredReadRuntime {
                     discard: Some(7),
                     ..DeferredReadRuntime::default()
-                }),
-            );
-            engine.scheduled_transport = mode;
-            engine.set_num_qubits_hint(2);
-            engine
-                .load_program(source.as_bytes(), ProgramFormat::LlvmIrText)
-                .unwrap();
-            // Discarded measurement 7 may still emit a lifetime prep; simulate
-            // that work, then require the next poll to fail instead of spinning.
-            let mut stage = engine.start(());
-            let mut polls = 0;
-            let started = Instant::now();
-            while let Ok(EngineStage::NeedsProcessing(_)) = &stage {
-                polls += 1;
-                if polls > 3 {
-                    break;
-                }
-                assert!(!engine.measurement_mapping.contains(&7));
-                let outcomes = ByteMessage::outcomes_builder()
-                    .add_outcomes(&vec![0; engine.measurement_mapping.len()])
-                    .build();
-                // Scheduled commands are intentionally not decoded by a flat engine.
-                stage = engine.continue_processing(outcomes);
-            }
-            let retry = engine.continue_processing(ByteMessage::outcomes_builder().build());
-            engine.reset_all().unwrap();
-            assert!(started.elapsed() < Duration::from_secs(5));
-            let error = stage
-                .err()
-                .expect("an unsatisfiable measured read must fail promptly");
-            assert!(
-                error
-                    .to_string()
-                    .contains("worker requested result 7 with no pending measurement"),
-                "{error}"
-            );
-            assert_eq!(
-                retry.err().expect("failure must stay latched").to_string(),
-                error.to_string()
+                },
+                after_first_read,
             );
         }
     }
 }
 
 #[test]
-fn deferred_measurement_reads_and_final_tail_share_the_runtime_drain() {
+fn non_measurement_drains_cannot_keep_an_unsatisfiable_read_alive() {
+    let _env_lock = crate::test_env::ENV_MUTEX.lock().unwrap();
+    for (mode, padding) in [
+        (ScheduledTransport::Off, DrainPadding::Idle),
+        (ScheduledTransport::V3, DrainPadding::Idle),
+        (ScheduledTransport::V3, DrainPadding::Empty),
+        (ScheduledTransport::V4, DrainPadding::Idle),
+        (ScheduledTransport::V4, DrainPadding::Custom),
+        (ScheduledTransport::V4, DrainPadding::Empty),
+    ] {
+        for after_first_read in [false, true] {
+            assert_unsatisfiable_read_fails(
+                mode,
+                DeferredReadRuntime {
+                    discard: Some(7),
+                    drain_padding: Some(padding),
+                    ..DeferredReadRuntime::default()
+                },
+                after_first_read,
+            );
+        }
+    }
+}
+
+fn deferred_read_quantum(mode: ScheduledTransport) -> pecos_engines::quantum_system::QuantumSystem {
     use pecos_engines::noise::IntoNoiseModel;
     use pecos_engines::quantum_system::QuantumSystem;
     use pecos_engines::runtime_frame::ShotContext;
@@ -1073,6 +1153,60 @@ fn deferred_measurement_reads_and_final_tail_share_the_runtime_drain() {
             Ok(())
         }
     }
+    let noise = if mode == ScheduledTransport::V4 {
+        ScheduledEventIdleZ::new(ScheduledIdleZ::new(2, 0.0, 0.0, 0.0).unwrap(), |_| {
+            Ok(Box::new(Gates))
+        })
+        .into_noise_model()
+    } else if mode == ScheduledTransport::V3 {
+        ScheduledIdleZ::new(2, 0.0, 0.0, 0.0)
+            .unwrap()
+            .into_noise_model()
+    } else {
+        Box::new(pecos_engines::noise::PassThroughNoiseModel::default())
+    };
+    let mut quantum = QuantumSystem::new(noise, Box::new(StateVecEngine::new(2)));
+    quantum
+        .begin_shot(ShotContext {
+            run: 0,
+            worker: 0,
+            shot: 0,
+        })
+        .unwrap();
+    quantum
+}
+
+fn finish_deferred_read_shot(
+    engine: &mut QisEngine,
+    quantum: &mut pecos_engines::quantum_system::QuantumSystem,
+    mut stage: EngineStage<ByteMessage, Shot>,
+) -> Result<Shot, PecosError> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if Instant::now() >= deadline {
+            return Err(PecosError::Generic(
+                "deferred measurement never completed".into(),
+            ));
+        }
+        match stage {
+            EngineStage::NeedsProcessing(commands) => {
+                // An empty host poll can precede delivery of the worker's
+                // completion message; it is independent of transport.
+                let outcomes = if commands.as_bytes() == ByteMessage::builder().build().as_bytes() {
+                    std::thread::yield_now();
+                    ByteMessage::outcomes_builder().build()
+                } else {
+                    quantum.process(commands)?
+                };
+                stage = engine.continue_processing(outcomes)?;
+            }
+            EngineStage::Complete(shot) => return Ok(shot),
+        }
+    }
+}
+
+#[test]
+fn deferred_measurement_reads_and_final_tail_share_the_runtime_drain() {
     let _env_lock = crate::test_env::ENV_MUTEX.lock().unwrap();
     let source = r#"
         declare void @__quantum__qis__x__body(i64)
@@ -1113,57 +1247,83 @@ fn deferred_measurement_reads_and_final_tail_share_the_runtime_drain() {
         engine
             .load_program(source.as_bytes(), ProgramFormat::LlvmIrText)
             .unwrap();
-        let noise = if mode == ScheduledTransport::V4 {
-            ScheduledEventIdleZ::new(ScheduledIdleZ::new(2, 0.0, 0.0, 0.0).unwrap(), |_| {
-                Ok(Box::new(Gates))
-            })
-            .into_noise_model()
-        } else if mode == ScheduledTransport::V3 {
-            ScheduledIdleZ::new(2, 0.0, 0.0, 0.0)
-                .unwrap()
-                .into_noise_model()
-        } else {
-            Box::new(pecos_engines::noise::PassThroughNoiseModel::default())
-        };
-        let mut quantum = QuantumSystem::new(noise, Box::new(StateVecEngine::new(2)));
-        quantum
-            .begin_shot(ShotContext {
-                run: 0,
-                worker: 0,
-                shot: 0,
-            })
-            .unwrap();
-        let result = (|| -> Result<Shot, PecosError> {
-            let mut stage = engine.start(())?;
-            let deadline = Instant::now() + Duration::from_secs(5);
-            loop {
-                if Instant::now() >= deadline {
-                    return Err(PecosError::Generic(
-                        "deferred measurement never completed".into(),
-                    ));
-                }
-                match stage {
-                    EngineStage::NeedsProcessing(commands) => {
-                        // An empty host poll can precede delivery of the worker's
-                        // completion message; it is independent of transport.
-                        let outcomes =
-                            if commands.as_bytes() == ByteMessage::builder().build().as_bytes() {
-                                std::thread::yield_now();
-                                ByteMessage::outcomes_builder().build()
-                            } else {
-                                quantum.process(commands)?
-                            };
-                        stage = engine.continue_processing(outcomes)?;
-                    }
-                    EngineStage::Complete(shot) => return Ok(shot),
-                }
-            }
-        })();
+        let mut quantum = deferred_read_quantum(mode);
+        let result = engine
+            .start(())
+            .and_then(|stage| finish_deferred_read_shot(&mut engine, &mut quantum, stage));
         engine.reset_all().unwrap();
         let shot = result.unwrap();
         assert_eq!(shot.data.get("measurement_0"), Some(&Data::U32(1)));
         assert_eq!(shot.data.get("measurement_1"), Some(&Data::U32(0)));
         // Final tail must still flush after the two mid-shot read flushes.
         assert_eq!(shot.data.get("measurement_2"), Some(&Data::U32(1)));
+    }
+}
+
+#[test]
+fn earlier_measurement_does_not_signal_ready_for_the_outstanding_read() {
+    let _env_lock = crate::test_env::ENV_MUTEX.lock().unwrap();
+    let source = r#"
+        declare void @__quantum__qis__x__body(i64)
+        declare i32 @__quantum__qis__m__body(i64, i64)
+        declare i1 @___read_future_bool(i64)
+        declare void @panic(i32, ptr)
+        define void @main() #0 {
+            call void @__quantum__qis__x__body(i64 0)
+            %m0 = call i32 @__quantum__qis__m__body(i64 0, i64 0)
+            call void @__quantum__qis__x__body(i64 1)
+            %m1 = call i32 @__quantum__qis__m__body(i64 1, i64 1)
+            %r1 = call i1 @___read_future_bool(i64 1)
+            %r0 = call i1 @___read_future_bool(i64 0)
+            %correct = and i1 %r0, %r1
+            br i1 %correct, label %done, label %failure
+        failure:
+            call void @panic(i32 1058, ptr null)
+            ret void
+        done:
+            ret void
+        }
+        attributes #0 = { "EntryPoint" }
+    "#;
+    for mode in [
+        ScheduledTransport::Off,
+        ScheduledTransport::V3,
+        ScheduledTransport::V4,
+    ] {
+        let mut engine = QisEngine::new(
+            Box::new(crate::QisHeliosInterface::new()),
+            Box::new(DeferredReadRuntime {
+                release_measurement_zero: true,
+                ..DeferredReadRuntime::default()
+            }),
+        );
+        engine.scheduled_transport = mode;
+        engine.set_num_qubits_hint(2);
+        engine
+            .load_program(source.as_bytes(), ProgramFormat::LlvmIrText)
+            .unwrap();
+        let mut quantum = deferred_read_quantum(mode);
+        let result = (|| -> Result<Shot, PecosError> {
+            let EngineStage::NeedsProcessing(earlier) = engine.start(())? else {
+                panic!("measurement 0 must be released before measurement 1");
+            };
+            assert_eq!(engine.measurement_mapping, [0]);
+            assert_eq!(engine.wait_for_result_needed(0), Some(1));
+            let reply = quantum.process(earlier)?;
+            assert_eq!(reply.outcomes()?, [1]);
+            let EngineStage::NeedsProcessing(requested) = engine.continue_processing(reply)? else {
+                panic!("the outstanding read must drain its held measurement");
+            };
+            assert_eq!(engine.measurement_mapping, [1]);
+            assert_eq!(engine.wait_for_result_needed(0), Some(1));
+            let reply = quantum.process(requested)?;
+            assert_eq!(reply.outcomes()?, [1]);
+            let stage = engine.continue_processing(reply)?;
+            finish_deferred_read_shot(&mut engine, &mut quantum, stage)
+        })();
+        engine.reset_all().unwrap();
+        let shot = result.unwrap();
+        assert_eq!(shot.data.get("measurement_0"), Some(&Data::U32(1)));
+        assert_eq!(shot.data.get("measurement_1"), Some(&Data::U32(1)));
     }
 }

@@ -329,15 +329,18 @@ pub trait QisRuntime: Send + Sync + dyn_clone::DynClone {
         ))
     }
 
-    /// Force terminal release of remaining native scheduled work, without execution.
+    /// Force release of all held native scheduled work, without execution.
+    /// Used when a mid-shot read needs its measurement and before shot completion.
+    /// Consume all returned batches; subsequent submissions or feedback may
+    /// create more pending work and require another drain.
     ///
     /// # Errors
-    /// Defaults to rejection; implementors must guarantee a terminal flush.
+    /// Defaults to rejection; implementors must guarantee a full flush.
     fn drain_pending_scheduled_operations(
         &mut self,
     ) -> Result<Vec<crate::scheduled::ScheduledBatch>> {
         Err(RuntimeError::ExecutionError(
-            "runtime does not support scheduled terminal drain".into(),
+            "runtime does not support scheduled drain".into(),
         ))
     }
 

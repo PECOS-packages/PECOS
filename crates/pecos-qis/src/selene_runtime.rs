@@ -418,7 +418,9 @@ pub struct SeleneRuntime {
     custom_event_handler: Option<CustomEventHandler>,
     batch_failure: Option<RuntimeError>,
     scheduled_mode: Option<bool>,
-    scheduled_terminal_drained: bool,
+    /// A successful forced drain since the last submission or measurement feedback.
+    /// Shot boundaries require this proof that all held scheduled work was released.
+    scheduled_drained: bool,
     scheduled_output: Option<ScheduledOutput>,
 }
 
@@ -536,7 +538,7 @@ impl SeleneRuntime {
             custom_event_handler: None,
             batch_failure: None,
             scheduled_mode: None,
-            scheduled_terminal_drained: false,
+            scheduled_drained: false,
             scheduled_output: None,
         }
     }
@@ -778,7 +780,7 @@ impl SeleneRuntime {
         // Feedback can make previously blocked native operations ready. A drain
         // preceding this delivery cannot certify the scheduler is still empty.
         if self.scheduled_mode == Some(true) && !measurements.is_empty() {
-            self.scheduled_terminal_drained = false;
+            self.scheduled_drained = false;
         }
         debug!(
             "Received {} measurement results, num_results={}, allocated_results={:?}",
@@ -903,14 +905,14 @@ impl SeleneRuntime {
         self.with_native_mutation(|runtime| {
             // Force the scheduler to release held work before collecting: a plain
             // poll only returns operations the plugin already considers ready, so
-            // without the terminal barrier a lazily scheduling runtime could hold
+            // without the forced barrier a lazily scheduling runtime could hold
             // a tail batch straight past this check. A plugin without the barrier
             // symbol cannot prove it released held work, so this fails closed
             // (both PECOS-built runtimes export `selene_runtime_global_barrier`).
             if !runtime.call_runtime_global_barrier(0)? {
                 return Err(RuntimeError::ExecutionError(
                     "runtime plugin does not export selene_runtime_global_barrier; \
-                 cannot force the terminal flush required to verify the \
+                 cannot force the flush required to verify the \
                  scheduler is drained"
                         .to_string(),
                 ));
@@ -2903,7 +2905,7 @@ impl Clone for SeleneRuntime {
                 )))
             }),
             scheduled_mode: self.scheduled_mode,
-            scheduled_terminal_drained: false,
+            scheduled_drained: false,
             scheduled_output: None,
         }
     }
@@ -3183,22 +3185,24 @@ impl QisRuntime for SeleneRuntime {
         }
         self.collect_scheduled(|runtime| {
             if !operations.is_empty() {
-                runtime.scheduled_terminal_drained = false;
+                runtime.scheduled_drained = false;
             }
             runtime.lower_native_operations(operations)
         })
     }
 
-    /// Force the native terminal barrier and return any remaining scheduled batches.
-    /// Call before shot completion and consume all returned work. This does not
-    /// execute it or certify a physics consumer. Same per-batch budgets as extraction.
+    /// Force the native barrier and return all held scheduled batches.
+    /// Used for mid-shot reads and before shot completion; consume all returned
+    /// work. Submissions and feedback invalidate the drain's shot-boundary proof.
+    /// This does not execute work or certify a physics consumer. Same per-batch
+    /// budgets as extraction.
     ///
     /// # Errors
-    /// Fails if a terminal flush is unsupported or extraction fails. Post-submission
+    /// Fails if a full flush is unsupported or extraction fails. Post-submission
     /// failures remain latched until reset.
     fn drain_pending_scheduled_operations(&mut self) -> Result<Vec<ScheduledBatch>> {
         let batches = self.collect_scheduled(Self::drain_native_pending_operations)?;
-        self.scheduled_terminal_drained = true;
+        self.scheduled_drained = true;
         Ok(batches)
     }
 
@@ -3276,7 +3280,7 @@ impl QisRuntime for SeleneRuntime {
 
     fn shot_start(&mut self, shot_id: u64, seed: Option<u64>) -> Result<()> {
         self.check_batch_failure()?;
-        if self.scheduled_mode == Some(true) && !self.scheduled_terminal_drained {
+        if self.scheduled_mode == Some(true) && !self.scheduled_drained {
             return Err(RuntimeError::ExecutionError(
                 "drain the scheduled shot or reset before starting another shot".into(),
             ));
@@ -3297,7 +3301,7 @@ impl QisRuntime for SeleneRuntime {
         self.source_trace_metadata.clear();
         self.custom_events.clear();
         self.scheduled_mode = None;
-        self.scheduled_terminal_drained = false;
+        self.scheduled_drained = false;
         self.scheduled_output = None;
         self.runtime_batch_index = 0;
         self.pending_shot_start = Some((shot_id, seed));
@@ -3308,9 +3312,9 @@ impl QisRuntime for SeleneRuntime {
 
     fn shot_end(&mut self) -> Result<Shot> {
         self.check_batch_failure()?;
-        if self.scheduled_mode == Some(true) && !self.scheduled_terminal_drained {
+        if self.scheduled_mode == Some(true) && !self.scheduled_drained {
             return Err(RuntimeError::ExecutionError(
-                "scheduled shot requires a successful terminal drain before shot_end".into(),
+                "scheduled shot requires a successful drain before shot_end".into(),
             ));
         }
         // Only end a shot the plugin actually started; the pinned Selene ABI
@@ -3369,7 +3373,7 @@ impl QisRuntime for SeleneRuntime {
         self.source_trace_metadata.clear();
         self.custom_events.clear();
         self.scheduled_mode = None;
-        self.scheduled_terminal_drained = false;
+        self.scheduled_drained = false;
         self.scheduled_output = None;
         self.runtime_batch_index = 0;
         self.pending_shot_start = None;

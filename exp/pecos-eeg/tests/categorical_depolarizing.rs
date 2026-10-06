@@ -304,9 +304,9 @@ fn custom_injection_order_is_preserved_in_noise_maps() {
     ]);
     let gates = [pecos_eeg::expand::make_gate(GateType::I, &[0])];
     let initial = StabilizerGroup::from_circuit(&[Gate::pz(&[0]), Gate::h(&[0])], 1);
-    // S_X attenuates Y before its RZ adjoint rotates it toward X. Reordering
-    // the injections would leave the resulting X expectation unattenuated.
-    let expected = (1.0 - (1.0 - 2.0 * p) * theta.sin()) / 2.0;
+    // Forward S_X leaves |+> unchanged in both Pauli branches, then RZ(theta)
+    // rotates X toward Y, giving <Y> = sin(theta), independent of p.
+    let expected = (1.0 - theta.sin()) / 2.0;
     assert_walkers(&gates, &Bm::y(0), &noise, &initial, 1, expected);
 }
 

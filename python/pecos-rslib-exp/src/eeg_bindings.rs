@@ -16,7 +16,7 @@ use pecos_qec::fault_tolerance::dem_builder::{
 };
 use pyo3::prelude::*;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 type PyDemEvent = (f64, Vec<usize>, Vec<usize>);
 type PyEegEventDiagnostic = (Vec<usize>, usize, usize, Vec<f64>, f64);
@@ -26,7 +26,6 @@ struct MetadataDefinition {
     id: usize,
     meas_ids: Vec<usize>,
     records: Vec<i32>,
-    has_both_reference_forms: bool,
 }
 
 /// Build a DEM using forward EEG analysis (perturbative, fast).
@@ -1337,7 +1336,6 @@ fn extract_meas_id_defs(py_tc: &Bound<'_, PyAny>, key: &str) -> PyResult<Vec<Met
             .into_iter()
             .map(|entry| MetadataDefinition {
                 id: entry.id as usize,
-                has_both_reference_forms: entry.has_both_reference_forms(),
                 meas_ids: entry.meas_ids,
                 records: entry.records,
             })
@@ -1348,7 +1346,6 @@ fn extract_meas_id_defs(py_tc: &Bound<'_, PyAny>, key: &str) -> PyResult<Vec<Met
             .into_iter()
             .map(|entry| MetadataDefinition {
                 id: entry.id as usize,
-                has_both_reference_forms: entry.has_both_reference_forms(),
                 meas_ids: entry.meas_ids,
                 records: entry.records,
             })
@@ -1401,10 +1398,9 @@ fn resolve_definition(
         id,
         meas_ids,
         records,
-        has_both_reference_forms,
     } = definition;
     let num_meas = expanded.measurement_qubit.len();
-    let record_qubits = records
+    let mut record_qubits = records
         .iter()
         .map(|&record| {
             let index = record_offset_to_absolute_index(num_meas, record).ok_or_else(|| {
@@ -1418,7 +1414,7 @@ fn resolve_definition(
                 .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))
         })
         .collect::<PyResult<Vec<_>>>()?;
-    let id_qubits = meas_ids
+    let mut id_qubits = meas_ids
         .iter()
         .map(|&meas_id| {
             expanded
@@ -1426,13 +1422,14 @@ fn resolve_definition(
                 .map_err(|err| pyo3::exceptions::PyValueError::new_err(err.to_string()))
         })
         .collect::<PyResult<Vec<_>>>()?;
-    if *has_both_reference_forms
-        && record_qubits.iter().collect::<BTreeSet<_>>()
-            != id_qubits.iter().collect::<BTreeSet<_>>()
-    {
-        return Err(pyo3::exceptions::PyValueError::new_err(format!(
-            "{kind} {id} has records and meas_ids that reference different auxiliary qubits"
-        )));
+    if !records.is_empty() && !meas_ids.is_empty() {
+        record_qubits.sort_unstable();
+        id_qubits.sort_unstable();
+        if record_qubits != id_qubits {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "{kind} {id} has records and meas_ids that reference different auxiliary qubits"
+            )));
+        }
     }
     let qubits = if records.is_empty() {
         id_qubits

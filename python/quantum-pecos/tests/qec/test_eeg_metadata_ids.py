@@ -104,29 +104,29 @@ def test_meas_ids_resolve_like_records(stamped):
 # MUST FAIL BEFORE: invalid metadata was silently ignored or position-labelled.
 @pytest.mark.parametrize("key", ["detectors", "observables"])
 @pytest.mark.parametrize(
-    "metadata",
+    ("metadata", "message"),
     [
-        "[",
-        "{}",
-        "[1]",
-        '[{"records":[-1]}]',
-        '[{"id":3}]',
-        '[{"id":3,"records":[-1]},{"id":3,"records":[-2]}]',
-        '[{"id":3,"records":[-2],"meas_ids":[1]}]',
-        [{"id": 3, "records": [-1]}],
-        '[{"id":3,"kind":"tracked_pauli","records":[-1]}]',
-        '[{"id":3,"records":[1.5]}]',
-        '[{"id":3,"meas_ids":[99]}]',
+        ("[", "{key} JSON is malformed"),
+        ("{}", "{key}_json must be a JSON list"),
+        ("[1]", "{kind} entry must be an object"),
+        ('[{"records":[-1]}]', "missing {kind} id"),
+        ('[{"id":3}]', "{kind} entry has neither 'records' nor 'meas_ids'"),
+        ('[{"id":3,"records":[-1]},{"id":3,"records":[-2]}]', "duplicate {key} id 3"),
+        (
+            '[{"id":3,"records":[-2],"meas_ids":[1]}]',
+            "{kind} 3 has records and meas_ids that reference different auxiliary qubits",
+        ),
+        ([{"id": 3, "records": [-1]}], "{key} metadata must be a JSON string; pass a JSON string"),
+        ('[{"id":3,"kind":"tracked_pauli","records":[-1]}]', '{kind} entry uses kind="tracked_pauli"'),
+        ('[{"id":3,"records":[1.5]}]', "{kind} record offsets must be integers"),
+        ('[{"id":3,"meas_ids":[99]}]', "annotation references MeasId(99), which the expansion never recorded"),
     ],
 )
 @pytest.mark.parametrize("entrypoint", [noise_characterization, exact_correlation_table])
-def test_invalid_metadata_raises(key, metadata, entrypoint):
+def test_invalid_metadata_raises(key, metadata, message, entrypoint):
     circuit = _circuit()
     circuit.set_meta(key, metadata)
-    with pytest.raises(
-        ValueError,
-        match=r"JSON|must|missing|neither|duplicate|different|tracked_pauli|integer|measurement",
-    ):
+    with pytest.raises(ValueError, match=re.escape(message.format(key=key, kind=key[:-1]))):
         entrypoint(circuit, p1=0.05, prune=0.0)
 
 
@@ -189,7 +189,8 @@ def test_canonical_optional_fields_are_validated(key, metadata):
         exact_correlation_table(circuit, p1=0.05, prune=0.0)
 
 
-# MUST FAIL BEFORE: co-present forms, even an empty array, must agree.
+# MUST FAIL BEFORE: an empty form must not reject the other non-empty form.
+@pytest.mark.parametrize("key", ["detectors", "observables"])
 @pytest.mark.parametrize(
     "metadata",
     [
@@ -197,20 +198,66 @@ def test_canonical_optional_fields_are_validated(key, metadata):
         '[{"id":5,"records":[-2],"meas_ids":[]}]',
     ],
 )
-def test_empty_copresent_reference_disagrees(metadata):
+def test_empty_copresent_reference_uses_nonempty_form(key, metadata):
     circuit = _circuit()
-    circuit.set_meta("detectors", metadata)
-    with pytest.raises(ValueError, match=r"detector 5.*different auxiliary qubits"):
-        exact_detection_rates(circuit, p1=0.05, prune=0.0)
+    circuit.set_meta(key, metadata)
+    expected = _circuit()
+    expected.set_meta(key, '[{"id":5,"records":[-2]}]')
+    actual_table = {tuple(nodes): p for nodes, p in exact_correlation_table(circuit, p1=0.05, prune=0.0)}
+    expected_table = {tuple(nodes): p for nodes, p in exact_correlation_table(expected, p1=0.05, prune=0.0)}
+    assert actual_table == pytest.approx(expected_table)
 
 
-# REGRESSION GUARD: redundant forms are alternatives rather than additive.
-def test_agreeing_reference_forms_are_resolved_once():
+# REGRESSION GUARD: equal multisets may differ in order and retain duplicate XOR parity.
+@pytest.mark.parametrize("key", ["detectors", "observables"])
+@pytest.mark.parametrize("records", [[-2], [-2, -1], [-2, -2, -1]])
+def test_agreeing_reference_forms_are_resolved_once(key, records):
     circuit = _circuit(stamped=(17, 9))
-    circuit.set_meta("detectors", '[{"id":5,"records":[-2],"meas_ids":[17]},{"id":2,"records":[-1],"meas_ids":[9]}]')
-    assert dict(exact_detection_rates(circuit, p1=0.05, prune=0.0)) == pytest.approx(
-        dict(exact_detection_rates(_circuit(), p1=0.05, prune=0.0)),
-    )
+    stamps = {-2: 17, -1: 9}
+    meas_ids = [stamps[record] for record in reversed(records)]
+    circuit.set_meta(key, json.dumps([{"id": 5, "records": records, "meas_ids": meas_ids}]))
+    expected = _circuit(stamped=(17, 9))
+    expected.set_meta(key, json.dumps([{"id": 5, "records": records}]))
+    actual_table = {tuple(nodes): p for nodes, p in exact_correlation_table(circuit, p1=0.05, prune=0.0)}
+    expected_table = {tuple(nodes): p for nodes, p in exact_correlation_table(expected, p1=0.05, prune=0.0)}
+    assert actual_table == pytest.approx(expected_table)
+
+
+# MUST FAIL BEFORE: set comparison discarded reference multiplicity.
+@pytest.mark.parametrize("key", ["detectors", "observables"])
+@pytest.mark.parametrize(("records", "meas_ids"), [([-2, -2], [0]), ([-2], [0, 0])])
+def test_reference_multiplicity_disagreement_raises(key, records, meas_ids):
+    circuit = _circuit()
+    circuit.set_meta(key, json.dumps([{"id": 1, "records": records, "meas_ids": meas_ids}]))
+    message = f"{key[:-1]} 1 has records and meas_ids that reference different auxiliary qubits"
+    with pytest.raises(ValueError, match=re.escape(message)):
+        exact_correlation_table(circuit, p1=0.05, prune=0.0)
+
+
+# REGRESSION GUARD: batched stamps pair with qubit positions, not sorted qubits or ids.
+def test_batched_meas_ids_resolve_like_records():
+    tables = []
+    for refs, values in [("records", [-1, -2]), ("meas_ids", [9, 17])]:
+        circuit = TickCircuit()
+        circuit.tick().pz([0, 1])
+        for qubits in ([0, 1], [0, 1], [1], [1]):
+            circuit.tick().h(qubits)
+        circuit.tick().mz_with_ids([1, 0], [17, 9])
+        circuit.set_meta("num_measurements", "2")
+        circuit.set_meta(
+            "detectors",
+            json.dumps(
+                [
+                    {"id": 5, refs: [values[0]]},
+                    {"id": 2, refs: [values[1]]},
+                ],
+            ),
+        )
+        circuit.set_meta("observables", json.dumps([{"id": 3, refs: [values[1]]}]))
+        rates = dict(exact_detection_rates(circuit, p1=0.05, prune=0.0))
+        assert rates == pytest.approx(dict(exact_detection_rates(_circuit(), p1=0.05, prune=0.0)))
+        tables.append({tuple(nodes): p for nodes, p in exact_correlation_table(circuit, p1=0.05, prune=0.0)})
+    assert tables[0] == pytest.approx(tables[1])
 
 
 class _MetadataProxy:

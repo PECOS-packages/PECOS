@@ -54,7 +54,6 @@ pub struct ParsedDetector {
     pub records: Vec<i32>,
     /// Stable measurement identifiers.
     pub meas_ids: Vec<usize>,
-    has_both_reference_forms: bool,
 }
 
 /// Parsed observable from JSON metadata.
@@ -66,29 +65,12 @@ pub struct ParsedObservable {
     pub records: Vec<i32>,
     /// Stable measurement identifiers.
     pub meas_ids: Vec<usize>,
-    has_both_reference_forms: bool,
     /// Human-readable name from the metadata JSON's `label` field.
     ///
     /// The metadata format has always carried this and callers already write
     /// it, but it used to be parsed and dropped, leaving circuit annotations as
     /// the only way to get a label onto an observable.
     pub label: Option<String>,
-}
-
-impl ParsedDetector {
-    /// Whether both reference keys were present, including empty arrays.
-    #[must_use]
-    pub fn has_both_reference_forms(&self) -> bool {
-        self.has_both_reference_forms
-    }
-}
-
-impl ParsedObservable {
-    /// Whether both reference keys were present, including empty arrays.
-    #[must_use]
-    pub fn has_both_reference_forms(&self) -> bool {
-        self.has_both_reference_forms
-    }
 }
 
 // ============================================================================
@@ -603,7 +585,6 @@ impl<'a> DemBuilder<'a> {
                 records,
                 meas_ids: Vec::new(),
                 label: None,
-                has_both_reference_forms: false,
             })
             .collect();
         self.clear_exact_branch_cache();
@@ -2654,7 +2635,6 @@ fn parse_single_detector(value: &serde_json::Value) -> Result<ParsedDetector, De
         coords,
         records,
         meas_ids,
-        has_both_reference_forms: object.contains_key("records") && object.contains_key("meas_ids"),
     })
 }
 
@@ -2709,7 +2689,6 @@ fn parse_single_observable(value: &serde_json::Value) -> Result<ParsedObservable
         records,
         meas_ids,
         label,
-        has_both_reference_forms: object.contains_key("records") && object.contains_key("meas_ids"),
     })
 }
 

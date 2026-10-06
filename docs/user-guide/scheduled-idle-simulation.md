@@ -51,6 +51,12 @@ Operation tracing is currently incompatible with this opt-in route.
 
 ## Timing and noise contract
 
+Every scheduled consumer uses the runtime's batch start times and durations to
+calculate idle exposure. Consumers must not reschedule operations or replace those
+timestamps with a reconstructed timeline. Explicit source barriers and terminal
+draining still apply. For release ordering, see
+[native scheduling across release](scheduled-event-adapters.md#native-scheduling-across-release).
+
 Batch start and duration remain integer nanoseconds. For each physical qubit,
 its idle interval runs from the end of its previous touching batch to the start
 of its next touching batch. The initial end is zero. Except before preparation

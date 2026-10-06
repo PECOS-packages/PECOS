@@ -861,3 +861,149 @@ fn native_set_identity_survives_named_construction_clone_and_reset() {
         SeleneRuntime::with_plugin_config("custom.so", vec![], vec![]).with_native_gate_set(set);
     assert_eq!(runtime.clone().native_gate_set(), set);
 }
+
+#[test]
+fn scheduled_release_does_not_extract_before_later_submissions() {
+    use selene_core::operation::plugin::RuntimeGetOperationHandle;
+    use std::cell::{Cell, RefCell};
+
+    thread_local! {
+        static ORIGINAL: Cell<Option<RuntimePluginDescriptorV1>> = const { Cell::new(None) };
+        static CALLS: RefCell<Vec<&'static str>> = const { RefCell::new(Vec::new()) };
+    }
+    unsafe extern "C" fn extract(
+        instance: RuntimeInstance,
+        output: SeleneRuntimeGetOperationHandle,
+    ) -> i32 {
+        CALLS.with_borrow_mut(|calls| calls.push("extract"));
+        let original = ORIGINAL.get().unwrap();
+        // Use the same repr(C) handle conversion as production extraction.
+        let forward = unsafe {
+            std::mem::transmute::<
+                unsafe extern "C" fn(RuntimeInstance, RuntimeGetOperationHandle) -> i32,
+                unsafe extern "C" fn(RuntimeInstance, SeleneRuntimeGetOperationHandle) -> i32,
+            >(original.get_next_operations_fn)
+        };
+        unsafe { forward(instance, output) }
+    }
+    unsafe extern "C" fn reset(instance: RuntimeInstance, qubit: u64) -> i32 {
+        CALLS.with_borrow_mut(|calls| calls.push("reset"));
+        let original = ORIGINAL.get().unwrap();
+        unsafe { (original.reset_fn)(instance, qubit) }
+    }
+    unsafe extern "C" fn release(instance: RuntimeInstance, qubit: u64) -> i32 {
+        CALLS.with_borrow_mut(|calls| calls.push("release"));
+        let original = ORIGINAL.get().unwrap();
+        unsafe { (original.qfree_fn)(instance, qubit) }
+    }
+    unsafe extern "C" fn barrier(
+        instance: RuntimeInstance,
+        qubits: *const u64,
+        count: u64,
+        delay: u64,
+    ) -> i32 {
+        CALLS.with_borrow_mut(|calls| calls.push("barrier"));
+        let original = ORIGINAL.get().unwrap();
+        unsafe { (original.local_barrier_fn)(instance, qubits, count, delay) }
+    }
+    unsafe extern "C" fn global_barrier(instance: RuntimeInstance, delay: u64) -> i32 {
+        CALLS.with_borrow_mut(|calls| calls.push("global_barrier"));
+        let original = ORIGINAL.get().unwrap();
+        unsafe { (original.global_barrier_fn)(instance, delay) }
+    }
+    let executable = std::env::current_exe().unwrap();
+    let source = crate::selene_runtimes::find_library_in_dir(
+        executable.parent().unwrap(),
+        pecos_qis_test_runtime::LIBRARY_NAME,
+    )
+    .unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let plugin = directory.path().join(source.file_name().unwrap());
+    std::fs::copy(source, &plugin).unwrap();
+    let public = crate::selene_runtimes::selene_soft_rz_runtime().unwrap();
+    // The libraries and descriptor outlive the runtime and all forwarding callbacks.
+    let library = unsafe { libloading::Library::new(&public.plugin_path).unwrap() };
+    let mut descriptor =
+        Box::new(unsafe { SeleneRuntime::runtime_plugin_descriptor(&library).unwrap() });
+    ORIGINAL.set(Some(*descriptor));
+    descriptor.get_next_operations_fn = unsafe {
+        std::mem::transmute::<
+            unsafe extern "C" fn(RuntimeInstance, SeleneRuntimeGetOperationHandle) -> i32,
+            unsafe extern "C" fn(RuntimeInstance, RuntimeGetOperationHandle) -> i32,
+        >(extract)
+    };
+    descriptor.reset_fn = reset;
+    descriptor.qfree_fn = release;
+    descriptor.local_barrier_fn = barrier;
+    descriptor.global_barrier_fn = global_barrier;
+    let fixture = unsafe { libloading::Library::new(&plugin).unwrap() };
+    unsafe {
+        let set = fixture
+            .get::<unsafe extern "C" fn(*mut c_void)>(b"set_descriptor")
+            .unwrap();
+        set((&raw mut *descriptor).cast());
+    }
+    let mut runtime = SeleneRuntime::new(&plugin);
+    runtime.init_args.clone_from(&public.init_args);
+    let mut runtime = start(runtime, 1);
+    CALLS.with_borrow_mut(Vec::clear);
+    let batches = runtime
+        .lower_scheduled_operations(&[
+            Operation::AllocateQubit { id: 7 },
+            QuantumOp::Reset(7).into(),
+            QuantumOp::RXY(0.25, 0.0, 7).into(),
+            QuantumOp::Measure(7, 31).into(),
+            Operation::ReleaseQubit { id: 7 },
+            Operation::AllocateQubit { id: 9 },
+            QuantumOp::Reset(9).into(),
+            QuantumOp::Measure(9, 47).into(),
+        ])
+        .unwrap();
+    let calls = CALLS.with_borrow(Clone::clone);
+    assert_eq!(
+        calls.get(..3),
+        Some(["reset", "release", "reset"].as_slice()),
+        "{calls:?}"
+    );
+    assert!(
+        calls[3..].iter().all(|call| *call == "extract"),
+        "{calls:?}"
+    );
+    let results: Vec<_> = batches
+        .iter()
+        .flat_map(|batch| &batch.measurements)
+        .map(|m| m.program_result)
+        .collect();
+    assert_eq!(results, [31, 47]);
+    let gates: Vec<_> = batches.iter().flat_map(|batch| &batch.operations).collect();
+    assert_eq!(
+        gates.len(),
+        5,
+        "both lifetimes' work must survive release and native-slot reuse"
+    );
+    assert!(matches!(
+        gates[0],
+        RuntimeScheduledOp::Reset { qubit_id: 0 }
+    ));
+    assert!(matches!(
+        gates[1],
+        RuntimeScheduledOp::Rxy { qubit_id: 0, .. }
+    ));
+    assert!(matches!(
+        gates[2],
+        RuntimeScheduledOp::Measure { qubit_id: 0, .. }
+    ));
+    assert!(matches!(
+        gates[3],
+        RuntimeScheduledOp::Reset { qubit_id: 0 }
+    ));
+    assert!(matches!(
+        gates[4],
+        RuntimeScheduledOp::Measure { qubit_id: 0, .. }
+    ));
+    runtime
+        .provide_measurement_outcomes(BTreeMap::from([(31, 0), (47, 1)]))
+        .unwrap();
+    runtime.drain_pending_scheduled_operations().unwrap();
+    runtime.shot_end().unwrap();
+}

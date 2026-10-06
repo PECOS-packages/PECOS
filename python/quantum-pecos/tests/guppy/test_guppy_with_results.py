@@ -27,15 +27,8 @@ class TestGuppyWithResults:
             "result": result,
         }
 
-    def test_result_function_availability(self, check_guppy_imports: dict) -> None:
-        """Test that result() function is available."""
-        assert callable(
-            check_guppy_imports["result"],
-        ), "result should be a callable function"
-
     def test_simple_measurement_with_result(self, check_guppy_imports: dict) -> None:
         """Test simple measurement with result tagging."""
-
         guppy = check_guppy_imports["guppy"]
         q_ops = check_guppy_imports["quantum"]
         result = check_guppy_imports["result"]
@@ -95,7 +88,6 @@ class TestGuppyWithResults:
 
     def test_bell_state_with_named_results(self, check_guppy_imports: dict) -> None:
         """Test Bell state creation with named result outputs."""
-        # Test with result() function
         guppy = check_guppy_imports["guppy"]
         q_ops = check_guppy_imports["quantum"]
         result = check_guppy_imports["result"]
@@ -121,13 +113,11 @@ class TestGuppyWithResults:
             result("qubit_1", m1)
             result("both_same", m0 == m1)  # Should always be True for Bell state
 
-        test_func = bell_state_with_results
-
         # Test compilation
         from pecos.compilation_pipeline import compile_guppy_to_hugr
 
         try:
-            hugr_bytes = compile_guppy_to_hugr(test_func)
+            hugr_bytes = compile_guppy_to_hugr(bell_state_with_results)
         except Exception as e:
             pytest.fail(f"Failed to compile Bell state function: {e}")
 
@@ -136,7 +126,6 @@ class TestGuppyWithResults:
 
     def test_quantum_statistics_output(self, check_guppy_imports: dict) -> None:
         """Test multiple measurements with statistical outputs."""
-
         guppy = check_guppy_imports["guppy"]
         q_ops = check_guppy_imports["quantum"]
         result = check_guppy_imports["result"]
@@ -183,7 +172,6 @@ class TestGuppyWithResults:
 
     def test_hugr_output_operations(self, check_guppy_imports: dict) -> None:
         """Test that HUGR contains output/result operations."""
-
         guppy = check_guppy_imports["guppy"]
         q_ops = check_guppy_imports["quantum"]
         result = check_guppy_imports["result"]

@@ -1,5 +1,7 @@
 """Test HUGR compilation through Selene."""
 
+import re
+
 import pytest
 from guppylang.decorator import guppy as guppy_decorator
 from guppylang.std.quantum import cx, h, measure, qubit, x
@@ -183,11 +185,13 @@ class TestLLVMGeneration:
         llvm_ir = compile_hugr_to_qis(hugr_bytes)
         assert isinstance(llvm_ir, str), "Should produce LLVM IR string"
 
-        # Verify LLVM structure: Selene QIS allocates, rotates (X lowers to rxy), and measures
-        assert "define" in llvm_ir, "Should have function definitions"
-        assert "@___qalloc" in llvm_ir, "Should allocate a qubit"
-        assert "@___rxy" in llvm_ir, "Should apply the X rotation"
-        assert "@___lazy_measure" in llvm_ir, "Should measure the qubit"
+        # Selene QIS allocates, applies X as rxy(theta=pi, phi=0), and measures
+        assert "call i64 @___qalloc()" in llvm_ir, "Should allocate a qubit"
+        assert re.search(
+            r"call void @___rxy\(i64 %[\w.]+, double 0x400921FB54442D18, double 0\.000000e\+00\)",
+            llvm_ir,
+        ), "Should apply X as rxy(pi, 0)"
+        assert "call i64 @___lazy_measure(" in llvm_ir, "Should measure the qubit"
 
     def test_llvm_ir_patterns(self) -> None:
         """Test that generated LLVM IR follows expected patterns."""

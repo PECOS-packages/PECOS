@@ -292,6 +292,12 @@ pub struct QisEngine {
     /// Stored measurement results for `get_results()`
     measurement_results: BTreeMap<usize, u32>,
 
+    /// A failed `Engine::reset`, held until a reset succeeds. Reset drops the
+    /// per-shot terminal error with the worker state before resetting the
+    /// runtime, so without this a failed runtime reset would let `get_results`
+    /// return the previous, failed shot.
+    reset_failure: Option<String>,
+
     /// RNG for generating per-shot seeds
     rng: PecosRng,
 
@@ -407,6 +413,7 @@ impl QisEngine {
             started: false,
             measurement_mapping: Vec::new(),
             measurement_results: BTreeMap::new(),
+            reset_failure: None,
             rng: PecosRng::seed_from_u64(0), // Will be properly seeded via set_seed()
             current_shot_seed: None,
             dynamic_state: None,
@@ -502,6 +509,7 @@ impl QisEngine {
             started: false,
             measurement_mapping: Vec::new(),
             measurement_results: BTreeMap::new(),
+            reset_failure: None,
             rng: PecosRng::seed_from_u64(0), // Will be properly seeded via set_seed()
             current_shot_seed: None,
             dynamic_state: None,
@@ -1076,6 +1084,7 @@ impl Clone for QisEngine {
             started: false,                       // Reset started flag for the clone
             measurement_mapping: Vec::new(),      // Clear for new shot
             measurement_results: BTreeMap::new(), // Clear for new shot
+            reset_failure: self.reset_failure.clone(), // Keep a failed reset latched
             rng: self.rng.clone(),
             current_shot_seed: None,         // Will be set on next start()
             dynamic_state: None,             // Can't clone thread state
@@ -1538,9 +1547,13 @@ impl QisEngine {
     /// shot can never certify a partial trace as complete — including on
     /// retried `continue_processing` calls after the failure was reported.
     fn terminal_failure_error(&self) -> Option<PecosError> {
-        self.dynamic_state
+        self.reset_failure
             .as_ref()
-            .and_then(|state| state.terminal_error.as_ref())
+            .or_else(|| {
+                self.dynamic_state
+                    .as_ref()
+                    .and_then(|state| state.terminal_error.as_ref())
+            })
             .map(|err| PecosError::Generic(err.clone()))
     }
 
@@ -1741,14 +1754,21 @@ impl Engine for QisEngine {
 
     fn reset(&mut self) -> Result<(), PecosError> {
         debug!("QisEngine: reset() called");
-        self.runtime
+        let reset = self
+            .runtime
             .reset()
-            .map_err(|e| PecosError::Generic(format!("Failed to reset runtime: {e}")))?;
-        if let Some(ref mut interface) = self.interface {
-            interface
-                .reset()
-                .map_err(crate::interface_impl::interface_error_to_pecos)?;
+            .map_err(|e| PecosError::Generic(format!("Failed to reset runtime: {e}")))
+            .and_then(|()| match self.interface {
+                Some(ref mut interface) => interface
+                    .reset()
+                    .map_err(crate::interface_impl::interface_error_to_pecos),
+                None => Ok(()),
+            });
+        if let Err(error) = reset {
+            self.reset_failure = Some(error.to_string());
+            return Err(error);
         }
+        self.reset_failure = None;
         self.current_operations = None;
         self.started = false;
         self.measurement_mapping.clear();
@@ -1948,10 +1968,14 @@ impl ControlEngine for QisEngine {
         self.current_shot_seed = Some(shot_seed);
         self.begin_trace_shot();
 
-        // Reset the runtime to ensure clean state for new shot
-        self.runtime
-            .reset()
-            .map_err(|e| PecosError::Generic(format!("Failed to reset runtime: {e}")))?;
+        // Reset the runtime to ensure clean state for new shot. This is as
+        // complete as `Engine::reset`, so it sets or clears the same latch.
+        if let Err(e) = self.runtime.reset() {
+            let error = PecosError::Generic(format!("Failed to reset runtime: {e}"));
+            self.reset_failure = Some(error.to_string());
+            return Err(error);
+        }
+        self.reset_failure = None;
 
         // Start a new shot with the generated seed and a real, monotonically
         // increasing shot id (a plugin keying state or telemetry on the shot
@@ -3712,6 +3736,109 @@ mod tests {
                     .contains("trace_complete")
             });
         assert!(!wrote_terminal_marker);
+    }
+
+    /// Runtime whose `shot_end` fails and whose `reset` fails while
+    /// `fail_reset` is set, for a reset after a failed shot.
+    #[derive(Clone, Default)]
+    struct ShotEndAndResetFailRuntime {
+        state: ClassicalState,
+        fail_reset: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    impl QisRuntime for ShotEndAndResetFailRuntime {
+        fn load_interface(&mut self, _interface: OperationList) -> RuntimeResult<()> {
+            Ok(())
+        }
+
+        fn execute_until_quantum(&mut self) -> RuntimeResult<Option<Vec<QuantumOp>>> {
+            Ok(None)
+        }
+
+        fn provide_measurements(
+            &mut self,
+            _measurements: BTreeMap<usize, bool>,
+        ) -> RuntimeResult<()> {
+            Ok(())
+        }
+
+        fn get_classical_state(&self) -> &ClassicalState {
+            &self.state
+        }
+
+        fn get_classical_state_mut(&mut self) -> &mut ClassicalState {
+            &mut self.state
+        }
+
+        fn is_complete(&self) -> bool {
+            true
+        }
+
+        fn num_qubits(&self) -> usize {
+            1
+        }
+
+        fn shot_end(&mut self) -> RuntimeResult<crate::runtime::Shot> {
+            Err(crate::runtime::RuntimeError::ExecutionError(
+                "invalid final schedule".to_string(),
+            ))
+        }
+
+        fn reset(&mut self) -> RuntimeResult<()> {
+            if self.fail_reset.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err(crate::runtime::RuntimeError::ExecutionError(
+                    "exit failed".to_string(),
+                ));
+            }
+            Ok(())
+        }
+    }
+
+    // #1040: reset drops the shot's terminal error with the worker state, so a
+    // failed runtime reset must not let `get_results` certify the failed shot.
+    #[test]
+    fn failed_reset_after_failed_shot_never_certifies_results() {
+        use std::sync::atomic::Ordering;
+        let runtime = ShotEndAndResetFailRuntime::default();
+        let fail_reset = std::sync::Arc::clone(&runtime.fail_reset);
+        fail_reset.store(true, Ordering::SeqCst);
+        let mut engine = QisEngine::with_runtime(Box::new(runtime));
+        engine.measurement_results.insert(0, 1);
+        engine.dynamic_state = Some(DynamicExecutionState {
+            sync_handle: None,
+            execution_complete: true,
+            terminal_error: None,
+            finalized: false,
+            terminal_lowering_flushed: false,
+        });
+
+        assert!(
+            engine
+                .continue_processing(ByteMessage::builder().build())
+                .is_err()
+        );
+        assert!(engine.get_results().is_err());
+
+        let Err(reset_error) = ControlEngine::reset(&mut engine) else {
+            panic!("the runtime reset must fail");
+        };
+        assert!(
+            reset_error.to_string().contains("exit failed"),
+            "{reset_error}"
+        );
+        let Err(results_error) = engine.get_results() else {
+            panic!("a failed reset must not certify the failed shot's results");
+        };
+        assert!(
+            results_error.to_string().contains("exit failed"),
+            "{results_error}"
+        );
+        assert!(engine.clone().get_results().is_err());
+
+        fail_reset.store(false, Ordering::SeqCst);
+        ControlEngine::reset(&mut engine).unwrap();
+        let shot = engine.get_results().unwrap();
+        assert!(shot.data.is_empty(), "{shot:?}");
     }
 
     /// Counts `shot_end` invocations to pin one-shot finalization.

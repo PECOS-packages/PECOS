@@ -585,7 +585,7 @@ fn apply_depolarizing(
     terms: &mut [HeisenbergTerm],
     channels: &[crate::noise::DepolarizingChannel],
 ) {
-    for channel in channels {
+    for channel in channels.iter().rev() {
         let scale = channel.eigenvalue();
         for term in terms.iter_mut() {
             if channel
@@ -687,8 +687,9 @@ pub fn heisenberg_with_noise_map(
 
         let noise_applied = gate_noise.is_some();
         if let Some(gn) = gate_noise {
-            // Individual injections in their original order
-            for inj in &gn.injections {
+            // Reverse forward time: channel adjoints, then reversed injections.
+            apply_depolarizing(&mut terms, &gn.depolarizing);
+            for inj in gn.injections.iter().rev() {
                 match inj.eeg_type {
                     crate::eeg::EegType::H => {
                         let h = inj.rate;
@@ -815,8 +816,6 @@ pub fn heisenberg_with_noise_map(
                     _ => {}
                 }
             }
-
-            apply_depolarizing(&mut terms, &gn.depolarizing);
         }
 
         // Step 2: Backward Clifford conjugation. Checked after the noise,
@@ -981,7 +980,8 @@ pub fn heisenberg_windowed(
             .filter(|exact| noise_touches_active(exact, &active_qubits));
         let noise_applied = gate_noise.is_some();
         if let Some(exact) = gate_noise {
-            for inj in &exact.injections {
+            apply_depolarizing(&mut terms, &exact.depolarizing);
+            for inj in exact.injections.iter().rev() {
                 match inj.eeg_type {
                     crate::eeg::EegType::H => {
                         let h = inj.rate;
@@ -1112,7 +1112,6 @@ pub fn heisenberg_windowed(
                     });
                 }
             }
-            apply_depolarizing(&mut terms, &exact.depolarizing);
         }
 
         // Step 2: Conjugate backward through the gate.
@@ -1310,7 +1309,8 @@ pub fn heisenberg_sparse(
                 &dynamic_noise
             };
 
-            for inj in &gate_noise.injections {
+            apply_depolarizing(&mut terms, &gate_noise.depolarizing);
+            for inj in gate_noise.injections.iter().rev() {
                 match inj.eeg_type {
                     crate::eeg::EegType::H => {
                         let h = inj.rate;
@@ -1449,8 +1449,6 @@ pub fn heisenberg_sparse(
                     _ => {}
                 }
             }
-
-            apply_depolarizing(&mut terms, &gate_noise.depolarizing);
         }
 
         // Step 2: Backward Clifford conjugation.
@@ -1595,7 +1593,8 @@ pub fn heisenberg_detection_probability_from_circuit(
 /// expanded circuit. Noise is the physical view from
 /// [`NoiseSpec::exact_noise_after_gate`]: H-type rotations U = exp(-i h P) and
 /// S-type Pauli channels with probability p = -s, for arbitrary Pauli strings
-/// P, followed by categorical depolarizing channels, each applied as the
+/// P, in forward list order, followed in forward time by categorical
+/// depolarizing channels in list order, each applied as the
 /// explicit sum over its 3 or 15 nonidentity Paulis.
 /// Identity labels have no effect. Expansion gates receive no noise.
 /// Useful as a reference/validation for the faster
@@ -1660,7 +1659,16 @@ pub fn heisenberg_exact_from_circuit(
         // Noise adjoint (skip expansion gates)
         if !expansion_gates[idx] {
             let exact = noise.exact_noise_after_gate(idx, g.gate_type, &qs);
-            for inj in &exact.injections {
+            for channel in exact.depolarizing.iter().rev() {
+                if let Some(&qubit) = channel.qubits().iter().find(|&&q| q >= n) {
+                    return Err(crate::expand::EegBuildError::ExactLabelOutOfRange {
+                        qubit,
+                        num_qubits: n,
+                    });
+                }
+                matrix_depolarizing_adjoint(&mut obs_re, &mut im, channel, n);
+            }
+            for inj in exact.injections.iter().rev() {
                 let weights = match inj.eeg_type {
                     crate::eeg::EegType::H => {
                         let (s, c) = inj.rate.sin_cos();
@@ -1692,15 +1700,6 @@ pub fn heisenberg_exact_from_circuit(
                     continue;
                 }
                 matrix_pauli_adjoint(&mut obs_re, &mut im, &inj.label, weights, n);
-            }
-            for channel in &exact.depolarizing {
-                if let Some(&qubit) = channel.qubits().iter().find(|&&q| q >= n) {
-                    return Err(crate::expand::EegBuildError::ExactLabelOutOfRange {
-                        qubit,
-                        num_qubits: n,
-                    });
-                }
-                matrix_depolarizing_adjoint(&mut obs_re, &mut im, channel, n);
             }
         }
 

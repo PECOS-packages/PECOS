@@ -187,6 +187,8 @@ impl<T> WeightedOutcome<T> {
 pub struct WeightedStatistics {
     /// Sum of weights (in log space for stability).
     log_weight_sum: f64,
+    /// Sum of squared weights (in log space), for the effective sample size.
+    log_weight_sq_sum: f64,
     /// Weighted sum of values.
     weighted_sum: f64,
     /// Weighted sum of squared values (for variance).
@@ -209,6 +211,7 @@ impl WeightedStatistics {
     pub fn new() -> Self {
         Self {
             log_weight_sum: f64::NEG_INFINITY,
+            log_weight_sq_sum: f64::NEG_INFINITY,
             weighted_sum: 0.0,
             weighted_sum_sq: 0.0,
             count: 0,
@@ -223,6 +226,7 @@ impl WeightedStatistics {
     /// * `weight` - The importance weight
     pub fn add(&mut self, value: f64, weight: &SampleWeight) {
         let log_w = weight.log_weight();
+        self.log_weight_sq_sum = log_sum_exp(self.log_weight_sq_sum, 2.0 * log_w);
 
         // Update max for normalization
         if log_w > self.max_log_weight {
@@ -298,14 +302,11 @@ impl WeightedStatistics {
     ///
     /// Low ESS indicates weight degeneracy (few samples dominate).
     #[must_use]
-    #[allow(clippy::cast_precision_loss)] // count as f64
     pub fn effective_sample_size(&self) -> f64 {
         if self.count == 0 {
             return 0.0;
         }
-        // This is an approximation - proper ESS needs sum of squared weights
-        // For now, return count (would need to track more state for true ESS)
-        self.count as f64
+        (2.0 * self.log_weight_sum - self.log_weight_sq_sum).exp()
     }
 
     /// Merge with another statistics accumulator.
@@ -327,6 +328,7 @@ impl WeightedStatistics {
         self.weighted_sum_sq =
             self.weighted_sum_sq * self_scale + other.weighted_sum_sq * other_scale;
         self.log_weight_sum = log_sum_exp(self.log_weight_sum, other.log_weight_sum);
+        self.log_weight_sq_sum = log_sum_exp(self.log_weight_sq_sum, other.log_weight_sq_sum);
         self.count += other.count;
         self.max_log_weight = new_max;
     }
@@ -347,6 +349,77 @@ fn log_sum_exp(a: f64, b: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn ess_of(weights: &[f64]) -> f64 {
+        let sum: f64 = weights.iter().sum();
+        let sum_sq: f64 = weights.iter().map(|w| w * w).sum();
+        sum * sum / sum_sq
+    }
+
+    #[test]
+    fn effective_sample_size_is_the_kish_formula() {
+        // Issue #900: ESS = (sum w)^2 / sum w^2, not the sample count.
+        for weights in [
+            vec![1.0; 8],
+            vec![1000.0, 1.0, 1.0, 1.0],
+            vec![0.5, 2.0, 0.25, 4.0, 1.0],
+        ] {
+            let mut stats = WeightedStatistics::new();
+            for (i, &w) in weights.iter().enumerate() {
+                stats.add(
+                    f64::from(u8::try_from(i % 2).unwrap()),
+                    &SampleWeight::from_linear(w),
+                );
+            }
+            let expected = ess_of(&weights);
+            assert!(
+                (stats.effective_sample_size() - expected).abs() < 1e-9 * expected,
+                "weights {weights:?}: ESS {} != {expected}",
+                stats.effective_sample_size()
+            );
+        }
+
+        // One dominant weight: the sample is worth about one draw.
+        let mut degenerate = WeightedStatistics::new();
+        degenerate.add(1.0, &SampleWeight::from_log(50.0));
+        for _ in 0..99 {
+            degenerate.add(0.0, &SampleWeight::one());
+        }
+        assert!((degenerate.effective_sample_size() - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn effective_sample_size_survives_merge_and_extreme_log_weights() {
+        let log_weights = [-700.0, -702.5, -699.0, -705.0, -701.0, -700.5];
+        let mut whole = WeightedStatistics::new();
+        let mut left = WeightedStatistics::new();
+        let mut right = WeightedStatistics::new();
+        for (i, &lw) in log_weights.iter().enumerate() {
+            let weight = SampleWeight::from_log(lw);
+            whole.add(1.0, &weight);
+            if i < 2 {
+                left.add(1.0, &weight);
+            } else {
+                right.add(1.0, &weight);
+            }
+        }
+        left.merge(&right);
+
+        // Reference computed relative to the largest weight to stay finite.
+        let max = log_weights
+            .iter()
+            .copied()
+            .fold(f64::NEG_INFINITY, f64::max);
+        let rel: Vec<f64> = log_weights.iter().map(|lw| (lw - max).exp()).collect();
+        let expected = ess_of(&rel);
+        for stats in [&whole, &left] {
+            assert!(
+                (stats.effective_sample_size() - expected).abs() < 1e-9 * expected,
+                "ESS {} != {expected}",
+                stats.effective_sample_size()
+            );
+        }
+    }
 
     #[test]
     fn test_sample_weight_one() {

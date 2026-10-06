@@ -166,8 +166,8 @@ pub(super) fn compare(circuit: &TickCircuit, seed: u64) {
         &noise,
         |state, pauli, negative, symbol, _| {
             let parts = pecos_stab_tn::stab_mps::coordinate_tableau::decompose(
-                &state.structure.tableau,
-                &state.structure.active,
+                state.structure.tableau(),
+                state.structure.active(),
                 pauli.factors(),
                 negative,
             );

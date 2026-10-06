@@ -21,8 +21,8 @@ pub(super) fn conditional(
     negative: bool,
 ) -> (f64, MeasurementCase) {
     let parts = pecos_stab_tn::stab_mps::coordinate_tableau::decompose(
-        &state.structure.tableau,
-        &state.structure.active,
+        state.structure.tableau(),
+        state.structure.active(),
         pauli.factors(),
         negative,
     );

@@ -228,7 +228,7 @@ fn named_clifford_frames_match_physical_trait_contract() {
             ] {
                 assert_eq!(
                     builder::pullback(&frame, &[(q, axis)]),
-                    builder::pullback(&physical.structure.tableau, &[(q, axis)]),
+                    builder::pullback(physical.structure.tableau(), &[(q, axis)]),
                     "{kind:?} {q} {axis:?}"
                 );
             }
@@ -314,7 +314,7 @@ fn signed_frames_on_entangled_prefixes() {
             ] {
                 assert_eq!(
                     builder::pullback(&frame, &[(q, axis)]),
-                    builder::pullback(&physical.structure.tableau, &[(q, axis)]),
+                    builder::pullback(physical.structure.tableau(), &[(q, axis)]),
                     "step {step}"
                 );
             }

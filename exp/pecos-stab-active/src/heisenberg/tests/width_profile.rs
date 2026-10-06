@@ -46,14 +46,18 @@ fn compare(program: &HeisenbergProgram, coverage: &mut Coverage) {
                 |state, pauli, negative, _, record| {
                     let mut counts = counts.borrow_mut();
                     counts.hidden_resets += usize::from(record.is_none());
-                    let measurement = state.structure.measurement(pauli.factors(), negative);
+                    let mut structure = state.structure.clone();
+                    let measurement = structure.measurement(pauli.factors(), negative);
                     match measurement.data().case() {
                         MeasurementCase::Random => counts.random += 1,
                         MeasurementCase::Deterministic => counts.deterministic += 1,
                         MeasurementCase::Active => {
                             counts.active += 1;
-                            let expectation =
-                                state.active_expectation(measurement.data().parts()).re;
+                            let expectation = StabActive::active_expectation(
+                                &state.amplitudes,
+                                measurement.data().parts(),
+                            )
+                            .re;
                             counts.snapped += usize::from(
                                 1.0 - expectation.abs() <= crate::EXPECTATION_ENDPOINT_TOLERANCE,
                             );
@@ -75,14 +79,15 @@ fn compare(program: &HeisenbergProgram, coverage: &mut Coverage) {
                         if let Some(mut structure) = pending.borrow_mut().take() {
                             let measurement = structure
                                 .measurement(pauli.factors(), sign.evaluate(&noise, measurements));
-                            let active = structure
-                                .apply_measurement(measurement, measurements[*symbol])
+                            let active = measurement
+                                .apply_measurement(measurements[*symbol])
                                 .unwrap();
-                            counts.basis_gates += usize::from(!active.gates.is_empty());
-                            counts.projections[usize::from(active.projection.value)] += 1;
+                            counts.basis_gates += usize::from(!active.gates().is_empty());
+                            counts.projections[usize::from(active.projection().value())] += 1;
                         }
                     } else if let HeisenbergOp::Rotation { pauli, angle, sign } = operation {
-                        let rotation = state.structure.rotation(
+                        let mut structure = state.structure.clone();
+                        let rotation = structure.rotation(
                             *angle,
                             pauli.factors(),
                             sign.evaluate(&noise, measurements),
@@ -300,10 +305,10 @@ fn overflowing_rotation_preserves_the_entire_state() {
     );
     assert_eq!(state.active_width(), before.active_width());
     assert_eq!(state.peak_active_width(), before.peak_active_width());
-    assert_eq!(state.structure.active, before.structure.active);
+    assert_eq!(state.structure.active(), before.structure.active());
     assert_eq!(
-        format!("{:?}", state.structure.tableau),
-        format!("{:?}", before.structure.tableau)
+        format!("{:?}", state.structure.tableau()),
+        format!("{:?}", before.structure.tableau())
     );
     assert_eq!(state.amplitudes, before.amplitudes);
 }

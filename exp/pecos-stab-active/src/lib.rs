@@ -112,18 +112,22 @@ impl StabActive {
 
     #[cfg(test)]
     fn parts(&self, pauli: &[(usize, PauliKindForDecomp)]) -> CoordinateDecomposition {
-        self.structure.measurement(pauli, false).into_parts()
+        pecos_stab_tn::stab_mps::coordinate_tableau::decompose(
+            self.structure.tableau(),
+            self.structure.active(),
+            pauli,
+            false,
+        )
     }
 
-    fn normalize(&mut self) {
-        let norm = self
-            .amplitudes
+    fn normalize(amplitudes: &mut [Complex64]) {
+        let norm = amplitudes
             .iter()
             .map(Complex64::norm_sqr)
             .sum::<f64>()
             .sqrt();
         assert!(norm > 0.0, "cannot normalize a zero state");
-        for amplitude in &mut self.amplitudes {
+        for amplitude in amplitudes {
             *amplitude /= norm;
         }
     }
@@ -146,14 +150,14 @@ impl StabActive {
     ) {
         let rotation = self.structure.rotation(theta, pauli, negative);
         if rotation.needs_promotion() {
-            let width = self.structure.width() + 1;
+            let width = rotation.width() + 1;
             assert!(
                 width <= self.max_width,
                 "active width {width} exceeds limit {}",
                 self.max_width
             );
         }
-        let Some(work) = self.structure.apply_rotation(rotation) else {
+        let Some(work) = rotation.apply_rotation() else {
             return;
         };
         if work.double {
@@ -188,17 +192,17 @@ impl StabActive {
                 }
             }
         }
-        self.normalize();
+        Self::normalize(&mut self.amplitudes);
     }
 
-    fn active_expectation(&self, parts: &CoordinateDecomposition) -> Complex64 {
+    fn active_expectation(amplitudes: &[Complex64], parts: &CoordinateDecomposition) -> Complex64 {
         let flip = mask(&parts.active_flips);
         let sign = mask(&parts.active_signs);
-        self.amplitudes
+        amplitudes
             .iter()
             .enumerate()
             .map(|(index, a)| {
-                self.amplitudes[index ^ flip].conj() * parts.phase * parity(index & sign) * a
+                amplitudes[index ^ flip].conj() * parts.phase * parity(index & sign) * a
             })
             .sum()
     }
@@ -209,13 +213,13 @@ impl StabActive {
     /// endpoint are treated as that exact eigenvalue before computing probability
     /// or drawing from the RNG. This matches the shared measurement policy and
     /// prevents a forced projector from amplifying a cancellation residue.
-    fn measurement_probability(&self, measurement: &MeasurementData) -> f64 {
+    fn measurement_probability(amplitudes: &[Complex64], measurement: &MeasurementData) -> f64 {
         let parts = measurement.parts();
         match measurement.case() {
             MeasurementCase::Random => 0.5,
             MeasurementCase::Deterministic => f64::from(parts.phase.re < 0.0),
             MeasurementCase::Active => {
-                let expectation = self.active_expectation(parts).re;
+                let expectation = Self::active_expectation(amplitudes, parts).re;
                 let expectation = if 1.0 - expectation.abs() <= EXPECTATION_ENDPOINT_TOLERANCE {
                     expectation.signum()
                 } else {
@@ -228,33 +232,33 @@ impl StabActive {
 
     #[cfg(test)]
     fn probability_one(&self, parts: &CoordinateDecomposition) -> f64 {
-        self.measurement_probability(&MeasurementData::new(parts.clone()))
+        Self::measurement_probability(&self.amplitudes, &MeasurementData::new(parts.clone()))
     }
 
-    fn coordinate_gate(&mut self, gate: CoordinateGate) {
+    fn coordinate_gate(amplitudes: &mut [Complex64], gate: CoordinateGate) {
         match gate {
             CoordinateGate::Sdg(bit) => {
-                for (index, amplitude) in self.amplitudes.iter_mut().enumerate() {
+                for (index, amplitude) in amplitudes.iter_mut().enumerate() {
                     if index & (1 << bit) != 0 {
                         *amplitude *= Complex64::new(0.0, -1.0);
                     }
                 }
             }
             CoordinateGate::H(bit) => {
-                for index in 0..self.amplitudes.len() {
+                for index in 0..amplitudes.len() {
                     if index & (1 << bit) == 0 {
                         let partner = index ^ (1 << bit);
-                        let a = self.amplitudes[index];
-                        let b = self.amplitudes[partner];
-                        self.amplitudes[index] = (a + b) * std::f64::consts::FRAC_1_SQRT_2;
-                        self.amplitudes[partner] = (a - b) * std::f64::consts::FRAC_1_SQRT_2;
+                        let a = amplitudes[index];
+                        let b = amplitudes[partner];
+                        amplitudes[index] = (a + b) * std::f64::consts::FRAC_1_SQRT_2;
+                        amplitudes[partner] = (a - b) * std::f64::consts::FRAC_1_SQRT_2;
                     }
                 }
             }
             CoordinateGate::Cx(control, target) => {
-                for index in 0..self.amplitudes.len() {
+                for index in 0..amplitudes.len() {
                     if index & (1 << control) != 0 && index & (1 << target) == 0 {
-                        self.amplitudes.swap(index, index ^ (1 << target));
+                        amplitudes.swap(index, index ^ (1 << target));
                     }
                 }
             }
@@ -285,20 +289,20 @@ impl StabActive {
         forced: Option<bool>,
     ) -> MeasurementResult {
         let measurement = self.structure.measurement(pauli, negative);
-        let probability = self.measurement_probability(measurement.data());
+        let probability = Self::measurement_probability(&self.amplitudes, measurement.data());
         let is_deterministic = probability <= 0.0 || probability >= 1.0;
         let outcome = if is_deterministic {
             probability >= 1.0
         } else {
             forced.unwrap_or_else(|| self.rng.random_bool(probability))
         };
-        if let Some(active) = self.structure.apply_measurement(measurement, outcome) {
-            for &gate in &active.gates {
-                self.coordinate_gate(gate);
+        if let Some(active) = measurement.apply_measurement(outcome) {
+            for &gate in active.gates() {
+                Self::coordinate_gate(&mut self.amplitudes, gate);
             }
-            let projection = active.projection;
-            let value = projection.value;
-            let bit_mask = 1 << projection.pivot_bit;
+            let projection = active.projection();
+            let value = projection.value();
+            let bit_mask = 1 << projection.pivot_bit();
             self.amplitudes = self
                 .amplitudes
                 .iter()
@@ -306,8 +310,7 @@ impl StabActive {
                 .filter(|(index, _)| (index & bit_mask != 0) == value)
                 .map(|(_, &a)| a)
                 .collect();
-            self.structure.demote(projection);
-            self.normalize();
+            Self::normalize(&mut self.amplitudes);
         }
         MeasurementResult {
             outcome,

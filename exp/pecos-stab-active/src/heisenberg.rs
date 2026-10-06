@@ -174,14 +174,11 @@ impl HeisenbergProgram {
                 match operation {
                     HeisenbergOp::Rotation { pauli, angle, .. } => {
                         let rotation = structure.rotation(*angle, pauli.factors(), false);
-                        structure.apply_rotation(rotation);
+                        let _ = rotation.apply_rotation();
                     }
                     HeisenbergOp::Measurement { pauli, .. } => {
                         let measurement = structure.measurement(pauli.factors(), false);
-                        if let Some(active) = structure.apply_measurement(measurement, false) {
-                            let projection = active.projection;
-                            structure.demote(projection);
-                        }
+                        let _ = measurement.apply_measurement(false);
                     }
                 }
                 structure.width()

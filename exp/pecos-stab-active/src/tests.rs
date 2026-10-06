@@ -64,13 +64,13 @@ fn apply_dense(matrix: &[(usize, Complex64)], vector: &[Complex64]) -> Vec<Compl
 // Independent H1 oracle: no simulator methods or decomposition/basis-change
 // helpers are used. The random seed only selects a nonorthogonal projector input.
 fn reconstruct(sim: &StabActive) -> Vec<Complex64> {
-    let n = sim.structure.tableau.num_qubits();
+    let n = sim.structure.tableau().num_qubits();
     let mut rng = PecosRng::seed_from_u64(937);
     let mut phi: Vec<_> = (0..1 << n)
         .map(|_| Complex64::new(rng.next_f64() - 0.5, rng.next_f64() - 0.5))
         .collect();
     for row in 0..n {
-        let image = apply_dense(&dense_row(sim.structure.tableau.stabs(), row), &phi);
+        let image = apply_dense(&dense_row(sim.structure.tableau().stabs(), row), &phi);
         for (a, b) in phi.iter_mut().zip(image) {
             *a = (*a + b) / 2.0;
         }
@@ -82,9 +82,9 @@ fn reconstruct(sim: &StabActive) -> Vec<Complex64> {
     }
     let matrices: Vec<_> = sim
         .structure
-        .active
+        .active()
         .iter()
-        .map(|&row| dense_row(sim.structure.tableau.destabs(), row))
+        .map(|&row| dense_row(sim.structure.tableau().destabs(), row))
         .collect();
     let mut basis = vec![phi];
     for x in 1usize..sim.amplitudes.len() {
@@ -516,7 +516,7 @@ fn check_roundoff_endpoint(pair: bool) {
         assert_eq!(parts.measurement_case(), MeasurementCase::Active);
         assert_eq!(!parts.active_flips.is_empty(), pair);
         assert_eq!(sim.active_width(), 1);
-        let raw = sim.active_expectation(&parts).re;
+        let raw = StabActive::active_expectation(&sim.amplitudes, &parts).re;
         assert!(
             raw.abs() < 1.0,
             "fixture must have a non-exact interior endpoint: {raw}"

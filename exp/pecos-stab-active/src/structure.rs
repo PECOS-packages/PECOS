@@ -13,12 +13,14 @@ use crate::PauliKindForDecomp;
 
 #[derive(Clone, Debug)]
 pub(crate) struct ActiveStructure {
-    pub(crate) tableau: SparseStabY,
-    pub(crate) active: Vec<usize>,
+    tableau: SparseStabY,
+    active: Vec<usize>,
     peak_width: usize,
 }
 
+#[must_use]
 pub(crate) struct Rotation<'a> {
+    structure: &'a mut ActiveStructure,
     pauli: &'a [(usize, PauliKindForDecomp)],
     theta: Angle64,
     kind: RotationKind,
@@ -34,6 +36,48 @@ enum RotationKind {
 }
 
 impl Rotation<'_> {
+    pub(crate) fn apply_rotation(self) -> Option<RotationWork> {
+        let Rotation {
+            structure,
+            pauli,
+            theta,
+            kind,
+        } = self;
+        match kind {
+            RotationKind::Identity => None,
+            RotationKind::Clifford(turns) => {
+                rotate_tableau(&mut structure.tableau, pauli, turns);
+                None
+            }
+            RotationKind::NonClifford { mut parts, promote } => {
+                if promote {
+                    coordinate_tableau::promote(
+                        &mut structure.tableau,
+                        &mut structure.active,
+                        pauli,
+                        false,
+                    );
+                    structure.peak_width = structure.peak_width.max(structure.width());
+                    parts = coordinate_tableau::decompose(
+                        &structure.tableau,
+                        &structure.active,
+                        pauli,
+                        false,
+                    );
+                }
+                Some(RotationWork {
+                    theta,
+                    parts,
+                    double: promote,
+                })
+            }
+        }
+    }
+
+    pub(crate) fn width(&self) -> usize {
+        self.structure.width()
+    }
+
     pub(crate) fn needs_promotion(&self) -> bool {
         matches!(self.kind, RotationKind::NonClifford { promote: true, .. })
     }
@@ -47,13 +91,16 @@ impl Rotation<'_> {
     }
 }
 
+#[must_use]
 pub(crate) struct RotationWork {
     pub(crate) theta: Angle64,
     pub(crate) parts: CoordinateDecomposition,
     pub(crate) double: bool,
 }
 
+#[must_use]
 pub(crate) struct Measurement<'a> {
+    structure: &'a mut ActiveStructure,
     pauli: &'a [(usize, PauliKindForDecomp)],
     negative: bool,
     data: MeasurementData,
@@ -80,28 +127,99 @@ impl MeasurementData {
 }
 
 impl Measurement<'_> {
+    pub(crate) fn apply_measurement(self, outcome: bool) -> Option<ActiveMeasurement> {
+        let Measurement {
+            structure,
+            pauli,
+            negative,
+            data,
+        } = self;
+        match data.case {
+            MeasurementCase::Random => {
+                coordinate_tableau::measure_random(
+                    &mut structure.tableau,
+                    &structure.active,
+                    pauli,
+                    negative,
+                    outcome,
+                );
+                None
+            }
+            MeasurementCase::Deterministic => None,
+            MeasurementCase::Active => {
+                let basis = coordinate_tableau::measurement_basis(
+                    &mut structure.tableau,
+                    &structure.active,
+                    pauli,
+                    negative,
+                );
+                let value = outcome ^ basis.negative;
+                coordinate_tableau::demote(
+                    &mut structure.tableau,
+                    &mut structure.active,
+                    basis.pivot_bit,
+                    value,
+                );
+                Some(ActiveMeasurement {
+                    gates: basis.gates,
+                    projection: Projection {
+                        pivot_bit: basis.pivot_bit,
+                        value,
+                    },
+                })
+            }
+        }
+    }
+
     pub(crate) fn data(&self) -> &MeasurementData {
         &self.data
     }
-
-    #[cfg(test)]
-    pub(crate) fn into_parts(self) -> CoordinateDecomposition {
-        self.data.parts
-    }
 }
 
+#[must_use]
 pub(crate) struct ActiveMeasurement {
-    pub(crate) gates: Vec<CoordinateGate>,
-    pub(crate) projection: Projection,
+    gates: Vec<CoordinateGate>,
+    projection: Projection,
 }
 
 #[derive(Clone, Copy)]
+#[must_use]
 pub(crate) struct Projection {
-    pub(crate) pivot_bit: usize,
-    pub(crate) value: bool,
+    pivot_bit: usize,
+    value: bool,
+}
+
+impl ActiveMeasurement {
+    pub(crate) fn gates(&self) -> &[CoordinateGate] {
+        &self.gates
+    }
+
+    pub(crate) fn projection(&self) -> &Projection {
+        &self.projection
+    }
+}
+
+impl Projection {
+    pub(crate) fn pivot_bit(&self) -> usize {
+        self.pivot_bit
+    }
+
+    pub(crate) fn value(&self) -> bool {
+        self.value
+    }
 }
 
 impl ActiveStructure {
+    #[cfg(test)]
+    pub(crate) fn tableau(&self) -> &SparseStabY {
+        &self.tableau
+    }
+
+    #[cfg(test)]
+    pub(crate) fn active(&self) -> &[usize] {
+        &self.active
+    }
+
     pub(crate) fn with_seed(num_qubits: usize, seed: u64) -> Self {
         Self {
             tableau: SparseStabY::with_seed(num_qubits, seed).with_destab_sign_tracking(),
@@ -142,7 +260,7 @@ impl ActiveStructure {
 
     // Plan without mutation so the amplitude owner can reject a promotion.
     pub(crate) fn rotation<'a>(
-        &self,
+        &'a mut self,
         theta: Angle64,
         pauli: &'a [(usize, PauliKindForDecomp)],
         negative: bool,
@@ -163,94 +281,26 @@ impl ActiveStructure {
             let promote = !parts.dormant_flips.is_empty();
             RotationKind::NonClifford { parts, promote }
         };
-        Rotation { pauli, theta, kind }
-    }
-
-    pub(crate) fn apply_rotation(&mut self, rotation: Rotation<'_>) -> Option<RotationWork> {
-        let Rotation { pauli, theta, kind } = rotation;
-        match kind {
-            RotationKind::Identity => None,
-            RotationKind::Clifford(turns) => {
-                rotate_tableau(&mut self.tableau, pauli, turns);
-                None
-            }
-            RotationKind::NonClifford { mut parts, promote } => {
-                if promote {
-                    coordinate_tableau::promote(&mut self.tableau, &mut self.active, pauli, false);
-                    self.peak_width = self.peak_width.max(self.width());
-                    parts =
-                        coordinate_tableau::decompose(&self.tableau, &self.active, pauli, false);
-                }
-                Some(RotationWork {
-                    theta,
-                    parts,
-                    double: promote,
-                })
-            }
+        Rotation {
+            structure: self,
+            pauli,
+            theta,
+            kind,
         }
     }
 
     pub(crate) fn measurement<'a>(
-        &self,
+        &'a mut self,
         pauli: &'a [(usize, PauliKindForDecomp)],
         negative: bool,
     ) -> Measurement<'a> {
         let parts = coordinate_tableau::decompose(&self.tableau, &self.active, pauli, negative);
         Measurement {
+            structure: self,
             pauli,
             negative,
             data: MeasurementData::new(parts),
         }
-    }
-
-    pub(crate) fn apply_measurement(
-        &mut self,
-        measurement: Measurement<'_>,
-        outcome: bool,
-    ) -> Option<ActiveMeasurement> {
-        let Measurement {
-            pauli,
-            negative,
-            data,
-        } = measurement;
-        match data.case {
-            MeasurementCase::Random => {
-                coordinate_tableau::measure_random(
-                    &mut self.tableau,
-                    &self.active,
-                    pauli,
-                    negative,
-                    outcome,
-                );
-                None
-            }
-            MeasurementCase::Deterministic => None,
-            MeasurementCase::Active => {
-                let basis = coordinate_tableau::measurement_basis(
-                    &mut self.tableau,
-                    &self.active,
-                    pauli,
-                    negative,
-                );
-                let value = outcome ^ basis.negative;
-                Some(ActiveMeasurement {
-                    gates: basis.gates,
-                    projection: Projection {
-                        pivot_bit: basis.pivot_bit,
-                        value,
-                    },
-                })
-            }
-        }
-    }
-
-    pub(crate) fn demote(&mut self, projection: Projection) {
-        coordinate_tableau::demote(
-            &mut self.tableau,
-            &mut self.active,
-            projection.pivot_bit,
-            projection.value,
-        );
     }
 }
 
@@ -294,6 +344,35 @@ pub(crate) fn rotate_tableau(
         }
         if kind == PauliKindForDecomp::Y {
             tableau.sz(&[QubitId(q)]);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn active_measurement_finishes_before_amplitude_work() {
+        let pauli = [(0, PauliKindForDecomp::X)];
+        for negative in [false, true] {
+            for outcome in [false, true] {
+                let mut structure = ActiveStructure::with_seed(1, 0);
+                let _ = structure
+                    .rotation(Angle64::from_radians(0.37), &pauli, false)
+                    .apply_rotation();
+                let work = structure
+                    .measurement(&pauli, negative)
+                    .apply_measurement(outcome)
+                    .unwrap();
+                // The result describes amplitude work; the structure is already complete.
+                assert_eq!(structure.width(), 0);
+                assert_eq!(structure.peak_width(), 1);
+                assert!(!work.gates().is_empty());
+                let measurement = structure.measurement(&pauli, negative);
+                assert_eq!(measurement.data().case(), MeasurementCase::Deterministic);
+                assert_eq!(measurement.data().parts().phase.re < 0.0, outcome);
+            }
         }
     }
 }

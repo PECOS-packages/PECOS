@@ -153,6 +153,8 @@ struct LoweredCommandBatch {
     gate_metadata: Vec<TraceMetadata>,
     /// Whether lowering emitted no command batches (including scheduled formats).
     is_empty: bool,
+    /// Imported measurement credits consumed by this command batch.
+    measurement_credits_consumed: usize,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -450,7 +452,7 @@ pub struct QisEngine {
     /// Current measurement outcomes; a later undelivered measurement blocks reuse.
     measurement_results: BTreeMap<usize, u32>,
 
-    /// Per-slot imported or runtime-generated measurements awaiting delivery.
+    /// Per-slot imported measurements awaiting delivery.
     pending_measurements: BTreeMap<usize, PendingMeasurements>,
 
     /// A failed `Engine::reset`, held until a reset succeeds. Reset drops the
@@ -1000,11 +1002,9 @@ impl QisEngine {
             commands: builder.build(),
             is_empty: gate_metadata.is_empty(),
             gate_metadata,
+            measurement_credits_consumed: 0,
         });
         self.command_builder = builder;
-        if message.is_ok() {
-            self.register_emitted_measurements();
-        }
         message
     }
 
@@ -1078,7 +1078,7 @@ impl QisEngine {
         self.register_imported_measurements(ops);
         let normalized = self.normalize_qubit_preps(ops);
         let ops = normalized.as_slice();
-        if self.scheduled_transport.enabled() {
+        let mut lowered = if self.scheduled_transport.enabled() {
             let batches = self
                 .runtime
                 .lower_scheduled_operations(ops)
@@ -1089,22 +1089,23 @@ impl QisEngine {
             let (commands, ids) =
                 crate::scheduled_transport::encode_mode(batches, shot, self.scheduled_transport)?;
             self.measurement_mapping = ids;
-            self.register_emitted_measurements();
-            return Ok(LoweredCommandBatch {
+            LoweredCommandBatch {
                 commands,
                 gate_metadata: Vec::new(),
                 is_empty,
-            });
-        }
-        if self.runtime.supports_operation_lowering() {
+                measurement_credits_consumed: 0,
+            }
+        } else if self.runtime.supports_operation_lowering() {
             let lowered_ops = self
                 .runtime
                 .lower_operations_with_metadata(ops)
                 .map_err(|e| PecosError::Generic(format!("Runtime lowering error: {e}")))?;
-            return self.quantum_ops_to_lowered_commands(lowered_ops);
-        }
-
-        self.operations_to_lowered_commands(ops)
+            self.quantum_ops_to_lowered_commands(lowered_ops)?
+        } else {
+            self.operations_to_lowered_commands(ops)?
+        };
+        lowered.measurement_credits_consumed = self.register_emitted_measurements()?;
+        Ok(lowered)
     }
 
     /// Convert already-materialized quantum ops into a `ByteMessage`.
@@ -1237,11 +1238,9 @@ impl QisEngine {
             commands: builder.build(),
             is_empty: gate_metadata.is_empty(),
             gate_metadata,
+            measurement_credits_consumed: 0,
         });
         self.command_builder = builder;
-        if message.is_ok() {
-            self.register_emitted_measurements();
-        }
         message
     }
 }
@@ -1559,6 +1558,7 @@ impl QisEngine {
                 commands: ByteMessage::builder().build(),
                 gate_metadata: Vec::new(),
                 is_empty: true,
+                measurement_credits_consumed: 0,
             }),
         );
     }
@@ -1726,10 +1726,11 @@ impl QisEngine {
             self.signal_dynamic_result_ready()?;
             return Ok(None);
         }
-        // A measurement supplies feedback that can release the requested one.
-        // Padding without any measurement cannot advance a blocked worker.
-        if let Some(commands) = self.drain_commands(false)?
-            && !self.measurement_mapping.is_empty()
+        // While the worker is blocked, imported credits are finite. Each
+        // progressing drain consumes at least one; feedback may release the
+        // requested measurement, but padding cannot keep a request alive.
+        if let Some((commands, consumed)) = self.drain_commands(false)?
+            && consumed > 0
         {
             return Ok(Some(commands));
         }
@@ -1753,18 +1754,26 @@ impl QisEngine {
         }
     }
 
-    /// Source measurements were counted on import. Count runtime-generated
-    /// measurements on emission, including those released by the final drain.
-    fn register_emitted_measurements(&mut self) {
-        for result_id in &self.measurement_mapping {
-            let pending = self.pending_measurements.entry(*result_id).or_default();
-            if pending.unemitted > 0 {
-                pending.unemitted -= 1;
-            } else {
-                pending.outstanding += 1;
-            }
-            self.measurement_results.remove(result_id);
+    /// Every emission must consume an imported credit. The returned count
+    /// bounds the number of progressing drains while the worker is blocked.
+    fn register_emitted_measurements(&mut self) -> Result<usize, PecosError> {
+        let mut consumed = 0;
+        for index in 0..self.measurement_mapping.len() {
+            let result_id = self.measurement_mapping[index];
+            let Some(pending) = self
+                .pending_measurements
+                .get_mut(&result_id)
+                .filter(|pending| pending.unemitted > 0)
+            else {
+                return Err(self.latch_terminal_error(format!(
+                    "runtime emitted a measurement for result {result_id} that was never imported"
+                )));
+            };
+            pending.unemitted -= 1;
+            consumed += 1;
+            self.measurement_results.remove(&result_id);
         }
+        Ok(consumed)
     }
 
     /// Check if dynamic execution is complete
@@ -1844,11 +1853,15 @@ impl QisEngine {
 
     fn drain_terminal_commands(&mut self) -> Result<Option<ByteMessage>, PecosError> {
         self.drain_commands(true)
+            .map(|drained| drained.map(|(commands, _)| commands))
     }
 
     /// Use the same drain for a stalled read and the final tail. Only the final
     /// flush is one-shot; reads may need several flushes during a shot.
-    fn drain_commands(&mut self, terminal: bool) -> Result<Option<ByteMessage>, PecosError> {
+    fn drain_commands(
+        &mut self,
+        terminal: bool,
+    ) -> Result<Option<(ByteMessage, usize)>, PecosError> {
         if self.scheduled_transport.enabled() {
             return self.drain_scheduled_commands();
         }
@@ -1879,10 +1892,13 @@ impl QisEngine {
             "result_flush"
         };
         self.trace_operations_chunk(stage, &ops, None, Some(&lowered));
-        Ok(Some(lowered.commands))
+        Ok(Some((
+            lowered.commands,
+            lowered.measurement_credits_consumed,
+        )))
     }
 
-    fn drain_scheduled_commands(&mut self) -> Result<Option<ByteMessage>, PecosError> {
+    fn drain_scheduled_commands(&mut self) -> Result<Option<(ByteMessage, usize)>, PecosError> {
         if !self.scheduled_transport.enabled()
             || self.dynamic_state.as_ref().is_some_and(|s| s.finalized)
         {
@@ -1901,8 +1917,8 @@ impl QisEngine {
             let (commands, ids) =
                 crate::scheduled_transport::encode_mode(batches, shot, self.scheduled_transport)?;
             self.measurement_mapping = ids;
-            self.register_emitted_measurements();
-            Ok(Some(commands))
+            let consumed = self.register_emitted_measurements()?;
+            Ok(Some((commands, consumed)))
         })();
         result.map_err(|e: PecosError| {
             self.latch_terminal_error(format!("scheduled drain failed: {e}"))
@@ -1992,6 +2008,12 @@ impl QisEngine {
             return Ok(());
         }
         self.verify_runtime_drained()?;
+        if !self.pending_measurements.is_empty() {
+            let slots: Vec<_> = self.pending_measurements.keys().copied().collect();
+            return Err(self.latch_terminal_error(format!(
+                "runtime dropped imported measurements for result slots {slots:?}"
+            )));
+        }
         if let Err(e) = self.runtime.shot_end() {
             return Err(self.latch_terminal_error(format!("runtime shot_end failed: {e}")));
         }
@@ -3817,7 +3839,7 @@ mod tests {
         engine.set_operation_trace_collector(collector.clone());
         engine.begin_trace_shot();
 
-        let ops = vec![QuantumOp::H(0).into()];
+        let ops = vec![QuantumOp::H(0).into(), QuantumOp::Measure(0, 17).into()];
         let lowered = engine
             .lower_operations_to_commands(&ops)
             .expect("runtime lower ops to commands");
@@ -4741,7 +4763,7 @@ mod scheduled_completion_tests {
             if self.with_event {
                 assert_eq!(values.get(&0), Some(&true));
             }
-            self.stage = 2;
+            self.stage = 3;
             Ok(())
         }
         fn get_classical_state(&self) -> &ClassicalState {
@@ -4764,6 +4786,14 @@ mod scheduled_completion_tests {
             }
             Ok(crate::runtime::Shot::default())
         }
+        fn lower_scheduled_operations(
+            &mut self,
+            operations: &[Operation],
+        ) -> RuntimeResult<Vec<ScheduledBatch>> {
+            assert!(operations.contains(&QuantumOp::Measure(0, 0).into()));
+            self.stage = 1;
+            Ok(vec![])
+        }
         fn drain_pending_scheduled_operations(&mut self) -> RuntimeResult<Vec<ScheduledBatch>> {
             if self.ended {
                 return Err(crate::runtime::RuntimeError::ExecutionError(
@@ -4771,8 +4801,8 @@ mod scheduled_completion_tests {
                 ));
             }
             let (mut ops, mut measurements, index) = match self.stage {
-                0 => {
-                    self.stage = 1;
+                1 => {
+                    self.stage = 2;
                     (
                         vec![Op::Measure {
                             qubit_id: 0,
@@ -4787,13 +4817,13 @@ mod scheduled_completion_tests {
                         0,
                     )
                 }
-                2 => {
+                3 => {
                     if self.fail_tail {
                         return Err(crate::runtime::RuntimeError::ExecutionError(
                             "tail drain failed".into(),
                         ));
                     }
-                    self.stage = 3;
+                    self.stage = 4;
                     (
                         vec![Op::Rz {
                             qubit_id: 0,
@@ -4840,6 +4870,9 @@ mod scheduled_completion_tests {
             finalized: false,
             terminal_lowering_flushed: false,
         });
+        engine
+            .lower_operations_terminal(&[QuantumOp::Measure(0, 0).into()])
+            .unwrap();
         // Execute the terminal measurement and feedback-triggered tail in a real owner.
         let mut quantum = QuantumSystem::new(
             ScheduledIdleZ::new(1, 0.0, 0.0, 0.0)
@@ -4944,6 +4977,9 @@ mod scheduled_completion_tests {
             finalized: false,
             terminal_lowering_flushed: false,
         });
+        engine
+            .lower_operations_terminal(&[QuantumOp::Measure(0, 0).into()])
+            .unwrap();
         let mut quantum = QuantumSystem::new(
             ScheduledEventIdleZ::new(ScheduledIdleZ::new(1, 0.0, 0.0, 0.0).unwrap(), |_| {
                 Ok(Box::new(Flip))
@@ -4996,6 +5032,9 @@ mod scheduled_completion_tests {
             finalized: false,
             terminal_lowering_flushed: false,
         });
+        engine
+            .lower_operations_terminal(&[QuantumOp::Measure(0, 0).into()])
+            .unwrap();
         engine
             .continue_processing(ByteMessage::outcomes_builder().build())
             .unwrap();

@@ -728,7 +728,6 @@ pub extern "C" fn pecos_check_need_result() -> u64 {
 /// Wait for a result to be needed or worker to complete (called by main thread)
 ///
 /// Blocks until the worker thread needs a measurement result OR completes.
-/// A zero timeout is a non-blocking, non-consuming peek of the outstanding request.
 /// Returns the result ID that is needed, or `u64::MAX` if worker completed,
 /// timeout, or no execution context is registered.
 ///
@@ -753,7 +752,7 @@ pub extern "C" fn pecos_wait_for_need_result(timeout_ms: u64) -> u64 {
     };
 
     // Wait until either: need_result is true, worker_complete is true, or timeout
-    while timeout_ms != 0 && !state.need_result && !state.worker_complete {
+    while !state.need_result && !state.worker_complete {
         let result = ctx.sync_condvar.wait_timeout(state, timeout);
         match result {
             Ok((s, timed_out)) => {
@@ -1420,29 +1419,6 @@ mod tests {
     fn test_check_need_result_no_context() {
         // When no context is registered, should return MAX
         assert_eq!(pecos_check_need_result(), u64::MAX);
-    }
-
-    #[test]
-    fn zero_timeout_peeks_do_not_consume_the_outstanding_request() {
-        if !crate::test_env::run_test_in_child(
-            "tests::zero_timeout_peeks_do_not_consume_the_outstanding_request",
-        ) {
-            return;
-        }
-        let ctx = setup_context();
-        pecos_enable_dynamic_mode();
-        assert_eq!(pecos_wait_for_need_result(0), u64::MAX);
-        let context = unsafe { &*ctx };
-        context.waiting_for_result.store(7, Ordering::SeqCst);
-        context.sync_state.lock().unwrap().need_result = true;
-        assert_eq!(pecos_wait_for_need_result(0), 7);
-        assert_eq!(pecos_wait_for_need_result(0), 7);
-        assert!(context.sync_state.lock().unwrap().need_result);
-        pecos_signal_result_ready();
-        assert_eq!(pecos_wait_for_need_result(0), u64::MAX);
-        context.sync_state.lock().unwrap().worker_complete = true;
-        assert_eq!(pecos_wait_for_need_result(0), u64::MAX);
-        teardown_context(ctx);
     }
 
     #[test]

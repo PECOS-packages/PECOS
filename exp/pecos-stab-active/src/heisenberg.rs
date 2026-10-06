@@ -10,12 +10,14 @@ mod dispatch;
 mod noise;
 #[cfg(test)]
 mod tests;
+mod validation;
 
 use crate::{PauliKindForDecomp, StabActive};
 pub use builder::CompileError;
 pub use noise::NoiseChannel;
 use pecos_core::{Angle64, PauliBitmaskVec};
 use pecos_quantum::TickCircuit;
+pub(crate) use validation::ProgramError;
 
 /// A constant XOR noise symbols XOR measurement symbols (including hidden resets).
 /// Each symbol occurs at most once in its set; outcomes are never flattened.
@@ -31,6 +33,8 @@ pub struct AffineSign {
 
 impl AffineSign {
     /// Evaluate `constant XOR noise XOR measurements`.
+    /// The measurement slice is indexed by symbol, which equals execution
+    /// position in compiled order.
     ///
     /// # Panics
     /// Panics if a referenced symbol has no entry in the supplied slices.
@@ -66,7 +70,7 @@ impl VirtualPauli {
     }
 }
 
-/// An operation at its original physical execution position.
+/// An operation in the program's execution order.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum HeisenbergOp {
     /// Apply `exp(-i (-1)^sign angle H / 2)`.
@@ -86,12 +90,13 @@ pub enum HeisenbergOp {
         sign: AffineSign,
         /// Measurement symbol, including hidden reset measurements.
         symbol: usize,
-        /// Visible execution ordinal, or none for a hidden reset measurement.
+        /// Visible record ordinal, or none for a hidden reset measurement.
         record: Option<usize>,
     },
 }
 
-/// A circuit compiled once with no scheduling, fusion, or reordering.
+/// A program whose operations run in list order.
+/// `compile` preserves physical order; every program is checked at construction.
 #[derive(Clone, Debug)]
 pub struct HeisenbergProgram {
     num_qubits: usize,
@@ -107,7 +112,7 @@ pub struct HeisenbergProgram {
 /// Visible records and their annotated XORs from one execution of a program.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ShotResult {
-    /// Raw visible outcomes in execution order.
+    /// Raw visible outcomes in record ordinal order.
     pub records: Vec<bool>,
     /// Detector parities in detector annotation order.
     pub detectors: Vec<bool>,
@@ -124,8 +129,22 @@ impl HeisenbergProgram {
     /// # Errors
     /// Returns a location-bearing error for unsupported or malformed gates,
     /// invalid channels, duplicate measurement IDs, or dangling annotations.
+    ///
+    /// # Panics
+    /// Panics if a builder bug produces an invalid program.
     pub fn compile(circuit: &TickCircuit) -> Result<Self, CompileError> {
         builder::compile(circuit)
+    }
+
+    /// Replace the operation list, keeping every table, and check the result.
+    /// This is the only way to obtain a program from a builder or rewrite.
+    pub(crate) fn with_operations(
+        self,
+        operations: Vec<HeisenbergOp>,
+    ) -> Result<Self, ProgramError> {
+        let program = Self { operations, ..self };
+        program.validate()?;
+        Ok(program)
     }
 
     /// Size of the virtual register, including all physical gate support.
@@ -134,7 +153,7 @@ impl HeisenbergProgram {
         self.num_qubits
     }
 
-    /// Operations in unchanged execution order.
+    /// Operations in execution order.
     #[must_use]
     pub fn operations(&self) -> &[HeisenbergOp] {
         &self.operations
@@ -146,13 +165,13 @@ impl HeisenbergProgram {
         &self.noise_channels
     }
 
-    /// Detector XORs over visible execution ordinals.
+    /// Detector XORs over visible record ordinals.
     #[must_use]
     pub fn detectors(&self) -> &[Vec<usize>] {
         &self.detectors
     }
 
-    /// Observable XORs over visible execution ordinals.
+    /// Observable XORs over visible record ordinals.
     #[must_use]
     pub fn observables(&self) -> &[Vec<usize>] {
         &self.observables
@@ -172,14 +191,28 @@ impl HeisenbergProgram {
         self.execute(state, &noise, |_, _, _, _, _| None)
     }
 
-    // Tests inject both noise and a measurement hook through the production
-    // execution loop. The hook can check probabilities before forcing collapse.
-    fn execute<F>(&self, mut state: StabActive, noise: &[bool], mut force: F) -> ShotResult
+    fn execute<F>(&self, state: StabActive, noise: &[bool], force: F) -> ShotResult
     where
         F: FnMut(&StabActive, &VirtualPauli, bool, usize, Option<usize>) -> Option<bool>,
     {
-        let mut measurements = Vec::with_capacity(self.num_measurements);
-        let mut records = Vec::with_capacity(self.num_records);
+        self.execute_with_outcomes(state, noise, force).0
+    }
+
+    // Tests inject both noise and a measurement hook through the production
+    // execution loop. The hook can check probabilities before forcing collapse.
+    // Outcomes are stored by symbol and records by ordinal. Construction checked
+    // that every symbol is produced before any operation reads it.
+    fn execute_with_outcomes<F>(
+        &self,
+        mut state: StabActive,
+        noise: &[bool],
+        mut force: F,
+    ) -> (ShotResult, Vec<bool>)
+    where
+        F: FnMut(&StabActive, &VirtualPauli, bool, usize, Option<usize>) -> Option<bool>,
+    {
+        let mut measurements = vec![false; self.num_measurements];
+        let mut records = vec![false; self.num_records];
         for operation in &self.operations {
             match operation {
                 HeisenbergOp::Rotation { pauli, angle, sign } => {
@@ -198,19 +231,20 @@ impl HeisenbergProgram {
                     let negative = sign.evaluate(noise, &measurements);
                     let forced = force(&state, pauli, negative, *symbol, *record);
                     let result = state.measure_pauli_inner(pauli.factors(), negative, forced);
-                    measurements.push(result.outcome);
-                    if record.is_some() {
-                        records.push(result.outcome);
+                    measurements[*symbol] = result.outcome;
+                    if let Some(ordinal) = record {
+                        records[*ordinal] = result.outcome;
                     }
                 }
             }
         }
         let parity = |ids: &Vec<usize>| ids.iter().fold(false, |s, &i| s ^ records[i]);
-        ShotResult {
+        let shot = ShotResult {
             detectors: self.detectors.iter().map(parity).collect(),
             observables: self.observables.iter().map(parity).collect(),
             records,
             peak_active_width: state.peak_active_width(),
-        }
+        };
+        (shot, measurements)
     }
 }

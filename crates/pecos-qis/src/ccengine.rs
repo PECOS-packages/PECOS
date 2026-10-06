@@ -827,9 +827,7 @@ impl QisEngine {
                     self.qubit_prep_states.insert(*id, QubitPrepState::Pending);
                 }
                 Operation::ReleaseQubit { id } => {
-                    if let Some(state) = self.qubit_prep_states.get_mut(id)
-                        && *state != QubitPrepState::Released
-                    {
+                    if let Some(state) = self.qubit_prep_states.get_mut(id) {
                         *state = QubitPrepState::Released;
                     }
                 }

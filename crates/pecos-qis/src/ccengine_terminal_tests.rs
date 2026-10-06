@@ -567,7 +567,7 @@ fn drop_joins_real_worker_with_queued_unconsumed_result() {
     }
     assert!(engine.interface.is_none());
     assert!(!engine.dynamic_state.as_ref().unwrap().execution_complete);
-    // The unconsumed result owns the Helios interface; it drops here on the host.
+    // A queued, unconsumed result must not prevent the worker from being joined.
     drop(engine);
     counts.assert_joined();
 }
@@ -617,4 +617,63 @@ fn drop_joins_monte_carlo_workers_after_repeated_runs() {
 #[test]
 fn drop_joins_monte_carlo_workers_after_erroring_runs() {
     assert_monte_carlo_workers_joined(true);
+}
+
+#[derive(Clone, Debug)]
+struct FailOnMeasurement;
+
+impl Engine for FailOnMeasurement {
+    type Input = ByteMessage;
+    type Output = ByteMessage;
+
+    fn process(&mut self, commands: ByteMessage) -> Result<ByteMessage, PecosError> {
+        let gates = commands.quantum_ops()?;
+        if gates.is_empty() {
+            return Ok(ByteMessage::outcomes_builder().build());
+        }
+        assert!(gates.iter().any(|gate| gate.gate_type == GateType::MZ));
+        Err(PecosError::Processing(
+            "injected measurement failure".into(),
+        ))
+    }
+    fn reset(&mut self) -> Result<(), PecosError> {
+        Ok(())
+    }
+}
+
+impl pecos_engines::quantum::QuantumEngine for FailOnMeasurement {
+    fn set_seed(&mut self, _: u64) {}
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
+}
+
+#[test]
+fn drop_cancels_monte_carlo_workers_after_quantum_failure() {
+    use pecos_engines::monte_carlo::MonteCarloEngine;
+
+    let _env_lock = crate::test_env::ENV_MUTEX.lock().unwrap();
+    let mut engine = reset_fixture(ScheduledTransport::Off);
+    let source = program(PULSE_TAIL, true, true);
+    engine.set_dynamic_config(Box::new(crate::helios_interface_builder()), &source);
+    let counts = Arc::clone(&engine.worker_counts);
+    let mut monte_carlo = MonteCarloEngine::builder()
+        .with_classical_engine(Box::new(engine))
+        .with_quantum_engine(Box::new(FailOnMeasurement))
+        .build();
+    // The quantum side fails before supplying the measurement, leaving the
+    // program blocked on its read when each MonteCarlo clone is dropped.
+    let started = Instant::now();
+    let error = monte_carlo.run_with_workers(8, 2).unwrap_err();
+    let elapsed = started.elapsed();
+    assert!(error.to_string().contains("injected measurement failure"));
+    let live = counts.live.load(Ordering::SeqCst);
+    assert!(
+        elapsed < Duration::from_secs(5) && live == 0,
+        "run took {elapsed:?} and left {live} live workers"
+    );
+    counts.assert_joined();
 }

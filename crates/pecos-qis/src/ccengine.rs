@@ -207,7 +207,7 @@ struct PersistentDynamicWorker {
     result_rx: Mutex<Receiver<WorkerResult>>,
     /// Joined on drop after a bounded wait; detached with a warning on timeout.
     handle: Option<JoinHandle<()>>,
-    /// Only the thread wait is bounded, not the engine's cancellation request.
+    /// Deadline for `Drop`'s thread wait.
     drop_timeout: Duration,
     /// Retain cancellation failure for the detach diagnostic.
     abort_error: Option<InterfaceError>,
@@ -368,7 +368,13 @@ impl Drop for PersistentDynamicWorker {
             std::thread::sleep(remaining.min(Duration::from_millis(1)));
         }
         if let Err(panic) = handle.join() {
-            warn!("Dynamic worker panicked: {panic:?}");
+            if let Some(message) = panic.downcast_ref::<String>() {
+                warn!("Dynamic worker panicked: {message}");
+            } else if let Some(message) = panic.downcast_ref::<&str>() {
+                warn!("Dynamic worker panicked: {message}");
+            } else {
+                warn!("Dynamic worker panicked with a non-string payload");
+            }
         }
         #[cfg(test)]
         self.worker_counts.joined.fetch_add(1, Ordering::SeqCst);

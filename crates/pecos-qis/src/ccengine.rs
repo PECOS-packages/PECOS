@@ -20,6 +20,9 @@
 //! worker. Python `run` and `reset` share a simulation mutex, so Python reset
 //! cannot interrupt a running call. Dropping an active engine and recovering its
 //! original worker through `Clone` are outside this cancellation contract.
+//! Cancellation also transfers through in-process Selene QIS plugin frames that
+//! call PECOS entry points, so plugins must not hold locks or owned resources
+//! across a gate or measurement call.
 
 use crate::program::QisInterfaceBuilder;
 use crate::qis_interface::{BoxedInterface, DynamicSyncHandle, InterfaceError, ProgramFormat};
@@ -1865,9 +1868,12 @@ impl QisEngine {
             if let Some(failure) = failure
                 && !failure.cancelled()
             {
-                return Err(PecosError::Generic(format!(
-                    "dynamic QIS worker failed during reset: {failure}"
-                )));
+                if failure.teardown.is_some() || self.interface.is_none() {
+                    return Err(PecosError::Generic(format!(
+                        "dynamic QIS worker failed during reset: {failure}"
+                    )));
+                }
+                warn!("Discarding abandoned QIS shot execution failure during reset: {failure}");
             }
         }
         // A shot's interface must come back before its state is discarded; an

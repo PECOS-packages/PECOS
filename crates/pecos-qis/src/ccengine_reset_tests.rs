@@ -127,17 +127,16 @@ fn queued_and_consumed_results_need_no_abort_or_second_receive() {
     }
 }
 
-struct CancelledInterface {
+struct FailingInterface {
+    execution: pecos_qis_ffi_types::ProgramError,
     teardown_fails: bool,
 }
-impl crate::QisInterface for CancelledInterface {
+impl crate::QisInterface for FailingInterface {
     fn load_program(&mut self, _: &[u8], _: ProgramFormat) -> Result<(), InterfaceError> {
         Ok(())
     }
     fn collect_operations(&mut self) -> Result<OperationList, InterfaceError> {
-        Err(InterfaceError::ProgramError(
-            pecos_qis_ffi_types::ProgramError::Cancelled,
-        ))
+        Err(InterfaceError::ProgramError(self.execution.clone()))
     }
     fn execute_with_measurements(
         &mut self,
@@ -146,7 +145,7 @@ impl crate::QisInterface for CancelledInterface {
         self.collect_operations()
     }
     fn name(&self) -> &'static str {
-        "cancelled"
+        "failing"
     }
     fn reset(&mut self) -> Result<(), InterfaceError> {
         Ok(())
@@ -162,30 +161,37 @@ impl crate::QisInterface for CancelledInterface {
 
 #[test]
 fn cancellation_and_teardown_failure_remain_separate() {
-    for teardown in [false, true] {
-        let (mut engine, sender, _, _) = running();
-        let worker = PersistentDynamicWorker::new();
-        worker
-            .execute(Box::new(CancelledInterface {
-                teardown_fails: teardown,
-            }))
-            .unwrap();
-        let result = worker
-            .recv_result_until(Instant::now() + Duration::from_secs(2))
-            .unwrap();
-        queue(&sender, result);
-        let reset = engine.reset_all();
-        if teardown {
-            let error = reset.unwrap_err().to_string();
-            assert!(error.contains("cancelled"));
-            assert!(error.contains("exit failure"));
-            assert!(engine.reset_failure.is_some());
+    use pecos_qis_ffi_types::ProgramError;
+    for execution in [
+        ProgramError::Cancelled,
+        ProgramError::NamedResult("abandoned result failure".into()),
+    ] {
+        for teardown in [false, true] {
+            let (mut engine, sender, _, _) = running();
+            let worker = PersistentDynamicWorker::new();
+            worker
+                .execute(Box::new(FailingInterface {
+                    execution: execution.clone(),
+                    teardown_fails: teardown,
+                }))
+                .unwrap();
+            let result = worker
+                .recv_result_until(Instant::now() + Duration::from_secs(2))
+                .unwrap();
+            queue(&sender, result);
+            let reset = engine.reset_all();
+            if teardown {
+                let error = reset.unwrap_err().to_string();
+                assert!(error.contains(&execution.to_string()));
+                assert!(error.contains("exit failure"));
+                assert!(engine.reset_failure.is_some());
+                assert!(engine.interface.is_some());
+                engine.reset_all().unwrap();
+            } else {
+                reset.unwrap();
+            }
             assert!(engine.interface.is_some());
-            engine.reset_all().unwrap();
-        } else {
-            reset.unwrap();
         }
-        assert!(engine.interface.is_some());
     }
 }
 

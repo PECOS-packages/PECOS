@@ -29,7 +29,7 @@ pub struct QubitPair {
 // After MAX_COLLECTION_READS, `___read_future_bool` returns true to break out of
 // loops like "repeat_until_one" (while not result: ... result = measure(q)).
 thread_local! {
-    static COLLECTION_MODE_READ_COUNT: Cell<u32> = const { Cell::new(0) };
+    pub(super) static COLLECTION_MODE_READ_COUNT: Cell<u32> = const { Cell::new(0) };
 }
 
 /// Maximum number of measurement reads in collection mode before returning true.
@@ -685,6 +685,7 @@ pub unsafe extern "C-unwind" fn pecos_qis_trace_metadata_qubit_hugr(
 /// Called from C/LLVM code. Qubit must be a valid non-negative ID.
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn pecos_qis_runtime_barrier_qubit_hugr(qubit: i64) -> i64 {
+    checkpoint!(0);
     let _ = checked_ffi_id!(
         stringify!(pecos_qis_runtime_barrier_qubit_hugr),
         qubit,
@@ -709,6 +710,7 @@ pub unsafe extern "C-unwind" fn pecos_qis_runtime_barrier_qubits2_hugr(
     first: i64,
     second: i64,
 ) -> QubitPair {
+    checkpoint!(QubitPair::default());
     let _ = checked_ffi_id!(
         stringify!(pecos_qis_runtime_barrier_qubits2_hugr),
         first,

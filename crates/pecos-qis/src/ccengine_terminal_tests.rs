@@ -282,6 +282,58 @@ fn finish_reset_shot(
 }
 
 #[test]
+fn reset_discards_real_worker_execution_failure_and_reuses_interface() {
+    let _env_lock = crate::test_env::ENV_MUTEX.lock().unwrap();
+    let mut engine = reset_fixture(ScheduledTransport::Off);
+    let source = program(
+        &format!(
+            "br i1 %read, label %success, label %failure\n\
+             failure:\n\
+             call void @panic(i32 1042, ptr null)\n\
+             ret i64 0\n\
+             success:\n{PULSE_TAIL}"
+        ),
+        true,
+        true,
+    ) + "\ndeclare void @panic(i32, ptr)\n";
+    engine
+        .load_program(source.as_bytes(), ProgramFormat::LlvmIrText)
+        .unwrap();
+    let stage = engine.start(()).unwrap();
+    assert_waiting(&mut engine, &stage);
+    // Let the abandoned shot fail without consuming its worker result through
+    // continue_processing/check_worker_complete. Reset must reclaim it itself.
+    engine.set_dynamic_result(0, 0).unwrap();
+    engine.signal_dynamic_result_ready().unwrap();
+    let wait_started = Instant::now();
+    assert_eq!(engine.wait_for_result_needed(2_000), None);
+    assert!(wait_started.elapsed() < Duration::from_secs(2));
+    let worker_id = engine
+        .persistent_worker
+        .as_ref()
+        .unwrap()
+        .handle
+        .thread()
+        .id();
+    engine.reset_all().unwrap();
+    assert!(engine.interface.is_some());
+    assert!(engine.reset_failure.is_none());
+    assert!(engine.dynamic_state.is_none());
+    let stage = engine.start(()).unwrap();
+    assert_eq!(
+        engine
+            .persistent_worker
+            .as_ref()
+            .unwrap()
+            .handle
+            .thread()
+            .id(),
+        worker_id
+    );
+    finish_reset_shot(&mut engine, &mut StateVecEngine::new(2), stage);
+}
+
+#[test]
 fn midshot_reset_reuses_real_worker_through_every_entry_point() {
     type ResetFn = fn(&mut QisEngine) -> Result<(), PecosError>;
     let _env_lock = crate::test_env::ENV_MUTEX.lock().unwrap();

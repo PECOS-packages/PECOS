@@ -50,6 +50,20 @@ fn cancellation_before_wait_survives_output_resets() {
     assert!(start.elapsed() < std::time::Duration::from_millis(500));
 }
 
+// Wake a stalled reader on failure so it can be joined before freeing its context.
+// Return the original timeout: this cleanup must never make a broken wake pass.
+fn receive_cancelled_reader<T>(
+    ctx: &Context,
+    completed: &std::sync::mpsc::Receiver<T>,
+) -> Result<T, std::sync::mpsc::RecvTimeoutError> {
+    let result = completed.recv_timeout(std::time::Duration::from_secs(1));
+    if result.is_err() {
+        ctx.get().sync_state.lock().unwrap().worker_complete = true;
+        ctx.get().sync_condvar.notify_all();
+    }
+    result
+}
+
 #[test]
 fn cancellation_wakes_wait_and_wins_ready_race() {
     if !crate::test_env::run_test_in_child(
@@ -59,38 +73,94 @@ fn cancellation_wakes_wait_and_wins_ready_race() {
     }
     for ready in [false, true] {
         let ctx = Context::new();
-        let address = ctx.0 as usize;
-        let (done, completed) = std::sync::mpsc::channel();
-        let worker = std::thread::spawn(move || {
-            // SAFETY: Parent keeps the context alive until this worker joins.
-            unsafe { pecos_register_execution_context(address as *mut ExecutionContext) };
-            // SAFETY: Valid result ID; no guard means cancellation returns zero.
-            let result = unsafe { ___read_future_uint(7) };
-            // SAFETY: Clear this worker's registration before its context is freed.
-            unsafe { pecos_register_execution_context(std::ptr::null_mut()) };
-            done.send(result).unwrap();
-            result
+        std::thread::scope(|scope| {
+            let address = ctx.0 as usize;
+            let (done, completed) = std::sync::mpsc::channel();
+            let worker = scope.spawn(move || {
+                // SAFETY: Parent keeps the context alive until this worker joins.
+                unsafe { pecos_register_execution_context(address as *mut ExecutionContext) };
+                // SAFETY: Valid result ID; no guard means cancellation returns zero.
+                let result = unsafe { ___read_future_uint(7) };
+                // SAFETY: Clear this worker's registration before its context is freed.
+                unsafe { pecos_register_execution_context(std::ptr::null_mut()) };
+                done.send(result).unwrap();
+                result
+            });
+            assert_eq!(pecos_wait_for_need_result(2_000), 7);
+            // Let the reader settle into its wait, and prove it has not returned.
+            assert_eq!(
+                completed.recv_timeout(std::time::Duration::from_millis(20)),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+            );
+            ctx.cancel();
+            // Readiness racing with the cancellation wake must not undo cancellation.
+            ctx.get().sync_state.lock().unwrap().result_ready = ready;
+            let result = receive_cancelled_reader(&ctx, &completed);
+            assert_eq!(worker.join().unwrap(), 0);
+            assert_eq!(result.unwrap(), 0);
+            assert_eq!(
+                *ctx.get().program_error.lock().unwrap(),
+                Some(ProgramError::Cancelled)
+            );
         });
-        assert_eq!(pecos_wait_for_need_result(2_000), 7);
-        {
-            let mut state = ctx.get().sync_state.lock().unwrap();
-            // Publish readiness and cancellation together so readiness cannot win.
-            state.result_ready = ready;
-            state.cancellation = CancellationState::Requested;
-            ctx.get().cancel_requested.store(true, Ordering::Release);
-        }
-        ctx.get().sync_condvar.notify_all();
-        assert_eq!(
-            completed
-                .recv_timeout(std::time::Duration::from_secs(1))
-                .unwrap(),
-            0
-        );
-        assert_eq!(worker.join().unwrap(), 0);
-        assert_eq!(
-            *ctx.get().program_error.lock().unwrap(),
-            Some(ProgramError::Cancelled)
-        );
+    }
+}
+
+#[test]
+fn bool_cancellation_after_wait_precedes_ready_result_and_collection_fallback() {
+    if !crate::test_env::run_test_in_child(
+        "cancellation_tests::bool_cancellation_after_wait_precedes_ready_result_and_collection_fallback",
+    ) {
+        return;
+    }
+    for ready in [false, true] {
+        let ctx = Context::new();
+        std::thread::scope(|scope| {
+            let address = ctx.0 as usize;
+            let (done, completed) = std::sync::mpsc::channel();
+            let worker = scope.spawn(move || {
+                // SAFETY: Parent owns the context until join. The returning handler
+                // only inspects borrows on this thread and is cleared before exit.
+                unsafe {
+                    pecos_register_execution_context(address as *mut ExecutionContext);
+                    pecos_set_program_panic_handler(Some(inspect_transfer));
+                }
+                assert_eq!(COLLECTION_MODE_READ_COUNT.get(), 0);
+                // SAFETY: Valid result ID with a live registered context.
+                let result = unsafe { ___read_future_bool(7) };
+                let observations = (result, TRANSFERS.get(), COLLECTION_MODE_READ_COUNT.get());
+                // SAFETY: Clear the thread's handler and registration before exit.
+                unsafe {
+                    pecos_set_program_panic_handler(None);
+                    pecos_register_execution_context(std::ptr::null_mut());
+                }
+                done.send(observations).unwrap();
+            });
+            assert_eq!(pecos_wait_for_need_result(2_000), 7);
+            assert_eq!(
+                completed.recv_timeout(std::time::Duration::from_millis(20)),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+            );
+            if ready {
+                pecos_set_measurement_outcome(7, 1);
+            }
+            {
+                let mut state = ctx.get().sync_state.lock().unwrap();
+                // Publish both under the wait's mutex to exercise a deterministic
+                // ready-result/cancel race. The export's wake is tested separately.
+                state.result_ready = ready;
+                state.cancellation = CancellationState::Requested;
+                ctx.get().cancel_requested.store(true, Ordering::Release);
+            }
+            ctx.get().sync_condvar.notify_all();
+            let observations = receive_cancelled_reader(&ctx, &completed);
+            worker.join().unwrap();
+            assert_eq!(observations.unwrap(), (false, 1, 0));
+            assert_eq!(
+                *ctx.get().program_error.lock().unwrap(),
+                Some(ProgramError::Cancelled)
+            );
+        });
     }
 }
 
@@ -102,6 +172,7 @@ unsafe extern "C-unwind" fn inspect_transfer() {
     assert!(ctx.sync_state.try_lock().is_ok());
     assert!(ctx.program_error.try_lock().is_ok());
     with_interface(|_| ());
+    EXECUTOR.with(|executor| assert!(executor.try_borrow_mut().is_ok()));
     TRANSFERS.set(TRANSFERS.get() + 1);
 }
 
@@ -155,8 +226,14 @@ fn cancellation_after_callback_returns_releases_executor_borrow() {
         );
         BTreeMap::from([(7, true)])
     });
-    // SAFETY: Valid ID and no installed transfer handler.
-    assert_eq!(unsafe { __quantum__rt__result_get_one(7) }, 0);
+    TRANSFERS.set(0);
+    // SAFETY: The returning handler inspects borrows on this thread and is
+    // cleared by Context::drop. The result ID is valid.
+    unsafe {
+        pecos_set_program_panic_handler(Some(inspect_transfer));
+        assert_eq!(__quantum__rt__result_get_one(7), 0);
+    }
+    assert_eq!(TRANSFERS.get(), 1);
     clear_quantum_executor();
     assert_eq!(
         *ctx.get().program_error.lock().unwrap(),
@@ -184,6 +261,8 @@ fn cancellation_checkpoints_prevent_operation_submission() {
         __quantum__qis__x__body(0);
         __quantum__qis__r1xy__body(0.1, 0.2, 0);
         ___rpp(0, 1, 0.1, 0.2);
+        pecos_qis_runtime_barrier_qubit_hugr(1);
+        pecos_qis_runtime_barrier_qubits2_hugr(1, 2);
         assert_eq!(__quantum__rt__qubit_allocate(), 0);
         assert_eq!(__quantum__qis__m__body(0, 7), 0);
         assert_eq!(___lazy_measure(0), 0);

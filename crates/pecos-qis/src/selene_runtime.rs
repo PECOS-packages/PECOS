@@ -3327,17 +3327,27 @@ impl QisRuntime for SeleneRuntime {
             && let Some(lib) = &self.library
             && let Some(instance) = self.instance
         {
-            unsafe {
-                // Missing shot_end fails closed like the other lifecycle
-                // hooks: the plugin's own finalization validation is part of
-                // what shot completion certifies.
-                let shot_end_fn = Self::runtime_plugin_descriptor(lib)?.shot_end_fn;
-                let errno = shot_end_fn(instance);
-                if errno != 0 {
-                    return Err(RuntimeError::FfiError(format!(
-                        "selene_runtime_shot_end failed with errno {errno}"
-                    )));
-                }
+            // Missing shot_end fails closed like the other lifecycle hooks: the
+            // plugin's own finalization validation is part of what shot
+            // completion certifies.
+            let finalized = unsafe {
+                Self::runtime_plugin_descriptor(lib).and_then(|descriptor| {
+                    let errno = (descriptor.shot_end_fn)(instance);
+                    if errno == 0 {
+                        Ok(())
+                    } else {
+                        Err(RuntimeError::FfiError(format!(
+                            "selene_runtime_shot_end failed with errno {errno}"
+                        )))
+                    }
+                })
+            };
+            if let Err(error) = finalized {
+                // The active shot is already taken and the plugin may have
+                // finalized part of it, so a retry must not certify the shot:
+                // block every operation until a reset succeeds.
+                self.latch_batch_failure(error.clone());
+                return Err(error);
             }
         }
         self.pending_shot_start = None;
@@ -4947,6 +4957,80 @@ mod tests {
             let current = runtime.instance.expect("re-initialized instance") as usize;
             assert_eq!(current, instances[1]);
             assert_ne!(current, ended);
+        }
+    }
+
+    #[cfg(feature = "selene-runtimes")]
+    #[test]
+    fn failed_shot_end_is_never_certified_on_retry() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static SHOT_END_CALLS: AtomicUsize = AtomicUsize::new(0);
+        unsafe extern "C" fn failing_shot_end(_: *mut c_void) -> i32 {
+            SHOT_END_CALLS.fetch_add(1, Ordering::SeqCst);
+            9
+        }
+
+        // The fixture library holds one process-wide descriptor, so install the
+        // faulty one only in a child process.
+        const CHILD_ENV: &str = "PECOS_TEST_FAILED_SHOT_END";
+        if std::env::var_os(CHILD_ENV).is_none() {
+            crate::test_env::run_test_in_child(
+                "selene_runtime::tests::failed_shot_end_is_never_certified_on_retry",
+                &[(CHILD_ENV, "1".as_ref())],
+            );
+            return;
+        }
+
+        let executable = std::env::current_exe().unwrap();
+        let plugin = crate::selene_runtimes::find_library_in_dir(
+            executable.parent().unwrap(),
+            pecos_qis_test_runtime::LIBRARY_NAME,
+        )
+        .expect("Cargo-built runtime fixture beside the test executable");
+        let public_runtime = crate::selene_runtimes::selene_simple_runtime().unwrap();
+        // SAFETY: Both libraries stay loaded and the boxed descriptor outlives the
+        // runtimes below. Every callback has its original ABI.
+        let public_library =
+            unsafe { libloading::Library::new(&public_runtime.plugin_path).unwrap() };
+        let mut descriptor =
+            Box::new(unsafe { SeleneRuntime::runtime_plugin_descriptor(&public_library).unwrap() });
+        descriptor.shot_end_fn = failing_shot_end;
+        let fixture = unsafe { libloading::Library::new(&plugin).unwrap() };
+        unsafe {
+            let set = fixture
+                .get::<unsafe extern "C" fn(*mut c_void)>(b"set_descriptor")
+                .unwrap();
+            set((&raw mut *descriptor).cast());
+        }
+        for mode in LoweringRoute::ALL {
+            SHOT_END_CALLS.store(0, Ordering::SeqCst);
+            let mut runtime = SeleneRuntime::new(&plugin);
+            runtime.init_args.clone_from(&public_runtime.init_args);
+            runtime.set_num_qubits(1);
+            runtime.shot_start(0, None).unwrap();
+            mode.lower(&mut runtime, &[Operation::AllocateQubit { id: 0 }])
+                .unwrap();
+            mode.drain(&mut runtime);
+
+            let error = runtime.shot_end().unwrap_err();
+            assert!(
+                error.to_string().contains("shot_end failed with errno 9"),
+                "{error}"
+            );
+            assert_eq!(SHOT_END_CALLS.load(Ordering::SeqCst), 1);
+            // The shot is not certified on retry, and nothing else runs on the
+            // possibly half-finalized plugin until a reset succeeds.
+            assert!(runtime.shot_end().is_err());
+            assert_eq!(SHOT_END_CALLS.load(Ordering::SeqCst), 1);
+            assert!(
+                mode.lower(&mut runtime, &[Operation::AllocateQubit { id: 1 }])
+                    .is_err()
+            );
+
+            runtime.reset().unwrap();
+            runtime.shot_start(1, None).unwrap();
+            mode.lower(&mut runtime, &[Operation::AllocateQubit { id: 0 }])
+                .unwrap();
         }
     }
 

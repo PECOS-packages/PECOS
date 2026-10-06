@@ -1419,9 +1419,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(
-        expected = "Cannot mix quantum operations with other message types"
-    )]
+    #[should_panic(expected = "Cannot mix quantum operations with other message types")]
     fn test_builder_type_checking() {
         // Create a builder for measurement outcomes
         let mut builder = ByteMessageBuilder::new();

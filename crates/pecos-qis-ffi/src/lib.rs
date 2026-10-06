@@ -962,10 +962,16 @@ fn read_dynamic_result(result_id: u64, boolean: bool) -> Option<u64> {
         Err(reason) => {
             if let Some(ctx) = get_execution_context() {
                 // SAFETY: The registered context is live throughout execution.
-                unsafe { &*ctx }.record_program_error(ProgramError::ResultUnavailable {
-                    result_id,
-                    reason: reason.to_owned(),
-                });
+                let ctx = unsafe { &*ctx };
+                let error = if ctx.cancel_requested.load(Ordering::Acquire) {
+                    ProgramError::Cancelled
+                } else {
+                    ProgramError::ResultUnavailable {
+                        result_id,
+                        reason: reason.to_owned(),
+                    }
+                };
+                ctx.record_program_error(error);
             }
             None
         }
@@ -1079,7 +1085,8 @@ pub extern "C" fn pecos_clear_pending_operations() {
 ///
 /// Returns a pointer to a newly allocated `OperationCollector` with the pending operations.
 /// The caller is responsible for freeing this via `pecos_free_operations`.
-/// Returns null if no operations are available or no context is registered.
+/// Returns an allocated empty collector when no operations are pending.
+/// Returns null when no context is registered or the pending-operations lock is poisoned.
 ///
 /// # Safety
 /// This function is safe to call from any thread. The returned pointer must be freed.
@@ -1101,10 +1108,8 @@ pub extern "C" fn pecos_get_pending_operations() -> *mut OperationCollector {
         Err(_) => return std::ptr::null_mut(),
     };
 
-    if ops.is_empty() {
-        return std::ptr::null_mut();
-    }
-
+    // An allocated empty collector is a successful import. Null is reserved
+    // for a missing context or a poisoned pending-operations mutex.
     let mut collector = OperationCollector::new();
     collector.operations = ops;
     Box::into_raw(Box::new(collector))
@@ -1523,6 +1528,9 @@ mod tests {
 
     #[test]
     fn test_pending_operations_storage() {
+        if !crate::test_env::run_test_in_child("tests::test_pending_operations_storage") {
+            return;
+        }
         let ctx = setup_context();
 
         let context = unsafe { &*ctx };
@@ -1547,18 +1555,25 @@ mod tests {
 
         // Second read should be empty because the handoff drains pending ops.
         let ptr = pecos_get_pending_operations();
-        assert!(ptr.is_null());
+        assert!(!ptr.is_null());
+        assert_eq!(unsafe { &*ptr }.operations, []);
+        unsafe { pecos_free_operations(ptr) };
 
         teardown_context(ctx);
     }
 
     #[test]
     fn test_pending_operations_empty() {
+        if !crate::test_env::run_test_in_child("tests::test_pending_operations_empty") {
+            return;
+        }
         let ctx = setup_context();
 
-        // When no operations, should return null
+        // Successful empty imports are distinct from unavailable imports.
         let ptr = pecos_get_pending_operations();
-        assert!(ptr.is_null());
+        assert!(!ptr.is_null());
+        assert_eq!(unsafe { &*ptr }.operations, []);
+        unsafe { pecos_free_operations(ptr) };
 
         teardown_context(ctx);
     }

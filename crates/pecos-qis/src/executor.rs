@@ -332,7 +332,9 @@ impl DynamicSyncHandle for HeliosSyncHandle {
         let collector = unsafe {
             let ptr = get_ops_fn();
             if ptr.is_null() {
-                return Ok(Vec::new());
+                return Err(InterfaceError::ExecutionError(
+                    "pending operations unavailable: missing context or poisoned pending-operations lock".into(),
+                ));
             }
             Box::from_raw(ptr)
         };
@@ -2494,7 +2496,9 @@ impl QisInterface for QisHeliosInterface {
         let collector = unsafe {
             let ptr = get_ops_fn();
             if ptr.is_null() {
-                return Ok(Vec::new());
+                return Err(InterfaceError::ExecutionError(
+                    "thread-local pending operations unavailable".into(),
+                ));
             }
             Box::from_raw(ptr)
         };
@@ -2688,6 +2692,24 @@ mod tests {
     }
 
     #[test]
+    fn pending_operations_import_reports_unavailable_and_accepts_empty() {
+        let _env_lock = ENV_MUTEX.lock().expect("environment lock");
+        let ffi = QisHeliosInterface::get_qis_ffi_lib_singleton().unwrap();
+        let register: Symbol<RegisterExecutionContextFn> =
+            unsafe { ffi.get(b"pecos_register_execution_context\0").unwrap() };
+        unsafe { register(std::ptr::null_mut()) };
+        let error = HeliosSyncHandle::new()
+            .get_pending_operations()
+            .unwrap_err();
+        assert!(error.to_string().contains("pending operations unavailable"));
+        let mut interface = QisHeliosInterface::new();
+        interface.enable_dynamic_mode().unwrap();
+        let handle = interface.get_sync_handle().unwrap();
+        assert_eq!(handle.get_pending_operations().unwrap(), []);
+        interface.disable_dynamic_mode().unwrap();
+    }
+
+    #[test]
     fn guarded_cancellation_is_typed_and_fresh_context_reuses_interface() {
         let _env_lock = ENV_MUTEX.lock().expect("environment lock");
         let ffi = QisHeliosInterface::get_qis_ffi_lib_singleton().unwrap();
@@ -2701,92 +2723,119 @@ mod tests {
         // The 8-byte `SeleneBoolResult` returns in one integer register on
         // every 64-bit target. The 16-byte `SeleneU64Result` returns in two
         // registers on SysV and AArch64 but through a hidden pointer on Windows.
+        // `RID` stands for the result ID each shot reads.
         #[cfg(not(windows))]
         let selene_u64 = (
             "declare {i32, i64} @selene_future_read_u64(ptr, i64)",
-            "%value = call {i32, i64} @selene_future_read_u64(ptr null, i64 0)",
+            "%value = call {i32, i64} @selene_future_read_u64(ptr null, i64 RID)",
         );
         #[cfg(windows)]
         let selene_u64 = (
             "declare void @selene_future_read_u64(ptr sret({i32, i64}), ptr, i64)",
             "%out = alloca {i32, i64}
-                    call void @selene_future_read_u64(ptr sret({i32, i64}) %out, ptr null, i64 0)",
+                    call void @selene_future_read_u64(ptr sret({i32, i64}) %out, ptr null, i64 RID)",
         );
         let reads = [
             (
                 "___read_future_bool",
                 "declare i1 @___read_future_bool(i64)",
-                "%value = call i1 @___read_future_bool(i64 0)",
+                "%value = call i1 @___read_future_bool(i64 RID)",
             ),
             (
                 "___read_future_uint",
                 "declare i64 @___read_future_uint(i64)",
-                "%value = call i64 @___read_future_uint(i64 0)",
+                "%value = call i64 @___read_future_uint(i64 RID)",
             ),
             (
                 "__quantum__rt__result_get_one",
                 "declare i32 @__quantum__rt__result_get_one(i64)",
-                "%value = call i32 @__quantum__rt__result_get_one(i64 0)",
+                "%value = call i32 @__quantum__rt__result_get_one(i64 RID)",
             ),
             (
                 "selene_future_read_bool",
                 "declare i64 @selene_future_read_bool(ptr, i64)",
-                "%value = call i64 @selene_future_read_bool(ptr null, i64 0)",
+                "%value = call i64 @selene_future_read_bool(ptr null, i64 RID)",
             ),
             ("selene_future_read_u64", selene_u64.0, selene_u64.1),
         ];
+        let mut missed_checkpoints = Vec::new();
         for (reader, declaration, call) in reads {
-            let source = format!(
-                r"
+            for cancelled_id in ["0", "-1"] {
+                let fresh_call = call.replace("RID", "0");
+                let source = format!(
+                    r"
                 declare ptr @heap_alloc(i64)
                 declare i32 @__quantum__qis__m__body(i64, i64)
                 {declaration}
                 define i64 @qmain(i64 %shot) {{
                     %allocation = call ptr @heap_alloc(i64 16)
                     %measurement = call i32 @__quantum__qis__m__body(i64 0, i64 0)
-                    {call}
+                    {fresh_call}
                     ret i64 0
                 }}
             "
-            );
-            let mut interface = QisHeliosInterface::new();
-            interface
-                .load_program(source.as_bytes(), ProgramFormat::LlvmIrText)
-                .unwrap();
-            interface.enable_dynamic_mode().unwrap();
-            let ctx = interface.execution_context.as_ref().unwrap().0;
-            // SAFETY: Interface owns this context until the next enable call.
-            assert_eq!(unsafe { abort(ctx) }, 0);
-            let error = interface
-                .execute_with_measurements(BTreeMap::from([(0, true)]))
-                .unwrap_err();
-            assert!(
-                matches!(
+                );
+                let mut interface = QisHeliosInterface::new();
+                // No gate may intercept cancellation before the reader. The
+                // invalid-ID case also distinguishes its entry checkpoint from
+                // later checkpoints in the shared dynamic read path.
+                let cancelled_call = call.replace("RID", cancelled_id);
+                let cancelled_source = format!(
+                    r"
+                declare ptr @heap_alloc(i64)
+                {declaration}
+                define i64 @qmain(i64 %shot) {{
+                    %allocation = call ptr @heap_alloc(i64 16)
+                    {cancelled_call}
+                    ret i64 0
+                }}
+            "
+                );
+                interface
+                    .load_program(cancelled_source.as_bytes(), ProgramFormat::LlvmIrText)
+                    .unwrap();
+                interface.enable_dynamic_mode().unwrap();
+                let ctx = interface.execution_context.as_ref().unwrap().0;
+                // SAFETY: Interface owns this context until the next enable call.
+                assert_eq!(unsafe { abort(ctx) }, 0);
+                let error = interface
+                    .execute_with_measurements(BTreeMap::from([(0, true)]))
+                    .unwrap_err();
+                if !matches!(
                     error,
                     InterfaceError::ProgramError(pecos_qis_ffi_types::ProgramError::Cancelled)
-                ),
-                "{reader}: {error}"
-            );
-            // SAFETY: Query the process counter after the guard has cleaned up.
-            assert_eq!(unsafe { live() }, 0);
-            interface.disable_dynamic_mode().unwrap();
-            interface.enable_dynamic_mode().unwrap();
-            // The fresh shot queues a real measurement; only its host reply
-            // may satisfy the read. Pre-populating an unmeasured ID is invalid.
-            let handle = interface.get_sync_handle().unwrap();
-            let worker = std::thread::spawn(move || {
-                let output = interface.execute_with_measurements(BTreeMap::new());
-                (interface, output)
-            });
-            assert_eq!(handle.wait_for_need_result(2_000), Some(0));
-            handle.set_measurement_result(0, true).unwrap();
-            handle.signal_result_ready().unwrap();
-            let (mut interface, output) = worker.join().unwrap();
-            output.unwrap();
-            interface.disable_dynamic_mode().unwrap();
-            // SAFETY: Query the process counter after normal guard cleanup.
-            assert_eq!(unsafe { live() }, 0);
+                ) {
+                    missed_checkpoints.push(format!("{reader}(result {cancelled_id}): {error}"));
+                }
+                // SAFETY: Query the process counter after the guard has cleaned up.
+                assert_eq!(unsafe { live() }, 0);
+                interface.disable_dynamic_mode().unwrap();
+                interface
+                    .load_program(source.as_bytes(), ProgramFormat::LlvmIrText)
+                    .unwrap();
+                interface.enable_dynamic_mode().unwrap();
+                // The fresh shot queues a real measurement; only its host reply
+                // may satisfy the read. Pre-populating an unmeasured ID is invalid.
+                let handle = interface.get_sync_handle().unwrap();
+                let worker = std::thread::spawn(move || {
+                    let output = interface.execute_with_measurements(BTreeMap::new());
+                    (interface, output)
+                });
+                assert_eq!(handle.wait_for_need_result(2_000), Some(0));
+                handle.set_measurement_result(0, true).unwrap();
+                handle.signal_result_ready().unwrap();
+                let (mut interface, output) = worker.join().unwrap();
+                output.unwrap();
+                interface.disable_dynamic_mode().unwrap();
+                // SAFETY: Query the process counter after normal guard cleanup.
+                assert_eq!(unsafe { live() }, 0);
+            }
         }
+        assert_eq!(
+            missed_checkpoints,
+            Vec::<String>::new(),
+            "missed reader entry checkpoints"
+        );
     }
 
     fn is_qir_text(ir: &str) -> bool {

@@ -847,3 +847,323 @@ fn never_measured_failure_surfaces_from_start_and_continue() {
         }
     }
 }
+
+/// Scheduler fixture that accepts source operations and releases them only on
+/// the runtime's normal barrier/drain. It can also discard one measured slot.
+#[derive(Clone, Default)]
+struct DeferredReadRuntime {
+    state: crate::runtime::ClassicalState,
+    pending: Vec<QuantumOp>,
+    discard: Option<usize>,
+    batch_index: usize,
+}
+impl DeferredReadRuntime {
+    fn accept(&mut self, operations: &[Operation]) {
+        for op in operations {
+            if let Operation::Quantum(op) = op {
+                if matches!(op, QuantumOp::Measure(_, id) if Some(*id) == self.discard) {
+                    continue;
+                }
+                self.pending.push(op.clone());
+            }
+        }
+    }
+    fn scheduled_drain(&mut self) -> Vec<crate::scheduled::ScheduledBatch> {
+        use crate::scheduled::{RuntimeScheduledOp as Op, ScheduledBatch, ScheduledMeasurement};
+        if self.pending.is_empty() {
+            return vec![];
+        }
+        let mut operations = Vec::new();
+        let mut measurements = Vec::new();
+        for op in std::mem::take(&mut self.pending) {
+            let scheduled = match op {
+                QuantumOp::X(q) => Op::Rxy {
+                    qubit_id: q as u64,
+                    theta: std::f64::consts::PI,
+                    phi: 0.0,
+                },
+                QuantumOp::Reset(q) => Op::Reset { qubit_id: q as u64 },
+                QuantumOp::Measure(q, r) => {
+                    measurements.push(ScheduledMeasurement {
+                        operation_index: operations.len(),
+                        runtime_result: r as u64,
+                        program_result: r,
+                        leakage_aware: false,
+                    });
+                    Op::Measure {
+                        qubit_id: q as u64,
+                        result_id: r as u64,
+                    }
+                }
+                op => panic!("unexpected test operation {op:?}"),
+            };
+            operations.push(scheduled);
+        }
+        let batch_index = self.batch_index;
+        self.batch_index += 1;
+        vec![ScheduledBatch {
+            runtime_shot_id: self.state.shot_id.unwrap(),
+            batch_index,
+            start_time_nanos: 0,
+            duration_nanos: 0,
+            operations,
+            measurements,
+        }]
+    }
+}
+impl crate::runtime::QisRuntime for DeferredReadRuntime {
+    fn load_interface(&mut self, _: OperationList) -> crate::runtime::Result<()> {
+        Ok(())
+    }
+    fn execute_until_quantum(&mut self) -> crate::runtime::Result<Option<Vec<QuantumOp>>> {
+        Ok(None)
+    }
+    fn provide_measurements(
+        &mut self,
+        values: BTreeMap<usize, bool>,
+    ) -> crate::runtime::Result<()> {
+        self.state.measurements.extend(values);
+        Ok(())
+    }
+    fn get_classical_state(&self) -> &crate::runtime::ClassicalState {
+        &self.state
+    }
+    fn get_classical_state_mut(&mut self) -> &mut crate::runtime::ClassicalState {
+        &mut self.state
+    }
+    fn is_complete(&self) -> bool {
+        true
+    }
+    fn num_qubits(&self) -> usize {
+        2
+    }
+    fn supports_operation_lowering(&self) -> bool {
+        true
+    }
+    fn lower_operations(
+        &mut self,
+        operations: &[Operation],
+    ) -> crate::runtime::Result<Vec<QuantumOp>> {
+        self.accept(operations);
+        if operations.contains(&Operation::Barrier) {
+            Ok(std::mem::take(&mut self.pending))
+        } else {
+            Ok(vec![])
+        }
+    }
+    fn drain_pending_operations(&mut self) -> crate::runtime::Result<Vec<QuantumOp>> {
+        Ok(std::mem::take(&mut self.pending))
+    }
+    fn lower_scheduled_operations(
+        &mut self,
+        operations: &[Operation],
+    ) -> crate::runtime::Result<Vec<crate::scheduled::ScheduledBatch>> {
+        self.accept(operations);
+        Ok(vec![])
+    }
+    fn drain_pending_scheduled_operations(
+        &mut self,
+    ) -> crate::runtime::Result<Vec<crate::scheduled::ScheduledBatch>> {
+        Ok(self.scheduled_drain())
+    }
+}
+
+#[test]
+fn unsatisfiable_measured_request_fails_from_start_and_continue() {
+    let _env_lock = crate::test_env::ENV_MUTEX.lock().unwrap();
+    for mode in [
+        ScheduledTransport::Off,
+        ScheduledTransport::V3,
+        ScheduledTransport::V4,
+    ] {
+        for after_first_read in [false, true] {
+            let prefix = if after_first_read {
+                "%m0 = call i32 @__quantum__qis__m__body(i64 0, i64 0)\n%r0 = call i1 @___read_future_bool(i64 0)"
+            } else {
+                ""
+            };
+            let source = format!(
+                r#"
+                declare i32 @__quantum__qis__m__body(i64, i64)
+                declare i1 @___read_future_bool(i64)
+                define void @main() #0 {{
+                    {prefix}
+                    %m = call i32 @__quantum__qis__m__body(i64 0, i64 7)
+                    %r = call i1 @___read_future_bool(i64 7)
+                    ret void
+                }}
+                attributes #0 = {{ "EntryPoint" }}
+            "#
+            );
+            let mut engine = QisEngine::new(
+                Box::new(crate::QisHeliosInterface::new()),
+                Box::new(DeferredReadRuntime {
+                    discard: Some(7),
+                    ..DeferredReadRuntime::default()
+                }),
+            );
+            engine.scheduled_transport = mode;
+            engine.set_num_qubits_hint(2);
+            engine
+                .load_program(source.as_bytes(), ProgramFormat::LlvmIrText)
+                .unwrap();
+            // Discarded measurement 7 may still emit a lifetime prep; simulate
+            // that work, then require the next poll to fail instead of spinning.
+            let mut stage = engine.start(());
+            let mut polls = 0;
+            let started = Instant::now();
+            while let Ok(EngineStage::NeedsProcessing(_)) = &stage {
+                polls += 1;
+                if polls > 3 {
+                    break;
+                }
+                assert!(!engine.measurement_mapping.contains(&7));
+                let outcomes = ByteMessage::outcomes_builder()
+                    .add_outcomes(&vec![0; engine.measurement_mapping.len()])
+                    .build();
+                // Scheduled commands are intentionally not decoded by a flat engine.
+                stage = engine.continue_processing(outcomes);
+            }
+            let retry = engine.continue_processing(ByteMessage::outcomes_builder().build());
+            engine.reset_all().unwrap();
+            assert!(started.elapsed() < Duration::from_secs(5));
+            let error = stage
+                .err()
+                .expect("an unsatisfiable measured read must fail promptly");
+            assert!(
+                error
+                    .to_string()
+                    .contains("worker requested result 7 with no pending measurement"),
+                "{error}"
+            );
+            assert_eq!(
+                retry.err().expect("failure must stay latched").to_string(),
+                error.to_string()
+            );
+        }
+    }
+}
+
+#[test]
+fn deferred_measurement_reads_and_final_tail_share_the_runtime_drain() {
+    use pecos_engines::noise::IntoNoiseModel;
+    use pecos_engines::quantum_system::QuantumSystem;
+    use pecos_engines::runtime_frame::ShotContext;
+    use pecos_engines::scheduled_events::{
+        ScheduledBatchAdapter, ScheduledEventBatch, ScheduledEventIdleZ, ScheduledEventOp,
+        ScheduledGateBuffer,
+    };
+    use pecos_engines::scheduled_frame::ScheduledIdleZ;
+    struct Gates;
+    impl ScheduledBatchAdapter for Gates {
+        fn validate(&self, _: &ScheduledEventBatch) -> Result<(), PecosError> {
+            Ok(())
+        }
+        fn translate(
+            &mut self,
+            batch: &ScheduledEventBatch,
+            output: &mut ScheduledGateBuffer<'_>,
+        ) -> Result<(), PecosError> {
+            for op in &batch.operations {
+                let ScheduledEventOp::Gate(gate) = op else {
+                    panic!("unexpected custom event")
+                };
+                output.push(gate.as_ref().clone())?;
+            }
+            Ok(())
+        }
+    }
+    let _env_lock = crate::test_env::ENV_MUTEX.lock().unwrap();
+    let source = r#"
+        declare void @__quantum__qis__x__body(i64)
+        declare i32 @__quantum__qis__m__body(i64, i64)
+        declare i1 @___read_future_bool(i64)
+        declare void @panic(i32, ptr)
+        define void @main() #0 {
+            call void @__quantum__qis__x__body(i64 0)
+            %m0 = call i32 @__quantum__qis__m__body(i64 0, i64 0)
+            %r0 = call i1 @___read_future_bool(i64 0)
+            call void @__quantum__qis__x__body(i64 0)
+            %m1 = call i32 @__quantum__qis__m__body(i64 0, i64 1)
+            %r1 = call i1 @___read_future_bool(i64 1)
+            %r1_zero = xor i1 %r1, true
+            %correct = and i1 %r0, %r1_zero
+            br i1 %correct, label %done, label %failure
+        failure:
+            call void @panic(i32 1058, ptr null)
+            ret void
+        done:
+            call void @__quantum__qis__x__body(i64 1)
+            %m2 = call i32 @__quantum__qis__m__body(i64 1, i64 2)
+            ret void
+        }
+        attributes #0 = { "EntryPoint" }
+    "#;
+    for mode in [
+        ScheduledTransport::Off,
+        ScheduledTransport::V3,
+        ScheduledTransport::V4,
+    ] {
+        let mut engine = QisEngine::new(
+            Box::new(crate::QisHeliosInterface::new()),
+            Box::new(DeferredReadRuntime::default()),
+        );
+        engine.scheduled_transport = mode;
+        engine.set_num_qubits_hint(2);
+        engine
+            .load_program(source.as_bytes(), ProgramFormat::LlvmIrText)
+            .unwrap();
+        let noise = if mode == ScheduledTransport::V4 {
+            ScheduledEventIdleZ::new(ScheduledIdleZ::new(2, 0.0, 0.0, 0.0).unwrap(), |_| {
+                Ok(Box::new(Gates))
+            })
+            .into_noise_model()
+        } else if mode == ScheduledTransport::V3 {
+            ScheduledIdleZ::new(2, 0.0, 0.0, 0.0)
+                .unwrap()
+                .into_noise_model()
+        } else {
+            Box::new(pecos_engines::noise::PassThroughNoiseModel::default())
+        };
+        let mut quantum = QuantumSystem::new(noise, Box::new(StateVecEngine::new(2)));
+        quantum
+            .begin_shot(ShotContext {
+                run: 0,
+                worker: 0,
+                shot: 0,
+            })
+            .unwrap();
+        let result = (|| -> Result<Shot, PecosError> {
+            let mut stage = engine.start(())?;
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                if Instant::now() >= deadline {
+                    return Err(PecosError::Generic(
+                        "deferred measurement never completed".into(),
+                    ));
+                }
+                match stage {
+                    EngineStage::NeedsProcessing(commands) => {
+                        // An empty host poll can precede delivery of the worker's
+                        // completion message; it is independent of transport.
+                        let outcomes =
+                            if commands.as_bytes() == ByteMessage::builder().build().as_bytes() {
+                                std::thread::yield_now();
+                                ByteMessage::outcomes_builder().build()
+                            } else {
+                                quantum.process(commands)?
+                            };
+                        stage = engine.continue_processing(outcomes)?;
+                    }
+                    EngineStage::Complete(shot) => return Ok(shot),
+                }
+            }
+        })();
+        engine.reset_all().unwrap();
+        let shot = result.unwrap();
+        assert_eq!(shot.data.get("measurement_0"), Some(&Data::U32(1)));
+        assert_eq!(shot.data.get("measurement_1"), Some(&Data::U32(0)));
+        // Final tail must still flush after the two mid-shot read flushes.
+        assert_eq!(shot.data.get("measurement_2"), Some(&Data::U32(1)));
+    }
+}

@@ -50,7 +50,10 @@ unsafe extern "C-unwind" fn inspect_transfer() {
         ctx.measurement_results.try_lock(),
         Err(std::sync::TryLockError::WouldBlock)
     ));
-    assert!(ctx.measured_results.try_lock().is_ok());
+    assert!(!matches!(
+        ctx.measured_results.try_lock(),
+        Err(std::sync::TryLockError::WouldBlock)
+    ));
     assert!(matches!(
         *ctx.program_error.lock().unwrap(),
         Some(ProgramError::ResultUnavailable { .. })
@@ -97,12 +100,14 @@ fn never_measured_fails_without_publishing_a_request() {
     }
 }
 
+#[derive(Clone, Copy)]
+enum HostReply {
+    Ready(Option<u64>),
+    WorkerComplete,
+}
+
 /// Run a reader on its own thread; the host responds only after observing `need_result`.
-fn host_read(
-    reader: Reader,
-    outcome: Option<u64>,
-    result_id: u64,
-) -> (u64, usize, u32, ProgramError) {
+fn host_read(reader: Reader, reply: HostReply, result_id: u64) -> (u64, usize, u32, ProgramError) {
     let ctx = Context::new();
     let address = ctx.0 as usize;
     let worker = std::thread::spawn(move || {
@@ -120,10 +125,18 @@ fn host_read(
         observation
     });
     assert_eq!(pecos_wait_for_need_result(2_000), result_id);
-    if let Some(outcome) = outcome {
-        pecos_set_measurement_outcome(result_id, outcome);
+    match reply {
+        HostReply::Ready(outcome) => {
+            if let Some(outcome) = outcome {
+                pecos_set_measurement_outcome(result_id, outcome);
+            }
+            pecos_signal_result_ready();
+        }
+        HostReply::WorkerComplete => {
+            ctx.get().sync_state.lock().unwrap().worker_complete = true;
+            ctx.get().sync_condvar.notify_all();
+        }
     }
-    pecos_signal_result_ready();
     let (value, transfers, counter) = worker.join().unwrap();
     (value, transfers, counter, ctx.error())
 }
@@ -136,7 +149,7 @@ fn every_reader_rejects_ready_without_an_outcome() {
         return;
     }
     for reader in readers() {
-        let (value, transfers, counter, error) = host_read(reader, None, 7);
+        let (value, transfers, counter, error) = host_read(reader, HostReply::Ready(None), 7);
         assert_eq!((value, transfers, counter), (0, 1, 0));
         assert_eq!(
             error,
@@ -148,7 +161,7 @@ fn every_reader_rejects_ready_without_an_outcome() {
     }
     let (_, transfers, counter, error) = host_read(
         |_| u64::from(unsafe { selene::selene_qubit_measure(std::ptr::null_mut(), 0) }.value),
-        None,
+        HostReply::Ready(None),
         0,
     );
     assert_eq!((transfers, counter), (1, 0));
@@ -172,6 +185,7 @@ fn poisoned_stores_and_export_fail_without_publishing() {
         (0, "poisoned pending operations"),
         (1, "poisoned measurement outcomes"),
         (2, "poisoned synchronization state"),
+        (3, "poisoned measured result slots"),
     ] {
         let ctx = Context::new();
         unsafe { __quantum__qis__m__body(0, 7) };
@@ -186,6 +200,10 @@ fn poisoned_stores_and_export_fail_without_publishing() {
                 1 => {
                     let _guard = ctx.measurement_results.lock().unwrap();
                     panic!("poison outcomes");
+                }
+                3 => {
+                    let _guard = ctx.measured_results.lock().unwrap();
+                    panic!("poison measured slots");
                 }
                 _ => {
                     let _guard = ctx.sync_state.lock().unwrap();
@@ -356,5 +374,87 @@ fn missing_transfer_handler_records_error_and_returns_abi_default() {
         assert_eq!(COLLECTION_MODE_READ_COUNT.get(), 0);
         assert_eq!(pecos_check_need_result(), u64::MAX);
         assert!(!ctx.get().sync_state.lock().unwrap().need_result);
+    }
+}
+
+#[test]
+fn worker_completion_without_outcome_fails_the_read() {
+    if !test_env::run_test_in_child(
+        "dynamic_read_tests::worker_completion_without_outcome_fails_the_read",
+    ) {
+        return;
+    }
+    for reader in readers() {
+        let (value, transfers, counter, error) = host_read(reader, HostReply::WorkerComplete, 7);
+        assert_eq!((value, transfers, counter), (0, 1, 0));
+        assert_eq!(
+            error,
+            ProgramError::ResultUnavailable {
+                result_id: 7,
+                reason: "worker complete before outcome".into(),
+            }
+        );
+    }
+}
+
+#[test]
+fn pending_operations_import_distinguishes_poison_from_empty() {
+    if !test_env::run_test_in_child(
+        "dynamic_read_tests::pending_operations_import_distinguishes_poison_from_empty",
+    ) {
+        return;
+    }
+    let ctx = Context::new();
+    let empty = pecos_get_pending_operations();
+    assert!(!empty.is_null());
+    assert_eq!(unsafe { &*empty }.operations, []);
+    unsafe { pecos_free_operations(empty) };
+    let address = ctx.0 as usize;
+    std::thread::spawn(move || {
+        let ctx = unsafe { &*(address as *mut ExecutionContext) };
+        let _guard = ctx.pending_ops.lock().unwrap();
+        panic!("poison pending import");
+    })
+    .join()
+    .unwrap_err();
+    assert!(pecos_get_pending_operations().is_null());
+}
+
+#[test]
+fn cancellation_wins_over_errors_detected_before_wait() {
+    if !test_env::run_test_in_child(
+        "dynamic_read_tests::cancellation_wins_over_errors_detected_before_wait",
+    ) {
+        return;
+    }
+    for failure in 0..4 {
+        let ctx = Context::new();
+        if failure != 0 {
+            unsafe { __quantum__qis__m__body(0, 7) };
+        }
+        if failure == 1 {
+            pecos_set_measurement_outcome(7, 2);
+        }
+        if failure >= 2 {
+            let address = ctx.0 as usize;
+            std::thread::spawn(move || {
+                let ctx = unsafe { &*(address as *mut ExecutionContext) };
+                if failure == 2 {
+                    let _guard = ctx.measurement_results.lock().unwrap();
+                    panic!("poison results before cancellation");
+                }
+                let _guard = ctx.measured_results.lock().unwrap();
+                panic!("poison measured slots before cancellation");
+            })
+            .join()
+            .unwrap_err();
+        }
+        assert_eq!(unsafe { pecos_abort_dynamic_execution(ctx.0) }, 0);
+        // Invoke the shared path directly: an outer reader's entry checkpoint
+        // must not hide error-recording precedence inside this helper.
+        assert_eq!(read_dynamic_result(7, true), None);
+        assert_eq!(ctx.error(), ProgramError::Cancelled);
+        assert!(!ctx.get().sync_state.lock().unwrap().need_result);
+        assert_eq!(COLLECTION_MODE_READ_COUNT.get(), 0);
     }
 }

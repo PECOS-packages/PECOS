@@ -151,6 +151,8 @@ impl std::fmt::Display for WorkerFailure {
 struct LoweredCommandBatch {
     commands: ByteMessage,
     gate_metadata: Vec<TraceMetadata>,
+    /// Whether lowering emitted no command batches (including scheduled formats).
+    is_empty: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -967,6 +969,7 @@ impl QisEngine {
 
         let message = result.map(|()| LoweredCommandBatch {
             commands: builder.build(),
+            is_empty: gate_metadata.is_empty(),
             gate_metadata,
         });
         self.command_builder = builder;
@@ -1049,12 +1052,14 @@ impl QisEngine {
                 .map_err(|e| PecosError::Generic(format!("scheduled extraction failed: {e}")))?;
             let shot = u64::try_from(self.trace_shot_index)
                 .map_err(|_| PecosError::Generic("shot index exceeds u64".into()))?;
+            let is_empty = batches.is_empty();
             let (commands, ids) =
                 crate::scheduled_transport::encode_mode(batches, shot, self.scheduled_transport)?;
             self.measurement_mapping = ids;
             return Ok(LoweredCommandBatch {
                 commands,
                 gate_metadata: Vec::new(),
+                is_empty,
             });
         }
         if self.runtime.supports_operation_lowering() {
@@ -1196,6 +1201,7 @@ impl QisEngine {
 
         let message = result.map(|()| LoweredCommandBatch {
             commands: builder.build(),
+            is_empty: gate_metadata.is_empty(),
             gate_metadata,
         });
         self.command_builder = builder;
@@ -1514,6 +1520,7 @@ impl QisEngine {
             Some(&LoweredCommandBatch {
                 commands: ByteMessage::builder().build(),
                 gate_metadata: Vec::new(),
+                is_empty: true,
             }),
         );
     }
@@ -1645,10 +1652,48 @@ impl QisEngine {
     ///
     /// The worker exports only newly generated operations before each wait, so
     /// this handoff stays proportional to fresh work instead of full history.
-    fn get_dynamic_operations(&mut self) -> Option<Vec<Operation>> {
-        let state = self.dynamic_state.as_ref()?;
-        let handle = state.sync_handle.as_ref()?;
-        handle.get_pending_operations().ok()
+    fn get_dynamic_operations(&mut self) -> Result<Vec<Operation>, PecosError> {
+        let imported = self
+            .dynamic_state
+            .as_ref()
+            .and_then(|state| state.sync_handle.as_ref())
+            .ok_or_else(|| InterfaceError::ExecutionError("No dynamic sync handle".into()))
+            .and_then(|handle| handle.get_pending_operations());
+        imported.map_err(|error| {
+            self.latch_terminal_error(format!("failed to import pending operations: {error}"))
+        })
+    }
+
+    /// Advance a requested read using exported work, cached outcomes, or the
+    /// runtime's existing drain. A request without any producer must fail.
+    fn process_result_request(
+        &mut self,
+        result_id: u64,
+        stage: &str,
+    ) -> Result<Option<ByteMessage>, PecosError> {
+        // Import before consulting the cache: new measurements own their slots.
+        let ops = self.get_dynamic_operations()?;
+        if !ops.is_empty() {
+            self.simulated_op_count += ops.len();
+            let lowered = self.lower_operations_terminal(&ops)?;
+            self.trace_operations_chunk(stage, &ops, Some(result_id), Some(&lowered));
+            if !lowered.is_empty {
+                return Ok(Some(lowered.commands));
+            }
+        }
+        let result_key = usize::try_from(result_id)
+            .map_err(|_| self.latch_terminal_error("result ID exceeds usize".into()))?;
+        if let Some(&value) = self.measurement_results.get(&result_key) {
+            self.set_dynamic_result(result_id, value)?;
+            self.signal_dynamic_result_ready()?;
+            return Ok(None);
+        }
+        if let Some(commands) = self.drain_commands(false)? {
+            return Ok(Some(commands));
+        }
+        Err(self.latch_terminal_error(format!(
+            "worker requested result {result_id} with no pending measurement"
+        )))
     }
 
     /// A newly queued measurement owns the next value of its result slot.
@@ -1739,6 +1784,12 @@ impl QisEngine {
     }
 
     fn drain_terminal_commands(&mut self) -> Result<Option<ByteMessage>, PecosError> {
+        self.drain_commands(true)
+    }
+
+    /// Use the same drain for a stalled read and the final tail. Only the final
+    /// flush is one-shot; reads may need several flushes during a shot.
+    fn drain_commands(&mut self, terminal: bool) -> Result<Option<ByteMessage>, PecosError> {
         if self.scheduled_transport.enabled() {
             return self.drain_scheduled_commands();
         }
@@ -1748,12 +1799,14 @@ impl QisEngine {
         let Some(state) = self.dynamic_state.as_mut() else {
             return Ok(None);
         };
-        if state.finalized || state.terminal_lowering_flushed {
+        if state.finalized || (terminal && state.terminal_lowering_flushed) {
             return Ok(None);
         }
-        state.terminal_lowering_flushed = true;
+        if terminal {
+            state.terminal_lowering_flushed = true;
+        }
 
-        // A terminal barrier is ordinary lowering: use the same conversion,
+        // A drain barrier is ordinary lowering: use the same conversion,
         // metadata matching, measurement mapping and sticky error path as source
         // operations. The subsequent certification drain remains only a guard.
         let ops = [Operation::Barrier];
@@ -1761,7 +1814,12 @@ impl QisEngine {
         if lowered.commands.is_empty()? {
             return Ok(None);
         }
-        self.trace_operations_chunk("terminal_flush", &ops, None, Some(&lowered));
+        let stage = if terminal {
+            "terminal_flush"
+        } else {
+            "result_flush"
+        };
+        self.trace_operations_chunk(stage, &ops, None, Some(&lowered));
         Ok(Some(lowered.commands))
     }
 
@@ -2258,20 +2316,8 @@ impl ControlEngine for QisEngine {
         // Use long timeout as safety net - condvar will wake immediately on signal
         if let Some(result_id) = self.wait_for_result_needed(30_000) {
             debug!("Worker needs result for id={result_id}");
-            // Get pending operations
-            if let Some(ops) = self.get_dynamic_operations() {
-                // Track how many operations we're sending for simulation
-                self.simulated_op_count = ops.len();
-                if !ops.is_empty() {
-                    let lowered = self.lower_operations_terminal(&ops)?;
-                    self.trace_operations_chunk(
-                        "pending_start",
-                        &ops,
-                        Some(result_id),
-                        Some(&lowered),
-                    );
-                    return Ok(EngineStage::NeedsProcessing(lowered.commands));
-                }
+            if let Some(commands) = self.process_result_request(result_id, "pending_start")? {
+                return Ok(EngineStage::NeedsProcessing(commands));
             }
         }
 
@@ -2371,28 +2417,8 @@ impl ControlEngine for QisEngine {
         if let Some(result_id) = self.wait_for_result_needed(30_000) {
             debug!("Worker needs result for id={result_id}");
 
-            // Consume exported operations before considering a cached value:
-            // a new measurement may overwrite the requested result slot.
-            if let Some(ops) = self.get_dynamic_operations()
-                && !ops.is_empty()
-            {
-                self.simulated_op_count += ops.len();
-                let lowered = self.lower_operations_terminal(&ops)?;
-                self.trace_operations_chunk(
-                    "pending_continue",
-                    &ops,
-                    Some(result_id),
-                    Some(&lowered),
-                );
-                return Ok(EngineStage::NeedsProcessing(lowered.commands));
-            }
-
-            let result_key = usize::try_from(result_id)
-                .map_err(|_| PecosError::Generic("result ID exceeds usize".to_string()))?;
-            if let Some(&value) = self.measurement_results.get(&result_key) {
-                debug!("Result {result_id} already available, signaling immediately");
-                self.set_dynamic_result(result_id, value)?;
-                self.signal_dynamic_result_ready()?;
+            if let Some(commands) = self.process_result_request(result_id, "pending_continue")? {
+                return Ok(EngineStage::NeedsProcessing(commands));
             }
         }
 
@@ -2479,6 +2505,77 @@ mod tests {
         fn num_qubits(&self) -> usize {
             1
         }
+    }
+
+    struct PoisonedImport {
+        imports: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl crate::qis_interface::DynamicSyncHandle for PoisonedImport {
+        fn wait_for_need_result(&self, _: u64) -> Option<u64> {
+            Some(7)
+        }
+        fn set_measurement_result(&self, _: u64, _: bool) -> Result<(), InterfaceError> {
+            panic!("an import failure cannot supply a result")
+        }
+        fn signal_result_ready(&self) -> Result<(), InterfaceError> {
+            panic!("an import failure cannot signal readiness")
+        }
+        fn get_pending_operations(&self) -> Result<Vec<Operation>, InterfaceError> {
+            self.imports
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            Err(InterfaceError::ExecutionError(
+                "poisoned pending-operations lock".into(),
+            ))
+        }
+        fn abort_execution(&self) -> Result<(), InterfaceError> {
+            Ok(())
+        }
+        fn get_named_results(
+            &self,
+        ) -> Result<BTreeMap<String, pecos_qis_ffi_types::NamedResult>, InterfaceError> {
+            Ok(BTreeMap::new())
+        }
+        fn get_named_result_traces(&self) -> Result<Vec<NamedResultTrace>, InterfaceError> {
+            Ok(vec![])
+        }
+    }
+
+    #[test]
+    fn pending_operations_import_error_is_terminal_and_sticky() {
+        let imports = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut engine = QisEngine::with_runtime(Box::new(DummyRuntime::default()));
+        engine.dynamic_state = Some(DynamicExecutionState {
+            sync_handle: Some(Box::new(PoisonedImport {
+                imports: imports.clone(),
+            })),
+            execution_complete: false,
+            terminal_error: None,
+            finalized: false,
+            terminal_lowering_flushed: false,
+        });
+        let error = engine
+            .continue_processing(ByteMessage::outcomes_builder().build())
+            .err()
+            .expect("import must fail");
+        assert!(
+            error
+                .to_string()
+                .contains("failed to import pending operations"),
+            "{error}"
+        );
+        assert!(
+            error
+                .to_string()
+                .contains("poisoned pending-operations lock"),
+            "{error}"
+        );
+        let retry = engine
+            .continue_processing(ByteMessage::outcomes_builder().build())
+            .err()
+            .expect("import must fail");
+        assert_eq!(retry.to_string(), error.to_string());
+        assert_eq!(imports.load(std::sync::atomic::Ordering::Relaxed), 1);
     }
 
     #[test]

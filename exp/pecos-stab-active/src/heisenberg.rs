@@ -12,7 +12,7 @@ mod noise;
 mod tests;
 mod validation;
 
-use crate::{PauliKindForDecomp, StabActive};
+use crate::{ActiveStructure, PauliKindForDecomp, StabActive};
 pub use builder::CompileError;
 pub use noise::NoiseChannel;
 use pecos_core::{Angle64, PauliBitmaskVec};
@@ -159,6 +159,33 @@ impl HeisenbergProgram {
         &self.operations
     }
 
+    /// Active width after each operation, without allocating amplitudes or
+    /// imposing a width limit. The peak is the maximum of the returned list.
+    /// An empty program returns an empty list and has peak width zero.
+    /// All signs are evaluated as positive and raw measurement outcomes as zero;
+    /// projection values still include the sign of the shared measurement basis.
+    /// The tableau carries an internal RNG, but profiling makes no sampling draws.
+    #[must_use]
+    pub fn width_profile(&self) -> Vec<usize> {
+        let mut structure = ActiveStructure::with_seed(self.num_qubits, 0);
+        self.operations
+            .iter()
+            .map(|operation| {
+                match operation {
+                    HeisenbergOp::Rotation { pauli, angle, .. } => {
+                        let rotation = structure.rotation(*angle, pauli.factors(), false);
+                        let _ = rotation.apply_rotation();
+                    }
+                    HeisenbergOp::Measurement { pauli, .. } => {
+                        let measurement = structure.measurement(pauli.factors(), false);
+                        let _ = measurement.apply_measurement(false);
+                    }
+                }
+                structure.width()
+            })
+            .collect()
+    }
+
     /// Independent channel instances, each with a joint component distribution.
     #[must_use]
     pub fn noise_channels(&self) -> &[NoiseChannel] {
@@ -198,18 +225,32 @@ impl HeisenbergProgram {
         self.execute_with_outcomes(state, noise, force).0
     }
 
-    // Tests inject both noise and a measurement hook through the production
-    // execution loop. The hook can check probabilities before forcing collapse.
-    // Outcomes are stored by symbol and records by ordinal. Construction checked
-    // that every symbol is produced before any operation reads it.
     fn execute_with_outcomes<F>(
+        &self,
+        state: StabActive,
+        noise: &[bool],
+        force: F,
+    ) -> (ShotResult, Vec<bool>)
+    where
+        F: FnMut(&StabActive, &VirtualPauli, bool, usize, Option<usize>) -> Option<bool>,
+    {
+        self.execute_observed(state, noise, force, |_, _, _| {})
+    }
+
+    // Tests inject noise, a pre-measurement force hook, and an observer after
+    // every operation through this production loop. Outcomes are stored by
+    // symbol and records by ordinal. Construction checked that every symbol
+    // is produced before any operation reads it.
+    fn execute_observed<F, O>(
         &self,
         mut state: StabActive,
         noise: &[bool],
         mut force: F,
+        mut observe: O,
     ) -> (ShotResult, Vec<bool>)
     where
         F: FnMut(&StabActive, &VirtualPauli, bool, usize, Option<usize>) -> Option<bool>,
+        O: FnMut(&StabActive, &HeisenbergOp, &[bool]),
     {
         let mut measurements = vec![false; self.num_measurements];
         let mut records = vec![false; self.num_records];
@@ -237,6 +278,7 @@ impl HeisenbergProgram {
                     }
                 }
             }
+            observe(&state, operation, &measurements);
         }
         let parity = |ids: &Vec<usize>| ids.iter().fold(false, |s, &i| s ^ records[i]);
         let shot = ShotResult {

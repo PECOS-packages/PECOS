@@ -4,7 +4,8 @@
 use super::{
     AffineSign, HeisenbergOp, HeisenbergProgram, NoiseChannel, VirtualPauli, dispatch, noise,
 };
-use crate::{PauliKindForDecomp, clifford_turns, rotate_tableau};
+use crate::PauliKindForDecomp;
+use crate::structure::{clifford_turns, rotate_tableau};
 use num_complex::Complex64;
 use pecos_core::{BitmaskStorage, MeasId, PauliBitmaskVec, gate_type::GateType};
 use pecos_quantum::{AnnotationKind, Gate, TickCircuit};

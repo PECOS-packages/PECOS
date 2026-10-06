@@ -20,9 +20,9 @@ pub(super) fn conditional(
     pauli: &VirtualPauli,
     negative: bool,
 ) -> (f64, MeasurementCase) {
-    let parts = crate::coordinate_tableau::decompose(
-        &state.tableau,
-        &state.active,
+    let parts = pecos_stab_tn::stab_mps::coordinate_tableau::decompose(
+        state.structure.tableau(),
+        state.structure.active(),
         pauli.factors(),
         negative,
     );

@@ -65,55 +65,62 @@ fn receive_cancelled_reader<T>(
 }
 
 #[test]
-fn cancellation_wakes_wait_and_wins_ready_race() {
-    if !crate::test_env::run_test_in_child(
-        "cancellation_tests::cancellation_wakes_wait_and_wins_ready_race",
-    ) {
+fn abort_export_wakes_waiting_reader() {
+    if !crate::test_env::run_test_in_child("cancellation_tests::abort_export_wakes_waiting_reader")
+    {
         return;
     }
-    for ready in [false, true] {
-        let ctx = Context::new();
-        std::thread::scope(|scope| {
-            let address = ctx.0 as usize;
-            let (done, completed) = std::sync::mpsc::channel();
-            let worker = scope.spawn(move || {
-                // SAFETY: Parent keeps the context alive until this worker joins.
-                unsafe { pecos_register_execution_context(address as *mut ExecutionContext) };
-                // SAFETY: Valid result ID; no guard means cancellation returns zero.
-                let result = unsafe { ___read_future_uint(7) };
-                // SAFETY: Clear this worker's registration before its context is freed.
-                unsafe { pecos_register_execution_context(std::ptr::null_mut()) };
-                done.send(result).unwrap();
-                result
-            });
-            assert_eq!(pecos_wait_for_need_result(2_000), 7);
-            // Let the reader settle into its wait, and prove it has not returned.
-            assert_eq!(
-                completed.recv_timeout(std::time::Duration::from_millis(20)),
-                Err(std::sync::mpsc::RecvTimeoutError::Timeout)
-            );
-            ctx.cancel();
-            // Readiness racing with the cancellation wake must not undo cancellation.
-            ctx.get().sync_state.lock().unwrap().result_ready = ready;
-            let result = receive_cancelled_reader(&ctx, &completed);
-            assert_eq!(worker.join().unwrap(), 0);
-            assert_eq!(result.unwrap(), 0);
-            assert_eq!(
-                *ctx.get().program_error.lock().unwrap(),
-                Some(ProgramError::Cancelled)
-            );
+    let ctx = Context::new();
+    std::thread::scope(|scope| {
+        let address = ctx.0 as usize;
+        let (done, completed) = std::sync::mpsc::channel();
+        let worker = scope.spawn(move || {
+            // SAFETY: Parent keeps the context alive until this worker joins.
+            unsafe { pecos_register_execution_context(address as *mut ExecutionContext) };
+            // SAFETY: Valid result ID; no guard means cancellation returns zero.
+            let result = unsafe { ___read_future_uint(7) };
+            // SAFETY: Clear this worker's registration before its context is freed.
+            unsafe { pecos_register_execution_context(std::ptr::null_mut()) };
+            done.send(result).unwrap();
         });
-    }
+        assert_eq!(pecos_wait_for_need_result(2_000), 7);
+        // Let the reader settle into its wait, and prove it has not returned.
+        assert_eq!(
+            completed.recv_timeout(std::time::Duration::from_millis(20)),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+        );
+        ctx.cancel();
+        let result = receive_cancelled_reader(&ctx, &completed);
+        worker.join().unwrap();
+        assert_eq!(result.unwrap(), 0);
+        assert_eq!(
+            *ctx.get().program_error.lock().unwrap(),
+            Some(ProgramError::Cancelled)
+        );
+    });
 }
 
 #[test]
-fn bool_cancellation_after_wait_precedes_ready_result_and_collection_fallback() {
+fn cancellation_after_wait_precedes_ready_result_and_collection_fallback() {
     if !crate::test_env::run_test_in_child(
-        "cancellation_tests::bool_cancellation_after_wait_precedes_ready_result_and_collection_fallback",
+        "cancellation_tests::cancellation_after_wait_precedes_ready_result_and_collection_fallback",
     ) {
         return;
     }
-    for ready in [false, true] {
+    let readers: [fn(i64) -> u64; 2] = [
+        |id| {
+            // SAFETY: Valid result ID with a live registered context.
+            u64::from(unsafe { ___read_future_bool(id) })
+        },
+        |id| {
+            // SAFETY: Valid result ID with a live registered context.
+            unsafe { ___read_future_uint(id) }
+        },
+    ];
+    for (reader, ready) in readers
+        .into_iter()
+        .flat_map(|reader| [(reader, false), (reader, true)])
+    {
         let ctx = Context::new();
         std::thread::scope(|scope| {
             let address = ctx.0 as usize;
@@ -126,8 +133,7 @@ fn bool_cancellation_after_wait_precedes_ready_result_and_collection_fallback() 
                     pecos_set_program_panic_handler(Some(inspect_transfer));
                 }
                 assert_eq!(COLLECTION_MODE_READ_COUNT.get(), 0);
-                // SAFETY: Valid result ID with a live registered context.
-                let result = unsafe { ___read_future_bool(7) };
+                let result = reader(7);
                 let observations = (result, TRANSFERS.get(), COLLECTION_MODE_READ_COUNT.get());
                 // SAFETY: Clear the thread's handler and registration before exit.
                 unsafe {
@@ -155,7 +161,7 @@ fn bool_cancellation_after_wait_precedes_ready_result_and_collection_fallback() 
             ctx.get().sync_condvar.notify_all();
             let observations = receive_cancelled_reader(&ctx, &completed);
             worker.join().unwrap();
-            assert_eq!(observations.unwrap(), (false, 1, 0));
+            assert_eq!(observations.unwrap(), (0, 1, 0));
             assert_eq!(
                 *ctx.get().program_error.lock().unwrap(),
                 Some(ProgramError::Cancelled)

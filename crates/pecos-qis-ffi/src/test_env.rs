@@ -106,3 +106,11 @@ pub(crate) fn run_test_in_child(test: &str) -> bool {
         .unwrap_or_else(|error| panic!("isolated test {test}: {error}"));
     false
 }
+
+// `--exact` with a filter that matches nothing exits 0; the helper must not
+// mistake that for a passing child.
+#[test]
+#[should_panic(expected = "did not run exactly one test")]
+fn child_helper_rejects_filter_matching_no_test() {
+    run_test_in_child("test_env::no_such_test");
+}

@@ -685,7 +685,7 @@ pub unsafe extern "C-unwind" fn pecos_qis_trace_metadata_qubit_hugr(
 /// Called from C/LLVM code. Qubit must be a valid non-negative ID.
 #[unsafe(no_mangle)]
 pub unsafe extern "C-unwind" fn pecos_qis_runtime_barrier_qubit_hugr(qubit: i64) -> i64 {
-    checkpoint!(0);
+    checkpoint!(qubit);
     let _ = checked_ffi_id!(
         stringify!(pecos_qis_runtime_barrier_qubit_hugr),
         qubit,
@@ -710,7 +710,7 @@ pub unsafe extern "C-unwind" fn pecos_qis_runtime_barrier_qubits2_hugr(
     first: i64,
     second: i64,
 ) -> QubitPair {
-    checkpoint!(QubitPair::default());
+    checkpoint!(QubitPair { first, second });
     let _ = checked_ffi_id!(
         stringify!(pecos_qis_runtime_barrier_qubits2_hugr),
         first,

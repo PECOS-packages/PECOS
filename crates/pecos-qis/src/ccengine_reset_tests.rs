@@ -197,10 +197,18 @@ fn cancellation_and_teardown_failure_remain_separate() {
 
 #[test]
 fn disconnected_poisoned_and_missing_interface_stay_latched() {
-    for mode in 0..3 {
+    for mode in 0..4 {
         let (mut engine, sender, _, _) = running();
         if mode == 0 {
             drop(sender);
+        } else if mode == 3 {
+            // An execution failure that lost the interface is reported, not discarded.
+            queue(
+                &sender,
+                Err((WorkerFailure::from("worker thread died".to_string()), None)),
+            );
+            let error = engine.reset_all().unwrap_err().to_string();
+            assert!(error.contains("failed during reset: worker thread died"));
         } else if mode == 1 {
             let receiver = &engine.persistent_worker.as_ref().unwrap().result_rx;
             std::thread::scope(|scope| {

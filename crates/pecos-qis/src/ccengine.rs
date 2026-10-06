@@ -22,7 +22,7 @@
 //! original worker through `Clone` are outside this cancellation contract.
 //! Cancellation also transfers through in-process Selene QIS plugin frames that
 //! call PECOS entry points, so plugins must not hold locks or owned resources
-//! across a gate or measurement call.
+//! across any `selene_*` or QIS entry call.
 
 use crate::program::QisInterfaceBuilder;
 use crate::qis_interface::{BoxedInterface, DynamicSyncHandle, InterfaceError, ProgramFormat};

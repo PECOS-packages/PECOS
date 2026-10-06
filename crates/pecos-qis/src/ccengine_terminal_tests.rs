@@ -855,6 +855,8 @@ enum DrainPadding {
     Empty,
 }
 
+type MeasurementDeliveries = std::sync::Arc<std::sync::Mutex<Vec<(usize, bool)>>>;
+
 /// Scheduler fixture that accepts source operations and defers their release
 /// to a barrier/drain, optionally releasing measurement 0 early or padding drains.
 #[derive(Clone, Default)]
@@ -865,6 +867,8 @@ struct DeferredReadRuntime {
     batch_index: usize,
     drain_padding: Option<DrainPadding>,
     release_measurement_zero: bool,
+    feedback_dependency: Option<usize>,
+    deliveries: Option<MeasurementDeliveries>,
 }
 impl DeferredReadRuntime {
     fn accept(&mut self, operations: &[Operation]) {
@@ -879,10 +883,12 @@ impl DeferredReadRuntime {
     }
     fn ready_operations(&mut self) -> Vec<QuantumOp> {
         if self.release_measurement_zero
-            && let Some(position) = self
-                .pending
-                .iter()
-                .position(|op| matches!(op, QuantumOp::Measure(_, 0)))
+            && let Some(position) = self.pending.iter().position(|op| {
+                matches!(
+                    op,
+                    QuantumOp::Measure(_, 0) | QuantumOp::MeasureLeaked(_, 0)
+                )
+            })
         {
             self.pending.drain(..=position).collect()
         } else {
@@ -890,14 +896,33 @@ impl DeferredReadRuntime {
         }
     }
 
+    fn released_operations(&mut self) -> Vec<QuantumOp> {
+        if let Some(dependency) = self.feedback_dependency
+            && !self.state.measurements.contains_key(&dependency)
+        {
+            if let Some(position) = self
+                .pending
+                .iter()
+                .position(|op| matches!(op, QuantumOp::Measure(_, result) if *result == dependency))
+            {
+                self.pending.drain(..=position).collect()
+            } else {
+                vec![]
+            }
+        } else {
+            std::mem::take(&mut self.pending)
+        }
+    }
+
     fn scheduled_drain(&mut self) -> Vec<crate::scheduled::ScheduledBatch> {
         use crate::scheduled::{RuntimeScheduledOp as Op, ScheduledBatch, ScheduledMeasurement};
-        if self.pending.is_empty() && self.drain_padding.is_none() {
+        let released = self.released_operations();
+        if released.is_empty() && self.drain_padding.is_none() {
             return vec![];
         }
         let mut operations = Vec::new();
         let mut measurements = Vec::new();
-        for op in std::mem::take(&mut self.pending) {
+        for op in released {
             let scheduled = match op {
                 QuantumOp::X(q) => Op::Rxy {
                     qubit_id: q as u64,
@@ -905,16 +930,24 @@ impl DeferredReadRuntime {
                     phi: 0.0,
                 },
                 QuantumOp::Reset(q) => Op::Reset { qubit_id: q as u64 },
-                QuantumOp::Measure(q, r) => {
+                QuantumOp::Measure(q, r) | QuantumOp::MeasureLeaked(q, r) => {
+                    let leaked = matches!(op, QuantumOp::MeasureLeaked(..));
                     measurements.push(ScheduledMeasurement {
                         operation_index: operations.len(),
                         runtime_result: r as u64,
                         program_result: r,
-                        leakage_aware: false,
+                        leakage_aware: leaked,
                     });
-                    Op::Measure {
-                        qubit_id: q as u64,
-                        result_id: r as u64,
+                    if leaked {
+                        Op::MeasureLeaked {
+                            qubit_id: q as u64,
+                            result_id: r as u64,
+                        }
+                    } else {
+                        Op::Measure {
+                            qubit_id: q as u64,
+                            result_id: r as u64,
+                        }
                     }
                 }
                 op => panic!("unexpected test operation {op:?}"),
@@ -955,6 +988,12 @@ impl crate::runtime::QisRuntime for DeferredReadRuntime {
         &mut self,
         values: BTreeMap<usize, bool>,
     ) -> crate::runtime::Result<()> {
+        if let Some(deliveries) = &self.deliveries {
+            deliveries
+                .lock()
+                .unwrap()
+                .extend(values.iter().map(|(&id, &value)| (id, value)));
+        }
         self.state.measurements.extend(values);
         Ok(())
     }
@@ -979,7 +1018,7 @@ impl crate::runtime::QisRuntime for DeferredReadRuntime {
     ) -> crate::runtime::Result<Vec<QuantumOp>> {
         self.accept(operations);
         if operations.contains(&Operation::Barrier) {
-            let mut emitted = std::mem::take(&mut self.pending);
+            let mut emitted = self.released_operations();
             if let Some(DrainPadding::Idle) = self.drain_padding {
                 emitted.push(QuantumOp::Idle(1e-9, 0));
             }
@@ -1070,7 +1109,7 @@ fn assert_unsatisfiable_read_fails(
     assert!(
         error
             .to_string()
-            .contains("worker requested result 7 with no pending measurement"),
+            .contains("runtime released no measurement for worker-requested result 7"),
         "{error}"
     );
     assert_eq!(
@@ -1325,5 +1364,221 @@ fn earlier_measurement_does_not_signal_ready_for_the_outstanding_read() {
         let shot = result.unwrap();
         assert_eq!(shot.data.get("measurement_0"), Some(&Data::U32(1)));
         assert_eq!(shot.data.get("measurement_1"), Some(&Data::U32(1)));
+    }
+}
+
+#[test]
+fn deferred_same_slot_delivery_cannot_satisfy_a_later_measurement_read() {
+    assert_deferred_same_slot_delivery(true);
+}
+
+#[test]
+fn deferred_same_slot_deliveries_complete_before_any_read() {
+    assert_deferred_same_slot_delivery(false);
+}
+
+fn assert_deferred_same_slot_delivery(read: bool) {
+    let _env_lock = crate::test_env::ENV_MUTEX.lock().unwrap();
+    let tail = if read {
+        r"
+            %value = call i1 @___read_future_bool(i64 0)
+            br i1 %value, label %done, label %failure
+        failure:
+            call void @panic(i32 1058, ptr null)
+            ret void
+        done:
+        "
+    } else {
+        ""
+    };
+    let source = format!(
+        r#"
+        declare void @__quantum__qis__x__body(i64)
+        declare i32 @__quantum__qis__m__body(i64, i64)
+        declare i1 @___read_future_bool(i64)
+        declare void @panic(i32, ptr)
+        define void @main() #0 {{
+            %first = call i32 @__quantum__qis__m__body(i64 0, i64 0)
+            call void @__quantum__qis__x__body(i64 0)
+            %second = call i32 @__quantum__qis__m__body(i64 0, i64 0)
+            {tail}
+            ret void
+        }}
+        attributes #0 = {{ "EntryPoint" }}
+    "#
+    );
+    for mode in [
+        ScheduledTransport::Off,
+        ScheduledTransport::V3,
+        ScheduledTransport::V4,
+    ] {
+        let deliveries = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut engine = QisEngine::new(
+            Box::new(crate::QisHeliosInterface::new()),
+            Box::new(DeferredReadRuntime {
+                release_measurement_zero: true,
+                deliveries: Some(std::sync::Arc::clone(&deliveries)),
+                ..DeferredReadRuntime::default()
+            }),
+        );
+        engine.scheduled_transport = mode;
+        engine.set_num_qubits_hint(2);
+        engine
+            .load_program(source.as_bytes(), ProgramFormat::LlvmIrText)
+            .unwrap();
+        let mut quantum = deferred_read_quantum(mode);
+        let result = (|| -> Result<Shot, PecosError> {
+            let EngineStage::NeedsProcessing(first) = engine.start(())? else {
+                panic!("the first measurement must be emitted on its own");
+            };
+            assert_eq!(engine.measurement_mapping, [0]);
+            assert_eq!(engine.pending_measurements[&0].outstanding, 2);
+            assert_eq!(engine.pending_measurements[&0].unemitted, 1);
+            let first_reply = quantum.process(first)?;
+            assert_eq!(first_reply.outcomes()?, [0]);
+            let EngineStage::NeedsProcessing(second) = engine.continue_processing(first_reply)?
+            else {
+                panic!("the second measurement must still be delivered");
+            };
+            assert!(!engine.measurement_results.contains_key(&0));
+            assert_eq!(engine.pending_measurements[&0].outstanding, 1);
+            assert_eq!(engine.pending_measurements[&0].unemitted, 0);
+            if read {
+                assert_eq!(engine.wait_for_result_needed(0), Some(0));
+                assert_eq!(engine.wait_for_result_needed(0), Some(0));
+            }
+            let second_reply = quantum.process(second)?;
+            assert_eq!(second_reply.outcomes()?, [1]);
+            let stage = engine.continue_processing(second_reply)?;
+            assert!(!engine.pending_measurements.contains_key(&0));
+            finish_deferred_read_shot(&mut engine, &mut quantum, stage)
+        })();
+        engine.reset_all().unwrap();
+        assert_eq!(engine.pending_measurements.len(), 0);
+        let shot = result.unwrap();
+        assert_eq!(shot.data.get("measurement_0"), Some(&Data::U32(1)));
+        // Earlier outcomes remain in the delivery record even though they cannot
+        // be used as the current slot value or satisfy a dynamic read.
+        assert_eq!(*deliveries.lock().unwrap(), [(0, false), (0, true)]);
+    }
+}
+
+#[test]
+fn forced_drain_measurement_feedback_releases_the_requested_measurement() {
+    let _env_lock = crate::test_env::ENV_MUTEX.lock().unwrap();
+    let source = r#"
+        declare void @__quantum__qis__x__body(i64)
+        declare i32 @__quantum__qis__m__body(i64, i64)
+        declare i1 @___read_future_bool(i64)
+        declare void @panic(i32, ptr)
+        define void @main() #0 {
+            call void @__quantum__qis__x__body(i64 0)
+            %m0 = call i32 @__quantum__qis__m__body(i64 0, i64 0)
+            call void @__quantum__qis__x__body(i64 1)
+            %m1 = call i32 @__quantum__qis__m__body(i64 1, i64 1)
+            %r1 = call i1 @___read_future_bool(i64 1)
+            %r0 = call i1 @___read_future_bool(i64 0)
+            %correct = and i1 %r0, %r1
+            br i1 %correct, label %done, label %failure
+        failure:
+            call void @panic(i32 1058, ptr null)
+            ret void
+        done:
+            ret void
+        }
+        attributes #0 = { "EntryPoint" }
+    "#;
+    for mode in [
+        ScheduledTransport::Off,
+        ScheduledTransport::V3,
+        ScheduledTransport::V4,
+    ] {
+        let mut engine = QisEngine::new(
+            Box::new(crate::QisHeliosInterface::new()),
+            Box::new(DeferredReadRuntime {
+                feedback_dependency: Some(0),
+                ..DeferredReadRuntime::default()
+            }),
+        );
+        engine.scheduled_transport = mode;
+        engine.set_num_qubits_hint(2);
+        engine
+            .load_program(source.as_bytes(), ProgramFormat::LlvmIrText)
+            .unwrap();
+        let mut quantum = deferred_read_quantum(mode);
+        let result = (|| -> Result<Shot, PecosError> {
+            // Import emits nothing; the forced drain releases only dependency 0.
+            let EngineStage::NeedsProcessing(dependency) = engine.start(())? else {
+                panic!("the drain must return a measurement that can provide feedback");
+            };
+            assert_eq!(engine.measurement_mapping, [0]);
+            assert_eq!(engine.wait_for_result_needed(0), Some(1));
+            let reply = quantum.process(dependency)?;
+            assert_eq!(reply.outcomes()?, [1]);
+            let EngineStage::NeedsProcessing(requested) = engine.continue_processing(reply)? else {
+                panic!("feedback must make the requested measurement available");
+            };
+            assert_eq!(engine.measurement_mapping, [1]);
+            assert_eq!(engine.wait_for_result_needed(0), Some(1));
+            let reply = quantum.process(requested)?;
+            assert_eq!(reply.outcomes()?, [1]);
+            let stage = engine.continue_processing(reply)?;
+            finish_deferred_read_shot(&mut engine, &mut quantum, stage)
+        })();
+        engine.reset_all().unwrap();
+        let shot = result.unwrap();
+        assert_eq!(shot.data.get("measurement_0"), Some(&Data::U32(1)));
+        assert_eq!(shot.data.get("measurement_1"), Some(&Data::U32(1)));
+    }
+}
+
+#[test]
+fn pending_measurement_counts_preserve_leakage_and_reset_each_shot() {
+    for mode in [
+        ScheduledTransport::Off,
+        ScheduledTransport::V3,
+        ScheduledTransport::V4,
+    ] {
+        let mut engine = QisEngine::with_runtime(Box::new(DeferredReadRuntime {
+            release_measurement_zero: true,
+            ..DeferredReadRuntime::default()
+        }));
+        engine.scheduled_transport = mode;
+        engine.runtime.shot_start(0, None).unwrap();
+        engine.dynamic_state = Some(DynamicExecutionState {
+            sync_handle: None,
+            execution_complete: true,
+            terminal_error: None,
+            finalized: false,
+            terminal_lowering_flushed: false,
+        });
+        engine
+            .lower_operations_terminal(&[
+                QuantumOp::MeasureLeaked(0, 0).into(),
+                QuantumOp::MeasureLeaked(0, 0).into(),
+            ])
+            .unwrap();
+        assert_eq!(engine.measurement_mapping, [0]);
+        let first = engine.map_measurements(&[0]).unwrap();
+        assert_eq!(engine.store_measurement_updates(&first).unwrap(), []);
+        assert!(!engine.measurement_results.contains_key(&0));
+        assert!(engine.drain_commands(false).unwrap().is_some());
+        assert_eq!(engine.measurement_mapping, [0]);
+        let second = engine.map_measurements(&[2]).unwrap();
+        assert_eq!(engine.store_measurement_updates(&second).unwrap(), [(0, 2)]);
+        assert_eq!(engine.measurement_results.get(&0), Some(&2));
+        assert_eq!(engine.pending_measurements.len(), 0);
+        // A queued, undelivered slot must disappear on reset and on Clone's
+        // fresh shot, even when it has not emitted a simulator command yet.
+        engine
+            .lower_operations_terminal(&[QuantumOp::MeasureLeaked(0, 8).into()])
+            .unwrap();
+        assert_eq!(engine.pending_measurements[&8].outstanding, 1);
+        assert_eq!(engine.pending_measurements[&8].unemitted, 1);
+        assert_eq!(engine.clone().pending_measurements.len(), 0);
+        // Only the drain was synthetic; no worker owns an interface here.
+        engine.dynamic_state = None;
+        engine.reset_all().unwrap();
+        assert_eq!(engine.pending_measurements.len(), 0);
     }
 }

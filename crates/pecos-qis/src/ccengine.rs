@@ -383,6 +383,14 @@ impl Drop for PersistentDynamicWorker {
     }
 }
 
+/// Imported measurements remain outstanding even while the runtime holds them.
+#[derive(Default)]
+struct PendingMeasurements {
+    outstanding: usize,
+    /// Imported measurements not yet present in a returned command batch.
+    unemitted: usize,
+}
+
 /// QIS Control Engine that mediates between interface and runtime
 ///
 /// This engine contains:
@@ -439,8 +447,11 @@ pub struct QisEngine {
     /// Tracking measurement result IDs for the current batch
     measurement_mapping: Vec<usize>,
 
-    /// Stored measurement results for `get_results()`
+    /// Current measurement outcomes; a later undelivered measurement blocks reuse.
     measurement_results: BTreeMap<usize, u32>,
+
+    /// Per-slot imported or runtime-generated measurements awaiting delivery.
+    pending_measurements: BTreeMap<usize, PendingMeasurements>,
 
     /// A failed `Engine::reset`, held until a reset succeeds. Reset drops the
     /// per-shot terminal error with the worker state before resetting the
@@ -527,11 +538,27 @@ impl QisEngine {
             .collect())
     }
 
-    fn store_measurement_updates(&mut self, updates: &[(usize, u32)]) {
+    /// Complete each measurement in order, exposing only a slot's last delivery.
+    fn store_measurement_updates(
+        &mut self,
+        updates: &[(usize, u32)],
+    ) -> Result<Vec<(usize, u32)>, PecosError> {
+        let mut current = Vec::new();
         for &(result_id, value) in updates {
-            self.measurement_results.insert(result_id, value);
-            debug!("QisEngine: Stored measurement result_id={result_id}, value={value}");
+            let Some(pending) = self.pending_measurements.get_mut(&result_id) else {
+                return Err(self.latch_terminal_error(format!(
+                    "outcome for result {result_id} has no outstanding measurement"
+                )));
+            };
+            pending.outstanding -= 1;
+            if pending.outstanding == 0 {
+                self.pending_measurements.remove(&result_id);
+                self.measurement_results.insert(result_id, value);
+                current.push((result_id, value));
+                debug!("QisEngine: Stored current result_id={result_id}, value={value}");
+            }
         }
+        Ok(current)
     }
 
     fn provide_measurement_updates_to_runtime(
@@ -567,6 +594,7 @@ impl QisEngine {
             started: false,
             measurement_mapping: Vec::new(),
             measurement_results: BTreeMap::new(),
+            pending_measurements: BTreeMap::new(),
             reset_failure: None,
             rng: PecosRng::seed_from_u64(0), // Will be properly seeded via set_seed()
             current_shot_seed: None,
@@ -665,6 +693,7 @@ impl QisEngine {
             started: false,
             measurement_mapping: Vec::new(),
             measurement_results: BTreeMap::new(),
+            pending_measurements: BTreeMap::new(),
             reset_failure: None,
             rng: PecosRng::seed_from_u64(0), // Will be properly seeded via set_seed()
             current_shot_seed: None,
@@ -973,6 +1002,9 @@ impl QisEngine {
             gate_metadata,
         });
         self.command_builder = builder;
+        if message.is_ok() {
+            self.register_emitted_measurements();
+        }
         message
     }
 
@@ -1043,6 +1075,7 @@ impl QisEngine {
         &mut self,
         ops: &[Operation],
     ) -> Result<LoweredCommandBatch, PecosError> {
+        self.register_imported_measurements(ops);
         let normalized = self.normalize_qubit_preps(ops);
         let ops = normalized.as_slice();
         if self.scheduled_transport.enabled() {
@@ -1056,6 +1089,7 @@ impl QisEngine {
             let (commands, ids) =
                 crate::scheduled_transport::encode_mode(batches, shot, self.scheduled_transport)?;
             self.measurement_mapping = ids;
+            self.register_emitted_measurements();
             return Ok(LoweredCommandBatch {
                 commands,
                 gate_metadata: Vec::new(),
@@ -1205,6 +1239,9 @@ impl QisEngine {
             gate_metadata,
         });
         self.command_builder = builder;
+        if message.is_ok() {
+            self.register_emitted_measurements();
+        }
         message
     }
 }
@@ -1246,6 +1283,7 @@ impl Clone for QisEngine {
             started: false,                       // Reset started flag for the clone
             measurement_mapping: Vec::new(),      // Clear for new shot
             measurement_results: BTreeMap::new(), // Clear for new shot
+            pending_measurements: BTreeMap::new(),
             reset_failure: self.reset_failure.clone(), // Keep a failed reset latched
             rng: self.rng.clone(),
             current_shot_seed: None,         // Will be set on next start()
@@ -1688,27 +1726,44 @@ impl QisEngine {
             self.signal_dynamic_result_ready()?;
             return Ok(None);
         }
-        // A forced drain releases all held work. Padding or unrelated work
-        // cannot keep an unsatisfiable request alive across host polls.
+        // A measurement supplies feedback that can release the requested one.
+        // Padding without any measurement cannot advance a blocked worker.
         if let Some(commands) = self.drain_commands(false)?
-            && self.measurement_mapping.contains(&result_key)
+            && !self.measurement_mapping.is_empty()
         {
             return Ok(Some(commands));
         }
         Err(self.latch_terminal_error(format!(
-            "worker requested result {result_id} with no pending measurement"
+            "runtime released no measurement for worker-requested result {result_id}"
         )))
     }
 
-    /// A newly queued measurement owns the next value of its result slot.
-    fn invalidate_measurement_slots(&mut self, operations: &[Operation]) {
+    /// Import all producers before lowering, including those a runtime defers.
+    fn register_imported_measurements(&mut self, operations: &[Operation]) {
         for op in operations {
             if let Operation::Quantum(
                 QuantumOp::Measure(_, result_id) | QuantumOp::MeasureLeaked(_, result_id),
             ) = op
             {
+                let pending = self.pending_measurements.entry(*result_id).or_default();
+                pending.outstanding += 1;
+                pending.unemitted += 1;
                 self.measurement_results.remove(result_id);
             }
+        }
+    }
+
+    /// Source measurements were counted on import. Count runtime-generated
+    /// measurements on emission, including those released by the final drain.
+    fn register_emitted_measurements(&mut self) {
+        for result_id in &self.measurement_mapping {
+            let pending = self.pending_measurements.entry(*result_id).or_default();
+            if pending.unemitted > 0 {
+                pending.unemitted -= 1;
+            } else {
+                pending.outstanding += 1;
+            }
+            self.measurement_results.remove(result_id);
         }
     }
 
@@ -1846,6 +1901,7 @@ impl QisEngine {
             let (commands, ids) =
                 crate::scheduled_transport::encode_mode(batches, shot, self.scheduled_transport)?;
             self.measurement_mapping = ids;
+            self.register_emitted_measurements();
             Ok(Some(commands))
         })();
         result.map_err(|e: PecosError| {
@@ -1891,7 +1947,6 @@ impl QisEngine {
         &mut self,
         ops: &[Operation],
     ) -> Result<LoweredCommandBatch, PecosError> {
-        self.invalidate_measurement_slots(ops);
         match self.lower_operations_to_commands(ops) {
             Ok(lowered) => Ok(lowered),
             Err(e) => {
@@ -1980,6 +2035,7 @@ impl QisEngine {
         self.started = false;
         self.measurement_mapping.clear();
         self.measurement_results.clear();
+        self.pending_measurements.clear();
         self.current_shot_seed = None;
         debug!("QisEngine: reset() completed, cleared measurement_results");
         Ok(())
@@ -2213,7 +2269,7 @@ impl ClassicalEngine for QisEngine {
         );
 
         let updates = self.map_measurements(&measurements)?;
-        self.store_measurement_updates(&updates);
+        let _ = self.store_measurement_updates(&updates)?;
 
         debug!(
             "QisEngine: Final measurement_results: {:?}",
@@ -2278,6 +2334,7 @@ impl ControlEngine for QisEngine {
         }
         // Clear previous shot's measurement state
         self.measurement_results.clear();
+        self.pending_measurements.clear();
         self.measurement_mapping.clear();
         self.pending_dynamic_ops.clear();
         self.simulated_op_count = 0;
@@ -2371,8 +2428,8 @@ impl ControlEngine for QisEngine {
 
         let measurements = Self::parse_measurement_outcomes(&input)?;
         let measurement_updates = self.map_measurements(&measurements)?;
+        let current_updates = self.store_measurement_updates(&measurement_updates)?;
         if !measurement_updates.is_empty() {
-            self.store_measurement_updates(&measurement_updates);
             self.provide_measurements_terminal(&measurement_updates)?;
         }
 
@@ -2401,7 +2458,7 @@ impl ControlEngine for QisEngine {
         }
 
         // Provide new measurement values to the dynamic worker thread.
-        for &(result_id, value) in &measurement_updates {
+        for &(result_id, value) in &current_updates {
             debug!("Stored and providing measurement: result_id={result_id} value={value}");
             self.set_dynamic_result(result_id as u64, value)?;
         }
@@ -2409,9 +2466,9 @@ impl ControlEngine for QisEngine {
         // Only the outstanding read's freshly delivered outcome permits ready.
         // Other measurements leave need_result set so the same request can
         // process any work the runtime still holds.
-        if !measurement_updates.is_empty()
+        if !current_updates.is_empty()
             && self.wait_for_result_needed(0).is_some_and(|requested| {
-                measurement_updates
+                current_updates
                     .iter()
                     .any(|&(result_id, _)| result_id as u64 == requested)
             })
@@ -4803,6 +4860,8 @@ mod scheduled_completion_tests {
         else {
             panic!("terminal drain must emit its measurement");
         };
+        assert_eq!(engine.pending_measurements[&0].outstanding, 1);
+        assert_eq!(engine.pending_measurements[&0].unemitted, 0);
         let measured = quantum.process(initial).unwrap();
         assert_eq!(measured.outcomes().unwrap(), vec![0]);
         let EngineStage::NeedsProcessing(commands) = engine.continue_processing(measured).unwrap()
@@ -4814,6 +4873,7 @@ mod scheduled_completion_tests {
             engine.continue_processing(reply).unwrap(),
             EngineStage::Complete(_)
         ));
+        assert_eq!(engine.pending_measurements.len(), 0);
         // A repeated completion poll must not touch an already-ended runtime.
         assert!(matches!(
             engine

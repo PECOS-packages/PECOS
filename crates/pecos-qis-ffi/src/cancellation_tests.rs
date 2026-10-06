@@ -306,7 +306,16 @@ fn abort_is_explicit_idempotent_and_reports_poison() {
     .unwrap_err();
     // SAFETY: Null is explicitly supported; second is still owned here.
     unsafe {
-        assert_ne!(pecos_abort_dynamic_execution(std::ptr::null_mut()), 0);
-        assert_ne!(pecos_abort_dynamic_execution(second.0), 0);
+        assert_eq!(pecos_abort_dynamic_execution(std::ptr::null_mut()), 1);
+        assert_eq!(pecos_abort_dynamic_execution(second.0), 2);
     }
+    // Poison is reported, but the cancellation is still published so that a
+    // waiter without a timeout can be reached.
+    assert!(second.get().cancel_requested.load(Ordering::Acquire));
+    let state = second
+        .get()
+        .sync_state
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    assert_eq!(state.cancellation, CancellationState::Requested);
 }

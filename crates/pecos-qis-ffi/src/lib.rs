@@ -643,6 +643,10 @@ pub extern "C" fn pecos_enable_dynamic_mode() {
 
 /// Request cooperative cancellation on an explicit execution context.
 ///
+/// Returns 0 on success, 1 for a null context, and 2 when the synchronization
+/// state is poisoned. A poisoned state is still cancelled and its waiters woken,
+/// so a reader with no timeout can always be reached; the error only reports it.
+///
 /// # Safety
 /// A non-null context must remain live for this call. It need not be registered
 /// on the calling thread. Cancellation lasts for the entire context lifetime.
@@ -652,14 +656,15 @@ pub unsafe extern "C" fn pecos_abort_dynamic_execution(ctx: *mut ExecutionContex
     let Some(ctx) = (unsafe { ctx.as_ref() }) else {
         return 1;
     };
-    let Ok(mut state) = ctx.sync_state.lock() else {
-        return 2;
+    let (mut state, status) = match ctx.sync_state.lock() {
+        Ok(state) => (state, 0),
+        Err(poisoned) => (poisoned.into_inner(), 2),
     };
     state.cancellation = CancellationState::Requested;
     ctx.cancel_requested.store(true, Ordering::Release);
     drop(state);
     ctx.sync_condvar.notify_all();
-    0
+    status
 }
 
 /// Disable dynamic execution mode (called via FFI from executor)

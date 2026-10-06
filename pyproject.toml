@@ -130,7 +130,6 @@ target-version = ["py312"]
 
 [tool.pytest.ini_options]
 markers = [
-  "optional_dependency: mark a test as using one or more optional dependencies",
   "optional_unix: mark tests as using an optional dependency that only work with Unix-based systems",
   "slow: mark tests that provide extra integration coverage but are excluded from the default fast Python test lane",
   "numpy: mark tests that verify NumPy compatibility (requires numpy installed)",

@@ -28,7 +28,6 @@ def _op_names(pkg: Package) -> set[str]:
     return names
 
 
-@pytest.mark.optional_dependency
 class TestSeleneHUGRCompilation:
     """Test HUGR compilation through Selene."""
 
@@ -164,7 +163,6 @@ class TestSeleneHUGRCompilation:
         assert len(pkg.modules) >= 1, "HUGR package should contain at least one module"
 
 
-@pytest.mark.optional_dependency
 class TestLLVMGeneration:
     """Test LLVM IR generation from quantum circuits."""
 
@@ -224,7 +222,6 @@ class TestLLVMGeneration:
         assert "i1 @__quantum__qis__mz" in expected_llvm_pattern, "Measurement should return i1"
 
 
-@pytest.mark.optional_dependency
 class TestHUGRVersionCompatibility:
     """Test HUGR envelope format compatibility."""
 

@@ -126,7 +126,6 @@ class TestPartialConsumption:
         )
         assert_ast_guppy_compiles(prog)
 
-    @pytest.mark.optional_dependency
     def test_hugr_compilation(self) -> None:
         """Test that patterns compile to HUGR."""
         prog = Main(

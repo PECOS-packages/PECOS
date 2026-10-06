@@ -92,7 +92,6 @@ class TestLinearityPatterns:
         )
         assert_ast_guppy_compiles(prog)
 
-    @pytest.mark.optional_dependency
     def test_empty_main_linearity(self) -> None:
         """Test empty main function satisfies linearity."""
         prog = Main()

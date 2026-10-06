@@ -16,7 +16,6 @@ from pecos.slr import CReg, If, Main, QReg, Return, SlrConverter
 from pecos.slr.qeclib.qubit.measures import Measure
 
 
-@pytest.mark.optional_dependency
 def test_hugr_compilation_simple() -> None:
     """Test that simple conditional programs can compile to HUGR."""
     prog = Main(

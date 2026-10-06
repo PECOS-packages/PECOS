@@ -54,7 +54,6 @@ def test_creg_permutation_qasm() -> None:
     assert qasm == qasm2, "QASM generation is not deterministic"
 
 
-@pytest.mark.optional_dependency
 def test_creg_permutation_qir() -> None:
     """Whole-register CReg Permute IS realized in QIR (static CReg model).
 

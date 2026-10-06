@@ -277,7 +277,6 @@ class TestLLVMSimulation:
                 pytest.fail(f"Unexpected error: {e}")
 
 
-@pytest.mark.optional_dependency
 class TestHUGRSimulation:
     """Test sim API with HUGR programs."""
 

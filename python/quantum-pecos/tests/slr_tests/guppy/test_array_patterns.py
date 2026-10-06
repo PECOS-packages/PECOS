@@ -19,7 +19,6 @@ from ..ast_guppy._harness import assert_ast_guppy_compiles  # noqa: TID252
 class TestArrayUnpacking:
     """Test array unpacking patterns for measurements."""
 
-    @pytest.mark.optional_dependency
     def test_unique_unpacked_names(self) -> None:
         """Slot-locals are disambiguated against declared register names.
 

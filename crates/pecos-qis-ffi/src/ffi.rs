@@ -345,7 +345,10 @@ ffi_gate_2q!(__quantum__qis__zz__body, ZZ);
 
 // --- Measurement and Reset ---
 
-/// Measure a qubit and store result
+/// Queue a qubit measurement into a result slot.
+///
+/// The i32 return is a placeholder, not a read. Read the result separately so
+/// measurement batches can remain asynchronous.
 ///
 /// # Safety
 /// This function is safe to call from C/LLVM code. The qubit and result parameters must be valid
@@ -355,9 +358,7 @@ pub unsafe extern "C-unwind" fn __quantum__qis__m__body(qubit: i64, result: i64)
     checkpoint!(0);
     let qubit_id = checked_ffi_id!(stringify!(__quantum__qis__m__body), qubit, usize);
     let result_id = checked_ffi_id!(stringify!(__quantum__qis__m__body), result, usize);
-    with_interface(|interface| {
-        interface.queue_operation(QuantumOp::Measure(qubit_id, result_id).into());
-    });
+    crate::queue_measurement(qubit_id, result_id, false);
     // Return 0 for now - actual result will be available after runtime execution
     0
 }
@@ -419,6 +420,23 @@ fn record_result_read(result_id: usize) {
     }
 }
 
+/// Transfer only after the shared read helper has released all owned data.
+/// The caller and all skipped frames must obey the checkpoint discipline.
+unsafe fn dynamic_read(result_id: usize, boolean: bool) -> u64 {
+    let Some(outcome) = crate::read_dynamic_result(result_id as u64, boolean) else {
+        checkpoint!(0);
+        if let Some(transfer) = PROGRAM_PANIC_TRANSFER.get() {
+            // SAFETY: No guards, borrows or owned error reasons remain live.
+            unsafe { transfer() };
+        }
+        // No execution guard: the error is already recorded; return the ABI default.
+        return 0;
+    };
+    checkpoint!(0);
+    record_result_read(result_id);
+    outcome
+}
+
 /// Get measurement result (returns 1 if result is One, 0 otherwise)
 ///
 /// This function supports dynamic circuits: if the result is not yet available and
@@ -433,6 +451,12 @@ pub unsafe extern "C-unwind" fn __quantum__rt__result_get_one(result: i64) -> i3
     checkpoint!(0);
     log::debug!("__quantum__rt__result_get_one called with result={result}");
     let result_id = checked_ffi_id!(stringify!(__quantum__rt__result_get_one), result, usize);
+
+    let has_executor = crate::EXECUTOR.with(|executor| executor.borrow().is_some());
+    if crate::is_dynamic_mode_active() && !has_executor {
+        // SAFETY: This FFI frame owns only scalar values.
+        return i32::from(unsafe { dynamic_read(result_id, true) } == 1);
+    }
 
     // First check if result is already available
     let existing_result = with_interface(|interface| interface.get_result(result_id));
@@ -875,11 +899,10 @@ pub unsafe extern "C-unwind" fn ___lazy_measure(qubit: i64) -> i64 {
         let result_id = interface.allocate_result();
         // Queue the allocation operation
         interface.queue_operation(Operation::AllocateResult { id: result_id });
-        // Queue the measurement operation
-        interface.queue_operation(QuantumOp::Measure(qubit_id, result_id).into());
         // Return the result ID
         result_id
     });
+    crate::queue_measurement(qubit_id, allocated_id, false);
     checked_ffi_id!("___lazy_measure", allocated_id, i64)
 }
 
@@ -894,9 +917,9 @@ pub unsafe extern "C-unwind" fn ___lazy_measure_leaked(qubit: i64) -> i64 {
     let allocated_id = with_interface(|interface| {
         let result_id = interface.allocate_result();
         interface.queue_operation(Operation::AllocateResult { id: result_id });
-        interface.queue_operation(QuantumOp::MeasureLeaked(qubit_id, result_id).into());
         result_id
     });
+    crate::queue_measurement(qubit_id, allocated_id, true);
     checked_ffi_id!("___lazy_measure_leaked", allocated_id, i64)
 }
 
@@ -923,46 +946,13 @@ pub unsafe extern "C-unwind" fn ___read_future_bool(future_id: i64) -> bool {
     log::debug!("___read_future_bool called with future_id={future_id}");
     let result_id = checked_ffi_id!(stringify!(___read_future_bool), future_id, usize);
 
-    // Check if result is already available in thread-local storage
-    let existing_result = with_interface(|interface| interface.get_result(result_id));
-    log::debug!("___read_future_bool: existing_result={existing_result:?}");
-
-    if let Some(result) = existing_result {
+    if crate::is_dynamic_mode_active() {
+        // SAFETY: This FFI frame owns only scalar values.
+        return unsafe { dynamic_read(result_id, true) } == 1;
+    }
+    if let Some(result) = with_interface(|interface| interface.get_result(result_id)) {
         record_result_read(result_id);
         return result;
-    }
-
-    // Check if dynamic mode is active (requires execution context)
-    if crate::is_dynamic_mode_active() {
-        // First check if result is already available in execution context
-        // This can happen when multiple measurements are batched together
-        if let Some(result) = crate::get_measurement_result(result_id as u64) {
-            log::debug!(
-                "___read_future_bool: result already in context for result_id={result_id}: {result}"
-            );
-            record_result_read(result_id);
-            return result;
-        }
-
-        log::debug!(
-            "___read_future_bool: dynamic mode active, signaling need for result_id={result_id}"
-        );
-
-        // Wait for the main thread to provide the result
-        // This uses the per-execution context for synchronization
-        let ready = crate::wait_for_result_ready(result_id as u64, 30000);
-        checkpoint!(false);
-        if ready {
-            // Result should now be available in the execution context
-            // The main thread stores results there to cross the thread boundary
-            let result = crate::get_measurement_result(result_id as u64);
-            log::debug!("___read_future_bool: got result after waiting: {result:?}");
-            if result.is_some() {
-                record_result_read(result_id);
-            }
-            return result.unwrap_or(false);
-        }
-        log::debug!("___read_future_bool: timeout waiting for result");
     }
 
     // Collection mode (non-dynamic): track read count to prevent infinite loops.
@@ -1003,19 +993,9 @@ pub unsafe extern "C-unwind" fn ___read_future_uint(future_id: i64) -> u64 {
     let result_id = checked_ffi_id!(stringify!(___read_future_uint), future_id, usize);
 
     if crate::is_dynamic_mode_active() {
-        if let Some(result) = crate::get_measurement_outcome(result_id as u64) {
-            record_result_read(result_id);
-            return result;
-        }
-        let ready = crate::wait_for_result_ready(result_id as u64, 30_000);
-        checkpoint!(0);
-        if ready {
-            let result = crate::get_measurement_outcome(result_id as u64);
-            if result.is_some() {
-                record_result_read(result_id);
-            }
-            return result.unwrap_or(0);
-        }
+        // SAFETY: This FFI frame owns only scalar values. With no handler,
+        // an unavailable read has already recorded the error and returns zero.
+        return unsafe { dynamic_read(result_id, false) };
     }
 
     // Static collection cannot synthesize a leak. Reuse the Boolean collection
@@ -2307,6 +2287,11 @@ mod tests {
 
     #[test]
     fn test_read_future_uint_preserves_leakage_outcome() {
+        if !crate::test_env::run_test_in_child(
+            "ffi::tests::test_read_future_uint_preserves_leakage_outcome",
+        ) {
+            return;
+        }
         setup_test();
         let ctx = crate::pecos_create_execution_context();
         let context = unsafe { &*ctx };
@@ -2314,6 +2299,7 @@ mod tests {
             .dynamic_mode_active
             .store(true, std::sync::atomic::Ordering::SeqCst);
         unsafe { crate::pecos_register_execution_context(ctx) };
+        crate::queue_measurement(0, 4, true);
         crate::pecos_set_measurement_outcome(4, 2);
 
         assert_eq!(unsafe { ___read_future_uint(4) }, 2);

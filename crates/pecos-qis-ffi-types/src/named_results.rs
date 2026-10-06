@@ -105,6 +105,7 @@ impl NamedResult {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ProgramError {
     Cancelled,
+    ResultUnavailable { result_id: u64, reason: String },
     Exit { code: i32, message: String },
     Panic { code: i32, message: String },
     NamedResult(String),
@@ -114,6 +115,12 @@ pub enum ProgramError {
 impl std::fmt::Display for ProgramError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::ResultUnavailable { result_id, reason } => {
+                write!(
+                    f,
+                    "QIS measurement result {result_id} unavailable: {reason}"
+                )
+            }
             Self::Cancelled => f.write_str("QIS program cancelled by reset"),
             Self::Exit { code, message } => {
                 write!(f, "QIS program exit: code={code}, message={message}")

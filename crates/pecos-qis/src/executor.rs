@@ -2565,12 +2565,16 @@ mod tests {
         let _env_lock = ENV_MUTEX.lock().expect("environment lock");
         let ffi = QisHeliosInterface::get_qis_ffi_lib_singleton().unwrap();
         // SAFETY: All symbols use the exact ABIs exported by the pinned runtime.
-        let (register, read, allocate, live, reset) = unsafe {
+        let (register, read, measure, allocate, live, reset) = unsafe {
             (
                 *ffi.get::<RegisterExecutionContextFn>(b"pecos_register_execution_context\0")
                     .unwrap(),
                 *ffi.get::<unsafe extern "C-unwind" fn(i64) -> bool>(b"___read_future_bool\0")
                     .unwrap(),
+                *ffi.get::<unsafe extern "C-unwind" fn(i64, i64) -> i32>(
+                    b"__quantum__qis__m__body\0",
+                )
+                .unwrap(),
                 *ffi.get::<unsafe extern "C-unwind" fn(u64) -> *mut u8>(b"heap_alloc\0")
                     .unwrap(),
                 *ffi.get::<unsafe extern "C" fn() -> usize>(b"pecos_get_live_allocation_count\0")
@@ -2583,7 +2587,10 @@ mod tests {
             let mut interface = QisHeliosInterface::new();
             interface.enable_dynamic_mode().unwrap();
             // SAFETY: Reset this test thread's collector before storing cached results.
-            unsafe { reset() };
+            unsafe {
+                reset();
+                measure(0, 7);
+            };
             let original = Arc::downgrade(interface.execution_context.as_ref().unwrap());
             let old_address = interface.execution_context.as_ref().unwrap().0 as usize;
             let handle = interface.get_sync_handle().unwrap();
@@ -2595,7 +2602,10 @@ mod tests {
             assert!(!unsafe { allocate(16) }.is_null());
             interface.enable_dynamic_mode().unwrap();
             // SAFETY: Reset this test thread's collector before storing cached results.
-            unsafe { reset() };
+            unsafe {
+                reset();
+                measure(0, 7);
+            };
             let new_address = interface.execution_context.as_ref().unwrap().0 as usize;
             assert_ne!(old_address, new_address);
             // Assert ownership before touching the old pointer, so an ownership
@@ -2729,9 +2739,11 @@ mod tests {
             let source = format!(
                 r"
                 declare ptr @heap_alloc(i64)
+                declare i32 @__quantum__qis__m__body(i64, i64)
                 {declaration}
                 define i64 @qmain(i64 %shot) {{
                     %allocation = call ptr @heap_alloc(i64 16)
+                    %measurement = call i32 @__quantum__qis__m__body(i64 0, i64 0)
                     {call}
                     ret i64 0
                 }}
@@ -2759,9 +2771,18 @@ mod tests {
             assert_eq!(unsafe { live() }, 0);
             interface.disable_dynamic_mode().unwrap();
             interface.enable_dynamic_mode().unwrap();
-            interface
-                .execute_with_measurements(BTreeMap::from([(0, true)]))
-                .unwrap();
+            // The fresh shot queues a real measurement; only its host reply
+            // may satisfy the read. Pre-populating an unmeasured ID is invalid.
+            let handle = interface.get_sync_handle().unwrap();
+            let worker = std::thread::spawn(move || {
+                let output = interface.execute_with_measurements(BTreeMap::new());
+                (interface, output)
+            });
+            assert_eq!(handle.wait_for_need_result(2_000), Some(0));
+            handle.set_measurement_result(0, true).unwrap();
+            handle.signal_result_ready().unwrap();
+            let (mut interface, output) = worker.join().unwrap();
+            output.unwrap();
             interface.disable_dynamic_mode().unwrap();
             // SAFETY: Query the process counter after normal guard cleanup.
             assert_eq!(unsafe { live() }, 0);

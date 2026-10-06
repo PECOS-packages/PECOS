@@ -1651,6 +1651,18 @@ impl QisEngine {
         handle.get_pending_operations().ok()
     }
 
+    /// A newly queued measurement owns the next value of its result slot.
+    fn invalidate_measurement_slots(&mut self, operations: &[Operation]) {
+        for op in operations {
+            if let Operation::Quantum(
+                QuantumOp::Measure(_, result_id) | QuantumOp::MeasureLeaked(_, result_id),
+            ) = op
+            {
+                self.measurement_results.remove(result_id);
+            }
+        }
+    }
+
     /// Check if dynamic execution is complete
     fn check_worker_complete(&mut self) -> bool {
         // First check if already complete
@@ -1819,6 +1831,7 @@ impl QisEngine {
         &mut self,
         ops: &[Operation],
     ) -> Result<LoweredCommandBatch, PecosError> {
+        self.invalidate_measurement_slots(ops);
         match self.lower_operations_to_commands(ops) {
             Ok(lowered) => Ok(lowered),
             Err(e) => {
@@ -2358,32 +2371,28 @@ impl ControlEngine for QisEngine {
         if let Some(result_id) = self.wait_for_result_needed(30_000) {
             debug!("Worker needs result for id={result_id}");
 
-            // Check if we already have this result (from a previous batch)
-            // Note: result_id is u64 but measurement_results uses usize keys
-            // This is safe because result IDs are small sequential integers
-            #[allow(clippy::cast_possible_truncation)]
-            let result_key = result_id as usize;
+            // Consume exported operations before considering a cached value:
+            // a new measurement may overwrite the requested result slot.
+            if let Some(ops) = self.get_dynamic_operations()
+                && !ops.is_empty()
+            {
+                self.simulated_op_count += ops.len();
+                let lowered = self.lower_operations_terminal(&ops)?;
+                self.trace_operations_chunk(
+                    "pending_continue",
+                    &ops,
+                    Some(result_id),
+                    Some(&lowered),
+                );
+                return Ok(EngineStage::NeedsProcessing(lowered.commands));
+            }
+
+            let result_key = usize::try_from(result_id)
+                .map_err(|_| PecosError::Generic("result ID exceeds usize".to_string()))?;
             if let Some(&value) = self.measurement_results.get(&result_key) {
                 debug!("Result {result_id} already available, signaling immediately");
-                // Re-set the result in global storage (in case it was cleared)
                 self.set_dynamic_result(result_id, value)?;
                 self.signal_dynamic_result_ready()?;
-                // Continue loop to wait for next result or completion
-            } else {
-                // Get newly exported operations.
-                if let Some(ops) = self.get_dynamic_operations() {
-                    self.simulated_op_count += ops.len();
-                    if !ops.is_empty() {
-                        let lowered = self.lower_operations_terminal(&ops)?;
-                        self.trace_operations_chunk(
-                            "pending_continue",
-                            &ops,
-                            Some(result_id),
-                            Some(&lowered),
-                        );
-                        return Ok(EngineStage::NeedsProcessing(lowered.commands));
-                    }
-                }
             }
         }
 

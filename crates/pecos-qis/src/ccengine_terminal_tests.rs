@@ -677,3 +677,173 @@ fn drop_cancels_monte_carlo_workers_after_quantum_failure() {
     );
     counts.assert_joined();
 }
+
+const DYNAMIC_READ_PROBE: &str = r#"declare void @__quantum__qis__x__body(i64)
+declare i32 @__quantum__qis__m__body(i64, i64)
+declare i32 @__quantum__rt__result_get_one(i64)
+define void @main() #0 {
+entry:
+  call void @__quantum__qis__x__body(i64 0)
+  %m0 = call i32 @__quantum__qis__m__body(i64 0, i64 0)
+  %one = call i32 @__quantum__rt__result_get_one(i64 0)
+  %is1 = icmp ne i32 %one, 0
+  br i1 %is1, label %flip, label %done
+flip:
+  call void @__quantum__qis__x__body(i64 1)
+  br label %done
+done:
+  %m1 = call i32 @__quantum__qis__m__body(i64 1, i64 1)
+  ret void
+}
+attributes #0 = { "EntryPoint" }
+"#;
+
+fn dynamic_read_engine(source: &str) -> QisEngine {
+    let mut engine = QisEngine::new(
+        Box::new(crate::QisHeliosInterface::new()),
+        Box::new(crate::selene_simple_runtime().unwrap()),
+    );
+    engine.set_num_qubits_hint(2);
+    engine
+        .load_program(source.as_bytes(), ProgramFormat::LlvmIrText)
+        .unwrap();
+    engine
+}
+
+fn drive_dynamic_read_shot(engine: &mut QisEngine) -> Result<Shot, PecosError> {
+    let mut quantum = StateVecEngine::new(2);
+    let mut stage = engine.start(())?;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        assert!(
+            Instant::now() < deadline,
+            "dynamic read failed to end its shot"
+        );
+        match stage {
+            EngineStage::NeedsProcessing(commands) => {
+                for result_id in &engine.measurement_mapping {
+                    assert!(
+                        !engine.measurement_results.contains_key(result_id),
+                        "new measurement retained a cached result for {result_id}"
+                    );
+                }
+                stage = engine.continue_processing(quantum.process(commands)?)?;
+            }
+            EngineStage::Complete(shot) => return Ok(shot),
+        }
+    }
+}
+
+#[test]
+fn result_get_one_feedback_uses_the_host_measurement() {
+    let _env_lock = crate::test_env::ENV_MUTEX.lock().unwrap();
+    let mut engine = dynamic_read_engine(DYNAMIC_READ_PROBE);
+    for _ in 0..3 {
+        let shot = drive_dynamic_read_shot(&mut engine).unwrap();
+        assert_eq!(shot.data.get("measurement_1"), Some(&Data::U32(1)));
+    }
+}
+
+#[test]
+fn same_result_slot_feedback_reads_the_new_measurement() {
+    let _env_lock = crate::test_env::ENV_MUTEX.lock().unwrap();
+    for (ty, reader, first, second) in [
+        ("i1", "___read_future_bool", "%first", "%second"),
+        (
+            "i32",
+            "__quantum__rt__result_get_one",
+            "%first_bool",
+            "%second_bool",
+        ),
+    ] {
+        let conversions = if ty == "i32" {
+            "%first_bool = icmp ne i32 %first, 0\n%second_bool = icmp ne i32 %second, 0"
+        } else {
+            ""
+        };
+        let source = format!(
+            r#"
+            declare void @__quantum__qis__x__body(i64)
+            declare i32 @__quantum__qis__m__body(i64, i64)
+            declare {ty} @{reader}(i64)
+            declare void @panic(i32, ptr)
+            define void @main() #0 {{
+                call void @__quantum__qis__x__body(i64 0)
+                %m0 = call i32 @__quantum__qis__m__body(i64 0, i64 0)
+                %first = call {ty} @{reader}(i64 0)
+                call void @__quantum__qis__x__body(i64 0)
+                %m1 = call i32 @__quantum__qis__m__body(i64 0, i64 0)
+                %second = call {ty} @{reader}(i64 0)
+                {conversions}
+                %second_zero = xor i1 {second}, true
+                %correct = and i1 {first}, %second_zero
+                br i1 %correct, label %done, label %failure
+            failure:
+                call void @panic(i32 1058, ptr null)
+                ret void
+            done:
+                ret void
+            }}
+            attributes #0 = {{ "EntryPoint" }}
+        "#
+        );
+        let mut engine = dynamic_read_engine(&source);
+        let shot = drive_dynamic_read_shot(&mut engine).unwrap();
+        assert_eq!(shot.data.get("measurement_0"), Some(&Data::U32(0)));
+    }
+}
+
+#[test]
+fn never_measured_failure_surfaces_from_start_and_continue() {
+    let _env_lock = crate::test_env::ENV_MUTEX.lock().unwrap();
+    for (ty, reader) in [
+        ("i1", "___read_future_bool"),
+        ("i32", "__quantum__rt__result_get_one"),
+    ] {
+        for after_measurement in [false, true] {
+            let prefix = if after_measurement {
+                "%m = call i32 @__quantum__qis__m__body(i64 0, i64 0)\n%read = call i1 @___read_future_bool(i64 0)"
+            } else {
+                ""
+            };
+            // Duplicate declarations of the bool reader are avoided for LLVM.
+            let extra_declaration = if ty == "i1" {
+                ""
+            } else {
+                "declare i1 @___read_future_bool(i64)"
+            };
+            let source = format!(
+                r#"
+                declare i32 @__quantum__qis__m__body(i64, i64)
+                declare {ty} @{reader}(i64)
+                {extra_declaration}
+                define void @main() #0 {{
+                    {prefix}
+                    %never = call {ty} @{reader}(i64 7)
+                    ret void
+                }}
+                attributes #0 = {{ "EntryPoint" }}
+            "#
+            );
+            let mut engine = dynamic_read_engine(&source);
+            let started = Instant::now();
+            let error = drive_dynamic_read_shot(&mut engine).unwrap_err();
+            assert!(started.elapsed() < Duration::from_secs(5));
+            assert!(
+                error
+                    .to_string()
+                    .contains("QIS measurement result 7 unavailable: never measured"),
+                "{error}"
+            );
+            assert!(
+                engine
+                    .dynamic_state
+                    .as_ref()
+                    .unwrap()
+                    .terminal_error
+                    .is_some()
+            );
+            assert!(!error.to_string().contains("cancelled by reset"));
+        }
+    }
+}

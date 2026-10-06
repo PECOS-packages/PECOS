@@ -51,6 +51,7 @@ Unparseable = "Unparseable"
 Pn = "Pn"
 PN = "PN"
 pn = "pn"
+Savin = "Savin" # author surname (GARI transform citation)
 
 [files]
 # Base64-encoded binary test fixtures inevitably contain typo-lookalike

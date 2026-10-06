@@ -14,6 +14,44 @@ use log::trace;
 use pecos_qis_ffi_types::{LoweredQuantumOp, Operation, OperationCollector, QuantumOp};
 use std::collections::BTreeMap;
 
+pub(crate) fn for_each_quantum_qubit(qop: &QuantumOp, mut include: impl FnMut(usize)) {
+    match qop {
+        QuantumOp::H(qubit)
+        | QuantumOp::X(qubit)
+        | QuantumOp::Y(qubit)
+        | QuantumOp::Z(qubit)
+        | QuantumOp::S(qubit)
+        | QuantumOp::Sdg(qubit)
+        | QuantumOp::T(qubit)
+        | QuantumOp::Tdg(qubit)
+        | QuantumOp::RX(_, qubit)
+        | QuantumOp::RY(_, qubit)
+        | QuantumOp::RZ(_, qubit)
+        | QuantumOp::RXY(_, _, qubit)
+        | QuantumOp::Idle(_, qubit)
+        | QuantumOp::Reset(qubit) => include(*qubit),
+        QuantumOp::CX(qubit_1, qubit_2)
+        | QuantumOp::CY(qubit_1, qubit_2)
+        | QuantumOp::CZ(qubit_1, qubit_2)
+        | QuantumOp::CH(qubit_1, qubit_2)
+        | QuantumOp::CRZ(_, qubit_1, qubit_2)
+        | QuantumOp::ZZ(qubit_1, qubit_2)
+        | QuantumOp::RZZ(_, qubit_1, qubit_2)
+        | QuantumOp::RXYXY2Q(_, _, qubit_1, qubit_2) => {
+            include(*qubit_1);
+            include(*qubit_2);
+        }
+        QuantumOp::CCX(qubit_1, qubit_2, qubit_3) => {
+            include(*qubit_1);
+            include(*qubit_2);
+            include(*qubit_3);
+        }
+        QuantumOp::Measure(qubit, _) | QuantumOp::MeasureLeaked(qubit, _) => {
+            include(*qubit);
+        }
+    }
+}
+
 /// Result type for runtime operations
 pub type Result<T> = std::result::Result<T, RuntimeError>;
 

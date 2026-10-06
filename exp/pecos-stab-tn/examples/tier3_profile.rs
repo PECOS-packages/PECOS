@@ -112,9 +112,9 @@ fn main() {
     });
     println!("    final bond dim: {}", stn.max_bond_dim());
 
-    // ---- 3. MC overlap_with_stabilizer cost (CD Loschmidt target) ----
+    // ---- 3. MC overlap_magnitude_with_stabilizer cost (CD Loschmidt target) ----
     println!();
-    println!("3. MC overlap_with_stabilizer (CD Loschmidt Method 1 we have):");
+    println!("3. MC overlap_magnitude_with_stabilizer (CD Loschmidt Method 1 we have):");
     println!("   Question: is the MC variance a bottleneck for code-state fidelity?");
 
     let n = 20;
@@ -134,13 +134,13 @@ fn main() {
     let num_samples_large = 10_000;
 
     bench("overlap n=20 GHZ (100 samples)", 1, || {
-        let _ = stn.overlap_with_stabilizer(&s, num_samples_small, None);
+        let _ = stn.overlap_magnitude_with_stabilizer(&s, num_samples_small, None);
     });
     bench("overlap n=20 GHZ (1k samples)", 1, || {
-        let _ = stn.overlap_with_stabilizer(&s, num_samples_medium, None);
+        let _ = stn.overlap_magnitude_with_stabilizer(&s, num_samples_medium, None);
     });
     bench("overlap n=20 GHZ (10k samples)", 1, || {
-        let _ = stn.overlap_with_stabilizer(&s, num_samples_large, None);
+        let _ = stn.overlap_magnitude_with_stabilizer(&s, num_samples_large, None);
     });
 
     println!();

@@ -430,7 +430,7 @@ mod tests {
                 gate,
             )
             .unwrap();
-            let actual = sim.state_vector();
+            let actual = sim.state_vector_up_to_phase();
             let overlap: Complex64 = expected
                 .iter()
                 .zip(&actual)

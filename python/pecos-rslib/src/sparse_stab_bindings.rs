@@ -26,9 +26,37 @@ pub struct PySparseStab {
 }
 
 #[cfg(test)]
-crate::simulator_utils::direct_surface_test!(direct_surface_matches_predicate, {
-    PySparseStab::new(2, None)
-});
+crate::simulator_utils::direct_surface_test!(
+    direct_surface_matches_predicate,
+    { PySparseStab::new(2, None) },
+    supports_forcing = true
+);
+
+#[cfg(test)]
+crate::simulator_utils::forced_z_surface_test!(
+    forced_mz_matches_aliases,
+    |seed| PySparseStab::new(2, Some(seed)),
+    "MZ",
+    &["Measure", "measure Z", "Measure +Z", "MZForced"],
+    true
+);
+
+#[cfg(test)]
+crate::simulator_utils::forced_z_surface_test!(
+    forced_pz_matches_aliases,
+    |seed| PySparseStab::new(2, Some(seed)),
+    "PZ",
+    &[
+        "Init",
+        "Init +Z",
+        "init |0>",
+        "leak",
+        "leak |0>",
+        "unleak |0>",
+        "PZForced"
+    ],
+    false
+);
 
 fn supports(entry: &SymbolEntry) -> bool {
     supports_exact! { entry;
@@ -210,10 +238,6 @@ impl PySparseStab {
                 self.inner.f4dg(q);
                 Ok(None)
             }
-            "PZ" => {
-                self.inner.pz(q);
-                Ok(None)
-            }
             "PZForced" => {
                 let forced_value = params
                     .ok_or_else(|| {
@@ -231,14 +255,8 @@ impl PySparseStab {
                 self.inner.pz_forced(location, forced_value);
                 Ok(None)
             }
-            "MZ" | "MX" | "MY" | "MZForced" => {
+            "MX" | "MY" | "MZForced" => {
                 let result = match symbol {
-                    "MZ" => self
-                        .inner
-                        .mz(q)
-                        .into_iter()
-                        .next()
-                        .expect("single-qubit measurement returned no result"),
                     "MX" => self
                         .inner
                         .mx(q)
@@ -334,7 +352,7 @@ impl PySparseStab {
                 Ok(None)
             }
             // Initialization aliases
-            "Init" | "Init +Z" | "init |0>" | "leak" | "leak |0>" | "unleak |0>" => {
+            "PZ" | "Init" | "Init +Z" | "init |0>" | "leak" | "leak |0>" | "unleak |0>" => {
                 // Check if forced_outcome parameter is provided
                 // If so, do forced measurement + correction (matches old Python behavior)
                 if let Some(params) = params
@@ -377,7 +395,7 @@ impl PySparseStab {
                 Ok(None)
             }
             // Measurement aliases
-            "Measure" | "measure Z" | "Measure +Z" => {
+            "MZ" | "Measure" | "measure Z" | "Measure +Z" => {
                 // Check if forced_outcome parameter is provided
                 if let Some(params) = params
                     && let Ok(Some(forced_item)) = params.get_item("forced_outcome")

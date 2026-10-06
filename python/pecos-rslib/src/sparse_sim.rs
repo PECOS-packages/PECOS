@@ -23,9 +23,33 @@ pub struct SparseSim {
 }
 
 #[cfg(test)]
-crate::simulator_utils::direct_surface_test!(direct_surface_matches_predicate, {
-    SparseSim::new(2)
-});
+crate::simulator_utils::direct_surface_test!(
+    direct_surface_matches_predicate,
+    { SparseSim::new(2) },
+    supports_forcing = true
+);
+
+#[cfg(test)]
+crate::simulator_utils::forced_z_surface_test!(
+    forced_mz_matches_aliases,
+    |seed| SparseSim {
+        inner: SparseStab::with_seed(2, seed)
+    },
+    "MZ",
+    &["MZForced"],
+    true
+);
+
+#[cfg(test)]
+crate::simulator_utils::forced_z_surface_test!(
+    forced_pz_matches_aliases,
+    |seed| SparseSim {
+        inner: SparseStab::with_seed(2, seed)
+    },
+    "PZ",
+    &["PZForced"],
+    false
+);
 
 fn supports(entry: &SymbolEntry) -> bool {
     supports_exact! { entry;
@@ -203,6 +227,16 @@ impl SparseSim {
                 Ok(None)
             }
             "PZ" => {
+                // Match SparseStab's Init aliases, including the random sentinel.
+                if let Some(params) = params
+                    && let Some(forced_item) = params.get_item("forced_outcome")?
+                {
+                    let forced_int: i32 = forced_item.extract()?;
+                    if forced_int != -1 {
+                        self.inner.pz_forced(location, forced_int != 0);
+                        return Ok(None);
+                    }
+                }
                 self.inner.pz(q);
                 Ok(None)
             }
@@ -245,12 +279,20 @@ impl SparseSim {
             }
             "MZ" | "MX" | "MY" | "MZForced" => {
                 let result = match symbol {
-                    "MZ" => self
-                        .inner
-                        .mz(q)
-                        .into_iter()
-                        .next()
-                        .expect("measurement returned no results"),
+                    "MZ" => {
+                        if let Some(params) = params
+                            && let Some(forced_item) = params.get_item("forced_outcome")?
+                        {
+                            let forced_int: i32 = forced_item.extract()?;
+                            self.inner.mz_forced(location, forced_int != 0)
+                        } else {
+                            self.inner
+                                .mz(q)
+                                .into_iter()
+                                .next()
+                                .expect("measurement returned no results")
+                        }
+                    }
                     "MX" => self
                         .inner
                         .mx(q)

@@ -7,11 +7,9 @@ from __future__ import annotations
 
 import pytest
 
-pytest.importorskip("pecos_rslib")
-
-from pecos_rslib import TickCircuit  # noqa: E402
-from pecos_rslib.decoders import mwpf, pymatching, relay_bp, tesseract  # noqa: E402
-from pecos_rslib.qec import DagFaultAnalyzer, DemSampler  # noqa: E402
+from pecos_rslib import TickCircuit
+from pecos_rslib.decoders import mwpf, pymatching, relay_bp, tesseract
+from pecos_rslib.qec import DagFaultAnalyzer, DemSampler
 
 DEM = "error(0.25) D0 L0\nerror(0.1) D0\n"
 

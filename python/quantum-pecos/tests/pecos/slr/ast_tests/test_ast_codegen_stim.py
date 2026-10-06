@@ -12,13 +12,11 @@
 """Tests for AST to Stim code generator."""
 
 import pytest
-
-stim = pytest.importorskip("stim")
-
-from pecos.slr import Barrier, CReg, If, Main, QReg, Repeat  # noqa: E402
-from pecos.slr.ast import slr_to_ast  # noqa: E402
-from pecos.slr.ast.codegen import AstToStim, ast_to_stim, ast_to_stim_str  # noqa: E402
-from pecos.slr.qeclib import qubit as qb  # noqa: E402
+import stim
+from pecos.slr import Barrier, CReg, If, Main, QReg, Repeat
+from pecos.slr.ast import slr_to_ast
+from pecos.slr.ast.codegen import AstToStim, ast_to_stim, ast_to_stim_str
+from pecos.slr.qeclib import qubit as qb
 
 
 class TestAstToStimBasic:

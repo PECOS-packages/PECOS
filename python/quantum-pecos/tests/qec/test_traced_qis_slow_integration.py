@@ -8,6 +8,7 @@ import math
 
 import numpy as np
 import pytest
+import stim
 from pecos.qec.surface import SurfacePatch
 from pecos.qec.surface.circuit_builder import tick_circuit_to_stim
 from pecos.qec.surface.decode import _build_surface_tick_circuit_for_native_model
@@ -15,7 +16,6 @@ from pecos_rslib.qec import DemSampler
 from pecos_rslib_exp import depolarizing, fault_catalog, meas_sampling, monte_carlo, sim_neo
 
 pymatching = pytest.importorskip("pymatching")
-stim = pytest.importorskip("stim")
 
 pytestmark = pytest.mark.slow
 

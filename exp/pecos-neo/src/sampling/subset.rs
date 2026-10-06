@@ -408,6 +408,9 @@ where
 
         // Track cumulative probability
         let mut cumulative_prob = 1.0;
+        // Conditionals actually committed into the estimate (terminal levels
+        // are recorded but not multiplied in); the CV uses these.
+        let mut committed_conditionals: Vec<f64> = Vec::new();
 
         for level in 0..self.config.max_levels {
             // Find threshold: score at (1 - threshold_fraction) quantile
@@ -458,8 +461,17 @@ where
                 break;
             }
 
+            if level + 1 == self.config.max_levels {
+                // Last permitted level: no later level would measure the
+                // failure fraction of a population resampled on this
+                // threshold, so estimate from the current population. With
+                // max_levels = 1 this is direct Monte Carlo (#902).
+                break;
+            }
+
             // Commit this level: condition on score >= threshold.
             cumulative_prob *= conditional_prob;
+            committed_conditionals.push(conditional_prob);
 
             // Check if all survivors are failures
             if samples
@@ -539,18 +551,13 @@ where
 
         let probability = cumulative_prob * final_failure_fraction;
 
-        // Estimate coefficient of variation (simplified)
-        // For subset simulation, CV ≈ sqrt(sum of 1/nᵢpᵢ) where nᵢ is samples and pᵢ is conditional prob
-        let cv_squared: f64 = levels
-            .iter()
-            .map(|l| {
-                if l.conditional_prob > 0.0 {
-                    (1.0 - l.conditional_prob) / (l.num_samples as f64 * l.conditional_prob)
-                } else {
-                    0.0
-                }
-            })
-            .sum();
+        // Independent-levels CV over the committed factors and the final
+        // failure fraction; recorded terminal levels are not estimator factors.
+        let cv_squared = independent_levels_cv_squared(
+            committed_conditionals.iter().copied(),
+            final_failure_fraction,
+            self.config.samples_per_level,
+        );
         let coefficient_of_variation = cv_squared.sqrt();
 
         SubsetResult {
@@ -2450,6 +2457,52 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn single_level_subset_simulation_is_direct_monte_carlo() {
+        // Issue #902: with max_levels = 1 the estimate must be the plain
+        // failure fraction of the initial population, with no threshold
+        // committed and no resampling. Score = m0 and failure = m0 AND m1, so
+        // the survivors above the threshold include non-failures, which is
+        // where committing the level used to bias the estimate.
+        let circuit = CommandBuilder::new()
+            .pz(&[0, 1])
+            .h(&[0, 1])
+            .mz(&[0, 1])
+            .build();
+        let bit = |outcomes: &MeasurementOutcomes, q: usize| {
+            outcomes.get_bit(QubitId(q)).unwrap_or(false)
+        };
+        let n = 2000;
+        let result = SubsetSimulation::new(
+            circuit,
+            2,
+            move |outcomes: &MeasurementOutcomes| f64::from(u8::from(bit(outcomes, 0))),
+            move |outcomes: &MeasurementOutcomes| bit(outcomes, 0) && bit(outcomes, 1),
+        )
+        .with_config(
+            SubsetConfig::new()
+                .with_samples_per_level(n)
+                .with_threshold_fraction(0.1)
+                .with_max_levels(1)
+                .with_seed(902),
+        )
+        .run();
+
+        assert_eq!(result.total_samples, n, "a single level must not resample");
+        let direct = result.direct_failures as f64 / n as f64;
+        assert!(
+            (direct - 0.25).abs() < 0.05,
+            "test regime: failure fraction {direct} should be near 0.25"
+        );
+        assert_eq!(result.probability, direct);
+        let expected_cv = ((1.0 - direct) / (n as f64 * direct)).sqrt();
+        assert!(
+            (result.coefficient_of_variation - expected_cv).abs() < 1e-12,
+            "CV {} must be the direct Monte Carlo CV {expected_cv}",
+            result.coefficient_of_variation
+        );
     }
 
     #[test]

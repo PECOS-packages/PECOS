@@ -6,11 +6,12 @@ mod oracle;
 mod reordering;
 mod sampling;
 mod validation;
+mod width_profile;
 
 use super::*;
-use crate::{ArbitraryRotationGateable, CliffordGateable, PecosRng, SparseStabY};
+use crate::{ArbitraryRotationGateable, CliffordGateable, PecosRng};
 use pecos_core::{Gate, MeasId, QubitId, channel, gate_type::GateType};
-use pecos_simulators::{DenseStateVec, ForcedMeasurement};
+use pecos_simulators::{DenseStateVec, ForcedMeasurement, SparseStabY};
 
 fn append(circuit: &mut TickCircuit, mut gate: Gate) {
     if gate.gate_type.consumes_measurement_record() {
@@ -227,7 +228,7 @@ fn named_clifford_frames_match_physical_trait_contract() {
             ] {
                 assert_eq!(
                     builder::pullback(&frame, &[(q, axis)]),
-                    builder::pullback(&physical.tableau, &[(q, axis)]),
+                    builder::pullback(physical.structure.tableau(), &[(q, axis)]),
                     "{kind:?} {q} {axis:?}"
                 );
             }
@@ -313,7 +314,7 @@ fn signed_frames_on_entangled_prefixes() {
             ] {
                 assert_eq!(
                     builder::pullback(&frame, &[(q, axis)]),
-                    builder::pullback(&physical.tableau, &[(q, axis)]),
+                    builder::pullback(physical.structure.tableau(), &[(q, axis)]),
                     "step {step}"
                 );
             }

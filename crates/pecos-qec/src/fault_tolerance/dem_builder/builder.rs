@@ -54,6 +54,8 @@ pub struct ParsedDetector {
     pub records: Vec<i32>,
     /// Stable measurement identifiers.
     pub meas_ids: Vec<usize>,
+    /// Human-readable name from the metadata JSON's `label` field.
+    pub label: Option<String>,
 }
 
 /// Parsed observable from JSON metadata.
@@ -2630,11 +2632,14 @@ fn parse_single_detector(value: &serde_json::Value) -> Result<ParsedDetector, De
     let coords = extract_coords(object)?;
     let (records, meas_ids) = extract_measurement_refs(object, "detector")?;
 
+    let label = extract_definition_label(object, "detector")?;
+
     Ok(ParsedDetector {
         id,
         coords,
         records,
         meas_ids,
+        label,
     })
 }
 
@@ -2672,17 +2677,7 @@ fn parse_single_observable(value: &serde_json::Value) -> Result<ParsedObservable
     )?;
 
     let (records, meas_ids) = extract_measurement_refs(object, "observable")?;
-    // A present-but-malformed label is rejected rather than silently treated as
-    // absent; the richer DEM metadata parser already holds that line.
-    let label = match object.get("label") {
-        None | Some(serde_json::Value::Null) => None,
-        Some(serde_json::Value::String(label)) => Some(label.clone()),
-        Some(other) => {
-            return Err(DemBuilderError::ParseError(format!(
-                "observable label must be a string or null, got {other}"
-            )));
-        }
-    };
+    let label = extract_definition_label(object, "observable")?;
 
     Ok(ParsedObservable {
         id,
@@ -2690,6 +2685,21 @@ fn parse_single_observable(value: &serde_json::Value) -> Result<ParsedObservable
         meas_ids,
         label,
     })
+}
+
+/// A present-but-malformed label is rejected rather than silently treated as
+/// absent; the richer DEM metadata parser already holds that line.
+fn extract_definition_label(
+    object: &serde_json::Map<String, serde_json::Value>,
+    kind: &str,
+) -> Result<Option<String>, DemBuilderError> {
+    match object.get("label") {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::String(label)) => Ok(Some(label.clone())),
+        Some(other) => Err(DemBuilderError::ParseError(format!(
+            "{kind} label must be a string or null, got {other}"
+        ))),
+    }
 }
 
 /// Parse detector JSON into per-detector measurement-reference vectors for the

@@ -143,9 +143,17 @@ pub struct DemBuilder<'a> {
     /// Optional circuit context for future exact replacement-branch replay.
     exact_branch_context: Option<ExactBranchReplayContext<'a>>,
     /// Ideal symbolic measurement history shared by exact branch replays.
-    exact_ideal_history_cache: RefCell<Option<Rc<MeasurementHistory>>>,
+    exact_ideal_history_cache: RefCell<Option<Rc<ExactIdealReplay>>>,
+    /// Record-position translation shared by ordinary and exact paths.
+    tc_to_influence_cache: RefCell<Option<Rc<BTreeMap<usize, usize>>>>,
     /// Per-gate cache for exact replacement-branch replay effects.
     exact_branch_cache: RefCell<BTreeMap<usize, ExactBranchReplayAnalysis>>,
+}
+
+#[derive(Debug)]
+struct ExactIdealReplay {
+    history: MeasurementHistory,
+    influence_to_history: Vec<usize>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -361,12 +369,15 @@ impl<'a> DemBuilder<'a> {
             measurement_order: None,
             exact_branch_context: None,
             exact_ideal_history_cache: RefCell::new(None),
+            tc_to_influence_cache: RefCell::new(None),
             exact_branch_cache: RefCell::new(BTreeMap::new()),
         }
     }
 
     fn clear_exact_branch_cache(&mut self) {
         self.exact_branch_cache.get_mut().clear();
+        self.exact_ideal_history_cache.get_mut().take();
+        self.tc_to_influence_cache.get_mut().take();
     }
 
     /// Sets the noise configuration from individual parameters.
@@ -389,7 +400,6 @@ impl<'a> DemBuilder<'a> {
         circuit: &'a pecos_quantum::DagCircuit,
     ) -> Self {
         self.exact_branch_context = Some(ExactBranchReplayContext { circuit });
-        self.exact_ideal_history_cache.get_mut().take();
         self.clear_exact_branch_cache();
         self
     }
@@ -695,11 +705,81 @@ impl<'a> DemBuilder<'a> {
             .collect()
     }
 
+    /// Match record positions to map positions by qubit and occurrence once.
+    fn tc_to_influence(&self) -> Rc<BTreeMap<usize, usize>> {
+        if let Some(cached) = self.tc_to_influence_cache.borrow().as_ref().cloned() {
+            return cached;
+        }
+        // Build a mapping from (qubit, occurrence_index) to influence_map_index
+        // This handles multi-round circuits where the same qubit is measured multiple times
+        let tc_to_influence: BTreeMap<usize, usize> =
+            if let Some(ref order) = self.measurement_order {
+                // Count occurrences of each qubit in TickCircuit order
+                let mut tc_qubit_counts: BTreeMap<usize, usize> = BTreeMap::new();
+                let mut tc_qubit_occurrence: Vec<(usize, usize)> = Vec::with_capacity(order.len());
+
+                for &qubit in order {
+                    let count = tc_qubit_counts.entry(qubit).or_insert(0);
+                    tc_qubit_occurrence.push((qubit, *count));
+                    *count += 1;
+                }
+
+                // Count occurrences of each qubit in influence map order
+                let mut im_qubit_counts: BTreeMap<usize, usize> = BTreeMap::new();
+                let mut im_qubit_occurrence: Vec<(usize, usize)> =
+                    Vec::with_capacity(self.influence_map.measurements.len());
+
+                for &(_, qubit, _) in &self.influence_map.measurements {
+                    let count = im_qubit_counts.entry(qubit).or_insert(0);
+                    im_qubit_occurrence.push((qubit, *count));
+                    *count += 1;
+                }
+
+                // Build (qubit, occurrence) -> influence_map_index mapping
+                let qubit_occ_to_im: BTreeMap<(usize, usize), usize> = im_qubit_occurrence
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, &(qubit, occ))| ((qubit, occ), idx))
+                    .collect();
+
+                // Build TickCircuit index -> influence map index mapping
+                tc_qubit_occurrence
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(tc_idx, &(qubit, occ))| {
+                        qubit_occ_to_im
+                            .get(&(qubit, occ))
+                            .map(|&im_idx| (tc_idx, im_idx))
+                    })
+                    .collect()
+            } else {
+                // No measurement order provided, assume indices match
+                (0..self.num_measurements).map(|i| (i, i)).collect()
+            };
+
+        let mapping = Rc::new(tc_to_influence);
+        *self.tc_to_influence_cache.borrow_mut() = Some(mapping.clone());
+        mapping
+    }
+
+    /// Resolve references into influence-map positions. Records and legacy
+    /// positional IDs use the occurrence translation; stamped IDs already name
+    /// map positions and must not be translated a second time.
     fn measurement_indices_from_refs(
         &self,
         records: &[i32],
         meas_ids: &[usize],
     ) -> Result<Vec<usize>, DemBuilderError> {
+        let translate = |record_index| {
+            self.tc_to_influence()
+                .get(&record_index)
+                .copied()
+                .ok_or_else(|| {
+                    DemBuilderError::ConfigurationError(format!(
+                        "record position {record_index} has no measurement in the influence map"
+                    ))
+                })
+        };
         if !records.is_empty() {
             return records
                 .iter()
@@ -710,6 +790,7 @@ impl<'a> DemBuilder<'a> {
                             self.num_measurements
                         ))
                     })
+                    .and_then(translate)
                 })
                 .collect();
         }
@@ -717,12 +798,20 @@ impl<'a> DemBuilder<'a> {
         meas_ids
             .iter()
             .map(|&meas_id| {
-                self.resolve_meas_id_to_tc_index(meas_id).ok_or_else(|| {
-                    DemBuilderError::ParseError(format!(
-                        "meas_id {meas_id} is not present in the circuit's {} measurement(s)",
-                        self.num_measurements
-                    ))
-                })
+                self.resolve_meas_id_to_tc_index(meas_id)
+                    .ok_or_else(|| {
+                        DemBuilderError::ParseError(format!(
+                            "meas_id {meas_id} is not present in the circuit's {} measurement(s)",
+                            self.num_measurements
+                        ))
+                    })
+                    .and_then(|index| {
+                        if self.influence_map.meas_ids.is_empty() {
+                            translate(index)
+                        } else {
+                            Ok(index)
+                        }
+                    })
             })
             .collect()
     }
@@ -1343,8 +1432,9 @@ impl<'a> DemBuilder<'a> {
                 self.measurement_indices_from_refs(&detector.records, &detector.meas_ids)?;
             if omitted_branch_flips_measurement_parity_from_histories(
                 request,
-                ideal_history.as_ref(),
+                &ideal_history.history,
                 &branch_info.history,
+                &ideal_history.influence_to_history,
                 &indices,
             )? {
                 xor_toggle_4(&mut triggered_dets, detector.id);
@@ -1356,8 +1446,9 @@ impl<'a> DemBuilder<'a> {
                 self.measurement_indices_from_refs(&observable.records, &observable.meas_ids)?;
             if omitted_branch_flips_measurement_parity_from_histories(
                 request,
-                ideal_history.as_ref(),
+                &ideal_history.history,
                 &branch_info.history,
+                &ideal_history.influence_to_history,
                 &indices,
             )? {
                 xor_toggle_2(&mut triggered_obs, observable.id);
@@ -1376,19 +1467,34 @@ impl<'a> DemBuilder<'a> {
     fn exact_ideal_measurement_history(
         &self,
         context: ExactBranchReplayContext<'_>,
-    ) -> Result<Rc<MeasurementHistory>, DemBuilderError> {
+    ) -> Result<Rc<ExactIdealReplay>, DemBuilderError> {
         use crate::fault_tolerance::influence_builder::InfluenceBuilder;
 
         if let Some(cached) = self.exact_ideal_history_cache.borrow().as_ref().cloned() {
             return Ok(cached);
         }
 
-        let history = Rc::new(
-            InfluenceBuilder::new(context.circuit)
-                .run_symbolic_simulation()
-                .map_err(|err| DemBuilderError::ConfigurationError(err.to_string()))?
-                .history,
-        );
+        let info = InfluenceBuilder::new(context.circuit)
+            .run_symbolic_simulation()
+            .map_err(|err| DemBuilderError::ConfigurationError(err.to_string()))?;
+        let influence_to_history = self.influence_map.measurements
+            .iter()
+            .enumerate()
+            .map(|(index, &(node, _, _))| {
+                info.node_to_meas_idx.get(node).copied().flatten().ok_or_else(|| {
+                    DemBuilderError::ConfigurationError(format!(
+                        "exact_branch_replay influence measurement {index} at node {node} has no history entry"
+                    ))
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        // circuit_with_omitted_two_qubit_gate uses update_gate in place, preserving
+        // node ids and edges. Every branch therefore shares this ideal node mapping.
+        // Outcome dependency sets remain history indices and are never translated.
+        let history = Rc::new(ExactIdealReplay {
+            history: info.history,
+            influence_to_history,
+        });
         *self.exact_ideal_history_cache.borrow_mut() = Some(history.clone());
         Ok(history)
     }
@@ -1519,7 +1625,7 @@ impl<'a> DemBuilder<'a> {
                         dem,
                         meas_to_detectors,
                         meas_to_observables,
-                    );
+                    )?;
                 }
                 GateType::MeasCrosstalkGlobalPayload
                     if !loc.before
@@ -1537,7 +1643,7 @@ impl<'a> DemBuilder<'a> {
                         dem,
                         meas_to_detectors,
                         meas_to_observables,
-                    );
+                    )?;
                 }
                 gate_type if is_two_qubit_noise_gate(gate_type) && !loc.before => {}
                 GateType::H
@@ -1794,7 +1900,7 @@ impl<'a> DemBuilder<'a> {
         dem: &mut DetectorErrorModel,
         meas_to_detectors: &BTreeMap<usize, Vec<u32>>,
         meas_to_observables: &BTreeMap<usize, Vec<u32>>,
-    ) {
+    ) -> Result<(), DemBuilderError> {
         let (bit_flip_probability, leak_probability) =
             match self.noise.measurement_crosstalk_dem_mode {
                 MeasurementCrosstalkDemMode::AveragedHiddenLeakageAsDepolarizing => (
@@ -1809,10 +1915,7 @@ impl<'a> DemBuilder<'a> {
                         "measurement crosstalk exact deterministic mode was validated with context",
                     );
                     let loc = &self.influence_map.locations[loc_idx];
-                    let hidden = Self::hidden_mz_result_before_crosstalk_payload(context, loc)
-                        .expect(
-                            "measurement crosstalk exact deterministic hidden result was validated",
-                        );
+                    let hidden = Self::hidden_mz_result_before_crosstalk_payload(context, loc)?;
                     if hidden.flip {
                         (
                             self.noise.p_meas_crosstalk_model.p_1_to_0,
@@ -1826,7 +1929,7 @@ impl<'a> DemBuilder<'a> {
                     }
                 }
                 MeasurementCrosstalkDemMode::Omitted => {
-                    return;
+                    return Ok(());
                 }
             };
         if matches!(
@@ -1845,7 +1948,7 @@ impl<'a> DemBuilder<'a> {
                 dem,
                 meas_to_detectors,
                 meas_to_observables,
-            );
+            )?;
         } else {
             self.process_measurement_crosstalk_pauli_rates_source_tracked(
                 loc_idx,
@@ -1853,8 +1956,9 @@ impl<'a> DemBuilder<'a> {
                 dem,
                 meas_to_detectors,
                 meas_to_observables,
-            );
+            )?;
         }
+        Ok(())
     }
 
     /// Processes local measurement-crosstalk payloads as single-location Pauli
@@ -1866,22 +1970,21 @@ impl<'a> DemBuilder<'a> {
         dem: &mut DetectorErrorModel,
         meas_to_detectors: &BTreeMap<usize, Vec<u32>>,
         meas_to_observables: &BTreeMap<usize, Vec<u32>>,
-    ) {
+    ) -> Result<(), DemBuilderError> {
         let loc = &self.influence_map.locations[loc_idx];
         let [rate_x, rate_y, rate_z] = rates;
-        let effect = |pauli| -> FaultMechanism {
+        let effect = |pauli| -> Result<FaultMechanism, DemBuilderError> {
             if loc.gate_type == GateType::MeasCrosstalkGlobalPayload {
                 let context = self.exact_branch_context.expect(
                     "measurement crosstalk exact deterministic mode was validated with context",
                 );
                 self.exact_measurement_crosstalk_pauli_effect(context, loc, pauli)
-                    .expect("global measurement crosstalk exact replay was validated")
             } else {
-                self.compute_mechanism(loc_idx, pauli, meas_to_detectors, meas_to_observables)
+                Ok(self.compute_mechanism(loc_idx, pauli, meas_to_detectors, meas_to_observables))
             }
         };
-        let x_effect = effect(Pauli::X);
-        let z_effect = effect(Pauli::Z);
+        let x_effect = effect(Pauli::X)?;
+        let z_effect = effect(Pauli::Z)?;
 
         if rate_x > 0.0 && !x_effect.is_empty() {
             dem.add_direct_contribution_with_source(
@@ -1919,6 +2022,7 @@ impl<'a> DemBuilder<'a> {
                 );
             }
         }
+        Ok(())
     }
 
     /// Converts one categorical idle Pauli channel after propagation has
@@ -2302,52 +2406,7 @@ impl<'a> DemBuilder<'a> {
         let mut meas_to_observables: BTreeMap<usize, Vec<u32>> = BTreeMap::new();
         let influence_observable_ids = self.influence_map.observable_ids();
 
-        // Build a mapping from (qubit, occurrence_index) to influence_map_index
-        // This handles multi-round circuits where the same qubit is measured multiple times
-        let tc_to_influence: BTreeMap<usize, usize> =
-            if let Some(ref order) = self.measurement_order {
-                // Count occurrences of each qubit in TickCircuit order
-                let mut tc_qubit_counts: BTreeMap<usize, usize> = BTreeMap::new();
-                let mut tc_qubit_occurrence: Vec<(usize, usize)> = Vec::with_capacity(order.len());
-
-                for &qubit in order {
-                    let count = tc_qubit_counts.entry(qubit).or_insert(0);
-                    tc_qubit_occurrence.push((qubit, *count));
-                    *count += 1;
-                }
-
-                // Count occurrences of each qubit in influence map order
-                let mut im_qubit_counts: BTreeMap<usize, usize> = BTreeMap::new();
-                let mut im_qubit_occurrence: Vec<(usize, usize)> =
-                    Vec::with_capacity(self.influence_map.measurements.len());
-
-                for &(_, qubit, _) in &self.influence_map.measurements {
-                    let count = im_qubit_counts.entry(qubit).or_insert(0);
-                    im_qubit_occurrence.push((qubit, *count));
-                    *count += 1;
-                }
-
-                // Build (qubit, occurrence) -> influence_map_index mapping
-                let qubit_occ_to_im: BTreeMap<(usize, usize), usize> = im_qubit_occurrence
-                    .iter()
-                    .enumerate()
-                    .map(|(idx, &(qubit, occ))| ((qubit, occ), idx))
-                    .collect();
-
-                // Build TickCircuit index -> influence map index mapping
-                tc_qubit_occurrence
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(tc_idx, &(qubit, occ))| {
-                        qubit_occ_to_im
-                            .get(&(qubit, occ))
-                            .map(|&im_idx| (tc_idx, im_idx))
-                    })
-                    .collect()
-            } else {
-                // No measurement order provided, assume indices match
-                (0..self.num_measurements).map(|i| (i, i)).collect()
-            };
+        let tc_to_influence = self.tc_to_influence();
 
         for det in &self.detectors {
             if det.records.is_empty() {
@@ -3131,11 +3190,13 @@ fn omitted_branch_flips_measurement_parity_from_histories(
     request: ExactBranchReplayRequest,
     ideal_history: &MeasurementHistory,
     branch_history: &MeasurementHistory,
+    influence_to_history: &[usize],
     measurement_indices: &[usize],
 ) -> Result<bool, DemBuilderError> {
     measurement_parity_differs_from_histories(
         ideal_history,
         branch_history,
+        influence_to_history,
         measurement_indices,
         &format!(
             "exact_branch_replay omitted gate at node {}",
@@ -3147,11 +3208,22 @@ fn omitted_branch_flips_measurement_parity_from_histories(
 fn measurement_parity_differs_from_histories(
     ideal_history: &MeasurementHistory,
     branch_history: &MeasurementHistory,
+    influence_to_history: &[usize],
     measurement_indices: &[usize],
     context: &str,
 ) -> Result<bool, DemBuilderError> {
-    let ideal = measurement_parity_expression(ideal_history, measurement_indices, "ideal")?;
-    let branch = measurement_parity_expression(branch_history, measurement_indices, "branch")?;
+    let ideal = measurement_parity_expression(
+        ideal_history,
+        influence_to_history,
+        measurement_indices,
+        "ideal",
+    )?;
+    let branch = measurement_parity_expression(
+        branch_history,
+        influence_to_history,
+        measurement_indices,
+        "branch",
+    )?;
     if ideal.dependencies != branch.dependencies {
         return Err(DemBuilderError::ConfigurationError(format!(
             "{context} changes measurement dependencies for parity {measurement_indices:?}; this branch is not representable as a single deterministic DEM event"
@@ -3162,6 +3234,7 @@ fn measurement_parity_differs_from_histories(
 
 fn measurement_parity_expression(
     history: &MeasurementHistory,
+    influence_to_history: &[usize],
     measurement_indices: &[usize],
     history_label: &str,
 ) -> Result<MeasurementParityExpression, DemBuilderError> {
@@ -3169,9 +3242,17 @@ fn measurement_parity_expression(
     let mut flip = false;
 
     for &measurement_idx in measurement_indices {
-        let result = history.get(measurement_idx).ok_or_else(|| {
+        let history_idx = influence_to_history
+            .get(measurement_idx)
+            .copied()
+            .ok_or_else(|| {
+                DemBuilderError::ConfigurationError(format!(
+                    "exact_branch_replay influence position {measurement_idx} has no measured node"
+                ))
+            })?;
+        let result = history.get(history_idx).ok_or_else(|| {
             DemBuilderError::ConfigurationError(format!(
-                "exact_branch_replay {history_label} history has no measurement {measurement_idx}"
+                    "exact_branch_replay {history_label} history has no entry {history_idx} for influence measurement {measurement_idx}"
             ))
         })?;
         dependencies.symmetric_difference_update(&result.outcome);
@@ -3621,6 +3702,57 @@ impl std::error::Error for DemBuilderError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn exact_parity_rejects_missing_positions_and_history_entries() {
+        use crate::fault_tolerance::influence_builder::InfluenceBuilder;
+
+        let mut circuit = pecos_quantum::DagCircuit::new();
+        circuit.pz(&[0]);
+        circuit.mz(&[0]);
+        let info = InfluenceBuilder::new(&circuit)
+            .run_symbolic_simulation()
+            .unwrap();
+        // The first mapping has no node for position 0; the second names a
+        // history entry beyond the sole measurement. Both must report errors.
+        for mapping in [vec![], vec![1]] {
+            assert!(matches!(
+                measurement_parity_expression(&info.history, &mapping, &[0], "ideal"),
+                Err(DemBuilderError::ConfigurationError(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn exact_reference_translation_preserves_legacy_ids_and_multiplicity() {
+        let mut map = DagFaultInfluenceMap::with_capacity(0);
+        map.measurements = vec![(2, 0, 0), (3, 1, 0), (4, 0, 0)];
+        let builder = DemBuilder::new(&map).with_measurement_order(vec![1, 0, 0]);
+        // q1 first, then the first and second q0 measurements. Duplicate
+        // references remain duplicate terms, for XOR cancellation downstream.
+        assert_eq!(
+            builder
+                .measurement_indices_from_refs(&[0, 1, 2, 1], &[])
+                .unwrap(),
+            [1, 0, 2, 0]
+        );
+        assert_eq!(
+            builder
+                .measurement_indices_from_refs(&[], &[0, 1, 2, 1])
+                .unwrap(),
+            [1, 0, 2, 0]
+        );
+        let first = builder.tc_to_influence();
+        assert!(Rc::ptr_eq(&first, &builder.tc_to_influence()));
+        let builder = builder.with_measurement_order(vec![0, 1, 0]);
+        assert_eq!(
+            builder
+                .measurement_indices_from_refs(&[0, 1, 2], &[])
+                .unwrap(),
+            [0, 1, 2]
+        );
+        assert!(!Rc::ptr_eq(&first, &builder.tc_to_influence()));
+    }
 
     #[test]
     fn z_error_before_mx_produces_a_detector_mechanism() {
@@ -4942,6 +5074,8 @@ mod tests {
 
         let builder = builder.with_detectors_json("[]").unwrap();
         assert!(builder.exact_branch_cache.borrow().is_empty());
+        assert!(builder.exact_ideal_history_cache.borrow().is_none());
+        assert!(builder.tc_to_influence_cache.borrow().is_none());
     }
 
     #[test]

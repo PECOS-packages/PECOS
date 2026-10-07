@@ -523,6 +523,14 @@ pub fn tick_circuit_emission(circuit: &TickCircuit) -> Vec<Option<MeasId>> {
     emission
 }
 
+/// Return DAG nodes in emission order: topological order keyed by node index.
+#[must_use]
+pub fn dag_circuit_emission_order(circuit: &DagCircuit) -> Vec<usize> {
+    circuit
+        .as_dag()
+        .lexicographical_topological_sort(|node| node)
+}
+
 /// A DAG's measurement records in emission order: topological order keyed by
 /// node index, then qubit-list order.
 ///
@@ -532,10 +540,7 @@ pub fn tick_circuit_emission(circuit: &TickCircuit) -> Vec<Option<MeasId>> {
 #[must_use]
 pub fn dag_circuit_emission(circuit: &DagCircuit) -> Vec<Option<MeasId>> {
     let mut emission = Vec::new();
-    for node in circuit
-        .as_dag()
-        .lexicographical_topological_sort(|node| node)
-    {
+    for node in dag_circuit_emission_order(circuit) {
         let Some(gate) = circuit.gate(node) else {
             continue;
         };

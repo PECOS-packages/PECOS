@@ -45,25 +45,32 @@ use std::rc::Rc;
 
 /// Parsed detector from JSON metadata.
 #[derive(Debug, Clone)]
-struct ParsedDetector {
-    id: u32,
-    coords: Option<[f64; 3]>,
-    records: Vec<i32>,
-    meas_ids: Vec<usize>,
+pub struct ParsedDetector {
+    /// Declared identifier.
+    pub id: u32,
+    /// Optional three-dimensional coordinates.
+    pub coords: Option<[f64; 3]>,
+    /// Measurement record offsets.
+    pub records: Vec<i32>,
+    /// Stable measurement identifiers.
+    pub meas_ids: Vec<usize>,
 }
 
 /// Parsed observable from JSON metadata.
 #[derive(Debug, Clone)]
-struct ParsedObservable {
-    id: u32,
-    records: Vec<i32>,
-    meas_ids: Vec<usize>,
+pub struct ParsedObservable {
+    /// Declared identifier.
+    pub id: u32,
+    /// Measurement record offsets.
+    pub records: Vec<i32>,
+    /// Stable measurement identifiers.
+    pub meas_ids: Vec<usize>,
     /// Human-readable name from the metadata JSON's `label` field.
     ///
     /// The metadata format has always carried this and callers already write
     /// it, but it used to be parsed and dropped, leaving circuit annotations as
     /// the only way to get a label onto an observable.
-    label: Option<String>,
+    pub label: Option<String>,
 }
 
 // ============================================================================
@@ -2588,7 +2595,10 @@ fn get_y_decomposition(p1: u8, p2: u8) -> Option<(u8, u8, u8, u8)> {
 // ============================================================================
 
 /// Parses detector definitions from JSON.
-fn parse_detectors_json(json: &str) -> Result<Vec<ParsedDetector>, DemBuilderError> {
+///
+/// # Errors
+/// Returns [`DemBuilderError`] when metadata fails schema or JSON validation.
+pub fn parse_detectors_json(json: &str) -> Result<Vec<ParsedDetector>, DemBuilderError> {
     let json = json.trim();
     if json.is_empty() || json == "[]" {
         return Ok(Vec::new());
@@ -2629,7 +2639,10 @@ fn parse_single_detector(value: &serde_json::Value) -> Result<ParsedDetector, De
 }
 
 /// Parses observable definitions from JSON.
-fn parse_observables_json(json: &str) -> Result<Vec<ParsedObservable>, DemBuilderError> {
+///
+/// # Errors
+/// Returns [`DemBuilderError`] when metadata fails schema or JSON validation.
+pub fn parse_observables_json(json: &str) -> Result<Vec<ParsedObservable>, DemBuilderError> {
     let json = json.trim();
     if json.is_empty() || json == "[]" {
         return Ok(Vec::new());

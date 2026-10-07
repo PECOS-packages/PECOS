@@ -39,9 +39,11 @@ pub fn schedule_for_width(program: HeisenbergProgram) -> HeisenbergProgram {
     let mut ready: Vec<_> = (0..source.len()).filter(|&i| indegrees[i] == 0).collect();
     let mut structure = ActiveStructure::with_seed(program.num_qubits(), 0);
     let mut operations = Vec::with_capacity(source.len());
-    // Exchange argument: when only promoting rotations are ready, the earliest
-    // remaining operation is ready. Choosing it lets non-growing operations move
-    // earlier without raising peak width, including kept quarter turns. This
+    // Exchange argument: when only priority-3 operations are ready, the
+    // lowest-index rule picks the earliest remaining operation, so each promotion
+    // happens no later, in source-prefix terms, than in the given order.
+    // Non-growing operations can move earlier without raising peak width,
+    // including kept quarter turns. This
     // needs the lowest-index tie-break only within priority 3; any deterministic
     // tie-break within priorities 1 and 2 preserves the bound. Keep original
     // order in all three anyway: refining priorities needs a benchmark.
@@ -163,8 +165,5 @@ pub(super) fn plan_cost(plan: &SamplingPlan) -> (usize, u128) {
         }
         before = after;
     }
-    (
-        plan.width_profile().iter().copied().max().unwrap_or(0),
-        work,
-    )
+    (plan.peak, work)
 }

@@ -128,6 +128,16 @@ fn exactness_and_peak_corpus() {
             }
         }
     }
+    // Extend exact-angle fusion coverage without changing either existing RNG
+    // stream. Kept quarter and three-quarter turns must participate in replay.
+    let previous_quarters = coverage.quarter_turns;
+    let mut fusion_rng = PecosRng::seed_from_u64(0x6007);
+    for _ in 0..160 {
+        let circuit = super::passes::random_circuit(&mut fusion_rng);
+        let program = fuse_rotations(HeisenbergProgram::compile(&circuit).unwrap());
+        compare(&program, &mut coverage);
+    }
+    assert!(coverage.quarter_turns > previous_quarters);
     println!("scheduler coverage: {coverage:?}");
     assert!(coverage.programs > 0 && coverage.reordered > 0 && coverage.improved > 0);
     assert!(coverage.quarter_turns > 0 && coverage.symbolic_signs > 0);
@@ -139,6 +149,11 @@ fn strict_width_improvements_and_feasibility() {
         assert_eq!(program.width_profile(), [1, 2, 1, 0]);
         let scheduled = schedule_for_width(program.clone());
         assert_eq!(scheduled.width_profile(), [1, 0, 1, 0]);
+        // Both candidates fit: selection must still prefer the lower peak.
+        assert_eq!(
+            plan_scheduled(&program, 26).unwrap().width_profile(),
+            [1, 0, 1, 0]
+        );
         assert!(matches!(
             program.plan(1),
             Err(PlanError::WidthExceeded { .. })
@@ -156,6 +171,60 @@ fn strict_width_improvements_and_feasibility() {
             }
         );
     }
+}
+
+#[test]
+fn acceptance_prefers_lower_work_at_equal_peak() {
+    let program = manual(
+        1,
+        vec![
+            rotation(
+                1,
+                &[(0, X)],
+                Angle64::from_radians(0.37),
+                AffineSign::default(),
+            ),
+            rotation(
+                1,
+                &[(0, Z)],
+                Angle64::from_radians(0.29),
+                AffineSign::default(),
+            ),
+            measurement(1, &[(0, Z)], 0),
+        ],
+    );
+    let scheduled = schedule_for_width(program.clone());
+    assert_eq!(program.width_profile(), [1, 1, 0]);
+    // The Active measurement takes priority over the non-promoting RZ.
+    assert_eq!(scheduled.width_profile(), [1, 0, 0]);
+    assert_eq!(plan_cost(&program.plan(26).unwrap()), (1, 6));
+    assert_eq!(plan_cost(&scheduled.plan(26).unwrap()), (1, 5));
+    assert_eq!(
+        plan_scheduled(&program, 26).unwrap().width_profile(),
+        [1, 0, 0]
+    );
+    compare(&program, &mut Coverage::default());
+}
+
+#[test]
+fn classification_uses_live_replay_state() {
+    let a = Angle64::from_radians(0.37);
+    let program = manual(
+        2,
+        vec![
+            measurement(2, &[(0, X)], 0),
+            rotation(2, &[(1, X)], a, AffineSign::default()),
+            rotation(2, &[(0, Z)], a, AffineSign::default()),
+            measurement(2, &[(1, Z)], 1),
+        ],
+    );
+    // MX installs X0 as a stabilizer, making RZ0 promoting. Replaying the
+    // chosen prefix is essential to prefer MZ1 after RX1 over that promotion.
+    assert_eq!(
+        schedule_for_width(program.clone()).width_profile(),
+        [0, 1, 0, 1]
+    );
+    compare(&program, &mut Coverage::default());
 }
 
 #[test]

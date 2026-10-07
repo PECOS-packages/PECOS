@@ -58,8 +58,9 @@ impl AffineSign {
     }
 
     /// Evaluate `constant XOR noise XOR measurements`.
-    /// The measurement slice is indexed by symbol, which equals execution
-    /// position in compiled order.
+    /// The measurement slice is indexed by symbol. In compiled programs, symbols
+    /// equal measurement execution positions; reordered programs still index
+    /// outcomes by symbol, regardless of execution position.
     ///
     /// # Panics
     /// Panics if a referenced symbol has no entry in the supplied slices.
